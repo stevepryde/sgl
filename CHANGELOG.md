@@ -15,6 +15,37 @@ full API details.
 
 ## Unreleased
 
+### Crystal's tracing and denoising parameters are SGL3D's
+
+- **Scope:** `sgl-3d` `FrameInput::crystal` and `CrystalParameters` are
+  removed. Their fields (depth-buffer thickness, roughness threshold, most
+  detailed mip, traversal budget, GGX importance-sample bias, spatial
+  reconstruction radius, the two temporal stability factors and the
+  bilateral cleanup's sigma) are how Crystal
+  (`settings::ReflectionMethod::Crystal`) traces and denoises, which S3D-6
+  makes SGL3D's. SGL3D keeps their previous defaults at both
+  `Settings::screen_space_reflections` levels, so a game that left them at
+  their defaults sees no change. A game controls Crystal through
+  `Settings::screen_space_reflections` and `Settings::reflection_method`.
+  With the `diagnostics` feature, `diagnostics::crystal_roughness_threshold()`
+  reports the roughness at which Crystal stops tracing.
+- **Migration:** delete the field and type from game code:
+
+  ```rust
+  // Before
+  use sgl_3d::{CrystalParameters, FrameInput};
+  let mut input = FrameInput::new(camera);
+  input.crystal = CrystalParameters { roughness_threshold: 0.3, ..CrystalParameters::default() };
+  // After
+  use sgl_3d::FrameInput;
+  let input = FrameInput::new(camera);
+  ```
+
+  A game that changed a value gets the defaults instead; for reflections
+  that blur with roughness and reach rougher surfaces, use
+  `ReflectionMethod::Velvet`. Afterwards, look at the game's glossy
+  reflections with Crystal.
+
 ### The fog filter loads each froxel once per run
 
 - **Scope:** `sgl-3d` volumetric fog with `Settings::fog_filter` (on by

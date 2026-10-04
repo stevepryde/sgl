@@ -568,13 +568,13 @@ combines passes from several engines, listed with their licences under it.
 - `Crystal` (default): one ray per pixel along its lobe's peak, the mirror
   direction, through a hierarchical depth buffer, then a spatial, temporal and
   bilateral denoiser, below perceptual roughness 0.2. Reflections stay sharp.
-  `FrameInput::crystal` (`CrystalParameters`) holds its authored parameters,
-  the fields of DiligentFX's `ScreenSpaceReflectionAttribs` that its settings
-  UI offers; SGL3D supplies the roughness input. Their default is DiligentFX's
-  own, with a perceptual `roughness_threshold` of 0.2 as in AMD's SSSR
-  sample, Hydrogent's 64 traversal steps (`max_traversal_intersections`), the
-  lobe peak (`ggx_importance_sample_bias` 1) and 0.95 of temporal history
-  (`temporal_radiance_stability_factor`): one stochastic ray per pixel leaves
+  SGL3D sets its tracing and denoising parameters, the same at Half and Full
+  resolution, and supplies the roughness input (`src/view/post_fx.rs`):
+  DiligentFX's `ScreenSpaceReflectionAttribs` defaults, with a perceptual
+  `RoughnessThreshold` of 0.2 as in AMD's SSSR sample, Hydrogent's 64
+  traversal steps (`MaxTraversalIntersections`), the lobe peak
+  (`GGXImportanceSampleBias` 1) and 0.95 of temporal history
+  (`TemporalRadianceStabilityFactor`): one stochastic ray per pixel leaves
   blotches on glossy receivers that the denoiser holds.
   - [DiligentFX](https://github.com/DiligentGraphics/DiligentFX/tree/f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b/PostProcess/ScreenSpaceReflection)
     SSR: AMD FidelityFX SSSR's tracing with a confidence output and
@@ -1382,9 +1382,10 @@ results. Run relevant cases explicitly when changing their boundary. The
 `diagnostics` feature adds `Settings::diagnostics` (`settings::Diagnostics`,
 not serialized: switches that turn a layer off, the numerical frame probe and
 the tone-target capture), `Renderer::diagnostic_target`,
-`Renderer::take_frame_probe_reports`, `diagnostics::read` and
+`Renderer::take_frame_probe_reports`, `diagnostics::read`,
 `diagnostics::source_id`, the value the source-identity target holds for an
-instance's pixels. Diagnostics are
+instance's pixels, and `diagnostics::crystal_roughness_threshold`, where
+Crystal stops tracing. Diagnostics are
 configuration: the library reads no environment variables and writes no files.
 Normal rendering does not require the feature.
 

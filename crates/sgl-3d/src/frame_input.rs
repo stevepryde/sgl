@@ -90,43 +90,6 @@ impl Default for Fog {
     }
 }
 
-/// Crystal's authored parameters (`settings::ReflectionMethod::Crystal`): the
-/// fields of DiligentFX's `ScreenSpaceReflectionAttribs` that its settings UI
-/// offers. SGL3D sets the roughness input's fields and DiligentFX
-/// `AlphaInterpolation`, its fade-in. The default is DiligentFX's with
-/// SGL3D's traversal budget, mirror-direction rays and temporal history (see
-/// README).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CrystalParameters {
-    /// How far behind a surface a ray may pass and still hit it, as a
-    /// fraction of the surface's view depth. Larger values streak, smaller
-    /// ones leave holes.
-    pub depth_buffer_thickness: f32,
-    /// Perceptual roughness above which a surface traces no ray. Reflections
-    /// fade out over the 0.05 below it.
-    pub roughness_threshold: f32,
-    /// The finest depth-hierarchy mip a ray traverses; mirrors use 0.
-    pub most_detailed_mip: u32,
-    /// The most depth-hierarchy lookups per ray. Most rays end after about 20.
-    pub max_traversal_intersections: u32,
-    /// 0..=1, from a GGX sample of the lobe to its peak, the mirror
-    /// direction. Higher is less noisy and further from the ground truth.
-    pub ggx_importance_sample_bias: f32,
-    /// The spatial reconstruction's largest kernel radius in pixels; rougher
-    /// receivers use more of it. Larger is less noisy and further from the
-    /// ground truth.
-    pub spatial_reconstruction_radius: f32,
-    /// 0..=1, the share of radiance history kept. Higher is less noisy and
-    /// ghosts more.
-    pub temporal_radiance_stability_factor: f32,
-    /// 0..=1, the share of variance history kept. Higher is less noisy and
-    /// ghosts more.
-    pub temporal_variance_stability_factor: f32,
-    /// The standard deviation in pixels of the bilateral cleanup's spatial
-    /// Gaussian, whose kernel reaches at most twice it.
-    pub bilateral_cleanup_spatial_sigma_factor: f32,
-}
-
 /// One frame's camera, authored look and per-frame state.
 #[derive(Clone, Copy)]
 pub struct FrameInput {
@@ -174,8 +137,6 @@ pub struct FrameInput {
     /// XeGTAO's search radius in world metres; nonpositive or nonfinite
     /// turns ambient occlusion off.
     pub ambient_occlusion_radius: f32,
-    /// Crystal screen-space reflections' parameters.
-    pub crystal: CrystalParameters,
 }
 
 impl FrameInput {
@@ -183,8 +144,7 @@ impl FrameInput {
     /// or environment; the environment's diffuse lighting, reflections and
     /// backdrop unturned at intensity 1; baked lighting on and atmosphere
     /// off; a 60 Hz frame time; a fixed exposure of 0 stops; and the default
-    /// bloom, motion blur, colour grading, ambient occlusion radius and
-    /// Crystal parameters.
+    /// bloom, motion blur, colour grading and ambient occlusion radius.
     pub fn new(camera: Camera) -> Self {
         Self {
             camera,
@@ -210,7 +170,6 @@ impl FrameInput {
             motion_blur: MotionBlurParameters::default(),
             color_grading: ColorGrading::default(),
             ambient_occlusion_radius: 0.5,
-            crystal: CrystalParameters::default(),
         }
     }
 }

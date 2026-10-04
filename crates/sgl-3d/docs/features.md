@@ -139,8 +139,7 @@ Environment and probe specular always apply. On top of them:
 
 - **Screen-space reflections** with two methods, Crystal and Velvet, which
   combine passes from DiligentFX, AMD FidelityFX, Godot, Wicked Engine and
-  Bevy. Crystal runs in SGL's `sgl-post-fx` effects library; its parameters
-  are `FrameInput::crystal`.
+  Bevy. Crystal runs in SGL's `sgl-post-fx` effects library.
   [Reflections](../README.md#reflections) credits each source.
 - **World-space reflections**: rays through a software BVH for moving objects
   that screen-space reflections miss.
