@@ -24,7 +24,7 @@ use tungstenite::http::{HeaderValue, StatusCode, Uri};
 use tungstenite::protocol::{Message, WebSocketConfig};
 
 use self::worker::{IoWorker, WorkerHandle};
-use super::native_write::drain_outbound;
+use super::native_write::{drain_outbound, send_ping};
 use super::queue::{PeerState, QueuedFrame};
 use super::{MAX_WEBSOCKET_FRAME_BYTES, WebSocketIdentity, decode_envelope, encode_envelope};
 use crate::{
@@ -967,13 +967,11 @@ where
                     generation: 0,
                 });
             }
-            Ok(Message::Ping(payload)) => {
+            // Tungstenite queues the pong itself; the next read or flush
+            // writes it.
+            Ok(Message::Ping(_)) => {
                 reads += 1;
                 shared.observe_activity();
-                if socket.send(Message::Pong(payload)).is_err() {
-                    shared.close(DisconnectReason::Transport);
-                    closing = true;
-                }
             }
             Ok(Message::Pong(payload)) => {
                 reads += 1;
@@ -1002,7 +1000,7 @@ where
     let saturated = reads >= MAX_READS_PER_WAKE;
 
     if let Some(payload) = shared.take_ping()
-        && socket.send(Message::Ping(payload.into())).is_err()
+        && send_ping(socket, payload).is_err()
     {
         shared.close(DisconnectReason::Transport);
         return SocketTick::Continue { idle: false };
@@ -1045,11 +1043,13 @@ mod tests {
 
     /// An in-memory socket: reads consume a scripted inbound buffer and
     /// report `WouldBlock` when it runs dry, like a non-blocking TCP stream;
-    /// writes accumulate for inspection.
+    /// writes accumulate for inspection, or report `WouldBlock` while
+    /// `writes_blocked` is set, like a peer that has stopped reading.
     #[derive(Default)]
     struct Scripted {
         inbound: VecDeque<u8>,
         outbound: Vec<u8>,
+        writes_blocked: bool,
     }
 
     impl Read for Scripted {
@@ -1067,6 +1067,9 @@ mod tests {
 
     impl Write for Scripted {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.writes_blocked {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
             self.outbound.extend_from_slice(buf);
             Ok(buf.len())
         }
@@ -1091,7 +1094,7 @@ mod tests {
     fn server_frames(bytes: Vec<u8>) -> Vec<Message> {
         let stream = Scripted {
             inbound: bytes.into(),
-            outbound: Vec::new(),
+            ..Scripted::default()
         };
         let mut client = WebSocket::from_raw_socket(stream, Role::Client, None);
         let mut out = Vec::new();
@@ -1114,7 +1117,7 @@ mod tests {
     fn server_socket(inbound: Vec<u8>) -> WebSocket<Scripted> {
         let stream = Scripted {
             inbound: inbound.into(),
-            outbound: Vec::new(),
+            ..Scripted::default()
         };
         WebSocket::from_raw_socket(stream, Role::Server, Some(websocket_config()))
     }
@@ -1271,6 +1274,37 @@ mod tests {
         tick(&mut socket, &shared);
         shared.advance(25);
         assert_eq!(shared.rtt().srtt_ms, 15);
+    }
+
+    /// A pong and a due ping that meet a peer which has stopped reading stay
+    /// buffered rather than failing the peer, the turn waits for the writable
+    /// edge, and both go out once the socket takes writes again.
+    #[test]
+    fn socket_tick_holds_control_frames_while_writes_block() {
+        let shared = SharedPeer::new(MAGIC, 10, 0);
+        shared.advance(0);
+        shared.advance(10);
+        let mut socket = server_socket(client_frames(vec![Message::Ping(b"hi".to_vec().into())]));
+        socket.get_mut().writes_blocked = true;
+        assert_eq!(
+            tick(&mut socket, &shared),
+            SocketTick::Continue { idle: true }
+        );
+        assert_eq!(lock(&shared.state).terminal(), None);
+
+        socket.get_mut().writes_blocked = false;
+        assert_eq!(
+            tick(&mut socket, &shared),
+            SocketTick::Continue { idle: true }
+        );
+        let frames = server_frames(std::mem::take(&mut socket.get_mut().outbound));
+        assert_eq!(
+            frames,
+            vec![
+                Message::Pong(b"hi".to_vec().into()),
+                Message::Ping(10u64.to_be_bytes().to_vec().into()),
+            ]
+        );
     }
 
     /// A flood is read at most `MAX_READS_PER_WAKE` frames per turn; the
