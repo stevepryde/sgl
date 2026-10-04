@@ -16,6 +16,13 @@
 // the local-light atlas), as Wicked Engine 4323a33's
 // WickedEngine/shaders/shadowHF.hlsli sample_shadow clamps each sample to
 // shadow_border_clamp's rectangle, MIT (src/LICENSE-wicked.txt).
+//
+// The fog's tap (sample_shadow_map_fog) ports Godot b130438's
+// servers/rendering/renderer_rd/shaders/environment/volumetric_fog_process.glsl
+// (MODE_DENSITY's directional shadow and INV_FOG_FADE), MIT
+// (src/LICENSE-godot.txt). Changes: WebGPU filters a depth texture only by
+// comparison, so the tap loads the four texels Godot's linear sampler
+// filters and filters them itself.
 
 const SPIRAL_OFFSET_0_=vec2<f32>(-0.7071,0.7071);
 const SPIRAL_OFFSET_1_=vec2<f32>(-0.0000,-0.8750);
@@ -34,8 +41,10 @@ const SHADOW_FILTER_TEMPORAL:u32=2u;
 // takes the static layers and the fixed kernel; the camera's surface, which
 // takes the frame's maps and the temporal kernel while temporal
 // antialiasing resolves it; and a point of the camera's fog, which has no
-// side and takes the frame's maps with one hardware tap, as Bevy's
-// volumetric fog does, which the fog's reprojection resolves.
+// side and takes the frame's maps with one tap that the fog's reprojection
+// resolves: a local light's one hardware tap, as Bevy's volumetric fog
+// samples it, and the directional cascade's Godot's fog tap
+// (directional_shadow.wgsl).
 const SHADOW_RECEIVER_CAPTURE:u32=0u;
 const SHADOW_RECEIVER_CAMERA:u32=1u;
 const SHADOW_RECEIVER_MEDIUM:u32=2u;
@@ -165,6 +174,27 @@ fn sample_shadow_map(shadow_map:texture_depth_2d_array,comparison:sampler_compar
   return sample_shadow_map_jimenez_fourteen(shadow_map,comparison,light_local,depth,array_index,bounds,frag_coord_xy,texel_size,1.0,true);
  }
  return sample_shadow_map_castano_thirteen(shadow_map,comparison,light_local,depth,array_index,bounds);
+}
+
+// Godot's INV_FOG_FADE: how fast the light a point in the fog receives
+// fades, per metre it lies behind its occluder.
+const INV_FOG_FADE:f32=10.;
+// Godot's fog tap: the occluder's depth at `light_local`, linearly filtered
+// with the map's edge clamped, and the light faded exponentially with the
+// metres the receiver at `depth` lies behind it, `z_range` metres per
+// unit of depth.
+fn sample_shadow_map_fog(shadow_map:texture_depth_2d_array,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,z_range:f32)->f32 {
+ let size=vec2<i32>(textureDimensions(shadow_map));
+ let texel=clamp(light_local,bounds.xy,bounds.zw)*vec2<f32>(size)-.5;
+ let weight=fract(texel);
+ let corner=vec2<i32>(floor(texel));
+ let columns=clamp(vec2(corner.x,corner.x+1),vec2(0),vec2(size.x-1));
+ let rows=clamp(vec2(corner.y,corner.y+1),vec2(0),vec2(size.y-1));
+ let first_row=mix(textureLoad(shadow_map,vec2(columns.x,rows.x),array_index,0),textureLoad(shadow_map,vec2(columns.y,rows.x),array_index,0),weight.x);
+ let second_row=mix(textureLoad(shadow_map,vec2(columns.x,rows.y),array_index,0),textureLoad(shadow_map,vec2(columns.y,rows.y),array_index,0),weight.x);
+ let occluder=mix(first_row,second_row,weight.y);
+ // Reversed Z: a receiver behind its occluder is deeper, nearer 0.
+ return exp(min(0.,depth-occluder)*z_range*INV_FOG_FADE);
 }
 
 // Bevy's receiver offset (shadows.wesl sample_directional_cascade): along

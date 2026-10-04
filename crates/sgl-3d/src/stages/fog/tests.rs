@@ -476,9 +476,11 @@ fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfilte
 // Defect: the injection ignores a light's shadow, or samples it where the
 // medium is not, so light leaks into the medium beneath an opaque slab.
 // The occluder's geometry decides: froxels well below the slab, within the
-// light's reach, see none of it; froxels above it see it.
+// light's reach, see none of a local light and, through Godot's fog tap,
+// at most exp(-10 x the metres they lie behind the slab's top) of the
+// directional light; froxels above it see it.
 #[test]
-fn shadowed_lights_scatter_nothing_behind_their_occluder() {
+fn shadowed_lights_scatter_almost_nothing_behind_their_occluder() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
@@ -582,9 +584,15 @@ fn shadowed_lights_scatter_nothing_behind_their_occluder() {
         let darkest_above = above.iter().copied().fold(f32::MAX, f32::min);
         let brightest_below = below.iter().copied().fold(0., f32::max);
         assert!(darkest_above > 0., "{label}: lit medium scattered nothing");
+        // Froxels below y 0.4 lie at least 1.2 m behind the slab's top.
+        let most_below = if local {
+            0.
+        } else {
+            darkest_above * (-10f32 * 1.2).exp()
+        };
         assert!(
-            brightest_below == 0.,
-            "{label}: {brightest_below} scattered beneath the occluder"
+            brightest_below <= most_below,
+            "{label}: {brightest_below} scattered beneath the occluder, against {darkest_above} above it"
         );
     }
 }

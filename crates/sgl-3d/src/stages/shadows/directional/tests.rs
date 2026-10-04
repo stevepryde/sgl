@@ -641,6 +641,189 @@ fn casters_within_the_pancake_keep_their_own_depth() {
     }
 }
 
+/// The share of the shadowed directional light that reaches each of
+/// `points` in the fog (`SHADOW_RECEIVER_MEDIUM`), in a frame of `input`.
+fn medium_light(fixture: &mut Fixture, input: &FrameInput, points: &[Vec3]) -> Vec<f32> {
+    let (device, queue) = (&fixture.device, &fixture.queue);
+    let prepared = fixture.renderer.prepare_test_frame(
+        device,
+        queue,
+        &mut fixture.scene,
+        input,
+        &fixture.settings,
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    fixture.renderer.encode_test_shadows(
+        device,
+        queue,
+        &mut encoder,
+        &fixture.scene,
+        &prepared,
+        None,
+    );
+    queue.submit([encoder.finish()]);
+    let observed = points
+        .chunks(4)
+        .flat_map(|chunk| {
+            let mut calls = chunk
+                .iter()
+                .map(|point| {
+                    format!(
+                        "directional_shadow_visibility(0u,vec3({:?},{:?},{:?}),vec3(0.),vec2(0.),SHADOW_RECEIVER_MEDIUM)",
+                        point.x, point.y, point.z
+                    )
+                })
+                .collect::<Vec<_>>();
+            calls.resize(4, "0.".into());
+            observe_shadow(
+                device,
+                queue,
+                &fixture.renderer,
+                &fixture.scene,
+                &format!("output[0]=vec4({});", calls.join(",")),
+            )
+            .into_iter()
+            .take(chunk.len())
+        })
+        .collect();
+    fixture.scene.finish_frame();
+    observed
+}
+
+// The fog takes Godot's fog tap: the light fades by exp(-INV_FOG_FADE * the
+// metres a point lies behind its occluder), INV_FOG_FADE being 10.
+// Plausible defects: the depth difference taken the wrong way round, scaled
+// by the cascade's depth per metre instead of its metres per unit of depth,
+// or offset toward the light as a surface's is; a cascade or layer that does
+// not hold the point; a shadow beyond the shadow distance. The oracle is
+// that formula over the geometry: a light shining straight down onto a
+// floor the camera does not see, and points in each cascade's part of the
+// view a known distance below or above it.
+#[test]
+fn the_fog_fades_the_light_by_the_metres_behind_its_occluder() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    const HEIGHT: f32 = 1.;
+    fixture.place(floor(Vec3::new(0., HEIGHT, -110.), 120.), false);
+    let shadow = DirectionalShadow {
+        distance: 200.,
+        cascades: 4,
+        first_split: 10.,
+        ..Default::default()
+    };
+    let input = frame(DirectionalLight {
+        direction: Vec3::NEG_Y,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: Some(shadow),
+        ..Default::default()
+    });
+    // (view depth, metres below the floor): points in cascades 0 to 3
+    // (bounds 10, 27, 74 and 200 m), one above the floor and one beyond the
+    // shadow distance.
+    let points = [
+        (3., 0.02),
+        (20., 0.05),
+        (50., 0.1),
+        (150., 0.2),
+        (20., -0.05),
+        (220., 0.2),
+    ];
+    let positions: Vec<Vec3> = points
+        .iter()
+        .map(|&(depth, below)| Vec3::new(0., HEIGHT - below, -depth))
+        .collect();
+    let observed = medium_light(&mut fixture, &input, &positions);
+    for ((depth, below), observed) in points.into_iter().zip(observed) {
+        let expected = if depth < shadow.distance && below > 0. {
+            (-10. * below).exp()
+        } else {
+            1.
+        };
+        assert!(
+            (observed - expected).abs() < 2e-3,
+            "a point {depth} m away and {below} m below the floor receives {observed} of the light, not {expected}"
+        );
+    }
+}
+
+// The fog's fade is measured from a caster within the cascade's pancake,
+// not from the cascade's near plane (#67). Plausible defects: the cascade
+// fitted tightly to its slice, so a caster toward the light from it is
+// recorded at the near plane, the fog just behind that plane receives most
+// of the light however far the caster is, and a point between the plane and
+// the caster is unshadowed. The oracle is Godot's fade over the geometry:
+// light shining straight down onto a floor 5 m above the top of cascade 0's
+// slice (about 5.5 m up at its 10 m far bound) reaches points in cascade 0
+// as exp(-10 x their metres below the floor), essentially none at the top
+// of the view; and a floor 20 m up, with the sun behind and above the
+// camera, leaves none in the fog just in front of the camera.
+#[test]
+fn the_fog_fades_from_casters_within_the_pancake() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let shadow = DirectionalShadow {
+        distance: 200.,
+        cascades: 4,
+        first_split: 10.,
+        ..Default::default()
+    };
+    let light = |direction| DirectionalLight {
+        direction,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: Some(shadow),
+        ..Default::default()
+    };
+    let tan = 0.5f32.tan();
+    let top = 10. * tan;
+
+    let mut fixture = Fixture::new(device, SIZE);
+    let height = top + 5.;
+    fixture.place(floor(Vec3::new(0., height, -110.), 120.), false);
+    // (view depth, metres below the floor): two points of cascade 0 above
+    // the view, just below the floor, and one at the top of the view near
+    // the cascade's far bound.
+    let points = [(3., 0.05), (3., 0.1), (9.9, height - 9.9 * tan + 0.01)];
+    let positions: Vec<Vec3> = points
+        .iter()
+        .map(|&(depth, below)| Vec3::new(0., height - below, -depth))
+        .collect();
+    let observed = medium_light(&mut fixture, &frame(light(Vec3::NEG_Y)), &positions);
+    for ((depth, below), observed) in points.into_iter().zip(observed) {
+        let expected = (-10. * below).exp();
+        assert!(
+            (observed - expected).abs() < 2e-3,
+            "a point {depth} m away and {below} m below a floor 5 m above cascade 0 receives {observed} of the light, not {expected}"
+        );
+    }
+
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    fixture.place(floor(Vec3::new(0., 20., 0.), 60.), false);
+    let depths = [0.15, 0.2, 0.3, 0.5];
+    let positions: Vec<Vec3> = depths
+        .iter()
+        .map(|&depth| Vec3::new(0., 0., -depth))
+        .collect();
+    let observed = medium_light(
+        &mut fixture,
+        &frame(light(Vec3::new(0., -1., -1.))),
+        &positions,
+    );
+    for (depth, observed) in depths.into_iter().zip(observed) {
+        assert!(
+            observed < 1e-3,
+            "the fog {depth} m in front of the camera, under a floor 20 m up, receives {observed} of the light"
+        );
+    }
+}
+
 /// Runs `statement` in a compute shader over the shading library with the
 /// camera's lit group 0, and returns the `vec4` it writes to `output[0]`.
 fn observe_shadow(

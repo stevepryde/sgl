@@ -15,6 +15,26 @@ full API details.
 
 ## Unreleased
 
+### The fog takes one directional shadow cascade and one tap, as Godot's fog
+
+- **Scope:** `sgl-3d` volumetric fog (`FrameInput::fog`) lit by a
+  directional light with a shadow (`DirectionalLight::shadow`). Each froxel
+  took the camera surfaces' lookup: the cascade at its view depth with a
+  2 cm offset toward the light, one hardware 2×2 comparison tap, and a
+  second cascade's tap blended in across their 20 % overlap. It now takes
+  Godot's volumetric fog lookup: the one cascade at its view depth, no
+  offset, one linear tap of the occluder's depth, and the light faded by
+  exp(−10 × the metres the froxel lies behind its occluder) rather than cut
+  off, so fog fades into an occluder's shadow over its first 10–30 cm (61 %
+  of the light 5 cm behind, 37 % 10 cm behind). The metres count from the
+  occluder's depth in the cascade's map, so an occluder beyond the shadow's
+  `pancake_size` toward the light counts from the pancake's edge.
+  Surfaces' shadows, local lights' shadows in the fog, and fog beyond the
+  shadow distance (unshadowed) are unchanged.
+- **Migration:** no game-code changes. Afterwards, look at light shafts and
+  at fog behind thin occluders (railings, foliage, window frames) under the
+  shadowed directional light.
+
 ### Directional shadow cascades reach a pancake toward the light
 
 - **Scope:** `sgl-3d` directional shadows. `DirectionalShadow` gains

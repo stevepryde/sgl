@@ -257,10 +257,13 @@ fog stage:
   `1 / height_falloff` metres above `height`, and that of every fog volume
   (`Scene::update_fog_volumes`, Godot's box `FogVolume` with its fog
   material's density, albedo and edge fade) it lies in;
-- lights it with the directional lights through their shadow cascades, the
-  camera's clustered point, spot and rectangle lights (baked ones too)
-  through the local-light atlas, each shadow one hardware 2×2 tap that the
-  reprojection resolves, as Bevy's volumetric fog samples them, and
+- lights it with the directional lights through the one shadow cascade at
+  the froxel's depth, whose light fades with the metres the froxel lies
+  behind its occluder (Godot's fog; an occluder beyond the shadow's
+  `pancake_size` counts from the pancake's edge), the camera's clustered
+  point, spot and rectangle lights (baked ones too) through the local-light
+  atlas, each shadow one tap that the reprojection resolves (a local light's
+  one hardware 2×2 tap, as Bevy's volumetric fog samples them), and
   `ambient` of the hemisphere fill and environment diffuse, scattered toward
   the camera by Henyey–Greenstein's phase function of `anisotropy`; each
   light's `fog_energy` scales its share, and a light at or below 0.001 is

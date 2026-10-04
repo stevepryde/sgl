@@ -18,8 +18,9 @@
 // over its bounds adding into the froxels with atomics, so a volume costs
 // only the froxels it reaches and its sums keep full precision; there is no
 // emission or GI injection. The lights are SGL3D's: the frame's directional
-// lights through the shared cascade sampling, and the camera's clustered
-// point, spot and rectangle lights through their records and the shared
+// lights through the shared cascade sampling, which gives the medium Godot's
+// one cascade and one faded tap, and the camera's clustered point, spot and
+// rectangle lights through their records and the shared
 // local-shadow sampling with one hardware tap per froxel, as Bevy's
 // volumetric fog samples its shadow maps and Godot's takes one tap, a
 // rectangle by the solid angle of its face, which Godot takes as the face's
