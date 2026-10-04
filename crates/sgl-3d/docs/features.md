@@ -167,7 +167,7 @@ Environment and probe specular always apply. On top of them:
   through their shadows, and the ambient light, so light shafts form where
   openings let a shadowed light through. Opaque surfaces, the sky, blended
   surfaces, glow and mist all fog from one volume. `Settings::fog_quality`
-  sets its resolution.
+  sets its resolution and `Settings::fog_filter` its blur.
   [Volumetric fog](../README.md#volumetric-fog).
 - **Mist**: positioned billboards (`Scene::update_mist`, their look
   `FrameInput::mist`).

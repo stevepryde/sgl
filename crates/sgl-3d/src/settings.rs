@@ -214,6 +214,11 @@ pub struct Settings {
     pub atmosphere: bool,
     /// The volumetric fog's resolution.
     pub fog_quality: FogQuality,
+    /// Godot's Gaussian filter across each slice of the volumetric fog's
+    /// froxels, x then y, before it integrates them (Godot's
+    /// `volumetric_fog/use_filter`): smoother fog, softer shafts and shadow
+    /// edges in it, at the cost of two passes over the froxels.
+    pub fog_filter: bool,
     /// Camera-path heat shimmer.
     pub heat_distortion: bool,
     pub motion_blur: MotionBlur,
@@ -225,8 +230,9 @@ pub struct Settings {
 }
 
 impl Default for Settings {
-    /// High, with atmosphere on, heat distortion, world-space reflections
-    /// and motion blur off, and every other choice at its default.
+    /// High, with atmosphere and the fog filter on, heat distortion,
+    /// world-space reflections and motion blur off, and every other choice
+    /// at its default.
     fn default() -> Self {
         Self {
             preset: RenderPreset::High,
@@ -240,6 +246,7 @@ impl Default for Settings {
             world_space_reflections: false,
             atmosphere: true,
             fog_quality: FogQuality::default(),
+            fog_filter: true,
             heat_distortion: false,
             motion_blur: MotionBlur::Off,
             #[cfg(feature = "diagnostics")]

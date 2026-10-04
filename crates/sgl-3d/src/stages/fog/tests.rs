@@ -1,8 +1,9 @@
 //! The volumetric fog in real frames: a medium without density leaves the
 //! frame as no fog does; a point light's scattering along a froxel column
-//! matches a numerical single-scattering integral along its view ray; and a
+//! matches a numerical single-scattering integral along its view ray; a
 //! shadowed light, local or directional, scatters nothing in the medium its
-//! occluder hides from it.
+//! occluder hides from it; and the filter blurs each slice by Godot's
+//! Gaussian while the history stays unfiltered.
 use super::froxels;
 use crate::renderer::Renderer;
 use crate::settings::{self, FogQuality, Settings};
@@ -216,7 +217,7 @@ fn an_empty_medium_leaves_the_frame_as_no_fog_does() {
         )
         .unwrap();
     let empty = render(&device, &queue, &mut scene, &frame, &settings(true), 2);
-    let integrated = texels(&read(&device, &queue, empty.fog_volumes()[1]));
+    let integrated = texels(&read(&device, &queue, empty.fog_volumes()[2]));
     assert!(
         integrated.iter().all(|texel| *texel == [0., 0., 0., 1.]),
         "an empty medium scattered or dimmed"
@@ -285,7 +286,7 @@ fn point_light_scattering_matches_a_single_scattering_integral() {
     let frame = input(fog);
     let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
     let size = froxels(QUALITY, SIZE);
-    let integrated = texels(&read(&device, &queue, renderer.fog_volumes()[1]));
+    let integrated = texels(&read(&device, &queue, renderer.fog_volumes()[2]));
     let mut checked = 0;
     for column in [
         [size[0] / 2, size[1] / 2],
@@ -344,6 +345,125 @@ fn point_light_scattering_matches_a_single_scattering_integral() {
     assert!(
         checked >= 8,
         "too few samples carry measurable light: {checked}"
+    );
+}
+
+/// Godot's filter weights (b130438 `volumetric_fog_process.glsl`
+/// MODE_FILTER `gauss`), from three froxels before to three after.
+const GODOT_GAUSS: [f32; 7] = [
+    0.071303, 0.131514, 0.189879, 0.214607, 0.189879, 0.131514, 0.071303,
+];
+
+/// `volume` of `size` blurred along `axis` (0 x, 1 y) by Godot's weights,
+/// its coordinates clamped to the volume as Godot clamps them.
+fn godot_gaussian(volume: &[[f32; 4]], size: [u32; 3], axis: usize) -> Vec<[f32; 4]> {
+    let index = |at: [u32; 3]| ((at[2] * size[1] + at[1]) * size[0] + at[0]) as usize;
+    let mut blurred = vec![[0.; 4]; volume.len()];
+    for z in 0..size[2] {
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                let at = [x, y, z];
+                let sum = &mut blurred[index(at)];
+                for (tap, weight) in GODOT_GAUSS.iter().enumerate() {
+                    let mut from = at;
+                    from[axis] =
+                        (at[axis] as i32 + tap as i32 - 3).clamp(0, size[axis] as i32 - 1) as u32;
+                    for (channel, value) in volume[index(from)].iter().enumerate() {
+                        sum[channel] += weight * value;
+                    }
+                }
+            }
+        }
+    }
+    blurred
+}
+
+// Defect: the filter takes other weights, axes or edges than Godot's, the
+// integration reads the unfiltered froxels, or the filter reaches the history
+// the next frame reprojects, which Godot copies before it filters, or it
+// leaves a channel out. Over two frames of a point light in a medium whose
+// density falls with height, so its light and its extinction both vary
+// across the frame, the froxels the frame wrote are the same with the filter
+// as without, the froxels it integrates are Godot's Gaussian of them along x
+// and then y within half-float rounding, and the integrated volume differs
+// from the unfiltered one.
+#[test]
+fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfiltered() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    scene
+        .add_light(
+            &device,
+            &queue,
+            Light {
+                position: Vec3::new(0.5, 0.3, -3.),
+                shape: LightShape::Point,
+                color: [1.; 3],
+                intensity: 40.,
+                range: 25.,
+                baked: false,
+                specular: 1.,
+                casts_shadow: false,
+            },
+        )
+        .unwrap();
+    let frame = input(Fog {
+        density: 0.06,
+        height: -1.,
+        height_falloff: 3.,
+        length: 10.,
+        detail_spread: 1.,
+        ..Fog::default()
+    });
+    let mut volumes = |fog_filter: bool| {
+        let settings = Settings {
+            fog_filter,
+            ..settings(true)
+        };
+        let renderer = render(&device, &queue, &mut scene, &frame, &settings, 2);
+        renderer
+            .fog_volumes()
+            .map(|view| texels(&read(&device, &queue, view)))
+    };
+    let [written, filtered, integrated] = volumes(true);
+    let [unfiltered_written, _, unfiltered_integrated] = volumes(false);
+    assert!(
+        written == unfiltered_written,
+        "the filter changed the froxels the next frame reprojects"
+    );
+    assert!(
+        integrated != unfiltered_integrated,
+        "the integration ignored the filter"
+    );
+    let size = froxels(QUALITY, SIZE);
+    let expected = godot_gaussian(&godot_gaussian(&written, size, 0), size, 1);
+    // Two half-float roundings of non-negative sums, one per pass.
+    let tolerance = |expected: f32| 2e-3 * expected + 1e-6;
+    // Froxels the filter moved by far more than that, in the light (red) and
+    // the extinction, where a wrong kernel would show.
+    let mut spread = [0; 2];
+    for (index, ((filtered, expected), written)) in
+        filtered.iter().zip(&expected).zip(&written).enumerate()
+    {
+        for channel in 0..4 {
+            assert!(
+                (filtered[channel] - expected[channel]).abs() <= tolerance(expected[channel]),
+                "froxel {index} channel {channel}: {} against Godot's Gaussian {}",
+                filtered[channel],
+                expected[channel]
+            );
+        }
+        for (moved, channel) in spread.iter_mut().zip([0, 3]) {
+            *moved += usize::from(
+                (expected[channel] - written[channel]).abs() > 10. * tolerance(expected[channel]),
+            );
+        }
+    }
+    assert!(
+        spread.iter().all(|moved| *moved > 10_000),
+        "the filter moved only {spread:?} froxels' light and extinction"
     );
 }
 

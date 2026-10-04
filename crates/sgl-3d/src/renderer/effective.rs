@@ -130,6 +130,7 @@ pub(super) fn resolve(
             fog_volumes,
             p[3][3] == 0. && p[2][3] == -1.,
         ),
+        fog_filter: settings.fog_filter,
         bloom: settings.bloom.enabled(low) && !disable.bloom,
         motion_blur: motion_blur(settings, input).filter(|_| post_fx_camera),
         heat: settings.heat_distortion,

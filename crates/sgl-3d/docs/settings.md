@@ -32,6 +32,7 @@ replace every choice with a complete bundle.
 | World-space reflections | `Settings::world_space_reflections` | `false`, `true` | | Shows moving objects that screen-space reflections cannot see, with rays through a software BVH at half resolution. Needs screen-space reflections. |
 | Atmosphere | `Settings::atmosphere` | `true`, `false` | | The volumetric fog and mist, while `FrameInput::atmosphere` is on. |
 | Fog quality | `Settings::fog_quality` | `High`, `Low` | | The volumetric fog's froxels: 64 slices, and Low 64 across the frame's mean side (Godot's default), High 128. Higher resolves sharper shafts and shadow edges in the fog at more cost. Needs a `perspective` camera. |
+| Fog filter | `Settings::fog_filter` | `true`, `false` | | Blurs each slice of the fog's froxels across the frame before integration (Godot's `use_filter`, on by default): smoother fog with softer shafts and shadow edges in it, for two passes over the froxels. |
 | Heat shimmer | `Settings::heat_distortion` | `false`, `true` | | Needs geometry from `Scene::update_heat_distortion`. |
 | Motion blur | `Settings::motion_blur` | `Off`, `Reduced`, `Full` | | A comfort choice: Full blurs over `FrameInput::motion_blur`'s shutter, Reduced over half of it. Needs a `perspective` camera. |
 | Frame rate | the game's loop, from `settings::FrameRate` | `Display`, `Fps60` to `Fps240` | | Not part of `Settings`: SGL3D does not pace frames. `FrameRate::limit` gives the cap. |
@@ -49,7 +50,9 @@ rewriting their saved one.
 
 These are the game's authored look or per-frame state, fields of `FrameInput`
 ([`src/frame_input.rs`](../src/frame_input.rs)). Keep them out of settings
-menus.
+menus. S3D-6 requires every behaviour that changes the image to be a player
+setting above, a diagnostics switch below, or a value here or on the scene
+type it belongs to, with a default so a game sets only what it changes.
 
 - `exposure`: fixed stops, or automatic exposure with its histogram range,
   filter, speeds, limits, compensation curve and metering mask.

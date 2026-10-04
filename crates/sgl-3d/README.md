@@ -257,6 +257,10 @@ fog stage:
   `temporal_reprojection` of it, and samples another point of it each frame
   (Godot's 16 Halton offsets), so shafts and shadow edges in the fog resolve
   over frames; this history restarts with the camera's;
+- with `Settings::fog_filter` (on by default, as Godot's `use_filter`),
+  blurs each slice with Godot's 7-tap Gaussian across x and then y, which
+  smooths what one sample per froxel leaves; the next frame reprojects the
+  unfiltered volume, as Godot keeps its history before it filters;
 - integrates each column front to back along its view ray into the light
   scattered toward the camera and the transmittance to each slice.
 
@@ -275,7 +279,8 @@ without a medium (no density and no fog volumes) runs no fog and pays
 nothing for it.
 `Settings::fog_quality` picks the volume's resolution: 64 slices, and Low
 is Godot's default of 64 froxels across the frame's mean side, High 128. Timing groups `fog injection` (the lights and shadows, which scale
-with froxels and the lights reaching them) and `fog integration`.
+with froxels and the lights reaching them), `fog filter` (with the filter)
+and `fog integration`.
 
 Every froxel tests every fog volume, so keep them few. There is no emission,
 density texture or volume shape other than a box. A moving light's
@@ -1010,7 +1015,7 @@ stage (each stage's documentation lists its own), are:
 - shadows: `directional shadow cascade 0` to `directional shadow cascade 3`
   (one per cascade the frame has), `local shadow layers` (static layers) and
   `local shadows` (the frame's faces);
-- volumetric fog: `fog injection` and `fog integration`;
+- volumetric fog: `fog injection`, `fog filter` and `fog integration`;
 - opaque: `sky` and `opaque geometry + lighting`, or `geometry`, `sky` and
   `opaque lighting` where the device lacks the fused pass's colour
   attachments; then `ambient occlusion`;
