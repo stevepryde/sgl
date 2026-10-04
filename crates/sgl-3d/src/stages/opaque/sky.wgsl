@@ -31,11 +31,16 @@ fn sky_color(i:Sky)->vec4<f32> {
 }
 // Background at infinity moves with the camera's rotation only (Diligent's
 // EnvMap.psh GetMotionVector, Bevy's skybox motion vectors): its direction
-// through both cameras, encoded as geometry's motion is.
+// through both cameras, encoded as geometry's motion is. A projection that
+// gives the direction no positive w (an orthographic camera's is 0) cannot
+// place it on screen; the sky then records no motion.
 fn sky_motion(i:Sky)->vec2<f32> {
  let world=view.inverse_view_projection*vec4(i.uv*2.-vec2(1.),1.,1.);
  let direction=world.xyz/world.w-view.eye;
  let current=view.stable_view_projection*vec4(direction,0.);
+ if current.w<=0. {
+  return vec2(0.);
+ }
  let previous=view.previous_view_projection*vec4(direction,0.);
  return gbuffer_encode_motion(current,previous);
 }

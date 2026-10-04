@@ -82,13 +82,15 @@ fn gbuffer_lit(packed:vec4<f32>)->bool {
 // the last submitted one, for geometry and the sky alike, at most
 // GBUFFER_MOTION_LIMIT screens along its longer axis with its direction kept.
 // Two screens is off-screen for every temporal consumer, even after the
-// reflections' 3x3 search around the reprojected position, and finite in the
-// half-float target. A previous position on or behind the previous camera's
-// plane (w <= 0) has no place on screen: its motion is the limit, away from
-// where its clip position points, as a point in front tends to as its w
-// reaches zero. Wicked Engine 4323a33 (WickedEngine/shaders/
-// visibility_velocityCS.hlsl) likewise writes velocity only for a positive
-// previous w, clamped to one screen.
+// reflections' 3x3 vicinity search moves the reprojected position a few
+// texels, and finite in the half-float target. A previous position on or
+// behind the previous camera's plane (w <= 0) has no place on screen: its
+// motion is the limit, away from where its clip position points, as a point
+// in front tends to as its w reaches zero. Wicked Engine 4323a33
+// (WickedEngine/shaders/visibility_velocityCS.hlsl) likewise writes velocity
+// only for a positive previous w, clamped to one screen. The current w must
+// be positive, as a rasterized fragment's is; callers handle a point the
+// current camera cannot place on screen.
 const GBUFFER_MOTION_LIMIT:f32=2.;
 fn gbuffer_encode_motion(current_clip:vec4<f32>,previous_clip:vec4<f32>)->vec2<f32> {
  let current=current_clip.xy/current_clip.w*vec2(0.5,-0.5);

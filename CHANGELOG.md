@@ -22,11 +22,13 @@ full API details.
   Where a pixel's position in the last submitted frame was on or behind that
   frame's camera, geometry wrote an unbounded offset (which can overflow the
   half-float target) and the sky wrote zero motion, so the sky kept stale
-  history. Both now write motion two screens long, in the direction the point
-  moved into view, so every temporal effect drops its history there and
-  motion blur streaks along the turn. Any motion longer than two screens is
-  shortened to two screens with its direction kept; it was already
-  off-screen for every temporal effect.
+  history. Both now write motion two screens long along its longer axis, in
+  the direction the point moved into view, so every temporal effect drops the
+  history it reprojects by motion there and motion blur streaks along the
+  turn. All motion is now capped at two screens along its longer axis, with
+  its direction kept. Motion beyond the cap was already off-screen for every
+  temporal effect, but there FSR2's reactive weighting and the reflections'
+  choice between motion and hit history can change.
 - **Migration:** no game-code changes. Afterwards, check fast camera turns
   (a quarter turn or more within a frame, without `FrameInput::camera_cut`)
   and objects passing close beside the camera, with TAA or FSR2 and motion

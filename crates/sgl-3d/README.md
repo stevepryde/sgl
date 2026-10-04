@@ -586,9 +586,10 @@ resize restart accumulation from current data.
 integrated as Diligent's Hydrogent renderer does:
 - The frame renders with a 16-sample Halton jitter and a −0.5 texture mip
   bias. Motion vectors (the G-buffer's motion target) stay unjittered; the sky's
-  follow the camera's rotation, as a background at infinity does. Motion is at
-  most two screens long; a surface or sky direction that was behind the last
-  frame's camera gets that length, so every temporal effect drops its history.
+  follow the camera's rotation, as a background at infinity does. Motion is
+  capped at two screens along its longer axis; a surface or sky direction that
+  was behind the last frame's camera gets that length, so every temporal
+  effect drops the history it reprojects by motion.
 - SSR and TAA need `perspective`'s infinite reversed-Z projection; with any
   other camera SSR is off and SMAA replaces TAA.
 - TAA resolves the complete linear HDR frame, including reflections, fog,
