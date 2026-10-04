@@ -165,7 +165,7 @@ fn incident_environment_is_complete_without_doubling_primary() {
                             view: &fog.0,
                             sampler: &fog.1,
                         },
-                        fog_slices: None,
+                        frame_fog: None,
                         camera,
                         scene: &scene,
                         ambient: &zero,

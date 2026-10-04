@@ -181,10 +181,8 @@ fn additive_effects_mark_fsr2_reactivity_for_their_frame_only() {
     // A quad one metre ahead covering the middle third of the view.
     let corner = |x: f32, y: f32| effects::Glow {
         position: (eye + forward + (right * x + up * y) * 0.15).to_array(),
-        uv: [0.; 2],
         color: [4., 2., 1., 0.5],
-        kind: 0.,
-        other: [0.; 3],
+        kind: effects::GlowKind::Uniform,
         soft_distance: 0.,
     };
     let quad = [

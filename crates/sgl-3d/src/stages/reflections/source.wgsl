@@ -5,7 +5,7 @@
 
 // Source-completion camera. With SOURCE_FOG, the frame's fog volume fogs
 // what completion and composition write; `fog` holds one over its length and
-// over its detail spread (fog.wgsl).
+// over its detail spread (fog.wgsl), and the share of its fog the sky takes.
 struct SourceCamera {
  inverse:mat4x4<f32>,
  eye:vec4<f32>,
@@ -128,7 +128,14 @@ fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material
   }
   view_depth=source_view_depth(world,camera);
  }
- let fog=source_fog(view_depth,id,size,camera);
+ var fog=source_fog(view_depth,id,size,camera);
+ if z<=0. {
+  // The sky takes its sky affect of the fog: Godot b130438's
+  // mix(sky, fogged sky, volumetric_fog_sky_affect)
+  // (servers/rendering/renderer_rd/shaders/environment/sky.glsl), MIT
+  // (src/LICENSE-godot.txt), as one mix of the fog with no fog.
+  fog=mix(vec4(0.,0.,0.,1.),fog,camera.fog.z);
+ }
  return CompletedSource(vec4(fog_composite(incoming,fog),alpha),vec4(fog_composite(incident,fog),alpha));
 }
 

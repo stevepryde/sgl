@@ -1,20 +1,45 @@
+// GlowVertex::kind (shading/vertex.rs): a tapered profile and a line; any
+// other kind is uniform.
+const GLOW_TAPERED:u32=1u;
+const GLOW_LINE:u32=2u;
+// A glow vertex as the scene's glow buffer holds it (GlowVertex).
+struct GlowVertex {
+ @location(0) position:vec3<f32>,
+ @location(1) color:vec4<f32>,
+ @location(2) kind:u32,
+ @location(3) soft_distance:f32,
+ @location(4) uv:vec2<f32>,
+ @location(5) taper:f32,
+ @location(6) ripple_frequency:vec2<f32>,
+ @location(7) ripple_amplitude:f32,
+ @location(8) other:vec3<f32>,
+ @location(9) offset:f32,
+}
 struct Glow {
  @builtin(position) clip:vec4<f32>,
  @location(0) uv:vec2<f32>,
  @location(1) color:vec4<f32>,
- @location(2) @interpolate(flat) kind:f32,
+ @location(2) @interpolate(flat) kind:u32,
  @location(3) view_depth:f32,
  @location(4) @interpolate(flat) soft_distance:f32,
+ @location(5) @interpolate(flat) taper:f32,
+ @location(6) @interpolate(flat) ripple_frequency:vec2<f32>,
+ @location(7) @interpolate(flat) ripple_amplitude:f32,
 }
-@vertex fn glow_vs(@location(0) position:vec3<f32>,@location(1) uv:vec2<f32>,@location(2) color:vec4<f32>,@location(3) kind:f32,@location(4) other:vec3<f32>,@location(5) soft_distance:f32)->Glow {
+@vertex fn glow_vs(vertex:GlowVertex)->Glow {
+ let position=vertex.position;
+ let other=vertex.other;
  var o:Glow;
  o.clip=view.view_projection*vec4(position,1.);
- o.uv=uv;
- o.color=color;
- o.kind=kind;
- o.soft_distance=soft_distance;
+ o.uv=vertex.uv;
+ o.color=vertex.color;
+ o.kind=vertex.kind;
+ o.soft_distance=vertex.soft_distance;
+ o.taper=vertex.taper;
+ o.ripple_frequency=vertex.ripple_frequency;
+ o.ripple_amplitude=vertex.ripple_amplitude;
  o.view_depth=-(view.view*vec4(position,1.)).z;
- if kind>1.5 {
+ if vertex.kind==GLOW_LINE {
   var end=view.view_projection*vec4(other,1.);
   // Expand the visible segment. Dividing an endpoint behind the camera by a
   // clamped W changes its projected direction and skews the one-pixel strip.
@@ -40,14 +65,15 @@ struct Glow {
   let delta=(end.xy/end.w-o.clip.xy/o.clip.w)*size;
   let along=delta/max(length(delta),.00001);
   // One drawing-buffer pixel, perpendicular to the projected segment at every depth.
-  o.clip=vec4(o.clip.xy+vec2(-along.y,along.x)*uv.x*2./size*o.clip.w,o.clip.zw);
+  o.clip=vec4(o.clip.xy+vec2(-along.y,along.x)*vertex.offset*2./size*o.clip.w,o.clip.zw);
  }
  return o;
 }
 fn glow_color(i:Glow)->vec4<f32> {
  var alpha=i.color.a;
- if i.kind>0.5 && i.kind<1.5 {
-  alpha*=pow(1.-i.uv.y,2.)*(sin(i.uv.x*62.83+i.uv.y*18.)*0.3+0.7);
+ if i.kind==GLOW_TAPERED {
+  let ripple=sin(dot(i.uv,i.ripple_frequency))*i.ripple_amplitude+1.-i.ripple_amplitude;
+  alpha*=pow(1.-i.uv.y,i.taper)*ripple;
  }
  return vec4(frame_fog(i.color.rgb,i.clip.xy,i.view_depth),alpha);
 }

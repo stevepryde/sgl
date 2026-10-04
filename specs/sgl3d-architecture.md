@@ -375,7 +375,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   integrated volume is the frame's one fog: group 0 lends it, with its
   slicing in `Frame`, to the draws that fog themselves (blended surfaces,
   glow and mist) through `shading::fog`, and source completion samples it
-  for the opaque surfaces, the sky and the incident radiance, as Godot's
+  for the opaque surfaces, the sky (by the fog's sky affect) and the
+  incident radiance, as Godot's
   forward pass samples its volume for every material; composition scales
   reflections by its transmittance. No pass fogs the composed frame, and
   probe captures and ray hits have none.

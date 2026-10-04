@@ -389,9 +389,7 @@ mod tests {
                 .map(|(position, color)| crate::effects::Glow {
                     position,
                     color,
-                    uv: [0.; 2],
-                    kind: 0.,
-                    other: [0.; 3],
+                    kind: crate::effects::GlowKind::Uniform,
                     soft_distance: 0.,
                 })
                 .collect::<Vec<_>>();

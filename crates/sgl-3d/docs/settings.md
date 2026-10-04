@@ -79,7 +79,9 @@ is done (its algorithm and internal parameters) is SGL3D's.
   (`volumetric_fog_enabled` and `fog_enabled`); `true` turns them on where
   the setting allows them; `fog` (the medium: density, height and falloff,
   albedo, anisotropy, the share of ambient light it scatters (none by
-  default, as Godot's), and the volume's length) and `mist` shape them;
+  default, as Godot's), the volume's length, and how much of it the sky
+  takes (all by default, as Godot's)) and `mist` (its colours, opacity,
+  billboard size and drift) shape them;
   SGL3D spaces the volume's slices and weights its history. Fog volumes are
   scene content (`Scene::update_fog_volumes`).
 - `environment`: the scene's environment that lights the frame and draws its

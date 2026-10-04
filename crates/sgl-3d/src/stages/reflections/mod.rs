@@ -312,10 +312,11 @@ fn source_inputs<'a: 'p, 'p>(
     let environments = &scene.environments;
     source::Inputs {
         fog,
-        fog_slices: ctx
-            .effective
-            .fog
-            .map(|_| [frame.fog_inverse_length, frame.fog_inverse_detail_spread]),
+        frame_fog: ctx.effective.fog.map(|_| source::SourceFog {
+            inverse_length: frame.fog_inverse_length,
+            inverse_detail_spread: frame.fog_inverse_detail_spread,
+            sky_affect: ctx.input.fog.sky_affect.clamp(0., 1.),
+        }),
         camera: ctx.views.reflection_camera,
         scene: &t.color,
         ambient: &t.ambient,
