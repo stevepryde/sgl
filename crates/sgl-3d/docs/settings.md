@@ -65,7 +65,8 @@ is done (its algorithm and internal parameters) is SGL3D's.
   blurs (0.5 by default).
 - `color_grading`: white balance, hue, post-saturation, the midtone range,
   and each section's saturation, contrast, gamma, gain and lift.
-- `ambient_occlusion_radius`: occlusion reach in metres.
+- `ambient_occlusion_radius`: occlusion reach in metres (0.5 by default),
+  clamped to 0.01–10000; `Settings::ambient_occlusion` turns AO off.
 - `directional_lights`, `hemisphere_light`: the lights that are not scene
   content. A directional light's `shadow` is its cascades' reach: distance
   and cascade count (`DirectionalShadow::default()` is Bevy's 150 m and 4);

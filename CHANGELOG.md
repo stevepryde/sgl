@@ -47,10 +47,38 @@ full API details.
   });
   ```
 
-  A game whose scenes sat outside the old range moves them into -8..8
-  with `Exposure::stops`, which metering follows and the correction adds
-  to. Afterwards, check the game's auto-exposed scenes, their brightest and
+  A game that set a custom range covering scenes outside −8..8 moves them
+  into −8..8 with `Exposure::stops = s`, which metering follows and the
+  correction adds to; to keep its look it also moves its compensation
+  curve's x-coordinates by +s and `correction_min` / `correction_max` by −s.
+  Afterwards, check the game's auto-exposed scenes, their brightest and
   darkest especially.
+
+### Ambient occlusion's radius no longer turns it off
+
+- **Scope:** `sgl-3d` `FrameInput::ambient_occlusion_radius` is only the
+  occlusion's reach in metres (AR-5: no floats as flags). A zero, negative
+  or nonfinite radius turned ambient occlusion off; XeGTAO now runs whenever
+  `Settings::ambient_occlusion` is not `Off` (with a `perspective` camera),
+  and the radius is clamped to 0.01–10000 m (NaN to 0.01): the low end of
+  XeGTAO's expected radius range (`XeGTAO.h` `GTAOImGuiSettings`, as Godot's
+  `Environment::ssao_radius`) and the upper end its settings clamp to. A
+  radius within that range renders as before; a positive radius below 0.01 m
+  or above 10000 m, which used to reach the pass unchanged, is now clamped.
+- **Migration:** a game that set a nonpositive or nonfinite radius to switch
+  ambient occlusion off sets the setting instead:
+
+  ```rust
+  // Before
+  input.ambient_occlusion_radius = 0.;
+  // After
+  settings.ambient_occlusion = AmbientOcclusionQuality::Off;
+  ```
+
+  `Renderer::render` takes `Settings` every frame, so a scene or camera that
+  should have no ambient occlusion passes settings with it `Off`. A game
+  whose radius stays within 0.01–10000 m needs no changes. Afterwards, check
+  scenes that used a zero radius.
 
 ### Reflection source completion is built at renderer creation
 

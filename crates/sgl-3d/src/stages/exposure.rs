@@ -35,12 +35,12 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 // How auto exposure meters and adapts, Bevy's `AutoExposure` defaults
 // (9d12036 `bevy_post_process/src/auto_exposure/settings.rs`). Metering
 // follows `Exposure::stops`, so one fixed range serves every scene.
-/// The log2 luminance the histogram spans (Bevy's `range`). Luminance below
-/// it is metered at the least; above it counts in the highest bin.
+// The log2 luminance the histogram spans (Bevy's `range`). Luminance below
+// it is metered at the least; above it counts in the highest bin.
 const MIN_LOG_LUMINANCE: f32 = -8.;
 const MAX_LOG_LUMINANCE: f32 = 8.;
-/// The share of samples, from the darkest, metering ignores, and the share
-/// it keeps (Bevy's `filter`): the darkest and brightest 10% are outliers.
+// The share of samples, from the darkest, metering ignores, and the share
+// it keeps (Bevy's `filter`): the darkest and brightest 10% are outliers.
 const FILTER_LOW: f32 = 0.1;
 const FILTER_HIGH: f32 = 0.9;
 /// How far in stops from the target the adaptation turns from linear to
