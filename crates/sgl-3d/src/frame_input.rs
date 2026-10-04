@@ -126,8 +126,9 @@ pub struct FrameInput {
     /// While `Settings::motion_blur` is on.
     pub motion_blur: MotionBlurParameters,
     pub color_grading: ColorGrading,
-    /// XeGTAO's search radius in world metres; nonpositive or nonfinite
-    /// turns ambient occlusion off.
+    /// XeGTAO's search radius in world metres, clamped to 0.01..=10000
+    /// (NaN to 0.01). `Settings::ambient_occlusion` turns ambient occlusion
+    /// off.
     pub ambient_occlusion_radius: f32,
 }
 

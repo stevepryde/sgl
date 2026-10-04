@@ -15,6 +15,31 @@ full API details.
 
 ## Unreleased
 
+### Ambient occlusion's radius no longer turns it off
+
+- **Scope:** `sgl-3d` `FrameInput::ambient_occlusion_radius` is only the
+  occlusion's reach in metres (AR-5: no floats as flags). A zero, negative
+  or nonfinite radius turned ambient occlusion off; XeGTAO now runs whenever
+  `Settings::ambient_occlusion` is not `Off` (with a `perspective` camera),
+  and the radius is clamped to 0.01–10000 m (NaN to 0.01): the low end of
+  XeGTAO's expected radius range (`XeGTAO.h` `GTAOImGuiSettings`, as Godot's
+  `Environment::ssao_radius`) and the upper end its settings clamp to. A
+  radius within that range renders as before.
+- **Migration:** a game that set a nonpositive or nonfinite radius to switch
+  ambient occlusion off sets the setting instead:
+
+  ```rust
+  // Before
+  input.ambient_occlusion_radius = 0.;
+  // After
+  settings.ambient_occlusion = AmbientOcclusionQuality::Off;
+  ```
+
+  `Renderer::render` takes `Settings` every frame, so a scene or camera that
+  should have no ambient occlusion passes settings with it `Off`. A game
+  whose radius stays within 0.01–10000 m needs no changes. Afterwards, check
+  scenes that used a zero radius.
+
 ### Reflection source completion is built at renderer creation
 
 - **Scope:** `sgl-3d` `Renderer::new`. It built reflection source completion

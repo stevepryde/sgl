@@ -97,13 +97,10 @@ pub(super) fn resolve(
     let low = settings.low();
     let diagnostics = settings.diagnostics_in_effect();
     let disable = diagnostics.disable;
-    let ambient_occlusion_radius = input.ambient_occlusion_radius;
     let p = input.camera.projection.to_cols_array_2d();
     // XeGTAO's depth unpack/reconstruction is for centered reversed-Z
     // perspective projections, not orthographic cameras.
     let ambient_occlusion = (settings.ambient_occlusion != AmbientOcclusionQuality::Off
-        && ambient_occlusion_radius.is_finite()
-        && ambient_occlusion_radius > 0.
         && p[3][3] == 0.
         && p[2][3] == -1.
         && p[2][0] == 0.
@@ -112,7 +109,7 @@ pub(super) fn resolve(
         && p[3][2] > 0.)
         .then_some(AmbientOcclusion {
             quality: settings.ambient_occlusion,
-            radius: ambient_occlusion_radius,
+            radius: input.ambient_occlusion_radius,
         });
     // DiligentFX's and FSR2's camera inputs are for `perspective`'s
     // infinite reversed-Z projection; with other cameras SSR is off and
