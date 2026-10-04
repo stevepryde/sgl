@@ -3,7 +3,8 @@
 //! read only this and the frame's authored values.
 use super::pipelines::LayerConstants;
 use crate::settings::{
-    AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, ReflectionMethod, ShadowQuality,
+    AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, ReflectionMethod,
+    ShadowQuality, SmaaQuality,
 };
 
 /// The filter the camera's surfaces take their shadows with
@@ -55,6 +56,8 @@ pub(crate) struct Effective {
     pub antialiasing: Antialiasing,
     pub taa: bool,
     pub fsr2: bool,
+    /// FSR2's RCAS sharpness in 0..=1, while it sharpens.
+    pub fsr2_sharpness: Option<f32>,
     /// DiligentFX's post-effect context runs: for TAA, and for Crystal SSR.
     pub post_fx: bool,
     /// The shadow maps' sizes.
@@ -89,6 +92,10 @@ pub(crate) struct Effective {
     pub culling: bool,
     /// SMAA may run (a diagnostics layer).
     pub smaa: bool,
+    /// SMAA's preset, where it runs.
+    pub smaa_quality: SmaaQuality,
+    /// Material samplers' `anisotropy_clamp`.
+    pub anisotropy: u16,
     /// The geometry pipelines' constants (diagnostics layers).
     pub layers: LayerConstants,
     /// Source completion adds environment and probe specular (a

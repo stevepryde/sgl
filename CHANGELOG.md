@@ -15,6 +15,44 @@ full API details.
 
 ## Unreleased
 
+### FSR2 sharpening, SMAA quality and anisotropic filtering are settings
+
+- **Scope:** `sgl-3d` adds four `settings::Settings` fields, each defaulting
+  to what SGL3D rendered before:
+  - `fsr2_sharpening: bool` (true) and `fsr2_sharpness: f32` (0.8): AMD's
+    RCAS sharpening of FSR2's output, a slider AMD's FSR2 guide asks games
+    to offer; 0 sharpens least, 1 most; values outside 0..=1 are clamped,
+    NaN to 0.
+  - `smaa_quality: SmaaQuality` (`Low`, `Medium`, `High`, `Ultra`; Medium):
+    SMAA 2.8's presets. Medium is unchanged; Low searches less at a higher
+    threshold; High and Ultra search further and add SMAA's diagonal and
+    corner detection, and Ultra a lower threshold.
+  - `anisotropic_filtering: AnisotropicFiltering` (`Off`, `X2`, `X4`, `X8`,
+    `X16`; X8): the material textures' anisotropic filtering, as Godot's
+    levels.
+
+  A change to the SMAA quality or the anisotropic filtering applies on the
+  next rendered frame, which rebuilds SMAA's two preset pipelines or every
+  material's sampler and group. `Settings` deserialises older saved values
+  with these defaults.
+- **Migration:** no game-code changes where `Settings` is built from
+  `Settings::default()` or `..Settings::default()`; a struct literal that
+  lists every field adds the four. To offer them:
+
+  ```rust
+  use sgl_3d::settings::{AnisotropicFiltering, Settings, SmaaQuality};
+  let settings = Settings {
+      fsr2_sharpness: 0.5,
+      smaa_quality: SmaaQuality::High,
+      anisotropic_filtering: AnisotropicFiltering::X16,
+      ..Settings::default()
+  };
+  ```
+
+  A game that offers these should check SMAA High and Ultra on its diagonal
+  edges, FSR2 sharpening on fine detail, and distant floors and walls with
+  each filtering level.
+
 ### TAA keeps history at racing speed, as Godot's TAA
 
 - **Scope:** `sgl-post-fx` `TemporalAntiAliasing`, and so `sgl-3d` TAA

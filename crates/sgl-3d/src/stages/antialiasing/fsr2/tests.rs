@@ -318,3 +318,92 @@ fn fsr2_runs_below_a_64_pixel_render_size() {
         );
     }
 }
+
+// Defects: `Settings::fsr2_sharpening` or `fsr2_sharpness` never reaches
+// FSR2's dispatch, or the sharpness runs backwards. RCAS sharpens: it raises
+// the differences between neighbouring pixels, more at a higher sharpness
+// (AMD's docs: 0 the least, 1 the most). The oracle is the upscaled frame's
+// total variation, compared across the same frames sharpened differently.
+#[test]
+fn fsr2_sharpening_follows_its_settings() {
+    let Some((device, queue)) = test_support::fsr2_device() else {
+        return;
+    };
+    if !device
+        .features()
+        .contains(sp_fidelity_wgpu::required_features())
+    {
+        eprintln!("skipping: the device lacks FSR2's features");
+        return;
+    }
+    let (mut scene, environment) = scene(&device, &queue);
+    let mut variation = |fsr2_sharpening, fsr2_sharpness| {
+        let settings = Settings {
+            scene_resolution: settings::SceneResolution::Full,
+            antialiasing: Antialiasing::Fsr2,
+            fsr2_quality: Fsr2Quality::NativeAa,
+            fsr2_sharpening,
+            fsr2_sharpness,
+            ..Settings::default()
+        };
+        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let output = view::targets::target(&device, "FSR2 frame", SIZE, shading::gbuffer::COLOR);
+        for frame in 0..3 {
+            let eye = glam::Vec3::new(2.4 + frame as f32 * 0.05, 2., 3.3);
+            let mut input = FrameInput::new(Camera {
+                eye,
+                view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
+                projection: perspective(55f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1),
+            });
+            input.camera_cut = frame == 0;
+            input.environment = Some(environment);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+        }
+        assert_eq!(
+            renderer.antialiasing_in_effect(&settings),
+            Antialiasing::Fsr2
+        );
+        let pixels = test_support::read(&device, &queue, renderer.fsr2_output().texture(), 8);
+        let red = |x: u32, y: u32| {
+            f64::from(test_support::half(
+                &pixels[((y * SIZE[0] + x) * 8) as usize..],
+            ))
+        };
+        (0..SIZE[1])
+            .flat_map(|y| (0..SIZE[0]).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let across = if x > 0 {
+                    (red(x, y) - red(x - 1, y)).abs()
+                } else {
+                    0.
+                };
+                let down = if y > 0 {
+                    (red(x, y) - red(x, y - 1)).abs()
+                } else {
+                    0.
+                };
+                across + down
+            })
+            .sum::<f64>()
+    };
+    let unsharpened = variation(false, 0.8);
+    let default = variation(true, 0.8);
+    let most = variation(true, 1.);
+    eprintln!("total variation: off {unsharpened}, 0.8 {default}, 1 {most}");
+    assert!(
+        unsharpened < default && default < most,
+        "off {unsharpened}, 0.8 {default}, 1 {most}"
+    );
+}

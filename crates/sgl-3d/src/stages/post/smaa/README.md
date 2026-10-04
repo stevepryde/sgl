@@ -2,10 +2,24 @@
 
 The WGSL shader ports Three.js 0.185.1's
 `examples/jsm/tsl/display/SMAANode.js`; the port was first made in Hyperdrive,
-before SGL3D was extracted from it. It retains Medium color-edge detection,
-eight search steps, the upstream area and search lookup tables, and
-neighborhood blending. No temporal samples, history, jitter or
-preset-dependent behavior are involved.
+before SGL3D was extracted from it. It retains Three's color-edge detection,
+the upstream area and search lookup tables, and neighborhood blending. No
+temporal samples, history or jitter are involved.
+
+`Settings::smaa_quality` chooses SMAA 2.8's preset (`SMAA.hlsl`
+`SMAA_PRESET_*`, iryoku/smaa 27fad0b) as the detection and weight
+pipelines' constants: Low and Medium search 4 and 8 steps at thresholds of
+0.15 and 0.1; High searches 16 steps with 8 diagonal ones at 0.1, Ultra 32
+and 16 at 0.05, and both round corners by 25%. Medium is Three's port as it
+was. High's and Ultra's diagonal and corner detection port `SMAA.hlsl`'s,
+with Bevy 9d12036's WGSL port of it
+(`crates/bevy_anti_alias/src/smaa/smaa.wesl`, MIT OR Apache-2.0,
+`../../../LICENSE-bevy.txt`) as the translation guide. Bevy's
+`calculate_diag_weights` writes the first diagonal's `d.z` from `d.y`, which
+is still 0 there, so it keeps that line's crossing edge on that side even
+where the line's end was not found; this port keeps `SMAA.hlsl`'s `d.z`.
+The corners take Three's search ends and distances, rounded as `SMAA.hlsl`
+rounds its own.
 
 The port retains Three's fullscreen triangle, CPU-computed inverse dimensions,
 vertex-interpolated UV/offset/pixel coordinates and sequential search corrections.
@@ -20,8 +34,10 @@ portable bundles do not need separate atlas files. The implementation and
 lookup tables originate in [SMAA v2.8](https://github.com/iryoku/smaa/releases/tag/v2.8).
 The adjacent `LICENSE-three.txt` and `LICENSE-smaa.txt` retain their notices.
 
-Call `Smaa::new(device, queue, width, height, output_format)`, then `resize`
-when target size changes. `encode(device, encoder, input, output, timing)` performs
+Call `Smaa::new(device, queue, width, height, output_format, quality)`, then
+`resize` when target size changes and `set_quality` when the preset does,
+which rebuilds the detection and weight pipelines.
+`encode(device, encoder, input, output, timing)` performs
 edge detection, weight calculation, and blending. Input and output must be
 distinct equally sized views; input must be filterable and texture-bindable.
 Input is linear HDR color before AgX tone mapping and sRGB output conversion. Overlay the
@@ -58,12 +74,13 @@ cargo test -p sgl-3d --lib antialiasing_off_preserves_captured_pixels -- --ignor
 cargo test -p sgl-3d --lib bloom_switch_removes_halos_and_preserves_low_override -- --ignored --nocapture
 ```
 
-The ignored real-device test renders diagonal geometry at native resolution
-and at 16× resolution in each dimension. It compares the SMAA result with the
-averaged high-resolution raster, at two sizes to exercise resize. This detects
-incorrect edge directions and atlas/search sampling that shader compilation
-cannot reveal. Captures are written under `.cache/smaa-qa`. It is an explicit
-development test, never a build, startup or deployment gate.
+The real-device tests render diagonal geometry at native resolution
+and at 16× resolution in each dimension. They compare the SMAA result with the
+averaged high-resolution raster, at two sizes to exercise resize, at every
+preset. This detects incorrect edge directions and atlas/search sampling that
+shader compilation cannot reveal. `every_preset_approaches_supersampled_rasterization`
+runs in the required check; the ignored one also writes captures under
+`.cache/smaa-qa`. Neither is a build, startup or deployment gate.
 
 ```sh
 cargo test -p sgl-3d --lib diagonal_edges_approach_supersampled_rasterization -- --ignored --nocapture

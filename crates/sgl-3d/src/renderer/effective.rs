@@ -60,6 +60,19 @@ fn motion_blur(settings: &Settings, input: &FrameInput) -> Option<f32> {
     (shutter.is_finite() && shutter > 0.).then_some(shutter)
 }
 
+/// FSR2's sharpness while `fsr2` runs and the setting sharpens: within
+/// AMD's 0..=1, NaN as the least.
+fn fsr2_sharpness(settings: &Settings, fsr2: bool) -> Option<f32> {
+    let sharpness = settings.fsr2_sharpness;
+    (fsr2 && settings.fsr2_sharpening).then(|| {
+        if sharpness.is_nan() {
+            0.
+        } else {
+            sharpness.clamp(0., 1.)
+        }
+    })
+}
+
 /// The effective configuration of a first frame from a `perspective` camera
 /// with `FrameInput::new`'s values and no fog volumes: what `Renderer::new`
 /// builds stages for, so that such a frame finds their pipelines built.
@@ -142,6 +155,7 @@ pub(super) fn resolve(
         antialiasing,
         taa,
         fsr2,
+        fsr2_sharpness: fsr2_sharpness(settings, fsr2),
         post_fx: taa || crystal,
         shadow_quality: settings.shadow_quality,
         shadow_filter,
@@ -164,6 +178,8 @@ pub(super) fn resolve(
         effects: !disable.effects,
         culling: !disable.culling,
         smaa: !disable.smaa,
+        smaa_quality: settings.smaa_quality,
+        anisotropy: settings.anisotropic_filtering.clamp(),
         layers: LayerConstants::new(&disable),
         source_environment: !disable.source_environment,
         #[cfg(feature = "diagnostics")]

@@ -18,6 +18,8 @@ pub(crate) struct Material {
     maps: MaterialMaps,
     /// Group 2.
     pub group: wgpu::BindGroup,
+    /// What group 2 binds besides its buffers.
+    bound: Bound,
     buffer: wgpu::Buffer,
     /// Lightmap eligibility, group 2's `baked_material`.
     baked: wgpu::Buffer,
@@ -31,6 +33,18 @@ pub(crate) struct Material {
     /// Meshes drawn with it, model meshes and their levels of detail alike,
     /// without authored tangent frames.
     pub untangented: u32,
+}
+
+/// The maps group 2 binds, each a texture index or `None` for the white
+/// fallback, and their wrapping, which its sampler takes.
+struct Bound {
+    base: Option<usize>,
+    emission: Option<usize>,
+    metallic_roughness: Option<usize>,
+    normal: Option<usize>,
+    bump: Option<usize>,
+    anisotropy: Option<usize>,
+    wrap: [gltf::texture::WrappingMode; 2],
 }
 
 impl Material {
@@ -99,6 +113,8 @@ pub(crate) struct Materials {
     /// White, for maps a material does not have.
     fallback: wgpu::TextureView,
     layout: wgpu::BindGroupLayout,
+    /// The samplers' `anisotropy_clamp`.
+    anisotropy: u16,
 }
 
 /// A material's maps: each one's index into the images added with it, and
@@ -125,6 +141,7 @@ impl Materials {
             textures: Textures::default(),
             fallback: textures::upload(device, queue, &white, false),
             layout: crate::shading::bind::material(device),
+            anisotropy: crate::settings::AnisotropicFiltering::default().clamp(),
         }
     }
 
@@ -282,8 +299,64 @@ impl Materials {
             },
             material.wrap,
         )?;
-        let view = |index: Option<usize>, colour: bool| -> &wgpu::TextureView {
-            match texture(index) {
+        let values_buffer = buffer(
+            device,
+            "material",
+            bytemuck::bytes_of(&uniform),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let baked = buffer(
+            device,
+            "baked material eligibility",
+            bytemuck::cast_slice(&[0u32; 4]),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let bound = Bound {
+            base: texture(material.base_texture),
+            emission: texture(material.emissive_texture),
+            metallic_roughness: texture(material.mr_texture),
+            normal: texture(material.normal_texture),
+            bump: texture(material.bump_texture),
+            anisotropy: texture(material.anisotropy_texture),
+            wrap: material.wrap,
+        };
+        let group = self.group(device, &bound, &values_buffer, &baked);
+        let mut distinct: Vec<usize> = maps(material)
+            .into_iter()
+            .filter_map(|(index, _)| texture(index))
+            .collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        for &texture in &distinct {
+            self.textures.use_texture(texture);
+        }
+        self.count(values.alpha, 1);
+        Ok(self.slots.insert(Material {
+            values,
+            maps: map_bits,
+            group,
+            bound,
+            buffer: values_buffer,
+            baked,
+            casts_directional_shadow: material.casts_directional_shadow,
+            textures: distinct,
+            record,
+            users: 0,
+            untangented: 0,
+        }))
+    }
+
+    /// Group 2 of a material binding `bound`, its values `buffer` and
+    /// lightmap eligibility `baked`, sampled with the current anisotropy.
+    fn group(
+        &self,
+        device: &wgpu::Device,
+        bound: &Bound,
+        buffer: &wgpu::Buffer,
+        baked: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        let view = |texture: Option<usize>, colour: bool| -> &wgpu::TextureView {
+            match texture {
                 Some(texture) => {
                     let texture = self.textures.get(texture);
                     if colour {
@@ -303,79 +376,62 @@ impl Materials {
         };
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("authored material sampler"),
-            address_mode_u: address(material.wrap[0]),
-            address_mode_v: address(material.wrap[1]),
+            address_mode_u: address(bound.wrap[0]),
+            address_mode_v: address(bound.wrap[1]),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: 8,
+            anisotropy_clamp: self.anisotropy,
             ..Default::default()
         });
-        let values_buffer = buffer(
-            device,
-            "material",
-            bytemuck::bytes_of(&uniform),
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        );
-        let baked = buffer(
-            device,
-            "baked material eligibility",
-            bytemuck::cast_slice(&[0u32; 4]),
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        );
         let entry = |binding, view| wgpu::BindGroupEntry {
             binding,
             resource: wgpu::BindingResource::TextureView(view),
         };
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("retained material"),
             layout: &self.layout,
             entries: &[
-                entry(
-                    group2::ANISOTROPY_MAP,
-                    view(material.anisotropy_texture, false),
-                ),
+                entry(group2::ANISOTROPY_MAP, view(bound.anisotropy, false)),
                 wgpu::BindGroupEntry {
                     binding: group2::BAKED_MATERIAL,
                     resource: baked.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: group2::MATERIAL,
-                    resource: values_buffer.as_entire_binding(),
+                    resource: buffer.as_entire_binding(),
                 },
-                entry(group2::BASE_MAP, view(material.base_texture, true)),
-                entry(group2::MR_MAP, view(material.mr_texture, false)),
+                entry(group2::BASE_MAP, view(bound.base, true)),
+                entry(group2::MR_MAP, view(bound.metallic_roughness, false)),
                 wgpu::BindGroupEntry {
                     binding: group2::TEX_SAMPLER,
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
-                entry(group2::EMISSION_MAP, view(material.emissive_texture, true)),
-                entry(group2::NORMAL_MAP, view(material.normal_texture, false)),
-                entry(group2::BUMP_MAP, view(material.bump_texture, false)),
+                entry(group2::EMISSION_MAP, view(bound.emission, true)),
+                entry(group2::NORMAL_MAP, view(bound.normal, false)),
+                entry(group2::BUMP_MAP, view(bound.bump, false)),
             ],
-        });
-        let mut distinct: Vec<usize> = maps(material)
-            .into_iter()
-            .filter_map(|(index, _)| texture(index))
-            .collect();
-        distinct.sort_unstable();
-        distinct.dedup();
-        for &texture in &distinct {
-            self.textures.use_texture(texture);
+        })
+    }
+
+    /// Samples every material's maps with at most `anisotropy` anisotropic
+    /// samples (`anisotropy_clamp`), remaking their groups when it changes.
+    pub fn set_anisotropy(&mut self, device: &wgpu::Device, anisotropy: u16) {
+        if self.anisotropy == anisotropy {
+            return;
         }
-        self.count(values.alpha, 1);
-        Ok(self.slots.insert(Material {
-            values,
-            maps: map_bits,
-            group,
-            buffer: values_buffer,
-            baked,
-            casts_directional_shadow: material.casts_directional_shadow,
-            textures: distinct,
-            record,
-            users: 0,
-            untangented: 0,
-        }))
+        self.anisotropy = anisotropy;
+        let groups: Vec<_> = self
+            .slots
+            .iter()
+            .map(|(id, material)| {
+                let group = self.group(device, &material.bound, &material.buffer, &material.baked);
+                (id, group)
+            })
+            .collect();
+        for (id, group) in groups {
+            self.slots.get_mut(id).expect("a live material").group = group;
+        }
     }
 
     /// Replaces a material's values in raster and the ray source at once.

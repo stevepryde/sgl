@@ -11,7 +11,7 @@
 //! context) or its own FSR2 output; which view completes the scene
 //! (`Completed`).
 //! Honours: the antialiasing in effect, FSR2 and its quality (the effective
-//! sizing), the TAA and FSR2 diagnostics layers.
+//! sizing), FSR2's sharpening, the TAA and FSR2 diagnostics layers.
 //! Timing groups: `TAA`, `FSR2`.
 //! History: FSR2's context, which restarts on SGL3D's history loss; TAA's
 //! lives in the post-effect context.
@@ -137,6 +137,7 @@ impl Antialiasing {
                 projection: glam::Mat4::from_cols_array_2d(&ctx.values.view.projection),
                 frame_time_ms: ctx.input.frame_time_ms,
                 exposure,
+                sharpness: ctx.effective.fsr2_sharpness,
             };
             match upscaler.dispatch(ctx.device, ctx.encoder, &inputs, ctx.timing) {
                 Ok(()) => Completed::Fsr2,

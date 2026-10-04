@@ -124,8 +124,9 @@ fn scene_size(
 impl Renderer {
     /// A renderer presenting to `output_format` at `output_size` physical
     /// pixels, for a window of `device_scale` physical pixels per logical
-    /// pixel, sized for `settings`. Reflection source completion is built for
-    /// them, so a first frame from a `perspective` camera does not rebuild it.
+    /// pixel, sized for `settings`. Reflection source completion and SMAA are
+    /// built for them, so a first frame from a `perspective` camera does not
+    /// rebuild them.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -177,8 +178,15 @@ impl Renderer {
             exposure: Exposure::new(device),
             antialiasing,
             motion_blur: MotionBlur::new(device),
-            post: Post::new(device, queue, output_format, sizes, sizing.bloom_targets)
-                .map_err(RendererError::LookupTextures)?,
+            post: Post::new(
+                device,
+                queue,
+                output_format,
+                sizes,
+                sizing.bloom_targets,
+                settings.smaa_quality,
+            )
+            .map_err(RendererError::LookupTextures)?,
             prepare: Prepare,
             deform: Deform::new(device),
             sizes,
@@ -348,6 +356,12 @@ impl Renderer {
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn fog_volumes(&self) -> [&wgpu::TextureView; 3] {
         self.fog.test_volumes()
+    }
+
+    /// FSR2's upscaled frame of the last frame it ran.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn fsr2_output(&self) -> &wgpu::TextureView {
+        self.antialiasing.output()
     }
 
     /// The motion-blurred frame, once motion blur has run.

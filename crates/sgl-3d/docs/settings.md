@@ -26,6 +26,9 @@ replace every choice with a complete bundle.
 | --- | --- | --- | --- | --- |
 | Antialiasing | `Settings::antialiasing` | `Preset`, `Taa`, `Smaa`, `Off`, `Fsr2` | Low: SMAA. High: TAA | FSR2 upscales as it antialiases. TAA runs where the device cannot run FSR2, which includes every browser (WebGPU lacks its features). TAA and FSR2 need a `perspective` camera: without one SMAA stands in for TAA, but an FSR2 frame is presented without SMAA. |
 | FSR2 quality | `Settings::fsr2_quality` | `Quality`, `NativeAa`, `Balanced`, `Performance`, `UltraPerformance` | | Native AA renders every scene pixel; Quality, Balanced, Performance and Ultra Performance render 1/1.5, 1/1.7, 1/2 and 1/3 of it per axis. Set `FrameInput::frame_time_ms` every frame. |
+| FSR2 sharpening | `Settings::fsr2_sharpening`, `Settings::fsr2_sharpness` | `true`, `false`; 0.8, any of 0..=1 | | AMD's RCAS sharpening of FSR2's output, as AMD asks games to offer: 0 sharpens least, 1 most; values outside are clamped, NaN to 0. |
+| SMAA quality | `Settings::smaa_quality` | `Medium`, `Low`, `High`, `Ultra` | | SMAA 2.8's presets: Low and Medium search up to 4 and 8 steps of two pixels each way along an edge; High up to 16 and also smooths diagonal lines and keeps sharp corners; Ultra up to 32 and finds fainter edges. Higher costs more. |
+| Anisotropic filtering | `Settings::anisotropic_filtering` | `X8`, `Off`, `X2`, `X4`, `X16` | | The most samples material textures take where a surface is seen at a grazing angle: sharper floors and walls at a distance, at more texture bandwidth. Off filters trilinearly. |
 | Scene resolution | `Settings::scene_resolution` | `Preset`, `Hd`, `FullHd`, `Full`, `ThreeQuarter`, `Half` | Low: one pixel per logical pixel. High: up to 1.75, never above the output | `Hd` and `FullHd` fit within 1280×720 and 1920×1080. Pass the window's scale factor to `Renderer::new` and `resize`. The game's UI keeps the output size. |
 | Bloom | `Settings::bloom` | `Preset`, `Off`, `On` | Low: Off. High: On | |
 | Shadow quality | `Settings::shadow_quality` | `High`, `Low` | | The shadow maps' sizes and the camera's shadow filter, as Godot's desktop and mobile defaults. High: 2048-texel cascades, a 4096-texel local-light atlas, and soft filtering (turned each frame under TAA or FSR2). Low: 1024-texel cascades, a 2048-texel atlas, and one hard 2×2 tap. A change reallocates the maps on the next frame, which draws every shadow again. |
@@ -44,7 +47,9 @@ replace every choice with a complete bundle.
 
 The preset, scene resolution, antialiasing changes to or from FSR2 and FSR2
 quality size the targets, so they apply at the next `Renderer::resize`, which
-the game calls every frame. The rest apply on the next rendered frame.
+the game calls every frame. The rest apply on the next rendered frame; that
+frame rebuilds SMAA's pipelines after an SMAA quality change, and every
+material's sampler after an anisotropic filtering change.
 `Renderer::antialiasing_in_effect(&settings)` reports what actually runs and
 `fsr2_error()` why FSR2 did not; show the effective choice without rewriting
 the saved value.

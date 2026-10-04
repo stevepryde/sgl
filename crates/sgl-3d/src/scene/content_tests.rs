@@ -1357,3 +1357,106 @@ fn anisotropy_material_edits_are_transactional() {
         assert_eq!(uniform(&scene, other), before_gpu);
     });
 }
+
+// Defects: `Settings::anisotropic_filtering` never reaches the material
+// samplers, or a change leaves materials sampling as they did. Anisotropic
+// filtering keeps a texture's detail where a surface recedes at a grazing
+// angle, which trilinear filtering blurs toward the texture's mean: a fine
+// checkerboard on a floor keeps more contrast between neighbouring pixels
+// with 16 samples than with none. Turning it off again restores the frame.
+#[test]
+fn anisotropic_filtering_keeps_a_receding_textures_detail() {
+    use crate::settings::AnisotropicFiltering;
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    const SIZE: [u32; 2] = [64, 64];
+    // An unlit floor 40 m deep, a 64×64 checkerboard of single texels
+    // repeating every 2 m.
+    let mut floor = asset_of(asset::CpuMesh {
+        vertices: [(-20., 0.), (20., 0.), (20., -40.), (-20., -40.)]
+            .map(|(x, z)| asset::Vertex {
+                tangent: [0.; 4],
+                lightmap_bounds: [0., 0., 1., 1.],
+                lightmap_uv: [0.; 2],
+                position: [x, 0., z],
+                normal: [0., 1., 0.],
+                uv: [x / 2., z / 2.],
+                color: [1.; 4],
+            })
+            .to_vec(),
+        indices: vec![0, 1, 2, 0, 2, 3],
+        material: 0,
+        deformation: Default::default(),
+    });
+    floor.images = vec![asset::Image::Rgba8(image::RgbaImage::from_fn(
+        64,
+        64,
+        |x, y| image::Rgba([if (x + y) % 2 == 0 { 255 } else { 0 }; 4]),
+    ))];
+    floor.materials[0].base = [1.; 4];
+    floor.materials[0].base_texture = Some(0);
+    floor.materials[0].unlit = true;
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, floor);
+    let mut settings = Settings {
+        antialiasing: settings::Antialiasing::Off,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let eye = Vec3::new(0., 1., 0.);
+    let input = FrameInput::new(Camera {
+        eye,
+        view: camera::rh::view::look_at_mat4(eye, Vec3::new(0., 0., -10.), Vec3::Y),
+        projection: crate::perspective(1., 1., 0.1),
+    });
+    let mut frame = |filtering| {
+        settings.anisotropic_filtering = filtering;
+        let output = crate::view::targets::target(
+            &device,
+            "anisotropy output",
+            SIZE,
+            crate::shading::gbuffer::COLOR,
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+        test_support::read(&device, &queue, renderer.targets().color.texture(), 8)
+    };
+    // The summed difference in red between horizontally neighbouring pixels
+    // below the horizon, where the floor recedes.
+    let contrast = |pixels: &[u8]| -> f64 {
+        let red = |x: u32, y: u32| {
+            f64::from(test_support::half(
+                &pixels[((y * SIZE[0] + x) * 8) as usize..],
+            ))
+        };
+        (SIZE[1] / 2 + 1..SIZE[1])
+            .flat_map(|y| (1..SIZE[0]).map(move |x| (x, y)))
+            .map(|(x, y)| (red(x, y) - red(x - 1, y)).abs())
+            .sum()
+    };
+    let off = frame(AnisotropicFiltering::Off);
+    let sixteen = frame(AnisotropicFiltering::X16);
+    let off_again = frame(AnisotropicFiltering::Off);
+    let (blurred, sharp) = (contrast(&off), contrast(&sixteen));
+    eprintln!("neighbour contrast: off {blurred}, 16x {sharp}");
+    assert!(
+        sharp > blurred,
+        "16x keeps no more detail ({sharp}) than trilinear ({blurred})"
+    );
+    assert!(
+        off_again == off,
+        "turning anisotropy off again changed the frame"
+    );
+}
