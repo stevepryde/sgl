@@ -35,6 +35,8 @@ full API details.
   frame.fog = Fog { density: 0.02, ambient: 1., ..Fog::default() };
   ```
 
+  Fog volumes (`Scene::update_fog_volumes`) scatter this share too: a game
+  that only adds volumes sets `frame.fog.ambient = 1.` to keep their look.
   Afterwards, look at fog in shadow and away from lights, and at distant
   fog against the sky.
 

@@ -264,8 +264,8 @@ fog stage:
   point, spot and rectangle lights (baked ones too) through the local-light
   atlas, each shadow one tap that the reprojection resolves (a local light's
   one hardware 2×2 tap, as Bevy's volumetric fog samples them), and
-  `ambient` (0 by default, as Godot's `ambient_inject`) of the hemisphere
-  fill and environment diffuse, scattered toward the camera by
+  `ambient` (0 by default, as Godot's `volumetric_fog_ambient_inject`) of
+  the hemisphere fill and environment diffuse, scattered toward the camera by
   Henyey–Greenstein's phase function of `anisotropy`; each
   light's `fog_energy` scales its share, and a light at or below 0.001 is
   skipped, attenuation and shadow lookup, as Godot does;

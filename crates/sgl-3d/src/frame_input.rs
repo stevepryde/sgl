@@ -50,10 +50,10 @@ pub struct Fog {
     /// so light shafts brighten looking toward their light.
     pub anisotropy: f32,
     /// The share of the frame's ambient light (the hemisphere fill and
-    /// environment diffuse) the medium scatters, as Godot's
-    /// `ambient_inject`, by default 0 as Godot's, so only lights light the
-    /// medium; 1 for open air under the sky, less where the sky does not
-    /// reach, such as inside a tunnel the camera is in.
+    /// environment diffuse) the medium and fog volumes scatter, as Godot's
+    /// `volumetric_fog_ambient_inject`. By default 0, as Godot's, so only
+    /// lights light the medium; up to 1 lets the sky's light glow in the
+    /// fog, less where the sky does not reach, such as inside a tunnel.
     pub ambient: f32,
     /// World Y below which the density is whole.
     pub height: f32,
