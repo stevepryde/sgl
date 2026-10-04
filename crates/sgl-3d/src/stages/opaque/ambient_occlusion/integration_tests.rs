@@ -171,6 +171,7 @@ fn gtao_primary_lighting_ownership_and_disable_restore() {
             color: [1., 0.5, 0.25],
             illuminance: f32::from(layer == "direct"),
             shadow: None,
+            ..Default::default()
         });
         let mut values = scene.material(material).unwrap();
         values.metallic = f32::from(layer == "metal multi");

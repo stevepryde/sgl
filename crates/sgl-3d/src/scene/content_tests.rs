@@ -332,6 +332,7 @@ fn caster_light() -> DirectionalLight {
         color: [1.; 3],
         illuminance: 1.,
         shadow: None,
+        ..Default::default()
     }
 }
 

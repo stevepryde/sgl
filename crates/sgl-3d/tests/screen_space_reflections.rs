@@ -950,6 +950,7 @@ fn content_edits_keep_history() {
                             baked: false,
                             specular: 1.,
                             casts_shadow: true,
+                            ..Default::default()
                         },
                     )
                     .map(drop)

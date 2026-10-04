@@ -21,6 +21,30 @@ pub struct DirectionalLight {
     /// The light's shadow, `None` for none. One directional light has a
     /// shadow: the first that is on and has one.
     pub shadow: Option<DirectionalShadow>,
+    /// Scales the light it scatters in the volumetric fog, nonnegative
+    /// (Godot's `light_volumetric_fog_energy`): 1 is physical, 2 doubles
+    /// it, and at most 0.001 (Godot's cutoff) leaves the light out of the
+    /// fog, which then skips its attenuation and shadow lookup. Surfaces
+    /// take the light alike whatever its value, and its shadow is still
+    /// drawn for them. A negative or non-finite value leaves it out too.
+    pub fog_energy: f32,
+}
+
+impl Default for DirectionalLight {
+    /// Godot's `DirectionalLight3D` defaults: white, shining along -Z (as
+    /// Godot's and Bevy's untransformed lights do), of π lux (its light
+    /// energy of 1, which its renderer scales by π), with no shadow and fog
+    /// energy 1. Set what differs and take the rest with
+    /// `..Default::default()`.
+    fn default() -> Self {
+        Self {
+            direction: Vec3::NEG_Z,
+            color: [1.; 3],
+            illuminance: std::f32::consts::PI,
+            shadow: None,
+            fog_energy: 1.,
+        }
+    }
 }
 
 /// A directional light's cascaded shadow, which SGL3D fits from the camera

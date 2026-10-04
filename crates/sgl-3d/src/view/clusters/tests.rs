@@ -67,6 +67,7 @@ fn random_light(random: &mut Random, center: Vec3, extent: Vec3) -> Light {
         baked: random.unit() < 0.3,
         specular: 1.,
         casts_shadow: false,
+        ..Default::default()
     }
 }
 
@@ -516,6 +517,7 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
                 baked: station % 3 != 0,
                 specular: 1.,
                 casts_shadow: false,
+                ..Default::default()
             });
         }
     }
@@ -528,6 +530,7 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
         baked: false,
         specular: 1.,
         casts_shadow: true,
+        ..Default::default()
     });
     // Markings on its road, a few degrees off true, and panels on its walls.
     let mut decals = Vec::new();

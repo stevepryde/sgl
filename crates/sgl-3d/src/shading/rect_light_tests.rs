@@ -312,6 +312,7 @@ fn rect(position: Vec3, direction: Vec3, width_axis: Vec3, width: f32, height: f
         baked: false,
         specular: 1.,
         casts_shadow: false,
+        ..Default::default()
     }
 }
 

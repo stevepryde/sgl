@@ -2,8 +2,9 @@
 //! frame as no fog does; a point light's scattering along a froxel column
 //! matches a numerical single-scattering integral along its view ray; a
 //! shadowed light, local or directional, scatters nothing in the medium its
-//! occluder hides from it; and the filter blurs each slice by Godot's
-//! Gaussian while the history stays unfiltered.
+//! occluder hides from it; the filter blurs each slice by Godot's Gaussian
+//! while the history stays unfiltered; and a light's fog energy scales its
+//! light in the medium and nowhere else.
 use super::froxels;
 use crate::renderer::Renderer;
 use crate::settings::{self, FogQuality, Settings};
@@ -174,6 +175,7 @@ fn an_empty_medium_leaves_the_frame_as_no_fog_does() {
             cascades: 2,
             first_split: 8.,
         }),
+        ..Default::default()
     });
     frame.hemisphere_light = HemisphereLight {
         sky_color: [0.4, 0.5, 0.7],
@@ -272,6 +274,7 @@ fn point_light_scattering_matches_a_single_scattering_integral() {
                 baked: false,
                 specular: 1.,
                 casts_shadow: false,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -406,6 +409,7 @@ fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfilte
                 baked: false,
                 specular: 1.,
                 casts_shadow: false,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -531,6 +535,7 @@ fn shadowed_lights_scatter_almost_nothing_behind_their_occluder() {
                         baked: false,
                         specular: 1.,
                         casts_shadow: true,
+                        ..Default::default()
                     },
                 )
                 .unwrap();
@@ -544,6 +549,7 @@ fn shadowed_lights_scatter_almost_nothing_behind_their_occluder() {
                     cascades: 2,
                     first_split: 10.,
                 }),
+                ..Default::default()
             });
         }
         let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
@@ -584,6 +590,114 @@ fn shadowed_lights_scatter_almost_nothing_behind_their_occluder() {
         assert!(
             brightest_below <= most_below,
             "{label}: {brightest_below} scattered beneath the occluder, against {darkest_above} above it"
+        );
+    }
+}
+
+// Defect: a light's fog energy does not scale what it scatters in the
+// medium, a light at 0 still scatters there, or the energy reaches its
+// surface lighting. The reference is the same light's in-scatter at fog
+// energy 1, measured froxel by froxel: at 2 each froxel holds twice it, at
+// 0 none, and without fog the frame is the same, and lit, at 0 as at 1.
+#[test]
+fn fog_energy_scales_a_light_in_the_medium_alone() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let fog = Fog {
+        density: 0.05,
+        anisotropy: 0.3,
+        length: 20.,
+        detail_spread: 1.,
+        ..Fog::default()
+    };
+    for (label, local) in [("scene light", true), ("directional light", false)] {
+        // Each froxel's in-scatter, and the frame without fog, with the light
+        // at `fog_energy` over a floor beneath it.
+        let observe = |fog_energy: f32| {
+            let mut scene = Scene::new(&device, &queue);
+            add_box(
+                &device,
+                &queue,
+                &mut scene,
+                Vec3::new(0., -2., -10.),
+                Vec3::new(20., 1., 20.),
+            );
+            let mut frame = input(fog);
+            if local {
+                scene
+                    .add_light(
+                        &device,
+                        &queue,
+                        Light {
+                            position: Vec3::new(0., 3., -8.),
+                            shape: LightShape::Spot {
+                                direction: Vec3::NEG_Y,
+                                inner_angle: 0.5,
+                                outer_angle: 0.8,
+                            },
+                            intensity: 60.,
+                            range: 12.,
+                            casts_shadow: true,
+                            fog_energy,
+                            ..Light::default()
+                        },
+                    )
+                    .unwrap();
+            } else {
+                frame.directional_lights[0] = Some(DirectionalLight {
+                    direction: Vec3::new(0.2, -1., 0.1),
+                    illuminance: 3.,
+                    shadow: Some(DirectionalShadow {
+                        distance: 30.,
+                        cascades: 2,
+                        first_split: 8.,
+                    }),
+                    fog_energy,
+                    ..DirectionalLight::default()
+                });
+            }
+            let fogged = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
+            let in_scatter: Vec<[f32; 3]> = texels(&read(&device, &queue, fogged.fog_volumes()[0]))
+                .into_iter()
+                .map(|froxel| [froxel[0], froxel[1], froxel[2]])
+                .collect();
+            let unfogged = render(&device, &queue, &mut scene, &frame, &settings(false), 1);
+            let surfaces = read(&device, &queue, &unfogged.targets().composite);
+            (in_scatter, surfaces)
+        };
+        let (single, surfaces) = observe(1.);
+        let lit = single
+            .iter()
+            .filter(|froxel| froxel.iter().any(|&channel| channel > 1e-3))
+            .count();
+        assert!(lit > 100, "{label}: {lit} froxels carry measurable light");
+        let (double, _) = observe(2.);
+        for (index, (twice, once)) in double.iter().zip(&single).enumerate() {
+            for channel in 0..3 {
+                let expected = 2. * once[channel];
+                assert!(
+                    (twice[channel] - expected).abs() <= 1e-3 * expected + 1e-6,
+                    "{label}: froxel {index} channel {channel} holds {} at fog energy 2, twice {} is {expected}",
+                    twice[channel],
+                    once[channel]
+                );
+            }
+        }
+        let (none, surfaces_at_zero) = observe(0.);
+        assert!(
+            none.iter().flatten().all(|&channel| channel == 0.),
+            "{label}: the medium scattered light at fog energy 0"
+        );
+        assert!(
+            texels(&surfaces)
+                .iter()
+                .any(|texel| texel[..3].iter().any(|&channel| channel > 0.)),
+            "{label}: the light lit no surface"
+        );
+        assert!(
+            surfaces_at_zero == surfaces,
+            "{label}: fog energy 0 changed the surfaces' light"
         );
     }
 }

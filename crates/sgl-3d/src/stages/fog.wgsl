@@ -97,6 +97,10 @@ const FOG_HALTON:array<vec3<f32>,16>=array(
  vec3(.03125,.59259259,.32),
 );
 
+// The fog energy at or below which Godot leaves a light out of the medium,
+// shadow lookup and all (volumetric_fog_process.glsl's light loops).
+const FOG_ENERGY_CUTOFF:f32=.001;
+
 fn henyey_greenstein(cos_theta:f32,g:f32)->f32 {
  // 1 / (4 * PI)
  let k=.0795774715459;
@@ -158,8 +162,13 @@ fn fog_volume_density(volume:FogVolumeRecord,position:vec3<f32>)->f32 {
  return density;
 }
 // What scene light `index` scatters toward the camera, along `view_ray`,
-// per unit of scattering at a point in the medium.
+// per unit of scattering at a point in the medium: none, without a shadow
+// lookup, at a fog energy Godot skips.
 fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f32>)->vec3<f32> {
+ let fog_energy=lights[index].fog_energy;
+ if fog_energy<=FOG_ENERGY_CUTOFF {
+  return vec3(0.);
+ }
  let sample=scene_light_sample(index,position,vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM);
  if sample.visibility<=0. {
   return vec3(0.);
@@ -168,7 +177,7 @@ fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f3
  if sample.rect!=NO_RECT_LIGHT {
   light*=fog_rect_solid_angle(lights[sample.rect],position,sample.direction);
  }
- return light*henyey_greenstein(dot(view_ray,sample.direction),froxels.anisotropy);
+ return light*henyey_greenstein(dot(view_ray,sample.direction),froxels.anisotropy)*fog_energy;
 }
 
 // The ambient light the medium scatters, the same at every froxel: one
@@ -219,7 +228,7 @@ var<workgroup> fog_ambient_light:vec3<f32>;
  if density>.00005 {
   for(var index=0u;index<2u;index++) {
    let directional=frame.directional_lights[index];
-   if directional.illuminance<=0. {
+   if directional.illuminance<=0. || directional.fog_energy<=FOG_ENERGY_CUTOFF {
     continue;
    }
    let toward=normalize(directional.direction_to_light);
@@ -227,7 +236,7 @@ var<workgroup> fog_ambient_light:vec3<f32>;
    if (directional.flags&DIRECTIONAL_LIGHT_SHADOW)!=0u {
     shadow=directional_shadow_visibility(index,position,vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM);
    }
-   light+=directional.color*directional.illuminance*shadow*henyey_greenstein(dot(view_ray,toward),froxels.anisotropy);
+   light+=directional.color*directional.illuminance*shadow*henyey_greenstein(dot(view_ray,toward),froxels.anisotropy)*directional.fog_energy;
   }
   light+=fog_ambient_light;
   let range=cluster_range(position,pixel);
