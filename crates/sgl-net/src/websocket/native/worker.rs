@@ -628,7 +628,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn no_accept_error_closes_the_listener() {
+    fn only_interrupted_or_reset_accepts_retry_at_once() {
         let cases = [
             (io::ErrorKind::WouldBlock, AcceptError::Drained),
             (io::ErrorKind::ConnectionAborted, AcceptError::AcceptNext),
