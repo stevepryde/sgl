@@ -36,6 +36,7 @@ use crate::shading::uniforms::{
 };
 use bytemuck::Zeroable;
 use cascades::{Cascades, MAX_SHADOW_CASCADES};
+use glam::camera;
 use glam::{Mat4, Vec3};
 
 /// The near plane of local-light shadow faces, in metres.
@@ -243,7 +244,7 @@ impl View {
     pub fn probe_face(center: Vec3, face: u8) -> Self {
         let (direction, up) = PROBE_FACES[usize::from(face)];
         let projection = crate::perspective(std::f32::consts::FRAC_PI_2, 1., 0.1);
-        let view = Mat4::look_at_rh(center, center + direction, up);
+        let view = camera::rh::view::look_at_mat4(center, center + direction, up);
         let view_projection = projection * view;
         Self {
             uniform: ViewUniform {
@@ -300,8 +301,8 @@ impl View {
     }
 
     fn local_shadow(position: Vec3, direction: Vec3, up: Vec3, fov: f32, range: f32) -> Self {
-        let projection = Mat4::perspective_rh(fov, 1., range, LOCAL_SHADOW_NEAR);
-        let view = Mat4::look_to_rh(position, direction, up);
+        let projection = camera::rh::proj::directx::perspective(fov, 1., range, LOCAL_SHADOW_NEAR);
+        let view = camera::rh::view::look_to_mat4(position, direction, up);
         Self {
             uniform: ViewUniform {
                 view: view.to_cols_array_2d(),

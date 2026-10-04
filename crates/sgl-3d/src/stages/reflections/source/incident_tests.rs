@@ -1,5 +1,6 @@
 use super::*;
 use crate::view::bindings::FogVolume;
+use glam::camera;
 use glam::{Mat4, Vec3, Vec4};
 
 use super::tests::{no_fog, probe, visible};
@@ -81,7 +82,7 @@ fn incident_environment_is_complete_without_doubling_primary() {
         let lookup_tables = crate::scene::lookup_tables::lookup_tables(&device, &queue);
         let parameters = environment_uniform(&device, 0., 1.);
         let empty_collection = crate::scene::probes::UploadedProbes::empty(&device);
-        let projection = Mat4::orthographic_rh(-10., 10., -1., 1., 100., 0.1);
+        let projection = camera::rh::proj::directx::orthographic(-10., 10., -1., 1., 100., 0.1);
         let camera = reflection_camera::Camera::new(Mat4::IDENTITY, projection);
         let projected = projection * Vec4::new(0., 0., -10., 1.);
         let depth = texture(

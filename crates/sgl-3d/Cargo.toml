@@ -18,19 +18,18 @@ diagnostics = []
 
 [dependencies]
 # Decodes a BC7 material image's level 0 for the scene's ray source.
-bcdec_rs = "0.2"
+bcdec_rs.workspace = true
 bytemuck.workspace = true
 sgl-post-fx.workspace = true
-# Preserve the extracted renderer's math behavior without changing sgl-2d.
-glam = "0.30"
-gltf = { version = "1.4", features = ["KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
+glam.workspace = true
+gltf = { workspace = true, features = ["KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
 image = { workspace = true, features = ["jpeg"] }
 # Reads block-compressed material images from KTX2, as Bevy does.
-ktx2 = "0.5"
+ktx2.workspace = true
 # Draw lists bin their draws by small keys each frame (view::draw_list).
-rustc-hash = "1.1"
+rustc-hash.workspace = true
 # KTX2's Zstandard supercompression, as Bevy's `zstd_rust` feature reads it.
-ruzstd = { version = "0.8", default-features = false, features = ["std"] }
+ruzstd = { workspace = true, features = ["std"] }
 serde.workspace = true
 serde_json.workspace = true
 sp-fidelity.workspace = true

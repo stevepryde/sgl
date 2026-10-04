@@ -1,6 +1,7 @@
 use crate::renderer::Renderer;
 use crate::settings::{Antialiasing, Fsr2Quality, Settings};
 use crate::*;
+use glam::camera;
 
 const SIZE: [u32; 2] = [96, 54];
 
@@ -78,7 +79,7 @@ fn fsr2_renders_each_quality_or_falls_back_to_taa() {
                 let eye = glam::Vec3::new(2.4 + frame as f32 * 0.05, 2., 3.3);
                 let mut input = FrameInput::new(Camera {
                     eye,
-                    view: glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Y),
+                    view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
                     projection: perspective(
                         55f32.to_radians(),
                         SIZE[0] as f32 / SIZE[1] as f32,
@@ -199,7 +200,7 @@ fn additive_effects_mark_fsr2_reactivity_for_their_frame_only() {
         scene.update_effects(&device, &queue, glow);
         let mut input = FrameInput::new(Camera {
             eye,
-            view: glam::Mat4::look_at_rh(eye, glam::Vec3::ZERO, glam::Vec3::Y),
+            view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
             projection: perspective(55f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1),
         });
         input.camera_cut = index == 0;

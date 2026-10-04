@@ -17,6 +17,7 @@
 //! in a box over the cubes.
 //! Printed pixel measurements are diagnostics,
 //! not image QA.
+use sgl_3d::glam::camera;
 use sgl_3d::{
     AlphaMode, AutoExposure, Camera, CompensationCurve, Decal, DirectionalLight, DirectionalShadow,
     Fog, FogVolume, FrameInput, HemisphereLight, InstanceState, Light, LightShape, Mobility,
@@ -506,7 +507,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     // A window's scale factor goes where the 1 is.
     let mut renderer = Renderer::new(&device, &queue, output.format(), size, 1., &settings)?;
     let eye = Vec3::new(6., 4., 7.);
-    let view = Mat4::look_at_rh(eye, Vec3::new(0., 0.7, 0.), Vec3::Y);
+    let view = camera::rh::view::look_at_mat4(eye, Vec3::new(0., 0.7, 0.), Vec3::Y);
     let projection = sgl_3d::perspective(50f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1);
     let mut frame = FrameInput::new(Camera {
         view,

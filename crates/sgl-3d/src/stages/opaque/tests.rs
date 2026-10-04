@@ -5,6 +5,7 @@ use crate::renderer::Renderer;
 use crate::settings::{AmbientOcclusionQuality, Settings};
 use crate::test_support;
 use crate::{Camera, FrameInput, Scene, perspective};
+use glam::camera;
 use glam::{Mat4, Vec3};
 use std::f32::consts::PI;
 
@@ -85,7 +86,7 @@ fn fused_and_split_opaque_write_the_same_targets() {
     }
     let eye = Vec3::new(0.4, 0.3, 2.6);
     let mut input = FrameInput::new(Camera {
-        view: Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y),
+        view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
         projection: perspective(1., 1., 0.1),
         eye,
     });

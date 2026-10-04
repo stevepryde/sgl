@@ -2,6 +2,7 @@
 //! both resolve pipelines. GPU readback is linear f32, so Inf cannot be hidden
 //! by presentation or a normalized output format.
 use super::*;
+use glam::camera;
 use wgpu::util::DeviceExt;
 const FULL: [u32; 2] = [128, 128];
 
@@ -137,7 +138,7 @@ fn finite_hdr_survives_trace_filter_storage_and_both_resolves() {
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
     let pipeline = Velvet::new(&device);
     let projection = Mat4::from_scale(glam::Vec3::new(1., -1., 1.))
-        * Mat4::orthographic_rh(-1., 1., -1., 1., 10., 0.1);
+        * camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1);
     queue.write_buffer(
         &pipeline.scene_data,
         0,

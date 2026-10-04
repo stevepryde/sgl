@@ -6,6 +6,7 @@ use crate::renderer::Renderer;
 use crate::settings::{RenderPreset, Settings};
 use crate::view::pipelines::GeometryPass;
 use crate::*;
+use glam::camera;
 use glam::{Mat4, Vec3};
 
 async fn gpu() -> (wgpu::Device, wgpu::Queue) {
@@ -1126,7 +1127,7 @@ fn lod_fused_source_preserves_pixels_and_uses_alternative_identity() {
             .map(|t| t.create_view(&Default::default()))
             .collect();
         let input = FrameInput::new(Camera {
-            view: Mat4::look_at_rh(Vec3::new(0., 0., 5.), Vec3::ZERO, Vec3::Y),
+            view: camera::rh::view::look_at_mat4(Vec3::new(0., 0., 5.), Vec3::ZERO, Vec3::Y),
             projection: crate::perspective(1., 1., 0.1),
             eye: Vec3::new(0., 0., 5.),
         });

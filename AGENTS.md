@@ -87,8 +87,11 @@ compatibility shims solely to avoid updating consumers.
   code edits must never force regeneration.
 - When changing a reusable API or recommended consumer workflow, update its
   owning spec, package documentation, and affected examples in the same change.
-- Keep current dependency version numbers in Cargo manifests and the lockfile,
-  not duplicated in prose; link to those sources. Retain version numbers where
+- Keep all dependency version requirements in the root `[workspace.dependencies]`;
+  member crates inherit them with `workspace = true` and select their own features
+  and target conditions. Keep the diagnostics-only self dev-dependency path-only
+  so Cargo omits it when packaging. Do not duplicate current dependency versions
+  in prose; link to the workspace manifest and lockfile. Retain version numbers where
   they identify a release migration, an exact-pin example, or upstream provenance.
 - `crates/sgl-3d/docs/` is SGL3D's guide for agents building games: what it
   contains, its features, and every setting a game can offer players. Update

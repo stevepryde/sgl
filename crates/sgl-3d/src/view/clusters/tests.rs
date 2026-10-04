@@ -4,6 +4,7 @@ use super::*;
 use crate::scene::buffer;
 use crate::shading::{self, bind::group0, uniforms::ViewUniform};
 use crate::{Decal, DecalImageId, Light, LightShape, Scene};
+use glam::camera;
 use glam::{Quat, Vec2, Vec3, Vec4Swizzles};
 
 /// A small deterministic generator.
@@ -465,7 +466,7 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
             let aspect = screen[0] as f32 / screen[1] as f32;
             let camera = Camera {
                 label: ["1920x1080", "1280x720", "333x777", "64x48", "1x1"][index],
-                view: Mat4::look_at_rh(eye, target, up),
+                view: camera::rh::view::look_at_mat4(eye, target, up),
                 projection: crate::perspective(
                     random.range(0.3, 2.),
                     aspect,
@@ -555,7 +556,7 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
     ] {
         let camera = Camera {
             label,
-            view: Mat4::look_at_rh(eye, target, Vec3::Y),
+            view: camera::rh::view::look_at_mat4(eye, target, Vec3::Y),
             projection: crate::perspective(1.1, 16. / 9., 0.1),
             screen: [1920, 1080],
         };
@@ -565,7 +566,7 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
     // has no farther light to reach.
     let camera = Camera {
         label: "lights within the first slice",
-        view: Mat4::look_at_rh(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y),
+        view: camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y),
         projection: crate::perspective(1.2, 16. / 9., 0.1),
         screen: [1280, 720],
     };
@@ -590,8 +591,8 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
     let eye = Vec3::new(10., 30., 10.);
     let camera = Camera {
         label: "orthographic",
-        view: Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y),
-        projection: Mat4::orthographic_rh(-40., 40., -25., 25., 200., 0.5),
+        view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
+        projection: camera::rh::proj::directx::orthographic(-40., 40., -25., 25., 200., 0.5),
         screen: [1600, 1000],
     };
     let lights: Vec<_> = (0..200)

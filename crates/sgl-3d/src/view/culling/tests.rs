@@ -1,5 +1,6 @@
 use super::*;
 use crate::asset::{CpuMesh, Vertex};
+use glam::camera;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 fn mesh(triangles: impl IntoIterator<Item = [Vec3; 3]>) -> CpuMesh {
@@ -71,7 +72,7 @@ fn retained_ranges_never_drop_clipped_triangles_under_affine_cameras() {
                 let pose = Mat4::from_translation(location)
                     * Mat4::from_rotation_y(yaw)
                     * Mat4::from_scale(scale);
-                let view = Mat4::look_at_rh(
+                let view = camera::rh::view::look_at_mat4(
                     location + Vec3::new(1., 3., 4.),
                     location - Vec3::Z * 10.,
                     Vec3::Y,

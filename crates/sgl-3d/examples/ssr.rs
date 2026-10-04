@@ -20,6 +20,7 @@
 //!   then the mean, 95th percentile and maximum over consecutive frames of
 //!   the absolute change of that band mean. The first `WARM_UP` frames are
 //!   excluded from timing and jump statistics.
+use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, Exposure, FrameInput, InstanceState, Mobility, Renderer, Scene,
     asset::{Asset, CpuMesh, Material, Vertex},
@@ -283,7 +284,7 @@ fn run(
         let eye = Vec3::new(0., 1.2, -(index as f32) * SPEED);
         let mut input = FrameInput::new(Camera {
             eye,
-            view: Mat4::look_at_rh(eye, eye + Vec3::new(0., -0.08, -1.), Vec3::Y),
+            view: camera::rh::view::look_at_mat4(eye, eye + Vec3::new(0., -0.08, -1.), Vec3::Y),
             projection,
         });
         input.camera_cut = index == 0;

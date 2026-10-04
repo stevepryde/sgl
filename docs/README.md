@@ -50,9 +50,9 @@ Git dependency. There is no umbrella crate or installation step for SGL.
 Bun and Playwright are repository development tools, not game dependencies.
 
 Use `sgl_3d::glam` for 3D math and `sgl_core::math` for shared 2D math.
-The crates currently use different glam versions; convert via arrays where
-they meet. See [3D conventions](3d-development.md) before sharing a GPU device
-or composing 2D UI over a 3D frame.
+Both re-export the same workspace glam types, so matching vectors and matrices
+can be passed directly between packages. See [3D conventions](3d-development.md)
+before sharing a GPU device or composing 2D UI over a 3D frame.
 
 ## Distributing a game
 

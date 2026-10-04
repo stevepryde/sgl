@@ -105,3 +105,9 @@ and an asynchronous readback.
 Follow the [licence-notice workflow](../../../docs/licensing.md). Include this
 crate's [bundled-code notices](../THIRD_PARTY_NOTICES.txt), the game's resolved
 Cargo dependency notices and any game-asset licences in the shipped files.
+
+## Math types
+
+Use `sgl_3d::glam`; SGL3D, `sgl-2d` and `sgl-core` share the workspace glam
+dependency. Matching vectors and matrices pass directly between packages.
+[Migration notes](../../../CHANGELOG.md) cover upgrades from the earlier split.

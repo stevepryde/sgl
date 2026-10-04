@@ -1,6 +1,7 @@
 //! Source completion's environment and probe specular, and probe culling.
 use super::*;
 use crate::view::bindings::FogVolume;
+use glam::camera;
 use glam::{Mat4, Vec3, Vec4};
 
 /// Full ambient visibility, which `Scene` binds while ambient occlusion is off.
@@ -231,7 +232,7 @@ fn source_environment_blends_overlapping_probes_and_the_sky_by_influence() {
                 .collect::<Vec<_>>(),
             ),
         ];
-        let projection = Mat4::orthographic_rh(-10., 10., -1., 1., 100., 0.1);
+        let projection = camera::rh::proj::directx::orthographic(-10., 10., -1., 1., 100., 0.1);
         let camera = reflection_camera::Camera::new(Mat4::IDENTITY, projection);
         let projected = projection * Vec4::new(0., 0., -10., 1.);
         let depth = texture(
@@ -339,7 +340,8 @@ fn probe_tiles_keep_the_probes_whose_influence_reaches_their_geometry() {
         return;
     };
     let size = [64, 32];
-    let view = Mat4::look_at_rh(Vec3::new(3., 2., 5.), Vec3::new(-4., 1., -2.), Vec3::Y);
+    let view =
+        camera::rh::view::look_at_mat4(Vec3::new(3., 2., 5.), Vec3::new(-4., 1., -2.), Vec3::Y);
     let projection = crate::perspective(1., 2., 0.1);
     let device_depth = |distance: f32| {
         let p = projection * Vec4::new(0., 0., -distance, 1.);

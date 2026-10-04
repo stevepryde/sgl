@@ -1,5 +1,6 @@
 //! Real Godot trace dispatch on visible geometry with grazing mapped normals.
 #![cfg(not(target_arch = "wasm32"))]
+use sgl_3d::glam::camera;
 use sgl_3d::glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 const SIZE: u32 = 128;
@@ -114,7 +115,7 @@ fn grazing_mapped_normals_keep_distant_visible_targets() {
         .map(|t| t.create_view(&Default::default()))
         .into();
     let projection = Mat4::from_scale(Vec3::new(1., -1., 1.))
-        * Mat4::orthographic_rh(-1., 1., -1., 1., 10., 0.1);
+        * camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1);
     let mut scene = Vec::from(projection.to_cols_array());
     scene.extend(projection.inverse().to_cols_array());
     scene.extend(Mat4::IDENTITY.to_cols_array());

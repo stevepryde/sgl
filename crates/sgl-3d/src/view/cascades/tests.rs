@@ -1,4 +1,5 @@
 use super::*;
+use glam::camera;
 use glam::{DVec3, DVec4};
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -77,7 +78,7 @@ fn a_fixed_point_moves_by_whole_texels_as_the_camera_moves_and_turns() {
                     pitch.sin(),
                     -yaw.cos() * pitch.cos(),
                 );
-                Mat4::look_to_rh(eye, forward, Vec3::Y)
+                camera::rh::view::look_to_mat4(eye, forward, Vec3::Y)
             })
             .collect();
         let fits: Vec<Cascades> = poses
@@ -137,7 +138,7 @@ fn every_visible_point_within_the_shadow_distance_falls_inside_its_cascade() {
         perspective(0.4, 1., 0.05),
         perspective(2.2, 21. / 9., 1.),
         Camera {
-            projection: Mat4::orthographic_rh(-30., 50., -20., 25., 400., 0.5),
+            projection: camera::rh::proj::directx::orthographic(-30., 50., -20., 25., 400., 0.5),
             slope: DVec3::ZERO,
             half: DVec3::new(40., 22.5, 0.),
             centre: DVec3::new(10., 2.5, 0.),
@@ -154,7 +155,7 @@ fn every_visible_point_within_the_shadow_distance_falls_inside_its_cascade() {
         for direction in directions {
             for count in 1..=4 {
                 let eye = Vec3::new(17., 4., -230.);
-                let view = Mat4::look_to_rh(eye, Vec3::new(0.3, -0.2, -1.), Vec3::Y);
+                let view = camera::rh::view::look_to_mat4(eye, Vec3::new(0.3, -0.2, -1.), Vec3::Y);
                 let shadow = shadow(count);
                 let cascades = Cascades::camera(view, projection, direction, &shadow, MAP).unwrap();
                 let cascades = cascades.as_slice();
@@ -248,7 +249,7 @@ fn every_point_a_capture_sees_within_the_shadow_distance_falls_inside_its_cascad
 // before it.
 #[wasm_bindgen_test(unsupported = test)]
 fn cascade_bounds_follow_the_authored_split_and_distance() {
-    let view = Mat4::look_to_rh(Vec3::new(3., 2., 1.), Vec3::NEG_Z, Vec3::Y);
+    let view = camera::rh::view::look_to_mat4(Vec3::new(3., 2., 1.), Vec3::NEG_Z, Vec3::Y);
     let projection = crate::perspective(1.1, 16. / 9., 0.3);
     for (distance, first_split) in [(200., 12.), (40., 10.), (150., 0.5)] {
         for count in 1..=4u32 {
@@ -283,9 +284,9 @@ fn cascade_bounds_follow_the_authored_split_and_distance() {
 // whose view is finite.
 #[wasm_bindgen_test(unsupported = test)]
 fn an_unusable_first_split_gives_one_cascade_over_the_distance() {
-    let view = Mat4::look_to_rh(Vec3::new(3., 2., 1.), Vec3::NEG_Z, Vec3::Y);
+    let view = camera::rh::view::look_to_mat4(Vec3::new(3., 2., 1.), Vec3::NEG_Z, Vec3::Y);
     let perspective = crate::perspective(1.1, 16. / 9., 0.3);
-    let orthographic = Mat4::orthographic_rh(-20., 20., -10., 10., 400., 0.);
+    let orthographic = camera::rh::proj::directx::orthographic(-20., 20., -10., 10., 400., 0.);
     for first_split in [0., -5., 0.2, f32::NAN, f32::INFINITY] {
         let shadow = DirectionalShadow {
             distance: 100.,

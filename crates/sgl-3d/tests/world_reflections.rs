@@ -1,5 +1,6 @@
 //! Opaque blockers of supplemental moving-object rays through the Ultra frame path.
 #![cfg(not(target_arch = "wasm32"))]
+use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, FrameInput, InstanceId, InstanceState, Mobility, Renderer, Scene,
     asset::{Asset, CpuMesh, Material, Vertex},
@@ -319,7 +320,7 @@ impl Frames {
     fn move_camera(&mut self, x: f32) {
         let eye = Vec3::new(x, 0., 0.);
         self.input.camera.eye = eye;
-        self.input.camera.view = Mat4::look_at_rh(eye, eye - Vec3::Z, Vec3::Y);
+        self.input.camera.view = camera::rh::view::look_at_mat4(eye, eye - Vec3::Z, Vec3::Y);
     }
     fn resize(&mut self, size: [u32; 2]) {
         self.size = size;

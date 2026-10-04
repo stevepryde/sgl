@@ -7,6 +7,7 @@ use crate::view::View;
 use crate::view::population::Population;
 use crate::{AlphaMode, InstanceState, Mobility, Scene, test_support};
 use bytemuck::Zeroable;
+use glam::camera;
 use glam::{Mat4, Quat, Vec3};
 
 // Plausible defects: blended draws left in instance order, sorted front to
@@ -99,7 +100,7 @@ fn blended_draws_are_sorted_back_to_front_by_mesh_bounds_centre() {
         expected.windows(2).all(|pair| pair[0].0 > pair[1].0),
         "the fixture's distances must differ"
     );
-    let view = Mat4::look_at_rh(eye, target, Vec3::Y);
+    let view = camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
     let projection = crate::perspective(1., 1., 0.1);
     let camera = View::camera(ViewUniform {
         view: view.to_cols_array_2d(),

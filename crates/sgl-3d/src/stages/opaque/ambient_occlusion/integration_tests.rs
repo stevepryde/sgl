@@ -9,7 +9,8 @@ use crate::{
     test_support::{self, half, read},
     *,
 };
-use glam::{Mat4, Vec3};
+use glam::Vec3;
+use glam::camera;
 use settings::AmbientOcclusionQuality as Quality;
 
 const SIZE: [u32; 2] = [65, 49];
@@ -101,7 +102,7 @@ fn box_on_floor(device: &wgpu::Device, queue: &wgpu::Queue) -> (Scene, MaterialI
     let eye = Vec3::new(2.4, 2., 3.3);
     let mut input = FrameInput::new(Camera {
         eye,
-        view: Mat4::look_at_rh(eye, Vec3::new(0., 0.3, 0.), Vec3::Y),
+        view: camera::rh::view::look_at_mat4(eye, Vec3::new(0., 0.3, 0.), Vec3::Y),
         projection: perspective(55f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1),
     });
     input.backdrop = Backdrop::Color([0.; 3]);

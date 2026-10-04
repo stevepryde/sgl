@@ -7,6 +7,7 @@ use crate::{
     static_lighting::{AmbientCube, IrradianceAtlas, Lightmap},
     *,
 };
+use glam::camera;
 use glam::{Mat4, Vec3};
 
 fn receiver(
@@ -666,8 +667,8 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
             let eye_z = 3.;
             let input = FrameInput::new(Camera {
                 eye: Vec3::Z * eye_z,
-                view: Mat4::look_at_rh(Vec3::Z * eye_z, Vec3::ZERO, Vec3::Y),
-                projection: Mat4::orthographic_rh(-1., 1., -1., 1., 10., 0.1),
+                view: camera::rh::view::look_at_mat4(Vec3::Z * eye_z, Vec3::ZERO, Vec3::Y),
+                projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
             });
             renderer.prepare_test_frame(&device, &queue, &mut scene, &input, &settings);
             let mut encoder = device.create_command_encoder(&Default::default());
@@ -874,8 +875,8 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
             let eye_z = 3.;
             let input = FrameInput::new(Camera {
                 eye: Vec3::Z * eye_z,
-                view: Mat4::look_at_rh(Vec3::Z * eye_z, Vec3::ZERO, Vec3::Y),
-                projection: Mat4::orthographic_rh(-1., 1., -1., 1., 10., 0.1),
+                view: camera::rh::view::look_at_mat4(Vec3::Z * eye_z, Vec3::ZERO, Vec3::Y),
+                projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
             });
             renderer.prepare_test_frame(&device, &queue, &mut scene, &input, &settings);
             let mut encoder = device.create_command_encoder(&Default::default());
@@ -982,7 +983,7 @@ fn compressed_static_atlas_shades_as_its_decoded_float_atlas_times_its_scale() {
     let eye = Vec3::new(2.4, 2., 3.3);
     let mut input = FrameInput::new(Camera {
         eye,
-        view: Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y),
+        view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
         projection: perspective(55f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1),
     });
     input.backdrop = Backdrop::Color([0.; 3]);

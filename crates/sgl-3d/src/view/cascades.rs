@@ -16,6 +16,7 @@
 //! direction; and a probe capture's cascades are cubes about its centre,
 //! what its six faces see out to each far bound.
 use crate::content::lighting::DirectionalShadow;
+use glam::camera;
 use glam::{Mat4, Vec3, Vec4};
 
 /// The most cascades a shadow has.
@@ -189,7 +190,7 @@ fn world_from_light(direction: Vec3) -> Mat4 {
     } else {
         Vec3::Y
     };
-    Mat4::look_to_rh(Vec3::ZERO, forward, up).transpose()
+    camera::rh::view::look_to_mat4(Vec3::ZERO, forward, up).transpose()
 }
 
 /// The corners of what a camera with `projection` sees between view depths

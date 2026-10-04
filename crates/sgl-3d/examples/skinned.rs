@@ -7,6 +7,7 @@
 //!
 //! Run with `cargo run -p sgl-3d --example skinned -- target/skinned.png`.
 //! Optional `--frames N` sets how many frames it animates.
+use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState, Light,
     LightShape, Mobility, Renderer, Scene,
@@ -441,7 +442,7 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
     let mut renderer = Renderer::new(&device, &queue, output.format(), size, 1., &settings)?;
     let eye = Vec3::new(0., 1.8, 5.);
     let mut input = FrameInput::new(Camera {
-        view: Mat4::look_at_rh(eye, Vec3::new(0., 1., 0.), Vec3::Y),
+        view: camera::rh::view::look_at_mat4(eye, Vec3::new(0., 1., 0.), Vec3::Y),
         projection: sgl_3d::perspective(50f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1),
         eye,
     });

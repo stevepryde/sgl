@@ -1,4 +1,5 @@
 use super::*;
+use glam::camera;
 
 // Surfaces in a camera view leave specular image-based lighting to the
 // reflection stages (as AMD's SSSR sample's scene input does) but keep
@@ -13,7 +14,7 @@ fn camera_surfaces_exclude_specular_ibl_and_keep_diffuse_and_emission() {
     use crate::asset::{CpuMesh, Vertex};
     use crate::settings::Settings;
     use crate::{Camera, DirectionalLight, FrameInput, HemisphereLight, Scene};
-    use glam::{Mat4, Vec3};
+    use glam::Vec3;
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
@@ -47,10 +48,10 @@ fn camera_surfaces_exclude_specular_ibl_and_keep_diffuse_and_emission() {
             &crate::test_support::environment([255; 4], &0x3c00u16.to_le_bytes()),
         )
         .unwrap();
-    let view = Mat4::look_at_rh(Vec3::new(0., 0., -2.), Vec3::ZERO, Vec3::Y);
+    let view = camera::rh::view::look_at_mat4(Vec3::new(0., 0., -2.), Vec3::ZERO, Vec3::Y);
     let mut input = FrameInput::new(Camera {
         view,
-        projection: Mat4::orthographic_rh(-1., 1., -1., 1., 10., 0.1),
+        projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
         eye: Vec3::new(0., 0., -2.),
     });
     // The sun shines from +Z, behind the plane's -Z normal; a hemisphere
@@ -271,7 +272,7 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
     use crate::asset::CpuMesh;
     use crate::settings::Settings;
     use crate::{Camera, DirectionalLight, DirectionalShadow, FrameInput, Scene};
-    use glam::{Mat4, Vec3};
+    use glam::Vec3;
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
@@ -302,7 +303,11 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
     let (_, occluder) =
         crate::test_support::add_static(&device, &queue, &mut scene, square(9., 3.));
     let mut input = FrameInput::new(Camera {
-        view: Mat4::look_at_rh(Vec3::new(1000., 0., 0.), Vec3::new(2000., 0., 0.), Vec3::Y),
+        view: camera::rh::view::look_at_mat4(
+            Vec3::new(1000., 0., 0.),
+            Vec3::new(2000., 0., 0.),
+            Vec3::Y,
+        ),
         projection: crate::perspective(1., 1., 0.1),
         eye: Vec3::new(1000., 0., 0.),
     });
@@ -364,7 +369,7 @@ fn a_capture_shadows_scene_lights_from_static_layers_it_places() {
     use crate::asset::CpuMesh;
     use crate::settings::Settings;
     use crate::{Camera, FrameInput, Light, LightShape, Scene};
-    use glam::{Mat4, Vec3};
+    use glam::Vec3;
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
@@ -411,7 +416,11 @@ fn a_capture_shadows_scene_lights_from_static_layers_it_places() {
         )
         .unwrap();
     let input = FrameInput::new(Camera {
-        view: Mat4::look_at_rh(Vec3::new(1000., 0., 0.), Vec3::new(2000., 0., 0.), Vec3::Y),
+        view: camera::rh::view::look_at_mat4(
+            Vec3::new(1000., 0., 0.),
+            Vec3::new(2000., 0., 0.),
+            Vec3::Y,
+        ),
         projection: crate::perspective(1., 1., 0.1),
         eye: Vec3::new(1000., 0., 0.),
     });

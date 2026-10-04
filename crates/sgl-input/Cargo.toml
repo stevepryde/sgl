@@ -18,12 +18,12 @@ publish.workspace = true
 unsafe_code = "deny"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.4"
-block2 = "0.6.2"
-objc2-game-controller = { version = "0.3.2", default-features = false, features = ["std", "block2", "GCController", "GCDevice", "GCExtendedGamepad", "GCPhysicalInputProfile", "GCControllerElement", "GCControllerAxisInput", "GCControllerButtonInput", "GCControllerDirectionPad"] }
+objc2.workspace = true
+block2.workspace = true
+objc2-game-controller = { workspace = true, features = ["std", "block2", "GCController", "GCDevice", "GCExtendedGamepad", "GCPhysicalInputProfile", "GCControllerElement", "GCControllerAxisInput", "GCControllerButtonInput", "GCControllerDirectionPad"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-gilrs = "0.11.2"
+gilrs.workspace = true
 
 [dev-dependencies]
 winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }

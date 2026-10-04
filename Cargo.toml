@@ -34,12 +34,21 @@ sgl-3d = { version = "0.1.0", path = "crates/sgl-3d" }
 sgl-post-fx = { version = "0.1.0", path = "crates/sgl-post-fx" }
 sgl-core = { version = "0.1.0", path = "crates/sgl-core" }
 sgl-net = { version = "0.1.0", path = "crates/sgl-net" }
+bcdec_rs = "0.2"
 blake3 = "1.8.3"
+block2 = "0.6.2"
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 fastrand = "2.4"
 fontdue = "0.9"
 futures = "0.3"
-glam = "0.33"
+gilrs = "0.11.2"
+glam = "0.33.2"
+gltf = "1.4"
+ktx2 = "0.5"
+objc2 = "0.6.4"
+objc2-game-controller = { version = "0.3.2", default-features = false }
+rustc-hash = "1.1"
+ruzstd = { version = "0.8", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 js-sys = "=0.3.103"
 console_error_panic_hook = "=0.1.7"

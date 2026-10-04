@@ -15,6 +15,26 @@ full API details.
 
 ## Unreleased
 
+### Shared workspace dependencies and math types
+
+- **Scope:** all dependency versions now live in the root workspace manifest.
+  `sgl_3d::glam` moves from glam `0.30` to the workspace's `0.33`, matching
+  `sgl_core::math` and `sgl-2d`. No other dependency versions change.
+- **Migration:** games with a direct glam requirement used for SGL3D should
+  use the workspace requirement (at least `0.33.2` for the camera API), or use
+  `sgl_3d::glam`. Matching 2D/3D math values can now
+  be passed directly; array conversions used only to bridge glam versions can
+  be removed. Keep conversions required by data layouts or coordinate spaces.
+- **Camera calls:** replace deprecated `Mat4::look_at_rh` / `look_to_rh` with
+  `glam::camera::rh::view::look_at_mat4` / `look_to_mat4`. Projection constructors
+  move to `glam::camera::rh::proj::directx` as `perspective`, `orthographic`,
+  and `perspective_infinite_reverse`, with the same arguments. These are the
+  right-handed, Y-up, zero-to-one depth variants used by WebGPU. SGL's
+  `perspective` helper still supplies an infinite reversed-Z projection.
+- **Validate:** compile the game and exercise camera movement, shadows, picking
+  and shared 2D/3D math on its native/browser targets. No baked asset format or
+  rendering setting changes; no bake regeneration is needed.
+
 ### Compatibility policy and upgrade guidance
 
 - **Scope:** all SGL crates. Releases may intentionally break compatibility;
@@ -43,9 +63,12 @@ full API details.
   point to Cargo manifests instead of repeating current glam/wgpu versions.
   Removed the redundant dependency inventory and contributor publishing section.
 - **Migration:** no game-code or dependency changes. Continue using
-  `sgl_3d::glam` for 3D math and explicit conversions at the 2D/3D boundary.
+  SGL math re-exports and the workspace manifest's dependency requirements.
 
 ### Bundled third-party notices
+
+- **Attribution:** use Stephen Pryde in copyright notices and generated
+  distribution notices. This updates the holder's name, not the licence terms.
 
 - **Scope:** repository notices and contributor tooling. Notices now cover
   copied/ported code and bundled assets, including the IBM Plex test font.

@@ -72,5 +72,7 @@ const sections = [
     `${name}${p.authors.length ? ` — authors: ${p.authors.join(", ")}` : ""}`).join("\n"),
 ];
 for (const [text, owners] of texts) sections.push(`--- Applies to: ${[...owners].sort().join(", ")}\n\n${text}`);
-await writeFile(output, `${sections.join("\n\n")}\n`);
+// Use the copyright holder's preferred name, including in older published dependencies.
+const notices = `${sections.join("\n\n")}\n`.replace(/\bSteve(?= Pryde\b)/g, "Stephen");
+await writeFile(output, notices);
 console.log(`Wrote ${output} (${packages.size} packages). Include it in the distributed game.`);

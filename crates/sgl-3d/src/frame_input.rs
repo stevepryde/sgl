@@ -13,12 +13,13 @@ use crate::content::identity::EnvironmentId;
 use crate::content::lighting::{
     Backdrop, DirectionalLight, EnvironmentLight, HemisphereLight, Mist,
 };
+use glam::camera;
 use glam::{Mat4, Vec3};
 
 /// Reversed-Z, infinite-far, right-handed perspective. Device depth is
 /// `near / distance`: 1 at the near plane, approaching 0 at infinity.
 pub fn perspective(fov_y_radians: f32, aspect: f32, near: f32) -> Mat4 {
-    Mat4::perspective_infinite_reverse_rh(fov_y_radians, aspect, near)
+    camera::rh::proj::directx::perspective_infinite_reverse(fov_y_radians, aspect, near)
 }
 
 /// A render camera. Projection uses reversed-Z device depth (1 near, 0 far),

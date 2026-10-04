@@ -90,9 +90,9 @@ settings SGL3D has today.
    core/net builds keep working. SGL3D builds for `wasm32-unknown-unknown` and
    renders on WebGPU in the browser lane, both in the required check
    ([testing](testing.md) 5). SGL3D exposes its math types through
-   `sgl_3d::glam`; `sgl-2d` uses distinct types, so math values cross packages through
-   explicit arrays. Both packages use the
-   shared wgpu version so a game can drive them from one device.
+   `sgl_3d::glam`; it shares the workspace glam dependency with `sgl-2d` and
+   `sgl-core`, so matching math values cross packages directly. Both renderers
+   also use the shared wgpu version so a game can drive them from one device.
 
 ## Rendering development
 

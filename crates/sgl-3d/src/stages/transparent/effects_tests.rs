@@ -3,6 +3,7 @@ use crate::renderer::Renderer;
 use crate::settings::{RenderPreset, Settings};
 use crate::{Camera, FrameInput, Scene};
 use glam::Mat4;
+use glam::camera;
 #[test]
 #[ignore = "real GPU: metric soft intersections and depth target replacement"]
 fn soft_intersection_metric_depth_and_clear_background() {
@@ -47,7 +48,7 @@ fn soft_intersection_metric_depth_and_clear_background() {
             let depth = renderer.targets().depth.clone();
             for projection in [
                 crate::perspective(1.2, size[0] as f32 / size[1] as f32, 0.1),
-                Mat4::orthographic_rh(-50., 50., -50., 50., 100., 0.1),
+                camera::rh::proj::directx::orthographic(-50., 50., -50., 50., 100., 0.1),
             ] {
                 let prepared = renderer.prepare_test_frame(
                     &device,

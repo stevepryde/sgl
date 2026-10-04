@@ -1,4 +1,5 @@
 use super::*;
+use sgl_3d::glam::camera;
 
 // A floor viewed along its geometry normal. The +Y probe face is green and
 // +X is red: a 45-degree base normal map reflects red while the geometry-normal
@@ -48,7 +49,8 @@ fn coated_base_normal_and_geometry_coat_see_separate_probe_faces() {
                 }
                 let eye = Vec3::new(0., 5., 0.);
                 frames.input.camera.eye = eye;
-                frames.input.camera.view = Mat4::look_at_rh(eye, Vec3::new(0., -1., 0.), Vec3::Z);
+                frames.input.camera.view =
+                    camera::rh::view::look_at_mat4(eye, Vec3::new(0., -1., 0.), Vec3::Z);
                 let mut texels = Vec::new();
                 for mip in 0..7 {
                     for face in 0..6 {

@@ -1,5 +1,6 @@
 //! DiligentFX SSR through SGL3D's public Scene and Renderer API.
 #![cfg(not(target_arch = "wasm32"))]
+use sgl_3d::glam::camera;
 use sgl_3d::{
     Backdrop, Camera, FrameInput, InstanceState, Mobility, ModelId, Renderer, Scene,
     SpecularProbeTexels,
@@ -212,7 +213,7 @@ impl Frames {
         let eye = Vec3::new(0., 0.2, 2.);
         let mut input = FrameInput::new(Camera {
             eye,
-            view: Mat4::look_at_rh(eye, Vec3::new(0., -0.6, -6.), Vec3::Y),
+            view: camera::rh::view::look_at_mat4(eye, Vec3::new(0., -0.6, -6.), Vec3::Y),
             projection: perspective(1., size[0] as f32 / size[1] as f32, 0.1),
         });
         input.backdrop = Backdrop::Color([0.; 3]);
@@ -267,7 +268,8 @@ impl Frames {
     fn look_from(&mut self, x: f32) {
         let eye = Vec3::new(x, 0.2, 2.);
         self.input.camera.eye = eye;
-        self.input.camera.view = Mat4::look_at_rh(eye, Vec3::new(x, -0.6, -6.), Vec3::Y);
+        self.input.camera.view =
+            camera::rh::view::look_at_mat4(eye, Vec3::new(x, -0.6, -6.), Vec3::Y);
     }
 
     fn render(&mut self, frames: usize, reset: bool) {
@@ -988,7 +990,11 @@ fn sky_motion_follows_camera_rotation() {
     frames.settings.antialiasing = settings::Antialiasing::Off;
     // Looking 31 degrees up with a 57 degree field of view: only sky.
     let camera = |eye: Vec3, yaw: f32| {
-        let view = Mat4::look_at_rh(eye, eye + Vec3::new(yaw.sin(), 0.6, -yaw.cos()), Vec3::Y);
+        let view = camera::rh::view::look_at_mat4(
+            eye,
+            eye + Vec3::new(yaw.sin(), 0.6, -yaw.cos()),
+            Vec3::Y,
+        );
         (eye, view)
     };
     let (eye, view) = camera(Vec3::new(0., 0.2, 2.), 0.);

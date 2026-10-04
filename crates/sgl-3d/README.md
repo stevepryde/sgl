@@ -33,10 +33,10 @@ may share one device/queue with the `sgl-2d` UI or 2D renderer; the game owns
 pass ordering and presentation.
 
 Use the public `sgl_3d::glam` re-export for matrices and vectors passed to this
-crate. Its math types are distinct from those used by `sgl-2d`; convert
-through arrays at the boundary instead of upgrading a renderer's math
-dependency during integration. The [package manifest](Cargo.toml) owns the
-crate's dependency requirements.
+crate. SGL3D, `sgl-2d`, and `sgl-core` share the workspace glam dependency,
+so their matching vector and matrix types can cross package boundaries directly.
+Dependency versions live in the [workspace manifest](../../Cargo.toml); the
+[package manifest](Cargo.toml) selects the features used here.
 
 | Input | Convention |
 | --- | --- |

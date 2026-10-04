@@ -20,6 +20,7 @@
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
+use sgl_3d::glam::camera;
 use sgl_3d::{
     AlphaMode, BakedSpecularProbe, Camera, Decal, DirectionalLight, DirectionalShadow,
     EnvironmentId, Fog, FogVolume, FrameInput, HemisphereLight, InstanceId, InstanceState, Light,
@@ -554,7 +555,7 @@ fn add_content(
 fn camera() -> Camera {
     let eye = Vec3::new(5., 6., 7.);
     Camera {
-        view: Mat4::look_at_rh(eye, Vec3::new(0.5, 0., 0.5), Vec3::Y),
+        view: camera::rh::view::look_at_mat4(eye, Vec3::new(0.5, 0., 0.5), Vec3::Y),
         projection: sgl_3d::perspective(50f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1),
         eye,
     }

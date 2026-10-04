@@ -25,10 +25,11 @@ so the browser loads the baked result.
 
 Keep metres, +Y up, and a right-handed camera looking along local -Z. Adapt
 source conventions once at the game boundary. Use `sgl_3d::glam` for renderer
-matrices. The 2D and 3D crates use distinct glam types; convert explicitly
-through arrays at a shared UI/3D boundary. Use the wgpu dependency specified
-by the [workspace manifest](../Cargo.toml) when sharing the game-owned device
-and queue; crate-specific dependencies live in their package manifests. Linear light values and HDR buffers must remain
+matrices. The 2D and 3D crates share the workspace glam types; matching
+vectors and matrices can cross the UI/3D boundary directly. Use the wgpu
+dependency specified by the [workspace manifest](../Cargo.toml) when sharing
+the game-owned device and queue. All dependency versions live in that manifest;
+package manifests select features. Linear light values and HDR buffers must remain
 linear until final presentation conversion.
 
 Load geometry and textures once per scene through `asset::load` or

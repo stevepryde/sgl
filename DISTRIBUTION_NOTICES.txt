@@ -90,7 +90,6 @@ getrandom@0.4.3 — authors: The Rand Project Developers
 gilrs-core@0.6.8 — authors: Mateusz Sieczko <arvamer@gmail.com>
 gilrs@0.11.2 — authors: Arvamer <arvamer@gmail.com>
 gl_generator@0.14.0 — authors: Brendan Zabarauskas <bjzaba@yahoo.com.au>, Corey Richardson, Arseny Kapoulkine
-glam@0.30.10 — authors: Cameron Hart <cameron.hart@gmail.com>
 glam@0.33.6
 glow@0.17.0 — authors: Joshua Groves <josh@joshgroves.com>, Dzmitry Malyshau <kvarkus@gmail.com>
 gltf-derive@1.4.1 — authors: David Harvey-Macaulay <alteous@outlook.com>
@@ -3195,7 +3194,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
---- Applies to: glam@0.30.10, glam@0.33.6
+--- Applies to: glam@0.33.6
 
 Apache License
                         Version 2.0, January 2004
@@ -6816,7 +6815,7 @@ SOFTWARE.
 
 MIT License
 
-Copyright (c) 2026 Steve Pryde
+Copyright (c) 2026 Stephen Pryde
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -7249,7 +7248,7 @@ THE SOFTWARE.
 This file is part of the FidelityFX SDK.
 
 Copyright (C) 2024 Advanced Micro Devices, Inc.
-Copyright (c) 2026 Steve Pryde (Rust/WGSL port and tooling).
+Copyright (c) 2026 Stephen Pryde (Rust/WGSL port and tooling).
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files(the "Software"), to deal

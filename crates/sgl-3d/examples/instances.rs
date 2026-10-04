@@ -7,6 +7,7 @@
 //! Run with `cargo run --release -p sgl-3d --example instances -- target/instances.png`.
 //! Optional `--count N` sets how many props (1000) and `--frames N` how many
 //! frames it renders (62); the timing skips the first two.
+use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState, Light,
     LightShape, Mobility, Renderer, Scene,
@@ -287,7 +288,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let mut renderer = Renderer::new(&device, &queue, output.format(), size, 1., &settings)?;
     let eye = Vec3::new(6., 4., 7.);
     let mut frame = FrameInput::new(Camera {
-        view: Mat4::look_at_rh(eye, Vec3::new(0., 0.7, 0.), Vec3::Y),
+        view: camera::rh::view::look_at_mat4(eye, Vec3::new(0., 0.7, 0.), Vec3::Y),
         projection: sgl_3d::perspective(50f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1),
         eye,
     });
