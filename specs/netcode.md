@@ -14,7 +14,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    send, flush, and close. Native UDP can be caller-polled or owned by a bounded
    worker; a native WebSocket server or client owns one I/O worker thread that
    serves all its connections and wakes only for socket readiness, caller work
-   (released frames, a due ping, a close) or a handshake deadline.
+   (released frames, a due ping, a close), a handshake deadline or an accept
+   retry. A server stops accepting only when admission stops or its listener
+   fails: a failed accept skips that connection, and running out of file
+   descriptors retries after a short back-off.
 3. Delivery is either reliable ordered or newest-wins latest-state.
 4. Transports own framing, sequencing, acknowledgement, retransmission, queue
    bounds, connection identity, and socket or browser I/O. The game supplies
