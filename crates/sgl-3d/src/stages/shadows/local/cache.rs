@@ -10,9 +10,16 @@
 //! What a frame draws commits at `finish_frame` (S3D-4): a slot drawn in a
 //! frame that is abandoned, or submitted but not finished, holds nothing
 //! reusable.
+//!
+//! What a slot holds is kept in the render frame of the scene's origin it
+//! was drawn at. A frame whose scene moved its origin since translates the
+//! lights and moving casters it records into its own (the architecture's
+//! History contract), and its layers stay valid: a layer is depth from its
+//! light, which the scene translated alike.
 use super::shape::LightView;
 use crate::content::identity::{InstanceId, LightId, ModelId};
-use glam::Mat4;
+use crate::scene::origin::translated;
+use glam::{DVec3, Mat4};
 use std::collections::HashMap;
 
 /// What a face's static layer shows, apart from static edits: when it
@@ -63,6 +70,8 @@ pub(super) struct Cache {
     examined: Option<u64>,
     /// The scene the slots show.
     scene: Option<u64>,
+    /// The scene's render origin what the slots and lights record is in.
+    origin: DVec3,
     pending: Pending,
 }
 
@@ -75,10 +84,12 @@ struct Pending {
 
 impl Cache {
     /// Starts a frame of scene `scene` with `slots` slots, whose static
-    /// edits have `finished` frames behind them: the previous frame's
-    /// changes are dropped unless it finished, and everything is stale for
-    /// another scene or when a finished frame's edits went unexamined.
-    pub fn begin(&mut self, scene: u64, slots: usize, finished: u64) {
+    /// edits have `finished` frames behind them, at render origin `origin`:
+    /// the previous frame's changes are dropped unless it finished,
+    /// everything is stale for another scene or when a finished frame's
+    /// edits went unexamined, and what is kept is translated into the
+    /// origin's render frame.
+    pub fn begin(&mut self, scene: u64, slots: usize, finished: u64, origin: DVec3) {
         self.pending = Pending {
             examined: Some(finished),
             ..Pending::default()
@@ -90,8 +101,31 @@ impl Cache {
         if !current || self.slots.len() != slots {
             self.slots = vec![Slot::default(); slots];
             self.lights.clear();
+        } else if origin != self.origin {
+            self.move_origin((origin - self.origin).as_vec3());
         }
         self.scene = Some(scene);
+        self.origin = origin;
+    }
+
+    /// Translates what the slots and lights record by `by`, as the scene
+    /// translated its lights and instances.
+    fn move_origin(&mut self, by: glam::Vec3) {
+        let moved = |key: &mut FaceKey| key.view.position -= by;
+        for slot in &mut self.slots {
+            if let Some(key) = &mut slot.layer {
+                moved(key);
+            }
+            if let Some((key, casters)) = &mut slot.face {
+                moved(key);
+                for caster in casters {
+                    caster.pose = translated(caster.pose, by);
+                }
+            }
+        }
+        for view in self.lights.values_mut() {
+            view.position -= by;
+        }
     }
 
     pub fn slot(&self, slot: usize) -> &Slot {

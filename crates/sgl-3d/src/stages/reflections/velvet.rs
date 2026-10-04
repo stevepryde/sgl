@@ -182,7 +182,6 @@ pub(crate) struct Velvet {
     frame: u32,
     /// Scene frame last encoded, matching the TAA/SSR continuity rule.
     previous_scene_frame: Option<u32>,
-    previous_view_projection: Option<Mat4>,
 }
 
 impl Velvet {
@@ -236,7 +235,6 @@ impl Velvet {
             groups: None,
             frame: 0,
             previous_scene_frame: None,
-            previous_view_projection: None,
         }
     }
 
@@ -292,13 +290,17 @@ impl Velvet {
                 .is_some_and(|previous| input.frame.frames == previous.wrapping_add(1));
         if resized || !continuous {
             self.frame = 0;
-            self.previous_view_projection = None;
         }
         self.previous_scene_frame = Some(input.frame.frames);
-        let view_projection = Mat4::from_cols_array_2d(&input.camera.proj)
-            * Mat4::from_cols_array_2d(&input.camera.view);
-        let previous = self.previous_view_projection.unwrap_or(view_projection);
-        self.previous_view_projection = Some(view_projection);
+        // The renderer's camera history is the previous camera, as it
+        // rasterized; a new history reprojects through this frame's.
+        let previous = match input.frame.previous_camera {
+            Some(camera) if self.frame > 0 => camera.jittered_view_projection(),
+            _ => {
+                Mat4::from_cols_array_2d(&input.camera.proj)
+                    * Mat4::from_cols_array_2d(&input.camera.view)
+            }
+        };
         let current = (self.frame % 2) as usize;
         let continues = self.frame > 0;
         self.frame = self.frame.wrapping_add(1).max(1);

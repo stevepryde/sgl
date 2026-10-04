@@ -51,6 +51,10 @@ its rendering `settings::Settings`.
    device), submit, and call `Renderer::finish_frame`.
 4. Set `FrameInput::camera_cut` on a camera cut. History restarts itself then,
    after a resize that changes the targets and for a different scene.
+5. A large world: keep the game's own coordinates and call
+   `Scene::move_origin` to keep what it renders near the render origin
+   (chunk-aligned in a streamed world); then give the camera and edits in
+   the new frame. Nothing restarts or redraws.
 
 [`examples/offscreen.rs`](../examples/offscreen.rs) is the loop to copy
 (`--decals` adds decals, `--motion-blur` motion blur, `--fog` volumetric

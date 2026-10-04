@@ -121,6 +121,7 @@ impl Prepare {
             effective.shadow_quality.cascade_size(),
             effective.shadow_filter,
             history.frames,
+            scene.origin(),
         );
         let frame = frame_uniform(
             input,
@@ -229,7 +230,7 @@ impl Prepare {
         center: Vec3,
         cascade_size: u32,
     ) -> CaptureViews {
-        let shadow = FrameShadow::capture(input, center, cascade_size);
+        let shadow = FrameShadow::capture(input, center, cascade_size, scene.origin());
         let frame = frame_uniform(input, &scene.static_lighting, &shadow, false);
         let uniform = |label, bytes: &[u8]| {
             crate::scene::buffer(device, label, bytes, wgpu::BufferUsages::UNIFORM)

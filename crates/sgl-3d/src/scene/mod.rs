@@ -16,6 +16,7 @@ pub(crate) mod materials;
 pub(crate) mod mesh_ranges;
 pub(crate) mod models;
 pub(crate) mod objects;
+pub(crate) mod origin;
 pub(crate) mod probe_grid;
 pub(crate) mod probes;
 mod ranges;
@@ -72,6 +73,9 @@ pub struct Scene {
     pub(crate) static_edits: static_edits::StaticEdits,
     /// The deformations the frame being rendered writes (the deform stage).
     pub(crate) deformations: Vec<crate::shading::deformation::DeformDispatch>,
+    /// Where the render origin lies in the frame the scene was created in
+    /// (`origin`).
+    origin: glam::DVec3,
 }
 
 /// Group 1 (`shading::bind::scene`) over `objects`, `source` and
@@ -130,6 +134,7 @@ impl Scene {
             transient: transient::Transient::new(device),
             static_edits: static_edits::StaticEdits::default(),
             deformations: Vec::new(),
+            origin: glam::DVec3::ZERO,
         }
     }
 
@@ -316,3 +321,6 @@ pub(crate) fn buffer(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "content_tests.rs"]
 mod content_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod origin_tests;

@@ -6,8 +6,8 @@
 //! the surfels that overlap the cell, which surfel_binningCS.hlsl fills.
 //! Probes are static, so SGL3D builds the grid once, on the CPU, when they are
 //! installed: one level over the collection's bounds, not around the camera.
-use crate::baked_specular_probe::BakedSpecularProbe;
-use glam::{UVec3, Vec3};
+use crate::baked_specular_probe::SpecularProbeBox;
+use glam::{Mat4, UVec3, Vec3};
 
 /// Cells at most: 256 KiB of cell records.
 const MAX_CELLS: u32 = 1 << 15;
@@ -49,11 +49,13 @@ impl ProbeGrid {
         }
     }
 
-    pub fn new(probes: &[BakedSpecularProbe]) -> Self {
-        if probes.is_empty() {
+    /// The grid over probes whose influence boxes are `influences`, each a
+    /// world-to-local transform and the box in that frame.
+    pub fn new(influences: &[(Mat4, SpecularProbeBox)]) -> Self {
+        if influences.is_empty() {
             return Self::empty();
         }
-        let bounds: Vec<[Vec3; 2]> = probes.iter().map(world_bounds).collect();
+        let bounds: Vec<[Vec3; 2]> = influences.iter().map(world_bounds).collect();
         let (min, max) = bounds.iter().fold(
             (Vec3::INFINITY, Vec3::NEG_INFINITY),
             |(min, max), [lo, hi]| (min.min(*lo), max.max(*hi)),
@@ -154,9 +156,9 @@ pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 3] {
 }
 
 /// The world-space bounds of a probe's influence box.
-fn world_bounds(probe: &BakedSpecularProbe) -> [Vec3; 2] {
-    let to_world = probe.world_to_local.inverse();
-    let [lo, hi] = [probe.influence.min, probe.influence.max];
+fn world_bounds((world_to_local, influence): &(Mat4, SpecularProbeBox)) -> [Vec3; 2] {
+    let to_world = world_to_local.inverse();
+    let [lo, hi] = [influence.min, influence.max];
     (0..8)
         .map(|corner| {
             let pick = glam::BVec3::new(corner & 1 != 0, corner & 2 != 0, corner & 4 != 0);
@@ -171,9 +173,9 @@ fn world_bounds(probe: &BakedSpecularProbe) -> [Vec3; 2] {
 mod tests {
     use super::*;
     use crate::baked_specular_probe::{
-        SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels,
+        BakedSpecularProbe, SpecularProbeRadiance, SpecularProbeTexels,
     };
-    use glam::{Mat4, Quat};
+    use glam::Quat;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     /// SplitMix64 from a fixed seed, as uniform values in [0, 1).
@@ -230,7 +232,11 @@ mod tests {
             let probes: Vec<_> = (0..1 + collection * 24)
                 .map(|_| probe(&mut random))
                 .collect();
-            let grid = ProbeGrid::new(&probes);
+            let influences: Vec<_> = probes
+                .iter()
+                .map(|probe| (probe.world_to_local, probe.influence))
+                .collect();
+            let grid = ProbeGrid::new(&influences);
             for _ in 0..4000 {
                 let owner = &probes[(random.next() * probes.len() as f32) as usize];
                 let [lo, hi] = [owner.influence.min, owner.influence.max];

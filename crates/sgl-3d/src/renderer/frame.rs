@@ -26,8 +26,7 @@ pub(super) fn render(
     timing: Option<&GpuTiming>,
 ) {
     // History restarts for a camera cut, a resize or another scene.
-    let history = renderer.begin_history(scene, input);
-    renderer.rendered = Some((history, scene.id));
+    let mut history = renderer.begin_history(scene, input);
     let Renderer {
         sizes,
         targets,
@@ -46,6 +45,7 @@ pub(super) fn render(
         antialiasing,
         motion_blur,
         post,
+        rendered,
         #[cfg(feature = "diagnostics")]
         probe,
         ..
@@ -106,6 +106,9 @@ pub(super) fn render(
         post_fx.as_mut(),
         context_jitter,
     );
+    // The camera history commits the jitter this frame applies.
+    history.camera.jitter = jitter.map_or([0.; 2], |jitter| jitter.ndc);
+    *rendered = Some((history, scene.id));
     let values = prepare.run(
         device,
         queue,
@@ -194,6 +197,7 @@ pub(super) fn render(
             sizes.render,
             glam::Mat4::from_cols_array_2d(&camera.view),
             glam::Mat4::from_cols_array_2d(&camera.proj),
+            history.previous_camera,
             timing,
         );
     }

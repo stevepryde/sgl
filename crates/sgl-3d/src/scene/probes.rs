@@ -4,8 +4,9 @@
 use super::probe_grid::ProbeGrid;
 use super::{Scene, buffer};
 use crate::baked_specular_probe::{
-    BakedSpecularProbe, LEVELS, MAX_PROBES, ProbeError, SpecularProbeTexels,
+    BakedSpecularProbe, LEVELS, MAX_PROBES, ProbeError, SpecularProbeBox, SpecularProbeTexels,
 };
+use glam::{Mat3, Mat4, Vec3};
 
 impl SpecularProbeTexels {
     fn format(&self) -> wgpu::TextureFormat {
@@ -61,6 +62,83 @@ pub(crate) struct UploadedProbes {
     /// The collection's metadata, then the world grid's cells and their
     /// probe lists (`ProbeGrid::words`).
     pub metadata: wgpu::Buffer,
+    /// Each probe's placement, which the metadata and grid are built from.
+    placements: Vec<Placement>,
+}
+
+/// Where a probe is: what its metadata and the world grid hold of it.
+#[derive(Clone, Copy)]
+struct Placement {
+    center: Vec3,
+    world_to_local: Mat4,
+    influence: SpecularProbeBox,
+    blend: Vec3,
+    proxy: Option<SpecularProbeBox>,
+}
+
+impl Placement {
+    fn new(probe: &BakedSpecularProbe) -> Self {
+        Self {
+            center: probe.center,
+            world_to_local: probe.world_to_local,
+            influence: probe.influence,
+            blend: probe.blend,
+            proxy: probe.proxy,
+        }
+    }
+
+    /// The placement in a render frame whose origin lies `by` from this
+    /// one's: its centre and its frame's origin translated, and its rigid
+    /// `world_to_local` rebuilt from that origin rather than translated.
+    fn translated(self, by: Vec3) -> Self {
+        let rotation = Mat3::from_mat4(self.world_to_local);
+        let origin = -(rotation.transpose() * self.world_to_local.w_axis.truncate()) - by;
+        let mut world_to_local = self.world_to_local;
+        world_to_local.w_axis = (-(rotation * origin)).extend(self.world_to_local.w_axis.w);
+        Self {
+            center: self.center - by,
+            world_to_local,
+            ..self
+        }
+    }
+
+    fn metadata(&self) -> ProbeMetadata {
+        let proxy = self.proxy.unwrap_or(self.influence);
+        ProbeMetadata {
+            world_to_local: self.world_to_local.to_cols_array_2d(),
+            center: self
+                .center
+                .extend(f32::from(self.proxy.is_some()))
+                .to_array(),
+            influence_min: self.influence.min.extend(0.).to_array(),
+            influence_max: self.influence.max.extend(0.).to_array(),
+            blend: self.blend.extend(0.).to_array(),
+            proxy_min: proxy.min.extend(0.).to_array(),
+            proxy_max: proxy.max.extend(0.).to_array(),
+            sphere: self
+                .world_to_local
+                .inverse()
+                .transform_point3((self.influence.min + self.influence.max) * 0.5)
+                .extend((self.influence.max - self.influence.min).length() * 0.5)
+                .to_array(),
+        }
+    }
+}
+
+/// The collection's metadata and world grid over `placements`, in one
+/// buffer.
+fn collection(device: &wgpu::Device, placements: &[Placement]) -> wgpu::Buffer {
+    let influences: Vec<_> = placements
+        .iter()
+        .map(|placement| (placement.world_to_local, placement.influence))
+        .collect();
+    let grid = ProbeGrid::new(&influences);
+    let mut metadata = CollectionMetadata::new(&grid);
+    metadata.counts[0] = placements.len() as u32;
+    for (slot, placement) in metadata.probes.iter_mut().zip(placements) {
+        *slot = placement.metadata();
+    }
+    collection_buffer(device, "baked specular probe collection", &metadata, &grid)
 }
 
 pub(crate) fn validate_face_size(face_size: u32, limits: &wgpu::Limits) -> Result<(), ProbeError> {
@@ -161,30 +239,7 @@ impl UploadedProbes {
                 return Err(ProbeError::MixedRadiance);
             }
         }
-        let grid = ProbeGrid::new(probes);
-        let mut metadata = CollectionMetadata::new(&grid);
-        metadata.counts[0] = probes.len() as u32;
-        for (slot, probe) in metadata.probes.iter_mut().zip(probes) {
-            let proxy = probe.proxy.unwrap_or(probe.influence);
-            *slot = ProbeMetadata {
-                world_to_local: probe.world_to_local.to_cols_array_2d(),
-                center: probe
-                    .center
-                    .extend(f32::from(probe.proxy.is_some()))
-                    .to_array(),
-                influence_min: probe.influence.min.extend(0.).to_array(),
-                influence_max: probe.influence.max.extend(0.).to_array(),
-                blend: probe.blend.extend(0.).to_array(),
-                proxy_min: proxy.min.extend(0.).to_array(),
-                proxy_max: proxy.max.extend(0.).to_array(),
-                sphere: probe
-                    .world_to_local
-                    .inverse()
-                    .transform_point3((probe.influence.min + probe.influence.max) * 0.5)
-                    .extend((probe.influence.max - probe.influence.min).length() * 0.5)
-                    .to_array(),
-            };
-        }
+        let placements: Vec<_> = probes.iter().map(Placement::new).collect();
         let texture = cube_array(
             device,
             "baked specular probes",
@@ -230,13 +285,19 @@ impl UploadedProbes {
         }
         Ok(Self {
             view: cube_array_view(&texture),
-            metadata: collection_buffer(
-                device,
-                "baked specular probe collection",
-                &metadata,
-                &grid,
-            ),
+            metadata: collection(device, &placements),
+            placements,
         })
+    }
+
+    /// Moves the render origin by `by` (`Scene::move_origin`): each probe's
+    /// centre and frame, and the world grid built over them anew. A
+    /// capture's radiance is about its centre and is unchanged.
+    pub(crate) fn move_origin(&mut self, device: &wgpu::Device, by: Vec3) {
+        for placement in &mut self.placements {
+            *placement = placement.translated(by);
+        }
+        self.metadata = collection(device, &self.placements);
     }
 
     pub(crate) fn empty(device: &wgpu::Device) -> Self {
@@ -257,6 +318,7 @@ impl UploadedProbes {
                 &CollectionMetadata::new(&grid),
                 &grid,
             ),
+            placements: Vec::new(),
         }
     }
 }

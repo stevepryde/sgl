@@ -3,7 +3,7 @@
 //! fills, with the buffers that hold them.
 use super::SceneError;
 use crate::content::transient::{
-    FogVolume, Glow, HeatDistortion, MAX_DISPLACEMENT_PIXELS, MAX_VERTICES,
+    FogVolume, Glow, GlowKind, HeatDistortion, MAX_DISPLACEMENT_PIXELS, MAX_VERTICES,
 };
 use crate::shading::fog::{self, FogVolumeRecord};
 use crate::shading::vertex::GlowVertex;
@@ -13,9 +13,13 @@ pub(crate) struct Transient {
     /// Additive glow vertices; `glow_count` of them are drawn.
     pub glow: wgpu::Buffer,
     pub glow_count: u32,
+    /// The glow as the game gave it, which a render origin move translates.
+    glow_vertices: Vec<Glow>,
     /// Heat triangle vertices; `heat_count` of them are drawn.
     pub heat: wgpu::Buffer,
     pub heat_count: u32,
+    /// The heat triangles as the game gave them.
+    heat_vertices: Vec<HeatDistortion>,
     /// Mist positions, back to front from the last sorted eye.
     pub mist_positions: Vec<[f32; 3]>,
     pub mist: wgpu::Buffer,
@@ -25,6 +29,8 @@ pub(crate) struct Transient {
     /// The world corners of each of the scene's fog volumes, in the records'
     /// order.
     pub fog_volume_corners: Vec<[Vec3; 8]>,
+    /// The fog volumes as the game gave them.
+    fog_volume_list: Vec<FogVolume>,
 }
 
 impl Transient {
@@ -38,6 +44,7 @@ impl Transient {
                 mapped_at_creation: false,
             }),
             glow_count: 0,
+            glow_vertices: Vec::new(),
             heat: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("bounded heat vertices"),
                 size: (MAX_VERTICES * std::mem::size_of::<HeatDistortion>()) as u64,
@@ -45,10 +52,12 @@ impl Transient {
                 mapped_at_creation: false,
             }),
             heat_count: 0,
+            heat_vertices: Vec::new(),
             mist: mist_buffer(device, 1),
             mist_positions: Vec::new(),
             fog_volumes: fog_volume_buffer(device, 1),
             fog_volume_corners: Vec::new(),
+            fog_volume_list: Vec::new(),
         }
     }
 
@@ -75,6 +84,17 @@ impl Transient {
         if !volumes.iter().all(valid) {
             return Err(SceneError::InvalidFogVolume);
         }
+        self.write_fog_volumes(device, queue, volumes);
+        Ok(())
+    }
+
+    /// Writes `volumes`' records, growing the retained buffer as needed.
+    fn write_fog_volumes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        volumes: &[FogVolume],
+    ) {
         let records: Vec<_> = volumes.iter().map(FogVolumeRecord::new).collect();
         let bytes: &[u8] = bytemuck::cast_slice(&records);
         if bytes.len() as u64 > self.fog_volumes.size() {
@@ -84,7 +104,7 @@ impl Transient {
             queue.write_buffer(&self.fog_volumes, 0, bytes);
         }
         self.fog_volume_corners = volumes.iter().map(fog::corners).collect();
-        Ok(())
+        self.fog_volume_list = volumes.to_vec();
     }
 
     /// Replaces the mist's positions, growing the retained buffer as needed.
@@ -121,6 +141,7 @@ impl Transient {
         if !bytes.is_empty() {
             queue.write_buffer(&self.glow, 0, bytes);
         }
+        self.glow_vertices = vertices.to_vec();
     }
 
     pub fn update_heat(
@@ -145,7 +166,37 @@ impl Transient {
         if self.heat_count > 0 {
             queue.write_buffer(&self.heat, 0, bytemuck::cast_slice(vertices));
         }
+        self.heat_vertices = vertices.to_vec();
         Ok(())
+    }
+
+    /// Moves the render origin by `by` (`Scene::move_origin`): the glow,
+    /// heat and mist positions and the fog volumes' centres, rewritten as
+    /// their updates write them.
+    pub fn move_origin(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, by: Vec3) {
+        let moved = |position: [f32; 3]| (Vec3::from_array(position) - by).to_array();
+        let mut glow = std::mem::take(&mut self.glow_vertices);
+        for vertex in &mut glow {
+            vertex.position = moved(vertex.position);
+            if let GlowKind::Line { other, .. } = &mut vertex.kind {
+                *other = moved(*other);
+            }
+        }
+        self.update_glow(device, queue, &glow);
+        for vertex in &mut self.heat_vertices {
+            vertex.position = moved(vertex.position);
+        }
+        if !self.heat_vertices.is_empty() {
+            queue.write_buffer(&self.heat, 0, bytemuck::cast_slice(&self.heat_vertices));
+        }
+        for position in &mut self.mist_positions {
+            *position = moved(*position);
+        }
+        let mut volumes = std::mem::take(&mut self.fog_volume_list);
+        for volume in &mut volumes {
+            volume.center -= by;
+        }
+        self.write_fog_volumes(device, queue, &volumes);
     }
 
     /// Orders the mist back to front from `eye`, as Three.js orders

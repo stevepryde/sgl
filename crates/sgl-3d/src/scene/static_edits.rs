@@ -28,6 +28,11 @@ pub(crate) fn posed_bounds(bounds: [Vec3; 2], pose: Mat4) -> [Vec3; 2] {
         min = min.min(p);
         max = max.max(p);
     }
+    outward(min, max)
+}
+
+/// The `f32` box that holds the `f64` box from `min` to `max`.
+fn outward(min: DVec3, max: DVec3) -> [Vec3; 2] {
     let down = |v: f64| {
         let rounded = v as f32;
         if f64::from(rounded) > v {
@@ -105,6 +110,16 @@ impl StaticEdits {
     /// them until it changes.
     pub fn edits(&self) -> u64 {
         self.edits
+    }
+
+    /// Moves the render origin by `by` (`Scene::move_origin`): the pending
+    /// bounds, rounded outward, so they still hold what the edits touched.
+    /// It is no static edit.
+    pub fn move_origin(&mut self, by: Vec3) {
+        let by = by.as_dvec3();
+        for bounds in &mut self.pending {
+            *bounds = outward(bounds[0].as_dvec3() - by, bounds[1].as_dvec3() - by);
+        }
     }
 
     /// Commits a submitted frame: its edits are no longer pending.

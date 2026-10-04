@@ -105,6 +105,8 @@ pub enum SceneError {
     /// A deforming model's instances move and keep their model, and it
     /// takes no part in levels of detail.
     DeformingModel,
+    /// A render origin (`Scene::move_origin`) is not finite.
+    InvalidOrigin,
     /// The content would exceed a limit of the device.
     DeviceLimit,
     /// The specular probe collection was refused.
@@ -189,6 +191,7 @@ impl std::fmt::Display for SceneError {
             Self::DeformingModel => {
                 "a deforming model's instances move and keep their model, and it takes no part in levels of detail"
             }
+            Self::InvalidOrigin => "a render origin must be finite",
             Self::DeviceLimit => "the content exceeds a limit of the device",
             Self::Probe(error) => return error.fmt(f),
         })

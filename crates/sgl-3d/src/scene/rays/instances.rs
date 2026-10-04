@@ -232,6 +232,12 @@ impl RayInstances {
         self.written.len()
     }
 
+    /// The static BVH must be built again before a ray reads it: what it
+    /// bounds moved with the render origin.
+    pub fn rebuild_statics(&mut self) {
+        self.statics_built = None;
+    }
+
     /// Whether the static BVH must be built again after `edits` static
     /// edits (`StaticEdits::edits`).
     pub fn statics_stale(&self, edits: u64) -> bool {

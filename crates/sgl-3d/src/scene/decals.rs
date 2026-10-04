@@ -214,6 +214,15 @@ impl Decals {
         packed
     }
 
+    /// Moves the render origin by `by` (`Scene::move_origin`): each decal's
+    /// position, whose record the next upload rewrites with every other.
+    pub fn move_origin(&mut self, by: glam::Vec3) {
+        for (_, decal) in self.slots.iter_mut() {
+            decal.position -= by;
+        }
+        self.stale |= !self.slots.is_empty();
+    }
+
     /// Counts `decal`'s images as used once more, or once less.
     fn count_users(&mut self, decal: &Decal, more: bool) {
         let mut images = vec![decal.base_color];
