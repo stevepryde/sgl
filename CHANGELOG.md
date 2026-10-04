@@ -30,9 +30,10 @@ full API details.
   depth and motion, so TAA reprojects them by the receiver rather than by
   what lies behind it, and what is seen through a receiver follows the
   receiver's motion. The opaque surface under a receiver keeps its probe and
-  sky specular, and world-space rays skip it. A scene that holds a receiver
-  allocates two render-size targets (12 bytes per pixel); one without pays
-  nothing. The blended pipelines bind two more textures, so the device floor
+  sky specular, and world-space rays skip it. The renderer allocates two
+  render-size targets (12 bytes per pixel) in the first frame whose scene
+  holds a receiver and keeps them; a renderer that has never rendered a
+  receiver pays nothing. The blended pipelines bind two more textures, so the device floor
   (S3D-1) rises from 17 to 19 sampled textures per shader stage; no known
   adapter offers 17 or 18 (WebGPU in Chromium reports 16 or 48, Metal, DX12
   and Vulkan 31 or more).

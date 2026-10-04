@@ -14,8 +14,8 @@
 //! encodes them, `targets.rs` allocates what they read and write.
 mod targets;
 
-use super::cached_group::CachedGroup;
 use crate::shading::Module;
+use crate::view::cached_group::CachedGroup;
 use crate::view::reflection_camera;
 use glam::{Mat4, Vec4};
 use targets::Targets;

@@ -175,7 +175,7 @@ impl Renderer {
         Ok(Self {
             opaque: Opaque::new(device, &bindings.unlit),
             reflections: Reflections::new(device, queue, render, &first_frame),
-            transparent: Transparent::new(device, &bindings.unlit, &targets),
+            transparent: Transparent::new(device, &bindings.unlit, &bindings.blended, &targets),
             exposure: Exposure::new(device),
             antialiasing,
             motion_blur: MotionBlur::new(device),

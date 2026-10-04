@@ -2,9 +2,9 @@
 //! and their environment and probe specular from the probes that tiled
 //! culling finds for each screen tile; and the composition that blends a
 //! screen-space method's reflections over it.
-use super::cached_group::CachedGroup;
 use crate::shading;
 use crate::view::bindings::FogVolume;
+use crate::view::cached_group::CachedGroup;
 use crate::view::reflection_camera;
 use wgpu::util::DeviceExt;
 

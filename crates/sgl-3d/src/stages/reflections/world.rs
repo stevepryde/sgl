@@ -2,8 +2,8 @@
 //! their denoiser, as Wicked Engine's RT reflections run them
 //! (`Postprocess_RTReflection`, wiRenderer.cpp): trace at half resolution,
 //! spatial resolve, temporal accumulation, bilateral upsample.
-use super::cached_group::CachedGroup;
 use crate::shading;
+use crate::view::cached_group::CachedGroup;
 use crate::view::history::HistoryFrame;
 use crate::view::pipelines::LitConstants;
 use crate::view::reflection_camera;

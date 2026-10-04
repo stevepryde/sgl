@@ -26,7 +26,8 @@
 //!   `motionVectorScale / renderSize` (`fsr2Dispatch`,
 //!   `LoadInputMotionVector`) and reprojects to `uv + motion`
 //!   (`ffx_fsr2_reproject.h`), so the scale is minus the render size.
-//! - Depth: SGL3D's infinite reversed-Z `stable_depth`, flagged
+//! - Depth: SGL3D's infinite reversed-Z surface depth (the opaque depth, or
+//!   the receivers' over it: the Surface contract), flagged
 //!   `FFX_FSR2_ENABLE_DEPTH_INVERTED | FFX_FSR2_ENABLE_DEPTH_INFINITE`, with
 //!   `cameraNear = FLT_MAX` and `cameraFar` the near plane, as the sample and
 //!   the SDK's debug checker expect for that configuration.

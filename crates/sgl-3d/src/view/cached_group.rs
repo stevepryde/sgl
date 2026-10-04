@@ -1,6 +1,7 @@
-//! A bind group kept across frames while it binds the same resources. The
-//! reflection passes' resources change only at a resize, a history swap or a
-//! new input, so making their groups every frame only costs encode time.
+//! A bind group kept across frames while it binds the same resources, which
+//! stages lay out for their own passes. Their resources change only at a
+//! resize, a history swap or a new input, so making their groups every frame
+//! only costs encode time.
 
 /// What one entry binds, by identity.
 enum Bound {
@@ -38,7 +39,7 @@ impl Bound {
 /// One bind group of `layout`, remade only when an entry binds a resource
 /// it does not: a reallocated target, the other half of a history pair or
 /// another input.
-pub(super) struct CachedGroup {
+pub(crate) struct CachedGroup {
     layout: wgpu::BindGroupLayout,
     bound: Vec<(u32, Bound)>,
     group: Option<wgpu::BindGroup>,

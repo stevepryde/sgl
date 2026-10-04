@@ -1008,9 +1008,10 @@ instance, so that replacing its geometry is no static edit. `Scene::set_model`
 rebuilds that model's ray source each call, so a mesh regenerated every frame
 pays a BVH build every frame: keep the grid as coarse as the look allows, or
 animate a deforming model with `set_instance_deformation`, which rays do not
-see. The surface's targets (a depth and an RGBA16F layer, 12 bytes per render
-pixel) are allocated from the first frame of a scene that holds a receiver; a
-scene without one pays nothing.
+see. The renderer allocates the surface's targets (a depth and an RGBA16F
+layer, 12 bytes per render pixel) in the first frame whose scene holds a
+receiver and keeps them from then on; a renderer that has never rendered a
+receiver pays nothing.
 
 ## Skinned meshes and morph targets
 
@@ -1227,10 +1228,10 @@ stage (each stage's documentation lists its own), are:
   `SSR` passes (named after DiligentFX's debug groups), Velvet's `Godot SSR`
   passes, `world reflection rays`, `world reflection denoise` and
   `reflection composition`;
-- transparent: `receivers` (the receiver pass, after opaque), `blended`
+- transparent: `receivers` (the receiver pass, after opaque); `blended`
   (blended surfaces) and `transparent` (additive effects and mist), each
   drawn into the reflection input while screen-space reflections run and onto
-  the composed frame, and `heat distortion`;
+  the composed frame; and `heat distortion`;
 - exposure: `exposure`, while automatic;
 - antialiasing: `TAA` or `FSR2` (all of FSR2's passes);
 - motion blur: `motion blur`;

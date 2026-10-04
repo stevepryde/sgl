@@ -5,6 +5,7 @@ pub(crate) mod heat;
 pub(crate) mod mist;
 
 use crate::shading::bind::{self, BlendedTrace};
+use crate::view::cached_group::CachedGroup;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::GeometryPass;
 use crate::view::targets::{SharedTargets, attachment};
@@ -57,25 +58,39 @@ pub(crate) struct Transparent {
     /// No screen-space result, which the blended draws bind while none
     /// composes: 1×1, zero.
     no_reflections: wgpu::TextureView,
-    /// The blended group 3's `BlendedTrace` of the draw into the incident
-    /// radiance, which composes nothing, and of the draw onto the composite.
-    traces: [wgpu::Buffer; 2],
+    /// The blended group 3 of the draw into the incident radiance, which
+    /// composes nothing, and of the draw onto the composite.
+    blended: [BlendedGroup; 2],
+}
+
+/// A blended draw's group 3 (`shading::bind::blended`), kept while it binds
+/// the same method result and surface depth, and its `BlendedTrace`
+/// uniform, written when the values change.
+struct BlendedGroup {
+    group: CachedGroup,
+    trace: wgpu::Buffer,
+    written: Option<BlendedTrace>,
 }
 
 impl Transparent {
+    /// The stage over `unlit` group 0 for its effects and mist and `blended`
+    /// group 3 (`shading::bind::blended`) for its blended draws.
     pub fn new(
         device: &wgpu::Device,
         unlit: &wgpu::BindGroupLayout,
+        blended: &wgpu::BindGroupLayout,
         targets: &SharedTargets,
     ) -> Self {
         let effects = effects::Effects::new(device, unlit);
-        let trace = |label| {
-            device.create_buffer(&wgpu::BufferDescriptor {
+        let group = |label| BlendedGroup {
+            group: CachedGroup::new(blended.clone()),
+            trace: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
                 size: size_of::<BlendedTrace>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            })
+            }),
+            written: None,
         };
         Self {
             depth_group: effects.depth_group(device, &targets.depth),
@@ -88,9 +103,9 @@ impl Transparent {
                 [1, 1],
                 crate::shading::gbuffer::COLOR,
             ),
-            traces: [
-                trace("blended incident trace"),
-                trace("blended composite trace"),
+            blended: [
+                group("blended incident trace"),
+                group("blended composite trace"),
             ],
         }
     }
@@ -149,9 +164,9 @@ impl Transparent {
     }
 
     /// Blended surfaces, glow and mist onto `beauty`.
-    pub fn encode(&self, ctx: &mut FrameContext<'_>, beauty: Beauty<'_>) {
+    pub fn encode(&mut self, ctx: &mut FrameContext<'_>, beauty: Beauty<'_>) {
         let targets: &SharedTargets = ctx.targets;
-        // The draw's slot in `traces`, and the method's result it composes.
+        // The draw's slot in `blended`, and the method's result it composes.
         let (beauty, fsr2_masks, (trace, reflections)) = match beauty {
             Beauty::Incident(view) => (view, None, (0, None)),
             Beauty::Composite { reflections } => (
@@ -163,8 +178,13 @@ impl Transparent {
         // The first pass that writes FSR2's masks clears them.
         let blended = !ctx.views.blended.is_empty();
         if blended {
-            let group = self.blended_group(ctx, &self.traces[trace], reflections);
-            Self::encode_blended(ctx, beauty, fsr2_masks, &group);
+            let group = Self::blended_group(
+                ctx,
+                &mut self.blended[trace],
+                &self.no_reflections,
+                reflections,
+            );
+            Self::encode_blended(ctx, beauty, fsr2_masks, group);
         }
         let draw = ctx.effective.effects;
         if draw || (fsr2_masks.is_some() && !blended) {
@@ -212,43 +232,37 @@ impl Transparent {
         }
     }
 
-    /// A blended draw's group 3, its `BlendedTrace` written to `trace`:
-    /// the screen-space method's `reflections` with its cutoff and fade
-    /// where the draw composes them, else no result, and the frame's surface
-    /// depth.
-    fn blended_group(
-        &self,
+    /// A blended draw's group 3 `blended`: the screen-space method's
+    /// `reflections` with its cutoff and fade where the draw composes them,
+    /// else `no_reflections` and no trace, and the frame's surface depth.
+    fn blended_group<'a>(
         ctx: &FrameContext<'_>,
-        trace: &wgpu::Buffer,
+        blended: &'a mut BlendedGroup,
+        no_reflections: &wgpu::TextureView,
         reflections: Option<&wgpu::TextureView>,
-    ) -> wgpu::BindGroup {
+    ) -> &'a wgpu::BindGroup {
         let traced = ctx.effective.screen_space.zip(reflections);
         let values = traced.map_or_else(BlendedTrace::default, |(ssr, _)| BlendedTrace {
             cutoff: ssr.cutoff,
             fade: ssr.fade,
             padding: [0.; 2],
         });
-        ctx.queue
-            .write_buffer(trace, 0, bytemuck::bytes_of(&values));
-        let reflections = traced.map_or(&self.no_reflections, |(_, view)| view);
-        ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blended reflections"),
-            layout: &ctx.bindings.blended,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: bind::blended::REFLECTIONS,
-                    resource: wgpu::BindingResource::TextureView(reflections),
-                },
-                wgpu::BindGroupEntry {
-                    binding: bind::blended::SURFACE_DEPTH,
-                    resource: wgpu::BindingResource::TextureView(ctx.surface.depth),
-                },
-                wgpu::BindGroupEntry {
-                    binding: bind::blended::TRACE,
-                    resource: trace.as_entire_binding(),
-                },
+        if blended.written != Some(values) {
+            ctx.queue
+                .write_buffer(&blended.trace, 0, bytemuck::bytes_of(&values));
+            blended.written = Some(values);
+        }
+        let reflections = traced.map_or(no_reflections, |(_, view)| view);
+        let texture = wgpu::BindingResource::TextureView;
+        blended.group.get(
+            ctx.device,
+            "blended reflections",
+            &[
+                (bind::blended::REFLECTIONS, texture(reflections)),
+                (bind::blended::SURFACE_DEPTH, texture(ctx.surface.depth)),
+                (bind::blended::TRACE, blended.trace.as_entire_binding()),
             ],
-        })
+        )
     }
 
     /// The camera's blended surfaces onto `beauty`, back to front, tested

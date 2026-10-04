@@ -62,7 +62,7 @@ pub(crate) mod blended {
 /// The screen-space method's cutoff and fade the blended draw composes its
 /// result with; matches `BlendedTrace` in bind_blended.wgsl.
 #[repr(C)]
-#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct BlendedTrace {
     /// Perceptual roughness at which the method traces no lobe; 0 composes
     /// nothing.

@@ -57,8 +57,9 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   the last submitted frame.
 - **Alpha modes** (`AlphaMode`, glTF `alphaMode`): masked materials are cut
   out below their cutoff in every view, shadow and ray; blended ones are lit,
-  fogged and drawn back to front over the frame, writing no depth or motion,
-  casting no shadow. [Alpha-masked and blended
+  fogged and drawn back to front over the frame, writing no depth or motion
+  unless marked to receive screen-space reflections, and casting no shadow.
+  [Alpha-masked and blended
   materials](../README.md#alpha-masked-and-blended-materials).
 - **Blended receivers** (`AlphaMode::Blend { receives_screen_space_reflections:
   true }`): water or glass, with the normals the game animates, that
