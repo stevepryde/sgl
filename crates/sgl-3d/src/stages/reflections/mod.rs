@@ -11,6 +11,7 @@ use crate::settings::ReflectionMethod;
 use crate::view::bindings::FogVolume;
 use crate::view::effective::{Effective, ScreenSpace};
 use crate::view::frame::FrameContext;
+use crate::view::pipelines::LitConstants;
 use crate::view::post_fx::{self, PostFx};
 use crate::view::targets::SharedTargets;
 
@@ -232,7 +233,7 @@ impl Reflections {
                 ctx.device,
                 ctx.queue,
                 [ctx.bindings.ray_hit_lit(), &ctx.scene.scene_group],
-                ctx.scene.lights.holds_rect(),
+                LitConstants::of(ctx.scene),
                 ctx.history,
                 ctx.sizes.render,
                 world::Inputs {

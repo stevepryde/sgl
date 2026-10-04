@@ -496,6 +496,13 @@ and no normal fade.
 - The camera's clusters list decals after the lights, each as the sphere
   about its box, as Bevy clusters its decals, so a pixel pays only for the
   decals whose bounds reach its cluster.
+- The lit pipelines apply decals only while the scene holds one, so a scene
+  without them pays nothing for them; the first decal added, or the last
+  removed, compiles the other set. Neither Godot (b130438, whose clustered
+  pass walks each cluster's decals whatever the scene holds) nor Bevy
+  (9d12036, whose `CLUSTERED_DECALS_ARE_USABLE` follows the device)
+  specialises on decals; a game that adds its first decal mid-play and
+  cannot afford that compile adds its decals at load.
 - The scene packs every image its decals use into one atlas of linear
   16-bit texels with five mips, as Godot packs its decal atlas: each image
   once for each colour space its maps sample it in, with a border that keeps

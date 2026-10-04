@@ -19,6 +19,10 @@
 // `sorting_offset` (decals apply in identity order), and its distance
 // fade.
 
+// Whether the pipeline applies decals: off while the scene holds none
+// (view/pipelines.rs), so a scene without them pays nothing for them.
+override decals_enabled:bool=true;
+
 // The surface values decals change.
 struct DecalSurface {
  base:vec3<f32>,
@@ -37,6 +41,9 @@ fn decal_texel(rect:vec4<f32>,uv:vec2<f32>,ddx:vec2<f32>,ddy:vec2<f32>)->vec4<f3
 // the position's screen derivatives, which select the atlas's mips (Godot's
 // simulated derivatives); a ray hit, which has none, passes zero.
 fn decal_surface(surface:DecalSurface,range:ClusterRange,position:vec3<f32>,geometry_normal:vec3<f32>,position_dx:vec3<f32>,position_dy:vec3<f32>)->DecalSurface {
+ if !decals_enabled {
+  return surface;
+ }
  var result=surface;
  let first=range.first+range.live+range.baked;
  for (var at=first;at<first+range.decals;at++) {

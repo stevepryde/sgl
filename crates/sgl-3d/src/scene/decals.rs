@@ -84,6 +84,12 @@ impl Decals {
         self.slots.get(id).ok_or(SceneError::UnknownDecal)
     }
 
+    /// Whether the scene holds no decal: the lit pipelines apply decals only
+    /// while it holds one.
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
     /// Every decal, in index order: the ones every view lists.
     pub fn iter(&self) -> impl Iterator<Item = (DecalId, &Decal)> {
         self.slots.iter()

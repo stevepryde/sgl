@@ -15,6 +15,22 @@ full API details.
 
 ## Unreleased
 
+### Scenes without decals compile the decal path out
+
+- **Scope:** `sgl-3d` decals (`Scene::add_decal`, `remove_decal`). Every lit
+  raster pass and world-space ray hit ran the decal path, so a scene
+  without decals paid a fixed per-pixel cost for it. The lit pipelines and
+  the world-space reflection trace now apply decals only while the scene
+  holds one, as they already shade rectangle lights only while it holds
+  one. Frames are unchanged; adding the scene's first decal, or removing its
+  last, compiles the lit pipelines for the other case before the next
+  frame draws.
+- **Migration:** no game-code changes. A game that adds its first decal
+  mid-play and cannot afford that compile adds its decals at load.
+  Afterwards, compare the `opaque geometry + lighting` timing group (or
+  `geometry` and `opaque lighting` where the pass is split) in a scene
+  without decals.
+
 ### Glow kinds are typed and the tapered profile is the game's
 
 - **Scope:** `sgl-3d` `effects::Glow`. `Glow::kind: f32` (0 uniform, 1

@@ -302,6 +302,108 @@ fn decals_change_base_colour_normal_and_roughness_inside_their_box_alone() {
     }
 }
 
+// Plausible defects: the lit pipelines of a scene without decals, which
+// compile the decal path out, shading a surface otherwise than those with
+// it, such as losing its mapped normal, roughness or metallic with the
+// decals, or losing another constant with theirs so the rectangle light
+// drops out. The oracle is a decal's documented reach, the surfaces inside
+// its box: a scene whose only decal lies behind the camera renders, pixel
+// for pixel, the frame of the same scene without it, the first with the
+// decal path compiled in and the second without; so does the scene once the
+// decal is removed again.
+#[test]
+fn a_decal_out_of_view_leaves_the_frame_as_without_decals() {
+    use crate::settings::{Antialiasing, Bloom};
+    use crate::{Light, LightShape};
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut asset = test_support::cube();
+    asset.meshes = vec![square(Vec3::new(0., 0., -6.), 8.)];
+    asset.images = vec![flat([166, 204, 255, 255])];
+    asset.materials[0].normal_texture = Some(0);
+    test_support::add_static(&device, &queue, &mut scene, asset);
+    let light = Light {
+        position: Vec3::new(1., 1., -4.),
+        range: 10.,
+        ..Light::default()
+    };
+    scene.add_light(&device, &queue, light).unwrap();
+    let panel = LightShape::Rect {
+        direction: -Vec3::Z,
+        width_axis: Vec3::X,
+        width: 1.,
+        height: 0.5,
+    };
+    scene
+        .add_light(
+            &device,
+            &queue,
+            Light {
+                position: Vec3::new(-2., 0., -5.),
+                shape: panel,
+                ..light
+            },
+        )
+        .unwrap();
+    let image = scene.add_decal_image(flat([255, 0, 0, 255])).unwrap();
+    let settings = Settings {
+        antialiasing: Antialiasing::Off,
+        bloom: Bloom::Off,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: perspective(1., 1., 0.1),
+        eye: Vec3::ZERO,
+    });
+    let output = crate::view::targets::target(
+        &device,
+        "decal frames",
+        SIZE,
+        crate::shading::gbuffer::COLOR,
+    );
+    let mut frame = |scene: &mut Scene| {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(scene);
+        test_support::read(&device, &queue, output.texture(), 8)
+    };
+    let without = frame(&mut scene);
+    assert!(
+        without.chunks(8).any(|pixel| pixel != &without[..8]),
+        "the lights shade the floor across the frame"
+    );
+    // The camera looks down −Z.
+    let behind = Decal {
+        position: Vec3::new(0., 0., 10.),
+        size: Vec3::ONE,
+        ..Decal::new(image)
+    };
+    let decal = scene.add_decal(&device, &queue, behind).unwrap();
+    assert!(
+        frame(&mut scene) == without,
+        "a decal behind the camera changed the frame"
+    );
+    scene.remove_decal(decal).unwrap();
+    assert!(
+        frame(&mut scene) == without,
+        "removing the decal changed the frame"
+    );
+}
+
 /// Runs `observation` in compute under the frame's ray-hit lit group 0 and
 /// the scene's group 1, and reads back its `words` vec4 outputs.
 #[allow(clippy::too_many_arguments)]
