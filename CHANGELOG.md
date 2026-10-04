@@ -34,6 +34,24 @@ full API details.
   notices for the new bundled notice. Afterwards, compare GPU memory and the
   `world reflection rays` timing group on the game's route.
 
+### Crystal's reflections no longer smear under fast motion
+
+- **Scope:** `sgl-post-fx` `ScreenSpaceReflection`, and so `sgl-3d`
+  `ReflectionMethod::Crystal`. Its temporal pass reprojected reflections by a
+  virtual point placed too far behind the surface and kept surface-motion
+  history that no longer matched the reflection, so on glossy floors in fast
+  motion reflections of bright fixtures smeared into streaks over several
+  frames. The virtual point now lies the hit distance beyond the surface along
+  the view ray, a surface history far from the current neighbourhood is
+  rejected, both as AMD's reflection denoiser does, and history is clamped to
+  Wicked Engine's 2 standard deviations instead of 2.5. Still reflections
+  measured unchanged (the 2-deviation box applies to them too).
+  `sgl-post-fx` now carries AMD FidelityFX Denoiser's MIT notice
+  (`LICENSE-amd-fidelityfx-denoiser.txt`).
+- **Migration:** no game-code changes. Regenerate the game's distribution
+  notices for the new bundled notice. Afterwards, look at Crystal's
+  reflections on glossy floors while the camera moves fast.
+
 ### An example writes the example grate
 
 - **Scope:** `sgl-3d` adds the `export_grate` example, which writes

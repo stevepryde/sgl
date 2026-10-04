@@ -3,6 +3,11 @@
 // f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b). Copyright Diligent Graphics LLC,
 // licensed under the Apache License, Version 2.0 (vendor/DiligentFX/License.txt).
 // Modified: translated from HLSL to WGSL; see crates/sgl-post-fx/README.md.
+// DFX-25 adds the surface-reprojection discard of AMD's reflection denoiser,
+// ffx-reflection-dnsr/ffx_denoiser_reflections_reproject.h
+// (https://github.com/GPUOpen-Effects/FidelityFX-Denoiser, revision
+// d7dfecbabe7b9523b14e7b067216e06b86e8d189), MIT licensed
+// (LICENSE-amd-fidelityfx-denoiser.txt).
 
 #include "ScreenSpaceReflectionStructures.fxh"
 #include "SSR_Common.fxh"
@@ -251,11 +256,19 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let PrevDistanceIncidentPoint = abs(Luminance(PrevColorIncidentPoint.rgb) - Luminance(PixelStat.Mean.rgb));
     let PrevDistanceReflectionHit = abs(Luminance(PrevColorReflectionHit.rgb) - Luminance(PixelStat.Mean.rgb));
 
-    let PrevCoord = select(PrevReflectionHit, PrevIncidentPoint, PrevDistanceIncidentPoint < PrevDistanceReflectionHit);
+    let UseIncidentPoint = PrevDistanceIncidentPoint < PrevDistanceReflectionHit;
+    let PrevCoord = select(PrevReflectionHit, PrevIncidentPoint, UseIncidentPoint);
     let Reprojection = ComputeReprojection(PrevCoord, Depth);
 
+    // PROVENANCE.md DFX-25: AMD's reflection denoiser keeps the surface
+    // (incident point) reprojection only while it lies near the current
+    // neighbourhood; otherwise the reflection moved by its own parallax and the
+    // history is rejected (FFX_DNSR_Reflections_PickReprojection).
+    let IncidentOffset = PrevColorIncidentPoint.rgb - PixelStat.Mean.rgb;
+    let IncidentAgrees = dot(IncidentOffset, IncidentOffset) < SSR_REPROJECT_SURFACE_DISCARD_VARIANCE_WEIGHT * length(PixelStat.Variance.rgb);
+
     var Output: PSOutput;
-    if (Reprojection.IsSuccess)
+    if (Reprojection.IsSuccess && (!UseIncidentPoint || IncidentAgrees))
     {
         let ColorMin = PixelStat.Mean - SSR_TEMPORAL_VARIANCE_GAMMA * PixelStat.StdDev;
         let ColorMax = PixelStat.Mean + SSR_TEMPORAL_VARIANCE_GAMMA * PixelStat.StdDev;

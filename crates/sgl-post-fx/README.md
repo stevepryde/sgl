@@ -28,7 +28,11 @@ files unedited.
   `radiance + (1 - confidence) * environment` (DFX-17). A ray more than the
   depth-buffer thickness behind a surface passes behind it, as Godot's
   hierarchical SSR traces (DFX-18). At full importance-sample bias a ray
-  follows the mirror direction, as Godot's SSR traces (DFX-20).
+  follows the mirror direction, as Godot's SSR traces (DFX-20). Its temporal
+  pass reprojects by the reflection's virtual point as AMD's reflection
+  denoiser places it, rejects a surface history far from the current
+  neighbourhood as AMD's does, and clamps to Wicked Engine's 2-deviation box
+  (DFX-25).
 - TAA accumulates a Halton-jittered frame into a history, rejecting by depth
   disocclusion and motion and clipping to the neighbourhood's variance box;
   `vendor/DiligentFX/PostProcess/TemporalAntiAliasing/README.md` describes it.
@@ -128,5 +132,7 @@ under the Apache License, Version 2.0 (`LICENSE.txt`, `vendor/*/License.txt`);
 neither ships a NOTICE file. DFX-14 and DFX-18 port Godot Engine code under
 the MIT licence (`LICENSE-godot.txt`); DFX-14's comes from Godot's TAA
 resolve, based on Spartan Engine's TAA, also MIT (`LICENSE-spartan.txt`).
-DFX-19 ports Bevy code under the MIT licence (`LICENSE-bevy.txt`). Every
-ported file states its origin and that it was modified.
+DFX-19 ports Bevy code under the MIT licence (`LICENSE-bevy.txt`), and
+DFX-25 AMD FidelityFX Denoiser code under the MIT licence
+(`LICENSE-amd-fidelityfx-denoiser.txt`). Every ported file states its origin
+and that it was modified.
