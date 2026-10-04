@@ -8,6 +8,15 @@ pub(crate) static XE_GTAO: crate::shading::Module = crate::shading::Module {
     deps: &[&crate::shading::GBUFFER],
 };
 
+/// The least search radius in metres: the low end of XeGTAO's expected
+/// range (`XeGTAO.h` `GTAOImGuiSettings`) and of Godot's
+/// `Environment::ssao_radius` (b130438 `scene/resources/environment.cpp`).
+/// The pass divides by the radius, so zero has no defined visibility.
+const MIN_RADIUS: f32 = 0.01;
+/// The greatest search radius in metres, to which XeGTAO's
+/// `GTAOImGuiSettings` clamps it.
+const MAX_RADIUS: f32 = 10000.;
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
@@ -113,6 +122,11 @@ impl AmbientOcclusion {
             add = -add;
         }
         let tan_half = [1.0 / projection[0][0], 1.0 / projection[1][1]];
+        let radius = if radius.is_nan() {
+            MIN_RADIUS
+        } else {
+            radius.clamp(MIN_RADIUS, MAX_RADIUS)
+        };
         for mip in 0..5 {
             let params = Params {
                 view: view.view,

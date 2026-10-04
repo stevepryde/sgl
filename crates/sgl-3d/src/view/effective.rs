@@ -29,7 +29,8 @@ pub(crate) struct ScreenSpace {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct AmbientOcclusion {
     pub quality: AmbientOcclusionQuality,
-    /// XeGTAO's search radius in world metres, positive and finite.
+    /// The frame's search radius in world metres, which XeGTAO's pass
+    /// clamps to the radii it takes.
     pub radius: f32,
 }
 

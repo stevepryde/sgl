@@ -748,10 +748,11 @@ baked direct/bounced irradiance and environment multiscattering retain their
 existing ownership. Probe captures and secondary rays do not consume
 camera-space AO. There are no substitute contact shadows.
 
-AO works with centered reversed-Z perspective cameras. Orthographic,
-off-axis and forward-depth cameras
-and nonpositive/nonfinite radii leave it ineffective while preserving the saved
-preference. Single-layer screen geometry cannot establish
+The radius is clamped to 0.01–10000 m (XeGTAO's expected minimum and its
+settings' maximum); `Settings::ambient_occlusion`
+alone turns AO off. AO works with centered reversed-Z perspective cameras.
+Orthographic, off-axis and forward-depth cameras leave it ineffective while
+preserving the saved preference. Single-layer screen geometry cannot establish
 offscreen or thin-occluder visibility; [the pinned XeGTAO catalogue](src/stages/opaque/ambient_occlusion/README.md)
 details approximations and numerical evidence.
 

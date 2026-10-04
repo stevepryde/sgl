@@ -347,3 +347,55 @@ fn completion_occludes_ambient_diffuse_by_the_frames_visibility() {
         );
     }
 }
+
+// Defects: a radius outside `FrameInput::ambient_occlusion_radius`'s
+// documented 0.01..=10000 m turns ambient occlusion off, which only
+// `Settings::ambient_occlusion` does (AR-5), or reaches XeGTAO, whose
+// falloff and sample spacing divide by it (a radius of -1 there darkens
+// this frame's mean visibility by half). The oracle is the frame at the
+// nearer end of that range.
+#[test]
+fn a_radius_outside_its_range_occludes_as_its_nearer_end() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let (mut scene, _, mut input) = box_on_floor(&device, &queue);
+    let settings = Settings {
+        scene_resolution: settings::SceneResolution::Full,
+        antialiasing: settings::Antialiasing::Off,
+        screen_space_reflections: settings::ScreenSpaceReflections::Off,
+        atmosphere: false,
+        bloom: settings::Bloom::Off,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
+    let mut visibility = |radius: f32| {
+        input.ambient_occlusion_radius = radius;
+        render(
+            &device,
+            &queue,
+            &mut scene,
+            &mut renderer,
+            &settings,
+            &input,
+            &output,
+            Quality::Medium,
+        );
+        let target = renderer
+            .diagnostic_target(diagnostics::DiagnosticTarget::AmbientOcclusion)
+            .unwrap_or_else(|| panic!("radius {radius} turned ambient occlusion off"));
+        read(&device, &queue, target.texture(), 4)
+    };
+    let least = visibility(0.01);
+    for radius in [0., -1., f32::NAN] {
+        assert!(
+            visibility(radius) == least,
+            "radius {radius} occluded otherwise than 0.01 m"
+        );
+    }
+    assert!(
+        visibility(f32::INFINITY) == visibility(10000.),
+        "an infinite radius occluded otherwise than 10000 m"
+    );
+}

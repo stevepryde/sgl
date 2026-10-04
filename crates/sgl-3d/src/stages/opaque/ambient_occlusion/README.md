@@ -11,9 +11,12 @@ Configuration is full-resolution FP32 (`XE_GTAO_FP32_DEPTHS`,
 NoiseIndex zero, and the upstream default one final denoise pass (beta 1.2).
 There is no history or temporal accumulation. Low/Medium/High/Ultra use the
 upstream 1×2, 2×2, 3×3, and 9×3 slice/step counts. The physical radius is
-multiplied by 1.457 internally, falloff fraction is 0.615, sample distribution
-power is 2, thin occluder compensation is zero, final power is 2.2, minimum
-visibility is 0.03, mip sampling offset is 3.30, and working scale is 1.5.
+clamped to 0.01–10000 m and multiplied by 1.457 internally.
+`GTAOImGuiSettings` clamps it to at most 10000 and expects at least 0.01 (its
+clamp's zero divides by zero in the falloff and sample spacing). The falloff
+fraction is 0.615, sample distribution power is 2, thin occluder compensation
+is zero, final power is 2.2, minimum visibility is 0.03, mip sampling offset
+is 3.30, and working scale is 1.5.
 The default small-radius fade, projected-normal 0.05 adjustment, pixel minimum
 1.3, and denoiser leak threshold/strength 2.5/0.5 are preserved upstream choices.
 
