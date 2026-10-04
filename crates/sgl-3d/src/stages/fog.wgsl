@@ -20,13 +20,14 @@
 //   at its box, where Godot's pow(0, 0) is undefined.
 // - Each froxel sums in f32, in the scene's order, the volumes whose froxel
 //   bounds hold it (fog.cpp's bounds, stages/fog/volume_froxels.rs), where
-//   Godot dispatches each volume over its bounds into fixed-point atomics,
-//   which WebGPU has only in buffers: no clear, extra pass or packing.
-//   Godot's packing drops a volume's density at or below 0.001, truncates it
-//   to 1/1024, and clamps its albedo weight to a density of 1 and its
-//   scattering to 1 (volumetric_fog.glsl's DENSITY_USED); here every medium
-//   scatters albedo × density, as Godot's environment medium does and
-//   Hillaire's albedo defines.
+//   Godot dispatches each volume over its bounds into fixed-point atomics:
+//   no clear, extra pass or packing. Godot's packing drops a volume's
+//   density at or below 0.001, truncates it to 1/1024, clamps its albedo
+//   weight to a density of 1 and its scattering to 1, and truncates that
+//   scattering to 11/11/10 bits (volumetric_fog.glsl's DENSITY_USED); here
+//   every medium scatters albedo × density, as Godot's environment medium
+//   does and Hillaire's albedo defines.
+// - Albedos are linear RGB, where Godot's fog colours are sRGB it converts.
 // - No GI injection: Godot injects VoxelGI and SDFGI, which SGL3D lacks.
 // - The lights are SGL3D's, in its units and falloff: the frame's two
 //   directional lights, one with cascades, and the camera's clustered point,
@@ -43,16 +44,17 @@
 //   it about the direction to its nearest point and fades it in over 10 cm
 //   in front of the face. Bounded by π, it needs no 1 m distance clamp,
 //   which Godot gives area lights against jitter flicker.
-// - No light has Godot's shadow_opacity.
+// - No light has Godot's shadow_opacity (stevepryde/sgl#65).
 // - The ambient is the frame's hemisphere fill and environment diffuse
 //   averaged over the sphere, which an isotropic phase scatters, where Godot
 //   samples its sky upward, at a mip chosen by the density, and along the
-//   view, blended by |g|. Fog::ambient defaults to 1 where Godot's
-//   ambient_inject defaults to 0, which stevepryde/sgl#69 decides.
+//   view, blended by |g|, mixed with its ambient colour by its sky
+//   contribution. Fog::ambient defaults to 1 where Godot's ambient_inject
+//   defaults to 0 (stevepryde/sgl#69).
 // - Froxels lie where the camera's unjittered projection puts them, and in
-//   the last frame's volume where its view-projection does, where Godot
-//   interpolates frustum sizes from the near plane and reprojects through
-//   the camera's transform alone, so a changing projection reprojects too.
+//   the last frame's volume where its view-projection does, so a changing
+//   projection reprojects too, where Godot interpolates frustum sizes from
+//   the near plane and reprojects through the camera's transform alone.
 // - A froxel without history (the first fog frame, a new size, the camera's
 //   reset) keeps none, where Godot blends from a cleared volume, so its fog
 //   fades in, and across a cut.
@@ -63,9 +65,10 @@
 // - The integration steps along the view ray through each slice, where
 //   Godot steps the slice's depth, so fog off the view's axis is as dense as
 //   on it.
-// - The sky takes the whole fog, without Godot's sky affect, and nothing
-//   fogs under an orthographic camera, which Godot's fog covers: froxels are
-//   placed by a perspective projection.
+// - The sky takes the whole fog, without Godot's sky affect
+//   (stevepryde/sgl#61), and nothing fogs under an orthographic camera,
+//   which Godot's fog covers: froxels are placed by a perspective
+//   projection.
 
 // The froxels, first to last, that the scene's fog volume at `volume` in
 // fog_volumes reaches (stages/fog/volume_froxels.rs FogVolumeFroxels).

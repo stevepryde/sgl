@@ -311,24 +311,26 @@ Where it differs from Godot's fog, and why:
 
 - The frame's medium takes a fog material's height falloff
   (`height_falloff`), so height fog needs no volume.
-- Every medium scatters `albedo` × density in full precision. Godot packs
-  its fog volumes into fixed-point atomics, which WebGPU has only in
-  buffers: they drop a volume at or below density 0.001, step its density by
-  1/1024 and stop its scattering growing past density 1, so a dense volume
-  here scatters more light than Godot's.
+- Every medium scatters `albedo` × density unquantized. Godot quantizes its
+  fog volumes: it drops a volume at or below density 0.001, steps its
+  density by 1/1024, caps its scattering at density 1 and truncates that
+  scattering to 11/11/10 bits, so a dense volume here scatters more light
+  than Godot's.
+- `albedo`, the frame's and a volume's, is linear RGB, where Godot's fog
+  colours are sRGB.
 - A fog volume is a box with a density, albedo and edge fade; its box's last
   0.1 m fades under `edge_fade` too, so a volume with none still ends at its
-  box. Emission, a volume's height falloff, density textures, negative
-  density and other shapes are not ported, and there is no GI injection,
-  which in Godot needs VoxelGI or SDFGI.
+  box. Emission (the frame's medium's too), a volume's height falloff,
+  density textures, negative density and other shapes are not ported, and
+  there is no GI injection, which in Godot needs VoxelGI or SDFGI.
 - The lights are SGL3D's, in its units and falloff, and none has Godot's
-  `shadow_opacity`. The directional shadow has no fade toward the shadow
-  distance: beyond it the fog is unshadowed, as surfaces are. A local
-  light's shadow is one 2×2 comparison tap without Godot's fade behind the
-  occluder, not ported: the atlas's perspective depth would need
-  linearizing for it. A rectangle scatters by its face's solid angle, which
-  stays bounded near it, so it takes no distance clamp against flicker as
-  Godot's area lights do.
+  `shadow_opacity` ([#65](https://github.com/stevepryde/sgl/issues/65)).
+  The directional shadow has no fade toward the shadow distance: beyond it
+  the fog is unshadowed, as surfaces are. A local light's light in the fog
+  ends at its occluder instead of fading over about 10 cm behind it. A
+  rectangle scatters by its face's solid angle, which stays bounded near
+  it, so it takes no distance clamp against flicker as Godot's area lights
+  do.
 - `ambient` scatters the mean of the hemisphere fill and environment
   diffuse over the sphere, which an isotropic medium scatters, where Godot
   samples its sky upward and along the view. It defaults to 1 where Godot's
@@ -339,7 +341,8 @@ Where it differs from Godot's fog, and why:
   volume and blends across cuts.
 - The integration steps along each view ray, where Godot's steps view depth
   and so thins its fog toward the frame's edges.
-- The sky takes the whole fog: there is no sky affect yet. Fog needs
+- The sky takes the whole fog: there is no sky affect yet
+  ([#61](https://github.com/stevepryde/sgl/issues/61)). Fog needs
   `perspective`'s projection, whose froxels it places; with another camera
   nothing fogs, where Godot's also fogs an orthographic view.
 
