@@ -103,18 +103,100 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.baked_irradiance=objects[hit.instance_id].baked_irradiance;
  return s;
 }
-// Radiance leaving a ray hit toward `outgoing`, its ambient diffuse
-// unoccluded. An offscreen hit has no camera pixel or view depth: its
-// directional shadow takes the first cascade that holds it, with the fixed
-// filter. Its environment specular comes from the installed probes and the
-// reflection sky beyond them, as a probe capture's surfaces take it.
-fn shade_ray_hit(hit:SceneHit,outgoing:vec3<f32>)->vec3<f32> {
+// A dynamic GI probe ray's hit's direct light (SHADOW_RECEIVER_PROBE_HIT):
+// one light drawn uniformly by `random.x` from the frame's directional
+// lights and the lights of `list` the surface takes, times their count; its
+// diffuse light alone, unoccluded by a map, and its visibility one any-hit
+// ray toward it through the one acceptance predicate over both kinds of
+// instance, at its shadow opacity, the ray not cast at or below the
+// cutoff. A rectangle's ray ends at the point of its face `random.yz` draws.
+//
+// Ports Wicked Engine df44c3db4c4927492bc9c791eac715d98d7ed091's light
+// sampling at a hit (WickedEngine/shaders/ddgi_raytraceCS.hlsl 329–490: one
+// light drawn uniformly, its diffuse light times NdotL / PI times the light
+// count, and a TraceRay_Any shadow ray from 0.001 to the light, to infinity
+// for a directional light), MIT (src/LICENSE-wicked.txt). Changed: each
+// light reaches the hit as every receiver's does (scene_light_sample, a
+// rectangle integrated over its face), its shadow opacity applies, and
+// SGL3D's lights are punctual, so Wicked's radius jitter has no
+// counterpart.
+fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
+ var directional=array<u32,2>(0u,0u);
+ var directional_count=0u;
+ for (var index=0u;index<2u;index++) {
+  if frame.directional_lights[index].illuminance>0. {
+   directional[directional_count]=index;
+   directional_count++;
+  }
+ }
+ var scene_count=list.live;
+ if takes_baked_lights(s.baked,s.lightmap_uv,s.moving) {
+  scene_count+=list.baked;
+ }
+ let light_count=directional_count+scene_count;
+ if light_count==0u {
+  return vec3(0.);
+ }
+ let pick=min(u32(floor(random.x*f32(light_count))),light_count-1u);
+ var sample:LightSample;
+ var direction=vec3(0.);
+ // A light at infinity: Wicked's FLT_MAX.
+ var distance=3.402823466e+38;
+ var opacity=0.;
+ if pick<directional_count {
+  let light=frame.directional_lights[directional[pick]];
+  direction=normalize(light.direction_to_light);
+  if dot(s.normal,direction)<=0. {
+   return vec3(0.);
+  }
+  sample=LightSample(direction,light.color*light.illuminance,1.,0.,NO_RECT_LIGHT);
+  opacity=light.shadow_opacity;
+ } else {
+  let index=cluster_item(list.first+pick-directional_count);
+  sample=scene_light_sample(index,s.position,s.normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT);
+  if sample.visibility<=0. {
+   return vec3(0.);
+  }
+  let light=lights[index];
+  var end=light.position;
+  if sample.rect!=NO_RECT_LIGHT {
+   end+=light.half_width*(random.y*2.-1.)+light_rect_half_height(light)*(random.z*2.-1.);
+  }
+  let to_light=end-s.position;
+  distance=length(to_light);
+  direction=to_light/max(distance,1e-20);
+  opacity=light.shadow_opacity;
+ }
+ sample.specular=0.;
+ if opacity>SHADOW_OPACITY_CUTOFF {
+  let visible=scene_segment_visible(s.position,direction,.001,distance);
+  sample.visibility=shadow_opacity_visibility(select(0.,1.,visible),opacity);
+ }
+ let reflectance=surface_reflectance(s,vec2(0.));
+ return surface_direct_light(s,reflectance,sample)*f32(light_count);
+}
+// Radiance leaving a ray hit toward `outgoing` as `receiver`, a world-space
+// reflection ray's hit (SHADOW_RECEIVER_CAPTURE) or a dynamic GI probe
+// ray's (SHADOW_RECEIVER_PROBE_HIT), its ambient diffuse unoccluded. An
+// offscreen hit has no camera pixel or view depth: a reflection ray's hit
+// takes the directional shadow's first cascade that holds it, with the
+// fixed filter, and its environment specular from the installed probes and
+// the reflection sky beyond them, as a probe capture's surfaces take it. A
+// probe ray's hit takes its diffuse light alone and the one light `random`
+// draws (probe_hit_light); other hits ignore `random`.
+fn shade_ray_hit(hit:SceneHit,outgoing:vec3<f32>,receiver:u32,random:vec3<f32>)->vec3<f32> {
  let material=scene_material(hit.material_word);
  let base=ray_base_color(hit,material);
  let emission=ray_emission(hit,material);
  if (material.values.flags&MATERIAL_UNLIT)!=0u {
   return shade_unlit(unlit_surface(base,emission)).color;
  }
- let context=ShadeContext(vec2(0.),false,true,cluster_range(hit.position,vec2(0.)),untraced_reflection());
- return max(vec3(0.),shade_lit(ray_surface(hit,material,base,emission,outgoing,context.clusters),context).color);
+ let probe_hit=receiver==SHADOW_RECEIVER_PROBE_HIT;
+ let context=ShadeContext(vec2(0.),receiver,!probe_hit,cluster_range(hit.position,vec2(0.)),untraced_reflection());
+ let s=ray_surface(hit,material,base,emission,outgoing,context.clusters);
+ var color=shade_lit(s,context).color;
+ if probe_hit {
+  color+=probe_hit_light(s,context.clusters,random);
+ }
+ return max(vec3(0.),color);
 }

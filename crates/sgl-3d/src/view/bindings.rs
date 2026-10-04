@@ -47,8 +47,9 @@ struct SceneGroups {
     resources: u64,
     /// The environment they bind, while the scene has it.
     environment: Option<EnvironmentId>,
-    /// The camera's clusters and the ray hits' lists they bind.
-    clusters: [wgpu::Buffer; 2],
+    /// The camera's clusters, the ray hits' lists and the volume's probe
+    /// hits' lists they bind.
+    clusters: [wgpu::Buffer; 3],
     /// The local-light shadow records they bind.
     local_records: wgpu::Buffer,
     /// The shadow maps they bind: the directional cascades, the local-light
@@ -56,6 +57,8 @@ struct SceneGroups {
     shadow_maps: [wgpu::TextureView; 3],
     /// The fog volume they bind.
     fog: wgpu::TextureView,
+    /// The dynamic GI volume's probes they bind.
+    dynamic_gi: wgpu::TextureView,
     /// The camera's lit group, with the installed probes, which its
     /// blended surfaces sample: source completion adds opaque surfaces'
     /// probe specular from the G-buffer, but blended surfaces write none.
@@ -64,6 +67,9 @@ struct SceneGroups {
     /// the static shadow layers and the installed probes, since they run no
     /// source completion and add probe specular themselves, as captures do.
     ray_hit_lit: wgpu::BindGroup,
+    /// The lit group of the dynamic GI probe rays' hits: as world-space ray
+    /// hits', with the volume's light and decal list.
+    volume_lit: wgpu::BindGroup,
     /// The camera's sky and transient group.
     camera_unlit: wgpu::BindGroup,
 }
@@ -88,6 +94,9 @@ pub(crate) struct FrameBindings {
     /// The fog volume every group 0 binds and its sampler, which the fog
     /// stage writes.
     fog: (wgpu::TextureView, wgpu::Sampler),
+    /// The dynamic GI volume's probes every lit group 0 binds, which the
+    /// dynamic GI stage writes.
+    dynamic_gi: wgpu::TextureView,
     camera_view: wgpu::Buffer,
     cascades: [wgpu::BindGroup; super::cascades::MAX_SHADOW_CASCADES],
     groups: Option<SceneGroups>,
@@ -95,14 +104,15 @@ pub(crate) struct FrameBindings {
 
 impl FrameBindings {
     /// Group 0 for `views` over the lit layout `lit`
-    /// (`shading::bind::lit`), binding `shadow_maps` and `fog` until a
-    /// frame refreshes them.
+    /// (`shading::bind::lit`), binding `shadow_maps`, `fog` and the
+    /// `dynamic_gi` probes until a frame refreshes them.
     pub fn new(
         device: &wgpu::Device,
         lit: wgpu::BindGroupLayout,
         views: &FrameViews,
         shadow_maps: ShadowMaps,
         fog: FogVolume<'_>,
+        dynamic_gi: &wgpu::TextureView,
     ) -> Self {
         let shadow = shading::bind::shadow(device);
         let frame = crate::scene::buffer(
@@ -132,6 +142,7 @@ impl FrameBindings {
             empty_probes: UploadedProbes::empty(device),
             shadow_maps,
             fog: (fog.view.clone(), fog.sampler.clone()),
+            dynamic_gi: dynamic_gi.clone(),
             camera_view: views.camera.buffer.clone(),
             cascades,
             groups: None,
@@ -141,8 +152,9 @@ impl FrameBindings {
     /// Rebuilds the camera's groups when `scene` is another scene, has
     /// replaced a resource they bind, `environment` (the frame's) binds
     /// other textures, `views` replaced a cluster buffer, `shadows`
-    /// replaced a map or its local-light shadow records, or `fog` its
-    /// volume.
+    /// replaced a map or its local-light shadow records, `fog` its volume,
+    /// or the dynamic GI stage its probes (`dynamic_gi`).
+    #[allow(clippy::too_many_arguments)]
     pub fn refresh(
         &mut self,
         device: &wgpu::Device,
@@ -151,13 +163,16 @@ impl FrameBindings {
         views: &FrameViews,
         shadows: ShadowMaps,
         fog: FogVolume<'_>,
+        dynamic_gi: &wgpu::TextureView,
     ) {
         self.shadow_maps = shadows;
         self.fog = (fog.view.clone(), fog.sampler.clone());
+        self.dynamic_gi = dynamic_gi.clone();
         let environment = scene.environments.live(environment);
         let clusters = [
             views.clusters.buffer().clone(),
             views.ray_lists.buffer().clone(),
+            views.volume_lists.buffer().clone(),
         ];
         let local_records = self.shadow_maps.local_records.clone();
         let maps = &self.shadow_maps;
@@ -173,6 +188,7 @@ impl FrameBindings {
                 && groups.local_records == local_records
                 && groups.shadow_maps == shadow_maps
                 && groups.fog == self.fog.0
+                && groups.dynamic_gi == self.dynamic_gi
         }) {
             return;
         }
@@ -195,6 +211,15 @@ impl FrameBindings {
             &clusters[1],
             self.static_local_shadows(&self.shadow_maps.local_records),
         );
+        let volume_lit = self.lit_group(
+            device,
+            scene,
+            environment,
+            [&self.camera_view, &self.frame],
+            probes,
+            &clusters[2],
+            self.static_local_shadows(&self.shadow_maps.local_records),
+        );
         let camera_unlit =
             self.unlit_group(device, scene, environment, &self.camera_view, &self.frame);
         self.groups = Some(SceneGroups {
@@ -204,8 +229,10 @@ impl FrameBindings {
             local_records,
             shadow_maps,
             fog: self.fog.0.clone(),
+            dynamic_gi: self.dynamic_gi.clone(),
             camera_lit,
             ray_hit_lit,
+            volume_lit,
             camera_unlit,
         });
     }
@@ -222,6 +249,11 @@ impl FrameBindings {
 
     pub fn ray_hit_lit(&self) -> &wgpu::BindGroup {
         &self.groups().ray_hit_lit
+    }
+
+    /// The lit group of the dynamic GI probe rays' hits.
+    pub fn volume_lit(&self) -> &wgpu::BindGroup {
+        &self.groups().volume_lit
     }
 
     pub fn camera_unlit(&self) -> &wgpu::BindGroup {
@@ -260,7 +292,7 @@ impl FrameBindings {
 
     /// A lit group 0: `view` and `frame`, the scene's lighting, decals and
     /// `environment`, `probes`, the view's `clusters`, the `local` shadows
-    /// its lights take and the fog volume.
+    /// its lights take, the fog volume and the dynamic GI volume's probes.
     #[allow(clippy::too_many_arguments)]
     pub fn lit_group(
         &self,
@@ -342,6 +374,7 @@ impl FrameBindings {
                     binding: group0::FOG_SAMPLER,
                     resource: wgpu::BindingResource::Sampler(&self.fog.1),
                 },
+                texture(group0::DYNAMIC_GI_PROBES, &self.dynamic_gi),
             ],
         })
     }

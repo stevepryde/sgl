@@ -1,13 +1,15 @@
 //! Content: the CPU data a game authors or loads and hands to a `Scene`:
 //! meshes, materials and images (glTF), the identities a scene issues for
-//! them, instance states, lights, decals, environments, baked lighting, specular
-//! probes, mesh alternatives and transient geometry; and the frame's lights
-//! and authored look it describes in `FrameInput`. Plain data and its
-//! validation; nothing here touches the GPU.
+//! them, instance states, lights, decals, environments, baked lighting,
+//! specular probes, the dynamic GI volume's placement, mesh alternatives and
+//! transient geometry; and the frame's lights and authored look it
+//! describes in `FrameInput`. Plain data and its validation; nothing here
+//! touches the GPU.
 pub mod asset;
 pub mod baked_specular_probe;
 pub(crate) mod decal;
 pub mod deformation;
+pub(crate) mod dynamic_gi;
 pub mod environment;
 pub mod geometry;
 mod gltf;

@@ -18,7 +18,7 @@ use crate::content::light::Light;
 use crate::scene::decals::Decals;
 use crate::scene::lights::Lights;
 use crate::shading::clusters::{CLUSTER_HEADER_WORDS, ClusterGrid};
-pub(crate) use assign::{CAMERA_CLUSTERS, ClusterConfig, ViewVolume};
+pub(crate) use assign::{BoxVolume, CAMERA_CLUSTERS, ClusterConfig, ViewVolume};
 use assign::{Clusterable, Scratch};
 use glam::{Mat4, UVec2};
 

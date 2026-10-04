@@ -107,6 +107,9 @@ pub enum SceneError {
     DeformingModel,
     /// A render origin (`Scene::move_origin`) is not finite.
     InvalidOrigin,
+    /// A dynamic GI volume's origin or spacing is not finite, its spacing
+    /// not positive, or it has fewer than two probes along an axis.
+    InvalidDynamicGiVolume,
     /// The content would exceed a limit of the device.
     DeviceLimit,
     /// The specular probe collection was refused.
@@ -192,6 +195,9 @@ impl std::fmt::Display for SceneError {
                 "a deforming model's instances move and keep their model, and it takes no part in levels of detail"
             }
             Self::InvalidOrigin => "a render origin must be finite",
+            Self::InvalidDynamicGiVolume => {
+                "a dynamic GI volume needs a finite origin, a finite positive spacing and at least two probes along each axis"
+            }
             Self::DeviceLimit => "the content exceeds a limit of the device",
             Self::Probe(error) => return error.fmt(f),
         })

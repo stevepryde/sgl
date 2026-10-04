@@ -39,7 +39,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 20] = [
+    let roots: [&'static super::Module; 23] = [
         &crate::view::pipelines::GEOMETRY,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
@@ -59,6 +59,9 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::post::tone_map::TONE_MAP,
         &crate::stages::exposure::EXPOSURE,
         &crate::stages::deform::DEFORM,
+        &crate::stages::dynamic_gi::ALLOCATE,
+        &crate::stages::dynamic_gi::TRACE,
+        &crate::stages::dynamic_gi::UPDATE,
         &crate::stages::motion_blur::MOTION_BLUR,
     ];
     let mut programs: Vec<_> = roots
@@ -173,6 +176,9 @@ fn rust_mirrors_match_wgsl_layouts() {
                 shadow_cascade_count,
                 frame_count,
                 lightmap_chart,
+                dynamic_gi_origin,
+                dynamic_gi_spacing,
+                dynamic_gi_probes,
             ]
         ),
         mirror!(
@@ -245,6 +251,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::exposure::mirrors())
     .chain(crate::stages::motion_blur::mirrors())
     .chain(crate::stages::fog::mirrors())
+    .chain(crate::stages::dynamic_gi::mirrors())
     .chain(crate::stages::fog::volume_froxels::mirrors())
     .chain(super::fog::mirrors())
     .chain(crate::stages::post::bloom::mirrors())
@@ -314,6 +321,7 @@ fn rust_mirrors_match_wgsl_layouts() {
         ("FRAME_BACKDROP_COLOR", FRAME_BACKDROP_COLOR),
         ("FRAME_TEMPORAL_SHADOW_FILTER", FRAME_TEMPORAL_SHADOW_FILTER),
         ("FRAME_HARDWARE_SHADOW_FILTER", FRAME_HARDWARE_SHADOW_FILTER),
+        ("FRAME_DYNAMIC_GI", FRAME_DYNAMIC_GI),
         ("MATERIAL_UNLIT", super::material::MATERIAL_UNLIT),
         (
             "MATERIAL_DOUBLE_SIDED",
@@ -531,6 +539,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         (0, "static_direction_atlas", group0::STATIC_DIRECTION_ATLAS),
         (0, "fog_volume", group0::FOG_VOLUME),
         (0, "fog_sampler", group0::FOG_SAMPLER),
+        (0, "dynamic_gi_probes", group0::DYNAMIC_GI_PROBES),
         (1, "objects", group1::OBJECTS),
         (1, "scene_source", group1::SCENE_SOURCE),
         (1, "scene_instances", group1::SCENE_INSTANCES),
@@ -665,11 +674,13 @@ fn rust_constants_match_wgsl_twins() {
     .into_iter()
     .chain(super::lights::constants())
     .chain(super::clusters::constants())
+    .chain(super::dynamic_gi::constants())
     .chain(super::vertex::constants())
     .chain(crate::scene::lookup_tables::constants())
     .chain(crate::scene::rays::constants())
     .chain(crate::shading::deformation::constants())
     .chain(crate::scene::probe_grid::constants())
+    .chain(crate::stages::dynamic_gi::constants())
     .chain(crate::stages::reflections::source::constants())
     .chain(crate::stages::reflections::velvet::constants());
     let programs = programs();

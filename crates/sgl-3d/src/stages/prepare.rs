@@ -4,7 +4,8 @@
 //! jitter antialiasing chose), uploads them, ends the motion of moving
 //! instances not posed since the last submitted frame, sorts the mist,
 //! updates the scene's ray instances on frames that trace them, clusters the
-//! scene's lights and decals for the camera and culls them for ray hits, and builds the
+//! scene's lights and decals for the camera and culls them for ray hits and
+//! the dynamic GI volume's probe hits, and builds the
 //! camera's draw lists (culled, LOD-selected; its blended surfaces' sorted
 //! back to front) and each directional shadow cascade's. The local-light shadow atlas places its own faces
 //! (`shadows::local`). For a probe capture it builds the capture's own
@@ -15,10 +16,12 @@
 //! clusters), the frame uniform, the scene's stale object records, ray
 //! instances and mist order.
 //! Honours: the effective local lights, temporal antialiasing (the shadow
-//! filter), atmosphere, baked lighting, culling and world-space reflections.
+//! filter), atmosphere, baked lighting, culling, world-space reflections and
+//! dynamic GI.
 //! Timing groups: none.
+use crate::content::dynamic_gi::DynamicGiVolume;
 use crate::shading::uniforms::{FrameValues, ViewUniform};
-use crate::view::clusters::{CAMERA_CLUSTERS, Clusters, ViewVolume};
+use crate::view::clusters::{BoxVolume, CAMERA_CLUSTERS, Clusters, ViewVolume};
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::effective::Effective;
 use crate::view::history::HistoryFrame;
@@ -123,11 +126,15 @@ impl Prepare {
             history.frames,
             scene.origin(),
         );
+        let volume = scene
+            .dynamic_gi_volume()
+            .filter(|_| effective.dynamic_gi.is_some());
         let frame = frame_uniform(
             input,
             &scene.static_lighting,
             &shadow,
             effective.fog.is_some(),
+            volume.as_ref(),
         );
         views.reflection_camera = reflection_camera::Camera::new(camera.view, camera.projection);
         if let Some(jitter) = jitter {
@@ -149,11 +156,11 @@ impl Prepare {
         queue.write_buffer(frame_buffer, 0, bytemuck::bytes_of(&frame));
         views.camera.set(queue, View::camera(view));
         scene.prepare_frame(device, queue, camera.eye);
-        // Only world-space rays read the ray instances and visibility mask.
-        // The entries set and static edits made since the last traced frame
-        // wait for the next, so the frames that skip it leave it nothing
-        // stale.
-        if effective.world_space {
+        // Only world-space rays and the dynamic GI volume's read the ray
+        // instances and visibility mask. The entries set and static edits
+        // made since the last traced frame wait for the next, so the frames
+        // that skip it leave it nothing stale.
+        if effective.world_space || volume.is_some() {
             scene.update_rays(device, queue, frame.visibility_mask);
         }
         let scene = &*scene;
@@ -180,6 +187,23 @@ impl Prepare {
                 |light| volume.reaches(light),
                 &scene.decals,
                 |decal| volume.reaches_decal(decal),
+            );
+        }
+        if let Some(volume) = volume {
+            // The probe rays' hits shade with the lights whose range reaches
+            // the volume's extent and the decals that reach it.
+            let extent = BoxVolume {
+                min: volume.origin,
+                max: volume.end(),
+            };
+            views.volume_lists.list(
+                device,
+                queue,
+                &scene.lights,
+                effective.local_lights,
+                |light| extent.reaches(light),
+                &scene.decals,
+                |decal| extent.reaches_decal(decal),
             );
         }
         let mask = Some(frame.visibility_mask);
@@ -217,8 +241,9 @@ impl Prepare {
     /// The views of a probe capture at `center` with `input`'s lights, the
     /// directional shadow's cascades about `center` in maps of
     /// `cascade_size` texels and, when `local_lights`, the scene's lights,
-    /// without their shadow. A capture has no fog: completion fogs what
-    /// reflects it at the receiver.
+    /// without their shadow, lit by the `dynamic_gi` volume whose probes
+    /// group 0 binds. A capture has no fog: completion fogs what reflects
+    /// it at the receiver.
     #[allow(clippy::too_many_arguments)]
     pub fn capture(
         &self,
@@ -229,9 +254,10 @@ impl Prepare {
         local_lights: bool,
         center: Vec3,
         cascade_size: u32,
+        dynamic_gi: Option<&DynamicGiVolume>,
     ) -> CaptureViews {
         let shadow = FrameShadow::capture(input, center, cascade_size, scene.origin());
-        let frame = frame_uniform(input, &scene.static_lighting, &shadow, false);
+        let frame = frame_uniform(input, &scene.static_lighting, &shadow, false, dynamic_gi);
         let uniform = |label, bytes: &[u8]| {
             crate::scene::buffer(device, label, bytes, wgpu::BufferUsages::UNIFORM)
         };

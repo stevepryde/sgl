@@ -9,8 +9,9 @@
 //! shadowed sun; a masked grate and a blended pane that receives
 //! screen-space reflections; a skinned and morphed box
 //! with an ambient cube; a box lit by a static irradiance atlas; point, spot
-//! and rectangle lights; a decal; a baked specular probe; glow, heat shimmer
-//! and mist; a fog volume; and an environment. Where the device has BC, the
+//! and rectangle lights; a decal; a baked specular probe; a dynamic GI volume
+//! over the ground; glow, heat shimmer and mist; a fog volume; and an
+//! environment. Where the device has BC, the
 //! grate's image, the probe and the atlas are block-compressed, as a game
 //! ships them. Each
 //! configuration reports `ok` or `FAIL`: WebGPU validation, out-of-memory and
@@ -24,9 +25,9 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     AlphaMode, BakedSpecularProbe, Camera, Decal, DirectionalLight, DirectionalShadow,
-    EnvironmentId, Fog, FogVolume, FrameInput, HemisphereLight, InstanceId, InstanceState, Light,
-    LightShape, Mist, Mobility, Renderer, Scene, SpecularProbeBox, SpecularProbeRadiance,
-    SpecularProbeTexels,
+    DynamicGiVolume, EnvironmentId, Fog, FogVolume, FrameInput, HemisphereLight, InstanceId,
+    InstanceState, Light, LightShape, Mist, Mobility, Renderer, Scene, SpecularProbeBox,
+    SpecularProbeRadiance, SpecularProbeTexels,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     deformation::{
         Influence, Joint, MeshDeformation, MorphDelta, MorphTarget, MorphWeight, Node, Rig,
@@ -36,8 +37,8 @@ use sgl_3d::{
     glam::{Mat4, Quat, Vec3, Vec4},
     heat_distortion::HeatDistortion,
     settings::{
-        AmbientOcclusionQuality, Antialiasing, MotionBlur, ReflectionMethod, RenderPreset,
-        ScreenSpaceReflections, Settings,
+        AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, MotionBlur, ReflectionMethod,
+        RenderPreset, ScreenSpaceReflections, Settings,
     },
     static_lighting::{AmbientCube, CompressedIrradianceAtlas, IrradianceAtlas},
     timing::GpuTiming,
@@ -511,6 +512,18 @@ fn add_content(
         .set_baked_specular_probes(device, queue, &[probe(bc)])
         .map_err(|e| format!("set_baked_specular_probes: {e}"))?;
     install_atlas(device, queue, scene, bc)?;
+    // Probes a metre apart over the ground about the box, which the
+    // deforming box's ambient cube lies beneath.
+    scene
+        .set_dynamic_gi_volume(
+            device,
+            Some(DynamicGiVolume {
+                origin: Vec3::new(-4., 0.25, -4.),
+                spacing: Vec3::ONE,
+                probes: [9, 3, 9],
+            }),
+        )
+        .map_err(|e| format!("set_dynamic_gi_volume: {e}"))?;
     let environment = scene
         .add_environment(device, queue, &environment())
         .map_err(|e| format!("add_environment: {e}"))?;
@@ -839,10 +852,11 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             false,
         ),
         (
-            "low, SMAA",
+            "low, SMAA, low dynamic GI",
             Settings {
                 preset: RenderPreset::Low,
                 antialiasing: Antialiasing::Smaa,
+                dynamic_gi: DynamicGiQuality::Low,
                 ..Settings::default()
             },
             false,

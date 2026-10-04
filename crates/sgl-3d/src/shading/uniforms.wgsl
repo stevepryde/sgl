@@ -94,6 +94,12 @@ struct Frame {
  frame_count:u32,
  // The lightmap's chart transform: chart UV = material UV * xy + zw.
  lightmap_chart:vec4<f32>,
+ // With FRAME_DYNAMIC_GI, the scene's dynamic GI volume (dynamic_gi.wgsl):
+ // its first probe's position, the spacing of its probes and their count
+ // along each axis.
+ dynamic_gi_origin:vec3<f32>,
+ dynamic_gi_spacing:vec3<f32>,
+ dynamic_gi_probes:vec3<u32>,
 }
 // The frame's volumetric fog ran: draws fog themselves from its volume.
 const FRAME_FOG:u32=1u;
@@ -105,6 +111,9 @@ const FRAME_BACKDROP_COLOR:u32=8u;
 const FRAME_TEMPORAL_SHADOW_FILTER:u32=16u;
 // The camera's shadows take one hardware 2x2 tap (the Low shadow quality).
 const FRAME_HARDWARE_SHADOW_FILTER:u32=32u;
+// The dynamic GI volume lights the frame: the scene holds one and
+// Settings::dynamic_gi runs it, and group 0 binds its probes.
+const FRAME_DYNAMIC_GI:u32=64u;
 // One instance's record, at its index in the scene's object buffer. That
 // index plus one is the source identity the G-buffer stores.
 struct Object {

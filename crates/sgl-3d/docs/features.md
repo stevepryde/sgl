@@ -151,6 +151,14 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   instances (`set_instance_baked_irradiance`). A fixture in the bake can also
   be a baked scene light, which lights moving instances live; its light then
   stays out of their ambient cubes.
+- **Dynamic diffuse GI**: a volume of probes the game places
+  (`Scene::set_dynamic_gi_volume`, `DynamicGiVolume`), kept up every frame
+  by rays through the scene (Wicked Engine's DDGI): coloured bounce light
+  from the frame's and the scene's lights, emitters and the sky, shadowed
+  by rays, on static surfaces without a bake and on moving instances in
+  place of their ambient cubes and the frame's ambient, fading out over one
+  spacing past the volume. `Settings::dynamic_gi` sets its rays.
+  [Dynamic GI](../README.md#dynamic-diffuse-gi).
 - **Baked specular probes**: parallax-corrected reflection cubes with blended
   influence boxes (`Scene::set_baked_specular_probes`), captured offline with
   `Renderer::capture_specular_probe`.
@@ -238,9 +246,10 @@ Environment and probe specular always apply. On top of them:
 
 ## Not provided
 
-Animation playback (sampling and blending clips is the game's). Dynamic
-diffuse GI, DLSS/MetalFX, hardware ray tracing, and GPU-driven/occlusion culling
-are [planned](../../../specs/sgl3d.md#planned). Current world-space reflections
+Animation playback (sampling and blending clips is the game's). A dynamic
+GI volume that scrolls with the player (installing a moved volume starts its
+probes afresh), DLSS/MetalFX, hardware ray tracing, and GPU-driven/occlusion
+culling are [planned](../../../specs/sgl3d.md#planned). Current world-space reflections
 use software rays; current culling runs on the CPU. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
 not provided.

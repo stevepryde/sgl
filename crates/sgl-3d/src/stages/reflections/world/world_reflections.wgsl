@@ -114,7 +114,7 @@ struct WorldRay {
   return output;
  }
  let hit=scene_decode_hit(raw,p,direction);
- output.indirect=vec4(shade_ray_hit(hit,-direction),1.);
+ output.indirect=vec4(shade_ray_hit(hit,-direction,SHADOW_RECEIVER_CAPTURE,vec3(0.)),1.);
  output.length=hit.distance;
  return output;
 }

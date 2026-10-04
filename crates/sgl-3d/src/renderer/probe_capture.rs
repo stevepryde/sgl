@@ -76,6 +76,10 @@ impl Renderer {
             !settings.diagnostics_in_effect().disable.local_lights,
             center,
             settings.shadow_quality.cascade_size(),
+            self.dynamic_gi
+                .lights(scene)
+                .filter(|_| settings.dynamic_gi.rays().is_some())
+                .as_ref(),
         );
         // Their lights' shadows sample static layers placed for the capture.
         let local_records = self.shadows.local.plan_capture(

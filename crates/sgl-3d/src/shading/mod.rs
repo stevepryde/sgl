@@ -11,6 +11,7 @@ pub(crate) mod bind;
 pub(crate) mod clusters;
 pub(crate) mod decals;
 pub(crate) mod deformation;
+pub(crate) mod dynamic_gi;
 pub(crate) mod fog;
 pub(crate) mod gbuffer;
 #[cfg(test)]
@@ -178,6 +179,20 @@ pub(crate) static BAKED_LIGHTING: Module = Module {
     name: "baked_lighting",
     source: include_str!("baked_lighting.wgsl"),
     deps: &[],
+};
+/// The dynamic GI volume's probes: where each lies and where its maps and
+/// data are in the probe texture.
+pub(crate) static DYNAMIC_GI: Module = Module {
+    name: "dynamic_gi",
+    source: include_str!("dynamic_gi.wgsl"),
+    deps: &[],
+};
+/// The dynamic GI volume's irradiance at a receiver. Reads `frame`,
+/// `dynamic_gi_probes` and `baked_sampler`.
+pub(crate) static DYNAMIC_GI_SAMPLE: Module = Module {
+    name: "dynamic_gi_sample",
+    source: include_str!("dynamic_gi_sample.wgsl"),
+    deps: &[&DYNAMIC_GI],
 };
 /// The volumetric fog's froxel volume: its slices, where a point samples it
 /// and how it fogs a colour.
@@ -353,6 +368,7 @@ pub(crate) static SURFACE: Module = Module {
         &ENVIRONMENT,
         &PROBE_GRID,
         &BAKED_LIGHTING,
+        &DYNAMIC_GI_SAMPLE,
         &DIRECTIONAL_SHADOW,
         &LIGHTS,
         &DECALS,
@@ -365,12 +381,19 @@ pub(crate) static SURFACE_RASTER: Module = Module {
     source: include_str!("surface_raster.wgsl"),
     deps: &[&VERTEX, &PBR, &ANISOTROPY, &MATERIAL_RASTER, &SURFACE],
 };
-/// A ray hit's `Surface` and its shading. Reads the lit bindings and the
+/// A ray hit's `Surface` and its shading, a dynamic GI probe ray's hit's
+/// light with its visibility ray among it. Reads the lit bindings and the
 /// scene's ray buffers.
 pub(crate) static SURFACE_RAY: Module = Module {
     name: "surface_ray",
     source: include_str!("surface_ray.wgsl"),
-    deps: &[&SCENE_RAYS, &ANISOTROPY, &BAKED_LIGHTING, &SURFACE],
+    deps: &[
+        &SCENE_RAYS,
+        &SCENE_RAYS_PORTABLE,
+        &ANISOTROPY,
+        &BAKED_LIGHTING,
+        &SURFACE,
+    ],
 };
 
 /// The lit shading library with scene ray queries, for compute fixtures:

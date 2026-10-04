@@ -678,7 +678,7 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
  let origin=vec3<f32>({x},{y},{eye_z});let direction=vec3(0.,0.,-1.);
  let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)));
  let hit=scene_decode_hit(raw,origin,direction);
- output[0]=vec4(shade_ray_hit(hit,-direction),select(0.,1.,hit.hit));
+ output[0]=vec4(shade_ray_hit(hit,-direction,SHADOW_RECEIVER_CAPTURE,vec3(0.)),select(0.,1.,hit.hit));
 }}
 "#
                 );
@@ -877,7 +877,7 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
  let origin=vec3<f32>({x},{y},{eye_z});let direction=vec3(0.,0.,-1.);
  let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)));
  let hit=scene_decode_hit(raw,origin,direction);
- output[0]=vec4(shade_ray_hit(hit,-direction),select(0.,1.,hit.hit));
+ output[0]=vec4(shade_ray_hit(hit,-direction,SHADOW_RECEIVER_CAPTURE,vec3(0.)),select(0.,1.,hit.hit));
 }}
 "#
                 );

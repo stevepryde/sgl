@@ -18,9 +18,9 @@ mod diagnostics_tests;
 use crate::settings::{Antialiasing, RenderPreset, SceneResolution, Settings};
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
-    antialiasing, deform::Deform, exposure::Exposure, fog::VolumetricFog, motion_blur::MotionBlur,
-    opaque::Opaque, post::Post, prepare::Prepare, reflections::Reflections, shadows::Shadows,
-    transparent::Transparent,
+    antialiasing, deform::Deform, dynamic_gi::DynamicGi, exposure::Exposure, fog::VolumetricFog,
+    motion_blur::MotionBlur, opaque::Opaque, post::Post, prepare::Prepare,
+    reflections::Reflections, shadows::Shadows, transparent::Transparent,
 };
 use crate::view::FrameViews;
 use crate::view::bindings::FrameBindings;
@@ -47,6 +47,7 @@ pub struct Renderer {
     post_fx: Option<PostFx>,
     prepare: Prepare,
     deform: Deform,
+    dynamic_gi: DynamicGi,
     shadows: Shadows,
     fog: VolumetricFog,
     opaque: Opaque,
@@ -153,7 +154,16 @@ impl Renderer {
         let shadows = Shadows::new(device, settings.shadow_quality);
         let lit = crate::shading::bind::lit(device);
         let fog = VolumetricFog::new(device, &lit);
-        let bindings = FrameBindings::new(device, lit, &views, shadows.maps(), fog.volume());
+        let scene_layout = crate::shading::bind::scene(device);
+        let dynamic_gi = DynamicGi::new(device, &lit, &scene_layout);
+        let bindings = FrameBindings::new(
+            device,
+            lit,
+            &views,
+            shadows.maps(),
+            fog.volume(),
+            dynamic_gi.probes(),
+        );
         let layers = LayerConstants::new(&settings.diagnostics_in_effect().disable);
         let pipelines = GeometryPipelines::new(
             device,
@@ -190,6 +200,7 @@ impl Renderer {
             .map_err(RendererError::LookupTextures)?,
             prepare: Prepare,
             deform: Deform::new(device),
+            dynamic_gi,
             sizes,
             bloom_targets: sizing.bloom_targets,
             targets,
@@ -284,6 +295,7 @@ impl Renderer {
             self.last_scene = Some(scene_id);
             scene.finish_frame();
             self.shadows.local.finish_frame();
+            self.dynamic_gi.finish_frame();
             #[cfg(feature = "diagnostics")]
             if let Some(probe) = &mut self.probe {
                 probe.submitted();

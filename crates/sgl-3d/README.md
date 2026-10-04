@@ -21,7 +21,7 @@ This page is the detailed reference:
 - [Lights and look](#frame-lights-and-look), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
 - [Reflections](#reflections), [TAA, SMAA and FSR2](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
-- [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [asset limits](#asset-and-environment-limits)
+- [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
 - [Skinning and morphs](#skinned-meshes-and-morph-targets), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
 - [Settings and fallbacks](#settings-and-capability-fallback), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
 
@@ -1150,8 +1150,8 @@ authored look and per-frame state in a `FrameInput`.
      stay near what it renders, chunk-aligned in a streamed world. Every
      position the scene holds becomes what it was less `to`: instances
      (with the pose their motion is measured from), lights, decals, fog
-     volumes, mist, glow and heat geometry, installed probes and the ray
-     source. From then on the game gives the camera, the frame input and
+     volumes, mist, glow and heat geometry, installed probes, the dynamic
+     GI volume (its probes kept) and the ray source. From then on the game gives the camera, the frame input and
      its edits in the new frame. It is not a static edit: moving instances
      keep their motion, static shadow layers stay valid, histories continue
      (each renderer translates what it keeps), and the directional
@@ -1240,6 +1240,8 @@ stage (each stage's documentation lists its own), are:
 
 - prepare: `deform` (the frame's skinning and morphing, while an instance's
   deformation changed);
+- dynamic GI: `dynamic GI allocation`, `dynamic GI rays` and `dynamic GI
+  blend`, while the scene holds a volume and `Settings::dynamic_gi` runs it;
 - shadows: `directional shadow cascade 0` to `directional shadow cascade 3`
   (one per cascade the frame has), `local shadow layers` (static layers) and
   `local shadows` (the frame's faces);
@@ -1338,6 +1340,78 @@ provides specular response. A state naming another model clears the cube, and
 a new instance starts without one.
 Neither alters material albedo or paints light into emission.
 
+## Dynamic diffuse GI
+
+A dynamic GI volume gives static and moving surfaces coloured bounce light
+from the frame's lights, the scene's lights, emitters and the sky, kept up
+every frame without a bake: a port of Wicked Engine's DDGI (Majercik et al.
+2019). The game places a lattice of probes over the part of its world it
+wants lit by bounced light:
+
+```rust
+scene.set_dynamic_gi_volume(
+    &device,
+    Some(DynamicGiVolume {
+        origin: Vec3::new(-4.7, -0.7, -4.7), // the first probe
+        spacing: Vec3::splat(1.33),          // metres between probes
+        probes: [8, 5, 8],
+    }),
+)?;
+```
+
+Each frame the dynamic GI stage, first after prepare, traces rays from the
+probes through the scene's ray source (static and moving instances that do
+not deform). A hit is lit by one light drawn from the frame's directional
+lights and the scene lights whose range reaches the volume, with one ray
+toward it for its shadow at the light's shadow opacity (no shadow map, so
+nothing leaks through walls into the probes), by its emission, and by the
+volume's own last frame for further bounces; a miss takes the environment
+and the hemisphere fill along the ray. Each probe keeps its irradiance and
+the distances to what surrounds it, so a surface takes light only from the
+probes that see it.
+
+Surfaces take their indirect diffuse light by one determination: a
+lightmap or irradiance atlas chart keeps its bake; else the volume lights
+the surface, in place of the environment's diffuse light and the hemisphere
+fill, which ambient occlusion then occludes as it did them; else a moving
+instance takes its ambient cube, else the frame's ambient. The camera's
+opaque and blended surfaces, probe captures, world-space ray hits and the
+probes' own hits sample the same volume. `SurfaceMaterial::environment_scale`
+scales the environment, not the volume. Beyond its extent the volume's share
+fades out over one spacing; ambient cubes stay the moving instances'
+fallback there, with `Settings::dynamic_gi` at `Off`, and without a volume.
+
+Placement:
+
+- Cover every surface the volume should light: one to a few metres apart
+  suits rooms and streets. A volume need not cover the world.
+- Keep probes off surfaces. Rays pass through the back of a single-sided
+  surface, so a probe on or inside one sees past it and lights receivers
+  near it with what lies beyond; in a closed room, let the lattice reach half
+  a spacing past the walls. Probes near a surface move off it, up to half a
+  spacing, as they trace.
+- Installing another placement starts the probes afresh, as does a frame
+  that does not run them (another scene, the setting `Off`): that frame
+  traces every probe at the most rays, as Wicked's first frame does.
+  Installing the same placement changes nothing; camera cuts, resizes and
+  `Scene::move_origin` keep the probes.
+- Memory is about 11 KB a probe at High (8 KB at Low): its irradiance and
+  depth maps, its share of the frame's ray list and results, and the blends'
+  history. A volume is refused with `SceneError::DeviceLimit` where its
+  probe texture (18 texels a probe along x times y) or its rays exceed the
+  device's largest 2D texture, and with `SceneError::InvalidDynamicGiVolume`
+  for a spacing that is not positive or fewer than two probes on an axis.
+
+`Settings::dynamic_gi` (`DynamicGiQuality`: `Off`, `Low`, `High`; `High` by
+default) sets the most rays a probe traces a frame: 128 or 256. Each probe
+traces rays by how consistent its irradiance is, a tenth of that outside the
+camera's view, at least four: a probe whose light settles traces few, and
+one whose light changes traces up to the most, so cost follows change.
+Frames that run the volume trace the ray source, so its instance BVHs
+rebuild on them as for world-space reflections. Deforming instances are
+lit by the volume but do not block its rays. Per-pass cost is reported in
+the `dynamic GI *` timing groups.
+
 ## Settings and capability fallback
 
 `settings::Settings` holds every rendering setting a game chooses in one serde
@@ -1367,7 +1441,7 @@ same `Scene`, `Renderer` and frame run on the page's WebGPU device, built for
 not supported, since SGL3D needs compute.
 
 - **Device.** Request it as natively, with `graphics_device::limits` (the
-  adapter's limits: 19 sampled textures and 8 storage buffers per stage are
+  adapter's limits: 20 sampled textures and 8 storage buffers per stage are
   the floor, S3D-1) and `graphics_device::features`. Desktop Chrome on Apple
   silicon reports 48 sampled textures and 10 storage buffers from Chromium
   149; Chromium 145 reported 16 and cannot run SGL3D. Render into an
@@ -1385,7 +1459,8 @@ not supported, since SGL3D needs compute.
   adapter-specific formats): chosen in the browser it resolves to TAA,
   `Renderer::antialiasing_in_effect` reports TAA and `fsr2_error()` names the
   missing features. TAA, both screen-space reflection methods, world-space
-  reflections, ambient occlusion, fog, motion blur, bloom and SMAA run.
+  reflections, dynamic GI, ambient occlusion, fog, motion blur, bloom and
+  SMAA run.
 - **Inputs, not clocks or files.** Fetch asset bytes and load them with
   `asset::load_slice` or `load_slice_with_options`; `asset::load` reads a file
   and fails in the browser. The frame time comes from
@@ -1400,7 +1475,8 @@ minimal page integration: device creation; procedural content (a textured
 ground, a shadow-casting box, a masked grate with a BC7 image, a blended
 pane that receives screen-space reflections, a skinned and morphed box with an ambient cube, a box lit by a BC6H/BC7
 static irradiance atlas, point, spot and rectangle lights, a decal, a BC6H
-specular probe, glow, heat shimmer, mist, a fog volume and an environment);
+specular probe, a dynamic GI volume, glow, heat shimmer, mist, a fog volume
+and an environment);
 frames under four settings configurations; an asynchronous readback; and
 error scopes. It loads no glTF and sets no lightmap or mesh LODs.
 

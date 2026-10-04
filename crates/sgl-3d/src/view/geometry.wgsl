@@ -197,7 +197,7 @@ fn blended_traced_reflection(i:Fragment)->TracedReflection {
 // alpha.
 fn blended_color(i:Fragment,raster_front:bool)->vec4<f32> {
  let front=object_front_face(i,raster_front);
- let context=ShadeContext(i.clip.xy,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
+ let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
  let s=raster_surface(i,front,surface_base_color(i),surface_emission(i),context.clusters);
  var shaded:Shaded;
  if s.unlit {

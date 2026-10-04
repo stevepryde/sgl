@@ -68,7 +68,8 @@ fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,pixel:vec2<f
   return unreached;
  }
  var visibility=1.;
- if light.shadow_opacity>SHADOW_OPACITY_CUTOFF {
+ // A probe hit looks up no map: its caller casts a visibility ray.
+ if light.shadow_opacity>SHADOW_OPACITY_CUTOFF && receiver!=SHADOW_RECEIVER_PROBE_HIT {
   visibility=shadow_opacity_visibility(local_shadow_visibility(index,light.position,light.range,position,normal,pixel,receiver),light.shadow_opacity);
  }
  if visibility<=0. {

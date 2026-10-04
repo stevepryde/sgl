@@ -192,6 +192,35 @@ impl FogQuality {
     }
 }
 
+/// Dynamic diffuse GI from the scene's volume of probes
+/// (`Scene::set_dynamic_gi_volume`), Wicked Engine's DDGI: the most rays
+/// each probe traces a frame. A probe whose light has settled traces a few
+/// whatever the tier; one whose light changes traces up to the most, and so
+/// settles faster and with less noise at High. Off traces none, and
+/// surfaces take their indirect diffuse light as without a volume. Without
+/// a volume nothing runs at any tier.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DynamicGiQuality {
+    Off,
+    /// Up to 128 rays a probe.
+    Low,
+    /// Up to 256 rays a probe, Wicked's default.
+    #[default]
+    High,
+}
+
+impl DynamicGiQuality {
+    /// The most rays a probe traces a frame, while it runs.
+    pub(crate) fn rays(self) -> Option<u32> {
+        let most = crate::shading::dynamic_gi::MOST_RAYS;
+        match self {
+            Self::Off => None,
+            Self::Low => Some(most / 2),
+            Self::High => Some(most),
+        }
+    }
+}
+
 /// The shadows' map sizes and the filter the camera's surfaces take them
 /// with, as Godot's desktop and mobile project settings set them
 /// (b130438: `directional_shadow/size`, `positional_shadow/atlas_size` and
@@ -304,6 +333,8 @@ pub struct Settings {
     pub atmosphere: bool,
     /// The volumetric fog's resolution.
     pub fog_quality: FogQuality,
+    /// The scene's dynamic diffuse GI volume's quality, or Off.
+    pub dynamic_gi: DynamicGiQuality,
     /// Godot's Gaussian filter across each slice of the volumetric fog's
     /// froxels, x then y, before it integrates them (Godot's
     /// `volumetric_fog/use_filter`): smoother fog, softer shafts and shadow
@@ -342,6 +373,7 @@ impl Default for Settings {
             world_space_reflections: false,
             atmosphere: true,
             fog_quality: FogQuality::default(),
+            dynamic_gi: DynamicGiQuality::default(),
             fog_filter: true,
             heat_distortion: false,
             motion_blur: MotionBlur::Off,

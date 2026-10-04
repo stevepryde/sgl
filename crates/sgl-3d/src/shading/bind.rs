@@ -30,6 +30,7 @@ pub(crate) mod group0 {
     pub(crate) const STATIC_DIRECTION_ATLAS: u32 = 26;
     pub(crate) const FOG_VOLUME: u32 = 27;
     pub(crate) const FOG_SAMPLER: u32 = 28;
+    pub(crate) const DYNAMIC_GI_PROBES: u32 = 29;
 }
 
 /// Group 1's bindings, as bind_scene.wgsl and scene_rays.wgsl declare them.
@@ -202,6 +203,11 @@ fn entries() -> Vec<wgpu::BindGroupLayoutEntry> {
                 STATIC_DIRECTION_ATLAS,
                 filterable,
                 wgpu::TextureViewDimension::D2Array,
+            ),
+            texture(
+                DYNAMIC_GI_PROBES,
+                filterable,
+                wgpu::TextureViewDimension::D2,
             ),
         ])
         .map(|mut entry| {

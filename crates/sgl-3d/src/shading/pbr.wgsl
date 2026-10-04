@@ -83,6 +83,14 @@ fn pbr_srgb_to_linear(value:vec3<f32>)->vec3<f32> {
 fn pbr_hemisphere(n:vec3<f32>,upper:vec3<f32>,ground:vec3<f32>,intensity:f32)->vec3<f32> {
  return mix(ground,upper,n.y*.5+.5)*intensity;
 }
+// The radiance whose irradiance pbr_hemisphere is: the upper colour above
+// the horizon and the ground colour below, times the intensity over PI. A
+// normal n sees the upper half over a projected solid angle of
+// PI (1 + n.y) / 2 and the lower over the rest, so their irradiance is
+// pbr_hemisphere's mix.
+fn pbr_hemisphere_radiance(direction:vec3<f32>,upper:vec3<f32>,ground:vec3<f32>,intensity:f32)->vec3<f32> {
+ return select(ground,upper,direction.y>=0.)*intensity/3.14159265359;
+}
 fn pbr_ibl_weights(base:vec3<f32>,metallic:f32,dfg:vec2<f32>)->PbrIblWeights {
  let dielectric_single=pbr_three_single_scatter(vec3(.04),dfg);
  let dielectric_multi=pbr_three_multi_scatter(vec3(.04),dfg);

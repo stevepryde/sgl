@@ -25,8 +25,8 @@ settings SGL3D has today.
    Rust render data on a caller-owned wgpu device and queue: native (Metal,
    Vulkan, DX12) or the browser's WebGPU, requested with the adapter's limits
    (`graphics_device::limits`). The device must support compute shaders,
-   eight storage buffers per shader stage (wgpu's default limit) and 19
-   sampled textures per shader stage (three above it). That rules out wgpu's
+   eight storage buffers per shader stage (wgpu's default limit) and 20
+   sampled textures per shader stage (four above it). That rules out wgpu's
    GL and GLES backend, WebGL2 included, which lacks compute and whose
    wgpu-hal fixes `MAX_TEXTURE_SLOTS` at 16, and a WebGPU device left at the
    default limits; Metal (31 or more, 128 on macOS and Apple6 and later),
@@ -242,8 +242,11 @@ current capabilities and limits.
 Remaining work, in the existing roadmap order:
 
 1. **Dynamic diffuse GI (11,
-   [#21](https://github.com/stevepryde/sgl/issues/21)).** Current diffuse GI
-   uses game-authored baked lightmaps, irradiance atlases, and ambient cubes.
+   [#21](https://github.com/stevepryde/sgl/issues/21)).** A volume of probes
+   the game places lights surfaces with bounce light alongside game-authored
+   lightmaps, irradiance atlases and ambient cubes
+   ([dynamic GI](../crates/sgl-3d/README.md#dynamic-diffuse-gi)); a volume
+   that scrolls with the player, and its adoption by the consumer, remain.
 2. **DLSS and MetalFX upscaling (12,
    [#22](https://github.com/stevepryde/sgl/issues/22)).** Current antialiasing
    choices are TAA, SMAA, and FSR2; FSR2 requires native device features and

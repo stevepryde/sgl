@@ -196,6 +196,34 @@ impl ViewVolume {
     }
 }
 
+/// A box, for culling lights by their range as the dynamic GI volume's list
+/// culls them against its extent: a sphere reaches it where its centre lies
+/// within its radius of the box's nearest point.
+pub(crate) struct BoxVolume {
+    pub min: Vec3,
+    pub max: Vec3,
+}
+
+impl BoxVolume {
+    fn reaches_sphere(&self, sphere: &Sphere) -> bool {
+        let nearest = sphere.center.clamp(self.min, self.max);
+        nearest.distance_squared(sphere.center) <= sphere.radius * sphere.radius
+    }
+
+    /// Whether `light`'s range reaches into the box.
+    pub fn reaches(&self, light: &Light) -> bool {
+        self.reaches_sphere(&Sphere {
+            center: light.position,
+            radius: light.range,
+        })
+    }
+
+    /// Whether the sphere about `decal`'s box reaches into the box.
+    pub fn reaches_decal(&self, decal: &Decal) -> bool {
+        self.reaches_sphere(&decal_sphere(decal))
+    }
+}
+
 /// Scratch kept between frames so assignment allocates nothing once warm.
 #[derive(Default)]
 pub(super) struct Scratch {

@@ -29,12 +29,14 @@ pub(crate) mod reflection_camera;
 pub(crate) mod targets;
 
 use crate::FrameInput;
+use crate::content::dynamic_gi::DynamicGiVolume;
 use crate::content::lighting::{Backdrop, DirectionalLight, DirectionalShadow};
 use crate::scene::static_lighting::StaticLighting;
 use crate::shading::uniforms::{
     DIRECTIONAL_LIGHT_SHADOW, DirectionalLightUniform, FRAME_BACKDROP_COLOR, FRAME_BAKED_LIGHTING,
-    FRAME_FOG, FRAME_HARDWARE_SHADOW_FILTER, FRAME_IRRADIANCE_ATLAS, FRAME_TEMPORAL_SHADOW_FILTER,
-    FrameUniform, ShadowCascadeUniform, VIEW_PROBE_CAPTURE, ViewUniform,
+    FRAME_DYNAMIC_GI, FRAME_FOG, FRAME_HARDWARE_SHADOW_FILTER, FRAME_IRRADIANCE_ATLAS,
+    FRAME_TEMPORAL_SHADOW_FILTER, FrameUniform, ShadowCascadeUniform, VIEW_PROBE_CAPTURE,
+    ViewUniform,
 };
 use bytemuck::Zeroable;
 use cascades::{Cascades, MAX_SHADOW_CASCADES};
@@ -155,12 +157,14 @@ impl FrameShadow {
 
 /// The frame data of `input` for a scene with `baked` diffuse lighting, with
 /// the directional `shadow`; `fog` is whether the frame's volumetric fog ran,
-/// so draws fog from its volume.
+/// so draws fog from its volume, and `dynamic_gi` the dynamic GI volume
+/// whose probes group 0 binds, which then lights the frame.
 pub(crate) fn frame_uniform(
     input: &FrameInput,
     baked: &StaticLighting,
     shadow: &FrameShadow,
     fog: bool,
+    dynamic_gi: Option<&DynamicGiVolume>,
 ) -> FrameUniform {
     let cascades = shadow.cascades.as_slice();
     let directional_lights = std::array::from_fn(|index| {
@@ -244,10 +248,17 @@ pub(crate) fn frame_uniform(
             | flag(
                 shadow.filter == ShadowFilter::Hardware,
                 FRAME_HARDWARE_SHADOW_FILTER,
-            ),
+            )
+            | flag(dynamic_gi.is_some(), FRAME_DYNAMIC_GI),
         shadow_cascade_count: cascades.len() as u32,
         frame_count: shadow.frame_count,
         padding: 0,
+        dynamic_gi_origin: dynamic_gi.map_or([0.; 3], |volume| volume.origin.to_array()),
+        padding_origin: 0.,
+        dynamic_gi_spacing: dynamic_gi.map_or([0.; 3], |volume| volume.spacing.to_array()),
+        padding_spacing: 0.,
+        dynamic_gi_probes: dynamic_gi.map_or([0; 3], |volume| volume.probes),
+        padding_probes: 0,
     }
 }
 
@@ -398,8 +409,8 @@ impl ViewSlot {
 
 /// The views of one frame and what each sees, built once per frame by the
 /// prepare stage and read by every later stage: the camera and its
-/// clusters, the light and decal lists of world-space ray hits and the
-/// directional shadow's cascades, and the draw instances of every list the
+/// clusters, the light and decal lists of world-space ray hits and of the
+/// dynamic GI probe rays' hits, the directional shadow's cascades, and the draw instances of every list the
 /// frame draws.
 pub(crate) struct FrameViews {
     pub camera: ViewSlot,
@@ -411,6 +422,9 @@ pub(crate) struct FrameViews {
     pub clusters: clusters::Clusters,
     /// The scene lights and decals world-space ray hits shade with.
     pub ray_lists: clusters::Clusters,
+    /// The scene lights and decals the dynamic GI probe rays' hits shade
+    /// with.
+    pub volume_lists: clusters::Clusters,
     /// Each directional shadow cascade, nearest first; the frame uses the
     /// first `cascade_count`.
     pub cascades: [ViewSlot; MAX_SHADOW_CASCADES],
@@ -430,6 +444,7 @@ impl FrameViews {
             blended: draw_list::DrawList::default(),
             clusters: clusters::Clusters::new(device, "camera clusters"),
             ray_lists: clusters::Clusters::new(device, "ray hit lights and decals"),
+            volume_lists: clusters::Clusters::new(device, "dynamic GI probe hit lights and decals"),
             cascades: std::array::from_fn(|_| ViewSlot::new(device, "directional shadow cascade")),
             cascade_count: 0,
             reflection_camera: reflection_camera::Camera::new(Mat4::IDENTITY, Mat4::IDENTITY),
