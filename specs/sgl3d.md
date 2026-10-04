@@ -87,9 +87,11 @@ settings SGL3D has today.
    light's part in an effect) is a value the game can set, even when the game
    shows it to no player: a `Settings` field when it is a player's
    quality/performance choice, otherwise a field of `FrameInput` or of the
-   scene type it belongs to. Its default follows the engine it was ported
-   from. Offer a player choice only for a real quality/performance trade-off;
-   the top tier is the best implemented quality. `SceneResolution` Hd/FullHd fit within 1280×720 and 1920×1080
+   scene type it belongs to. Each is optional: it has a sane default (the
+   ported engine's), so a game sets only what it changes and code that builds
+   these values from their defaults keeps compiling when one is added. Offer a
+   player choice only for a real quality/performance trade-off; the top tier
+   is the best implemented quality. `SceneResolution` Hd/FullHd fit within 1280×720 and 1920×1080
    physical pixels, preserving aspect ratio without upscaling.
 7. **S3D-7 — Existing consumers.** Existing 2D/browser consumers and headless
    core/net builds keep working. SGL3D builds for `wasm32-unknown-unknown` and
