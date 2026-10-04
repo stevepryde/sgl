@@ -72,7 +72,6 @@ const MUTANT_CRATES = ["sgl-core", "sgl-net", "sgl-2d"] as const;
 // with a slash match the whole path, hence the `**/` prefix.
 const MUTANT_EXCLUDES: Record<string, string[]> = {
   "sgl-2d": [
-    "**/render/*.rs",
     "**/canvas/gpu.rs",
     "**/canvas/test_gpu.rs",
     "**/canvas/sprite.rs",

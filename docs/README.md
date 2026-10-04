@@ -19,16 +19,15 @@ reference do not need to be in every prompt.
 
 ## Add SGL to a game
 
-Use only the crates your game needs. Once the initial `0.1.0` release has been
-published to crates.io:
+Use only the crates your game needs, all at the same version:
 
 ```toml
 [dependencies]
-sgl-core = "0.1.0"
-sgl-2d = "0.1.0"
+sgl-core = "0.2.0"
+sgl-2d = "0.2.0"
 ```
 
-Until then, or when changing SGL alongside a game, use a sibling checkout:
+When changing SGL alongside a game, use a sibling checkout:
 
 ```toml
 [dependencies]
@@ -72,11 +71,11 @@ For stability, use exact requirements for every SGL crate the game depends on:
 
 ```toml
 [dependencies]
-sgl-core = "=0.1.0"
-sgl-2d = "=0.1.0"
+sgl-core = "=0.2.0"
+sgl-2d = "=0.2.0"
 ```
 
-The leading `=` is an exact pin; `"0.1.0"` permits compatible updates. Commit
+The leading `=` is an exact pin; `"0.2.0"` permits compatible updates. Commit
 the game's `Cargo.lock` as well to retain the resolved dependency graph.
 For Git dependencies, use the same full commit `rev` for all SGL crates.
 An exact pin keeps the game on its selected release until you choose to migrate.

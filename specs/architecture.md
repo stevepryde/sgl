@@ -35,8 +35,8 @@ library; their rules, content, and process layouts stay with the games.
    - `sgl-post-fx` — SGL's wgpu post-processing effects, including screen-space
      reflections and temporal anti-aliasing derived from DiligentFX; SGL3D
      owns scene and frame integration
-   - `sgl-2d` — assets, immediate UI, and caller-driven compact and
-     logical-canvas wgpu renderers
+   - `sgl-2d` — assets, immediate UI, and a caller-driven logical-canvas wgpu
+     renderer
    - `sgl-input` — controller discovery and normalized events/state, independent
      of rendering; games retain focus, assignment and binding policy
    - `sgl-net` — opaque UDP, WebSocket, in-memory, and simulated transports

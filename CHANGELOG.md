@@ -15,6 +15,79 @@ full API details.
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-04
+
+### One version for every SGL crate
+
+- **Scope:** `sgl-core`, `sgl-net`, `sgl-input`, `sgl-2d`, `sgl-3d`, and
+  `sgl-post-fx` move to `0.2.0` together; SGL crates share one version.
+  `sgl-2d` and `sgl-3d` have breaking changes below. The other crates have no
+  API changes and are versioned with them.
+- **Migration:** change every SGL requirement to `0.2.0` (or `=0.2.0`) in
+  one step, then apply the entries below. Do not mix `0.1` and `0.2` SGL
+  crates.
+
+### One 2D renderer: `sgl_2d::render` removed
+
+- **Scope:** `sgl-2d`. The compact `render` module is removed with all its
+  symbols: `Renderer`, `Sprite`, `SpriteBatch`, `TextureId`, `PixelRect`,
+  `FrameOutcome`, `RenderError`, `SpriteError`, `TextureUploadError`,
+  `MAX_SPRITES` and `render::RendererInitError`. `canvas` is the only
+  renderer; `sgl_2d::canvas::RendererInitError` is unchanged. Canvas APIs and
+  output do not change, so games already on `canvas` need no changes.
+- **Migration:**
+  - Bring-up: replace `render::Renderer::new(window).await?` with
+    `canvas::Context::try_new_async(window, vsync).await?` (`try_new` on
+    native), then `canvas::Renderer::new(&context, logical_w, logical_h,
+    clear_srgb)`. The canvas renders at the logical size and letterboxes to
+    the window; call `Renderer::set_target_size` with the surface size to
+    render at native resolution. `Renderer::resize` becomes
+    `Context::resize`.
+  - Textures: replace `upload_rgba8` and `TextureId` with an
+    `assets::Texture` in `Assets<Texture>`, uploaded with
+    `Renderer::upload_texture(&context, handle, &texture)` and drawn by its
+    `Handle<Texture>`. `Renderer::white_texture` supplies the flat-quad
+    texture. Sprites with a texture that was never uploaded are skipped, not
+    reported as an error.
+  - Sprites: replace `SpriteBatch::push(Sprite { .. })` with
+    `DrawList::push(SpriteInstance { .. })` (`push_screen` for UI).
+    `source: PixelRect::new(x, y, w, h)` becomes
+    `src: Some(Rect::new(x, y, w, h))`. `size` becomes
+    `scale = size / source size`, multiplied by `pixels_per_unit` under a
+    world-unit camera. `position` locates the center rather than `pivot`, so
+    offset non-center pivots by `(0.5 - pivot) × size`, rotated with the
+    sprite. `rotation_radians` becomes `rot` with the same direction. Order
+    by `z`; equal `z` keeps push order.
+  - Camera: replace the `view_projection` matrix with `canvas::Camera`.
+    `Camera::new(w, h)` gives y-down logical pixels;
+    `with_units(WorldUnits { pixels_per_unit, y_up })` gives world units, and
+    `center` and `zoom` move it. Camera rotation and custom projections are
+    not supported.
+  - Colour: `render` read textures as sRGB and took linear `tint` and clear
+    colours. The canvas default (`LightingSpace::Gamma`) takes sRGB `color`
+    and clear colours: convert with `canvas::linear_to_srgb`. Alternatively,
+    pass `LightingSpace::Linear` to `Renderer::with_lighting` to keep
+    world-channel colours linear; the clear colour is still sRGB.
+  - Frames: replace `renderer.render(clear, view_projection, &batch)` with:
+
+    ```rust
+    if let Some(frame) = context.acquire() {
+        renderer.render(&context, &frame, &mut draw_list, &camera);
+        window.pre_present_notify();
+        frame.present();
+    }
+    ```
+
+    `acquire` returning `None` replaces `FrameOutcome::Skipped`.
+  - Device: the canvas requests wgpu's default limits; `render` requested
+    downlevel limits. On adapters limited to downlevel limits (some older or
+    GL-only GPUs), `Context` bring-up fails with `RendererInitError::Device`.
+  - [`examples/direct-game`](examples/direct-game/src/main.rs) is the minimal
+    port: a game-owned winit loop drawing one sprite on native and browser.
+- **Validate:** on each native and browser target, check sprite size,
+  position, orientation and colour; resize and minimize the window.
+  No content formats change.
+
 ### Shared workspace dependencies and math types
 
 - **Scope:** all dependency versions now live in the root workspace manifest.

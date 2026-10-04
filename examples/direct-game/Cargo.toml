@@ -10,9 +10,9 @@ workspace = true
 
 [dependencies]
 sgl-2d.workspace = true
+sgl-core.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-pollster.workspace = true
 winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -4,61 +4,66 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sgl_2d::render::{PixelRect, Renderer, Sprite, SpriteBatch, TextureId};
+use sgl_2d::assets::{Assets, Handle, Texture};
+use sgl_2d::canvas::{Camera, Context, DrawList, Renderer, SpriteInstance};
+use sgl_core::math::Vec2;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-type ReadyRenderer = Rc<RefCell<Option<(Renderer, TextureId)>>>;
+/// The logical resolution the scene renders at before the letterbox blit.
+const LOGICAL_WIDTH: u32 = 960;
+const LOGICAL_HEIGHT: u32 = 540;
+
+struct Graphics {
+    context: Context,
+    renderer: Renderer,
+    white: Handle<Texture>,
+}
+
+type ReadyGraphics = Rc<RefCell<Option<Graphics>>>;
 
 #[derive(Default)]
 struct Game {
     window: Option<Arc<Window>>,
-    renderer: ReadyRenderer,
-    batch: SpriteBatch,
+    graphics: ReadyGraphics,
+    draw: DrawList,
 }
 
 impl Game {
-    fn install_renderer(ready: &ReadyRenderer, mut renderer: Renderer) {
-        let texture = renderer
-            .upload_rgba8("white pixel", 1, 1, &[255, 255, 255, 255])
-            .expect("the fixed one-pixel texture is valid");
-        *ready.borrow_mut() = Some((renderer, texture));
+    fn install_graphics(ready: &ReadyGraphics, context: Context) {
+        let mut renderer = Renderer::new(&context, LOGICAL_WIDTH, LOGICAL_HEIGHT, [0.2, 0.22, 0.3]);
+        let white = renderer.white_texture(&context, &mut Assets::default());
+        *ready.borrow_mut() = Some(Graphics {
+            context,
+            renderer,
+            white,
+        });
     }
 
     fn redraw(&mut self) {
-        let mut ready = self.renderer.borrow_mut();
-        let Some((renderer, texture)) = ready.as_mut() else {
+        let mut ready = self.graphics.borrow_mut();
+        let (Some(window), Some(graphics)) = (&self.window, ready.as_mut()) else {
             return;
         };
-        self.batch.clear();
-        self.batch
-            .push(Sprite {
-                texture: *texture,
-                position: [0.0, 0.0],
-                size: [0.75, 0.75],
-                pivot: [0.5, 0.5],
-                rotation_radians: 0.0,
-                source: PixelRect::new(0, 0, 1, 1),
-                tint: [0.95, 0.55, 0.15, 1.0],
-                flip_x: false,
-                flip_y: false,
-            })
-            .expect("the fixed sample sprite is valid");
-        renderer
-            .render(
-                [0.03, 0.04, 0.07, 1.0],
-                [
-                    [1.0, 0.0, 0.0, 0.0],
-                    [0.0, 1.0, 0.0, 0.0],
-                    [0.0, 0.0, 1.0, 0.0],
-                    [0.0, 0.0, 0.0, 1.0],
-                ],
-                &self.batch,
-            )
-            .expect("sample render failed");
+        let camera = Camera::new(LOGICAL_WIDTH, LOGICAL_HEIGHT);
+        self.draw.clear();
+        self.draw.push(SpriteInstance {
+            // The white texture is 1×1, so scale is the size in logical pixels.
+            scale: Vec2::splat(200.0),
+            color: [0.98, 0.77, 0.42, 1.0],
+            ..SpriteInstance::new(graphics.white, camera.center)
+        });
+        let Some(frame) = graphics.context.acquire() else {
+            return;
+        };
+        graphics
+            .renderer
+            .render(&graphics.context, &frame, &mut self.draw, &camera);
+        window.pre_present_notify();
+        frame.present();
     }
 }
 
@@ -69,7 +74,7 @@ impl ApplicationHandler for Game {
         }
         let attributes = Window::default_attributes()
             .with_title("SGL direct game")
-            .with_inner_size(LogicalSize::new(960, 540));
+            .with_inner_size(LogicalSize::new(LOGICAL_WIDTH, LOGICAL_HEIGHT));
         #[cfg(target_arch = "wasm32")]
         let attributes = {
             use winit::platform::web::WindowAttributesExtWebSys;
@@ -84,20 +89,16 @@ impl ApplicationHandler for Game {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let renderer = pollster::block_on(Renderer::new(window.clone()))
-                .expect("renderer creation failed");
-            Self::install_renderer(&self.renderer, renderer);
+            Self::install_graphics(&self.graphics, Context::new(window.clone(), true));
             window.request_redraw();
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            let ready = Rc::clone(&self.renderer);
+            let ready = Rc::clone(&self.graphics);
             wasm_bindgen_futures::spawn_local(async move {
-                let renderer = Renderer::new(window.clone())
-                    .await
-                    .expect("renderer creation failed");
-                Self::install_renderer(&ready, renderer);
+                let context = Context::new_async(window.clone(), true).await;
+                Self::install_graphics(&ready, context);
                 window.request_redraw();
             });
         }
@@ -107,8 +108,8 @@ impl ApplicationHandler for Game {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                if let Some((renderer, _)) = self.renderer.borrow_mut().as_mut() {
-                    renderer.resize(size.width, size.height);
+                if let Some(graphics) = self.graphics.borrow_mut().as_mut() {
+                    graphics.context.resize(size.width, size.height);
                 }
             }
             WindowEvent::RedrawRequested => self.redraw(),

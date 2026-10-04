@@ -1,6 +1,6 @@
-//! The render-side GPU context: a windowed [`Context`] brought up through
-//! the window GPU bring-up the compact renderer also uses, and the surface
-//! lifecycle (resize / acquire / present).
+//! The render-side GPU context: a windowed [`Context`] brought up surface →
+//! adapter → device → configured surface, and the surface lifecycle
+//! (resize / acquire / present).
 //!
 //! Adapter/device are requested **once at startup** asynchronously.
 //! [`Context::try_new_async`] returns a [`RendererInitError`] a game can
@@ -10,13 +10,33 @@
 //! through [`Gpu::headless`]; a [`Context`] derefs to it. The swapchain is
 //! sRGB; present mode comes from the vsync flag (PR-1: default off).
 
+use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
 
 use winit::window::Window;
 
-pub use crate::surface::RendererInitError;
-use crate::surface::{self, Swapchain, WindowGpu, WindowSurface};
+/// Why [`Context::try_new_async`] could not bring the GPU up for a window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RendererInitError {
+    Surface(String),
+    Adapter(String),
+    Device(String),
+    UnsupportedSurface,
+}
+
+impl fmt::Display for RendererInitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Surface(message) | Self::Adapter(message) | Self::Device(message) => {
+                formatter.write_str(message)
+            }
+            Self::UnsupportedSurface => formatter.write_str("surface has no compatible format"),
+        }
+    }
+}
+
+impl std::error::Error for RendererInitError {}
 
 /// The wgpu device and queue without any surface: everything an upload or
 /// an offscreen scene render needs. A windowed [`Context`] derefs to this,
@@ -87,7 +107,8 @@ pub struct Context {
     gpu: Gpu,
     /// The sRGB surface format selected for the swapchain.
     pub surface_format: wgpu::TextureFormat,
-    surface: WindowSurface,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
 }
 
 impl Deref for Context {
@@ -141,66 +162,89 @@ impl Context {
         window: Arc<Window>,
         vsync: bool,
     ) -> Result<Self, RendererInitError> {
-        let WindowGpu {
-            device,
-            queue,
-            surface,
-        } = surface::bring_up(
-            &window,
-            |_| device_descriptor("sgl canvas device"),
-            |caps| {
-                // Native swapchains use sRGB store conversion. WebGPU canvas
-                // contexts only accept their preferred non-sRGB canvas format
-                // in browsers, so the blit pipeline selects a value-preserving
-                // fragment entry point.
-                #[cfg(not(target_arch = "wasm32"))]
-                let format = caps
-                    .formats
-                    .iter()
-                    .copied()
-                    .find(wgpu::TextureFormat::is_srgb)
-                    .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
-                #[cfg(target_arch = "wasm32")]
-                let format = caps
-                    .formats
-                    .iter()
-                    .copied()
-                    .find(|format| {
-                        matches!(
-                            format,
-                            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
-                        )
-                    })
-                    .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
-                Some(Swapchain {
+        let instance = wgpu::Instance::default();
+        // The surface borrows nothing beyond the Arc<Window> it is given, so
+        // it is 'static for as long as that Arc is alive.
+        let surface = instance
+            .create_surface(window.clone())
+            .map_err(|error| RendererInitError::Surface(error.to_string()))?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::None,
+                force_fallback_adapter: false,
+                compatible_surface: Some(&surface),
+            })
+            .await
+            .map_err(|error| RendererInitError::Adapter(error.to_string()))?;
+        let (device, queue) = adapter
+            .request_device(&device_descriptor("sgl canvas device"))
+            .await
+            .map_err(|error| RendererInitError::Device(error.to_string()))?;
+        let caps = surface.get_capabilities(&adapter);
+        // Native swapchains use sRGB store conversion. WebGPU canvas contexts
+        // only accept their preferred non-sRGB canvas format in browsers, so
+        // the blit pipeline selects a value-preserving fragment entry point.
+        #[cfg(not(target_arch = "wasm32"))]
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(wgpu::TextureFormat::is_srgb)
+            .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
+        #[cfg(target_arch = "wasm32")]
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|format| {
+                matches!(
                     format,
-                    present_mode: if vsync {
-                        wgpu::PresentMode::AutoVsync
-                    } else {
-                        wgpu::PresentMode::AutoNoVsync
-                    },
-                    alpha_mode: *caps.alpha_modes.first()?,
-                    view_formats: Vec::new(),
-                })
+                    wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
+                )
+            })
+            .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
+        let alpha_mode = *caps
+            .alpha_modes
+            .first()
+            .ok_or(RendererInitError::UnsupportedSurface)?;
+        let size = window.inner_size();
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            present_mode: if vsync {
+                wgpu::PresentMode::AutoVsync
+            } else {
+                wgpu::PresentMode::AutoNoVsync
             },
-        )
-        .await?;
+            alpha_mode,
+            view_formats: Vec::new(),
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
         Ok(Self {
             gpu: Gpu { device, queue },
-            surface_format: surface.format(),
+            surface_format: format,
             surface,
+            config,
         })
     }
 
     /// Current surface size in physical pixels.
     pub fn size(&self) -> (u32, u32) {
-        self.surface.size()
+        (self.config.width, self.config.height)
     }
 
     /// Reconfigure the surface to a new size (call on window resize). Ignores
     /// zero-area sizes (minimized window).
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.surface.resize(&self.gpu.device, width, height);
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.config.width = width;
+        self.config.height = height;
+        self.surface.configure(&self.gpu.device, &self.config);
     }
 
     /// Acquire the next swapchain frame.
@@ -211,7 +255,18 @@ impl Context {
     /// `Occluded`, `Validation`, or a still-bad surface after the retry)
     /// return `None` so the caller drops the frame.
     pub fn acquire(&mut self) -> Option<Frame> {
-        let surface_texture = self.surface.acquire(&self.gpu.device)?;
+        use wgpu::CurrentSurfaceTexture as Current;
+        let surface_texture = match self.surface.get_current_texture() {
+            Current::Success(texture) | Current::Suboptimal(texture) => texture,
+            Current::Outdated | Current::Lost => {
+                self.surface.configure(&self.gpu.device, &self.config);
+                match self.surface.get_current_texture() {
+                    Current::Success(texture) | Current::Suboptimal(texture) => texture,
+                    _ => return None,
+                }
+            }
+            Current::Timeout | Current::Occluded | Current::Validation => return None,
+        };
         let view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
