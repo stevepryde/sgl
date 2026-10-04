@@ -85,14 +85,17 @@ settings SGL3D has today.
    Library preset resolution and capability fallback never rewrite saved
    choices and report the effective result separately. A game controls what
    each image-changing feature does and how much, even when it shows the
-   control to no player: whether the feature is on, and its level (a quality
-   tier, or a strength such as a light's share of the fog). That is a
-   `Settings` field when it is a player's choice (quality, performance or
-   comfort) or a diagnostics switch, otherwise a field of `FrameInput` or of
-   the scene type it belongs to. How a feature is done is SGL3D's: its
-   algorithm, kernels, thresholds, history weights and other internal
-   parameters are chosen by SGL3D for each level and are never game fields. A
-   game need not set any control: a player choice defaults as
+   control to no player: whether the feature is on, and its level: a quality
+   tier, a choice between implementations with a real player-facing trade-off
+   (AR-3, RD-3) such as the antialiasing method, a strength such as bloom
+   intensity or a light's share of the fog, or a reach in metres such as the
+   shadow distance. The authored look and content (S3D-2, S3D-5) stay the
+   game's. That is a `Settings` field when it is a player's choice (quality,
+   performance or comfort) or a diagnostics switch, otherwise a field of
+   `FrameInput` or of the scene type it belongs to. How a feature is done is
+   SGL3D's: its algorithm, kernels, thresholds, history weights and other
+   internal parameters are chosen by SGL3D for each level and are never game
+   fields. A game need not set any control: a player choice defaults as
    `Settings::default()` sets it (the High tier where it follows the tier),
    and any other to the ported engine's as RD-2 or a recorded decision
    adjusted it, or to SGL3D's own where nothing was ported. Each type that
