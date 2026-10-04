@@ -53,8 +53,10 @@ pub(crate) static VOLUMETRIC_FOG: crate::shading::Module = crate::shading::Modul
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The injection's workgroup side, in froxels along each axis.
 const INJECT_GROUP: u32 = 4;
-/// The filter's workgroup side, in froxels along x and y of one slice.
+/// The filter's workgroup side, in invocations along x and y of one slice.
 const FILTER_GROUP: u32 = 8;
+/// The froxels each filter invocation filters along its pass's axis.
+const FILTER_RUN: u32 = 8;
 /// The integration's workgroup side, in columns along x and y.
 const INTEGRATE_GROUP: u32 = 8;
 /// Godot's `VolumetricFog::MAX_TEMPORAL_FRAMES`: the frames its froxel jitter
@@ -570,10 +572,16 @@ impl VolumetricFog {
                     label: Some("volumetric fog filter"),
                     timestamp_writes: ctx.timing.and_then(|t| t.compute_pass("fog filter")),
                 });
-            for (pipeline, group) in self.filter.iter().zip(&volumes.filter[index]) {
+            // A pass's invocations each filter a run along its axis.
+            let groups = |side: u32, along: bool| {
+                side.div_ceil(FILTER_GROUP * if along { FILTER_RUN } else { 1 })
+            };
+            for (axis, (pipeline, group)) in
+                self.filter.iter().zip(&volumes.filter[index]).enumerate()
+            {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(1, group, &[]);
-                pass.dispatch_workgroups(x.div_ceil(FILTER_GROUP), y.div_ceil(FILTER_GROUP), z);
+                pass.dispatch_workgroups(groups(x, axis == 0), groups(y, axis == 1), z);
             }
             // The other volume now holds this frame's filtered froxels. Its
             // hold is kept: only a retry of this frame, abandoned before the
