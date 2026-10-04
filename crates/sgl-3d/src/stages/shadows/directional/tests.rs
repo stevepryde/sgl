@@ -542,6 +542,100 @@ fn ray_hits_take_the_cascade_that_holds_them() {
     assert!(camera > 0.99, "{camera}");
 }
 
+// The fog takes Godot's fog tap: the light fades by exp(-INV_FOG_FADE * the
+// metres a point lies behind its occluder), INV_FOG_FADE being 10.
+// Plausible defects: the depth difference taken the wrong way round, scaled
+// by the cascade's depth per metre instead of its metres per unit of depth,
+// or offset toward the light as a surface's is; a cascade or layer that does
+// not hold the point; a shadow beyond the shadow distance. The oracle is
+// that formula over the geometry: a light shining straight down onto a
+// floor the camera does not see, and points in each cascade's part of the
+// view a known distance below or above it.
+#[test]
+fn the_fog_fades_the_light_by_the_metres_behind_its_occluder() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    const HEIGHT: f32 = 1.;
+    fixture.place(floor(Vec3::new(0., HEIGHT, -110.), 120.), false);
+    let shadow = DirectionalShadow {
+        distance: 200.,
+        cascades: 4,
+        first_split: 10.,
+    };
+    let input = frame(DirectionalLight {
+        direction: Vec3::NEG_Y,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: Some(shadow),
+    });
+    // (view depth, metres below the floor): points in cascades 0 to 3
+    // (bounds 10, 27, 74 and 200 m), one above the floor and one beyond the
+    // shadow distance.
+    let points = [
+        (3., 0.02),
+        (20., 0.05),
+        (50., 0.1),
+        (150., 0.2),
+        (20., -0.05),
+        (220., 0.2),
+    ];
+    let (device, queue) = (&fixture.device, &fixture.queue);
+    let prepared = fixture.renderer.prepare_test_frame(
+        device,
+        queue,
+        &mut fixture.scene,
+        &input,
+        &fixture.settings,
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    fixture.renderer.encode_test_shadows(
+        device,
+        queue,
+        &mut encoder,
+        &fixture.scene,
+        &prepared,
+        None,
+    );
+    queue.submit([encoder.finish()]);
+    let observed: Vec<f32> = points
+        .chunks(4)
+        .flat_map(|chunk| {
+            let mut calls = chunk
+                .iter()
+                .map(|(depth, below)| {
+                    format!(
+                        "directional_shadow_visibility(0u,vec3(0.,{:?},{:?}),vec3(0.),vec2(0.),SHADOW_RECEIVER_MEDIUM)",
+                        HEIGHT - below,
+                        -depth
+                    )
+                })
+                .collect::<Vec<_>>();
+            calls.resize(4, "0.".into());
+            observe_shadow(
+                device,
+                queue,
+                &fixture.renderer,
+                &fixture.scene,
+                &format!("output[0]=vec4({});", calls.join(",")),
+            )
+        })
+        .collect();
+    fixture.scene.finish_frame();
+    for ((depth, below), observed) in points.into_iter().zip(observed) {
+        let expected = if depth < shadow.distance && below > 0. {
+            (-10. * below).exp()
+        } else {
+            1.
+        };
+        assert!(
+            (observed - expected).abs() < 2e-3,
+            "a point {depth} m away and {below} m below the floor receives {observed} of the light, not {expected}"
+        );
+    }
+}
+
 /// Runs `statement` in a compute shader over the shading library with the
 /// camera's lit group 0, and returns the `vec4` it writes to `output[0]`.
 fn observe_shadow(

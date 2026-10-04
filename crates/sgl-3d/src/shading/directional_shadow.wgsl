@@ -9,6 +9,14 @@
 // biases are Bevy's DirectionalLight defaults rather than per-light values;
 // no PCSS; and probe captures and ray hits, which have no camera depth,
 // take the first cascade that holds them (directional_shadow_at).
+//
+// The camera's fog takes Godot b130438's lookup instead
+// (directional_shadow_medium, from servers/rendering/renderer_rd/shaders/
+// environment/volumetric_fog_process.glsl, MODE_DENSITY's directional
+// lights, MIT, src/LICENSE-godot.txt): the one cascade at the point's view
+// depth, no receiver offset, and the fog tap. Changes: beyond the last
+// cascade the fog is unshadowed, as surfaces are, where Godot fades the
+// last cascade out by the light's shadow fade.
 
 // Bevy's DirectionalLight::DEFAULT_SHADOW_DEPTH_BIAS, in metres toward the
 // light.
@@ -115,13 +123,34 @@ fn directional_shadow_at(light_id:u32,frag_position:vec3<f32>,surface_normal:vec
  return 1.0;
 }
 
+// The camera's fog at `position`, `view_z` deep: the cascade at that depth,
+// unoffset, and its fog tap.
+fn directional_shadow_medium(position:vec3<f32>,view_z:f32)->f32 {
+ let cascade_index=get_cascade_index(view_z);
+ if cascade_index>=frame.shadow_cascade_count {
+  return 1.0;
+ }
+ let light_local=world_to_directional_light_local(cascade_index,vec4(position,1.));
+ if light_local.w==0.0 {
+  return 1.0;
+ }
+ // Godot's shadow_z_range: the cascade's depth in metres, one over its
+ // orthographic projection's depth per metre.
+ let clip_from_world=frame.shadow_cascades[cascade_index].clip_from_world;
+ let depth_per_metre=vec3(clip_from_world[0].z,clip_from_world[1].z,clip_from_world[2].z);
+ return sample_shadow_map_fog(directional_shadow_map,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,inverseSqrt(dot(depth_per_metre,depth_per_metre)));
+}
+
 // Directional light `light_id`'s shadow at `receiver` (SHADOW_RECEIVER_*).
-// The camera's surfaces and fog see it at `pixel` (Bevy's selection by view
-// depth, with their filter); a probe capture or ray hit sees the first
-// cascade that holds it.
+// The camera's surfaces see it at `pixel` (Bevy's selection by view depth,
+// with their filter), its fog as Godot's fog does; a probe capture or ray
+// hit sees the first cascade that holds it.
 fn directional_shadow_visibility(light_id:u32,position:vec3<f32>,normal:vec3<f32>,pixel:vec2<f32>,receiver:u32)->f32 {
  if receiver!=SHADOW_RECEIVER_CAPTURE {
   let view_z=(view.view*vec4(position,1.)).z;
+  if receiver==SHADOW_RECEIVER_MEDIUM {
+   return directional_shadow_medium(position,view_z);
+  }
   return fetch_directional_shadow(light_id,position,normal,view_z,pixel,shadow_filter(receiver));
  }
  return directional_shadow_at(light_id,position,normal);
