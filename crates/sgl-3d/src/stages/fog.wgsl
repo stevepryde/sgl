@@ -49,8 +49,7 @@
 //   averaged over the sphere, which an isotropic phase scatters, where Godot
 //   samples its sky upward, at a mip chosen by the density, and along the
 //   view, blended by |g|, mixed with its ambient colour by its sky
-//   contribution. Fog::ambient defaults to 1 where Godot's ambient_inject
-//   defaults to 0 (stevepryde/sgl#69).
+//   contribution.
 // - Froxels lie where the camera's unjittered projection puts them, and in
 //   the last frame's volume where its view-projection does, so a changing
 //   projection reprojects too, where Godot interpolates frustum sizes from

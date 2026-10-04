@@ -333,9 +333,7 @@ Where it differs from Godot's fog, and why:
   do.
 - `ambient` scatters the mean of the hemisphere fill and environment
   diffuse over the sphere, which an isotropic medium scatters, where Godot
-  samples its sky upward and along the view. It defaults to 1 where Godot's
-  `ambient_inject` defaults to 0, pending
-  [#69](https://github.com/stevepryde/sgl/issues/69).
+  samples its sky upward and along the view.
 - A froxel without history (the first fog frame, a new volume size or the
   camera's reset) keeps none, where Godot's fog fades in from a cleared
   volume and blends across cuts.
