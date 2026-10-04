@@ -93,9 +93,9 @@ fn incident_environment_is_complete_without_doubling_primary() {
         );
         let depth_view = depth.create_view(&Default::default());
         let visibility = visible(&device, &queue);
-        let mut source = ReflectionSource::new(&device, size);
-        source.use_variant(
+        let mut source = ReflectionSource::new(
             &device,
+            size,
             Variant {
                 environment: true,
                 incident: true,

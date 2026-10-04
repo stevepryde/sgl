@@ -60,6 +60,29 @@ fn motion_blur(settings: &Settings, input: &FrameInput) -> Option<f32> {
     (shutter.is_finite() && shutter > 0.).then_some(shutter)
 }
 
+/// The effective configuration of a first frame from a `perspective` camera
+/// with `FrameInput::new`'s values and no fog volumes: what `Renderer::new`
+/// builds stages for, so that such a frame finds their pipelines built.
+/// `fsr2_running` and `fused_supported` are as for `resolve`.
+pub(super) fn first_frame(
+    settings: &Settings,
+    fsr2_running: bool,
+    fused_supported: bool,
+) -> Effective {
+    let camera = crate::Camera {
+        view: glam::Mat4::IDENTITY,
+        projection: crate::perspective(1., 1., 0.1),
+        eye: glam::Vec3::ZERO,
+    };
+    resolve(
+        settings,
+        &FrameInput::new(camera),
+        false,
+        fsr2_running,
+        fused_supported,
+    )
+}
+
 /// The effective configuration of a frame. `fog_volumes` is whether the
 /// scene holds fog volumes, `fsr2_running` whether FSR2's context runs on
 /// this device and `fused_supported` whether the device has the fused pass's

@@ -9,7 +9,7 @@ pub(crate) mod world;
 use crate::scene::probes::UploadedProbes;
 use crate::settings::ReflectionMethod;
 use crate::view::bindings::FogVolume;
-use crate::view::effective::ScreenSpace;
+use crate::view::effective::{Effective, ScreenSpace};
 use crate::view::frame::FrameContext;
 use crate::view::post_fx::{self, PostFx};
 use crate::view::targets::SharedTargets;
@@ -66,10 +66,18 @@ pub(crate) struct Reflections {
 }
 
 impl Reflections {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, size: [u32; 2]) -> Self {
+    /// Reflections at `size`, with source completion built for the
+    /// `first_frame` the renderer expects.
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: [u32; 2],
+        first_frame: &Effective,
+    ) -> Self {
         use wgpu::util::DeviceExt;
+        let variant = source_variant(first_frame, first_frame.ambient_occlusion.is_some());
         Self {
-            source: source::ReflectionSource::new(device, size),
+            source: source::ReflectionSource::new(device, size, variant),
             environment_parameters: source::environment_uniform(device, 0., 1.),
             velvet: None,
             world: None,
@@ -140,12 +148,7 @@ impl Reflections {
             .unwrap_or(&ctx.bindings.empty_probes);
         self.source.use_variant(
             ctx.device,
-            source::Variant {
-                environment: ctx.effective.source_environment,
-                // Only the method reads it; world-space rays run only with one.
-                incident: ctx.effective.screen_space.is_some(),
-                diffuse_occlusion: ambient_occlusion.is_some(),
-            },
+            source_variant(ctx.effective, ambient_occlusion.is_some()),
         );
         let visibility = ambient_occlusion.unwrap_or(&self.full_visibility).clone();
         let fog = ctx.bindings.fog();
@@ -266,6 +269,17 @@ impl Reflections {
             world_space,
             ctx.timing,
         );
+    }
+}
+
+/// What source completion is built for under `effective`, occluding ambient
+/// diffuse while `ambient_occlusion`'s visibility is bound.
+fn source_variant(effective: &Effective, ambient_occlusion: bool) -> source::Variant {
+    source::Variant {
+        environment: effective.source_environment,
+        // Only the method reads it; world-space rays run only with one.
+        incident: effective.screen_space.is_some(),
+        diffuse_occlusion: ambient_occlusion,
     }
 }
 
