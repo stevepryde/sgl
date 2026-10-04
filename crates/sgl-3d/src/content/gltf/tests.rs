@@ -333,6 +333,7 @@ fn emitted_strength_is_preserved_unless_the_caller_caps_it() {
         &fixture.path(),
         LoadOptions {
             emissive_strength_cap: Some(1.5),
+            ..LoadOptions::default()
         },
     )
     .unwrap();
@@ -340,6 +341,7 @@ fn emitted_strength_is_preserved_unless_the_caller_caps_it() {
         &fixture.embedded(),
         LoadOptions {
             emissive_strength_cap: Some(1.5),
+            ..LoadOptions::default()
         },
     )
     .unwrap();
@@ -371,7 +373,14 @@ fn embedded_part_selection_keeps_ancestors_and_excludes_other_mesh_nodes() {
     ];
     let fixture = Fixture::new(source, &values);
     let bytes = fixture.embedded();
-    let part = load_slice_filtered(&bytes, |name| name == Some("head")).unwrap();
+    let head = |name: Option<&str>| name == Some("head");
+    fn selecting<'a>(nodes: &'a (dyn Fn(Option<&str>) -> bool + Sync)) -> LoadOptions<'a> {
+        LoadOptions {
+            nodes: Some(nodes),
+            ..LoadOptions::default()
+        }
+    }
+    let part = load_slice_with_options(&bytes, selecting(&head)).unwrap();
     let mesh = &part.meshes[0];
     assert_eq!(mesh.indices.len(), 3);
     for (v, expected) in mesh
@@ -402,5 +411,109 @@ fn embedded_part_selection_keeps_ancestors_and_excludes_other_mesh_nodes() {
             .sum::<usize>(),
         12
     );
-    assert!(load_slice_filtered(&bytes, |_| false).is_err());
+    assert!(load_slice_with_options(&bytes, selecting(&|_| false)).is_err());
+    // A file selects as its bytes do.
+    let file = load_with_options(&fixture.path(), selecting(&head)).unwrap();
+    assert_eq!(file.meshes.len(), 1);
+    assert_eq!(file.meshes[0].indices.len(), 3);
+}
+
+// Defects: the loader reads or decodes an image the game supplies, puts a
+// supplied or decoded image at another index than the materials address,
+// or tells the game the wrong image (a data URI is embedded, not a file).
+// Oracle: an image whose file does not exist loads only while supplied, and
+// a written PNG's and an embedded one's known texels.
+#[test]
+fn supplied_images_are_never_read_and_the_rest_decode() {
+    let source = br#"{
+      "asset":{"version":"2.0"},
+      "buffers":[{"uri":"fixture.bin","byteLength":96}],
+      "bufferViews":[
+        {"buffer":0,"byteLength":36},
+        {"buffer":0,"byteOffset":36,"byteLength":36},
+        {"buffer":0,"byteOffset":72,"byteLength":24}
+      ],
+      "accessors":[
+        {"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},
+        {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},
+        {"bufferView":2,"componentType":5126,"count":3,"type":"VEC2"}
+      ],
+      "images":[
+        {"uri":"missing.png","name":"albedo"},
+        {"uri":"glow.png"},
+        {"uri":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNwC4gCAAHQAPElUIcnAAAAAElFTkSuQmCC"}
+      ],
+      "textures":[{"source":0},{"source":1}],
+      "materials":[{
+        "pbrMetallicRoughness":{"baseColorTexture":{"index":0}},
+        "emissiveTexture":{"index":1},"emissiveFactor":[1,1,1]
+      }],
+      "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"material":0}]}],
+      "nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0
+    }"#;
+    let values = [
+        0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0.,
+        1.,
+    ];
+    let fixture = Fixture::new(source, &values);
+    image::RgbImage::from_raw(2, 1, vec![10, 20, 30, 40, 50, 60])
+        .unwrap()
+        .save(fixture.directory.join("glow.png"))
+        .unwrap();
+    let supplied = image::RgbaImage::from_raw(1, 1, vec![1, 2, 3, 4]).unwrap();
+    let seen = std::sync::Mutex::new(Vec::new());
+    let sources = |image: GltfImage<'_>| -> Result<ImageSource> {
+        seen.lock().unwrap().push((
+            image.index,
+            image.name.map(String::from),
+            image.uri.map(String::from),
+        ));
+        Ok(match image.uri {
+            Some("missing.png") => ImageSource::Supplied(Image::Rgba8(supplied.clone())),
+            _ => ImageSource::Decode,
+        })
+    };
+    let texels = |image: &Image| match image {
+        Image::Rgba8(image) => image.as_raw().clone(),
+        Image::Compressed(_) => panic!("expected RGBA8"),
+    };
+    assert!(
+        load(&fixture.path()).is_err(),
+        "decoding reads the missing image"
+    );
+    let asset = load_with_options(
+        &fixture.path(),
+        LoadOptions {
+            images: Some(&sources),
+            ..LoadOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(texels(&asset.images[0]), [1, 2, 3, 4]);
+    assert_eq!(texels(&asset.images[1]), [10, 20, 30, 255, 40, 50, 60, 255]);
+    assert_eq!(texels(&asset.images[2]), [70, 80, 90, 255]);
+    assert_eq!(asset.materials[0].base_texture, Some(0));
+    assert_eq!(asset.materials[0].emissive_texture, Some(1));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            (0, Some("albedo".into()), Some("missing.png".into())),
+            (1, None, Some("glow.png".into())),
+            (2, None, None),
+        ]
+    );
+    // Bytes resolve no external file: supplying every image loads them.
+    let supply_all = |_: GltfImage<'_>| -> Result<ImageSource> {
+        Ok(ImageSource::Supplied(Image::Rgba8(supplied.clone())))
+    };
+    let embedded = load_slice_with_options(
+        &fixture.embedded(),
+        LoadOptions {
+            images: Some(&supply_all),
+            ..LoadOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(embedded.images.len(), 3);
+    assert!(load_slice(&fixture.embedded()).is_err());
 }

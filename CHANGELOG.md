@@ -54,6 +54,78 @@ full API details.
   distant moving objects, and compare the `world reflection rays` timing
   group on the game's route.
 
+### glTF loading takes the game's images instead of decoding them
+
+- **Scope:** `sgl-3d` `asset::LoadOptions` gains `images` and `nodes` and a
+  lifetime (`LoadOptions<'a>`), with the new `asset::GltfImage` and
+  `asset::ImageSource`; `asset::load_slice_filtered` is removed. The loader
+  asks `images` once per glTF image (its
+  index, name and, for an external file, its URI) whether to decode it
+  (`ImageSource::Decode`) or take the game's `Image`
+  (`ImageSource::Supplied`), which it places at that image's index; a
+  supplied image is never read or decoded, as Bevy's glTF loader leaves an
+  external image to its asset server (9d12036
+  `crates/bevy_gltf/src/loader/mod.rs` `load_image`). An embedded glTF may
+  now refer to external image files when the game supplies them. Without
+  `images` every image decodes as before. A game that replaced a loaded
+  asset's images with BC7 chains paid for decoding the PNGs it discarded:
+  a GLB with four PNGs (three 2048² and one 1024²) loaded in about 100 ms
+  decoding them and 1 ms with all four supplied (Apple M5, release build).
+  Mesh node selection moves from `load_slice_filtered` into
+  `LoadOptions::nodes`, so a file load selects nodes as bytes did and a
+  selection combines with supplied images and the emissive cap; it selects
+  as before. Both callbacks are borrowed and `Sync`, so `LoadOptions` stays
+  `Send` and `Sync` and one value can serve loads on several threads.
+- **Migration:** a `LoadOptions` literal that names every field gains
+  `..LoadOptions::default()`:
+
+  ```rust
+  // Before
+  LoadOptions { emissive_strength_cap: Some(1.5) }
+  // After
+  LoadOptions { emissive_strength_cap: Some(1.5), ..LoadOptions::default() }
+  ```
+
+  A game that replaces images after loading can supply them instead:
+
+  ```rust
+  // Before
+  let mut asset = asset::load(&path)?;
+  asset.images[0] = Image::Compressed(CompressedImage::from_ktx2(&albedo_ktx2)?);
+  // After
+  let sources = |image: GltfImage<'_>| -> asset::Result<ImageSource> {
+      Ok(if image.index == 0 {
+          ImageSource::Supplied(Image::Compressed(CompressedImage::from_ktx2(&albedo_ktx2)?))
+      } else {
+          ImageSource::Decode
+      })
+  };
+  let asset = asset::load_with_options(
+      &path,
+      LoadOptions { images: Some(&sources), ..LoadOptions::default() },
+  )?;
+  ```
+
+  A filtered load passes its predicate as `nodes`:
+
+  ```rust
+  // Before
+  let part = asset::load_slice_filtered(&bytes, |name| name == Some("head"))?;
+  // After
+  let head = |name: Option<&str>| name == Some("head");
+  let part = asset::load_slice_with_options(
+      &bytes,
+      LoadOptions { nodes: Some(&head), ..LoadOptions::default() },
+  )?;
+  ```
+
+  A `LoadOptions` that a game stored without a lifetime now needs one:
+  build it where it is used, or store a `LoadOptions<'static>` whose
+  callbacks are `static` or leaked. A callback that mutates state uses a
+  `Mutex` or an atomic, as `Sync` requires. Games that use none of these
+  need no changes. Afterwards, check the game's asset load times, its
+  compressed materials and its rigid parts.
+
 ### AgX looks are a colour grading choice
 
 - **Scope:** `sgl-3d` adds `AgxLook` (`None`, `Punchy`, `Golden`) and

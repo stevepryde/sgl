@@ -15,7 +15,8 @@ use gltf::texture::WrappingMode;
 
 use super::deformation::{MeshDeformation, Rig};
 pub use super::gltf::{
-    LoadOptions, load, load_slice, load_slice_filtered, load_slice_with_options, load_with_options,
+    GltfImage, ImageSource, LoadOptions, load, load_slice, load_slice_with_options,
+    load_with_options,
 };
 pub use super::images::{CompressedFormat, CompressedImage, Image};
 use super::material::AlphaMode;

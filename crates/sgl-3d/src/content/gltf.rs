@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 use super::asset::{Asset, CpuMesh, Material, Result, Vertex};
 use super::deformation::{MeshDeformation, MorphTarget};
+use super::images::Image;
 use material::read_material;
 use rig::{Rigging, read_influences, read_morph_targets};
 
@@ -24,11 +25,58 @@ mod rig_tests;
 mod tests;
 
 /// Optional application adaptations applied while loading an asset.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct LoadOptions {
+#[derive(Clone, Copy, Default)]
+pub struct LoadOptions<'a> {
     /// Maximum authored emissive strength, applied before the emissive color.
     /// `None` preserves authored intensity. A cap must be finite and nonnegative.
     pub emissive_strength_cap: Option<f32>,
+    /// Where each of the glTF's images comes from, asked once per image in
+    /// image order. `None` decodes every image.
+    #[allow(clippy::type_complexity)]
+    pub images: Option<&'a (dyn Fn(GltfImage<'_>) -> Result<ImageSource> + Sync)>,
+    /// Which of the scene's mesh nodes load, asked once per mesh node with
+    /// its authored name; `None` loads every one. Every ancestor's
+    /// transform applies, selected or not, and each descendant is asked
+    /// itself. Selecting none is an error.
+    #[allow(clippy::type_complexity)]
+    pub nodes: Option<&'a (dyn Fn(Option<&str>) -> bool + Sync)>,
+}
+
+impl std::fmt::Debug for LoadOptions<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoadOptions")
+            .field("emissive_strength_cap", &self.emissive_strength_cap)
+            .field("images", &self.images.map(|_| "Fn"))
+            .field("nodes", &self.nodes.map(|_| "Fn"))
+            .finish()
+    }
+}
+
+/// A glTF image the loader is about to read, as `LoadOptions::images` sees
+/// it.
+#[derive(Clone, Copy, Debug)]
+pub struct GltfImage<'a> {
+    /// Its index in the glTF, which materials' texture indices and
+    /// `Asset::images` use.
+    pub index: usize,
+    /// Its authored name.
+    pub name: Option<&'a str>,
+    /// The file it refers to, relative to the glTF and percent-encoded, as
+    /// authored; `None` when it is embedded (a buffer view or a data URI).
+    pub uri: Option<&'a str>,
+}
+
+/// Where a loaded asset's image comes from, as Bevy's glTF loader resolves
+/// each image's source (`load_image`): the glTF's own, decoded, or the
+/// game's.
+#[derive(Clone, Debug)]
+pub enum ImageSource {
+    /// Read and decode the glTF's image: an 8-bit PNG or JPEG, embedded or
+    /// beside a glTF file.
+    Decode,
+    /// This image instead, such as a compressed chain from the game's export
+    /// step. The glTF's image is neither read nor decoded.
+    Supplied(Image),
 }
 
 /// Load a `.gltf` or `.glb` file, preserving authored emissive strength.
@@ -39,67 +87,37 @@ pub fn load(path: &Path) -> Result<Asset> {
 /// Load a file with explicit application adaptations. External buffers and
 /// images resolve beside it. A browser has no file system: it fetches the
 /// bytes and calls [`load_slice_with_options`].
-pub fn load_with_options(path: &Path, options: LoadOptions) -> Result<Asset> {
+pub fn load_with_options(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
     load_inner(path, options).map_err(|error| format!("{}: {error}", path.display()).into())
 }
 
-fn load_inner(path: &Path, options: LoadOptions) -> Result<Asset> {
+fn load_inner(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
     check(options)?;
     let bytes = std::fs::read(path)?;
-    let (document, buffers, images) = import(&bytes, path.parent()).map_err(|error| {
+    let (document, buffers) = import(&bytes, path.parent()).map_err(|error| {
         format!("glTF import failed: {error}; check referenced files and re-export valid glTF from the Blender source")
     })?;
-    decode(
-        document,
-        buffers,
-        images,
-        options.emissive_strength_cap,
-        &|_| true,
-    )
+    decode(document, &buffers, path.parent(), options)
 }
 
 /// Load an embedded glTF/GLB with the same material and geometry rules as [`load`].
-/// External file URIs cannot be resolved from bytes; embed buffers and images.
+/// External file URIs cannot be resolved from bytes; embed buffers and images,
+/// or supply the images ([`load_slice_with_options`]).
 pub fn load_slice(bytes: &[u8]) -> Result<Asset> {
     load_slice_with_options(bytes, LoadOptions::default())
 }
 
 /// Load an embedded glTF/GLB with explicit application adaptations, under
-/// the same rules as [`load_with_options`].
-pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions) -> Result<Asset> {
+/// the same rules as [`load_with_options`]. An image the options supply
+/// may be an external file the bytes cannot resolve.
+pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions<'_>) -> Result<Asset> {
     check(options)?;
-    load_embedded(bytes, options, &|_| true)
-}
-
-/// Load mesh nodes selected by the caller from an embedded asset.
-/// The predicate sees each mesh node's optional authored name. All ancestor
-/// transforms remain applied, including ancestors excluded by the predicate.
-/// Selection does not implicitly include descendants; each mesh node is tested.
-/// Unsupported content is rejected under the same rules as file loading.
-pub fn load_slice_filtered(
-    bytes: &[u8],
-    include_node: impl Fn(Option<&str>) -> bool,
-) -> Result<Asset> {
-    load_embedded(bytes, LoadOptions::default(), &include_node)
-}
-
-fn load_embedded(
-    bytes: &[u8],
-    options: LoadOptions,
-    include_node: &dyn Fn(Option<&str>) -> bool,
-) -> Result<Asset> {
-    let (document, buffers, images) =
+    let (document, buffers) =
         import(bytes, None).map_err(|error| format!("embedded glTF import failed: {error}"))?;
-    decode(
-        document,
-        buffers,
-        images,
-        options.emissive_strength_cap,
-        include_node,
-    )
+    decode(document, &buffers, None, options)
 }
 
-fn check(options: LoadOptions) -> Result<()> {
+fn check(options: LoadOptions<'_>) -> Result<()> {
     if options
         .emissive_strength_cap
         .is_some_and(|cap| !cap.is_finite() || cap < 0.0)
@@ -112,30 +130,97 @@ fn check(options: LoadOptions) -> Result<()> {
 // The gltf crate exposes generic extension values but does not recognize required
 // KHR_materials_anisotropy. Remove only that declaration for its core validation;
 // all structural validation and every other required extension remain enforced.
-fn import(
-    bytes: &[u8],
-    base: Option<&Path>,
-) -> Result<(
-    gltf::Document,
-    Vec<gltf::buffer::Data>,
-    Vec<gltf::image::Data>,
-)> {
+fn import(bytes: &[u8], base: Option<&Path>) -> Result<(gltf::Document, Vec<gltf::buffer::Data>)> {
     let gltf::Gltf { document, blob } = gltf::Gltf::from_slice_without_validation(bytes)?;
     let mut root = document.into_json();
     root.extensions_required
         .retain(|extension| extension != "KHR_materials_anisotropy");
     let document = gltf::Document::from_json(root)?;
     let buffers = gltf::import_buffers(&document, base, blob)?;
-    let images = gltf::import_images(&document, base, &buffers)?;
-    Ok((document, buffers, images))
+    Ok((document, buffers))
+}
+
+/// `document`'s images, each from where `options.images` says, decoded
+/// where it says nothing. Bevy's glTF loader resolves each image's source
+/// as it loads (9d12036 `crates/bevy_gltf/src/loader/mod.rs` `load_image`):
+/// it decodes an embedded image and leaves an external one to its asset
+/// server, so the loader never decodes it. Here the game, which has no
+/// asset server, chooses for each image. A file's images resolve beside it
+/// (`base`).
+fn read_images(
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+    base: Option<&Path>,
+    options: LoadOptions<'_>,
+) -> Result<Vec<Image>> {
+    document
+        .images()
+        .map(|image| {
+            let index = image.index();
+            let source = match options.images {
+                None => ImageSource::Decode,
+                Some(sources) => {
+                    let uri = match image.source() {
+                        gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => {
+                            Some(uri)
+                        }
+                        _ => None,
+                    };
+                    sources(GltfImage {
+                        index,
+                        name: image.name(),
+                        uri,
+                    })
+                    .map_err(|error| format!("image {index}: {error}"))?
+                }
+            };
+            match source {
+                ImageSource::Supplied(supplied) => Ok(supplied),
+                ImageSource::Decode => {
+                    let data = gltf::image::Data::from_source(image.source(), base, buffers)
+                        .map_err(|error| format!("image {index} import failed: {error}; check referenced files and re-export valid glTF from the Blender source"))?;
+                    rgba(index, data)
+                }
+            }
+        })
+        .collect()
+}
+
+/// A decoded 8-bit image as RGBA8.
+fn rgba(index: usize, data: gltf::image::Data) -> Result<Image> {
+    use gltf::image::Format;
+    let channels = match data.format {
+        Format::R8 => 1,
+        Format::R8G8 => 2,
+        Format::R8G8B8 => 3,
+        Format::R8G8B8A8 => 4,
+        other => {
+            return Err(format!(
+                "image {index} has unsupported {other:?} pixels; export an 8-bit PNG or JPEG"
+            )
+            .into());
+        }
+    };
+    let rgba = data
+        .pixels
+        .chunks_exact(channels)
+        .flat_map(|p| match channels {
+            1 => [p[0], p[0], p[0], 255],
+            2 => [p[0], p[0], p[0], p[1]],
+            3 => [p[0], p[1], p[2], 255],
+            _ => [p[0], p[1], p[2], p[3]],
+        })
+        .collect();
+    image::RgbaImage::from_raw(data.width, data.height, rgba)
+        .map(Image::Rgba8)
+        .ok_or_else(|| format!("image {index} has inconsistent pixel dimensions").into())
 }
 
 fn decode(
     document: gltf::Document,
-    buffers: Vec<gltf::buffer::Data>,
-    images: Vec<gltf::image::Data>,
-    emission_cap: Option<f32>,
-    include_node: &dyn Fn(Option<&str>) -> bool,
+    buffers: &[gltf::buffer::Data],
+    base: Option<&Path>,
+    options: LoadOptions<'_>,
 ) -> Result<Asset> {
     for extension in document.extensions_used() {
         if !matches!(
@@ -165,7 +250,7 @@ fn decode(
         .map(|material| {
             let strength = material.emissive_strength().unwrap_or(1.0);
             let mut result = read_material(material, &document)?;
-            if let Some(cap) = emission_cap
+            if let Some(cap) = options.emissive_strength_cap
                 && strength > cap
             {
                 result.emissive = result.emissive.map(|value| value * cap / strength);
@@ -176,47 +261,19 @@ fn decode(
     // glTF primitives may omit a material; retain the specification default.
     let default_material = materials.len();
     materials.push(Material::default());
-    let images = images
-        .into_iter()
-        .enumerate()
-        .map(|(index, data)| {
-            use gltf::image::Format;
-            let channels = match data.format {
-                Format::R8 => 1,
-                Format::R8G8 => 2,
-                Format::R8G8B8 => 3,
-                Format::R8G8B8A8 => 4,
-                other => return Err(format!(
-                    "image {index} has unsupported {other:?} pixels; export an 8-bit PNG or JPEG"
-                )
-                .into()),
-            };
-            let rgba = data
-                .pixels
-                .chunks_exact(channels)
-                .flat_map(|p| match channels {
-                    1 => [p[0], p[0], p[0], 255],
-                    2 => [p[0], p[0], p[0], p[1]],
-                    3 => [p[0], p[1], p[2], 255],
-                    _ => [p[0], p[1], p[2], p[3]],
-                })
-                .collect();
-            image::RgbaImage::from_raw(data.width, data.height, rgba)
-                .map(super::images::Image::Rgba8)
-                .ok_or_else(|| format!("image {index} has inconsistent pixel dimensions").into())
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let images = read_images(&document, buffers, base, options)?;
     let scene = document
         .default_scene()
         .or_else(|| document.scenes().next())
         .ok_or("GLB contains no scene")?;
-    let mut rigging = Rigging::new(&document, &buffers)?;
+    let mut rigging = Rigging::new(&document, buffers)?;
+    let include_node = options.nodes.unwrap_or(&|_| true);
     let mut meshes = Vec::new();
     for node in scene.nodes() {
         read_node(
             node,
             Mat4::IDENTITY,
-            &buffers,
+            buffers,
             (default_material, &materials),
             &mut rigging,
             &mut meshes,
