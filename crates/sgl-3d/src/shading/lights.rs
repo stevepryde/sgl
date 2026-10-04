@@ -29,6 +29,10 @@ pub(crate) struct LightRecord {
     /// Half a rectangle's height, along its width's axis crossed with its
     /// normal; zero for a point or spot light.
     pub half_height: f32,
+    /// How dark its shadow is (`Light::shadow_opacity`).
+    pub shadow_opacity: f32,
+    /// WGSL rounds `Light` up to its 16-byte alignment.
+    pub padding: [f32; 3],
 }
 
 /// `LightRecord::shape`: a point or spot light.
@@ -96,6 +100,8 @@ impl LightRecord {
             fog_energy: light.fog_energy,
             half_width,
             half_height,
+            shadow_opacity: light.shadow_opacity,
+            padding: [0.; 3],
         }
     }
 }
@@ -178,6 +184,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
                 fog_energy,
                 half_width,
                 half_height,
+                shadow_opacity,
             ]
         ),
         mirror!(

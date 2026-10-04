@@ -35,9 +35,10 @@ fn light_angle_attenuation(light:Light,to_light:vec3<f32>)->f32 {
 // Scene light `index` at `receiver` (SHADOW_RECEIVER_*) with its position
 // and normal, seen at the view's `pixel`. It does not reach a receiver it is
 // out of range of, outside the cone of, behind (a rectangle: not in front of
-// its face), or that its shadow fully occludes. A point in the fog has no
-// side, so a light reaches it from any direction; its normal is zero, so
-// its shadow takes no normal offset.
+// its face), or that its shadow, at its shadow opacity, fully occludes. A
+// light at or below the shadow opacity cutoff looks up no shadow. A point in
+// the fog has no side, so a light reaches it from any direction; its normal
+// is zero, so its shadow takes no normal offset.
 fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,pixel:vec2<f32>,receiver:u32)->LightSample {
  let unreached=LightSample(vec3(0.),vec3(0.),0.,0.,NO_RECT_LIGHT);
  let light=lights[index];
@@ -66,7 +67,10 @@ fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,pixel:vec2<f
  if attenuation<=0. {
   return unreached;
  }
- let visibility=local_shadow_visibility(index,light.position,light.range,position,normal,pixel,receiver);
+ var visibility=1.;
+ if light.shadow_opacity>SHADOW_OPACITY_CUTOFF {
+  visibility=shadow_opacity_visibility(local_shadow_visibility(index,light.position,light.range,position,normal,pixel,receiver),light.shadow_opacity);
+ }
  if visibility<=0. {
   return unreached;
  }

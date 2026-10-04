@@ -44,7 +44,6 @@
 //   it about the direction to its nearest point and fades it in over 10 cm
 //   in front of the face. Bounded by π, it needs no 1 m distance clamp,
 //   which Godot gives area lights against jitter flicker.
-// - No light has Godot's shadow_opacity (stevepryde/sgl#65).
 // - The ambient is the frame's hemisphere fill and environment diffuse
 //   averaged over the sphere, which an isotropic phase scatters, where Godot
 //   samples its sky upward, at a mip chosen by the density, and along the
@@ -293,10 +292,7 @@ var<workgroup> fog_ambient_light:vec3<f32>;
     continue;
    }
    let toward=normalize(directional.direction_to_light);
-   var shadow=1.;
-   if (directional.flags&DIRECTIONAL_LIGHT_SHADOW)!=0u {
-    shadow=directional_shadow_visibility(index,position,vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM);
-   }
+   let shadow=directional_light_shadow(index,position,vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM);
    light+=directional.color*directional.illuminance*shadow*henyey_greenstein(dot(view_ray,toward),froxels.anisotropy)*directional.fog_energy;
   }
   light+=fog_ambient_light;

@@ -105,7 +105,8 @@ fn is_rect(light: &Light) -> bool {
 }
 
 /// A light a record can hold: finite, nonnegative colour, intensity,
-/// specular scale and fog energy, a positive range, a spot's nonzero
+/// specular scale and fog energy, a shadow opacity in 0..=1, a positive
+/// range, a spot's nonzero
 /// direction and ordered angles below a right angle (Bevy's limit), and a
 /// rectangle's nonzero direction, a width axis not parallel to it, and a
 /// positive size.
@@ -116,6 +117,7 @@ fn validate(light: &Light) -> Result<(), SceneError> {
         && nonnegative(light.intensity)
         && nonnegative(light.specular)
         && nonnegative(light.fog_energy)
+        && (0.0..=1.).contains(&light.shadow_opacity)
         && light.range.is_finite()
         && light.range > 0.
         && match light.shape {

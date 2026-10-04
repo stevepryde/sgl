@@ -78,14 +78,20 @@ pub struct Light {
     /// lit without a shadow. A rectangle has a point shadow from its centre
     /// over the half-space it lights, as Godot shadows its area lights.
     pub casts_shadow: bool,
+    /// How dark its shadow is, 0..=1 (Godot's `shadow_opacity`), on surfaces
+    /// and in the volumetric fog alike: 1 hides all of its light behind its
+    /// casters, 0.4 lets 0.6 of it through, and at most 0.001 (Godot's
+    /// cutoff) draws no shadow and skips the lookup.
+    pub shadow_opacity: f32,
 }
 
 impl Default for Light {
     /// Godot's `Light3D` defaults: a white point light at the origin, of
     /// π candela (its light energy of 1, which its renderer scales by π),
     /// reaching 5 metres, live, physical specular (its `light_specular` of
-    /// 0.5, which its renderer doubles), fog energy 1 and no shadow. Set
-    /// what differs and take the rest with `..Default::default()`.
+    /// 0.5, which its renderer doubles), fog energy 1 and no shadow, at
+    /// opacity 1 when cast. Set what differs and take the rest with
+    /// `..Default::default()`.
     fn default() -> Self {
         Self {
             position: Vec3::ZERO,
@@ -97,6 +103,7 @@ impl Default for Light {
             specular: 1.,
             fog_energy: 1.,
             casts_shadow: false,
+            shadow_opacity: 1.,
         }
     }
 }

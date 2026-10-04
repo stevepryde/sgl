@@ -156,3 +156,15 @@ fn directional_shadow_visibility(light_id:u32,position:vec3<f32>,normal:vec3<f32
  }
  return directional_shadow_at(light_id,position,normal);
 }
+
+// Directional light `index` (Frame.directional_lights)'s shadow at
+// `receiver`, at its shadow opacity (shadow_opacity_visibility); 1 for a
+// light without the frame's cascades or at or below the opacity cutoff,
+// which looks up none.
+fn directional_light_shadow(index:u32,position:vec3<f32>,normal:vec3<f32>,pixel:vec2<f32>,receiver:u32)->f32 {
+ let light=frame.directional_lights[index];
+ if (light.flags&DIRECTIONAL_LIGHT_SHADOW)==0u || light.shadow_opacity<=SHADOW_OPACITY_CUTOFF {
+  return 1.;
+ }
+ return shadow_opacity_visibility(directional_shadow_visibility(index,position,normal,pixel,receiver),light.shadow_opacity);
+}

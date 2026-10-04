@@ -166,7 +166,13 @@ pub(crate) fn frame_uniform(
                 } else {
                     0.
                 },
-                padding: [0.; 3],
+                // A shadow opacity the blend cannot take draws no shadow.
+                shadow_opacity: if light.shadow_opacity.is_finite() {
+                    light.shadow_opacity.clamp(0., 1.)
+                } else {
+                    0.
+                },
+                padding: [0.; 2],
             }
         })
     });

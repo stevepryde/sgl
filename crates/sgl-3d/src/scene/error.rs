@@ -61,8 +61,9 @@ pub enum SceneError {
     /// diffuse light from lightmap charts and the irradiance atlas.
     StaticInstance,
     /// A light's position, colour, intensity, range or specular scale is
-    /// not finite, or not positive where it must be, or a spot's direction
-    /// is zero or its angles are not `0 <= inner <= outer < π/2`.
+    /// not finite, or not positive where it must be, its shadow opacity is
+    /// outside 0..=1, or a spot's direction is zero or its angles are not
+    /// `0 <= inner <= outer < π/2`.
     InvalidLight,
     /// A decal's position, rotation or size is not finite, its size not
     /// positive, or its colour, mix or fades outside their ranges.
@@ -149,7 +150,7 @@ impl std::fmt::Display for SceneError {
                 "a static instance takes baked light from charts, not an ambient cube"
             }
             Self::InvalidLight => {
-                "a light needs a finite position, nonnegative colour, intensity and specular scale, a positive range, and a spot a nonzero direction with 0 <= inner <= outer < pi/2"
+                "a light needs a finite position, nonnegative colour, intensity and specular scale, a shadow opacity in 0..=1, a positive range, and a spot a nonzero direction with 0 <= inner <= outer < pi/2"
             }
             Self::InvalidDecal => {
                 "a decal needs a finite pose, a positive size, and colour, mix and fades in range"
