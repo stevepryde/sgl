@@ -86,7 +86,7 @@ fn histogram_counts_each_pixel_in_its_bin_by_its_mask_weight() {
         },
         ..Default::default()
     };
-    let (min, max) = (automatic.min_log_luminance, automatic.max_log_luminance);
+    let (min, max) = (MIN_LOG_LUMINANCE, MAX_LOG_LUMINANCE);
     let mut expected = vec![0u32; 64];
     let mut texels = Vec::new();
     for y in 0..size[1] {
