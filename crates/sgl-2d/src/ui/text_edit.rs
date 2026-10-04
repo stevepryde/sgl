@@ -14,28 +14,6 @@ pub(super) struct EditState {
     pub(super) scroll: f32,
 }
 
-/// Apply one frame of line-edit input to `buf`: backspace first, then
-/// printable chars appended (cursor is at the end) up to `max_len`
-/// **characters** (PR-9: name `LineEdit` max 50). Returns whether `buf`
-/// changed. Pure — unit-tested without any UI.
-pub fn edit_apply(buf: &mut String, chars: &[char], backspace: bool, max_len: usize) -> bool {
-    let mut changed = false;
-    if backspace && buf.pop().is_some() {
-        changed = true;
-    }
-    for &c in chars {
-        if c.is_control() {
-            continue;
-        }
-        if buf.chars().count() >= max_len {
-            break;
-        }
-        buf.push(c);
-        changed = true;
-    }
-    changed
-}
-
 impl UiFrame<'_> {
     /// Single-line text field: click to focus at the end; Left/Right and
     /// Home/End move the caret, Shift extends selection, and `SelectAll` selects
@@ -755,34 +733,5 @@ mod tests {
         assert_eq!(value, "12abcde");
         zeroize_string(&mut value);
         assert!(value.is_empty());
-    }
-
-    /// The pure editing ops: insert order, backspace-then-insert, the
-    /// max-length cap (in characters, not bytes), control-char filtering.
-    #[wasm_bindgen_test(unsupported = test)]
-    fn edit_apply_ops() {
-        let mut buf = String::new();
-        assert!(edit_apply(&mut buf, &['a', 'b', 'c'], false, 50));
-        assert_eq!(buf, "abc");
-
-        // Backspace applies before the new chars.
-        assert!(edit_apply(&mut buf, &['d'], true, 50));
-        assert_eq!(buf, "abd");
-
-        // Backspace on empty is a no-op, not a change.
-        let mut empty = String::new();
-        assert!(!edit_apply(&mut empty, &[], true, 50));
-
-        // Max length caps in characters — multibyte safe.
-        let mut short = String::from("ab");
-        assert!(edit_apply(&mut short, &['ü', 'x'], false, 3));
-        assert_eq!(short, "abü", "cap hit after the 3rd char");
-        assert!(edit_apply(&mut short, &[], true, 3));
-        assert_eq!(short, "ab", "pop removes the whole multibyte char");
-
-        // Control characters are filtered.
-        let mut ctl = String::new();
-        assert!(!edit_apply(&mut ctl, &['\u{8}', '\r'], false, 50));
-        assert_eq!(ctl, "");
     }
 }

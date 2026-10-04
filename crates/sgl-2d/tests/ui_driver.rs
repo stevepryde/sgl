@@ -17,7 +17,7 @@ use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRu
 use sgl_2d::assets::{Assets, Texture};
 use sgl_2d::canvas::text::TextRenderer;
 use sgl_2d::canvas::{DrawList, Rect};
-use sgl_2d::ui::{FpsCounter, NumberField, Ui, UiInput, edit_apply};
+use sgl_2d::ui::{FpsCounter, NumberField, Ui, UiInput};
 use sgl_core::math::Vec2;
 
 const SEED: [u8; 32] = *b"sgl-client ui driver seed     01";
@@ -170,8 +170,9 @@ fn step() -> impl Strategy<Value = Step> {
         )
 }
 
-/// Model of `edit_apply` from its contract: backspace drops one character,
-/// then printable characters append up to `max_len` characters.
+/// Model of one frame of typing with the caret at the end, from the line
+/// edit's contract: backspace drops one character, then printable characters
+/// append up to `max_len` characters.
 fn model_edit(
     buf: &str,
     chars: &[char],
@@ -546,31 +547,6 @@ fn widget_tree_obeys_the_interaction_contract_under_random_input() {
             popover_open = expected_popover_after;
             modal_blocking = modal_open;
         }
-        Ok(())
-    });
-}
-
-/// Defect: a cursor that walks past the end, a max length counted in bytes,
-/// or a change flag that lies. Oracle: the contract restated as a model over
-/// characters (including multi-byte ones).
-#[test]
-fn edit_apply_matches_its_character_model() {
-    let strategy = (
-        prop::collection::vec(prop::char::any(), 0..10),
-        prop::collection::vec(prop::char::any(), 0..6),
-        any::<bool>(),
-        0usize..12,
-    );
-    check(strategy, |(initial, chars, backspace, max_len)| {
-        let initial: String = initial.into_iter().filter(|c| !c.is_control()).collect();
-        let mut buf = initial.clone();
-        let changed = edit_apply(&mut buf, &chars, backspace, max_len);
-        let expected = model_edit(&initial, &chars, backspace, max_len, false);
-        // The model never grows past max_len; the implementation may keep an
-        // over-long initial buffer as is (it only refuses to append).
-        prop_assert_eq!(buf.clone(), expected);
-        prop_assert_eq!(changed, buf != initial, "change flag");
-        prop_assert!(buf.chars().count() <= max_len.max(initial.chars().count()));
         Ok(())
     });
 }

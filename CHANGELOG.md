@@ -15,6 +15,30 @@ full API details.
 
 ## Unreleased
 
+### `sgl_2d::ui::edit_apply` removed
+
+- **Scope:** `sgl-2d`. The public helper `ui::edit_apply` (backspace, then
+  append printable characters up to a character limit) is removed. No widget
+  used it: `UiFrame::line_edit` edits at its caret, with selection and
+  clipboard.
+- **Migration:** for a text field, use `UiFrame::line_edit`. A game that
+  called `edit_apply` on its own string keeps the same behaviour by copying it
+  into game code:
+
+  ```rust
+  fn edit_apply(buf: &mut String, chars: &[char], backspace: bool, max_len: usize) -> bool {
+      let mut changed = backspace && buf.pop().is_some();
+      for &c in chars.iter().filter(|c| !c.is_control()) {
+          if buf.chars().count() >= max_len {
+              break;
+          }
+          buf.push(c);
+          changed = true;
+      }
+      changed
+  }
+  ```
+
 ### Reflection history follows Wicked Engine's vicinity search
 
 - **Scope:** `sgl-3d` temporal reprojection for reflections, which world-space
