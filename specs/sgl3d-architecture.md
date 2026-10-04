@@ -425,12 +425,12 @@ code; it does not redeclare a struct, binding or function another module owns.
 ## Open questions
 
 - How a blended surface that must also receive screen-space reflections is
-  ordered (#310).
+  ordered (#20).
 - How a game that moves its render origin for precision keeps motion and
   history exact without a static edit for every instance: an origin operation
   on the scene and renderer, or poses the renderer makes camera-relative.
-  Decided by #414, before #309 builds on it.
+  Decided by #17, before #19 builds on it.
 - How ray traversal stays bounded in a scene of many instances; today it
-  visits every one. Decided by #415, before #309 builds on it.
+  visits every one. Decided by #18, before #19 builds on it.
 - Where dynamic GI updates, ray-traced shadows and two-phase occlusion culling
   sit in the stage order. Decided by the roadmap steps that add them.

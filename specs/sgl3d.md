@@ -173,7 +173,9 @@ The code's structure follows the
 
 The status below reflects the `0.1.0` public baseline. Parenthesized numbers
 are stable roadmap labels, not GitHub issue numbers. Keep this status current
-when a roadmap feature lands; link implementation work and follow-ups from
+when a roadmap feature lands. The
+[SGL project](https://github.com/users/stevepryde/projects/12) owns priority
+and status; link implementation work and follow-ups from
 [public issues](https://github.com/stevepryde/sgl/issues). The
 [architecture](sgl3d-architecture.md#designs-that-span-stages) owns the designs
 that span stages; the [feature guide](../crates/sgl-3d/docs/features.md) owns
@@ -200,15 +202,20 @@ current capabilities and limits.
 
 Remaining work, in the existing roadmap order:
 
-1. **Dynamic diffuse GI (11).** Current diffuse GI uses game-authored baked
-   lightmaps, irradiance atlases, and ambient cubes.
-2. **DLSS and MetalFX upscaling (12).** Current antialiasing choices are TAA,
-   SMAA, and FSR2; FSR2 requires native device features and falls back to TAA
-   in the browser.
-3. **Hardware ray-traced reflections and shadows (13).** Current world-space
+1. **Dynamic diffuse GI (11,
+   [#21](https://github.com/stevepryde/sgl/issues/21)).** Current diffuse GI
+   uses game-authored baked lightmaps, irradiance atlases, and ambient cubes.
+2. **DLSS and MetalFX upscaling (12,
+   [#22](https://github.com/stevepryde/sgl/issues/22)).** Current antialiasing
+   choices are TAA, SMAA, and FSR2; FSR2 requires native device features and
+   falls back to TAA in the browser.
+3. **Hardware ray-traced reflections and shadows (13,
+   [#23](https://github.com/stevepryde/sgl/issues/23)).** Current world-space
    reflections traverse a software BVH; they do not use hardware ray tracing.
-4. **GPU-driven culling and occlusion culling (22).** Current visibility uses
-   CPU frustum/mesh-section culling, authored mesh LOD, and instanced draws.
+4. **GPU-driven culling and occlusion culling (22,
+   [#24](https://github.com/stevepryde/sgl/issues/24)).** Current visibility
+   uses CPU frustum/mesh-section culling, authored mesh LOD, and instanced
+   draws.
 
 These are planned capabilities, not APIs a game can depend on yet. Implement
 them under RD-1 and the architecture rules, retaining native and browser
