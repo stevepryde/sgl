@@ -143,7 +143,8 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let PixelCoord = vec2<i32>(Position.xy);
 
     let ScreenCoordUV = Position.xy * g_Camera.f4ViewportSize.zw;
-    let PositionWS = ScreenSpaceToWorldSpace(vec3<f32>(ScreenCoordUV, LoadDepth(PixelCoord)));
+    let Depth = LoadDepth(PixelCoord);
+    let PositionWS = ScreenSpaceToWorldSpace(vec3<f32>(ScreenCoordUV, Depth));
     let NormalWS = LoadNormalWS(PixelCoord);
     let ViewWS = normalize(g_Camera.f4Position.xyz - PositionWS);
     let NdotV = saturate(dot(NormalWS, ViewWS));
@@ -188,6 +189,6 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     // DFX-16: undo the tone mapping.
     Output.ResolvedRadiance = Output.ResolvedRadiance / (1.0 - Luminance(Output.ResolvedRadiance.rgb));
     Output.ResolvedVariance = PixelAreaStat.Variance / max(PixelAreaStat.WeightSum, 1e-6f);
-    Output.ResolvedDepth = ComputeResolvedDepth(PositionWS, LoadDepth(PixelCoord), NearestSurfaceHitDistance);
+    Output.ResolvedDepth = ComputeResolvedDepth(PositionWS, Depth, NearestSurfaceHitDistance);
     return Output;
 }

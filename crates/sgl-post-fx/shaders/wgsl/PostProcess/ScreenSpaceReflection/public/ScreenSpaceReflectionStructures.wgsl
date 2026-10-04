@@ -3,6 +3,14 @@
 // f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b). Copyright Diligent Graphics LLC,
 // licensed under the Apache License, Version 2.0 (vendor/DiligentFX/License.txt).
 // Modified: translated from HLSL to WGSL; see crates/sgl-post-fx/README.md.
+// DFX-25 adds SSR_REPROJECT_SURFACE_DISCARD_VARIANCE_WEIGHT, AMD's
+// FFX_DNSR_REFLECTIONS_REPROJECT_SURFACE_DISCARD_VARIANCE_WEIGHT from
+// ffx-reflection-dnsr/ffx_denoiser_reflections_config.h
+// (https://github.com/GPUOpen-Effects/FidelityFX-Denoiser, revision
+// d7dfecbabe7b9523b14e7b067216e06b86e8d189), MIT licensed
+// (LICENSE-amd-fidelityfx-denoiser.txt), and takes SSR_TEMPORAL_VARIANCE_GAMMA
+// from Wicked Engine's ssr_temporalCS.hlsl (revision
+// 2ff1d9e7b36091d6edf9f823af77e6bc9af20e3b, MIT).
 
 #ifndef _SCREEN_SPACE_REFLECTION_STRUCTURES_FXH_
 #define _SCREEN_SPACE_REFLECTION_STRUCTURES_FXH_
