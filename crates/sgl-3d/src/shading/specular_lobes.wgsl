@@ -21,24 +21,42 @@ struct SpecularLobe {
 }
 const SPECULAR_BASE:u32=0u;
 const SPECULAR_COAT:u32=1u;
+// The cosine between a lobe's `normal` and the `view`, at which its DFG
+// table is read.
+fn specular_nv(normal:vec3<f32>,view:vec3<f32>)->f32 {
+ return max(dot(normal,view),0.);
+}
 // The base lobe and the coat's (no response without a coat) of a surface
-// seen along `view`, with the DFG table of `tables` filtered by `filtering`
-// (lookup_tables.wgsl).
-fn specular_lobes(normal:vec3<f32>,coat_normal:vec3<f32>,view:vec3<f32>,f0:vec3<f32>,roughness:f32,coat:f32,coat_roughness:f32,anisotropy:vec4<f32>,tables:texture_2d_array<f32>,filtering:sampler)->array<SpecularLobe,2> {
- let nv=max(dot(normal,view),0.);
- let coat_nv=max(dot(coat_normal,view),0.);
+// seen along `view`. `base_dfg` is the DFG table at the base's
+// specular_nv and `roughness`, which the caller has read for its own terms;
+// the coat's is read from `tables`, filtered by `filtering`
+// (lookup_tables.wgsl), only on a coated surface.
+fn specular_lobes(normal:vec3<f32>,coat_normal:vec3<f32>,view:vec3<f32>,f0:vec3<f32>,roughness:f32,base_dfg:vec2<f32>,coat:f32,coat_roughness:f32,anisotropy:vec4<f32>,tables:texture_2d_array<f32>,filtering:sampler)->array<SpecularLobe,2> {
+ let nv=specular_nv(normal,view);
+ let coat_nv=specular_nv(coat_normal,view);
  let coat_fresnel=pbr_coat_fresnel(coat_normal,view,coat);
- let base_response=pbr_three_single_scatter(f0,lookup_dfg(tables,filtering,nv,roughness))*(1.-coat_fresnel);
+ let base_response=pbr_three_single_scatter(f0,base_dfg)*(1.-coat_fresnel);
  let base_direction=pbr_anisotropy_reflection(normal,view,anisotropy,roughness);
- let coat_response=pbr_three_single_scatter(vec3(.04),lookup_dfg(tables,filtering,coat_nv,coat_roughness))*coat;
+ var coat_dfg=vec2(0.);
+ if coat>0. {
+  coat_dfg=lookup_dfg(tables,filtering,coat_nv,coat_roughness);
+ }
+ let coat_response=pbr_three_single_scatter(vec3(.04),coat_dfg)*coat;
  let coat_mirror=reflect(-view,coat_normal);
  let coat_direction=normalize(mix(coat_mirror,coat_normal,pow(coat_roughness,4.)));
  return array(SpecularLobe(base_response,base_direction,roughness,nv),SpecularLobe(coat_response,coat_direction,coat_roughness,coat_nv));
 }
 // The lobe a screen-space method traces: the coat of a coated surface, else
-// the base.
+// the base. The G-buffer's traced normal and roughness
+// (gbuffer_reflection_normal, gbuffer_traced_roughness) select by it.
 fn specular_traced_lobe(coat:f32)->u32 {
  return select(SPECULAR_BASE,SPECULAR_COAT,coat>0.);
+}
+// Whether a method traces a lobe of perceptual `roughness`: below its
+// cutoff, given as the alpha roughness `traced` (the cutoff squared; 0 traces
+// nothing).
+fn specular_traces(roughness:f32,traced:f32)->bool {
+ return roughness*roughness<traced;
 }
 // The share of a screen-space method's result a lobe of perceptual
 // `roughness` takes: none at the method's `cutoff`, rising smoothly over the

@@ -39,10 +39,11 @@ fn gbuffer_base_normal(packed:vec4<f32>)->vec3<f32> {
 fn gbuffer_coat_normal(packed:vec4<f32>)->vec3<f32> {
  return gbuffer_octahedral_decode(packed.zw);
 }
-// The normal of the lobe reflections trace: the coat's on a coated receiver,
-// else the base's.
+// The normal of the lobe reflections trace (specular_traced_lobe): the
+// coat's on a coated receiver, else the base's.
 fn gbuffer_reflection_normal(packed:vec4<f32>,coat:f32)->vec3<f32> {
- return gbuffer_octahedral_decode(select(packed.xy,packed.zw,coat>0.));
+ let coated=specular_traced_lobe(coat)==SPECULAR_COAT;
+ return gbuffer_octahedral_decode(select(packed.xy,packed.zw,coated));
 }
 
 struct GBufferMaterial {
@@ -57,14 +58,12 @@ fn gbuffer_encode_material(coat_roughness:f32,roughness:f32,coat:f32,environment
 fn gbuffer_material(packed:vec4<f32>)->GBufferMaterial {
  return GBufferMaterial(packed.x,packed.y,packed.z,packed.w);
 }
-// The perceptual roughness of the lobe reflections trace: the coat's on a
-// coated receiver, else the base's. Unlit receivers reflect nothing: 1, which
-// no method traces.
+// The perceptual roughness of the lobe reflections trace
+// (specular_traced_lobe): the coat's on a coated receiver, else the base's.
+// Unlit receivers reflect nothing: 1, which no method traces.
 fn gbuffer_traced_roughness(material:GBufferMaterial,lit:bool)->f32 {
- var roughness=material.roughness;
- if material.coat>0. {
-  roughness=material.coat_roughness;
- }
+ let coated=specular_traced_lobe(material.coat)==SPECULAR_COAT;
+ var roughness=select(material.roughness,material.coat_roughness,coated);
  if !lit {
   roughness=1.;
  }

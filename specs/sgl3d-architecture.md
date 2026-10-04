@@ -477,13 +477,12 @@ code; it does not redeclare a struct, binding or function another module owns.
   surfaces, fill its misses and skip pixels under a receiver; one
   composition adds the opaque lobes, and under a receiver gives the opaque
   lobe its fallback alone, since the result there is the receiver's. The
-  traced lobe, its response, its direction and the formula response ×
-  (reflected × fade + fallback × (1 − confidence × fade)), has one owner in
-  `shading`, which completion, composition and the blended draw call; the
-  receivers fold today's two copies, `source_lobes` in
-  `stages/reflections/source.wgsl` and `shade_lit`'s environment specular in
-  `shading/surface.wgsl`, onto it (AR-11). Another method plugs in beside
-  the existing ones.
+  lobes' responses and directions, which lobe is traced, the method's cutoff
+  test and fade, and the formula response × (reflected × fade + fallback ×
+  (1 − confidence × fade)) have one owner, `shading/specular_lobes.wgsl`,
+  which completion and composition, lit shading (probe captures, ray hits
+  and blended surfaces) and the G-buffer's traced normal and roughness call.
+  Another method plugs in beside the existing ones.
 - **Deformation.** Skinned and morphed positions reach every geometry pass the
   same way, with the previous frame's positions for motion. Prepare's deform
   stage morphs and skins each deforming instance whose deformation changed

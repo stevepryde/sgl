@@ -38,14 +38,9 @@ struct ReflectionEnvironment {
 // `world`, seen from the camera.
 fn source_lobes(normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotropy:vec4<f32>,world:vec3<f32>,camera:SourceCamera)->array<SpecularLobe,2> {
  let view=normalize(camera.eye.xyz-world);
- return specular_lobes(gbuffer_base_normal(normals),gbuffer_coat_normal(normals),view,f0.rgb,material.roughness,material.coat,material.coat_roughness,anisotropy,source_lookup_tables,env_sampler);
-}
-// Whether a screen-space method traces `lobe` of `lobes`: the traced lobe
-// (the coat of a coated receiver, else the base) below alpha roughness
-// `traced`.
-fn source_traced(lobe:u32,lobes:array<SpecularLobe,2>,coat:f32,traced:f32)->bool {
- let roughness=lobes[lobe].roughness;
- return lobe==specular_traced_lobe(coat) && roughness*roughness<traced;
+ let normal=gbuffer_base_normal(normals);
+ let base_dfg=lookup_dfg(source_lookup_tables,env_sampler,specular_nv(normal,view),material.roughness);
+ return specular_lobes(normal,gbuffer_coat_normal(normals),view,f0.rgb,material.roughness,base_dfg,material.coat,material.coat_roughness,anisotropy,source_lookup_tables,env_sampler);
 }
 // Specular occlusion of a lobe's environment and probe specular by the
 // receiver's ambient visibility, as Filament's desktop default evaluates it
@@ -103,13 +98,14 @@ fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material
   if gbuffer_lit(f0) {
    let lobes=source_lobes(normals,material,f0,anisotropy,world,camera);
    let visibility=source_ambient_visibility(id);
+   let traced_lobe=specular_traced_lobe(material.coat);
    for(var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
     if lobe==SPECULAR_COAT && material.coat<=0. {
      continue;
     }
     let environment=source_environment(world,lobes[lobe].direction,lobes[lobe].roughness,material.environment_scale,source_probes(id))*lobes[lobe].response*source_specular_occlusion(lobes[lobe],lobe==SPECULAR_COAT,visibility,f0.rgb);
     incident+=environment;
-    if !source_traced(lobe,lobes,material.coat,traced) {
+    if lobe!=traced_lobe || !specular_traces(lobes[lobe].roughness,traced) {
      incoming+=environment;
     }
    }
@@ -242,13 +238,13 @@ override incident_radiance_enabled:bool=true;
  }
  let visibility=source_ambient_visibility(id);
  var specular=vec3(0.);
- for(var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
-  if source_traced(lobe,lobes,material.coat,env.traced) {
-   let environment=source_environment(world,lobes[lobe].direction,lobes[lobe].roughness,material.environment_scale,source_probes(id))*source_specular_occlusion(lobes[lobe],lobe==SPECULAR_COAT,visibility,f0.rgb);
-   let fallback=world_hit.rgb+environment*(1.-world_hit.a);
-   let fade=specular_trace_fade(lobes[lobe].roughness,sqrt(env.traced),env.fade);
-   specular+=specular_traced(lobes[lobe],reflected,fade,fallback);
-  }
+ let traced_lobe=specular_traced_lobe(material.coat);
+ let lobe=lobes[traced_lobe];
+ if specular_traces(lobe.roughness,env.traced) {
+  let environment=source_environment(world,lobe.direction,lobe.roughness,material.environment_scale,source_probes(id))*source_specular_occlusion(lobe,traced_lobe==SPECULAR_COAT,visibility,f0.rgb);
+  let fallback=world_hit.rgb+environment*(1.-world_hit.a);
+  let fade=specular_trace_fade(lobe.roughness,sqrt(env.traced),env.fade);
+  specular=specular_traced(lobe,reflected,fade,fallback);
  }
  return vec4(specular*source_fog(source_view_depth(world,source_camera),id,size,source_camera).a,0.);
 }

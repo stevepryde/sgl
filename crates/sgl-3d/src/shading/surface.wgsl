@@ -220,8 +220,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let coat_rough=s.coat_roughness;
  let emission=s.emission;
  let v=s.view;
- let nv=max(dot(n,v),0.);
- let dfg=surface_dfg(nv,rough);
+ let dfg=surface_dfg(specular_nv(n,v),rough);
  let reflectance=surface_reflectance(s,dfg);
  let f0=reflectance.f0;
  let diffuse=reflectance.diffuse;
@@ -258,7 +257,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
   }
  }
  if context.environment_specular {
-  let lobes=specular_lobes(n,coat_n,v,f0,rough,coat,coat_rough,s.anisotropy,lookup_tables,environment_sampler);
+  let lobes=specular_lobes(n,coat_n,v,f0,rough,dfg,coat,coat_rough,s.anisotropy,lookup_tables,environment_sampler);
   for (var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
    if lobe==SPECULAR_COAT && coat<=0. {
     continue;

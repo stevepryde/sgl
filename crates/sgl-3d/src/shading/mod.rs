@@ -272,11 +272,12 @@ pub(crate) static VERTEX: Module = Module {
     source: include_str!("vertex.wgsl"),
     deps: &[&BIND_SCENE],
 };
-/// The G-buffer's targets: their encode and decode functions.
+/// The G-buffer's targets: their encode and decode functions. Its traced
+/// lobe is the one `SPECULAR_LOBES` selects.
 pub(crate) static GBUFFER: Module = Module {
     name: "gbuffer",
     source: include_str!("gbuffer.wgsl"),
-    deps: &[],
+    deps: &[&SPECULAR_LOBES],
 };
 /// The full-screen triangle and its vertex entry point, `fullscreen_vs`.
 pub(crate) static FULLSCREEN: Module = Module {
