@@ -1,6 +1,9 @@
 //! PBRT 4e EqualCounts primitive subdivision, flattened depth first with escape
-//! links instead of a traversal stack. Each triangle occurs in exactly one leaf.
-//! Node and leaf words are absolute addresses in the source.
+//! links instead of a traversal stack. Each primitive occurs in exactly one
+//! leaf. Node and leaf words are absolute addresses in the source. One builder
+//! and node record serve both levels of the source: a model's BVH, whose leaf
+//! records name its triangles, and the instance BVHs (`instances`), whose leaf
+//! records name instance entries.
 use super::RayMesh;
 use glam::Vec3;
 
@@ -21,8 +24,6 @@ struct Node {
 
 /// A node record's words.
 const NODE_WORDS: usize = std::mem::size_of::<Node>() / 4;
-/// A leaf primitive record's words.
-const PRIMITIVE_WORDS: usize = std::mem::size_of::<LeafPrimitive>() / 4;
 /// The most primitives a leaf holds.
 const LEAF_PRIMITIVES: usize = 4;
 
@@ -32,18 +33,24 @@ fn split(primitives: usize) -> Option<usize> {
     (primitives > LEAF_PRIMITIVES).then_some(primitives / 2)
 }
 
-/// The words `append` writes for `triangles` primitives.
-pub(super) fn words(triangles: usize) -> usize {
+/// The words a BVH over `primitives` leaf records of `T` takes. It grows
+/// with their count: one more primitive splits no fewer nodes.
+pub(super) fn words<T>(primitives: usize) -> usize {
     fn nodes(primitives: usize) -> usize {
         match split(primitives) {
             Some(middle) => 1 + nodes(middle) + nodes(primitives - middle),
             None => 1,
         }
     }
-    if triangles == 0 {
+    if primitives == 0 {
         return 0;
     }
-    nodes(triangles) * NODE_WORDS + triangles * PRIMITIVE_WORDS
+    nodes(primitives) * NODE_WORDS + primitives * std::mem::size_of::<T>() / 4
+}
+
+/// The words `append` writes for a model of `triangles`.
+pub(super) fn model_words(triangles: usize) -> usize {
+    words::<LeafPrimitive>(triangles)
 }
 
 /// A leaf primitive's record in the source: a triangle of one of the model's
@@ -55,10 +62,11 @@ struct LeafPrimitive {
     triangle: u32,
 }
 
-struct Primitive {
-    min: Vec3,
-    max: Vec3,
-    leaf: LeafPrimitive,
+/// A primitive a BVH bounds, and its leaf record.
+pub(crate) struct Primitive<T> {
+    pub min: Vec3,
+    pub max: Vec3,
+    pub leaf: T,
 }
 
 /// Appends the BVH of `meshes`' triangles to `words`, whose first word is
@@ -81,15 +89,26 @@ pub(super) fn append(meshes: &[RayMesh<'_>], words: &mut Vec<u32>, base: u32) ->
             });
         }
     }
+    append_primitives(&mut primitives, words, base)
+}
+
+/// Appends the BVH of `primitives` to `words`, whose first word is stored at
+/// source word `base`, and returns its root's address, zero when there are
+/// none. Their bounds are finite.
+pub(super) fn append_primitives<T: bytemuck::Pod>(
+    primitives: &mut [Primitive<T>],
+    words: &mut Vec<u32>,
+    base: u32,
+) -> u32 {
     if primitives.is_empty() {
         return 0;
     }
     let root = base + words.len() as u32;
-    build(&mut primitives, words, base);
+    build(primitives, words, base);
     root
 }
 
-fn build(primitives: &mut [Primitive], words: &mut Vec<u32>, base: u32) {
+fn build<T: bytemuck::Pod>(primitives: &mut [Primitive<T>], words: &mut Vec<u32>, base: u32) {
     let at = words.len();
     words.resize(at + NODE_WORDS, 0);
     let min = primitives
@@ -128,8 +147,8 @@ fn build(primitives: &mut [Primitive], words: &mut Vec<u32>, base: u32) {
         min: min.to_array().map(|v| v.next_down().max(f32::MIN)),
         max: max.to_array().map(|v| v.next_up().min(f32::MAX)),
         // Exclusive subtree end is also the next sibling/ancestor sibling. A
-        // root's escape is the model traversal bound, so there is no
-        // fixed-depth stack.
+        // root's escape is the traversal bound, so there is no fixed-depth
+        // stack.
         escape: base + words.len() as u32,
         count,
         first,

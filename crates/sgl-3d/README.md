@@ -688,8 +688,12 @@ SSR and TAA.
 objects, which baked probes cannot hold, as Lumen and HDRP's mixed tracing
 continue failed screen traces in world space. Each traced lobe that SSR did not
 fully resolve casts one GGX-sampled ray at half resolution through the portable
-scene BVH, reaching 1000 m (Wicked Engine's default `Postprocess_RTReflection`
-range). All opaque geometry participates in closest-hit visibility; only a
+scene BVHs, reaching 1000 m (Wicked Engine's default `Postprocess_RTReflection`
+range). They are two-level, as hardware acceleration structures are: a BVH over
+the static instances and one over the moving instances, rebuilt on the CPU
+when static content changes and every traced frame respectively, then each
+model's own BVH, so a ray's cost follows the instances it reaches rather than
+how many the scene holds. All opaque geometry participates in closest-hit visibility; only a
 moving nearest hit supplies secondary radiance. Wicked Engine's RT reflection
 resolve, temporal and bilateral upsample passes denoise the rays. The result is
 premultiplied radiance with the share of rays that hit in alpha, and it composites as

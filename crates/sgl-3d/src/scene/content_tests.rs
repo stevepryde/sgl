@@ -175,8 +175,8 @@ fn uploaded_record(
     }
 }
 
-/// The scene's nearest hit of the ray from `origin` down -Z, after uploading
-/// its instance list: [distance, the hit material's base red, its lightmap
+/// The scene's nearest hit of the ray from `origin` down -Z, after updating
+/// its rays: [distance, the hit material's base red, its lightmap
 /// eligibility, the instance's index], or zeros for a miss.
 fn trace(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene, origin: Vec3) -> [f32; 4] {
     let body = format!(
@@ -194,12 +194,12 @@ fn trace(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene, origin: 
 "#,
         origin.x, origin.y, origin.z
     );
-    ray_dispatch(device, queue, scene, &body)
+    ray_dispatch(device, queue, scene, &body, true)
 }
 
 /// Whether the segment from `origin` down -Z to `length` metres meets none
 /// of the scene's surfaces (`scene_segment_visible`, the any-hit traversal),
-/// after uploading its instance list.
+/// after updating its rays.
 fn segment_visible(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -217,18 +217,20 @@ fn segment_visible(
 "#,
         origin.x, origin.y, origin.z
     );
-    ray_dispatch(device, queue, scene, &body)[0] == 1.
+    ray_dispatch(device, queue, scene, &body, false)[0] == 1.
 }
 
-/// `body`'s first result, run over the scene's ray buffers after uploading
-/// its instance list.
+/// `body`'s first result, run over the scene's ray buffers after updating
+/// them for a traced frame, and over its object records when it `decodes`
+/// a hit.
 fn ray_dispatch(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene: &mut Scene,
     body: &str,
+    decodes: bool,
 ) -> [f32; 4] {
-    scene.update_rays(queue, 0);
+    scene.update_rays(device, queue, 0);
     let scene = &*scene;
     dispatch(
         device,
@@ -237,21 +239,30 @@ fn ray_dispatch(
         body,
         1,
         |pipeline| {
-            // Group 1 as the scene binds it, with an auto layout.
-            let [source, instances] = scene.rays.buffers();
+            // Group 1 as the scene binds it, with an auto layout, which
+            // holds the object records only where the body reads them.
+            let entries = [
+                (
+                    crate::shading::bind::group1::OBJECTS,
+                    scene.object_records(),
+                ),
+                (
+                    crate::shading::bind::group1::SCENE_SOURCE,
+                    scene.rays.source().as_entire_binding(),
+                ),
+                (
+                    crate::shading::bind::group1::SCENE_INSTANCES,
+                    scene.ray_instances.buffer().as_entire_binding(),
+                ),
+            ]
+            .into_iter()
+            .skip(usize::from(!decodes))
+            .map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource })
+            .collect::<Vec<_>>();
             Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &pipeline.get_bind_group_layout(1),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: source.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: instances.as_entire_binding(),
-                    },
-                ],
+                entries: &entries,
             }))
         },
     )[0]

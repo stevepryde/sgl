@@ -3,7 +3,7 @@
 use super::tests::{Fixture, Pose, asset, triangle};
 use super::*;
 use crate::asset::Asset;
-use glam::{DMat4, DVec3, Quat, Vec3};
+use glam::{DMat4, DVec3, Mat4, Quat, Vec3};
 use wgpu::util::DeviceExt;
 
 fn query(
@@ -158,17 +158,33 @@ fn portable_scene_exact_intervals_parallel_axes_and_instance_removal() {
     });
 }
 
+fn oracle(assets: &[Asset], poses: &[Pose], ray: [f32; 8]) -> Option<(f64, u32, u32, u32)> {
+    oracle_except(assets, poses, ray, false, None)
+}
+
 // Different numerical algorithm from WGSL: intersect each WORLD triangle's plane,
 // then test oriented edges at the hit, with no inverse ray, BVH or MT bary solve.
-fn oracle(assets: &[Asset], poses: &[Pose], ray: [f32; 8]) -> Option<(f64, usize, u32, u32)> {
+// Returns the distance, the instance's index, mesh and triangle of the nearest
+// hit within the ray's interval, its end excluded when `open_end`, other than
+// triangle `except` (an index, mesh and triangle).
+pub(super) fn oracle_except(
+    assets: &[Asset],
+    poses: &[Pose],
+    ray: [f32; 8],
+    open_end: bool,
+    except: Option<(u32, u32, u32)>,
+) -> Option<(f64, u32, u32, u32)> {
     let origin = DVec3::new(ray[0] as f64, ray[1] as f64, ray[2] as f64);
     let direction = DVec3::new(ray[4] as f64, ray[5] as f64, ray[6] as f64);
     let mut closest = None;
     let mut maximum = ray[7] as f64;
-    for (slot, instance) in poses.iter().enumerate() {
+    for instance in poses {
         let world = DMat4::from_cols_array(&instance.world.to_cols_array().map(f64::from));
         for (mesh_id, mesh) in assets[instance.model].meshes.iter().enumerate() {
             for (primitive, indices) in mesh.indices.chunks_exact(3).enumerate() {
+                if except == Some((instance.id, mesh_id as u32, primitive as u32)) {
+                    continue;
+                }
                 let mut p = [0, 1, 2].map(|i| {
                     world.transform_point3(DVec3::from_array(
                         mesh.vertices[indices[i] as usize].position.map(f64::from),
@@ -189,13 +205,13 @@ fn oracle(assets: &[Asset], poses: &[Pose], ray: [f32; 8]) -> Option<(f64, usize
                     continue;
                 }
                 let t = normal.dot(p[0] - origin) / denom;
-                if t < ray[3] as f64 || t > maximum {
+                if t < ray[3] as f64 || t > maximum || (open_end && t >= ray[7] as f64) {
                     continue;
                 }
                 let point = origin + direction * t;
                 if (0..3).all(|i| (p[(i + 1) % 3] - p[i]).cross(point - p[i]).dot(normal) >= 0.) {
                     maximum = t;
-                    closest = Some((t, slot, mesh_id as u32, primitive as u32));
+                    closest = Some((t, instance.id, mesh_id as u32, primitive as u32));
                 }
             }
         }
@@ -290,7 +306,7 @@ fn portable_scene_randomized_hierarchy_against_world_f64_oracle() {
                     expected.is_some(),
                     "frame={frame}, ray={index}, actual={actual:?}, expected={expected:?}"
                 );
-                if let Some((t, slot, mesh, primitive)) = expected {
+                if let Some((t, index, mesh, primitive)) = expected {
                     hits += 1;
                     assert!(
                         (f32::from_bits(actual[4]) as f64 - t).abs() < 0.0001,
@@ -299,7 +315,7 @@ fn portable_scene_randomized_hierarchy_against_world_f64_oracle() {
                     );
                     assert_eq!(
                         &actual[1..4],
-                        &[slot as u32, mesh, primitive],
+                        &[index, mesh, primitive],
                         "frame={frame}, ray={index}"
                     );
                 }

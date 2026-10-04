@@ -2,13 +2,15 @@
 // (scene::rays): each image's level 0, each material's record, each model's
 // consecutive mesh records, packed exact Vertex arrays and indices, and its
 // BVH (`scene_rays_portable.wgsl`), a deforming model's influences and morph
-// targets, and a deforming instance's joint matrices, morph weights and
-// deformed vertices (deformation.wgsl). Every address is a word of the
-// source. Word 0 starts no record, so a zero image or BVH root word means
-// none.
-// The header's words.
+// targets, a deforming instance's joint matrices, morph weights and
+// deformed vertices (deformation.wgsl), and the static and moving instance
+// BVHs (scene::rays::instances). Every address is a word of the source.
+// Word 0 starts no record, so a zero image or BVH root word means none.
+// The header's words: the enabled material visibility groups and the
+// instance BVHs' roots.
 const SCENE_HEADER_VISIBILITY_MASK:u32=0u;
-const SCENE_HEADER_INSTANCE_COUNT:u32=1u;
+const SCENE_HEADER_STATIC_ROOT:u32=1u;
+const SCENE_HEADER_MOVING_ROOT:u32=2u;
 // An image's: its size and format, then its level 0 row by row: RGBA8
 // texels, or BC7's 4x4 blocks as stored, four words each.
 const SCENE_IMAGE_WIDTH:u32=0u;

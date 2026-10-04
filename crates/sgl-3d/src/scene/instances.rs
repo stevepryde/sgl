@@ -1,6 +1,6 @@
 //! Instances: each one's state, mobility, ambient cube, private motion
-//! history and deformation, and its object record, with the `Scene`
-//! operations that add, read, change and remove them.
+//! history and deformation, its object record and its ray entry, with the
+//! `Scene` operations that add, read, change and remove them.
 use super::deformation::InstanceDeformation;
 use super::models::Model;
 use super::objects::Objects;
@@ -120,6 +120,16 @@ fn validate_pose(pose: Mat4) -> Result<(), SceneError> {
 pub(crate) struct Instances {
     pub slots: Slots<InstanceId, Instance>,
     pub objects: Objects,
+    /// Live static and moving instances.
+    counts: [usize; 2],
+}
+
+/// `Instances::counts`' index of a mobility.
+fn kind(mobility: Mobility) -> usize {
+    match mobility {
+        Mobility::Static => 0,
+        Mobility::Moving => 1,
+    }
 }
 
 impl Instances {
@@ -127,6 +137,7 @@ impl Instances {
         Self {
             slots: Slots::default(),
             objects: Objects::new(device),
+            counts: [0; 2],
         }
     }
 
@@ -239,9 +250,10 @@ impl Scene {
             return Err(SceneError::DeformingModel);
         }
         let count = self.instances.slots.next_index() + 1;
+        let kind_count = self.instances.counts[kind(mobility)] + 1;
         let reserved = self
-            .rays
-            .reserve_instances(device, count)
+            .ray_instances
+            .reserve(device, queue, &mut self.rays, count, mobility, kind_count)
             .and_then(|_| self.instances.reserve(device, queue, count))
             .and_then(|_| {
                 let model = self.models.get(state.model)?;
@@ -263,8 +275,23 @@ impl Scene {
             .instances
             .slots
             .insert(Instance::new(state, mobility, model, deformation));
-        self.instances.write(queue, id);
+        self.instances.counts[kind(mobility)] += 1;
+        self.write_instance(queue, id);
         Ok(id)
+    }
+
+    /// Writes instance `id`'s object record and, unless it deforms, which no
+    /// ray sees, its ray entry.
+    fn write_instance(&mut self, queue: &wgpu::Queue, id: InstanceId) {
+        self.instances.write(queue, id);
+        let instance = self.instances.slots.get(id).expect("a live instance");
+        if instance.deformation.is_none() {
+            let (ray, pose) = (
+                self.drawn_model(instance.state.model).ray,
+                instance.state.pose,
+            );
+            self.ray_instances.set(id.index(), ray, pose);
+        }
     }
 
     /// An instance's current state.
@@ -309,7 +336,7 @@ impl Scene {
         if placed {
             instance.pose_casters(self.models.get(state.model)?);
         }
-        self.instances.write(queue, id);
+        self.write_instance(queue, id);
         Ok(())
     }
 
@@ -328,6 +355,7 @@ impl Scene {
             .get_mut(instance.state.model)
             .expect("an instance's model lives");
         model.instances -= 1;
+        self.instances.counts[kind(instance.mobility)] -= 1;
         if instance.mobility == Mobility::Static {
             self.static_edits
                 .record(posed_bounds(model.bounds, instance.state.pose));

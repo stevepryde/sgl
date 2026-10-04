@@ -30,6 +30,7 @@ pub(crate) mod transient;
 pub use error::SceneError;
 
 use crate::content::identity::{Identity, MaterialId, ModelId};
+use crate::content::instance::Mobility;
 use std::sync::atomic::{AtomicU64, Ordering};
 use wgpu::util::DeviceExt;
 
@@ -49,7 +50,8 @@ pub struct Scene {
     /// Lit group 0's lookup tables (`lookup_tables`).
     pub(crate) lookup_tables: wgpu::TextureView,
     pub(crate) rays: rays::SceneRays,
-    ray_instances: Vec<rays::SceneRayInstance>,
+    /// The ray source's instance entries and instance BVHs.
+    pub(crate) ray_instances: rays::instances::RayInstances,
     /// Group 1: the object records and the ray buffers.
     pub(crate) scene_group: wgpu::BindGroup,
     /// The buffers `scene_group` binds: objects, ray source, ray instances.
@@ -106,7 +108,8 @@ impl Scene {
         let scene_layout = crate::shading::bind::scene(device);
         let instances = instances::Instances::new(device);
         let rays = rays::SceneRays::new(device);
-        let bound = Self::buffers(&instances, &rays);
+        let ray_instances = rays::instances::RayInstances::new(device);
+        let bound = Self::buffers(&instances, &rays, &ray_instances);
         Self {
             materials: materials::Materials::new(device, queue),
             models: models::Models::default(),
@@ -114,7 +117,7 @@ impl Scene {
             decals: decals::Decals::new(device, queue),
             environments: environments::Environments::new(device, queue),
             lookup_tables: lookup_tables::lookup_tables(device, queue),
-            ray_instances: Vec::new(),
+            ray_instances,
             scene_group: scene_group(device, &scene_layout, &bound),
             bound,
             scene_layout,
@@ -130,18 +133,21 @@ impl Scene {
         }
     }
 
-    fn buffers(instances: &instances::Instances, rays: &rays::SceneRays) -> [wgpu::Buffer; 3] {
-        let [source, ray_instances] = rays.buffers();
+    fn buffers(
+        instances: &instances::Instances,
+        rays: &rays::SceneRays,
+        ray_instances: &rays::instances::RayInstances,
+    ) -> [wgpu::Buffer; 3] {
         [
             instances.objects.buffer().clone(),
-            source.clone(),
-            ray_instances.clone(),
+            rays.source().clone(),
+            ray_instances.buffer().clone(),
         ]
     }
 
     /// Rebuilds group 1 after content growth replaced a buffer it binds.
     fn refresh_scene_group(&mut self, device: &wgpu::Device) {
-        let buffers = Self::buffers(&self.instances, &self.rays);
+        let buffers = Self::buffers(&self.instances, &self.rays, &self.ray_instances);
         if buffers != self.bound {
             self.scene_group = scene_group(device, &self.scene_layout, &buffers);
             self.bound = buffers;
@@ -178,36 +184,50 @@ impl Scene {
         self.transient.sort_mist(queue, eye);
     }
 
-    /// Uploads the instance list of the capture-visible instances that do
-    /// not deform, in index order, and the frame's visibility mask. Rays see
-    /// no deforming instance, as Bevy 9d12036's ray-traced scene leaves out
-    /// meshes with joint attributes
-    /// (crates/bevy_solari/src/scene/blas.rs, `is_mesh_raytracing_compatible`).
-    pub(crate) fn update_rays(&mut self, queue: &wgpu::Queue, visibility_mask: u32) {
-        let list = &mut self.ray_instances;
-        list.clear();
-        list.extend(
-            self.instances
-                .slots
-                .iter()
-                .filter(|(_, instance)| {
-                    instance.state.capture_visible && instance.deformation.is_none()
-                })
-                .map(|(id, instance)| rays::SceneRayInstance {
-                    baked_irradiance: instance.baked_irradiance,
-                    model: self
-                        .models
-                        .slots
-                        .get(instance.state.model)
-                        .expect("an instance's model lives")
-                        .ray,
-                    world: instance.state.pose,
-                    id: id.index() as u32,
-                    flags: instance.flags(),
-                }),
-        );
+    /// Before a traced frame: uploads the frame's visibility mask and the
+    /// instance entries set since the last traced frame, and builds the
+    /// instance BVHs over the capture-visible instances whose model has
+    /// triangles and does not deform: the moving one every traced frame and
+    /// the static one after a static edit. Rays see no deforming instance,
+    /// as Bevy 9d12036's ray-traced scene leaves out meshes with joint
+    /// attributes (crates/bevy_solari/src/scene/blas.rs,
+    /// `is_mesh_raytracing_compatible`).
+    pub(crate) fn update_rays(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        visibility_mask: u32,
+    ) {
         self.rays.set_visibility_mask(queue, visibility_mask);
-        self.rays.update(queue, list);
+        let edits = self.static_edits.edits();
+        let rebuild_statics = self.ray_instances.statics_stale(edits);
+        let mut statics = Vec::new();
+        let mut moving = Vec::new();
+        for (id, instance) in self.instances.slots.iter() {
+            let rebuilt = match instance.mobility {
+                Mobility::Static => rebuild_statics,
+                Mobility::Moving => true,
+            };
+            if !rebuilt || !instance.state.capture_visible || instance.deformation.is_some() {
+                continue;
+            }
+            let model = self.drawn_model(instance.state.model);
+            if model.ray.bvh_root == 0 {
+                continue;
+            }
+            let bounded = rays::instances::bounded(id.index(), model.bounds, instance.state.pose);
+            match instance.mobility {
+                Mobility::Static => statics.push(bounded),
+                Mobility::Moving => moving.push(bounded),
+            }
+        }
+        self.ray_instances.update(
+            device,
+            queue,
+            &self.rays,
+            rebuild_statics.then_some((statics.as_mut_slice(), edits)),
+            &mut moving,
+        );
     }
 
     /// Upload caller-generated additive geometry, growing the retained buffer when necessary.

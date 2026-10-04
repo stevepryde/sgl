@@ -3,7 +3,8 @@
 //! static instance, and replacing the geometry of a model one uses. A cache
 //! of static content marks what they reach as stale. They are kept until
 //! `finish_frame`, so an abandoned frame leaves them for the next, and are
-//! merged conservatively.
+//! merged conservatively. A cache rebuilt whole, which no frame need show
+//! the bounds to (the static instance BVH), counts the edits instead.
 use glam::{Mat4, Vec3};
 
 /// The most boxes kept: past it, a new box merges with the one whose union
@@ -38,12 +39,15 @@ pub(crate) struct StaticEdits {
     pending: Vec<[Vec3; 2]>,
     /// Frames finished so far.
     finished: u64,
+    /// Static edits recorded so far.
+    edits: u64,
 }
 
 impl StaticEdits {
     /// Records the world `bounds` a static edit touched. Bounds of empty
     /// geometry touch nothing.
     pub fn record(&mut self, bounds: [Vec3; 2]) {
+        self.edits += 1;
         if !bounds[0].is_finite() || !bounds[1].is_finite() {
             return;
         }
@@ -69,6 +73,13 @@ impl StaticEdits {
     /// of every frame since it last drew is up to date with them.
     pub fn finished(&self) -> u64 {
         self.finished
+    }
+
+    /// The static edits recorded so far, whether or not a frame was
+    /// submitted since: a cache built after this many is up to date with
+    /// them until it changes.
+    pub fn edits(&self) -> u64 {
+        self.edits
     }
 
     /// Commits a submitted frame: its edits are no longer pending.
