@@ -360,15 +360,16 @@ code; it does not redeclare a struct, binding or function another module owns.
   lighting: the directional lights with the shared cascade sampling, the
   camera's clustered lights (baked ones too) through their records and the
   shared local-shadow sampling, each froxel a shadow receiver with no side,
-  and the ambient fill; blends it with its
-  reprojection into the stage's last volume; and integrates each column
-  along its view ray. The integrated volume is the frame's one fog: group 0
-  lends it, with its slicing in `Frame`, to the draws that fog themselves
-  (blended surfaces, glow and mist) through `shading::fog`, and source
-  completion samples it for the opaque surfaces, the sky and the incident
-  radiance, as Godot's forward pass samples its volume for every material;
-  composition scales reflections by its transmittance. No pass fogs the
-  composed frame, and probe captures and ray hits have none.
+  and the ambient fill; blends it with its reprojection into the stage's
+  last volume; filters each slice across x and y (`Settings::fog_filter`),
+  leaving the volume the next frame reprojects unfiltered; and integrates
+  each column along its view ray. The integrated volume is the frame's one
+  fog: group 0 lends it, with its slicing in `Frame`, to the draws that fog
+  themselves (blended surfaces, glow and mist) through `shading::fog`, and
+  source completion samples it for the opaque surfaces, the sky and the
+  incident radiance, as Godot's forward pass samples its volume for every
+  material; composition scales reflections by its transmittance. No pass
+  fogs the composed frame, and probe captures and ray hits have none.
 - **Temporal.** Geometry writes unjittered motion. Jitter is applied to the
   projection by the antialiasing in effect, and every history resets together.
   Motion blur reads the same motion and depth after antialiasing, so it

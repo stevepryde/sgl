@@ -337,9 +337,10 @@ impl Renderer {
         &self.targets
     }
 
-    /// The fog's froxels the last frame wrote and its integrated volume.
+    /// The fog's froxels the last frame wrote, the froxels it integrated
+    /// and its integrated volume.
     #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn fog_volumes(&self) -> [&wgpu::TextureView; 2] {
+    pub(crate) fn fog_volumes(&self) -> [&wgpu::TextureView; 3] {
         self.fog.test_volumes()
     }
 

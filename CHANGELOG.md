@@ -15,6 +15,26 @@ full API details.
 
 ## Unreleased
 
+### Volumetric fog filters its froxels, as Godot's does by default
+
+- **Scope:** `sgl-3d` volumetric fog, and the new `Settings::fog_filter`
+  (`bool`, default `true`). The fog stage now runs Godot's filter (b130438
+  `volumetric_fog_process.glsl` MODE_FILTER and `fog.cpp`): a 7-tap
+  Gaussian across x and then y of each slice of the froxel volume, after
+  injection and before integration, as Godot's default
+  `rendering/environment/volumetric_fog/use_filter` does. Fog at default
+  settings is therefore blurred across neighbouring froxels, with softer
+  light shafts and shadow edges in it; the volume the next frame reprojects
+  stays unfiltered, as Godot's. `fog_filter: false` gives the previous
+  image. A new timing group, `fog filter`, covers the two passes. Saved
+  settings without the field load with the filter on.
+- **Migration:** no game-code changes where `Settings` comes from
+  `Settings::default()`, `..Settings::default()` or deserialization; an
+  exhaustive `Settings { .. }` literal adds `fog_filter`. To keep the
+  unfiltered fog, set `fog_filter: false`; a game may offer it as a setting
+  ([settings](crates/sgl-3d/docs/settings.md)). Afterwards, look at the
+  game's fogged scenes with light shafts, in motion.
+
 ### One coat Fresnel cosine for every term
 
 - **Scope:** `sgl-3d` shading of coated materials (`clearcoat` above 0).

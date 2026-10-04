@@ -2,7 +2,8 @@
 // frame. Ported from Godot b130438's
 // servers/rendering/renderer_rd/shaders/environment/volumetric_fog_process.glsl
 // (MODE_DENSITY, the medium and the light it scatters in each froxel blended
-// with the last frame's, and MODE_FOG, the integration front to back) and
+// with the last frame's, MODE_FILTER, a Gaussian across each slice's x and
+// then y, and MODE_FOG, the integration front to back) and
 // environment/fog.cpp (volumetric_fog_update), MIT (src/LICENSE-godot.txt),
 // after Hillaire 2015, "Physically Based and Unified Volumetric Rendering in
 // Frostbite".
@@ -12,21 +13,23 @@
 // FogVolume and its FogMaterial's density, albedo and edge fade from
 // volumetric_fog.glsl and scene/resources/3d/fog_material.cpp), which each
 // froxel sums itself rather than each volume adding into the froxels it
-// covers with atomics; there is no emission, GI injection or optional
-// filter. The lights are SGL3D's: the frame's directional lights
-// through the shared cascade sampling, and the camera's clustered point, spot
-// and rectangle lights through their records and the shared local-shadow
-// sampling with one hardware tap per froxel, as Bevy's volumetric fog
-// samples its shadow maps and Godot's takes one tap, a rectangle by the
-// solid angle of its face, which Godot takes as the face's diffuse integral
-// toward the froxel. The ambient is the frame's
-// hemisphere fill and environment diffuse averaged over the sphere, which an
-// isotropic phase scatters. Froxel positions come from the camera's
-// unjittered projection and their place in the last frame's volume from its
-// view-projection, rather than frustum sizes. The history alternates two
-// volumes instead of copying one. The integration steps along the view ray
-// through each slice, where Godot steps the slice's depth, so fog off the
-// view's axis is as dense as on it.
+// covers with atomics; there is no emission or GI injection. The lights are
+// SGL3D's: the frame's directional lights through the shared cascade
+// sampling, and the camera's clustered point, spot and rectangle lights
+// through their records and the shared local-shadow sampling with one
+// hardware tap per froxel, as Bevy's volumetric fog samples its shadow maps
+// and Godot's takes one tap, a rectangle by the solid angle of its face,
+// which Godot takes as the face's diffuse integral toward the froxel. The
+// ambient is the frame's hemisphere fill and environment diffuse averaged
+// over the sphere, which an isotropic phase scatters. Froxel positions come
+// from the camera's unjittered projection and their place in the last frame's
+// volume from its view-projection, rather than frustum sizes. The history
+// alternates two volumes instead of copying one, so the filter's y pass
+// writes the one the injection has just reprojected, and the history stays
+// unfiltered, as Godot copies its history before it filters. The filter skips
+// invocations outside the volume, whose stores WGSL leaves undefined. The
+// integration steps along the view ray through each slice, where Godot steps
+// the slice's depth, so fog off the view's axis is as dense as on it.
 
 // One frame's froxel volume (stages/fog.rs FroxelVolumeUniform).
 struct FroxelVolume {
@@ -63,6 +66,11 @@ struct FroxelVolume {
 @group(1) @binding(2) var history_sampler:sampler;
 @group(1) @binding(3) var scattering:texture_storage_3d<rgba16float,write>;
 @group(1) @binding(6) var<storage,read> fog_volumes:array<FogVolumeRecord>;
+// Filter: the froxels one pass reads and writes, and Godot's params.filter_axis
+// (0 x, 1 y) it filters along.
+@group(1) @binding(7) var source_map:texture_3d<f32>;
+@group(1) @binding(8) var dest_map:texture_storage_3d<rgba16float,write>;
+override filter_axis:u32=0u;
 // Integration: this frame's froxels and the volume it integrates them into.
 @group(1) @binding(4) var integrate_scattering:texture_3d<f32>;
 @group(1) @binding(5) var integrated:texture_storage_3d<rgba16float,write>;
@@ -234,6 +242,23 @@ var<workgroup> fog_ambient_light:vec3<f32>;
   froxel=mix(froxel,reprojected,reproject_amount);
  }
  textureStore(scattering,id,clamp(froxel,vec4(0.),vec4(65504.)));
+}
+
+// Godot's MODE_FILTER: each froxel's 7-tap Gaussian along filter_axis of
+// this frame's froxels, clamped to the volume's edges.
+@compute @workgroup_size(8,8,1) fn filter_froxels(@builtin(global_invocation_id) id:vec3<u32>) {
+ if any(id>=froxels.size) {
+  return;
+ }
+ let pos=vec3<i32>(id);
+ const gauss=array<f32,7>(.071303,.131514,.189879,.214607,.189879,.131514,.071303);
+ const filter_dir=array(vec3(1,0,0),vec3(0,1,0),vec3(0,0,1));
+ let offset=filter_dir[filter_axis];
+ var accum=vec4(0.);
+ for(var i=-3;i<=3;i++) {
+  accum+=textureLoad(source_map,clamp(pos+offset*i,vec3(0),vec3<i32>(froxels.size)-vec3(1)),0)*gauss[i+3];
+ }
+ textureStore(dest_map,pos,accum);
 }
 
 // Each column's light scattered toward the camera (rgb) and transmittance
