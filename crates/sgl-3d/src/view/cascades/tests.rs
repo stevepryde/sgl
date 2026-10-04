@@ -82,7 +82,7 @@ fn a_fixed_point_moves_by_whole_texels_as_the_camera_moves_and_turns() {
             .collect();
         let fits: Vec<Cascades> = poses
             .iter()
-            .map(|&view| Cascades::camera(view, projection, direction, &shadow(4), MAP).unwrap())
+            .map(|&view| Cascades::camera(view, projection, direction, &shadow(4), MAP))
             .collect();
         for (index, first) in fits[0].as_slice().iter().enumerate() {
             for later in &fits[1..] {
@@ -156,7 +156,7 @@ fn every_visible_point_within_the_shadow_distance_falls_inside_its_cascade() {
                 let eye = Vec3::new(17., 4., -230.);
                 let view = camera::rh::view::look_to_mat4(eye, Vec3::new(0.3, -0.2, -1.), Vec3::Y);
                 let shadow = shadow(count);
-                let cascades = Cascades::camera(view, projection, direction, &shadow, MAP).unwrap();
+                let cascades = Cascades::camera(view, projection, direction, &shadow, MAP);
                 let cascades = cascades.as_slice();
                 assert_eq!(cascades.len(), count as usize);
                 let clip_from_world = (projection * view).as_dmat4();
@@ -219,7 +219,7 @@ fn every_point_a_capture_sees_within_the_shadow_distance_falls_inside_its_cascad
     let center = Vec3::new(-41., 3.5, 812.);
     let mut sequence = Sequence(3);
     for direction in [Vec3::new(0.6, -1., -0.4), Vec3::NEG_Y] {
-        let cascades = Cascades::capture(center, direction, &shadow(4), MAP).unwrap();
+        let cascades = Cascades::capture(center, direction, &shadow(4), MAP);
         let cascades = cascades.as_slice();
         for _ in 0..4000 {
             let offset = DVec3::new(
@@ -294,7 +294,6 @@ fn cascade_bounds_are_godots_splits_of_the_range_from_the_near_plane() {
         ];
         for (label, expected, cascades) in fits {
             let bounds: Vec<f32> = cascades
-                .unwrap()
                 .as_slice()
                 .iter()
                 .map(|cascade| cascade.far_bound)
@@ -306,6 +305,56 @@ fn cascade_bounds_are_godots_splits_of_the_range_from_the_near_plane() {
                         .zip(expected)
                         .all(|(a, b)| (a - b).abs() < 1e-3),
                 "{label}, {count} cascades: bounds {bounds:?}, not {expected:?}"
+            );
+        }
+    }
+}
+
+// A shadow's distance is only its reach (AR-5): `DirectionalLight::shadow`
+// being `None` is its off switch. Plausible defects: a distance at or
+// before where the cascades start, nonfinite, or NaN casting no shadow, or
+// reaching the fit and making nonfinite cascades. The oracle is Godot's
+// bound, by hand: the distance at least 1 mm beyond where the cascades
+// start (the camera's 0.3 m near plane, a capture's centre), and at most
+// the 8192 m top of `directional_shadow_max_distance`'s range.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_distance_out_of_range_shadows_to_the_nearer_bound() {
+    let view = camera::rh::view::look_to_mat4(Vec3::new(3., 2., 1.), Vec3::NEG_Z, Vec3::Y);
+    let projection = crate::perspective(1.1, 16. / 9., 0.3);
+    for (distance, camera, capture) in [
+        (0., 0.301, 0.001),
+        (-5., 0.301, 0.001),
+        (0.2, 0.301, 0.2),
+        (f32::NAN, 0.301, 0.001),
+        (f32::NEG_INFINITY, 0.301, 0.001),
+        (f32::INFINITY, 8192., 8192.),
+        (1e9, 8192., 8192.),
+    ] {
+        let shadow = DirectionalShadow {
+            distance,
+            cascades: 1,
+        };
+        let fits = [
+            (
+                "camera",
+                camera,
+                Cascades::camera(view, projection, Vec3::NEG_Y, &shadow, MAP),
+            ),
+            (
+                "capture",
+                capture,
+                Cascades::capture(Vec3::new(5., 1., -3.), Vec3::NEG_Y, &shadow, MAP),
+            ),
+        ];
+        for (label, expected, cascades) in fits {
+            let [cascade] = cascades.as_slice() else {
+                panic!("{label}: distance {distance} cast no shadow");
+            };
+            assert!(
+                (cascade.far_bound - expected).abs() < 1e-4 * expected.max(1.)
+                    && cascade.clip_from_world.is_finite(),
+                "{label}: distance {distance} reaches {}, not {expected}",
+                cascade.far_bound
             );
         }
     }

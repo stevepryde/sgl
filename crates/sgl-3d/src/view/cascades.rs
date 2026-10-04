@@ -47,6 +47,16 @@ pub(crate) const SHADOW_PANCAKE_SIZE: f32 = 20.;
 /// default `directional_shadow_split_1` to `_3`. A shadow of `n` cascades
 /// takes the first `n - 1`, as Godot's 2-split mode takes the first.
 const SPLIT_SHARES: [f32; MAX_SHADOW_CASCADES - 1] = [0.1, 0.2, 0.5];
+/// How far beyond where the cascades start a shadow's distance reaches at
+/// least, in metres, as Godot keeps its distance 1 mm beyond the camera's
+/// near plane (`_light_instance_setup_directional_shadow`:
+/// `MAX(max_distance, z_near + 0.001)`).
+const MIN_RANGE: f32 = 0.001;
+/// The farthest a shadow's distance reaches, in metres: the top of Godot's
+/// `directional_shadow_max_distance` range (`scene/3d/light_3d.cpp`). Godot
+/// bounds it by the camera's far plane, which `perspective` puts at
+/// infinity.
+const MAX_DISTANCE: f32 = 8192.;
 
 /// One cascade's shadow view.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -83,20 +93,19 @@ impl Cascades {
 
     /// `shadow`'s cascades of a light shining along `direction`, seen by a
     /// camera with `view` and `projection`, in maps of `map_size` texels.
-    /// None when the shadow reaches no farther than the camera's near plane.
     pub fn camera(
         view: Mat4,
         projection: Mat4,
         direction: Vec3,
         shadow: &DirectionalShadow,
         map_size: u32,
-    ) -> Option<Self> {
+    ) -> Self {
         let near = camera_near(projection);
-        let bounds = cascade_bounds(shadow, near)?;
+        let bounds = cascade_bounds(shadow, near);
         let world_from_light = world_from_light(direction);
         let light_from_camera = world_from_light.transpose() * view.inverse();
         let overlap_factor = 1. - SHADOW_CASCADE_OVERLAP;
-        Some(Self::from_bounds(bounds.as_slice(), |index, far_bound| {
+        Self::from_bounds(bounds.as_slice(), |index, far_bound| {
             let near_bound = if index == 0 {
                 near
             } else {
@@ -110,7 +119,7 @@ impl Cascades {
                 light_from_camera,
                 far_bound,
             )
-        }))
+        })
     }
 
     /// `shadow`'s cascades of a light shining along `direction` for a probe
@@ -122,11 +131,11 @@ impl Cascades {
         direction: Vec3,
         shadow: &DirectionalShadow,
         map_size: u32,
-    ) -> Option<Self> {
-        let bounds = cascade_bounds(shadow, 0.)?;
+    ) -> Self {
+        let bounds = cascade_bounds(shadow, 0.);
         let world_from_light = world_from_light(direction);
         let light_from_capture = world_from_light.transpose() * Mat4::from_translation(center);
-        Some(Self::from_bounds(bounds.as_slice(), |_, far_bound| {
+        Self::from_bounds(bounds.as_slice(), |_, far_bound| {
             let f = far_bound;
             let corners = [
                 Vec3::new(f, -f, f),
@@ -145,7 +154,7 @@ impl Cascades {
                 light_from_capture,
                 far_bound,
             )
-        }))
+        })
     }
 }
 
@@ -164,19 +173,23 @@ impl Bounds {
 /// `shadow`'s far bounds beyond a first cascade starting at `near`, as
 /// Godot's `_light_instance_setup_directional_shadow` places them: cascade
 /// `i` ends at `near + SPLIT_SHARES[i] * (distance - near)` and the last at
-/// `distance`.
-fn cascade_bounds(shadow: &DirectionalShadow, near: f32) -> Option<Bounds> {
-    let distance = shadow.distance;
-    if !distance.is_finite() || distance <= near {
-        return None;
+/// `distance`, which is at most [`MAX_DISTANCE`] and at least [`MIN_RANGE`]
+/// beyond `near` (NaN as 0).
+fn cascade_bounds(shadow: &DirectionalShadow, near: f32) -> Bounds {
+    let distance = if shadow.distance.is_nan() {
+        0.
+    } else {
+        shadow.distance
     }
+    .min(MAX_DISTANCE)
+    .max(near + MIN_RANGE);
     let count = shadow.cascades.clamp(1, MAX_SHADOW_CASCADES as u32) as usize;
     let range = distance - near;
     let mut list = [distance; MAX_SHADOW_CASCADES];
     for (bound, share) in list[..count - 1].iter_mut().zip(SPLIT_SHARES) {
         *bound = near + share * range;
     }
-    Some(Bounds { list, count })
+    Bounds { list, count }
 }
 
 /// The view depth of the camera's near plane: device depth 1.

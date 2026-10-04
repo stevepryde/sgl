@@ -15,6 +15,34 @@ full API details.
 
 ## Unreleased
 
+### A directional shadow's distance no longer turns it off
+
+- **Scope:** `sgl-3d` `DirectionalShadow::distance` is only the shadow's
+  reach in metres (AR-5: no floats as flags). A distance that was
+  nonfinite or no farther than the camera's near plane (a probe capture's
+  centre) cast no shadow; the light now always casts its shadow while
+  `DirectionalLight::shadow` is `Some`, and SGL3D keeps the distance at
+  least 1 mm beyond where the cascades start and at most 8192 m (NaN as
+  0), as Godot's `_light_instance_setup_directional_shadow` keeps its
+  distance 1 mm beyond the near plane, with the top of its
+  `directional_shadow_max_distance` range (b130438). A distance within
+  that range shadows as before.
+- **Migration:** a game that set a nonpositive or nonfinite distance to
+  switch a directional light's shadow off sets the shadow to `None`:
+
+  ```rust
+  // Before
+  light.shadow = Some(DirectionalShadow { distance: 0., ..DirectionalShadow::DEFAULT });
+  // After
+  light.shadow = None;
+  ```
+
+  A finite distance beyond 8192 m, which used to reach that far, now stops
+  at 8192 m. A game whose distances stay within that range needs no
+  changes.
+  Afterwards, check scenes that used a zero distance, and probe captures
+  with a shadow distance of 0.
+
 ### One shadow-quality setting sets the shadow maps' sizes and filter
 
 - **Scope:** `sgl-3d` adds `Settings::shadow_quality`

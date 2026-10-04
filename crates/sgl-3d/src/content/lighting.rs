@@ -58,8 +58,11 @@ impl Default for DirectionalLight {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DirectionalShadow {
     /// The farthest view depth that is shadowed, in metres (Godot's
-    /// `directional_shadow_max_distance`, Bevy's `maximum_distance`).
-    /// Nonpositive or nonfinite casts no shadow.
+    /// `directional_shadow_max_distance`, Bevy's `maximum_distance`), at
+    /// least 1 mm beyond the camera's near plane, as Godot keeps it, and at
+    /// most 8192 m, the top of Godot's `directional_shadow_max_distance`
+    /// range (NaN as 0). `DirectionalLight::shadow` as `None` casts
+    /// no shadow.
     pub distance: f32,
     /// How many cascades split `distance`, 1 to 4; others are clamped.
     pub cascades: u32,

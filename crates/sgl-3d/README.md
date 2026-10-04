@@ -109,7 +109,9 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   `Settings::shadow_quality`). SGL3D places the splits as
   Godot's `DirectionalLight3D` does by default: each cascade but the last
   ends 0.1, 0.2 and 0.5 of the way from the near plane to `distance` (two
-  cascades split at 0.1, three at 0.1 and 0.2), and the last at `distance`.
+  cascades split at 0.1, three at 0.1 and 0.2), and the last at `distance`,
+  which is kept at least 1 mm beyond the near plane, as Godot keeps it, and
+  at most 8192 m, the top of Godot's `directional_shadow_max_distance` range; `shadow: None` alone turns the shadow off.
   `DirectionalShadow::default()` is Bevy's 150 m and 4 (cascades ending at
   about 15, 30, 75 and 150 m); a `const` builds from
   `..DirectionalShadow::DEFAULT`, the same values. A cascade
