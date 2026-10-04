@@ -175,6 +175,7 @@ fn an_empty_medium_leaves_the_frame_as_no_fog_does() {
             distance: 30.,
             cascades: 2,
             first_split: 8.,
+            ..Default::default()
         }),
         ..Default::default()
     });
@@ -549,6 +550,7 @@ fn shadowed_lights_scatter_almost_nothing_behind_their_occluder() {
                     distance: 40.,
                     cascades: 2,
                     first_split: 10.,
+                    ..Default::default()
                 }),
                 ..Default::default()
             });
@@ -653,6 +655,7 @@ fn fog_energy_scales_a_light_in_the_medium_alone() {
                         distance: 30.,
                         cascades: 2,
                         first_split: 8.,
+                        ..Default::default()
                     }),
                     fog_energy,
                     ..DirectionalLight::default()

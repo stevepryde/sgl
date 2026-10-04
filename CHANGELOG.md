@@ -26,12 +26,45 @@ full API details.
   offset, one linear tap of the occluder's depth, and the light faded by
   exp(−10 × the metres the froxel lies behind its occluder) rather than cut
   off, so fog fades into an occluder's shadow over its first 10–30 cm (61 %
-  of the light 5 cm behind, 37 % 10 cm behind).
+  of the light 5 cm behind, 37 % 10 cm behind). The metres count from the
+  occluder's depth in the cascade's map, so an occluder beyond the shadow's
+  `pancake_size` toward the light counts from the pancake's edge.
   Surfaces' shadows, local lights' shadows in the fog, and fog beyond the
   shadow distance (unshadowed) are unchanged.
 - **Migration:** no game-code changes. Afterwards, look at light shafts and
   at fog behind thin occluders (railings, foliage, window frames) under the
   shadowed directional light.
+
+### Directional shadow cascades reach a pancake toward the light
+
+- **Scope:** `sgl-3d` directional shadows. `DirectionalShadow` gains
+  `pancake_size: f32` (Godot's `directional_shadow_pancake_size`, metres)
+  and implements `Default` (Bevy's 150 m, 4 cascades and 10 m first split,
+  with Godot's 20 m pancake). Each cascade's near plane sat on the top of its
+  slice of the view, toward the light, and every caster between it and the
+  light was recorded at that plane's depth. The near plane now lies
+  `pancake_size` beyond, as Godot's does, so a caster within that margin is
+  recorded at its own depth and only one farther away at the margin's edge.
+  The camera's surfaces are shadowed as before (their test only asks
+  whether a caster lies in front); each cascade's depth spans that many more
+  metres, which `Depth32Float` holds to well under a millimetre. Probe
+  captures and world-space ray hits take the first cascade whose map holds a
+  surface, which may now be a nearer, finer one for a surface toward the
+  light from a cascade's part of the view, so captures and reflections can
+  differ slightly; no re-capture is required, and `pancake_size: 0.` gives
+  the previous fit.
+- **Migration:** a `DirectionalShadow { .. }` literal that names every field
+  adds `pancake_size: 20.` or ends with `..Default::default()`:
+
+  ```rust
+  // Before
+  shadow: Some(DirectionalShadow { distance: 150., cascades: 4, first_split: 10. }),
+  // After
+  shadow: Some(DirectionalShadow { distance: 150., cascades: 4, first_split: 10., ..Default::default() }),
+  ```
+
+  No other game-code changes. Afterwards, check shadows near the camera
+  under the key light.
 
 ### Fog volumes cost only the froxels they reach
 

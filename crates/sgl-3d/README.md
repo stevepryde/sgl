@@ -83,6 +83,7 @@ frame.directional_lights[0] = Some(DirectionalLight {
         distance: 150.,  // metres of view depth that are shadowed
         cascades: 4,     // 1 to 4
         first_split: 10., // where the first cascade ends
+        ..Default::default() // pancake_size 20 m, as Godot
     }),
     ..Default::default() // fog_energy 1: its full light in the fog
 });
@@ -107,22 +108,28 @@ frame.backdrop = Backdrop::Environment { yaw: 0., brightness: 1. };
 - The shadow is Bevy's cascaded shadow map, which SGL3D fits from the camera
   every frame: the view depth from the camera's near plane to `distance` is
   split into `cascades`, ending at depths spaced geometrically from
-  `first_split` (Bevy's defaults are 150 m, 4 and 10 m), each a 2048-texel
-  map. A cascade keeps one size and moves in whole texels, so a still
-  shadow does not shimmer as the camera moves and turns (a change of field
-  of view or of these values resizes it). Each cascade overlaps the next by a
-  fifth of its far bound, and surfaces blend between the two there. Beyond
-  `distance` nothing is shadowed. Casters between the light and a cascade
-  still cast into it: their depth is unclipped, through
+  `first_split`, each a 2048-texel map. `DirectionalShadow::default()` is
+  Bevy's 150 m, 4 and 10 m with Godot's 20 m `pancake_size`. A cascade
+  keeps one size and moves in whole texels, so a still shadow does not
+  shimmer as the camera moves and turns (a change of field of view or of
+  these values resizes it). Each cascade overlaps the next by a fifth of its
+  far bound, and surfaces blend between the two there. Beyond `distance`
+  nothing is shadowed. Casters between the light and a cascade still cast
+  into it: their depth is unclipped, through
   `wgpu::Features::DEPTH_CLIP_CONTROL` where the device has it
   (`graphics_device::features`) and emulated in the caster's shader where it
-  does not. Receivers are offset along their normal by Bevy's 1.8 texels
-  (times √2) and toward the light by 2 cm, so no bias is authored. While TAA
-  or FSR2 runs the camera's surfaces filter with Jimenez's 8-tap spiral,
-  turned per pixel and per frame for them to resolve; otherwise, and in probe
-  captures and ray hits, with Castaño's fixed 9-tap kernel. A probe capture
-  fits its own cascades about its centre; it and world-space ray hits take
-  the first cascade that holds a surface. Timing groups
+  does not. Each cascade's map reaches `pancake_size` metres toward the
+  light beyond its part of the view (Godot's pancake), so a caster within
+  that margin is recorded at its own depth and one beyond it at the
+  margin's edge. Receivers are offset along their normal by Bevy's 1.8
+  texels (times √2) and toward the light by 2 cm, so no bias is authored.
+  While TAA or FSR2 runs the camera's surfaces filter with Jimenez's 8-tap
+  spiral, turned per pixel and per frame for them to resolve; otherwise, and
+  in probe captures and ray hits, with Castaño's fixed 9-tap kernel. A probe
+  capture fits its own cascades about its centre; it and world-space ray
+  hits take the first cascade whose map holds a surface, which the pancake
+  makes a nearer, finer one for a surface toward the light from a cascade's
+  part of the view (`pancake_size: 0.` gives the fit without it). Timing groups
   `directional shadow cascade 0` to `3`, nearest first.
 - `hemisphere_light` is Three.js's `HemisphereLight`: diffuse irradiance
   blended from `ground_color` facing down to `sky_color` facing up.
@@ -252,10 +259,11 @@ fog stage:
   material's density, albedo and edge fade) it lies in;
 - lights it with the directional lights through the one shadow cascade at
   the froxel's depth, whose light fades with the metres the froxel lies
-  behind its occluder (Godot's fog), the camera's clustered point, spot and
-  rectangle lights (baked ones too) through the local-light atlas, each
-  shadow one tap that the reprojection resolves (a local light's one
-  hardware 2×2 tap, as Bevy's volumetric fog samples them), and
+  behind its occluder (Godot's fog; an occluder beyond the shadow's
+  `pancake_size` counts from the pancake's edge), the camera's clustered
+  point, spot and rectangle lights (baked ones too) through the local-light
+  atlas, each shadow one tap that the reprojection resolves (a local light's
+  one hardware 2×2 tap, as Bevy's volumetric fog samples them), and
   `ambient` of the hemisphere fill and environment diffuse, scattered toward
   the camera by Henyey–Greenstein's phase function of `anisotropy`; each
   light's `fog_energy` scales its share, and a light at or below 0.001 is
