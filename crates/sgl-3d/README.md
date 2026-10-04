@@ -613,8 +613,13 @@ combines passes from several engines, listed with their licences under it.
     mirror direction and depth tolerance (DFX-18, DFX-20). MIT,
     `sgl-post-fx/LICENSE-godot.txt`.
   - [Wicked Engine](https://github.com/turanszkij/WickedEngine/tree/2ff1d9e7b36091d6edf9f823af77e6bc9af20e3b/WickedEngine/shaders)'s
-    tone-mapped spatial resolve (DFX-16) and history weight
-    (`ssr_resolveCS.hlsl`, `ssr_temporalCS.hlsl`). MIT, `src/LICENSE-wicked.txt`.
+    tone-mapped spatial resolve (DFX-16), history weight and 2-deviation
+    history clamp (`ssr_resolveCS.hlsl`, `ssr_temporalCS.hlsl`, DFX-25). MIT,
+    `src/LICENSE-wicked.txt`.
+  - [AMD's reflection denoiser](https://github.com/GPUOpen-Effects/FidelityFX-Denoiser/blob/d7dfecbabe7b9523b14e7b067216e06b86e8d189/ffx-reflection-dnsr/ffx_denoiser_reflections_reproject.h)'s
+    virtual-point reprojection and its discard of a surface history far from
+    the current neighbourhood, so fast motion does not smear floor reflections
+    (DFX-25). MIT, `sgl-post-fx/LICENSE-amd-fidelityfx-denoiser.txt`.
   - [Bevy](https://github.com/bevyengine/bevy/tree/b56fc29d3016e641754765244b5ba3f9cc504671/crates/bevy_pbr/src/ssr)'s
     roughness fade. MIT OR Apache-2.0.
 - `Velvet`: one mirror ray per pixel through a hierarchical depth

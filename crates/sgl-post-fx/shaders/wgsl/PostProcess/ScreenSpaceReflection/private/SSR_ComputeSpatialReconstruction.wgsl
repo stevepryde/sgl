@@ -3,6 +3,11 @@
 // f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b). Copyright Diligent Graphics LLC,
 // licensed under the Apache License, Version 2.0 (vendor/DiligentFX/License.txt).
 // Modified: translated from HLSL to WGSL; see crates/sgl-post-fx/README.md.
+// DFX-25 places the reflection's virtual point as AMD's reflection denoiser
+// does, ffx-reflection-dnsr/ffx_denoiser_reflections_reproject.h
+// (https://github.com/GPUOpen-Effects/FidelityFX-Denoiser, revision
+// d7dfecbabe7b9523b14e7b067216e06b86e8d189), MIT licensed
+// (LICENSE-amd-fidelityfx-denoiser.txt).
 
 #include "ScreenSpaceReflectionStructures.fxh"
 #include "BasicStructures.fxh"
@@ -102,10 +107,16 @@ fn ComputeWeightedVariance(Stat: ptr<function, PixelAreaStatistic>, SampleColor:
     (*Stat).Variance += Weight * (Value - PrevMean) * (Value - (*Stat).Mean);
 }
 
-fn ComputeResolvedDepth(PositionWS: vec3<f32>, SurfaceHitDistance: f32) -> f32
+// PROVENANCE.md DFX-25: the depth of the reflection's virtual point, the hit
+// distance beyond the surface along the view ray, as AMD's reflection denoiser
+// places it (FFX_DNSR_Reflections_GetHitPositionReprojection). Upstream took
+// the whole distance for the camera-space Z, which places the point too far by
+// the inverse cosine of the ray's angle from the view axis.
+fn ComputeResolvedDepth(PositionWS: vec3<f32>, Depth: f32, SurfaceHitDistance: f32) -> f32
 {
     let CameraSurfaceDistance = distance(g_Camera.f4Position.xyz, PositionWS);
-    return CameraZToDepth(CameraSurfaceDistance + SurfaceHitDistance, g_Camera.mProj);
+    let SurfaceCameraZ = DepthToCameraZ(Depth, g_Camera.mProj);
+    return CameraZToDepth(SurfaceCameraZ * (CameraSurfaceDistance + SurfaceHitDistance) / max(CameraSurfaceDistance, 1e-6), g_Camera.mProj);
 }
 
 fn ScreenSpaceToWorldSpace(ScreenCoordUV: vec3<f32>) -> vec3<f32>
@@ -177,6 +188,6 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     // DFX-16: undo the tone mapping.
     Output.ResolvedRadiance = Output.ResolvedRadiance / (1.0 - Luminance(Output.ResolvedRadiance.rgb));
     Output.ResolvedVariance = PixelAreaStat.Variance / max(PixelAreaStat.WeightSum, 1e-6f);
-    Output.ResolvedDepth = ComputeResolvedDepth(PositionWS, NearestSurfaceHitDistance);
+    Output.ResolvedDepth = ComputeResolvedDepth(PositionWS, LoadDepth(PixelCoord), NearestSurfaceHitDistance);
     return Output;
 }

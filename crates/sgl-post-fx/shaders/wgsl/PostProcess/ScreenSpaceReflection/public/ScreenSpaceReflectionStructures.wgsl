@@ -25,7 +25,13 @@
 #define SSR_DISOCCLUSION_THRESHOLD 0.9
 
 // Sets the value for the variance gamma in the temporal accumulation step
-#define SSR_TEMPORAL_VARIANCE_GAMMA 2.5
+// PROVENANCE.md DFX-25: Wicked Engine's ssr_temporalCS temporalScale.
+#define SSR_TEMPORAL_VARIANCE_GAMMA 2.0
+
+// PROVENANCE.md DFX-25: AMD's FFX_DNSR_REFLECTIONS_REPROJECT_SURFACE_DISCARD_VARIANCE_WEIGHT. The surface
+// reprojection's history is kept while its squared distance from the neighbourhood mean stays under this
+// many times the length of the neighbourhood variance.
+#define SSR_REPROJECT_SURFACE_DISCARD_VARIANCE_WEIGHT 1.5
 
 // Defines the factor for edge-stopping function on world-space normals in the bilateral filtering step
 #define SSR_BILATERAL_SIGMA_NORMAL 128.0
