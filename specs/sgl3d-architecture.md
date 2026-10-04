@@ -141,6 +141,34 @@ a material's caster values, another `Scene`) is its owner's. An abandoned
 frame commits nothing: the next frame measures motion from the last submitted
 frame and sees the same pending bounds.
 
+**Render origin.** Every position at the boundary is `f32` in the scene's
+render frame. A game whose world is larger than `f32` renders precisely keeps
+its own coordinates and gives the scene its content near an origin it
+chooses, chunk-aligned in a streamed world. `Scene::move_origin(to)` moves
+that origin to `to`, a finite `Vec3` in the current render frame, applied
+exactly as given: every position the scene holds becomes what it was less
+`to`, and from then on the game expresses the camera and what it edits in the
+new frame. It is an edit under the rule above and not a static edit: it
+records no bounds, makes no cache stale, writes no motion and cuts no
+history. The scene translates every position and transform it retains, CPU
+state and GPU mirror alike, and uploads them as an edit does: each instance's
+pose and the pose its motion is measured from, its bounds and the culling
+hierarchy, the object records, the ray source's instances and whatever is
+built over them, lights, decals, fog volumes, transient geometry, the
+installed probes with their grid, and the pending static-edit bounds.
+Geometry, deformed vertices and joint matrices are model-local; lightmaps,
+irradiance atlases and ambient cubes have no position; a probe's capture is
+radiance about its centre: none changes. A translated position rounds once,
+at its magnitude in the new frame, so content keeps the precision it was
+added with and equal values stay equal; a chunk that should have a new
+origin's full precision is re-posed by the game. The scene keeps where its
+origin lies in the frame it was created in, a double-precision sum of its
+moves, for the renderer ([History](#shared-contracts)) and the cascades'
+snapping ([Shadows](#designs-that-span-stages)). When and where the origin
+moves is the game's, like any content, and nothing about it is a setting
+(S3D-6); a game that never moves it pays nothing: no pose or input gains a
+field, and a frame compares two values.
+
 ## Frame
 
 One frame, as the game sees it: edit the `Scene`;
@@ -193,8 +221,9 @@ views.
 
 A stage is one module with one struct. It owns its private pipelines, bind
 groups, targets and history, and offers the renderer the same few operations:
-create, resize, prepare, encode and reset history. It states what it reads,
-what it writes, which settings it honours and its timing group. Stages meet
+create, resize, prepare, encode, reset history and move origin. It states
+what it reads, what it writes, which settings it honours and its timing
+group. Stages meet
 only through the shared contracts below and the values the renderer passes
 between them; no stage imports another. What two stages share (a port's
 context, the geometry pipeline cache, shared targets, group 0) is owned by the
@@ -219,7 +248,7 @@ Each has one definition, which every producer and consumer uses.
 | Draw lists | One builder turns a scene and a view into instanced draws. A view's population is a filter over instances by their flags (static, `visible`, `capture_visible`) and over materials by the visibility mask and alpha mode, not a walk of named collections. Blended materials are the camera's blended population alone, sorted back to front. Each instance is culled and selects its level of detail on its own; its draws of one mesh then merge with other instances' into one instanced draw per index range when they share geometry (model and mesh, or a deforming instance's own, as that instance deforms it), material, pipeline variant and mobility and draw the same ranges, as Bevy batches its phases: opaque, masked, capture and caster populations wherever they are, in bins ordered by their model's first instance and mesh, so each instance's meshes keep their order; blended ones only where adjacent in their sorted order. A batch names its instances by index, its geometry by model and mesh, and its material by identity. A deforming instance is culled by its deformed bounds and draws no level of detail. Every list of a frame, or of a probe capture, appends its draw instances to one buffer, which the renderer uploads once every list is built and before any pass draws, as Bevy writes one batched instance buffer for every view. Every geometry pass (G-buffer, lighting, shadow, capture) draws from a draw list; none walks the scene. Draw statistics count the draws and triangles of static and moving instances; a draw holds one mobility. |
 | Geometry pipelines | One cache keyed by pass and by what the material and instance require (face culling; the alpha mode: opaque, masked or blended; and for pulled passes whether the instance deforms), not a field per variant, and by the lit constants: whether the scene holds a rectangle light and whether it holds a decal, one value (`LitConstants`) that the world-space reflection trace's pipelines are keyed by too. A masked material's pipelines discard the texels it cuts out, so opaque ones keep early depth; masked, blended and deformed pipelines are prepared once the scene holds such content. The lit constants specialise the lit passes and the world-space reflection trace, so a scene without rectangle lights or decals pays nothing for their shading: they shade rectangles (`rect_lights_enabled`) only while the scene holds one, as Godot specialises its clustered pass on `cluster_has_area_light`, and apply decals (`decals_enabled`) only while it holds one. |
 | Sizes | Render size up to antialiasing, scene size after it, output size at presentation. Defined once by the renderer. |
-| History | A stage owns its history. The renderer issues one reset for `FrameInput::camera_cut`, a `Renderer::resize` that changed the targets, or a different `Scene`. Content edits and lighting changes restart no history: each history rejects what changed by reprojection and clamping, as its upstream does; the scene's change tracking rebuilds bindings and instance motion and reports static edits to caches of static content ([Scene content](#scene-content)), nothing more. |
+| History | A stage owns its history. The renderer issues one reset for `FrameInput::camera_cut`, a `Renderer::resize` that changed the targets, or a different `Scene`. Content edits and lighting changes restart no history: each history rejects what changed by reprojection and clamping, as its upstream does; the scene's change tracking rebuilds bindings and instance motion and reports static edits to caches of static content ([Scene content](#scene-content)), nothing more. Camera history is the renderer's (S3D-4): the last submitted camera, from which the `View`'s previous matrices come; a stage reprojects through them and keeps no camera of its own. The renderer keeps the render origin its histories are expressed in, and takes the scene's at a reset. When the scene's origin moved since (`Scene::move_origin`), `render` translates the camera history by the difference, as Filament keeps its antialiasing history in the user's world across its origin snaps, and issues one move with that delta, as it issues a reset: each stage translates what it retains in the render frame (a shadow face's light and the poses of the moving casters it drew), what it keeps in screen space (colour, depth, motion, confidence, the fog's volume) needs nothing, and nothing restarts. An abandoned frame leaves both the scene's origin and the renderer's as they are, so the next frame translates nothing twice. |
 | Settings | The renderer resolves requested settings into one effective configuration per frame. Stages read only that, and report why a choice could not run. |
 | Timing | Every pass belongs to its stage's timing group. |
 | Diagnostics | Behind the `diagnostics` feature. Switches are `Settings::diagnostics`, resolved into the effective configuration, never environment variables; observations return to the game, and the library writes no files. |
@@ -293,7 +322,13 @@ code; it does not redeclare a struct, binding or function another module owns.
   take the cascade at their view depth and blend into the next across the
   overlap; a probe capture fits its own cascades about its centre, and its
   surfaces and ray hits take the first cascade that holds them. Shadow views
-  render through the common draw-list path.
+  render through the common draw-list path. A move of the render origin
+  ([Scene content](#scene-content)) leaves every static layer valid: a layer
+  is depth from its light, and a face's view is rebuilt from the translated
+  light; the cascades snap their texel grid about the frame the scene was
+  created in, through the scene's summed moves, as Filament snaps its
+  directional shadows about the user's world origin, so a move shifts no
+  shadow texel.
 - **Opaque and masked surfaces.** Direct, baked and ambient light are computed
   in the forward pass, never from the G-buffer; environment specular and
   reflections are computed from it. Ambient occlusion is applied after the
@@ -440,9 +475,5 @@ code; it does not redeclare a struct, binding or function another module owns.
 
 - How a blended surface that must also receive screen-space reflections is
   ordered (#20).
-- How a game that moves its render origin for precision keeps motion and
-  history exact without a static edit for every instance: an origin operation
-  on the scene and renderer, or poses the renderer makes camera-relative.
-  Decided by #17, before #19 builds on it.
 - Where dynamic GI updates, ray-traced shadows and two-phase occlusion culling
   sit in the stage order. Decided by the roadmap steps that add them.

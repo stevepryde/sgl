@@ -52,6 +52,11 @@ settings SGL3D has today.
    device depth (1 at the near plane, 0 at the far plane; `sgl_3d::perspective`
    builds the infinite-far projection) and column-major matrix arrays. Camera
    and shadow-map depth both clear to 0; nearer surfaces have greater depth.
+   Positions are `f32` in the scene's render frame, which the game moves by
+   an exact delta (`Scene::move_origin`) to keep what it renders near the
+   origin, without a static edit or a history cut
+   ([render origin](sgl3d-architecture.md#scene-content)); the game's own
+   world coordinates stay its own.
    SGL3D splits and fits a directional light's shadow cascades from the
    camera; the caller supplies only the shadow's distance in metres of view
    depth and its cascade count.
