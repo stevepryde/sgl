@@ -129,20 +129,11 @@ fn observe(
 }
 
 #[test]
-#[ignore = "real GPU; lightmap transport and the runtime baked-lighting switch"]
 fn lightmap_is_baked_until_baked_lighting_is_switched_off() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: graphics_device::limits(&adapter),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
         let mut scene = Scene::new(&device, &queue);
         let (world, _) =
             test_support::add_static(&device, &queue, &mut scene, test_support::cube());
@@ -277,20 +268,11 @@ fn lightmap_filters_bilinearly_with_x_clamped_and_y_repeated() {
 }
 
 #[test]
-#[ignore = "real GPU; actual triangle chart interpolation and moving receiver world orientation"]
 fn static_atlas_and_moving_cube_transport() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: graphics_device::limits(&adapter),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
         let mut world = test_support::cube();
         world.materials[0].double_sided = true;
         world.meshes[0].vertices = [(-4., -4.), (-4., 4.), (4., 4.), (4., -4.)]
@@ -568,20 +550,11 @@ fn static_atlas_and_moving_cube_transport() {
 }
 
 #[test]
-#[ignore = "real GPU; bent and mapped surface normals must modulate a baked directional field"]
 fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: graphics_device::limits(&adapter),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
         let mut model = test_support::cube();
         model.materials[0].base = [1.; 4];
         model.materials[0].metallic = 0.;
@@ -757,20 +730,11 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
 }
 
 #[test]
-#[ignore = "real GPU; material normal texels modulate fixed atlas and lightmap in raster and secondary"]
 fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: graphics_device::limits(&adapter),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
         let mut model = test_support::cube();
         model.materials[0].base = [1.; 4];
         model.materials[0].double_sided = true;

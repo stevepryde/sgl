@@ -394,17 +394,24 @@ pub(crate) fn fsr2_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 fn device_choosing(
     features: impl FnOnce(&wgpu::Adapter) -> wgpu::Features,
 ) -> Option<(wgpu::Device, wgpu::Queue)> {
+    let adapter = adapter()?;
+    Some(
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: (adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC)
+                | features(&adapter),
+            required_limits: crate::graphics_device::limits(&adapter),
+            ..Default::default()
+        }))
+        .unwrap(),
+    )
+}
+
+/// The default adapter, for a test that requests its own devices, or `None`
+/// after printing why. `SGL_REQUIRE_GPU` turns the skip into a failure.
+pub(crate) fn adapter() -> Option<wgpu::Adapter> {
     let required = std::env::var("SGL_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0");
     match pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())) {
-        Ok(adapter) => Some(
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                required_features: (adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC)
-                    | features(&adapter),
-                required_limits: crate::graphics_device::limits(&adapter),
-                ..Default::default()
-            }))
-            .unwrap(),
-        ),
+        Ok(adapter) => Some(adapter),
         Err(error) => {
             assert!(
                 !required,
@@ -413,18 +420,5 @@ fn device_choosing(
             eprintln!("skipping GPU test: {error}");
             None
         }
-    }
-}
-
-/// The renderer's limits with half floats, and subgroups where the adapter
-/// has them, as diagnostics fixtures request their device.
-pub(crate) fn diagnostic_device_descriptor(
-    adapter: &wgpu::Adapter,
-) -> wgpu::DeviceDescriptor<'static> {
-    wgpu::DeviceDescriptor {
-        required_features: wgpu::Features::SHADER_F16
-            | (adapter.features() & wgpu::Features::SUBGROUP),
-        required_limits: crate::graphics_device::limits(adapter),
-        ..Default::default()
     }
 }

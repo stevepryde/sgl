@@ -104,30 +104,24 @@ fn plane_asset(has_normal_map: bool) -> Asset {
 }
 
 #[test]
-#[ignore = "real Metal raster/secondary normal-map orientation regression"]
 fn authored_normal_map_axes_mirrored_uv_and_back_faces() {
     material_normal_oracle(true, true, false, false);
 }
 
+// The normal stage switched off must not fall through to the bump map.
 #[test]
-#[ignore = "real Metal diagnostic must not fall through to an unselected bump map"]
 fn disabled_normal_stage_preserves_normal_map_precedence() {
     material_normal_oracle(true, false, false, false);
 }
 
-// Known pre-extraction failure, reproduced on Apple M5/Metal using raster
-// shaders from Hyperdrive 8486a6248ec43a346dd1e1145b33cdb63cb4fda3:
-// case 0 raster = (-0.013229594, -0.0262142, 0.9995688), while the affine-height
-// oracle = (-0.18945529, -0.37891057, 0.90583307). Secondary matches the oracle.
-// Extraction preserves that behavior and this unsatisfied physical requirement.
+// A bump map alone: the affine height's slope in both UV axes, per pixel in
+// raster and per metre in secondary rays, under mirrored UVs and back faces.
 #[test]
-#[ignore = "known pre-extraction affine raster bump mismatch; real Metal"]
 fn affine_bump_height_axes_mirrored_uv_and_back_faces() {
     material_normal_oracle(false, true, false, false);
 }
 
 #[test]
-#[ignore = "real GPU; authored tangent under mirrored shear, normal maps and actual secondary hits"]
 fn anisotropic_authored_frames_mirrored_shear_and_back_faces() {
     material_normal_oracle(true, true, true, false);
     material_normal_oracle(true, true, true, true);
@@ -139,20 +133,10 @@ fn material_normal_oracle(
     authored: bool,
     observe_axis: bool,
 ) {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
-        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: crate::graphics_device::limits(&adapter),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-        eprintln!("normal-map oracle adapter: {:?}", adapter.get_info());
         let mut asset = plane_asset(has_normal_map);
         let world = if authored {
             Mat4::from_cols_array(&[

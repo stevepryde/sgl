@@ -18,14 +18,11 @@ fn wall_visibility(distance: f64, radius: f64) -> f64 {
 }
 
 #[test]
-#[ignore = "requires a real GPU"]
 fn ambient_occlusion_matches_independent_hemisphere_integral() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         let mut ao = super::AmbientOcclusion::new(&device);
         for (size, wall, rotated) in [
             ([129, 113], false, false),

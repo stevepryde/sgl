@@ -2,42 +2,7 @@
 //! This catches reversed neighborhood directions and broken search/area sampling
 //! that shader validation alone cannot detect. No application startup gate.
 use super::*;
-
-pub(crate) fn read(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
-    let size = texture.size();
-    let row = (size.width * 4).div_ceil(256) * 256;
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("SMAA GPU evidence"),
-        size: u64::from(row * size.height),
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    encoder.copy_texture_to_buffer(
-        texture.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(row),
-                rows_per_image: Some(size.height),
-            },
-        },
-        size,
-    );
-    queue.submit([encoder.finish()]);
-    let (tx, rx) = std::sync::mpsc::channel();
-    buffer.map_async(wgpu::MapMode::Read, .., move |result| {
-        tx.send(result).unwrap();
-    });
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    rx.recv().unwrap().unwrap();
-    buffer
-        .get_mapped_range(..)
-        .chunks(row as usize)
-        .flat_map(|line| line[..size.width as usize * 4].iter().copied())
-        .collect()
-}
+use crate::test_support::read;
 
 fn image_target(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
@@ -70,14 +35,10 @@ const QUALITIES: [SmaaQuality; 4] = [
 /// 0.125: between Medium's threshold (0.1) and Low's (0.15).
 const FAINT: f32 = 32. / 255.;
 
-/// A triangle's slanted edge on black, raw and through SMAA, and its
-/// coverage by an independent reference.
+/// Absolute coverage error of a triangle's slanted edge on black, raw and
+/// through SMAA, against an independent reference, away from the viewport
+/// boundary.
 struct Coverage {
-    raw: Vec<u8>,
-    smaa: Vec<u8>,
-    reference: Vec<u8>,
-    /// Absolute coverage error of the raw and SMAA images against the
-    /// reference, away from the viewport boundary.
     raw_error: f64,
     smaa_error: f64,
 }
@@ -190,10 +151,9 @@ fn coverage(
         None,
     );
     queue.submit([encoder.finish()]);
-    let raw = read(device, queue, &input);
-    let aa = read(device, queue, &output);
-    let high = read(device, queue, &supersampled);
-    let mut reference = vec![0u8; raw.len()];
+    let raw = read(device, queue, &input, 4);
+    let aa = read(device, queue, &output, 4);
+    let high = read(device, queue, &supersampled, 4);
     let (mut raw_error, mut smaa_error) = (0.0f64, 0.0f64);
     for y in 0..size[1] as usize {
         for x in 0..size[0] as usize {
@@ -206,8 +166,6 @@ fn coverage(
             }
             let value = f64::from(total) / 256.0;
             let i = (y * size[0] as usize + x) * 4;
-            reference[i..i + 3].fill(value.round() as u8);
-            reference[i + 3] = 255;
             // Exclude the viewport boundary, which has no outside image.
             if x > 1 && y > 1 && x + 2 < size[0] as usize && y + 2 < size[1] as usize {
                 raw_error += (f64::from(raw[i]) - value).abs();
@@ -216,9 +174,6 @@ fn coverage(
         }
     }
     Coverage {
-        raw,
-        smaa: aa,
-        reference,
         raw_error,
         smaa_error,
     }
@@ -315,58 +270,4 @@ fn every_preset_approaches_supersampled_rasterization() {
             "{size:?}: Medium must smooth a 0.125 edge: {medium} against raw {raw}"
         );
     }
-}
-
-#[test]
-#[ignore = "requires a real GPU; writes review images under .cache/smaa-qa"]
-fn diagonal_edges_approach_supersampled_rasterization() {
-    pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&wgpu::RequestAdapterOptions::default())
-            .await
-            .unwrap();
-        eprintln!("SMAA QA device: {:?}", adapter.get_info());
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
-            .await
-            .unwrap();
-        let capture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".cache/smaa-qa");
-        std::fs::create_dir_all(&capture).unwrap();
-        for quality in QUALITIES {
-            let mut smaa = Smaa::new(
-                &device,
-                &queue,
-                1,
-                1,
-                wgpu::TextureFormat::Rgba8Unorm,
-                quality,
-            )
-            .unwrap();
-            for size in [[128, 96], [192, 128]] {
-                let c = coverage(&device, &queue, &mut smaa, size, Edge::WHITE);
-                eprintln!(
-                    "{quality:?} {size:?}: raw absolute coverage error={:.2}; SMAA={:.2}",
-                    c.raw_error, c.smaa_error
-                );
-                for (name, pixels) in [
-                    ("raw", &c.raw),
-                    ("smaa", &c.smaa),
-                    ("reference", &c.reference),
-                ] {
-                    image::save_buffer(
-                        capture.join(format!("{}-{quality:?}-{name}.png", size[0])),
-                        pixels,
-                        size[0],
-                        size[1],
-                        image::ColorType::Rgba8,
-                    )
-                    .unwrap();
-                }
-                assert!(
-                    c.smaa_error < c.raw_error * 0.9,
-                    "SMAA must improve diagonal coverage against independently rasterized reference"
-                );
-            }
-        }
-    });
 }

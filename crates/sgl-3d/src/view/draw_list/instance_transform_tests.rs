@@ -33,13 +33,11 @@ fn center(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -
 }
 
 #[test]
-#[ignore = "real GPU; affine normal direction and mirrored authored material sides"]
 fn scaled_and_mirrored_instances_preserve_normals_and_material_sides() {
+    let Some(adapter) = test_support::adapter() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
         // Exercise actual pipeline creation/rendering at the minimal budget,
         // the former incorrect full-pass boundary, and its supported boundary.
         for budget in [32, 40, 56, 64]
@@ -48,7 +46,7 @@ fn scaled_and_mirrored_instances_preserve_normals_and_material_sides() {
         {
             let (device, queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor {
-                    required_features: adapter.features() & wgpu::Features::SHADER_F16,
+                    required_features: graphics_device::features(&adapter),
                     required_limits: wgpu::Limits {
                         max_color_attachment_bytes_per_sample: budget,
                         ..graphics_device::limits(&adapter)

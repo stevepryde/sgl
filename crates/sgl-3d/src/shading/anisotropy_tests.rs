@@ -79,9 +79,11 @@ fn direction(theta: f64, phi: f64) -> DVec3 {
 }
 
 #[test]
-#[ignore = "real GPU; f64 anisotropic GGX and frozen isotropic compatibility oracle"]
 fn anisotropy_gpu_matches_independent_brdf_and_historical_zero() {
     use wgpu::util::DeviceExt;
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
         let mut cases: Vec<[[f32; 4]; 4]> = Vec::new();
         for rotation in [
@@ -114,12 +116,6 @@ fn anisotropy_gpu_matches_independent_brdf_and_historical_zero() {
                 }
             }
         }
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        eprintln!("anisotropy GPU: {:?}", adapter.get_info());
-        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
         // The surface library reads the lit bindings, so the program declares
         // them; this entry point uses only its own two, at free group 0 slots.
         let source = format!(
@@ -297,94 +293,4 @@ fn observed_direct(c:Case,axis_strength:vec4<f32>)->vec3<f32> {
             cases.len()
         );
     });
-}
-
-// Diagnostic, deliberately without a quality pass/fail threshold. A 4x sample
-// count comparison reports numerical convergence separately from model error.
-#[test]
-#[ignore = "CPU highsample diagnostic; approximation errors, not acceptance"]
-fn anisotropy_rectangle_and_environment_approximation_diagnostic() {
-    let n = DVec3::Z;
-    for (rough, strength, metallic) in [
-        (0.3, 0.6, 1.),
-        (0.45, 0.35, 1.),
-        (0.55, 0.3, 1.),
-        (0.25, 0.5, 0.8),
-    ] {
-        let material_f0 =
-            DVec3::splat(0.04) * (1. - metallic) + DVec3::new(0.54, 0.49, 0.44) * metallic;
-        eprintln!("material rough={rough} strength={strength} metallic={metallic}");
-        for axis in [0f64, PI / 4., PI / 2.] {
-            let t = DVec3::new(axis.cos(), axis.sin(), 0.);
-            let v = direction(0.87, 0.61);
-            for side in [256usize, 512] {
-                let mut rectangle = DVec3::ZERO;
-                let mut isotropic = DVec3::ZERO;
-                let mut env = [DVec3::ZERO; 2];
-                let mut bent_env = [DVec3::ZERO; 2];
-                let bent = bent_normal(n, v, t, rough, strength);
-                let bent_t = (DVec3::X - bent * bent.x).normalize();
-                for y in 0..side {
-                    for x in 0..side {
-                        // Finite 1.6 x 0.3 rectangle at z=1, near mirror direction.
-                        let p = DVec3::new(
-                            -0.55 + ((x as f64 + 0.5) / side as f64 - 0.5) * 1.6,
-                            -0.4 + ((y as f64 + 0.5) / side as f64 - 0.5) * 0.3,
-                            1.,
-                        );
-                        let l = p.normalize();
-                        let weight =
-                            1.6 * 0.3 / (side * side) as f64 * l.z / p.length_squared() * l.z;
-                        rectangle += specular_f0(n, v, l, t, rough, strength, material_f0) * weight;
-                        isotropic += specular_f0(n, v, l, t, rough, 0., material_f0) * weight;
-                        // Uniform solid-angle full sphere supports both physical and
-                        // bent hemispheres without losing the bent silhouette region.
-                        let z = 2. * (y as f64 + 0.5) / side as f64 - 1.;
-                        let phi = 2. * PI * (x as f64 + 0.5) / side as f64;
-                        let l = DVec3::new(
-                            (1. - z * z).sqrt() * phi.cos(),
-                            (1. - z * z).sqrt() * phi.sin(),
-                            z,
-                        );
-                        let radiance = [
-                            0.2 + 0.8 * l.z.max(0.),
-                            0.05 + 8. * (80. * (l.dot(direction(0.9, 3.7)) - 1.)).exp(),
-                        ];
-                        let weight = 4. * PI / (side * side) as f64;
-                        for k in 0..2 {
-                            if l.z > 0. {
-                                env[k] += specular_f0(n, v, l, t, rough, strength, material_f0)
-                                    * l.z
-                                    * radiance[k]
-                                    * weight;
-                            }
-                            let cosine = bent.dot(l);
-                            if cosine > 0. {
-                                bent_env[k] +=
-                                    specular_f0(bent, v, l, bent_t, rough, 0., material_f0)
-                                        * cosine
-                                        * radiance[k]
-                                        * weight;
-                            }
-                        }
-                    }
-                }
-                let error = |a: DVec3, b: DVec3| ((b - a) / a).to_array().map(|x| x * 100.);
-                eprintln!(
-                    "axis={axis:.5} side={side}: rectangle anis={:?} isotropic={:?} signed_error_pct={:?}",
-                    rectangle.to_array(),
-                    isotropic.to_array(),
-                    error(rectangle, isotropic)
-                );
-                for k in 0..2 {
-                    eprintln!(
-                        "axis={axis:.5} side={side}: environment {k} anis={:?} bent_isotropic={:?} signed_error_pct={:?}",
-                        env[k].to_array(),
-                        bent_env[k].to_array(),
-                        error(env[k], bent_env[k])
-                    );
-                }
-            }
-        }
-    }
 }

@@ -70,20 +70,19 @@ otherwise black neighboring pixels, across High → Low → High. These establis
 control behavior, not resolution of the reported scene artifacts.
 
 ```sh
-cargo test -p sgl-3d --lib antialiasing_off_preserves_captured_pixels -- --ignored --nocapture
-cargo test -p sgl-3d --lib bloom_switch_removes_halos_and_preserves_low_override -- --ignored --nocapture
+cargo test -p sgl-3d --lib antialiasing_off_preserves_captured_pixels
+cargo test -p sgl-3d --lib bloom_switch_removes_halos_and_preserves_low_override
 ```
 
-The real-device tests render diagonal geometry at native resolution
-and at 16× resolution in each dimension. They compare the SMAA result with the
+The real-device test renders diagonal geometry at native resolution and at
+16× resolution in each dimension. It compares the SMAA result with the
 averaged high-resolution raster, at two sizes to exercise resize, at every
 preset. This detects incorrect edge directions and atlas/search sampling that
-shader compilation cannot reveal. `every_preset_approaches_supersampled_rasterization`
-runs in the required check; the ignored one also writes captures under
-`.cache/smaa-qa`. Neither is a build, startup or deployment gate.
+shader compilation cannot reveal. It runs in the required check, never as a
+build, startup or deployment gate.
 
 ```sh
-cargo test -p sgl-3d --lib diagonal_edges_approach_supersampled_rasterization -- --ignored --nocapture
+cargo test -p sgl-3d --lib every_preset_approaches_supersampled_rasterization -- --nocapture
 ```
 
 On 2026-09-09 the standalone module test passed on Apple M5 / Metal. Sum of

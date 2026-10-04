@@ -176,17 +176,11 @@ mod tests {
     // viewport clamping, stale resize resources and changes outside coverage.
     // Oracle: authored linear ramp and independently rasterized foreground stripe.
     #[test]
-    #[ignore = "real GPU: bounded heat source sampling and depth footprint"]
     fn bounded_sampling() {
+        let Some((device, queue)) = crate::test_support::device() else {
+            return;
+        };
         pollster::block_on(async {
-            let adapter = wgpu::Instance::default()
-                .request_adapter(&Default::default())
-                .await
-                .unwrap();
-            let (device, queue) = adapter
-                .request_device(&crate::test_support::diagnostic_device_descriptor(&adapter))
-                .await
-                .unwrap();
             let mut heat = Heat::new(&device);
             let mut transient = Transient::new(&device);
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl("@vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32> {let p=vec2(f32((i<<1u)&2u),f32(i&2u));return vec4(p*2.-1.,.75,1.);}".into()) });

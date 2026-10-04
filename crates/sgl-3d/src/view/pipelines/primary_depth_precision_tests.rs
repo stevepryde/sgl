@@ -6,17 +6,11 @@ use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 #[test]
-#[ignore = "physical GPU depth precision fixture; eight native camera poses"]
 fn primary_depth_precision_native_planes() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
-            .await
-            .unwrap();
         let data: serde_json::Value =
             serde_json::from_str(include_str!("primary_depth_precision_inputs.json")).unwrap();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
