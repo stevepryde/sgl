@@ -201,21 +201,30 @@ Stages run in one order, written in one place in `renderer`:
    has the colour attachments for it, the G-buffer and lit colour are one
    fused pass, the faster form on the consumer's route; otherwise a G-buffer
    pass and a lighting pass at its depth write the same targets.
-5. **Reflections**: ambient occlusion of the opaque surfaces' ambient diffuse,
-   environment and probe specular, the screen-space method, world-space rays,
-   and their one composition. Completion fogs the opaque surfaces and the sky.
-6. **Transparent**: blended surfaces, additive effects and mist, each fogged
+5. **Receivers**: the transparent stage draws its reflective blended
+   receivers' depth and traced lobe over a copy of the opaque depth, and
+   their motion into the G-buffer's, so the surface that reflections and the
+   temporal consumers see is the nearest reflective one, opaque or receiver
+   ([Surface](#shared-contracts)). It runs only while the scene holds a
+   receiver and something reads the surface.
+6. **Reflections**: ambient occlusion of the opaque surfaces' ambient diffuse,
+   environment and probe specular, the screen-space method over the surface,
+   world-space rays from the opaque surfaces, and their one composition of
+   the opaque lobes. Completion fogs the opaque surfaces and the sky.
+7. **Transparent**: blended surfaces, additive effects and mist, each fogged
    where it lies, then distortion. It is drawn onto the composed frame and,
    while a screen-space method traces, into the reflection input before
-   tracing, so reflections show it.
-7. **Exposure**: the frame's one exposure, fixed or metered from the complete
+   tracing, so reflections show it. Onto the composed frame, a receiver
+   that is the surface at its pixel composes the method's result into its
+   traced lobe.
+8. **Exposure**: the frame's one exposure, fixed or metered from the complete
    HDR frame at the render size, before both of its readers.
-8. **Antialiasing**: TAA or FSR2, from render size to scene size. FSR2 reads
-   the exposure.
-9. **Motion blur**: the antialiased frame blurred along the geometry's
+9. **Antialiasing**: TAA or FSR2, from render size to scene size, reprojected
+   by the surface's depth and motion. FSR2 reads the exposure.
+10. **Motion blur**: the antialiased frame blurred along the surface's
    motion, at the scene size, before bloom, SMAA and tone mapping, as Bevy
    and Wicked Engine run it after TAA.
-10. **Post**: bloom, SMAA, then tone mapping with the exposure and colour
+11. **Post**: bloom, SMAA, then tone mapping with the exposure and colour
    grading, dithered to the output.
 
 A new feature takes a place in this list by editing it here. A probe capture
@@ -239,18 +248,19 @@ Each has one definition, which every producer and consumer uses.
 | --- | --- |
 | Conventions | Units, axes, depth and colour are S3D-3. |
 | View and frame data | `View`, one per view (matrices, previous matrices, jitter, eye, viewport), and `Frame`, one per frame (time, the directional lights with the shadowed light's cascades, the hemisphere fill, the environment's diffuse lighting, reflection sky and backdrop, the fog volume's slicing and whether the frame has fog, mist, the visibility mask, and the scene's baked-lighting constants: the atlas scale and the lightmap's chart transform), declared with their flag bits in `shading::uniforms`. Named fields; flags are integers with named bits. The renderer packs `Frame` from `FrameInput`'s typed values; no GPU layout is public. |
-| Bind groups | For pipelines that draw scene geometry through the shading library. Group 0 has three layouts: lit (view and frame data, lights, decals and the atlas their images are packed in, clusters, shadows, environment, probes, lookup tables and the fog volume), unlit (view and frame data, the frame's environment with its backdrop and the fog volume, for the sky, additive effects and mist) and shadow (view and frame data). The fog volume and its sampler are visible to fragment stages only. A view that renders into one of those binds a neutral stand-in for it; ray hits bind the lit layout with their light and decal lists, the local-light atlas's static layers and, as probe captures do, the installed probes. Group 1: the object records, one storage buffer bound whole that geometry passes read, and the geometry buffers ray queries read. Group 2: material. Group 3: the stage's own. Ports, full-screen passes and the deform stage lay out their own. Four groups is the limit. Lit group 0 and group 1 bind 8 storage buffers to a fragment stage, wgpu's default limit and S3D-1's floor: `graphics_device::limits` requests the adapter's `max_storage_buffers_per_shader_stage`, and the change that adds another states the floor it needs in S3D-1 or folds two buffers into one (the probe collection holds its world grid; the decals' indices share the clusters' lists). Lit group 0 and a material bind 17 sampled textures to a fragment stage, the floor S3D-1 states, and lit group 0 and the world-space trace's own targets 16 to a compute stage, where the fog volume does not count: `graphics_device::limits` requests the adapter's, and the change that adds another states the floor it needs in S3D-1 or folds two textures into one (one lookup-table texture holds the rectangle lights' fit and the DFG table). |
+| Bind groups | For pipelines that draw scene geometry through the shading library. Group 0 has three layouts: lit (view and frame data, lights, decals and the atlas their images are packed in, clusters, shadows, environment, probes, lookup tables and the fog volume), unlit (view and frame data, the frame's environment with its backdrop and the fog volume, for the sky, additive effects and mist) and shadow (view and frame data). The fog volume and its sampler are visible to fragment stages only. A view that renders into one of those binds a neutral stand-in for it; ray hits bind the lit layout with their light and decal lists, the local-light atlas's static layers and, as probe captures do, the installed probes. Group 1: the object records, one storage buffer bound whole that geometry passes read, and the geometry buffers ray queries read. Group 2: material. Group 3: the stage's own. Ports, full-screen passes and the deform stage lay out their own. Four groups is the limit. Lit group 0 and group 1 bind 8 storage buffers to a fragment stage, wgpu's default limit and S3D-1's floor: `graphics_device::limits` requests the adapter's `max_storage_buffers_per_shader_stage`, and the change that adds another states the floor it needs in S3D-1 or folds two buffers into one (the probe collection holds its world grid; the decals' indices share the clusters' lists). Lit group 0 and a material bind 17 sampled textures to a fragment stage, the floor S3D-1 states, which the blended pipelines' group 3 (the screen-space method's result and the surface depth) raises to 19 when the receivers land; lit group 0 and the world-space trace's own targets, with the surface depth, bind 17 to a compute stage, where the fog volume does not count: `graphics_device::limits` requests the adapter's, and the change that adds another states the floor it needs in S3D-1 or folds two textures into one (one lookup-table texture holds the rectangle lights' fit and the DFG table). |
 | Layout mirroring | A struct shared between Rust and WGSL is declared once in each, side by side in `shading`. A test compares the Rust layout with naga's layout of the composed WGSL. A vertex buffer's layout is derived once from the Rust type it holds, and a test compares it with naga's inputs of the vertex entry points that read it. |
-| G-buffer | What the opaque stage records for later stages, including the ambient diffuse within lit colour before occlusion. One WGSL module defines its targets and encodings with `encode` and `decode`; a port converts at its adapter. |
+| G-buffer | What the opaque stage records for later stages, including the ambient diffuse within lit colour before occlusion. Its depth, normals, roughness, F0, anisotropy and source identity are the opaque surface's for the whole frame; its motion is the surface's ([Surface](#shared-contracts)), since nothing reads the opaque surface's motion once the receivers have drawn theirs. One WGSL module defines its targets and encodings with `encode` and `decode`, the receiver layer's included; a port converts at its adapter. |
+| Surface | The nearest reflective surface at each pixel, opaque or blended receiver, which the screen-space method, world-space rays, composition, TAA, FSR2 and motion blur see: the **surface depth**, a copy of the opaque depth that the receiver pass draws its receivers over, depth-tested and written so the nearest receiver wins; the **receiver layer**, the traced lobe's normal and perceptual roughness at receiver pixels, in the G-buffer module's encodings; and the G-buffer's motion. A pixel is under a receiver where the surface depth is nearer than the opaque depth; no mask is stored. The renderer owns both targets, allocates them at the render size when the scene first holds a receiver, and lends the opaque depth as the surface depth in a frame that draws no receiver, so a game without receivers pays nothing. Each screen-space method's adapter converts the surface: the receiver layer where a receiver is nearer, else the G-buffer, through one accessor the G-buffer module owns, and the surface depth; TAA's context, FSR2 and motion blur read the surface depth and motion. Completion, probe culling, the transparent stage's depth tests and the diagnostics read the opaque depth. |
 | Surface shading | One evaluated `Surface` and one set of functions for direct, environment and baked light, and one for the decals that change a lit surface before it is lit. Raster shading, probe captures and ray hits call the same functions (S3D-5). |
 | Lights and shadows | One light record, at its identity's index in the scene's light buffer, and one accessor for the lights and decals that reach a point: the cluster in a camera view, culled lists elsewhere, which are a grid of one cluster. One writer packs every view's clusters; each list holds its live lights, then its baked ones, then its decals. A point or spot light's shading reads its record's first four rows; a rectangle's also reads its last, and `surface_direct_light` integrates its face by linearly transformed cosines, from lit group 0's table, in one loop over its lobes. A light's shadow record, at the same index in a buffer the shadow stage writes each frame, places its faces in the local-light atlas; a light without one is unshadowed. One sampling function per shadow kind, and one set of filters and receiver bias for every 2D shadow map, in `shading::shadow_sampling`: Bevy's Castano '13 kernel, its Jimenez '14 spiral where temporal antialiasing resolves it, its one hardware 2×2 tap for the camera's surfaces at the Low shadow quality (Godot's hard filter; `Settings::shadow_quality` also sets the cascades' and the local-light atlas's sizes, as Godot's desktop and mobile defaults), and for the fog, whose reprojection resolves it, its one hardware 2×2 tap for a local light and Godot's fog tap for the directional cascades (the one cascade at the point's view depth, one linear tap of the occluder's depth, the light fading exponentially with the metres the point lies behind it), chosen by what receives the shadow (a capture's or ray hit's surface, the camera's surface or the fog), and, but for Godot's fog tap, which takes none, its normal offset scaled by the map's texel size plus a depth offset toward the light. Each kernel tap is clamped to the map's rectangle in its texture, as Wicked Engine clamps to a light's atlas rectangle. The directional cascades and the local-light atlas use them. Every shadow kind culls casters as the camera does, as Bevy's shadow pipelines do and its bias assumes: a single-sided material casts from its front faces, a double-sided one from both. |
-| Material records | A material's values reach the GPU as one record, `Material` in `shading/material.wgsl`, mirrored by `MaterialUniform`: named fields, and flags as integer `MATERIAL_*` bits (unlit, double-sided, the maps it was added with, its alpha mode). The scene packs it from the public typed `SurfaceMaterial` (named fields, `bool`s and the `AlphaMode` enum) and from the maps the material was added with, which no edit changes; group 2 binds it and the ray source holds the same record. No GPU layout is public. |
+| Material records | A material's values reach the GPU as one record, `Material` in `shading/material.wgsl`, mirrored by `MaterialUniform`: named fields, and flags as integer `MATERIAL_*` bits (unlit, double-sided, the maps it was added with, its alpha mode and, for a blended one, whether it receives screen-space reflections). The scene packs it from the public typed `SurfaceMaterial` (named fields, `bool`s and the `AlphaMode` enum, whose `Blend { screen_space_reflections }` carries the receiver flag where it applies) and from the maps the material was added with, which no edit changes; group 2 binds it and the ray source holds the same record. No GPU layout is public. |
 | Scene records | An instance has one object record, declared in `shading::uniforms`, at its identity's index in the scene's object buffer, a storage buffer. Its flags are named bits; static or moving is one of them, never a range of indices. A deforming instance's record names its deformed vertices this frame and its positions in the last submitted frame. That index is the source identity the G-buffer stores and a ray hit reports; it names an instance within one frame only. Each instance of a draw reaches its record through its draw instance (`shading::vertex::DrawInstance`, a vertex buffer stepped per instance): the record's index and the drawn mesh's record in the ray source, as Bevy's batched draws reach each instance's `MeshUniform` from its instance index. A fragment reads the record at the source identity it carries. Instancing renumbers no instance. |
 | Ray source | Each material, texture and model owns ranges of the ray buffers (its record; its level 0 in its image's format: RGBA8 texels, or a block-compressed image's blocks as stored, which a ray decodes texel by texel as raster's level 0 decodes them; its vertices, indices and BVH; a deforming model's influences and morph targets), and each deforming instance its joint matrices, morph weights and deformed vertices (`shading::deformation`), written when it is added or replaced and freed for reuse when it is removed. Above the model BVHs the source is two-level, as DXR and Vulkan acceleration structures, Bevy's ray-traced scene and Wicked Engine's hardware path are (Wald et al. 2003; Meister et al. 2021, §5.3.3). Each instance has one entry in the instance list at its identity's index, holding what its object record lacks (its model's ray words and its inverse pose), written when its record is written and when its model's geometry is replaced; a deforming instance's, which no ray sees, is never written. The list is never rebuilt for a frame, and a hit names the index raster names, whose object record holds its pose, flags and ambient cube. Two instance BVHs, static and moving, bound the capture-visible instances of each kind that do not deform by their posed model bounds; a leaf names entries. A traversal walks the BVH of the kind it wants, both for all, with the world-space ray, and at a leaf each instance's model BVH with the ray in that model's space, the one acceptance predicate (visibility group, alpha mode, side, cut-out texels, the receiver's own triangle and an open end of the interval) deciding each candidate; nothing tests a kind inside a traversal. The scene builds both BVHs on the CPU with the model BVHs' builder and node record, into ranges of the source whose roots the header names, each kept by its BVH and reallocated only when it outgrows it: the moving BVH on every traced frame and the static one on the first traced frame after a static edit, rebuilt rather than refitted, as Bevy and Wicked rebuild their TLAS every frame and NVIDIA and AMD advise. Nothing else is uploaded for unchanged content. The entries and both BVHs are in the object records' space, so a ray from the G-buffer traverses without a transform; a change of that space's origin (#17) is one scene operation that rewrites every entry and rebuilds both BVHs, never a static edit per instance nor a rewrite per frame. The hardware path (#23) builds its TLAS over the instances the BVHs bound, from their entries, each naming its model's BLAS as the entry names its BVH, with the index as the instance's custom index and its kind as its mask bit, selected by the ray's cull mask, and its candidate loop runs the same predicate, so both paths share one list and one hit: the instance index, mesh, triangle, distance and barycentrics, decoded once from the entry. |
-| Draw lists | One builder turns a scene and a view into instanced draws. A view's population is a filter over instances by their flags (static, `visible`, `capture_visible`) and over materials by the visibility mask and alpha mode, not a walk of named collections. Blended materials are the camera's blended population alone, sorted back to front. Each instance is culled and selects its level of detail on its own; its draws of one mesh then merge with other instances' into one instanced draw per index range when they share geometry (model and mesh, or a deforming instance's own, as that instance deforms it), material, pipeline variant and mobility and draw the same ranges, as Bevy batches its phases: opaque, masked, capture and caster populations wherever they are, in bins ordered by their model's first instance and mesh, so each instance's meshes keep their order; blended ones only where adjacent in their sorted order. A batch names its instances by index, its geometry by model and mesh, and its material by identity. A deforming instance is culled by its deformed bounds and draws no level of detail. Every list of a frame, or of a probe capture, appends its draw instances to one buffer, which the renderer uploads once every list is built and before any pass draws, as Bevy writes one batched instance buffer for every view. Every geometry pass (G-buffer, lighting, shadow, capture) draws from a draw list; none walks the scene. Draw statistics count the draws and triangles of static and moving instances; a draw holds one mobility. |
+| Draw lists | One builder turns a scene and a view into instanced draws. A view's population is a filter over instances by their flags (static, `visible`, `capture_visible`) and over materials by the visibility mask and alpha mode, not a walk of named collections. Blended materials are the camera's blended population alone, sorted back to front; the receiver pass draws that list's receiver batches, not a second list. Each instance is culled and selects its level of detail on its own; its draws of one mesh then merge with other instances' into one instanced draw per index range when they share geometry (model and mesh, or a deforming instance's own, as that instance deforms it), material, pipeline variant and mobility and draw the same ranges, as Bevy batches its phases: opaque, masked, capture and caster populations wherever they are, in bins ordered by their model's first instance and mesh, so each instance's meshes keep their order; blended ones only where adjacent in their sorted order. A batch names its instances by index, its geometry by model and mesh, and its material by identity. A deforming instance is culled by its deformed bounds and draws no level of detail. Every list of a frame, or of a probe capture, appends its draw instances to one buffer, which the renderer uploads once every list is built and before any pass draws, as Bevy writes one batched instance buffer for every view. Every geometry pass (G-buffer, lighting, shadow, capture) draws from a draw list; none walks the scene. Draw statistics count the draws and triangles of static and moving instances; a draw holds one mobility. |
 | Geometry pipelines | One cache keyed by pass and by what the material and instance require (face culling; the alpha mode: opaque, masked or blended; and for pulled passes whether the instance deforms), not a field per variant, and by the lit constants: whether the scene holds a rectangle light and whether it holds a decal, one value (`LitConstants`) that the world-space reflection trace's pipelines are keyed by too. A masked material's pipelines discard the texels it cuts out, so opaque ones keep early depth; masked, blended and deformed pipelines are prepared once the scene holds such content. The lit constants specialise the lit passes and the world-space reflection trace, so a scene without rectangle lights or decals pays nothing for their shading: they shade rectangles (`rect_lights_enabled`) only while the scene holds one, as Godot specialises its clustered pass on `cluster_has_area_light`, and apply decals (`decals_enabled`) only while it holds one. |
 | Sizes | Render size up to antialiasing, scene size after it, output size at presentation. Defined once by the renderer. |
-| History | A stage owns its history. The renderer issues one reset for `FrameInput::camera_cut`, a `Renderer::resize` that changed the targets, or a different `Scene`. Content edits and lighting changes restart no history: each history rejects what changed by reprojection and clamping, as its upstream does; the scene's change tracking rebuilds bindings and instance motion and reports static edits to caches of static content ([Scene content](#scene-content)), nothing more. Camera history is the renderer's (S3D-4): the last submitted camera's unjittered view and projection, from which the `View`'s previous matrices come; a stage reprojects through them and keeps no camera of its own. The frame's history carries the scene's render origin, its summed moves as a value ([Scene content](#scene-content)). Each holder of state retained in the render frame records the origin that state is expressed in and, where the frame's differs, translates the state by the difference and records the frame's origin with it: the renderer its camera history, committed at `finish_frame` as that history is, as Filament keeps its antialiasing history in the user's world across its origin snaps; a stage what it retains (a shadow face's light and the poses of the moving casters it drew), committed as that state is. Repeating the step is idempotent, so an abandoned frame, which commits nothing, translates nothing twice: the next frame compares the same origins. What a stage keeps in screen space (colour, depth, motion, confidence, the fog's volume) needs nothing, and nothing restarts; a reset records the frame's origin with the new history. |
+| History | A stage owns its history. The receiver pass keeps none: the surface is rebuilt in every frame it runs. The renderer issues one reset for `FrameInput::camera_cut`, a `Renderer::resize` that changed the targets, or a different `Scene`. Content edits and lighting changes restart no history: each history rejects what changed by reprojection and clamping, as its upstream does; the scene's change tracking rebuilds bindings and instance motion and reports static edits to caches of static content ([Scene content](#scene-content)), nothing more. Camera history is the renderer's (S3D-4): the last submitted camera's unjittered view and projection, from which the `View`'s previous matrices come; a stage reprojects through them and keeps no camera of its own. The frame's history carries the scene's render origin, its summed moves as a value ([Scene content](#scene-content)). Each holder of state retained in the render frame records the origin that state is expressed in and, where the frame's differs, translates the state by the difference and records the frame's origin with it: the renderer its camera history, committed at `finish_frame` as that history is, as Filament keeps its antialiasing history in the user's world across its origin snaps; a stage what it retains (a shadow face's light and the poses of the moving casters it drew), committed as that state is. Repeating the step is idempotent, so an abandoned frame, which commits nothing, translates nothing twice: the next frame compares the same origins. What a stage keeps in screen space (colour, depth, motion, confidence, the fog's volume) needs nothing, and nothing restarts; a reset records the frame's origin with the new history. |
 | Settings | The renderer resolves requested settings into one effective configuration per frame. Stages read only that, and report why a choice could not run. |
 | Timing | Every pass belongs to its stage's timing group. |
 | Diagnostics | Behind the `diagnostics` feature. Switches are `Settings::diagnostics`, resolved into the effective configuration, never environment variables; observations return to the game, and the library writes no files. |
@@ -369,6 +379,48 @@ code; it does not redeclare a struct, binding or function another module owns.
   and rays pass through them, as Godot leaves alpha-pass materials out of its
   shadow passes; probe captures, which run the opaque stage, do not show
   them.
+- **Receivers.** A blended material the game marks
+  `AlphaMode::Blend { screen_space_reflections: true }` (glTF loads blended
+  materials unmarked) receives the frame's screen-space reflections as the
+  surface at its pixels. The game supplies the receiver as it supplies any
+  surface: its mesh with the normals it animates (a caller-generated mesh
+  replaced with `set_model`, which rebuilds the model's ray source each
+  time, or a deforming instance), and its material's roughness, F0 and
+  coat; simulation, level and animation policy stay in the game. SGL3D
+  owns the rest. Godot, Bevy, Wicked Engine and Filament trace opaque
+  surfaces only (Godot b130438 `render_forward_clustered.cpp`, SSR before
+  the colour passes and none for `RENDER_LIST_ALPHA`; Bevy 9d12036
+  `ssr/mod.rs`, deferred only; Wicked 4323a33 `objectHF.hlsli`, `texture_ssr`
+  under `#ifndef TRANSPARENT`, water from a planar `texture_reflection`;
+  Filament ef1a133 `surface_light_indirect.fs`, `BLEND_MODE_OPAQUE ||
+  BLEND_MODE_MASKED`, a TODO to ray-march blended surfaces), so SGL3D
+  follows HDRP's practice for receivers (its `Receive SSR Transparent`
+  materials write transparent depth and motion vectors, its SSR pass runs
+  over them, and the transparent forward pass samples the result) with
+  its own methods, not a second tracer. The transparent stage's receiver
+  pass draws the blended list's receiver batches through the blended
+  draw's vertex entry with the frame's jittered projection: the surface
+  depth, tested and written, the traced lobe (the coat's on a coated
+  receiver, else the base's; an unlit receiver is never traced) into the
+  receiver layer, and unjittered motion into the G-buffer's. The screen-space
+  method then traces the receivers as it traces opaque surfaces, from the
+  same surface, at the same resolution, with the same cutoff and fade,
+  through the same accumulation. Drawing onto the composed frame, a receiver
+  fragment whose depth equals the surface depth at its pixel (the vertex
+  entry's `@invariant` position makes the equality exact) composes the
+  method's result into its traced lobe by the one lobe formula, with probe
+  and sky specular as the fallback; every other blended fragment, a receiver
+  behind it included, takes probe and sky specular as before. Into the
+  reflection input, the receiver draws as before. The blended pipelines'
+  group 3 lends the method's result, the surface depth and the method's
+  cutoff and fade from the effective configuration. The approximation and
+  its limits: the nearest receiver at a pixel is the surface, and alone
+  reflects; the receiver's reflection is scaled by its alpha with the rest
+  of its colour (glTF's coverage blend, as Godot and Bevy blend); the
+  transmitted background is blended under it, undistorted; the trace sees
+  this frame's reflection input, so a receiver reflected in another shows
+  its probe specular; world-space rays do not fill a receiver's misses;
+  additive effects and mist never receive.
 - **Reflections.** Environment and probe specular always apply: source
   completion adds them to the main view's opaque surfaces from probes culled
   per screen tile, and captures, ray hits and blended surfaces add them in
@@ -379,9 +431,15 @@ code; it does not redeclare a struct, binding or function another module owns.
   opaque colour, and occludes the specular it adds by the same visibility.
   Captures and ray hits have no ambient occlusion and keep their ambient
   diffuse whole. A
-  screen-space method returns premultiplied radiance and confidence
-  ([D-17](decisions.md)); world-space rays fill its misses; one composition
-  combines them, so another method plugs in beside the existing ones.
+  screen-space method traces the surface ([Surface](#shared-contracts)),
+  converted at its adapter, and returns premultiplied radiance and
+  confidence ([D-17](decisions.md)); world-space rays, from the opaque
+  surfaces, fill its misses and skip pixels under a receiver; one
+  composition adds the opaque lobes, and under a receiver gives the opaque
+  lobe its fallback alone, since the result there is the receiver's. The
+  lobe formula, response × (reflected × fade + fallback × (1 − confidence ×
+  fade)), has one owner in `shading`, which composition and the blended
+  draw call. Another method plugs in beside the existing ones.
 - **Deformation.** Skinned and morphed positions reach every geometry pass the
   same way, with the previous frame's positions for motion. Prepare's deform
   stage morphs and skins each deforming instance whose deformation changed
@@ -420,8 +478,13 @@ code; it does not redeclare a struct, binding or function another module owns.
   probe captures and ray hits have none.
 - **Temporal.** Geometry writes unjittered motion. Jitter is applied to the
   projection by the antialiasing in effect, and every history resets together.
-  Motion blur reads the same motion and depth after antialiasing, so it
-  blurs the camera's and moving instances' motion alike.
+  Every temporal consumer (the screen-space method's accumulation, TAA,
+  FSR2, motion blur) reads one surface depth and motion
+  ([Surface](#shared-contracts)), so a receiver's pixels reproject by the
+  receiver, which the receiver pass draws with the frame's jitter as opaque
+  geometry is drawn, never by the background behind it. Motion blur reads
+  them after antialiasing, so it blurs the camera's and moving instances'
+  motion alike.
 - **Exposure.** Lighting stays linear HDR to the tone map. One exposure value,
   a 1×1 texture the exposure stage writes and the renderer passes on, feeds
   FSR2 and the tone map. Automatic exposure keeps its adapted correction as
@@ -476,7 +539,5 @@ code; it does not redeclare a struct, binding or function another module owns.
 
 ## Open questions
 
-- How a blended surface that must also receive screen-space reflections is
-  ordered (#20).
 - Where dynamic GI updates, ray-traced shadows and two-phase occlusion culling
   sit in the stage order. Decided by the roadmap steps that add them.
