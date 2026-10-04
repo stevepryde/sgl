@@ -93,8 +93,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   receivers without baked lighting (moving instances, and static ones with
   no lightmap or assigned atlas chart), leaving the rest to the game's bake; `specular` scales its
   highlights (0 for a fixture already reflected as an emitter), and
-  `fog_energy` its light in the volumetric fog (0 leaves it out of the fog,
-  which then pays nothing for it). `Light::default()` and
+  `fog_energy` its light in the volumetric fog (at most 0.001 leaves it out
+  of the fog, which then skips its attenuation and shadow lookup). `Light::default()` and
   `DirectionalLight::default()` are Godot's light defaults, so a game sets
   only what differs (`..Default::default()`).
   `LightShape::Rect` is a one-sided panel or strip whose face is integrated

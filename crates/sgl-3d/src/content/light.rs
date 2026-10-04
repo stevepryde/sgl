@@ -67,9 +67,10 @@ pub struct Light {
     pub specular: f32,
     /// Scales the light it scatters in the volumetric fog, nonnegative
     /// (Godot's `light_volumetric_fog_energy`): 1 is physical, 2 doubles
-    /// it, and at most 0.001 leaves the light out of the fog, which then
-    /// pays nothing for it, its shadow included. Surfaces take the light
-    /// alike whatever its value. A `baked` light lights the fog too.
+    /// it, and at most 0.001 (Godot's cutoff) leaves the light out of the
+    /// fog, which then skips its attenuation and shadow lookup. Surfaces
+    /// take the light alike whatever its value, and its shadow is still
+    /// drawn for them. A `baked` light lights the fog too.
     pub fog_energy: f32,
     /// Casts a shadow, in the local-light shadow atlas, while its range
     /// reaches the camera's view and the atlas has room for it: the lights

@@ -23,9 +23,10 @@ pub struct DirectionalLight {
     pub shadow: Option<DirectionalShadow>,
     /// Scales the light it scatters in the volumetric fog, nonnegative
     /// (Godot's `light_volumetric_fog_energy`): 1 is physical, 2 doubles
-    /// it, and at most 0.001 leaves the light out of the fog, which then
-    /// pays nothing for it, its shadow included. Surfaces take the light
-    /// alike whatever its value.
+    /// it, and at most 0.001 (Godot's cutoff) leaves the light out of the
+    /// fog, which then skips its attenuation and shadow lookup. Surfaces
+    /// take the light alike whatever its value, and its shadow is still
+    /// drawn for them. A negative or non-finite value leaves it out too.
     pub fog_energy: f32,
 }
 

@@ -256,8 +256,8 @@ fog stage:
   reprojection resolves, as Bevy's volumetric fog samples them, and
   `ambient` of the hemisphere fill and environment diffuse, scattered toward
   the camera by Henyey–Greenstein's phase function of `anisotropy`; each
-  light's `fog_energy` scales its share, and a light at 0 is skipped, shadow
-  and all, as Godot does;
+  light's `fog_energy` scales its share, and a light at or below 0.001 is
+  skipped, attenuation and shadow lookup, as Godot does;
 - blends each froxel with where it lay in the last frame's volume, keeping
   `temporal_reprojection` of it, and samples another point of it each frame
   (Godot's 16 Halton offsets), so shafts and shadow edges in the fog resolve
@@ -354,11 +354,12 @@ take the rest with `..Default::default()`.
 - `fog_energy` scales the light it scatters in the
   [volumetric fog](#volumetric-fog) (Godot's
   `light_volumetric_fog_energy`): 1 is physical and 2 doubles it. At most
-  0.001 leaves the light out of the fog, which then skips it, its shadow
-  lookup included, as Godot does: set 0 on fixtures whose light the fog does
-  not need, to save fog injection time. Surfaces take the light alike at any
-  value. A baked light lights the fog too, which has no bake, and its
-  `fog_energy` scales that.
+  0.001 leaves the light out of the fog, which then skips its attenuation
+  and shadow lookup, as Godot does: set 0 on fixtures whose light the fog
+  does not need, to save fog injection time. The fog still visits the
+  light's cluster entry, and its shadow is still drawn for surfaces, which
+  take the light alike at any value. A baked light lights the fog too,
+  which has no bake, and its `fog_energy` scales that.
 - `casts_shadow` gives the light a shadow in the local-light shadow atlas
   ([Local-light shadows](#local-light-shadows)).
 - Each frame the renderer assigns the lights, with the

@@ -158,7 +158,13 @@ pub(crate) fn frame_uniform(
                 flags: flag(shadow.light == Some(index), DIRECTIONAL_LIGHT_SHADOW),
                 color: light.color,
                 illuminance: light.illuminance,
-                fog_energy: light.fog_energy,
+                // As `is_on` takes a light it cannot shine for none, a fog
+                // energy the fog cannot scale by leaves it out of the fog.
+                fog_energy: if light.fog_energy.is_finite() && light.fog_energy > 0. {
+                    light.fog_energy
+                } else {
+                    0.
+                },
                 padding: [0.; 3],
             }
         })

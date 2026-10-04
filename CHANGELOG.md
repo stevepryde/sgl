@@ -20,11 +20,12 @@ full API details.
 - **Scope:** `sgl-3d` `Light` and `DirectionalLight` gain
   `fog_energy: f32` (Godot's `light_volumetric_fog_energy`), which scales the
   light each scatters in the volumetric fog: 1 is the look so far, 2 doubles
-  it, and at most 0.001 leaves the light out of the fog, so fog injection
-  skips it and its shadow lookup there. Surfaces are lit alike at any value,
-  and a `baked` light's light in the fog scales too. `Scene::add_light` and
-  `set_light` refuse a negative or non-finite `fog_energy` with
-  `SceneError::InvalidLight`. Both types now implement `Default` with Godot's
+  it, and at most 0.001 (Godot's cutoff) leaves the light out of the fog, so
+  fog injection skips its attenuation and shadow lookup. Surfaces are lit
+  alike at any value, and a `baked` light's light in the fog scales too.
+  `Scene::add_light` and `set_light` refuse a negative or non-finite
+  `fog_energy` with `SceneError::InvalidLight`; a directional light's is
+  taken as 0. Both types now implement `Default` with Godot's
   light defaults: `Light` is a white point light at the origin of π candela
   reaching 5 m, live, specular 1, fog energy 1 and no shadow;
   `DirectionalLight` is white, shines along -Z at π lux, with no shadow and
