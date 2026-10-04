@@ -24,7 +24,8 @@ full API details.
   and the radius is clamped to 0.01–10000 m (NaN to 0.01): the low end of
   XeGTAO's expected radius range (`XeGTAO.h` `GTAOImGuiSettings`, as Godot's
   `Environment::ssao_radius`) and the upper end its settings clamp to. A
-  radius within that range renders as before.
+  radius within that range renders as before; a positive radius below 0.01 m
+  or above 10000 m, which used to reach the pass unchanged, is now clamped.
 - **Migration:** a game that set a nonpositive or nonfinite radius to switch
   ambient occlusion off sets the setting instead:
 
