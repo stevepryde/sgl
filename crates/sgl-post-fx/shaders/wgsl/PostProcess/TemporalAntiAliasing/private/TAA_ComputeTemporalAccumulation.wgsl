@@ -276,11 +276,15 @@ fn ComputeVarianceGamma(Speed: f32) -> f32
     return VarianceDynamic * (1.0 - smoothstep(0.0, TAA_VARIANCE_BOX_ZERO_SPEED, Speed));
 }
 
-fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
+fn ComputeMaxAlpha(IsStill: bool) -> f32
 {
     // PROVENANCE.md DFX-19: still pixels accumulate up to TAA_STILL_HISTORY_FACTOR.
-    let MaxAlpha = select(g_TAAAttribs.TemporalStabilityFactor, TAA_STILL_HISTORY_FACTOR, IsStill);
-    return min(MaxAlpha, saturate(1.0 / (2.0 - Alpha)));
+    return select(g_TAAAttribs.TemporalStabilityFactor, TAA_STILL_HISTORY_FACTOR, IsStill);
+}
+
+fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
+{
+    return min(ComputeMaxAlpha(IsStill), saturate(1.0 / (2.0 - Alpha)));
 }
 
 @fragment
@@ -295,13 +299,11 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> @location
     }
 
     // PROVENANCE.md DFX-14: Godot's velocity disocclusion (taa_resolve.glsl
-    // get_factor_disocclusion). History is rejected gradually by the
+    // get_factor_disocclusion), the share of history rejected by the
     // difference in pixels between this pixel's motion and the previous
-    // frame's motion where it was. Godot adds the rejection to its current
-    // weight; here it scales the history weight, as DiligentFX combines its
-    // rejections.
+    // frame's motion where it was.
     let MotionDiffPixels = (Motion - SamplePrevMotion(vec2<i32>(PrevPosition))) * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
-    let MotionDiffFactor = 1.0 - saturate((length(MotionDiffPixels) - TAA_MOTION_DIFF_THRESHOLD_PIXELS) * TAA_MOTION_DIFF_REJECTION_PER_PIXEL);
+    let MotionDiffRejection = saturate((length(MotionDiffPixels) - TAA_MOTION_DIFF_THRESHOLD_PIXELS) * TAA_MOTION_DIFF_REJECTION_PER_PIXEL);
     // PROVENANCE.md DFX-19: nothing moved at a still pixel, and the depth buffers differ only by
     // their jitter, which on sub-pixel geometry would reject its history every few frames.
     let MotionPixels = abs(Motion * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
@@ -324,7 +326,11 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> @location
     let PixelStat = ComputePixelStatisticYCoCgSDR(vec2<i32>(Position.xy));
     let YCoCgSDRClampedColor = ClipToAABB(YCoCgSDRPrevColor, PixelStat.Mean, VarianceGamma * PixelStat.StdDev);
 
-    let Alpha = RGBHDRPrevColor.a * MotionDiffFactor * DepthFactor;
+    // PROVENANCE.md DFX-14: Godot adds the rejection to its current weight
+    // (blend_factor = RPC_16 + factor_disocclusion), so history keeps at most
+    // the cap less the rejection. DiligentFX's confidence still ramps the
+    // weight up after a reset, and the rejection does not compound with it.
+    let Alpha = min(RGBHDRPrevColor.a * DepthFactor, max(ComputeMaxAlpha(IsStill) - MotionDiffRejection, 0.0));
     let RGBHDROutput = SDRToHDR(YCoCgToRGB(mix(YCoCgSDRCurrColor, YCoCgSDRClampedColor, Alpha)));
     return vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(Alpha, IsStill));
 }

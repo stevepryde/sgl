@@ -3,6 +3,14 @@
 // f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b). Copyright Diligent Graphics LLC,
 // licensed under the Apache License, Version 2.0 (vendor/DiligentFX/License.txt).
 // Modified: translated from HLSL to WGSL; see crates/sgl-post-fx/README.md.
+// DFX-14 replaces upstream's motion-rejection and variance constants with the
+// motion-difference rejection and variance box constants of Godot's TAA,
+// servers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl and
+// servers/rendering/renderer_rd/effects/taa.cpp
+// (https://github.com/godotengine/godot, revision
+// b13043816a0f234985030ec035363a005bc86c32), MIT licensed (LICENSE-godot.txt);
+// taa_resolve.glsl is based on Spartan Engine's TAA, Copyright (c) 2016-2022
+// Panos Karabelas, MIT licensed (LICENSE-spartan.txt).
 
 #ifndef _TEMPORAL_ANTI_ALIASING_STRUCTURES_FXH_
 #define _TEMPORAL_ANTI_ALIASING_STRUCTURES_FXH_
@@ -12,8 +20,9 @@
 
 // PROVENANCE.md DFX-14: Godot's velocity disocclusion. History is kept while the difference between
 // a pixel's motion and the previous frame's motion where it was stays within this many pixels
-// (taa.cpp disocclusion_threshold), and beyond it loses this share per pixel (taa_resolve.glsl
-// DISOCCLUSION_SCALE), all of it 100 pixels further.
+// (taa.cpp disocclusion_threshold); beyond it, this share of the frame's weight per pixel moves from
+// history to the current frame (taa_resolve.glsl DISOCCLUSION_SCALE), none left 93.75 pixels
+// further under the default 0.9375 history cap (TemporalStabilityFactor).
 #define TAA_MOTION_DIFF_THRESHOLD_PIXELS    2.5
 #define TAA_MOTION_DIFF_REJECTION_PER_PIXEL 0.01
 
@@ -23,7 +32,8 @@
 #define TAA_VARIANCE_BOX_ZERO_SPEED 0.02
 
 // Godot's variance_dynamic (taa.cpp): 1.1 standard deviations at 1080 rows, scaled inversely with
-// the height and kept between 0.75 and 1.
+// the height and kept between 0.75 and 1. 1.1 clamps to 1, so the box is 1 deviation up to 1188
+// rows and 1188/height deviations above, 0.75 from 1584 rows.
 #define TAA_VARIANCE_DYNAMIC_BASE        1.1
 #define TAA_VARIANCE_DYNAMIC_BASE_HEIGHT 1080.0
 #define TAA_VARIANCE_DYNAMIC_MIN         0.75

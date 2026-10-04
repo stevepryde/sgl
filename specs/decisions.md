@@ -113,9 +113,15 @@ Use the [current specs](README.md) for implementation and the
     motion changes between frames, as its constant documents and Godot does,
     not by speed as upstream's code does, so fast racing motion keeps its
     history (DFX-14). Amended 2026-10-05 (#93): the 4-pixel limit left the
-    near field without history at racing speed, so TAA follows Godot's rule
-    itself: gradual rejection by motion difference, with history clipped to a
-    neighbourhood box that narrows with speed.
+    near field without history at racing speed, so TAA follows Godot's TAA
+    itself. A steady motion difference keeps Godot's history weight, 0.9375
+    less 0.01 per pixel beyond 2.5 (0.69 at 27.5 pixels), and history is
+    clipped towards the neighbourhood mean within a box of at most 1 standard
+    deviation that narrows to none at 2 % of the screen per frame. Fast
+    motion looks antialiased and softer, with slightly more trailing at speed
+    (about 0.05 % to 0.3 % of the previous frame at 30 and 60 Hz on
+    Hyperdrive's route). Still pixels take the same box, at most 1 deviation
+    instead of 2.5, which changes D-17's still-pixel history (DFX-19).
   - Probe captures include area-light emitters, as in Frostbite and Wicked.
     Reflections then count a fixture's emission alongside its light's analytic
     highlight.
@@ -132,7 +138,10 @@ Use the [current specs](README.md) for implementation and the
   - DiligentFX traces each lobe's peak (`GGXImportanceSampleBias` 1) and its
     temporal pass keeps Wicked Engine's 0.95 of history.
   - TAA keeps a longer history at still pixels and does not reject them by
-    depth, as Bevy's TAA does (DFX-19).
+    depth, as Bevy's TAA does (DFX-19). Since D-16's 2026-10-05 amendment,
+    that history is clipped within clamp(1188 / height, 0.75, 1) standard
+    deviations of the neighbourhood mean: Bevy's 1σ clip up to 1188 rows,
+    tighter above (#94).
   - Static probe captures draw only the visibility groups the frame selects,
     as a reflection probe's culling mask does, so a game can leave near
     fixtures out of probes their proxy cannot place. D-16's emitters stay in

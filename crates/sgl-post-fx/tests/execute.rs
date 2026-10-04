@@ -474,8 +474,9 @@ fn read_rgba16f(
 // PROVENANCE.md DFX-14: history survives fast motion that is consistent
 // between frames (upstream rejects any pixel moving faster than 1/256 of the
 // viewport height per frame) and, as Godot's TAA, loses it gradually as the
-// motion changes by more than 2.5 pixels between frames. The accumulated
-// weight is the output's alpha: 0.5 for a pixel without history
+// motion changes by more than 2.5 pixels between frames. The output's alpha
+// is DiligentFX's accumulated confidence, 1 / (2 - the history weight the
+// frame used) below the cap: 0.5 for a pixel without history
 // (`ResetAccumulation`'s value, and `ComputeCorrectedAlpha(0)`).
 #[test]
 fn taa_rejects_history_gradually_by_motion_change_not_speed() {
@@ -579,6 +580,19 @@ fn taa_rejects_history_gradually_by_motion_change_not_speed() {
         "history weights {large} and {moderate} for motion changes of 51.2 and \
          25.6 pixels are not between none (0.5) and consistent motion's ({consistent})"
     );
+    // Once settled, the history weight is Godot's: 1 less its current weight,
+    // 1/16 plus 0.01 per pixel of change beyond 2.5 (taa_resolve.glsl RPC_16
+    // and DISOCCLUSION_SCALE, taa.cpp disocclusion_threshold), not compounded
+    // by the confidence.
+    for (alpha, change) in [(moderate, 25.6f32), (large, 51.2)] {
+        let godot = 1.0 - (1.0 / 16.0 + (change - 2.5) * 0.01);
+        let weight = 2.0 - 1.0 / alpha;
+        assert!(
+            (weight - godot).abs() < 2e-3,
+            "a motion change of {change} pixels settled at history weight {weight}, \
+             not Godot's {godot}"
+        );
+    }
 }
 
 /// A depth buffer of per-texel `values`, row-major, written by a full-screen

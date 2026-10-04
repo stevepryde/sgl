@@ -35,8 +35,8 @@ files unedited.
   As Godot's TAA, it rejects history gradually where motion changes between
   frames, not by speed, and clips it towards the neighbourhood mean within a
   box that narrows with speed (DFX-14). A pixel that has not moved keeps a
-  longer history and is not
-  rejected by depth, as Bevy's TAA treats still pixels (DFX-19).
+  longer history within the same box and is not rejected by depth, as Bevy's
+  TAA treats still pixels (DFX-19).
 - Host: derived from `ScreenSpaceReflection.cpp`, `TemporalAntiAliasing.cpp`,
   `PostFXContext.cpp` and `PostFXRenderTechnique.cpp`, recording into a
   caller's `wgpu::CommandEncoder` where
@@ -128,5 +128,5 @@ under the Apache License, Version 2.0 (`LICENSE.txt`, `vendor/*/License.txt`);
 neither ships a NOTICE file. DFX-14 and DFX-18 port Godot Engine code under
 the MIT licence (`LICENSE-godot.txt`); DFX-14's comes from Godot's TAA
 resolve, based on Spartan Engine's TAA, also MIT (`LICENSE-spartan.txt`).
-DFX-19 ports Bevy code under the MIT licence (`LICENSE-bevy.txt`). Every ported file states its origin and that it
-was modified.
+DFX-19 ports Bevy code under the MIT licence (`LICENSE-bevy.txt`). Every
+ported file states its origin and that it was modified.

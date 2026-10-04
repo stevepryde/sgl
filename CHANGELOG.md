@@ -22,21 +22,30 @@ full API details.
   pixel's motion differed from the previous frame's by more than 1/256 of the
   screen height (about 4 pixels at 1080p), which under forward motion left
   most of the frame, and nearly all of its lower third, unantialiased at
-  racing speed. It now follows Godot's TAA (`taa_resolve.glsl`, `taa.cpp`):
-  history fades by 1 % per pixel of motion difference beyond 2.5 pixels, and
-  is clipped towards the 3×3 neighbourhood's mean within a box of about 1
-  standard deviation at rest (0.75–1, by height) that narrows to none at 2 %
-  of the screen per frame. Still pixels take the same box instead of 2.5
-  deviations; their longer history and depth rule (DFX-19) and depth
-  disocclusion elsewhere are unchanged. Fast-moving surfaces therefore look
-  antialiased and softer instead of aliased, and trails behind moving
-  objects over still backgrounds clear sooner. `sgl-post-fx` now carries
-  Spartan Engine's MIT notice (`LICENSE-spartan.txt`), from which Godot's TAA
+  racing speed. It now follows Godot's TAA (`taa_resolve.glsl`, `taa.cpp`).
+  Beyond 2.5 pixels of motion difference, each pixel moves 1 % of the
+  frame's weight from history to the current frame, so a steady difference
+  keeps Godot's 0.9375 − 0.01 × (difference − 2.5) of history: 0.69 at 27.5
+  pixels, none from about 96 pixels. History is clipped towards the 3×3
+  neighbourhood's mean within a box of clamp(1188 / height, 0.75, 1)
+  standard deviations at rest (1 up to 1188 rows) that narrows to none at
+  2 % of the screen per frame. Still pixels keep their longer history and
+  skip the depth test (DFX-19), but take this box instead of 2.5
+  deviations: at most 1, Bevy's clip for still pixels. On screen, fast-moving
+  surfaces look antialiased and softer instead of aliased, with slightly
+  more trailing at speed (on Hyperdrive's route, from about 0.05 % to 0.3 %
+  of the previous frame at 30 and 60 Hz); trails behind objects moving over
+  still backgrounds clear sooner; and with the camera stopped, animated
+  effects without motion vectors follow sooner, while history on fine
+  jittered detail is clipped harder. `sgl-post-fx` now carries Spartan
+  Engine's MIT notice (`LICENSE-spartan.txt`), from which Godot's TAA
   resolve derives.
 - **Migration:** no game-code changes. Regenerate the game's distribution
-  notices for the new bundled notice. Afterwards, look at fast camera motion
-  (the near field at speed) and at a stopped camera with moving objects, with
-  TAA on.
+  notices for the new bundled notice. Afterwards, with TAA on, look at fast
+  camera motion (the near field at speed, for softness and trails), at a
+  stopped camera with moving objects, and at a stopped camera's animated
+  effects and fine detail for shimmer, especially at 1440p and above, where
+  the still box is under 1 deviation.
 
 ### A directional shadow's distance no longer turns it off
 
