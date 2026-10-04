@@ -45,7 +45,7 @@ fn world_receiver(p:vec2<i32>)->WorldReceiver {
  let material=gbuffer_material(textureLoad(world_material,q,0));
  let lit=gbuffer_lit(textureLoad(world_f0,q,0));
  let roughness=gbuffer_traced_roughness(material,lit);
- let traced=depth>0. && lit && roughness*roughness<world.traced;
+ let traced=depth>0. && lit && specular_traces(roughness,world.traced);
  return WorldReceiver(depth,gbuffer_reflection_normal(normals,material.coat),roughness,traced);
 }
 // Wicked globals.hlsli reconstruct_position; linear depth for SGL3D's infinite

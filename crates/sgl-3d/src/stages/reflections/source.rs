@@ -16,10 +16,8 @@ pub(crate) static COMPLETION: shading::Module = shading::Module {
     deps: &[
         &shading::GBUFFER,
         &shading::PROBE_SAMPLING,
-        &shading::ANISOTROPY,
-        &shading::PBR,
+        &shading::SPECULAR_LOBES,
         &shading::PROBE_COLLECTION,
-        &shading::LOOKUP_TABLES,
         &shading::FULLSCREEN,
         &shading::FOG,
     ],

@@ -272,11 +272,12 @@ pub(crate) static VERTEX: Module = Module {
     source: include_str!("vertex.wgsl"),
     deps: &[&BIND_SCENE],
 };
-/// The G-buffer's targets: their encode and decode functions.
+/// The G-buffer's targets: their encode and decode functions. Its traced
+/// lobe is the one `SPECULAR_LOBES` selects.
 pub(crate) static GBUFFER: Module = Module {
     name: "gbuffer",
     source: include_str!("gbuffer.wgsl"),
-    deps: &[],
+    deps: &[&SPECULAR_LOBES],
 };
 /// The full-screen triangle and its vertex entry point, `fullscreen_vs`.
 pub(crate) static FULLSCREEN: Module = Module {
@@ -323,6 +324,14 @@ pub(crate) static SCENE_RAYS_PORTABLE: Module = Module {
     source: include_str!("scene_rays_portable.wgsl"),
     deps: &[&SCENE_RAYS],
 };
+/// A surface's specular lobes, the lobe a screen-space method traces and
+/// the formula that composes its result: one owner for source completion,
+/// composition and lit shading.
+pub(crate) static SPECULAR_LOBES: Module = Module {
+    name: "specular_lobes",
+    source: include_str!("specular_lobes.wgsl"),
+    deps: &[&PBR, &ANISOTROPY, &LOOKUP_TABLES],
+};
 /// One `Surface` and its shading for every view. Reads the lit bindings.
 pub(crate) static SURFACE: Module = Module {
     name: "surface",
@@ -331,6 +340,7 @@ pub(crate) static SURFACE: Module = Module {
         &ANISOTROPY,
         &PBR,
         &DFG,
+        &SPECULAR_LOBES,
         &LIGHT_SAMPLE,
         &RECT_LIGHT,
         &ENVIRONMENT,
