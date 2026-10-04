@@ -257,9 +257,10 @@ fn additive_effects_mark_fsr2_reactivity_for_their_frame_only() {
 // Defect: FSR2 stops below a 64-pixel render size. Its luminance pyramid
 // binds mips 4 and 5 of a texture half the maximum render size
 // (`ffx_fsr2.cpp`), which sp-fidelity-wgpu before 0.1.1 viewed even where
-// the texture lacked them, so wgpu rejected the frame. Expected: wgpu's validation accepts every frame and FSR2 stays in
-// effect, at the smallest size (a single mip), either side of the 32-pixel
-// (mip 4) boundary and just below 64 (mip 5).
+// the texture lacked them, so wgpu rejected the frame. Expected: wgpu's
+// validation accepts every frame and FSR2 stays in effect, at the smallest
+// size (a single mip), either side of the 32-pixel (mip 4) boundary and just
+// below 64 (mip 5).
 #[test]
 fn fsr2_runs_below_a_64_pixel_render_size() {
     let Some((device, queue)) = test_support::fsr2_device() else {
