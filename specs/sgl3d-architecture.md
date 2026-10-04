@@ -404,7 +404,9 @@ code; it does not redeclare a struct, binding or function another module owns.
    cases too. A mechanism only one game could want lives in that game.
 7. **AR-7 — Small public surface.** Games use `Scene`, `Renderer` and the plain
    data they take and return. Everything else is private, and an entry point
-   becomes public when a consumer needs it.
+   becomes public when a consumer needs it. The values S3D-6 makes settable,
+   and the defaults or constructors that build them, are part of that plain
+   data whether or not a game uses them.
 8. **AR-8 — Cohesion.** A module does one thing. Before adding to a Rust file
    that passes about 600 lines, or to a type that owns resources for two
    concerns, split it by concern; spreading one type's `impl` across files

@@ -98,6 +98,11 @@ compatibility shims solely to avoid updating consumers.
   it in the same change whenever a feature, setting, value, default, preset
   behaviour or the frame workflow is added, changed or removed. Keep it short:
   it steers and points to the code and package README, which hold the detail.
+- Every SGL3D behaviour that changes the image is a value the game can set
+  (S3D-6 in `specs/sgl3d.md`), even if no game shows it to players, with a
+  default so the game need not set it. A change that adds or ports such a
+  behaviour adds the value that sets it in the same change. Correctness fixes
+  and the shading model are not settings.
 - SGL3D's code follows `specs/sgl3d-architecture.md` and its AR rules: layers
   that depend one way, one stage order, a renderer that only orders stages,
   one owner per layout, encoding and formula, typed boundaries, and nothing
