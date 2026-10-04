@@ -380,11 +380,13 @@ fn godot_gaussian(volume: &[[f32; 4]], size: [u32; 3], axis: usize) -> Vec<[f32;
 
 // Defect: the filter takes other weights, axes or edges than Godot's, the
 // integration reads the unfiltered froxels, or the filter reaches the history
-// the next frame reprojects, which Godot copies before it filters. Over two
-// frames of a point light in the medium, the froxels the frame wrote are the
-// same with the filter as without, the froxels it integrates are Godot's
-// Gaussian of them along x and then y within half-float rounding, and the
-// integrated volume differs from the unfiltered one.
+// the next frame reprojects, which Godot copies before it filters, or it
+// leaves a channel out. Over two frames of a point light in a medium whose
+// density falls with height, so its light and its extinction both vary
+// across the frame, the froxels the frame wrote are the same with the filter
+// as without, the froxels it integrates are Godot's Gaussian of them along x
+// and then y within half-float rounding, and the integrated volume differs
+// from the unfiltered one.
 #[test]
 fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfiltered() {
     let Some((device, queue)) = test_support::device() else {
@@ -409,6 +411,8 @@ fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfilte
         .unwrap();
     let frame = input(Fog {
         density: 0.06,
+        height: -1.,
+        height_falloff: 3.,
         length: 10.,
         detail_spread: 1.,
         ..Fog::default()
@@ -437,9 +441,9 @@ fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfilte
     let expected = godot_gaussian(&godot_gaussian(&written, size, 0), size, 1);
     // Two half-float roundings of non-negative sums, one per pass.
     let tolerance = |expected: f32| 2e-3 * expected + 1e-6;
-    // Froxels the filter moved by far more than that, where a wrong kernel
-    // would show.
-    let mut spread = 0;
+    // Froxels the filter moved by far more than that, in the light (red) and
+    // the extinction, where a wrong kernel would show.
+    let mut spread = [0; 2];
     for (index, ((filtered, expected), written)) in
         filtered.iter().zip(&expected).zip(&written).enumerate()
     {
@@ -451,9 +455,16 @@ fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfilte
                 expected[channel]
             );
         }
-        spread += usize::from((expected[0] - written[0]).abs() > 10. * tolerance(expected[0]));
+        for (moved, channel) in spread.iter_mut().zip([0, 3]) {
+            *moved += usize::from(
+                (expected[channel] - written[channel]).abs() > 10. * tolerance(expected[channel]),
+            );
+        }
     }
-    assert!(spread > 1_000, "the filter moved only {spread} froxels");
+    assert!(
+        spread.iter().all(|moved| *moved > 10_000),
+        "the filter moved only {spread:?} froxels' light and extinction"
+    );
 }
 
 // Defect: the injection ignores a light's shadow, or samples it where the

@@ -6,10 +6,10 @@
 //! spot and rectangle lights through their local-light shadows, and the
 //! ambient light, blends it with where the froxel was in the last frame's
 //! volume, filters each slice across x and then y with Godot's Gaussian,
-//! then integrates each column front to back into the light
-//! scattered toward the camera and the transmittance to every slice. Every draw that fogs samples that volume where its point
-//! lies (`shading/fog.wgsl`), so opaque surfaces, blended surfaces, effects
-//! and the sky take one fog.
+//! then integrates each column front to back into the light scattered
+//! toward the camera and the transmittance to every slice. Every draw that
+//! fogs samples that volume where its point lies (`shading/fog.wgsl`), so
+//! opaque surfaces, blended surfaces, effects and the sky take one fog.
 //!
 //! Placement: after shadows and before opaque, as Godot updates its
 //! volumetric fog before its opaque pass (`render_forward_clustered.cpp`
@@ -30,7 +30,8 @@ use crate::settings::FogQuality;
 use crate::view::bindings::FogVolume;
 use crate::view::frame::FrameContext;
 
-/// The injection and integration, under the lit group 0.
+/// The injection under the lit group 0, and the filter and integration,
+/// which bind no group 0.
 pub(crate) static VOLUMETRIC_FOG: crate::shading::Module = crate::shading::Module {
     name: "volumetric_fog",
     source: include_str!("fog.wgsl"),
@@ -555,9 +556,11 @@ impl VolumetricFog {
                 pass.set_bind_group(1, group, &[]);
                 pass.dispatch_workgroups(x.div_ceil(FILTER_GROUP), y.div_ceil(FILTER_GROUP), z);
             }
-            // The other volume now holds this frame's filtered froxels.
+            // The other volume now holds this frame's filtered froxels. Its
+            // hold is kept: only a retry of this frame, abandoned before the
+            // GPU ran it, matches it, and then it still holds the last
+            // frame's unfiltered froxels.
             volumes.integrated_from = 1 - index;
-            volumes.holds[1 - index] = None;
         }
         let mut pass = ctx
             .encoder

@@ -14,23 +14,22 @@
 // volumetric_fog.glsl and scene/resources/3d/fog_material.cpp), which each
 // froxel sums itself rather than each volume adding into the froxels it
 // covers with atomics; there is no emission or GI injection. The lights are
-// SGL3D's: the frame's directional lights
-// through the shared cascade sampling, and the camera's clustered point, spot
-// and rectangle lights through their records and the shared local-shadow
-// sampling with one hardware tap per froxel, as Bevy's volumetric fog
-// samples its shadow maps and Godot's takes one tap, a rectangle by the
-// solid angle of its face, which Godot takes as the face's diffuse integral
-// toward the froxel. The ambient is the frame's
-// hemisphere fill and environment diffuse averaged over the sphere, which an
-// isotropic phase scatters. Froxel positions come from the camera's
-// unjittered projection and their place in the last frame's volume from its
-// view-projection, rather than frustum sizes. The history alternates two
-// volumes instead of copying one, so the filter's y pass writes the one the
-// injection has just reprojected, and the history stays unfiltered, as
-// Godot copies its history before it filters. The filter skips invocations
-// outside the volume, whose stores WGSL leaves undefined. The integration
-// steps along the view ray through each slice, where Godot steps the slice's
-// depth, so fog off the view's axis is as dense as on it.
+// SGL3D's: the frame's directional lights through the shared cascade
+// sampling, and the camera's clustered point, spot and rectangle lights
+// through their records and the shared local-shadow sampling with one
+// hardware tap per froxel, as Bevy's volumetric fog samples its shadow maps
+// and Godot's takes one tap, a rectangle by the solid angle of its face,
+// which Godot takes as the face's diffuse integral toward the froxel. The
+// ambient is the frame's hemisphere fill and environment diffuse averaged
+// over the sphere, which an isotropic phase scatters. Froxel positions come
+// from the camera's unjittered projection and their place in the last frame's
+// volume from its view-projection, rather than frustum sizes. The history
+// alternates two volumes instead of copying one, so the filter's y pass
+// writes the one the injection has just reprojected, and the history stays
+// unfiltered, as Godot copies its history before it filters. The filter skips
+// invocations outside the volume, whose stores WGSL leaves undefined. The
+// integration steps along the view ray through each slice, where Godot steps
+// the slice's depth, so fog off the view's axis is as dense as on it.
 
 // One frame's froxel volume (stages/fog.rs FroxelVolumeUniform).
 struct FroxelVolume {
