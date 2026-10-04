@@ -19,7 +19,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
   `load_with_options` and `load_slice_with_options` (an emissive strength
   cap), `load_slice_filtered` (named rigid parts), or a
-  procedural `asset::Asset`. Unsupported features return errors rather than
+  procedural `asset::Asset` (`asset::Material::default()` is glTF's default
+  material). Unsupported features return errors rather than
   partial models. [Limits](../README.md#asset-and-environment-limits).
 - **Compressed material textures**: a material image is decoded RGBA8, whose
   mips SGL3D filters when it is added, or a BC7 mip chain uploaded as stored
@@ -45,7 +46,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   `set_…`, `remove_…`), each named by the identity its addition returned. Buffers grow
   as content is added; content in use cannot be removed.
   [Lifecycle](../README.md#retained-scene-and-frame-lifecycle).
-- **Instances**: model placements (`InstanceState`), static or moving. Static
+- **Instances**: model placements (`InstanceState`; `InstanceState::new(model)`
+  is at the origin and shown in every view), static or moving. Static
   instances are what bakes and probe captures contain and write no motion;
   moving ones are posed each frame with `Scene::set_instance` (and
   `set_instance_deformation` when their model deforms) and write motion from
@@ -62,8 +64,10 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   clustered with the lights, sampled from one atlas SGL3D packs; probe
   captures and world-space ray hits take them too. Unlit materials take
   none. Keep boxes shallow: everything inside one takes the decal.
+  `Decal::new(image)` has Godot's decal defaults.
   [Decals](../README.md#decals).
-- **Material edits** at runtime: `Scene::set_material` (`SurfaceMaterial`).
+- **Material edits** at runtime: `Scene::set_material` (`SurfaceMaterial`,
+  whose default is glTF's default material).
 - **Visibility groups**: `FrameInput::visibility_mask` switches material
   groups on and off per frame, including in probe captures.
 - **Culling and LOD**: frustum culling of mesh sections is automatic.
@@ -79,8 +83,9 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
 - **Directional lights**: up to two (`FrameInput::directional_lights`,
   `DirectionalLight`). The first that is on and has a `shadow`
   (`DirectionalShadow`: distance, cascade count, first split and pancake
-  size) casts cascaded shadows that SGL3D fits from the camera: up to four
-  2048-texel cascades, stable while the camera moves, blended across their
+  size; `DirectionalShadow::DEFAULT` for a `const`) casts cascaded shadows
+  that SGL3D fits from the camera: up to four 2048-texel cascades, stable
+  while the camera moves, blended across their
   overlaps, filtered and biased as Bevy does, and cast by everything between
   the light and the view. A single-sided material casts from its front faces, a
   double-sided one from both. `fog_energy` scales its light in the
@@ -111,7 +116,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
 - **Image-based lighting**: environment panoramas with prefiltered atlases
   (`environment::EnvironmentMap`, `Scene::add_environment`);
   `FrameInput::environment` picks the frame's, `diffuse_environment` and
-  `reflection_environment` turn and scale its diffuse and specular light,
+  `reflection_environment` (`EnvironmentLight`, unturned at intensity 1 by
+  default) turn and scale its diffuse and specular light,
   and `backdrop` (`Backdrop`) shows its panorama or a colour behind
   everything.
 - **Baked diffuse**, authored and baked by the game: a lightmap for chosen
@@ -168,7 +174,8 @@ Environment and probe specular always apply. On top of them:
   `FrameInput::atmosphere` is on (off by default, as Godot's fog). The
   frame's medium (density with height falloff, albedo, anisotropy, the
   share of ambient light it scatters, none by default as Godot's) and
-  denser boxes of it (`Scene::update_fog_volumes`, `FogVolume`), lit by the
+  denser boxes of it (`Scene::update_fog_volumes`, `FogVolume`, by default
+  Godot's), lit by the
   directional lights through their cascades, the clustered point, spot and
   rectangle lights through their shadows, each scaled by its `fog_energy`,
   and that share of the ambient light, so light shafts form where openings
@@ -177,7 +184,8 @@ Environment and probe specular always apply. On top of them:
   resolution and `Settings::fog_filter` its blur.
   [Volumetric fog](../README.md#volumetric-fog).
 - **Mist**: positioned billboards (`Scene::update_mist`, their look
-  `FrameInput::mist`), while `FrameInput::atmosphere` is on.
+  `FrameInput::mist`, which `Mist::default()` hides), while
+  `FrameInput::atmosphere` is on.
 - **Additive effects**: game-generated glow triangles with soft depth fades
   (`Scene::update_effects`, `effects::Glow`).
   [Soft additive effects](../README.md#soft-additive-effects).

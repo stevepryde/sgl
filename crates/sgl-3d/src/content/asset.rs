@@ -114,6 +114,42 @@ pub struct Material {
     pub alpha: AlphaMode,
 }
 
+impl Default for Material {
+    /// glTF 2.0's default material, which the loader gives a primitive
+    /// without one: unnamed, a white base, metallic and roughness 1, no
+    /// emission, clearcoat, anisotropy, bump or textures, normal scale 1,
+    /// repeating, single-sided, lit and opaque, in visibility group 0 and
+    /// casting directional shadows. Set what differs and take the rest with
+    /// `..Default::default()`.
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            visibility_group: 0,
+            casts_directional_shadow: true,
+            base: [1.0; 4],
+            emissive: [0.0; 3],
+            metallic: 1.0,
+            roughness: 1.0,
+            clearcoat: 0.0,
+            coat_roughness: 0.0,
+            anisotropy_strength: 0.0,
+            anisotropy_rotation: 0.0,
+            anisotropy_texture: None,
+            base_texture: None,
+            mr_texture: None,
+            emissive_texture: None,
+            normal_texture: None,
+            normal_scale: 1.0,
+            bump_texture: None,
+            bump_scale: 0.0,
+            wrap: [WrappingMode::Repeat; 2],
+            double_sided: false,
+            unlit: false,
+            alpha: AlphaMode::Opaque,
+        }
+    }
+}
+
 /// CPU-side meshes, material inputs, and images ready for GPU upload.
 ///
 /// The caller owns this data and decides how to compose it into a scene.

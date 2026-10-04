@@ -16,6 +16,21 @@ pub struct InstanceState {
     pub capture_visible: bool,
 }
 
+impl InstanceState {
+    /// `model` at the world origin, unturned and unscaled, shown to the main
+    /// camera and every other view, as Godot's `MeshInstance3D` is visible
+    /// and casts shadows by default. Set what differs and take the rest with
+    /// `..InstanceState::new(model)`.
+    pub fn new(model: ModelId) -> Self {
+        Self {
+            model,
+            pose: Mat4::IDENTITY,
+            visible: true,
+            capture_visible: true,
+        }
+    }
+}
+
 /// Whether an instance moves, chosen when it is added.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mobility {
