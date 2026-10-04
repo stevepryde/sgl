@@ -755,3 +755,58 @@ fn entries_set_over_untraced_frames_stay_one_per_instance() {
         "a traced frame uploads them"
     );
 }
+
+// Plausible defects: a move of the render origin that leaves instance
+// entries, the static instance BVH (which no static edit rebuilds) or the
+// moving one in the old render frame. The oracle is the same rays expressed
+// in the new frame: they meet the same instances, triangles and distances.
+#[test]
+fn rays_meet_the_same_geometry_after_a_render_origin_move() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let model = scene
+        .add_asset(
+            &device,
+            &queue,
+            asset(vec![triangle(0., 0., false, 0)], true),
+        )
+        .unwrap()
+        .model;
+    let mut instances = Vec::new();
+    for (index, mobility) in [Mobility::Static, Mobility::Moving, Mobility::Static]
+        .into_iter()
+        .enumerate()
+    {
+        let pose = Mat4::from_translation(Vec3::new(index as f32 * 4. + 2000., 0., -3.));
+        let id = scene
+            .add_instance(&device, &queue, state(model, pose, true), mobility)
+            .unwrap();
+        instances.push(id.index() as u32);
+    }
+    let observer = Observer::new(&device, &scene);
+    let rays = |origin: Vec3| -> Vec<TestRay> {
+        (0..3)
+            .map(|index| down(Vec3::new(index as f32 * 4. + 2000., 0., 0.) - origin, 10.))
+            .collect()
+    };
+    let before = observer.observe(&device, &queue, &mut scene, &rays(Vec3::ZERO));
+    let by = Vec3::new(1024.75, 0., -512.);
+    scene.move_origin(&device, &queue, by).unwrap();
+    scene.finish_frame();
+    let after = observer.observe(&device, &queue, &mut scene, &rays(by));
+    for (index, (before, after)) in before.iter().zip(&after).enumerate() {
+        assert_eq!(
+            before.nearest[..4],
+            [1, instances[index], 0, 0],
+            "ray {index}"
+        );
+        assert_eq!(after.nearest[..4], before.nearest[..4], "ray {index}");
+        assert_eq!(
+            f32::from_bits(after.nearest[4]),
+            f32::from_bits(before.nearest[4]),
+            "ray {index}"
+        );
+    }
+}

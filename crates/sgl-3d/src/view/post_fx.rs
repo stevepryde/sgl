@@ -9,6 +9,7 @@
 //! into DiligentFX's inputs in one fullscreen pass and runs
 //! `PostFXContext::Execute` once for every effect; SSR and TAA then read that
 //! context.
+use super::history::CameraFrame;
 use super::targets::{SharedTargets, Surface};
 use crate::shading;
 use glam::{Mat4, Vec4};
@@ -114,10 +115,9 @@ pub(crate) const TAA_MIP_BIAS: f32 = -0.5;
 const TAA_FEATURE_FLAGS: temporal_anti_aliasing::FeatureFlags =
     temporal_anti_aliasing::FeatureFlags::BICUBIC_FILTER;
 
-/// The camera and frame the effects' history refers to.
+/// The frame the effects' history refers to.
 struct History {
     frame_index: u32,
-    camera: CameraAttribs,
 }
 
 /// SGL3D's G-buffer as DiligentFX's inputs.
@@ -355,7 +355,8 @@ impl PostFx {
     /// `surface` over the G-buffer into DiligentFX's inputs and executes the
     /// post-effect context. `view` is right-handed and `projection` is
     /// `perspective`'s infinite reversed-Z form with the frame's jitter
-    /// applied.
+    /// applied; `previous` is the renderer's camera history, the previous
+    /// camera.
     #[allow(clippy::too_many_arguments)]
     pub fn begin(
         &mut self,
@@ -367,6 +368,7 @@ impl PostFx {
         size: [u32; 2],
         view: Mat4,
         projection: Mat4,
+        previous: Option<CameraFrame>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
         if self
@@ -463,8 +465,14 @@ impl PostFx {
                 ..Default::default()
             });
         }
-        let previous_camera = match &self.history {
-            Some(history) if !reset_accumulation => history.camera,
+        let previous_camera = match (&self.history, previous) {
+            (Some(history), Some(previous)) if !reset_accumulation => camera_attribs(
+                previous.view,
+                previous.jittered_projection(),
+                previous.jitter,
+                size,
+                history.frame_index,
+            ),
             _ => camera,
         };
         let timestamps =
@@ -483,7 +491,6 @@ impl PostFx {
             });
         self.history = Some(History {
             frame_index: self.frame_index,
-            camera,
         });
     }
 

@@ -10,8 +10,14 @@
 //! Changes: the slice corners unproject the camera's projection matrix,
 //! which also covers off-centre and orthographic cameras (Bevy takes them
 //! from its projection types); the light's rotation is built from its
-//! direction; and a probe capture's cascades are cubes about its centre,
-//! what its six faces see out to each far bound.
+//! direction; a probe capture's cascades are cubes about its centre, what
+//! its six faces see out to each far bound; and the texel grid is snapped
+//! about the frame the scene was created in rather than its render frame:
+//! the scene's render origin is taken into light space in double precision
+//! and reduced modulo the texel size, as Filament 70d2da5e9 computes its
+//! directional shadows' snapping reference from its world origin in double
+//! (`filament/src/details/Scene.cpp`), so moving the origin shifts no
+//! shadow texel and the origin's magnitude costs none.
 //!
 //! Where the cascades start and end, and how far each reaches toward the
 //! light, port Godot b130438's `_light_instance_setup_directional_shadow`
@@ -27,7 +33,7 @@
 //! only one beyond it is clamped to the near plane.
 use crate::content::lighting::DirectionalShadow;
 use glam::camera;
-use glam::{Mat4, Vec3, Vec4};
+use glam::{DVec3, Mat3, Mat4, Vec3, Vec4};
 
 /// The most cascades a shadow has.
 pub(crate) const MAX_SHADOW_CASCADES: usize = 4;
@@ -92,17 +98,20 @@ impl Cascades {
     }
 
     /// `shadow`'s cascades of a light shining along `direction`, seen by a
-    /// camera with `view` and `projection`, in maps of `map_size` texels.
+    /// camera with `view` and `projection`, in maps of `map_size` texels,
+    /// in the render frame of the scene's `origin`.
     pub fn camera(
         view: Mat4,
         projection: Mat4,
         direction: Vec3,
         shadow: &DirectionalShadow,
         map_size: u32,
+        origin: DVec3,
     ) -> Self {
         let near = camera_near(projection);
         let bounds = cascade_bounds(shadow, near);
         let world_from_light = world_from_light(direction);
+        let origin = light_origin(world_from_light, origin);
         let light_from_camera = world_from_light.transpose() * view.inverse();
         let overlap_factor = 1. - SHADOW_CASCADE_OVERLAP;
         Self::from_bounds(bounds.as_slice(), |index, far_bound| {
@@ -118,6 +127,7 @@ impl Cascades {
                 world_from_light,
                 light_from_camera,
                 far_bound,
+                origin,
             )
         })
     }
@@ -125,15 +135,17 @@ impl Cascades {
     /// `shadow`'s cascades of a light shining along `direction` for a probe
     /// capture at `center`: cascade `i` covers the cube that reaches its far
     /// bound from `center` along each axis, which the capture's six faces see
-    /// out to that view depth.
+    /// out to that view depth. In the render frame of the scene's `origin`.
     pub fn capture(
         center: Vec3,
         direction: Vec3,
         shadow: &DirectionalShadow,
         map_size: u32,
+        origin: DVec3,
     ) -> Self {
         let bounds = cascade_bounds(shadow, 0.);
         let world_from_light = world_from_light(direction);
+        let origin = light_origin(world_from_light, origin);
         let light_from_capture = world_from_light.transpose() * Mat4::from_translation(center);
         Self::from_bounds(bounds.as_slice(), |_, far_bound| {
             let f = far_bound;
@@ -153,9 +165,17 @@ impl Cascades {
                 world_from_light,
                 light_from_capture,
                 far_bound,
+                origin,
             )
         })
     }
+}
+
+/// The scene's render `origin` in light space, in double precision: where
+/// the texel grid of the frame the scene was created in lies in the render
+/// frame's light space.
+fn light_origin(world_from_light: Mat4, origin: DVec3) -> DVec3 {
+    Mat3::from_mat4(world_from_light).transpose().as_dmat3() * origin
 }
 
 /// Up to four far bounds.
@@ -238,13 +258,14 @@ fn slice_corners(projection: Mat4, near: f32, far: f32) -> [Vec3; 8] {
 /// `frustum_corners` (in the camera's view space, `calculate_cascade`'s
 /// order), for maps of `cascade_texture_size` texels, with its near plane
 /// [`SHADOW_PANCAKE_SIZE`] toward the light beyond the slice (Godot's
-/// pancake).
+/// pancake), its texel grid snapped about `light_origin` (`light_origin`).
 fn calculate_cascade(
     frustum_corners: [Vec3; 8],
     cascade_texture_size: f32,
     world_from_light: Mat4,
     light_from_camera: Mat4,
     far_bound: f32,
+    light_origin: DVec3,
 ) -> Cascade {
     let mut min = Vec3::splat(f32::MAX);
     let mut max = Vec3::splat(f32::MIN);
@@ -273,9 +294,17 @@ fn calculate_cascade(
     let near_plane = max.z + SHADOW_PANCAKE_SIZE;
     // NOTE: For shadow stability it is very important that the near_plane_center is at integer
     //       multiples of the texel size to be exactly representable in a floating point value.
+    // SGL3D: integer multiples in the frame the scene was created in, whose
+    //        light-space origin lies `light_origin` from the render frame's:
+    //        the grid's offset is the origin reduced modulo the texel size,
+    //        zero while the origin never moved.
+    let offset = |origin: f64| origin.rem_euclid(f64::from(cascade_texel_size)) as f32;
+    let snap = |center: f32, offset: f32| {
+        ((center + offset) / cascade_texel_size).floor() * cascade_texel_size - offset
+    };
     let near_plane_center = Vec3::new(
-        (0.5 * (min.x + max.x) / cascade_texel_size).floor() * cascade_texel_size,
-        (0.5 * (min.y + max.y) / cascade_texel_size).floor() * cascade_texel_size,
+        snap(0.5 * (min.x + max.x), offset(light_origin.x)),
+        snap(0.5 * (min.y + max.y), offset(light_origin.y)),
         // NOTE: max.z is the near plane for right-handed y-up
         near_plane,
     );

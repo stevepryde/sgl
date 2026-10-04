@@ -124,13 +124,13 @@ fn dispatch(
 /// An instance's uploaded record as vertex shading reads it: the world
 /// position of its model origin, the motion of that point (current minus
 /// previous) and the +X entry of its ambient cube.
-struct Record {
-    position: [f32; 3],
-    motion: [f32; 3],
-    cube: [f32; 3],
+pub(super) struct Record {
+    pub position: [f32; 3],
+    pub motion: [f32; 3],
+    pub cube: [f32; 3],
 }
 
-fn uploaded_record(
+pub(super) fn uploaded_record(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene: &Scene,

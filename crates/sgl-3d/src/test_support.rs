@@ -65,6 +65,70 @@ pub(crate) fn read_words(
     bytemuck::cast_slice(&readback.get_mapped_range(..)).to_vec()
 }
 
+/// The words of `buffer`, a storage buffer that cannot be copied from, as
+/// a compute pass reads them.
+pub(crate) fn storage_words(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+) -> Vec<u32> {
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("storage readback"),
+        source: wgpu::ShaderSource::Wgsl(
+            r#"
+@group(0) @binding(0) var<storage,read> source:array<u32>;
+@group(0) @binding(1) var<storage,read_write> copy:array<u32>;
+@compute @workgroup_size(64) fn copy_words(@builtin(global_invocation_id) id:vec3<u32>) {
+ let index=id.x+id.y*65535u*64u;
+ if index<arrayLength(&source) {
+  copy[index]=source[index];
+ }
+}
+"#
+            .into(),
+        ),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("storage readback"),
+        layout: None,
+        module: &module,
+        entry_point: Some("copy_words"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let copy = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("storage readback"),
+        size: buffer.size(),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: copy.as_entire_binding(),
+            },
+        ],
+    });
+    let words = (buffer.size() / 4) as u32;
+    let groups = words.div_ceil(64);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(groups.min(65535), groups.div_ceil(65535), 1);
+    }
+    queue.submit([encoder.finish()]);
+    read_words(device, queue, &copy)
+}
+
 #[path = "../examples/support/ktx2_writer.rs"]
 mod ktx2_writer;
 pub(crate) use ktx2_writer::{bc7_mode_6, ktx2};

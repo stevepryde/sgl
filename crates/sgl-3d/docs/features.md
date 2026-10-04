@@ -55,6 +55,11 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   moving ones are posed each frame with `Scene::set_instance` (and
   `set_instance_deformation` when their model deforms) and write motion from
   the last submitted frame.
+- **Render origin**: positions are `f32` in the scene's render frame, which
+  `Scene::move_origin` moves by an exact delta, so a large or streamed world
+  renders near the origin. Motion, shadow caches and histories carry across
+  the move; nothing redraws and no history restarts.
+  [Lifecycle](../README.md#retained-scene-and-frame-lifecycle).
 - **Alpha modes** (`AlphaMode`, glTF `alphaMode`): masked materials are cut
   out below their cutoff in every view, shadow and ray; blended ones are lit,
   fogged and drawn back to front over the frame, writing no depth or motion

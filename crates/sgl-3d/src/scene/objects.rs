@@ -50,6 +50,13 @@ impl Objects {
         queue.write_buffer(&self.buffer, offset(index), bytemuck::bytes_of(record));
     }
 
+    /// Writes `records`, record `i` at index `i`, in one write.
+    pub fn write_all(&self, queue: &wgpu::Queue, records: &[ObjectUniform]) {
+        if !records.is_empty() {
+            queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(records));
+        }
+    }
+
     pub fn write_baked_irradiance(&self, queue: &wgpu::Queue, index: usize, cube: AmbientCube) {
         queue.write_buffer(
             &self.buffer,

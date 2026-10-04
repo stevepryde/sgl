@@ -15,6 +15,34 @@ full API details.
 
 ## Unreleased
 
+### The scene's render origin moves without a cut
+
+- **Scope:** `sgl-3d` adds `Scene::move_origin(&device, &queue, to: Vec3)`
+  and `SceneError::InvalidOrigin`. Positions stay `f32` in the scene's
+  render frame; a game whose world is larger than `f32` renders precisely
+  keeps its own coordinates and moves the render origin to `to` (in the
+  current render frame) to stay near what it renders. Every position the
+  scene holds becomes what it was less `to`: instances and the poses their
+  motion is measured from, object records, the ray source, lights, decals,
+  fog volumes, mist, glow and heat geometry, installed specular probes and
+  their grid, and pending static-edit bounds. It is not a static edit:
+  moving instances keep their motion, static shadow layers stay valid,
+  every history continues (the renderer translates its camera history and
+  the local-light shadow cache what it keeps), and the directional cascades
+  snap their texel grid about the frame the scene was created in, so a move
+  shifts no shadow texel. Internally the renderer's camera history now keeps
+  the previous view, projection and jitter, and Velvet, world-space
+  reflections and the DiligentFX context take their previous camera from it
+  instead of keeping their own; their output is unchanged.
+- **Migration:** no game-code changes for a game that never moves its
+  origin, and its frames render as before. A game that matches
+  `SceneError` exhaustively adds the `InvalidOrigin` arm. To use it: after
+  `move_origin`, give the camera (`FrameInput::camera`) and every position
+  the game edits afterwards (instance poses, lights, decals, transient
+  geometry) in the new frame, less `to`; the scene has translated what it
+  already holds. Exercise a moving camera across a move with TAA, SSR and
+  shadows on: nothing should jump, smear or redraw.
+
 ### Crystal's rays stop at the far plane
 
 - **Scope:** `sgl-post-fx` screen-space reflections, and so `sgl-3d`'s

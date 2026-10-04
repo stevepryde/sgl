@@ -188,8 +188,12 @@ impl Plan {
         self.frame += 1;
         self.drawn = 0;
         let edits = &scene.static_edits;
-        self.cache
-            .begin(scene.id, atlas::cell_count(), edits.finished());
+        self.cache.begin(
+            scene.id,
+            atlas::cell_count(),
+            edits.finished(),
+            scene.origin(),
+        );
         self.allocation
             .retain(|light| scene.lights.get(light).is_ok());
         self.mark_static_edits(scene);

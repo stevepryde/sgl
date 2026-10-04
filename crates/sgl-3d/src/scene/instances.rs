@@ -4,6 +4,8 @@
 use super::deformation::InstanceDeformation;
 use super::models::Model;
 use super::objects::Objects;
+use super::origin::translated;
+use super::rays::instances::RayInstances;
 use super::shadow_clusters::PosedClusters;
 use super::slots::Slots;
 use super::static_edits::posed_bounds;
@@ -184,6 +186,42 @@ impl Instances {
                 instance.mobility == Mobility::Static && instance.state.model == model
             })
             .map(|(_, instance)| instance.state.pose)
+    }
+
+    /// Moves the render origin by `by` (`Scene::move_origin`): each
+    /// instance's pose and the pose its motion is measured from, so a
+    /// static instance still writes no motion and a moving one the same, a
+    /// static instance's caster bounds, every object record in one write,
+    /// and each rigid instance's ray entry. The write zeroes the records of
+    /// removed indices below the highest live one, which no draw or ray
+    /// reads until an instance reuses the index and writes its own.
+    pub fn move_origin(
+        &mut self,
+        queue: &wgpu::Queue,
+        by: Vec3,
+        models: &super::models::Models,
+        rays: &mut RayInstances,
+    ) {
+        let mut records = Vec::new();
+        for (id, instance) in self.slots.iter_mut() {
+            instance.state.pose = translated(instance.state.pose, by);
+            if let Some((pose, _)) = &mut instance.submitted {
+                *pose = translated(*pose, by);
+            }
+            let model = models
+                .slots
+                .get(instance.state.model)
+                .expect("an instance's model lives");
+            instance.pose_casters(model);
+            if instance.deformation.is_none() {
+                rays.set(id.index(), model.ray, instance.state.pose);
+            }
+            if records.len() <= id.index() {
+                records.resize(id.index() + 1, bytemuck::Zeroable::zeroed());
+            }
+            records[id.index()] = instance.record();
+        }
+        self.objects.write_all(queue, &records);
     }
 
     /// Commits a submitted frame: each moving instance's pose and

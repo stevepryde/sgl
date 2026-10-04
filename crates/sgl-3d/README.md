@@ -1143,6 +1143,23 @@ authored look and per-frame state in a `FrameInput`.
      detail registered on it.
    - `update_mist`, `update_fog_volumes`, `update_effects` and
      `update_heat_distortion` replace transient geometry whole.
+   - `move_origin(&device, &queue, to)` moves the render origin to `to`, a
+     finite position in the current render frame. Every position SGL3D
+     takes is `f32` in that frame; a game whose world is larger than `f32`
+     renders precisely keeps its own coordinates and moves the origin to
+     stay near what it renders, chunk-aligned in a streamed world. Every
+     position the scene holds becomes what it was less `to`: instances
+     (with the pose their motion is measured from), lights, decals, fog
+     volumes, mist, glow and heat geometry, installed probes and the ray
+     source. From then on the game gives the camera, the frame input and
+     its edits in the new frame. It is not a static edit: moving instances
+     keep their motion, static shadow layers stay valid, histories continue
+     (each renderer translates what it keeps), and the directional
+     cascades' texel grid stays put. Geometry, bakes and probe captures do
+     not change. A translated position rounds once, at its magnitude in the
+     new frame, so integer poses such as chunk origins stay exact and a game
+     never re-poses its instances after a move. A game that never calls it
+     pays nothing.
 
    Buffers grow as content is added and reuse removed content's ranges;
    content beyond a device limit is refused. `Renderer::new(&device, &queue,

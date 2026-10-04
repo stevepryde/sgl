@@ -1061,3 +1061,50 @@ fn lit_surfaces_do_not_shadow_themselves() {
         }
     }
 }
+
+// Plausible defects: a move of the render origin that leaves the atlas's
+// slots and lights recorded in the old render frame, so every light looks
+// moved and redraws every caster, or translates them the wrong way, or again
+// in a frame after an abandoned one. The oracles are the draws the
+// production encoder issued, none for a scene that moved only with its
+// origin, and the light's visibility behind each blocker, in the new frame,
+// through the frame's atlas and the static layers ray hits sample.
+#[test]
+fn a_render_origin_move_keeps_every_shadow_in_place_without_drawing() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (mut scene, light, far, model) = cached_scene(&mut harness);
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    scene
+        .set_instance(&queue, far, at(model, Vec3::new(0., 0., 2.)))
+        .unwrap();
+    harness.frame(&mut scene, &input());
+    let still = harness.frame(&mut scene, &input());
+    assert_eq!(still.draws, 0, "before the move: {still:?}");
+    let by = Vec3::new(1000.5, -3.25, 2048.);
+    scene.move_origin(&device, &queue, by).unwrap();
+    // The game expresses its camera, and its moving instance's pose, in the
+    // new frame.
+    let mut moved = input();
+    moved.camera.view = Mat4::from_translation(by);
+    moved.camera.eye = -by;
+    scene
+        .set_instance(&queue, far, at(model, Vec3::new(0., 0., 2.) - by))
+        .unwrap();
+    drop(harness.encode(&mut scene, &moved));
+    let after = harness.frame(&mut scene, &moved);
+    assert_eq!(after.draws, 0, "after the move: {after:?}");
+    assert_eq!(after.shadowed, 1, "after the move: {after:?}");
+    harness.expect(
+        light,
+        &[(BEHIND_STATIC - by, 0.), (BEHIND_MOVING - by, 0.)],
+        "after the move",
+    );
+    harness.expect_seen(
+        light,
+        &[(BEHIND_STATIC - by, 0.), (Vec3::new(-4., 0., 0.) - by, 1.)],
+        Seen::RayHit,
+        "static layers after the move",
+    );
+}

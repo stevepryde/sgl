@@ -82,7 +82,9 @@ fn a_fixed_point_moves_by_whole_texels_as_the_camera_moves_and_turns() {
             .collect();
         let fits: Vec<Cascades> = poses
             .iter()
-            .map(|&view| Cascades::camera(view, projection, direction, &shadow(4), MAP))
+            .map(|&view| {
+                Cascades::camera(view, projection, direction, &shadow(4), MAP, DVec3::ZERO)
+            })
             .collect();
         for (index, first) in fits[0].as_slice().iter().enumerate() {
             for later in &fits[1..] {
@@ -156,7 +158,8 @@ fn every_visible_point_within_the_shadow_distance_falls_inside_its_cascade() {
                 let eye = Vec3::new(17., 4., -230.);
                 let view = camera::rh::view::look_to_mat4(eye, Vec3::new(0.3, -0.2, -1.), Vec3::Y);
                 let shadow = shadow(count);
-                let cascades = Cascades::camera(view, projection, direction, &shadow, MAP);
+                let cascades =
+                    Cascades::camera(view, projection, direction, &shadow, MAP, DVec3::ZERO);
                 let cascades = cascades.as_slice();
                 assert_eq!(cascades.len(), count as usize);
                 let clip_from_world = (projection * view).as_dmat4();
@@ -219,7 +222,7 @@ fn every_point_a_capture_sees_within_the_shadow_distance_falls_inside_its_cascad
     let center = Vec3::new(-41., 3.5, 812.);
     let mut sequence = Sequence(3);
     for direction in [Vec3::new(0.6, -1., -0.4), Vec3::NEG_Y] {
-        let cascades = Cascades::capture(center, direction, &shadow(4), MAP);
+        let cascades = Cascades::capture(center, direction, &shadow(4), MAP, DVec3::ZERO);
         let cascades = cascades.as_slice();
         for _ in 0..4000 {
             let offset = DVec3::new(
@@ -276,6 +279,7 @@ fn cascade_bounds_are_godots_splits_of_the_range_from_the_near_plane() {
                         cascades: count,
                     },
                     MAP,
+                    DVec3::ZERO,
                 ),
             ),
             (
@@ -289,6 +293,7 @@ fn cascade_bounds_are_godots_splits_of_the_range_from_the_near_plane() {
                         cascades: count,
                     },
                     MAP,
+                    DVec3::ZERO,
                 ),
             ),
         ];
@@ -338,12 +343,18 @@ fn a_distance_out_of_range_shadows_to_the_nearer_bound() {
             (
                 "camera",
                 camera,
-                Cascades::camera(view, projection, Vec3::NEG_Y, &shadow, MAP),
+                Cascades::camera(view, projection, Vec3::NEG_Y, &shadow, MAP, DVec3::ZERO),
             ),
             (
                 "capture",
                 capture,
-                Cascades::capture(Vec3::new(5., 1., -3.), Vec3::NEG_Y, &shadow, MAP),
+                Cascades::capture(
+                    Vec3::new(5., 1., -3.),
+                    Vec3::NEG_Y,
+                    &shadow,
+                    MAP,
+                    DVec3::ZERO,
+                ),
             ),
         ];
         for (label, expected, cascades) in fits {
@@ -356,6 +367,60 @@ fn a_distance_out_of_range_shadows_to_the_nearer_bound() {
                 "{label}: distance {distance} reaches {}, not {expected}",
                 cascade.far_bound
             );
+        }
+    }
+}
+
+// Plausible defects: the texel grid snapped in the render frame, so moving
+// the render origin by a distance that is no whole number of texels in light
+// space shifts every shadow texel for a frame; or the origin taken into light
+// space in single precision, so a far origin loses the grid. The oracle is
+// the map: with the camera where it was in the world, a fixed world point
+// lands on the same texel coordinates, but for whole texels, before and
+// after the move, whatever the origin's magnitude.
+#[wasm_bindgen_test(unsupported = test)]
+fn moving_the_render_origin_shifts_no_shadow_texel() {
+    let projection = crate::perspective(1.1, 16. / 9., 0.3);
+    let far = DVec3::new(10_000_000.375, -2_500.5, -20_000_000.625);
+    for direction in [
+        Vec3::new(0.6, -1., -0.4),
+        Vec3::new(-0.3, -1., 0.8),
+        Vec3::NEG_Y,
+    ] {
+        for (first, moved) in [
+            (DVec3::ZERO, DVec3::new(731.37, 12.6, -409.81)),
+            (far, far + DVec3::new(1024., 0., -2048.)),
+            (far, far + DVec3::new(-77.7, 3.3, 129.9)),
+        ] {
+            let eye = first + DVec3::new(5.25, 20., -3.5);
+            let forward = Vec3::new(0.3, -0.4, -1.).normalize();
+            let fit = |origin: DVec3| {
+                let view =
+                    camera::rh::view::look_to_mat4((eye - origin).as_vec3(), forward, Vec3::Y);
+                Cascades::camera(view, projection, direction, &shadow(4), MAP, origin)
+            };
+            let (before, after) = (fit(first), fit(moved));
+            for (index, (before, after)) in
+                before.as_slice().iter().zip(after.as_slice()).enumerate()
+            {
+                for offset in [
+                    DVec3::new(13.7, 2.3, -41.9),
+                    DVec3::new(-3.1, -18.8, -6.4),
+                    DVec3::new(60.5, -8.25, -77.125),
+                ] {
+                    let point = eye + offset;
+                    let texels = |cascade: &Cascade, origin: DVec3| {
+                        let p = clip(cascade, point - origin);
+                        (p.truncate() * 0.5 + 0.5) * f64::from(MAP)
+                    };
+                    let shift = texels(after, moved) - texels(before, first);
+                    let fraction = (shift - shift.round()).abs();
+                    assert!(
+                        fraction.max_element() < 0.01,
+                        "cascade {index}, light {direction:?}, origin {first:?} to {moved:?}: shifted {shift:?} texels"
+                    );
+                }
+            }
         }
     }
 }

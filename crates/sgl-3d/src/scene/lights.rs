@@ -91,6 +91,19 @@ impl Lights {
     }
 }
 
+impl Lights {
+    /// Moves the render origin by `by` (`Scene::move_origin`): each light's
+    /// position and record.
+    pub fn move_origin(&mut self, queue: &wgpu::Queue, by: glam::Vec3) {
+        for (_, light) in self.slots.iter_mut() {
+            light.position -= by;
+        }
+        for (id, light) in self.slots.iter() {
+            self.write(queue, id.index(), light);
+        }
+    }
+}
+
 fn light_buffer(device: &wgpu::Device, records: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("scene lights"),

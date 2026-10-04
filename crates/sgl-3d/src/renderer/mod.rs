@@ -25,7 +25,7 @@ use crate::stages::{
 use crate::view::FrameViews;
 use crate::view::bindings::FrameBindings;
 use crate::view::draw_list::GeometryStats;
-use crate::view::history::{CameraHistory, HistoryFrame};
+use crate::view::history::{CameraFrame, CameraHistory, HistoryFrame};
 use crate::view::pipelines::{GeometryPipelines, LayerConstants};
 use crate::view::post_fx::PostFx;
 use crate::view::targets::{SharedTargets, Sizes};
@@ -291,11 +291,16 @@ impl Renderer {
         }
     }
 
-    /// The history of a frame of `scene` seen by `input`'s camera.
+    /// The history of a frame of `scene` seen by `input`'s camera, in the
+    /// render frame of the scene's origin.
     fn begin_history(&self, scene: &Scene, input: &FrameInput) -> HistoryFrame {
         let reset = input.camera_cut || self.pending_reset || self.last_scene != Some(scene.id);
-        self.history
-            .begin(input.camera.projection * input.camera.view, reset)
+        let camera = CameraFrame {
+            view: input.camera.view,
+            projection: input.camera.projection,
+            jitter: [0.; 2],
+        };
+        self.history.begin(camera, reset, scene.origin())
     }
 
     /// The antialiasing that runs for `settings`: their choice resolved for

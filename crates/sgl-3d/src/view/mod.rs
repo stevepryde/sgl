@@ -103,10 +103,18 @@ impl FrameShadow {
         map_size: u32,
         filter: ShadowFilter,
         frame_count: u32,
+        origin: glam::DVec3,
     ) -> Self {
         let camera = input.camera;
         let (light, cascades) = Self::fit(input, |direction, shadow| {
-            Cascades::camera(camera.view, camera.projection, direction, shadow, map_size)
+            Cascades::camera(
+                camera.view,
+                camera.projection,
+                direction,
+                shadow,
+                map_size,
+                origin,
+            )
         })
         .map_or((None, Cascades::default()), |(light, cascades)| {
             (Some(light), cascades)
@@ -120,10 +128,11 @@ impl FrameShadow {
     }
 
     /// The shadow of `input`'s light for a probe capture at `center`, in
-    /// cascades of `map_size` texels.
-    pub fn capture(input: &FrameInput, center: Vec3, map_size: u32) -> Self {
+    /// cascades of `map_size` texels, in the render frame of the scene's
+    /// `origin`.
+    pub fn capture(input: &FrameInput, center: Vec3, map_size: u32, origin: glam::DVec3) -> Self {
         Self::fit(input, |direction, shadow| {
-            Cascades::capture(center, direction, shadow, map_size)
+            Cascades::capture(center, direction, shadow, map_size, origin)
         })
         .map_or_else(Self::default, |(light, cascades)| Self {
             light: Some(light),
