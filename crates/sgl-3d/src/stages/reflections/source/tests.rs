@@ -290,7 +290,7 @@ fn source_environment_blends_overlapping_probes_and_the_sky_by_influence() {
                         view: &fog.0,
                         sampler: &fog.1,
                     },
-                    fog_slices: None,
+                    frame_fog: None,
                     camera,
                     scene: &scene,
                     ambient: &zero,

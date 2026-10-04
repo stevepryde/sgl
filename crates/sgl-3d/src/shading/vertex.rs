@@ -1,6 +1,7 @@
 //! Vertex buffer layouts derived from the Rust structs the buffers hold: the
 //! shadow casters' (`CasterVertex`) and every scene geometry draw's instances
-//! (`DrawInstance`).
+//! (`DrawInstance`); and the glow's vertex record (`GlowVertex`).
+use crate::content::transient::{Glow, GlowKind};
 
 /// A type a vertex attribute holds, and the format the shader reads it in.
 pub(crate) trait Attribute {
@@ -112,3 +113,70 @@ pub(crate) const CASTER_SLOT: u32 = 1;
 /// the scene source; shadow casters read both.
 pub(crate) const GEOMETRY_BUFFERS: [wgpu::VertexBufferLayout<'static>; 2] =
     [DRAW_INSTANCE_LAYOUT.buffer, CASTER_LAYOUT.buffer];
+
+/// One glow vertex (`Glow`) as the scene's glow buffer holds it, which
+/// `glow_vs` (stages/transparent/glow.wgsl) reads: its kind as a `GLOW_*`
+/// value, and the values of that kind, zero for the others.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GlowVertex {
+    pub position: [f32; 3],
+    pub color: [f32; 4],
+    pub kind: u32,
+    pub soft_distance: f32,
+    /// `GlowKind::Tapered`'s coordinates and profile.
+    pub uv: [f32; 2],
+    pub taper: f32,
+    pub ripple_frequency: [f32; 2],
+    pub ripple_amplitude: f32,
+    /// `GlowKind::Line`'s other endpoint and offset across it.
+    pub other: [f32; 3],
+    pub offset: f32,
+}
+
+/// `GlowVertex::kind`: `GlowKind::Uniform`, `Tapered` and `Line`.
+pub(crate) const GLOW_UNIFORM: u32 = 0;
+pub(crate) const GLOW_TAPERED: u32 = 1;
+pub(crate) const GLOW_LINE: u32 = 2;
+
+impl GlowVertex {
+    pub fn new(glow: &Glow) -> Self {
+        let vertex = Self {
+            position: glow.position,
+            color: glow.color,
+            kind: GLOW_UNIFORM,
+            soft_distance: glow.soft_distance,
+            ..bytemuck::Zeroable::zeroed()
+        };
+        match glow.kind {
+            GlowKind::Uniform => vertex,
+            GlowKind::Tapered { uv, profile } => Self {
+                kind: GLOW_TAPERED,
+                uv,
+                // In range, so the ripple never takes alpha below zero, which
+                // would subtract light under the additive blend.
+                taper: profile.taper.max(0.),
+                ripple_frequency: profile.ripple_frequency,
+                ripple_amplitude: profile.ripple_amplitude.clamp(0., 0.5),
+                ..vertex
+            },
+            GlowKind::Line { other, offset } => Self {
+                kind: GLOW_LINE,
+                other,
+                offset,
+                ..vertex
+            },
+        }
+    }
+}
+
+/// The constants with WGSL twins.
+#[cfg(test)]
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 2] {
+    use crate::shading::layout_tests::Constant;
+    use naga::Literal::U32;
+    [
+        Constant::new("glow", "GLOW_TAPERED", U32(GLOW_TAPERED)),
+        Constant::new("glow", "GLOW_LINE", U32(GLOW_LINE)),
+    ]
+}

@@ -74,10 +74,8 @@
 // - The integration steps along the view ray through each slice, where
 //   Godot steps the slice's depth, so fog off the view's axis is as dense as
 //   on it.
-// - The sky takes the whole fog, without Godot's sky affect
-//   (stevepryde/sgl#61), and nothing fogs under an orthographic camera,
-//   which Godot's fog covers: froxels are placed by a perspective
-//   projection.
+// - Nothing fogs under an orthographic camera, which Godot's fog covers:
+//   froxels are placed by a perspective projection.
 
 // The froxels, first to last, that the scene's fog volume at `volume` in
 // fog_volumes reaches (stages/fog/volume_froxels.rs FogVolumeFroxels).

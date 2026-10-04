@@ -202,6 +202,7 @@ pub(crate) fn frame_uniform(
         mist_dense_color: mist.dense_color,
         backdrop_yaw,
         mist_size: [mist.width, mist.height],
+        mist_drift: mist.drift,
         backdrop_brightness,
         fog_inverse_length: input.fog.length.recip(),
         fog_inverse_detail_spread: crate::shading::fog::DETAIL_SPREAD.recip(),
@@ -221,7 +222,7 @@ pub(crate) fn frame_uniform(
             | flag(shadow.temporal, FRAME_TEMPORAL_SHADOW_FILTER),
         shadow_cascade_count: cascades.len() as u32,
         frame_count: shadow.frame_count,
-        padding: [0; 3],
+        padding: 0,
     }
 }
 

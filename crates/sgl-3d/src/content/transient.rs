@@ -3,26 +3,63 @@
 /// One vertex in an additive triangle list, expressed in world space.
 ///
 /// The caller owns geometry generation, lifetime, topology and presentation time.
-/// `Default` is all zero: a uniform (kind 0), hard-edged vertex at the origin
-/// that adds nothing until it has a colour.
-#[repr(C)]
-#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+/// `Default` is a uniform, hard-edged vertex at the origin that adds nothing
+/// until it has a colour.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Glow {
     /// World-space vertex or line endpoint position.
     pub position: [f32; 3],
-    /// Tapered profile coordinates for kind 1. For kind 2, X is the signed
-    /// screen-space offset in pixels; -0.5 and 0.5 span a one-pixel line.
-    pub uv: [f32; 2],
     /// Linear RGB radiance and alpha. RGB is added with source-alpha weighting.
     pub color: [f32; 4],
-    /// Shading profile: 0 is uniform, 1 modulates alpha along a tapered
-    /// oscillating profile, and 2 expands a projected line using `other`.
-    pub kind: f32,
-    /// Opposite world-space endpoint for kind 2; unused for other profiles.
-    pub other: [f32; 3],
+    /// How its triangle shades. Keep the kind, and a tapered profile, the
+    /// same across a triangle.
+    pub kind: GlowKind,
     /// Intersection fade distance in metres of view depth; zero keeps hard edges.
     /// Keep constant across a triangle. Use zero for screen-space motion lines.
     pub soft_distance: f32,
+}
+
+/// How a glow triangle shades.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum GlowKind {
+    /// Its colour as interpolated across the triangle.
+    #[default]
+    Uniform,
+    /// Its alpha shaped by `profile` at the vertex's `uv`, interpolated
+    /// across the triangle.
+    Tapered { uv: [f32; 2], profile: GlowProfile },
+    /// A line one pixel wide from `position` to `other`, the opposite
+    /// world-space endpoint: the vertex lies `offset` pixels across the
+    /// projected segment, signed; -0.5 and 0.5 span the line.
+    Line { other: [f32; 3], offset: f32 },
+}
+
+/// The shape of a tapered glow's alpha over its `uv` (u and v): whole at
+/// v = 0, fading to nothing at v = 1, and rippling in bands across u that
+/// slant along v. Alpha is scaled by
+/// (1 − v)^taper × (1 − a + a × sin(u × f\[0\] + v × f\[1\])), where a is
+/// `ripple_amplitude` and f `ripple_frequency`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlowProfile {
+    /// How sharply alpha fades toward v = 1; positive, higher fades sooner.
+    pub taper: f32,
+    /// The ripple's phase in radians per unit of u and of v.
+    pub ripple_frequency: [f32; 2],
+    /// How deep the ripple cuts, 0..=0.5: alpha ranges from 1 − 2 ×
+    /// `ripple_amplitude` in its troughs to 1 on its crests; 0 is smooth.
+    pub ripple_amplitude: f32,
+}
+
+impl Default for GlowProfile {
+    /// SGL3D's own, from Hyperdrive: a quadratic taper with about ten bands
+    /// across u and a ripple that dims alpha to 0.4 in its troughs.
+    fn default() -> Self {
+        Self {
+            taper: 2.,
+            ripple_frequency: [62.83, 18.],
+            ripple_amplitude: 0.3,
+        }
+    }
 }
 
 /// Maximum retained triangle-list vertices. Excess submissions fail without replacing the list.

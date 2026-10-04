@@ -179,15 +179,17 @@ Environment and probe specular always apply. On top of them:
   rectangle lights through their shadows, each scaled by its `fog_energy`,
   and that share of the ambient light, so light shafts form where openings
   let a shadowed light through. Opaque surfaces, the sky, blended surfaces,
-  glow and mist all fog from one volume. `Fog::length` sets its reach,
+  glow and mist all fog from one volume, the sky by `Fog::sky_affect`
+  (all of it by default, as Godot's). `Fog::length` sets its reach,
   `Settings::fog_quality` its resolution and `Settings::fog_filter` its
   blur; SGL3D spaces its slices and weights its history.
   [Volumetric fog](../README.md#volumetric-fog).
-- **Mist**: positioned billboards (`Scene::update_mist`, their look
-  `FrameInput::mist`, which `Mist::default()` hides), while
+- **Mist**: positioned billboards (`Scene::update_mist`, their look and
+  drift `FrameInput::mist`, which `Mist::default()` hides), while
   `FrameInput::atmosphere` is on.
 - **Additive effects**: game-generated glow triangles with soft depth fades
-  (`Scene::update_effects`, `effects::Glow`).
+  (`Scene::update_effects`, `effects::Glow`): uniform, tapered by a
+  `GlowProfile`, or one-pixel lines (`GlowKind`).
   [Soft additive effects](../README.md#soft-additive-effects).
 - **Heat shimmer**: screen distortion over game-supplied triangles
   (`Scene::update_heat_distortion`).

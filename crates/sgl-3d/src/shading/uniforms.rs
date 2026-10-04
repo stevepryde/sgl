@@ -87,6 +87,7 @@ pub(crate) struct FrameUniform {
     pub mist_dense_color: [f32; 3],
     pub backdrop_yaw: f32,
     pub mist_size: [f32; 2],
+    pub mist_drift: [f32; 2],
     pub backdrop_brightness: f32,
     /// One over the fog volume's length and over its detail spread.
     pub fog_inverse_length: f32,
@@ -101,7 +102,7 @@ pub(crate) struct FrameUniform {
     pub shadow_cascade_count: u32,
     /// Frames since history restarted.
     pub frame_count: u32,
-    pub padding: [u32; 3],
+    pub padding: u32,
     pub lightmap_chart: [f32; 4],
 }
 

@@ -10,7 +10,8 @@
 //! then integrates each column front to back into the light scattered
 //! toward the camera and the transmittance to every slice. Every draw that
 //! fogs samples that volume where its point lies (`shading/fog.wgsl`), so
-//! opaque surfaces, blended surfaces, effects and the sky take one fog.
+//! opaque surfaces, blended surfaces, effects and the sky (by
+//! `Fog::sky_affect`) take one fog.
 //!
 //! Placement: after shadows and before opaque, as Godot updates its
 //! volumetric fog before its opaque pass (`render_forward_clustered.cpp`

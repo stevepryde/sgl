@@ -47,7 +47,7 @@ pub use view::draw_list::GeometryStats;
 
 /// Caller-authored additive geometry.
 pub mod effects {
-    pub use crate::content::transient::Glow;
+    pub use crate::content::transient::{Glow, GlowKind, GlowProfile};
 }
 /// Caller-authored heat shimmer geometry.
 pub mod heat_distortion {

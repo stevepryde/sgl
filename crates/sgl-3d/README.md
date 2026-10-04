@@ -146,7 +146,9 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   environment's panorama or one colour.
 - `fog` (`Fog`) is the frame's participating medium
   ([Volumetric fog](#volumetric-fog)) and `mist` (`Mist`) the look of the
-  scene's mist billboards (`Mist::default()` hides them); both draw while
+  scene's mist billboards: their colours, opacity, size and `drift`, how
+  fast and which way their noise moves (`Mist::default()` hides them, and
+  drifts them slowly up and to the left); both draw while
   `FrameInput::atmosphere` (off by default, as Godot's fog) and
   `Settings::atmosphere` (which allows them, on by default) are on.
 
@@ -240,6 +242,7 @@ frame.fog = Fog {
     height: 0.,
     height_falloff: 0.05,    // density halves every 20 m above `height`
     length: 400.,            // metres of view depth the volume covers
+    sky_affect: 0.5,         // half the fog on the sky (default 1)
 };
 // Denser medium in a box, such as a tunnel's haze, added to the frame's.
 scene.update_fog_volumes(device, queue, &[FogVolume {
@@ -287,9 +290,11 @@ before opaque, the fog stage:
 
 Every draw then fogs from that volume where its point lies, as colour ×
 transmittance + scattered light: source completion fogs opaque surfaces and
-the sky (the sky as if at `length`), and blended surfaces, glow and mist fog
-themselves. Reflections composed over a surface take its transmittance, and
-screen-space reflections trace the fogged frame. Probe captures have no fog.
+the sky (as if at `length`, by `sky_affect`: the sky mixed with its fogged
+self, as Godot's `volumetric_fog_sky_affect`, 1 by default), and blended
+surfaces, glow and mist fog themselves. Reflections composed over a surface
+take its transmittance, and screen-space reflections trace the fogged frame.
+Probe captures have no fog.
 The `offscreen` example's `--fog` shows the frame's medium and a fog volume.
 
 Light shafts are the medium's shadowed scattering: where an opening lets a
@@ -347,10 +352,8 @@ Where it differs from Godot's fog, and why:
   volume and blends across cuts.
 - The integration steps along each view ray, where Godot's steps view depth
   and so thins its fog toward the frame's edges.
-- The sky takes the whole fog: there is no sky affect yet
-  ([#61](https://github.com/stevepryde/sgl/issues/61)). Fog needs
-  `perspective`'s projection, whose froxels it places; with another camera
-  nothing fogs, where Godot's also fogs an orthographic view.
+- Fog needs `perspective`'s projection, whose froxels it places; with
+  another camera nothing fogs, where Godot's also fogs an orthographic view.
 
 ## Point, spot and rectangle lights
 
@@ -1450,10 +1453,31 @@ hold visible instances of one model, and those instances' triangles.
 
 ## Soft additive effects
 
-Set `effects::Glow::soft_distance` to a positive distance in metres for a linear
+`Scene::update_effects` takes a triangle list of `effects::Glow` vertices,
+each with its `kind` (`GlowKind`), the same across a triangle:
+
+- `Uniform`: the interpolated colour.
+- `Tapered { uv, profile }`: alpha shaped over `uv` by a `GlowProfile`,
+  whole at v = 0 and gone at v = 1 (`taper`), rippling in bands across u
+  that slant along v (`ripple_frequency`, `ripple_amplitude`).
+  `GlowProfile::default()` is SGL3D's own tapered sine.
+- `Line { other, offset }`: a line one pixel wide toward the endpoint
+  `other`, the vertex `offset` pixels across it (-0.5 and 0.5 span it).
+
+```rust,ignore
+use sgl_3d::effects::{Glow, GlowKind, GlowProfile};
+let flame = |position, uv| Glow {
+    position,
+    color: [4., 1.5, 0.4, 0.8],
+    kind: GlowKind::Tapered { uv, profile: GlowProfile { taper: 3., ..Default::default() } },
+    soft_distance: 0.2,
+};
+```
+
+Set `Glow::soft_distance` to a positive distance in metres for a linear
 intersection fade against opaque primary geometry; use `0.0` for hard edges and
 screen-space motion lines. Keep this field constant across each triangle.
-`Glow::default()` is all zero: uniform (kind 0), hard-edged and colourless.
+`Glow::default()` is uniform, hard-edged and colourless.
 The renderer honors it both where effects are drawn into the reflection input
 and onto the composed frame, including own-depth volume transmission. Geometry
 generation remains game-owned. See [the reference and numerical

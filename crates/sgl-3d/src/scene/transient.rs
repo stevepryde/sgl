@@ -6,6 +6,7 @@ use crate::content::transient::{
     FogVolume, Glow, HeatDistortion, MAX_DISPLACEMENT_PIXELS, MAX_VERTICES,
 };
 use crate::shading::fog::{self, FogVolumeRecord};
+use crate::shading::vertex::GlowVertex;
 use glam::Vec3;
 
 pub(crate) struct Transient {
@@ -32,7 +33,7 @@ impl Transient {
         Self {
             glow: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("transient glow"),
-                size: std::mem::size_of::<Glow>() as u64,
+                size: std::mem::size_of::<GlowVertex>() as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
@@ -106,7 +107,8 @@ impl Transient {
     /// Replaces the glow drawn this frame, growing the retained buffer as needed.
     /// An empty slice clears the draw without discarding the buffer reservation.
     pub fn update_glow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, vertices: &[Glow]) {
-        let bytes = bytemuck::cast_slice(vertices);
+        let records: Vec<_> = vertices.iter().map(GlowVertex::new).collect();
+        let bytes: &[u8] = bytemuck::cast_slice(&records);
         if bytes.len() as u64 > self.glow.size() {
             self.glow = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("transient glow"),

@@ -77,10 +77,8 @@ fn soft_intersection_metric_depth_and_clear_background() {
                         let vertices = [[-200., -200., -z], [600., -200., -z], [-200., 600., -z]]
                             .map(|position| crate::effects::Glow {
                                 position,
-                                uv: [0.; 2],
                                 color: [1., 2., 3., 0.4],
-                                kind: 0.,
-                                other: [0.; 3],
+                                kind: crate::effects::GlowKind::Uniform,
                                 soft_distance: width,
                             });
                         scene.update_effects(&device, &queue, &vertices);

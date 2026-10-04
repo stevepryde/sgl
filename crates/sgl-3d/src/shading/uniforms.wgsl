@@ -69,8 +69,10 @@ struct Frame {
  mist_dense_color:vec3<f32>,
  // The panorama backdrop's yaw and radiance scale.
  backdrop_yaw:f32,
- // Each mist billboard's width and height.
+ // Each mist billboard's width and height, and how far its noise moves
+ // across it each second (Mist::drift).
  mist_size:vec2<f32>,
+ mist_drift:vec2<f32>,
  backdrop_brightness:f32,
  // With FRAME_FOG: one over the fog volume's length and over its detail
  // spread (fog.wgsl).
