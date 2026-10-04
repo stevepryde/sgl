@@ -115,8 +115,10 @@ compatibility shims solely to avoid updating consumers.
 - SGL3D rendering follows `specs/sgl3d.md` (RD-1–RD-7 and its roadmap): build
   foundations in roadmap order, follow what other game engines do (port their
   compatible-licensed implementation instead of inventing our own when the
-  technique already exists), and delete what a better implementation
-  supersedes. Never port from Unity's Graphics repository,
+  technique already exists), improve on it where it is inefficient or falls
+  short, with a recorded decision and before/after measurements, and delete
+  what a better implementation supersedes. Never port from Unity's Graphics
+  repository,
   Unreal, or GPL sources. Keep game policy and content in the consumer.
 - Never guess at rendering. Before any rendering change, check the upstream
   reference being ported (vendored beside its port, e.g. DiligentFX; AMD's
@@ -124,7 +126,10 @@ compatibility shims solely to avoid updating consumers.
   Godot, Filament, Diligent and other major renderers), plus papers,
   Frostbite talks, Unreal and HDRP documentation and AMD/NVIDIA docs, with
   sources. Follow the standard pipeline and the pattern those engines share;
-  do not invent techniques or tune constants to make tests pass.
+  do not invent a technique an engine already provides, and do not tune
+  constants to make tests pass. Going beyond the engines (a cheaper pass, a
+  better schedule, a better result) is welcome when measured against the
+  ported baseline and recorded as a decision (RD-2).
 - Code stays MIT-compatible: port only from the RD-2 allowed sources, keep their
   licence and provenance, and list them in the notices. Unreal and Unity's
   Graphics repository may inform practice but their code is never copied.
