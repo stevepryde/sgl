@@ -287,10 +287,16 @@ is Godot's default of 64 froxels across the frame's mean side, High 128. Timing 
 with froxels and the lights reaching them), `fog filter` (with the filter)
 and `fog integration`.
 
-Every froxel tests every fog volume, so keep them few. There is no emission,
-density texture or volume shape other than a box. A moving light's
-scattering trails it by the history it keeps. Froxels are coarse: detail in the fog blurs along the
-view, the more the farther.
+Each frame bounds the froxels every fog volume may reach from its corners,
+as Godot does: a froxel evaluates only the volumes whose bounds hold it,
+after testing those of every volume in view. A volume behind the camera,
+beyond `length`, or wholly in front of the camera and beside the frame costs
+nothing on the GPU. A volume that holds or crosses the camera's plane is
+evaluated in every froxel of the frame up to its far end, so split a long
+one, such as a tunnel's, into segments. There is no emission, density
+texture or volume shape other than a box. A moving light's scattering trails
+it by the history it keeps. Froxels are coarse: detail in the fog blurs
+along the view, the more the farther.
 
 ## Point, spot and rectangle lights
 

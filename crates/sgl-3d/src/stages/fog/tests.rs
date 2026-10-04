@@ -3,8 +3,9 @@
 //! matches a numerical single-scattering integral along its view ray; a
 //! shadowed light, local or directional, scatters nothing in the medium its
 //! occluder hides from it; the filter blurs each slice by Godot's Gaussian
-//! while the history stays unfiltered; and a light's fog energy scales its
-//! light in the medium and nowhere else.
+//! while the history stays unfiltered; a light's fog energy scales its
+//! light in the medium and nowhere else; and fog volumes add their medium to
+//! every froxel they reach.
 use super::froxels;
 use crate::renderer::Renderer;
 use crate::settings::{self, FogQuality, Settings};
@@ -13,7 +14,7 @@ use crate::{
     Backdrop, Camera, DirectionalLight, DirectionalShadow, Fog, FrameInput, HemisphereLight,
     InstanceState, Light, LightShape, Mobility, Scene, test_support,
 };
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3};
 
 const SIZE: [u32; 2] = [160, 90];
 const QUALITY: FogQuality = FogQuality::High;
@@ -695,65 +696,189 @@ fn fog_energy_scales_a_light_in_the_medium_alone() {
 }
 
 // Defect: a fog volume's box is placed, turned or sized wrongly, or its
-// density does not add to the medium's. The box's own geometry decides:
-// froxels well inside it hold both densities, froxels well outside only the
-// medium's.
+// density does not add to the medium's; or its froxel bounds leave out
+// froxels it reaches, at its faces or where it crosses the frame's edge,
+// the camera's plane or the volume's far end, or holds the camera; or a
+// froxel reads another volume's record for bounds that skip culled
+// volumes; or the bounds misplace the camera (its position, turn or
+// off-centre projection). The boxes' definitions decide: a froxel holds the
+// frame's medium plus each box's density where its centre lies, and
+// scatters an isotropic, unshadowed directional light by the albedos those
+// densities weight, Godot's scattering.
 #[test]
-fn a_fog_volume_adds_its_density_inside_its_box() {
+fn fog_volumes_add_their_medium_to_every_froxel_they_reach() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
-    let mut scene = Scene::new(&device, &queue);
-    let volume = crate::FogVolume {
-        center: Vec3::new(1., 0.5, -8.),
-        rotation: glam::Quat::from_rotation_y(0.6) * glam::Quat::from_rotation_x(0.3),
-        size: Vec3::new(4., 2., 6.),
-        density: 0.2,
-        albedo: [1.; 3],
-        edge_fade: 0.,
+    // A camera away from the origin, turned, with an off-centre projection;
+    // each box is placed relative to it.
+    let turn = Quat::from_rotation_y(0.7);
+    let world_from_camera = Mat4::from_rotation_translation(turn, Vec3::new(12., 1.5, -40.));
+    let volume = |center: Vec3, rotation: Quat, size: Vec3, density: f32, albedo: [f32; 3]| {
+        crate::FogVolume {
+            center: world_from_camera.transform_point3(center),
+            rotation: turn * rotation,
+            size,
+            density,
+            albedo,
+            edge_fade: 0.,
+        }
     };
-    scene
-        .update_fog_volumes(&device, &queue, &[volume])
-        .unwrap();
+    let volumes = [
+        // Behind the camera, beside the frame and beyond the volume: none
+        // reaches a froxel.
+        volume(
+            Vec3::new(0., 0., 6.),
+            Quat::IDENTITY,
+            Vec3::splat(3.),
+            0.5,
+            [1., 0., 0.],
+        ),
+        volume(
+            Vec3::new(-30., 0., -8.),
+            Quat::IDENTITY,
+            Vec3::splat(2.),
+            0.5,
+            [0., 1., 0.],
+        ),
+        volume(
+            Vec3::new(0., 0., -30.),
+            Quat::IDENTITY,
+            Vec3::splat(4.),
+            0.5,
+            [0., 0., 1.],
+        ),
+        // Beside the camera, from behind it to in front of it.
+        volume(
+            Vec3::new(1.5, -1., 0.),
+            Quat::IDENTITY,
+            Vec3::new(1., 1., 12.),
+            0.3,
+            [0.2, 0.9, 0.5],
+        ),
+        // A tunnel holding the camera.
+        volume(
+            Vec3::new(0., 0., -4.),
+            Quat::from_rotation_y(0.1),
+            Vec3::new(6., 4., 20.),
+            0.05,
+            [0.5, 0.5, 1.],
+        ),
+        // Across the frame's left edge.
+        volume(
+            Vec3::new(-7.5, 0.5, -8.),
+            Quat::from_rotation_y(0.4),
+            Vec3::new(3., 2., 3.),
+            0.2,
+            [0.9, 0.3, 0.6],
+        ),
+        // Across the volume's far end.
+        volume(
+            Vec3::new(1., 1., -19.5),
+            Quat::IDENTITY,
+            Vec3::new(2., 2., 3.),
+            0.15,
+            [0.4, 0.8, 0.2],
+        ),
+        // Two overlapping boxes.
+        volume(
+            Vec3::new(0.5, 0., -9.),
+            Quat::from_rotation_y(0.6) * Quat::from_rotation_x(0.3),
+            Vec3::new(4., 3., 5.),
+            0.2,
+            [1., 0.5, 0.25],
+        ),
+        volume(
+            Vec3::new(1.8, 0.6, -10.5),
+            Quat::IDENTITY,
+            Vec3::splat(3.),
+            0.1,
+            [0.2, 0.9, 0.6],
+        ),
+    ];
+    let mut scene = Scene::new(&device, &queue);
+    scene.update_fog_volumes(&device, &queue, &volumes).unwrap();
     let fog = Fog {
         density: 0.01,
+        albedo: [1., 0.7, 0.4],
+        anisotropy: 0.,
+        ambient: 0.,
         length: 20.,
-        detail_spread: 1.,
+        detail_spread: 2.,
         ..Fog::default()
     };
-    let frame = input(fog);
+    let mut frame = input(fog);
+    let mut projection = projection();
+    projection.z_axis.x = 0.1;
+    projection.z_axis.y = -0.05;
+    frame.camera = Camera {
+        view: world_from_camera.inverse(),
+        projection,
+        eye: world_from_camera.w_axis.truncate(),
+    };
+    // An isotropic phase scatters 1 / (4 PI) of the illuminance toward the
+    // camera, so each froxel scatters its albedo-weighted density.
+    frame.directional_lights[0] = Some(DirectionalLight {
+        direction: Vec3::new(0.3, -1., -0.4),
+        color: [1.; 3],
+        illuminance: 4. * std::f32::consts::PI,
+        shadow: None,
+        ..Default::default()
+    });
     let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
     let size = froxels(QUALITY, SIZE);
     let froxels = texels(&read(&device, &queue, renderer.fog_volumes()[0]));
-    let local_from_world =
-        Mat4::from_rotation_translation(volume.rotation, volume.center).inverse();
-    let (mut inside, mut outside) = (0, 0);
+    let local_from_world = volumes
+        .map(|volume| Mat4::from_rotation_translation(volume.rotation, volume.center).inverse());
+    let world_from_view = frame.camera.view.inverse();
+    let mut reached = [0; 9];
     for z in 0..size[2] {
         for y in 0..size[1] {
             for x in 0..size[0] {
-                let point = froxel_center(&frame, size, [x, y, z]);
-                let local = local_from_world.transform_point3(point).abs() - volume.size * 0.5;
-                let extinction = froxels[((z * size[1] + y) * size[0] + x) as usize][3];
-                if local.max_element() < -0.3 {
-                    inside += 1;
+                let point =
+                    world_from_view.transform_point3(froxel_center(&frame, size, [x, y, z]));
+                let mut density = fog.density;
+                let mut scattering = Vec3::from(fog.albedo) * fog.density;
+                for (index, volume) in volumes.iter().enumerate() {
+                    let local = local_from_world[index].transform_point3(point);
+                    let added = volume.density * box_density(local, volume.size * 0.5);
+                    density += added;
+                    scattering += Vec3::from(volume.albedo) * added;
+                    reached[index] += usize::from(added > 0.);
+                }
+                let froxel = froxels[((z * size[1] + y) * size[0] + x) as usize];
+                assert!(
+                    (froxel[3] - density).abs() <= 1e-3 * density + 1e-4,
+                    "{point}: extinction {} against the boxes' {density}",
+                    froxel[3]
+                );
+                for channel in 0..3 {
                     assert!(
-                        (extinction - 0.21).abs() < 1e-3,
-                        "{point} inside the volume: extinction {extinction}"
-                    );
-                } else if local.max_element() > 0.3 {
-                    outside += 1;
-                    assert!(
-                        (extinction - 0.01).abs() < 1e-4,
-                        "{point} outside the volume: extinction {extinction}"
+                        (froxel[channel] - scattering[channel]).abs()
+                            <= 2e-3 * scattering[channel] + 1e-4,
+                        "{point} channel {channel}: scattering {} against the boxes' {}",
+                        froxel[channel],
+                        scattering[channel]
                     );
                 }
             }
         }
     }
     assert!(
-        inside > 100 && outside > 100,
-        "{inside} inside, {outside} outside"
+        reached[3..].iter().all(|&count| count > 50),
+        "froxels inside each box: {reached:?}"
     );
+}
+
+/// The share of a box fog volume's density at `local` in the box of
+/// `half_size` without edge fade: Godot's box `FogVolume`
+/// (`volumetric_fog.glsl`), whose density fades in over the 0.1 m inside its
+/// faces by its signed distance.
+fn box_density(local: Vec3, half_size: Vec3) -> f32 {
+    let q = local.abs() - half_size;
+    let distance = q.max(Vec3::ZERO).length() + q.max_element().min(0.);
+    let t = ((distance + 0.1) / 0.1).clamp(0., 1.);
+    1. - t * t * (3. - 2. * t)
 }
 
 // Defect: a blended surface fogs itself at the wrong distance (a fragment's

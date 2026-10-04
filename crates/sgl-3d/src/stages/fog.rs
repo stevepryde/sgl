@@ -1,10 +1,11 @@
 //! Volumetric fog: Godot's froxel volume (`fog.wgsl`), after Hillaire 2015.
 //! A volume of froxels fills the camera's frustum out to the fog's length,
-//! its depth slices spread toward the camera. Each frame sums the frame's
-//! medium and the scene's fog volumes in every froxel, lights it with the
-//! directional lights through their cascades, the camera's clustered point,
-//! spot and rectangle lights through their local-light shadows, and the
-//! ambient light, blends it with where the froxel was in the last frame's
+//! its depth slices spread toward the camera. Each frame bounds the froxels
+//! each of the scene's fog volumes reaches, as Godot does (`volume_froxels`),
+//! sums the frame's medium and the volumes reaching each froxel, lights it
+//! with the directional lights through their cascades, the camera's clustered
+//! point, spot and rectangle lights through their local-light shadows, and
+//! the ambient light, blends it with where the froxel was in the last frame's
 //! volume, filters each slice across x and then y with Godot's Gaussian,
 //! then integrates each column front to back into the light scattered
 //! toward the camera and the transmittance to every slice. Every draw that
@@ -20,8 +21,9 @@
 //! frame's local-light atlas and cascades, its directional lights, hemisphere
 //! fill and environment), the frame's `FrameInput::fog`, the scene's fog
 //! volumes, the camera history, and its own last volume.
-//! Writes: its froxel volumes and the integrated volume, which group 0 lends
-//! draws and source completion samples.
+//! Writes: the froxels each fog volume reaches, its froxel volumes and the
+//! integrated volume, which group 0 lends draws and source completion
+//! samples.
 //! Honours: the effective fog (`Settings::atmosphere`, `Settings::fog_quality`
 //! and `FrameInput::atmosphere`); without it, it does not run and nothing
 //! fogs. The filter runs with `Settings::fog_filter`.
@@ -141,8 +143,9 @@ struct Volumes {
     /// Each column's integration.
     integrated: wgpu::TextureView,
     /// Injection into `scattering[i]` from the other, with the scene's fog
-    /// volume buffer they bind, until the scene replaces it.
-    inject: Option<(wgpu::Buffer, [wgpu::BindGroup; 2])>,
+    /// volume buffer and the reached froxels' buffer they bind, until either
+    /// is replaced.
+    inject: Option<(wgpu::Buffer, wgpu::Buffer, [wgpu::BindGroup; 2])>,
     /// Integration of `scattering[i]`.
     integrate: [wgpu::BindGroup; 2],
     /// The filter of `scattering[i]`: along x into `integrated`, then along
@@ -160,6 +163,7 @@ pub(crate) struct VolumetricFog {
     filter_layout: wgpu::BindGroupLayout,
     integrate_layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
+    reached: volume_froxels::ReachedFroxels,
     /// Linear and clamped: reprojection's and every draw's.
     sampler: wgpu::Sampler,
     volumes: Volumes,
@@ -203,6 +207,16 @@ impl VolumetricFog {
             },
             count: None,
         };
+        let read_only_storage = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
         let inject_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("volumetric fog injection"),
             entries: &[
@@ -215,16 +229,8 @@ impl VolumetricFog {
                     count: None,
                 },
                 storage(3),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                read_only_storage(6),
+                read_only_storage(9),
             ],
         });
         let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -297,6 +303,7 @@ impl VolumetricFog {
             filter_layout,
             integrate_layout,
             uniform,
+            reached: volume_froxels::ReachedFroxels::new(device),
             sampler,
             volumes,
         }
@@ -456,7 +463,7 @@ impl VolumetricFog {
         let fog = ctx.input.fog;
         let camera = ctx.input.camera;
         let projection = camera.projection;
-        let uniform = FroxelVolumeUniform {
+        let mut uniform = FroxelVolumeUniform {
             world_from_view: camera.view.inverse().to_cols_array_2d(),
             previous_clip_from_world: history.previous.to_cols_array_2d(),
             projection: [
@@ -481,14 +488,22 @@ impl VolumetricFog {
                 0.
             },
             ambient: fog.ambient.max(0.),
-            volume_count: ctx.scene.transient.fog_volume_count,
+            volume_count: 0,
             padding: [0; 2],
         };
+        uniform.volume_count = self.reached.write(
+            ctx.device,
+            ctx.queue,
+            &ctx.scene.transient.fog_volume_corners,
+            camera.view,
+            &uniform,
+        );
         let fog_volumes = &ctx.scene.transient.fog_volumes;
+        let reached = &self.reached.buffer;
         if volumes
             .inject
             .as_ref()
-            .is_none_or(|(bound, _)| bound != fog_volumes)
+            .is_none_or(|(scene, bound, _)| scene != fog_volumes || bound != reached)
         {
             let groups = [0, 1].map(|index| {
                 let view = wgpu::BindingResource::TextureView;
@@ -516,12 +531,16 @@ impl VolumetricFog {
                             binding: 6,
                             resource: fog_volumes.as_entire_binding(),
                         },
+                        wgpu::BindGroupEntry {
+                            binding: 9,
+                            resource: reached.as_entire_binding(),
+                        },
                     ],
                 })
             });
-            volumes.inject = Some((fog_volumes.clone(), groups));
+            volumes.inject = Some((fog_volumes.clone(), reached.clone(), groups));
         }
-        let inject = &volumes.inject.as_ref().unwrap().1[index];
+        let inject = &volumes.inject.as_ref().unwrap().2[index];
         ctx.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         let [x, y, z] = volumes.size;
@@ -576,3 +595,4 @@ impl VolumetricFog {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+pub(crate) mod volume_froxels;

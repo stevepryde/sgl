@@ -54,7 +54,7 @@ pub(super) fn render(
     let effective = super::effective::resolve(
         settings,
         input,
-        scene.transient.fog_volume_count > 0,
+        !scene.transient.fog_volume_corners.is_empty(),
         antialiasing.fsr2_running(),
         pipelines.fused_supported,
     );
