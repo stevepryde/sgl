@@ -157,6 +157,8 @@ pub struct FrameInput {
     /// baked irradiance.
     pub baked_lighting: bool,
     /// The volumetric fog and mist, while `Settings::atmosphere` is on too.
+    /// Off by default, as Godot's `volumetric_fog_enabled` and
+    /// `fog_enabled`: a game turns it on where it wants fog or mist.
     pub atmosphere: bool,
     pub fog: Fog,
     pub mist: Mist,
@@ -179,10 +181,10 @@ pub struct FrameInput {
 impl FrameInput {
     /// `camera` with no lights, fog medium, mist, visibility groups
     /// or environment; the environment's diffuse lighting, reflections and
-    /// backdrop unturned at intensity 1; baked lighting and atmosphere on; a 60 Hz
-    /// frame time; a fixed exposure of 0 stops; and the default bloom,
-    /// motion blur, colour grading, ambient occlusion radius and Crystal
-    /// parameters.
+    /// backdrop unturned at intensity 1; baked lighting on and atmosphere
+    /// off; a 60 Hz frame time; a fixed exposure of 0 stops; and the default
+    /// bloom, motion blur, colour grading, ambient occlusion radius and
+    /// Crystal parameters.
     pub fn new(camera: Camera) -> Self {
         Self {
             camera,
@@ -202,7 +204,7 @@ impl FrameInput {
                 brightness: 1.,
             },
             baked_lighting: true,
-            atmosphere: true,
+            atmosphere: false,
             fog: Fog::default(),
             mist: Mist {
                 thin_color: [0.; 3],

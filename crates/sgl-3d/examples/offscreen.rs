@@ -532,7 +532,9 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         }),
         ..Default::default()
     });
-    // A thin haze the sun scatters forward, thinning above 2 m.
+    // A thin haze the sun scatters forward, thinning above 2 m, where the
+    // player's settings allow the atmosphere.
+    frame.atmosphere = true;
     frame.fog = Fog {
         density: 0.04,
         anisotropy: 0.5,

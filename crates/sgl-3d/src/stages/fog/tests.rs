@@ -33,7 +33,8 @@ fn settings(atmosphere: bool) -> Settings {
     }
 }
 
-/// A camera at the origin looking down -Z over a black backdrop.
+/// A camera at the origin looking down -Z over a black backdrop, its
+/// atmosphere on so that the settings decide whether the fog runs.
 fn input(fog: Fog) -> FrameInput {
     let mut input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
@@ -41,6 +42,7 @@ fn input(fog: Fog) -> FrameInput {
         eye: Vec3::ZERO,
     });
     input.backdrop = Backdrop::Color([0.; 3]);
+    input.atmosphere = true;
     input.fog = fog;
     input
 }

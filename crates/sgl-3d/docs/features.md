@@ -164,7 +164,8 @@ Environment and probe specular always apply. On top of them:
 - **Colour grading** (`FrameInput::color_grading`): white balance, hue, and
   saturation, contrast, gamma, gain and lift for shadows, midtones and
   highlights, then AgX tone mapping and a post-saturation.
-- **Volumetric fog** (`FrameInput::fog`, `Fog`): Godot's froxel fog. The
+- **Volumetric fog** (`FrameInput::fog`, `Fog`): Godot's froxel fog, while
+  `FrameInput::atmosphere` is on (off by default, as Godot's fog). The
   frame's medium (density with height falloff, albedo, anisotropy, the
   share of ambient light it scatters, none by default as Godot's) and
   denser boxes of it (`Scene::update_fog_volumes`, `FogVolume`), lit by the
@@ -176,7 +177,7 @@ Environment and probe specular always apply. On top of them:
   resolution and `Settings::fog_filter` its blur.
   [Volumetric fog](../README.md#volumetric-fog).
 - **Mist**: positioned billboards (`Scene::update_mist`, their look
-  `FrameInput::mist`).
+  `FrameInput::mist`), while `FrameInput::atmosphere` is on.
 - **Additive effects**: game-generated glow triangles with soft depth fades
   (`Scene::update_effects`, `effects::Glow`).
   [Soft additive effects](../README.md#soft-additive-effects).

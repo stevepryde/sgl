@@ -210,7 +210,9 @@ pub struct Settings {
     /// Traces what screen-space reflections miss on moving objects through
     /// the scene's ray buffers; only effective with screen-space reflections.
     pub world_space_reflections: bool,
-    /// The volumetric fog and mist, while the frame has an atmosphere.
+    /// The volumetric fog and mist, while the frame turns its atmosphere on
+    /// (`FrameInput::atmosphere`, off by default): the player's allowance,
+    /// on by default.
     pub atmosphere: bool,
     /// The volumetric fog's resolution.
     pub fog_quality: FogQuality,
@@ -230,7 +232,7 @@ pub struct Settings {
 }
 
 impl Default for Settings {
-    /// High, with atmosphere and the fog filter on, heat distortion,
+    /// High, with atmosphere allowed and the fog filter on, heat distortion,
     /// world-space reflections and motion blur off, and every other choice
     /// at its default.
     fn default() -> Self {
