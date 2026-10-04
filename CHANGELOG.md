@@ -15,6 +15,18 @@ full API details.
 
 ## Unreleased
 
+### Crystal's rays stop at the far plane
+
+- **Scope:** `sgl-post-fx` screen-space reflections, and so `sgl-3d`'s
+  Crystal method. A ray that reaches the far plane now ends there, as AMD's
+  hybrid SSSR traversal ends it, instead of descending every level of the
+  depth hierarchy first. Rays toward the sky take about 6% fewer steps, and
+  the `SSR intersection` pass takes about 4% less time. Reflections are
+  unchanged but for one 8-bit step at a few pixels near the horizon, where
+  a miss's shorter length weights spatial reconstruction.
+- **Migration:** no game-code changes. Afterwards, compare the `SSR`
+  timing groups on the game's route.
+
 ### Blended surfaces can receive screen-space reflections
 
 - **Scope:** `sgl-3d` `AlphaMode::Blend` is now a struct variant,
