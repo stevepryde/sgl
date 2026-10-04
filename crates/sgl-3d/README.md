@@ -143,8 +143,9 @@ frame.backdrop = Backdrop::Environment { yaw: 0., brightness: 1. };
   environment's panorama or one colour.
 - `fog` (`Fog`) is the frame's participating medium
   ([Volumetric fog](#volumetric-fog)) and `mist` (`Mist`) the look of the
-  scene's mist billboards; both draw while `FrameInput::atmosphere` and
-  `Settings::atmosphere` are on.
+  scene's mist billboards; both draw while `FrameInput::atmosphere` (off by
+  default, as Godot's fog) and `Settings::atmosphere` (the player's
+  allowance, on by default) are on.
 
 ## Exposure, bloom and colour grading
 
@@ -226,6 +227,7 @@ frame.motion_blur.shutter_angle = 0.5; // the default, film's 180° shutter
 
 ```rust,ignore
 use sgl_3d::Fog;
+frame.atmosphere = true; // fog and mist are off by default
 frame.fog = Fog {
     density: 0.002,          // extinction per metre at and below `height`
     albedo: [0.9, 0.95, 1.], // the share of extinction that scatters
@@ -1184,10 +1186,10 @@ Neither alters material albedo or paints light into emission.
 
 `settings::Settings` holds every player rendering choice in one serde value
 the game stores and passes to `Renderer::new`, `resize` and `render`;
-`Settings::default()` is High with atmosphere on. [Settings](docs/settings.md)
-lists each field. The game owns its settings record, file format, controls,
-defaults, and saving. `settings::FrameRate` describes presentation cadence; the
-renderer does not run a frame limiter.
+`Settings::default()` is High with atmosphere allowed.
+[Settings](docs/settings.md) lists each field. The game owns its settings
+record, file format, controls, defaults, and saving. `settings::FrameRate`
+describes presentation cadence; the renderer does not run a frame limiter.
 
 Keep a saved explicit choice distinct from `Preset`. Apply the preset only where
 the option requests it. Low → High → Low and application restart must preserve

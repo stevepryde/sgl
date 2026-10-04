@@ -30,7 +30,7 @@ replace every choice with a complete bundle.
 | Screen-space reflections | `Settings::screen_space_reflections` | `Off`, `Half`, `Full` | | The resolution rays are traced at. Needs a `perspective` camera. |
 | Reflection method | `Settings::reflection_method` | `Crystal`, `Velvet` | | Crystal is sharp and reflects only glossy surfaces (perceptual roughness below 0.2). Velvet blurs with roughness and reaches rougher surfaces (below 0.7), so it traces more of the screen. |
 | World-space reflections | `Settings::world_space_reflections` | `false`, `true` | | Shows moving objects that screen-space reflections cannot see, with rays through a software BVH at half resolution. Needs screen-space reflections. |
-| Atmosphere | `Settings::atmosphere` | `true`, `false` | | The volumetric fog and mist, while `FrameInput::atmosphere` is on. |
+| Atmosphere | `Settings::atmosphere` | `true`, `false` | | The volumetric fog and mist, while the game turns `FrameInput::atmosphere` on (off by default, as Godot's fog). |
 | Fog quality | `Settings::fog_quality` | `High`, `Low` | | The volumetric fog's froxels: 64 slices, and Low 64 across the frame's mean side (Godot's default), High 128. Higher resolves sharper shafts and shadow edges in the fog at more cost. Needs a `perspective` camera. |
 | Fog filter | `Settings::fog_filter` | `true`, `false` | | Blurs each slice of the fog's froxels across the frame before integration (Godot's `use_filter`, on by default): smoother fog with softer shafts and shadow edges in it, for two passes over the froxels. |
 | Heat shimmer | `Settings::heat_distortion` | `false`, `true` | | Needs geometry from `Scene::update_heat_distortion`. |
@@ -72,12 +72,13 @@ type it belongs to, with a default so a game sets only what it changes.
   (`Light::fog_energy`), scales its light in the volumetric fog: 1 by
   default, at most 0.001 leaves it out.
 - `baked_lighting`: `false` turns baked lighting off.
-- `atmosphere`: `false` turns the volumetric fog and mist off whatever the
-  setting; `fog` (the medium: density, height and falloff, albedo,
-  anisotropy, the share of ambient light it scatters (none by default, as
-  Godot's), the volume's length and detail spread, and how much of the last
-  frame's volume it keeps) and `mist` shape them. Fog volumes are scene
-  content (`Scene::update_fog_volumes`).
+- `atmosphere`: the volumetric fog and mist, off by default as Godot's
+  (`volumetric_fog_enabled` and `fog_enabled`); `true` turns them on where
+  the setting allows them; `fog` (the medium: density, height and falloff,
+  albedo, anisotropy, the share of ambient light it scatters (none by
+  default, as Godot's), the volume's length and detail spread, and how much
+  of the last frame's volume it keeps) and `mist` shape them. Fog volumes
+  are scene content (`Scene::update_fog_volumes`).
 - `environment`: the scene's environment that lights the frame and draws its
   sky; `None` is black. `diffuse_environment` turns and scales its diffuse
   light, `backdrop` is its panorama or a colour.

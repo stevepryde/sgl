@@ -416,6 +416,7 @@ mod tests {
                         eye: Vec3::ZERO,
                     });
                     frame.camera_cut = true;
+                    frame.atmosphere = true;
                     let mut encoder = device.create_command_encoder(&Default::default());
                     renderer.render(
                         &device,

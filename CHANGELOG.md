@@ -15,6 +15,34 @@ full API details.
 
 ## Unreleased
 
+### The atmosphere is off by default, as Godot's fog
+
+- **Scope:** `sgl-3d` `FrameInput::atmosphere`, which turns the volumetric
+  fog (`FrameInput::fog`, fog volumes) and mist (`Scene::update_mist`,
+  `FrameInput::mist`) on for the frame. `FrameInput::new` set it to `true`,
+  so a frame with a fog medium, fog volumes or mist drew them unless the
+  game opted out; it is now `false`, as Godot's `volumetric_fog_enabled` and
+  `fog_enabled` default to false (b130438 `scene/resources/environment.h`).
+  A frame from `FrameInput::new` draws no fog or mist until the game turns
+  its atmosphere on. `Settings::atmosphere`, the player's allowance, stays
+  `true` by default, so the game needs no settings change.
+- **Migration:** set the frame's atmosphere where the game wants fog or
+  mist:
+
+  ```rust
+  // Before
+  let mut input = FrameInput::new(camera);
+  input.fog = Fog { density: 0.02, ..Fog::default() };
+  // After
+  let mut input = FrameInput::new(camera);
+  input.atmosphere = true;
+  input.fog = Fog { density: 0.02, ..Fog::default() };
+  ```
+
+  A game that already sets `atmosphere` on every frame needs no change.
+  Afterwards, check that the game's foggy and misty scenes still show
+  them.
+
 ### The fog scatters no ambient light by default, as Godot's
 
 - **Scope:** `sgl-3d` `Fog::ambient` (`FrameInput::fog`), the share of the
