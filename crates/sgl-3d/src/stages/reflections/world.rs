@@ -12,8 +12,10 @@ use std::collections::HashMap;
 
 /// Wicked's default RT reflection downscale.
 const DOWNSCALE: u32 = 2;
-/// How far a reflection ray looks for moving objects, in metres.
-const RANGE: f32 = 100.;
+/// How far a reflection ray looks for moving objects, in metres: Wicked's
+/// default RT reflection range (4323a33 `Postprocess_RTReflection`,
+/// wiRenderer.h).
+const RANGE: f32 = 1000.;
 
 pub(crate) struct Inputs<'a> {
     pub depth: &'a wgpu::TextureView,
@@ -496,3 +498,6 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
         ]
     )]
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;
