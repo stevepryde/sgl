@@ -34,30 +34,18 @@ struct ReflectionEnvironment {
 @group(0) @binding(12) var<uniform> env:ReflectionEnvironment;
 @group(0) @binding(13) var receiver_material:texture_2d<f32>;
 
-// A receiver's specular lobe: its split-sum response, reflection direction,
-// perceptual roughness and N.V, and whether a screen-space method traces it.
-struct SourceLobe {
- weight:vec3<f32>,
- ray:vec3<f32>,
- rough:f32,
- nv:f32,
- traced:bool,
+// A receiver's specular lobes (specular_lobes.wgsl) from its G-buffer at
+// `world`, seen from the camera.
+fn source_lobes(normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotropy:vec4<f32>,world:vec3<f32>,camera:SourceCamera)->array<SpecularLobe,2> {
+ let view=normalize(camera.eye.xyz-world);
+ return specular_lobes(gbuffer_base_normal(normals),gbuffer_coat_normal(normals),view,f0.rgb,material.roughness,material.coat,material.coat_roughness,anisotropy,source_lookup_tables,env_sampler);
 }
-// The base lobe and, for a coated receiver, the coat lobe. A screen-space
-// method traces the coat of a coated receiver, else the base, when its alpha
-// roughness is below `traced`.
-fn source_lobes(normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotropy:vec4<f32>,world:vec3<f32>,camera:SourceCamera,traced:f32)->array<SourceLobe,2> {
- let n=gbuffer_base_normal(normals);
- let coat=gbuffer_coat_normal(normals);
- let v=normalize(camera.eye.xyz-world);
- let nv=max(dot(n,v),0.);
- let coat_nv=max(dot(coat,v),0.);
- let coat_ray=reflect(-v,coat);
- let coat_f=pbr_coat_fresnel(coat,v,material.coat);
- let base_ray=pbr_anisotropy_reflection(n,v,anisotropy,material.roughness);
- let base=SourceLobe(pbr_three_single_scatter(f0.rgb,source_brdf(nv,material.roughness))*(1.-coat_f),base_ray,material.roughness,nv,material.coat<=0. && material.roughness*material.roughness<traced);
- let coat_lobe=SourceLobe(pbr_three_single_scatter(vec3(0.04),source_brdf(coat_nv,material.coat_roughness))*material.coat,normalize(mix(coat_ray,coat,pow(material.coat_roughness,4.))),material.coat_roughness,coat_nv,material.coat>0. && material.coat_roughness*material.coat_roughness<traced);
- return array(base,coat_lobe);
+// Whether a screen-space method traces `lobe` of `lobes`: the traced lobe
+// (the coat of a coated receiver, else the base) below alpha roughness
+// `traced`.
+fn source_traced(lobe:u32,lobes:array<SpecularLobe,2>,coat:f32,traced:f32)->bool {
+ let roughness=lobes[lobe].roughness;
+ return lobe==specular_traced_lobe(coat) && roughness*roughness<traced;
 }
 // Specular occlusion of a lobe's environment and probe specular by the
 // receiver's ambient visibility, as Filament's desktop default evaluates it
@@ -67,8 +55,8 @@ fn source_lobes(normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotro
 // translated to WGSL). Lagarde and de Rousiers 2014, "Moving Frostbite to
 // PBR", with GTAO's multi-bounce on the base lobe's F0 (Jimenez et al. 2016).
 // Screen-space hits are visible surfaces and stay unoccluded, as in Filament.
-fn source_specular_occlusion(lobe:SourceLobe,coat:bool,visibility:f32,f0:vec3<f32>)->vec3<f32> {
- let alpha=lobe.rough*lobe.rough;
+fn source_specular_occlusion(lobe:SpecularLobe,coat:bool,visibility:f32,f0:vec3<f32>)->vec3<f32> {
+ let alpha=lobe.roughness*lobe.roughness;
  let ao=clamp(pow(lobe.nv+visibility,exp2(-16.*alpha-1.))-1.+visibility,0.,1.);
  if coat {
   return vec3(ao);
@@ -113,15 +101,15 @@ fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material
  if z>0. {
   let world=source_world(z,id,size,camera);
   if gbuffer_lit(f0) {
-   let lobes=source_lobes(normals,material,f0,anisotropy,world,camera,traced);
+   let lobes=source_lobes(normals,material,f0,anisotropy,world,camera);
    let visibility=source_ambient_visibility(id);
-   for(var i=0u;i<2u;i++) {
-    if i==1u && material.coat<=0. {
+   for(var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
+    if lobe==SPECULAR_COAT && material.coat<=0. {
      continue;
     }
-    let environment=source_environment(world,lobes[i].ray,lobes[i].rough,material.environment_scale,source_probes(id))*lobes[i].weight*source_specular_occlusion(lobes[i],i==1u,visibility,f0.rgb);
+    let environment=source_environment(world,lobes[lobe].direction,lobes[lobe].roughness,material.environment_scale,source_probes(id))*lobes[lobe].response*source_specular_occlusion(lobes[lobe],lobe==SPECULAR_COAT,visibility,f0.rgb);
     incident+=environment;
-    if !lobes[i].traced {
+    if !source_traced(lobe,lobes,material.coat,traced) {
      incoming+=environment;
     }
    }
@@ -148,9 +136,6 @@ fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material
 // Lit group 0's lookup tables, for the DFG table (lookup_tables.wgsl).
 @group(0) @binding(7) var source_lookup_tables:texture_2d_array<f32>;
 @group(0) @binding(17) var source_anisotropy:texture_2d<f32>;
-fn source_brdf(nv:f32,rough:f32)->vec2<f32> {
- return lookup_dfg(source_lookup_tables,env_sampler,nv,rough);
-}
 @group(0) @binding(18) var baked:texture_cube_array<f32>;
 @group(0) @binding(19) var<storage,read> collection:ProbeCollection;
 // Each tile's probe buckets (probe_culling.wgsl), from its first.
@@ -249,7 +234,7 @@ override incident_radiance_enabled:bool=true;
  let size=textureDimensions(source_depth);
  let world=source_world(z,id,size,source_camera);
  let material=gbuffer_material(textureLoad(receiver_material,p,0));
- var lobes=source_lobes(textureLoad(source_normal,p,0),material,f0,textureLoad(source_anisotropy,p,0),world,source_camera,env.traced);
+ let lobes=source_lobes(textureLoad(source_normal,p,0),material,f0,textureLoad(source_anisotropy,p,0),world,source_camera);
  let reflected=textureLoad(screen_space,p,0);
  var world_hit=vec4(0.);
  if all(id<textureDimensions(world_space)) {
@@ -257,13 +242,12 @@ override incident_radiance_enabled:bool=true;
  }
  let visibility=source_ambient_visibility(id);
  var specular=vec3(0.);
- for(var i=0u;i<2u;i++) {
-  if lobes[i].traced {
-   let environment=source_environment(world,lobes[i].ray,lobes[i].rough,material.environment_scale,source_probes(id))*source_specular_occlusion(lobes[i],i==1u,visibility,f0.rgb);
+ for(var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
+  if source_traced(lobe,lobes,material.coat,env.traced) {
+   let environment=source_environment(world,lobes[lobe].direction,lobes[lobe].roughness,material.environment_scale,source_probes(id))*source_specular_occlusion(lobes[lobe],lobe==SPECULAR_COAT,visibility,f0.rgb);
    let fallback=world_hit.rgb+environment*(1.-world_hit.a);
-   let cutoff=sqrt(env.traced);
-   let fade=1.-smoothstep(cutoff-env.fade,cutoff,lobes[i].rough);
-   specular+=(reflected.rgb*fade+fallback*(1.-reflected.a*fade))*lobes[i].weight;
+   let fade=specular_trace_fade(lobes[lobe].roughness,sqrt(env.traced),env.fade);
+   specular+=specular_traced(lobes[lobe],reflected,fade,fallback);
   }
  }
  return vec4(specular*source_fog(source_view_depth(world,source_camera),id,size,source_camera).a,0.);

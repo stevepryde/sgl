@@ -221,7 +221,6 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let emission=s.emission;
  let v=s.view;
  let nv=max(dot(n,v),0.);
- let coat_nv=max(dot(coat_n,v),0.);
  let dfg=surface_dfg(nv,rough);
  let reflectance=surface_reflectance(s,dfg);
  let f0=reflectance.f0;
@@ -259,10 +258,13 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
   }
  }
  if context.environment_specular {
-  color+=probe_environment(s.position,pbr_anisotropy_reflection(n,v,s.anisotropy,rough),rough)*s.environment_scale*ibl.single*(1.-reflectance.coat_fresnel);
-  if coat>0. {
-   let coat_ray=reflect(-v,coat_n);
-   color+=probe_environment(s.position,normalize(mix(coat_ray,coat_n,pow(coat_rough,4.))),coat_rough)*s.environment_scale*pbr_three_single_scatter(vec3(0.04),surface_dfg(coat_nv,coat_rough))*coat;
+  let lobes=specular_lobes(n,coat_n,v,f0,rough,coat,coat_rough,s.anisotropy,lookup_tables,environment_sampler);
+  for (var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
+   if lobe==SPECULAR_COAT && coat<=0. {
+    continue;
+   }
+   let environment=probe_environment(s.position,lobes[lobe].direction,lobes[lobe].roughness)*s.environment_scale;
+   color+=lobes[lobe].response*environment;
   }
  }
  color+=emission*(1.-reflectance.coat_fresnel);

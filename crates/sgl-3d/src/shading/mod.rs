@@ -323,6 +323,14 @@ pub(crate) static SCENE_RAYS_PORTABLE: Module = Module {
     source: include_str!("scene_rays_portable.wgsl"),
     deps: &[&SCENE_RAYS],
 };
+/// A surface's specular lobes, the lobe a screen-space method traces and
+/// the formula that composes its result: one owner for source completion,
+/// composition and lit shading.
+pub(crate) static SPECULAR_LOBES: Module = Module {
+    name: "specular_lobes",
+    source: include_str!("specular_lobes.wgsl"),
+    deps: &[&PBR, &ANISOTROPY, &LOOKUP_TABLES],
+};
 /// One `Surface` and its shading for every view. Reads the lit bindings.
 pub(crate) static SURFACE: Module = Module {
     name: "surface",
@@ -331,6 +339,7 @@ pub(crate) static SURFACE: Module = Module {
         &ANISOTROPY,
         &PBR,
         &DFG,
+        &SPECULAR_LOBES,
         &LIGHT_SAMPLE,
         &RECT_LIGHT,
         &ENVIRONMENT,
