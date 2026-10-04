@@ -1,10 +1,11 @@
 //! Tone mapping and presentation (`tone_map.wgsl`): the frame's exposure,
-//! Bevy's colour grading and Filament's AgX, from the antialiased HDR scene
-//! to the output. Directly, or, when diagnostics capture it, into the
-//! tone-mapped target at the output size, which is then copied to the output
-//! texel for texel.
+//! Bevy's colour grading and Filament's AgX with its look, from the
+//! antialiased HDR scene to the output, with Bevy's deband dither. Directly,
+//! or, when diagnostics capture it, into the tone-mapped target at the output
+//! size, undithered, which is then copied to the output texel for texel and
+//! dithered alike.
 use super::inputs::{self, Inputs, draw, pipeline, sampled, uniform_entry};
-use crate::frame_input::ColorGrading;
+use crate::frame_input::{AgxLook, ColorGrading};
 use crate::shading::gbuffer::COLOR as HDR;
 use crate::view::targets::target;
 use glam::{Mat3, Vec2, Vec3, vec2, vec3};
@@ -35,6 +36,9 @@ pub(crate) struct ColorGradingUniform {
     midtone_range: [f32; 2],
     hue: f32,
     post_saturation: f32,
+    /// Filament's `AgxLook` value.
+    agx_look: u32,
+    _padding5: [u32; 3],
 }
 
 /// Bevy's `RGB_TO_LMS`, `LMS_TO_RGB`, `D65_XY` and `D65_LMS`
@@ -55,7 +59,7 @@ const D65_LMS: Vec3 = vec3(0.975538, 1.01648, 1.08475);
 impl ColorGradingUniform {
     /// Bevy's `From<ColorGrading> for ColorGradingUniform`: the white
     /// balance as one matrix (sRGB to LMS, the white point scaled to D65's,
-    /// back to sRGB) and the sections' values by section.
+    /// back to sRGB) and the sections' values by section; and the AgX look.
     pub fn new(grading: &ColorGrading) -> Self {
         let global = &grading.global;
         let white_point_xy = D65_XY + vec2(-global.temperature, global.tint);
@@ -79,6 +83,12 @@ impl ColorGradingUniform {
             midtone_range: [global.midtones_start, global.midtones_end],
             hue: global.hue,
             post_saturation: global.post_saturation,
+            // Filament's `AgxLook` values.
+            agx_look: match grading.agx_look {
+                AgxLook::None => 0,
+                AgxLook::Punchy => 1,
+                AgxLook::Golden => 2,
+            },
             ..Default::default()
         }
     }
@@ -102,6 +112,7 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
             midtone_range,
             hue,
             post_saturation,
+            agx_look,
         ]
     )]
 }
@@ -259,7 +270,7 @@ impl ToneMap {
         }
     }
 
-    /// The tone-mapped target to `output`, texel for texel.
+    /// The tone-mapped target to `output`, texel for texel, dithered.
     pub(super) fn present_output(
         &self,
         device: &wgpu::Device,

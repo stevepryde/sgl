@@ -15,6 +15,67 @@ full API details.
 
 ## Unreleased
 
+### AgX looks are a colour grading choice
+
+- **Scope:** `sgl-3d` adds `AgxLook` (`None`, `Punchy`, `Golden`) and
+  `ColorGrading::agx_look`: Filament's AgX looks (ef1a133
+  `filament/src/ToneMapper.cpp` `agxLook`), a contrast and saturation
+  within AgX after its curve. Punchy has more contrast and saturation;
+  Golden a golden, slightly washed-out tint. The default, `None`, is the
+  look SGL3D rendered before.
+- **Migration:** no game-code changes where `ColorGrading` is built with
+  `ColorGrading::default()` or `..Default::default()`; a struct literal that
+  lists every field adds `agx_look: AgxLook::None`. To choose a look:
+
+  ```rust
+  input.color_grading = ColorGrading {
+      agx_look: AgxLook::Punchy,
+      ..Default::default()
+  };
+  ```
+
+### The output is dithered
+
+- **Scope:** `sgl-3d`'s tone map always dithers the output with Bevy's deband
+  dither (9d12036 `DebandDither::Enabled`, `screen_space_dither`): up to half
+  an 8-bit step per channel, in a 2.2 gamma, the same pattern every frame,
+  with no control. Smooth gradients such as sky, fog and dark falloffs no
+  longer band on 8-bit surfaces. Every frame's output changes slightly: an
+  8-bit code may differ by one from before, and RGBA16F outputs carry the
+  same noise. The diagnostics tone-mapped capture
+  (`DiagnosticTarget::ToneMapped`) stays undithered.
+- **Migration:** no game-code changes. A game that compares rendered output
+  exactly against stored images re-captures them or compares within one
+  8-bit code value. Afterwards, look at gradients in the game's dark scenes,
+  sky and fog.
+
+### Bloom's halo shape is SGL3D's
+
+- **Scope:** `sgl-3d` `BloomParameters::low_frequency_boost`,
+  `low_frequency_boost_curvature` and `high_pass_frequency` are removed
+  (S3D-6: how a feature is done is SGL3D's). SGL3D shapes the halo with
+  Bevy's `Bloom::NATURAL` values, 0.7, 0.95 and 1 (9d12036
+  `crates/bevy_post_process/src/bloom/settings.rs`), the values
+  `BloomParameters::default()` set. `intensity` stays the game's. A bloom
+  that used the defaults looks the same; one that set other values now
+  takes these.
+- **Migration:** delete the three fields from game code:
+
+  ```rust
+  // Before
+  input.bloom = BloomParameters {
+      intensity: 0.1,
+      low_frequency_boost: 0.7,
+      ..Default::default()
+  };
+  // After
+  input.bloom = BloomParameters { intensity: 0.1 };
+  ```
+
+  `..Default::default()` after `intensity` now updates nothing; Clippy's
+  `needless_update` flags it. Afterwards, check the game's bright emitters
+  and highlights.
+
 ### Scenes without decals compile the decal path out
 
 - **Scope:** `sgl-3d` decals (`Scene::add_decal`, `remove_decal`). Every lit

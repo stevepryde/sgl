@@ -1,5 +1,6 @@
 //! Post: bloom, SMAA (or its stand-in for TAA that did not run), then tone
-//! mapping with the frame's exposure and colour grading, to the output.
+//! mapping with the frame's exposure and colour grading, dithered to the
+//! output.
 //!
 //! Reads: the completed scene at the scene size, motion-blurred when motion
 //! blur ran (`stages::motion_blur`), which antialiasing completed it

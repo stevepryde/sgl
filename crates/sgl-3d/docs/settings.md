@@ -59,12 +59,12 @@ is done (its algorithm and internal parameters) is SGL3D's.
 - `exposure`: fixed stops, or automatic exposure with its brightening and
   darkening speeds, limits, compensation curve and metering mask. SGL3D
   keeps Bevy's histogram range, outlier filter and exponential blend.
-- `bloom`: intensity, low-frequency boost and its curvature, and high-pass
-  frequency.
+- `bloom`: intensity; SGL3D shapes the halo as Bevy's natural bloom.
 - `motion_blur`: the shutter angle, the share of each frame's motion that
   blurs (0.5 by default).
 - `color_grading`: white balance, hue, post-saturation, the midtone range,
-  and each section's saturation, contrast, gamma, gain and lift.
+  each section's saturation, contrast, gamma, gain and lift, and the AgX
+  look (`AgxLook::None` by default, `Punchy` or `Golden`).
 - `ambient_occlusion_radius`: occlusion reach in metres (0.5 by default),
   clamped to 0.01–10000; `Settings::ambient_occlusion` turns AO off.
 - `directional_lights`, `hemisphere_light`: the lights that are not scene

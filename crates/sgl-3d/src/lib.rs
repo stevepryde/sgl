@@ -35,9 +35,9 @@ pub use content::{
     asset, baked_specular_probe, deformation, environment, geometry, lod, static_lighting,
 };
 pub use frame_input::{
-    AutoExposure, BloomParameters, Camera, ColorGrading, ColorGradingGlobal, ColorGradingSection,
-    CompensationCurve, CompensationCurveError, Exposure, Fog, FrameInput, MeteringMask,
-    MotionBlurParameters, perspective,
+    AgxLook, AutoExposure, BloomParameters, Camera, ColorGrading, ColorGradingGlobal,
+    ColorGradingSection, CompensationCurve, CompensationCurveError, Exposure, Fog, FrameInput,
+    MeteringMask, MotionBlurParameters, perspective,
 };
 pub use glam;
 pub use renderer::{Renderer, RendererError};

@@ -1,6 +1,7 @@
 // Tone mapping: the frame's exposure, Bevy's colour grading and Filament's
-// AgX, from the antialiased HDR scene to display-referred linear colour.
-// SMAA has already run on HDR, before this nonlinear operation.
+// AgX, from the antialiased HDR scene to display-referred linear colour,
+// dithered as it is written to the output. SMAA has already run on HDR,
+// before this nonlinear operation.
 //
 // Colour grading ports Bevy 9d12036
 // crates/bevy_core_pipeline/src/tonemapping.wesl (LEVEL_MARGIN,
@@ -13,13 +14,21 @@
 // by its zero chroma.
 //
 // AgX ports Filament ef1a133 filament/src/ToneMapper.cpp (AgxToneMapper with
-// look NONE) as filament/src/details/ColorGrading.cpp applies a custom
-// ToneMapper on its non-FILMIC path: from sRGB to Rec. 2020 primaries
+// its looks, agxLook) as filament/src/details/ColorGrading.cpp applies a
+// custom ToneMapper on its non-FILMIC path: from sRGB to Rec. 2020 primaries
 // (selectColorGradingTransformIn, 743-755, with filament/src/ColorSpaceUtils.h),
 // the tone mapper, back to sRGB and saturated (hdrColorAt, 1068-1088);
 // Apache-2.0, see LICENSE-filament.txt. Modified: translated to WGSL; the colour space
 // matrices and AgXOutsetMatrix (the inverse of AgXOutsetMatrixInv) are
-// evaluated.
+// evaluated; the looks' zero CDL offset is left out.
+//
+// The deband dither ports Bevy 9d12036's DebandDither::Enabled
+// (crates/bevy_core_pipeline/src/tonemapping.wesl screen_space_dither, after
+// Vlachos 2015, "Advanced VR Rendering", slide 49, and its use in
+// tonemapping/tonemapping_frag.wesl), MIT OR Apache-2.0
+// (src/LICENSE-bevy.txt). Changes: it dithers the output, not the
+// tone-mapped target, so diagnostics capture the undithered scene and the
+// copy from it dithers as the direct path does.
 struct ColorGrading {
  balance:mat3x3<f32>,
  saturation:vec3<f32>,
@@ -30,6 +39,8 @@ struct ColorGrading {
  midtone_range:vec2<f32>,
  hue:f32,
  post_saturation:f32,
+ // AGX_LOOK_NONE, AGX_LOOK_PUNCHY or AGX_LOOK_GOLDEN.
+ agx_look:u32,
 }
 // The frame's exposure multiplier (`stages::exposure`).
 @group(1) @binding(0) var exposure:texture_2d<f32>;
@@ -135,6 +146,33 @@ fn agx_default_contrast_approx(x:vec3<f32>)->vec3<f32> {
  let x6=x4*x2;
  return -17.86*x6*x+78.01*x6-126.7*x4*x+92.06*x4-28.72*x2*x+4.361*x2-.1718*x+.002857;
 }
+// Filament's AgxLook values.
+const AGX_LOOK_NONE:u32=0u;
+const AGX_LOOK_PUNCHY:u32=1u;
+const AGX_LOOK_GOLDEN:u32=2u;
+// Filament's agxLook of the sigmoid's output: an ASC CDL slope and power,
+// then saturation about Rec. 709 luminance.
+fn agx_look(in:vec3<f32>)->vec3<f32> {
+ let look=grading.agx_look;
+ if look==AGX_LOOK_NONE {
+  return in;
+ }
+ let luma=luminance(in);
+ var slope=vec3(1.);
+ var power=vec3(1.);
+ var sat=1.;
+ if look==AGX_LOOK_GOLDEN {
+  slope=vec3(1.,.9,.5);
+  power=vec3(.8);
+  sat=1.3;
+ }
+ if look==AGX_LOOK_PUNCHY {
+  power=vec3(1.35);
+  sat=1.4;
+ }
+ let v=pow(in*slope,power);
+ return luma+sat*(v-luma);
+}
 // Filament's AgX of linear Rec. 2020 colour.
 fn agx(color:vec3<f32>)->vec3<f32> {
  var v=max(vec3(0.),color);
@@ -145,6 +183,7 @@ fn agx(color:vec3<f32>)->vec3<f32> {
  v=(v-AGX_MIN_EV)/(AGX_MAX_EV-AGX_MIN_EV);
  v=clamp(v,vec3(0.),vec3(1.));
  v=agx_default_contrast_approx(v);
+ v=agx_look(v);
  v=AGX_OUTSET_MATRIX*v;
  // Linearize.
  return pow(max(vec3(0.),v),vec3(2.2));
@@ -163,19 +202,37 @@ fn tone_map(hdr:vec3<f32>)->vec3<f32> {
  color=saturation(color,grading.post_saturation);
  return clamp(color,vec3(0.),vec3(1.));
 }
-// The tone-mapped target is already at output resolution: the copy preserves
-// each texel; the surface attachment still performs its normal sRGB encoding.
+// Bevy's screen_space_dither: up to half an 8-bit step either way per
+// channel, from the output pixel's position.
+fn screen_space_dither(frag_coord:vec2<f32>)->vec3<f32> {
+ var dither=vec3(dot(vec2(171.,231.),frag_coord));
+ dither=fract(dither/vec3(103.,71.,97.));
+ return (dither-.5)/255.;
+}
+// Display-referred `color` dithered at the output pixel `frag_coord`, as
+// Bevy's tonemapping_frag.wesl does: in a 2.2 gamma approximation of the
+// sRGB encoding the output's attachment then performs, against banding
+// where it quantizes to 8 bits.
+fn dither(color:vec3<f32>,frag_coord:vec2<f32>)->vec3<f32> {
+ return powsafe(powsafe(color,1./2.2)+screen_space_dither(frag_coord),2.2);
+}
+// The tone-mapped target is already at output resolution: the copy dithers
+// each texel as the direct path does; the surface attachment still performs
+// its normal sRGB encoding.
 @fragment fn copy_pixel(i:Output)->@location(0) vec4<f32> {
- return textureLoad(scene,vec2<i32>(i.position.xy),0);
+ let color=textureLoad(scene,vec2<i32>(i.position.xy),0);
+ return vec4(dither(color.rgb,i.position.xy),color.a);
 }
 @fragment fn present(i:Output)->@location(0) vec4<f32> {
  return vec4(tone_map(textureSample(scene,linear_sampler,i.uv).rgb),1.);
 }
 @fragment fn present_direct(i:Output)->@location(0) vec4<f32> {
- // Retain the RGBA16F tone-target rounding before surface encoding, without
- // storing and sampling an otherwise redundant full-resolution image.
+ // Round through half floats as the RGBA16F tone target holds them (within
+ // one 8-bit code of it; WGSL leaves the conversion's rounding open), before
+ // dithering and surface encoding, without an otherwise redundant
+ // full-resolution image.
  let color=tone_map(textureSample(scene,linear_sampler,i.uv).rgb);
  let rg=unpack2x16float(pack2x16float(color.rg));
  let ba=unpack2x16float(pack2x16float(vec2(color.b,1.)));
- return vec4(rg,ba);
+ return vec4(dither(vec3(rg,ba.x),i.position.xy),ba.y);
 }

@@ -155,7 +155,7 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
 ## Exposure, bloom and colour grading
 
 ```rust,ignore
-use sgl_3d::{AutoExposure, BloomParameters, ColorGrading, CompensationCurve, Exposure};
+use sgl_3d::{AgxLook, AutoExposure, BloomParameters, ColorGrading, CompensationCurve, Exposure};
 frame.exposure = Exposure {
     stops: 0., // applied before tone mapping; +1 doubles the light
     automatic: Some(AutoExposure {
@@ -166,8 +166,11 @@ frame.exposure = Exposure {
         ..Default::default() // Bevy's speeds and an even mask
     }),
 };
-frame.bloom = BloomParameters { intensity: 0.1, ..Default::default() };
-frame.color_grading = ColorGrading::default(); // Bevy's sections and white balance
+frame.bloom = BloomParameters { intensity: 0.1 };
+frame.color_grading = ColorGrading {
+    agx_look: AgxLook::Punchy, // Filament's look; None (the default) adds none
+    ..Default::default() // Bevy's sections and white balance, unchanged
+};
 ```
 
 - The frame has one exposure, which FSR2 and the tone map both read. With
@@ -188,16 +191,20 @@ frame.color_grading = ColorGrading::default(); // Bevy's sections and white bala
 - Bloom is Bevy's energy-conserving bloom: a mip chain 512 texels high,
   13-tap downsamples (the first with a Karis average against fireflies), 3×3
   tent upsamples blended level by level, and the result mixed into the scene.
-  `intensity` is how much light scatters, 0 none; the low-frequency boost
-  and high-pass shape the halo. Light only moves, so emitters bloom by being
-  bright, with no threshold. The chain is `Rg11b10Ufloat` where the device
-  renders to it (`graphics_device::features`), else RGBA16F. Timing group
-  `bloom`.
+  `intensity` is how much light scatters, 0 none; SGL3D shapes the halo with
+  Bevy's `Bloom::NATURAL` low-frequency boost and high-pass. Light only
+  moves, so emitters bloom by being bright, with no threshold. The chain is
+  `Rg11b10Ufloat` where the device renders to it
+  (`graphics_device::features`), else RGBA16F. Timing group `bloom`.
 - The tone map multiplies by the exposure, applies Bevy's `ColorGrading`
   (hue, white balance, and saturation, contrast and ASC CDL for shadows,
-  midtones and highlights), then Filament's AgX in Rec. 2020, then the
-  grading's post-saturation. The default grading changes nothing. Timing
-  group `tone map`.
+  midtones and highlights), then Filament's AgX in Rec. 2020 with the
+  grading's `agx_look` (`None`, AgX's base contrast; `Punchy`, more contrast
+  and saturation; `Golden`, a golden, slightly washed-out tint), then the
+  grading's post-saturation. The default grading changes nothing. The output
+  is dithered with Bevy's deband dither, up to half an 8-bit step per
+  channel, so smooth gradients do not band on an 8-bit surface; the
+  tone-mapped diagnostics capture is not. Timing group `tone map`.
 
 ## Motion blur
 

@@ -30,8 +30,8 @@ HUD after presentation. Resize retains pipelines, samplers and lookup textures.
 ## Settings that isolate it
 
 `Settings::antialiasing` `Off` skips all three SMAA passes. Tone mapping and any
-chosen scene upscale precede an exact texel copy to the output attachment,
-retaining its normal sRGB conversion. `Settings::bloom` `Off` skips the
+chosen scene upscale precede a texel copy to the output attachment, which
+dithers it and retains its normal sRGB conversion. `Settings::bloom` `Off` skips the
 Gaussian pyramid and bloom sampling; its targets shrink independently of the
 scene and reflection histories. `Settings::atmosphere` `false` skips the
 volumetric fog and mist.
@@ -46,9 +46,9 @@ depth-dependent fog and procedural mist.
 The following observations retain the original reports; they are not
 acceptance of the current whole-scene output.
 
-Numerical GPU checks exercise Off → On → Off at 80×64 and 37×29. Off copies
-RGBA16F exactly and matches the independent sRGB transfer within one 8-bit code
-value for RGBA and BGRA surfaces. A separate HDR impulse check verifies that
+Numerical GPU checks exercise Off → On → Off at 80×64 and 37×29. Off matches
+the independent sRGB transfer within one 8-bit code value, the output's
+dither, for RGBA16F, RGBA and BGRA outputs. A separate HDR impulse check verifies that
 Bloom Off removes previous halos and explicit On spreads positive energy into
 otherwise black neighboring pixels, across High → Low → High. These establish
 control behavior, not resolution of the reported scene artifacts.

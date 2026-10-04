@@ -134,28 +134,18 @@ impl MeteringMask {
 
 /// Bevy's energy-conserving bloom: the scene downsampled through a mip
 /// chain and upsampled back, each level blended into the next finer one,
-/// and the result blended into the scene.
+/// and the result blended into the scene. SGL3D shapes the halo as Bevy's
+/// `Bloom::NATURAL` does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BloomParameters {
     /// 0..=1: how likely light is to scatter; 0 is no bloom.
     pub intensity: f32,
-    /// 0..=1: how much more the widest scattering contributes.
-    pub low_frequency_boost: f32,
-    /// 0..=1: how far the boost reaches toward narrower scattering.
-    pub low_frequency_boost_curvature: f32,
-    /// 0..=1: the widest scattering angle, 1 being 90°.
-    pub high_pass_frequency: f32,
 }
 
 impl Default for BloomParameters {
     /// Bevy's `Bloom::NATURAL`.
     fn default() -> Self {
-        Self {
-            intensity: 0.15,
-            low_frequency_boost: 0.7,
-            low_frequency_boost_curvature: 0.95,
-            high_pass_frequency: 1.,
-        }
+        Self { intensity: 0.15 }
     }
 }
 
@@ -178,7 +168,8 @@ impl Default for MotionBlurParameters {
 }
 
 /// Bevy's colour grading, applied to the exposed scene before tone mapping,
-/// except `global.post_saturation`, after it. The default changes nothing.
+/// except `global.post_saturation`, after it, and Filament's AgX look,
+/// within the tone map. The default changes nothing.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ColorGrading {
     pub global: ColorGradingGlobal,
@@ -187,6 +178,20 @@ pub struct ColorGrading {
     pub midtones: ColorGradingSection,
     /// Applied to the lighter parts of the image.
     pub highlights: ColorGradingSection,
+    pub agx_look: AgxLook,
+}
+
+/// Filament's AgX looks (`AgxToneMapper::AgxLook`): a creative contrast and
+/// saturation within AgX, after its curve.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AgxLook {
+    /// AgX's base contrast, with no look.
+    #[default]
+    None,
+    /// More contrast and saturation, for sRGB displays.
+    Punchy,
+    /// A golden tint, slightly washed out, for BT.1886 displays.
+    Golden,
 }
 
 /// Grading of the whole image.
