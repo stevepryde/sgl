@@ -9,6 +9,12 @@ pub fn source_id(instance: InstanceId) -> u32 {
     instance.index() as u32 + 1
 }
 
+/// The perceptual roughness at and above which `ReflectionMethod::Crystal`
+/// traces no ray; its reflections fade out over the 0.05 below it.
+pub fn crystal_roughness_threshold() -> f32 {
+    crate::view::post_fx::ssr_attribs().roughness_threshold
+}
+
 /// An intermediate target of the last rendered frame
 /// (`Renderer::diagnostic_target`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

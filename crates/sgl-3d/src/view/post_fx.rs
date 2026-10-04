@@ -9,7 +9,6 @@
 //! runs `PostFXContext::Execute` once for every effect; SSR and TAA then read
 //! that context.
 use super::targets::SharedTargets;
-use crate::frame_input::CrystalParameters;
 use crate::shading;
 use glam::{Mat4, Vec4};
 use sgl_post_fx::post_fx_context::{self, FrameDesc, PostFXContext};
@@ -77,10 +76,14 @@ const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MATERIAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
-/// DiligentFX's `ScreenSpaceReflectionAttribs` defaults, `RoughnessThreshold`
-/// 0.2 included as in AMD's SSSR sample, with the traversal budget of
-/// Diligent's own renderer, Hydrogent (`HnPostProcessTaskParams`:
-/// `MaxTraversalIntersections` 64).
+/// Crystal's DiligentFX attributes, the same at every
+/// `Settings::screen_space_reflections` level: DiligentFX's
+/// `ScreenSpaceReflectionAttribs` defaults, `RoughnessThreshold` 0.2
+/// included as in AMD's SSSR sample, with the traversal budget of Diligent's
+/// own renderer, Hydrogent (`HnPostProcessTaskParams`:
+/// `MaxTraversalIntersections` 64), and the material input `begin` writes:
+/// perceptual roughness in channel 0, as Hydrogent supplies it.
+/// `ScreenSpaceReflection` sets `AlphaInterpolation` itself.
 ///
 /// Each ray follows its lobe's peak, the mirror direction
 /// (`GGXImportanceSampleBias` 1, DFX-20), as Godot's SSR traces: one GGX
@@ -90,59 +93,13 @@ const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// temporal pass keeps 0.95 of its clamped history, as Wicked Engine's
 /// `ssr_temporalCS` (the pass it derives from) does; at DiligentFX's 1.0 the
 /// current frame never enters and stale history smears as the camera moves.
-impl Default for CrystalParameters {
-    fn default() -> Self {
-        let ScreenSpaceReflectionAttribs {
-            depth_buffer_thickness,
-            roughness_threshold,
-            most_detailed_mip,
-            spatial_reconstruction_radius,
-            temporal_variance_stability_factor,
-            bilateral_cleanup_spatial_sigma_factor,
-            ..
-        } = Default::default();
-        Self {
-            depth_buffer_thickness,
-            roughness_threshold,
-            most_detailed_mip,
-            max_traversal_intersections: 64,
-            ggx_importance_sample_bias: 1.,
-            spatial_reconstruction_radius,
-            temporal_radiance_stability_factor: 0.95,
-            temporal_variance_stability_factor,
-            bilateral_cleanup_spatial_sigma_factor,
-        }
-    }
-}
-
-/// Crystal's parameters as DiligentFX's attributes, with the material input
-/// `begin` writes: perceptual roughness in channel 0, as Hydrogent supplies
-/// it (`HnPostProcessTaskParams`). `ScreenSpaceReflection` sets
-/// `AlphaInterpolation` itself.
-fn ssr_attribs(parameters: &CrystalParameters) -> ScreenSpaceReflectionAttribs {
-    let CrystalParameters {
-        depth_buffer_thickness,
-        roughness_threshold,
-        most_detailed_mip,
-        max_traversal_intersections,
-        ggx_importance_sample_bias,
-        spatial_reconstruction_radius,
-        temporal_radiance_stability_factor,
-        temporal_variance_stability_factor,
-        bilateral_cleanup_spatial_sigma_factor,
-    } = *parameters;
+pub(crate) fn ssr_attribs() -> ScreenSpaceReflectionAttribs {
     ScreenSpaceReflectionAttribs {
-        depth_buffer_thickness,
-        roughness_threshold,
-        most_detailed_mip,
         is_roughness_perceptual: 1,
         roughness_channel: 0,
-        max_traversal_intersections,
-        ggx_importance_sample_bias,
-        spatial_reconstruction_radius,
-        temporal_radiance_stability_factor,
-        temporal_variance_stability_factor,
-        bilateral_cleanup_spatial_sigma_factor,
+        max_traversal_intersections: 64,
+        ggx_importance_sample_bias: 1.,
+        temporal_radiance_stability_factor: 0.95,
         ..Default::default()
     }
 }
@@ -541,7 +498,6 @@ impl PostFx {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        parameters: &CrystalParameters,
         frame_time: f32,
         half_resolution: bool,
         radiance: &wgpu::TextureView,
@@ -570,7 +526,7 @@ impl PostFx {
             normal_buffer_srv: &inputs.normal,
             material_buffer_srv: &inputs.material,
             motion_vectors_srv: &inputs.motion,
-            ssr_attribs: &ssr_attribs(parameters),
+            ssr_attribs: &ssr_attribs(),
             pass_timestamps: Some(&timestamps),
             reset_accumulation: self.reset_accumulation,
             frame_time,

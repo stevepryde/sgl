@@ -737,12 +737,10 @@ fn reflections_are_continuous_across_the_roughness_cutoff() {
         frames.render(FRAMES, true);
         Some(frames.luminance_at(&frames.composite(), PANEL_MIRROR))
     };
-    let Some(cutoff) = Frames::new(world(smooth_metal(), 0.), environment(0.), true, SIZE)
-        .map(|frames| frames.input.crystal.roughness_threshold)
-    else {
+    let cutoff = sgl_3d::diagnostics::crystal_roughness_threshold();
+    let Some(traced) = at(cutoff - 0.06) else {
         return;
     };
-    let traced = at(cutoff - 0.06).unwrap();
     assert!(
         traced > 2.,
         "a floor well below the cutoff reflects the panel: luminance {traced}"

@@ -11,7 +11,7 @@ use crate::settings::ReflectionMethod;
 use crate::view::bindings::FogVolume;
 use crate::view::effective::ScreenSpace;
 use crate::view::frame::FrameContext;
-use crate::view::post_fx::PostFx;
+use crate::view::post_fx::{self, PostFx};
 use crate::view::targets::SharedTargets;
 
 /// Wicked Engine's SSR temporal reprojection, which Velvet and world-space
@@ -188,7 +188,6 @@ impl Reflections {
                     ctx.device,
                     ctx.queue,
                     ctx.encoder,
-                    &ctx.input.crystal,
                     ctx.input.frame_time_ms / 1000.,
                     half_resolution,
                     &self.source.incident,
@@ -277,7 +276,7 @@ fn traced(ctx: &FrameContext<'_>) -> (f32, f32) {
     let (cutoff, fade) = match ctx.effective.screen_space.map(|ssr| ssr.method) {
         None => (0., 0.),
         // As Bevy's SSR fades.
-        Some(ReflectionMethod::Crystal) => (ctx.input.crystal.roughness_threshold, 0.05),
+        Some(ReflectionMethod::Crystal) => (post_fx::ssr_attribs().roughness_threshold, 0.05),
         Some(ReflectionMethod::Velvet) => (velvet::ROUGHNESS_CUTOFF, velvet::ROUGHNESS_FADE),
     };
     (cutoff * cutoff, fade)
