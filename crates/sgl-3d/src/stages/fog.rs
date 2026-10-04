@@ -5,7 +5,8 @@
 //! directional lights through their cascades, the camera's clustered point,
 //! spot and rectangle lights through their local-light shadows, and the
 //! ambient light, blends it with where the froxel was in the last frame's
-//! volume, then integrates each column front to back into the light
+//! volume, filters each slice across x and then y with Godot's Gaussian,
+//! then integrates each column front to back into the light
 //! scattered toward the camera and the transmittance to every slice. Every draw that fogs samples that volume where its point
 //! lies (`shading/fog.wgsl`), so opaque surfaces, blended surfaces, effects
 //! and the sky take one fog.
@@ -23,8 +24,8 @@
 //! draws and source completion samples.
 //! Honours: the effective fog (`Settings::atmosphere`, `Settings::fog_quality`
 //! and `FrameInput::atmosphere`); without it, it does not run and nothing
-//! fogs.
-//! Timing groups: `fog injection`, `fog integration`.
+//! fogs. The filter runs with `Settings::fog_filter`.
+//! Timing groups: `fog injection`, `fog filter`, `fog integration`.
 use crate::settings::FogQuality;
 use crate::view::bindings::FogVolume;
 use crate::view::frame::FrameContext;
@@ -49,6 +50,8 @@ pub(crate) static VOLUMETRIC_FOG: crate::shading::Module = crate::shading::Modul
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The injection's workgroup side, in froxels along each axis.
 const INJECT_GROUP: u32 = 4;
+/// The filter's workgroup side, in froxels along x and y of one slice.
+const FILTER_GROUP: u32 = 8;
 /// The integration's workgroup side, in columns along x and y.
 const INTEGRATE_GROUP: u32 = 8;
 /// Godot's `VolumetricFog::MAX_TEMPORAL_FRAMES`: the frames its froxel jitter
@@ -131,6 +134,9 @@ struct Volumes {
     scattering: [wgpu::TextureView; 2],
     /// The history frame count each of `scattering` holds.
     holds: [Option<u32>; 2],
+    /// Which of `scattering` the last integration read: the one its frame
+    /// wrote, or with the filter the other, which holds them filtered.
+    integrated_from: usize,
     /// Each column's integration.
     integrated: wgpu::TextureView,
     /// Injection into `scattering[i]` from the other, with the scene's fog
@@ -138,12 +144,19 @@ struct Volumes {
     inject: Option<(wgpu::Buffer, [wgpu::BindGroup; 2])>,
     /// Integration of `scattering[i]`.
     integrate: [wgpu::BindGroup; 2],
+    /// The filter of `scattering[i]`: along x into `integrated`, then along
+    /// y into the other of `scattering`, which the injection has reprojected,
+    /// so the history it leaves is unfiltered.
+    filter: [[wgpu::BindGroup; 2]; 2],
 }
 
 pub(crate) struct VolumetricFog {
     inject: wgpu::ComputePipeline,
+    /// Along x, then y.
+    filter: [wgpu::ComputePipeline; 2],
     integrate: wgpu::ComputePipeline,
     inject_layout: wgpu::BindGroupLayout,
+    filter_layout: wgpu::BindGroupLayout,
     integrate_layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
     /// Linear and clamped: reprojection's and every draw's.
@@ -213,11 +226,18 @@ impl VolumetricFog {
                 },
             ],
         });
+        let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("volumetric fog filter"),
+            entries: &[uniform, texture(7, false), storage(8)],
+        });
         let integrate_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("volumetric fog integration"),
             entries: &[uniform, texture(4, false), storage(5)],
         });
-        let pipeline = |label, layouts: &[Option<&wgpu::BindGroupLayout>], entry| {
+        let pipeline = |label,
+                        layouts: &[Option<&wgpu::BindGroupLayout>],
+                        entry,
+                        constants: &[(&str, f64)]| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
                 bind_group_layouts: layouts,
@@ -228,7 +248,10 @@ impl VolumetricFog {
                 layout: Some(&layout),
                 module: &shader,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
                 cache: None,
             })
         };
@@ -236,11 +259,21 @@ impl VolumetricFog {
             "volumetric fog injection",
             &[Some(lit), Some(&inject_layout)],
             "inject",
+            &[],
         );
+        let filter = [0., 1.].map(|axis| {
+            pipeline(
+                "volumetric fog filter",
+                &[None, Some(&filter_layout)],
+                "filter_froxels",
+                &[("filter_axis", axis)],
+            )
+        });
         let integrate = pipeline(
             "volumetric fog integration",
             &[None, Some(&integrate_layout)],
             "integrate",
+            &[],
         );
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("volumetric fog froxels"),
@@ -254,11 +287,13 @@ impl VolumetricFog {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let volumes = Self::volumes(device, &integrate_layout, &uniform, [1; 3]);
+        let volumes = Self::volumes(device, &filter_layout, &integrate_layout, &uniform, [1; 3]);
         Self {
             inject,
+            filter,
             integrate,
             inject_layout,
+            filter_layout,
             integrate_layout,
             uniform,
             sampler,
@@ -268,6 +303,7 @@ impl VolumetricFog {
 
     fn volumes(
         device: &wgpu::Device,
+        filter_layout: &wgpu::BindGroupLayout,
         integrate_layout: &wgpu::BindGroupLayout,
         uniform: &wgpu::Buffer,
         size: [u32; 3],
@@ -315,13 +351,41 @@ impl VolumetricFog {
                 ],
             })
         });
+        let filter_pass = |source, dest| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("volumetric fog filter"),
+                layout: filter_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: view(source),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: view(dest),
+                    },
+                ],
+            })
+        };
+        let filter = [0, 1].map(|index| {
+            [
+                filter_pass(&scattering[index], &integrated),
+                filter_pass(&integrated, &scattering[1 - index]),
+            ]
+        });
         Volumes {
             size,
             scattering,
             holds: [None; 2],
+            integrated_from: 0,
             integrated,
             inject: None,
             integrate,
+            filter,
         }
     }
 
@@ -339,7 +403,13 @@ impl VolumetricFog {
         };
         let size = froxels(quality, render);
         if self.volumes.size != size {
-            self.volumes = Self::volumes(device, &self.integrate_layout, &self.uniform, size);
+            self.volumes = Self::volumes(
+                device,
+                &self.filter_layout,
+                &self.integrate_layout,
+                &self.uniform,
+                size,
+            );
         }
     }
 
@@ -351,12 +421,18 @@ impl VolumetricFog {
         }
     }
 
-    /// The froxels the last frame wrote and the integrated volume.
+    /// The froxels the last frame wrote, which its successor reprojects,
+    /// the froxels its integration read and the integrated volume.
     #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub fn test_volumes(&self) -> [&wgpu::TextureView; 2] {
-        let holds = self.volumes.holds;
+    pub fn test_volumes(&self) -> [&wgpu::TextureView; 3] {
+        let volumes = &self.volumes;
+        let holds = volumes.holds;
         let last = usize::from(holds[1] > holds[0]);
-        [&self.volumes.scattering[last], &self.volumes.integrated]
+        [
+            &volumes.scattering[last],
+            &volumes.scattering[volumes.integrated_from],
+            &volumes.integrated,
+        ]
     }
 
     /// Lights and integrates the frame's volume while the frame has fog.
@@ -464,6 +540,25 @@ impl VolumetricFog {
             z.div_ceil(INJECT_GROUP),
         );
         drop(pass);
+        // Godot's filter, after the history is kept and before integration
+        // (fog.cpp volumetric_fog_update).
+        volumes.integrated_from = index;
+        if ctx.effective.fog_filter {
+            let mut pass = ctx
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("volumetric fog filter"),
+                    timestamp_writes: ctx.timing.and_then(|t| t.compute_pass("fog filter")),
+                });
+            for (pipeline, group) in self.filter.iter().zip(&volumes.filter[index]) {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(1, group, &[]);
+                pass.dispatch_workgroups(x.div_ceil(FILTER_GROUP), y.div_ceil(FILTER_GROUP), z);
+            }
+            // The other volume now holds this frame's filtered froxels.
+            volumes.integrated_from = 1 - index;
+            volumes.holds[1 - index] = None;
+        }
         let mut pass = ctx
             .encoder
             .begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -471,7 +566,7 @@ impl VolumetricFog {
                 timestamp_writes: ctx.timing.and_then(|t| t.compute_pass("fog integration")),
             });
         pass.set_pipeline(&self.integrate);
-        pass.set_bind_group(1, &volumes.integrate[index], &[]);
+        pass.set_bind_group(1, &volumes.integrate[volumes.integrated_from], &[]);
         pass.dispatch_workgroups(x.div_ceil(INTEGRATE_GROUP), y.div_ceil(INTEGRATE_GROUP), 1);
     }
 }

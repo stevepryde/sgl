@@ -57,6 +57,8 @@ pub(crate) struct Effective {
     /// its volume: the frame's atmosphere, with a medium (a density or fog
     /// volumes) the volume can hold, seen by a `perspective` camera.
     pub fog: Option<FogQuality>,
+    /// The fog filters its froxels before it integrates them, while it runs.
+    pub fog_filter: bool,
     pub bloom: bool,
     /// The share of each pixel's motion that motion blur spreads it over:
     /// the authored shutter scaled by the setting, while positive.
