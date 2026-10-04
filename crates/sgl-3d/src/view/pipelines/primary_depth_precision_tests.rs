@@ -1,4 +1,5 @@
-//! Retained native triangles: independent f64 ray oracle places deck before trim.
+//! Retained native triangles: independent f64 ray oracle places the nearer
+//! triangle before the one behind it.
 //! Catches vertex-transform depth swaps and Equal-pass material overwrites.
 use super::{GeometryPass, depth};
 use glam::Mat4;

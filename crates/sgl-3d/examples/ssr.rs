@@ -1,6 +1,6 @@
-//! DiligentFX SSR in SGL3D: a static night road with a rough, wet-asphalt
-//! surface (perceptual roughness 0.35), thin bright emitter bars at distance
-//! and a camera translating at racing speed (1 m per frame, 216 km/h at 60 Hz).
+//! DiligentFX SSR in SGL3D: a static, dimly lit ground strip with a rough
+//! reflective surface (perceptual roughness 0.35), thin bright emitter bars at
+//! distance and a fast-translating camera (1 m per frame, 60 m/s at 60 Hz).
 //!
 //! `cargo run --release -p sgl-3d --example ssr [-- --frames N]`
 //!
@@ -13,8 +13,8 @@
 //!   after DiligentFX's debug groups) and the frame total, means over the
 //!   measured frames with up to two frames in flight; the SSR frame cost is
 //!   the difference of the two frame totals.
-//! - Brightness jumps: for each frame, the mean over the road band (rows
-//!   62–80 % of the height, columns 30–70 % of the width: the road ahead of
+//! - Brightness jumps: for each frame, the mean over the ground band (rows
+//!   62–80 % of the height, columns 30–70 % of the width: the strip ahead of
 //!   the camera, below the horizon) of the display luminance
 //!   0.2126 R + 0.7152 G + 0.0722 B of the tone-mapped 8-bit output (0–255);
 //!   then the mean, 95th percentile and maximum over consecutive frames of
@@ -99,8 +99,9 @@ fn cuboid(center: Vec3, size: Vec3, material: usize) -> CpuMesh {
     mesh
 }
 
-/// A 16 m wide road 1 km long; warm and cool bars on posts every 25 m on
-/// both sides and an overhead gantry bar every 100 m.
+/// A reflective strip 16 m wide and 1 km long between rougher side planes;
+/// warm and cool bars on posts every 25 m on both sides and an overhead bar
+/// every 100 m.
 fn world() -> Asset {
     let mut meshes = vec![
         cuboid(Vec3::new(0., -0.05, -490.), Vec3::new(16., 0.1, 1000.), 0),
@@ -133,7 +134,7 @@ fn world() -> Asset {
     }
 }
 
-/// A uniform night sky of radiance 1/32.
+/// A uniform dim sky of radiance 1/32.
 fn environment() -> EnvironmentMap {
     EnvironmentMap {
         panorama: image::RgbaImage::from_pixel(4, 2, image::Rgba([8, 8, 12, 255])),
@@ -181,7 +182,7 @@ fn read_pixels(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Textu
         .collect()
 }
 
-fn road_band_luminance(pixels: &[u8]) -> f64 {
+fn ground_band_luminance(pixels: &[u8]) -> f64 {
     let [width, height] = SIZE.map(|x| x as usize);
     let (rows, columns) = (
         height * 62 / 100..height * 80 / 100,
@@ -241,12 +242,12 @@ fn run(
         ..Default::default()
     }))?;
     let mut scene = Scene::new(&device, &queue);
-    let road = scene.add_asset(&device, &queue, world())?.model;
+    let ground = scene.add_asset(&device, &queue, world())?.model;
     scene.add_instance(
         &device,
         &queue,
         InstanceState {
-            model: road,
+            model: ground,
             pose: Mat4::IDENTITY,
             visible: true,
             capture_visible: true,
@@ -333,7 +334,7 @@ fn run(
             Mode::Timing => {}
             Mode::Images => {
                 let pixels = read_pixels(&device, &queue, &output);
-                result.band.push(road_band_luminance(&pixels));
+                result.band.push(ground_band_luminance(&pixels));
                 if ssr.is_some() {
                     image::save_buffer(
                         directory.join(format!("frame-{index:03}.png")),
@@ -417,7 +418,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         println!("No GPU timestamps on this device");
     }
-    println!("\nRoad-band brightness jumps (8-bit display units):");
+    println!("\nGround-band brightness jumps (8-bit display units):");
     report_jumps(
         "Environment and probe specular only",
         &run(frames, None, Mode::Images, &directory)?,
