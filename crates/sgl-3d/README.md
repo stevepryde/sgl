@@ -289,8 +289,7 @@ The `offscreen` example's `--fog` shows the frame's medium and a fog volume.
 
 Light shafts are the medium's shadowed scattering: where an opening lets a
 light's shadow map through, the medium lights, and forward scattering
-(`anisotropy` above 0) brightens it toward the light. Fog needs
-`perspective`'s projection; with another camera nothing fogs. A frame
+(`anisotropy` above 0) brightens it toward the light. A frame
 without a medium (no density and no fog volumes) runs no fog and pays
 nothing for it.
 `Settings::fog_quality` picks the volume's resolution: 64 slices, and Low
@@ -304,10 +303,45 @@ after testing those of every volume in view. A volume behind the camera,
 beyond `length`, or wholly in front of the camera and beside the frame costs
 nothing on the GPU. A volume that holds or crosses the camera's plane is
 evaluated in every froxel of the frame up to its far end, so split a long
-one, such as a tunnel's, into segments. There is no emission, density
-texture or volume shape other than a box. A moving light's scattering trails
+one, such as a tunnel's, into segments. A moving light's scattering trails
 it by the history it keeps. Froxels are coarse: detail in the fog blurs
 along the view, the more the farther.
+
+Where it differs from Godot's fog, and why:
+
+- The frame's medium takes a fog material's height falloff
+  (`height_falloff`), so height fog needs no volume.
+- Every medium scatters `albedo` × density in full precision. Godot packs
+  its fog volumes into fixed-point atomics, which WebGPU has only in
+  buffers: they drop a volume at or below density 0.001, step its density by
+  1/1024 and stop its scattering growing past density 1, so a dense volume
+  here scatters more light than Godot's.
+- A fog volume is a box with a density, albedo and edge fade; its box's last
+  0.1 m fades under `edge_fade` too, so a volume with none still ends at its
+  box. Emission, a volume's height falloff, density textures, negative
+  density and other shapes are not ported, and there is no GI injection,
+  which in Godot needs VoxelGI or SDFGI.
+- The lights are SGL3D's, in its units and falloff, and none has Godot's
+  `shadow_opacity`. The directional shadow has no fade toward the shadow
+  distance: beyond it the fog is unshadowed, as surfaces are. A local
+  light's shadow is one 2×2 comparison tap without Godot's fade behind the
+  occluder, not ported: the atlas's perspective depth would need
+  linearizing for it. A rectangle scatters by its face's solid angle, which
+  stays bounded near it, so it takes no distance clamp against flicker as
+  Godot's area lights do.
+- `ambient` scatters the mean of the hemisphere fill and environment
+  diffuse over the sphere, which an isotropic medium scatters, where Godot
+  samples its sky upward and along the view. It defaults to 1 where Godot's
+  `ambient_inject` defaults to 0, pending
+  [#69](https://github.com/stevepryde/sgl/issues/69).
+- A froxel without history (the first fog frame, a new volume size or the
+  camera's reset) keeps none, where Godot's fog fades in from a cleared
+  volume and blends across cuts.
+- The integration steps along each view ray, where Godot's steps view depth
+  and so thins its fog toward the frame's edges.
+- The sky takes the whole fog: there is no sky affect yet. Fog needs
+  `perspective`'s projection, whose froxels it places; with another camera
+  nothing fogs, where Godot's also fogs an orthographic view.
 
 ## Point, spot and rectangle lights
 
