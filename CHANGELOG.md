@@ -15,6 +15,21 @@ full API details.
 
 ## Unreleased
 
+### Reflection history follows Wicked Engine's vicinity search
+
+- **Scope:** `sgl-3d` temporal reprojection for reflections, which world-space
+  rays (`Settings::world_space_reflections`) and `ReflectionMethod::Velvet`
+  accumulate through. When the reprojected history's depth does not match the
+  receiver, the 3x3 search for the closest history depth now moves its centre
+  to each better candidate, as Wicked Engine's `ssr_temporalCS.hlsl` does,
+  instead of offsetting every candidate from the reprojected point. Near depth
+  edges, history can now be taken from more than one texel away, so
+  accumulated reflections there change.
+- **Migration:** no game-code changes.
+- **Validate:** with world-space rays and with Velvet, move the camera so
+  foreground objects pass over reflective floors or water, and look at the
+  reflections along those objects' silhouettes.
+
 ### Distribution notices name path packages without versions
 
 - **Scope:** `scripts/distribution-notices.ts`. Path packages (a workspace's

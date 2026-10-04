@@ -55,19 +55,22 @@ fn temporal_previous_color(view:TemporalView,previous_uv:vec2<f32>,depth:f32)->T
  if disocclusion>DISOCCLUSION_THRESHOLD {
   return TemporalHistory(color,disocclusion,uv);
  }
- // Find the closest sample in the vicinity if a disocclusion is not certain.
- let texel=view.size.zw;
- for(var y=-1;y<=1;y++) {
-  for(var x=-1;x<=1;x++) {
-   let candidate=previous_uv+vec2<f32>(vec2(x,y))*texel;
-   let weight=temporal_disocclusion(view,depth,temporal_history_depth(view,candidate));
-   if weight>disocclusion {
-    disocclusion=weight;
-    uv=candidate;
+ // Find the closest sample in the vicinity if a disocclusion is not certain,
+ // offsetting each candidate from the best one so far.
+ if disocclusion<DISOCCLUSION_THRESHOLD {
+  let texel=view.size.zw;
+  for(var y=-1;y<=1;y++) {
+   for(var x=-1;x<=1;x++) {
+    let candidate=uv+vec2<f32>(vec2(x,y))*texel;
+    let weight=temporal_disocclusion(view,depth,temporal_history_depth(view,candidate));
+    if weight>disocclusion {
+     disocclusion=weight;
+     uv=candidate;
+    }
    }
   }
+  color=textureSampleLevel(temporal_history,linear_sampler,uv,0.);
  }
- color=textureSampleLevel(temporal_history,linear_sampler,uv,0.);
  // Bilinear interpolation on fallback, near edges.
  if disocclusion<DISOCCLUSION_THRESHOLD {
   let f=fract(uv*view.size.xy+vec2(.5));
