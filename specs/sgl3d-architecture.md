@@ -1,11 +1,10 @@
 # SGL3D architecture
 
-Owner decision, 2026-09-30 ([D-18](decisions.md)): SGL3D has one explicit
-internal design, the existing code is restructured to it before further
-features (roadmap 23), and every change is held to the [rules](#rules) below.
-[SGL3D](sgl3d.md) owns the consumer contract, rendering rules and roadmap; this
-spec owns the shape of the code. It describes the target, and new code
-follows it.
+SGL3D follows the internal design established on 2026-09-30
+([D-18](decisions.md), roadmap 23). The structural migration is implemented;
+every change is held to the [rules](#rules) below.
+[SGL3D](sgl3d.md) owns the consumer contract, rendering rules and roadmap;
+this spec owns the shape of the code.
 
 ## Shape
 

@@ -1,0 +1,87 @@
+[
+  {
+    "component": "AMD FidelityFX",
+    "path": "crates/sgl-3d/src/LICENSE-amd-fidelityfx.txt",
+    "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/c6efa6bf7f2027b3ec94f28578bb5965eabb9e55/LICENSE.txt",
+    "prefix": "AMD FidelityFX SDK, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK\nRevision c6efa6bf7f2027b3ec94f28578bb5965eabb9e55 (SDK 1.1.4), LICENSE.txt. SGL3D\nadapts the FSR sample's reactive and transparency-and-composition mask\ntargets and exports (samples/fsrapi/fsrapirendermodule.cpp and\nframework/rendermodules/translucency/shaders/) in view/targets.rs,\nstages/antialiasing/fsr2.rs, stages/transparent/glow.wgsl and\nstages/transparent/atmosphere.wgsl.\n\n"
+  },
+  {
+    "component": "Bevy",
+    "path": "crates/sgl-3d/src/LICENSE-bevy.txt",
+    "url": "https://raw.githubusercontent.com/bevyengine/bevy/b56fc29d3016e641754765244b5ba3f9cc504671/LICENSE-MIT",
+    "prefix": "Bevy Engine, https://github.com/bevyengine/bevy\nRevision b56fc29d3016e641754765244b5ba3f9cc504671, LICENSE-MIT (Bevy is dual\nlicensed MIT OR Apache-2.0; SGL3D uses it under the MIT terms below).\n\n"
+  },
+  {
+    "component": "Bevy",
+    "path": "crates/sgl-post-fx/LICENSE-bevy.txt",
+    "url": "https://raw.githubusercontent.com/bevyengine/bevy/92a29e701a6b0bf8846484c3999c2ba97d90dd06/LICENSE-MIT",
+    "prefix": "Bevy Engine, https://github.com/bevyengine/bevy\nRevision 92a29e701a6b0bf8846484c3999c2ba97d90dd06, LICENSE-MIT (Bevy is dual\nlicensed MIT OR Apache-2.0; sgl-post-fx uses it under the MIT terms below).\n\n"
+  },
+  {
+    "component": "Filament",
+    "path": "crates/sgl-3d/src/LICENSE-filament.txt",
+    "url": "https://raw.githubusercontent.com/google/filament/ef1a133d6777299ad971a0f9612adf4aad281f46/LICENSE",
+    "prefix": "Filament, https://github.com/google/filament\nRevision ef1a133d6777299ad971a0f9612adf4aad281f46, LICENSE (Apache-2.0). SGL3D ports normalFiltering\n(shaders/src/surface_shading_lit.fs) and its material defaults into pbr.wgsl, and\nSpecularAO_Lagarde and gtaoMultiBounce (shaders/src/surface_ambient_occlusion.fs)\nwith their desktop defaults into source_surface.wgsl, and AgxToneMapper\n(filament/src/ToneMapper.cpp) with the sRGB and Rec. 2020 conversions\n(filament/src/ColorSpaceUtils.h) into tone_map.wgsl.\n\n"
+  },
+  {
+    "component": "Godot",
+    "path": "crates/sgl-3d/src/LICENSE-godot.txt",
+    "url": "https://raw.githubusercontent.com/godotengine/godot/ed1daf0bf001b61586d9930840f2f1394092c079/LICENSE.txt",
+    "prefix": "Godot Engine, https://github.com/godotengine/godot\nRevision ed1daf0bf001b61586d9930840f2f1394092c079 (4.7.2-stable), LICENSE.txt.\n\n"
+  },
+  {
+    "component": "Godot",
+    "path": "crates/sgl-post-fx/LICENSE-godot.txt",
+    "url": "https://raw.githubusercontent.com/godotengine/godot/d851ae838de54a0bd3dde9043912f39c74265cdd/LICENSE.txt",
+    "prefix": "Godot Engine, https://github.com/godotengine/godot\nRevision d851ae838de54a0bd3dde9043912f39c74265cdd, LICENSE.txt. The DiligentFX\nport adds the depth-tolerance pass-through of\nservers/rendering/renderer_rd/shaders/effects/screen_space_reflection.glsl to\nSSR_ComputeIntersection.wgsl (PROVENANCE.md DFX-18).\n\n"
+  },
+  {
+    "component": "Intel XeGTAO",
+    "path": "crates/sgl-3d/src/stages/opaque/ambient_occlusion/reference/LICENSE",
+    "url": "https://raw.githubusercontent.com/GameTechDev/XeGTAO/a5b1686c7ea37788eeb3576b5be47f7c03db532c/LICENSE"
+  },
+  {
+    "component": "Linearly Transformed Cosines (code and lookup table)",
+    "path": "crates/sgl-3d/src/LICENSE-ltc-code.txt",
+    "url": "https://raw.githubusercontent.com/selfshadow/ltc_code/31e5e96b54f98f33098f8503003119ba2231a1c6/LICENSE",
+    "prefix": "Linearly transformed cosines fit for GGX, https://github.com/selfshadow/ltc_code\nRevision 31e5e96b54f98f33098f8503003119ba2231a1c6, LICENSE. The table SGL3D\nembeds (src/scene/ltc_ggx.rgba16) is this fit as Bevy 9d12036 ships it\n(crates/bevy_pbr/src/ltc/ltc.ktx2).\n\n"
+  },
+  {
+    "component": "SMAA (code and lookup textures)",
+    "path": "crates/sgl-3d/src/stages/post/smaa/LICENSE-smaa.txt",
+    "url": "https://raw.githubusercontent.com/iryoku/smaa/27fad0bf7313765b0472bef46b280734e558a26b/LICENSE.txt",
+    "note": "SMAA licence revision matching the notice accompanying the port; v2.8 in the README identifies the algorithm, not this later permissive licence."
+  },
+  {
+    "component": "Three.js (SMAA and mist noise)",
+    "path": "crates/sgl-3d/src/stages/post/smaa/LICENSE-three.txt",
+    "url": "https://raw.githubusercontent.com/mrdoob/three.js/2431a09f46f34c560bc8e44b33be0e567723d5b9/LICENSE"
+  },
+  {
+    "component": "Wicked Engine",
+    "path": "crates/sgl-3d/src/LICENSE-wicked.txt",
+    "url": "https://raw.githubusercontent.com/turanszkij/WickedEngine/4323a33c94d021d45404adaf863e9b01673ab365/LICENSE.txt",
+    "prefix": "Wicked Engine, https://github.com/turanszkij/WickedEngine\nRevision 4323a33c94d021d45404adaf863e9b01673ab365, LICENSE.txt. SGL3D ports the\nprobe culling of WickedEngine/shaders/lightCullingCS.hlsl in probe_culling.wgsl,\nand from revision 2ff1d9e7b36091d6edf9f823af77e6bc9af20e3b the RT reflection\ntrace and denoiser (rtreflectionCS.hlsl, ssr_resolveCS.hlsl, ssr_temporalCS.hlsl,\nssr_upsampleCS.hlsl, stochasticSSRHF.hlsli and brdf.hlsli in\nWickedEngine/shaders/) in world_reflections*.wgsl and temporal_reprojection.wgsl,\nthrough which Godot's screen-space reflections (godot_reflections_temporal.wgsl)\nalso accumulate.\n\n"
+  },
+  {
+    "component": "DiligentFX/DiligentCore — Copyright Diligent Graphics LLC",
+    "path": "crates/sgl-post-fx/LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/DiligentGraphics/DiligentFX/f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b/License.txt"
+  },
+  {
+    "component": "DiligentFX/DiligentCore — Copyright Diligent Graphics LLC",
+    "path": "crates/sgl-post-fx/vendor/DiligentFX/License.txt",
+    "url": "https://raw.githubusercontent.com/DiligentGraphics/DiligentFX/f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b/License.txt"
+  },
+  {
+    "component": "DiligentFX/DiligentCore — Copyright Diligent Graphics LLC",
+    "path": "crates/sgl-post-fx/vendor/DiligentCore/License.txt",
+    "url": "https://raw.githubusercontent.com/DiligentGraphics/DiligentCore/18bfa7b7563a0ef5b5fe074d37c2e8304100e965/License.txt"
+  },
+  {
+    "component": "IBM Plex Sans (test font)",
+    "path": "crates/sgl-2d/tests/fixtures/OFL-IBMPlexSans.txt",
+    "url": "https://raw.githubusercontent.com/IBM/plex/2d89ed6610c5e67b148f7bce6768e65c4abef979/LICENSE.txt",
+    "note": "Licence source only; the original font import did not record its upstream revision. Preserve the bundled font and its existing notice."
+  }
+]

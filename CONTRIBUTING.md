@@ -16,13 +16,14 @@ rustfmt, and the `wasm32-unknown-unknown` target.
 
 ```sh
 bun install --frozen-lockfile
-cargo install wasm-bindgen-cli --version 0.2.126 --locked
 bunx playwright install chromium
 ```
 
-The wasm-bindgen CLI version must match the workspace dependency in
-[Cargo.toml](Cargo.toml); it provides both `wasm-bindgen` and
-`wasm-bindgen-test-runner`. Node.js runs the pure WASM tests. Playwright's
+Install the matching CLI with
+`cargo install wasm-bindgen-cli --version VERSION --locked`, replacing
+`VERSION` with the workspace's `wasm-bindgen` version from
+[Cargo.toml](Cargo.toml), without the leading `=`. It provides both
+`wasm-bindgen` and `wasm-bindgen-test-runner`. Node.js runs the pure WASM tests. Playwright's
 Chromium and a WebGPU-capable GPU run the browser lane. Native examples and
 GPU tests need a supported graphics driver; Linux also needs the development
 libraries used by winit and Gilrs, including the applicable window-system
@@ -32,6 +33,10 @@ libraries and libudev.
 
 - Start with the existing implementation and a concrete consumer need.
   Preserve the game/library boundary in [architecture](specs/architecture.md).
+- Breaking changes are an expected part of SGL's evolution. Prefer a clear
+  API over compatibility shims, and give consumer agents actionable migration
+  instructions in [CHANGELOG.md](CHANGELOG.md). Every consumer-visible change
+  belongs under `Unreleased`, including behavior changes that still compile.
 - Change the owning spec when behavior changes. Update package docs, agent
   guidance, and affected examples in the same change. Keep current guidance
   separate from the historical [decision log](specs/decisions.md).
@@ -76,35 +81,9 @@ reports out of `docs/`; that directory holds maintained consumer guidance.
 First-party changes use the repository's [MIT OR Apache-2.0 terms](LICENSE).
 Third-party code keeps its original licence and attribution; follow
 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and the owning package's
-provenance instructions.
-
-## Publishing
-
-The six library crates start at `0.1.0`; the direct-game example is never
-published. The initial release is prepared here but must be uploaded by the
-maintainer. Authenticate to crates.io using your approved local credential
-setup; never put a registry token in repository files or command arguments.
-
-Publish dependencies before their consumers from the repository root:
-
-```sh
-cargo publish -p sgl-core
-cargo publish -p sgl-net
-cargo publish -p sgl-input
-cargo publish -p sgl-post-fx
-cargo publish -p sgl-2d
-cargo publish -p sgl-3d
-```
-
-`sgl-2d` needs the published `sgl-core` version, and `sgl-3d` needs
-`sgl-post-fx`. Let each dependency become available in the registry before
-publishing its consumer. Cargo performs its normal packaging and build
-verification; do not bypass it with `--no-verify`.
-
-For later releases, update the workspace package version and internal dependency
-version requirements together. Keep `sgl-3d`'s development-only self-dependency
-path-only; it enables diagnostic accessors in workspace tests and is omitted
-from the published manifest. Refresh
-`Cargo.lock` and the generated licence notices with
-`bun scripts/license-notices.ts generate`. Keep release validation in the
-[development workflow](#validate); publishing uses Cargo directly.
+provenance instructions. The notices cover copied/ported code and bundled
+assets, not dependencies fetched separately by Cargo. When adding or removing
+bundled material, update `licenses/upstreams.json` and run
+`bun scripts/refresh-licenses.ts`. Preserve the original licence files and source
+headers. Dependency/port changes also refresh the distribution bundle; follow
+[the licensing workflow](docs/licensing.md).

@@ -193,9 +193,10 @@ Environment and probe specular always apply. On top of them:
 
 ## Not provided
 
-Animation playback (sampling and blending clips is the game's). Dynamic GI
-and hardware ray tracing are on the
-[roadmap](../../../specs/sgl3d.md#roadmap). Compressed images
+Animation playback (sampling and blending clips is the game's). Dynamic
+diffuse GI, DLSS/MetalFX, hardware ray tracing, and GPU-driven/occlusion culling
+are [planned](../../../specs/sgl3d.md#planned). Current world-space reflections
+use software rays; current culling runs on the CPU. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
 not provided.
 

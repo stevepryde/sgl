@@ -226,3 +226,12 @@ Use the [current specs](README.md) for implementation and the
   unpublished. This supersedes D-24's disabled-publication clause.
   Rationale: give the public library a clean starting point and let games
   consume versioned registry packages as well as Git and local dependencies.
+
+- **D-26** Owner direction, 2026-10-04: SGL evolves for games maintained by
+  AI coding agents. Breaking releases are acceptable when they improve the
+  library; minimizing consumer edits is not a reason to retain obsolete APIs
+  or add compatibility shims. Every consumer-visible update carries actionable
+  migration guidance in [CHANGELOG.md](../CHANGELOG.md). Games needing stability
+  pin exact crate versions or Git revisions and upgrade deliberately.
+  Rationale: agents can migrate game code as the library improves; explicit
+  upgrade instructions and opt-in dependency updates make that practical.

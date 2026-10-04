@@ -54,6 +54,46 @@ The crates currently use different glam versions; convert via arrays where
 they meet. See [3D conventions](3d-development.md) before sharing a GPU device
 or composing 2D UI over a 3D frame.
 
+## Distributing a game
+
+Follow [shipping licence notices](licensing.md). Generate the combined notices
+for the game's locked dependencies and build selection, include licences for
+its assets, and ship the files with the native build or browser site. Carry
+that guide's game-agent rules into the game's own `AGENTS.md` and packaging
+workflow so future updates preserve them.
+
+## Updating a game
+
+SGL expects AI agents to keep games current. A new release may change APIs,
+behavior, or data formats; compatibility with old game code is not guaranteed
+across breaking releases.
+
+For stability, use exact requirements for every SGL crate the game depends on:
+
+```toml
+[dependencies]
+sgl-core = "=0.1.0"
+sgl-2d = "=0.1.0"
+```
+
+The leading `=` is an exact pin; `"0.1.0"` permits compatible updates. Commit
+the game's `Cargo.lock` as well to retain the resolved dependency graph.
+For Git dependencies, use the same full commit `rev` for all SGL crates.
+An exact pin keeps the game on its selected release until you choose to migrate.
+
+1. Identify the game's current version or Git revision and the target release.
+2. Read every intervening entry in [CHANGELOG.md](../CHANGELOG.md), including
+   `Unreleased` only when targeting an unreleased Git revision.
+3. Update the dependency pins together, apply the listed code and data
+   migrations, and consult the target version's package guides and examples.
+   Regenerate baked content only when a documented input or format change
+   requires it.
+4. Build and test the game on its supported targets, then exercise the affected
+   gameplay, rendering, input, networking, or persistence workflow. Compilation
+   alone does not catch changed defaults or behavior.
+5. Refresh [distribution notices](licensing.md) for changed dependencies, ports
+   or assets and include them in the game's packaged output.
+
 ## Keep ownership explicit
 
 - The game owns its window or canvas, event loop, input bindings, clocks,

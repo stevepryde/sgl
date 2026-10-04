@@ -11,8 +11,58 @@ to the original games or a maintainer's machine.
 - Changing SGL: [contribution workflow](CONTRIBUTING.md),
   [architecture](specs/architecture.md), and the owning contract in the
   [spec index](specs/README.md). Load only the relevant detail.
+- Updating a game: read [CHANGELOG.md](CHANGELOG.md) from the game's pinned
+  version through the target version, then follow the affected package guides.
 - Validating a change: `bun scripts/tasks.ts check` is the required check;
   setup and target requirements are in [Contributing](CONTRIBUTING.md#setup).
+
+## Compatibility and migrations
+
+SGL is intended for games maintained by AI coding agents. New releases may
+break APIs, behavior, data formats, or integration workflows. Agents are
+expected to update game code as SGL evolves. Prefer a coherent, maintainable
+library over minimizing migration work; do not retain obsolete APIs or add
+compatibility shims solely to avoid updating consumers.
+
+- Every consumer-visible change must update [CHANGELOG.md](CHANGELOG.md) in
+  the same change, under `Unreleased`. Name affected crates and symbols,
+  describe the old and new behavior, and give concrete migration steps or
+  before/after code. Explicitly say when no game-code changes are needed.
+- Record changes that compile successfully but alter behavior too: defaults,
+  settings, units, frame ordering, platform support, and asset/bake formats.
+  Include any required data conversion or explicit re-export and the relevant
+  game workflow to exercise after migrating. Never require regeneration for
+  unrelated edits or dependency bumps.
+- All six library crates share `workspace.package.version` in the root
+  `Cargo.toml`; keep `version.workspace = true` in each crate. Update the
+  root's internal dependency version requirements alongside release bumps.
+- At release, move those entries into a dated version section; retain older
+  migration notes. Use Cargo-compatible semantic versioning: during `0.x`,
+  incompatible changes advance the minor version, not just the patch version.
+- Games needing stability should pin every direct SGL dependency to an exact
+  version (for example, `=0.1.0`) and commit `Cargo.lock`. Git consumers should
+  pin a full commit `rev`. Upgrade deliberately, applying all intervening
+  migration notes and validating the game's affected workflows and targets.
+
+## Licence notices and distribution
+
+- Preserve original licences, copyright notices and provenance for copied code
+  and assets. Update `licenses/upstreams.json` with the actual licence-source
+  revision when updating a port; run `bun scripts/refresh-licenses.ts` and keep
+  source and package notices in the same change. Never replace a retained
+  licence with upstream `main` merely because it changed.
+- When dependencies or ports change, regenerate `DISTRIBUTION_NOTICES.txt` with
+  `bun scripts/distribution-notices.ts DISTRIBUTION_NOTICES.txt --workspace --all-features`.
+  Resolve missing upstream attribution; generic MIT/BSD templates are not a
+  substitute for original copyright notices. Record changed obligations in
+  the changelog. See [licensing workflow](docs/licensing.md).
+- When creating or maintaining a consuming game, carry the
+  [game-agent rules](docs/licensing.md#instructions-for-game-agents) into its
+  own `AGENTS.md` and existing packaging workflow. Generate the game's notices
+  from its lockfile, target and features, preserve non-Cargo asset notices, and
+  include them in the shipped native/browser files. Inspect the final artifact;
+  source-tree presence alone is insufficient. Do not impose extra splash-screen,
+  branding or source-publication requirements.
 
 ## Repository rules
 
@@ -37,6 +87,9 @@ to the original games or a maintainer's machine.
   code edits must never force regeneration.
 - When changing a reusable API or recommended consumer workflow, update its
   owning spec, package documentation, and affected examples in the same change.
+- Keep current dependency version numbers in Cargo manifests and the lockfile,
+  not duplicated in prose; link to those sources. Retain version numbers where
+  they identify a release migration, an exact-pin example, or upstream provenance.
 - `crates/sgl-3d/docs/` is SGL3D's guide for agents building games: what it
   contains, its features, and every setting a game can offer players. Update
   it in the same change whenever a feature, setting, value, default, preset

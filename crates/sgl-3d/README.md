@@ -28,13 +28,15 @@ This page is the detailed reference:
 ## Dependencies and data conventions
 
 Use this workspace crate from the same SGL revision as other SGL packages.
-It uses wgpu 29.0.4. A game may share one device/queue with the
-`sgl-2d` UI or 2D renderer; the game owns pass ordering and presentation.
+Use the wgpu dependency in the [workspace manifest](../../Cargo.toml). A game
+may share one device/queue with the `sgl-2d` UI or 2D renderer; the game owns
+pass ordering and presentation.
 
 Use the public `sgl_3d::glam` re-export for matrices and vectors passed to this
-crate. It preserves glam 0.30 from the proven renderer; `sgl-2d` uses glam
-0.33. These are distinct Rust types. Convert through arrays at the boundary
-instead of upgrading one renderer's math dependency during integration.
+crate. Its math types are distinct from those used by `sgl-2d`; convert
+through arrays at the boundary instead of upgrading a renderer's math
+dependency during integration. The [package manifest](Cargo.toml) owns the
+crate's dependency requirements.
 
 | Input | Convention |
 | --- | --- |

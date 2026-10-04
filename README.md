@@ -61,8 +61,18 @@ and rendering settings.
 SGL is under active development. The library crates are prepared for an initial
 `0.1.0` release on crates.io. Until that release is published, use Git or a local
 checkout. Keep SGL dependencies on the same release or revision and consult the
-matching docs when updating. See [dependency setup](docs/README.md#add-sgl-to-a-game)
-and [publishing](CONTRIBUTING.md#publishing).
+matching docs when updating. See [dependency setup](docs/README.md#add-sgl-to-a-game).
+
+## Updates and stability
+
+SGL evolves for games maintained by AI coding agents. New releases may require
+changes to game code; we prioritize improving the library over preserving old
+APIs. Every consumer-facing update carries [changelog and migration notes](CHANGELOG.md)
+that agents can follow.
+
+For a game that needs stability, pin an exact version such as
+`sgl-3d = "=0.1.0"` and commit `Cargo.lock` (or pin a full Git commit `rev`).
+Upgrade deliberately using the [agent update workflow](docs/README.md#updating-a-game).
 
 ## Try it
 
@@ -109,4 +119,7 @@ First-party source is available under [MIT](LICENSE-MIT) or
 [Apache-2.0](LICENSE-APACHE), at your choice. `sgl-post-fx` retains its
 [Apache-2.0 licence](crates/sgl-post-fx/LICENSE.txt); bundled third-party code
 and assets retain their own terms. See [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)
-for attribution and licence details.
+for attribution and licence details. Game agents should follow
+[shipping licence notices](docs/licensing.md), which provides a combined
+[distribution bundle](DISTRIBUTION_NOTICES.txt) and a generator for the game's
+actual dependencies.

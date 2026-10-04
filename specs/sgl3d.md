@@ -89,8 +89,8 @@ settings SGL3D has today.
 7. **S3D-7 — Existing consumers.** Existing 2D/browser consumers and headless
    core/net builds keep working. SGL3D builds for `wasm32-unknown-unknown` and
    renders on WebGPU in the browser lane, both in the required check
-   ([testing](testing.md) 5). SGL3D uses glam 0.30 through `sgl_3d::glam`
-   while `sgl-2d` uses glam 0.33, so math values cross packages through
+   ([testing](testing.md) 5). SGL3D exposes its math types through
+   `sgl_3d::glam`; `sgl-2d` uses distinct types, so math values cross packages through
    explicit arrays. Both packages use the
    shared wgpu version so a game can drive them from one device.
 
@@ -171,28 +171,48 @@ The code's structure follows the
 
 ## Roadmap
 
-Build in this order. Numbers in brackets are stable roadmap labels. Track
-implementation status and follow-ups in [GitHub issues](https://github.com/stevepryde/sgl/issues);
-implementation issues should include the roadmap label, sources, and scope.
-The [architecture](sgl3d-architecture.md#designs-that-span-stages) holds the
-designs these steps share.
+The status below reflects the `0.1.0` public baseline. Parenthesized numbers
+are stable roadmap labels, not GitHub issue numbers. Keep this status current
+when a roadmap feature lands; link implementation work and follow-ups from
+[public issues](https://github.com/stevepryde/sgl/issues). The
+[architecture](sgl3d-architecture.md#designs-that-span-stages) owns the designs
+that span stages; the [feature guide](../crates/sgl-3d/docs/features.md) owns
+current capabilities and limits.
 
-1. **Structure.** Restructure the existing code to the architecture, with no
-   change in output (23, #352).
-2. **Lighting and shadows.** Clustered point and spot lights (5, #294);
-   cascaded directional shadows with filtering and bias (15, #344); the
-   local-light shadow atlas with cached static casters, reusing that filtering
-   and bias (14, #343); rectangular area lights (16,
-   #345).
-3. **Image.** Tone mapping, exposure, colour grading and bloom (6, #295).
-4. **Content.** Alpha-masked and alpha-blended materials (17, #346); skinned
-   meshes and morph targets (18, #347); instanced draw submission (19, #348);
-   compressed material textures (20, #349); decals (21, #350).
-5. **Effects.** Motion blur (9, #297); volumetric fog and light shafts
-   (10, #298).
-6. **Later.** Dynamic diffuse GI (11, #299); DLSS and MetalFX upscaling
-   (12, #300); hardware ray-traced reflections and shadows (13, #301);
-   GPU-driven culling and occlusion culling (22, #351).
+### Implemented
+
+- **Structure (23):** retained `Scene`, frame-owning `Renderer`, and the
+  [layered stage architecture](sgl3d-architecture.md#shape).
+- **Lighting and shadows:** clustered point and spot lights (5), cascaded
+  directional shadows (15), cached local-light shadow atlas (14), and
+  rectangular area lights (16). See [lights](../crates/sgl-3d/README.md#point-spot-and-rectangle-lights)
+  and [shadows](../crates/sgl-3d/README.md#local-light-shadows).
+- **Image (6):** tone mapping, exposure, colour grading, and bloom.
+  See [image controls](../crates/sgl-3d/README.md#exposure-bloom-and-colour-grading).
+- **Content:** alpha-masked and blended materials (17), skinned meshes and
+  morph targets (18), instanced draws (19), compressed material textures (20),
+  and decals (21). See [content support and limits](../crates/sgl-3d/docs/features.md#content).
+- **Effects:** motion blur (9) and volumetric fog with light shafts (10).
+  See [motion blur](../crates/sgl-3d/README.md#motion-blur) and
+  [fog](../crates/sgl-3d/README.md#volumetric-fog).
+
+### Planned
+
+Remaining work, in the existing roadmap order:
+
+1. **Dynamic diffuse GI (11).** Current diffuse GI uses game-authored baked
+   lightmaps, irradiance atlases, and ambient cubes.
+2. **DLSS and MetalFX upscaling (12).** Current antialiasing choices are TAA,
+   SMAA, and FSR2; FSR2 requires native device features and falls back to TAA
+   in the browser.
+3. **Hardware ray-traced reflections and shadows (13).** Current world-space
+   reflections traverse a software BVH; they do not use hardware ray tracing.
+4. **GPU-driven culling and occlusion culling (22).** Current visibility uses
+   CPU frustum/mesh-section culling, authored mesh LOD, and instanced draws.
+
+These are planned capabilities, not APIs a game can depend on yet. Implement
+them under RD-1 and the architecture rules, retaining native and browser
+support with explicit capability fallbacks where required.
 
 ## Acceptance boundaries
 

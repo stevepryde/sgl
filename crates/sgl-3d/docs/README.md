@@ -99,3 +99,9 @@ and an asynchronous readback.
   [rendering development rules](../../../specs/sgl3d.md#rendering-development)
   and the [architecture](../../../specs/sgl3d-architecture.md): port a proven,
   permissively licensed implementation into its place in the stage order.
+
+## Distributing a game
+
+Follow the [licence-notice workflow](../../../docs/licensing.md). Include this
+crate's [bundled-code notices](../THIRD_PARTY_NOTICES.txt), the game's resolved
+Cargo dependency notices and any game-asset licences in the shipped files.
