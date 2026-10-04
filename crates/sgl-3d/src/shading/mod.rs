@@ -297,11 +297,17 @@ pub(crate) static DEFORMATION: Module = Module {
     source: include_str!("deformation.wgsl"),
     deps: &[],
 };
+/// One texel of a BC7 block, as the GPU decodes it.
+pub(crate) static BC7: Module = Module {
+    name: "bc7",
+    source: include_str!("bc7.wgsl"),
+    deps: &[],
+};
 /// The scene's geometry and materials for ray queries, at group 1.
 pub(crate) static SCENE_RAYS: Module = Module {
     name: "scene_rays",
     source: include_str!("scene_rays.wgsl"),
-    deps: &[&MATERIAL, &SCENE_SOURCE],
+    deps: &[&MATERIAL, &SCENE_SOURCE, &BC7],
 };
 /// A scene vertex pulled from the scene source, as an instance shows it:
 /// deformed when it deforms. Reads `object`.

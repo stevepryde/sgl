@@ -1,5 +1,5 @@
 // The scene source's layout: a header, then the ranges content owns
-// (scene::rays): each image's texels, each material's record, each model's
+// (scene::rays): each image's level 0, each material's record, each model's
 // consecutive mesh records, packed exact Vertex arrays and indices, and its
 // BVH (`scene_rays_portable.wgsl`), a deforming model's influences and morph
 // targets, and a deforming instance's joint matrices, morph weights and
@@ -9,10 +9,15 @@
 // The header's words.
 const SCENE_HEADER_VISIBILITY_MASK:u32=0u;
 const SCENE_HEADER_INSTANCE_COUNT:u32=1u;
-// An image's: its size, then its RGBA8 texels row by row.
+// An image's: its size and format, then its level 0 row by row: RGBA8
+// texels, or BC7's 4x4 blocks as stored, four words each.
 const SCENE_IMAGE_WIDTH:u32=0u;
 const SCENE_IMAGE_HEIGHT:u32=1u;
-const SCENE_IMAGE_TEXELS:u32=2u;
+const SCENE_IMAGE_FORMAT:u32=2u;
+const SCENE_IMAGE_TEXELS:u32=3u;
+// An image's formats.
+const SCENE_IMAGE_RGBA8:u32=0u;
+const SCENE_IMAGE_BC7:u32=1u;
 // A vertex's stride and its fields' offsets, in words.
 const SCENE_VERTEX_WORDS:u32=22u;
 const SCENE_VERTEX_POSITION:u32=0u;

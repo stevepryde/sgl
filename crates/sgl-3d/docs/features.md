@@ -28,7 +28,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   (`asset::Image::Compressed`, read from KTX2 with
   `CompressedImage::from_ktx2`; needs `TEXTURE_COMPRESSION_BC`). Games compress
   in their export step and supply the chains while a glTF loads
-  (`LoadOptions::images`). Rays read a compressed image's level 0 decoded.
+  (`LoadOptions::images`). Rays decode a compressed image's level 0 from its
+  stored blocks.
   [Compressed material images](../README.md#compressed-material-images).
 - **Skinned meshes and morph targets**: the loader imports skins (four
   influences per vertex), morph targets, the node hierarchy and animation

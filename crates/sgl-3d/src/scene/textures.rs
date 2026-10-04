@@ -1,6 +1,6 @@
 //! Material textures: each image materials were added with, as the sampled
-//! textures raster binds and as texels in the ray source. Materials added
-//! together share them; a texture lives while a material uses it.
+//! textures raster binds and as its level 0 in the ray source. Materials
+//! added together share them; a texture lives while a material uses it.
 use super::SceneError;
 use super::rays::SceneRays;
 use crate::asset::{CompressedFormat, CompressedImage, Image};
@@ -209,7 +209,7 @@ pub(crate) struct Texture {
     pub color: Option<wgpu::TextureView>,
     /// Sampled as linear data, when a material uses it for data.
     pub data: Option<wgpu::TextureView>,
-    /// Its record and texels in the ray source.
+    /// Its record and level 0 in the ray source.
     pub ray: Range<u32>,
     /// Materials using it.
     users: usize,
@@ -232,7 +232,7 @@ impl Textures {
         image: &Image,
         [color, data]: [bool; 2],
     ) -> Result<usize, SceneError> {
-        let ray = rays.add_image(device, queue, &image.texels())?;
+        let ray = rays.add_image(device, queue, image)?;
         let [color, data] = match image {
             Image::Rgba8(image) => [
                 color.then(|| upload(device, queue, image, true)),
@@ -271,7 +271,7 @@ impl Textures {
             .users += 1;
     }
 
-    /// One user fewer; the last frees the texture and its texels.
+    /// One user fewer; the last frees the texture and its ray image.
     pub fn release(&mut self, rays: &mut SceneRays, index: usize) {
         self.entries[index]
             .as_mut()
@@ -280,7 +280,7 @@ impl Textures {
         self.free_unused(rays, index);
     }
 
-    /// Frees the texture at `index` and its texels if it is still there and
+    /// Frees the texture at `index` and its ray image if it is still there and
     /// no material uses it.
     pub fn free_unused(&mut self, rays: &mut SceneRays, index: usize) {
         if self.entries[index]
