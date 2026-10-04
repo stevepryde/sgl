@@ -79,7 +79,6 @@ pub use button::IconButton;
 pub use input::{UiInput, UiKey};
 pub use layout::{Splitter, SplitterAxis, SplitterResponse, UiCursor};
 pub use number_field::NumberField;
-pub use text_edit::edit_apply;
 pub use theme::UiTheme;
 
 use input::FocusTarget;
