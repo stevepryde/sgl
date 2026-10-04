@@ -1382,9 +1382,10 @@ results. Run relevant cases explicitly when changing their boundary. The
 `diagnostics` feature adds `Settings::diagnostics` (`settings::Diagnostics`,
 not serialized: switches that turn a layer off, the numerical frame probe and
 the tone-target capture), `Renderer::diagnostic_target`,
-`Renderer::take_frame_probe_reports`, `diagnostics::read` and
+`Renderer::take_frame_probe_reports`, `diagnostics::read`,
 `diagnostics::source_id`, the value the source-identity target holds for an
-instance's pixels. Diagnostics are
+instance's pixels, and `diagnostics::crystal_roughness_threshold`, where
+Crystal stops tracing. Diagnostics are
 configuration: the library reads no environment variables and writes no files.
 Normal rendering does not require the feature.
 

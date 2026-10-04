@@ -38,7 +38,7 @@ full API details.
   input.crystal = CrystalParameters { roughness_threshold: 0.3, ..CrystalParameters::default() };
   // After
   use sgl_3d::FrameInput;
-  let mut input = FrameInput::new(camera);
+  let input = FrameInput::new(camera);
   ```
 
   A game that changed a value gets the defaults instead; for reflections
