@@ -15,6 +15,39 @@ full API details.
 
 ## Unreleased
 
+### The fog's detail spread and history weight are SGL3D's
+
+- **Scope:** `sgl-3d` `Fog::detail_spread` and `Fog::temporal_reprojection`
+  are removed (S3D-6: how a feature is done is SGL3D's). SGL3D spaces the
+  froxel volume's slices with Godot's default detail spread, 2, and keeps
+  Godot's default 0.9 of the last frame's volume where a froxel reprojects
+  (b130438 `scene/resources/environment.h`), the values `Fog::default()`
+  set. `Fog::length` and the medium stay the game's. A fog that used the
+  defaults looks the same; one that set other values now takes these.
+- **Migration:** delete both fields from game code:
+
+  ```rust
+  // Before
+  input.fog = Fog {
+      density: 0.02,
+      length: 300.,
+      detail_spread: 2.,
+      temporal_reprojection: 0.9,
+      ..Fog::default()
+  };
+  // After
+  input.fog = Fog {
+      density: 0.02,
+      length: 300.,
+      ..Fog::default()
+  };
+  ```
+
+  A game that set its own spread or history weight now gets Godot's (a
+  history weight of 0 no longer turns history off); fog history smearing
+  under fast camera motion is SGL3D's to fix (#80). Afterwards, check the
+  game's fogged scenes.
+
 ### Crystal's tracing and denoising parameters are SGL3D's
 
 - **Scope:** `sgl-3d` `FrameInput::crystal` and `CrystalParameters` are

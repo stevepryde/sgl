@@ -125,12 +125,12 @@ fn froxel_center(input: &FrameInput, size: [u32; 3], index: [u32; 3]) -> Vec3 {
 
 /// Column `column`'s frame position and slice `slice`'s view depth, from
 /// the frame's geometry: columns split the frame evenly, and slices split
-/// the fog's length as its detail spread spaces them.
+/// the fog's length as the volume's detail spread spaces them.
 fn froxel_ray(input: &FrameInput, size: [u32; 3], column: [u32; 2], slice: u32) -> (Vec2, f32) {
     let u = (column[0] as f32 + 0.5) / size[0] as f32;
     let v = (column[1] as f32 + 0.5) / size[1] as f32;
     let unit = (slice as f32 + 0.5) / size[2] as f32;
-    let depth = input.fog.length * unit.powf(input.fog.detail_spread);
+    let depth = input.fog.length * unit.powf(crate::shading::fog::DETAIL_SPREAD);
     (Vec2::new(u * 2. - 1., 1. - v * 2.), depth)
 }
 
@@ -253,7 +253,7 @@ fn henyey_greenstein(cos_theta: f32, g: f32) -> f32 {
 }
 
 // Defect: the injection's units, phase, light attenuation or albedo, or the
-// integration's step, extinction or energy-conserving weight, are wrong. The
+// integration's step or extinction, are wrong. The
 // reference integrates single scattering along each column's view ray from
 // the camera to a slice's centre by brute force: a homogeneous medium's
 // transmittance exp(-sigma t) (Beer-Lambert) times what it scatters from a
@@ -290,7 +290,6 @@ fn point_light_scattering_matches_a_single_scattering_integral() {
         albedo: [1., 0.5, 0.25],
         anisotropy: 0.4,
         length: 10.,
-        detail_spread: 1.,
         ..Fog::default()
     };
     let frame = input(fog);
@@ -425,7 +424,6 @@ fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfilte
         height: -1.,
         height_falloff: 3.,
         length: 10.,
-        detail_spread: 1.,
         ..Fog::default()
     });
     let mut volumes = |fog_filter: bool| {
@@ -493,7 +491,6 @@ fn shadowed_lights_scatter_almost_nothing_behind_their_occluder() {
         density: 0.1,
         anisotropy: 0.,
         length: 20.,
-        detail_spread: 1.,
         ..Fog::default()
     };
     // The slab spans y 1.4..1.6 and x and z ±20 about (0, -10).
@@ -616,7 +613,6 @@ fn fog_energy_scales_a_light_in_the_medium_alone() {
         density: 0.05,
         anisotropy: 0.3,
         length: 20.,
-        detail_spread: 1.,
         ..Fog::default()
     };
     for (label, local) in [("scene light", true), ("directional light", false)] {
@@ -820,7 +816,6 @@ fn fog_volumes_add_their_medium_to_every_froxel_they_reach() {
         anisotropy: 0.,
         ambient: 0.,
         length: 20.,
-        detail_spread: 2.,
         ..Fog::default()
     };
     let mut frame = input(fog);
@@ -932,7 +927,6 @@ fn a_blended_surface_is_fogged_at_its_depth() {
     let fog = Fog {
         density: 0.02,
         length: 60.,
-        detail_spread: 1.,
         ..Fog::default()
     };
     let frame = input(fog);

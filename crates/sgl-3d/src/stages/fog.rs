@@ -62,6 +62,10 @@ const INTEGRATE_GROUP: u32 = 8;
 /// Godot's `VolumetricFog::MAX_TEMPORAL_FRAMES`: the frames its froxel jitter
 /// cycles through.
 const TEMPORAL_FRAMES: u32 = 16;
+/// The share of the last frame's volume a froxel keeps where it reprojects:
+/// Godot's default `volumetric_fog_temporal_reproject_amount` (b130438
+/// `scene/resources/environment.h`).
+const TEMPORAL_REPROJECT_AMOUNT: f32 = 0.9;
 /// Godot's anisotropy range.
 const MAX_ANISOTROPY: f32 = 0.9;
 
@@ -480,12 +484,12 @@ impl VolumetricFog {
             density: fog.density.max(0.),
             render_size: ctx.sizes.render.map(|v| v as f32),
             length: fog.length,
-            detail_spread: fog.detail_spread,
+            detail_spread: crate::shading::fog::DETAIL_SPREAD,
             height: fog.height,
             height_falloff: fog.height_falloff.max(0.),
             anisotropy: fog.anisotropy.clamp(-MAX_ANISOTROPY, MAX_ANISOTROPY),
             temporal_blend: if reprojects {
-                fog.temporal_reprojection.clamp(0., 1.)
+                TEMPORAL_REPROJECT_AMOUNT
             } else {
                 0.
             },
