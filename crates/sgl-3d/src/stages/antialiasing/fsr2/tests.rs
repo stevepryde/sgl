@@ -257,10 +257,9 @@ fn additive_effects_mark_fsr2_reactivity_for_their_frame_only() {
 // Defect: FSR2 stops below a 64-pixel render size. Its luminance pyramid
 // binds mips 4 and 5 of a texture half the maximum render size
 // (`ffx_fsr2.cpp`), which sp-fidelity-wgpu before 0.1.1 viewed even where
-// the texture lacked them, so wgpu rejected the frame and FSR2 fell back to
-// TAA. Expected: wgpu's validation accepts every frame and FSR2 stays in
-// effect, at sizes either side of the 32-pixel (mip 4) boundary and just
-// below 64 (mip 5).
+// the texture lacked them, so wgpu rejected the frame. Expected: wgpu's validation accepts every frame and FSR2 stays in
+// effect, at the smallest size (a single mip), either side of the 32-pixel
+// (mip 4) boundary and just below 64 (mip 5).
 #[test]
 fn fsr2_runs_below_a_64_pixel_render_size() {
     let Some((device, queue)) = test_support::fsr2_device() else {
@@ -281,10 +280,10 @@ fn fsr2_runs_below_a_64_pixel_render_size() {
         ..Settings::default()
     };
     let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
-    for size in [[31, 31], [32, 32], [33, 33], [63, 63]] {
+    for size in [[2, 2], [31, 31], [32, 32], [33, 33], [63, 63]] {
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         renderer.resize(&device, size, 1., &settings);
         let output = view::targets::target(&device, "FSR2 frame", size, shading::gbuffer::COLOR);
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         for frame in 0..2 {
             let eye = glam::Vec3::new(2.4 + frame as f32 * 0.05, 2., 3.3);
             let mut input = FrameInput::new(Camera {
