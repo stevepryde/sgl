@@ -15,6 +15,19 @@ full API details.
 
 ## Unreleased
 
+### The fog filter loads each froxel once per run
+
+- **Scope:** `sgl-3d` volumetric fog with `Settings::fog_filter` (on by
+  default). Each invocation of the filter's x and y passes filtered one
+  froxel from 7 loads; it now filters a run of 8 froxels along its pass's
+  axis from the 14 their taps reach, so a pass loads 1.75 froxels per froxel
+  instead of 7, and the `fog filter` timing group falls. Godot's weights,
+  axes, edge clamping and order, the RGBA16F volume between the passes and
+  the unfiltered history the next frame reprojects are unchanged: each
+  filtered froxel is the same sum as before.
+- **Migration:** no game-code changes. Afterwards, compare the `fog filter`
+  timing group on the game's route.
+
 ### The atmosphere is off by default, as Godot's fog
 
 - **Scope:** `sgl-3d` `FrameInput::atmosphere`, which turns the volumetric

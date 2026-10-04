@@ -60,7 +60,21 @@
 // - The history alternates two volumes instead of copying one: the filter's
 //   y pass writes the one the injection has just reprojected, so the history
 //   stays unfiltered, as Godot copies it before it filters. The filter skips
-//   invocations outside the volume, whose stores WGSL leaves undefined.
+//   froxels outside the volume, whose stores WGSL leaves undefined.
+// - Each filter invocation filters a run of 8 froxels along its pass's axis
+//   from the 14 their taps reach, loading each once, where Godot's
+//   invocation filters one froxel from 7 loads: 1.75 loads per froxel per
+//   pass instead of 7.
+//   Its sums are Godot's, term for term, through the same RGBA16F volume
+//   between the passes. FidelityFX Blur 1.1 (FidelityFX SDK c6efa6b,
+//   sdk/include/FidelityFX/gpu/blur/ffx_blur.h) shares taps the same way,
+//   walking each thread group down its columns so each row's blur serves
+//   every vertical tap reaching it, and reads its input through the texture
+//   cache, its workgroup input cache (BLUR_ENABLE_INPUT_CACHE) off as
+//   slower; here one invocation holds its run's taps in registers. Tiles in
+//   workgroup memory, as Godot's screen-space reflection filter and Wicked
+//   Engine's blur_gaussian_float4CS.hlsl use, measured slower than these
+//   runs on an Apple M5 (stevepryde/sgl#70).
 // - The integration steps along the view ray through each slice, where
 //   Godot steps the slice's depth, so fog off the view's axis is as dense as
 //   on it.
@@ -307,21 +321,72 @@ var<workgroup> fog_ambient_light:vec3<f32>;
  textureStore(scattering,id,clamp(froxel,vec4(0.),vec4(65504.)));
 }
 
-// Godot's MODE_FILTER: each froxel's 7-tap Gaussian along filter_axis of
-// this frame's froxels, clamped to the volume's edges.
-@compute @workgroup_size(8,8,1) fn filter_froxels(@builtin(global_invocation_id) id:vec3<u32>) {
- if any(id>=froxels.size) {
-  return;
- }
- let pos=vec3<i32>(id);
+// Godot's MODE_FILTER sum: the 7-tap Gaussian of the froxels from three
+// before a froxel along filter_axis to three after it, in Godot's order.
+fn filter_gauss(t0:vec4<f32>,t1:vec4<f32>,t2:vec4<f32>,t3:vec4<f32>,t4:vec4<f32>,t5:vec4<f32>,t6:vec4<f32>) -> vec4<f32> {
  const gauss=array<f32,7>(.071303,.131514,.189879,.214607,.189879,.131514,.071303);
+ var accum=vec4(0.);
+ accum+=t0*gauss[0];
+ accum+=t1*gauss[1];
+ accum+=t2*gauss[2];
+ accum+=t3*gauss[3];
+ accum+=t4*gauss[4];
+ accum+=t5*gauss[5];
+ accum+=t6*gauss[6];
+ return accum;
+}
+
+// Godot's MODE_FILTER: each froxel's 7-tap Gaussian along filter_axis of
+// this frame's froxels, clamped to the volume's edges. Each invocation
+// filters the 8 froxels from pos along the axis (stages/fog.rs FILTER_RUN)
+// from the 14 their taps reach, each loaded once. The taps are written out:
+// a loop over an array of them measured nearly 3× slower.
+@compute @workgroup_size(8,8,1) fn filter_froxels(@builtin(global_invocation_id) id:vec3<u32>) {
  const filter_dir=array(vec3(1,0,0),vec3(0,1,0),vec3(0,0,1));
  let offset=filter_dir[filter_axis];
- var accum=vec4(0.);
- for(var i=-3;i<=3;i++) {
-  accum+=textureLoad(source_map,clamp(pos+offset*i,vec3(0),vec3<i32>(froxels.size)-vec3(1)),0)*gauss[i+3];
+ let last=vec3<i32>(froxels.size)-vec3(1);
+ let pos=vec3<i32>(id)*(vec3(1)+offset*7);
+ if any(pos>last) {
+  return;
  }
- textureStore(dest_map,pos,accum);
+ let t0=textureLoad(source_map,clamp(pos-offset*3,vec3(0),last),0);
+ let t1=textureLoad(source_map,clamp(pos-offset*2,vec3(0),last),0);
+ let t2=textureLoad(source_map,clamp(pos-offset,vec3(0),last),0);
+ let t3=textureLoad(source_map,pos,0);
+ let t4=textureLoad(source_map,clamp(pos+offset,vec3(0),last),0);
+ let t5=textureLoad(source_map,clamp(pos+offset*2,vec3(0),last),0);
+ let t6=textureLoad(source_map,clamp(pos+offset*3,vec3(0),last),0);
+ let t7=textureLoad(source_map,clamp(pos+offset*4,vec3(0),last),0);
+ let t8=textureLoad(source_map,clamp(pos+offset*5,vec3(0),last),0);
+ let t9=textureLoad(source_map,clamp(pos+offset*6,vec3(0),last),0);
+ let t10=textureLoad(source_map,clamp(pos+offset*7,vec3(0),last),0);
+ let t11=textureLoad(source_map,clamp(pos+offset*8,vec3(0),last),0);
+ let t12=textureLoad(source_map,clamp(pos+offset*9,vec3(0),last),0);
+ let t13=textureLoad(source_map,clamp(pos+offset*10,vec3(0),last),0);
+ // The run stops at the volume's edge.
+ let run=min(dot(last-pos,offset)+1,8);
+ textureStore(dest_map,pos,filter_gauss(t0,t1,t2,t3,t4,t5,t6));
+ if run>1 {
+  textureStore(dest_map,pos+offset,filter_gauss(t1,t2,t3,t4,t5,t6,t7));
+ }
+ if run>2 {
+  textureStore(dest_map,pos+offset*2,filter_gauss(t2,t3,t4,t5,t6,t7,t8));
+ }
+ if run>3 {
+  textureStore(dest_map,pos+offset*3,filter_gauss(t3,t4,t5,t6,t7,t8,t9));
+ }
+ if run>4 {
+  textureStore(dest_map,pos+offset*4,filter_gauss(t4,t5,t6,t7,t8,t9,t10));
+ }
+ if run>5 {
+  textureStore(dest_map,pos+offset*5,filter_gauss(t5,t6,t7,t8,t9,t10,t11));
+ }
+ if run>6 {
+  textureStore(dest_map,pos+offset*6,filter_gauss(t6,t7,t8,t9,t10,t11,t12));
+ }
+ if run>7 {
+  textureStore(dest_map,pos+offset*7,filter_gauss(t7,t8,t9,t10,t11,t12,t13));
+ }
 }
 
 // Each column's light scattered toward the camera (rgb) and transmittance
