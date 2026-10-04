@@ -173,8 +173,9 @@ Stages run in one order, written in one place in `renderer`:
    environment and probe specular, the screen-space method, world-space rays,
    and their one composition. Completion fogs the opaque surfaces and the sky.
 6. **Transparent**: blended surfaces, additive effects and mist, each fogged
-   where it lies, then distortion. It is drawn twice: into the reflection input before tracing, so reflections show
-   it, and onto the composed frame.
+   where it lies, then distortion. It is drawn onto the composed frame and,
+   while a screen-space method traces, into the reflection input before
+   tracing, so reflections show it.
 7. **Exposure**: the frame's one exposure, fixed or metered from the complete
    HDR frame at the render size, before both of its readers.
 8. **Antialiasing**: TAA or FSR2, from render size to scene size. FSR2 reads
