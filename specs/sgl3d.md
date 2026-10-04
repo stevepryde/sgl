@@ -136,21 +136,27 @@ The code's structure follows the
    a feature before its prerequisites exist (motion vectors, TAA, depth pyramid,
    light culling), and do not build narrow special-purpose mechanisms to
    compensate for a missing foundation.
-2. **RD-2 — Port proven code.** Follow what other game engines do. When a
-   technique already exists in an engine with a compatible licence, port it
-   instead of inventing our own; when several exist, port the best, chosen by
-   comparing their quality and fit with SGL3D.
+2. **RD-2 — Port proven code, then improve it.** Follow what other game
+   engines do. When a technique already exists in an engine with a compatible
+   licence, port it instead of inventing our own; when several exist, port the
+   best, chosen by comparing their quality and fit with SGL3D. The rule stops
+   SGL3D reinventing what is standard elsewhere; it does not cap SGL3D at what
+   the engines do.
    - Port techniques, not architectures: take the shader math and pass
      structure, and write the orchestration natively in SGL3D.
    - For convention choices such as handedness, depth direction, units and
      material inputs, follow the pattern most common among modern open-source
      engines and change SGL3D to match instead of adapting each port. Adapt any remaining difference once at the port boundary.
-   - Change constants, fix upstream bugs and simplify freely when it improves
-     the result. Difference catalogues, line-by-line translation rules and
-     equivalence proofs are not required.
+   - Improve on the port where it is inefficient or falls short: optimise,
+     change constants, fix upstream bugs and simplify freely. A departure that
+     changes cost or the image is measured against the ported baseline
+     (per-pass GPU time under RD-6, the look under RD-5) and recorded as a
+     decision with its reason beside the port's provenance; its numbers go in
+     the change description. Difference catalogues, line-by-line translation
+     rules and equivalence proofs are not required.
    - Record provenance in the ported file's header (project, revision, original
-     path). Keep the source's licence text beside the code and list it in
-     `BUNDLED_RENDERING_NOTICES` in `scripts/license-notices.ts`. MIT requires
+     path). Keep the source's licence text beside the code and register it in
+     `licenses/upstreams.json` ([licensing](../docs/licensing.md)). MIT requires
      keeping the notice; Apache-2.0 also requires carrying its NOTICE and marking
      changed files.
    - Allowed: Bevy (MIT/Apache-2.0), Wicked Engine (MIT), Godot (MIT), Three.js
