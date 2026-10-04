@@ -79,8 +79,7 @@ is done (its algorithm and internal parameters) is SGL3D's.
   albedo, anisotropy, the share of ambient light it scatters (none by
   default, as Godot's), and the volume's length) and `mist` shape them;
   SGL3D spaces the volume's slices and weights its history. Fog volumes are
-  scene content
-  (`Scene::update_fog_volumes`).
+  scene content (`Scene::update_fog_volumes`).
 - `environment`: the scene's environment that lights the frame and draws its
   sky; `None` is black. `diffuse_environment` turns and scales its diffuse
   light, `backdrop` is its panorama or a colour.
