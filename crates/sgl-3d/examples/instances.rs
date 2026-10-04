@@ -301,6 +301,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             distance: 20.,
             cascades: 2,
             first_split: 8.,
+            ..Default::default()
         }),
         ..Default::default()
     });

@@ -13,8 +13,15 @@
 //! from its projection types); the first cascade starts at the camera's near
 //! plane, as Godot's `_light_instance_setup_directional_shadow` starts it
 //! (Bevy's `minimum_distance`); the light's rotation is built from its
-//! direction; and a probe capture's cascades are cubes about its centre,
-//! what its six faces see out to each far bound.
+//! direction; a probe capture's cascades are cubes about its centre,
+//! what its six faces see out to each far bound; and each cascade's near
+//! plane lies the shadow's `pancake_size` toward the light beyond the
+//! slice's bounds, as Godot b130438's pancake puts it beyond the slice's
+//! bounding sphere (`servers/rendering/renderer_scene_cull.cpp`
+//! `_light_instance_setup_directional_shadow`: `z_max = z_vec.dot(center) +
+//! radius + pancake_size`), MIT (`src/LICENSE-godot.txt`), so a caster within
+//! that margin keeps its own depth and only one beyond it is clamped to the
+//! near plane.
 use crate::content::lighting::DirectionalShadow;
 use glam::camera;
 use glam::{Mat4, Vec3, Vec4};
@@ -75,6 +82,7 @@ impl Cascades {
         let world_from_light = world_from_light(direction);
         let light_from_camera = world_from_light.transpose() * view.inverse();
         let overlap_factor = 1. - SHADOW_CASCADE_OVERLAP;
+        let pancake = pancake_size(shadow);
         Some(Self::from_bounds(bounds.as_slice(), |index, far_bound| {
             let near_bound = if index == 0 {
                 near
@@ -88,6 +96,7 @@ impl Cascades {
                 world_from_light,
                 light_from_camera,
                 far_bound,
+                pancake,
             )
         }))
     }
@@ -105,6 +114,7 @@ impl Cascades {
         let bounds = cascade_bounds(shadow, 0.)?;
         let world_from_light = world_from_light(direction);
         let light_from_capture = world_from_light.transpose() * Mat4::from_translation(center);
+        let pancake = pancake_size(shadow);
         Some(Self::from_bounds(bounds.as_slice(), |_, far_bound| {
             let f = far_bound;
             let corners = [
@@ -123,6 +133,7 @@ impl Cascades {
                 world_from_light,
                 light_from_capture,
                 far_bound,
+                pancake,
             )
         }))
     }
@@ -170,6 +181,12 @@ fn cascade_bounds(shadow: &DirectionalShadow, near: f32) -> Option<Bounds> {
     Some(bounds)
 }
 
+/// `shadow`'s pancake size: nonnegative and finite, else 0.
+fn pancake_size(shadow: &DirectionalShadow) -> f32 {
+    let size = shadow.pancake_size;
+    if size.is_finite() { size.max(0.) } else { 0. }
+}
+
 /// The view depth of the camera's near plane: device depth 1.
 fn camera_near(projection: Mat4) -> f32 {
     let near = projection.inverse() * Vec4::new(0., 0., 1., 1.);
@@ -214,13 +231,16 @@ fn slice_corners(projection: Mat4, near: f32, far: f32) -> [Vec3; 8] {
 
 /// Bevy's `calculate_cascade`: the shadow view of the frustum slice with
 /// `frustum_corners` (in the camera's view space, `calculate_cascade`'s
-/// order), for maps of `cascade_texture_size` texels.
+/// order), for maps of `cascade_texture_size` texels, with its near plane
+/// `pancake_size` metres toward the light beyond the slice (Godot's
+/// pancake).
 fn calculate_cascade(
     frustum_corners: [Vec3; 8],
     cascade_texture_size: f32,
     world_from_light: Mat4,
     light_from_camera: Mat4,
     far_bound: f32,
+    pancake_size: f32,
 ) -> Cascade {
     let mut min = Vec3::splat(f32::MAX);
     let mut max = Vec3::splat(f32::MIN);
@@ -245,13 +265,15 @@ fn calculate_cascade(
     //       integer, cascade_texel_size is then an integer multiple of a power of 2 and can be
     //       exactly represented in a floating point value.
     let cascade_texel_size = cascade_diameter / cascade_texture_size;
+    // SGL3D: the near plane, moved toward the light by Godot's pancake.
+    let near_plane = max.z + pancake_size;
     // NOTE: For shadow stability it is very important that the near_plane_center is at integer
     //       multiples of the texel size to be exactly representable in a floating point value.
     let near_plane_center = Vec3::new(
         (0.5 * (min.x + max.x) / cascade_texel_size).floor() * cascade_texel_size,
         (0.5 * (min.y + max.y) / cascade_texel_size).floor() * cascade_texel_size,
         // NOTE: max.z is the near plane for right-handed y-up
-        max.z,
+        near_plane,
     );
 
     // It is critical for `cascade_from_world` to be stable. So rather than forming `world_from_cascade`
@@ -267,7 +289,7 @@ fn calculate_cascade(
 
     // Right-handed orthographic projection, centered at `near_plane_center`.
     // NOTE: This is different from the reference material, as we use reverse Z.
-    let r = (max.z - min.z).recip();
+    let r = (near_plane - min.z).recip();
     let clip_from_cascade = Mat4::from_cols(
         Vec4::new(2.0 / cascade_diameter, 0.0, 0.0, 0.0),
         Vec4::new(0.0, 2.0 / cascade_diameter, 0.0, 0.0),

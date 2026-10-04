@@ -53,7 +53,8 @@ settings SGL3D has today.
    and shadow-map depth both clear to 0; nearer surfaces have greater depth.
    SGL3D fits a directional light's shadow cascades from the camera; the
    caller supplies only the shadow's distance, cascade count and first split
-   in metres of view depth. Point, spot and rectangle
+   in metres of view depth, and its pancake size in metres toward the light.
+   Point, spot and rectangle
    light intensity is per steradian (candela; a rectangle's along its normal)
    and directional illuminance per square metre (lux), on one scale; a
    light's direction points where it shines.

@@ -65,6 +65,26 @@ pub struct DirectionalShadow {
     /// not finite or not beyond the camera's near plane gives one cascade
     /// over the whole distance. Unused with one cascade.
     pub first_split: f32,
+    /// How far toward the light, in metres, each cascade's map still records
+    /// a caster at its own depth beyond the part of the view it covers
+    /// (Godot's `directional_shadow_pancake_size`); a caster farther toward
+    /// the light is recorded at the margin's edge and still shadows the
+    /// cascade. Negative or non-finite is 0.
+    pub pancake_size: f32,
+}
+
+impl Default for DirectionalShadow {
+    /// Bevy's `CascadeShadowConfigBuilder` defaults (150 m, 4 cascades, the
+    /// first ending at 10 m) and Godot's 20 m pancake. Set what differs and
+    /// take the rest with `..Default::default()`.
+    fn default() -> Self {
+        Self {
+            distance: 150.,
+            cascades: 4,
+            first_split: 10.,
+            pancake_size: 20.,
+        }
+    }
 }
 
 impl DirectionalLight {
