@@ -23,8 +23,8 @@ the corresponding pipeline on the next draw.
 `Renderer::geometry_stats` reports primary-camera submitted draw ranges and
 triangles after CPU visibility, before fixed-function backface rejection. In a
 diagnostics build, turning the culling layer off in `Settings::diagnostics`
-restores complete mesh ranges and disables camera hardware culling for
-pixel/timing comparisons.
+restores complete mesh ranges for pixel/timing comparisons; hardware face
+culling stays as above.
 
 ## Reference comparison
 
