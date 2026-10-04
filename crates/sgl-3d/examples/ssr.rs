@@ -301,6 +301,7 @@ fn run(
             color: [0.5, 0.55, 0.7],
             illuminance: 3.,
             shadow: None,
+            ..Default::default()
         });
         if let Some(timing) = &mut timing {
             for frame in timing.begin_frame(&device, &queue) {

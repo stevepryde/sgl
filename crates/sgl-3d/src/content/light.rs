@@ -65,10 +65,37 @@ pub struct Light {
     /// diffuse-only light (Godot's `light_specular`), for a fixture already
     /// visible as an emitter in reflections and probes.
     pub specular: f32,
+    /// Scales the light it scatters in the volumetric fog, nonnegative
+    /// (Godot's `light_volumetric_fog_energy`): 1 is physical, 2 doubles
+    /// it, and at most 0.001 leaves the light out of the fog, which then
+    /// pays nothing for it, its shadow included. Surfaces take the light
+    /// alike whatever its value. A `baked` light lights the fog too.
+    pub fog_energy: f32,
     /// Casts a shadow, in the local-light shadow atlas, while its range
     /// reaches the camera's view and the atlas has room for it: the lights
     /// that cover most of the screen take the room first, and the rest are
     /// lit without a shadow. A rectangle has a point shadow from its centre
     /// over the half-space it lights, as Godot shadows its area lights.
     pub casts_shadow: bool,
+}
+
+impl Default for Light {
+    /// Godot's `Light3D` defaults: a white point light at the origin, of
+    /// π candela (its light energy of 1, which its renderer scales by π),
+    /// reaching 5 metres, live, physical specular (its `light_specular` of
+    /// 0.5, which its renderer doubles), fog energy 1 and no shadow. Set
+    /// what differs and take the rest with `..Default::default()`.
+    fn default() -> Self {
+        Self {
+            position: Vec3::ZERO,
+            shape: LightShape::Point,
+            color: [1.; 3],
+            intensity: std::f32::consts::PI,
+            range: 5.,
+            baked: false,
+            specular: 1.,
+            fog_energy: 1.,
+            casts_shadow: false,
+        }
+    }
 }

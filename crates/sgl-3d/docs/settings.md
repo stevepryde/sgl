@@ -66,7 +66,9 @@ type it belongs to, with a default so a game sets only what it changes.
 - `crystal`: Crystal's tracing and denoising parameters.
 - `directional_lights`, `hemisphere_light`: the lights that are not scene
   content. A directional light's `shadow` is its cascades' reach: distance,
-  cascade count and first split; `None` casts none.
+  cascade count and first split; `None` casts none. Its `fog_energy`, as a
+  scene light's (`Light::fog_energy`), scales its light in the volumetric
+  fog: 1 by default, 0 leaves it out.
 - `baked_lighting`: `false` turns baked lighting off.
 - `atmosphere`: `false` turns the volumetric fog and mist off whatever the
   setting; `fog` (the medium: density, height and falloff, albedo,

@@ -74,6 +74,7 @@ fn frames(device: &wgpu::Device, queue: &wgpu::Queue, shown: bool) -> [Vec<u8>; 
         color: [1.; 3],
         illuminance: 1.,
         shadow: None,
+        ..Default::default()
     });
     let output = crate::view::targets::target(device, "blended frames", SIZE, gbuffer::COLOR);
     for x in [-0.3, 0.3] {

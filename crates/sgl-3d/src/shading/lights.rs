@@ -21,7 +21,8 @@ pub(crate) struct LightRecord {
     pub spot_offset: f32,
     /// `LIGHT_PUNCTUAL` or `LIGHT_RECT`.
     pub shape: u32,
-    pub padding: u32,
+    /// The scale of its light in the volumetric fog.
+    pub fog_energy: f32,
     /// A rectangle's half width along its width's axis; zero for a point or
     /// spot light.
     pub half_width: [f32; 3],
@@ -92,7 +93,7 @@ impl LightRecord {
             spot_scale,
             spot_offset,
             shape,
-            padding: 0,
+            fog_energy: light.fog_energy,
             half_width,
             half_height,
         }
@@ -174,7 +175,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
                 spot_scale,
                 spot_offset,
                 shape,
-                padding,
+                fog_energy,
                 half_width,
                 half_height,
             ]

@@ -262,6 +262,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             baked: false,
             specular: 1.,
             casts_shadow: true,
+            ..Default::default()
         },
     )?;
     let size = [320, 240];
@@ -301,6 +302,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             cascades: 2,
             first_split: 8.,
         }),
+        ..Default::default()
     });
     frame.hemisphere_light = HemisphereLight {
         sky_color: [0.2, 0.3, 0.5],

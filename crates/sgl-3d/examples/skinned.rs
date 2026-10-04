@@ -416,6 +416,7 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
             baked: false,
             specular: 1.,
             casts_shadow: true,
+            ..Default::default()
         },
     )?;
     let size = [320, 240];
@@ -455,6 +456,7 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
             cascades: 2,
             first_split: 6.,
         }),
+        ..Default::default()
     });
     input.hemisphere_light = HemisphereLight {
         sky_color: [0.2, 0.3, 0.5],

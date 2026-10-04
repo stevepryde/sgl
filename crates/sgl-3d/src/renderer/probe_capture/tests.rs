@@ -61,6 +61,7 @@ fn camera_surfaces_exclude_specular_ibl_and_keep_diffuse_and_emission() {
         color: [1., 0.8, 0.6],
         illuminance: 3.,
         shadow: None,
+        ..Default::default()
     });
     input.hemisphere_light = HemisphereLight {
         sky_color: [0.5, 0.6, 0.8],
@@ -235,6 +236,7 @@ fn captures_shade_scene_lights_by_the_ownership_rule() {
         baked: false,
         specular: 1.,
         casts_shadow: false,
+        ..Default::default()
     };
     let id = scene.add_light(&device, &queue, light).unwrap();
     let live = captured(&mut scene);
@@ -320,6 +322,7 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
             cascades: 3,
             first_split: 2.,
         }),
+        ..Default::default()
     });
     let settings = Settings::default();
     let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
@@ -412,6 +415,7 @@ fn a_capture_shadows_scene_lights_from_static_layers_it_places() {
                 baked: false,
                 specular: 1.,
                 casts_shadow: true,
+                ..Default::default()
             },
         )
         .unwrap();

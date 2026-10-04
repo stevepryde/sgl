@@ -158,6 +158,8 @@ pub(crate) fn frame_uniform(
                 flags: flag(shadow.light == Some(index), DIRECTIONAL_LIGHT_SHADOW),
                 color: light.color,
                 illuminance: light.illuminance,
+                fog_energy: light.fog_energy,
+                padding: [0.; 3],
             }
         })
     });

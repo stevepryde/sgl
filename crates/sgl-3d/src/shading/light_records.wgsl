@@ -22,7 +22,8 @@ struct Light {
  spot_offset:f32,
  // LIGHT_PUNCTUAL or LIGHT_RECT.
  shape:u32,
- padding:u32,
+ // Godot's volumetric_fog_energy: the scale of its light in the fog.
+ fog_energy:f32,
  // A rectangle's half width along its width's axis (Bevy's RectLight right
  // times half its width), and half its height along Bevy's up, the width's
  // axis crossed with its normal.

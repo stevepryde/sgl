@@ -40,6 +40,7 @@ fn light(position: Vec3) -> Light {
         baked: false,
         specular: 1.,
         casts_shadow: false,
+        ..Default::default()
     }
 }
 
@@ -273,6 +274,10 @@ fn scene_lights_light_what_they_own() {
         },
         Light {
             intensity: f32::NAN,
+            ..light(ahead)
+        },
+        Light {
+            fog_energy: -1.,
             ..light(ahead)
         },
         Light {

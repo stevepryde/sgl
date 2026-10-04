@@ -439,6 +439,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             baked: false,
             specular: 1.,
             casts_shadow: true,
+            ..Default::default()
         },
     )?;
     scene.add_light(
@@ -457,6 +458,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             baked: false,
             specular: 1.,
             casts_shadow: true,
+            ..Default::default()
         },
     )?;
     scene.add_light(
@@ -476,6 +478,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             baked: false,
             specular: 1.,
             casts_shadow: false,
+            ..Default::default()
         },
     )?;
     let output = device.create_texture(&wgpu::TextureDescriptor {
@@ -526,6 +529,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             cascades: 2,
             first_split: 8.,
         }),
+        ..Default::default()
     });
     // A thin haze the sun scatters forward, thinning above 2 m.
     frame.fog = Fog {

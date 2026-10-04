@@ -163,6 +163,7 @@ fn scaled_and_mirrored_instances_preserve_normals_and_material_sides() {
                             color: [1.; 3],
                             illuminance: 1.,
                             shadow: None,
+                            ..Default::default()
                         });
                         input.baked_lighting = false;
                         input.atmosphere = false;

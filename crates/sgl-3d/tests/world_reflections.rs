@@ -413,6 +413,7 @@ fn ray_hits_on_a_moving_instance_take_scene_lights() {
                 baked: true,
                 specular: 0.,
                 casts_shadow: false,
+                ..Default::default()
             },
         )
         .unwrap();
