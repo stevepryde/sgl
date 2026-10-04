@@ -67,6 +67,11 @@ impl<I: Identity, T> Slots<I, T> {
         Some(value)
     }
 
+    /// Whether no content is live.
+    pub fn is_empty(&self) -> bool {
+        self.free.len() == self.entries.len()
+    }
+
     /// The content at `index`, whatever its generation.
     pub fn at(&self, index: usize) -> Option<&T> {
         self.entries.get(index)?.as_ref().map(|(_, value)| value)

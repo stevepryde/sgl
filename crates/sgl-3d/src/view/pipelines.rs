@@ -2,7 +2,7 @@
 //! draw list, in one cache keyed by pass, by what the material and instance
 //! require (face culling, alpha mode and deformed vertices: `variant`), by
 //! the diagnostics layer constants and by whether the scene holds rectangle
-//! lights.
+//! lights and decals (`LitConstants`).
 use crate::Scene;
 use crate::settings::DisabledLayers;
 use crate::shading::{self, gbuffer};
@@ -141,26 +141,55 @@ impl LayerConstants {
     }
 }
 
+/// What lit shading compiles in only while the scene holds it, so a scene
+/// without it pays nothing for it: the lit passes' and the world-space
+/// reflection trace's constants that follow the scene's content.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct LitConstants {
+    /// Rectangle lights' shading (`rect_lights_enabled` in lights.wgsl), as
+    /// Godot specialises its clustered pass on `cluster_has_area_light`.
+    pub rect_lights: bool,
+    /// Decals (`decals_enabled` in decals.wgsl). Neither Godot, whose
+    /// clustered pass walks each cluster's decals whatever the scene holds,
+    /// nor Bevy, whose `CLUSTERED_DECALS_ARE_USABLE` follows the device,
+    /// specialises on them; the trade is a compile when the first decal is
+    /// added or the last removed.
+    pub decals: bool,
+}
+
+impl LitConstants {
+    /// What `scene` holds.
+    pub fn of(scene: &Scene) -> Self {
+        Self {
+            rect_lights: scene.lights.holds_rect(),
+            decals: !scene.decals.is_empty(),
+        }
+    }
+
+    pub fn constants(self) -> [(&'static str, f64); 2] {
+        [
+            ("rect_lights_enabled", f64::from(u8::from(self.rect_lights))),
+            ("decals_enabled", f64::from(u8::from(self.decals))),
+        ]
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PipelineKey {
     pass: GeometryPass,
     variant: Variant,
     layers: LayerConstants,
-    /// Whether the lit passes shade rectangle lights (`rect_lights_enabled`
-    /// in lights.wgsl): only while the scene holds one, as Godot
-    /// specialises its clustered pass on `cluster_has_area_light`, so a
-    /// scene without them pays nothing for their shading.
-    rect_lights: bool,
+    lit: LitConstants,
 }
 
 impl PipelineKey {
-    /// Casters take no layer constants, shade no lights and read the
-    /// positions they are given, deformed or not.
+    /// Casters take no layer or lit constants and read the positions they
+    /// are given, deformed or not.
     pub fn new(
         pass: GeometryPass,
         variant: Variant,
         layers: LayerConstants,
-        rect_lights: bool,
+        lit: LitConstants,
     ) -> Self {
         let caster = pass.caster();
         Self {
@@ -170,13 +199,13 @@ impl PipelineKey {
                 ..variant
             },
             layers: if caster { LayerConstants::ALL } else { layers },
-            rect_lights: rect_lights && !caster,
+            lit: if caster { LitConstants::default() } else { lit },
         }
     }
 
     /// The pipeline constants: a masked material's discard (`alpha_mask`,
-    /// material_raster.wgsl) and, for the pulled passes, the layers,
-    /// rectangle lights and deformed vertices.
+    /// material_raster.wgsl) and, for the pulled passes, the layers, the lit
+    /// constants and deformed vertices.
     fn constants(self) -> Vec<(&'static str, f64)> {
         let masked = (
             "alpha_mask",
@@ -190,7 +219,7 @@ impl PipelineKey {
             };
         }
         let mut constants = self.layers.constants().to_vec();
-        constants.push(("rect_lights_enabled", f64::from(u8::from(self.rect_lights))));
+        constants.extend(self.lit.constants());
         constants.push(masked);
         constants.push((
             "deformed_vertices",
@@ -246,8 +275,8 @@ pub(crate) struct GeometryPipelines {
     cache: HashMap<PipelineKey, wgpu::RenderPipeline>,
     /// The diagnostics layers `get` returns pipelines for.
     layers: LayerConstants,
-    /// Whether `get` returns pipelines that shade rectangle lights.
-    rect_lights: bool,
+    /// The lit constants `get` returns pipelines for.
+    lit_constants: LitConstants,
     /// The content `get` returns pipelines for beyond opaque, rigid
     /// geometry.
     content: Content,
@@ -345,7 +374,7 @@ impl GeometryPipelines {
             }),
             cache: HashMap::new(),
             layers,
-            rect_lights: false,
+            lit_constants: LitConstants::default(),
             content: Content::default(),
             anisotropy_inline: attachments_fit(&limits, &targets(GeometryPass::GBuffer, true)),
             fused_supported: attachments_fit(&limits, &targets(GeometryPass::Fused, true)),
@@ -358,15 +387,16 @@ impl GeometryPipelines {
     }
 
     /// `get` returns pipelines compiled with `layers` for `scene` from now
-    /// on: shading rectangle lights while it holds one, and for the alpha
-    /// modes its materials use and its deforming models, created here on
-    /// first use. Without diagnostics every frame uses `ALL`.
+    /// on: shading rectangle lights and applying decals while it holds one,
+    /// and for the alpha modes its materials use and its deforming models,
+    /// created here on first use. Without diagnostics every frame uses
+    /// `ALL`.
     pub fn specialise(&mut self, device: &wgpu::Device, layers: LayerConstants, scene: &Scene) {
-        let rect_lights = scene.lights.holds_rect();
+        let lit_constants = LitConstants::of(scene);
         let content = Content::of(scene);
-        if (self.layers, self.rect_lights, self.content) != (layers, rect_lights, content) {
+        if (self.layers, self.lit_constants, self.content) != (layers, lit_constants, content) {
             self.layers = layers;
-            self.rect_lights = rect_lights;
+            self.lit_constants = lit_constants;
             self.content = content;
             self.prepare_layers(device);
         }
@@ -377,7 +407,7 @@ impl GeometryPipelines {
     /// the scene uses and, for pulled passes, deformed vertices while it
     /// holds a deforming model.
     fn prepare_layers(&mut self, device: &wgpu::Device) {
-        let (layers, rect_lights) = (self.layers, self.rect_lights);
+        let (layers, lit_constants) = (self.layers, self.lit_constants);
         let mut passes = vec![
             GeometryPass::Forward,
             GeometryPass::GBuffer,
@@ -414,7 +444,8 @@ impl GeometryPipelines {
                             alpha,
                             deformed,
                         };
-                        self.prepare(device, PipelineKey::new(pass, variant, layers, rect_lights));
+                        let key = PipelineKey::new(pass, variant, layers, lit_constants);
+                        self.prepare(device, key);
                     }
                 }
             }
@@ -431,7 +462,7 @@ impl GeometryPipelines {
 
     /// `pass`'s pipeline for `variant`.
     pub fn get(&self, pass: GeometryPass, variant: Variant) -> &wgpu::RenderPipeline {
-        let key = PipelineKey::new(pass, variant, self.layers, self.rect_lights);
+        let key = PipelineKey::new(pass, variant, self.layers, self.lit_constants);
         self.cache
             .get(&key)
             .unwrap_or_else(|| panic!("geometry pipeline {key:?} was not prepared"))

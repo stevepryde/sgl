@@ -5,8 +5,10 @@
 use super::cached_group::CachedGroup;
 use crate::shading;
 use crate::view::history::HistoryFrame;
+use crate::view::pipelines::LitConstants;
 use crate::view::reflection_camera;
 use glam::Mat4;
+use std::collections::HashMap;
 
 /// Wicked's default RT reflection downscale.
 const DOWNSCALE: u32 = 2;
@@ -132,10 +134,10 @@ impl Denoise {
 pub(crate) struct WorldReflections {
     trace_shader: wgpu::ShaderModule,
     trace_layout: wgpu::PipelineLayout,
-    /// The trace's pipelines without and with rectangle lights' shading
-    /// (`rect_lights_enabled`), each created when a frame first needs it,
-    /// as the geometry pipelines specialise on the scene's lights.
-    trace: [Option<wgpu::RenderPipeline>; 2],
+    /// The trace's pipelines for each set of lit constants, each created
+    /// when a frame first needs it, as the geometry pipelines specialise on
+    /// the scene's rectangle lights and decals.
+    trace: HashMap<LitConstants, wgpu::RenderPipeline>,
     /// The trace's receivers at group 3.
     trace_group: CachedGroup,
     resolve: Denoise,
@@ -244,7 +246,7 @@ impl WorldReflections {
         Self {
             trace_shader,
             trace_layout: trace_pipeline_layout,
-            trace: [None, None],
+            trace: HashMap::new(),
             trace_group: CachedGroup::new(trace_layout),
             resolve: compute("world_resolve"),
             temporal: compute("world_temporal"),
@@ -273,10 +275,10 @@ impl WorldReflections {
         &self.targets.output
     }
 
-    /// The trace's pipeline, shading rectangle lights when `rect_lights`.
-    fn trace(&mut self, device: &wgpu::Device, rect_lights: bool) -> &wgpu::RenderPipeline {
+    /// The trace's pipeline compiled with `lit`.
+    fn trace(&mut self, device: &wgpu::Device, lit: LitConstants) -> &wgpu::RenderPipeline {
         let (shader, layout) = (&self.trace_shader, &self.trace_layout);
-        self.trace[usize::from(rect_lights)].get_or_insert_with(|| {
+        self.trace.entry(lit).or_insert_with(|| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("world-space reflection rays"),
                 layout: Some(layout),
@@ -290,7 +292,7 @@ impl WorldReflections {
                     module: shader,
                     entry_point: Some("world_trace"),
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[("rect_lights_enabled", f64::from(u8::from(rect_lights)))],
+                        constants: &lit.constants(),
                         ..Default::default()
                     },
                     targets: &[
@@ -309,8 +311,8 @@ impl WorldReflections {
     }
 
     /// `groups` are the camera's ray-hit lit group 0 (with the installed
-    /// probes) and the scene's group 1; `rect_lights`, whether the scene
-    /// holds a rectangle light.
+    /// probes) and the scene's group 1; `lit_constants`, the scene's
+    /// (`LitConstants::of`).
     #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
@@ -318,13 +320,13 @@ impl WorldReflections {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         [lit, scene]: [&wgpu::BindGroup; 2],
-        rect_lights: bool,
+        lit_constants: LitConstants,
         history: HistoryFrame,
         size: [u32; 2],
         input: Inputs<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        self.trace(device, rect_lights);
+        self.trace(device, lit_constants);
         let resized = self.targets.full != size;
         if resized {
             self.targets = Targets::new(device, size);
@@ -395,7 +397,7 @@ impl WorldReflections {
                 timestamp_writes: timing.and_then(|t| t.render_pass("world reflection rays")),
                 ..Default::default()
             });
-            pass.set_pipeline(self.trace[usize::from(rect_lights)].as_ref().unwrap());
+            pass.set_pipeline(&self.trace[&lit_constants]);
             pass.set_bind_group(0, lit, &[]);
             pass.set_bind_group(1, scene, &[]);
             pass.set_bind_group(3, trace_group, &[]);

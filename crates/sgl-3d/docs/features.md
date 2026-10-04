@@ -64,7 +64,9 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   clustered with the lights, sampled from one atlas SGL3D packs; probe
   captures and world-space ray hits take them too. Unlit materials take
   none. Keep boxes shallow: everything inside one takes the decal.
-  `Decal::new(image)` has Godot's decal defaults.
+  `Decal::new(image)` has Godot's decal defaults. The lit pipelines apply
+  decals only while the scene holds one, so the first decal added compiles
+  them anew.
   [Decals](../README.md#decals).
 - **Material edits** at runtime: `Scene::set_material` (`SurfaceMaterial`,
   whose default is glTF's default material).
