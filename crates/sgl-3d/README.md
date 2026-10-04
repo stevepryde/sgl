@@ -315,8 +315,8 @@ Where it differs from Godot's fog, and why:
 - The frame's medium takes a fog material's height falloff
   (`height_falloff`), so height fog needs no volume.
 - The detail spread and the share of history kept are SGL3D's, at Godot's
-  defaults, rather than frame values (S3D-6), and reprojection is always
-  on.
+  defaults, where Godot's `Environment` exposes them (S3D-6), and
+  reprojection is always on.
 - Every medium scatters `albedo` × density unquantized. Godot quantizes its
   fog volumes: it drops a volume at or below density 0.001, steps its
   density by 1/1024, caps its scattering at density 1 and truncates that

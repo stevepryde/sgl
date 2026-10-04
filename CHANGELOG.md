@@ -43,10 +43,10 @@ full API details.
   };
   ```
 
-  A game that set its own spread or history weight (hyperdrive#150 and
-  #151) keeps only `length`; fog history smearing under fast camera
-  motion is SGL3D's to fix (sgl#80). Afterwards, check the game's fogged
-  scenes.
+  A game that set its own spread or history weight now gets Godot's (a
+  history weight of 0 no longer turns history off); fog history smearing
+  under fast camera motion is SGL3D's to fix (#80). Afterwards, check the
+  game's fogged scenes.
 
 ### Crystal's tracing and denoising parameters are SGL3D's
 

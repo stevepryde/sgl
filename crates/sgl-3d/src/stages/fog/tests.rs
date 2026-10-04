@@ -253,7 +253,7 @@ fn henyey_greenstein(cos_theta: f32, g: f32) -> f32 {
 }
 
 // Defect: the injection's units, phase, light attenuation or albedo, or the
-// integration's step, extinction or energy-conserving weight, are wrong. The
+// integration's step or extinction, are wrong. The
 // reference integrates single scattering along each column's view ray from
 // the camera to a slice's centre by brute force: a homogeneous medium's
 // transmittance exp(-sigma t) (Beer-Lambert) times what it scatters from a
