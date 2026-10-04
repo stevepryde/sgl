@@ -74,10 +74,10 @@ type it belongs to, with a default so a game sets only what it changes.
 - `baked_lighting`: `false` turns baked lighting off.
 - `atmosphere`: `false` turns the volumetric fog and mist off whatever the
   setting; `fog` (the medium: density, height and falloff, albedo,
-  anisotropy, the share of ambient light it scatters, the volume's length
-  and detail spread, and how much of the last frame's volume it keeps) and
-  `mist` shape them. Fog volumes are scene content
-  (`Scene::update_fog_volumes`).
+  anisotropy, the share of ambient light it scatters (none by default, as
+  Godot's), the volume's length and detail spread, and how much of the last
+  frame's volume it keeps) and `mist` shape them. Fog volumes are scene
+  content (`Scene::update_fog_volumes`).
 - `environment`: the scene's environment that lights the frame and draws its
   sky; `None` is black. `diffuse_environment` turns and scales its diffuse
   light, `backdrop` is its panorama or a colour.

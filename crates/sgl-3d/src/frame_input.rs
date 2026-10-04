@@ -51,8 +51,9 @@ pub struct Fog {
     pub anisotropy: f32,
     /// The share of the frame's ambient light (the hemisphere fill and
     /// environment diffuse) the medium scatters, as Godot's
-    /// `ambient_inject`: 1 for open air, less where the sky does not reach,
-    /// such as inside a tunnel the camera is in.
+    /// `ambient_inject`, by default 0 as Godot's, so only lights light the
+    /// medium; 1 for open air under the sky, less where the sky does not
+    /// reach, such as inside a tunnel the camera is in.
     pub ambient: f32,
     /// World Y below which the density is whole.
     pub height: f32,
@@ -71,15 +72,15 @@ pub struct Fog {
 }
 
 impl Default for Fog {
-    /// No medium, with all of the ambient light and Godot's defaults for
-    /// the rest: albedo white, anisotropy 0.2, uniform, a 64 m volume,
-    /// detail spread 2 and 0.9 of the reprojected volume kept.
+    /// No medium, with Godot's defaults: albedo white, anisotropy 0.2, no
+    /// ambient light, uniform, a 64 m volume, detail spread 2 and 0.9 of the
+    /// reprojected volume kept.
     fn default() -> Self {
         Self {
             density: 0.,
             albedo: [1.; 3],
             anisotropy: 0.2,
-            ambient: 1.,
+            ambient: 0.,
             height: 0.,
             height_falloff: 0.,
             length: 64.,
