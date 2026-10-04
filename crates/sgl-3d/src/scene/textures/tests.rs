@@ -1,5 +1,5 @@
 //! Block-compressed material images at real GPU boundaries: a KTX2 chain's
-//! levels as the device samples them, and the decoded level 0 that rays read.
+//! levels as the device samples them, and level 0 as rays decode it.
 use crate::asset::{CompressedImage, CpuMesh, Image, Vertex};
 use crate::scene::rays::Query;
 use crate::test_support;
@@ -144,10 +144,9 @@ fn srgb_to_linear(byte: u8) -> f32 {
 // with a full chain whose lower levels hold partial blocks, added to a scene
 // as one material's sRGB base map, linear data map, or both. At every level
 // the device samples, through each view a material uses, what bcdec decodes
-// from that level's blocks; and the ray source holds level 0's texels as the
-// device samples them.
+// from that level's blocks.
 #[test]
-fn compressed_chain_samples_its_stored_levels_and_rays_hold_its_level_0() {
+fn compressed_chain_samples_its_stored_levels() {
     let Some((device, queue)) = bc_device() else {
         return;
     };
@@ -162,12 +161,11 @@ fn compressed_chain_samples_its_stored_levels_and_rays_hold_its_level_0() {
     let file = test_support::ktx2(ktx2::Format::BC7_SRGB_BLOCK, [width, height], &levels, true);
     let image = CompressedImage::from_ktx2(&file).unwrap();
     assert_eq!(image.levels, levels, "the stored levels, level 0 first");
-    let mut scene = Scene::new(&device, &queue);
     for [color, data] in [[true, false], [false, true], [true, true]] {
         let mut material = test_support::cube().materials[0].clone();
         material.base_texture = color.then_some(0);
         material.mr_texture = data.then_some(0);
-        scene = Scene::new(&device, &queue);
+        let mut scene = Scene::new(&device, &queue);
         scene
             .add_materials(
                 &device,
@@ -213,22 +211,181 @@ fn compressed_chain_samples_its_stored_levels_and_rays_hold_its_level_0() {
             }
         }
     }
+}
+
+// A BC7 image of a block for each mode and each value of the six bits after
+// its mode bit (a partition of every mode that has them, and every rotation
+// and index selection), the rest random, as one material's data map. A ray
+// reads each texel of level 0 as the device samples it, from no more than
+// the stored blocks: no decoded copy.
+#[test]
+fn rays_decode_every_bc7_mode_and_partition_as_level_0_samples() {
+    let Some((device, queue)) = bc_device() else {
+        return;
+    };
+    let [width, height] = [128, 64];
+    let blocks: Vec<u8> = random_bc7_blocks((width / 4 * height / 4) as usize, &mut 11)
+        .chunks_exact(16)
+        .zip(0u128..)
+        .flat_map(|(random, block)| {
+            let mode = block % 8;
+            let six_bits = block / 8 % 64;
+            let random = u128::from_le_bytes(random.try_into().unwrap());
+            let bits = (random >> (mode + 7) << (mode + 7)) | six_bits << (mode + 1) | 1 << mode;
+            bits.to_le_bytes()
+        })
+        .collect();
+    let image = CompressedImage {
+        format: crate::asset::CompressedFormat::Bc7,
+        width,
+        height,
+        levels: vec![blocks],
+    };
+    let mut material = test_support::cube().materials[0].clone();
+    material.mr_texture = Some(0);
+    let mut scene = Scene::new(&device, &queue);
+    scene
+        .add_materials(
+            &device,
+            &queue,
+            &[material],
+            &[Image::Compressed(image.clone())],
+        )
+        .unwrap();
     let texture = scene.materials.texture(0);
-    let words = test_support::read_words(&device, &queue, scene.rays.source());
-    let ray = &words[texture.ray.start as usize..texture.ray.end as usize];
-    let level_0 = gpu_texels(
+    let ray_words = (texture.ray.end - texture.ray.start) as usize;
+    assert!(
+        ray_words * 4 <= image.levels[0].len() + 16,
+        "the ray image takes {ray_words} words for {} bytes of blocks",
+        image.levels[0].len()
+    );
+    let sampled = gpu_texels(
         &device,
         &queue,
         texture.data.as_ref().unwrap(),
         0,
         [width, height],
     );
-    assert_eq!(ray[..2], [width, height], "the ray image's size");
-    let packed: Vec<u32> = level_0
-        .iter()
-        .map(|texel| u32::from_le_bytes(texel.map(|value| (value * 255.).round() as u8)))
-        .collect();
-    assert_eq!(ray[2..], packed, "the ray image holds level 0 as sampled");
+    let read = ray_texels(&device, &queue, &scene, texture.ray.start, [width, height]);
+    let bytes = |texels: &[[f32; 4]]| -> Vec<[u8; 4]> {
+        texels
+            .iter()
+            .map(|texel| texel.map(|value| (value * 255.).round() as u8))
+            .collect()
+    };
+    for (texel, (read, sampled)) in bytes(&read).iter().zip(bytes(&sampled)).enumerate() {
+        let [x, y] = [texel as u32 % width, texel as u32 / width];
+        assert_eq!(
+            *read,
+            sampled,
+            "texel ({x}, {y}): mode {}",
+            (y / 4 * width / 4 + x / 4) % 8
+        );
+    }
+}
+
+/// Every texel of the image at `image_word` in `scene`'s ray source, of
+/// `size` texels, as a ray reads it as data.
+fn ray_texels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &Scene,
+    image_word: u32,
+    [width, height]: [u32; 2],
+) -> Vec<[f32; 4]> {
+    let library = crate::shading::compose(&[&crate::shading::SCENE_RAYS]);
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("ray image readback"),
+        source: wgpu::ShaderSource::Wgsl(
+            format!(
+                "{library}
+@group(0) @binding(0) var<storage,read_write> texels:array<vec4<f32>>;
+@group(0) @binding(1) var<uniform> pick:vec4<u32>;
+@compute @workgroup_size(8,8) fn read_texels(@builtin(global_invocation_id) id:vec3<u32>) {{
+ if id.x>=pick.y || id.y>=pick.z {{return;}}
+ texels[id.y*pick.y+id.x]=scene_texel(pick.x,vec2<i32>(id.xy),vec2(0u),false);
+}}"
+            )
+            .into(),
+        ),
+    });
+    let io = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(
+            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[Some(&io), Some(&crate::shading::bind::scene(device))],
+                immediate_size: 0,
+            }),
+        ),
+        module: &module,
+        entry_point: Some("read_texels"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let texels = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: u64::from(width * height) * 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let pick = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&[image_word, width, height, 0]),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &io,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: texels.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: pick.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.set_bind_group(1, &scene.scene_group, &[]);
+        pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+    }
+    queue.submit([encoder.finish()]);
+    test_support::read_words(device, queue, &texels)
+        .chunks_exact(4)
+        .map(|texel| std::array::from_fn(|channel| f32::from_bits(texel[channel])))
+        .collect()
 }
 
 // The KTX2 reader refuses what it does not read, each a valid file of one
@@ -318,7 +475,7 @@ fn a_compressed_chain_the_device_cannot_upload_is_refused() {
 // texel: one mode 6 block per 4x4 texels, its endpoints opaque and clear,
 // each texel's index picking one. A ray at each texel's centre hits the
 // quad exactly where that texel is opaque, as the portable traversal's
-// acceptance predicate reads the ray source's decoded texels.
+// acceptance predicate decodes the ray source's blocks.
 #[test]
 fn rays_pass_the_cut_out_texels_of_a_compressed_masked_material() {
     let Some((device, queue)) = bc_device() else {

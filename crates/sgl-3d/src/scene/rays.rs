@@ -1,7 +1,7 @@
 //! The ray source: the scene's geometry and materials for shader ray queries,
 //! through a portable BVH that needs no hardware ray-tracing features, and
 //! the instance list. Each texture, material and model owns ranges of the
-//! source buffer (its texels; its record; its mesh records, vertices,
+//! source buffer (its level 0; its record; its mesh records, vertices,
 //! indices and BVH; a deforming model's influences and morph targets), and
 //! each deforming instance its joint matrices, morph weights and deformed
 //! vertices (`scene::deformation`), written when it is added or replaced and
@@ -15,10 +15,14 @@ use std::ops::Range;
 
 use super::SceneError;
 use super::ranges::Ranges;
-use crate::asset::Vertex;
+use crate::asset::{CompressedFormat, Image, Vertex};
 use crate::shading::material::MaterialUniform;
 
 mod bvh;
+#[cfg(test)]
+mod layout;
+#[cfg(test)]
+pub(crate) use layout::{constants, mirrors};
 #[cfg(test)]
 mod query;
 #[cfg(test)]
@@ -95,13 +99,22 @@ struct SourceHeader {
     padding: [u32; 2],
 }
 
-/// An image's record in the source, followed by its RGBA8 texels row by row.
+/// An image's record in the source, followed by its level 0 row by row:
+/// RGBA8 texels, or a BC7 image's blocks as stored, which rays decode texel
+/// by texel.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ImageHeader {
     width: u32,
     height: u32,
+    /// `IMAGE_RGBA8` or `IMAGE_BC7`.
+    format: u32,
 }
+
+/// `ImageHeader::format` of RGBA8 texels.
+const IMAGE_RGBA8: u32 = 0;
+/// `ImageHeader::format` of BC7 blocks.
+const IMAGE_BC7: u32 = 1;
 
 /// A mesh's record in the source: where its vertices and indices start, its
 /// material's record, and its first vertex among its model's.
@@ -230,24 +243,30 @@ impl SceneRays {
         }
     }
 
-    /// An image's record and texels; its word starts the range.
+    /// An image's record and level 0, as stored; its word starts the range.
     pub fn add_image(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        image: &image::RgbaImage,
+        image: &Image,
     ) -> Result<Range<u32>, SceneError> {
-        let header = ImageHeader {
-            width: image.width(),
-            height: image.height(),
+        let [width, height] = image.size();
+        let (format, bytes) = match image {
+            Image::Rgba8(image) => (IMAGE_RGBA8, image.as_raw().as_slice()),
+            Image::Compressed(image) => match image.format {
+                CompressedFormat::Bc7 => (IMAGE_BC7, image.levels[0].as_slice()),
+            },
         };
-        let texels = image.as_raw().len() / 4;
-        let range = self.allocate(device, queue, words::<ImageHeader>() + texels)?;
+        let header = ImageHeader {
+            width,
+            height,
+            format,
+        };
+        let range = self.allocate(device, queue, words::<ImageHeader>() + bytes.len() / 4)?;
         let mut record = Vec::with_capacity(range.len());
         record.extend_from_slice(bytemuck::cast_slice(&[header]));
         record.extend(
-            image
-                .as_raw()
+            bytes
                 .chunks_exact(4)
                 .map(|p| u32::from_le_bytes([p[0], p[1], p[2], p[3]])),
         );
@@ -425,159 +444,6 @@ fn instance_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
-}
-
-/// The WGSL twins of the source's record layouts, in words: `SourceHeader`,
-/// `ImageHeader`, `asset::Vertex` (which the source holds verbatim),
-/// `MeshRecord`, `MaterialRecord` and the BVH's node and leaf primitive.
-#[cfg(test)]
-pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
-    use crate::asset::Vertex;
-    use std::mem::{offset_of, size_of};
-    let material = |field: usize| offset_of!(MaterialRecord, material) + field;
-    let source = [
-        (
-            "SCENE_HEADER_VISIBILITY_MASK",
-            offset_of!(SourceHeader, visibility_mask),
-        ),
-        (
-            "SCENE_HEADER_INSTANCE_COUNT",
-            offset_of!(SourceHeader, instance_count),
-        ),
-        ("SCENE_IMAGE_WIDTH", offset_of!(ImageHeader, width)),
-        ("SCENE_IMAGE_HEIGHT", offset_of!(ImageHeader, height)),
-        ("SCENE_IMAGE_TEXELS", size_of::<ImageHeader>()),
-        ("SCENE_VERTEX_WORDS", size_of::<Vertex>()),
-        ("SCENE_VERTEX_POSITION", offset_of!(Vertex, position)),
-        ("SCENE_VERTEX_NORMAL", offset_of!(Vertex, normal)),
-        ("SCENE_VERTEX_UV", offset_of!(Vertex, uv)),
-        ("SCENE_VERTEX_COLOR", offset_of!(Vertex, color)),
-        ("SCENE_VERTEX_LIGHTMAP_UV", offset_of!(Vertex, lightmap_uv)),
-        (
-            "SCENE_VERTEX_LIGHTMAP_BOUNDS",
-            offset_of!(Vertex, lightmap_bounds),
-        ),
-        ("SCENE_VERTEX_TANGENT", offset_of!(Vertex, tangent)),
-        ("SCENE_MESH_WORDS", size_of::<MeshRecord>()),
-        ("SCENE_MESH_VERTICES", offset_of!(MeshRecord, vertices)),
-        ("SCENE_MESH_INDICES", offset_of!(MeshRecord, indices)),
-        (
-            "SCENE_MESH_MATERIAL_WORD",
-            offset_of!(MeshRecord, material_word),
-        ),
-        (
-            "SCENE_MESH_FIRST_VERTEX",
-            offset_of!(MeshRecord, first_vertex),
-        ),
-        (
-            "SCENE_MATERIAL_BASE",
-            material(offset_of!(MaterialUniform, base)),
-        ),
-        (
-            "SCENE_MATERIAL_EMISSION",
-            material(offset_of!(MaterialUniform, emission)),
-        ),
-        (
-            "SCENE_MATERIAL_ENVIRONMENT_SCALE",
-            material(offset_of!(MaterialUniform, environment_scale)),
-        ),
-        (
-            "SCENE_MATERIAL_METALLIC",
-            material(offset_of!(MaterialUniform, metallic)),
-        ),
-        (
-            "SCENE_MATERIAL_ROUGHNESS",
-            material(offset_of!(MaterialUniform, roughness)),
-        ),
-        (
-            "SCENE_MATERIAL_COAT",
-            material(offset_of!(MaterialUniform, coat)),
-        ),
-        (
-            "SCENE_MATERIAL_COAT_ROUGHNESS",
-            material(offset_of!(MaterialUniform, coat_roughness)),
-        ),
-        (
-            "SCENE_MATERIAL_NORMAL_SCALE",
-            material(offset_of!(MaterialUniform, normal_scale)),
-        ),
-        (
-            "SCENE_MATERIAL_BUMP_SCALE",
-            material(offset_of!(MaterialUniform, bump_scale)),
-        ),
-        (
-            "SCENE_MATERIAL_ANISOTROPY_STRENGTH",
-            material(offset_of!(MaterialUniform, anisotropy_strength)),
-        ),
-        (
-            "SCENE_MATERIAL_ANISOTROPY_ROTATION",
-            material(offset_of!(MaterialUniform, anisotropy_rotation)),
-        ),
-        (
-            "SCENE_MATERIAL_ALPHA_CUTOFF",
-            material(offset_of!(MaterialUniform, alpha_cutoff)),
-        ),
-        (
-            "SCENE_MATERIAL_VISIBILITY_GROUP",
-            material(offset_of!(MaterialUniform, visibility_group)),
-        ),
-        (
-            "SCENE_MATERIAL_FLAGS",
-            material(offset_of!(MaterialUniform, flags)),
-        ),
-        (
-            "SCENE_MATERIAL_TEXTURES",
-            offset_of!(MaterialRecord, textures),
-        ),
-        ("SCENE_MATERIAL_WRAP", offset_of!(MaterialRecord, wrap)),
-        ("SCENE_MATERIAL_BAKED", offset_of!(MaterialRecord, baked)),
-        ("SCENE_TEXTURE_BASE", offset_of!(MaterialTextures, base)),
-        (
-            "SCENE_TEXTURE_METALLIC_ROUGHNESS",
-            offset_of!(MaterialTextures, metallic_roughness),
-        ),
-        (
-            "SCENE_TEXTURE_EMISSION",
-            offset_of!(MaterialTextures, emission),
-        ),
-        ("SCENE_TEXTURE_NORMAL", offset_of!(MaterialTextures, normal)),
-        ("SCENE_TEXTURE_BUMP", offset_of!(MaterialTextures, bump)),
-        (
-            "SCENE_TEXTURE_ANISOTROPY",
-            offset_of!(MaterialTextures, anisotropy),
-        ),
-    ];
-    // The BVH is declared beside the portable traversal that reads it.
-    source
-        .into_iter()
-        .map(|constant| ("geometry", constant))
-        .chain(bvh::layout().map(|constant| ("world_reflections", constant)))
-        .map(|(program, (name, bytes))| {
-            crate::shading::layout_tests::Constant::new(
-                program,
-                name,
-                naga::Literal::U32(u32::try_from(bytes / 4).unwrap()),
-            )
-        })
-        .collect()
-}
-
-#[cfg(test)]
-pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
-    [crate::shading::layout_tests::mirror!(
-        "world_reflections",
-        "SceneRayInstanceData",
-        InstanceData,
-        [
-            world,
-            normal as "normal_matrix",
-            mesh_word,
-            id,
-            flags,
-            bvh_root,
-            baked_irradiance
-        ]
-    )]
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

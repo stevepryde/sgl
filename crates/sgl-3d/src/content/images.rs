@@ -61,7 +61,7 @@ impl Image {
     }
 
     /// Level 0's texels, decoded from its blocks when it is compressed: what
-    /// the ray source holds.
+    /// the decal atlas packs.
     pub(crate) fn texels(&self) -> Cow<'_, image::RgbaImage> {
         match self {
             Self::Rgba8(image) => Cow::Borrowed(image),

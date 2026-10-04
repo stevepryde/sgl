@@ -6,6 +6,12 @@
     "prefix": "AMD FidelityFX SDK, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK\nRevision c6efa6bf7f2027b3ec94f28578bb5965eabb9e55 (SDK 1.1.4), LICENSE.txt. SGL3D\nadapts the FSR sample's reactive and transparency-and-composition mask\ntargets and exports (samples/fsrapi/fsrapirendermodule.cpp and\nframework/rendermodules/translucency/shaders/) in view/targets.rs,\nstages/antialiasing/fsr2.rs, stages/transparent/glow.wgsl and\nstages/transparent/atmosphere.wgsl.\n\n"
   },
   {
+    "component": "bcdec",
+    "path": "crates/sgl-3d/src/LICENSE-bcdec.txt",
+    "url": "https://raw.githubusercontent.com/iOrange/bcdec/3b29f8f44466c7d59852670f82f53905cf627d48/LICENSE",
+    "prefix": "bcdec, https://github.com/iOrange/bcdec\nRevision 3b29f8f44466c7d59852670f82f53905cf627d48, LICENSE (bcdec is available\nunder the MIT License or the Unlicense; SGL3D uses it under the MIT terms\nbelow). SGL3D ports bcdec_bc7 (bcdec.h, as Godot b130438 vendors it in\nthirdparty/misc/bcdec.h) into shading/bc7.wgsl.\n\n"
+  },
+  {
     "component": "Bevy",
     "path": "crates/sgl-3d/src/LICENSE-bevy.txt",
     "url": "https://raw.githubusercontent.com/bevyengine/bevy/b56fc29d3016e641754765244b5ba3f9cc504671/LICENSE-MIT",

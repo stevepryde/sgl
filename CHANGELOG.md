@@ -15,6 +15,25 @@ full API details.
 
 ## Unreleased
 
+### Rays decode compressed material images from their stored blocks
+
+- **Scope:** `sgl-3d` scene rays (world-space reflections). A BC7 material
+  image (`asset::Image::Compressed`) kept a CPU-decoded RGBA8 copy of its
+  level 0 in the ray source, four bytes a texel; the ray source now holds
+  level 0's stored blocks, one byte a texel, and a ray decodes each texel it
+  samples (bcdec's BC7 decoder, as Godot vendors it). Such an image takes a
+  quarter of the ray memory it took (a 2048² image: 16 MiB, now 4 MiB), and
+  adding one no longer decodes it on the CPU. Rays read the same texels as
+  before, raster's level 0, so reflections look the same. A texel decoded
+  from BC7 costs more shader time than an RGBA8 one, so the
+  `world reflection rays` timing group may rise where reflection rays hit
+  moving objects, or pass masked materials, with compressed images. RGBA8
+  images are unchanged. `sgl-3d` now carries bcdec's MIT notice
+  (`src/LICENSE-bcdec.txt`), from which the shader's decoder derives.
+- **Migration:** no game-code changes. Regenerate the game's distribution
+  notices for the new bundled notice. Afterwards, compare GPU memory and the
+  `world reflection rays` timing group on the game's route.
+
 ### An example writes the example grate
 
 - **Scope:** `sgl-3d` adds the `export_grate` example, which writes

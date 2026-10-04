@@ -36,11 +36,7 @@ impl Fixture {
             let images: Vec<_> = asset
                 .images
                 .iter()
-                .map(|image| {
-                    rays.add_image(device, queue, &image.texels())
-                        .unwrap()
-                        .start
-                })
+                .map(|image| rays.add_image(device, queue, image).unwrap().start)
                 .collect();
             let image = |index: Option<usize>| index.map_or(0, |index| images[index]);
             let words: Vec<_> = asset

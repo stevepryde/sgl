@@ -60,11 +60,21 @@ fn scene_srgb_to_linear(c:vec3<f32>)->vec3<f32> {
 fn scene_image_size(image_word:u32)->vec2<u32> {
  return vec2(scene_source[image_word+SCENE_IMAGE_WIDTH],scene_source[image_word+SCENE_IMAGE_HEIGHT]);
 }
+// Texel `p` of an image's level 0, decoded from its block when the image is
+// BC7.
 fn scene_texel(image_word:u32,p:vec2<i32>,wrap:vec2<u32>,srgb:bool)->vec4<f32> {
  let size=vec2<i32>(scene_image_size(image_word));
  let x=scene_wrap_texel(p.x,size.x,wrap.x);
  let y=scene_wrap_texel(p.y,size.y,wrap.y);
- let rgba=unpack4x8unorm(scene_source[image_word+SCENE_IMAGE_TEXELS+u32(y*size.x+x)]);
+ let texels=image_word+SCENE_IMAGE_TEXELS;
+ var rgba:vec4<f32>;
+ if scene_source[image_word+SCENE_IMAGE_FORMAT]==SCENE_IMAGE_BC7 {
+  let block=texels+u32((y/4)*(size.x/4)+x/4)*4u;
+  let words=vec4(scene_source[block],scene_source[block+1u],scene_source[block+2u],scene_source[block+3u]);
+  rgba=bc7_texel(words,u32((y%4)*4+x%4));
+ } else {
+  rgba=unpack4x8unorm(scene_source[texels+u32(y*size.x+x)]);
+ }
  if srgb {
   return vec4(scene_srgb_to_linear(rgba.rgb),rgba.a);
  }
