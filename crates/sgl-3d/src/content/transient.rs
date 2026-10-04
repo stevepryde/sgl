@@ -54,7 +54,8 @@ pub struct FogVolume {
     pub density: f32,
     /// Linear RGB single-scattering albedo of what it adds.
     pub albedo: [f32; 3],
-    /// Nonnegative: 0 keeps the density whole to the box's faces; higher
-    /// thins it toward them (Godot's `edge_fade`).
+    /// Nonnegative: 0 keeps the density whole to within 0.1 m of the box's
+    /// faces, across which it fades out; higher also thins it toward them
+    /// from the box's middle (Godot's `edge_fade`).
     pub edge_fade: f32,
 }
