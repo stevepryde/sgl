@@ -83,6 +83,7 @@ frame.directional_lights[0] = Some(DirectionalLight {
         distance: 150.,  // metres of view depth that are shadowed
         cascades: 4,     // 1 to 4
         first_split: 10., // where the first cascade ends
+        ..Default::default() // pancake_size 20 m, as Godot
     }),
     ..Default::default() // fog_energy 1: its full light in the fog
 });
@@ -116,7 +117,11 @@ frame.backdrop = Backdrop::Environment { yaw: 0., brightness: 1. };
   still cast into it: their depth is unclipped, through
   `wgpu::Features::DEPTH_CLIP_CONTROL` where the device has it
   (`graphics_device::features`) and emulated in the caster's shader where it
-  does not. Receivers are offset along their normal by Bevy's 1.8 texels
+  does not. Each cascade's map reaches `pancake_size` metres toward the
+  light beyond its part of the view (Godot's pancake, 20 m by default), so a
+  caster within that margin is recorded at its own depth and one beyond it
+  at the margin's edge. `DirectionalShadow::default()` is
+  Bevy's 150 m, 4 and 10 m with Godot's 20 m pancake. Receivers are offset along their normal by Bevy's 1.8 texels
   (times √2) and toward the light by 2 cm, so no bias is authored. While TAA
   or FSR2 runs the camera's surfaces filter with Jimenez's 8-tap spiral,
   turned per pixel and per frame for them to resolve; otherwise, and in probe

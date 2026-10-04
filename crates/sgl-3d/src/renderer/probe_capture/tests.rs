@@ -321,6 +321,7 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
             distance: 20.,
             cascades: 3,
             first_split: 2.,
+            ..Default::default()
         }),
         ..Default::default()
     });

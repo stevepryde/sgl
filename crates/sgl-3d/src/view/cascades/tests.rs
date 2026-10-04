@@ -10,6 +10,7 @@ fn shadow(cascades: u32) -> DirectionalShadow {
         distance: 200.,
         cascades,
         first_split: 12.,
+        ..Default::default()
     }
 }
 
@@ -257,6 +258,7 @@ fn cascade_bounds_follow_the_authored_split_and_distance() {
                 distance,
                 cascades: count,
                 first_split,
+                ..Default::default()
             };
             let cascades = Cascades::camera(view, projection, Vec3::NEG_Y, &shadow, MAP).unwrap();
             let bounds: Vec<f32> = cascades.as_slice().iter().map(|c| c.far_bound).collect();
@@ -292,6 +294,7 @@ fn an_unusable_first_split_gives_one_cascade_over_the_distance() {
             distance: 100.,
             cascades: 4,
             first_split,
+            ..Default::default()
         };
         let fits = [
             (

@@ -66,7 +66,8 @@ type it belongs to, with a default so a game sets only what it changes.
 - `crystal`: Crystal's tracing and denoising parameters.
 - `directional_lights`, `hemisphere_light`: the lights that are not scene
   content. A directional light's `shadow` is its cascades' reach: distance,
-  cascade count and first split; `None` casts none. Its `fog_energy`, as a
+  cascade count, first split and pancake size (`DirectionalShadow::default()`
+  is Bevy's 150 m, 4 and 10 m with Godot's 20 m pancake); `None` casts none. Its `fog_energy`, as a
   scene light's (`Light::fog_energy`), scales its light in the volumetric
   fog: 1 by default, at most 0.001 leaves it out.
 - `baked_lighting`: `false` turns baked lighting off.

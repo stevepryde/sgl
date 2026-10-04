@@ -36,6 +36,7 @@ const SHADOW: DirectionalShadow = DirectionalShadow {
     distance: 10.,
     cascades: 2,
     first_split: 2.5,
+    pancake_size: 20.,
 };
 
 /// A light shining along -Z onto the receiver, red or green, with or without
@@ -428,6 +429,7 @@ fn every_cascade_shadows_its_part_of_the_view() {
         distance: 200.,
         cascades: 4,
         first_split: 10.,
+        ..Default::default()
     };
     let input = frame(DirectionalLight {
         direction: Vec3::NEG_Z,
@@ -501,6 +503,7 @@ fn ray_hits_take_the_cascade_that_holds_them() {
             distance: 200.,
             cascades: 4,
             first_split: 10.,
+            ..Default::default()
         }),
         ..Default::default()
     });
@@ -545,6 +548,88 @@ fn ray_hits_take_the_cascade_that_holds_them() {
     );
     // The camera's selection by view depth does not hold this point.
     assert!(camera > 0.99, "{camera}");
+}
+
+// A cascade's map records a caster up to the shadow's pancake toward the
+// light beyond its slice at the caster's own depth (Godot's pancake), so
+// the metres between a point and its occluder can be read from the map.
+// Plausible defects: the near plane left on the slice, so such a caster is
+// clamped to it and the occluder reads as the near plane; the margin moved
+// away from the light; the depth scale not following the wider range. The
+// oracle is geometric: under a light shining straight down, a floor the
+// camera does not see, above the top of the nearest cascades' slices
+// (cascade 0 tops out about 5.5 m up), lies exactly as far above each
+// point as its height difference.
+#[test]
+fn casters_within_the_pancake_keep_their_own_depth() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    const HEIGHT: f32 = 12.;
+    fixture.place(floor(Vec3::new(0., HEIGHT, -110.), 120.), false);
+    let input = frame(DirectionalLight {
+        direction: Vec3::NEG_Y,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: Some(DirectionalShadow {
+            distance: 200.,
+            cascades: 4,
+            first_split: 10.,
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    // (view depth, height): points in cascades 0, 0, 1 and 2, in view.
+    let points = [(0.3, 0.), (3., 1.), (20., 5.), (60., 0.)];
+    let (device, queue) = (&fixture.device, &fixture.queue);
+    let prepared = fixture.renderer.prepare_test_frame(
+        device,
+        queue,
+        &mut fixture.scene,
+        &input,
+        &fixture.settings,
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    fixture.renderer.encode_test_shadows(
+        device,
+        queue,
+        &mut encoder,
+        &fixture.scene,
+        &prepared,
+        None,
+    );
+    queue.submit([encoder.finish()]);
+    let positions = points
+        .iter()
+        .map(|(depth, height)| format!("vec3(0.,{height:?},{:?})", -depth))
+        .collect::<Vec<_>>()
+        .join(",");
+    // The metres from each point to the occluder its cascade's map records
+    // over it: the depth difference over the projection's depth per metre.
+    let statement = format!(
+        "var points=array<vec3<f32>,4>({positions});\n\
+         var metres=vec4(0.);\n\
+         for(var i=0;i<4;i++) {{\n\
+          let point=points[i];\n\
+          let cascade=get_cascade_index((view.view*vec4(point,1.)).z);\n\
+          let local=world_to_directional_light_local(cascade,vec4(point,1.));\n\
+          let texel=vec2<i32>(local.xy*vec2<f32>(textureDimensions(directional_shadow_map)));\n\
+          let occluder=textureLoad(directional_shadow_map,texel,i32(cascade),0);\n\
+          let clip=frame.shadow_cascades[cascade].clip_from_world;\n\
+          metres[i]=(occluder-local.z)/length(vec3(clip[0].z,clip[1].z,clip[2].z));\n\
+         }}\n\
+         output[0]=metres;"
+    );
+    let metres = observe_shadow(device, queue, &fixture.renderer, &fixture.scene, &statement);
+    fixture.scene.finish_frame();
+    for ((depth, height), metres) in points.into_iter().zip(metres) {
+        let expected = HEIGHT - height;
+        assert!(
+            (metres - expected).abs() < 0.01,
+            "the floor reads {metres} m above the point {depth} m away, not {expected}"
+        );
+    }
 }
 
 /// Runs `statement` in a compute shader over the shading library with the

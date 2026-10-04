@@ -734,6 +734,7 @@ async fn render(
             distance: 20.,
             cascades: 2,
             first_split: 6.,
+            ..Default::default()
         }),
         ..Default::default()
     });
