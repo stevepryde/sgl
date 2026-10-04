@@ -56,8 +56,9 @@ types. Under S3D-6 a game says which one or how much (a setting above, a
 diagnostics switch below, or a value here), each with a default; how a feature
 is done (its algorithm and internal parameters) is SGL3D's.
 
-- `exposure`: fixed stops, or automatic exposure with its histogram range,
-  filter, speeds, limits, compensation curve and metering mask.
+- `exposure`: fixed stops, or automatic exposure with its brightening and
+  darkening speeds, limits, compensation curve and metering mask. SGL3D
+  keeps Bevy's histogram range, outlier filter and exponential blend.
 - `bloom`: intensity, low-frequency boost and its curvature, and high-pass
   frequency.
 - `motion_blur`: the shutter angle, the share of each frame's motion that

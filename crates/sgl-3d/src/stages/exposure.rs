@@ -32,6 +32,21 @@ pub(crate) static EXPOSURE: crate::shading::Module = crate::shading::Module {
 /// The exposure multiplier's format, which FSR2 reads as its exposure.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
+// How auto exposure meters and adapts, Bevy's `AutoExposure` defaults
+// (9d12036 `bevy_post_process/src/auto_exposure/settings.rs`). Metering
+// follows `Exposure::stops`, so one fixed range serves every scene.
+// The log2 luminance the histogram spans (Bevy's `range`). Luminance below
+// it is metered at the least; above it counts in the highest bin.
+const MIN_LOG_LUMINANCE: f32 = -8.;
+const MAX_LOG_LUMINANCE: f32 = 8.;
+// The share of samples, from the darkest, metering ignores, and the share
+// it keeps (Bevy's `filter`): the darkest and brightest 10% are outliers.
+const FILTER_LOW: f32 = 0.1;
+const FILTER_HIGH: f32 = 0.9;
+/// How far in stops from the target the adaptation turns from linear to
+/// exponential, against jitter when the target keeps moving slightly.
+const EXPONENTIAL_TRANSITION_DISTANCE: f32 = 1.5;
+
 /// `AutoExposure` in `exposure.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -58,7 +73,7 @@ impl AutoExposureUniform {
     /// `automatic` after `stops` for a frame of `delta_time` seconds,
     /// restarting at the target when `reset`.
     fn new(automatic: &AutoExposure, stops: f32, delta_time: f32, reset: bool) -> Self {
-        let log_lum_range = automatic.max_log_luminance - automatic.min_log_luminance;
+        let log_lum_range = MAX_LOG_LUMINANCE - MIN_LOG_LUMINANCE;
         // Bevy's `correction_bounds`: an invalid range does not limit.
         let (correction_min, correction_max) = if automatic.correction_min.is_finite()
             && automatic.correction_max.is_finite()
@@ -74,14 +89,14 @@ impl AutoExposureUniform {
             compensation[index / 2][index % 2 * 2..index % 2 * 2 + 2].copy_from_slice(point);
         }
         Self {
-            min_log_lum: automatic.min_log_luminance,
+            min_log_lum: MIN_LOG_LUMINANCE,
             inv_log_lum_range: log_lum_range.recip(),
             log_lum_range,
-            low_percent: automatic.filter_low,
-            high_percent: automatic.filter_high,
+            low_percent: FILTER_LOW,
+            high_percent: FILTER_HIGH,
             speed_up: automatic.speed_brighten,
             speed_down: automatic.speed_darken,
-            exponential_transition_distance: automatic.exponential_transition_distance,
+            exponential_transition_distance: EXPONENTIAL_TRANSITION_DISTANCE,
             correction_min,
             correction_max,
             delta_time,

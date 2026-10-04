@@ -161,7 +161,7 @@ frame.exposure = Exposure {
         compensation: CompensationCurve::new(&[[-6., -3.], [0., -2.5]])?,
         correction_min: -1., // the most it darkens, in stops from `stops`
         correction_max: 2.,  // the most it brightens
-        ..Default::default() // Bevy's range, filter, speeds and an even mask
+        ..Default::default() // Bevy's speeds and an even mask
     }),
 };
 frame.bloom = BloomParameters { intensity: 0.1, ..Default::default() };
@@ -171,14 +171,15 @@ frame.color_grading = ColorGrading::default(); // Bevy's sections and white bala
 - The frame has one exposure, which FSR2 and the tone map both read. With
   `automatic: None` it is `stops`. Otherwise it is Bevy's auto exposure,
   metered from the complete HDR frame at the render size, before
-  antialiasing: a 64-bin histogram of log2 luminance (after `stops`),
-  weighted by `metering_mask` (a 16×16 grid), averaged without the
-  `filter_low` darkest and `1 - filter_high` brightest samples. The target
-  correction brings that average to 2 raised to the compensation curve's
-  stops (-2.5 is about middle grey); the correction follows it at
+  antialiasing: a 64-bin histogram of log2 luminance (after `stops`) from -8
+  to 8, weighted by `metering_mask` (a 16×16 grid), averaged without the
+  darkest and brightest 10% of samples (Bevy's default range and filter,
+  which SGL3D keeps). The target correction brings that average to 2 raised
+  to the compensation curve's stops (-2.5 is about middle grey); `stops`
+  shifts the frame into the range. The correction follows it at
   `speed_brighten` stops per second when the scene got brighter and
   `speed_darken` when it got darker, by `FrameInput::frame_time_ms`, slowing
-  within `exponential_transition_distance`, and stays within
+  within 1.5 stops of it (Bevy's default), and stays within
   `correction_min..=correction_max`. A camera cut, a target-changing resize,
   another scene or a switch from a fixed exposure sets it to its target.
   Timing group `exposure`.

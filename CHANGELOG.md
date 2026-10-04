@@ -15,6 +15,45 @@ full API details.
 
 ## Unreleased
 
+### Auto exposure's histogram range, filter and blend are SGL3D's
+
+- **Scope:** `sgl-3d` `AutoExposure::min_log_luminance`,
+  `max_log_luminance`, `filter_low`, `filter_high` and
+  `exponential_transition_distance` are removed (S3D-6: how a feature is
+  done is SGL3D's). SGL3D meters a histogram of log2 luminance from -8 to
+  8, ignores the darkest and brightest 10% of samples, and turns the
+  adaptation exponential within 1.5 stops of its target: Bevy's
+  `AutoExposure` defaults (9d12036), the values `AutoExposure::default()`
+  set. Metering follows `Exposure::stops`, so the fixed range serves any
+  scene. `speed_brighten`, `speed_darken`, `correction_min`,
+  `correction_max`, `compensation` and `metering_mask` stay the game's. Auto
+  exposure that used the defaults looks the same; one that set other values
+  now takes these.
+- **Migration:** delete the five fields from game code:
+
+  ```rust
+  // Before
+  input.exposure.automatic = Some(AutoExposure {
+      min_log_luminance: -10.,
+      max_log_luminance: 6.,
+      filter_low: 0.2,
+      speed_darken: 2.,
+      ..AutoExposure::default()
+  });
+  // After
+  input.exposure.automatic = Some(AutoExposure {
+      speed_darken: 2.,
+      ..AutoExposure::default()
+  });
+  ```
+
+  A game that set a custom range covering scenes outside −8..8 moves them
+  into −8..8 with `Exposure::stops = s`, which metering follows and the
+  correction adds to; to keep its look it also moves its compensation
+  curve's x-coordinates by +s and `correction_min` / `correction_max` by −s.
+  Afterwards, check the game's auto-exposed scenes, their brightest and
+  darkest especially.
+
 ### Ambient occlusion's radius no longer turns it off
 
 - **Scope:** `sgl-3d` `FrameInput::ambient_occlusion_radius` is only the
