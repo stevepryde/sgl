@@ -43,6 +43,14 @@ fn pbr_three_fresnel(c:f32,f0:vec3<f32>)->vec3<f32> {
  let f=exp2((-5.55473*c-6.98316)*c);
  return f0*(1.-f)+vec3(f);
 }
+// A coat's Fresnel toward the view, weighted by the coat, as Three.js 0.185.1
+// PhysicalLightingModel.finish evaluates it: at
+// clearcoatNormalView.dot(positionViewDirection).clamp() (to [0, 1]) with
+// F0 0.04 and F90 1. Callers dim the light beneath the coat by it.
+fn pbr_coat_fresnel(coat_normal:vec3<f32>,view:vec3<f32>,coat:f32)->f32 {
+ let coat_view_cosine=clamp(dot(coat_normal,view),0.,1.);
+ return coat*pbr_three_fresnel(coat_view_cosine,vec3(.04)).x;
+}
 fn pbr_three_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,r:f32,f0:vec3<f32>)->vec3<f32> {
  let nv=clamp(dot(n,v),0.,1.);
  let nl=clamp(dot(n,l),0.,1.);

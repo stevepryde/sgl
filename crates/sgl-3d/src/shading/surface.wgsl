@@ -88,7 +88,8 @@ fn probe_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32)->vec3<f32> {
 // What shade_lit derives once per surface for its direct lights, as
 // Filament's PixelParams: the diffuse colour, the specular reflectance at
 // normal incidence, the DFG lookup at the view, and the coat's Fresnel toward
-// the view, weighted by the coat.
+// the view, weighted by the coat (pbr_coat_fresnel), which also attenuates
+// shade_lit's ambient, environment and emitted light.
 struct SurfaceReflectance {
  diffuse:vec3<f32>,
  f0:vec3<f32>,
@@ -100,8 +101,7 @@ struct SurfaceReflectance {
 fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
  let f0=mix(vec3(0.04),surface.base.rgb,surface.metallic);
  let diffuse=surface.base.rgb*(1.-surface.metallic);
- let coat_view_cosine=clamp(dot(surface.coat_normal,surface.view),0.,1.);
- let coat_fresnel=surface.coat*pbr_three_fresnel(coat_view_cosine,vec3(.04)).x;
+ let coat_fresnel=pbr_coat_fresnel(surface.coat_normal,surface.view,surface.coat);
  return SurfaceReflectance(diffuse,f0,view_dfg,coat_fresnel);
 }
 // The light one sample brings to a surface, as Filament's
@@ -226,21 +226,18 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let reflectance=surface_reflectance(s,dfg);
  let f0=reflectance.f0;
  let diffuse=reflectance.diffuse;
- // The coat's Fresnel at max(N.V,0) for the other terms; the direct light's
- // clamps N.V to 1 (#428).
- let coat_f=pbr_three_fresnel(coat_nv,vec3(0.04)).x*coat;
  // The retained cosine convolution stores irradiance / PI. It is already
  // a lighting integral, so neither a second PI nor a brightness fudge belongs here.
  let ibl=pbr_ibl_weights(base.rgb,metallic,dfg);
- var color=(ibl.diffuse+ibl.multi)*diffuse_environment(n)*s.environment_scale*(1.-coat_f);
+ var color=(ibl.diffuse+ibl.multi)*diffuse_environment(n)*s.environment_scale*(1.-reflectance.coat_fresnel);
  let sky=frame.hemisphere_sky_color;
  let hemisphere_intensity=frame.hemisphere_intensity;
  let ground=frame.hemisphere_ground_color;
- let hemisphere=diffuse/3.14159265359*pbr_hemisphere(n,sky,ground,hemisphere_intensity)*(1.-coat_f);
+ let hemisphere=diffuse/3.14159265359*pbr_hemisphere(n,sky,ground,hemisphere_intensity)*(1.-reflectance.coat_fresnel);
  color+=hemisphere;
  // The ambient diffuse that ambient occlusion weights: the diffuse
  // environment and hemisphere terms; multiscattering stays apart from it.
- let ambient=ibl.diffuse*diffuse_environment(n)*s.environment_scale*(1.-coat_f)+hemisphere;
+ let ambient=ibl.diffuse*diffuse_environment(n)*s.environment_scale*(1.-reflectance.coat_fresnel)+hemisphere;
  if frame.directional_lights[0].illuminance>0. {
   color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,n,context));
  }
@@ -262,12 +259,12 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
   }
  }
  if context.environment_specular {
-  color+=probe_environment(s.position,pbr_anisotropy_reflection(n,v,s.anisotropy,rough),rough)*s.environment_scale*ibl.single*(1.-coat_f);
+  color+=probe_environment(s.position,pbr_anisotropy_reflection(n,v,s.anisotropy,rough),rough)*s.environment_scale*ibl.single*(1.-reflectance.coat_fresnel);
   if coat>0. {
    let coat_ray=reflect(-v,coat_n);
    color+=probe_environment(s.position,normalize(mix(coat_ray,coat_n,pow(coat_rough,4.))),coat_rough)*s.environment_scale*pbr_three_single_scatter(vec3(0.04),surface_dfg(coat_nv,coat_rough))*coat;
   }
  }
- color+=emission*(1.-coat_f);
+ color+=emission*(1.-reflectance.coat_fresnel);
  return Shaded(color,ambient);
 }
