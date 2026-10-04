@@ -125,8 +125,7 @@ impl Renderer {
     /// A renderer presenting to `output_format` at `output_size` physical
     /// pixels, for a window of `device_scale` physical pixels per logical
     /// pixel, sized for `settings`. Reflection source completion is built for
-    /// them, so a first frame from a `perspective` camera builds it no
-    /// pipeline.
+    /// them, so a first frame from a `perspective` camera does not rebuild it.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
