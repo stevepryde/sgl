@@ -280,10 +280,11 @@ code; it does not redeclare a struct, binding or function another module owns.
   captures and ray hits, which show static content, sample the static
   layers. The directional
   light that casts a shadow has cascades that `view/cascades.rs` splits and
-  fits from the camera: Bevy's geometric splits from a first one at a fixed
-  share of the shadow's distance, and Bevy's constant-diameter,
-  texel-snapped fit with its near plane a fixed 20 m pancake toward the
-  light beyond the slice, as Godot's; both are SGL3D's, not the game's. Each
+  fits from the camera: Godot's default splits, fixed shares of the range
+  from the camera's near plane to the shadow's distance, and Bevy's
+  constant-diameter, texel-snapped fit with its near plane Godot's 20 m
+  pancake toward the light beyond the slice; both are SGL3D's, not the
+  game's. Each
   cascade is a view with its own draw list in one layer of a depth array. A cascade's
   casters are culled without its near plane and drawn with unclipped depth
   (emulated where the device lacks `DEPTH_CLIP_CONTROL`), so a caster

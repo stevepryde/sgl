@@ -301,10 +301,10 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
         asset.materials[0].double_sided = false;
         asset
     };
-    // The first cascade's cube reaches 2 m (a fifteenth of the distance)
-    // from the capture's centre, 1 m up.
+    // The first cascade's cube reaches 2 m (Godot's first split, 0.1 of the
+    // distance) from the capture's centre, 1 m up.
     let shadow = DirectionalShadow {
-        distance: 30.,
+        distance: 20.,
         cascades: 3,
     };
     let mut scene = Scene::new(&device, &queue);

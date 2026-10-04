@@ -47,22 +47,21 @@ impl Default for DirectionalLight {
     }
 }
 
-/// A directional light's cascaded shadow, which SGL3D fits from the camera
-/// (Bevy's `CascadeShadowConfigBuilder`, Godot's directional shadow splits).
+/// A directional light's cascaded shadow, which SGL3D splits and fits from
+/// the camera (Godot's `DirectionalLight3D` splits, Bevy's cascade fit).
 /// The camera's view depth from its near plane to `distance` is split into
 /// `cascades`, each a shadow map of the same size covering a farther and
 /// larger part of the view, so texels near the camera are small. SGL3D
-/// places the splits from these two values: the first cascade ends at a
-/// fifteenth of `distance` (Bevy's default 10 m of 150 m) and the others at
-/// depths spaced geometrically from there to `distance`.
+/// places the splits as Godot does by default: each cascade but the last
+/// ends 0.1, 0.2 and 0.5 of the way from the near plane to `distance`, and
+/// the last at `distance`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DirectionalShadow {
-    /// The farthest view depth that is shadowed, in metres (Bevy's
-    /// `maximum_distance`). Nonpositive or nonfinite casts no shadow.
+    /// The farthest view depth that is shadowed, in metres (Godot's
+    /// `directional_shadow_max_distance`, Bevy's `maximum_distance`).
+    /// Nonpositive or nonfinite casts no shadow.
     pub distance: f32,
-    /// How many cascades split `distance`, 1 to 4; others are clamped. A
-    /// `distance` within 15 times the camera's near plane, where the first
-    /// cascade would end before the view begins, has one.
+    /// How many cascades split `distance`, 1 to 4; others are clamped.
     pub cascades: u32,
 }
 

@@ -105,13 +105,13 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   π), no shadow and fog energy 1.
 - The shadow is Bevy's cascaded shadow map, which SGL3D fits from the camera
   every frame: the view depth from the camera's near plane to `distance` is
-  split into `cascades`, each a 2048-texel map. SGL3D places the splits:
-  the first cascade ends at a fifteenth of `distance` (Bevy's default 10 m
-  of 150 m) and the others at depths spaced geometrically from there to
-  `distance`, as Bevy spaces them; a `distance` within 15 times the camera's
-  near plane has one cascade. `DirectionalShadow::default()` is Bevy's
-  150 m and 4; a `const` builds from `..DirectionalShadow::DEFAULT`, the
-  same values. A cascade
+  split into `cascades`, each a 2048-texel map. SGL3D places the splits as
+  Godot's `DirectionalLight3D` does by default: each cascade but the last
+  ends 0.1, 0.2 and 0.5 of the way from the near plane to `distance` (two
+  cascades split at 0.1, three at 0.1 and 0.2), and the last at `distance`.
+  `DirectionalShadow::default()` is Bevy's 150 m and 4 (cascades ending at
+  about 15, 30, 75 and 150 m); a `const` builds from
+  `..DirectionalShadow::DEFAULT`, the same values. A cascade
   keeps one size and moves in whole texels, so a still shadow does not
   shimmer as the camera moves and turns (a change of field of view or of
   these values resizes it). Each cascade overlaps the next by a fifth of its

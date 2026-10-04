@@ -1,8 +1,7 @@
 //! A directional light's shadow cascades: the camera's view depth split into
 //! slices, each covered by one orthographic shadow view.
 //!
-//! Ports Bevy 9d12036 `crates/bevy_light/src/cascade.rs`
-//! (`calculate_cascade_bounds`, the near bounds of
+//! Ports Bevy 9d12036 `crates/bevy_light/src/cascade.rs` (the near bounds of
 //! `build_directional_light_cascades`, and `calculate_cascade`), MIT OR
 //! Apache-2.0 (`src/LICENSE-bevy.txt`). A cascade keeps a constant diameter,
 //! the larger of its slice's body and far-plane diagonals rounded up to whole
@@ -10,20 +9,22 @@
 //! shadow of a still scene does not shimmer while the camera moves or turns.
 //! Changes: the slice corners unproject the camera's projection matrix,
 //! which also covers off-centre and orthographic cameras (Bevy takes them
-//! from its projection types); the first cascade starts at the camera's near
-//! plane, as Godot's `_light_instance_setup_directional_shadow` starts it
-//! (Bevy's `minimum_distance`); the light's rotation is built from its
-//! direction; a probe capture's cascades are cubes about its centre,
-//! what its six faces see out to each far bound; the first cascade ends at a
-//! fifteenth of the shadow's distance ([`FIRST_SPLIT_DIVISOR`]) rather than
-//! at an authored depth; and each cascade's near plane lies [`SHADOW_PANCAKE_SIZE`] toward
-//! the light beyond the slice's bounds, as Godot b130438's pancake puts it
-//! beyond the slice's bounding sphere
-//! (`servers/rendering/renderer_scene_cull.cpp`
-//! `_light_instance_setup_directional_shadow`: `z_max = z_vec.dot(center) +
-//! radius + pancake_size`), MIT (`src/LICENSE-godot.txt`), so a caster within
-//! that margin keeps its own depth and only one beyond it is clamped to the
-//! near plane.
+//! from its projection types); the light's rotation is built from its
+//! direction; and a probe capture's cascades are cubes about its centre,
+//! what its six faces see out to each far bound.
+//!
+//! Where the cascades start and end, and how far each reaches toward the
+//! light, port Godot b130438's `_light_instance_setup_directional_shadow`
+//! (`servers/rendering/renderer_scene_cull.cpp`), MIT
+//! (`src/LICENSE-godot.txt`), with `DirectionalLight3D`'s defaults
+//! (`scene/3d/light_3d.cpp`): the first cascade starts at the camera's near
+//! plane; each but the last ends at a fixed share of the range from there to
+//! the shadow's distance ([`SPLIT_SHARES`]), and the last at the distance;
+//! and each cascade's near plane lies [`SHADOW_PANCAKE_SIZE`] toward the
+//! light beyond the slice's bounds, as Godot's pancake puts it beyond the
+//! slice's bounding sphere (`z_max = z_vec.dot(center) + radius +
+//! pancake_size`), so a caster within that margin keeps its own depth and
+//! only one beyond it is clamped to the near plane.
 use crate::content::lighting::DirectionalShadow;
 use glam::camera;
 use glam::{Mat4, Vec3, Vec4};
@@ -36,19 +37,16 @@ pub(crate) const MAX_SHADOW_CASCADES: usize = 4;
 /// is its twin.
 pub(crate) const SHADOW_CASCADE_OVERLAP: f32 = 0.2;
 /// How far toward the light, in metres, each cascade's map still records a
-/// caster at its own depth beyond the part of the view it covers: Godot
-/// b130438's `directional_shadow_pancake_size` default
-/// (`scene/3d/light_3d.cpp`). A caster farther toward the light is recorded
-/// at the margin's edge and still shadows the cascade.
+/// caster at its own depth beyond the part of the view it covers:
+/// `DirectionalLight3D`'s default `directional_shadow_pancake_size`. A
+/// caster farther toward the light is recorded at the margin's edge and
+/// still shadows the cascade.
 pub(crate) const SHADOW_PANCAKE_SIZE: f32 = 20.;
-/// The shadow's distance over the first cascade's far bound: Bevy 9d12036's
-/// `CascadeShadowConfigBuilder` defaults, a `first_cascade_far_bound` of
-/// 10 m in a `maximum_distance` of 150 m, kept as a share of any distance as
-/// Godot b130438 (`directional_shadow_split_1`, `scene/3d/light_3d.cpp`) and
-/// Filament ef1a133 (`ShadowOptions::cascadeSplitPositions`,
-/// `filament/include/filament/LightManager.h`) place their splits at fixed
-/// shares of the shadow's distance.
-const FIRST_SPLIT_DIVISOR: f32 = 15.;
+/// Where each cascade but the last ends, as a share of the range from the
+/// camera's near plane to the shadow's distance: `DirectionalLight3D`'s
+/// default `directional_shadow_split_1` to `_3`. A shadow of `n` cascades
+/// takes the first `n - 1`, as Godot's 2-split mode takes the first.
+const SPLIT_SHARES: [f32; MAX_SHADOW_CASCADES - 1] = [0.1, 0.2, 0.5];
 
 /// One cascade's shadow view.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -163,32 +161,22 @@ impl Bounds {
     }
 }
 
-/// `shadow`'s far bounds beyond a first cascade starting at `near`: Bevy's
-/// `calculate_cascade_bounds`, geometric from the first split, `distance` /
-/// [`FIRST_SPLIT_DIVISOR`], to `distance`. A first split not beyond `near`
-/// gives one cascade over the whole distance, as Bevy's builder refuses it.
+/// `shadow`'s far bounds beyond a first cascade starting at `near`, as
+/// Godot's `_light_instance_setup_directional_shadow` places them: cascade
+/// `i` ends at `near + SPLIT_SHARES[i] * (distance - near)` and the last at
+/// `distance`.
 fn cascade_bounds(shadow: &DirectionalShadow, near: f32) -> Option<Bounds> {
     let distance = shadow.distance;
     if !distance.is_finite() || distance <= near {
         return None;
     }
-    let first = distance / FIRST_SPLIT_DIVISOR;
-    let count = if first > near {
-        shadow.cascades.clamp(1, MAX_SHADOW_CASCADES as u32) as usize
-    } else {
-        1
-    };
-    let mut bounds = Bounds {
-        list: [distance; MAX_SHADOW_CASCADES],
-        count,
-    };
-    if count > 1 {
-        let base = (distance / first).powf(1. / (count - 1) as f32);
-        for (index, bound) in bounds.list[..count].iter_mut().enumerate() {
-            *bound = first * base.powf(index as f32);
-        }
+    let count = shadow.cascades.clamp(1, MAX_SHADOW_CASCADES as u32) as usize;
+    let range = distance - near;
+    let mut list = [distance; MAX_SHADOW_CASCADES];
+    for (bound, share) in list[..count - 1].iter_mut().zip(SPLIT_SHARES) {
+        *bound = near + share * range;
     }
-    Some(bounds)
+    Some(Bounds { list, count })
 }
 
 /// The view depth of the camera's near plane: device depth 1.

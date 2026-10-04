@@ -68,7 +68,7 @@ is done (its algorithm and internal parameters) is SGL3D's.
 - `directional_lights`, `hemisphere_light`: the lights that are not scene
   content. A directional light's `shadow` is its cascades' reach: distance
   and cascade count (`DirectionalShadow::default()` is Bevy's 150 m and 4);
-  SGL3D places the splits and the pancake. `None` casts none. Its
+  SGL3D places the splits (Godot's) and the pancake. `None` casts none. Its
   `fog_energy`, as a scene light's
   (`Light::fog_energy`), scales its light in the volumetric fog: 1 by
   default, at most 0.001 leaves it out.
