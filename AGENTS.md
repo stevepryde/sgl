@@ -74,7 +74,10 @@ compatibility shims solely to avoid updating consumers.
   Do not call it a game engine, add an engine on top of it, or turn it into one.
   Game logic is Rust. Authored gameplay data is RON. New 3D clients use
   Rust/wgpu through `sgl-3d` (SGL3D), native and in the browser (WASM +
-  WebGPU) alike: both are first-class targets. The game owns its window or
+  WebGPU): both are first-class targets, meaning both are maintained. The
+  browser is not a parity target: native supports everything the device can,
+  and the browser takes a fallback or goes without a feature where it is not
+  feasible (D-27). The game owns its window or
   canvas and event loop. `sgl-2d` renders 2D games and the HUD and UI over a
   3D scene. See `specs/sgl3d.md` and
   `docs/3d-development.md`. Do not add a second gameplay scripting language, an

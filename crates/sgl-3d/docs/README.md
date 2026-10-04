@@ -13,6 +13,8 @@ the code. They are kept current with every feature change; the code and the
 
 A Rust/wgpu 3D renderer that a game links as a library, native or in the
 browser (WASM + WebGPU): both are first-class targets, running the same code.
+Native takes every feature the device supports; the browser falls back or goes
+without where it cannot, and the effective configuration reports which.
 The game owns the window or canvas, event loop, input, simulation, camera, UI,
 content and settings file.
 SGL3D keeps GPU resources and encodes each frame into the game's command
