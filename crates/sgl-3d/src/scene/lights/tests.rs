@@ -281,6 +281,10 @@ fn scene_lights_light_what_they_own() {
             ..light(ahead)
         },
         Light {
+            shadow_opacity: -0.5,
+            ..light(ahead)
+        },
+        Light {
             shadow_opacity: 1.5,
             ..light(ahead)
         },

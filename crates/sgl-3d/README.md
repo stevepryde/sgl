@@ -99,12 +99,13 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
 - Up to two directional lights (Bevy's `DirectionalLight`, Godot's
   `DirectionalLight3D`). A light with zero illuminance, or a zero or
   non-finite direction, is off. The first light that is on and has a
-  `shadow` casts it; the other is unshadowed. `fog_energy` scales the light
-  it scatters in the [volumetric fog](#volumetric-fog), and `shadow_opacity`
-  how dark its shadow is, as a scene light's do. `DirectionalLight::default()`
-  is Godot's `DirectionalLight3D`: white, shining along -Z, π lux (its light
-  energy of 1, which it scales by π), no shadow (opacity 1 when it has one)
-  and fog energy 1.
+  `shadow` casts it and draws its cascades, even at a `shadow_opacity` of
+  at most 0.001, which shows none; the other is unshadowed. `fog_energy` scales the light it scatters in the
+  [volumetric fog](#volumetric-fog), and `shadow_opacity` how dark its
+  shadow is, as a scene light's do. `DirectionalLight::default()` is Godot's
+  `DirectionalLight3D`: white, shining along -Z, π lux (its light energy of
+  1, which it scales by π), no shadow (opacity 1 when it has one) and fog
+  energy 1.
 - The shadow is Bevy's cascaded shadow map, which SGL3D fits from the camera
   every frame: the view depth from the camera's near plane to `distance` is
   split into `cascades`, each a map of 2048 texels (1024 at the Low
@@ -350,8 +351,7 @@ Where it differs from Godot's fog, and why:
   box. Emission (the frame's medium's too), a volume's height falloff,
   density textures, negative density and other shapes are not ported, and
   there is no GI injection, which in Godot needs VoxelGI or SDFGI.
-- The lights are SGL3D's, in its units and falloff; their shadows take
-  their `shadow_opacity` in the fog as on surfaces, as Godot's do.
+- The lights are SGL3D's, in its units and falloff.
   The directional shadow has no fade toward the shadow distance: beyond it
   the fog is unshadowed, as surfaces are. A local light's light in the fog
   ends at its occluder instead of fading over about 10 cm behind it. A
