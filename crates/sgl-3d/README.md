@@ -952,8 +952,8 @@ stay in the game (S3D-1).
   instance again and redraws the local-light shadow faces it reaches, so
   skip it for an instance whose pose did not change.
 - **Rigid nodes.** A rigid mesh's node is baked at its rest transform, so a
-  clip that animates it moves nothing; split such parts out with
-  `load_slice_filtered` (named rigid parts) and pose them as instances.
+  clip that animates it moves nothing; split such parts out by selecting
+  their nodes (`LoadOptions::nodes`) and pose them as instances.
 - **Rendering.** Each frame the deform stage morphs and skins, in one compute
   pass, every instance whose deformation changed since the last submitted
   frame (Bevy's skinning and morph math, run once per frame as Wicked
@@ -1000,9 +1000,10 @@ authored look and per-frame state in a `FrameInput`.
    material), and images: decoded RGBA8, or BC7 mip chains
    ([Compressed material images](#compressed-material-images)). Apply game-specific adaptations
    explicitly; `LoadOptions` can bound emissive strength when the game requests
-   that behavior, and supply any of the glTF's images (`images`) so the
-   loader never reads or decodes them. Default loading preserves authored
-   strength and decodes every image.
+   that behavior, supply any of the glTF's images (`images`) so the loader
+   never reads or decodes them, and select mesh nodes (`nodes`). Default
+   loading preserves authored strength, decodes every image and loads every
+   node.
 3. `Scene::new(&device, &queue)` starts empty. Add content between frames;
    each addition returns its identity (`MaterialId`, `ModelId`, `InstanceId`,
    `LightId`, `DecalImageId`, `DecalId`, `EnvironmentId`), and every operation
@@ -1281,13 +1282,17 @@ error scopes. It loads no glTF and sets no lightmap or mesh LODs.
 
 ## Asset and environment limits
 
-`asset::load_slice_filtered(bytes, |name| name == Some("head"))` selects mesh
-nodes by a caller-owned predicate for rigid-part animation. Each mesh node is
-tested independently; excluded parents still contribute their transforms. It
-uses the same decoding, material support, validation, and batching as file
-loading. Embedded imports require embedded buffers, and embedded images
-unless the game supplies them (`LoadOptions::images`); games add their
-asset label to errors. An empty selection is an error.
+`LoadOptions { nodes: Some(&|name| name == Some("head")), ..Default::default() }`
+selects mesh nodes, from a file or bytes, by a caller-owned predicate for
+rigid-part animation. Each mesh node is tested independently; excluded
+parents still contribute their transforms. Selection combines with the other
+options and uses the same decoding, material support, validation, and
+batching as a whole load. An empty selection is an error. Embedded imports
+require embedded buffers, and embedded images unless the game supplies them
+(`LoadOptions::images`); games add their asset label to errors. A
+`LoadOptions` borrows its callbacks, which are `Sync` so one value can serve
+loads on several threads: build it where it is used, or store a
+`LoadOptions<'static>` of `static` or leaked callbacks.
 
 The loader supports glTF triangle meshes, baked rigid node transforms,
 skins with four influences per vertex, morph targets, animation clips as data

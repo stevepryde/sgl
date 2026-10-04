@@ -33,7 +33,13 @@ pub struct LoadOptions<'a> {
     /// Where each of the glTF's images comes from, asked once per image in
     /// image order. `None` decodes every image.
     #[allow(clippy::type_complexity)]
-    pub images: Option<&'a dyn Fn(GltfImage<'_>) -> Result<ImageSource>>,
+    pub images: Option<&'a (dyn Fn(GltfImage<'_>) -> Result<ImageSource> + Sync)>,
+    /// Which of the scene's mesh nodes load, asked once per mesh node with
+    /// its authored name; `None` loads every one. Every ancestor's
+    /// transform applies, selected or not, and each descendant is asked
+    /// itself. Selecting none is an error.
+    #[allow(clippy::type_complexity)]
+    pub nodes: Option<&'a (dyn Fn(Option<&str>) -> bool + Sync)>,
 }
 
 impl std::fmt::Debug for LoadOptions<'_> {
@@ -41,6 +47,7 @@ impl std::fmt::Debug for LoadOptions<'_> {
         f.debug_struct("LoadOptions")
             .field("emissive_strength_cap", &self.emissive_strength_cap)
             .field("images", &self.images.map(|_| "Fn"))
+            .field("nodes", &self.nodes.map(|_| "Fn"))
             .finish()
     }
 }
@@ -54,8 +61,8 @@ pub struct GltfImage<'a> {
     pub index: usize,
     /// Its authored name.
     pub name: Option<&'a str>,
-    /// The file it refers to, as authored (relative to the glTF); `None`
-    /// when it is embedded.
+    /// The file it refers to, relative to the glTF and percent-encoded, as
+    /// authored; `None` when it is embedded (a buffer view or a data URI).
     pub uri: Option<&'a str>,
 }
 
@@ -90,7 +97,7 @@ fn load_inner(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
     let (document, buffers) = import(&bytes, path.parent()).map_err(|error| {
         format!("glTF import failed: {error}; check referenced files and re-export valid glTF from the Blender source")
     })?;
-    decode(document, &buffers, path.parent(), options, &|_| true)
+    decode(document, &buffers, path.parent(), options)
 }
 
 /// Load an embedded glTF/GLB with the same material and geometry rules as [`load`].
@@ -105,29 +112,9 @@ pub fn load_slice(bytes: &[u8]) -> Result<Asset> {
 /// may be an external file the bytes cannot resolve.
 pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions<'_>) -> Result<Asset> {
     check(options)?;
-    load_embedded(bytes, options, &|_| true)
-}
-
-/// Load mesh nodes selected by the caller from an embedded asset.
-/// The predicate sees each mesh node's optional authored name. All ancestor
-/// transforms remain applied, including ancestors excluded by the predicate.
-/// Selection does not implicitly include descendants; each mesh node is tested.
-/// Unsupported content is rejected under the same rules as file loading.
-pub fn load_slice_filtered(
-    bytes: &[u8],
-    include_node: impl Fn(Option<&str>) -> bool,
-) -> Result<Asset> {
-    load_embedded(bytes, LoadOptions::default(), &include_node)
-}
-
-fn load_embedded(
-    bytes: &[u8],
-    options: LoadOptions<'_>,
-    include_node: &dyn Fn(Option<&str>) -> bool,
-) -> Result<Asset> {
     let (document, buffers) =
         import(bytes, None).map_err(|error| format!("embedded glTF import failed: {error}"))?;
-    decode(document, &buffers, None, options, include_node)
+    decode(document, &buffers, None, options)
 }
 
 fn check(options: LoadOptions<'_>) -> Result<()> {
@@ -234,7 +221,6 @@ fn decode(
     buffers: &[gltf::buffer::Data],
     base: Option<&Path>,
     options: LoadOptions<'_>,
-    include_node: &dyn Fn(Option<&str>) -> bool,
 ) -> Result<Asset> {
     for extension in document.extensions_used() {
         if !matches!(
@@ -281,6 +267,7 @@ fn decode(
         .or_else(|| document.scenes().next())
         .ok_or("GLB contains no scene")?;
     let mut rigging = Rigging::new(&document, buffers)?;
+    let include_node = options.nodes.unwrap_or(&|_| true);
     let mut meshes = Vec::new();
     for node in scene.nodes() {
         read_node(

@@ -17,9 +17,9 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
 - **glTF 2.0 meshes**: triangles with metallic/roughness, normal and
   bump maps, clearcoat, emission, unlit and `KHR_materials_anisotropy`.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
-  `load_with_options` and `load_slice_with_options` (an emissive strength
-  cap, and images the game supplies, which are never decoded),
-  `load_slice_filtered` (named rigid parts), or a
+  `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
+  emissive strength cap, images the game supplies, which are never decoded,
+  and a selection of mesh nodes for named rigid parts), or a
   procedural `asset::Asset` (`asset::Material::default()` is glTF's default
   material). Unsupported features return errors rather than
   partial models. [Limits](../README.md#asset-and-environment-limits).

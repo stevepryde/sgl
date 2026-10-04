@@ -33,7 +33,7 @@ package manifests select features. Linear light values and HDR buffers must rema
 linear until final presentation conversion.
 
 Load geometry and textures once per scene through `asset::load` or
-`asset::load_slice`. Use `asset::load_slice_filtered` for named rigid parts;
+`asset::load_slice`. Select named rigid parts with `LoadOptions::nodes`;
 keep naming conventions in the game predicate. Skinned and morphed assets
 bring their rig and clips as plain data (`Asset::rig`); the game samples and
 blends clips and poses each deforming instance every frame with

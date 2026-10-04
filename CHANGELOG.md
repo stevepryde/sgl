@@ -31,9 +31,10 @@ full API details.
 
 ### glTF loading takes the game's images instead of decoding them
 
-- **Scope:** `sgl-3d` `asset::LoadOptions` gains `images` and a lifetime
-  (`LoadOptions<'a>`), with the new `asset::GltfImage` and
-  `asset::ImageSource`. The loader asks `images` once per glTF image (its
+- **Scope:** `sgl-3d` `asset::LoadOptions` gains `images` and `nodes` and a
+  lifetime (`LoadOptions<'a>`), with the new `asset::GltfImage` and
+  `asset::ImageSource`; `asset::load_slice_filtered` is removed. The loader
+  asks `images` once per glTF image (its
   index, name and, for an external file, its URI) whether to decode it
   (`ImageSource::Decode`) or take the game's `Image`
   (`ImageSource::Supplied`), which it places at that image's index; a
@@ -45,6 +46,11 @@ full API details.
   asset's images with BC7 chains paid for decoding the PNGs it discarded:
   a GLB with four PNGs (three 2048² and one 1024²) loaded in about 100 ms
   decoding them and 1 ms with all four supplied (Apple M5, release build).
+  Mesh node selection moves from `load_slice_filtered` into
+  `LoadOptions::nodes`, so a file load selects nodes as bytes did and a
+  selection combines with supplied images and the emissive cap; it selects
+  as before. Both callbacks are borrowed and `Sync`, so `LoadOptions` stays
+  `Send` and `Sync` and one value can serve loads on several threads.
 - **Migration:** a `LoadOptions` literal that names every field gains
   `..LoadOptions::default()`:
 
@@ -75,8 +81,25 @@ full API details.
   )?;
   ```
 
-  Games that use neither need no changes. Afterwards, check the game's
-  asset load times and its compressed materials.
+  A filtered load passes its predicate as `nodes`:
+
+  ```rust
+  // Before
+  let part = asset::load_slice_filtered(&bytes, |name| name == Some("head"))?;
+  // After
+  let head = |name: Option<&str>| name == Some("head");
+  let part = asset::load_slice_with_options(
+      &bytes,
+      LoadOptions { nodes: Some(&head), ..LoadOptions::default() },
+  )?;
+  ```
+
+  A `LoadOptions` that a game stored without a lifetime now needs one:
+  build it where it is used, or store a `LoadOptions<'static>` whose
+  callbacks are `static` or leaked. A callback that mutates state uses a
+  `Mutex` or an atomic, as `Sync` requires. Games that use none of these
+  need no changes. Afterwards, check the game's asset load times, its
+  compressed materials and its rigid parts.
 
 ### AgX looks are a colour grading choice
 

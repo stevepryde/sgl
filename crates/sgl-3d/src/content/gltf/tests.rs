@@ -373,7 +373,14 @@ fn embedded_part_selection_keeps_ancestors_and_excludes_other_mesh_nodes() {
     ];
     let fixture = Fixture::new(source, &values);
     let bytes = fixture.embedded();
-    let part = load_slice_filtered(&bytes, |name| name == Some("head")).unwrap();
+    let head = |name: Option<&str>| name == Some("head");
+    fn selecting<'a>(nodes: &'a (dyn Fn(Option<&str>) -> bool + Sync)) -> LoadOptions<'a> {
+        LoadOptions {
+            nodes: Some(nodes),
+            ..LoadOptions::default()
+        }
+    }
+    let part = load_slice_with_options(&bytes, selecting(&head)).unwrap();
     let mesh = &part.meshes[0];
     assert_eq!(mesh.indices.len(), 3);
     for (v, expected) in mesh
@@ -404,13 +411,18 @@ fn embedded_part_selection_keeps_ancestors_and_excludes_other_mesh_nodes() {
             .sum::<usize>(),
         12
     );
-    assert!(load_slice_filtered(&bytes, |_| false).is_err());
+    assert!(load_slice_with_options(&bytes, selecting(&|_| false)).is_err());
+    // A file selects as its bytes do.
+    let file = load_with_options(&fixture.path(), selecting(&head)).unwrap();
+    assert_eq!(file.meshes.len(), 1);
+    assert_eq!(file.meshes[0].indices.len(), 3);
 }
 
 // Defects: the loader reads or decodes an image the game supplies, puts a
 // supplied or decoded image at another index than the materials address,
-// or tells the game the wrong image. Oracle: an image whose file does not
-// exist loads only while supplied, and a written PNG's known texels.
+// or tells the game the wrong image (a data URI is embedded, not a file).
+// Oracle: an image whose file does not exist loads only while supplied, and
+// a written PNG's and an embedded one's known texels.
 #[test]
 fn supplied_images_are_never_read_and_the_rest_decode() {
     let source = br#"{
@@ -426,7 +438,11 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
         {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},
         {"bufferView":2,"componentType":5126,"count":3,"type":"VEC2"}
       ],
-      "images":[{"uri":"missing.png","name":"albedo"},{"uri":"glow.png"}],
+      "images":[
+        {"uri":"missing.png","name":"albedo"},
+        {"uri":"glow.png"},
+        {"uri":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNwC4gCAAHQAPElUIcnAAAAAElFTkSuQmCC"}
+      ],
       "textures":[{"source":0},{"source":1}],
       "materials":[{
         "pbrMetallicRoughness":{"baseColorTexture":{"index":0}},
@@ -445,9 +461,9 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
         .save(fixture.directory.join("glow.png"))
         .unwrap();
     let supplied = image::RgbaImage::from_raw(1, 1, vec![1, 2, 3, 4]).unwrap();
-    let seen = std::cell::RefCell::new(Vec::new());
+    let seen = std::sync::Mutex::new(Vec::new());
     let sources = |image: GltfImage<'_>| -> Result<ImageSource> {
-        seen.borrow_mut().push((
+        seen.lock().unwrap().push((
             image.index,
             image.name.map(String::from),
             image.uri.map(String::from),
@@ -475,13 +491,15 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
     .unwrap();
     assert_eq!(texels(&asset.images[0]), [1, 2, 3, 4]);
     assert_eq!(texels(&asset.images[1]), [10, 20, 30, 255, 40, 50, 60, 255]);
+    assert_eq!(texels(&asset.images[2]), [70, 80, 90, 255]);
     assert_eq!(asset.materials[0].base_texture, Some(0));
     assert_eq!(asset.materials[0].emissive_texture, Some(1));
     assert_eq!(
-        *seen.borrow(),
+        *seen.lock().unwrap(),
         [
             (0, Some("albedo".into()), Some("missing.png".into())),
             (1, None, Some("glow.png".into())),
+            (2, None, None),
         ]
     );
     // Bytes resolve no external file: supplying every image loads them.
@@ -496,6 +514,6 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
         },
     )
     .unwrap();
-    assert_eq!(embedded.images.len(), 2);
+    assert_eq!(embedded.images.len(), 3);
     assert!(load_slice(&fixture.embedded()).is_err());
 }
