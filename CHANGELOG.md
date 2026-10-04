@@ -15,6 +15,20 @@ full API details.
 
 ## Unreleased
 
+### World-space reflection rays reach 1000 m, as Wicked Engine's
+
+- **Scope:** `sgl-3d` world-space reflections
+  (`Settings::world_space_reflections`). Each ray looked for moving objects
+  up to 100 m from its receiver; it now reaches 1000 m, Wicked Engine's
+  default `Postprocess_RTReflection` range (4323a33 wiRenderer.h), so
+  moving objects between 100 m and 1000 m away now appear in reflections
+  where screen-space reflections miss them. Rays that hit nothing within
+  100 m traverse farther, so the `world reflection rays` timing group may
+  rise in large scenes with distant moving objects.
+- **Migration:** no game-code changes. Afterwards, look at reflections of
+  distant moving objects, and compare the `world reflection rays` timing
+  group on the game's route.
+
 ### AgX looks are a colour grading choice
 
 - **Scope:** `sgl-3d` adds `AgxLook` (`None`, `Punchy`, `Golden`) and
