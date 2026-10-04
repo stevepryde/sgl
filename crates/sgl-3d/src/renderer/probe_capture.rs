@@ -26,7 +26,10 @@ impl Renderer {
     /// bounce. Baked lights light only surfaces without baked lighting. Moving
     /// instances, effects and atmospheric post are excluded; the camera is
     /// unused. It shares the frame's shadow views and maps, so call it
-    /// between frames, not between `render` and `finish_frame`. This blocks
+    /// between frames, not between `render` and `finish_frame`. Those maps
+    /// follow `settings.shadow_quality`: a capture at another quality than
+    /// the frames reallocates the frame's maps and resets the local-light
+    /// shadow cache, so the next frame draws every shadow again. This blocks
     /// for GPU readback; it is for asset authoring, never a runtime loop.
     /// WebGPU cannot block, so in a browser it fails with
     /// `ProbeError::Readback`: bake natively and load the result.

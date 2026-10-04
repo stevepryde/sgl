@@ -564,7 +564,7 @@ only once it is submitted and `finish_frame` is called; a dropped or
 unfinished frame is drawn again.
 
 Shadows are filtered and biased as the directional cascades are, with
-Bevy's filters (Castaño's 13-tap kernel, or the Jimenez spiral while TAA or
+Bevy's filters (Castaño's 9-tap kernel, or the Jimenez spiral while TAA or
 FSR2 resolves it, whether or not a directional light casts; one hardware
 2×2 tap at Low) and Bevy's spot-light receiver offset for every face,
 cube faces included: Bevy tunes its spot biases for these 2D filters and its

@@ -488,13 +488,12 @@ fn every_cascade_shadows_its_part_of_the_view() {
     }
 }
 
-// Plausible defects: a change of shadow quality that leaves lit group 0
-// binding the old cascades, or draws or fits them for another size than
-// the maps have. The oracle is geometric, as above: on the first frame at
-// each quality, the receiver is dark while an occluder the camera does not
-// see covers it from the light, and as lit as without it while it casts
-// nothing; the occluder comes and goes with each change, so cascades kept
-// from the last quality show it where it no longer is.
+// Plausible defect: a change of shadow quality that leaves lit group 0
+// binding the old cascades. The oracle is geometric, as above: on the first
+// frame at each quality, the receiver is dark while an occluder the camera
+// does not see covers it from the light, and as lit as without it while it
+// casts nothing; the occluder comes and goes with each change, so cascades
+// kept from the last quality show it where it no longer is.
 #[test]
 fn cascades_follow_a_change_of_shadow_quality() {
     let Some(device) = test_support::device() else {
