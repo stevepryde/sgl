@@ -10,9 +10,10 @@
 //! or accept retry.
 //!
 //! A server's worker also accepts, rate-limits and upgrades connections
-//! without blocking, and admits them to the caller's registry. A failed
-//! accept skips that connection; running out of file descriptors retries
-//! after [`ACCEPT_RETRY`]; only a failed listener stops accepting.
+//! without blocking, and admits them to the caller's registry. After an
+//! interrupted accept, or one that took a connection the client had already
+//! reset, it accepts again at once; after any other accept error it retries
+//! after [`ACCEPT_RETRY`]. The listener closes only when admission stops.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
@@ -41,7 +42,8 @@ const WAKER: Token = Token(0);
 const LISTENER: Token = Token(1);
 const FIRST_SOCKET: usize = 2;
 const EVENT_CAPACITY: usize = 1_024;
-/// How long accepting waits after the process runs out of file descriptors.
+/// How long accepting waits after an accept error that may leave the
+/// connection in the backlog.
 const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
 type ServerUpgrade =
@@ -112,13 +114,13 @@ struct Handshake {
 
 /// A server's listener and what its upgrades need.
 struct Acceptor {
-    /// Closed once admission stops or accepting fails.
+    /// Closed once admission stops.
     listener: Option<TcpListener>,
     context: ListenerContext,
     rate: AcceptRateLimiter,
     next_connection: Option<ConnectionId>,
-    /// When to accept again after running out of file descriptors. The
-    /// connections left in the backlog raise no new readiness edge.
+    /// When to accept again after an accept error. A connection left in the
+    /// backlog raises no new readiness edge.
     retry_at: Option<Instant>,
 }
 
@@ -368,15 +370,11 @@ impl IoWorker {
             };
             let stream = match listener.accept() {
                 Ok((stream, _remote)) => stream,
-                Err(error) => match AcceptError::of(&error) {
+                Err(error) => match AcceptError::of(error.kind()) {
                     AcceptError::Drained => return,
-                    AcceptError::Connection => continue,
-                    AcceptError::Exhausted => {
+                    AcceptError::AcceptNext => continue,
+                    AcceptError::BackOff => {
                         acceptor.retry_at = Some(Instant::now() + ACCEPT_RETRY);
-                        return;
-                    }
-                    AcceptError::Listener => {
-                        self.close_listener();
                         return;
                     }
                 },
@@ -399,7 +397,7 @@ impl IoWorker {
         }
     }
 
-    /// Accepts again once a descriptor back-off has passed.
+    /// Accepts again once an accept error's back-off has passed.
     fn retry_accept(&mut self) {
         if self
             .acceptor
@@ -593,44 +591,33 @@ impl Drop for IoWorker {
     }
 }
 
-/// What a failed `accept` means for the listener.
+/// What a failed `accept` means for accepting. No accept error closes the
+/// listener.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AcceptError {
     /// The backlog is empty; the next connection raises a readiness edge.
     Drained,
-    /// Only the connection being accepted failed; accept the next one.
-    Connection,
-    /// The process or system is out of file descriptors; retry after a
-    /// back-off.
-    Exhausted,
-    /// The listener itself failed.
-    Listener,
+    /// A signal interrupted the call, or the connection it took had already
+    /// been reset by the client: accept again at once.
+    AcceptNext,
+    /// Anything else, such as running out of file descriptors or socket
+    /// buffers, a firewall refusal or a pending network error. Some fail
+    /// before the connection leaves the backlog, so accepting again at once
+    /// would spin: retry after [`ACCEPT_RETRY`].
+    BackOff,
 }
 
 impl AcceptError {
-    fn of(error: &io::Error) -> Self {
-        match error.kind() {
+    fn of(kind: io::ErrorKind) -> Self {
+        match kind {
             io::ErrorKind::WouldBlock => Self::Drained,
             io::ErrorKind::ConnectionAborted
             | io::ErrorKind::ConnectionReset
-            | io::ErrorKind::Interrupted => Self::Connection,
-            _ if error
-                .raw_os_error()
-                .is_some_and(|code| OUT_OF_DESCRIPTORS.contains(&code)) =>
-            {
-                Self::Exhausted
-            }
-            _ => Self::Listener,
+            | io::ErrorKind::Interrupted => Self::AcceptNext,
+            _ => Self::BackOff,
         }
     }
 }
-
-/// `ENFILE` and `EMFILE`, which `io::ErrorKind` leaves uncategorized.
-#[cfg(unix)]
-const OUT_OF_DESCRIPTORS: [i32; 2] = [23, 24];
-/// `WSAEMFILE`, which `io::ErrorKind` leaves uncategorized.
-#[cfg(windows)]
-const OUT_OF_DESCRIPTORS: [i32; 1] = [10_024];
 
 fn handshake_timed_out() -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, "WebSocket handshake timed out")
@@ -641,30 +628,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_failed_listener_stops_accepting() {
+    fn no_accept_error_closes_the_listener() {
         let cases = [
             (io::ErrorKind::WouldBlock, AcceptError::Drained),
-            (io::ErrorKind::ConnectionAborted, AcceptError::Connection),
-            (io::ErrorKind::ConnectionReset, AcceptError::Connection),
-            (io::ErrorKind::Interrupted, AcceptError::Connection),
-            // `EINVAL`: the socket is not listening.
-            (io::ErrorKind::InvalidInput, AcceptError::Listener),
+            (io::ErrorKind::ConnectionAborted, AcceptError::AcceptNext),
+            (io::ErrorKind::ConnectionReset, AcceptError::AcceptNext),
+            (io::ErrorKind::Interrupted, AcceptError::AcceptNext),
+            (io::ErrorKind::OutOfMemory, AcceptError::BackOff),
+            (io::ErrorKind::PermissionDenied, AcceptError::BackOff),
+            (io::ErrorKind::NetworkDown, AcceptError::BackOff),
+            (io::ErrorKind::HostUnreachable, AcceptError::BackOff),
+            (io::ErrorKind::InvalidInput, AcceptError::BackOff),
         ];
         for (kind, expected) in cases {
-            assert_eq!(
-                AcceptError::of(&io::Error::from(kind)),
-                expected,
-                "{kind:?}"
-            );
-        }
-        // `ENFILE` and `EMFILE` share these values on Linux, macOS and the BSDs.
-        #[cfg(unix)]
-        for code in [23, 24] {
-            assert_eq!(
-                AcceptError::of(&io::Error::from_raw_os_error(code)),
-                AcceptError::Exhausted,
-                "os error {code}"
-            );
+            assert_eq!(AcceptError::of(kind), expected, "{kind:?}");
         }
     }
 }

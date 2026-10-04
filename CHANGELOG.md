@@ -20,10 +20,13 @@ full API details.
 - **Scope:** `sgl-net` `NativeWebSocketServer`. Any accept error other than
   `WouldBlock` used to close the listener, so one client resetting in the
   backlog or one moment out of file descriptors ended admission for the life
-  of the server while existing peers kept playing. Now `ConnectionAborted`,
-  `ConnectionReset` and `Interrupted` skip that connection, running out of
-  file descriptors (`EMFILE`, `ENFILE`, `WSAEMFILE`) retries accepting after
-  100 ms, and only a failed listener stops accepting.
+  of the server while existing peers kept playing. No accept error closes the
+  listener now. After `Interrupted`, `ConnectionAborted` or `ConnectionReset`
+  the server accepts again at once; after any other error (out of file
+  descriptors or socket buffers, a firewall refusal, a pending network error)
+  it retries 100 ms later. Accepting stops only when admission stops
+  (`ServerIo::stop_admission` or dropping the server). No events or errors
+  change.
 - **Migration:** no game-code changes.
 
 ### Native WebSocket keeps a backpressured peer when a ping or pong is due
