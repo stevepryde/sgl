@@ -204,6 +204,17 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
         if (any(Position.xy < vec2<f32>(0.0)) || any(Position.xy >= vec2<f32>(1.0))) {
             break;
         }
+        // DFX-26: stop at the far plane, where a ray can only miss, as AMD's
+        // hybrid traversal does, instead of descending every mip there.
+#if SSR_OPTION_INVERTED_DEPTH
+        if (Position.z < 1e-6) {
+            break;
+        }
+#else
+        if (Position.z > 1.0 - 1e-6) {
+            break;
+        }
+#endif
         let CurrentMipPosition = CurrentMipResolution * Position.xy;
         let SurfaceDepth = LoadDepthHierarchy(vec2<i32>(CurrentMipPosition), CurrentMip);
 
