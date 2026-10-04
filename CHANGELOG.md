@@ -25,10 +25,10 @@ full API details.
   instead of offsetting every candidate from the reprojected point. Near depth
   edges, history can now be taken from more than one texel away, so
   accumulated reflections there change.
-- **Migration:** no game-code changes. Afterwards, with world-space rays and
-  with Velvet, move the camera so foreground objects pass over reflective
-  floors or water, and look at the reflections along those objects'
-  silhouettes.
+- **Migration:** no game-code changes.
+- **Validate:** with world-space rays and with Velvet, move the camera so
+  foreground objects pass over reflective floors or water, and look at the
+  reflections along those objects' silhouettes.
 
 ### Distribution notices name path packages without versions
 
