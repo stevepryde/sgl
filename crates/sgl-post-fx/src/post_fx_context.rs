@@ -6,8 +6,9 @@
 //! origins and implementation notes are recorded in PROVENANCE.md.
 //!
 //! Per-frame resources shared by the post effects: the camera constant buffer,
-//! the blue-noise textures, the depth reprojected into the previous frame, the
-//! previous frame's depth and the closest motion vectors.
+//! the blue-noise textures, the depth reprojected into the previous frame and
+//! the previous frame's depth. TAA finds the closest motion vectors itself
+//! (PROVENANCE.md DFX-13).
 use crate::render_technique::{
     DepthStencilStateDesc, PostFXRenderTechnique, Resource, Shader, create_shader,
 };
@@ -60,7 +61,6 @@ pub struct RenderAttributes<'a, 'p> {
     pub device_context: &'a mut wgpu::CommandEncoder,
     pub curr_depth_buffer_srv: &'a wgpu::TextureView,
     pub prev_depth_buffer_srv: &'a wgpu::TextureView,
-    pub motion_vectors_srv: &'a wgpu::TextureView,
     pub curr_camera: Option<&'a CameraAttribs>,
     pub prev_camera: Option<&'a CameraAttribs>,
     /// Two `CameraAttribs`, current then previous, used instead of
@@ -101,17 +101,12 @@ pub struct SupportedDeviceFeatures {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CreateInfo {
     pub transition_duration: f32,
-    /// Compute the closest motion vectors each frame (TAA, SSAO and depth of
-    /// field read them; SSR does not). Not upstream, where they are always
-    /// computed (PROVENANCE.md DFX-13).
-    pub compute_closest_motion: bool,
 }
 
 impl Default for CreateInfo {
     fn default() -> Self {
         Self {
             transition_duration: 1.0,
-            compute_closest_motion: true,
         }
     }
 }
@@ -120,7 +115,6 @@ impl Default for CreateInfo {
 enum RenderTech {
     ComputeBlueNoiseTexture,
     ComputeReprojectedDepth,
-    ComputeClosestMotion,
     ComputePreviousDepth,
     CopyDepth,
     CopyColor,
@@ -170,7 +164,6 @@ pub struct PostFXContext {
     constant_buffer: Option<wgpu::Buffer>,
     reprojected_depth: Option<wgpu::TextureView>,
     previous_depth: Option<wgpu::TextureView>,
-    closest_motion: Option<wgpu::TextureView>,
     point_clamp: wgpu::Sampler,
     linear_clamp: wgpu::Sampler,
 }
@@ -272,7 +265,6 @@ impl PostFXContext {
             constant_buffer: None,
             reprojected_depth: None,
             previous_depth: None,
-            closest_motion: None,
             point_clamp: sampler(
                 "Sam_PointClamp",
                 wgpu::FilterMode::Nearest,
@@ -321,13 +313,6 @@ impl PostFXContext {
             height,
             depth_format,
         )));
-        self.closest_motion = Some(view(&texture_2d(
-            device,
-            "PostFXContext::ClosestMotion",
-            width,
-            height,
-            wgpu::TextureFormat::Rg16Float,
-        )));
     }
 
     pub fn execute(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
@@ -360,9 +345,6 @@ impl PostFXContext {
         if self.pso_ready {
             self.compute_blue_noise_texture(render_attribs);
             self.compute_reprojected_depth(render_attribs);
-            if self.settings.compute_closest_motion {
-                self.compute_closest_motion(render_attribs);
-            }
             self.compute_previous_depth(render_attribs);
         }
     }
@@ -389,10 +371,6 @@ impl PostFXContext {
 
     pub fn get_previous_depth(&self) -> &wgpu::TextureView {
         self.previous_depth.as_ref().expect("prepared resources")
-    }
-
-    pub fn get_closest_motion_vectors(&self) -> &wgpu::TextureView {
-        self.closest_motion.as_ref().expect("prepared resources")
     }
 
     pub fn get_camera_attribs_cb(&self) -> &wgpu::Buffer {
@@ -606,32 +584,6 @@ impl PostFXContext {
             }
         }
         {
-            let inverted = if feature_flags.contains(FeatureFlags::REVERSED_DEPTH) {
-                "1"
-            } else {
-                "0"
-            };
-            let tech = self.render_technique(RenderTech::ComputeClosestMotion, feature_flags);
-            if !tech.is_initialized_pso() {
-                let ps = create_shader(
-                    device,
-                    "ComputeClosestMotion.fx",
-                    "ComputeClosestMotionPS",
-                    &[("POSTFX_OPTION_INVERTED_DEPTH", inverted)],
-                );
-                tech.initialize_pso(
-                    device,
-                    "PreparePostFX::ComputeClosestMotion",
-                    &vs(),
-                    &ps,
-                    &[(0, Resource::DepthTexture), (1, Resource::Texture)],
-                    &[wgpu::TextureFormat::Rg16Float],
-                    None,
-                    DepthStencilStateDesc::DisableDepth,
-                );
-            }
-        }
-        {
             let tech = self
                 .render_tech
                 .entry(RenderTechniqueKey {
@@ -737,42 +689,6 @@ impl PostFXContext {
             render_attribs
                 .pass_timestamps
                 .and_then(|timestamps| timestamps("ComputeReprojectedDepth")),
-        );
-    }
-
-    fn compute_closest_motion(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
-        let device = render_attribs.device;
-        let tech = &self.render_tech[&RenderTechniqueKey {
-            render_tech: RenderTech::ComputeClosestMotion,
-            feature_flags: self.feature_flags,
-            texture_format: None,
-        }];
-        let group = tech.bind_group(
-            device,
-            "ComputeClosestMotion",
-            &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(
-                        render_attribs.curr_depth_buffer_srv,
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(render_attribs.motion_vectors_srv),
-                },
-            ],
-        );
-        draw(
-            render_attribs.device_context,
-            "ComputeClosestMotion",
-            &[self.get_closest_motion_vectors()],
-            tech,
-            &group,
-            0..3,
-            render_attribs
-                .pass_timestamps
-                .and_then(|timestamps| timestamps("ComputeClosestMotion")),
         );
     }
 

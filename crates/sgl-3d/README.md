@@ -1165,8 +1165,8 @@ stage (each stage's documentation lists its own), are:
 - motion blur: `motion blur`;
 - post: `bloom`, `SMAA` and `tone map`;
 - DiligentFX's post-effect context, for TAA and Crystal: `DiligentFX inputs`,
-  `DiligentFX blue noise`, `DiligentFX reprojected depth`,
-  `DiligentFX closest motion` and `DiligentFX previous depth`.
+  `DiligentFX blue noise`, `DiligentFX reprojected depth` and
+  `DiligentFX previous depth`.
 
 Inactive work reports nothing.
 

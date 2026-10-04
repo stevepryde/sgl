@@ -64,7 +64,7 @@ As DiligentFX's README describes, per frame:
 ```rust,ignore
 context.prepare_resources(&device, &FrameDesc { index, width, height, .. }, post_fx_context::FeatureFlags::REVERSED_DEPTH);
 ssr.prepare_resources(&device, &mut encoder, &mut context, FeatureFlags::NONE);
-context.execute(&mut post_fx_context::RenderAttributes { /* depths, motion, cameras */ });
+context.execute(&mut post_fx_context::RenderAttributes { /* depths, cameras */ });
 ssr.execute(&mut screen_space_reflection::RenderAttributes { /* G-buffer, attribs */ });
 // ssr.get_ssr_radiance_srv(): rgb reflected radiance, a confidence
 ```
@@ -74,7 +74,7 @@ TAA runs the same way, after the context:
 ```rust,ignore
 taa.prepare_resources(&device, &mut encoder, &context, temporal_anti_aliasing::FeatureFlags::NONE, 0);
 // Render the frame with TemporalAntiAliasing::get_jittered_proj_matrix(proj, taa.get_jitter_offset(0)).
-taa.execute(&mut temporal_anti_aliasing::RenderAttributes { /* color, attribs */ });
+taa.execute(&mut temporal_anti_aliasing::RenderAttributes { /* color, depth, motion, attribs */ });
 // taa.get_accumulated_frame_srv(false, 0): the anti-aliased frame
 ```
 
@@ -95,8 +95,8 @@ SSR discards its history by the rule DiligentFX's TAA uses:
 - after skipped frame indices,
 - when `RenderAttributes::reset_accumulation` asks.
 
-`CreateInfo::compute_closest_motion` skips motion vectors no effect reads.
-Both are listed in PROVENANCE.md.
+TAA finds the closest motion vectors in its resolve, from the depth buffer
+and motion vectors it is given (DFX-13). Both are listed in PROVENANCE.md.
 
 ## Translation conventions
 
