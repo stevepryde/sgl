@@ -15,6 +15,23 @@ full API details.
 
 ## Unreleased
 
+### Fog volumes cost only the froxels they reach
+
+- **Scope:** `sgl-3d` volumetric fog with scene fog volumes
+  (`Scene::update_fog_volumes`, `FogVolume`). The fog injection tested every
+  fog volume in every froxel; each frame now bounds the froxels each volume
+  may reach from its corners (Godot's per-volume froxel bounds), leaves out
+  volumes behind the camera, beyond `Fog::length`, or wholly in front of the
+  camera and beside the frame, and sums in each froxel only the volumes
+  whose bounds hold it, in the same order. A volume that holds or crosses
+  the camera's plane is bounded by the whole frame up to its far end. Each
+  froxel's density and albedo-weighted scattering are unchanged; the
+  `fog injection` timing group falls by the volumes a froxel no longer
+  evaluates.
+- **Migration:** no game-code changes. A long fog volume that holds or
+  crosses the camera's plane, such as a tunnel's, still costs every froxel
+  up to its far end; split it into segments to bound it more tightly.
+
 ### Per-light fog energy; `Light` and `DirectionalLight` implement `Default`
 
 - **Scope:** `sgl-3d` `Light` and `DirectionalLight` gain

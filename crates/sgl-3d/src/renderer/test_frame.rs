@@ -76,7 +76,7 @@ impl Renderer {
         let effective = super::effective::resolve(
             settings,
             &input,
-            scene.transient.fog_volume_count > 0,
+            !scene.transient.fog_volume_corners.is_empty(),
             false,
             self.pipelines.fused_supported,
         );

@@ -17,8 +17,7 @@ pub(crate) struct FogVolumeRecord {
 
 impl FogVolumeRecord {
     pub fn new(volume: &FogVolume) -> Self {
-        let world_from_local =
-            glam::Mat4::from_rotation_translation(volume.rotation.normalize(), volume.center);
+        let world_from_local = world_from_local(volume);
         let half_size = volume.size * 0.5;
         Self {
             local_from_world: world_from_local.inverse().to_cols_array_2d(),
@@ -30,6 +29,25 @@ impl FogVolumeRecord {
             radius_squared: half_size.length_squared(),
         }
     }
+}
+
+/// The world positions of `volume`'s box's eight corners.
+pub(crate) fn corners(volume: &FogVolume) -> [glam::Vec3; 8] {
+    let world_from_local = world_from_local(volume);
+    let half_size = volume.size * 0.5;
+    std::array::from_fn(|corner| {
+        let sign = glam::Vec3::new(
+            if corner & 1 == 0 { -1. } else { 1. },
+            if corner & 2 == 0 { -1. } else { 1. },
+            if corner & 4 == 0 { -1. } else { 1. },
+        );
+        world_from_local.transform_point3(half_size * sign)
+    })
+}
+
+/// `volume`'s box's frame in the world.
+fn world_from_local(volume: &FogVolume) -> glam::Mat4 {
+    glam::Mat4::from_rotation_translation(volume.rotation.normalize(), volume.center)
 }
 
 /// The layouts this module mirrors.

@@ -236,6 +236,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::exposure::mirrors())
     .chain(crate::stages::motion_blur::mirrors())
     .chain(crate::stages::fog::mirrors())
+    .chain(crate::stages::fog::volume_froxels::mirrors())
     .chain(super::fog::mirrors())
     .chain(crate::stages::post::bloom::mirrors())
     .chain(crate::stages::post::tone_map::mirrors());

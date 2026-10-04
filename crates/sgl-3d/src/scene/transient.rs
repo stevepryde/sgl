@@ -5,7 +5,7 @@ use super::SceneError;
 use crate::content::transient::{
     FogVolume, Glow, HeatDistortion, MAX_DISPLACEMENT_PIXELS, MAX_VERTICES,
 };
-use crate::shading::fog::FogVolumeRecord;
+use crate::shading::fog::{self, FogVolumeRecord};
 use glam::Vec3;
 
 pub(crate) struct Transient {
@@ -18,9 +18,12 @@ pub(crate) struct Transient {
     /// Mist positions, back to front from the last sorted eye.
     pub mist_positions: Vec<[f32; 3]>,
     pub mist: wgpu::Buffer,
-    /// Fog volume records; the first `fog_volume_count` are the scene's.
+    /// Fog volume records; the first `fog_volume_corners.len()` are the
+    /// scene's.
     pub fog_volumes: wgpu::Buffer,
-    pub fog_volume_count: u32,
+    /// The world corners of each of the scene's fog volumes, in the records'
+    /// order.
+    pub fog_volume_corners: Vec<[Vec3; 8]>,
 }
 
 impl Transient {
@@ -44,7 +47,7 @@ impl Transient {
             mist: mist_buffer(device, 1),
             mist_positions: Vec::new(),
             fog_volumes: fog_volume_buffer(device, 1),
-            fog_volume_count: 0,
+            fog_volume_corners: Vec::new(),
         }
     }
 
@@ -79,7 +82,7 @@ impl Transient {
         if !bytes.is_empty() {
             queue.write_buffer(&self.fog_volumes, 0, bytes);
         }
-        self.fog_volume_count = volumes.len() as u32;
+        self.fog_volume_corners = volumes.iter().map(fog::corners).collect();
         Ok(())
     }
 
