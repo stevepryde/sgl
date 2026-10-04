@@ -135,8 +135,8 @@ struct Frames {
     device: wgpu::Device,
     queue: wgpu::Queue,
     scene: Scene,
-    /// The vehicle, which only reflections show.
-    vehicle: InstanceId,
+    /// The offscreen model, which only reflections show.
+    offscreen_model: InstanceId,
     renderer: Renderer,
     settings: Settings,
     input: FrameInput,
@@ -148,15 +148,19 @@ impl Frames {
         Self::with_roughness(wall_z, 0.045)
     }
     fn with_roughness(wall_z: Option<f32>, roughness: f32) -> Option<Self> {
-        // An unlit vehicle's radiance is independent of scene lighting and
-        // the static wall.
-        let mut vehicle = material([6., 6., 6., 1.], 0., 1.);
-        vehicle.unlit = true;
-        Self::with_vehicle(wall_z, roughness, vehicle)
+        // An unlit offscreen model's radiance is independent of scene lighting
+        // and the static wall.
+        let mut offscreen_model = material([6., 6., 6., 1.], 0., 1.);
+        offscreen_model.unlit = true;
+        Self::with_offscreen_model(wall_z, roughness, offscreen_model)
     }
     /// A mirror at z = -4 under the camera at the origin, looking down -Z, and
-    /// a `vehicle` model behind it at z = 2 that only reflections show.
-    fn with_vehicle(wall_z: Option<f32>, roughness: f32, vehicle: Material) -> Option<Self> {
+    /// an `offscreen_model` behind it at z = 2 that only reflections show.
+    fn with_offscreen_model(
+        wall_z: Option<f32>,
+        roughness: f32,
+        offscreen_model: Material,
+    ) -> Option<Self> {
         let (device, queue) = device()?;
         let panel = |z, material| {
             quad(
@@ -193,15 +197,18 @@ impl Frames {
         scene
             .add_instance(&device, &queue, shown(world), Mobility::Static)
             .unwrap();
-        let vehicle = Asset {
+        let offscreen_model = Asset {
             meshes: vec![panel(2., 0)],
-            materials: vec![vehicle],
+            materials: vec![offscreen_model],
             images: vec![],
             rig: Default::default(),
         };
-        let vehicle = scene.add_asset(&device, &queue, vehicle).unwrap().model;
-        let vehicle = scene
-            .add_instance(&device, &queue, shown(vehicle), Mobility::Moving)
+        let offscreen_model = scene
+            .add_asset(&device, &queue, offscreen_model)
+            .unwrap()
+            .model;
+        let offscreen_model = scene
+            .add_instance(&device, &queue, shown(offscreen_model), Mobility::Moving)
             .unwrap();
         let mut input = FrameInput::new(Camera {
             eye: Vec3::ZERO,
@@ -237,7 +244,7 @@ impl Frames {
             device,
             queue,
             scene,
-            vehicle,
+            offscreen_model,
             renderer,
             settings,
             input,
@@ -255,7 +262,8 @@ impl Frames {
     fn reflected(&self) -> f32 {
         let pixels = self.composite();
         // Central receivers see only the mirror in primary visibility. Their
-        // secondary rays head behind the camera toward the vehicle and wall.
+        // secondary rays head behind the camera toward the offscreen model and
+        // wall.
         let mut sum = 0.;
         for y in 56..72 {
             for x in 56..72 {
@@ -299,22 +307,22 @@ impl Frames {
     }
     fn history() -> Option<Self> {
         let mut frames = Self::with_roughness(None, 0.12)?;
-        frames.move_vehicle(0.);
+        frames.move_offscreen_model(0.);
         Some(frames)
     }
-    fn move_vehicle(&mut self, x: f32) {
-        self.pose_vehicle(
+    fn move_offscreen_model(&mut self, x: f32) {
+        self.pose_offscreen_model(
             Mat4::from_translation(Vec3::new(x, 0., 0.))
                 * Mat4::from_scale(Vec3::new(0.04, 0.04, 1.)),
         );
     }
-    fn pose_vehicle(&mut self, pose: Mat4) {
+    fn pose_offscreen_model(&mut self, pose: Mat4) {
         let state = InstanceState {
             pose,
-            ..*self.scene.instance(self.vehicle).unwrap()
+            ..*self.scene.instance(self.offscreen_model).unwrap()
         };
         self.scene
-            .set_instance(&self.queue, self.vehicle, state)
+            .set_instance(&self.queue, self.offscreen_model, state)
             .unwrap();
     }
     fn move_camera(&mut self, x: f32) {
@@ -381,11 +389,12 @@ fn half(bytes: &[u8]) -> f32 {
 // Defect: world-space ray hits shade without the scene's lights (their list
 // empty or unbound). Independent signal: a diffuse-only baked light adds
 // nothing to the metal mirror itself, so it can reach the composite only
-// through the mirror's ray hits on the moving vehicle that only reflections
-// show.
+// through the mirror's ray hits on the moving offscreen model that only
+// reflections show.
 #[test]
 fn ray_hits_on_a_moving_instance_take_scene_lights() {
-    let Some(mut frames) = Frames::with_vehicle(None, 0.045, material([0.9, 0.9, 0.9, 1.], 0., 1.))
+    let Some(mut frames) =
+        Frames::with_offscreen_model(None, 0.045, material([0.9, 0.9, 0.9, 1.], 0., 1.))
     else {
         return;
     };
@@ -411,17 +420,18 @@ fn ray_hits_on_a_moving_instance_take_scene_lights() {
     eprintln!("world ray hits: without the light {dark}, with it {lit}");
     assert!(
         lit > dark + 0.5,
-        "the vehicle's reflection took no light: {lit} vs {dark}"
+        "the offscreen model's reflection took no light: {lit} vs {dark}"
     );
 }
 
-// Defect: dropping static instances before intersection reflects the vehicle
-// through an opaque wall. Independent signal: GPU HDR radiance must return to
-// the same scene's normal fallback when a wall lies between mirror and vehicle;
-// a wall beyond the vehicle must preserve it. Shader/type checks cannot detect
-// this scene-visibility error. Executes production world trace and composition.
+// Defect: dropping static instances before intersection reflects the
+// offscreen model through an opaque wall. Independent signal: GPU HDR radiance
+// must return to the same scene's normal fallback when a wall lies between
+// mirror and offscreen model; a wall beyond the offscreen model must preserve
+// it. Shader/type checks cannot detect this scene-visibility error. Executes
+// production world trace and composition.
 #[test]
-fn opaque_static_geometry_blocks_offscreen_vehicle_in_ultra() {
+fn opaque_static_geometry_blocks_offscreen_model_in_ultra() {
     let Some(mut clear) = Frames::new(None) else {
         return;
     };
@@ -435,7 +445,7 @@ fn opaque_static_geometry_blocks_offscreen_vehicle_in_ultra() {
     let mut behind = Frames::new(Some(3.)).unwrap();
     let behind_ray = behind.render();
     eprintln!(
-        "Ultra world rays: clear={clear_ray}, fallback={fallback}, blocked={blocked_ray}, blocked_fallback={blocked_fallback}, wall_behind_vehicle={behind_ray}"
+        "Ultra world rays: clear={clear_ray}, fallback={fallback}, blocked={blocked_ray}, blocked_fallback={blocked_fallback}, wall_behind_offscreen_model={behind_ray}"
     );
     assert!(
         clear_ray > fallback + 1.,
@@ -447,7 +457,7 @@ fn opaque_static_geometry_blocks_offscreen_vehicle_in_ultra() {
     );
     assert!(
         (behind_ray - clear_ray).abs() < 0.01,
-        "a wall beyond the vehicle must not suppress the nearer moving hit"
+        "a wall beyond the offscreen model must not suppress the nearer moving hit"
     );
 }
 
@@ -455,14 +465,15 @@ fn opaque_static_geometry_blocks_offscreen_vehicle_in_ultra() {
 // empty probe collection, so a reflected moving object inside a probe shows sky
 // specular where probe captures take the probe's; or the hit looks up the wrong
 // cell of the probe grid (transposed axes, a wrong stride). Independent signal:
-// a probe whose influence holds the lit metal vehicle and no receiver leaves the
-// composite unchanged with world rays off, and with them on the reflected
-// vehicle takes its radiance (16 times the sky's); a second probe far from the
-// scene changes nothing the rays see. Executes the production world trace and
-// composition.
+// a probe whose influence holds the lit metal offscreen model and no receiver
+// leaves the composite unchanged with world rays off, and with them on the
+// reflected offscreen model takes its radiance (16 times the sky's); a second
+// probe far from the scene changes nothing the rays see. Executes the
+// production world trace and composition.
 #[test]
 fn ray_hits_take_installed_probe_specular() {
-    let Some(mut frames) = Frames::with_vehicle(None, 0.045, material([1.; 4], 1., 0.5)) else {
+    let Some(mut frames) = Frames::with_offscreen_model(None, 0.045, material([1.; 4], 1., 0.5))
+    else {
         return;
     };
     let sky_ray = frames.render();
@@ -478,7 +489,7 @@ fn ray_hits_take_installed_probe_specular() {
     let probe = sgl_3d::BakedSpecularProbe {
         center: Vec3::new(0., 0., 2.),
         world_to_local: Mat4::IDENTITY,
-        // The vehicle's plane, behind the camera; the mirror is at z = -4.
+        // The offscreen model's plane, behind the camera; the mirror is at z = -4.
         influence: sgl_3d::SpecularProbeBox {
             min: Vec3::new(-30., -30., 1.),
             max: Vec3::new(30., 30., 3.),
@@ -498,8 +509,8 @@ fn ray_hits_take_installed_probe_specular() {
     frames.settings.world_space_reflections = true;
     let probe_ray = frames.render();
     // Far off on all three axes, it makes the grid's axes unequal and puts the
-    // vehicle's cell at different coordinates on each, so a transposed or
-    // mis-strided lookup reads a cell that does not list the first probe.
+    // offscreen model's cell at different coordinates on each, so a transposed
+    // or mis-strided lookup reads a cell that does not list the first probe.
     let far = sgl_3d::BakedSpecularProbe {
         center: Vec3::new(-205., 105., -90.),
         influence: sgl_3d::SpecularProbeBox {
@@ -562,8 +573,8 @@ fn world_history_restarts_after_discontinuities() {
             dirty.frame(i == 0);
         }
         let mut fresh = Frames::history().unwrap();
-        dirty.move_vehicle(0.3);
-        fresh.move_vehicle(0.3);
+        dirty.move_offscreen_model(0.3);
+        fresh.move_offscreen_model(0.3);
         dirty.move_camera(0.15);
         fresh.move_camera(0.15);
         match transition {
@@ -651,30 +662,30 @@ fn consecutive_world_frames_keep_accumulation() {
 
 // Defect: a frame with world rays traces the ray instances an earlier frame
 // uploaded, or none, so after a frame without world rays its rays find a
-// moving object where it was, or nowhere. Independent signal: the
-// unlit vehicle (radiance 6 against a 0.25 sky) raises the central receivers'
-// reflected radiance only where their rays hit it. Moved into their rays from
-// beyond every one of them, during a frame without world rays, it must show in
-// the next frame with them. Executes the production prepare upload, world trace
-// and composition.
+// moving object where it was, or nowhere. Independent signal: the unlit
+// offscreen model (radiance 6 against a 0.25 sky) raises the central
+// receivers' reflected radiance only where their rays hit it. Moved into their
+// rays from beyond every one of them, during a frame without world rays, it
+// must show in the next frame with them. Executes the production prepare
+// upload, world trace and composition.
 #[test]
 fn world_rays_trace_poses_moved_while_they_were_off() {
     let Some(mut frames) = Frames::new(None) else {
         return;
     };
-    frames.pose_vehicle(Mat4::from_translation(Vec3::X * 100.));
+    frames.pose_offscreen_model(Mat4::from_translation(Vec3::X * 100.));
     let aside = frames.render();
     frames.settings.world_space_reflections = false;
     frames.frame(false);
-    frames.pose_vehicle(Mat4::IDENTITY);
+    frames.pose_offscreen_model(Mat4::IDENTITY);
     frames.settings.world_space_reflections = true;
     frames.frame(false);
     let moved = frames.reflected();
     eprintln!(
-        "World rays after a frame without them: vehicle aside={aside}, moved into view={moved}"
+        "World rays after a frame without them: offscreen model aside={aside}, moved into view={moved}"
     );
     assert!(
         moved > aside + 1.,
-        "the first world frame must trace the vehicle where it now is: {moved} versus {aside}"
+        "the first world frame must trace the offscreen model where it now is: {moved} versus {aside}"
     );
 }

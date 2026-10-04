@@ -1,5 +1,5 @@
 {
-  "provenance": "Native receiver-origin-medium-tiny-final/tunnel-full inputs-048..055.json; independent f64 final-primary-oracle.json, actual authored world vertices. Nearest oracle surface is deck317; EDGE98496 is behind.",
+  "provenance": "Native camera inputs-048..055.json; independent f64 final-primary-oracle.json, actual authored world vertices. Nearest oracle surface is world triangle 317; world triangle 98496 is behind.",
   "frames": [
     {
       "frame": 48,
@@ -859,14 +859,14 @@
     }
   ],
   "source_sha256": {
-    ".cache/shadow-map-visual-audit/final-primary-oracle.json": "cdf67758af6d0839d5d76e15f16a312a81091f6d1575c6440908b01273d9a879",
-    ".cache/tunnel-light/receiver-origin-medium-tiny-final/tunnel-full/inputs-048.json": "5a74b00db2b9aff89ea5293da40eb58f55019a82bc11ca620b3da38da6b0a6a5",
-    ".cache/tunnel-light/receiver-origin-medium-tiny-final/tunnel-full/inputs-049.json": "09e1f9972fc72bae580104d0c237489d6a9b1107465a23e74467002d2d8a0950",
-    ".cache/tunnel-light/receiver-origin-medium-tiny-final/tunnel-full/inputs-050.json": "3f30834c4261be93430071a25c6606cd9727588f8d9699d57f701a13cc4d2818",
-    ".cache/tunnel-light/receiver-origin-medium-tiny-final/tunnel-full/inputs-051.json": "9561cc526f1341cf12f11a3037ad16336f31c700dae57ee8b2f4176e367fddd9",
-    ".cache/tunnel-light/receiver-origin-medium-tiny-final/tunnel-full/inputs-052.json": "c8182764d0d1c2a204640d98ba7c6b862e75a6fcf296e3ebfc96380e460784bc",
-    ".cache/tunnel-light/receiver-origin-medium-tiny-final/tunnel-full/inputs-053.json": "79c5917201935f2e868d8a8b096e0ff7fe8d1c537a1e2b55e872db41167910d3",
-    ".cache/tunnel-light/receiver-origin-medium-tiny-final/tunnel-full/inputs-054.json": "edb0f699dca23d288256ccbceca2e3b873838a17750e98d7bfb943ee9bd6b770",
-    ".cache/tunnel-light/receiver-origin-medium-tiny-final/tunnel-full/inputs-055.json": "7e500315528f9cea69aa0bf0156c5e037a2cdb951250c2abfe5d2ef3999892cf"
+    "final-primary-oracle.json": "cdf67758af6d0839d5d76e15f16a312a81091f6d1575c6440908b01273d9a879",
+    "inputs-048.json": "5a74b00db2b9aff89ea5293da40eb58f55019a82bc11ca620b3da38da6b0a6a5",
+    "inputs-049.json": "09e1f9972fc72bae580104d0c237489d6a9b1107465a23e74467002d2d8a0950",
+    "inputs-050.json": "3f30834c4261be93430071a25c6606cd9727588f8d9699d57f701a13cc4d2818",
+    "inputs-051.json": "9561cc526f1341cf12f11a3037ad16336f31c700dae57ee8b2f4176e367fddd9",
+    "inputs-052.json": "c8182764d0d1c2a204640d98ba7c6b862e75a6fcf296e3ebfc96380e460784bc",
+    "inputs-053.json": "79c5917201935f2e868d8a8b096e0ff7fe8d1c537a1e2b55e872db41167910d3",
+    "inputs-054.json": "edb0f699dca23d288256ccbceca2e3b873838a17750e98d7bfb943ee9bd6b770",
+    "inputs-055.json": "7e500315528f9cea69aa0bf0156c5e037a2cdb951250c2abfe5d2ef3999892cf"
   }
 }
