@@ -1,12 +1,14 @@
-//! The opaque stage's two forms through the real stage.
+//! The opaque stage through the real stage: its two forms, and the motion
+//! it records.
 use crate::asset::{CpuMesh, Vertex};
 use crate::diagnostics::DiagnosticTarget;
 use crate::renderer::Renderer;
-use crate::settings::{AmbientOcclusionQuality, Settings};
+use crate::settings::{AmbientOcclusionQuality, Antialiasing, Settings};
+use crate::shading::gbuffer;
 use crate::test_support;
-use crate::{Camera, FrameInput, Scene, perspective};
+use crate::{Backdrop, Camera, FrameInput, InstanceState, Mobility, Scene, perspective};
 use glam::camera;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, UVec2, Vec2, Vec3};
 use std::f32::consts::PI;
 
 const SIZE: [u32; 2] = [64, 64];
@@ -250,5 +252,120 @@ fn masked_surfaces_are_cut_out_in_both_opaque_forms() {
             fused == split,
             "the fused and split forms cut out differently"
         );
+    }
+}
+
+/// An odd size, so the middle pixel looks straight down the camera's axis.
+const TURN_SIZE: [u32; 2] = [63, 63];
+
+/// The motion target (x and y per texel) and the number of texels geometry
+/// covers after two frames of a static square: the camera at the identity
+/// pose, then turned by `turn`, facing the square.
+fn motion_after_turn(device: &wgpu::Device, queue: &wgpu::Queue, turn: Mat4) -> (Vec<Vec2>, usize) {
+    let mut scene = Scene::new(device, queue);
+    let mut asset = test_support::cube();
+    asset.meshes = vec![square(-5., 1.5)];
+    let ids = scene.add_asset(device, queue, asset).unwrap();
+    scene
+        .add_instance(
+            device,
+            queue,
+            InstanceState {
+                model: ids.model,
+                pose: turn,
+                visible: true,
+                capture_visible: true,
+            },
+            Mobility::Static,
+        )
+        .unwrap();
+    // Without antialiasing's jitter, which would move the middle pixel off
+    // the axis.
+    let settings = Settings {
+        antialiasing: Antialiasing::Off,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(device, queue, TURN_SIZE, &settings);
+    let output = crate::view::targets::target(device, "turn", TURN_SIZE, gbuffer::COLOR);
+    let mut input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: perspective(1., 1., 0.1),
+        eye: Vec3::ZERO,
+    });
+    input.backdrop = Backdrop::Color([0.2; 3]);
+    for view in [Mat4::IDENTITY, turn.inverse()] {
+        input.camera.view = view;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            device,
+            queue,
+            &mut encoder,
+            &mut scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+    }
+    let shared = renderer.targets();
+    let motion = test_support::read(device, queue, shared.motion.texture(), 4)
+        .chunks_exact(4)
+        .map(|texel| {
+            Vec2::new(
+                test_support::half(&texel[0..2]),
+                test_support::half(&texel[2..4]),
+            )
+        })
+        .collect();
+    let drawn = test_support::read(device, queue, shared.depth.texture(), 4)
+        .chunks_exact(4)
+        .filter(|texel| f32::from_le_bytes((*texel).try_into().unwrap()) > 0.)
+        .count();
+    (motion, drawn)
+}
+
+// Plausible defects (#4): a predecessor behind the last camera (clip w <= 0)
+// left on screen (the sky's former zero motion, or an epsilon in place of w
+// that leaves a point straight behind the camera near the middle), mirrored
+// to the other side (an unguarded divide by a negative w) or made infinite
+// or NaN (a divide by zero, or a half float overflowing) for the
+// reflections, TAA, FSR2 and motion blur that read it. The oracle is
+// geometric: the camera turns a quarter or a half turn between two frames,
+// more than its field of view, so nothing it sees now was on screen before.
+// The square it then faces straddles the last camera's plane after the
+// quarter turn, so geometry and sky predecessors lie both beside and behind
+// that camera, and the half turn puts the middle pixel's predecessor straight
+// behind it. A left turn moves everything right on screen.
+#[test]
+fn a_turn_past_the_view_moves_every_pixel_off_screen_along_the_turn() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    for (turn, left) in [(PI / 2., true), (PI, false)] {
+        let (motion, drawn) = motion_after_turn(&device, &queue, Mat4::from_rotation_y(turn));
+        let texels = motion.len();
+        assert!(
+            drawn > 0 && drawn < texels,
+            "the turned view shows both the square and the sky ({drawn} of {texels} texels drawn)"
+        );
+        for (index, &m) in motion.iter().enumerate() {
+            let pixel = UVec2::new(index as u32 % TURN_SIZE[0], index as u32 / TURN_SIZE[0]);
+            let uv = (pixel.as_vec2() + 0.5) / UVec2::from(TURN_SIZE).as_vec2();
+            let previous = uv - m;
+            assert!(
+                m.is_finite(),
+                "turn {turn}: motion {m} at {pixel} is not finite"
+            );
+            assert!(
+                previous.cmplt(Vec2::ZERO).any() || previous.cmpgt(Vec2::ONE).any(),
+                "turn {turn}: motion {m} at {pixel} puts the previous position {previous} on screen"
+            );
+            assert!(
+                !left || m.x > 0.,
+                "turn {turn}: motion {m} at {pixel} is not along the left turn"
+            );
+        }
     }
 }
