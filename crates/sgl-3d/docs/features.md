@@ -144,7 +144,7 @@ Environment and probe specular always apply. On top of them:
   Bevy. Crystal runs in SGL's `sgl-post-fx` effects library.
   [Reflections](../README.md#reflections) credits each source.
 - **World-space reflections**: rays through a software BVH for moving objects
-  up to 1000 m away that screen-space reflections miss.
+  up to 1000 m from the reflecting surface that screen-space reflections miss.
 
 ## Image quality and post-processing
 

@@ -55,8 +55,10 @@ fn composite(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &Renderer) ->
 // floor it sees reflects directions 16° to 74° above the horizon, which the
 // frame does not show and screen-space reflections cannot trace. A moving
 // unlit white wall 300 m ahead spans those directions up to about 1000 m
-// away, so the floor reflects it through world-space rays; moved 5 km away
-// it reflects nothing, and the floor shows only the black backdrop.
+// away, so the floor reflects it through world-space rays. Moved 1.1 km
+// away it still spans some of those directions, but every ray to it is longer
+// than 1100 m, so a range of 1000 m reflects nothing there and the floor shows
+// only the black backdrop; an unlimited trace would still reflect it.
 #[test]
 fn world_space_rays_reflect_a_moving_wall_300_metres_away() {
     let Some((device, queue)) = test_support::device() else {
@@ -117,12 +119,12 @@ fn world_space_rays_reflect_a_moving_wall_300_metres_away() {
         composite(&device, &queue, renderer)
     };
     let near = frame(&mut scene, &mut renderer, &input);
-    scene.set_instance(&queue, wall, wall_at(-5000.)).unwrap();
+    scene.set_instance(&queue, wall, wall_at(-1100.)).unwrap();
     input.camera_cut = true;
     let far = frame(&mut scene, &mut renderer, &input);
     assert!(
         far.iter().all(|&red| red < 0.01),
-        "the floor reflects something with the wall 5 km away"
+        "the floor reflects the wall 1.1 km away, beyond the rays' 1000 m"
     );
     let reflecting = near.iter().filter(|&&red| red > 0.25).count();
     assert!(
