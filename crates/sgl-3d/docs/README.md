@@ -31,7 +31,7 @@ its rendering `settings::Settings`.
    `graphics_device::fsr2_features(&adapter)`, plus `TEXTURE_COMPRESSION_BC`
    for compressed bakes and material textures and `TIMESTAMP_QUERY` for GPU timing.
    In the browser the device is the page's WebGPU one, requested the same way;
-   it needs 17 sampled textures per stage (Chromium 149 and later).
+   it needs 19 sampled textures per stage (Chromium 149 and later).
 2. Load: `Scene::new` starts empty. Add content between frames and keep the
    identities it returns: `asset::load` (a file) or `asset::load_slice` (bytes,
    as a browser fetches them) into

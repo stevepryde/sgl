@@ -14,8 +14,8 @@
 //! encodes them, `targets.rs` allocates what they read and write.
 mod targets;
 
-use super::cached_group::CachedGroup;
 use crate::shading::Module;
+use crate::view::cached_group::CachedGroup;
 use crate::view::reflection_camera;
 use glam::{Mat4, Vec4};
 use targets::Targets;
@@ -79,7 +79,11 @@ pub(crate) const ROUGHNESS_CUTOFF: f32 = 0.7;
 pub(crate) const ROUGHNESS_FADE: f32 = 0.1;
 
 pub(crate) struct Inputs<'a> {
+    /// The surface depth, with the opaque depth and the receiver layer that
+    /// select the surface's lobe (the Surface contract).
     pub depth: &'a wgpu::TextureView,
+    pub opaque_depth: &'a wgpu::TextureView,
+    pub receivers: &'a wgpu::TextureView,
     pub normal: &'a wgpu::TextureView,
     pub material: &'a wgpu::TextureView,
     pub f0: &'a wgpu::TextureView,
@@ -376,6 +380,8 @@ impl Velvet {
                 (4, self.view.as_entire_binding()),
                 (5, view(&t.normal_roughness)),
                 (6, view(full_depth)),
+                (7, view(input.opaque_depth)),
+                (8, view(input.receivers)),
             ],
             t.full,
         );

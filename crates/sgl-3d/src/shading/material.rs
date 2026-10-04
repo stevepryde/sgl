@@ -10,6 +10,7 @@ pub(crate) const MATERIAL_BUMP_MAP: u32 = 8;
 pub(crate) const MATERIAL_ANISOTROPY_MAP: u32 = 16;
 pub(crate) const MATERIAL_ALPHA_MASK: u32 = 32;
 pub(crate) const MATERIAL_ALPHA_BLEND: u32 = 64;
+pub(crate) const MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS: u32 = 128;
 
 /// Which maps a material was added with, as `MATERIAL_*_MAP` bits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,7 +55,16 @@ impl MaterialUniform {
         let (alpha_cutoff, alpha) = match values.alpha {
             AlphaMode::Opaque => (0., 0),
             AlphaMode::Mask { cutoff } => (cutoff, MATERIAL_ALPHA_MASK),
-            AlphaMode::Blend => (0., MATERIAL_ALPHA_BLEND),
+            AlphaMode::Blend {
+                receives_screen_space_reflections,
+            } => (
+                0.,
+                MATERIAL_ALPHA_BLEND
+                    | bit(
+                        receives_screen_space_reflections,
+                        MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS,
+                    ),
+            ),
         };
         Self {
             base: values.base,

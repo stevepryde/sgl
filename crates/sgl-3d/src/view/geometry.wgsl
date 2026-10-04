@@ -2,8 +2,9 @@
 // (source_vs): the G-buffer (stable_fs and its fallbacks), lit color with
 // motion (fs), lit color with its ambient diffuse, motion and exact primitive
 // identity (source_fs), the G-buffer and source_fs's outputs at once
-// (fused_opaque_fs), and blended surfaces' colour (blended_fs). A masked
-// material's pipelines discard the texels it cuts out in each opaque pass
+// (fused_opaque_fs), blended receivers as the surface (receiver_fs) and
+// blended surfaces' colour (blended_fs). A masked material's pipelines
+// discard the texels it cuts out in each opaque pass
 // (material_alpha_discard), after the fragment's last derivative.
 struct SceneOutput {
  @location(0) color:vec4<f32>,
@@ -151,17 +152,52 @@ struct FusedOpaqueOutput {
  return FusedOpaqueOutput(stable.normal,stable.material,stable.motion,stable.f0,vec4(shaded.color,s.base.a),vec4(shaded.ambient,0.),i.source_id,stable.anisotropy);
 }
 
+// The receiver pass (stages/transparent): a blended receiver of screen-space
+// reflections as the surface at its pixels, drawn through source_vs as
+// blended_fs draws it, over the surface depth it tests strictly nearer and
+// writes: its traced lobe into the receiver layer and its unjittered motion
+// into the G-buffer's, as HDRP's transparent depth prepass and motion
+// vectors draw a material that receives SSR.
+struct ReceiverOutput {
+ @location(0) receiver:vec4<f32>,
+ @location(1) motion:vec2<f32>,
+}
+@fragment fn receiver_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->ReceiverOutput {
+ let front=object_front_face(i,raster_front);
+ let recorded=stable_material(stable_raster_surface(i,front));
+ let lobe=gbuffer_traced_lobe(recorded.normal,recorded.material,recorded.f0);
+ return ReceiverOutput(gbuffer_encode_receiver(lobe),gbuffer_encode_motion(i.current_clip,i.previous_clip));
+}
+
+// What the frame's screen-space method returned for a blended fragment's
+// traced lobe (bind_blended.wgsl): the method's result where the fragment is
+// a receiver that is the surface at its pixel, its depth equal to the
+// surface depth there, as the receiver pass drew it through the same vertex
+// entry (its position @invariant), primitive and depth state; for every
+// other fragment, a receiver behind it included, none.
+fn blended_traced_reflection(i:Fragment)->TracedReflection {
+ let receives=(material.flags&MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS)!=0u;
+ if !receives || blended_trace.cutoff<=0. {
+  return untraced_reflection();
+ }
+ let pixel=vec2<i32>(i.clip.xy);
+ if textureLoad(blended_surface_depth,pixel,0)!=i.clip.z {
+  return untraced_reflection();
+ }
+ return TracedReflection(textureLoad(blended_reflections,pixel,0),blended_trace.cutoff,blended_trace.fade);
+}
 // Blended surfaces, which the transparent stage draws back to front over the
 // beauty: lit as opaque surfaces are, with the probe and sky specular that
-// source completion gives opaque ones (probe_environment), then fogged from
-// the frame's fog volume where they lie, as Bevy 9d12036's forward
-// transparent pass shades and fogs each fragment
+// source completion gives opaque ones (probe_environment), a receiver that
+// is the surface composing the screen-space method's result into its traced
+// lobe in its place, then fogged from the frame's fog volume where they lie,
+// as Bevy 9d12036's forward transparent pass shades and fogs each fragment
 // (crates/bevy_pbr/src/render/pbr.wesl) and Godot b130438's samples its
 // volumetric fog (scene_forward_clustered.glsl), and blended with their
 // alpha.
 fn blended_color(i:Fragment,raster_front:bool)->vec4<f32> {
  let front=object_front_face(i,raster_front);
- let context=ShadeContext(i.clip.xy,true,true,cluster_range(i.world,i.clip.xy));
+ let context=ShadeContext(i.clip.xy,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
  let s=raster_surface(i,front,surface_base_color(i),surface_emission(i),context.clusters);
  var shaded:Shaded;
  if s.unlit {

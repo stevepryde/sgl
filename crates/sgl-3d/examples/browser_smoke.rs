@@ -6,7 +6,8 @@
 //! It creates a device with the adapter's limits, builds a scene and renders
 //! a few frames of it under several settings into an offscreen target. The
 //! scene holds a textured ground; a box that shades part of it from a
-//! shadowed sun; a masked grate and a blended pane; a skinned and morphed box
+//! shadowed sun; a masked grate and a blended pane that receives
+//! screen-space reflections; a skinned and morphed box
 //! with an ambient cube; a box lit by a static irradiance atlas; point, spot
 //! and rectangle lights; a decal; a baked specular probe; glow, heat shimmer
 //! and mist; a fog volume; and an environment. Where the device has BC, the
@@ -142,7 +143,8 @@ fn world() -> Asset {
 }
 
 /// A masked grate (the BC7 `grate.ktx2` where the device has BC, else an
-/// RGBA8 lattice) and a blended pane, both behind the box from the camera.
+/// RGBA8 lattice) and a blended pane that receives screen-space reflections,
+/// both behind the box from the camera.
 fn alpha_content(bc: bool) -> Result<Asset, String> {
     let image = if bc {
         Image::Compressed(
@@ -161,7 +163,9 @@ fn alpha_content(bc: bool) -> Result<Asset, String> {
     bars.alpha = AlphaMode::Mask { cutoff: 0.5 };
     let mut glass = material([0.2, 0.5, 1., 0.4], 0., 0.05);
     glass.double_sided = true;
-    glass.alpha = AlphaMode::Blend;
+    glass.alpha = AlphaMode::Blend {
+        receives_screen_space_reflections: true,
+    };
     Ok(Asset {
         meshes: vec![
             panel(Vec3::new(-3., 1.5, -3.), Vec3::X, Vec3::Y, 0),

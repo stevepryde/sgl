@@ -1,7 +1,7 @@
-//! Group-0 layouts, one per bind module (bind_*.wgsl), group 1's and group
-//! 2's, and the binding numbers they and the groups built for them use. The
-//! layout test checks every number against naga's binding of the WGSL
-//! variable it is named after.
+//! Group-0 layouts, one per bind module (bind_*.wgsl), group 1's, group
+//! 2's and the blended pipelines' group 3, and the binding numbers they and
+//! the groups built for them use. The layout test checks every number
+//! against naga's binding of the WGSL variable it is named after.
 
 /// Group 0's bindings, as bind_lit.wgsl, bind_unlit.wgsl and bind_shadow.wgsl
 /// declare them.
@@ -50,6 +50,26 @@ pub(crate) mod group2 {
     pub(crate) const BUMP_MAP: u32 = 6;
     pub(crate) const BAKED_MATERIAL: u32 = 7;
     pub(crate) const ANISOTROPY_MAP: u32 = 8;
+}
+
+/// The blended pipelines' group 3, as bind_blended.wgsl declares it.
+pub(crate) mod blended {
+    pub(crate) const REFLECTIONS: u32 = 0;
+    pub(crate) const SURFACE_DEPTH: u32 = 1;
+    pub(crate) const TRACE: u32 = 2;
+}
+
+/// The screen-space method's cutoff and fade the blended draw composes its
+/// result with; matches `BlendedTrace` in bind_blended.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct BlendedTrace {
+    /// Perceptual roughness at which the method traces no lobe; 0 composes
+    /// nothing.
+    pub cutoff: f32,
+    /// The width of its fade below the cutoff.
+    pub fade: f32,
+    pub padding: [f32; 2],
 }
 
 use group0::*;
@@ -311,6 +331,53 @@ pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
         storage(group1::SCENE_SOURCE, rays),
         storage(group1::SCENE_INSTANCES, rays),
     ]
+}
+
+/// The blended pipelines' group 3: bind_blended.wgsl's screen-space
+/// method's result, surface depth and trace.
+pub(crate) fn blended(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    layout(device, "blended reflections", &blended_entries())
+}
+
+/// Group 3's entries for the blended pipelines.
+pub(crate) fn blended_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
+    let texture = |binding, sample_type| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    };
+    [
+        texture(
+            blended::REFLECTIONS,
+            wgpu::TextureSampleType::Float { filterable: false },
+        ),
+        texture(blended::SURFACE_DEPTH, wgpu::TextureSampleType::Depth),
+        wgpu::BindGroupLayoutEntry {
+            binding: blended::TRACE,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+    ]
+}
+
+#[cfg(test)]
+pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
+    [crate::shading::layout_tests::mirror!(
+        "geometry",
+        "BlendedTrace",
+        BlendedTrace,
+        [cutoff, fade, padding]
+    )]
 }
 
 /// Group 2, a material: bind_material.wgsl's values, its maps and sampler,

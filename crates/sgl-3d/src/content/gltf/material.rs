@@ -13,7 +13,9 @@ pub(super) fn read_material(
     // 0.5 and must not be negative.
     let alpha = match material.alpha_mode() {
         gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
-        gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+        gltf::material::AlphaMode::Blend => AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+        },
         gltf::material::AlphaMode::Mask => {
             let cutoff = material.alpha_cutoff().unwrap_or(0.5);
             if !(cutoff.is_finite() && cutoff >= 0.) {

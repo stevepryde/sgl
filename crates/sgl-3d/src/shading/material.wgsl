@@ -25,9 +25,11 @@ const MATERIAL_DOUBLE_SIDED:u32=2u;
 const MATERIAL_NORMAL_MAP:u32=4u;
 const MATERIAL_BUMP_MAP:u32=8u;
 const MATERIAL_ANISOTROPY_MAP:u32=16u;
-// Its alpha mode: masked or blended; neither is opaque.
+// Its alpha mode: masked or blended; neither is opaque. A blended one may
+// receive the frame's screen-space reflections (AlphaMode::Blend).
 const MATERIAL_ALPHA_MASK:u32=32u;
 const MATERIAL_ALPHA_BLEND:u32=64u;
+const MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS:u32=128u;
 // Whether material `m` cuts out a texel of base alpha `alpha`: a masked
 // material below its cutoff. Bevy 9d12036's alpha_discard
 // (crates/bevy_pbr/src/render/pbr_functions.wesl), MIT OR Apache-2.0

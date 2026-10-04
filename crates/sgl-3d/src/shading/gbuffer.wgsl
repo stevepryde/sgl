@@ -12,6 +12,10 @@
 // ambient: in rgb, the ambient diffuse radiance within lit colour (Shaded in
 //  surface.wgsl) before occlusion; source completion subtracts the share its
 //  ambient visibility hides. Zero where nothing lit was drawn.
+// receiver (the Surface contract, specs/sgl3d-architecture.md): where a
+//  blended receiver is the surface, RG its traced lobe's normal as `normal`
+//  holds one and B that lobe's perceptual roughness. Read only under a
+//  receiver, where the surface depth is nearer than the opaque depth.
 //
 // Octahedral unit-vector encoding from Bevy b56fc29d3016e641754765244b5ba3f9cc504671,
 // crates/bevy_pbr/src/render/utils.wgsl (MIT, see LICENSE-bevy.txt).
@@ -68,6 +72,34 @@ fn gbuffer_traced_roughness(material:GBufferMaterial,lit:bool)->f32 {
   roughness=1.;
  }
  return roughness;
+}
+
+// The lobe reflections trace: its normal and perceptual roughness.
+struct GBufferTracedLobe {
+ normal:vec3<f32>,
+ roughness:f32,
+}
+// The traced lobe of a surface recorded as `normals`, `material` and `f0`.
+fn gbuffer_traced_lobe(normals:vec4<f32>,material:vec4<f32>,f0:vec4<f32>)->GBufferTracedLobe {
+ let decoded=gbuffer_material(material);
+ return GBufferTracedLobe(gbuffer_reflection_normal(normals,decoded.coat),gbuffer_traced_roughness(decoded,gbuffer_lit(f0)));
+}
+fn gbuffer_encode_receiver(lobe:GBufferTracedLobe)->vec4<f32> {
+ return vec4(gbuffer_octahedral_encode(lobe.normal),lobe.roughness,0.);
+}
+// Whether a pixel is under a receiver: its surface depth is nearer than its
+// opaque depth (reversed Z).
+fn gbuffer_under_receiver(surface_depth:f32,opaque_depth:f32)->bool {
+ return surface_depth>opaque_depth;
+}
+// The traced lobe of the surface at a pixel: the receiver layer's
+// `receiver` under a receiver, else that of the opaque surface the G-buffer
+// records.
+fn gbuffer_surface_lobe(surface_depth:f32,opaque_depth:f32,receiver:vec4<f32>,normals:vec4<f32>,material:vec4<f32>,f0:vec4<f32>)->GBufferTracedLobe {
+ if gbuffer_under_receiver(surface_depth,opaque_depth) {
+  return GBufferTracedLobe(gbuffer_octahedral_decode(receiver.xy),receiver.z);
+ }
+ return gbuffer_traced_lobe(normals,material,f0);
 }
 
 fn gbuffer_encode_f0(f0:vec3<f32>,lit:bool)->vec4<f32> {

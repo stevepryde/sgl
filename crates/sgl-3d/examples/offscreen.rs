@@ -189,7 +189,9 @@ fn alpha_content() -> Result<Asset, Box<dyn Error>> {
     bars.alpha = AlphaMode::Mask { cutoff: 0.5 };
     let glass = |base: [f32; 4]| Material {
         double_sided: true,
-        alpha: AlphaMode::Blend,
+        alpha: AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+        },
         ..material(base, [0.; 3], 0., 0.05)
     };
     Ok(Asset {

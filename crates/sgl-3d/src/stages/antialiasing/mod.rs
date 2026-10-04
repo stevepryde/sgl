@@ -4,9 +4,10 @@
 //! bloom and tone mapping, as in Hydrogent, Bevy, Unreal and AMD's FSR2
 //! placement.
 //!
-//! Reads: the complete HDR frame (the composite), depth, motion, FSR2's
-//! masks, the camera's projection, the frame time, the frame's exposure
-//! (`stages::exposure`) and the lent post-effect context.
+//! Reads: the complete HDR frame (the composite), the surface's depth and
+//! motion (the Surface contract), FSR2's masks, the camera's projection, the
+//! frame time, the frame's exposure (`stages::exposure`) and the lent
+//! post-effect context, whose inputs hold the surface.
 //! Writes: the frame's jitter and mip bias; TAA's accumulation (in the
 //! context) or its own FSR2 output; which view completes the scene
 //! (`Completed`).
@@ -131,7 +132,7 @@ impl Antialiasing {
             let upscaler = self.fsr2.as_mut().unwrap();
             let inputs = fsr2::Inputs {
                 color,
-                depth: &ctx.targets.depth,
+                depth: ctx.surface.depth,
                 motion: &ctx.targets.motion,
                 masks: &ctx.targets.fsr2_masks,
                 projection: glam::Mat4::from_cols_array_2d(&ctx.values.view.projection),

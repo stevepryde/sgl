@@ -47,7 +47,7 @@ impl Alpha {
         match mode {
             AlphaMode::Opaque => Self::Opaque,
             AlphaMode::Mask { .. } => Self::Mask,
-            AlphaMode::Blend => Self::Blend,
+            AlphaMode::Blend { .. } => Self::Blend,
         }
     }
 }

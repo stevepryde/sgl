@@ -23,6 +23,7 @@ macro_rules! context {
             effective: &$frame.effective,
             sizes: $renderer.sizes,
             targets: &$renderer.targets,
+            surface: $renderer.targets.surface(false),
             scene: $scene,
             values: &$frame.values,
             input: &$frame.input,
@@ -76,7 +77,7 @@ impl Renderer {
         let effective = super::effective::resolve(
             settings,
             &input,
-            !scene.transient.fog_volume_corners.is_empty(),
+            super::effective::SceneContent::of(scene),
             false,
             self.pipelines.fused_supported,
         );
@@ -94,6 +95,9 @@ impl Renderer {
             &mut self.views,
             &self.bindings.frame,
         );
+        if scene.materials.holds_receivers() {
+            self.targets.hold_surface(device);
+        }
         self.shadows.resize(device, effective.shadow_quality);
         self.shadows.local.prepare(
             device,
@@ -197,6 +201,27 @@ impl Renderer {
         self.transparent.encode(
             &mut ctx,
             crate::stages::transparent::Beauty::Incident(beauty),
+        );
+    }
+
+    /// The receiver pass of `frame`, after its opaque stage, then the
+    /// blended draw onto the composite, as `render` encodes them, composing
+    /// `reflections` as the screen-space method's result.
+    pub(crate) fn encode_test_receivers(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &Scene,
+        frame: &TestFrame,
+        reflections: Option<&wgpu::TextureView>,
+    ) {
+        let mut ctx = context!(self, device, queue, encoder, scene, frame);
+        let drew = self.transparent.encode_receivers(&mut ctx);
+        ctx.surface = self.targets.surface(drew);
+        self.transparent.encode(
+            &mut ctx,
+            crate::stages::transparent::Beauty::Composite { reflections },
         );
     }
 

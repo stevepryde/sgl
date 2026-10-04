@@ -162,10 +162,11 @@ impl Renderer {
                 &bindings.shadow,
                 &bindings.scene,
                 &bindings.material,
+                &bindings.blended,
             ],
             layers,
         );
-        let targets = SharedTargets::new(device, render);
+        let targets = SharedTargets::new(device, render, false);
         let first_frame = effective::first_frame(
             settings,
             antialiasing.fsr2_running(),
@@ -174,7 +175,7 @@ impl Renderer {
         Ok(Self {
             opaque: Opaque::new(device, &bindings.unlit),
             reflections: Reflections::new(device, queue, render, &first_frame),
-            transparent: Transparent::new(device, &bindings.unlit, &targets),
+            transparent: Transparent::new(device, &bindings.unlit, &bindings.blended, &targets),
             exposure: Exposure::new(device),
             antialiasing,
             motion_blur: MotionBlur::new(device),
@@ -238,7 +239,7 @@ impl Renderer {
         if self.sizes == sizes && self.bloom_targets == sizing.bloom_targets {
             return;
         }
-        self.targets = SharedTargets::new(device, render);
+        self.targets = SharedTargets::new(device, render, self.targets.surface.is_some());
         self.exposure.forget_inputs();
         self.motion_blur.forget_inputs();
         self.post.resize(device, sizes, sizing.bloom_targets);

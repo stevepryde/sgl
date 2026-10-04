@@ -25,8 +25,8 @@ settings SGL3D has today.
    Rust render data on a caller-owned wgpu device and queue: native (Metal,
    Vulkan, DX12) or the browser's WebGPU, requested with the adapter's limits
    (`graphics_device::limits`). The device must support compute shaders,
-   eight storage buffers per shader stage (wgpu's default limit) and 17
-   sampled textures per shader stage (one above it). That rules out wgpu's
+   eight storage buffers per shader stage (wgpu's default limit) and 19
+   sampled textures per shader stage (three above it). That rules out wgpu's
    GL and GLES backend, WebGL2 included, which lacks compute and whose
    wgpu-hal fixes `MAX_TEXTURE_SLOTS` at 16, and a WebGPU device left at the
    default limits; Metal (31 or more, 128 on macOS and Apple6 and later),

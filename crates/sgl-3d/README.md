@@ -661,6 +661,12 @@ combines passes from several engines, listed with their licences under it.
 Each method returns the same premultiplied radiance and confidence, so a new
 one (hardware ray tracing) plugs in beside them.
 
+The methods trace the surface: the nearest of the opaque surfaces and the
+[blended receivers](#blended-receivers). Composition adds the opaque lobes;
+under a receiver, whose result it is, the opaque lobe keeps its environment
+and probe specular, and the receiver composes the result in its blended draw
+by the same formula.
+
 `Renderer::new` builds source completion for its settings' screen-space
 reflections and ambient occlusion, so a first frame from a `perspective`
 camera compiles none of it; turning either on or off later compiles it again
@@ -695,9 +701,10 @@ SSR and TAA.
 
 `Settings::world_space_reflections` (with SSR on) traces what SSR misses on moving
 objects, which baked probes cannot hold, as Lumen and HDRP's mixed tracing
-continue failed screen traces in world space. Each traced lobe that SSR did not
-fully resolve casts one GGX-sampled ray at half resolution through the portable
-scene BVHs, reaching 1000 m (Wicked Engine's default `Postprocess_RTReflection`
+continue failed screen traces in world space. Each traced lobe of an opaque
+surface that SSR did not fully resolve, and that no blended receiver covers,
+casts one GGX-sampled ray at half resolution through the portable scene BVHs,
+reaching 1000 m (Wicked Engine's default `Postprocess_RTReflection`
 range). They are two-level, as hardware acceleration structures are: a BVH over
 the static instances and one over the moving instances, rebuilt on the CPU
 when static content changes and every traced frame respectively, then each
@@ -940,23 +947,71 @@ map's.
   hits, where the portable ray traversal's nearest, any-hit and visibility
   queries pass through cut-out texels. Masked materials draw with their own
   pipelines, so opaque ones keep early depth testing.
-- `AlphaMode::Blend` (glass, screens, holograms) is blended with its alpha over
-  what lies behind it. The transparent stage draws blended surfaces back to
-  front, sorted by the view depth of each mesh's bounds centre as Bevy's
-  `Transparent3d` phase is, onto the composed frame and, while a screen-space
-  reflection method traces it, into the reflection input, before additive
-  effects and mist. They are lit as opaque surfaces are: the directional lights
-  and their shadow, the clustered point, spot and rectangle lights, baked
-  light, the environment, and the installed probes' and reflection sky's
-  specular; then fogged. They write no depth, motion or G-buffer, so ambient
-  occlusion, screen-space reflections and temporal antialiasing see what lies
-  behind them. They cast no shadow and rays pass through them, as Godot leaves
-  alpha-pass materials out of its shadow passes, and probe captures leave them
-  out. Order is per mesh: split intersecting or interleaved blended meshes.
-  Order-independent transparency is not provided.
+- `AlphaMode::Blend { receives_screen_space_reflections }` (glass, screens,
+  holograms, water) is blended with its alpha over what lies behind it. The
+  transparent stage draws blended surfaces back to front, sorted by the view
+  depth of each mesh's bounds centre as Bevy's `Transparent3d` phase is, onto
+  the composed frame and, while a screen-space reflection method traces it,
+  into the reflection input, before additive effects and mist. They are lit
+  as opaque surfaces are: the directional lights and their shadow, the
+  clustered point, spot and rectangle lights, baked light, the environment,
+  and the installed probes' and reflection sky's specular; then fogged.
+  Unmarked (`false`, as glTF loads them), they write no depth, motion or
+  G-buffer, so ambient occlusion, screen-space reflections and temporal
+  antialiasing see what lies behind them. They cast no shadow and rays pass
+  through them, as Godot leaves alpha-pass materials out of its shadow
+  passes, and probe captures leave them out. Order is per mesh: split
+  intersecting or interleaved blended meshes. Order-independent transparency
+  is not provided.
 
 `Scene::set_material` changes a material's alpha mode like its other values.
 The `offscreen` example's `--alpha` shows both modes.
+
+### Blended receivers
+
+A blended material marked `receives_screen_space_reflections: true` is a
+receiver: water or glass that reflects the scene in front of it. Where it is
+the nearest receiver it is the surface that screen-space reflections trace
+and temporal effects reproject, as HDRP's `Receive SSR Transparent` materials
+are:
+
+- After the opaque stage, a receiver pass draws the camera's receivers over a
+  copy of the opaque depth, the nearest winning, with the frame's jitter: their
+  depth, their traced lobe's normal and roughness (the coat on a coated
+  receiver, else the base) and their motion.
+- Crystal or Velvet traces them as it traces opaque surfaces, at the same
+  resolution, cutoff and fade, through the same accumulation
+  ([Reflections](#reflections)).
+- The blended draw composes the result into the traced lobe in place of its
+  probe and sky specular, by the formula opaque composition uses. The opaque
+  surface seen through a receiver keeps its own probe and sky specular, and
+  world-space rays skip it.
+- TAA, FSR2 and motion blur reproject and blur a receiver's pixels by the
+  receiver's depth and motion. The pass runs while the scene holds a receiver
+  and SSR, TAA, FSR2 or motion blur runs, so with SSR off and TAA on, TAA
+  still reprojects a receiver by its own motion rather than by what lies
+  behind it.
+
+Limits: the nearest receiver at a pixel alone reflects; a receiver behind
+another, and one seen in another's reflection, show their probe and sky
+specular. The reflection is scaled by the receiver's alpha with the rest of
+its colour (glTF's coverage blend, as Godot and Bevy blend). What lies behind
+is blended under it undistorted (no refraction), and reprojects and blurs by
+the receiver's motion, so a receiver moving against its background trails the
+background, not its reflection. World-space rays do not fill a receiver's
+misses; probe and sky specular do. Unlit receivers, additive effects and mist
+reflect nothing.
+
+The game supplies the receiver as any surface: its mesh, with the normals it
+animates, and its material's roughness, F0 and coat. Place it as a moving
+instance, so that replacing its geometry is no static edit. `Scene::set_model`
+rebuilds that model's ray source each call, so a mesh regenerated every frame
+pays a BVH build every frame: keep the grid as coarse as the look allows, or
+animate a deforming model with `set_instance_deformation`, which rays do not
+see. The renderer allocates the surface's targets (a depth and an RGBA16F
+layer, 12 bytes per render pixel) in the first frame whose scene holds a
+receiver and keeps them from then on; a renderer that has never rendered a
+receiver pays nothing.
 
 ## Skinned meshes and morph targets
 
@@ -1173,9 +1228,10 @@ stage (each stage's documentation lists its own), are:
   `SSR` passes (named after DiligentFX's debug groups), Velvet's `Godot SSR`
   passes, `world reflection rays`, `world reflection denoise` and
   `reflection composition`;
-- transparent: `blended` (blended surfaces) and `transparent` (additive
-  effects and mist), each drawn into the reflection input while screen-space
-  reflections run and onto the composed frame, and `heat distortion`;
+- transparent: `receivers` (the receiver pass, after opaque); `blended`
+  (blended surfaces) and `transparent` (additive effects and mist), each
+  drawn into the reflection input while screen-space reflections run and onto
+  the composed frame; and `heat distortion`;
 - exposure: `exposure`, while automatic;
 - antialiasing: `TAA` or `FSR2` (all of FSR2's passes);
 - motion blur: `motion blur`;
@@ -1288,7 +1344,7 @@ same `Scene`, `Renderer` and frame run on the page's WebGPU device, built for
 not supported, since SGL3D needs compute.
 
 - **Device.** Request it as natively, with `graphics_device::limits` (the
-  adapter's limits: 17 sampled textures and 8 storage buffers per stage are
+  adapter's limits: 19 sampled textures and 8 storage buffers per stage are
   the floor, S3D-1) and `graphics_device::features`. Desktop Chrome on Apple
   silicon reports 48 sampled textures and 10 storage buffers from Chromium
   149; Chromium 145 reported 16 and cannot run SGL3D. Render into an
@@ -1319,7 +1375,7 @@ not supported, since SGL3D needs compute.
 `browser_smoke` (`examples/browser_smoke.rs`) is the browser lane's test and a
 minimal page integration: device creation; procedural content (a textured
 ground, a shadow-casting box, a masked grate with a BC7 image, a blended
-pane, a skinned and morphed box with an ambient cube, a box lit by a BC6H/BC7
+pane that receives screen-space reflections, a skinned and morphed box with an ambient cube, a box lit by a BC6H/BC7
 static irradiance atlas, point, spot and rectangle lights, a decal, a BC6H
 specular probe, glow, heat shimmer, mist, a fog volume and an environment);
 frames under four settings configurations; an asynchronous readback; and

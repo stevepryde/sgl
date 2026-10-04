@@ -57,9 +57,17 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   the last submitted frame.
 - **Alpha modes** (`AlphaMode`, glTF `alphaMode`): masked materials are cut
   out below their cutoff in every view, shadow and ray; blended ones are lit,
-  fogged and drawn back to front over the frame, writing no depth or motion,
-  casting no shadow. [Alpha-masked and blended
+  fogged and drawn back to front over the frame, writing no depth or motion
+  unless marked to receive screen-space reflections, and casting no shadow.
+  [Alpha-masked and blended
   materials](../README.md#alpha-masked-and-blended-materials).
+- **Blended receivers** (`AlphaMode::Blend { receives_screen_space_reflections:
+  true }`): water or glass, with the normals the game animates, that
+  receives the frame's screen-space reflections where it is the nearest
+  receiver, and that TAA, FSR2 and motion blur reproject by its own motion.
+  No refraction; one reflecting layer per pixel. A mesh replaced every frame
+  with `Scene::set_model` rebuilds its ray BVH every frame.
+  [Blended receivers](../README.md#blended-receivers).
 - **Decals**: boxes that project the game's images onto the lit surfaces
   inside them, changing base colour and, with their maps, normal, roughness
   and metallic before lighting, so reflections and SSR see them
@@ -149,7 +157,8 @@ Environment and probe specular always apply. On top of them:
 
 - **Screen-space reflections** with two methods, Crystal and Velvet, which
   combine passes from DiligentFX, AMD FidelityFX, Godot, Wicked Engine and
-  Bevy. Crystal runs in SGL's `sgl-post-fx` effects library.
+  Bevy, over opaque surfaces and blended receivers. Crystal runs in SGL's
+  `sgl-post-fx` effects library.
   [Reflections](../README.md#reflections) credits each source.
 - **World-space reflections**: rays through a software BVH for moving objects
   up to 1000 m from the reflecting surface that screen-space reflections miss.
@@ -232,4 +241,4 @@ are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
 not provided.
 
 Also not provided: occlusion textures, tangent generation, runtime probe
-capture and order-independent transparency.
+capture, order-independent transparency and refraction.

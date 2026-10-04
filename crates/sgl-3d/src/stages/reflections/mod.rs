@@ -1,7 +1,6 @@
 //! Reflections: ambient occlusion of opaque surfaces' ambient diffuse,
 //! environment and probe specular, the screen-space method, world-space
 //! rays, and their one composition.
-mod cached_group;
 pub(crate) mod source;
 pub(crate) mod velvet;
 pub(crate) mod world;
@@ -12,7 +11,7 @@ use crate::view::bindings::FogVolume;
 use crate::view::effective::{Effective, ScreenSpace};
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
-use crate::view::post_fx::{self, PostFx};
+use crate::view::post_fx::PostFx;
 use crate::view::targets::SharedTargets;
 
 /// Wicked Engine's SSR temporal reprojection, which Velvet and world-space
@@ -29,14 +28,18 @@ static TEMPORAL_REPROJECTION: crate::shading::Module = crate::shading::Module {
 /// each receiver's ambient diffuse its ambient visibility hides out of the
 /// opaque beauty, and adds its environment and probe specular, writing the
 /// composite and, while a screen-space method runs, the incident
-/// radiance. `resolve` runs the screen-space method over the incident
-/// radiance, which returns premultiplied radiance and confidence (Crystal
-/// through the lent post-effect context, or Velvet); world-space rays fill
-/// its misses on moving objects; one composition adds both to the
-/// composite. Another method returns the same and plugs in beside these.
+/// radiance. `resolve` runs the screen-space method over the surface and
+/// the incident radiance, which returns premultiplied radiance and
+/// confidence (Crystal through the lent post-effect context, or Velvet);
+/// world-space rays fill its misses on moving objects, from opaque surfaces
+/// not under a receiver; one composition adds both to the composite's opaque
+/// lobes, giving a lobe under a receiver its fallback alone, since the
+/// result there is the receiver's, which `resolve` returns for the blended
+/// draw. Another method returns the same and plugs in beside these.
 ///
 /// Reads: the G-buffer, colour, ambient diffuse, depth, motion and source
-/// identity, the reflection camera, the ambient visibility opaque passes on
+/// identity, the surface (the surface depth and receiver layer), the
+/// reflection camera, the ambient visibility opaque passes on
 /// when ambient occlusion ran, the scene's
 /// environment, probes and DFG table, the lent post-effect context
 /// (Crystal), the ray-hit lit group 0 and the scene's group 1 (world rays).
@@ -159,14 +162,16 @@ impl Reflections {
     }
 
     /// After the transparent stage drew into the incident radiance: the
-    /// screen-space method, world-space rays filling its misses, and their
-    /// composition into the composite.
+    /// screen-space method over the surface, world-space rays filling its
+    /// misses on opaque surfaces, and their composition into the
+    /// composite. Returns the method's result, which receivers that are the
+    /// surface compose; `None` while no method runs.
     pub fn resolve(
         &mut self,
         ctx: &mut FrameContext<'_>,
         post_fx: Option<&mut PostFx>,
         ambient_occlusion: Option<&wgpu::TextureView>,
-    ) {
+    ) -> Option<wgpu::TextureView> {
         let screen_space = ctx.effective.screen_space;
         // A method that does not run keeps no history.
         if !screen_space.is_some_and(|ssr| ssr.method == ReflectionMethod::Velvet) {
@@ -175,15 +180,14 @@ impl Reflections {
         if !ctx.effective.world_space {
             self.world = None;
         }
-        let Some(ScreenSpace {
+        let ScreenSpace {
             method,
             half_resolution,
-        }) = screen_space
-        else {
-            return;
-        };
+            ..
+        } = screen_space?;
         let (traced, _) = traced(ctx);
         let t = ctx.targets;
+        let surface = ctx.surface;
         let camera = ctx.views.reflection_camera;
         let reflected = match method {
             ReflectionMethod::Crystal => post_fx
@@ -207,7 +211,9 @@ impl Reflections {
                     ctx.sizes.render,
                     half_resolution,
                     velvet::Inputs {
-                        depth: &t.depth,
+                        depth: surface.depth,
+                        opaque_depth: &t.depth,
+                        receivers: surface.receivers,
                         normal: &t.normal,
                         material: &t.material,
                         f0: &t.f0,
@@ -238,6 +244,7 @@ impl Reflections {
                 ctx.sizes.render,
                 world::Inputs {
                     depth: &t.depth,
+                    surface_depth: surface.depth,
                     normal: &t.normal,
                     material: &t.material,
                     f0: &t.f0,
@@ -266,10 +273,12 @@ impl Reflections {
             ctx.encoder,
             ctx.device,
             inputs,
+            surface.depth,
             reflected,
             world_space,
             ctx.timing,
         );
+        Some(reflected.clone())
     }
 }
 
@@ -288,13 +297,9 @@ fn source_variant(effective: &Effective, ambient_occlusion: bool) -> source::Var
 /// and the width of its fade below that (0 and 0 with no method). The
 /// methods compare perceptual roughness with their own cutoff.
 fn traced(ctx: &FrameContext<'_>) -> (f32, f32) {
-    let (cutoff, fade) = match ctx.effective.screen_space.map(|ssr| ssr.method) {
-        None => (0., 0.),
-        // As Bevy's SSR fades.
-        Some(ReflectionMethod::Crystal) => (post_fx::ssr_attribs().roughness_threshold, 0.05),
-        Some(ReflectionMethod::Velvet) => (velvet::ROUGHNESS_CUTOFF, velvet::ROUGHNESS_FADE),
-    };
-    (cutoff * cutoff, fade)
+    ctx.effective
+        .screen_space
+        .map_or((0., 0.), |ssr| (ssr.cutoff * ssr.cutoff, ssr.fade))
 }
 
 /// Source completion's and composition's inputs: `probes`, the frame's

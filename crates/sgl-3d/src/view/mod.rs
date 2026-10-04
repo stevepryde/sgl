@@ -10,8 +10,10 @@
 //! The types stages share, which the renderer owns and lends them, are
 //! here too: the frame's context (`frame`), the effective configuration
 //! (`effective`), the sizes and shared targets (`targets`), group 0
-//! (`bindings`) and DiligentFX's post-effect context (`post_fx`).
+//! (`bindings`), DiligentFX's post-effect context (`post_fx`), and the bind
+//! group cache stages keep for their own passes (`cached_group`).
 pub(crate) mod bindings;
+pub(crate) mod cached_group;
 pub(crate) mod cascades;
 pub(crate) mod clusters;
 pub(crate) mod culling;

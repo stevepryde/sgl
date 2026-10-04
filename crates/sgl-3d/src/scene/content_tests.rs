@@ -295,7 +295,9 @@ fn rays_pass_through_cut_out_texels_and_blended_surfaces() {
     masked.materials[0].base = [0.5, 0., 0., 1.];
     let mut blended = asset_of(plane(-2., [0.; 2], 1., false));
     blended.materials[0].base = [0.75, 0., 0., 0.5];
-    blended.materials[0].alpha = AlphaMode::Blend;
+    blended.materials[0].alpha = AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+    };
     for (asset, x) in [(floor, 0.), (masked, 0.), (blended, 4.)] {
         let model = scene.add_asset(&device, &queue, asset).unwrap().model;
         let at = state(model, Mat4::from_translation(Vec3::X * x));
