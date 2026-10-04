@@ -6,11 +6,14 @@
 //! ([`SharedPeer::request_turn`]), or a turn that stopped short (its read
 //! bound reached, or a close under way). Each such connection gets one turn
 //! per round, so a busy peer cannot starve the others. With nothing ready and
-//! nothing requested the worker sleeps; its only timer is the nearest
-//! handshake deadline.
+//! nothing requested the worker sleeps until the nearest handshake deadline
+//! or accept retry.
 //!
 //! A server's worker also accepts, rate-limits and upgrades connections
-//! without blocking, and admits them to the caller's registry.
+//! without blocking, and admits them to the caller's registry. After an
+//! interrupted accept, or one that took a connection the client had already
+//! reset, it accepts again at once; after any other accept error it retries
+//! after [`ACCEPT_RETRY`]. The listener closes only when admission stops.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
@@ -39,6 +42,9 @@ const WAKER: Token = Token(0);
 const LISTENER: Token = Token(1);
 const FIRST_SOCKET: usize = 2;
 const EVENT_CAPACITY: usize = 1_024;
+/// How long accepting waits after an accept error that may leave the
+/// connection in the backlog.
+const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
 type ServerUpgrade =
     Result<WebSocket<TcpStream>, HandshakeError<ServerHandshake<TcpStream, Admission>>>;
@@ -108,11 +114,14 @@ struct Handshake {
 
 /// A server's listener and what its upgrades need.
 struct Acceptor {
-    /// Closed once admission stops or accepting fails.
+    /// Closed once admission stops.
     listener: Option<TcpListener>,
     context: ListenerContext,
     rate: AcceptRateLimiter,
     next_connection: Option<ConnectionId>,
+    /// When to accept again after an accept error. A connection left in the
+    /// backlog raises no new readiness edge.
+    retry_at: Option<Instant>,
 }
 
 /// One server's or client's sockets and the loop that serves them.
@@ -163,6 +172,7 @@ impl IoWorker {
             rate: AcceptRateLimiter::new(context.max_accepts_per_second),
             context,
             next_connection: Some(ConnectionId::MIN),
+            retry_at: None,
         });
         Ok(())
     }
@@ -241,6 +251,11 @@ impl IoWorker {
                 self.handshakes
                     .values()
                     .map(|handshake| handshake.deadline)
+                    .chain(
+                        self.acceptor
+                            .as_ref()
+                            .and_then(|acceptor| acceptor.retry_at),
+                    )
                     .min()
                     .map(|deadline| deadline.saturating_duration_since(Instant::now()))
             } else {
@@ -268,6 +283,7 @@ impl IoWorker {
                     token => self.queue(token),
                 }
             }
+            self.retry_accept();
             self.expire_handshakes();
             self.close_listener_if_stopped();
             self.run_round();
@@ -338,6 +354,9 @@ impl IoWorker {
 
     /// Accepts until the listener would block, as admission allows.
     fn accept(&mut self) {
+        if let Some(acceptor) = &mut self.acceptor {
+            acceptor.retry_at = None;
+        }
         loop {
             let Some(acceptor) = &mut self.acceptor else {
                 return;
@@ -351,12 +370,14 @@ impl IoWorker {
             };
             let stream = match listener.accept() {
                 Ok((stream, _remote)) => stream,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return,
-                // Any other accept error ends accepting.
-                Err(_) => {
-                    self.close_listener();
-                    return;
-                }
+                Err(error) => match AcceptError::of(error.kind()) {
+                    AcceptError::Drained => return,
+                    AcceptError::AcceptNext => continue,
+                    AcceptError::BackOff => {
+                        acceptor.retry_at = Some(Instant::now() + ACCEPT_RETRY);
+                        return;
+                    }
+                },
             };
             if !acceptor.rate.allow(Instant::now()) {
                 continue;
@@ -376,10 +397,23 @@ impl IoWorker {
         }
     }
 
+    /// Accepts again once an accept error's back-off has passed.
+    fn retry_accept(&mut self) {
+        if self
+            .acceptor
+            .as_ref()
+            .and_then(|acceptor| acceptor.retry_at)
+            .is_some_and(|retry_at| Instant::now() >= retry_at)
+        {
+            self.accept();
+        }
+    }
+
     fn close_listener(&mut self) {
         if let Some(acceptor) = &mut self.acceptor
             && let Some(mut listener) = acceptor.listener.take()
         {
+            acceptor.retry_at = None;
             let _ = self.poll.registry().deregister(&mut listener);
         }
     }
@@ -557,6 +591,57 @@ impl Drop for IoWorker {
     }
 }
 
+/// What a failed `accept` means for accepting. No accept error closes the
+/// listener.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AcceptError {
+    /// The backlog is empty; the next connection raises a readiness edge.
+    Drained,
+    /// A signal interrupted the call, or the connection it took had already
+    /// been reset by the client: accept again at once.
+    AcceptNext,
+    /// Anything else, such as running out of file descriptors or socket
+    /// buffers, a firewall refusal or a pending network error. Some fail
+    /// before the connection leaves the backlog, so accepting again at once
+    /// would spin: retry after [`ACCEPT_RETRY`].
+    BackOff,
+}
+
+impl AcceptError {
+    fn of(kind: io::ErrorKind) -> Self {
+        match kind {
+            io::ErrorKind::WouldBlock => Self::Drained,
+            io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::Interrupted => Self::AcceptNext,
+            _ => Self::BackOff,
+        }
+    }
+}
+
 fn handshake_timed_out() -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, "WebSocket handshake timed out")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_interrupted_or_reset_accepts_retry_at_once() {
+        let cases = [
+            (io::ErrorKind::WouldBlock, AcceptError::Drained),
+            (io::ErrorKind::ConnectionAborted, AcceptError::AcceptNext),
+            (io::ErrorKind::ConnectionReset, AcceptError::AcceptNext),
+            (io::ErrorKind::Interrupted, AcceptError::AcceptNext),
+            (io::ErrorKind::OutOfMemory, AcceptError::BackOff),
+            (io::ErrorKind::PermissionDenied, AcceptError::BackOff),
+            (io::ErrorKind::NetworkDown, AcceptError::BackOff),
+            (io::ErrorKind::HostUnreachable, AcceptError::BackOff),
+            (io::ErrorKind::InvalidInput, AcceptError::BackOff),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(AcceptError::of(kind), expected, "{kind:?}");
+        }
+    }
 }

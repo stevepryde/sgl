@@ -510,3 +510,51 @@ fn slow_handshake_does_not_block_other_admissions() {
         .is_ok()
     );
 }
+
+/// Running out of file descriptors must not end admission. The test re-runs
+/// itself in a child process with a low descriptor limit, so using every
+/// descriptor starves nothing else.
+#[cfg(unix)]
+#[test]
+fn a_server_that_ran_out_of_descriptors_admits_later_clients() {
+    const CHILD: &str = "SGL_NET_DESCRIPTOR_LIMIT_CHILD";
+    // The harness exits 0 when the filter matches no test; only the child
+    // body exits with this.
+    const CHILD_PASSED: i32 = 42;
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new("sh")
+            .args([
+                "-c",
+                r#"ulimit -n 64 && exec "$0" --exact "$1" --nocapture"#,
+            ])
+            .arg(std::env::current_exe().unwrap())
+            .arg("a_server_that_ran_out_of_descriptors_admits_later_clients")
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(CHILD_PASSED),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let mut server = server(4);
+    let mut files = Vec::new();
+    while let Ok(file) = std::fs::File::open("/dev/null") {
+        files.push(file);
+    }
+    // One descriptor for a client; the server has none to accept it with.
+    files.pop();
+    let _stranded = TcpStream::connect(server.local_addr()).unwrap();
+    thread::sleep(Duration::from_millis(300));
+    files.clear();
+
+    let mut client = connect_native(&server);
+    assert_eq!(client.poll(0), vec![ClientEvent::Connected]);
+    connected_id(&wait_server_events(&mut server));
+    std::process::exit(CHILD_PASSED);
+}
