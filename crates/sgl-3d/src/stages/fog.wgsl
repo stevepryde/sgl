@@ -66,15 +66,11 @@
 //   invocation filters one froxel from 7 loads: 1.75 loads per froxel per
 //   pass instead of 7.
 //   Its sums are Godot's, term for term, through the same RGBA16F volume
-//   between the passes. FidelityFX Blur 1.1 (FidelityFX SDK c6efa6b,
-//   sdk/include/FidelityFX/gpu/blur/ffx_blur.h) shares taps the same way,
-//   walking each thread group down its columns so each row's blur serves
-//   every vertical tap reaching it, and reads its input through the texture
-//   cache, its workgroup input cache (BLUR_ENABLE_INPUT_CACHE) off as
-//   slower; here one invocation holds its run's taps in registers. Tiles in
-//   workgroup memory, as Godot's screen-space reflection filter and Wicked
-//   Engine's blur_gaussian_float4CS.hlsl use, measured slower than these
-//   runs on an Apple M5 (stevepryde/sgl#70).
+//   between the passes. The runs are SGL3D's own sliding-window reuse of
+//   the taps neighbouring froxels share; no code is taken from another
+//   engine. Tiles in workgroup memory, as Godot's screen-space reflection
+//   filter and Wicked Engine's blur_gaussian_float4CS.hlsl use, measured
+//   slower than these runs on an Apple M5 (stevepryde/sgl#88).
 // - The integration steps along the view ray through each slice, where
 //   Godot steps the slice's depth, so fog off the view's axis is as dense as
 //   on it.
@@ -340,7 +336,10 @@ fn filter_gauss(t0:vec4<f32>,t1:vec4<f32>,t2:vec4<f32>,t3:vec4<f32>,t4:vec4<f32>
 // this frame's froxels, clamped to the volume's edges. Each invocation
 // filters the 8 froxels from pos along the axis (stages/fog.rs FILTER_RUN)
 // from the 14 their taps reach, each loaded once. The taps are written out:
-// a loop over an array of them measured nearly 3× slower.
+// a loop over an array of them measured nearly 3× slower. Each tap clamps
+// to the volume itself, the far edge too: an out-of-range textureLoad
+// returns zero or an implementation-defined texel on Vulkan, D3D12 and
+// WebGPU, and only Metal (naga's Restrict policy) clamps it.
 @compute @workgroup_size(8,8,1) fn filter_froxels(@builtin(global_invocation_id) id:vec3<u32>) {
  const filter_dir=array(vec3(1,0,0),vec3(0,1,0),vec3(0,0,1));
  let offset=filter_dir[filter_axis];
