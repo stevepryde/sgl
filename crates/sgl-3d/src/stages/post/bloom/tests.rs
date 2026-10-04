@@ -58,15 +58,8 @@ fn conserves(device: &wgpu::Device, queue: &wgpu::Queue) {
         .collect();
     let expected = total_luminance(&input);
     let natural = BloomParameters::default();
-    let scattered = BloomParameters {
-        intensity: 1.,
-        low_frequency_boost: 0.,
-        ..natural
-    };
-    let none = BloomParameters {
-        intensity: 0.,
-        ..natural
-    };
+    let scattered = BloomParameters { intensity: 1. };
+    let none = BloomParameters { intensity: 0. };
     for parameters in [natural, scattered, none] {
         queue.write_buffer(
             &inputs.settings,

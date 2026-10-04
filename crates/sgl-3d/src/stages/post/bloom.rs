@@ -22,6 +22,13 @@ pub(crate) static BLOOM: crate::shading::Module = crate::shading::Module {
 const MAX_MIP_DIMENSION: u32 = 512;
 /// Bevy's mip count for it, `ilog2(max_mip_dimension).max(2) - 1`.
 const MIP_COUNT: u32 = MAX_MIP_DIMENSION.ilog2() - 1;
+/// Bevy's `Bloom::NATURAL` shape of the halo
+/// (`crates/bevy_post_process/src/bloom/settings.rs`): how much more the
+/// widest scattering contributes, how far that boost reaches toward
+/// narrower scattering, and the widest scattering angle, 1 being 90°.
+const LOW_FREQUENCY_BOOST: f32 = 0.7;
+const LOW_FREQUENCY_BOOST_CURVATURE: f32 = 0.95;
+const HIGH_PASS_FREQUENCY: f32 = 1.;
 
 /// `BloomSettings` in `inputs.wgsl`: what bloom's passes read.
 #[repr(C)]
@@ -64,13 +71,12 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
 
 /// Bevy's `compute_blend_factor` for its energy-conserving composite: the
 /// blend of mip `mip` into the next finer level (the scene for mip 0), of
-/// `max_mip`. Nonfinite factors from parameters outside 0..=1 blend nothing.
+/// `max_mip`. A nonfinite intensity blends nothing.
 fn blend_factor(bloom: &BloomParameters, mip: u32, max_mip: u32) -> f32 {
     let mip = mip as f32 / max_mip as f32;
-    let mut lf_boost = (1. - (1. - mip).powf(1. / (1. - bloom.low_frequency_boost_curvature)))
-        * bloom.low_frequency_boost;
-    let high_pass_lq =
-        1. - ((mip - bloom.high_pass_frequency) / bloom.high_pass_frequency).clamp(0., 1.);
+    let mut lf_boost =
+        (1. - (1. - mip).powf(1. / (1. - LOW_FREQUENCY_BOOST_CURVATURE))) * LOW_FREQUENCY_BOOST;
+    let high_pass_lq = 1. - ((mip - HIGH_PASS_FREQUENCY) / HIGH_PASS_FREQUENCY).clamp(0., 1.);
     lf_boost *= 1. - bloom.intensity;
     let blend = (bloom.intensity + lf_boost) * high_pass_lq;
     if blend.is_finite() {

@@ -185,7 +185,7 @@ Stages run in one order, written in one place in `renderer`:
    motion, at the scene size, before bloom, SMAA and tone mapping, as Bevy
    and Wicked Engine run it after TAA.
 10. **Post**: bloom, SMAA, then tone mapping with the exposure and colour
-   grading, to the output.
+   grading, dithered to the output.
 
 A new feature takes a place in this list by editing it here. A probe capture
 is a `Renderer` operation that runs prepare, shadows and opaque over its own

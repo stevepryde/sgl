@@ -5,7 +5,7 @@
 mod look;
 
 pub use look::{
-    AutoExposure, BloomParameters, ColorGrading, ColorGradingGlobal, ColorGradingSection,
+    AgxLook, AutoExposure, BloomParameters, ColorGrading, ColorGradingGlobal, ColorGradingSection,
     CompensationCurve, CompensationCurveError, Exposure, MeteringMask, MotionBlurParameters,
 };
 

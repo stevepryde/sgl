@@ -52,7 +52,8 @@ fn sizes(size: [u32; 2]) -> Sizes {
 
 // Defects: AA Off still filters, flips rows, loses channels or skips/doubles the
 // display transfer. The independent oracle is captured pre-AA scene data plus
-// the sRGB transfer equation. Compilation cannot check these pixel semantics.
+// the sRGB transfer equation, within the output's dither of up to a code
+// value. Compilation cannot check these pixel semantics.
 #[test]
 #[ignore = "real GPU; numerical AA bypass, format and runtime-switch checks"]
 fn antialiasing_off_preserves_captured_pixels() {
@@ -103,11 +104,30 @@ fn antialiasing_off_preserves_captured_pixels() {
                         output.texture(),
                         if format == HDR { 8 } else { 4 },
                     );
+                    // Linear colour as an 8-bit sRGB code, unrounded.
+                    let code = |linear: f64| {
+                        let encoded = if linear <= 0.0031308 {
+                            12.92 * linear
+                        } else {
+                            1.055 * linear.powf(1.0 / 2.4) - 0.055
+                        };
+                        encoded.clamp(0.0, 1.0) * 255.0
+                    };
                     if format == HDR {
-                        assert_eq!(
-                            actual, bytes,
-                            "AA Off must copy every linear half-float texel exactly"
-                        );
+                        for (index, texel) in actual.chunks_exact(2).enumerate() {
+                            let value = f64::from(half(texel));
+                            let captured = f64::from(half(&bytes[index * 2..]));
+                            let channel = index % 4;
+                            if channel == 3 {
+                                assert_eq!(value, captured, "AA Off must copy alpha exactly");
+                            } else {
+                                assert!(
+                                    (code(value) - code(captured)).abs() <= 1.,
+                                    "{size:?} pixel {} channel {channel}: {value} vs {captured}",
+                                    index / 4
+                                );
+                            }
+                        }
                     } else {
                         for (pixel, rgba) in actual.chunks_exact(4).enumerate() {
                             for (channel, &value) in rgba.iter().enumerate() {
@@ -120,14 +140,12 @@ fn antialiasing_off_preserves_captured_pixels() {
                                     };
                                 let linear =
                                     f64::from(half(&bytes[pixel * 8 + source_channel * 2..]));
-                                let encoded = if channel == 3 {
-                                    linear
-                                } else if linear <= 0.0031308 {
-                                    12.92 * linear
+                                let expected = if channel == 3 {
+                                    linear.clamp(0.0, 1.0) * 255.0
                                 } else {
-                                    1.055 * linear.powf(1.0 / 2.4) - 0.055
-                                };
-                                let expected = (encoded.clamp(0.0, 1.0) * 255.0).round() as i32;
+                                    code(linear)
+                                }
+                                .round() as i32;
                                 assert!(
                                     (i32::from(value) - expected).abs() <= 1,
                                     "{format:?} {size:?} pixel {pixel} channel {channel}: {} vs {expected}",
@@ -137,9 +155,7 @@ fn antialiasing_off_preserves_captured_pixels() {
                         }
                     }
                 }
-                eprintln!(
-                    "AA bypass: {format:?} {size:?}; exact linear copy or <=1 sRGB code value"
-                );
+                eprintln!("AA bypass: {format:?} {size:?}; <=1 sRGB code value");
             }
         }
     });
@@ -149,6 +165,7 @@ fn antialiasing_off_preserves_captured_pixels() {
 // explicit On override. Without bloom, a single bright texel on black leaves
 // its neighbours as black as the far corner; with bloom they are brighter,
 // independently of the bloom kernel or tone mapper's particular equations.
+// The tone-mapped capture is read, before the output's dither.
 #[test]
 #[ignore = "real GPU; bloom resource and rendered override isolation"]
 fn bloom_switch_removes_halos_and_preserves_low_override() {
@@ -189,7 +206,7 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
                 let presentation = Presentation {
                     bloom: enabled,
                     smaa: false,
-                    capture: false,
+                    capture: true,
                 };
                 post.present(
                     &device,
@@ -202,7 +219,7 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
                     None,
                 );
                 queue.submit([encoder.finish()]);
-                let actual = read(&device, &queue, output.texture(), 8);
+                let actual = read(&device, &queue, post.tone_mapped().texture(), 8);
                 let neighbor = half(&actual[(32 * 64 + 26) * 8..]);
                 // Tone-mapped black, far from the impulse.
                 let black = half(&actual[..]);
