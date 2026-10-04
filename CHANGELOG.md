@@ -15,6 +15,40 @@ full API details.
 
 ## Unreleased
 
+### Per-light fog energy; `Light` and `DirectionalLight` implement `Default`
+
+- **Scope:** `sgl-3d` `Light` and `DirectionalLight` gain
+  `fog_energy: f32` (Godot's `light_volumetric_fog_energy`), which scales the
+  light each scatters in the volumetric fog: 1 is the look so far, 2 doubles
+  it, and at most 0.001 (Godot's cutoff) leaves the light out of the fog, so
+  fog injection skips its attenuation and shadow lookup. Surfaces are lit
+  alike at any value, and a `baked` light's light in the fog scales too.
+  `Scene::add_light` and `set_light` refuse a negative or non-finite
+  `fog_energy` with `SceneError::InvalidLight`; a directional light's is
+  taken as 0. Both types now implement `Default` with Godot's
+  light defaults: `Light` is a white point light at the origin of π candela
+  reaching 5 m, live, specular 1, fog energy 1 and no shadow;
+  `DirectionalLight` is white, shines along -Z at π lux, with no shadow and
+  fog energy 1.
+- **Migration:** a `Light` or `DirectionalLight` struct literal must name
+  the new field. Add `..Default::default()` (fog energy 1, the look so far)
+  or `fog_energy: 1.`; the image is unchanged either way.
+
+  ```rust
+  // Before
+  Light { position, shape, color, intensity, range, baked: false, specular: 1., casts_shadow: true }
+  DirectionalLight { direction, color, illuminance, shadow: None }
+  // After
+  Light { position, shape, color, intensity, range, baked: false, specular: 1., casts_shadow: true, ..Default::default() }
+  DirectionalLight { direction, color, illuminance, shadow: None, ..Default::default() }
+  ```
+
+  To cut fog cost, set `fog_energy: 0.` on lights whose light the fog does
+  not need (for example many small shadowed fixtures).
+- **Validate:** with the fog on, a light at fog energy 0 leaves no glow or
+  shaft in the medium but still lights surfaces, and the `fog injection`
+  timing falls with the lights taken out.
+
 ### Volumetric fog filters its froxels, as Godot's does by default
 
 - **Scope:** `sgl-3d` volumetric fog, and the new `Settings::fog_filter`

@@ -83,7 +83,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   cascades, stable while the camera moves, blended across their overlaps,
   filtered and biased as Bevy does, and cast by everything between the light
   and the view. A single-sided material casts from its front faces, a
-  double-sided one from both. A hemisphere fill
+  double-sided one from both. `fog_energy` scales its light in the
+  volumetric fog. A hemisphere fill
   (`FrameInput::hemisphere_light`, `HemisphereLight`).
   [Frame lights and look](../README.md#frame-lights-and-look).
 - **Point, spot and rectangle lights**: scene content (`Scene::add_light`,
@@ -91,7 +92,11 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   pixel pays only for the lights that reach it. A `baked` light lights only
   receivers without baked lighting (moving instances, and static ones with
   no lightmap or assigned atlas chart), leaving the rest to the game's bake; `specular` scales its
-  highlights (0 for a fixture already reflected as an emitter).
+  highlights (0 for a fixture already reflected as an emitter), and
+  `fog_energy` its light in the volumetric fog (at most 0.001 leaves it out
+  of the fog, which then skips its attenuation and shadow lookup). `Light::default()` and
+  `DirectionalLight::default()` are Godot's light defaults, so a game sets
+  only what differs (`..Default::default()`).
   `LightShape::Rect` is a one-sided panel or strip whose face is integrated
   by linearly transformed cosines: soft light and stretched highlights
   nearby, a spot of the same intensity far away. It costs more per pixel
@@ -164,10 +169,11 @@ Environment and probe specular always apply. On top of them:
   share of ambient light it scatters) and denser boxes of it
   (`Scene::update_fog_volumes`, `FogVolume`), lit by the directional lights
   through their cascades, the clustered point, spot and rectangle lights
-  through their shadows, and the ambient light, so light shafts form where
-  openings let a shadowed light through. Opaque surfaces, the sky, blended
-  surfaces, glow and mist all fog from one volume. `Settings::fog_quality`
-  sets its resolution and `Settings::fog_filter` its blur.
+  through their shadows, each scaled by its `fog_energy`, and the ambient
+  light, so light shafts form where openings let a shadowed light through.
+  Opaque surfaces, the sky, blended surfaces, glow and mist all fog from one
+  volume. `Settings::fog_quality` sets its resolution and
+  `Settings::fog_filter` its blur.
   [Volumetric fog](../README.md#volumetric-fog).
 - **Mist**: positioned billboards (`Scene::update_mist`, their look
   `FrameInput::mist`).

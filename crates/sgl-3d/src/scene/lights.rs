@@ -104,16 +104,18 @@ fn is_rect(light: &Light) -> bool {
     matches!(light.shape, LightShape::Rect { .. })
 }
 
-/// A light a record can hold: finite, nonnegative colour, intensity and
-/// specular scale, a positive range, a spot's nonzero direction and ordered
-/// angles below a right angle (Bevy's limit), and a rectangle's nonzero
-/// direction, a width axis not parallel to it, and a positive size.
+/// A light a record can hold: finite, nonnegative colour, intensity,
+/// specular scale and fog energy, a positive range, a spot's nonzero
+/// direction and ordered angles below a right angle (Bevy's limit), and a
+/// rectangle's nonzero direction, a width axis not parallel to it, and a
+/// positive size.
 fn validate(light: &Light) -> Result<(), SceneError> {
     let nonnegative = |value: f32| value.is_finite() && value >= 0.;
     let valid = light.position.is_finite()
         && light.color.iter().all(|&channel| nonnegative(channel))
         && nonnegative(light.intensity)
         && nonnegative(light.specular)
+        && nonnegative(light.fog_energy)
         && light.range.is_finite()
         && light.range > 0.
         && match light.shape {

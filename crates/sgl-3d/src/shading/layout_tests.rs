@@ -184,7 +184,7 @@ fn rust_mirrors_match_wgsl_layouts() {
             "geometry",
             "DirectionalLight",
             DirectionalLightUniform,
-            [direction_to_light, flags, color, illuminance]
+            [direction_to_light, flags, color, illuminance, fog_energy]
         ),
         mirror!(
             "geometry",

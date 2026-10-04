@@ -513,6 +513,7 @@ fn deformed_casters_cast_at_their_deformed_depth() {
         color: [1.; 3],
         illuminance: 1.,
         shadow: None,
+        ..Default::default()
     });
     let mut scene = Scene::new(&device, &queue);
     // A rigid mesh before the deforming one, so its positions start past

@@ -405,6 +405,7 @@ fn add_content(
             baked: false,
             specular: 1.,
             casts_shadow: true,
+            ..Default::default()
         },
         Light {
             position: Vec3::new(-2., 3., -2.),
@@ -419,6 +420,7 @@ fn add_content(
             baked: false,
             specular: 1.,
             casts_shadow: true,
+            ..Default::default()
         },
         Light {
             position: Vec3::new(-4., 1., 0.),
@@ -434,6 +436,7 @@ fn add_content(
             baked: false,
             specular: 1.,
             casts_shadow: false,
+            ..Default::default()
         },
     ] {
         scene
@@ -732,6 +735,7 @@ async fn render(
             cascades: 2,
             first_split: 6.,
         }),
+        ..Default::default()
     });
     frame.hemisphere_light = HemisphereLight {
         sky_color: [0.2, 0.3, 0.5],

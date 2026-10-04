@@ -46,6 +46,7 @@ fn light(red: bool, shadow: bool) -> Option<DirectionalLight> {
         color: if red { [1., 0., 0.] } else { [0., 1., 0.] },
         illuminance: 1.,
         shadow: shadow.then_some(SHADOW),
+        ..Default::default()
     })
 }
 
@@ -329,6 +330,7 @@ fn casters_between_the_light_and_a_cascade_cast_into_it() {
             color: [1.; 3],
             illuminance: 1.,
             shadow: Some(SHADOW),
+            ..Default::default()
         });
         let center = [[SIZE[0] / 2, SIZE[1] / 2]];
         let shadowed = fixture.observe(&input, &center)[0];
@@ -387,6 +389,7 @@ fn masked_casters_shadow_with_their_opaque_texels_only() {
             color: [1.; 3],
             illuminance: 1.,
             shadow: Some(SHADOW),
+            ..Default::default()
         });
         // The receiver at x = -0.6 and +0.6 m, behind U = 0.3 and 0.7.
         let pixels = [[12, SIZE[1] / 2], [19, SIZE[1] / 2]];
@@ -431,6 +434,7 @@ fn every_cascade_shadows_its_part_of_the_view() {
         color: [1.; 3],
         illuminance: 1.,
         shadow: Some(shadow),
+        ..Default::default()
     });
     // Depths in cascades 0 to 3 (bounds 10, 27, 74 and 200 m) and beyond the
     // distance, each at its own place across the view.
@@ -498,6 +502,7 @@ fn ray_hits_take_the_cascade_that_holds_them() {
             cascades: 4,
             first_split: 10.,
         }),
+        ..Default::default()
     });
     let observe = |fixture: &mut Fixture| -> [f32; 2] {
         let (device, queue) = (&fixture.device, &fixture.queue);

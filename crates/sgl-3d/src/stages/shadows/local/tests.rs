@@ -56,6 +56,7 @@ fn point(position: Vec3, range: f32) -> Light {
         baked: false,
         specular: 1.,
         casts_shadow: true,
+        ..Default::default()
     }
 }
 

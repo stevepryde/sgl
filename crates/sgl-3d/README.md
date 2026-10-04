@@ -84,6 +84,7 @@ frame.directional_lights[0] = Some(DirectionalLight {
         cascades: 4,     // 1 to 4
         first_split: 10., // where the first cascade ends
     }),
+    ..Default::default() // fog_energy 1: its full light in the fog
 });
 frame.hemisphere_light = HemisphereLight {
     sky_color: [0.2, 0.3, 0.5],
@@ -98,7 +99,11 @@ frame.backdrop = Backdrop::Environment { yaw: 0., brightness: 1. };
 - Up to two directional lights (Bevy's `DirectionalLight`, Godot's
   `DirectionalLight3D`). A light with zero illuminance, or a zero or
   non-finite direction, is off. The first light that is on and has a
-  `shadow` casts it; the other is unshadowed.
+  `shadow` casts it; the other is unshadowed. `fog_energy` scales the light
+  it scatters in the [volumetric fog](#volumetric-fog), as a scene light's
+  does. `DirectionalLight::default()` is Godot's `DirectionalLight3D`:
+  white, shining along -Z, π lux (its light energy of 1, which it scales by
+  π), no shadow and fog energy 1.
 - The shadow is Bevy's cascaded shadow map, which SGL3D fits from the camera
   every frame: the view depth from the camera's near plane to `distance` is
   split into `cascades`, ending at depths spaced geometrically from
@@ -250,7 +255,9 @@ fog stage:
   through the local-light atlas, each shadow one hardware 2×2 tap that the
   reprojection resolves, as Bevy's volumetric fog samples them, and
   `ambient` of the hemisphere fill and environment diffuse, scattered toward
-  the camera by Henyey–Greenstein's phase function of `anisotropy`;
+  the camera by Henyey–Greenstein's phase function of `anisotropy`; each
+  light's `fog_energy` scales its share, and a light at or below 0.001 is
+  skipped, attenuation and shadow lookup, as Godot does;
 - blends each froxel with where it lay in the last frame's volume, keeping
   `temporal_reprojection` of it, and samples another point of it each frame
   (Godot's 16 Halton offsets), so shafts and shadow edges in the fog resolve
@@ -302,9 +309,14 @@ let lamp = scene.add_light(&device, &queue, Light {
     range: 25.,            // metres
     baked: true,           // the game's bake holds this fixture
     specular: 0.,          // reflections already show its emitter
-    casts_shadow: false,
+    ..Default::default()   // no shadow, fog_energy 1
 })?;
 ```
+
+`Light::default()` is Godot's `Light3D`: a white point light at the origin
+of π candela (its light energy of 1, which it scales by π) reaching 5 m,
+live, physical specular, fog energy 1 and no shadow. Set what differs and
+take the rest with `..Default::default()`.
 
 - Light falls off with the inverse square of distance and fades smoothly to
   nothing at `range`, Filament's punctual lights as Bevy shades them. A spot
@@ -339,6 +351,15 @@ let lamp = scene.add_light(&device, &queue, Light {
 - `specular` scales the light's specular lobes, base and coat (Godot's
   `light_specular`). Use 0 for a fixture whose emitter reflections and
   probes already show, so its highlight does not count twice.
+- `fog_energy` scales the light it scatters in the
+  [volumetric fog](#volumetric-fog) (Godot's
+  `light_volumetric_fog_energy`): 1 is physical and 2 doubles it. At most
+  0.001 leaves the light out of the fog, which then skips its attenuation
+  and shadow lookup, as Godot does: set 0 on fixtures whose light the fog
+  does not need, to save fog injection time. The fog still visits the
+  light's cluster entry, and its shadow is still drawn for surfaces, which
+  take the light alike at any value. A baked light lights the fog too,
+  which has no bake, and its `fog_energy` scales that.
 - `casts_shadow` gives the light a shadow in the local-light shadow atlas
   ([Local-light shadows](#local-light-shadows)).
 - Each frame the renderer assigns the lights, with the
@@ -349,10 +370,10 @@ let lamp = scene.add_light(&device, &queue, Light {
   first; a receiver with baked lighting stops there. Probe captures shade
   every light that is on; world-space ray hits shade the lights that reach
   the camera's view, as Wicked Engine's ray-traced reflections do.
-- Values must be finite, colour, intensity and specular nonnegative, the
-  range positive, a spot's direction nonzero, and a rectangle's direction
-  nonzero, its width axis not parallel to it and its size positive; anything
-  else is refused with `SceneError::InvalidLight`. A light with zero intensity costs nothing.
+- Values must be finite, colour, intensity, specular and fog energy
+  nonnegative, the range positive, a spot's direction nonzero, and a
+  rectangle's direction nonzero, its width axis not parallel to it and its
+  size positive; anything else is refused with `SceneError::InvalidLight`. A light with zero intensity costs nothing.
 
 ## Decals
 
