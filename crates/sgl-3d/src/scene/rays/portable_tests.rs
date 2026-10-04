@@ -1,4 +1,5 @@
-//! Real feature-free GPU queries versus independent world-space plane/edge tests.
+//! Real GPU queries of the portable BVH, which needs no hardware ray-tracing
+//! features, versus independent world-space plane/edge tests.
 use super::tests::{Fixture, Pose, asset, triangle};
 use super::*;
 use crate::asset::Asset;

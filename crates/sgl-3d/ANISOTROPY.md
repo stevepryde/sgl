@@ -65,8 +65,9 @@ and the f64 tolerance applies to the new nonzero path.
 The errors below were measured by a CPU diagnostic with no pass/fail
 threshold, `anisotropy_rectangle_and_environment_approximation_diagnostic`.
 It asserted nothing, so it is no longer a test; its source is in
-`src/shading/anisotropy_tests.rs` at commit `6cc5111`. It used the four
-material combinations listed below, base color
+`src/shading/anisotropy_tests.rs` at commit
+`6cc5111358eb14a604989fd8eb9c5ac8071ad50d`. It used the four material
+combinations listed below, base color
 `(0.54, 0.49, 0.44)`, view inclination 0.87 and azimuth 0.61 radians, and axis
 rotations 0, pi/4 and pi/2. Each setup reported 256² and 512² deterministic
 midpoint samples, separating quadrature convergence from approximation bias.

@@ -1,4 +1,5 @@
-//! Independent analytic planes exercise real Metal BLAS/TLAS/candidate queries.
+//! Independent analytic planes exercise the portable BVH's ray and candidate
+//! queries on the default adapter.
 use super::*;
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
 use glam::{Mat4, Vec3};

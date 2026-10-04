@@ -426,13 +426,27 @@ fn directional_casters_respect_enabled_groups_and_explicit_policy() {
 // single-sided plane's front faces cast (Bevy's shadow pipelines keep the
 // material's cull mode), and store the authored plane depth without raster
 // bias: a sloped plane exposes slope bias; reversed winding and single or
-// double sides expose culling errors, for a static and a moving instance.
+// double sides expose culling errors, for a static and a moving instance,
+// with the device's unclipped depth and with its emulation in the shader.
 #[test]
 fn directional_casters_cast_front_faces_at_unbiased_depth() {
-    let Some((device, queue)) = test_support::device() else {
-        return;
-    };
-    pollster::block_on(async {
+    for (path, without) in [
+        ("unclipped depth", wgpu::Features::empty()),
+        (
+            "emulated unclipped depth",
+            wgpu::Features::DEPTH_CLIP_CONTROL,
+        ),
+    ] {
+        let Some((device, queue)) = test_support::device_without(without) else {
+            return;
+        };
+        let native = device
+            .features()
+            .contains(wgpu::Features::DEPTH_CLIP_CONTROL);
+        if native != without.is_empty() {
+            eprintln!("skipping {path}: the adapter has no DEPTH_CLIP_CONTROL");
+            continue;
+        }
         const SIZE: u32 = 64;
         let depth = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("analytic directional caster depth"),
@@ -504,13 +518,13 @@ fn directional_casters_cast_front_faces_at_unbiased_depth() {
                         let depth = observed[(y * SIZE + x) as usize];
                         assert!(
                             depth.is_finite() && (depth - expected).abs() < 0.000002,
-                            "{mobility:?} {label} pixel({x},{y}): depth {depth}, expected {expected}"
+                            "{path} {mobility:?} {label} pixel({x},{y}): depth {depth}, expected {expected}"
                         );
                     }
                 }
             }
         }
-    });
+    }
 }
 
 #[test]
