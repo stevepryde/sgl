@@ -37,7 +37,7 @@ fn receiver(
 /// Runs `observation` over the frame of `scene` that `input` describes,
 /// prepared as a frame is, with the camera's lit group 0 and the scene's
 /// group 1. The observation may trace rays where the frame does not, so it
-/// uploads the scene's ray instances itself.
+/// updates the scene's rays itself.
 fn observe(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -106,7 +106,7 @@ fn observe(
         }],
     });
     renderer.prepare_test_frame(device, queue, scene, input, settings);
-    scene.update_rays(queue, input.visibility_mask);
+    scene.update_rays(device, queue, input.visibility_mask);
     let mut encoder = device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -356,7 +356,7 @@ fn static_atlas_and_moving_cube_transport() {
  let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,100.)));
  let h=scene_decode_hit(raw,origin,direction);
  let normal=select(-h.geometric_normal,h.geometric_normal,h.front_face);
- output[0]=vec4(surface_fixed_irradiance(false,h.uv,h.lightmap_uv,h.lightmap_bounds,normal,h.front_face,(h.instance_flags&OBJECT_STATIC)==0u,scene_instances[h.instance_slot].baked_irradiance),select(0.,1.,h.hit));
+ output[0]=vec4(surface_fixed_irradiance(false,h.uv,h.lightmap_uv,h.lightmap_bounds,normal,h.front_face,(h.instance_flags&OBJECT_STATIC)==0u,objects[h.instance_id].baked_irradiance),select(0.,1.,h.hit));
 }}
 "#,
                 origin.x, origin.y, origin.z, direction.x, direction.y, direction.z

@@ -303,11 +303,13 @@ pub(crate) static BC7: Module = Module {
     source: include_str!("bc7.wgsl"),
     deps: &[],
 };
-/// The scene's geometry and materials for ray queries, at group 1.
+/// The scene's geometry and materials for ray queries, at group 1, and the
+/// object records a hit reads its instance's pose, flags and ambient cube
+/// from.
 pub(crate) static SCENE_RAYS: Module = Module {
     name: "scene_rays",
     source: include_str!("scene_rays.wgsl"),
-    deps: &[&MATERIAL, &SCENE_SOURCE, &BC7],
+    deps: &[&MATERIAL, &SCENE_SOURCE, &BIND_SCENE, &BC7],
 };
 /// A scene vertex pulled from the scene source, as an instance shows it:
 /// deformed when it deforms. Reads `object`.
@@ -319,7 +321,7 @@ pub(crate) static VERTEX_PULL: Module = Module {
 pub(crate) static SCENE_RAYS_PORTABLE: Module = Module {
     name: "scene_rays_portable",
     source: include_str!("scene_rays_portable.wgsl"),
-    deps: &[&UNIFORMS, &SCENE_RAYS],
+    deps: &[&SCENE_RAYS],
 };
 /// One `Surface` and its shading for every view. Reads the lit bindings.
 pub(crate) static SURFACE: Module = Module {

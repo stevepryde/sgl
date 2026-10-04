@@ -1,15 +1,16 @@
 //! The WGSL twins of the ray source's layouts, which the layout test
 //! compares with `scene_source.wgsl` and `scene_rays.wgsl`.
+use super::instances::{InstanceEntry, InstanceLeaf};
 use super::{
-    IMAGE_BC7, IMAGE_RGBA8, ImageHeader, InstanceData, MaterialRecord, MaterialTextures,
-    MeshRecord, SourceHeader, bvh,
+    IMAGE_BC7, IMAGE_RGBA8, ImageHeader, MaterialRecord, MaterialTextures, MeshRecord,
+    SourceHeader, bvh,
 };
 use crate::shading::material::MaterialUniform;
 
 /// The WGSL twins of the source's record layouts, in words: `SourceHeader`,
 /// `ImageHeader` and its formats, `asset::Vertex` (which the source holds
-/// verbatim), `MeshRecord`, `MaterialRecord` and the BVH's node and leaf
-/// primitive.
+/// verbatim), `MeshRecord`, `MaterialRecord`, the BVH's node and leaf
+/// primitive and an instance BVH's leaf.
 pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
     use crate::asset::Vertex;
     use std::mem::{offset_of, size_of};
@@ -20,8 +21,12 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             offset_of!(SourceHeader, visibility_mask),
         ),
         (
-            "SCENE_HEADER_INSTANCE_COUNT",
-            offset_of!(SourceHeader, instance_count),
+            "SCENE_HEADER_STATIC_ROOT",
+            offset_of!(SourceHeader, static_root),
+        ),
+        (
+            "SCENE_HEADER_MOVING_ROOT",
+            offset_of!(SourceHeader, moving_root),
         ),
         ("SCENE_IMAGE_WIDTH", offset_of!(ImageHeader, width)),
         ("SCENE_IMAGE_HEIGHT", offset_of!(ImageHeader, height)),
@@ -131,7 +136,12 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
     source
         .into_iter()
         .map(|constant| ("geometry", constant))
-        .chain(bvh::layout().map(|constant| ("world_reflections", constant)))
+        .chain(
+            bvh::layout()
+                .into_iter()
+                .chain([("SCENE_BVH_INSTANCE_WORDS", size_of::<InstanceLeaf>())])
+                .map(|constant| ("world_reflections", constant)),
+        )
         .map(|(program, (name, bytes))| {
             crate::shading::layout_tests::Constant::new(
                 program,
@@ -155,20 +165,12 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         .collect()
 }
 
-/// The instance list's entry, `InstanceData`.
+/// An instance's entry, `InstanceEntry`.
 pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
     [crate::shading::layout_tests::mirror!(
         "world_reflections",
-        "SceneRayInstanceData",
-        InstanceData,
-        [
-            world,
-            normal as "normal_matrix",
-            mesh_word,
-            id,
-            flags,
-            bvh_root,
-            baked_irradiance
-        ]
+        "SceneRayInstance",
+        InstanceEntry,
+        [inverse_world, mesh_word, bvh_root]
     )]
 }

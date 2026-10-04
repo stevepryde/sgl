@@ -292,7 +292,8 @@ pub(crate) fn scene(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 }
 
 /// Group 1's entries: geometry passes read the object records; ray queries
-/// and ray hits, which also run in compute, read the ray buffers.
+/// and ray hits, which also run in compute, read the ray buffers and, for a
+/// hit's pose, flags and ambient cube, the object records.
 pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
     let storage = |binding, visibility| wgpu::BindGroupLayoutEntry {
         binding,
@@ -306,7 +307,7 @@ pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
     };
     let rays = wgpu::ShaderStages::VERTEX_FRAGMENT | wgpu::ShaderStages::COMPUTE;
     [
-        storage(group1::OBJECTS, wgpu::ShaderStages::VERTEX_FRAGMENT),
+        storage(group1::OBJECTS, rays),
         storage(group1::SCENE_SOURCE, rays),
         storage(group1::SCENE_INSTANCES, rays),
     ]

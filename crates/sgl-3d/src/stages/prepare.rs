@@ -3,7 +3,7 @@
 //! cascades, fit from the camera, baked lighting and fog, the
 //! jitter antialiasing chose), uploads them, ends the motion of moving
 //! instances not posed since the last submitted frame, sorts the mist,
-//! uploads the scene's ray instances on frames that trace them, clusters the
+//! updates the scene's ray instances on frames that trace them, clusters the
 //! scene's lights and decals for the camera and culls them for ray hits, and builds the
 //! camera's draw lists (culled, LOD-selected; its blended surfaces' sorted
 //! back to front) and each directional shadow cascade's. The local-light shadow atlas places its own faces
@@ -149,10 +149,11 @@ impl Prepare {
         views.camera.set(queue, View::camera(view));
         scene.prepare_frame(device, queue, camera.eye);
         // Only world-space rays read the ray instances and visibility mask.
-        // Each upload writes the scene's current state, so the frames that
-        // skip it leave a later tracing frame nothing stale.
+        // The entries set and static edits made since the last traced frame
+        // wait for the next, so the frames that skip it leave it nothing
+        // stale.
         if effective.world_space {
-            scene.update_rays(queue, frame.visibility_mask);
+            scene.update_rays(device, queue, frame.visibility_mask);
         }
         let scene = &*scene;
         views.clusters.cluster(

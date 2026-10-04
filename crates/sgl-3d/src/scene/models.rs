@@ -12,7 +12,7 @@ use super::slots::Slots;
 use super::static_edits::posed_bounds;
 use super::{Scene, SceneError, buffer};
 use crate::asset::{self, Asset, Vertex};
-use crate::content::identity::{MaterialId, ModelId};
+use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::content::model::{AssetIds, ModelMesh};
 use crate::lod::MeshLod;
 use crate::shading::vertex::CasterVertex;
@@ -357,6 +357,13 @@ impl Scene {
         Models::free(&mut self.rays, previous_range, previous_deformation);
         let model = self.models.get(id).unwrap();
         self.instances.pose_casters(model, id);
+        // Rays see its instances' new geometry from their entries.
+        for (instance, shown) in self.instances.slots.iter() {
+            if shown.state.model == id && shown.deformation.is_none() {
+                self.ray_instances
+                    .set(instance.index(), model.ray, shown.state.pose);
+            }
+        }
         Ok(())
     }
 

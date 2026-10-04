@@ -60,8 +60,8 @@ fn ray_base_color(hit:SceneHit,material:SceneMaterial)->vec4<f32> {
 }
 fn ray_emission(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
  var emission=material.values.emission*scene_sample_texture(material.textures[SCENE_TEXTURE_EMISSION],hit.uv,material.wrap,true).rgb;
- // The instance list carries the object record's flags, so a hit is moving
- // exactly where raster's object.flags say so.
+ // A hit's flags are its object record's, so a hit is moving exactly where
+ // raster's object.flags say so.
  if !instance_emission_enabled && (hit.instance_flags&OBJECT_STATIC)==0u {
   emission=vec3(0.);
  }
@@ -100,7 +100,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.uv=hit.uv;
  s.lightmap_uv=hit.lightmap_uv;
  s.lightmap_bounds=hit.lightmap_bounds;
- s.baked_irradiance=scene_instances[hit.instance_slot].baked_irradiance;
+ s.baked_irradiance=objects[hit.instance_id].baked_irradiance;
  return s;
 }
 // Radiance leaving a ray hit toward `outgoing`, its ambient diffuse

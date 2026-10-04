@@ -15,7 +15,7 @@ use crate::asset::{Asset, CpuMesh, Material, Vertex};
 use crate::scene::textures::upload as texture;
 use crate::shading::material::MaterialMaps;
 use crate::shading::{self, uniforms::ObjectUniform};
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 const CENTERS: [f32; 4] = [-3., -1., 1., 3.];

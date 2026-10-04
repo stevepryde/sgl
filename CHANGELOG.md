@@ -15,6 +15,26 @@ full API details.
 
 ## Unreleased
 
+### World-space reflection rays cost what they reach, not the instance count
+
+- **Scope:** `sgl-3d` scene rays (world-space reflections). A ray walked
+  every capture-visible instance in turn, and every traced frame rebuilt
+  and uploaded the whole instance list, so the `world reflection rays`
+  timing group grew with the scene's instance count. The ray source is now
+  two-level: each instance keeps one entry at its index, written only when
+  it is added, re-posed or its model's geometry is replaced, and two
+  instance BVHs, one over the static and one over the moving instances,
+  are built on the CPU, the moving one every traced frame and the static
+  one after a static edit. A ray walks the BVH of the kind it needs, then
+  the models it reaches. Rays see the same geometry as before (capture-visible,
+  non-deforming instances), so reflections look the same. Adding an
+  instance also reserves room for its kind's instance BVH in the ray
+  source, about 30 bytes an instance in doubling steps, so `add_instance`
+  can return `SceneError::DeviceLimit` when the ray source is nearly full.
+- **Migration:** no game-code changes. Afterwards, compare the
+  `world reflection rays` timing group on the game's route; scenes with many
+  instances should see it fall.
+
 ### TAA finds the closest motion vectors in its resolve
 
 - **Scope:** `sgl-post-fx` `TemporalAntiAliasing` and `PostFXContext`, and

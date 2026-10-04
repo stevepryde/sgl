@@ -1,16 +1,15 @@
 //! The ray source: the scene's geometry and materials for shader ray queries,
-//! through a portable BVH that needs no hardware ray-tracing features, and
-//! the instance list. Each texture, material and model owns ranges of the
-//! source buffer (its level 0; its record; its mesh records, vertices,
-//! indices and BVH; a deforming model's influences and morph targets), and
-//! each deforming instance its joint matrices, morph weights and deformed
-//! vertices (`scene::deformation`), written when it is added or replaced and
-//! freed for reuse when it is removed; the buffer grows when they do not
-//! fit. Pulled raster passes read vertices from it too, so it is always
-//! current, and shadow casters read a deforming instance's positions from
-//! it as a vertex buffer. The instance list is rebuilt from the scene's
-//! instances on frames that trace.
-use glam::Mat4;
+//! through portable BVHs that need no hardware ray-tracing features. Each
+//! texture, material and model owns ranges of the source buffer (its level
+//! 0; its record; its mesh records, vertices, indices and BVH; a deforming
+//! model's influences and morph targets), and each deforming instance its
+//! joint matrices, morph weights and deformed vertices
+//! (`scene::deformation`), written when it is added or replaced and freed
+//! for reuse when it is removed; the buffer grows when they do not fit.
+//! Pulled raster passes read vertices from it too, so it is always current,
+//! and shadow casters read a deforming instance's positions from it as a
+//! vertex buffer. Above the model BVHs, the instances' entries and the
+//! instance BVHs built over them are `instances`'.
 use std::ops::Range;
 
 use super::SceneError;
@@ -19,6 +18,7 @@ use crate::asset::{CompressedFormat, Image, Vertex};
 use crate::shading::material::MaterialUniform;
 
 mod bvh;
+pub(crate) mod instances;
 #[cfg(test)]
 mod layout;
 #[cfg(test)]
@@ -61,33 +61,6 @@ pub(crate) struct RayMesh<'a> {
     pub material_word: u32,
 }
 
-/// One entry of the instance list.
-pub(crate) struct SceneRayInstance {
-    pub baked_irradiance: crate::static_lighting::AmbientCube,
-    pub model: RayModel,
-    pub world: Mat4,
-    /// The instance's index: its object record and source identity.
-    pub id: u32,
-    /// Its object record's flags.
-    pub flags: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct InstanceData {
-    world: [[f32; 4]; 4],
-    normal: [[f32; 4]; 4],
-    /// The model's first mesh record.
-    mesh_word: u32,
-    /// `SceneRayInstance::id`.
-    id: u32,
-    /// `SceneRayInstance::flags`.
-    flags: u32,
-    /// The model's BVH root node, zero when it has no triangles.
-    bvh_root: u32,
-    baked_irradiance: [[f32; 4]; 6],
-}
-
 /// The source's first words. Word 0 starts no record, so a zero image or BVH
 /// root word means none.
 #[repr(C)]
@@ -95,8 +68,11 @@ struct InstanceData {
 struct SourceHeader {
     /// The enabled material visibility groups.
     visibility_mask: u32,
-    instance_count: u32,
-    padding: [u32; 2],
+    /// The static and moving instance BVHs' roots (`instances`), zero when
+    /// one bounds nothing.
+    static_root: u32,
+    moving_root: u32,
+    padding: u32,
 }
 
 /// An image's record in the source, followed by its level 0 row by row:
@@ -163,13 +139,11 @@ pub(crate) struct SceneRays {
     words: Ranges,
     /// The largest source the device binds, in words.
     word_limit: u64,
-    instances: wgpu::Buffer,
-    instance_data: Vec<InstanceData>,
     visibility_mask: u32,
 }
 
 impl SceneRays {
-    /// A source holding only its header, and room for one instance.
+    /// A source holding only its header.
     pub fn new(device: &wgpu::Device) -> Self {
         let limits = device.limits();
         let header = words::<SourceHeader>();
@@ -180,19 +154,11 @@ impl SceneRays {
                 .max_storage_buffer_binding_size
                 .min(limits.max_buffer_size)
                 / 4,
-            instances: instance_buffer(device, 1),
-            instance_data: Vec::new(),
             visibility_mask: 0,
         }
     }
 
-    /// Group 1's bindings 1 and 2: the source geometry and materials, and the
-    /// current instances.
-    pub fn buffers(&self) -> [&wgpu::Buffer; 2] {
-        [&self.source, &self.instances]
-    }
-
-    /// The source buffer, which the deform stage writes.
+    /// The source buffer, which group 1 binds and the deform stage writes.
     pub fn source(&self) -> &wgpu::Buffer {
         &self.source
     }
@@ -325,7 +291,7 @@ impl SceneRays {
                 .iter()
                 .map(|mesh| mesh.vertices.len() * words::<Vertex>() + mesh.indices.len())
                 .sum::<usize>()
-            + bvh::words(triangles);
+            + bvh::model_words(triangles);
         let range = self.allocate(device, queue, len)?;
         let base = range.start;
         let mut block = vec![0u32; meshes.len() * MESH_WORDS];
@@ -360,56 +326,13 @@ impl SceneRays {
         })
     }
 
-    /// Room for `count` instances in the list. True when the list buffer was
-    /// replaced, which group 1 binds.
-    pub fn reserve_instances(
-        &mut self,
-        device: &wgpu::Device,
-        count: usize,
-    ) -> Result<bool, SceneError> {
-        let stride = std::mem::size_of::<InstanceData>() as u64;
-        let capacity = self.instances.size() / stride;
-        if count as u64 <= capacity {
-            return Ok(false);
-        }
-        let limits = device.limits();
-        let limit = limits
-            .max_storage_buffer_binding_size
-            .min(limits.max_buffer_size)
-            / stride;
-        if count as u64 > limit {
-            return Err(SceneError::DeviceLimit);
-        }
-        self.instances = instance_buffer(device, (count as u64).max(capacity * 2).min(limit));
-        Ok(true)
-    }
-
-    /// Uploads the instance list, which the scene keeps within the reserved
-    /// room. Encode before any ray dispatch in this frame.
-    pub fn update(&mut self, queue: &wgpu::Queue, instances: &[SceneRayInstance]) {
+    /// Names the static and moving instance BVHs' roots in the header.
+    pub fn set_instance_roots(&self, queue: &wgpu::Queue, roots: [u32; 2]) {
         queue.write_buffer(
             &self.source,
-            std::mem::offset_of!(SourceHeader, instance_count) as u64,
-            bytemuck::bytes_of(&(instances.len() as u32)),
+            std::mem::offset_of!(SourceHeader, static_root) as u64,
+            bytemuck::cast_slice(&roots),
         );
-        self.instance_data.clear();
-        self.instance_data
-            .extend(instances.iter().map(|instance| InstanceData {
-                baked_irradiance: instance.baked_irradiance.packed(),
-                world: instance.world.to_cols_array_2d(),
-                normal: instance.world.inverse().transpose().to_cols_array_2d(),
-                mesh_word: instance.model.mesh_word,
-                id: instance.id,
-                flags: instance.flags,
-                bvh_root: instance.model.bvh_root,
-            }));
-        if !self.instance_data.is_empty() {
-            queue.write_buffer(
-                &self.instances,
-                0,
-                bytemuck::cast_slice(&self.instance_data),
-            );
-        }
     }
 
     /// Set the enabled material visibility groups before tracing this frame.
@@ -437,15 +360,6 @@ fn source_buffer(device: &wgpu::Device, words: u64) -> wgpu::Buffer {
     })
 }
 
-fn instance_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("scene ray current instance lookup"),
-        size: capacity * std::mem::size_of::<InstanceData>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
@@ -454,3 +368,6 @@ mod portable_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod secondary_normal_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod instance_tests;

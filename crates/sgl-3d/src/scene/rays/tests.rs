@@ -1,12 +1,16 @@
 //! Independent analytic planes exercise the portable BVH's ray and candidate
 //! queries on the default adapter.
+use super::instances::{RayInstances, bounded};
 use super::*;
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
+use crate::content::instance::Mobility;
+use crate::scene::objects::Objects;
+use crate::shading::uniforms::ObjectUniform;
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
-/// An instance of fixture model `model` (an asset's index) at `world`,
-/// reporting `id`.
+/// A moving instance of fixture model `model` (an asset's index) at `world`,
+/// at index `id`.
 #[derive(Clone, Copy)]
 pub(super) struct Pose {
     pub model: usize,
@@ -15,14 +19,17 @@ pub(super) struct Pose {
 }
 
 /// The ray source of `assets`, each one model, added as a scene adds a
-/// material's images and record and a model's meshes, with group 1 over it
-/// and the standalone dispatch that traces it.
+/// material's images and record and a model's meshes, with the instances'
+/// object records and entries, group 1 over them and the standalone
+/// dispatch that traces it.
 pub(super) struct Fixture {
     pub rays: SceneRays,
-    models: Vec<RayModel>,
+    instances: RayInstances,
+    /// Each asset's model and its bounds.
+    models: Vec<(RayModel, [Vec3; 2])>,
     /// Each asset's material records.
     pub materials: Vec<Vec<u32>>,
-    objects: crate::scene::objects::Objects,
+    objects: Objects,
     layout: wgpu::BindGroupLayout,
     pub query: Query,
 }
@@ -77,45 +84,72 @@ impl Fixture {
                     material_word: words[mesh.material],
                 })
                 .collect();
-            models.push(rays.add_model(device, queue, &meshes).unwrap().ray);
+            let bounds = asset.meshes.iter().flat_map(|mesh| &mesh.vertices).fold(
+                [Vec3::INFINITY, Vec3::NEG_INFINITY],
+                |[min, max], vertex| {
+                    let p = Vec3::from_array(vertex.position);
+                    [min.min(p), max.max(p)]
+                },
+            );
+            models.push((rays.add_model(device, queue, &meshes).unwrap().ray, bounds));
             materials.push(words);
         }
         Self {
             rays,
+            instances: RayInstances::new(device),
             models,
             materials,
-            objects: crate::scene::objects::Objects::new(device),
+            objects: Objects::new(device),
             layout: crate::shading::bind::scene(device),
             query: Query::new(device),
         }
     }
 
-    /// Uploads `poses` as the instance list, reserving room for them.
+    /// Sets `poses` as the moving instances: each one's object record and
+    /// entry at its index, and the moving BVH over them.
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, poses: &[Pose]) {
-        self.rays.reserve_instances(device, poses.len()).unwrap();
-        let instances: Vec<_> = poses
+        let count = poses
             .iter()
-            .map(|pose| SceneRayInstance {
-                baked_irradiance: Default::default(),
-                model: self.models[pose.model],
-                world: pose.world,
-                id: pose.id,
-                flags: 0,
-            })
-            .collect();
-        self.rays.update(queue, &instances);
+            .map(|pose| pose.id as usize + 1)
+            .max()
+            .unwrap_or(0);
+        self.instances
+            .reserve(
+                device,
+                queue,
+                &mut self.rays,
+                count,
+                Mobility::Moving,
+                poses.len(),
+            )
+            .unwrap();
+        self.objects.reserve(device, count).unwrap();
+        let mut moving = Vec::new();
+        for pose in poses {
+            let (model, bounds) = self.models[pose.model];
+            let world = pose.world.to_cols_array_2d();
+            let record = ObjectUniform {
+                model: world,
+                previous_model: world,
+                ..bytemuck::Zeroable::zeroed()
+            };
+            self.objects.write(queue, pose.id as usize, &record);
+            self.instances.set(pose.id as usize, model, pose.world);
+            moving.push(bounded(pose.id as usize, bounds, pose.world));
+        }
+        self.instances
+            .update(device, queue, &self.rays, None, &mut moving);
     }
 
-    /// Group 1 over the source, the instance list and one object record.
+    /// Group 1 over the object records, the source and the entries.
     pub fn scene_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
-        let [source, instances] = self.rays.buffers();
         super::super::scene_group(
             device,
             &self.layout,
             &[
                 self.objects.buffer().clone(),
-                source.clone(),
-                instances.clone(),
+                self.rays.source().clone(),
+                self.instances.buffer().clone(),
             ],
         )
     }
