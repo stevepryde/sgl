@@ -72,6 +72,11 @@ fn programs() -> Vec<(&'static str, String)> {
             compose(&[&crate::scene::rays::QUERY]),
         ),
         ("lit_compute_library", crate::shading::lit_compute_library()),
+        // The port's own program, whose attributes SGL3D fills.
+        (
+            "sgl_post_fx_taa",
+            sgl_post_fx::shaders::shader_source("TAA_ComputeTemporalAccumulation.fx", &[]),
+        ),
     ]);
     #[cfg(feature = "diagnostics")]
     programs.extend([
@@ -239,7 +244,8 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::fog::volume_froxels::mirrors())
     .chain(super::fog::mirrors())
     .chain(crate::stages::post::bloom::mirrors())
-    .chain(crate::stages::post::tone_map::mirrors());
+    .chain(crate::stages::post::tone_map::mirrors())
+    .chain(crate::view::post_fx::mirrors());
     let programs = programs();
     let module = |label: &str| {
         let (_, source) = programs

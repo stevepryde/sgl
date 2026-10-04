@@ -37,7 +37,7 @@ pub use content::{
 pub use frame_input::{
     AutoExposure, BloomParameters, Camera, ColorGrading, ColorGradingGlobal, ColorGradingSection,
     CompensationCurve, CompensationCurveError, CrystalParameters, Exposure, Fog, FrameInput,
-    MeteringMask, MotionBlurParameters, perspective,
+    MeteringMask, MotionBlurParameters, TaaParameters, perspective,
 };
 pub use glam;
 pub use renderer::{Renderer, RendererError};

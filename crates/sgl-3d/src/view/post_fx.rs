@@ -8,14 +8,20 @@
 //! G-buffer and camera into DiligentFX's inputs in one fullscreen pass and
 //! runs `PostFXContext::Execute` once for every effect; SSR and TAA then read
 //! that context.
+mod parameters;
+
+#[cfg(test)]
+pub(crate) use parameters::mirrors;
+
 use super::targets::SharedTargets;
-use crate::frame_input::CrystalParameters;
+use crate::frame_input::{CrystalParameters, TaaParameters};
 use crate::shading;
 use glam::{Mat4, Vec4};
+use parameters::{ssr_attribs, taa_attribs, taa_feature_flags};
+use sgl_post_fx::CameraAttribs;
 use sgl_post_fx::post_fx_context::{self, FrameDesc, PostFXContext};
 use sgl_post_fx::screen_space_reflection::{self, FeatureFlags, ScreenSpaceReflection};
 use sgl_post_fx::temporal_anti_aliasing::{self, TemporalAntiAliasing};
-use sgl_post_fx::{CameraAttribs, ScreenSpaceReflectionAttribs, TemporalAntiAliasingAttribs};
 
 /// Distance in metres of the effect camera's far plane. DiligentFX's camera
 /// (`CameraAttribs::SetClipPlanes`) has a finite far plane where SGL3D's
@@ -77,84 +83,10 @@ const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MATERIAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
-/// DiligentFX's `ScreenSpaceReflectionAttribs` defaults, `RoughnessThreshold`
-/// 0.2 included as in AMD's SSSR sample, with the traversal budget of
-/// Diligent's own renderer, Hydrogent (`HnPostProcessTaskParams`:
-/// `MaxTraversalIntersections` 64).
-///
-/// Each ray follows its lobe's peak, the mirror direction
-/// (`GGXImportanceSampleBias` 1, DFX-20), as Godot's SSR traces: one GGX
-/// sample per pixel leaves noise on glossy, normal-mapped receivers that the
-/// denoiser cannot remove, and its temporal pass holds it as blotches. The
-/// spatial reconstruction still widens reflections with roughness. The
-/// temporal pass keeps 0.95 of its clamped history, as Wicked Engine's
-/// `ssr_temporalCS` (the pass it derives from) does; at DiligentFX's 1.0 the
-/// current frame never enters and stale history smears as the camera moves.
-impl Default for CrystalParameters {
-    fn default() -> Self {
-        let ScreenSpaceReflectionAttribs {
-            depth_buffer_thickness,
-            roughness_threshold,
-            most_detailed_mip,
-            spatial_reconstruction_radius,
-            temporal_variance_stability_factor,
-            bilateral_cleanup_spatial_sigma_factor,
-            ..
-        } = Default::default();
-        Self {
-            depth_buffer_thickness,
-            roughness_threshold,
-            most_detailed_mip,
-            max_traversal_intersections: 64,
-            ggx_importance_sample_bias: 1.,
-            spatial_reconstruction_radius,
-            temporal_radiance_stability_factor: 0.95,
-            temporal_variance_stability_factor,
-            bilateral_cleanup_spatial_sigma_factor,
-        }
-    }
-}
-
-/// Crystal's parameters as DiligentFX's attributes, with the material input
-/// `begin` writes: perceptual roughness in channel 0, as Hydrogent supplies
-/// it (`HnPostProcessTaskParams`). `ScreenSpaceReflection` sets
-/// `AlphaInterpolation` itself.
-fn ssr_attribs(parameters: &CrystalParameters) -> ScreenSpaceReflectionAttribs {
-    let CrystalParameters {
-        depth_buffer_thickness,
-        roughness_threshold,
-        most_detailed_mip,
-        max_traversal_intersections,
-        ggx_importance_sample_bias,
-        spatial_reconstruction_radius,
-        temporal_radiance_stability_factor,
-        temporal_variance_stability_factor,
-        bilateral_cleanup_spatial_sigma_factor,
-    } = *parameters;
-    ScreenSpaceReflectionAttribs {
-        depth_buffer_thickness,
-        roughness_threshold,
-        most_detailed_mip,
-        is_roughness_perceptual: 1,
-        roughness_channel: 0,
-        max_traversal_intersections,
-        ggx_importance_sample_bias,
-        spatial_reconstruction_radius,
-        temporal_radiance_stability_factor,
-        temporal_variance_stability_factor,
-        bilateral_cleanup_spatial_sigma_factor,
-        ..Default::default()
-    }
-}
-
 /// Hydrogent's texture mip bias while TAA runs (`HnBeginFrameTask`:
 /// `MipBias = UseTAA ? -0.5 : 0.0`), which keeps jittered samples of
 /// minified textures as sharp as the resolved image.
 pub(crate) const TAA_MIP_BIAS: f32 = -0.5;
-
-/// Hydrogent's TAA feature flags (`HnPostProcessTaskParams::TAAFeatureFlags`).
-const TAA_FEATURE_FLAGS: temporal_anti_aliasing::FeatureFlags =
-    temporal_anti_aliasing::FeatureFlags::BICUBIC_FILTER;
 
 /// The camera and frame the effects' history refers to.
 struct History {
@@ -349,7 +281,7 @@ impl PostFx {
     /// Hydrogent's `HnPostProcessTask::Prepare` publishes it).
     /// `history_valid` is false after a reset, resize or camera cut;
     /// `frame_index` counts frames since that reset, so a gap means the
-    /// effects missed frames.
+    /// effects missed frames. TAA prepares the history filters of `taa`.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -357,6 +289,7 @@ impl PostFx {
         size: [u32; 2],
         frame_index: u32,
         history_valid: bool,
+        taa: &TaaParameters,
     ) -> [f32; 2] {
         // History continues only while SGL3D's does and no frame was missed,
         // the rule DiligentFX's TAA applies (DFX-12 in sgl-post-fx's
@@ -379,12 +312,12 @@ impl PostFx {
             post_fx_context::FeatureFlags::REVERSED_DEPTH,
         );
         self.jitter = match &mut self.taa {
-            Some(taa) => {
-                taa.prepare_resources(device, encoder, &self.context, TAA_FEATURE_FLAGS, 0);
+            Some(effect) => {
+                effect.prepare_resources(device, encoder, &self.context, taa_feature_flags(taa), 0);
                 if self.reset_accumulation {
                     [0.; 2]
                 } else {
-                    taa.get_jitter_offset(0)
+                    effect.get_jitter_offset(0)
                 }
             }
             None => [0.; 2],
@@ -587,12 +520,15 @@ impl PostFx {
     }
 
     /// DiligentFX TAA of `color`, the frame's linear HDR before bloom and
-    /// tone mapping, after `begin`. Requires a context created with `taa`.
+    /// tone mapping, with `parameters`, after `begin` (and `prepare` with
+    /// the same parameters). Requires a context created with `taa`.
+    #[allow(clippy::too_many_arguments)]
     pub fn temporal_anti_aliasing(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
+        parameters: &TaaParameters,
         color: &wgpu::TextureView,
         timing: Option<&crate::timing::GpuTiming>,
     ) -> &wgpu::TextureView {
@@ -605,10 +541,7 @@ impl PostFx {
             device_context: encoder,
             post_fx_context: &mut self.context,
             color_buffer_srv: color,
-            taa_attribs: &TemporalAntiAliasingAttribs {
-                reset_accumulation: u32::from(self.reset_accumulation),
-                ..Default::default()
-            },
+            taa_attribs: &taa_attribs(parameters, self.reset_accumulation),
             accumulation_buffer_idx: 0,
             pass_timestamps: Some(&timestamps),
         });

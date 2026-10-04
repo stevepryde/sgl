@@ -7,6 +7,7 @@
 // crates/bevy_anti_alias/src/taa/taa.wesl (https://github.com/bevyengine/bevy,
 // revision 92a29e701a6b0bf8846484c3999c2ba97d90dd06), MIT licensed
 // (LICENSE-bevy.txt).
+// DFX-25: upstream's TAA_* defines are g_TAAAttribs members.
 
 #include "BasicStructures.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
@@ -16,10 +17,8 @@
 #define FLT_EPS 5.960464478e-8
 
 // PROVENANCE.md DFX-19: Bevy's still-pixel rule. A pixel whose closest motion is under
-// TAA_STILL_MOTION_PIXELS on both axes keeps history up to TAA_STILL_HISTORY_FACTOR
-// (1 - Bevy's MIN_HISTORY_BLEND_RATE) and is not rejected by depth disocclusion.
-const TAA_STILL_MOTION_PIXELS = 0.01;
-const TAA_STILL_HISTORY_FACTOR = 0.985;
+// g_TAAAttribs.StillMotionPixels on both axes keeps history up to
+// g_TAAAttribs.StillHistoryFactor and is not rejected by depth disocclusion.
 
 // WGSL: one uniform holds the constant buffer's two cameras, so the upstream
 // g_CurrCamera and g_PrevCamera read as cbCameraAttribs.g_CurrCamera and
@@ -125,7 +124,7 @@ fn SamplePrevMotion(PixelCoord: vec2<i32>) -> vec2<f32>
 
 fn ClipToAABB(ColorPrev: vec3<f32>, ColorCurr: vec3<f32>, AABBCentre: vec3<f32>, AABBExtents: vec3<f32>) -> vec3<f32>
 {
-    let MaxT = TAA_VARIANCE_INTERSECTION_MAX_T;
+    let MaxT = g_TAAAttribs.VarianceIntersectionMaxT;
     let Direction = ColorCurr - ColorPrev;
     let Intersection = ((AABBCentre - sign(Direction) * AABBExtents) - ColorPrev) / Direction;
     let PossibleT = mix(vec3<f32>(MaxT + 1.0, MaxT + 1.0, MaxT + 1.0), Intersection, vec3<f32>(Intersection >= vec3<f32>(0.0, 0.0, 0.0)));
@@ -160,7 +159,7 @@ fn ComputeDepthDisocclusion(Position: vec2<f32>, PrevPosition: vec2<f32>) -> f32
         }
     }
 
-    return select(0.0, 1.0, Disocclusion > TAA_DEPTH_DISOCCLUSION_THRESHOLD);
+    return select(0.0, 1.0, Disocclusion > g_TAAAttribs.DepthDisocclusionThreshold);
 }
 
 fn SamplePrevColorCatmullRom(Position: vec2<f32>) -> vec4<f32>
@@ -251,8 +250,8 @@ fn ComputePixelStatisticYCoCgSDR(PixelCoord: vec2<i32>) -> PixelStatistic
 
 fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
 {
-    // PROVENANCE.md DFX-19: still pixels accumulate up to TAA_STILL_HISTORY_FACTOR.
-    let MaxAlpha = select(g_TAAAttribs.TemporalStabilityFactor, TAA_STILL_HISTORY_FACTOR, IsStill);
+    // PROVENANCE.md DFX-19: still pixels accumulate up to StillHistoryFactor.
+    let MaxAlpha = select(g_TAAAttribs.TemporalStabilityFactor, g_TAAAttribs.StillHistoryFactor, IsStill);
     return min(MaxAlpha, saturate(1.0 / (2.0 - Alpha)));
 }
 
@@ -268,17 +267,17 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> @location
     }
 
     let AspectRatio = cbCameraAttribs.g_CurrCamera.f4ViewportSize.x * cbCameraAttribs.g_CurrCamera.f4ViewportSize.w;
-    let MotionFactor = saturate(1.0 - length(vec2<f32>(Motion.x * AspectRatio, Motion.y)) * TAA_MOTION_VECTOR_DIFF_FACTOR);
+    let MotionFactor = saturate(1.0 - length(vec2<f32>(Motion.x * AspectRatio, Motion.y)) * g_TAAAttribs.MotionVectorDiffFactor);
     // PROVENANCE.md DFX-14: history is rejected by the difference between
     // this pixel's motion and the previous frame's motion where it was, as
     // TAA_MOTION_VECTOR_DIFF_FACTOR documents. The speed alone (MotionFactor)
     // still sets the variance gamma.
     let MotionDiff = Motion - SamplePrevMotion(vec2<i32>(PrevPosition));
-    let MotionDiffFactor = saturate(1.0 - length(vec2<f32>(MotionDiff.x * AspectRatio, MotionDiff.y)) * TAA_MOTION_VECTOR_DIFF_FACTOR);
+    let MotionDiffFactor = saturate(1.0 - length(vec2<f32>(MotionDiff.x * AspectRatio, MotionDiff.y)) * g_TAAAttribs.MotionVectorDiffFactor);
     // PROVENANCE.md DFX-19: nothing moved at a still pixel, and the depth buffers differ only by
     // their jitter, which on sub-pixel geometry would reject its history every few frames.
     let MotionPixels = abs(Motion * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
-    let IsStill = MotionPixels.x < TAA_STILL_MOTION_PIXELS && MotionPixels.y < TAA_STILL_MOTION_PIXELS;
+    let IsStill = MotionPixels.x < g_TAAAttribs.StillMotionPixels && MotionPixels.y < g_TAAAttribs.StillMotionPixels;
     let DepthFactor = select(ComputeDepthDisocclusion(Position, PrevPosition), 1.0, IsStill);
 
     let RGBHDRCurrColor = SampleCurrColor(vec2<i32>(Position));
@@ -293,7 +292,7 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> @location
         return vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(RGBHDRPrevColor.a, false));
     }
 
-    let VarianceGamma = mix(TAA_MIN_VARIANCE_GAMMA, TAA_MAX_VARIANCE_GAMMA, MotionFactor * MotionFactor);
+    let VarianceGamma = mix(g_TAAAttribs.MinVarianceGamma, g_TAAAttribs.MaxVarianceGamma, MotionFactor * MotionFactor);
     let PixelStat = ComputePixelStatisticYCoCgSDR(vec2<i32>(Position.xy));
     let YCoCgSDRClampedColor = ClipToAABB(YCoCgSDRPrevColor, YCoCgSDRCurrColor, PixelStat.Mean, VarianceGamma * PixelStat.StdDev);
 

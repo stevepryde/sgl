@@ -15,6 +15,39 @@ full API details.
 
 ## Unreleased
 
+### TAA's history, rejection and filters are frame input
+
+- **Scope:** `sgl-3d` adds `FrameInput::taa` (`TaaParameters`, with
+  `Default`): TAA's most history at moving pixels
+  (`temporal_stability_factor`) and still ones (`still_history_factor`,
+  under `still_motion_pixels` of motion), its rejection by motion change
+  (`motion_vector_diff_factor`) and depth (`depth_disocclusion_threshold`),
+  its variance clip (`min_variance_gamma`, `max_variance_gamma`,
+  `variance_intersection_max_t`) and its history filters (`bicubic_filter`,
+  `gaussian_weighting`, `ycocg_color_space`). These were fixed; each
+  default is the value TAA used, so frames are unchanged. A value outside
+  its field's range is clamped to it. `sgl-post-fx`
+  `TemporalAntiAliasingAttribs` gains the shader's former constants as
+  fields (`min_variance_gamma`, `max_variance_gamma`,
+  `motion_vector_diff_factor`, `depth_disocclusion_threshold`,
+  `variance_intersection_max_t`, `still_motion_pixels`,
+  `still_history_factor`, and `padding1`), defaulting to their values; its
+  uniform grows from 16 to 48 bytes.
+- **Migration:** no game-code changes where frames come from
+  `FrameInput::new`; an exhaustive `FrameInput { .. }` literal adds
+  `taa: TaaParameters::default()`. Code that builds `sgl-post-fx`'s
+  `TemporalAntiAliasingAttribs` exhaustively adds the new fields or ends
+  with `..Default::default()`. To trade shimmer for less ghosting on fast
+  motion, lower the moving pixels' history:
+
+  ```rust
+  let mut input = FrameInput::new(camera);
+  input.taa = TaaParameters {
+      temporal_stability_factor: 0.9,
+      ..TaaParameters::default()
+  };
+  ```
+
 ### The atmosphere is off by default, as Godot's fog
 
 - **Scope:** `sgl-3d` `FrameInput::atmosphere`, which turns the volumetric

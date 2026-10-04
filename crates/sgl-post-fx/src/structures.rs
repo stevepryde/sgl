@@ -4,7 +4,8 @@
 //! (`Shaders/PostProcess/ScreenSpaceReflection/public/ScreenSpaceReflectionStructures.fxh`)
 //! and `TemporalAntiAliasingAttribs`
 //! (`Shaders/PostProcess/TemporalAntiAliasing/public/TemporalAntiAliasingStructures.fxh`),
-//! with the headers' `DEFAULT_VALUE` defaults. All are constant-buffer
+//! with the headers' `DEFAULT_VALUE` defaults and TAA's former defines'
+//! values. All are constant-buffer
 //! layouts (`CHECK_STRUCT_ALIGNMENT`: a multiple of 16 bytes).
 //!
 //! Matrices are stored column by column as `[f32; 16]`. An HLSL matrix row is
@@ -159,7 +160,9 @@ impl Default for ScreenSpaceReflectionAttribs {
     }
 }
 
-/// `TemporalAntiAliasingStructures.fxh` `TemporalAntiAliasingAttribs`.
+/// `TemporalAntiAliasingStructures.fxh` `TemporalAntiAliasingAttribs`, with
+/// the header's `TAA_*` defines and DFX-19's still-pixel constants as fields
+/// after upstream's (PROVENANCE.md DFX-25).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TemporalAntiAliasingAttribs {
@@ -172,6 +175,38 @@ pub struct TemporalAntiAliasingAttribs {
     pub skip_rejection: u32,
 
     pub padding0: f32,
+
+    /// `TAA_MIN_VARIANCE_GAMMA`: the minimum value for the variance gamma.
+    /// The variance gamma is used to adjust the influence of historical data in the anti-aliasing process.
+    /// A lower value means that the algorithm is less influenced by past frames, making it more responsive to changes but potentially less smooth
+    pub min_variance_gamma: f32,
+
+    /// `TAA_MAX_VARIANCE_GAMMA`: the maximum value for the variance gamma.
+    /// A higher maximum value allows the algorithm to rely more heavily on historical data,
+    /// which can produce smoother results but may also introduce more motion blur or ghosting effects in fast-moving scenes.
+    pub max_variance_gamma: f32,
+
+    /// `TAA_MOTION_VECTOR_DIFF_FACTOR`: the threshold for pixel velocity difference that determines whether a pixel is considered to have "no history."
+    /// If the difference in motion vectors between the current frame and the previous frame exceeds this value, the pixel is treated as if it has no historical data.
+    /// This helps to prevent ghosting effects by not blending pixels with significantly different motion vectors.
+    pub motion_vector_diff_factor: f32,
+
+    /// `TAA_DEPTH_DISOCCLUSION_THRESHOLD`: the threshold for depth disocclusion. It is used to determine how much a change in depth between frames should be considered as disocclusion,
+    /// which occurs when previously occluded objects become visible. A small threshold value means that only significant depth changes will be treated as disocclusion,
+    /// which can help in maintaining the stability of the image but may ignore some smaller, yet visually important changes.
+    pub depth_disocclusion_threshold: f32,
+
+    /// `TAA_VARIANCE_INTERSECTION_MAX_T`: the max "distance" between source colour and target colour.
+    /// Setting this to a larger value allows more bright pixels from the history buffer to be leaved unchanged.
+    pub variance_intersection_max_t: f32,
+
+    /// DFX-19: a pixel whose closest motion is under this many pixels on both axes is still.
+    pub still_motion_pixels: f32,
+
+    /// DFX-19: the most history a still pixel keeps, in place of `temporal_stability_factor`.
+    pub still_history_factor: f32,
+
+    pub padding1: f32,
 }
 
 impl Default for TemporalAntiAliasingAttribs {
@@ -181,6 +216,15 @@ impl Default for TemporalAntiAliasingAttribs {
             reset_accumulation: 0,
             skip_rejection: 0,
             padding0: 0.0,
+            min_variance_gamma: 0.75,
+            max_variance_gamma: 2.5,
+            motion_vector_diff_factor: 256.0,
+            depth_disocclusion_threshold: 0.9,
+            variance_intersection_max_t: 10.0,
+            still_motion_pixels: 0.01,
+            // 1 - Bevy's MIN_HISTORY_BLEND_RATE (DFX-19).
+            still_history_factor: 0.985,
+            padding1: 0.0,
         }
     }
 }

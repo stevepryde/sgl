@@ -6,7 +6,8 @@
 //!
 //! Reads: the complete HDR frame (the composite), depth, motion, FSR2's
 //! masks, the camera's projection, the frame time, the frame's exposure
-//! (`stages::exposure`) and the lent post-effect context.
+//! (`stages::exposure`), TAA's parameters (`FrameInput::taa`) and the lent
+//! post-effect context.
 //! Writes: the frame's jitter and mip bias; TAA's accumulation (in the
 //! context) or its own FSR2 output; which view completes the scene
 //! (`Completed`).
@@ -124,7 +125,14 @@ impl Antialiasing {
         let color = &ctx.targets.composite;
         if ctx.effective.taa {
             let post_fx = post_fx.unwrap();
-            post_fx.temporal_anti_aliasing(ctx.device, ctx.queue, ctx.encoder, color, ctx.timing);
+            post_fx.temporal_anti_aliasing(
+                ctx.device,
+                ctx.queue,
+                ctx.encoder,
+                &ctx.input.taa,
+                color,
+                ctx.timing,
+            );
             Completed::Taa
         } else if ctx.effective.fsr2 {
             // FSR2 upscales the same linear HDR frame (AMD's FSR2 placement).
@@ -168,3 +176,6 @@ impl Antialiasing {
         self.fsr2.as_ref()
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;

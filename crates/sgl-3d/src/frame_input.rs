@@ -127,6 +127,56 @@ pub struct CrystalParameters {
     pub bilateral_cleanup_spatial_sigma_factor: f32,
 }
 
+/// TAA's authored parameters (`settings::Antialiasing::Taa`): its history
+/// weights, rejection and history filters, the main controls of ghosting
+/// against shimmer. They are the fields of DiligentFX's
+/// `TemporalAntiAliasingAttribs`, its `TAA_*` defines (fields in
+/// `sgl-post-fx`) and its `FEATURE_FLAGS`, and the still-pixel history SGL3D
+/// takes from Bevy. SGL3D restarts history itself. The default is
+/// DiligentFX's, with Hydrogent's filters (see README). A value outside its
+/// range is clamped to it, NaN to its lower end. The first frame with a new
+/// combination of the three filters builds its pipeline and is not
+/// antialiased, as in DiligentFX.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TaaParameters {
+    /// 0..=1, the most history a moving pixel keeps. Higher is smoother and
+    /// ghosts more.
+    pub temporal_stability_factor: f32,
+    /// 0..=1, the most history a still pixel keeps.
+    pub still_history_factor: f32,
+    /// 0 or more: a pixel that moves less than this many pixels per frame on
+    /// both axes is still. It keeps up to `still_history_factor` and is not
+    /// rejected by depth, so sub-pixel detail does not blink under jitter.
+    pub still_motion_pixels: f32,
+    /// 0 or more: a moving pixel's history weight falls linearly to zero as
+    /// its motion differs from the last frame's there by 1/this of the
+    /// screen height per frame. The variance gamma uses the same scale for
+    /// speed.
+    pub motion_vector_diff_factor: f32,
+    /// 0 or more: the variance clip's half-size, in standard deviations of
+    /// the pixel's neighbourhood, for a pixel moving
+    /// 1/`motion_vector_diff_factor` of the screen height per frame or
+    /// faster. Higher keeps more history.
+    pub min_variance_gamma: f32,
+    /// 0 or more: the variance clip's half-size at a pixel that does not
+    /// move; slower pixels blend toward it.
+    pub max_variance_gamma: f32,
+    /// 0..=1: a moving pixel's history is rejected where every depth near
+    /// where it was differs from its own by a relative change `d` with
+    /// `exp(-d)` at most this (at 0.9, about a tenth). Higher rejects more.
+    pub depth_disocclusion_threshold: f32,
+    /// 0 or more: history outside the variance clip moves toward the
+    /// current colour until it enters, unless that takes at least this many
+    /// times their difference; then it is kept.
+    pub variance_intersection_max_t: f32,
+    /// Sample history with a Catmull-Rom filter, sharper than bilinear.
+    pub bicubic_filter: bool,
+    /// Weight the variance clip's neighbourhood by a Gaussian.
+    pub gaussian_weighting: bool,
+    /// Clip colour in YCoCg rather than RGB.
+    pub ycocg_color_space: bool,
+}
+
 /// One frame's camera, authored look and per-frame state.
 #[derive(Clone, Copy)]
 pub struct FrameInput {
@@ -176,6 +226,8 @@ pub struct FrameInput {
     pub ambient_occlusion_radius: f32,
     /// Crystal screen-space reflections' parameters.
     pub crystal: CrystalParameters,
+    /// TAA's parameters.
+    pub taa: TaaParameters,
 }
 
 impl FrameInput {
@@ -183,8 +235,8 @@ impl FrameInput {
     /// or environment; the environment's diffuse lighting, reflections and
     /// backdrop unturned at intensity 1; baked lighting on and atmosphere
     /// off; a 60 Hz frame time; a fixed exposure of 0 stops; and the default
-    /// bloom, motion blur, colour grading, ambient occlusion radius and
-    /// Crystal parameters.
+    /// bloom, motion blur, colour grading, ambient occlusion radius, Crystal
+    /// and TAA parameters.
     pub fn new(camera: Camera) -> Self {
         Self {
             camera,
@@ -223,6 +275,7 @@ impl FrameInput {
             color_grading: ColorGrading::default(),
             ambient_occlusion_radius: 0.5,
             crystal: CrystalParameters::default(),
+            taa: TaaParameters::default(),
         }
     }
 }

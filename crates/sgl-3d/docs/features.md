@@ -145,7 +145,8 @@ Environment and probe specular always apply. On top of them:
   diffuse and environment and probe reflections; turning it on draws no
   geometry again. [Ambient occlusion](../README.md#ambient-occlusion).
 - **Antialiasing**: SGL's DiligentFX-derived TAA in `sgl-post-fx`, SMAA, or
-  AMD FSR2, which also upscales.
+  AMD FSR2, which also upscales. TAA's history, rejection and filters are
+  `FrameInput::taa`.
   [Temporal anti-aliasing](../README.md#temporal-anti-aliasing).
 - **Scene resolution** scaling below the output size; the game's UI stays at
   full size.

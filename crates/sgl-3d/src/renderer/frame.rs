@@ -92,7 +92,14 @@ pub(super) fn render(
         post_fx.release_screen_space_reflections();
     }
     let context_jitter = post_fx.as_mut().map(|post_fx| {
-        post_fx.prepare(device, encoder, sizes.render, history.frames, history.valid)
+        post_fx.prepare(
+            device,
+            encoder,
+            sizes.render,
+            history.frames,
+            history.valid,
+            &input.taa,
+        )
     });
     let jitter = antialiasing.prepare(
         &effective,

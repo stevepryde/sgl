@@ -355,6 +355,16 @@ impl Renderer {
     pub(crate) fn tone_mapped(&self) -> &wgpu::TextureView {
         self.post.tone_mapped()
     }
+
+    /// TAA's accumulated frame, with its history weight in alpha, while TAA
+    /// runs.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn taa_output(&self) -> Option<&wgpu::TextureView> {
+        self.post_fx
+            .as_ref()
+            .filter(|post_fx| post_fx.taa())
+            .map(PostFx::taa_output)
+    }
 }
 
 #[cfg(any(test, feature = "diagnostics"))]

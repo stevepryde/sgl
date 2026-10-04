@@ -34,7 +34,9 @@ files unedited.
   `vendor/DiligentFX/PostProcess/TemporalAntiAliasing/README.md` describes it.
   It rejects history where motion changes between frames, not by speed
   (DFX-14). A pixel that has not moved keeps a longer history and is not
-  rejected by depth, as Bevy's TAA treats still pixels (DFX-19).
+  rejected by depth, as Bevy's TAA treats still pixels (DFX-19). Its
+  rejection and variance-clip constants are `TemporalAntiAliasingAttribs`
+  fields, set per frame (DFX-25).
 - Host: derived from `ScreenSpaceReflection.cpp`, `TemporalAntiAliasing.cpp`,
   `PostFXContext.cpp` and `PostFXRenderTechnique.cpp`, recording into a
   caller's `wgpu::CommandEncoder` where
@@ -44,7 +46,8 @@ files unedited.
   compiles one (`HLSLDefinitions.fxh`, the macros, the file, its includes).
 - Structures: `src/structures.rs` holds the host halves of `CameraAttribs`,
   `ScreenSpaceReflectionAttribs` and `TemporalAntiAliasingAttribs` with the
-  headers' defaults.
+  headers' defaults; SGL3D's layout test compares `TemporalAntiAliasingAttribs`
+  with naga's layout of the WGSL struct.
 
 ## Use
 
@@ -117,7 +120,8 @@ permutation of each effect (reversed depth; SSR's previous frame and half
 resolution; TAA's Gaussian weighting, bicubic filter and YCoCg colour space)
 on the device and checks the output stays finite. SGL3D's integration
 (`crates/sgl-3d/src/view/post_fx.rs`) is tested in
-`crates/sgl-3d/tests/screen_space_reflections.rs`.
+`crates/sgl-3d/tests/screen_space_reflections.rs` and, for TAA,
+`crates/sgl-3d/src/stages/antialiasing/tests.rs`.
 
 ## Licence
 

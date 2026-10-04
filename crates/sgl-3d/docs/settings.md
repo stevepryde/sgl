@@ -64,6 +64,10 @@ type it belongs to, with a default so a game sets only what it changes.
   and each section's saturation, contrast, gamma, gain and lift.
 - `ambient_occlusion_radius`: occlusion reach in metres.
 - `crystal`: Crystal's tracing and denoising parameters.
+- `taa`: TAA's ghosting and shimmer controls: the history kept at moving
+  and still pixels, rejection by motion change and depth, the variance
+  clip, and the history filters (Catmull-Rom sampling on by default,
+  Gaussian weighting, YCoCg clipping).
 - `directional_lights`, `hemisphere_light`: the lights that are not scene
   content. A directional light's `shadow` is its cascades' reach: distance,
   cascade count, first split and pancake size

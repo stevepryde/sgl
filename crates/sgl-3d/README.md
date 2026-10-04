@@ -676,12 +676,22 @@ integrated as Diligent's Hydrogent renderer does:
   effects, mist and heat shimmer, before bloom and tone mapping.
 - It uses Catmull-Rom history sampling, depth disocclusion and a variance
   clip.
+- `FrameInput::taa` (`TaaParameters`) holds its authored parameters: the
+  fields of DiligentFX's `TemporalAntiAliasingAttribs`, including its former
+  compile-time rejection and clip constants (`sgl-post-fx` PROVENANCE.md
+  DFX-25), and its `FEATURE_FLAGS` as named filters. Their default is
+  DiligentFX's, with Hydrogent's feature flags (Catmull-Rom history alone)
+  and the still-pixel history of Bevy's TAA: a pixel moving under 0.01
+  pixels per frame keeps up to 0.985 of its history and skips the depth test,
+  where moving pixels keep up to 0.9375 (DFX-19). Lower history weights
+  ghost less and shimmer more.
 
 SSR and TAA share DiligentFX's post-effect context. History restarts with
 SSR's, and a restarted frame renders without jitter. TAA keeps history for
 fast motion that is consistent between frames and rejects it where motion
-changes (1/256 of the screen height per frame), as Godot's TAA does; upstream
-rejects by speed (`sgl-post-fx` PROVENANCE.md DFX-14).
+changes (by default 1/256 of the screen height per frame,
+`motion_vector_diff_factor`), as Godot's TAA does; upstream rejects by speed
+(`sgl-post-fx` PROVENANCE.md DFX-14).
 
 ### FSR2
 
