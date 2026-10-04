@@ -15,6 +15,14 @@ full API details.
 
 ## Unreleased
 
+### An example writes the example grate
+
+- **Scope:** `sgl-3d` adds the `export_grate` example, which writes
+  `examples/grate.ktx2`, the BC7 grate of the `offscreen` and `browser_smoke`
+  examples (`cargo run -p sgl-3d --example export_grate`). It replaces the
+  ignored test `export_example_grate`; the file is unchanged.
+- **Migration:** no game-code changes.
+
 ### FSR2 sharpening, SMAA quality and anisotropic filtering are settings
 
 - **Scope:** `sgl-3d` adds four `settings::Settings` fields, each defaulting

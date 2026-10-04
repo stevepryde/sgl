@@ -5,20 +5,11 @@ use crate::{Camera, FrameInput, Scene};
 use glam::Mat4;
 use glam::camera;
 #[test]
-#[ignore = "real GPU: metric soft intersections and depth target replacement"]
 fn soft_intersection_metric_depth_and_clear_background() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: crate::graphics_device::limits(&adapter),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
         let mut world = crate::test_support::cube();
         for vertex in &mut world.meshes[0].vertices {
             vertex.position = [vertex.position[0] * 100., vertex.position[1] * 100., -6.];

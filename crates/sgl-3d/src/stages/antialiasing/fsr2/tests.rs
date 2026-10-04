@@ -28,26 +28,11 @@ fn scene(device: &wgpu::Device, queue: &wgpu::Queue) -> (Scene, EnvironmentId) {
 // modes": 1.5, 1.7, 2 and 3, rounded down), the extents from the textures
 // and the validity from wgpu's validation.
 #[test]
-#[ignore = "real GPU; FSR2 per-quality frames or TAA fallback"]
 fn fsr2_renders_each_quality_or_falls_back_to_taa() {
-    let adapter =
-        pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())).unwrap();
-    for with_features in [false, true] {
-        let features = if with_features {
-            graphics_device::fsr2_features(&adapter)
-        } else {
-            wgpu::Features::empty()
+    for request in [test_support::device, test_support::fsr2_device] {
+        let Some((device, queue)) = request() else {
+            return;
         };
-        if with_features && features.is_empty() {
-            eprintln!("the adapter lacks FSR2's features");
-            continue;
-        }
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: features,
-            required_limits: graphics_device::limits(&adapter),
-            ..Default::default()
-        }))
-        .unwrap();
         let (mut scene, environment) = scene(&device, &queue);
         let mut settings = Settings {
             scene_resolution: settings::SceneResolution::Full,
@@ -115,7 +100,8 @@ fn fsr2_renders_each_quality_or_falls_back_to_taa() {
                 assert_eq!(extent(renderer.test_fsr2().unwrap().output()), SIZE);
             } else {
                 eprintln!(
-                    "{quality:?} with {features:?}: TAA, because {}",
+                    "{quality:?} with {:?}: TAA, because {}",
+                    device.features(),
                     renderer.fsr2_error().unwrap()
                 );
                 assert_eq!(
@@ -135,21 +121,17 @@ fn fsr2_renders_each_quality_or_falls_back_to_taa() {
 // fog; coverage is where the quad was placed; the effects draw nothing into
 // the transparency and composition mask (AMD's reactive particles).
 #[test]
-#[ignore = "real GPU: FSR2 masks from the camera's transparent draws"]
 fn additive_effects_mark_fsr2_reactivity_for_their_frame_only() {
-    let adapter =
-        pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())).unwrap();
-    let features = graphics_device::fsr2_features(&adapter);
-    if features.is_empty() {
-        eprintln!("the adapter lacks FSR2's features");
+    let Some((device, queue)) = test_support::fsr2_device() else {
+        return;
+    };
+    if !device
+        .features()
+        .contains(sp_fidelity_wgpu::required_features())
+    {
+        eprintln!("skipping: the device lacks FSR2's features");
         return;
     }
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_features: features,
-        required_limits: graphics_device::limits(&adapter),
-        ..Default::default()
-    }))
-    .unwrap();
     let (mut scene, environment) = scene(&device, &queue);
     let settings = Settings {
         scene_resolution: settings::SceneResolution::Full,

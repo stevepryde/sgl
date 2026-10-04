@@ -1,23 +1,10 @@
-//! Real feature-free GPU queries versus independent world-space plane/edge tests.
+//! Real GPU queries of the portable BVH, which needs no hardware ray-tracing
+//! features, versus independent world-space plane/edge tests.
 use super::tests::{Fixture, Pose, asset, triangle};
 use super::*;
 use crate::asset::Asset;
 use glam::{DMat4, DVec3, Quat, Vec3};
 use wgpu::util::DeviceExt;
-
-async fn gpu() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-    eprintln!("portable query adapter: {:?}", adapter.get_info());
-    adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::empty(),
-            required_limits: crate::graphics_device::limits(&adapter),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-}
 
 fn query(
     device: &wgpu::Device,
@@ -69,10 +56,11 @@ fn query(
 }
 
 #[test]
-#[ignore = "requires GPU; run with --ignored --nocapture"]
 fn portable_scene_exact_intervals_parallel_axes_and_instance_removal() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let (device, queue) = gpu().await;
         let asset = asset(vec![triangle(0., -2., false, 0)], true);
         let mut scene = Fixture::new(&device, &queue, &[&asset]);
         let mut poses = vec![Pose {
@@ -216,10 +204,11 @@ fn oracle(assets: &[Asset], poses: &[Pose], ray: [f32; 8]) -> Option<(f64, usize
 }
 
 #[test]
-#[ignore = "requires GPU; run with --ignored --nocapture"]
 fn portable_scene_randomized_hierarchy_against_world_f64_oracle() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let (device, queue) = gpu().await;
         let meshes = (0..513)
             .map(|i| {
                 let mut mesh = triangle(
@@ -324,10 +313,11 @@ fn portable_scene_randomized_hierarchy_against_world_f64_oracle() {
 }
 
 #[test]
-#[ignore = "requires GPU; run with --ignored --nocapture"]
 fn portable_scene_fragment_segment_visibility() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let (device, queue) = gpu().await;
         let asset = asset(vec![triangle(0., -2., false, 0)], false);
         let mut scene = Fixture::new(&device, &queue, &[&asset]);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -460,10 +450,11 @@ fn portable_scene_fragment_segment_visibility() {
 }
 
 #[test]
-#[ignore = "real portable GPU; edited material sides and visibility must change accepted geometry"]
 fn portable_scene_material_edits_restore_near_and_far_occluders() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let (device, queue) = gpu().await;
         // The near plane presents its authored back face; the farther one its front.
         let mut asset = asset(
             vec![triangle(0., -2., true, 0), triangle(0., -4., false, 1)],

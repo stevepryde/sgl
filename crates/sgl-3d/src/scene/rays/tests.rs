@@ -1,4 +1,5 @@
-//! Independent analytic planes exercise real Metal BLAS/TLAS/candidate queries.
+//! Independent analytic planes exercise the portable BVH's ray and candidate
+//! queries on the default adapter.
 use super::*;
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
 use glam::{Mat4, Vec3};
@@ -193,22 +194,11 @@ pub(super) fn asset(meshes: Vec<CpuMesh>, two_sided: bool) -> Asset {
 }
 
 #[test]
-#[ignore = "requires GPU; run with --ignored --nocapture"]
 fn portable_scene_faces_occlusion_coincident_offscreen_and_current_pose() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
-        let adapter = instance.request_adapter(&Default::default()).await.unwrap();
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_limits: crate::graphics_device::limits(&adapter),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-        eprintln!("scene ray adapter: {:?}", adapter.get_info());
         let mut optional_occluder = asset(
             vec![triangle(-3., -4., false, 0), triangle(-3., -1., false, 1)],
             false,

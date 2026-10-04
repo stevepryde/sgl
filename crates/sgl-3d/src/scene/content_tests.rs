@@ -9,21 +9,6 @@ use crate::*;
 use glam::camera;
 use glam::{Mat4, Vec3};
 
-async fn gpu() -> (wgpu::Device, wgpu::Queue) {
-    let adapter = wgpu::Instance::default()
-        .request_adapter(&Default::default())
-        .await
-        .unwrap();
-    adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            required_features: adapter.features() & wgpu::Features::SHADER_F16,
-            required_limits: graphics_device::limits(&adapter),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-}
-
 fn plane(z: f32, slope: [f32; 2], half: f32, reversed: bool) -> asset::CpuMesh {
     asset::CpuMesh {
         vertices: [(-half, -half), (half, -half), (half, half), (-half, half)]
@@ -337,10 +322,11 @@ fn caster_light() -> DirectionalLight {
 }
 
 #[test]
-#[ignore = "real GPU; visible material groups must cast the authored directional plane depth"]
 fn directional_casters_respect_enabled_groups_and_explicit_policy() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let (device, queue) = gpu().await;
         let depth = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("authored plane depth"),
             size: wgpu::Extent3d {
@@ -440,12 +426,27 @@ fn directional_casters_respect_enabled_groups_and_explicit_policy() {
 // single-sided plane's front faces cast (Bevy's shadow pipelines keep the
 // material's cull mode), and store the authored plane depth without raster
 // bias: a sloped plane exposes slope bias; reversed winding and single or
-// double sides expose culling errors, for a static and a moving instance.
+// double sides expose culling errors, for a static and a moving instance,
+// with the device's unclipped depth and with its emulation in the shader.
 #[test]
-#[ignore = "real GPU; directional caster winding, material side and plane depth"]
 fn directional_casters_cast_front_faces_at_unbiased_depth() {
-    pollster::block_on(async {
-        let (device, queue) = gpu().await;
+    for (path, without) in [
+        ("unclipped depth", wgpu::Features::empty()),
+        (
+            "emulated unclipped depth",
+            wgpu::Features::DEPTH_CLIP_CONTROL,
+        ),
+    ] {
+        let Some((device, queue)) = test_support::device_without(without) else {
+            return;
+        };
+        let native = device
+            .features()
+            .contains(wgpu::Features::DEPTH_CLIP_CONTROL);
+        if native != without.is_empty() {
+            eprintln!("skipping {path}: the adapter has no DEPTH_CLIP_CONTROL");
+            continue;
+        }
         const SIZE: u32 = 64;
         let depth = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("analytic directional caster depth"),
@@ -517,20 +518,21 @@ fn directional_casters_cast_front_faces_at_unbiased_depth() {
                         let depth = observed[(y * SIZE + x) as usize];
                         assert!(
                             depth.is_finite() && (depth - expected).abs() < 0.000002,
-                            "{mobility:?} {label} pixel({x},{y}): depth {depth}, expected {expected}"
+                            "{path} {mobility:?} {label} pixel({x},{y}): depth {depth}, expected {expected}"
                         );
                     }
                 }
             }
         }
-    });
+    }
 }
 
 #[test]
-#[ignore = "real GPU; abandoned model updates must not become the uploaded motion predecessor"]
 fn instance_motion_uses_last_submitted_model_after_abandoned_updates() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let (device, queue) = gpu().await;
         let mut scene = Scene::new(&device, &queue);
         let [a, b] = [(); 2].map(|()| {
             scene
@@ -1062,10 +1064,11 @@ fn each_frame_draws_its_environment_and_an_ended_one_is_black() {
 }
 
 #[test]
-#[ignore = "real GPU; LOD vertex-pulled source identity and full-detail pixel equivalence"]
 fn lod_fused_source_preserves_pixels_and_uses_alternative_identity() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let (device, queue) = gpu().await;
         let mut world = test_support::cube();
         let repeated = world.meshes[0].indices.clone();
         world.meshes[0].indices.extend(repeated);
@@ -1291,10 +1294,11 @@ fn uploaded_material(
 }
 
 #[test]
-#[ignore = "real GPU; invalid anisotropy edits must preserve both CPU and uploaded material state"]
 fn anisotropy_material_edits_are_transactional() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let (device, queue) = gpu().await;
         let mut world = asset_of(plane(0.5, [0.; 2], 1., false));
         for vertex in &mut world.meshes[0].vertices {
             vertex.tangent = [1., 0., 0., 1.];

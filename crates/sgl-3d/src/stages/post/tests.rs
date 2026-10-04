@@ -55,17 +55,11 @@ fn sizes(size: [u32; 2]) -> Sizes {
 // the sRGB transfer equation, within the output's dither of up to a code
 // value. Compilation cannot check these pixel semantics.
 #[test]
-#[ignore = "real GPU; numerical AA bypass, format and runtime-switch checks"]
 fn antialiasing_off_preserves_captured_pixels() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&crate::test_support::diagnostic_device_descriptor(&adapter))
-            .await
-            .unwrap();
         let capture = include_bytes!("../../../tests/fixtures/tone-mapped-crop.rgba16");
         for format in [
             HDR,
@@ -175,17 +169,11 @@ fn antialiasing_off_preserves_captured_pixels() {
 // independently of the bloom kernel or tone mapper's particular equations.
 // The tone-mapped capture is read, before the output's dither.
 #[test]
-#[ignore = "real GPU; bloom resource and rendered override isolation"]
 fn bloom_switch_removes_halos_and_preserves_low_override() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&crate::test_support::diagnostic_device_descriptor(&adapter))
-            .await
-            .unwrap();
         let mut post = Post::new(
             &device,
             &queue,
@@ -267,18 +255,12 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
 // Physical texture extents expose these integration failures independently of
 // the resolution helper's calculated dimensions.
 #[test]
-#[ignore = "real GPU; physical scene/output target resize checks"]
 fn scene_resolution_budgets_resize_targets_without_stretching_or_upscaling() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
     pollster::block_on(async {
         use crate::settings::SceneResolution;
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&Default::default())
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(&crate::test_support::diagnostic_device_descriptor(&adapter))
-            .await
-            .unwrap();
         let mut settings = crate::settings::Settings::default();
         let mut renderer =
             crate::renderer::Renderer::new(&device, &queue, HDR, [64, 64], 2., &settings).unwrap();

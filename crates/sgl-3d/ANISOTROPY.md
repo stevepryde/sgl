@@ -31,10 +31,10 @@ equations.
 
 ## Numerical conformance checks
 
-Run the explicitly selected real-GPU check:
+The real-GPU check runs in the required check; to run it alone:
 
 ```sh
-cargo test -p sgl-3d anisotropy_gpu_matches_independent_brdf_and_historical_zero -- --ignored --nocapture
+cargo test -p sgl-3d --lib anisotropy_gpu_matches_independent_brdf_and_historical_zero -- --nocapture
 ```
 
 The test uses 1,152 combinations: roughness 0.15/0.3/0.7, strength
@@ -62,14 +62,14 @@ and the f64 tolerance applies to the new nonzero path.
 
 ## Approximation diagnostic
 
-```sh
-cargo test -p sgl-3d anisotropy_rectangle_and_environment_approximation_diagnostic -- --ignored --nocapture
-```
-
-This is a diagnostic, not a quality acceptance test; it deliberately has no
-pass/fail error threshold. It uses the four material combinations listed below, base color
+The errors below were measured by a CPU diagnostic with no pass/fail
+threshold, `anisotropy_rectangle_and_environment_approximation_diagnostic`.
+It asserted nothing, so it is no longer a test; its source is in
+`src/shading/anisotropy_tests.rs` at commit
+`6cc5111358eb14a604989fd8eb9c5ac8071ad50d`. It used the four material
+combinations listed below, base color
 `(0.54, 0.49, 0.44)`, view inclination 0.87 and azimuth 0.61 radians, and axis
-rotations 0, pi/4 and pi/2. Each setup reports 256² and 512² deterministic
+rotations 0, pi/4 and pi/2. Each setup reported 256² and 512² deterministic
 midpoint samples, separating quadrature convergence from approximation bias.
 All inputs, scalar radiances and outputs are linear. F0 is
 `0.04*(1-metallic)+base*metallic`. Measurements isolate single-scattering
@@ -148,7 +148,7 @@ and diffuse ownership separate. Sampling unfiltered radiance avoids double
 convolution. A small sample count cannot guarantee discovery of narrow bright
 sources; combining an environment-radiance proposal with the GGX proposal through
 [PBRT fourth-edition multiple importance sampling](https://pbr-book.org/4ed/Monte_Carlo_Integration/Improving_Efficiency) is the next measured step if BRDF-only sampling
-fails the preserved diagnostic. Each sample adds a radiance lookup (and each
+fails that diagnostic's measurement. Each sample adds a radiance lookup (and each
 connected endpoint may require its own projection). This does not solve angular
 screen-space coverage or hidden geometry, and screen-space rays stay isotropic. Sample counts, variance and motion
 stability need evidence before choosing a persistent fidelity control. No runtime

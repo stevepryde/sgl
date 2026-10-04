@@ -10,7 +10,6 @@ use glam::camera;
 // be leaked specular image-based lighting. The capture metal, dielectric and
 // emissive controls keep a disconnected or black draw from passing.
 #[test]
-#[ignore = "real GPU; camera and capture views' environment specular"]
 fn camera_surfaces_exclude_specular_ibl_and_keep_diffuse_and_emission() {
     use crate::asset::{CpuMesh, Vertex};
     use crate::settings::Settings;

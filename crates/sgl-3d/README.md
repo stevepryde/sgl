@@ -1378,7 +1378,7 @@ its size (`SceneError::InvalidCompressedImage`). Rays read level 0 decoded to
 RGBA8, as raster's level 0 samples it: four bytes a texel in the ray source
 beside the texture's one. Basis Universal transcoding, for a device without
 BC, is not provided. The `offscreen` example's `--alpha` grate is a BC7 KTX2
-chain.
+chain, which `cargo run -p sgl-3d --example export_grate` writes.
 
 For anisotropic materials, supply `Vertex::tangent = [tx, ty, tz, handedness]`
 with handedness +1 or -1, plus authored normals. Legacy meshes may leave the

@@ -291,14 +291,11 @@ mod tests {
     // The detector itself could miss NaN/sign bits or retain another frame's
     // counters. Known IEEE-754 binary16 inputs exercise actual GPU classification.
     #[test]
-    #[ignore = "real GPU diagnostic calibration against IEEE-754 values"]
     fn frame_probe_detects_invalid_values_and_pixel_loss() {
+        let Some((device, queue)) = crate::test_support::device() else {
+            return;
+        };
         pollster::block_on(async {
-            let adapter = wgpu::Instance::default()
-                .request_adapter(&Default::default())
-                .await
-                .unwrap();
-            let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
             let mut probe = FrameProbe::new(&device);
             let make = || {
                 device.create_texture(&wgpu::TextureDescriptor {
