@@ -14,6 +14,9 @@
 // b13043816a0f234985030ec035363a005bc86c32), MIT licensed (LICENSE-godot.txt);
 // taa_resolve.glsl is based on Spartan Engine's TAA, Copyright (c) 2016-2022
 // Panos Karabelas, MIT licensed (LICENSE-spartan.txt).
+// DFX-13 finds the closest motion vectors in the resolve, as taa_resolve.glsl
+// does (get_closest_pixel_velocity_3x3), with the search of DiligentFX's
+// Shaders/Common/private/ComputeClosestMotion.fx.
 
 #include "BasicStructures.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
@@ -21,6 +24,12 @@
 #include "TemporalAntiAliasingStructures.fxh"
 
 #define FLT_EPS 5.960464478e-8
+
+#if POSTFX_OPTION_INVERTED_DEPTH
+    #define DepthFarPlane  0.0
+#else
+    #define DepthFarPlane  1.0
+#endif // POSTFX_OPTION_INVERTED_DEPTH
 
 // PROVENANCE.md DFX-19: Bevy's still-pixel rule. A pixel whose closest motion is under
 // TAA_STILL_MOTION_PIXELS on both axes keeps history up to TAA_STILL_HISTORY_FACTOR
@@ -43,6 +52,7 @@ struct CameraAttribsPair
 
 @group(0) @binding(2) var g_TextureCurrColor: texture_2d<f32>;
 @group(0) @binding(3) var g_TexturePrevColor: texture_2d<f32>;
+// PROVENANCE.md DFX-13: the motion vectors, of which the resolve finds the closest.
 @group(0) @binding(4) var g_TextureMotion: texture_2d<f32>;
 @group(0) @binding(5) var g_TextureCurrDepth: texture_2d<f32>;
 @group(0) @binding(6) var g_TexturePrevDepth: texture_2d<f32>;
@@ -51,6 +61,10 @@ struct CameraAttribsPair
 
 // PROVENANCE.md DFX-14: the previous frame's closest motion vectors.
 @group(0) @binding(8) var g_TexturePrevMotion: texture_2d<f32>;
+
+// PROVENANCE.md DFX-13: the depth buffer, in which the closest motion is found.
+// WGSL: the depth buffer binds as a depth texture.
+@group(0) @binding(9) var g_TextureDepth: texture_depth_2d;
 
 struct PixelStatistic
 {
@@ -119,9 +133,42 @@ fn SamplePrevDepth(PixelCoord: vec2<i32>) -> f32
     return HlslLoad(g_TexturePrevDepth, PixelCoord, 0).x;
 }
 
+// PROVENANCE.md DFX-13: ComputeClosestMotion.fx's SampleDepth, SampleMotion and SampleClosestMotion.
+fn SampleDepth(PixelCoord: vec2<i32>) -> f32
+{
+    return HlslLoadDepth(g_TextureDepth, PixelCoord, 0);
+}
+
 fn SampleMotion(PixelCoord: vec2<i32>) -> vec2<f32>
 {
-    return HlslLoad(g_TextureMotion, PixelCoord, 0).xy * F3NDC_XYZ_TO_UVD_SCALE.xy;
+    return HlslLoad(g_TextureMotion, PixelCoord, 0).xy;
+}
+
+fn SampleClosestMotion(PixelCoord: vec2<i32>) -> vec2<f32>
+{
+    var ClosestDepth: f32 = DepthFarPlane;
+    var ClosestOffset = vec2<i32>(0, 0);
+
+    const SearchRadius = 1;
+    for (var x = -SearchRadius; x <= SearchRadius; x++)
+    {
+        for (var y = -SearchRadius; y <= SearchRadius; y++)
+        {
+            let Coord = PixelCoord + vec2<i32>(x, y);
+            let NeighborDepth = SampleDepth(Coord);
+#if POSTFX_OPTION_INVERTED_DEPTH
+            if (NeighborDepth > ClosestDepth)
+#else
+            if (NeighborDepth < ClosestDepth)
+#endif
+            {
+                ClosestOffset = vec2<i32>(x, y);
+                ClosestDepth = NeighborDepth;
+            }
+        }
+    }
+
+    return SampleMotion(PixelCoord + ClosestOffset);
 }
 
 // PROVENANCE.md DFX-14.
@@ -287,15 +334,24 @@ fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
     return min(ComputeMaxAlpha(IsStill), saturate(1.0 / (2.0 - Alpha)));
 }
 
+// PROVENANCE.md DFX-13: the accumulated frame, and the closest motion vector the next frame
+// reads (DFX-14).
+struct PSOutput
+{
+    @location(0) Color:         vec4<f32>,
+    @location(1) ClosestMotion: vec2<f32>,
+}
+
 @fragment
-fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) vec4<f32>
+fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 {
     let Position = VSOut.f4PixelPos.xy;
-    let Motion = SampleMotion(vec2<i32>(Position.xy));
+    let ClosestMotion = SampleClosestMotion(vec2<i32>(Position.xy));
+    let Motion = ClosestMotion * F3NDC_XYZ_TO_UVD_SCALE.xy;
     let PrevPosition = Position.xy - Motion * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
 
     if (!IsInsideScreen_f2(PrevPosition, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy) || g_TAAAttribs.ResetAccumulation != 0u) {
-        return vec4<f32>(SampleCurrColor(vec2<i32>(Position)), 0.5);
+        return PSOutput(vec4<f32>(SampleCurrColor(vec2<i32>(Position)), 0.5), ClosestMotion);
     }
 
     // PROVENANCE.md DFX-14: Godot's velocity disocclusion (taa_resolve.glsl
@@ -319,7 +375,7 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> @location
     if (g_TAAAttribs.SkipRejection != 0u)
     {
         let RGBHDROutput = SDRToHDR(YCoCgToRGB(mix(YCoCgSDRCurrColor, YCoCgSDRPrevColor, RGBHDRPrevColor.a)));
-        return vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(RGBHDRPrevColor.a, false));
+        return PSOutput(vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(RGBHDRPrevColor.a, false)), ClosestMotion);
     }
 
     let VarianceGamma = ComputeVarianceGamma(length(Motion));
@@ -332,5 +388,5 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> @location
     // weight up after a reset, and the rejection does not compound with it.
     let Alpha = min(RGBHDRPrevColor.a * DepthFactor, max(ComputeMaxAlpha(IsStill) - MotionDiffRejection, 0.0));
     let RGBHDROutput = SDRToHDR(YCoCgToRGB(mix(YCoCgSDRCurrColor, YCoCgSDRClampedColor, Alpha)));
-    return vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(Alpha, IsStill));
+    return PSOutput(vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(Alpha, IsStill)), ClosestMotion);
 }

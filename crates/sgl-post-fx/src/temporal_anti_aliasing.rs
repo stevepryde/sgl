@@ -6,7 +6,7 @@
 //! origins and implementation notes are recorded in PROVENANCE.md.
 //!
 //! Implements [temporal anti-aliasing post-process effect](https://github.com/DiligentGraphics/DiligentFX/tree/master/PostProcess/TemporalAntiAliasing).
-use crate::post_fx_context::{self, PostFXContext, TextureOperationAttribs};
+use crate::post_fx_context::{self, PostFXContext, TextureOperationAttribs, draw};
 use crate::render_technique::{
     DepthStencilStateDesc, PostFXRenderTechnique, Resource, create_shader,
 };
@@ -53,6 +53,13 @@ pub struct RenderAttributes<'a, 'p> {
     pub post_fx_context: &'a mut PostFXContext,
     /// Shader resource view of the source color.
     pub color_buffer_srv: &'a wgpu::TextureView,
+    /// Shader resource view of the depth buffer, the context's
+    /// `curr_depth_buffer_srv`, in which the closest motion vectors are
+    /// found (PROVENANCE.md DFX-13).
+    pub depth_buffer_srv: &'a wgpu::TextureView,
+    /// Shader resource view of the motion vectors, in a filterable float
+    /// format such as `Rg16Float`.
+    pub motion_vectors_srv: &'a wgpu::TextureView,
     /// TAA settings.
     pub taa_attribs: &'a TemporalAntiAliasingAttribs,
     /// Accumulation buffer index.
@@ -73,11 +80,16 @@ const RENDER_TECHS: [RenderTech; 1] = [RenderTech::ComputeTemporalAccumulation];
 struct RenderTechniqueKey {
     render_tech: RenderTech,
     feature_flags: FeatureFlags,
+    /// The context's `REVERSED_DEPTH`, for the closest-motion search
+    /// (PROVENANCE.md DFX-13).
+    reversed_depth: bool,
 }
 
 const ACCUMULATED_BUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// `PostFXContext`'s closest motion vectors (PROVENANCE.md DFX-14).
-const PREVIOUS_MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// The closest motion vectors the resolve finds and keeps for the next frame
+/// (PROVENANCE.md DFX-13, DFX-14), in the format of DiligentFX's
+/// `PostFXContext`.
+const CLOSEST_MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
 /// `TemporalAntiAliasing::AccumulationBufferInfo`.
 struct AccumulationBufferInfo {
@@ -85,8 +97,9 @@ struct AccumulationBufferInfo {
     constant_buffer: Option<wgpu::Buffer>,
     /// `RESOURCE_ID_ACCUMULATED_BUFFER0`, `RESOURCE_ID_ACCUMULATED_BUFFER1`.
     accumulated_buffers: Option<[wgpu::TextureView; 2]>,
-    /// The previous frame's closest motion vectors (PROVENANCE.md DFX-14).
-    previous_motion: Option<wgpu::TextureView>,
+    /// Each accumulated buffer's frame's closest motion vectors, which the
+    /// next frame reads (PROVENANCE.md DFX-14).
+    closest_motion: Option<[wgpu::TextureView; 2]>,
 
     width: u32,
     height: u32,
@@ -102,7 +115,7 @@ impl Default for AccumulationBufferInfo {
         Self {
             constant_buffer: None,
             accumulated_buffers: None,
-            previous_motion: None,
+            closest_motion: None,
             width: 0,
             height: 0,
             current_frame_idx: 0,
@@ -186,10 +199,9 @@ impl AccumulationBufferInfo {
                 ACCUMULATED_BUFFER_FORMAT,
             )
         }));
-        self.previous_motion = Some(texture(
-            "TemporalAntiAliasing::PreviousMotion",
-            PREVIOUS_MOTION_FORMAT,
-        ));
+        self.closest_motion = Some(std::array::from_fn(|_| {
+            texture("TemporalAntiAliasing::ClosestMotion", CLOSEST_MOTION_FORMAT)
+        }));
     }
 
     fn update_constant_buffer(
@@ -223,6 +235,21 @@ impl AccumulationBufferInfo {
             .as_ref()
             .expect("TemporalAntiAliasing::PrepareResources")[index as usize]
     }
+
+    fn closest_motion(&self, index: u32) -> &wgpu::TextureView {
+        &self
+            .closest_motion
+            .as_ref()
+            .expect("TemporalAntiAliasing::PrepareResources")[index as usize]
+    }
+}
+
+/// Whether the context's depth is reversed, which the closest-motion search
+/// follows (PROVENANCE.md DFX-13).
+fn reversed_depth(post_fx_context: &PostFXContext) -> bool {
+    post_fx_context
+        .get_feature_flags()
+        .contains(post_fx_context::FeatureFlags::REVERSED_DEPTH)
 }
 
 // https://en.wikipedia.org/wiki/Halton_sequence#Implementation_in_pseudocode
@@ -308,11 +335,13 @@ impl TemporalAntiAliasing {
 
         // wgpu creates pipelines synchronously, so a created technique is
         // ready (PROVENANCE.md DFX-2).
+        let reversed_depth = reversed_depth(post_fx_context);
         self.all_psos_ready = RENDER_TECHS.iter().all(|&render_tech| {
             self.render_tech
                 .get(&RenderTechniqueKey {
                     render_tech,
                     feature_flags,
+                    reversed_depth,
                 })
                 .is_some_and(PostFXRenderTechnique::is_initialized_pso)
         });
@@ -336,7 +365,7 @@ impl TemporalAntiAliasing {
         self.prepare_shaders_and_pso(
             render_attribs.device,
             feature_flags,
-            ACCUMULATED_BUFFER_FORMAT,
+            reversed_depth(render_attribs.post_fx_context),
         );
 
         let acc_buffer = self
@@ -352,7 +381,6 @@ impl TemporalAntiAliasing {
         } else {
             Self::compute_placeholder_texture(render_attribs, acc_buffer);
         }
-        Self::copy_previous_motion(render_attribs, acc_buffer);
 
         if all_psos_ready {
             PostFxExecutionStatus::Ready
@@ -405,13 +433,14 @@ impl TemporalAntiAliasing {
         &mut self,
         device: &wgpu::Device,
         feature_flags: FeatureFlags,
-        texture_format: wgpu::TextureFormat,
+        reversed_depth: bool,
     ) {
         let tech = self
             .render_tech
             .entry(RenderTechniqueKey {
                 render_tech: RenderTech::ComputeTemporalAccumulation,
                 feature_flags,
+                reversed_depth,
             })
             .or_default();
         if !tech.is_initialized_pso() {
@@ -434,6 +463,10 @@ impl TemporalAntiAliasing {
                 (
                     "TAA_OPTION_YCOCG_COLOR_SPACE",
                     flag(FeatureFlags::YCOCG_COLOR_SPACE),
+                ),
+                (
+                    "POSTFX_OPTION_INVERTED_DEPTH",
+                    if reversed_depth { "1" } else { "0" },
                 ),
             ];
 
@@ -466,8 +499,9 @@ impl TemporalAntiAliasing {
                     (6, Resource::Texture),
                     (7, Resource::Sampler { filtering: true }),
                     (8, Resource::Texture),
+                    (9, Resource::DepthTexture),
                 ],
-                &[texture_format],
+                &[ACCUMULATED_BUFFER_FORMAT, CLOSEST_MOTION_FORMAT],
                 None,
                 DepthStencilStateDesc::DisableDepth,
             );
@@ -479,11 +513,12 @@ impl TemporalAntiAliasing {
         render_attribs: &mut RenderAttributes<'_, '_>,
         acc_buff: &AccumulationBufferInfo,
     ) {
+        let ctx = &*render_attribs.post_fx_context;
         let tech = &self.render_tech[&RenderTechniqueKey {
             render_tech: RenderTech::ComputeTemporalAccumulation,
             feature_flags: acc_buff.feature_flags,
+            reversed_depth: reversed_depth(ctx),
         }];
-        let ctx = &*render_attribs.post_fx_context;
 
         let frame_index = ctx.get_frame_desc().index;
         let curr_buff_idx = frame_index & 0x01;
@@ -518,7 +553,7 @@ impl TemporalAntiAliasing {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: texture(ctx.get_closest_motion_vectors()),
+                    resource: texture(render_attribs.motion_vectors_srv),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
@@ -534,33 +569,28 @@ impl TemporalAntiAliasing {
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
-                    resource: texture(acc_buff.previous_motion.as_ref().expect("prepared")),
+                    resource: texture(acc_buff.closest_motion(prev_buff_idx)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: texture(render_attribs.depth_buffer_srv),
                 },
             ],
         );
 
-        let mut pass =
+        // PROVENANCE.md DFX-13: the resolve also writes this frame's closest
+        // motion vectors, which the next frame reads (DFX-14).
+        draw(
+            render_attribs.device_context,
+            "TemporalAccumulation",
+            &[curr_buffer_rtv, acc_buff.closest_motion(curr_buff_idx)],
+            tech,
+            &group,
+            0..3,
             render_attribs
-                .device_context
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("TemporalAccumulation"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: curr_buffer_rtv,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    timestamp_writes: render_attribs
-                        .pass_timestamps
-                        .and_then(|timestamps| timestamps("TemporalAccumulation")),
-                    ..Default::default()
-                });
-        pass.set_pipeline(tech.pso.as_ref().expect("initialized technique"));
-        pass.set_bind_group(0, &group, &[]);
-        pass.draw(0..3, 0..1);
+                .pass_timestamps
+                .and_then(|timestamps| timestamps("TemporalAccumulation")),
+        );
     }
 
     fn compute_placeholder_texture(
@@ -581,18 +611,10 @@ impl TemporalAntiAliasing {
             acc_buff.accumulated_buffer(buff_idx),
             ACCUMULATED_BUFFER_FORMAT,
         );
-    }
 
-    /// PROVENANCE.md DFX-14: keeps this frame's closest motion vectors for
-    /// the next frame's history rejection, with `CopyTextureColor`.
-    fn copy_previous_motion(
-        render_attribs: &mut RenderAttributes<'_, '_>,
-        acc_buff: &AccumulationBufferInfo,
-    ) {
-        let motion = render_attribs
-            .post_fx_context
-            .get_closest_motion_vectors()
-            .clone();
+        // PROVENANCE.md DFX-14: without the resolve, the next frame's previous
+        // closest motion is this frame's motion, copied with
+        // `CopyTextureColor`.
         render_attribs.post_fx_context.copy_texture_color(
             &mut TextureOperationAttribs {
                 device: render_attribs.device,
@@ -601,9 +623,9 @@ impl TemporalAntiAliasing {
                     .pass_timestamps
                     .and_then(|timestamps| timestamps("TemporalAccumulation")),
             },
-            &motion,
-            acc_buff.previous_motion.as_ref().expect("prepared"),
-            PREVIOUS_MOTION_FORMAT,
+            render_attribs.motion_vectors_srv,
+            acc_buff.closest_motion(buff_idx),
+            CLOSEST_MOTION_FORMAT,
         );
     }
 }

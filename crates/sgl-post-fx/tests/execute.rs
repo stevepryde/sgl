@@ -287,7 +287,6 @@ fn every_feature_permutation_executes() {
                     device_context: &mut encoder,
                     curr_depth_buffer_srv: &current_depth,
                     prev_depth_buffer_srv: &previous_depth,
-                    motion_vectors_srv: &motion,
                     curr_camera: Some(&curr),
                     prev_camera: Some(&prev),
                     camera_attribs_cb: None,
@@ -379,7 +378,6 @@ fn every_taa_feature_permutation_executes() {
                     device_context: &mut encoder,
                     curr_depth_buffer_srv: &current_depth,
                     prev_depth_buffer_srv: &previous_depth,
-                    motion_vectors_srv: &motion,
                     curr_camera: Some(&curr),
                     prev_camera: Some(&prev),
                     camera_attribs_cb: None,
@@ -391,6 +389,8 @@ fn every_taa_feature_permutation_executes() {
                     device_context: &mut encoder,
                     post_fx_context: &mut context,
                     color_buffer_srv: &color,
+                    depth_buffer_srv: &current_depth,
+                    motion_vectors_srv: &motion,
                     taa_attribs: &TemporalAntiAliasingAttribs::default(),
                     accumulation_buffer_idx: 0,
                     pass_timestamps: None,
@@ -534,7 +534,6 @@ fn taa_rejects_history_gradually_by_motion_change_not_speed() {
                 device_context: &mut encoder,
                 curr_depth_buffer_srv: &current_depth,
                 prev_depth_buffer_srv: &previous_depth,
-                motion_vectors_srv: &motion[index as usize % 2],
                 curr_camera: Some(&camera),
                 prev_camera: Some(&camera),
                 camera_attribs_cb: None,
@@ -546,6 +545,8 @@ fn taa_rejects_history_gradually_by_motion_change_not_speed() {
                 device_context: &mut encoder,
                 post_fx_context: &mut context,
                 color_buffer_srv: &color,
+                depth_buffer_srv: &current_depth,
+                motion_vectors_srv: &motion[index as usize % 2],
                 taa_attribs: &TemporalAntiAliasingAttribs::default(),
                 accumulation_buffer_idx: 0,
                 pass_timestamps: None,
@@ -592,6 +593,123 @@ fn taa_rejects_history_gradually_by_motion_change_not_speed() {
             "a motion change of {change} pixels settled at history weight {weight}, \
              not Godot's {godot}"
         );
+    }
+}
+
+/// Defect: TAA's closest-motion search (PROVENANCE.md DFX-13) reading the
+/// depth convention backwards, searching less than the 3×3 neighbourhood, or
+/// picking the farthest depth instead of the nearest. Oracle: a pixel's
+/// closest motion is the motion of the nearest depth within Chebyshev
+/// distance 1 (DiligentFX's `ComputeClosestMotion.fx`). One near texel whose
+/// motion reprojects off screen therefore resets exactly the 3×3 block
+/// around it (alpha 0.5, the off-screen reset), while pixels two or more
+/// away keep the history of still pixels (alpha 0.985, DFX-19), under
+/// reversed and conventional depth alike.
+#[test]
+fn taa_closest_motion_is_the_nearest_depth_in_3x3() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let near_texel = [20u32, 20u32];
+    let at = |x: u32, y: u32| (y * SIZE[0] + x) as usize;
+    for reversed in [true, false] {
+        let (near, background) = if reversed { (0.5, 0.05) } else { (0.5, 0.95) };
+        let mut depths = vec![background; (SIZE[0] * SIZE[1]) as usize];
+        depths[at(near_texel[0], near_texel[1])] = near;
+        // Four NDC units, two screens: off screen from every pixel.
+        let mut motion = vec![0.0f32; 2 * (SIZE[0] * SIZE[1]) as usize];
+        motion[2 * at(near_texel[0], near_texel[1])] = 4.0;
+        let motion = texels(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rg16Float,
+            &half(&motion),
+        );
+        let color = texture(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba16Float,
+            &half(&[4.0, 2.0, 1.0, 1.0]),
+        );
+        let mut context = PostFXContext::new(&device, &queue, Default::default());
+        let mut taa = TemporalAntiAliasing::new(&device);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let current_depth = depth_values(&device, &queue, &mut encoder, &depths);
+        let previous_depth = depth_values(&device, &queue, &mut encoder, &depths);
+        let camera = camera(reversed, 0);
+        let context_flags = if reversed {
+            post_fx_context::FeatureFlags::REVERSED_DEPTH
+        } else {
+            post_fx_context::FeatureFlags::NONE
+        };
+        // The first frame copies its input (DFX-2); the next two resolve.
+        for index in 0..3u32 {
+            context.prepare_resources(
+                &device,
+                &FrameDesc {
+                    index,
+                    width: SIZE[0],
+                    height: SIZE[1],
+                    output_width: SIZE[0],
+                    output_height: SIZE[1],
+                },
+                context_flags,
+            );
+            taa.prepare_resources(
+                &device,
+                &mut encoder,
+                &context,
+                temporal_anti_aliasing::FeatureFlags::NONE,
+                0,
+            );
+            context.execute(&mut RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                curr_depth_buffer_srv: &current_depth,
+                prev_depth_buffer_srv: &previous_depth,
+                curr_camera: Some(&camera),
+                prev_camera: Some(&camera),
+                camera_attribs_cb: None,
+                pass_timestamps: None,
+            });
+            taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                post_fx_context: &mut context,
+                color_buffer_srv: &color,
+                depth_buffer_srv: &current_depth,
+                motion_vectors_srv: &motion,
+                taa_attribs: &TemporalAntiAliasingAttribs::default(),
+                accumulation_buffer_idx: 0,
+                pass_timestamps: None,
+            });
+            queue.submit([std::mem::replace(
+                &mut encoder,
+                device.create_command_encoder(&Default::default()),
+            )
+            .finish()]);
+        }
+        let texels = read_rgba16f(&device, &queue, taa.get_accumulated_frame_srv(false, 0));
+        for y in near_texel[1] - 3..=near_texel[1] + 3 {
+            for x in near_texel[0] - 3..=near_texel[0] + 3 {
+                let within = x.abs_diff(near_texel[0]) <= 1 && y.abs_diff(near_texel[1]) <= 1;
+                let alpha = texels[at(x, y)][3];
+                if within {
+                    assert_eq!(
+                        alpha, 0.5,
+                        "reversed {reversed}: ({x}, {y}) beside the near texel kept history"
+                    );
+                } else {
+                    assert!(
+                        (alpha - 0.985).abs() < 1e-3,
+                        "reversed {reversed}: ({x}, {y}), two or more from the near texel, \
+                         has history weight {alpha}, not a still pixel's 0.985"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -798,7 +916,6 @@ fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
         &queue,
         post_fx_context::CreateInfo {
             transition_duration: 0.0,
-            ..Default::default()
         },
     );
     let mut ssr = ScreenSpaceReflection::new(&device);
@@ -820,7 +937,6 @@ fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
         device_context: &mut encoder,
         curr_depth_buffer_srv: &current_depth,
         prev_depth_buffer_srv: &previous_depth,
-        motion_vectors_srv: &motion,
         curr_camera: Some(&curr),
         prev_camera: Some(&curr),
         camera_attribs_cb: None,

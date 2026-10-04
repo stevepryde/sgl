@@ -30,7 +30,6 @@ const MODULES: &[(&str, &str)] = modules![
     "Common/private/FullScreenTriangleVS.wgsl",
     "Common/private/ComputeBlueNoiseTexture.wgsl",
     "Common/private/ComputeReprojectedDepth.wgsl",
-    "Common/private/ComputeClosestMotion.wgsl",
     "PostProcess/Common/src/PostFXContext_ScreenTriangleVS.wgsl",
     "PostProcess/Common/src/PostFXContext_CopyTexturePS.wgsl",
     "PostProcess/ScreenSpaceReflection/public/ScreenSpaceReflectionStructures.wgsl",

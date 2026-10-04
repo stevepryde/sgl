@@ -15,6 +15,67 @@ full API details.
 
 ## Unreleased
 
+### TAA finds the closest motion vectors in its resolve
+
+- **Scope:** `sgl-post-fx` `TemporalAntiAliasing` and `PostFXContext`, and
+  so `sgl-3d` TAA. `PostFXContext::execute` computed the closest motion
+  vectors in a full-screen pass for TAA, and TAA copied them each frame for
+  the next frame's history rejection. TAA now finds them in its resolve, as
+  Godot's TAA resolve finds the velocity of the closest depth, and writes
+  them beside its accumulated frame for the next frame: one full-screen
+  pass, one texture and the per-frame copy fewer. Resolved frames are
+  unchanged, but for the one after a frame that copies its input (the first
+  of a new TAA feature set, DFX-2), which compares with that frame's motion
+  vectors rather than their closest: different only within a pixel of a
+  depth edge. Removed: `post_fx_context::CreateInfo::compute_closest_motion`,
+  `PostFXContext::get_closest_motion_vectors` and
+  `post_fx_context::RenderAttributes::motion_vectors_srv`. Added:
+  `temporal_anti_aliasing::RenderAttributes::depth_buffer_srv` and
+  `motion_vectors_srv`, the depth buffer and motion vectors the context
+  took; the motion vectors must be a filterable float format, such as
+  `Rg16Float`. SGL3D's `DiligentFX closest motion` timing group is gone;
+  that work is now in `TAA`.
+- **Migration:** games using SGL3D need no code changes; a game that reads
+  timing groups by name stops reading `DiligentFX closest motion`. Code
+  calling `sgl-post-fx` directly passes the motion vectors to TAA instead of
+  the context and drops `compute_closest_motion`:
+
+  ```rust
+  // Before
+  let mut context = PostFXContext::new(&device, &queue, CreateInfo {
+      transition_duration: 0.,
+      compute_closest_motion: true,
+  });
+  context.execute(&mut post_fx_context::RenderAttributes {
+      curr_depth_buffer_srv: &depth,
+      prev_depth_buffer_srv: &previous_depth,
+      motion_vectors_srv: &motion,
+      /* ... */
+  });
+  taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+      color_buffer_srv: &color,
+      /* ... */
+  });
+  // After
+  let mut context = PostFXContext::new(&device, &queue, CreateInfo {
+      transition_duration: 0.,
+  });
+  context.execute(&mut post_fx_context::RenderAttributes {
+      curr_depth_buffer_srv: &depth,
+      prev_depth_buffer_srv: &previous_depth,
+      /* ... */
+  });
+  taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+      color_buffer_srv: &color,
+      depth_buffer_srv: &depth,
+      motion_vectors_srv: &motion,
+      /* ... */
+  });
+  ```
+
+  Afterwards, compare the `TAA` timing group with the former `TAA` and
+  `DiligentFX closest motion` on the game's route.
+
 ### Rays decode compressed material images from their stored blocks
 
 - **Scope:** `sgl-3d` scene rays (world-space reflections). A BC7 material

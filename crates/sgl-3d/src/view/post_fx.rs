@@ -201,7 +201,6 @@ fn pass_group(pass: &str) -> &'static str {
     match pass {
         "ComputeBlueNoiseTexture" => "DiligentFX blue noise",
         "ComputeReprojectedDepth" => "DiligentFX reprojected depth",
-        "ComputeClosestMotion" => "DiligentFX closest motion",
         "ComputePreviousDepth" => "DiligentFX previous depth",
         "ComputeHierarchicalDepthBuffer" => "SSR depth hierarchy",
         "ComputeStencilMaskAndExtractRoughness" => "SSR mask and roughness",
@@ -216,8 +215,7 @@ fn pass_group(pass: &str) -> &'static str {
 }
 
 impl PostFx {
-    /// With `taa`, the context also computes the closest motion vectors TAA
-    /// reads.
+    /// With `taa`, the effects include TAA.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, taa: bool) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("DiligentFX inputs"),
@@ -239,9 +237,6 @@ impl PostFx {
                 // wall-clock time.
                 post_fx_context::CreateInfo {
                     transition_duration: 0.,
-                    // DiligentFX's TAA, SSAO and depth of field read them;
-                    // SSR does not.
-                    compute_closest_motion: taa,
                 },
             ),
             ssr: None,
@@ -476,7 +471,6 @@ impl PostFx {
                 device_context: encoder,
                 curr_depth_buffer_srv: depth_view,
                 prev_depth_buffer_srv: previous_depth,
-                motion_vectors_srv: &inputs.motion,
                 curr_camera: Some(&camera),
                 prev_camera: Some(&previous_camera),
                 camera_attribs_cb: None,
@@ -553,6 +547,7 @@ impl PostFx {
         timing: Option<&crate::timing::GpuTiming>,
     ) -> &wgpu::TextureView {
         let taa = self.taa.as_mut().expect("PostFx::new with TAA");
+        let inputs = self.inputs.as_ref().expect("PostFx::begin");
         let timestamps =
             |pass: &'static str| timing.and_then(|timing| timing.render_pass(pass_group(pass)));
         taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
@@ -561,6 +556,8 @@ impl PostFx {
             device_context: encoder,
             post_fx_context: &mut self.context,
             color_buffer_srv: color,
+            depth_buffer_srv: &inputs.depth[(self.frame_index & 1) as usize],
+            motion_vectors_srv: &inputs.motion,
             taa_attribs: &TemporalAntiAliasingAttribs {
                 reset_accumulation: u32::from(self.reset_accumulation),
                 ..Default::default()
