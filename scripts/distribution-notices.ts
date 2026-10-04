@@ -17,7 +17,7 @@ const process_ = Bun.spawn([
 const [status, json] = await Promise.all([process_.exited, new Response(process_.stdout).text()]);
 if (status !== 0) process.exit(status);
 
-type Package = { name: string; version: string; manifest_path: string; authors: string[] };
+type Package = { name: string; version: string; source: string | null; manifest_path: string; authors: string[] };
 type License = { id: string; text: string; source_path: string | null; used_by: { crate: Package }[] };
 type Supplement = { packages: string[]; source: string; text: string; note?: string };
 const data: { licenses: License[]; crates: { package: Package; license: string }[] } = JSON.parse(json);
@@ -65,13 +65,20 @@ const unresolved = data.licenses.filter((license) => !license.source_path
 if (unresolved.length) {
   throw new Error(`Missing original attribution for ${[...new Set(unresolved)].join(", ")}. Resolve with cargo-about --config clarifications or pinned supplemental notices; output was not written.`);
 }
+// Path packages (the workspace's own crates) are named without a version so a
+// release bump leaves the notices unchanged. Registry and Git packages keep it:
+// several versions of one crate can carry different notices.
+const label = (name: string) => {
+  const p = packages.get(name);
+  return p && !p.source ? p.name : name;
+};
 const sections = [
   "DISTRIBUTION NOTICES",
   "Collected for the resolved Cargo packages listed below. Identical texts are shared.\nAdditional game assets and non-Cargo components need their own applicable notices.\nAlternative licence texts are retained as supplied; this does not require choosing both.",
-  [...packages].sort(([a], [b]) => a.localeCompare(b)).map(([name, p]) =>
+  [...packages].map(([name, p]) => [label(name), p] as const).sort(([a], [b]) => a.localeCompare(b)).map(([name, p]) =>
     `${name}${p.authors.length ? ` — authors: ${p.authors.join(", ")}` : ""}`).join("\n"),
 ];
-for (const [text, owners] of texts) sections.push(`--- Applies to: ${[...owners].sort().join(", ")}\n\n${text}`);
+for (const [text, owners] of texts) sections.push(`--- Applies to: ${[...owners].map(label).sort().join(", ")}\n\n${text}`);
 // Use the copyright holder's preferred name, including in older published dependencies.
 const notices = `${sections.join("\n\n")}\n`.replace(/\bSteve(?= Pryde\b)/g, "Stephen");
 await writeFile(output, notices);

@@ -15,6 +15,15 @@ full API details.
 
 ## Unreleased
 
+### Distribution notices name path packages without versions
+
+- **Scope:** `scripts/distribution-notices.ts`. Path packages (a workspace's
+  own crates, or SGL from a local checkout) are now listed by name only, so a
+  version bump no longer changes the generated notices. Registry and Git
+  packages keep their versions.
+- **Migration:** no game-code changes. A game's next regeneration drops the
+  versions from its path packages.
+
 ## 0.2.0 — 2026-10-04
 
 ### One version for every SGL crate

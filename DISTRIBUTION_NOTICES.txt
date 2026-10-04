@@ -211,12 +211,12 @@ serde_core@1.0.229 — authors: Erick Tryzelaar <erick.tryzelaar@gmail.com>, Dav
 serde_derive@1.0.229 — authors: Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>
 serde_json@1.0.151 — authors: Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>
 serde@1.0.229 — authors: Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>
-sgl-2d@0.1.0
-sgl-3d@0.1.0
-sgl-core@0.1.0
-sgl-input@0.1.0
-sgl-net@0.1.0
-sgl-post-fx@0.1.0
+sgl-2d
+sgl-3d
+sgl-core
+sgl-input
+sgl-net
+sgl-post-fx
 sha1@0.10.7 — authors: RustCrypto Developers
 shlex@2.0.1 — authors: comex <comexk@gmail.com>, Fenhl <fenhl@fenhl.net>, Adrian Taylor <adetaylor@chromium.org>, Alex Touchet <alextouchet@outlook.com>, Daniel Parks <dp+git@oxidized.org>, Garrett Berg <googberg@gmail.com>
 simd_cesu8@1.2.0 — authors: Sean C. Roach <me@seancroach.dev>
@@ -728,7 +728,7 @@ Apache License
    See the License for the specific language governing permissions and
    limitations under the License.
 
---- Applies to: as-raw-xcb-connection@1.0.1, codespan-reporting@0.13.1, raw-window-metal@1.1.0, sgl-2d@0.1.0, sgl-3d@0.1.0, sgl-core@0.1.0, sgl-input@0.1.0, sgl-net@0.1.0, static_assertions@1.1.0, x11rb-protocol@0.13.2, x11rb@0.13.2, zeroize@1.9.0, zune-core@0.5.3, zune-jpeg@0.5.15
+--- Applies to: as-raw-xcb-connection@1.0.1, codespan-reporting@0.13.1, raw-window-metal@1.1.0, sgl-2d, sgl-3d, sgl-core, sgl-input, sgl-net, static_assertions@1.1.0, x11rb-protocol@0.13.2, x11rb@0.13.2, zeroize@1.9.0, zune-core@0.5.3, zune-jpeg@0.5.15
 
 Apache License
                            Version 2.0, January 2004
@@ -5558,7 +5558,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
---- Applies to: allocator-api2@0.2.21, android-activity@0.6.1, android_system_properties@0.1.6, blake3@1.8.6, constant_time_eq@0.4.2, document-features@0.2.12, fdeflate@0.3.7, fontdue@0.9.4, gilrs-core@0.6.8, gilrs@0.11.2, gl_generator@0.14.0, gpu-descriptor-types@0.2.0, gpu-descriptor@0.3.2, half@2.7.1, image@0.25.10, itoa@1.0.18, jni-macros@0.22.4, jni-sys-macros@0.4.1, jni@0.22.4, khronos_api@3.1.0, libc@0.2.189, litrs@1.0.0, miniz_oxide@0.8.9, miniz_oxide@0.9.1, naga@29.0.4, ndk-context@0.1.1, ndk-sys@0.6.0+11769913, ndk@0.9.0, num_enum@0.7.6, num_enum_derive@0.7.6, objc2-core-foundation@0.3.2, objc2-game-controller@0.3.2, objc2-io-kit@0.3.2, objc2-metal@0.3.2, objc2-quartz-core@0.3.2, pin-project-internal@1.1.13, pin-project-lite@0.2.17, pin-project@1.1.13, portable-atomic-util@0.2.7, portable-atomic@1.14.0, proc-macro2@1.0.107, profiling@1.0.18, quote@1.0.47, r-efi@5.3.0, r-efi@6.0.0, rand@0.9.5, rand_chacha@0.9.0, range-alloc@0.1.5, raw-window-handle@0.6.2, rustversion@1.0.23, semver@1.0.28, serde@1.0.229, serde_core@1.0.229, serde_derive@1.0.229, serde_json@1.0.151, sgl-post-fx@0.1.0, shlex@2.0.1, simdutf8@0.1.5, spirv@0.4.0+sdk-1.4.341.0, syn@2.0.119, syn@3.0.3, thiserror-impl@1.0.69, thiserror-impl@2.0.20, thiserror@1.0.69, thiserror@2.0.20, unicode-ident@1.0.24, wgpu-core-deps-apple@29.0.4, wgpu-core-deps-emscripten@29.0.4, wgpu-core-deps-windows-linux-android@29.0.4, wgpu-core@29.0.4, wgpu-hal@29.0.4, wgpu-naga-bridge@29.0.4, wgpu-types@29.0.4, wgpu@29.0.4
+--- Applies to: allocator-api2@0.2.21, android-activity@0.6.1, android_system_properties@0.1.6, blake3@1.8.6, constant_time_eq@0.4.2, document-features@0.2.12, fdeflate@0.3.7, fontdue@0.9.4, gilrs-core@0.6.8, gilrs@0.11.2, gl_generator@0.14.0, gpu-descriptor-types@0.2.0, gpu-descriptor@0.3.2, half@2.7.1, image@0.25.10, itoa@1.0.18, jni-macros@0.22.4, jni-sys-macros@0.4.1, jni@0.22.4, khronos_api@3.1.0, libc@0.2.189, litrs@1.0.0, miniz_oxide@0.8.9, miniz_oxide@0.9.1, naga@29.0.4, ndk-context@0.1.1, ndk-sys@0.6.0+11769913, ndk@0.9.0, num_enum@0.7.6, num_enum_derive@0.7.6, objc2-core-foundation@0.3.2, objc2-game-controller@0.3.2, objc2-io-kit@0.3.2, objc2-metal@0.3.2, objc2-quartz-core@0.3.2, pin-project-internal@1.1.13, pin-project-lite@0.2.17, pin-project@1.1.13, portable-atomic-util@0.2.7, portable-atomic@1.14.0, proc-macro2@1.0.107, profiling@1.0.18, quote@1.0.47, r-efi@5.3.0, r-efi@6.0.0, rand@0.9.5, rand_chacha@0.9.0, range-alloc@0.1.5, raw-window-handle@0.6.2, rustversion@1.0.23, semver@1.0.28, serde@1.0.229, serde_core@1.0.229, serde_derive@1.0.229, serde_json@1.0.151, sgl-post-fx, shlex@2.0.1, simdutf8@0.1.5, spirv@0.4.0+sdk-1.4.341.0, syn@2.0.119, syn@3.0.3, thiserror-impl@1.0.69, thiserror-impl@2.0.20, thiserror@1.0.69, thiserror@2.0.20, unicode-ident@1.0.24, wgpu-core-deps-apple@29.0.4, wgpu-core-deps-emscripten@29.0.4, wgpu-core-deps-windows-linux-android@29.0.4, wgpu-core@29.0.4, wgpu-hal@29.0.4, wgpu-naga-bridge@29.0.4, wgpu-types@29.0.4, wgpu@29.0.4
 
 Apache License
 Version 2.0, January 2004
@@ -5634,7 +5634,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
---- Applies to: sgl-3d@0.1.0
+--- Applies to: sgl-3d
 
 Filament, https://github.com/google/filament
 Revision ef1a133d6777299ad971a0f9612adf4aad281f46, LICENSE (Apache-2.0). SGL3D ports normalFiltering
@@ -7773,7 +7773,7 @@ is licensed under:
 
 at your option.
 
---- Applies to: sgl-3d@0.1.0
+--- Applies to: sgl-3d
 
 THIRD-PARTY NOTICES FOR STEVE'S GAME LIBRARY
 
@@ -8249,7 +8249,7 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
 OR OTHER DEALINGS IN THE SOFTWARE.
 
---- Applies to: sgl-post-fx@0.1.0
+--- Applies to: sgl-post-fx
 
 THIRD-PARTY NOTICES FOR STEVE'S GAME LIBRARY
 
