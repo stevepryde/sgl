@@ -39,18 +39,22 @@ const SHADOW_FILTER_GAUSSIAN:u32=1u;
 const SHADOW_FILTER_TEMPORAL:u32=2u;
 // What receives a shadow: a probe capture's or ray hit's surface, which
 // takes the static layers and the fixed kernel; the camera's surface, which
-// takes the frame's maps and the temporal kernel while temporal
-// antialiasing resolves it; and a point of the camera's fog, which has no
-// side and takes the frame's maps with one tap that the fog's reprojection
-// resolves: a local light's one hardware tap, as Bevy's volumetric fog
-// samples it, and the directional cascade's Godot's fog tap
-// (directional_shadow.wgsl).
+// takes the frame's maps with the filter its shadow quality chooses (one
+// hardware tap, as Godot's hard filter; else the temporal kernel while
+// temporal antialiasing resolves it, or the fixed one); and a point of the
+// camera's fog, which has no side and takes the frame's maps with one tap
+// that the fog's reprojection resolves: a local light's one hardware tap,
+// as Bevy's volumetric fog samples it, and the directional cascade's
+// Godot's fog tap (directional_shadow.wgsl).
 const SHADOW_RECEIVER_CAPTURE:u32=0u;
 const SHADOW_RECEIVER_CAMERA:u32=1u;
 const SHADOW_RECEIVER_MEDIUM:u32=2u;
 // The filter a receiver's shadows take.
 fn shadow_filter(receiver:u32)->u32 {
  if receiver==SHADOW_RECEIVER_MEDIUM {
+  return SHADOW_FILTER_HARDWARE_2X2;
+ }
+ if receiver==SHADOW_RECEIVER_CAMERA && (frame.flags&FRAME_HARDWARE_SHADOW_FILTER)!=0u {
   return SHADOW_FILTER_HARDWARE_2X2;
  }
  if receiver==SHADOW_RECEIVER_CAMERA && (frame.flags&FRAME_TEMPORAL_SHADOW_FILTER)!=0u {

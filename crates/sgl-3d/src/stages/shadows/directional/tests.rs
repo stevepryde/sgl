@@ -488,6 +488,54 @@ fn every_cascade_shadows_its_part_of_the_view() {
     }
 }
 
+// Plausible defect: a change of shadow quality that leaves lit group 0
+// binding the old cascades. The oracle is geometric, as above: on the first
+// frame at each quality, the receiver is dark while an occluder the camera
+// does not see covers it from the light, and as lit as without it while it
+// casts nothing; the occluder comes and goes with each change, so cascades
+// kept from the last quality show it where it no longer is.
+#[test]
+fn cascades_follow_a_change_of_shadow_quality() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    fixture.place(quad(Vec3::new(0., 0., -5.), 1.), true);
+    let occluder = fixture.place(quad(Vec3::new(0., 0., -4.), 0.5), false);
+    let input = frame(DirectionalLight {
+        direction: Vec3::NEG_Z,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: Some(two_cascades()),
+        ..Default::default()
+    });
+    let center = [[SIZE[0] / 2, SIZE[1] / 2]];
+    fixture.cast(occluder, false);
+    let lit = fixture.observe(&input, &center)[0];
+    assert!(lit > 0.05, "the receiver is unlit: {lit}");
+    for (quality, casts) in [
+        (settings::ShadowQuality::Low, true),
+        (settings::ShadowQuality::High, false),
+        (settings::ShadowQuality::Low, false),
+        (settings::ShadowQuality::High, true),
+    ] {
+        fixture.settings.shadow_quality = quality;
+        fixture.cast(occluder, casts);
+        let seen = fixture.observe(&input, &center)[0];
+        if casts {
+            assert!(
+                seen < 0.01 * lit,
+                "{quality:?}: the receiver is {seen} behind the occluder and {lit} without"
+            );
+        } else {
+            assert!(
+                (seen - lit).abs() < 0.01 * lit,
+                "{quality:?}: the receiver is {seen} without the occluder, {lit} before"
+            );
+        }
+    }
+}
+
 // Ray hits have no camera depth, so they take the first cascade whose map
 // holds them. Plausible defects: a hit takes the cascade of its camera view
 // depth, which may not hold it (a hit behind the camera has negative depth

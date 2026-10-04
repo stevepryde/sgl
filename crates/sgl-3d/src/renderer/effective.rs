@@ -4,9 +4,9 @@
 use crate::FrameInput;
 use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, FogQuality, ReflectionMethod, RenderPreset,
-    ScreenSpaceReflections, Settings,
+    ScreenSpaceReflections, Settings, ShadowQuality,
 };
-use crate::view::effective::{AmbientOcclusion, Effective, ScreenSpace, Sizing};
+use crate::view::effective::{AmbientOcclusion, Effective, ScreenSpace, ShadowFilter, Sizing};
 use crate::view::pipelines::LayerConstants;
 
 /// The size-affecting choices of `settings`.
@@ -131,11 +131,20 @@ pub(super) fn resolve(
     });
     // DiligentFX's SSR shares TAA's post-effect context.
     let crystal = screen_space.is_some_and(|ssr| ssr.method == ReflectionMethod::Crystal);
+    // The camera's shadow filter: Godot's hard tap at Low; at High, Bevy's
+    // spiral while temporal antialiasing resolves it, else its Gaussian.
+    let shadow_filter = match settings.shadow_quality {
+        ShadowQuality::Low => ShadowFilter::Hardware,
+        ShadowQuality::High if taa || fsr2 => ShadowFilter::Temporal,
+        ShadowQuality::High => ShadowFilter::Gaussian,
+    };
     Effective {
         antialiasing,
         taa,
         fsr2,
         post_fx: taa || crystal,
+        shadow_quality: settings.shadow_quality,
+        shadow_filter,
         ambient_occlusion,
         screen_space,
         world_space: settings.world_space_reflections && screen_space.is_some(),

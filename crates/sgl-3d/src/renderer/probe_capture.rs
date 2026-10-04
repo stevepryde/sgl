@@ -26,7 +26,10 @@ impl Renderer {
     /// bounce. Baked lights light only surfaces without baked lighting. Moving
     /// instances, effects and atmospheric post are excluded; the camera is
     /// unused. It shares the frame's shadow views and maps, so call it
-    /// between frames, not between `render` and `finish_frame`. This blocks
+    /// between frames, not between `render` and `finish_frame`. Those maps
+    /// follow `settings.shadow_quality`: a capture at another quality than
+    /// the frames reallocates the frame's maps and resets the local-light
+    /// shadow cache, so the next frame draws every shadow again. This blocks
     /// for GPU readback; it is for asset authoring, never a runtime loop.
     /// WebGPU cannot block, so in a browser it fails with
     /// `ProbeError::Readback`: bake natively and load the result.
@@ -57,6 +60,10 @@ impl Renderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("author static specular probe"),
         });
+        // The capture draws into the frame's shadow maps, at the settings'
+        // quality, and its groups bind them.
+        self.shadows.resize(device, settings.shadow_quality);
+        self.bindings.shadow_maps = self.shadows.maps();
         let mut views = self.prepare.capture(
             device,
             queue,
@@ -64,6 +71,7 @@ impl Renderer {
             input,
             !settings.diagnostics_in_effect().disable.local_lights,
             center,
+            settings.shadow_quality.cascade_size(),
         );
         // Their lights' shadows sample static layers placed for the capture.
         let local_records = self.shadows.local.plan_capture(

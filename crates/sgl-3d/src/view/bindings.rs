@@ -51,6 +51,9 @@ struct SceneGroups {
     clusters: [wgpu::Buffer; 2],
     /// The local-light shadow records they bind.
     local_records: wgpu::Buffer,
+    /// The shadow maps they bind: the directional cascades, the local-light
+    /// atlas and its static layers.
+    shadow_maps: [wgpu::TextureView; 3],
     /// The fog volume they bind.
     fog: wgpu::TextureView,
     /// The camera's lit group, with the installed probes, which its
@@ -134,7 +137,8 @@ impl FrameBindings {
     /// Rebuilds the camera's groups when `scene` is another scene, has
     /// replaced a resource they bind, `environment` (the frame's) binds
     /// other textures, `views` replaced a cluster buffer, `shadows`
-    /// replaced its local-light shadow records or `fog` its volume.
+    /// replaced a map or its local-light shadow records, or `fog` its
+    /// volume.
     pub fn refresh(
         &mut self,
         device: &wgpu::Device,
@@ -152,11 +156,18 @@ impl FrameBindings {
             views.ray_lists.buffer().clone(),
         ];
         let local_records = self.shadow_maps.local_records.clone();
+        let maps = &self.shadow_maps;
+        let shadow_maps = [
+            maps.directional.clone(),
+            maps.local_atlas.clone(),
+            maps.local_layers.clone(),
+        ];
         if self.groups.as_ref().is_some_and(|groups| {
             groups.resources == scene.resources
                 && groups.environment == environment
                 && groups.clusters == clusters
                 && groups.local_records == local_records
+                && groups.shadow_maps == shadow_maps
                 && groups.fog == self.fog.0
         }) {
             return;
@@ -187,6 +198,7 @@ impl FrameBindings {
             environment,
             clusters,
             local_records,
+            shadow_maps,
             fog: self.fog.0.clone(),
             camera_lit,
             ray_hit_lit,

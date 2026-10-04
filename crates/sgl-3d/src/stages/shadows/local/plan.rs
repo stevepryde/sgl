@@ -54,7 +54,6 @@ pub(super) struct Face {
     pub moving: DrawList,
 }
 
-#[derive(Default)]
 pub(super) struct Plan {
     allocation: Atlas,
     cache: Cache,
@@ -71,6 +70,20 @@ pub(super) struct Plan {
 }
 
 impl Plan {
+    /// Nothing placed or drawn yet in an atlas of `size` texels a side.
+    pub fn new(size: u32) -> Self {
+        Self {
+            allocation: Atlas::new(size),
+            cache: Cache::default(),
+            frame: 0,
+            faces: Vec::new(),
+            drawn: 0,
+            records: Vec::new(),
+            reach: LightReach::default(),
+            stats: LocalShadowStats::default(),
+        }
+    }
+
     /// The faces this frame draws.
     pub fn faces(&self) -> &[Face] {
         &self.faces[..self.drawn]
@@ -383,7 +396,7 @@ fn candidates(
 /// The shadow record of a light seen as `shadow` at `placement`, whose
 /// static layers hold its static casters when `layered`.
 fn record(shadow: LightView, placement: Placement, layered: bool) -> LocalShadowRecord {
-    let texel = 1. / atlas::ATLAS_SIZE as f32;
+    let texel = 1. / placement.atlas as f32;
     // A face's width at a metre along its axis, over its texels: Bevy's
     // point and spot texel sizes (crates/bevy_pbr/src/render/light.rs).
     let (kind, width) = match shadow.shape {

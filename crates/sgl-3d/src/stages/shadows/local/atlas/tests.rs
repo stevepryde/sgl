@@ -4,6 +4,9 @@ use super::*;
 use crate::content::identity::Identity;
 use wasm_bindgen_test::wasm_bindgen_test;
 
+/// The atlas's size: its slots are 512, 256, 128 and 64 texels.
+const SIZE: u32 = 4096;
+
 fn light(index: usize) -> LightId {
     LightId::issue(index, index as u64 + 1)
 }
@@ -28,7 +31,7 @@ fn rects(atlas: &Atlas) -> Vec<(LightId, [u32; 4])> {
 // other.
 #[wasm_bindgen_test(unsupported = test)]
 fn held_faces_never_overlap() {
-    let mut atlas = Atlas::default();
+    let mut atlas = Atlas::new(SIZE);
     let mut state = 0x2545_f491_4f6c_dd1du64;
     let mut random = move || {
         state ^= state << 13;
@@ -51,7 +54,7 @@ fn held_faces_never_overlap() {
         }
         let rects = rects(&atlas);
         for (i, (light, a)) in rects.iter().enumerate() {
-            assert!(a[2] <= ATLAS_SIZE && a[3] <= ATLAS_SIZE, "{light:?} {a:?}");
+            assert!(a[2] <= SIZE && a[3] <= SIZE, "{light:?} {a:?}");
             for (other, b) in &rects[i + 1..] {
                 let disjoint = a[2] <= b[0] || b[2] <= a[0] || a[3] <= b[1] || b[3] <= a[1];
                 assert!(
@@ -69,7 +72,7 @@ fn held_faces_never_overlap() {
 // the size it wants.
 #[wasm_bindgen_test(unsupported = test)]
 fn a_light_moves_to_its_wanted_size_only_after_holding_its_slots() {
-    let mut atlas = Atlas::default();
+    let mut atlas = Atlas::new(SIZE);
     let small = atlas.update(light(0), 0., 1, 1).unwrap();
     assert_eq!(small.size, 64);
     for frame in 2..=1 + REALLOCATION_FRAMES {
@@ -84,7 +87,7 @@ fn a_light_moves_to_its_wanted_size_only_after_holding_its_slots() {
 /// Fills the 64-texel quadrant with one-slot lights 0..1024 seen at frame 1,
 /// except `stale`, last seen at frame `stale_frame`.
 fn full(stale: usize, stale_frame: u64) -> Atlas {
-    let mut atlas = Atlas::default();
+    let mut atlas = Atlas::new(SIZE);
     for index in 0..1024 {
         atlas.update(light(index), 0., 1, 1).unwrap();
     }
@@ -125,11 +128,11 @@ fn a_full_quadrant_gives_up_the_least_recently_seen_light() {
 // one light lie in one quadrant, wrapping its rows.
 #[wasm_bindgen_test(unsupported = test)]
 fn a_cube_takes_six_consecutive_slots_of_one_quadrant() {
-    let mut atlas = Atlas::default();
+    let mut atlas = Atlas::new(SIZE);
     let cube = atlas.update(light(0), 10., 6, 1).unwrap();
     assert_eq!(cube.size, 512);
     let quadrants: Vec<_> = (0..6)
-        .map(|face| cube.origin(face).map(|texel| texel / (ATLAS_SIZE / 2)))
+        .map(|face| cube.origin(face).map(|texel| texel / (SIZE / 2)))
         .collect();
     assert!(quadrants.iter().all(|&quadrant| quadrant == quadrants[0]));
     let rows: Vec<_> = (0..6).map(|face| cube.origin(face)[1]).collect();
@@ -142,7 +145,7 @@ fn a_cube_takes_six_consecutive_slots_of_one_quadrant() {
 // the count of lights the scene still has.
 #[wasm_bindgen_test(unsupported = test)]
 fn removed_lights_are_forgotten() {
-    let mut atlas = Atlas::default();
+    let mut atlas = Atlas::new(SIZE);
     // Cubes fill the 64-texel quadrant, all seen every frame.
     let resident: Vec<_> = (0..170).map(light).collect();
     let mut churned = Vec::new();

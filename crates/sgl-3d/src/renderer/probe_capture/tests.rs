@@ -1,4 +1,5 @@
 use super::*;
+use crate::settings::ShadowQuality;
 use glam::camera;
 
 // Surfaces in a camera view leave specular image-based lighting to the
@@ -266,19 +267,58 @@ fn captures_shade_scene_lights_by_the_ownership_rule() {
 // defects: cascades fit to the frame's camera rather than the capture, a
 // face selecting a cascade by its own view depth that does not hold the
 // surface, or casters in front of a cascade clipped. The oracle is
-// geometric: a capture looks down at a floor that an occluder high above it,
-// beyond its cascades' pancake, covers from a light shining down, while the
-// frame's camera is far away; the floor it records is dark under the
-// occluder and lit without it.
+// geometric (`floor_under_occluder`).
 #[test]
 fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
+    let Some(gpu) = crate::test_support::device() else {
+        return;
+    };
+    let (shadowed, lit) = floor_under_occluder(gpu, None, ShadowQuality::High);
+    assert!(
+        lit > 0.05 && shadowed < 0.01 * lit,
+        "the floor below the capture is {shadowed} under the occluder and {lit} without"
+    );
+}
+
+// Plausible defect: a capture at another shadow quality than the frames
+// before it reallocates the frame's maps and draws its cascades into the
+// new ones, while its lit groups bind the old ones, which hold the last
+// frame's cascades about a camera far away. The oracle is geometric
+// (`floor_under_occluder`), with the capture after a frame at the other
+// quality, each way.
+#[test]
+fn a_capture_at_another_shadow_quality_shadows_from_its_own_maps() {
+    for (frames, capture) in [
+        (ShadowQuality::High, ShadowQuality::Low),
+        (ShadowQuality::Low, ShadowQuality::High),
+    ] {
+        let Some(gpu) = crate::test_support::device() else {
+            return;
+        };
+        let (shadowed, lit) = floor_under_occluder(gpu, Some(frames), capture);
+        assert!(
+            lit > 0.05 && shadowed < 0.01 * lit,
+            "a {capture:?} capture after {frames:?} frames: the floor below it is {shadowed} \
+             under the occluder and {lit} without"
+        );
+    }
+}
+
+/// The floor a capture records below it, under an occluder and without it,
+/// at the shadow quality `capture`, after a frame at `frames` when given: a
+/// capture looks down at a floor that an occluder high above it, beyond its
+/// cascades' pancake, covers from a light shining down, while the frame's
+/// camera is far away, so the floor it records should be dark under the
+/// occluder and lit without it.
+fn floor_under_occluder(
+    (device, queue): (wgpu::Device, wgpu::Queue),
+    frames: Option<ShadowQuality>,
+    capture: ShadowQuality,
+) -> (f32, f32) {
     use crate::asset::CpuMesh;
     use crate::settings::Settings;
     use crate::{Camera, DirectionalLight, DirectionalShadow, FrameInput, Scene};
     use glam::Vec3;
-    let Some((device, queue)) = crate::test_support::device() else {
-        return;
-    };
     // A white single-sided square facing +Y at height `y`.
     let square = |y: f32, half: f32| {
         let mut asset = crate::test_support::cube();
@@ -333,8 +373,38 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
         shadow: Some(shadow),
         ..Default::default()
     });
-    let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let quality = |shadow_quality| Settings {
+        shadow_quality,
+        ..Settings::default()
+    };
+    let settings = quality(capture);
+    let mut renderer = Renderer::for_test(
+        &device,
+        &queue,
+        [64, 64],
+        &quality(frames.unwrap_or(capture)),
+    );
+    if let Some(frames) = frames {
+        let output = crate::view::targets::target(
+            &device,
+            "frame before the capture",
+            [64, 64],
+            crate::shading::gbuffer::COLOR,
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &input,
+            &quality(frames),
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+    }
     let face_size = 64;
     let mut floor = |scene: &mut Scene| {
         let radiance = renderer
@@ -360,11 +430,7 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
     let mut state = *scene.instance(occluder).unwrap();
     state.capture_visible = false;
     scene.set_instance(&queue, occluder, state).unwrap();
-    let lit = floor(&mut scene);
-    assert!(
-        lit > 0.05 && shadowed < 0.01 * lit,
-        "the floor below the capture is {shadowed} under the occluder and {lit} without"
-    );
+    (shadowed, floor(&mut scene))
 }
 
 // A probe capture shades with the scene's lights' shadows from the static

@@ -15,6 +15,31 @@ full API details.
 
 ## Unreleased
 
+### One shadow-quality setting sets the shadow maps' sizes and filter
+
+- **Scope:** `sgl-3d` adds `Settings::shadow_quality`
+  (`settings::ShadowQuality`: `High`, the default, or `Low`), Godot's
+  desktop and mobile shadow defaults (b130438 `directional_shadow/size`,
+  `positional_shadow/atlas_size`, `soft_shadow_filter_quality` and their
+  `.mobile` overrides). `High` is what every shadow had before: 2048-texel
+  directional cascades, a 4096-texel local-light atlas, and the camera's
+  surfaces filtered with Jimenez's spiral under TAA or FSR2, else Castaño's
+  kernel. `Low` takes 1024-texel cascades, a 2048-texel atlas with slots of
+  half the size, and one hardware 2×2 comparison for the camera's surfaces
+  (Godot's hard filter). Probe captures and ray hits keep Castaño's kernel,
+  and the fog its one tap, at either. A change reallocates the maps on the
+  next frame (or probe capture), which places and draws every shadow
+  again. Saved settings without the field load as `High`. Also fixed: the
+  camera's local-light shadows took Castaño's kernel under TAA or FSR2 in
+  frames where no directional light cast a shadow; they now take the
+  spiral, as the package README says.
+- **Migration:** no game-code changes where `Settings` comes from
+  `Settings::default()`, `..Settings::default()` or deserialization; an
+  exhaustive `Settings { .. }` literal adds `shadow_quality`. A game may
+  offer it to players ([settings](crates/sgl-3d/docs/settings.md)).
+  Afterwards, look at the game's shadows at Low, and at local-light shadows
+  under TAA in scenes without a shadowed directional light.
+
 ### World-space reflection rays reach 1000 m, as Wicked Engine's
 
 - **Scope:** `sgl-3d` world-space reflections
