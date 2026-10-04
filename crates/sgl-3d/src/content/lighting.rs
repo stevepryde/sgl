@@ -47,50 +47,38 @@ impl Default for DirectionalLight {
     }
 }
 
-/// A directional light's cascaded shadow, which SGL3D fits from the camera
-/// (Bevy's `CascadeShadowConfigBuilder`, Godot's directional shadow splits).
+/// A directional light's cascaded shadow, which SGL3D splits and fits from
+/// the camera (Godot's `DirectionalLight3D` splits, Bevy's cascade fit).
 /// The camera's view depth from its near plane to `distance` is split into
 /// `cascades`, each a shadow map of the same size covering a farther and
-/// larger part of the view, so texels near the camera are small.
+/// larger part of the view, so texels near the camera are small. SGL3D
+/// places the splits as Godot does by default: each cascade but the last
+/// ends 0.1, 0.2 and 0.5 of the way from the near plane to `distance`, and
+/// the last at `distance`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DirectionalShadow {
-    /// The farthest view depth that is shadowed, in metres (Bevy's
-    /// `maximum_distance`). Nonpositive or nonfinite casts no shadow.
+    /// The farthest view depth that is shadowed, in metres (Godot's
+    /// `directional_shadow_max_distance`, Bevy's `maximum_distance`).
+    /// Nonpositive or nonfinite casts no shadow.
     pub distance: f32,
     /// How many cascades split `distance`, 1 to 4; others are clamped.
     pub cascades: u32,
-    /// The view depth where the first cascade ends, in metres (Bevy's
-    /// `first_cascade_far_bound`); the others end at depths spaced
-    /// geometrically from it to `distance`. At most `distance`; one that is
-    /// not finite or not beyond the camera's near plane gives one cascade
-    /// over the whole distance. Unused with one cascade.
-    pub first_split: f32,
-    /// How far toward the light, in metres, each cascade's map still records
-    /// a caster at its own depth beyond the part of the view it covers
-    /// (Godot's `directional_shadow_pancake_size`); a caster farther toward
-    /// the light is recorded at the margin's edge and still shadows the
-    /// cascade. Negative or non-finite is 0.
-    pub pancake_size: f32,
 }
 
 impl DirectionalShadow {
-    /// Bevy's `CascadeShadowConfigBuilder` defaults (150 m, 4 cascades, the
-    /// first ending at 10 m) and Godot's 20 m pancake, as `Default::default()`
-    /// returns them, for a `const` to build from:
+    /// Bevy's `CascadeShadowConfigBuilder` defaults (150 m and 4 cascades),
+    /// as `Default::default()` returns them, for a `const` to build from:
     ///
     /// ```
     /// use sgl_3d::DirectionalShadow;
     /// const COURSE_SHADOW: DirectionalShadow = DirectionalShadow {
     ///     distance: 200.,
-    ///     first_split: 12.,
     ///     ..DirectionalShadow::DEFAULT
     /// };
     /// ```
     pub const DEFAULT: Self = Self {
         distance: 150.,
         cascades: 4,
-        first_split: 10.,
-        pancake_size: 20.,
     };
 }
 

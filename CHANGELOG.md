@@ -92,6 +92,51 @@ full API details.
 - **Migration:** no game-code changes. Afterwards, compare the `fog filter`
   timing group on the game's route.
 
+### SGL3D places the directional shadow's splits, as Godot does
+
+- **Scope:** `sgl-3d` `DirectionalShadow` loses `first_split`; a game sets
+  only `distance` and `cascades` (S3D-6), and `DirectionalShadow::DEFAULT`
+  and `Default` stay 150 m and 4 cascades. The splits were Bevy's: the
+  first cascade ended at `first_split` and the others at depths spaced
+  geometrically from there to `distance`. They are now Godot's
+  `DirectionalLight3D` default splits: each cascade but the last ends 0.1,
+  0.2 and 0.5 of the way from the camera's near plane to `distance`, and
+  the last at `distance`; 2 cascades split at 0.1, 3 at 0.1 and 0.2. This
+  changes the look. With a 0.1 m near plane:
+  - the default (150 m, 4 cascades) splits at 15.1, 30.1 and 75 m (was 10,
+    24.7 and 60.8 m): the first cascade reaches 1.5 times as deep and the
+    next two about 1.2 times, so their texels are that much larger and
+    shadows near the camera a little softer; the last is unchanged;
+  - 200 m in 4 cascades with a 12 m first split splits at 20.1, 40.1 and
+    100 m (was 12, 30.7 and 78.3 m);
+  - 40 m in 2 cascades with a 10 m first split splits at 4.1 m;
+  - SGL3D's examples (20 m in 2 cascades with a 6 or 8 m first split, 15 m
+    with 6 m) split at 2.1 and 1.6 m.
+
+  A probe capture's cascades start at its centre: they end at 0.1, 0.2 and
+  0.5 of `distance`. A short distance now always splits (a first split
+  within the near plane gave one cascade).
+- **Migration:** delete `first_split` from every `DirectionalShadow`,
+  `const`s included, and `pancake_size` where a game took it from Git
+  between releases (SGL3D keeps Godot's 20 m pancake):
+
+  ```rust
+  // Before
+  const COURSE_SHADOW: DirectionalShadow =
+      DirectionalShadow { distance: 200., cascades: 4, first_split: 12. };
+  shadow: Some(DirectionalShadow { distance: 40., cascades: 2, first_split: 10. }),
+  // After
+  const COURSE_SHADOW: DirectionalShadow = DirectionalShadow { distance: 200., cascades: 4 };
+  shadow: Some(DirectionalShadow { distance: 40., cascades: 2 }),
+  ```
+
+  `distance` and `cascades` remain the game's controls: a shorter distance
+  gives finer shadows in every cascade. Afterwards, look at shadows near
+  the camera and across cascade transitions under the shadowed light,
+  especially in close scenes with few cascades. Existing probe captures
+  stay valid; a new capture may differ slightly where the light is
+  shadowed.
+
 ### The atmosphere is off by default, as Godot's fog
 
 - **Scope:** `sgl-3d` `FrameInput::atmosphere`, which turns the volumetric
@@ -157,8 +202,8 @@ full API details.
   exp(−10 × the metres the froxel lies behind its occluder) rather than cut
   off, so fog fades into an occluder's shadow over its first 10–30 cm (61 %
   of the light 5 cm behind, 37 % 10 cm behind). The metres count from the
-  occluder's depth in the cascade's map, so an occluder beyond the shadow's
-  `pancake_size` toward the light counts from the pancake's edge.
+  occluder's depth in the cascade's map, so an occluder beyond the
+  cascade's 20 m pancake toward the light counts from the pancake's edge.
   Surfaces' shadows, local lights' shadows in the fog, and fog beyond the
   shadow distance (unshadowed) are unchanged.
 - **Migration:** no game-code changes. Afterwards, look at light shafts and
@@ -167,34 +212,22 @@ full API details.
 
 ### Directional shadow cascades reach a pancake toward the light
 
-- **Scope:** `sgl-3d` directional shadows. `DirectionalShadow` gains
-  `pancake_size: f32` (Godot's `directional_shadow_pancake_size`, metres)
-  and implements `Default` (Bevy's 150 m, 4 cascades and 10 m first split,
-  with Godot's 20 m pancake). Each cascade's near plane sat on the top of its
-  slice of the view, toward the light, and every caster between it and the
-  light was recorded at that plane's depth. The near plane now lies
-  `pancake_size` beyond, as Godot's does, so a caster within that margin is
-  recorded at its own depth and only one farther away at the margin's edge.
-  The camera's surfaces are shadowed as before (their test only asks
-  whether a caster lies in front); each cascade's depth spans that many more
-  metres, which `Depth32Float` holds to well under a millimetre. Probe
-  captures and world-space ray hits take the first cascade whose map holds a
-  surface, which may now be a nearer, finer one for a surface toward the
-  light from a cascade's part of the view, so captures and reflections can
-  differ slightly; no re-capture is required, and `pancake_size: 0.` gives
-  the previous fit.
-- **Migration:** a `DirectionalShadow { .. }` literal that names every field
-  adds `pancake_size: 20.` or ends with `..Default::default()`:
-
-  ```rust
-  // Before
-  shadow: Some(DirectionalShadow { distance: 150., cascades: 4, first_split: 10. }),
-  // After
-  shadow: Some(DirectionalShadow { distance: 150., cascades: 4, first_split: 10., ..Default::default() }),
-  ```
-
-  No other game-code changes. Afterwards, check shadows near the camera
-  under the key light.
+- **Scope:** `sgl-3d` directional shadows. `DirectionalShadow` implements
+  `Default` (Bevy's 150 m and 4 cascades). Each cascade's near plane sat on
+  the top of its slice of the view, toward the light, and every caster
+  between it and the light was recorded at that plane's depth. The near
+  plane now lies 20 m beyond (Godot's default
+  `directional_shadow_pancake_size`, which SGL3D owns), as Godot's does, so a
+  caster within that margin is recorded at its own depth and only one
+  farther away at the margin's edge. The camera's surfaces are shadowed as
+  before (their test only asks whether a caster lies in front); each
+  cascade's depth spans 20 m more, which `Depth32Float` holds to well under
+  a millimetre. Probe captures and world-space ray hits take the first
+  cascade whose map holds a surface, which may now be a nearer, finer one
+  for a surface toward the light from a cascade's part of the view, so
+  captures and reflections can differ slightly; no re-capture is required.
+- **Migration:** no game-code changes. Afterwards, check shadows near the
+  camera under the key light.
 
 ### Fog volumes cost only the froxels they reach
 
@@ -237,14 +270,15 @@ full API details.
   ```rust
   // Before
   const COURSE_SHADOW: DirectionalShadow =
-      DirectionalShadow { distance: 200., cascades: 4, first_split: 12., pancake_size: 20. };
+      DirectionalShadow { distance: 200., cascades: 4, first_split: 12. };
   let decal = Decal { position, rotation: Quat::IDENTITY, size, base_color: paint, normal: None,
       metallic_roughness: None, color: [1.; 4], base_color_mix: 1., upper_fade: 0.3,
       lower_fade: 0.3, normal_fade: 0.5 };
   let state = InstanceState { model, pose: Mat4::IDENTITY, visible: true, capture_visible: true };
-  // After
+  // After (`first_split` goes: see "SGL3D places the directional shadow's
+  // splits, as Godot does")
   const COURSE_SHADOW: DirectionalShadow =
-      DirectionalShadow { distance: 200., first_split: 12., ..DirectionalShadow::DEFAULT };
+      DirectionalShadow { distance: 200., ..DirectionalShadow::DEFAULT };
   let decal = Decal { position, size, normal_fade: 0.5, ..Decal::new(paint) };
   let state = InstanceState::new(model);
   ```

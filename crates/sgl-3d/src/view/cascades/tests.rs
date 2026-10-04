@@ -9,8 +9,6 @@ fn shadow(cascades: u32) -> DirectionalShadow {
     DirectionalShadow {
         distance: 200.,
         cascades,
-        first_split: 12.,
-        ..Default::default()
     }
 }
 
@@ -242,87 +240,72 @@ fn every_point_a_capture_sees_within_the_shadow_distance_falls_inside_its_cascad
     }
 }
 
-// The authored values set the cascades' far bounds. Plausible defects: the
-// first split ignored or clamped away, the last cascade stopping short of
-// or beyond the distance, or splits that are not geometric. The oracle is
-// the `DirectionalShadow` contract: the first cascade ends at `first_split`,
-// the last at `distance`, and each bound is the same multiple of the one
-// before it.
+// Godot places the cascades' far bounds
+// (`_light_instance_setup_directional_shadow` with `DirectionalLight3D`'s
+// default splits of 0.1, 0.2 and 0.5): each but the last ends that share of the way from the camera's near plane
+// to the shadow's distance, and the last at the distance; 2 and 3 cascades
+// take the first one and two shares. Plausible defects: shares measured from
+// the view origin rather than the near plane, the wrong shares for fewer
+// cascades (the last ones, or rescaled), or the last cascade stopping short
+// of or beyond the distance. The oracle is Godot's formula over its default
+// shares, worked by hand: a camera whose near plane is 0.3 m with a 150.3 m
+// shadow (a 150 m range), and a probe capture, whose cascades start at its
+// centre, with a 40 m one.
 #[wasm_bindgen_test(unsupported = test)]
-fn cascade_bounds_follow_the_authored_split_and_distance() {
+fn cascade_bounds_are_godots_splits_of_the_range_from_the_near_plane() {
     let view = camera::rh::view::look_to_mat4(Vec3::new(3., 2., 1.), Vec3::NEG_Z, Vec3::Y);
     let projection = crate::perspective(1.1, 16. / 9., 0.3);
-    for (distance, first_split) in [(200., 12.), (40., 10.), (150., 0.5)] {
-        for count in 1..=4u32 {
-            let shadow = DirectionalShadow {
-                distance,
-                cascades: count,
-                first_split,
-                ..Default::default()
-            };
-            let cascades = Cascades::camera(view, projection, Vec3::NEG_Y, &shadow, MAP).unwrap();
-            let bounds: Vec<f32> = cascades.as_slice().iter().map(|c| c.far_bound).collect();
-            assert_eq!(bounds.len(), count as usize);
-            let close = |a: f32, b: f32| (a - b).abs() <= 1e-5 * b.abs();
-            assert!(close(*bounds.last().unwrap(), distance), "{bounds:?}");
-            if count > 1 {
-                assert!(close(bounds[0], first_split), "{bounds:?}");
-                let ratio = bounds[1] / bounds[0];
-                for pair in bounds.windows(2) {
-                    assert!(
-                        close(pair[1] / pair[0], ratio),
-                        "{bounds:?} are not geometric"
-                    );
-                }
-            }
-        }
-    }
-}
-
-// A first split that is not finite or not beyond the camera's near plane
-// (a probe capture's is its centre) cannot start a geometric series, and
-// once produced NaN bounds and matrices that removed the shadow without a
-// word. The contract gives one cascade over the whole distance instead,
-// whose view is finite.
-#[wasm_bindgen_test(unsupported = test)]
-fn an_unusable_first_split_gives_one_cascade_over_the_distance() {
-    let view = camera::rh::view::look_to_mat4(Vec3::new(3., 2., 1.), Vec3::NEG_Z, Vec3::Y);
-    let perspective = crate::perspective(1.1, 16. / 9., 0.3);
-    let orthographic = camera::rh::proj::directx::orthographic(-20., 20., -10., 10., 400., 0.);
-    for first_split in [0., -5., 0.2, f32::NAN, f32::INFINITY] {
-        let shadow = DirectionalShadow {
-            distance: 100.,
-            cascades: 4,
-            first_split,
-            ..Default::default()
-        };
+    let camera: [&[f32]; 4] = [
+        &[150.3],
+        &[15.3, 150.3],
+        &[15.3, 30.3, 150.3],
+        &[15.3, 30.3, 75.3, 150.3],
+    ];
+    let capture: [&[f32]; 4] = [&[40.], &[4., 40.], &[4., 8., 40.], &[4., 8., 20., 40.]];
+    for (count, (camera, capture)) in (1..=4u32).zip(camera.into_iter().zip(capture)) {
         let fits = [
             (
-                "perspective",
-                Cascades::camera(view, perspective, Vec3::NEG_Y, &shadow, MAP),
-            ),
-            (
-                "orthographic",
-                Cascades::camera(view, orthographic, Vec3::NEG_Y, &shadow, MAP),
+                "camera",
+                camera,
+                Cascades::camera(
+                    view,
+                    projection,
+                    Vec3::NEG_Y,
+                    &DirectionalShadow {
+                        distance: 150.3,
+                        cascades: count,
+                    },
+                    MAP,
+                ),
             ),
             (
                 "capture",
-                Cascades::capture(Vec3::new(5., 1., -3.), Vec3::NEG_Y, &shadow, MAP),
+                capture,
+                Cascades::capture(
+                    Vec3::new(5., 1., -3.),
+                    Vec3::NEG_Y,
+                    &DirectionalShadow {
+                        distance: 40.,
+                        cascades: count,
+                    },
+                    MAP,
+                ),
             ),
         ];
-        for (label, cascades) in fits {
-            let cascades = cascades.unwrap();
-            // The orthographic camera's near plane is at 0, so 0.2 splits it.
-            if label != "perspective" && first_split == 0.2 {
-                continue;
-            }
-            let cascades = cascades.as_slice();
-            assert_eq!(cascades.len(), 1, "{label}, first split {first_split}");
-            assert_eq!(cascades[0].far_bound, 100.);
+        for (label, expected, cascades) in fits {
+            let bounds: Vec<f32> = cascades
+                .unwrap()
+                .as_slice()
+                .iter()
+                .map(|cascade| cascade.far_bound)
+                .collect();
             assert!(
-                cascades[0].clip_from_world.is_finite() && cascades[0].texel_size.is_finite(),
-                "{label}, first split {first_split}: {:?}",
-                cascades[0]
+                bounds.len() == expected.len()
+                    && bounds
+                        .iter()
+                        .zip(expected)
+                        .all(|(a, b)| (a - b).abs() < 1e-3),
+                "{label}, {count} cascades: bounds {bounds:?}, not {expected:?}"
             );
         }
     }

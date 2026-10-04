@@ -3,6 +3,7 @@
 use crate::asset::{CpuMesh, Vertex};
 use crate::renderer::Renderer;
 use crate::settings::{self, Settings};
+use crate::view::cascades::SHADOW_PANCAKE_SIZE;
 use crate::{
     Backdrop, Camera, DirectionalLight, DirectionalShadow, FrameInput, InstanceState, Mobility,
     Scene, test_support,
@@ -36,16 +37,14 @@ fn two_cascades() -> DirectionalShadow {
     DirectionalShadow {
         distance: 10.,
         cascades: 2,
-        first_split: 2.5,
-        ..Default::default()
     }
 }
 
 /// An occluder's place on the receivers' axis, toward a light shining along
-/// -Z, 10 m beyond `two_cascades`' pancake: every cascade clamps it to its
-/// near plane.
+/// -Z, 10 m beyond the cascades' pancake: every cascade clamps it to its near
+/// plane.
 fn beyond_the_pancake() -> Vec3 {
-    Vec3::new(0., 0., two_cascades().pancake_size + 10.)
+    Vec3::new(0., 0., SHADOW_PANCAKE_SIZE + 10.)
 }
 
 /// A light shining along -Z onto the receiver, red or green, with or without
@@ -437,8 +436,6 @@ fn every_cascade_shadows_its_part_of_the_view() {
     let shadow = DirectionalShadow {
         distance: 200.,
         cascades: 4,
-        first_split: 10.,
-        ..Default::default()
     };
     let input = frame(DirectionalLight {
         direction: Vec3::NEG_Z,
@@ -447,7 +444,7 @@ fn every_cascade_shadows_its_part_of_the_view() {
         shadow: Some(shadow),
         ..Default::default()
     });
-    // Depths in cascades 0 to 3 (bounds 10, 27, 74 and 200 m) and beyond the
+    // Depths in cascades 0 to 3 (bounds 20, 40, 100 and 200 m) and beyond the
     // distance, each at its own place across the view.
     let receivers = [
         (3., -0.35),
@@ -495,15 +492,16 @@ fn every_cascade_shadows_its_part_of_the_view() {
 // holds them. Plausible defects: a hit takes the cascade of its camera view
 // depth, which may not hold it (a hit behind the camera has negative depth
 // and the nearest cascade lies ahead), and is left unshadowed. The oracle is
-// geometric: an occluder above a point behind the camera covers it from a
-// light shining down, observed through the shading function ray hits call.
+// geometric: an occluder above a point 10 m behind the camera, beyond the
+// map of cascade 0 (which reaches about 6 m behind), covers it from a light
+// shining down, observed through the shading function ray hits call.
 #[test]
 fn ray_hits_take_the_cascade_that_holds_them() {
     let Some(device) = test_support::device() else {
         return;
     };
     let mut fixture = Fixture::new(device, SIZE);
-    let occluder = fixture.place(floor(Vec3::new(0., 3., 5.), 1.), false);
+    let occluder = fixture.place(floor(Vec3::new(0., 3., 10.), 1.), false);
     let input = frame(DirectionalLight {
         direction: Vec3::NEG_Y,
         color: [1.; 3],
@@ -511,8 +509,6 @@ fn ray_hits_take_the_cascade_that_holds_them() {
         shadow: Some(DirectionalShadow {
             distance: 200.,
             cascades: 4,
-            first_split: 10.,
-            ..Default::default()
         }),
         ..Default::default()
     });
@@ -542,8 +538,8 @@ fn ray_hits_take_the_cascade_that_holds_them() {
             &fixture.scene,
             // The point behind the camera as a ray hit and, for contrast, as
             // the camera's surface.
-            "output[0]=vec4(directional_shadow_visibility(0u,vec3(0.,0.,5.),vec3(0.,1.,0.),vec2(0.),SHADOW_RECEIVER_CAPTURE),\
-             directional_shadow_visibility(0u,vec3(0.,0.,5.),vec3(0.,1.,0.),vec2(0.),SHADOW_RECEIVER_CAMERA),0.,0.);",
+            "output[0]=vec4(directional_shadow_visibility(0u,vec3(0.,0.,10.),vec3(0.,1.,0.),vec2(0.),SHADOW_RECEIVER_CAPTURE),\
+             directional_shadow_visibility(0u,vec3(0.,0.,10.),vec3(0.,1.,0.),vec2(0.),SHADOW_RECEIVER_CAMERA),0.,0.);",
         );
         fixture.scene.finish_frame();
         [observed[0], observed[1]]
@@ -567,7 +563,7 @@ fn ray_hits_take_the_cascade_that_holds_them() {
 // away from the light; the depth scale not following the wider range. The
 // oracle is geometric: under a light shining straight down, a floor the
 // camera does not see, above the top of the nearest cascades' slices
-// (cascade 0 tops out about 5.5 m up), lies exactly as far above each
+// (cascade 0 tops out about 11 m up), lies exactly as far above each
 // point as its height difference.
 #[test]
 fn casters_within_the_pancake_keep_their_own_depth() {
@@ -584,13 +580,11 @@ fn casters_within_the_pancake_keep_their_own_depth() {
         shadow: Some(DirectionalShadow {
             distance: 200.,
             cascades: 4,
-            first_split: 10.,
-            ..Default::default()
         }),
         ..Default::default()
     });
     // (view depth, height): points in cascades 0, 0, 1 and 2, in view.
-    let points = [(0.3, 0.), (3., 1.), (20., 5.), (60., 0.)];
+    let points = [(0.3, 0.), (3., 1.), (30., 5.), (60., 0.)];
     let (device, queue) = (&fixture.device, &fixture.queue);
     let prepared = fixture.renderer.prepare_test_frame(
         device,
@@ -710,8 +704,6 @@ fn the_fog_fades_the_light_by_the_metres_behind_its_occluder() {
     let shadow = DirectionalShadow {
         distance: 200.,
         cascades: 4,
-        first_split: 10.,
-        ..Default::default()
     };
     let input = frame(DirectionalLight {
         direction: Vec3::NEG_Y,
@@ -721,14 +713,14 @@ fn the_fog_fades_the_light_by_the_metres_behind_its_occluder() {
         ..Default::default()
     });
     // (view depth, metres below the floor): points in cascades 0 to 3
-    // (bounds 10, 27, 74 and 200 m), one above the floor and one beyond the
+    // (bounds 20, 40, 100 and 200 m), one above the floor and one beyond the
     // shadow distance.
     let points = [
         (3., 0.02),
-        (20., 0.05),
-        (50., 0.1),
+        (30., 0.05),
+        (70., 0.1),
         (150., 0.2),
-        (20., -0.05),
+        (30., -0.05),
         (220., 0.2),
     ];
     let positions: Vec<Vec3> = points
@@ -756,21 +748,17 @@ fn the_fog_fades_the_light_by_the_metres_behind_its_occluder() {
 // of the light however far the caster is, and a point between the plane and
 // the caster is unshadowed. The oracle is Godot's fade over the geometry:
 // light shining straight down onto a floor 5 m above the top of cascade 0's
-// slice (about 5.5 m up at its 10 m far bound) reaches points in cascade 0
-// as exp(-10 x their metres below the floor), essentially none at the top
-// of the view; and a floor 20 m up, with the sun behind and above the
-// camera, leaves none in the fog just in front of the camera.
+// slice (about 8.2 m up at the default shadow's 15.09 m first far bound)
+// reaches points in cascade 0 as exp(-10 x their metres below the floor),
+// essentially none at the top of the view; and a floor 20 m up, with the
+// sun behind and above the camera, leaves none in the fog just in front of
+// the camera.
 #[test]
 fn the_fog_fades_from_casters_within_the_pancake() {
     let Some(device) = test_support::device() else {
         return;
     };
-    let shadow = DirectionalShadow {
-        distance: 200.,
-        cascades: 4,
-        first_split: 10.,
-        ..Default::default()
-    };
+    let shadow = DirectionalShadow::default();
     let light = |direction| DirectionalLight {
         direction,
         color: [1.; 3],
@@ -779,7 +767,9 @@ fn the_fog_fades_from_casters_within_the_pancake() {
         ..Default::default()
     };
     let tan = 0.5f32.tan();
-    let top = 10. * tan;
+    // Godot's first split of the default shadow seen from a 0.1 m near
+    // plane: 0.1 m + 0.1 x 149.9 m.
+    let top = 15.09 * tan;
 
     let mut fixture = Fixture::new(device, SIZE);
     let height = top + 5.;
@@ -787,7 +777,7 @@ fn the_fog_fades_from_casters_within_the_pancake() {
     // (view depth, metres below the floor): two points of cascade 0 above
     // the view, just below the floor, and one at the top of the view near
     // the cascade's far bound.
-    let points = [(3., 0.05), (3., 0.1), (9.9, height - 9.9 * tan + 0.01)];
+    let points = [(3., 0.05), (3., 0.1), (15., height - 15. * tan + 0.01)];
     let positions: Vec<Vec3> = points
         .iter()
         .map(|&(depth, below)| Vec3::new(0., height - below, -depth))

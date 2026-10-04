@@ -66,10 +66,10 @@ is done (its algorithm and internal parameters) is SGL3D's.
   and each section's saturation, contrast, gamma, gain and lift.
 - `ambient_occlusion_radius`: occlusion reach in metres.
 - `directional_lights`, `hemisphere_light`: the lights that are not scene
-  content. A directional light's `shadow` is its cascades' reach: distance,
-  cascade count, first split and pancake size
-  (`DirectionalShadow::default()` is Bevy's 150 m, 4 and 10 m with Godot's
-  20 m pancake); `None` casts none. Its `fog_energy`, as a scene light's
+  content. A directional light's `shadow` is its cascades' reach: distance
+  and cascade count (`DirectionalShadow::default()` is Bevy's 150 m and 4);
+  SGL3D places the splits (Godot's) and the pancake. `None` casts none. Its
+  `fog_energy`, as a scene light's
   (`Light::fog_energy`), scales its light in the volumetric fog: 1 by
   default, at most 0.001 leaves it out.
 - `baked_lighting`: `false` turns baked lighting off.
