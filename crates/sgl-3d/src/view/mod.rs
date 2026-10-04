@@ -83,8 +83,7 @@ pub(crate) fn directional_shadow(input: &FrameInput) -> Option<(usize, Direction
 
 /// The directional shadow of one frame's views: the light that casts it and
 /// its cascades, the camera's filter, and the frames since history
-/// restarted, which turn the temporal filter's noise. A light casts it only
-/// when it has cascades.
+/// restarted, which turn the temporal filter's noise.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FrameShadow {
     pub light: Option<usize>,
@@ -135,11 +134,11 @@ impl FrameShadow {
     /// direction and shadow.
     fn fit(
         input: &FrameInput,
-        fit: impl FnOnce(Vec3, &DirectionalShadow) -> Option<Cascades>,
+        fit: impl FnOnce(Vec3, &DirectionalShadow) -> Cascades,
     ) -> Option<(usize, Cascades)> {
         let (light, shadow) = directional_shadow(input)?;
         let direction = input.directional_lights[light]?.direction;
-        fit(direction, &shadow).map(|cascades| (light, cascades))
+        Some((light, fit(direction, &shadow)))
     }
 }
 
