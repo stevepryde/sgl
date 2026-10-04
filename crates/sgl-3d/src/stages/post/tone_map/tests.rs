@@ -224,8 +224,8 @@ fn srgb_code(value: f64) -> f64 {
 }
 
 // Defects: no dither, so a gradient bands, every pixel of a column rounding
-// alike; a dither too strong, that strays more than a code value; and a dither only the direct or only the captured path
-// applies. The oracle is the undithered tone-mapped scene the capture writes
+// alike; a dither too strong, that strays more than a code value; and a
+// dither only the direct or only the captured path applies. The oracle is the undithered tone-mapped scene the capture writes
 // and the sRGB transfer function, at the GPU's 8-bit sRGB encoding: on both
 // paths each output code stays within a code value and a half of its exact
 // code, and down each column of a horizontal gradient the outputs average to
