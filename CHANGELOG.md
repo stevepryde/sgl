@@ -15,6 +15,18 @@ full API details.
 
 ## Unreleased
 
+### One coat Fresnel cosine for every term
+
+- **Scope:** `sgl-3d` shading of coated materials (`clearcoat` above 0).
+  The coat's Fresnel toward the view, which dims the light beneath the coat,
+  now uses one cosine clamped to [0, 1] (Three.js 0.185.1) for direct,
+  ambient, environment and emitted light, and for source completion's
+  environment specular and screen-space reflection composition. Before, only
+  direct light clamped it at 1. Results change only where rounding put
+  the coat normal's dot product with the view above 1, and then by far less
+  than a half-float step.
+- **Migration:** no game-code changes.
+
 ### One motion rule for predecessors behind the camera
 
 - **Scope:** `sgl-3d` motion vectors (the G-buffer's motion target), read by

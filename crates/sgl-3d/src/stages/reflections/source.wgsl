@@ -53,7 +53,7 @@ fn source_lobes(normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotro
  let nv=max(dot(n,v),0.);
  let coat_nv=max(dot(coat,v),0.);
  let coat_ray=reflect(-v,coat);
- let coat_f=pbr_three_fresnel(coat_nv,vec3(0.04)).x*material.coat;
+ let coat_f=pbr_coat_fresnel(coat,v,material.coat);
  let base_ray=pbr_anisotropy_reflection(n,v,anisotropy,material.roughness);
  let base=SourceLobe(pbr_three_single_scatter(f0.rgb,source_brdf(nv,material.roughness))*(1.-coat_f),base_ray,material.roughness,nv,material.coat<=0. && material.roughness*material.roughness<traced);
  let coat_lobe=SourceLobe(pbr_three_single_scatter(vec3(0.04),source_brdf(coat_nv,material.coat_roughness))*material.coat,normalize(mix(coat_ray,coat,pow(material.coat_roughness,4.))),material.coat_roughness,coat_nv,material.coat>0. && material.coat_roughness*material.coat_roughness<traced);
