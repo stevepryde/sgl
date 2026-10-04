@@ -622,6 +622,11 @@ combines passes from several engines, listed with their licences under it.
 Each method returns the same premultiplied radiance and confidence, so a new
 one (hardware ray tracing) plugs in beside them.
 
+`Renderer::new` builds source completion for its settings' screen-space
+reflections and ambient occlusion, so a first frame from a `perspective`
+camera compiles none of it; turning either on or off later compiles it again
+on the next frame.
+
 SSR traces the lit beauty with effects and mist, emitters included. Probe
 captures include emitters too, so hits and misses show the same fixtures. A
 lobe is traced when its perceptual roughness is

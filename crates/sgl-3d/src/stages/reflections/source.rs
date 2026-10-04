@@ -290,12 +290,9 @@ pub(crate) struct ReflectionSource {
     no_world: wgpu::TextureView,
 }
 impl ReflectionSource {
-    pub fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
-        let variant = Variant {
-            environment: true,
-            incident: false,
-            diffuse_occlusion: false,
-        };
+    /// Culling, and completion and composition compiled for `variant`, at
+    /// `size`.
+    pub fn new(device: &wgpu::Device, size: [u32; 2], variant: Variant) -> Self {
         let culling = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("specular probe tiled culling"),
             source: wgpu::ShaderSource::Wgsl(shading::compose(&[&PROBE_CULLING]).into()),
@@ -308,7 +305,7 @@ impl ReflectionSource {
             compilation_options: Default::default(),
             cache: None,
         });
-        Self {
+        let mut source = Self {
             culling_group: CachedGroup::new(culling.get_bind_group_layout(0)),
             culling,
             culling_camera: device.create_buffer(&wgpu::BufferDescriptor {
@@ -329,7 +326,9 @@ impl ReflectionSource {
             size,
             incident: Self::target(device, [1, 1], "incident radiance"),
             no_world: Self::target(device, [1, 1], "no world-space reflections"),
-        }
+        };
+        source.fit_incident(device);
+        source
     }
     fn target(device: &wgpu::Device, size: [u32; 2], label: &str) -> wgpu::TextureView {
         device
