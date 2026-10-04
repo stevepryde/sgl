@@ -54,29 +54,13 @@ impl Options {
 
 fn material(base: [f32; 4], emissive: [f32; 3], metallic: f32, roughness: f32) -> Material {
     Material {
-        anisotropy_strength: 0.,
-        anisotropy_rotation: 0.,
-        anisotropy_texture: None,
         name: "procedural surface".into(),
-        visibility_group: 0,
-        casts_directional_shadow: true,
         base,
         emissive,
         metallic,
         roughness,
-        clearcoat: 0.,
         coat_roughness: 0.3,
-        base_texture: None,
-        mr_texture: None,
-        emissive_texture: None,
-        normal_texture: None,
-        normal_scale: 1.,
-        bump_texture: None,
-        bump_scale: 0.,
-        wrap: [gltf::texture::WrappingMode::Repeat; 2],
-        double_sided: false,
-        unlit: false,
-        alpha: sgl_3d::AlphaMode::Opaque,
+        ..Default::default()
     }
 }
 
@@ -219,18 +203,17 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         })
         .await?;
     let mut scene = Scene::new(&device, &queue);
-    let still = |model| InstanceState {
-        model,
-        pose: Mat4::IDENTITY,
-        visible: true,
-        capture_visible: true,
-    };
     let ground = asset(
         vec![cuboid(Vec3::new(0., -0.25, 0.), Vec3::new(10., 0.4, 8.), 0)],
         vec![material([0.12, 0.16, 0.2, 1.], [0.; 3], 0.1, 0.4)],
     );
     let ground = scene.add_asset(&device, &queue, ground)?.model;
-    scene.add_instance(&device, &queue, still(ground), Mobility::Static)?;
+    scene.add_instance(
+        &device,
+        &queue,
+        InstanceState::new(ground),
+        Mobility::Static,
+    )?;
     // The same few models placed many times; every fourth spins, and moving
     // instances are posed every frame.
     let models = props()
@@ -241,7 +224,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     for index in 0..options.count {
         let state = InstanceState {
             pose: prop_pose(index, options.count, 0.),
-            ..still(models[index % models.len()])
+            ..InstanceState::new(models[index % models.len()])
         };
         if index % 4 == 3 {
             let id = scene.add_instance(&device, &queue, state, Mobility::Moving)?;

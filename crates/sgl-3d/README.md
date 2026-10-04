@@ -92,9 +92,9 @@ frame.hemisphere_light = HemisphereLight {
     ground_color: [0.05, 0.03, 0.02],
     intensity: 0.2,
 };
-frame.diffuse_environment = EnvironmentLight { yaw: 0., intensity: 1. };
-frame.reflection_environment = EnvironmentLight { yaw: 0., intensity: 1. };
-frame.backdrop = Backdrop::Environment { yaw: 0., brightness: 1. };
+frame.diffuse_environment = EnvironmentLight { yaw: 0.5, ..Default::default() }; // intensity 1
+frame.reflection_environment = EnvironmentLight { yaw: 0.5, ..Default::default() };
+frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
 ```
 
 - Up to two directional lights (Bevy's `DirectionalLight`, Godot's
@@ -109,7 +109,8 @@ frame.backdrop = Backdrop::Environment { yaw: 0., brightness: 1. };
   every frame: the view depth from the camera's near plane to `distance` is
   split into `cascades`, ending at depths spaced geometrically from
   `first_split`, each a 2048-texel map. `DirectionalShadow::default()` is
-  Bevy's 150 m, 4 and 10 m with Godot's 20 m `pancake_size`. A cascade
+  Bevy's 150 m, 4 and 10 m with Godot's 20 m `pancake_size`; a `const`
+  builds from `..DirectionalShadow::DEFAULT`, the same values. A cascade
   keeps one size and moves in whole texels, so a still shadow does not
   shimmer as the camera moves and turns (a change of field of view or of
   these values resizes it). Each cascade overlaps the next by a fifth of its
@@ -134,7 +135,8 @@ frame.backdrop = Backdrop::Environment { yaw: 0., brightness: 1. };
 - `hemisphere_light` is Three.js's `HemisphereLight`: diffuse irradiance
   blended from `ground_color` facing down to `sky_color` facing up.
 - The frame environment lights each lobe through its own `EnvironmentLight`
-  (yaw and intensity): `diffuse_environment` the diffuse lobe, and
+  (yaw and intensity, by default unturned at intensity 1, as Three.js's
+  scene environment): `diffuse_environment` the diffuse lobe, and
   `reflection_environment` the specular lobe wherever no baked probe does
   (source completion beyond the probes, probe captures and ray hits, and the
   sky captures record). Bevy's `EnvironmentMapLight` and Filament's
@@ -143,9 +145,9 @@ frame.backdrop = Backdrop::Environment { yaw: 0., brightness: 1. };
   environment's panorama or one colour.
 - `fog` (`Fog`) is the frame's participating medium
   ([Volumetric fog](#volumetric-fog)) and `mist` (`Mist`) the look of the
-  scene's mist billboards; both draw while `FrameInput::atmosphere` (off by
-  default, as Godot's fog) and `Settings::atmosphere` (the player's
-  allowance, on by default) are on.
+  scene's mist billboards (`Mist::default()` hides them); both draw while
+  `FrameInput::atmosphere` (off by default, as Godot's fog) and
+  `Settings::atmosphere` (the player's allowance, on by default) are on.
 
 ## Exposure, bloom and colour grading
 
@@ -244,7 +246,7 @@ scene.update_fog_volumes(device, queue, &[FogVolume {
     center, rotation, size,  // metres, about its centre
     density: 0.01,
     albedo: [0.9, 0.9, 1.],
-    edge_fade: 0.,
+    ..Default::default() // Godot's edge fade, 0.1
 }])?;
 ```
 
@@ -445,19 +447,18 @@ use sgl_3d::{asset::Image, Decal};
 let paint = scene.add_decal_image(Image::Rgba8(arrow))?;
 let matte = scene.add_decal_image(Image::Rgba8(rough_paint))?;
 let marking = scene.add_decal(&device, &queue, Decal {
-    position: Vec3::new(0., 0., -40.),
-    rotation: Quat::IDENTITY, // projects down its −Y onto the road
+    position: Vec3::new(0., 0., -40.), // unturned, it projects down its −Y onto the road
     size: Vec3::new(1.2, 0.4, 4.),
-    base_color: paint,
-    normal: None,
     metallic_roughness: Some(matte),
-    color: [1.; 4],
-    base_color_mix: 1.,
-    upper_fade: 0.3,
-    lower_fade: 0.3,
     normal_fade: 0.5,
+    ..Decal::new(paint) // Godot's decal defaults
 })?;
 ```
+
+`Decal::new(image)` takes Godot's `Decal` defaults for the rest: a 2 m cube
+at the origin, unturned, no normal or metallic-roughness map, a white
+`color`, `base_color_mix` 1, fades of 0.3 toward the upper and lower faces
+and no normal fade.
 
 - The box spans `size` about `position`, turned by `rotation`. It projects
   down its local −Y: its images lie across its local X (U, left to right) and
@@ -967,7 +968,8 @@ authored look and per-frame state in a `FrameInput`.
 2. Load assets through `asset::load` (files) or `asset::load_slice`
    (embedded glTF/GLB bytes, as a browser fetches them), each with a
    `_with_options` form, or build an `asset::Asset` from
-   `CpuMesh`, `Material`, and images: decoded RGBA8, or BC7 mip chains
+   `CpuMesh`, `Material` (`Material::default()` is glTF's default
+   material), and images: decoded RGBA8, or BC7 mip chains
    ([Compressed material images](#compressed-material-images)). Apply game-specific adaptations
    explicitly; `LoadOptions` can bound emissive strength when the game requests
    that behavior. Default loading preserves authored strength.
@@ -982,7 +984,8 @@ authored look and per-frame state in a `FrameInput`.
      `add_model` (`ModelMesh`es naming materials already added) add procedural
      content.
    - `add_instance(&device, &queue, InstanceState { model, pose, visible,
-     capture_visible }, mobility)` places a model. `Mobility::Static`
+     capture_visible }, mobility)` places a model; `InstanceState::new(model)`
+     is at the origin and shown in every view. `Mobility::Static`
      instances are what bakes and probe captures contain; they write no motion
      and take baked diffuse light from lightmap charts and the irradiance
      atlas. `Mobility::Moving` instances are posed every frame; they take an
@@ -1439,6 +1442,7 @@ hold visible instances of one model, and those instances' triangles.
 Set `effects::Glow::soft_distance` to a positive distance in metres for a linear
 intersection fade against opaque primary geometry; use `0.0` for hard edges and
 screen-space motion lines. Keep this field constant across each triangle.
+`Glow::default()` is all zero: uniform (kind 0), hard-edged and colourless.
 The renderer honors it both where effects are drawn into the reflection input
 and onto the composed frame, including own-depth volume transmission. Geometry
 generation remains game-owned. See [the reference and numerical

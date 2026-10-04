@@ -55,3 +55,27 @@ pub struct Decal {
     /// `(1 + n·Y) / 2` is at or below this (Godot's `normal_fade`).
     pub normal_fade: f32,
 }
+
+impl Decal {
+    /// A decal of `base_color` with Godot's `Decal` defaults (b130438
+    /// `scene/3d/decal.h`): a 2 m cube at the origin, unturned, with no
+    /// normal or metallic-roughness map, a white `color`, the image's whole
+    /// base colour (`base_color_mix` 1), fades of 0.3 toward the upper and
+    /// lower faces and no normal fade. Set what differs and take the rest
+    /// with `..Decal::new(base_color)`.
+    pub fn new(base_color: DecalImageId) -> Self {
+        Self {
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            size: Vec3::splat(2.),
+            base_color,
+            normal: None,
+            metallic_roughness: None,
+            color: [1.; 4],
+            base_color_mix: 1.,
+            upper_fade: 0.3,
+            lower_fade: 0.3,
+            normal_fade: 0.,
+        }
+    }
+}

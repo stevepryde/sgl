@@ -112,29 +112,13 @@ impl Options {
 
 fn material(base: [f32; 4], emissive: [f32; 3], metallic: f32, roughness: f32) -> Material {
     Material {
-        anisotropy_strength: 0.0,
-        anisotropy_rotation: 0.0,
-        anisotropy_texture: None,
         name: "procedural surface".into(),
-        visibility_group: 0,
-        casts_directional_shadow: true,
         base,
         emissive,
         metallic,
         roughness,
-        clearcoat: 0.,
         coat_roughness: 0.3,
-        base_texture: None,
-        mr_texture: None,
-        emissive_texture: None,
-        normal_texture: None,
-        normal_scale: 1.,
-        bump_texture: None,
-        bump_scale: 0.,
-        wrap: [gltf::texture::WrappingMode::Repeat; 2],
-        double_sided: false,
-        unlit: false,
-        alpha: sgl_3d::AlphaMode::Opaque,
+        ..Default::default() // glTF's default material
     }
 }
 
@@ -250,14 +234,9 @@ fn add_decals(
         rotation: Quat::from_rotation_y(turn),
         // Shallow, so the paint keeps to the ground's top face.
         size: Vec3::new(2.4, 0.3, 0.6),
-        base_color,
-        normal: None,
         metallic_roughness: Some(metallic_roughness),
-        color: [1.; 4],
-        base_color_mix: 1.,
-        upper_fade: 0.3,
-        lower_fade: 0.3,
         normal_fade: 0.5,
+        ..Decal::new(base_color) // Godot's decal defaults
     };
     scene.add_decal(device, queue, stripe(Vec3::new(0.6, -0.05, 2.), 0.))?;
     scene.add_decal(device, queue, stripe(Vec3::new(2.4, -0.05, 0.6), 1.2))?;
@@ -372,38 +351,13 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     // Content is added once; each addition returns its identity.
     let mut scene = Scene::new(&device, &queue);
     let world = scene.add_asset(&device, &queue, world)?.model;
-    scene.add_instance(
-        &device,
-        &queue,
-        InstanceState {
-            model: world,
-            pose: Mat4::IDENTITY,
-            visible: true,
-            capture_visible: true,
-        },
-        Mobility::Static,
-    )?;
+    scene.add_instance(&device, &queue, InstanceState::new(world), Mobility::Static)?;
     let cube = scene.add_asset(&device, &queue, cube)?.model;
-    let mut moving = InstanceState {
-        model: cube,
-        pose: Mat4::IDENTITY,
-        visible: true,
-        capture_visible: true,
-    };
+    let mut moving = InstanceState::new(cube);
     let instance = scene.add_instance(&device, &queue, moving, Mobility::Moving)?;
     if options.alpha {
         let alpha = scene.add_asset(&device, &queue, alpha_content()?)?.model;
-        scene.add_instance(
-            &device,
-            &queue,
-            InstanceState {
-                model: alpha,
-                pose: Mat4::IDENTITY,
-                visible: true,
-                capture_visible: true,
-            },
-            Mobility::Static,
-        )?;
+        scene.add_instance(&device, &queue, InstanceState::new(alpha), Mobility::Static)?;
     }
     if options.fog {
         // Denser haze in a box over the cubes, added to the frame's.
@@ -412,11 +366,11 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             &queue,
             &[FogVolume {
                 center: Vec3::new(0., 1.5, 0.),
-                rotation: Quat::IDENTITY,
                 size: Vec3::new(6., 3., 6.),
                 density: 0.15,
                 albedo: [0.9, 0.95, 1.],
                 edge_fade: 0.5,
+                ..Default::default()
             }],
         )?;
     }

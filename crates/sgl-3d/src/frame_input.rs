@@ -195,10 +195,7 @@ impl FrameInput {
             environment: None,
             directional_lights: [None; 2],
             hemisphere_light: HemisphereLight::default(),
-            diffuse_environment: EnvironmentLight {
-                yaw: 0.,
-                intensity: 1.,
-            },
+            diffuse_environment: EnvironmentLight::default(),
             backdrop: Backdrop::Environment {
                 yaw: 0.,
                 brightness: 1.,
@@ -206,17 +203,8 @@ impl FrameInput {
             baked_lighting: true,
             atmosphere: false,
             fog: Fog::default(),
-            mist: Mist {
-                thin_color: [0.; 3],
-                dense_color: [0.; 3],
-                opacity: 0.,
-                width: 1.,
-                height: 1.,
-            },
-            reflection_environment: EnvironmentLight {
-                yaw: 0.,
-                intensity: 1.,
-            },
+            mist: Mist::default(),
+            reflection_environment: EnvironmentLight::default(),
             exposure: Exposure::default(),
             bloom: BloomParameters::default(),
             motion_blur: MotionBlurParameters::default(),

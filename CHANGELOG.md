@@ -136,6 +136,42 @@ full API details.
   crosses the camera's plane, such as a tunnel's, still costs every froxel
   up to its far end; split it into segments to bound it more tightly.
 
+### Every SGL3D scene and frame value has a default or a constructor
+
+- **Scope:** `sgl-3d`, additive. These now implement `Default`:
+  `EnvironmentLight` (unturned at intensity 1, as Three.js's scene
+  environment), `Mist` (hidden: black, opacity 0, 1 m billboards),
+  `FogVolume` (Godot's: a 2 m cube at the origin of density 1, white albedo
+  and edge fade 0.1), `asset::Material` (glTF 2.0's default material, which
+  the loader already gave a primitive without one), `SurfaceMaterial` (that
+  material's values, `environment_scale` 1) and `effects::Glow` (all zero:
+  uniform, hard-edged and colourless). New constructors take the values
+  that have no default: `Decal::new(base_color)` (Godot's `Decal` defaults:
+  a 2 m cube at the origin, white `color`, `base_color_mix` 1, fades of 0.3
+  and no normal fade) and `InstanceState::new(model)` (identity pose,
+  `visible` and `capture_visible`). `DirectionalShadow::DEFAULT` is
+  `DirectionalShadow::default()` as a `const`. `FrameInput::new` and the glTF
+  loader take their values from these defaults, so no image changes.
+- **Migration:** no game-code changes. To keep compiling when a value is
+  added, build these from their defaults and set only what differs; a
+  `const` cannot call `Default::default()`, so it builds from
+  `DirectionalShadow::DEFAULT`:
+
+  ```rust
+  // Before
+  const COURSE_SHADOW: DirectionalShadow =
+      DirectionalShadow { distance: 200., cascades: 4, first_split: 12., pancake_size: 20. };
+  let decal = Decal { position, rotation: Quat::IDENTITY, size, base_color: paint, normal: None,
+      metallic_roughness: None, color: [1.; 4], base_color_mix: 1., upper_fade: 0.3,
+      lower_fade: 0.3, normal_fade: 0.5 };
+  let state = InstanceState { model, pose: Mat4::IDENTITY, visible: true, capture_visible: true };
+  // After
+  const COURSE_SHADOW: DirectionalShadow =
+      DirectionalShadow { distance: 200., first_split: 12., ..DirectionalShadow::DEFAULT };
+  let decal = Decal { position, size, normal_fade: 0.5, ..Decal::new(paint) };
+  let state = InstanceState::new(model);
+  ```
+
 ### Per-light fog energy; `Light` and `DirectionalLight` implement `Default`
 
 - **Scope:** `sgl-3d` `Light` and `DirectionalLight` gain

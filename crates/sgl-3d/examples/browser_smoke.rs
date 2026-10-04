@@ -57,29 +57,12 @@ const LIT: Vec3 = Vec3::new(1.5, 0., 2.);
 
 fn material(base: [f32; 4], metallic: f32, roughness: f32) -> Material {
     Material {
-        anisotropy_strength: 0.,
-        anisotropy_rotation: 0.,
-        anisotropy_texture: None,
         name: "smoke surface".into(),
-        visibility_group: 0,
-        casts_directional_shadow: true,
         base,
-        emissive: [0.; 3],
         metallic,
         roughness,
-        clearcoat: 0.,
         coat_roughness: 0.3,
-        base_texture: None,
-        mr_texture: None,
-        emissive_texture: None,
-        normal_texture: None,
-        normal_scale: 1.,
-        bump_texture: None,
-        bump_scale: 0.,
-        wrap: [gltf::texture::WrappingMode::Repeat; 2],
-        double_sided: false,
-        unlit: false,
-        alpha: AlphaMode::Opaque,
+        ..Default::default()
     }
 }
 
@@ -381,17 +364,7 @@ fn add_content(
             .map_err(|e| format!("add_asset: {e}"))?
             .model;
         scene
-            .add_instance(
-                device,
-                queue,
-                InstanceState {
-                    model,
-                    pose: Mat4::IDENTITY,
-                    visible: true,
-                    capture_visible: true,
-                },
-                Mobility::Static,
-            )
+            .add_instance(device, queue, InstanceState::new(model), Mobility::Static)
             .map_err(|e| format!("add_instance: {e}"))?;
     }
     // Local lights away from the measured points, on the far side of the box.
@@ -456,16 +429,9 @@ fn add_content(
             queue,
             Decal {
                 position: Vec3::new(-2., 0., 2.),
-                rotation: Quat::IDENTITY,
                 size: Vec3::new(1., 0.3, 1.),
-                base_color: paint,
-                normal: None,
-                metallic_roughness: None,
-                color: [1.; 4],
-                base_color_mix: 1.,
-                upper_fade: 0.3,
-                lower_fade: 0.3,
                 normal_fade: 0.5,
+                ..Decal::new(paint)
             },
         )
         .map_err(|e| format!("add_decal: {e}"))?;
@@ -478,10 +444,8 @@ fn add_content(
             device,
             queue,
             InstanceState {
-                model,
                 pose: Mat4::from_translation(Vec3::new(-2.5, 0., 2.5)),
-                visible: true,
-                capture_visible: true,
+                ..InstanceState::new(model)
             },
             Mobility::Moving,
         )
@@ -497,11 +461,9 @@ fn add_content(
         .map_err(|e| format!("set_instance_baked_irradiance: {e}"))?;
     let glow = |position: [f32; 3]| Glow {
         position,
-        uv: [0.; 2],
         color: [1., 0.5, 0.2, 0.8],
-        kind: 0.,
-        other: [0.; 3],
         soft_distance: 0.2,
+        ..Default::default()
     };
     scene.update_effects(
         device,
@@ -534,11 +496,10 @@ fn add_content(
             queue,
             &[FogVolume {
                 center: Vec3::new(-3., 1., -2.),
-                rotation: Quat::IDENTITY,
-                size: Vec3::new(2., 2., 2.),
                 density: 0.1,
                 albedo: [0.9, 0.95, 1.],
                 edge_fade: 0.5,
+                ..Default::default()
             }],
         )
         .map_err(|e| format!("update_fog_volumes: {e}"))?;
@@ -748,8 +709,8 @@ async fn render(
             thin_color: [0.6, 0.65, 0.7],
             dense_color: [0.8, 0.85, 0.9],
             opacity: 0.5,
-            width: 1.,
             height: 0.5,
+            ..Default::default()
         };
         frame.fog = Fog {
             density: 0.02,

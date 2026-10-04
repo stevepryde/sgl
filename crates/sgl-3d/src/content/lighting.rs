@@ -73,17 +73,32 @@ pub struct DirectionalShadow {
     pub pancake_size: f32,
 }
 
-impl Default for DirectionalShadow {
+impl DirectionalShadow {
     /// Bevy's `CascadeShadowConfigBuilder` defaults (150 m, 4 cascades, the
-    /// first ending at 10 m) and Godot's 20 m pancake. Set what differs and
-    /// take the rest with `..Default::default()`.
+    /// first ending at 10 m) and Godot's 20 m pancake, as `Default::default()`
+    /// returns them, for a `const` to build from:
+    ///
+    /// ```
+    /// use sgl_3d::DirectionalShadow;
+    /// const COURSE_SHADOW: DirectionalShadow = DirectionalShadow {
+    ///     distance: 200.,
+    ///     first_split: 12.,
+    ///     ..DirectionalShadow::DEFAULT
+    /// };
+    /// ```
+    pub const DEFAULT: Self = Self {
+        distance: 150.,
+        cascades: 4,
+        first_split: 10.,
+        pancake_size: 20.,
+    };
+}
+
+impl Default for DirectionalShadow {
+    /// [`DirectionalShadow::DEFAULT`]. Set what differs and take the rest
+    /// with `..Default::default()`.
     fn default() -> Self {
-        Self {
-            distance: 150.,
-            cascades: 4,
-            first_split: 10.,
-            pancake_size: 20.,
-        }
+        Self::DEFAULT
     }
 }
 
@@ -123,6 +138,18 @@ pub struct EnvironmentLight {
     pub intensity: f32,
 }
 
+impl Default for EnvironmentLight {
+    /// The map unturned at its own radiance (yaw 0, intensity 1), as
+    /// Three.js r185's `Scene.environmentRotation` and
+    /// `environmentIntensity`.
+    fn default() -> Self {
+        Self {
+            yaw: 0.,
+            intensity: 1.,
+        }
+    }
+}
+
 /// What the camera sees where no surface is (Godot's background mode,
 /// Filament's `Skybox`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -148,4 +175,18 @@ pub struct Mist {
     pub width: f32,
     /// Each billboard's height in metres.
     pub height: f32,
+}
+
+impl Default for Mist {
+    /// Hidden: black, opacity 0, on 1 m square billboards. Set the colours
+    /// and opacity to show it.
+    fn default() -> Self {
+        Self {
+            thin_color: [0.; 3],
+            dense_color: [0.; 3],
+            opacity: 0.,
+            width: 1.,
+            height: 1.,
+        }
+    }
 }

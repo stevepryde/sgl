@@ -7,7 +7,7 @@ use std::path::Path;
 use glam::{Mat4, Vec3};
 use gltf::{
     mesh::Mode,
-    texture::{MagFilter, MinFilter, WrappingMode},
+    texture::{MagFilter, MinFilter},
 };
 use std::collections::HashMap;
 
@@ -175,31 +175,7 @@ fn decode(
         .collect::<Result<Vec<_>>>()?;
     // glTF primitives may omit a material; retain the specification default.
     let default_material = materials.len();
-    materials.push(Material {
-        name: String::new(),
-        visibility_group: 0,
-        casts_directional_shadow: true,
-        base: [1.0; 4],
-        emissive: [0.0; 3],
-        metallic: 1.0,
-        roughness: 1.0,
-        clearcoat: 0.0,
-        coat_roughness: 0.0,
-        anisotropy_strength: 0.0,
-        anisotropy_rotation: 0.0,
-        anisotropy_texture: None,
-        base_texture: None,
-        mr_texture: None,
-        emissive_texture: None,
-        normal_texture: None,
-        normal_scale: 1.0,
-        bump_texture: None,
-        bump_scale: 0.0,
-        wrap: [WrappingMode::Repeat; 2],
-        double_sided: false,
-        unlit: false,
-        alpha: crate::AlphaMode::Opaque,
-    });
+    materials.push(Material::default());
     let images = images
         .into_iter()
         .enumerate()

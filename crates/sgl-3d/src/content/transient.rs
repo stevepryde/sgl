@@ -3,8 +3,10 @@
 /// One vertex in an additive triangle list, expressed in world space.
 ///
 /// The caller owns geometry generation, lifetime, topology and presentation time.
+/// `Default` is all zero: a uniform (kind 0), hard-edged vertex at the origin
+/// that adds nothing until it has a colour.
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Glow {
     /// World-space vertex or line endpoint position.
     pub position: [f32; 3],
@@ -58,4 +60,22 @@ pub struct FogVolume {
     /// faces, across which it fades out; higher also thins it toward them
     /// from the box's middle (Godot's `edge_fade`).
     pub edge_fade: f32,
+}
+
+impl Default for FogVolume {
+    /// Godot's `FogVolume` and `FogMaterial` defaults (b130438
+    /// `scene/3d/fog_volume.h`, `scene/resources/3d/fog_material.h`): a 2 m
+    /// cube at the origin, unturned, of density 1, white albedo and edge
+    /// fade 0.1. Set what differs and take the rest with
+    /// `..Default::default()`.
+    fn default() -> Self {
+        Self {
+            center: glam::Vec3::ZERO,
+            rotation: glam::Quat::IDENTITY,
+            size: glam::Vec3::splat(2.),
+            density: 1.,
+            albedo: [1.; 3],
+            edge_fade: 0.1,
+        }
+    }
 }

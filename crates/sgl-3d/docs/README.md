@@ -87,6 +87,13 @@ and an asynchronous readback.
   changes, never for dependency or code updates.
 - Persist `settings::Settings` in the game's own settings record and follow
   the [preset rules](settings.md#presets).
+- Build scene and frame values from their defaults and set only what
+  differs, so the game keeps compiling when SGL3D adds a value:
+  `FrameInput::new(camera)`, `InstanceState::new(model)`,
+  `Decal::new(image)`, and `..Default::default()` for the other values
+  (`Settings`, lights and their shadows, fog and fog volumes, mist,
+  environment lighting, materials, exposure and the post-processing
+  parameters). In a `const`, use `..DirectionalShadow::DEFAULT`.
 - Report the effective state honestly:
   `Renderer::antialiasing_in_effect(&settings)` and `fsr2_error()` say when
   the device fell back (FSR2 always does in the browser).

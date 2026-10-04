@@ -58,6 +58,18 @@ pub struct SurfaceMaterial {
     pub alpha: AlphaMode,
 }
 
+impl Default for SurfaceMaterial {
+    /// The values of the default authored material
+    /// (`asset::Material::default()`, glTF 2.0's), lit by the whole
+    /// environment (`environment_scale` 1). Set what
+    /// differs and take the rest with `..Default::default()`, or from
+    /// [`Scene::material`](crate::Scene::material) to change a material's
+    /// current values.
+    fn default() -> Self {
+        Self::authored(&Material::default())
+    }
+}
+
 impl SurfaceMaterial {
     /// The values of an authored material, as a scene adds them.
     pub(crate) fn authored(m: &Material) -> Self {
