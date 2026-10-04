@@ -1156,7 +1156,10 @@ authored look and per-frame state in a `FrameInput`.
      keep their motion, static shadow layers stay valid, histories continue
      (each renderer translates what it keeps), and the directional
      cascades' texel grid stays put. Geometry, bakes and probe captures do
-     not change. A game that never calls it pays nothing.
+     not change. A translated position rounds once, at its magnitude in the
+     new frame, so integer poses such as chunk origins stay exact and a game
+     never re-poses its instances after a move. A game that never calls it
+     pays nothing.
 
    Buffers grow as content is added and reuse removed content's ranges;
    content beyond a device limit is refused. `Renderer::new(&device, &queue,
