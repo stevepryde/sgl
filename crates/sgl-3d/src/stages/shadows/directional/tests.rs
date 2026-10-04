@@ -3,6 +3,7 @@
 use crate::asset::{CpuMesh, Vertex};
 use crate::renderer::Renderer;
 use crate::settings::{self, Settings};
+use crate::view::cascades::SHADOW_PANCAKE_SIZE;
 use crate::{
     Backdrop, Camera, DirectionalLight, DirectionalShadow, FrameInput, InstanceState, Mobility,
     Scene, test_support,
@@ -36,16 +37,14 @@ fn two_cascades() -> DirectionalShadow {
     DirectionalShadow {
         distance: 10.,
         cascades: 2,
-        first_split: 2.5,
-        ..Default::default()
     }
 }
 
 /// An occluder's place on the receivers' axis, toward a light shining along
-/// -Z, 10 m beyond `two_cascades`' pancake: every cascade clamps it to its
-/// near plane.
+/// -Z, 10 m beyond the cascades' pancake: every cascade clamps it to its near
+/// plane.
 fn beyond_the_pancake() -> Vec3 {
-    Vec3::new(0., 0., two_cascades().pancake_size + 10.)
+    Vec3::new(0., 0., SHADOW_PANCAKE_SIZE + 10.)
 }
 
 /// A light shining along -Z onto the receiver, red or green, with or without
@@ -437,8 +436,6 @@ fn every_cascade_shadows_its_part_of_the_view() {
     let shadow = DirectionalShadow {
         distance: 200.,
         cascades: 4,
-        first_split: 10.,
-        ..Default::default()
     };
     let input = frame(DirectionalLight {
         direction: Vec3::NEG_Z,
@@ -447,7 +444,7 @@ fn every_cascade_shadows_its_part_of_the_view() {
         shadow: Some(shadow),
         ..Default::default()
     });
-    // Depths in cascades 0 to 3 (bounds 10, 27, 74 and 200 m) and beyond the
+    // Depths in cascades 0 to 3 (bounds 13, 33, 81 and 200 m) and beyond the
     // distance, each at its own place across the view.
     let receivers = [
         (3., -0.35),
@@ -511,8 +508,6 @@ fn ray_hits_take_the_cascade_that_holds_them() {
         shadow: Some(DirectionalShadow {
             distance: 200.,
             cascades: 4,
-            first_split: 10.,
-            ..Default::default()
         }),
         ..Default::default()
     });
@@ -567,7 +562,7 @@ fn ray_hits_take_the_cascade_that_holds_them() {
 // away from the light; the depth scale not following the wider range. The
 // oracle is geometric: under a light shining straight down, a floor the
 // camera does not see, above the top of the nearest cascades' slices
-// (cascade 0 tops out about 5.5 m up), lies exactly as far above each
+// (cascade 0 tops out about 7.3 m up), lies exactly as far above each
 // point as its height difference.
 #[test]
 fn casters_within_the_pancake_keep_their_own_depth() {
@@ -584,8 +579,6 @@ fn casters_within_the_pancake_keep_their_own_depth() {
         shadow: Some(DirectionalShadow {
             distance: 200.,
             cascades: 4,
-            first_split: 10.,
-            ..Default::default()
         }),
         ..Default::default()
     });
@@ -710,8 +703,6 @@ fn the_fog_fades_the_light_by_the_metres_behind_its_occluder() {
     let shadow = DirectionalShadow {
         distance: 200.,
         cascades: 4,
-        first_split: 10.,
-        ..Default::default()
     };
     let input = frame(DirectionalLight {
         direction: Vec3::NEG_Y,
@@ -721,7 +712,7 @@ fn the_fog_fades_the_light_by_the_metres_behind_its_occluder() {
         ..Default::default()
     });
     // (view depth, metres below the floor): points in cascades 0 to 3
-    // (bounds 10, 27, 74 and 200 m), one above the floor and one beyond the
+    // (bounds 13, 33, 81 and 200 m), one above the floor and one beyond the
     // shadow distance.
     let points = [
         (3., 0.02),
@@ -756,21 +747,17 @@ fn the_fog_fades_the_light_by_the_metres_behind_its_occluder() {
 // of the light however far the caster is, and a point between the plane and
 // the caster is unshadowed. The oracle is Godot's fade over the geometry:
 // light shining straight down onto a floor 5 m above the top of cascade 0's
-// slice (about 5.5 m up at its 10 m far bound) reaches points in cascade 0
-// as exp(-10 x their metres below the floor), essentially none at the top
-// of the view; and a floor 20 m up, with the sun behind and above the
-// camera, leaves none in the fog just in front of the camera.
+// slice (about 5.5 m up at the default shadow's 10 m first far bound)
+// reaches points in cascade 0 as exp(-10 x their metres below the floor),
+// essentially none at the top of the view; and a floor 20 m up, with the
+// sun behind and above the camera, leaves none in the fog just in front of
+// the camera.
 #[test]
 fn the_fog_fades_from_casters_within_the_pancake() {
     let Some(device) = test_support::device() else {
         return;
     };
-    let shadow = DirectionalShadow {
-        distance: 200.,
-        cascades: 4,
-        first_split: 10.,
-        ..Default::default()
-    };
+    let shadow = DirectionalShadow::default();
     let light = |direction| DirectionalLight {
         direction,
         color: [1.; 3],

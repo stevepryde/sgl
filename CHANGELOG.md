@@ -92,6 +92,43 @@ full API details.
 - **Migration:** no game-code changes. Afterwards, compare the `fog filter`
   timing group on the game's route.
 
+### SGL3D places the directional shadow's splits and pancake
+
+- **Scope:** `sgl-3d` `DirectionalShadow` loses `first_split` and
+  `pancake_size`; a game sets only `distance` and `cascades`, and
+  `DirectionalShadow::DEFAULT` and `Default` stay 150 m and 4 cascades.
+  Where the cascades split and how far each map reaches toward the light
+  are SGL3D's (S3D-6): the first cascade ends at a fifteenth of `distance`
+  (Bevy's default 10 m of 150 m) and the others at depths spaced
+  geometrically from there to `distance`, as before; the pancake is
+  Godot's 20 m. The default shadow's cascades are unchanged (10, 24.7, 60.8
+  and 150 m), as is any shadow whose first split was a fifteenth of its
+  distance and whose pancake was 20 m. Others move: 200 m with a 12 m first
+  split now splits at 13.3, 32.9 and 81.1 m (was 12, 30.7 and 78.3 m), and
+  40 m in 2 cascades with a 10 m first split now splits at 2.7 m; a pancake
+  of other than 20 m becomes 20 m. A distance within 15 times the camera's
+  near plane has one cascade, as a first split within it did. This removes
+  the `pancake_size` that "Directional shadow cascades reach a pancake
+  toward the light" below added: skip that entry's migration step.
+- **Migration:** delete `first_split` and `pancake_size` from every
+  `DirectionalShadow`, `const`s included:
+
+  ```rust
+  // Before
+  const COURSE_SHADOW: DirectionalShadow =
+      DirectionalShadow { distance: 200., cascades: 4, first_split: 12. };
+  shadow: Some(DirectionalShadow { distance: 40., cascades: 2, first_split: 10., ..Default::default() }),
+  // After
+  const COURSE_SHADOW: DirectionalShadow = DirectionalShadow { distance: 200., cascades: 4 };
+  shadow: Some(DirectionalShadow { distance: 40., cascades: 2 }),
+  ```
+
+  A game whose first split was not a fifteenth of its distance sees its
+  nearest cascade's detail cover a different depth; `distance` and
+  `cascades` remain its controls. Afterwards, look at shadows near the
+  camera and across cascade transitions under the shadowed light,
+  especially in close scenes with few cascades.
+
 ### The atmosphere is off by default, as Godot's fog
 
 - **Scope:** `sgl-3d` `FrameInput::atmosphere`, which turns the volumetric

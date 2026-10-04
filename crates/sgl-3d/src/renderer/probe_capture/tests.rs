@@ -301,11 +301,11 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
         asset.materials[0].double_sided = false;
         asset
     };
+    // The first cascade's cube reaches 2 m (a fifteenth of the distance)
+    // from the capture's centre, 1 m up.
     let shadow = DirectionalShadow {
-        distance: 20.,
+        distance: 30.,
         cascades: 3,
-        first_split: 2.,
-        ..Default::default()
     };
     let mut scene = Scene::new(&device, &queue);
     crate::test_support::add_static(&device, &queue, &mut scene, square(0., 6.));
@@ -315,7 +315,7 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
         &device,
         &queue,
         &mut scene,
-        square(13. + shadow.pancake_size, 3.),
+        square(13. + crate::view::cascades::SHADOW_PANCAKE_SIZE, 3.),
     );
     let mut input = FrameInput::new(Camera {
         view: camera::rh::view::look_at_mat4(

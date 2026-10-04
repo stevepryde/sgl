@@ -433,8 +433,6 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
         shadow: Some(DirectionalShadow {
             distance: 15.,
             cascades: 2,
-            first_split: 6.,
-            ..Default::default()
         }),
         ..Default::default()
     });

@@ -80,10 +80,8 @@ frame.directional_lights[0] = Some(DirectionalLight {
     color: [1., 0.85, 0.7],               // linear RGB
     illuminance: 3.,                      // lux
     shadow: Some(DirectionalShadow {
-        distance: 150.,  // metres of view depth that are shadowed
-        cascades: 4,     // 1 to 4
-        first_split: 10., // where the first cascade ends
-        ..Default::default() // pancake_size 20 m, as Godot
+        distance: 150., // metres of view depth that are shadowed
+        cascades: 4,    // 1 to 4
     }),
     ..Default::default() // fog_energy 1: its full light in the fog
 });
@@ -107,10 +105,13 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   π), no shadow and fog energy 1.
 - The shadow is Bevy's cascaded shadow map, which SGL3D fits from the camera
   every frame: the view depth from the camera's near plane to `distance` is
-  split into `cascades`, ending at depths spaced geometrically from
-  `first_split`, each a 2048-texel map. `DirectionalShadow::default()` is
-  Bevy's 150 m, 4 and 10 m with Godot's 20 m `pancake_size`; a `const`
-  builds from `..DirectionalShadow::DEFAULT`, the same values. A cascade
+  split into `cascades`, each a 2048-texel map. SGL3D places the splits:
+  the first cascade ends at a fifteenth of `distance` (Bevy's default 10 m
+  of 150 m) and the others at depths spaced geometrically from there to
+  `distance`, as Bevy spaces them; a `distance` within 15 times the camera's
+  near plane has one cascade. `DirectionalShadow::default()` is Bevy's
+  150 m and 4; a `const` builds from `..DirectionalShadow::DEFAULT`, the
+  same values. A cascade
   keeps one size and moves in whole texels, so a still shadow does not
   shimmer as the camera moves and turns (a change of field of view or of
   these values resizes it). Each cascade overlaps the next by a fifth of its
@@ -119,8 +120,8 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   into it: their depth is unclipped, through
   `wgpu::Features::DEPTH_CLIP_CONTROL` where the device has it
   (`graphics_device::features`) and emulated in the caster's shader where it
-  does not. Each cascade's map reaches `pancake_size` metres toward the
-  light beyond its part of the view (Godot's pancake), so a caster within
+  does not. Each cascade's map reaches 20 m toward the light beyond its
+  part of the view (Godot's default pancake), so a caster within
   that margin is recorded at its own depth and one beyond it at the
   margin's edge. Receivers are offset along their normal by Bevy's 1.8
   texels (times √2) and toward the light by 2 cm, so no bias is authored.
@@ -130,7 +131,7 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   capture fits its own cascades about its centre; it and world-space ray
   hits take the first cascade whose map holds a surface, which the pancake
   makes a nearer, finer one for a surface toward the light from a cascade's
-  part of the view (`pancake_size: 0.` gives the fit without it). Timing groups
+  part of the view. Timing groups
   `directional shadow cascade 0` to `3`, nearest first.
 - `hemisphere_light` is Three.js's `HemisphereLight`: diffuse irradiance
   blended from `ground_color` facing down to `sky_color` facing up.
@@ -261,8 +262,8 @@ before opaque, the fog stage:
   material's density, albedo and edge fade) it lies in;
 - lights it with the directional lights through the one shadow cascade at
   the froxel's depth, whose light fades with the metres the froxel lies
-  behind its occluder (Godot's fog; an occluder beyond the shadow's
-  `pancake_size` counts from the pancake's edge), the camera's clustered
+  behind its occluder (Godot's fog; an occluder beyond the cascade's 20 m
+  pancake counts from the pancake's edge), the camera's clustered
   point, spot and rectangle lights (baked ones too) through the local-light
   atlas, each shadow one tap that the reprojection resolves (a local light's
   one hardware 2×2 tap, as Bevy's volumetric fog samples them), and

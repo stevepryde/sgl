@@ -14,10 +14,12 @@
 //! plane, as Godot's `_light_instance_setup_directional_shadow` starts it
 //! (Bevy's `minimum_distance`); the light's rotation is built from its
 //! direction; a probe capture's cascades are cubes about its centre,
-//! what its six faces see out to each far bound; and each cascade's near
-//! plane lies the shadow's `pancake_size` toward the light beyond the
-//! slice's bounds, as Godot b130438's pancake puts it beyond the slice's
-//! bounding sphere (`servers/rendering/renderer_scene_cull.cpp`
+//! what its six faces see out to each far bound; the first cascade ends at a
+//! fifteenth of the shadow's distance ([`FIRST_SPLIT_DIVISOR`]) rather than
+//! at an authored depth; and each cascade's near plane lies [`SHADOW_PANCAKE_SIZE`] toward
+//! the light beyond the slice's bounds, as Godot b130438's pancake puts it
+//! beyond the slice's bounding sphere
+//! (`servers/rendering/renderer_scene_cull.cpp`
 //! `_light_instance_setup_directional_shadow`: `z_max = z_vec.dot(center) +
 //! radius + pancake_size`), MIT (`src/LICENSE-godot.txt`), so a caster within
 //! that margin keeps its own depth and only one beyond it is clamped to the
@@ -33,6 +35,20 @@ pub(crate) const MAX_SHADOW_CASCADES: usize = 4;
 /// two across the overlap. directional_shadow.wgsl's SHADOW_CASCADE_OVERLAP
 /// is its twin.
 pub(crate) const SHADOW_CASCADE_OVERLAP: f32 = 0.2;
+/// How far toward the light, in metres, each cascade's map still records a
+/// caster at its own depth beyond the part of the view it covers: Godot
+/// b130438's `directional_shadow_pancake_size` default
+/// (`scene/3d/light_3d.cpp`). A caster farther toward the light is recorded
+/// at the margin's edge and still shadows the cascade.
+pub(crate) const SHADOW_PANCAKE_SIZE: f32 = 20.;
+/// The shadow's distance over the first cascade's far bound: Bevy 9d12036's
+/// `CascadeShadowConfigBuilder` defaults, a `first_cascade_far_bound` of
+/// 10 m in a `maximum_distance` of 150 m, kept as a share of any distance as
+/// Godot b130438 (`directional_shadow_split_1`, `scene/3d/light_3d.cpp`) and
+/// Filament ef1a133 (`ShadowOptions::cascadeSplitPositions`,
+/// `filament/include/filament/LightManager.h`) place their splits at fixed
+/// shares of the shadow's distance.
+const FIRST_SPLIT_DIVISOR: f32 = 15.;
 
 /// One cascade's shadow view.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -82,7 +98,6 @@ impl Cascades {
         let world_from_light = world_from_light(direction);
         let light_from_camera = world_from_light.transpose() * view.inverse();
         let overlap_factor = 1. - SHADOW_CASCADE_OVERLAP;
-        let pancake = pancake_size(shadow);
         Some(Self::from_bounds(bounds.as_slice(), |index, far_bound| {
             let near_bound = if index == 0 {
                 near
@@ -96,7 +111,6 @@ impl Cascades {
                 world_from_light,
                 light_from_camera,
                 far_bound,
-                pancake,
             )
         }))
     }
@@ -114,7 +128,6 @@ impl Cascades {
         let bounds = cascade_bounds(shadow, 0.)?;
         let world_from_light = world_from_light(direction);
         let light_from_capture = world_from_light.transpose() * Mat4::from_translation(center);
-        let pancake = pancake_size(shadow);
         Some(Self::from_bounds(bounds.as_slice(), |_, far_bound| {
             let f = far_bound;
             let corners = [
@@ -133,7 +146,6 @@ impl Cascades {
                 world_from_light,
                 light_from_capture,
                 far_bound,
-                pancake,
             )
         }))
     }
@@ -152,17 +164,16 @@ impl Bounds {
 }
 
 /// `shadow`'s far bounds beyond a first cascade starting at `near`: Bevy's
-/// `calculate_cascade_bounds`, geometric from `first_split` to `distance`.
-/// A `first_split` that is not finite or not beyond `near` gives one
-/// cascade over the whole distance, as Bevy's builder refuses it.
+/// `calculate_cascade_bounds`, geometric from the first split, `distance` /
+/// [`FIRST_SPLIT_DIVISOR`], to `distance`. A first split not beyond `near`
+/// gives one cascade over the whole distance, as Bevy's builder refuses it.
 fn cascade_bounds(shadow: &DirectionalShadow, near: f32) -> Option<Bounds> {
     let distance = shadow.distance;
     if !distance.is_finite() || distance <= near {
         return None;
     }
-    let first = shadow.first_split;
-    let split = first.is_finite() && first > near;
-    let count = if split {
+    let first = distance / FIRST_SPLIT_DIVISOR;
+    let count = if first > near {
         shadow.cascades.clamp(1, MAX_SHADOW_CASCADES as u32) as usize
     } else {
         1
@@ -172,19 +183,12 @@ fn cascade_bounds(shadow: &DirectionalShadow, near: f32) -> Option<Bounds> {
         count,
     };
     if count > 1 {
-        let first = first.min(distance);
         let base = (distance / first).powf(1. / (count - 1) as f32);
         for (index, bound) in bounds.list[..count].iter_mut().enumerate() {
             *bound = first * base.powf(index as f32);
         }
     }
     Some(bounds)
-}
-
-/// `shadow`'s pancake size: nonnegative and finite, else 0.
-fn pancake_size(shadow: &DirectionalShadow) -> f32 {
-    let size = shadow.pancake_size;
-    if size.is_finite() { size.max(0.) } else { 0. }
 }
 
 /// The view depth of the camera's near plane: device depth 1.
@@ -232,7 +236,7 @@ fn slice_corners(projection: Mat4, near: f32, far: f32) -> [Vec3; 8] {
 /// Bevy's `calculate_cascade`: the shadow view of the frustum slice with
 /// `frustum_corners` (in the camera's view space, `calculate_cascade`'s
 /// order), for maps of `cascade_texture_size` texels, with its near plane
-/// `pancake_size` metres toward the light beyond the slice (Godot's
+/// [`SHADOW_PANCAKE_SIZE`] toward the light beyond the slice (Godot's
 /// pancake).
 fn calculate_cascade(
     frustum_corners: [Vec3; 8],
@@ -240,7 +244,6 @@ fn calculate_cascade(
     world_from_light: Mat4,
     light_from_camera: Mat4,
     far_bound: f32,
-    pancake_size: f32,
 ) -> Cascade {
     let mut min = Vec3::splat(f32::MAX);
     let mut max = Vec3::splat(f32::MIN);
@@ -266,7 +269,7 @@ fn calculate_cascade(
     //       exactly represented in a floating point value.
     let cascade_texel_size = cascade_diameter / cascade_texture_size;
     // SGL3D: the near plane, moved toward the light by Godot's pancake.
-    let near_plane = max.z + pancake_size;
+    let near_plane = max.z + SHADOW_PANCAKE_SIZE;
     // NOTE: For shadow stability it is very important that the near_plane_center is at integer
     //       multiples of the texel size to be exactly representable in a floating point value.
     let near_plane_center = Vec3::new(
