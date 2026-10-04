@@ -1,0 +1,311 @@
+//! Opaque: the sky, the G-buffer and lit colour (direct, baked, emitted and
+//! ambient light) over one depth, then ambient occlusion over the G-buffer's
+//! depth and normals. Where the device has the colour attachments for it, the
+//! G-buffer and lighting are one fused pass; otherwise a G-buffer pass and a
+//! lighting pass at its depth write the same targets. Lit colour keeps its
+//! ambient diffuse whole and records it apart, for source completion to
+//! occlude by this stage's visibility.
+//!
+//! Reads: the camera view and its draw list, group 0's camera lit and unlit
+//! groups, the geometry pipelines; for a probe capture face (`encode_capture`),
+//! the capture's draw list and the face's groups.
+//! Writes: the shared G-buffer, colour, ambient diffuse, source identity and
+//! depth; its own ambient occlusion targets.
+//! Honours: ambient occlusion (quality and radius), the fused form (device
+//! capability, diagnostics), the diagnostics layers compiled into the
+//! geometry pipelines.
+//! Timing groups: fused `sky`, `opaque geometry + lighting`; split
+//! `geometry`, `sky`, `opaque lighting`; then `ambient occlusion`.
+pub(crate) mod ambient_occlusion;
+pub(crate) mod sky;
+
+use crate::view::draw_list::{DrawInstances, DrawList};
+use crate::view::frame::FrameContext;
+use crate::view::pipelines::{GeometryPass, GeometryPipelines};
+use crate::view::targets::{CaptureFace, attachment};
+
+pub(crate) struct Opaque {
+    sky: sky::Sky,
+    ambient_occlusion: Option<ambient_occlusion::AmbientOcclusion>,
+    /// Whether ambient occlusion ran this frame.
+    ambient_occlusion_ran: bool,
+}
+
+impl Opaque {
+    pub fn new(device: &wgpu::Device, unlit: &wgpu::BindGroupLayout) -> Self {
+        Self {
+            sky: sky::Sky::new(device, unlit),
+            ambient_occlusion: None,
+            ambient_occlusion_ran: false,
+        }
+    }
+
+    /// The camera's opaque surfaces, fused or split, then ambient occlusion
+    /// over them.
+    pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
+        if ctx.effective.fused {
+            self.encode_fused(ctx);
+        } else {
+            self.encode_split(ctx);
+        }
+        self.ambient_occlusion_ran = ctx.effective.ambient_occlusion.is_some();
+        if let Some(settings) = ctx.effective.ambient_occlusion {
+            let targets = ctx.targets;
+            self.ambient_occlusion
+                .get_or_insert_with(|| ambient_occlusion::AmbientOcclusion::new(ctx.device))
+                .encode(
+                    ctx.device,
+                    ctx.queue,
+                    ctx.encoder,
+                    &targets.depth,
+                    &targets.normal,
+                    &ctx.views.camera.view.uniform,
+                    settings.quality,
+                    settings.radius,
+                    ctx.timing,
+                );
+        }
+    }
+
+    /// This frame's ambient visibility, when ambient occlusion ran.
+    pub fn visibility(&self) -> Option<&wgpu::TextureView> {
+        self.ambient_occlusion
+            .as_ref()
+            .filter(|_| self.ambient_occlusion_ran)
+            .and_then(|ambient_occlusion| ambient_occlusion.output())
+    }
+
+    fn encode_fused(&mut self, ctx: &mut FrameContext<'_>) {
+        let targets = ctx.targets;
+        {
+            let sky = [attachment(&targets.color), attachment(&targets.motion)];
+            let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fused scene sky and depth clear"),
+                color_attachments: &sky,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &targets.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: ctx.timing.and_then(|t| t.render_pass("sky")),
+                ..Default::default()
+            });
+            self.sky.draw(&mut pass, ctx.bindings.camera_unlit());
+        }
+        let views = [
+            &targets.normal,
+            &targets.material,
+            &targets.motion,
+            &targets.f0,
+            &targets.color,
+            &targets.ambient,
+            &targets.source_id,
+            &targets.anisotropy,
+        ];
+        // Motion and color (indices 2 and 4) keep the sky drawn above.
+        let attachments = std::array::from_fn::<_, 8, _>(|index| {
+            let mut target = attachment(views[index]);
+            if matches!(index, 2 | 4) {
+                target.as_mut().unwrap().ops.load = wgpu::LoadOp::Load;
+            }
+            target
+        });
+        let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("fused opaque material and lighting"),
+            color_attachments: &attachments,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &targets.depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: ctx
+                .timing
+                .and_then(|t| t.render_pass("opaque geometry + lighting")),
+            ..Default::default()
+        });
+        pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
+        ctx.views.camera.list.draw(
+            ctx.scene,
+            ctx.pipelines,
+            &ctx.views.instances,
+            &mut pass,
+            GeometryPass::Fused,
+        );
+    }
+
+    fn encode_split(&mut self, ctx: &mut FrameContext<'_>) {
+        let targets = ctx.targets;
+        let anisotropy_inline = ctx.pipelines.anisotropy_inline;
+        // The G-buffer and depth.
+        {
+            let colors = [
+                &targets.normal,
+                &targets.material,
+                &targets.motion,
+                &targets.f0,
+                &targets.anisotropy,
+            ];
+            let attachments = colors.map(attachment);
+            let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("stable scene geometry"),
+                timestamp_writes: ctx.timing.and_then(|t| t.render_pass("geometry")),
+                color_attachments: &attachments[..if anisotropy_inline { 5 } else { 4 }],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &targets.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
+            ctx.views.camera.list.draw(
+                ctx.scene,
+                ctx.pipelines,
+                &ctx.views.instances,
+                &mut pass,
+                GeometryPass::GBuffer,
+            );
+        }
+        if !anisotropy_inline {
+            let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("stable anisotropy attachment fallback"),
+                color_attachments: &[attachment(&targets.anisotropy)],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &targets.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: ctx.timing.and_then(|t| t.render_pass("geometry")),
+                ..Default::default()
+            });
+            pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
+            ctx.views.camera.list.draw(
+                ctx.scene,
+                ctx.pipelines,
+                &ctx.views.instances,
+                &mut pass,
+                GeometryPass::GBufferAnisotropy,
+            );
+        }
+        // The sky writes color and motion; opaque geometry then writes color,
+        // ambient diffuse and identity together once, and its motion over the
+        // sky's.
+        {
+            let mut motion = attachment(&targets.motion);
+            motion.as_mut().unwrap().ops.load = wgpu::LoadOp::Load;
+            let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("source sky background"),
+                color_attachments: &[attachment(&targets.color), motion],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &targets.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: ctx.timing.and_then(|t| t.render_pass("sky")),
+                ..Default::default()
+            });
+            self.sky.draw(&mut pass, ctx.bindings.camera_unlit());
+        }
+        let colors = [
+            &targets.color,
+            &targets.ambient,
+            &targets.motion,
+            &targets.source_id,
+        ];
+        // Color and motion (indices 0 and 2) keep the sky drawn above.
+        let attachments = std::array::from_fn::<_, 4, _>(|index| {
+            let mut target = attachment(colors[index]);
+            if matches!(index, 0 | 2) {
+                target.as_mut().unwrap().ops.load = wgpu::LoadOp::Load;
+            }
+            target
+        });
+        let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("opaque HDR with stable depth ownership"),
+            timestamp_writes: ctx.timing.and_then(|t| t.render_pass("opaque lighting")),
+            color_attachments: &attachments,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &targets.depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
+        ctx.views.camera.list.draw(
+            ctx.scene,
+            ctx.pipelines,
+            &ctx.views.instances,
+            &mut pass,
+            GeometryPass::Lighting,
+        );
+    }
+
+    /// Probe capture face `face`: the sky under `unlit`, then `list`'s lit
+    /// colour and motion with depth under `lit`, from the capture's draw
+    /// instances.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_capture(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &crate::Scene,
+        pipelines: &GeometryPipelines,
+        list: (&DrawList, &DrawInstances),
+        face: &CaptureFace,
+        unlit: &wgpu::BindGroup,
+        lit: &wgpu::BindGroup,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("static instances and sky capture"),
+            color_attachments: &[attachment(&face.color), attachment(&face.motion)],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &face.depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0.),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        self.encode_forward(&mut pass, scene, pipelines, list, unlit, lit);
+    }
+
+    /// A probe capture face: the sky, then `list`'s lit colour and motion
+    /// with depth (`GeometryPass::Forward`) from `drawn`, in the caller's
+    /// pass.
+    pub fn encode_forward(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        scene: &crate::Scene,
+        pipelines: &GeometryPipelines,
+        (list, drawn): (&DrawList, &DrawInstances),
+        unlit: &wgpu::BindGroup,
+        lit: &wgpu::BindGroup,
+    ) {
+        self.sky.draw(pass, unlit);
+        pass.set_bind_group(0, lit, &[]);
+        list.draw(scene, pipelines, drawn, pass, GeometryPass::Forward);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;

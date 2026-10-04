@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SGL3D browser smoke</title>
+<link rel="icon" href="data:,">
+<pre id="report">running…</pre>
+<script type="module">
+  import init, { run } from "./browser_smoke.js";
+  const out = document.getElementById("report");
+  try {
+    await init();
+    const report = await run();
+    out.textContent = report;
+    window.__sglReport = report;
+  } catch (error) {
+    out.textContent = `FAIL init: ${error}`;
+    window.__sglReport = `FAIL init: ${error}\n`;
+  }
+</script>

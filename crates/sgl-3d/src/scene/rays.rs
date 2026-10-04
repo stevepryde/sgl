@@ -1,0 +1,590 @@
+//! The ray source: the scene's geometry and materials for shader ray queries,
+//! through a portable BVH that needs no hardware ray-tracing features, and
+//! the instance list. Each texture, material and model owns ranges of the
+//! source buffer (its texels; its record; its mesh records, vertices,
+//! indices and BVH; a deforming model's influences and morph targets), and
+//! each deforming instance its joint matrices, morph weights and deformed
+//! vertices (`scene::deformation`), written when it is added or replaced and
+//! freed for reuse when it is removed; the buffer grows when they do not
+//! fit. Pulled raster passes read vertices from it too, so it is always
+//! current, and shadow casters read a deforming instance's positions from
+//! it as a vertex buffer. The instance list is rebuilt from the scene's
+//! instances on frames that trace.
+use glam::Mat4;
+use std::ops::Range;
+
+use super::SceneError;
+use super::ranges::Ranges;
+use crate::asset::Vertex;
+use crate::shading::material::MaterialUniform;
+
+mod bvh;
+#[cfg(test)]
+mod query;
+#[cfg(test)]
+pub(crate) use query::QUERY;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use query::Query;
+
+/// What a ray instance reads of its model.
+#[derive(Clone, Copy)]
+pub(crate) struct RayModel {
+    /// The model's first mesh record.
+    pub mesh_word: u32,
+    /// Its BVH root node, zero when it has no triangles.
+    pub bvh_root: u32,
+}
+
+/// A model's words in the source: what rays read, its range, and each
+/// mesh's first vertex record.
+pub(crate) struct RayModelWords {
+    pub ray: RayModel,
+    pub range: Range<u32>,
+    pub vertices: Vec<u32>,
+}
+
+impl RayModel {
+    /// Mesh `mesh`'s record, which pulled raster passes read.
+    pub fn mesh_word(&self, mesh: usize) -> u32 {
+        self.mesh_word + (mesh * MESH_WORDS) as u32
+    }
+}
+
+/// One mesh of a model being added: its geometry and its material's record.
+pub(crate) struct RayMesh<'a> {
+    pub vertices: &'a [Vertex],
+    pub indices: &'a [u32],
+    pub material_word: u32,
+}
+
+/// One entry of the instance list.
+pub(crate) struct SceneRayInstance {
+    pub baked_irradiance: crate::static_lighting::AmbientCube,
+    pub model: RayModel,
+    pub world: Mat4,
+    /// The instance's index: its object record and source identity.
+    pub id: u32,
+    /// Its object record's flags.
+    pub flags: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct InstanceData {
+    world: [[f32; 4]; 4],
+    normal: [[f32; 4]; 4],
+    /// The model's first mesh record.
+    mesh_word: u32,
+    /// `SceneRayInstance::id`.
+    id: u32,
+    /// `SceneRayInstance::flags`.
+    flags: u32,
+    /// The model's BVH root node, zero when it has no triangles.
+    bvh_root: u32,
+    baked_irradiance: [[f32; 4]; 6],
+}
+
+/// The source's first words. Word 0 starts no record, so a zero image or BVH
+/// root word means none.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct SourceHeader {
+    /// The enabled material visibility groups.
+    visibility_mask: u32,
+    instance_count: u32,
+    padding: [u32; 2],
+}
+
+/// An image's record in the source, followed by its RGBA8 texels row by row.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ImageHeader {
+    width: u32,
+    height: u32,
+}
+
+/// A mesh's record in the source: where its vertices and indices start, its
+/// material's record, and its first vertex among its model's.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct MeshRecord {
+    vertices: u32,
+    indices: u32,
+    material_word: u32,
+    first_vertex: u32,
+}
+
+/// A mesh record's words; a model's records are consecutive.
+const MESH_WORDS: usize = std::mem::size_of::<MeshRecord>() / 4;
+
+/// A material's record in the source: its values, its textures, their wrap
+/// modes and whether lightmap charts light it.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct MaterialRecord {
+    material: MaterialUniform,
+    textures: MaterialTextures,
+    wrap: [u32; 2],
+    baked: u32,
+}
+
+/// Each texture's image word, zero when absent.
+#[repr(C)]
+#[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct MaterialTextures {
+    pub base: u32,
+    pub metallic_roughness: u32,
+    pub emission: u32,
+    pub normal: u32,
+    pub bump: u32,
+    pub anisotropy: u32,
+}
+
+/// Words of `T`.
+fn words<T>() -> usize {
+    std::mem::size_of::<T>() / 4
+}
+
+pub(crate) struct SceneRays {
+    source: wgpu::Buffer,
+    words: Ranges,
+    /// The largest source the device binds, in words.
+    word_limit: u64,
+    instances: wgpu::Buffer,
+    instance_data: Vec<InstanceData>,
+    visibility_mask: u32,
+}
+
+impl SceneRays {
+    /// A source holding only its header, and room for one instance.
+    pub fn new(device: &wgpu::Device) -> Self {
+        let limits = device.limits();
+        let header = words::<SourceHeader>();
+        Self {
+            source: source_buffer(device, header as u64),
+            words: Ranges::new(header as u32),
+            word_limit: limits
+                .max_storage_buffer_binding_size
+                .min(limits.max_buffer_size)
+                / 4,
+            instances: instance_buffer(device, 1),
+            instance_data: Vec::new(),
+            visibility_mask: 0,
+        }
+    }
+
+    /// Group 1's bindings 1 and 2: the source geometry and materials, and the
+    /// current instances.
+    pub fn buffers(&self) -> [&wgpu::Buffer; 2] {
+        [&self.source, &self.instances]
+    }
+
+    /// The source buffer, which the deform stage writes.
+    pub fn source(&self) -> &wgpu::Buffer {
+        &self.source
+    }
+
+    /// `len` words, growing the source to hold them. Content already written
+    /// keeps its words.
+    pub fn allocate(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        len: usize,
+    ) -> Result<Range<u32>, SceneError> {
+        let len = u32::try_from(len).map_err(|_| SceneError::DeviceLimit)?;
+        let range = self.words.allocate(len).ok_or(SceneError::DeviceLimit)?;
+        let needed = u64::from(self.words.end());
+        if needed > self.word_limit {
+            self.words.free(range);
+            return Err(SceneError::DeviceLimit);
+        }
+        let capacity = self.source.size() / 4;
+        if needed > capacity {
+            let grown = source_buffer(device, needed.max(capacity * 2).min(self.word_limit));
+            // Through the queue, never a frame's encoder: an abandoned frame
+            // loses no content.
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("grow scene ray source"),
+            });
+            encoder.copy_buffer_to_buffer(&self.source, 0, &grown, 0, self.source.size());
+            queue.submit([encoder.finish()]);
+            self.source = grown;
+        }
+        Ok(range)
+    }
+
+    /// Frees words for reuse.
+    pub fn free(&mut self, range: Range<u32>) {
+        self.words.free(range);
+    }
+
+    /// Writes `values` at `word`.
+    pub fn write(&self, queue: &wgpu::Queue, word: u32, values: &[u32]) {
+        if !values.is_empty() {
+            queue.write_buffer(
+                &self.source,
+                u64::from(word) * 4,
+                bytemuck::cast_slice(values),
+            );
+        }
+    }
+
+    /// An image's record and texels; its word starts the range.
+    pub fn add_image(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &image::RgbaImage,
+    ) -> Result<Range<u32>, SceneError> {
+        let header = ImageHeader {
+            width: image.width(),
+            height: image.height(),
+        };
+        let texels = image.as_raw().len() / 4;
+        let range = self.allocate(device, queue, words::<ImageHeader>() + texels)?;
+        let mut record = Vec::with_capacity(range.len());
+        record.extend_from_slice(bytemuck::cast_slice(&[header]));
+        record.extend(
+            image
+                .as_raw()
+                .chunks_exact(4)
+                .map(|p| u32::from_le_bytes([p[0], p[1], p[2], p[3]])),
+        );
+        self.write(queue, range.start, &record);
+        Ok(range)
+    }
+
+    /// A material's record, which lightmap charts do not light; its word
+    /// starts the range.
+    pub fn add_material(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        values: &MaterialUniform,
+        textures: MaterialTextures,
+        wrap: [gltf::texture::WrappingMode; 2],
+    ) -> Result<Range<u32>, SceneError> {
+        let record = MaterialRecord {
+            material: *values,
+            textures,
+            wrap: wrap.map(|w| match w {
+                gltf::texture::WrappingMode::Repeat => 0,
+                gltf::texture::WrappingMode::MirroredRepeat => 1,
+                gltf::texture::WrappingMode::ClampToEdge => 2,
+            }),
+            baked: 0,
+        };
+        let range = self.allocate(device, queue, words::<MaterialRecord>())?;
+        self.write(queue, range.start, bytemuck::cast_slice(&[record]));
+        Ok(range)
+    }
+
+    /// Replaces the values of the material record at `word`.
+    pub fn write_material(&self, queue: &wgpu::Queue, word: u32, values: &MaterialUniform) {
+        let field = std::mem::offset_of!(MaterialRecord, material) / 4;
+        self.write(queue, word + field as u32, bytemuck::cast_slice(&[*values]));
+    }
+
+    /// Whether lightmap charts light the material whose record is at `word`.
+    pub fn write_baked(&self, queue: &wgpu::Queue, word: u32, baked: bool) {
+        let field = std::mem::offset_of!(MaterialRecord, baked) / 4;
+        self.write(queue, word + field as u32, &[u32::from(baked)]);
+    }
+
+    /// A model's mesh records, vertices, indices and BVH, in one range. The
+    /// BVH's words are absolute, so it is built where it is stored.
+    pub fn add_model(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        meshes: &[RayMesh<'_>],
+    ) -> Result<RayModelWords, SceneError> {
+        let triangles: usize = meshes.iter().map(|mesh| mesh.indices.len() / 3).sum();
+        let len = meshes.len() * MESH_WORDS
+            + meshes
+                .iter()
+                .map(|mesh| mesh.vertices.len() * words::<Vertex>() + mesh.indices.len())
+                .sum::<usize>()
+            + bvh::words(triangles);
+        let range = self.allocate(device, queue, len)?;
+        let base = range.start;
+        let mut block = vec![0u32; meshes.len() * MESH_WORDS];
+        block.reserve(len - block.len());
+        let mut first_vertex = 0;
+        let mut vertex_words = Vec::with_capacity(meshes.len());
+        for (index, mesh) in meshes.iter().enumerate() {
+            let vertices = base + block.len() as u32;
+            vertex_words.push(vertices);
+            block.extend_from_slice(bytemuck::cast_slice(mesh.vertices));
+            let indices = base + block.len() as u32;
+            block.extend_from_slice(mesh.indices);
+            let at = index * MESH_WORDS;
+            block[at..at + MESH_WORDS].copy_from_slice(bytemuck::cast_slice(&[MeshRecord {
+                vertices,
+                indices,
+                material_word: mesh.material_word,
+                first_vertex,
+            }]));
+            first_vertex += mesh.vertices.len() as u32;
+        }
+        let bvh_root = bvh::append(meshes, &mut block, base);
+        debug_assert_eq!(block.len(), len, "a model fills its range");
+        self.write(queue, base, &block);
+        Ok(RayModelWords {
+            ray: RayModel {
+                mesh_word: base,
+                bvh_root,
+            },
+            range,
+            vertices: vertex_words,
+        })
+    }
+
+    /// Room for `count` instances in the list. True when the list buffer was
+    /// replaced, which group 1 binds.
+    pub fn reserve_instances(
+        &mut self,
+        device: &wgpu::Device,
+        count: usize,
+    ) -> Result<bool, SceneError> {
+        let stride = std::mem::size_of::<InstanceData>() as u64;
+        let capacity = self.instances.size() / stride;
+        if count as u64 <= capacity {
+            return Ok(false);
+        }
+        let limits = device.limits();
+        let limit = limits
+            .max_storage_buffer_binding_size
+            .min(limits.max_buffer_size)
+            / stride;
+        if count as u64 > limit {
+            return Err(SceneError::DeviceLimit);
+        }
+        self.instances = instance_buffer(device, (count as u64).max(capacity * 2).min(limit));
+        Ok(true)
+    }
+
+    /// Uploads the instance list, which the scene keeps within the reserved
+    /// room. Encode before any ray dispatch in this frame.
+    pub fn update(&mut self, queue: &wgpu::Queue, instances: &[SceneRayInstance]) {
+        queue.write_buffer(
+            &self.source,
+            std::mem::offset_of!(SourceHeader, instance_count) as u64,
+            bytemuck::bytes_of(&(instances.len() as u32)),
+        );
+        self.instance_data.clear();
+        self.instance_data
+            .extend(instances.iter().map(|instance| InstanceData {
+                baked_irradiance: instance.baked_irradiance.packed(),
+                world: instance.world.to_cols_array_2d(),
+                normal: instance.world.inverse().transpose().to_cols_array_2d(),
+                mesh_word: instance.model.mesh_word,
+                id: instance.id,
+                flags: instance.flags,
+                bvh_root: instance.model.bvh_root,
+            }));
+        if !self.instance_data.is_empty() {
+            queue.write_buffer(
+                &self.instances,
+                0,
+                bytemuck::cast_slice(&self.instance_data),
+            );
+        }
+    }
+
+    /// Set the enabled material visibility groups before tracing this frame.
+    pub fn set_visibility_mask(&mut self, queue: &wgpu::Queue, mask: u32) {
+        if self.visibility_mask != mask {
+            queue.write_buffer(
+                &self.source,
+                std::mem::offset_of!(SourceHeader, visibility_mask) as u64,
+                bytemuck::bytes_of(&mask),
+            );
+            self.visibility_mask = mask;
+        }
+    }
+}
+
+fn source_buffer(device: &wgpu::Device, words: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("scene ray source geometry and materials"),
+        size: words * 4,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::VERTEX
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
+fn instance_buffer(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("scene ray current instance lookup"),
+        size: capacity * std::mem::size_of::<InstanceData>() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// The WGSL twins of the source's record layouts, in words: `SourceHeader`,
+/// `ImageHeader`, `asset::Vertex` (which the source holds verbatim),
+/// `MeshRecord`, `MaterialRecord` and the BVH's node and leaf primitive.
+#[cfg(test)]
+pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
+    use crate::asset::Vertex;
+    use std::mem::{offset_of, size_of};
+    let material = |field: usize| offset_of!(MaterialRecord, material) + field;
+    let source = [
+        (
+            "SCENE_HEADER_VISIBILITY_MASK",
+            offset_of!(SourceHeader, visibility_mask),
+        ),
+        (
+            "SCENE_HEADER_INSTANCE_COUNT",
+            offset_of!(SourceHeader, instance_count),
+        ),
+        ("SCENE_IMAGE_WIDTH", offset_of!(ImageHeader, width)),
+        ("SCENE_IMAGE_HEIGHT", offset_of!(ImageHeader, height)),
+        ("SCENE_IMAGE_TEXELS", size_of::<ImageHeader>()),
+        ("SCENE_VERTEX_WORDS", size_of::<Vertex>()),
+        ("SCENE_VERTEX_POSITION", offset_of!(Vertex, position)),
+        ("SCENE_VERTEX_NORMAL", offset_of!(Vertex, normal)),
+        ("SCENE_VERTEX_UV", offset_of!(Vertex, uv)),
+        ("SCENE_VERTEX_COLOR", offset_of!(Vertex, color)),
+        ("SCENE_VERTEX_LIGHTMAP_UV", offset_of!(Vertex, lightmap_uv)),
+        (
+            "SCENE_VERTEX_LIGHTMAP_BOUNDS",
+            offset_of!(Vertex, lightmap_bounds),
+        ),
+        ("SCENE_VERTEX_TANGENT", offset_of!(Vertex, tangent)),
+        ("SCENE_MESH_WORDS", size_of::<MeshRecord>()),
+        ("SCENE_MESH_VERTICES", offset_of!(MeshRecord, vertices)),
+        ("SCENE_MESH_INDICES", offset_of!(MeshRecord, indices)),
+        (
+            "SCENE_MESH_MATERIAL_WORD",
+            offset_of!(MeshRecord, material_word),
+        ),
+        (
+            "SCENE_MESH_FIRST_VERTEX",
+            offset_of!(MeshRecord, first_vertex),
+        ),
+        (
+            "SCENE_MATERIAL_BASE",
+            material(offset_of!(MaterialUniform, base)),
+        ),
+        (
+            "SCENE_MATERIAL_EMISSION",
+            material(offset_of!(MaterialUniform, emission)),
+        ),
+        (
+            "SCENE_MATERIAL_ENVIRONMENT_SCALE",
+            material(offset_of!(MaterialUniform, environment_scale)),
+        ),
+        (
+            "SCENE_MATERIAL_METALLIC",
+            material(offset_of!(MaterialUniform, metallic)),
+        ),
+        (
+            "SCENE_MATERIAL_ROUGHNESS",
+            material(offset_of!(MaterialUniform, roughness)),
+        ),
+        (
+            "SCENE_MATERIAL_COAT",
+            material(offset_of!(MaterialUniform, coat)),
+        ),
+        (
+            "SCENE_MATERIAL_COAT_ROUGHNESS",
+            material(offset_of!(MaterialUniform, coat_roughness)),
+        ),
+        (
+            "SCENE_MATERIAL_NORMAL_SCALE",
+            material(offset_of!(MaterialUniform, normal_scale)),
+        ),
+        (
+            "SCENE_MATERIAL_BUMP_SCALE",
+            material(offset_of!(MaterialUniform, bump_scale)),
+        ),
+        (
+            "SCENE_MATERIAL_ANISOTROPY_STRENGTH",
+            material(offset_of!(MaterialUniform, anisotropy_strength)),
+        ),
+        (
+            "SCENE_MATERIAL_ANISOTROPY_ROTATION",
+            material(offset_of!(MaterialUniform, anisotropy_rotation)),
+        ),
+        (
+            "SCENE_MATERIAL_ALPHA_CUTOFF",
+            material(offset_of!(MaterialUniform, alpha_cutoff)),
+        ),
+        (
+            "SCENE_MATERIAL_VISIBILITY_GROUP",
+            material(offset_of!(MaterialUniform, visibility_group)),
+        ),
+        (
+            "SCENE_MATERIAL_FLAGS",
+            material(offset_of!(MaterialUniform, flags)),
+        ),
+        (
+            "SCENE_MATERIAL_TEXTURES",
+            offset_of!(MaterialRecord, textures),
+        ),
+        ("SCENE_MATERIAL_WRAP", offset_of!(MaterialRecord, wrap)),
+        ("SCENE_MATERIAL_BAKED", offset_of!(MaterialRecord, baked)),
+        ("SCENE_TEXTURE_BASE", offset_of!(MaterialTextures, base)),
+        (
+            "SCENE_TEXTURE_METALLIC_ROUGHNESS",
+            offset_of!(MaterialTextures, metallic_roughness),
+        ),
+        (
+            "SCENE_TEXTURE_EMISSION",
+            offset_of!(MaterialTextures, emission),
+        ),
+        ("SCENE_TEXTURE_NORMAL", offset_of!(MaterialTextures, normal)),
+        ("SCENE_TEXTURE_BUMP", offset_of!(MaterialTextures, bump)),
+        (
+            "SCENE_TEXTURE_ANISOTROPY",
+            offset_of!(MaterialTextures, anisotropy),
+        ),
+    ];
+    // The BVH is declared beside the portable traversal that reads it.
+    source
+        .into_iter()
+        .map(|constant| ("geometry", constant))
+        .chain(bvh::layout().map(|constant| ("world_reflections", constant)))
+        .map(|(program, (name, bytes))| {
+            crate::shading::layout_tests::Constant::new(
+                program,
+                name,
+                naga::Literal::U32(u32::try_from(bytes / 4).unwrap()),
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
+    [crate::shading::layout_tests::mirror!(
+        "world_reflections",
+        "SceneRayInstanceData",
+        InstanceData,
+        [
+            world,
+            normal as "normal_matrix",
+            mesh_word,
+            id,
+            flags,
+            bvh_root,
+            baked_irradiance
+        ]
+    )]
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod portable_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod secondary_normal_tests;

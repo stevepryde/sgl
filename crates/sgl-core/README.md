@@ -1,0 +1,40 @@
+# sgl-core
+
+Deterministic game building blocks with no I/O, clocks, threads, graphics,
+or dependencies on other SGL crates. The game supplies time, seeds, units,
+and state. Native clients, browser clients, and headless servers share the
+same API.
+
+## Choose a module
+
+| Need | API |
+| --- | --- |
+| Fixed-step simulation and interpolation | [`time::FixedClock`](src/time.rs) |
+| Typed canonical hashing and raw byte digests | [`StateHasher`, `CanonicalWrite`, `Digest`](src/hash.rs) |
+| Frozen seeded random stream | [`SplitMix64`, `derive_stream_seed`](src/rng.rs) |
+| General seeded randomness | [`random::Rng`](src/random.rs) |
+| Bounded row-major grid | [`Grid2`](src/grid.rs) |
+| Frame animation and scripted sequences | [`anim`](src/anim.rs) |
+| Swept AABB, kinematic sliding, sensors, and one-way platforms | [`collision`](src/collision.rs) |
+| Shared 2D vector and geometry helpers | [`math`](src/math.rs) |
+
+`FixedClock` clamps each frame delta to one fixed step. It runs at most one
+simulation step per frame; it is not a catch-up accumulator. Use its
+interpolation fraction for presentation, keeping game simulation separate
+from rendering.
+
+`SplitMix64` and canonical hashes have frozen cross-target contracts.
+`random::Rng` is deterministic for a seed within its dependency version;
+its stream is not promised across dependency upgrades. Choose according to
+the game's replay or persistence requirements.
+
+Collision units and the up axis belong to the game. Supply them through
+`CollisionConfig`; SGL does not choose a world scale or entity layout.
+
+Read the [core contract](../../specs/core.md) before changing deterministic
+behavior. [Parity fixtures](tests/parity.rs) and [property tests](tests/properties.rs)
+exercise the cross-target and algorithm boundaries.
+
+Run `cargo test -p sgl-core` for focused native checks. The repository's
+[required check](../../CONTRIBUTING.md#validate) also runs the WASM lane.
+For dependency setup, see [Building games with SGL](../../docs/README.md).

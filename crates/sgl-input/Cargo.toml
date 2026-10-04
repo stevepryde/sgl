@@ -1,0 +1,29 @@
+[package]
+name = "sgl-input"
+repository.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/sgl-input"
+categories = ["game-development"]
+keywords = ["gamedev", "input", "gamepad", "controller"]
+readme = "README.md"
+description = "Caller-polled controller discovery, events, and held state for SGL games"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Only the macOS FFI module may use unsafe; all other SGL crates retain the
+# workspace-wide forbid. The public input API is safe Rust.
+[lints.rust]
+unsafe_code = "deny"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+block2 = "0.6.2"
+objc2-game-controller = { version = "0.3.2", default-features = false, features = ["std", "block2", "GCController", "GCDevice", "GCExtendedGamepad", "GCPhysicalInputProfile", "GCControllerElement", "GCControllerAxisInput", "GCControllerButtonInput", "GCControllerDirectionPad"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+gilrs = "0.11.2"
+
+[dev-dependencies]
+winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }

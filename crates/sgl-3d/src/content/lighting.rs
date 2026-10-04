@@ -1,0 +1,107 @@
+//! The frame's lights and authored look, as the game describes them in
+//! `FrameInput`: directional lights, the hemisphere fill, the environment's
+//! lighting and backdrop, and the mist. Metres, radians
+//! about +Y and linear RGB. Point and spot lights are scene content
+//! (`Light`); SGL3D packs all of these into its frame data itself.
+use glam::Vec3;
+
+/// A light at infinity, such as the sun or the moon (Bevy's
+/// `DirectionalLight`, Godot's `DirectionalLight3D`, Filament's directional
+/// light).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DirectionalLight {
+    /// Where the light shines, from the light toward what it lights; any
+    /// nonzero length. A zero or non-finite direction is no light.
+    pub direction: Vec3,
+    /// Linear RGB, nonnegative.
+    pub color: [f32; 3],
+    /// Illuminance at normal incidence (lux), on the scale of scene lights'
+    /// candela; zero turns the light off.
+    pub illuminance: f32,
+    /// The light's shadow, `None` for none. One directional light has a
+    /// shadow: the first that is on and has one.
+    pub shadow: Option<DirectionalShadow>,
+}
+
+/// A directional light's cascaded shadow, which SGL3D fits from the camera
+/// (Bevy's `CascadeShadowConfigBuilder`, Godot's directional shadow splits).
+/// The camera's view depth from its near plane to `distance` is split into
+/// `cascades`, each a shadow map of the same size covering a farther and
+/// larger part of the view, so texels near the camera are small.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DirectionalShadow {
+    /// The farthest view depth that is shadowed, in metres (Bevy's
+    /// `maximum_distance`). Nonpositive or nonfinite casts no shadow.
+    pub distance: f32,
+    /// How many cascades split `distance`, 1 to 4; others are clamped.
+    pub cascades: u32,
+    /// The view depth where the first cascade ends, in metres (Bevy's
+    /// `first_cascade_far_bound`); the others end at depths spaced
+    /// geometrically from it to `distance`. At most `distance`; one that is
+    /// not finite or not beyond the camera's near plane gives one cascade
+    /// over the whole distance. Unused with one cascade.
+    pub first_split: f32,
+}
+
+impl DirectionalLight {
+    /// The light reaches anything: positive illuminance and a direction
+    /// that normalises. A light that is off is packed as no light and casts
+    /// no shadow.
+    pub(crate) fn is_on(&self) -> bool {
+        self.illuminance > 0. && self.direction.try_normalize().is_some()
+    }
+}
+
+/// A sky and ground fill (Three.js's `HemisphereLight`): a surface facing
+/// straight up receives `sky_color` and one facing straight down
+/// `ground_color`, blended by the normal's height, times `intensity`, as
+/// irradiance on the directional lights' scale. It lights diffuse surfaces
+/// only.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HemisphereLight {
+    /// Linear RGB, nonnegative.
+    pub sky_color: [f32; 3],
+    /// Linear RGB, nonnegative.
+    pub ground_color: [f32; 3],
+    /// Nonnegative; zero turns the fill off.
+    pub intensity: f32,
+}
+
+/// The frame environment's map turned about +Y and scaled where it lights
+/// one lobe: `FrameInput::diffuse_environment` or `reflection_environment`.
+/// Bevy's `EnvironmentMapLight` and Filament's `IndirectLight` carry the same
+/// rotation and intensity but scale diffuse and specular together.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EnvironmentLight {
+    /// Radians about +Y.
+    pub yaw: f32,
+    /// Nonnegative scale of the map's radiance.
+    pub intensity: f32,
+}
+
+/// What the camera sees where no surface is (Godot's background mode,
+/// Filament's `Skybox`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Backdrop {
+    /// The frame environment's panorama (Bevy's `Skybox`), turned `yaw`
+    /// radians about +Y, its radiance scaled by `brightness`.
+    Environment { yaw: f32, brightness: f32 },
+    /// One linear RGB colour.
+    Color([f32; 3]),
+}
+
+/// The look of the mist billboards at the scene's mist positions
+/// (`Scene::update_mist`), shaded by animated noise.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mist {
+    /// Linear RGB where the noise is thin.
+    pub thin_color: [f32; 3],
+    /// Linear RGB where the noise is dense.
+    pub dense_color: [f32; 3],
+    /// The densest noise's opacity, 0..=1; zero hides the mist.
+    pub opacity: f32,
+    /// Each billboard's width in metres.
+    pub width: f32,
+    /// Each billboard's height in metres.
+    pub height: f32,
+}

@@ -1,0 +1,8 @@
+Steve's Game Library first-party source code is dual licensed under either:
+
+- the MIT License in LICENSE-MIT; or
+- the Apache License, Version 2.0, in LICENSE-APACHE.
+
+You may choose either license. Third-party dependencies, fixtures, fonts, images, and
+other bundled assets retain their own licenses and are not relicensed by this notice.
+See THIRD_PARTY_NOTICES.txt and any asset-specific attribution.

@@ -1,0 +1,293 @@
+//! Fixture access to the renderer's stages: a frame prepared as `render`
+//! prepares it, then single stage operations, for tests that observe one
+//! stage's output.
+use super::Renderer;
+use crate::settings::Settings;
+use crate::shading::uniforms::FrameValues;
+use crate::view::draw_list::{DrawInstances, DrawList};
+use crate::view::effective::Effective;
+use crate::view::frame::FrameContext;
+use crate::view::history::HistoryFrame;
+use crate::view::pipelines::GeometryPass;
+use crate::view::population::Population;
+use crate::{FrameInput, Scene};
+
+/// The context of `frame`, borrowing the renderer's lent resources.
+macro_rules! context {
+    ($renderer:expr, $device:expr, $queue:expr, $encoder:expr, $scene:expr, $frame:expr) => {
+        FrameContext {
+            device: $device,
+            queue: $queue,
+            encoder: $encoder,
+            timing: None,
+            effective: &$frame.effective,
+            sizes: $renderer.sizes,
+            targets: &$renderer.targets,
+            scene: $scene,
+            values: &$frame.values,
+            input: &$frame.input,
+            views: &$renderer.views,
+            bindings: &mut $renderer.bindings,
+            pipelines: &$renderer.pipelines,
+            history: $frame.history,
+        }
+    };
+}
+
+/// A frame prepared by `Renderer::prepare_test_frame`.
+pub(crate) struct TestFrame {
+    effective: Effective,
+    values: FrameValues,
+    input: FrameInput,
+    history: HistoryFrame,
+}
+
+impl Renderer {
+    /// A renderer of HDR output at `size` for `settings`.
+    pub(crate) fn for_test(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: [u32; 2],
+        settings: &Settings,
+    ) -> Self {
+        Self::new(
+            device,
+            queue,
+            crate::shading::gbuffer::COLOR,
+            size,
+            1.,
+            settings,
+        )
+        .unwrap()
+    }
+
+    /// Prepares the frame of `scene` that `input` describes as `render`
+    /// does, without antialiasing's jitter, and encodes nothing: group 0, the
+    /// views, their draw lists and uniforms.
+    pub(crate) fn prepare_test_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &mut Scene,
+        input: &FrameInput,
+        settings: &Settings,
+    ) -> TestFrame {
+        let input = *input;
+        let effective = super::effective::resolve(
+            settings,
+            &input,
+            scene.transient.fog_volume_count > 0,
+            false,
+            self.pipelines.fused_supported,
+        );
+        self.pipelines.specialise(device, effective.layers, scene);
+        let history = self.begin_history(scene, &input);
+        let values = self.prepare.run(
+            device,
+            queue,
+            scene,
+            &input,
+            history,
+            &effective,
+            None,
+            self.sizes.render,
+            &mut self.views,
+            &self.bindings.frame,
+        );
+        self.shadows.local.prepare(
+            device,
+            queue,
+            &self.bindings,
+            (scene, &mut self.views.instances),
+            (input.camera.view, input.camera.projection),
+            values.frame.visibility_mask,
+            effective.local_lights,
+        );
+        self.views.instances.upload(device, queue);
+        self.fog.prepare(device, effective.fog, self.sizes.render);
+        self.bindings.refresh(
+            device,
+            scene,
+            input.environment,
+            &self.views,
+            self.shadows.maps(),
+            self.fog.volume(),
+        );
+        TestFrame {
+            effective,
+            values,
+            input,
+            history,
+        }
+    }
+
+    /// Replaces the prepared frame's directional shadow with one cascade of
+    /// view-projection `clip_from_world` and its casters, as prepare builds
+    /// them, for fixtures that need a known shadow view.
+    pub(crate) fn set_test_cascade(
+        &mut self,
+        gpu: (&wgpu::Device, &wgpu::Queue),
+        scene: &Scene,
+        frame: &TestFrame,
+        clip_from_world: glam::Mat4,
+    ) {
+        let (device, queue) = gpu;
+        crate::stages::prepare::set_cascades(
+            queue,
+            scene,
+            &mut self.views,
+            Some(frame.values.frame.visibility_mask),
+            std::iter::once(clip_from_world),
+        );
+        self.views.instances.upload(device, queue);
+    }
+
+    /// The camera's directional shadow cascades (into the renderer's layers,
+    /// or the first into `target`) and the local-light shadow faces, as
+    /// `render` encodes them.
+    pub(crate) fn encode_test_shadows(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &Scene,
+        frame: &TestFrame,
+        target: Option<&wgpu::TextureView>,
+    ) {
+        let layer = target.map(|target| {
+            std::mem::replace(&mut self.shadows.directional.layers[0], target.clone())
+        });
+        let mut ctx = context!(self, device, queue, encoder, scene, frame);
+        self.shadows.encode_local(&mut ctx);
+        self.shadows.encode_directional(&mut ctx);
+        if let Some(layer) = layer {
+            self.shadows.directional.layers[0] = layer;
+        }
+    }
+
+    /// The opaque stage of `frame`, fused or split, with the ambient
+    /// occlusion its settings choose.
+    pub(crate) fn encode_test_opaque(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &Scene,
+        frame: &mut TestFrame,
+        fused: bool,
+    ) {
+        frame.effective.fused = fused;
+        let mut ctx = context!(self, device, queue, encoder, scene, frame);
+        self.opaque.encode(&mut ctx);
+    }
+
+    /// The transparent stage's glow and mist into `beauty`, over the
+    /// renderer's depth target.
+    pub(crate) fn encode_test_transparent(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &Scene,
+        frame: &TestFrame,
+        beauty: &wgpu::TextureView,
+    ) {
+        let mut ctx = context!(self, device, queue, encoder, scene, frame);
+        self.transparent.encode(
+            &mut ctx,
+            crate::stages::transparent::Beauty::Incident(beauty),
+        );
+    }
+
+    /// Draws the camera's draw list with `kind` into `pass` under the
+    /// camera's lit group 0; `Forward` draws the sky first, as a probe
+    /// capture face does.
+    pub(crate) fn draw_test_camera(
+        &self,
+        scene: &Scene,
+        pass: &mut wgpu::RenderPass<'_>,
+        kind: GeometryPass,
+    ) {
+        let list = &self.views.camera.list;
+        if kind == GeometryPass::Forward {
+            self.opaque.encode_forward(
+                pass,
+                scene,
+                &self.pipelines,
+                (list, &self.views.instances),
+                self.bindings.camera_unlit(),
+                self.bindings.camera_lit(),
+            );
+        } else {
+            pass.set_bind_group(0, self.bindings.camera_lit(), &[]);
+            list.draw(scene, &self.pipelines, &self.views.instances, pass, kind);
+        }
+    }
+
+    /// The camera's lit group 0, as the frame binds it.
+    pub(crate) fn test_camera_lit(&self) -> &wgpu::BindGroup {
+        self.bindings.camera_lit()
+    }
+
+    /// World-space ray hits' lit group 0, as the frame binds it.
+    pub(crate) fn test_ray_hit_lit(&self) -> &wgpu::BindGroup {
+        self.bindings.ray_hit_lit()
+    }
+
+    pub(crate) fn test_lit_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.bindings.lit
+    }
+
+    /// Whether this device writes the G-buffer and lighting in one pass.
+    pub(crate) fn test_fused_supported(&self) -> bool {
+        self.pipelines.fused_supported
+    }
+
+    /// Whether the G-buffer pass writes anisotropy itself.
+    pub(crate) fn test_anisotropy_inline(&self) -> bool {
+        self.pipelines.anisotropy_inline
+    }
+
+    /// The last frame's FSR2 context.
+    pub(crate) fn test_fsr2(&self) -> Option<&crate::stages::antialiasing::fsr2::Fsr2> {
+        self.antialiasing.fsr2()
+    }
+
+    /// Marks the prepared camera view as a probe capture face's, so surfaces
+    /// shade as captures shade them.
+    pub(crate) fn test_view_as_capture(&mut self, queue: &wgpu::Queue) {
+        let mut view = self.views.camera.view;
+        view.uniform.flags |= crate::shading::uniforms::VIEW_PROBE_CAPTURE;
+        self.views.camera.set(queue, view);
+    }
+
+    /// Draws the static capture-visible instances, whole and double-sided, into a
+    /// colour and motion pass with depth under the camera's lit group 0 of the
+    /// prepared frame: a probe face's population and pipeline from the camera.
+    pub(crate) fn draw_static(
+        &self,
+        gpu: (&wgpu::Device, &wgpu::Queue),
+        scene: &Scene,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) {
+        let (device, queue) = gpu;
+        let mut instances = DrawInstances::default();
+        let mut list = DrawList::default();
+        list.build(
+            &mut instances,
+            scene,
+            &crate::view::View::camera(bytemuck::Zeroable::zeroed()),
+            None,
+            Population::ProbeFace,
+        );
+        pass.set_bind_group(0, self.bindings.camera_lit(), &[]);
+        instances.upload(device, queue);
+        list.draw(
+            scene,
+            &self.pipelines,
+            &instances,
+            pass,
+            GeometryPass::Forward,
+        );
+    }
+}

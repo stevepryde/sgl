@@ -1,0 +1,114 @@
+// View and frame data (group 0 bindings 0 and 1) and the per-instance object
+// record (group 1 binding 0). Rust mirrors: shading/uniforms.rs; the layout test
+// compares the two. Colours are linear RGB, lengths metres and angles radians
+// about +Y.
+// One rendered view: the camera, a probe-capture face or a shadow face.
+struct View {
+ view:mat4x4<f32>,
+ // Unjittered.
+ projection:mat4x4<f32>,
+ // What raster uses: the jittered projection times the view.
+ view_projection:mat4x4<f32>,
+ inverse_view_projection:mat4x4<f32>,
+ // Unjittered, for motion.
+ stable_view_projection:mat4x4<f32>,
+ previous_view_projection:mat4x4<f32>,
+ eye:vec3<f32>,
+ // Material texture mip bias of the antialiasing in effect.
+ mip_bias:f32,
+ // Half the NDC jitter: raster offsets clip xy by 2 jitter w.
+ jitter:vec2<f32>,
+ viewport:vec2<f32>,
+ flags:u32,
+}
+const VIEW_PROBE_CAPTURE:u32=1u;
+// A light at infinity (FrameInput::directional_lights).
+struct DirectionalLight {
+ // From a receiver toward the light; any nonzero length.
+ direction_to_light:vec3<f32>,
+ flags:u32,
+ color:vec3<f32>,
+ // Zero for no light.
+ illuminance:f32,
+}
+// DirectionalLight.flags: the light has the frame's shadow cascades.
+const DIRECTIONAL_LIGHT_SHADOW:u32=1u;
+// One cascade of the directional shadow (Bevy's DirectionalCascade), drawn
+// into its layer of directional_shadow_map.
+struct ShadowCascade {
+ // Reversed-Z orthographic view-projection.
+ clip_from_world:mat4x4<f32>,
+ // World metres per shadow-map texel.
+ texel_size:f32,
+ // The camera's view depth where the cascade ends; a probe capture's cascade
+ // ends this far from its centre along each axis.
+ far_bound:f32,
+}
+// What every view of one frame shares.
+struct Frame {
+ directional_lights:array<DirectionalLight,2>,
+ // The shadowed light's cascades, nearest first: the first
+ // shadow_cascade_count are in use.
+ shadow_cascades:array<ShadowCascade,4>,
+ // Three.js's HemisphereLight: irradiance facing up and facing down.
+ hemisphere_sky_color:vec3<f32>,
+ hemisphere_intensity:f32,
+ hemisphere_ground_color:vec3<f32>,
+ // The environment map's diffuse lighting: its yaw and radiance scale.
+ // Specular takes reflection_yaw and reflection_intensity.
+ diffuse_environment_yaw:f32,
+ // The backdrop with FRAME_BACKDROP_COLOR.
+ backdrop_color:vec3<f32>,
+ diffuse_environment_intensity:f32,
+ // The mist's colour where its noise is thin and dense, and the densest
+ // noise's opacity.
+ mist_thin_color:vec3<f32>,
+ mist_opacity:f32,
+ mist_dense_color:vec3<f32>,
+ // The panorama backdrop's yaw and radiance scale.
+ backdrop_yaw:f32,
+ // Each mist billboard's width and height.
+ mist_size:vec2<f32>,
+ backdrop_brightness:f32,
+ // With FRAME_FOG: one over the fog volume's length and over its detail
+ // spread (fog.wgsl).
+ fog_inverse_length:f32,
+ fog_inverse_detail_spread:f32,
+ reflection_yaw:f32,
+ reflection_intensity:f32,
+ elapsed_seconds:f32,
+ // Multiplies the irradiance atlas (scene::static_lighting).
+ fixed_irradiance_scale:f32,
+ visibility_mask:u32,
+ flags:u32,
+ shadow_cascade_count:u32,
+ // Frames since history restarted: the temporal shadow filter's noise
+ // turns with it.
+ frame_count:u32,
+ // The lightmap's chart transform: chart UV = material UV * xy + zw.
+ lightmap_chart:vec4<f32>,
+}
+// The frame's volumetric fog ran: draws fog themselves from its volume.
+const FRAME_FOG:u32=1u;
+const FRAME_BAKED_LIGHTING:u32=2u;
+// An irradiance atlas is installed (Scene::set_static_irradiance_atlas).
+const FRAME_IRRADIANCE_ATLAS:u32=4u;
+const FRAME_BACKDROP_COLOR:u32=8u;
+// The camera's shadows take the temporal filter, for TAA or FSR2 to resolve.
+const FRAME_TEMPORAL_SHADOW_FILTER:u32=16u;
+// One instance's record, at its index in the scene's object buffer. That
+// index plus one is the source identity the G-buffer stores.
+struct Object {
+ model:mat4x4<f32>,
+ previous_model:mat4x4<f32>,
+ baked_irradiance:array<vec4<f32>,6>,
+ flags:u32,
+ // A deforming instance's vertices in the scene source (deformation.wgsl):
+ // its positions this frame and in the last submitted frame, and its
+ // normals and tangents. Zero for an instance that does not deform.
+ deformed_positions:u32,
+ previous_positions:u32,
+ deformed_normals:u32,
+}
+// Object.flags: a static instance; a moving one has the bit clear.
+const OBJECT_STATIC:u32=1u;

@@ -1,0 +1,2 @@
+https://github.com/DiligentGraphics/DiligentCore
+18bfa7b7563a0ef5b5fe074d37c2e8304100e965

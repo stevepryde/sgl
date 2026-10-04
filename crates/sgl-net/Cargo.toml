@@ -1,0 +1,48 @@
+[package]
+name = "sgl-net"
+repository.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/sgl-net"
+categories = ["game-development", "network-programming"]
+keywords = ["gamedev", "networking", "udp", "websocket"]
+readme = "README.md"
+description = "Opaque-payload UDP, WebSocket, and in-memory game transports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+blake3.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom.workspace = true
+mio.workspace = true
+tungstenite = { workspace = true, features = ["handshake"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest.workspace = true
+tungstenite = { workspace = true, features = ["handshake"] }
+
+[dev-dependencies]
+wasm-bindgen-test.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-futures.workspace = true
+
+# The browser test lane (`bun scripts/tasks.ts check-browser`): a native
+# fixture server and the wasm probe Playwright runs against it.
+[[example]]
+name = "ws_fixture_server"
+
+[[example]]
+name = "browser_probe"
+crate-type = ["cdylib"]

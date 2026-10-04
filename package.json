@@ -1,0 +1,7 @@
+{
+  "name": "sgl-tooling",
+  "private": true,
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}

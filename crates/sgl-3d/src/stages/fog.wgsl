@@ -1,0 +1,261 @@
+// The volumetric fog: the camera's froxel volume, lit and integrated each
+// frame. Ported from Godot b130438's
+// servers/rendering/renderer_rd/shaders/environment/volumetric_fog_process.glsl
+// (MODE_DENSITY, the medium and the light it scatters in each froxel blended
+// with the last frame's, and MODE_FOG, the integration front to back) and
+// environment/fog.cpp (volumetric_fog_update), MIT (src/LICENSE-godot.txt),
+// after Hillaire 2015, "Physically Based and Unified Volumetric Rendering in
+// Frostbite".
+//
+// Changes: the medium is the frame's (Godot's environment fog with its fog
+// material's height falloff) and the scene's box fog volumes (Godot's box
+// FogVolume and its FogMaterial's density, albedo and edge fade from
+// volumetric_fog.glsl and scene/resources/3d/fog_material.cpp), which each
+// froxel sums itself rather than each volume adding into the froxels it
+// covers with atomics; there is no emission, GI injection or optional
+// filter. The lights are SGL3D's: the frame's directional lights
+// through the shared cascade sampling, and the camera's clustered point, spot
+// and rectangle lights through their records and the shared local-shadow
+// sampling with one hardware tap per froxel, as Bevy's volumetric fog
+// samples its shadow maps and Godot's takes one tap, a rectangle by the
+// solid angle of its face, which Godot takes as the face's diffuse integral
+// toward the froxel. The ambient is the frame's
+// hemisphere fill and environment diffuse averaged over the sphere, which an
+// isotropic phase scatters. Froxel positions come from the camera's
+// unjittered projection and their place in the last frame's volume from its
+// view-projection, rather than frustum sizes. The history alternates two
+// volumes instead of copying one. The integration steps along the view ray
+// through each slice, where Godot steps the slice's depth, so fog off the
+// view's axis is as dense as on it.
+
+// One frame's froxel volume (stages/fog.rs FroxelVolumeUniform).
+struct FroxelVolume {
+ world_from_view:mat4x4<f32>,
+ // The last frame's unjittered view-projection.
+ previous_clip_from_world:mat4x4<f32>,
+ // The unjittered projection's x and y scales, then its x and y offsets:
+ // the view point at depth d under frame position ndc is
+ // ((ndc + offset) * d / scale, -d).
+ projection:vec4<f32>,
+ size:vec3<u32>,
+ // This frame's offset in FOG_HALTON.
+ frame:u32,
+ albedo:vec3<f32>,
+ density:f32,
+ render_size:vec2<f32>,
+ length:f32,
+ detail_spread:f32,
+ height:f32,
+ height_falloff:f32,
+ anisotropy:f32,
+ // The share of the last frame's volume a froxel keeps where it
+ // reprojects; 0 without history.
+ temporal_blend:f32,
+ // The share of the frame's ambient light the medium scatters.
+ ambient:f32,
+ // How many of fog_volumes are the scene's.
+ volume_count:u32,
+}
+@group(1) @binding(0) var<uniform> froxels:FroxelVolume;
+// Injection: the last frame's froxels and the sampler that reprojects them,
+// and this frame's.
+@group(1) @binding(1) var previous_scattering:texture_3d<f32>;
+@group(1) @binding(2) var history_sampler:sampler;
+@group(1) @binding(3) var scattering:texture_storage_3d<rgba16float,write>;
+@group(1) @binding(6) var<storage,read> fog_volumes:array<FogVolumeRecord>;
+// Integration: this frame's froxels and the volume it integrates them into.
+@group(1) @binding(4) var integrate_scattering:texture_3d<f32>;
+@group(1) @binding(5) var integrated:texture_storage_3d<rgba16float,write>;
+
+// Godot's halton_map: where in its froxel each frame samples while the
+// froxel reprojects.
+const FOG_HALTON:array<vec3<f32>,16>=array(
+ vec3(.5,.33333333,.2),
+ vec3(.25,.66666667,.4),
+ vec3(.75,.11111111,.6),
+ vec3(.125,.44444444,.8),
+ vec3(.625,.77777778,.04),
+ vec3(.375,.22222222,.24),
+ vec3(.875,.55555556,.44),
+ vec3(.0625,.88888889,.64),
+ vec3(.5625,.03703704,.84),
+ vec3(.3125,.37037037,.08),
+ vec3(.8125,.7037037,.28),
+ vec3(.1875,.14814815,.48),
+ vec3(.6875,.48148148,.68),
+ vec3(.4375,.81481481,.88),
+ vec3(.9375,.25925926,.12),
+ vec3(.03125,.59259259,.32),
+);
+
+fn henyey_greenstein(cos_theta:f32,g:f32)->f32 {
+ // 1 / (4 * PI)
+ let k=.0795774715459;
+ return k*(1.-g*g)/pow(1.+g*g-2.*g*cos_theta,1.5);
+}
+// Neither infinite nor NaN, judged by the exponent bits so no fast-math
+// assumption removes the test.
+fn fog_finite(value:vec4<f32>)->bool {
+ let exponent=bitcast<vec4<u32>>(value)&vec4(0x7f800000u);
+ return all(exponent!=vec4(0x7f800000u));
+}
+// The frame position of a froxel's unit x and y, with y down the frame.
+fn froxel_ndc(unit:vec2<f32>)->vec2<f32> {
+ return vec2(unit.x*2.-1.,1.-unit.y*2.);
+}
+fn froxel_view_position(ndc:vec2<f32>,depth:f32)->vec3<f32> {
+ return vec3((ndc+froxels.projection.zw)*depth/froxels.projection.xy,-depth);
+}
+// The world position at a froxel's unit coordinates.
+fn froxel_world(unit:vec3<f32>)->vec3<f32> {
+ let depth=fog_slice_depth(unit.z,froxels.length,froxels.detail_spread);
+ return (froxels.world_from_view*vec4(froxel_view_position(froxel_ndc(unit.xy),depth),1.)).xyz;
+}
+// The frame's ambient light that an isotropic medium scatters: the mean of
+// the radiance from every direction. The hemisphere fill and environment
+// diffuse each give a surface's diffuse radiance for its normal, so the mean
+// of an upward and a downward one's is the sphere's for light that varies
+// with height alone.
+fn fog_ambient()->vec3<f32> {
+ let up=vec3(0.,1.,0.);
+ let sky=frame.hemisphere_sky_color;
+ let ground=frame.hemisphere_ground_color;
+ let intensity=frame.hemisphere_intensity;
+ let hemisphere=(pbr_hemisphere(up,sky,ground,intensity)+pbr_hemisphere(-up,sky,ground,intensity))/(2.*3.14159265359);
+ return hemisphere+(diffuse_environment(up)+diffuse_environment(-up))*.5;
+}
+// The solid angle of rectangle `rect`'s face from a point `toward` its
+// centre: the face's form factor about that direction, times PI.
+fn fog_rect_solid_angle(rect:Light,position:vec3<f32>,toward:vec3<f32>)->f32 {
+ let identity=mat3x3(vec3(1.,0.,0.),vec3(0.,1.,0.),vec3(0.,0.,1.));
+ let face=rect_light_frame(toward,toward,rect.position-position,rect.half_width,light_rect_half_height(rect));
+ return 3.14159265359*ltc_integrate_quad(face,identity);
+}
+// The density fog volume `volume` adds at `position`: Godot's box FogVolume
+// (its signed distance and cull mask) with its FogMaterial's edge fade.
+fn fog_volume_density(volume:FogVolumeRecord,position:vec3<f32>)->f32 {
+ let offset=position-volume.center;
+ if dot(offset,offset)>volume.radius_squared {
+  return 0.;
+ }
+ let local=(volume.local_from_world*vec4(position,1.)).xyz;
+ let q=abs(local)-volume.half_size;
+ let sdf=length(max(q,vec3(0.)))+min(max(q.x,max(q.y,q.z)),0.);
+ var density=volume.density*(1.-smoothstep(-.1,0.,sdf));
+ if volume.edge_fade>0. {
+  let side=min(volume.half_size.x,min(volume.half_size.y,volume.half_size.z));
+  density*=pow(clamp(-sdf/side,0.,1.),volume.edge_fade);
+ }
+ return density;
+}
+// What scene light `index` scatters toward the camera, along `view_ray`,
+// per unit of scattering at a point in the medium.
+fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f32>)->vec3<f32> {
+ let sample=scene_light_sample(index,position,vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM);
+ if sample.visibility<=0. {
+  return vec3(0.);
+ }
+ var light=sample.radiance*sample.visibility;
+ if sample.rect!=NO_RECT_LIGHT {
+  light*=fog_rect_solid_angle(lights[sample.rect],position,sample.direction);
+ }
+ return light*henyey_greenstein(dot(view_ray,sample.direction),froxels.anisotropy);
+}
+
+// The ambient light the medium scatters, the same at every froxel: one
+// invocation of each workgroup samples it.
+var<workgroup> fog_ambient_light:vec3<f32>;
+
+// Each froxel's extinction (a) and the light its medium scatters toward the
+// camera per metre (rgb), blended with where it was in the last frame's.
+@compute @workgroup_size(4,4,4) fn inject(@builtin(global_invocation_id) id:vec3<u32>,@builtin(local_invocation_index) local:u32) {
+ if local==0u {
+  fog_ambient_light=fog_ambient()*froxels.ambient;
+ }
+ workgroupBarrier();
+ if any(id>=froxels.size) {
+  return;
+ }
+ let size=vec3<f32>(froxels.size);
+ var unit=(vec3<f32>(id)+vec3(.5))/size;
+ var reprojected=vec4(0.);
+ var reproject_amount=0.;
+ if froxels.temporal_blend>0. {
+  let previous=froxels.previous_clip_from_world*vec4(froxel_world(unit),1.);
+  // The last frame's clip w is its view depth.
+  if previous.w>0. {
+   let previous_uv=vec2(previous.x,-previous.y)/previous.w*.5+vec2(.5);
+   let previous_unit=fog_volume_coordinate(previous_uv,previous.w,1./froxels.length,1./froxels.detail_spread);
+   if all(previous_unit>vec3(0.)) && all(previous_unit<vec3(1.)) {
+    reprojected=textureSampleLevel(previous_scattering,history_sampler,previous_unit,0.);
+    reproject_amount=froxels.temporal_blend;
+    // Only a froxel that reprojects jitters.
+    unit=(vec3<f32>(id)+FOG_HALTON[froxels.frame])/size;
+   }
+  }
+ }
+ let position=froxel_world(unit);
+ let view_ray=normalize(position-view.eye);
+ let pixel=unit.xy*froxels.render_size;
+ var density=froxels.density*clamp(exp2(-froxels.height_falloff*(position.y-froxels.height)),0.,1.);
+ // Godot's scattering: each medium's albedo weighted by its density.
+ var albedo=froxels.albedo*density;
+ for(var index=0u;index<froxels.volume_count;index++) {
+  let volume=fog_volumes[index];
+  let added=fog_volume_density(volume,position);
+  density+=added;
+  albedo+=volume.albedo*added;
+ }
+ var light=vec3(0.);
+ if density>.00005 {
+  for(var index=0u;index<2u;index++) {
+   let directional=frame.directional_lights[index];
+   if directional.illuminance<=0. {
+    continue;
+   }
+   let toward=normalize(directional.direction_to_light);
+   var shadow=1.;
+   if (directional.flags&DIRECTIONAL_LIGHT_SHADOW)!=0u {
+    shadow=directional_shadow_visibility(index,position,vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM);
+   }
+   light+=directional.color*directional.illuminance*shadow*henyey_greenstein(dot(view_ray,toward),froxels.anisotropy);
+  }
+  light+=fog_ambient_light;
+  let range=cluster_range(position,pixel);
+  let end=range.first+range.live+range.baked;
+  for(var at=range.first;at<end;at++) {
+   light+=fog_scene_light(cluster_item(at),position,view_ray,pixel);
+  }
+ }
+ var froxel=vec4(light*albedo,density);
+ if !fog_finite(froxel) {
+  froxel=select(vec4(0.),reprojected,fog_finite(reprojected));
+ } else if fog_finite(reprojected) {
+  froxel=mix(froxel,reprojected,reproject_amount);
+ }
+ textureStore(scattering,id,clamp(froxel,vec4(0.),vec4(65504.)));
+}
+
+// Each column's light scattered toward the camera (rgb) and transmittance
+// (a) from the camera to each slice's centre.
+@compute @workgroup_size(8,8,1) fn integrate(@builtin(global_invocation_id) id:vec3<u32>) {
+ if any(id.xy>=froxels.size.xy) {
+  return;
+ }
+ let unit=(vec2<f32>(id.xy)+vec2(.5))/vec2<f32>(froxels.size.xy);
+ // Metres along the column's view ray per metre of depth.
+ let ray_scale=length(froxel_view_position(froxel_ndc(unit),1.));
+ var accumulated=vec4(0.,0.,0.,1.);
+ var previous_depth=0.;
+ for(var z=0u;z<froxels.size.z;z++) {
+  let position=vec3(id.xy,z);
+  let froxel=textureLoad(integrate_scattering,position,0);
+  let depth=fog_slice_depth((f32(z)+.5)/f32(froxels.size.z),froxels.length,froxels.detail_spread);
+  // Beer-Lambert over the step, and the light scattered within it,
+  // integrated against its own extinction (Hillaire 2015).
+  let transmittance=exp(-(depth-previous_depth)*ray_scale*froxel.a);
+  accumulated=vec4(accumulated.rgb+(froxel.rgb-froxel.rgb*transmittance)/max(froxel.a,.00001)*accumulated.a,accumulated.a*transmittance);
+  previous_depth=depth;
+  textureStore(integrated,position,select(vec4(0.),clamp(accumulated,vec4(0.),vec4(65504.)),fog_finite(accumulated)));
+ }
+}

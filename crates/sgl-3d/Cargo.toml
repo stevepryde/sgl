@@ -1,0 +1,58 @@
+[package]
+name = "sgl-3d"
+repository.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/sgl-3d"
+categories = ["game-development", "rendering"]
+keywords = ["gamedev", "wgpu", "rendering", "pbr", "webgpu"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Caller-driven 3D rendering for SGL games, native and in the browser (WebGPU)"
+
+[features]
+default = []
+diagnostics = []
+
+[dependencies]
+# Decodes a BC7 material image's level 0 for the scene's ray source.
+bcdec_rs = "0.2"
+bytemuck.workspace = true
+sgl-post-fx.workspace = true
+# Preserve the extracted renderer's math behavior without changing sgl-2d.
+glam = "0.30"
+gltf = { version = "1.4", features = ["KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
+image = { workspace = true, features = ["jpeg"] }
+# Reads block-compressed material images from KTX2, as Bevy does.
+ktx2 = "0.5"
+# Draw lists bin their draws by small keys each frame (view::draw_list).
+rustc-hash = "1.1"
+# KTX2's Zstandard supercompression, as Bevy's `zstd_rust` feature reads it.
+ruzstd = { version = "0.8", default-features = false, features = ["std"] }
+serde.workspace = true
+serde_json.workspace = true
+sp-fidelity.workspace = true
+sp-fidelity-wgpu.workspace = true
+wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan", "gles", "webgpu"] }
+
+[dev-dependencies]
+# The layout tests parse and validate the composed WGSL.
+naga = { workspace = true, features = ["wgsl-in"] }
+pollster.workspace = true
+wasm-bindgen-test.workspace = true
+# Integration tests read the frame's targets through the diagnostics accessors.
+# Keep this path-only: Cargo omits it when publishing, avoiding a registry self-dependency.
+sgl-3d = { path = ".", features = ["diagnostics"] }
+
+# The browser lane's smoke test (`bun scripts/tasks.ts check-browser`).
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+console_error_panic_hook.workspace = true
+futures.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+
+[[example]]
+name = "browser_smoke"
+crate-type = ["cdylib"]

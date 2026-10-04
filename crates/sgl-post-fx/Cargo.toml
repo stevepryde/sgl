@@ -1,0 +1,23 @@
+[package]
+name = "sgl-post-fx"
+repository.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/sgl-post-fx"
+categories = ["game-development", "rendering"]
+keywords = ["gamedev", "wgpu", "rendering", "post-processing"]
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+description = "SGL wgpu post-processing effects: screen-space reflections and temporal anti-aliasing derived from DiligentFX"
+publish.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan", "gles", "webgpu"] }
+
+[dev-dependencies]
+pollster.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

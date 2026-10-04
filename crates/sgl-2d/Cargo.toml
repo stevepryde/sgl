@@ -1,0 +1,48 @@
+[package]
+name = "sgl-2d"
+repository.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/sgl-2d"
+categories = ["game-development", "rendering"]
+keywords = ["gamedev", "wgpu", "rendering", "sprites", "ui"]
+readme = "README.md"
+description = "Caller-driven 2D rendering, assets, text, lighting, and immediate UI for SGL games"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+fontdue.workspace = true
+glam.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sgl-core.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster.workspace = true
+wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan", "gles"] }
+winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures.workspace = true
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys.workspace = true
+wgpu = { workspace = true, features = ["std", "wgsl", "webgpu"] }
+winit = { workspace = true, features = ["rwh_06"] }
+
+[dev-dependencies]
+wasm-bindgen-test.workspace = true
+
+# proptest pulls getrandom, which does not build for wasm32-unknown-unknown
+# without a global cfg; property tests are native-only.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest.workspace = true
