@@ -1,6 +1,9 @@
-//! DiligentFX SSR in SGL3D: a static, dimly lit ground strip with a rough
-//! reflective surface (perceptual roughness 0.35), thin bright emitter bars at
-//! distance and a fast-translating camera (1 m per frame, 60 m/s at 60 Hz).
+//! Screen-space reflections in SGL3D (Crystal, the default method): a static,
+//! dimly lit ground strip with a smooth reflective surface (perceptual
+//! roughness 0.1, below Crystal's 0.2 cutoff, so it traces), boxes of many
+//! heights at many distances along it, thin bright emitter bars at distance
+//! and a fast-translating camera (1 m per frame, 60 m/s at 60 Hz). Its rays
+//! end near, far, on the bars or in the sky.
 //!
 //! `cargo run --release -p sgl-3d --example ssr [-- --frames N]`
 //!
@@ -10,9 +13,10 @@
 //!
 //! Printed:
 //! - GPU time per SGL3D pass group (`GpuTiming`; the SSR passes are named
-//!   after DiligentFX's debug groups) and the frame total, means over the
-//!   measured frames with up to two frames in flight; the SSR frame cost is
-//!   the difference of the two frame totals.
+//!   after DiligentFX's debug groups) and the frame total: mean, median and
+//!   95th percentile over the measured frames with up to two frames in
+//!   flight; the SSR frame cost is the difference of the two mean frame
+//!   totals.
 //! - Brightness jumps: for each frame, the mean over the ground band (rows
 //!   62–80 % of the height, columns 30–70 % of the width: the strip ahead of
 //!   the camera, below the horizon) of the display luminance
@@ -86,7 +90,8 @@ fn cuboid(center: Vec3, size: Vec3, material: usize) -> CpuMesh {
 
 /// A reflective strip 16 m wide and 1 km long between rougher side planes;
 /// warm and cool bars on posts every 25 m on both sides and an overhead bar
-/// every 100 m.
+/// every 100 m; and boxes from 0.3 to 6 m high on the strip either side of
+/// the camera's path and on the side planes, every few metres.
 fn world() -> Asset {
     let mut meshes = vec![
         cuboid(Vec3::new(0., -0.05, -490.), Vec3::new(16., 0.1, 1000.), 0),
@@ -106,13 +111,36 @@ fn world() -> Asset {
             meshes.push(cuboid(Vec3::new(0., 6., z), Vec3::new(17., 0.15, 0.15), 2));
         }
     }
+    // A fixed xorshift sequence places the boxes, so every run is the same.
+    let mut seed = 0x2545_f491_u32;
+    let mut random = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed as f32 / u32::MAX as f32
+    };
+    let mut z = -8.;
+    while z > -980. {
+        let side = if random() < 0.5 { -1. } else { 1. };
+        // Clear of the camera's path at x = 0, on the strip or beyond it.
+        let x = side * (2.5 + random() * 15.);
+        let height = 0.3 + random() * random() * 5.7;
+        let width = 0.4 + random() * 1.8;
+        meshes.push(cuboid(
+            Vec3::new(x, height * 0.5, z),
+            Vec3::new(width, height, width),
+            4,
+        ));
+        z -= 2. + random() * 6.;
+    }
     Asset {
         meshes,
         materials: vec![
-            material([0.12, 0.12, 0.13, 1.], 0.35, false),
+            material([0.12, 0.12, 0.13, 1.], 0.1, false),
             material([0.02, 0.025, 0.02, 1.], 0.9, false),
             material([120., 70., 25., 1.], 1., true),
             material([25., 70., 120., 1.], 1., true),
+            material([0.3, 0.28, 0.25, 1.], 0.7, false),
         ],
         images: Vec::new(),
         rig: Default::default(),
@@ -187,20 +215,36 @@ fn ground_band_luminance(pixels: &[u8]) -> f64 {
 #[derive(Default)]
 struct Run {
     band: Vec<f64>,
-    groups: BTreeMap<&'static str, f64>,
-    total_ms: f64,
-    timed_frames: usize,
+    /// Each group's time in each measured frame (0 where it did not run).
+    groups: BTreeMap<&'static str, Vec<f64>>,
+    totals: Vec<f64>,
 }
 
 impl Run {
     fn add(&mut self, frame: FrameTime) {
         if frame.frame as usize > WARM_UP {
-            self.timed_frames += 1;
-            self.total_ms += frame.total_ms;
+            let measured = self.totals.len();
+            self.totals.push(frame.total_ms);
             for pass in frame.passes {
-                *self.groups.entry(pass.name).or_default() += pass.ms;
+                let times = self.groups.entry(pass.name).or_default();
+                times.resize(measured + 1, 0.);
+                times[measured] += pass.ms;
             }
         }
+    }
+
+    /// The mean, median and 95th percentile of `times` over the measured
+    /// frames.
+    fn statistics(&self, times: &[f64]) -> (f64, f64, f64) {
+        let mut sorted = times.to_vec();
+        sorted.resize(self.totals.len(), 0.);
+        sorted.sort_by(f64::total_cmp);
+        let at = |q: f64| sorted[((sorted.len() as f64 * q).ceil() as usize).saturating_sub(1)];
+        (
+            sorted.iter().sum::<f64>() / sorted.len() as f64,
+            at(0.5),
+            at(0.95),
+        )
     }
 }
 
@@ -340,15 +384,15 @@ fn run(
 }
 
 fn report_timing(label: &str, run: &Run) {
-    println!("\n{label}");
-    let n = run.timed_frames as f64;
     println!(
-        "  GPU frame total {:.3} ms (mean of {} frames)",
-        run.total_ms / n,
-        run.timed_frames
+        "\n{label} (mean / median / p95 over {} frames)",
+        run.totals.len()
     );
-    for (name, ms) in &run.groups {
-        println!("  {name:<28} {:.3} ms", ms / n);
+    let (mean, median, p95) = run.statistics(&run.totals);
+    println!("  GPU frame total              {mean:.3} / {median:.3} / {p95:.3} ms");
+    for (name, times) in &run.groups {
+        let (mean, median, p95) = run.statistics(times);
+        println!("  {name:<28} {mean:.3} / {median:.3} / {p95:.3} ms");
     }
 }
 
@@ -388,13 +432,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let baseline = run(frames, None, Mode::Timing, &directory)?;
     let with = run(frames, Some(settings), Mode::Timing, &directory)?;
-    if baseline.timed_frames > 0 && with.timed_frames > 0 {
+    if !baseline.totals.is_empty() && !with.totals.is_empty() {
         report_timing("Environment and probe specular only", &baseline);
         report_timing("With SSR", &with);
         println!(
             "\nSSR frame cost: {:.3} ms",
-            with.total_ms / with.timed_frames as f64
-                - baseline.total_ms / baseline.timed_frames as f64
+            with.statistics(&with.totals).0 - baseline.statistics(&baseline.totals).0
         );
     } else {
         println!("No GPU timestamps on this device");
