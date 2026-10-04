@@ -285,11 +285,11 @@ code; it does not redeclare a struct, binding or function another module owns.
   casters are culled without its near plane and drawn with unclipped depth
   (emulated where the device lacks `DEPTH_CLIP_CONTROL`), so a caster
   between the light and the cascade still casts: one within the pancake at
-  its own depth, one beyond it at the near plane's. The camera's surfaces take the cascade at their view
-  depth and blend into the next across the overlap; a probe capture fits
-  its own cascades about its centre, and its surfaces and ray hits take the
-  first cascade that holds them. Shadow views render through the common
-  draw-list path.
+  its own depth, one beyond it at the near plane's. The camera's surfaces
+  take the cascade at their view depth and blend into the next across the
+  overlap; a probe capture fits its own cascades about its centre, and its
+  surfaces and ray hits take the first cascade that holds them. Shadow views
+  render through the common draw-list path.
 - **Opaque and masked surfaces.** Direct, baked and ambient light are computed
   in the forward pass, never from the G-buffer; environment specular and
   reflections are computed from it. Ambient occlusion is applied after the

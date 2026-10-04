@@ -32,12 +32,21 @@ fn quad(center: Vec3, half: f32) -> CpuMesh {
 }
 
 /// Two cascades out to 10 m.
-const SHADOW: DirectionalShadow = DirectionalShadow {
-    distance: 10.,
-    cascades: 2,
-    first_split: 2.5,
-    pancake_size: 20.,
-};
+fn two_cascades() -> DirectionalShadow {
+    DirectionalShadow {
+        distance: 10.,
+        cascades: 2,
+        first_split: 2.5,
+        ..Default::default()
+    }
+}
+
+/// An occluder's place on the receivers' axis, toward a light shining along
+/// -Z, 10 m beyond `two_cascades`' pancake: every cascade clamps it to its
+/// near plane.
+fn beyond_the_pancake() -> Vec3 {
+    Vec3::new(0., 0., two_cascades().pancake_size + 10.)
+}
 
 /// A light shining along -Z onto the receiver, red or green, with or without
 /// a shadow.
@@ -46,7 +55,7 @@ fn light(red: bool, shadow: bool) -> Option<DirectionalLight> {
         direction: Vec3::NEG_Z,
         color: if red { [1., 0., 0.] } else { [0., 1., 0.] },
         illuminance: 1.,
-        shadow: shadow.then_some(SHADOW),
+        shadow: shadow.then_some(two_cascades()),
         ..Default::default()
     })
 }
@@ -301,8 +310,8 @@ fn frame(light: DirectionalLight) -> FrameInput {
 // directional casters with unclipped depth, emulated in the shader where
 // the device lacks DEPTH_CLIP_CONTROL, and culls them without the near
 // plane. The oracle is geometric: the light shines along the camera's view
-// onto a receiver ahead, and an occluder behind the camera, nearer the light
-// than anything the camera sees, covers it from the light.
+// onto a receiver ahead, and an occluder behind the camera, beyond the
+// cascades' pancake toward the light, covers it from the light.
 #[test]
 fn casters_between_the_light_and_a_cascade_cast_into_it() {
     for (label, without) in [
@@ -325,12 +334,12 @@ fn casters_between_the_light_and_a_cascade_cast_into_it() {
         }
         let mut fixture = Fixture::new(device, SIZE);
         fixture.place(quad(Vec3::new(0., 0., -5.), 1.), true);
-        let occluder = fixture.place(quad(Vec3::new(0., 0., 3.), 1.5), false);
+        let occluder = fixture.place(quad(beyond_the_pancake(), 1.5), false);
         let input = frame(DirectionalLight {
             direction: Vec3::NEG_Z,
             color: [1.; 3],
             illuminance: 1.,
-            shadow: Some(SHADOW),
+            shadow: Some(two_cascades()),
             ..Default::default()
         });
         let center = [[SIZE[0] / 2, SIZE[1] / 2]];
@@ -348,8 +357,8 @@ fn casters_between_the_light_and_a_cascade_cast_into_it() {
 // discarding other texels than the material cuts out (UV, vertex colour or
 // cutoff taken wrongly), or the masked casters' unclipped depth missing. The
 // oracle is geometric: the light shines along the camera's view, and an
-// occluder the camera does not see, its base map cut out over its left half,
-// covers the receiver. Behind its cut-out half the receiver is as lit as it
+// occluder the camera does not see, beyond the cascades' pancake toward the
+// light, its base map cut out over its left half, covers the receiver. Behind its cut-out half the receiver is as lit as it
 // is without the occluder; behind its opaque half it is dark.
 #[test]
 fn masked_casters_shadow_with_their_opaque_texels_only() {
@@ -374,7 +383,7 @@ fn masked_casters_shadow_with_their_opaque_texels_only() {
         let mut fixture = Fixture::new(device, SIZE);
         fixture.place(quad(Vec3::new(0., 0., -5.), 2.), true);
         // The occluder's U runs along +X: its left half is cut out.
-        let mut occluder = quad(Vec3::new(0., 0., 3.), 1.5);
+        let mut occluder = quad(beyond_the_pancake(), 1.5);
         for (vertex, uv) in
             occluder
                 .vertices
@@ -389,7 +398,7 @@ fn masked_casters_shadow_with_their_opaque_texels_only() {
             direction: Vec3::NEG_Z,
             color: [1.; 3],
             illuminance: 1.,
-            shadow: Some(SHADOW),
+            shadow: Some(two_cascades()),
             ..Default::default()
         });
         // The receiver at x = -0.6 and +0.6 m, behind U = 0.3 and 0.7.

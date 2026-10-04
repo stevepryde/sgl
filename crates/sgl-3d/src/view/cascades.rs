@@ -265,14 +265,15 @@ fn calculate_cascade(
     //       integer, cascade_texel_size is then an integer multiple of a power of 2 and can be
     //       exactly represented in a floating point value.
     let cascade_texel_size = cascade_diameter / cascade_texture_size;
+    // SGL3D: the near plane, moved toward the light by Godot's pancake.
+    let near_plane = max.z + pancake_size;
     // NOTE: For shadow stability it is very important that the near_plane_center is at integer
     //       multiples of the texel size to be exactly representable in a floating point value.
     let near_plane_center = Vec3::new(
         (0.5 * (min.x + max.x) / cascade_texel_size).floor() * cascade_texel_size,
         (0.5 * (min.y + max.y) / cascade_texel_size).floor() * cascade_texel_size,
         // NOTE: max.z is the near plane for right-handed y-up
-        // SGL3D: moved toward the light by Godot's pancake.
-        max.z + pancake_size,
+        near_plane,
     );
 
     // It is critical for `cascade_from_world` to be stable. So rather than forming `world_from_cascade`
@@ -288,7 +289,7 @@ fn calculate_cascade(
 
     // Right-handed orthographic projection, centered at `near_plane_center`.
     // NOTE: This is different from the reference material, as we use reverse Z.
-    let r = (max.z + pancake_size - min.z).recip();
+    let r = (near_plane - min.z).recip();
     let clip_from_cascade = Mat4::from_cols(
         Vec4::new(2.0 / cascade_diameter, 0.0, 0.0, 0.0),
         Vec4::new(0.0, 2.0 / cascade_diameter, 0.0, 0.0),

@@ -266,9 +266,10 @@ fn captures_shade_scene_lights_by_the_ownership_rule() {
 // defects: cascades fit to the frame's camera rather than the capture, a
 // face selecting a cascade by its own view depth that does not hold the
 // surface, or casters in front of a cascade clipped. The oracle is
-// geometric: a capture looks down at a floor that an occluder high above it
-// covers from a light shining down, while the frame's camera is far away;
-// the floor it records is dark under the occluder and lit without it.
+// geometric: a capture looks down at a floor that an occluder high above it,
+// beyond its cascades' pancake, covers from a light shining down, while the
+// frame's camera is far away; the floor it records is dark under the
+// occluder and lit without it.
 #[test]
 fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
     use crate::asset::CpuMesh;
@@ -300,10 +301,22 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
         asset.materials[0].double_sided = false;
         asset
     };
+    let shadow = DirectionalShadow {
+        distance: 20.,
+        cascades: 3,
+        first_split: 2.,
+        ..Default::default()
+    };
     let mut scene = Scene::new(&device, &queue);
     crate::test_support::add_static(&device, &queue, &mut scene, square(0., 6.));
-    let (_, occluder) =
-        crate::test_support::add_static(&device, &queue, &mut scene, square(9., 3.));
+    // 10 m above the first cascade's near plane: its cube's top, 3 m up,
+    // plus the pancake.
+    let (_, occluder) = crate::test_support::add_static(
+        &device,
+        &queue,
+        &mut scene,
+        square(13. + shadow.pancake_size, 3.),
+    );
     let mut input = FrameInput::new(Camera {
         view: camera::rh::view::look_at_mat4(
             Vec3::new(1000., 0., 0.),
@@ -317,12 +330,7 @@ fn a_capture_shadows_what_it_sees_from_cascades_about_its_centre() {
         direction: Vec3::NEG_Y,
         color: [1.; 3],
         illuminance: 1.,
-        shadow: Some(DirectionalShadow {
-            distance: 20.,
-            cascades: 3,
-            first_split: 2.,
-            ..Default::default()
-        }),
+        shadow: Some(shadow),
         ..Default::default()
     });
     let settings = Settings::default();

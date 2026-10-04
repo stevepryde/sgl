@@ -79,11 +79,10 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
 - **Directional lights**: up to two (`FrameInput::directional_lights`,
   `DirectionalLight`). The first that is on and has a `shadow`
   (`DirectionalShadow`: distance, cascade count, first split and pancake
-  size) casts
-  cascaded shadows that SGL3D fits from the camera: up to four 2048-texel
-  cascades, stable while the camera moves, blended across their overlaps,
-  filtered and biased as Bevy does, and cast by everything between the light
-  and the view. A single-sided material casts from its front faces, a
+  size) casts cascaded shadows that SGL3D fits from the camera: up to four
+  2048-texel cascades, stable while the camera moves, blended across their
+  overlaps, filtered and biased as Bevy does, and cast by everything between
+  the light and the view. A single-sided material casts from its front faces, a
   double-sided one from both. `fog_energy` scales its light in the
   volumetric fog. A hemisphere fill
   (`FrameInput::hemisphere_light`, `HemisphereLight`).

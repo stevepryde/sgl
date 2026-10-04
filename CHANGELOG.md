@@ -25,9 +25,14 @@ full API details.
   light was recorded at that plane's depth. The near plane now lies
   `pancake_size` beyond, as Godot's does, so a caster within that margin is
   recorded at its own depth and only one farther away at the margin's edge.
-  Surfaces are shadowed as before (their test only asks whether a caster
-  lies in front); each cascade's depth spans that many more metres, which
-  `Depth32Float` holds to well under a millimetre.
+  The camera's surfaces are shadowed as before (their test only asks
+  whether a caster lies in front); each cascade's depth spans that many more
+  metres, which `Depth32Float` holds to well under a millimetre. Probe
+  captures and world-space ray hits take the first cascade whose map holds a
+  surface, which may now be a nearer, finer one for a surface toward the
+  light from a cascade's part of the view, so captures and reflections can
+  differ slightly; no re-capture is required, and `pancake_size: 0.` gives
+  the previous fit.
 - **Migration:** a `DirectionalShadow { .. }` literal that names every field
   adds `pancake_size: 20.` or ends with `..Default::default()`:
 
