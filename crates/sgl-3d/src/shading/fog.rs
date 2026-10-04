@@ -1,6 +1,14 @@
 //! Rust mirror of fog.wgsl's fog volume record, which the scene packs and
-//! the fog stage reads.
+//! the fog stage reads, and the spread of the froxel volume's slices.
 use crate::content::transient::FogVolume;
+
+/// How the froxel volume spaces its depth slices, as fog.wgsl's
+/// `fog_slice_depth` takes it: above 1, more of them lie near the camera.
+/// Godot's default `volumetric_fog_detail_spread` (b130438
+/// `scene/resources/environment.h`, MIT). The frame's uniform carries it to
+/// draws, and the fog stage's to its passes and its fog volumes' froxel
+/// bounds.
+pub(crate) const DETAIL_SPREAD: f32 = 2.;
 
 /// `FogVolumeRecord` in fog.wgsl: a box's frame, size and medium.
 #[repr(C)]

@@ -36,10 +36,10 @@ pub(super) fn atmosphere(settings: &Settings, input: &FrameInput) -> bool {
 
 /// The volumetric fog's quality while it runs: with the frame's atmosphere,
 /// a medium (a positive density, or the scene's `fog_volumes`), a volume of
-/// positive, finite length and detail spread, and a `perspective` camera
-/// (`perspective`), whose clip w is view depth, which the froxels' slices
-/// and reprojection take. Without a medium there is nothing to fog, and the
-/// frame is as it would be with the fog run.
+/// positive, finite length, and a `perspective` camera (`perspective`),
+/// whose clip w is view depth, which the froxels' slices and reprojection
+/// take. Without a medium there is nothing to fog, and the frame is as it
+/// would be with the fog run.
 fn fog(
     settings: &Settings,
     input: &FrameInput,
@@ -48,9 +48,7 @@ fn fog(
 ) -> Option<FogQuality> {
     let fog = input.fog;
     let medium = fog.density > 0. || fog_volumes;
-    let volume = [fog.length, fog.detail_spread]
-        .iter()
-        .all(|value| value.is_finite() && *value > 0.);
+    let volume = fog.length.is_finite() && fog.length > 0.;
     (atmosphere(settings, input) && medium && volume && perspective).then_some(settings.fog_quality)
 }
 

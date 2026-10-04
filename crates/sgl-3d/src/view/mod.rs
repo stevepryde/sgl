@@ -204,7 +204,7 @@ pub(crate) fn frame_uniform(
         mist_size: [mist.width, mist.height],
         backdrop_brightness,
         fog_inverse_length: input.fog.length.recip(),
-        fog_inverse_detail_spread: input.fog.detail_spread.recip(),
+        fog_inverse_detail_spread: crate::shading::fog::DETAIL_SPREAD.recip(),
         reflection_yaw: input.reflection_environment.yaw,
         reflection_intensity: input.reflection_environment.intensity,
         elapsed_seconds: input.elapsed_seconds,

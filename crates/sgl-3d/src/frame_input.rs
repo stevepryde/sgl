@@ -64,17 +64,11 @@ pub struct Fog {
     /// The view depth in metres the froxel volume covers; anything farther,
     /// the sky included, takes the fog as far as it.
     pub length: f32,
-    /// Above 1, more of the volume's depth slices lie near the camera.
-    pub detail_spread: f32,
-    /// 0..1: the share of the last frame's volume each froxel keeps where it
-    /// reprojects. Higher is smoother; lower trails less behind moving lights.
-    pub temporal_reprojection: f32,
 }
 
 impl Default for Fog {
     /// No medium, with Godot's defaults: albedo white, anisotropy 0.2, no
-    /// ambient light, uniform, a 64 m volume, detail spread 2 and 0.9 of the
-    /// reprojected volume kept.
+    /// ambient light, uniform, and a 64 m volume.
     fn default() -> Self {
         Self {
             density: 0.,
@@ -84,8 +78,6 @@ impl Default for Fog {
             height: 0.,
             height_falloff: 0.,
             length: 64.,
-            detail_spread: 2.,
-            temporal_reprojection: 0.9,
         }
     }
 }

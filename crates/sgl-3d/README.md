@@ -238,8 +238,6 @@ frame.fog = Fog {
     height: 0.,
     height_falloff: 0.05,    // density halves every 20 m above `height`
     length: 400.,            // metres of view depth the volume covers
-    detail_spread: 2.,       // slices closer together near the camera
-    temporal_reprojection: 0.9,
 };
 // Denser medium in a box, such as a tunnel's haze, added to the frame's.
 scene.update_fog_volumes(device, queue, &[FogVolume {
@@ -253,9 +251,9 @@ scene.update_fog_volumes(device, queue, &[FogVolume {
 The fog is Godot's volumetric fog (b130438 `volumetric_fog_process.glsl` and
 `fog.cpp`, MIT), after Hillaire's "Physically Based and Unified Volumetric
 Rendering in Frostbite" (2015). A volume of froxels fills the camera's
-frustum out to `length` metres of view depth, its slices spread toward the
-camera by `detail_spread`. Each frame, after shadows and before opaque, the
-fog stage:
+frustum out to `length` metres of view depth, more of its slices near the
+camera (Godot's default detail spread, 2). Each frame, after shadows and
+before opaque, the fog stage:
 
 - sums each froxel's medium: the frame's, whose density halves every
   `1 / height_falloff` metres above `height`, and that of every fog volume
@@ -274,9 +272,10 @@ fog stage:
   light's `fog_energy` scales its share, and a light at or below 0.001 is
   skipped, attenuation and shadow lookup, as Godot does;
 - blends each froxel with where it lay in the last frame's volume, keeping
-  `temporal_reprojection` of it, and samples another point of it each frame
-  (Godot's 16 Halton offsets), so shafts and shadow edges in the fog resolve
-  over frames; this history restarts with the camera's;
+  0.9 of it (Godot's default reprojection amount), and samples another
+  point of it each frame (Godot's 16 Halton offsets), so shafts and shadow
+  edges in the fog resolve over frames; this history restarts with the
+  camera's;
 - with `Settings::fog_filter` (on by default, as Godot's `use_filter`),
   blurs each slice with Godot's 7-tap Gaussian across x and then y, which
   smooths what one sample per froxel leaves; the next frame reprojects the
@@ -315,6 +314,9 @@ Where it differs from Godot's fog, and why:
 
 - The frame's medium takes a fog material's height falloff
   (`height_falloff`), so height fog needs no volume.
+- The detail spread and the share of history kept are SGL3D's, at Godot's
+  defaults, rather than frame values (S3D-6), and reprojection is always
+  on.
 - Every medium scatters `albedo` × density unquantized. Godot quantizes its
   fog volumes: it drops a volume at or below density 0.001, steps its
   density by 1/1024, caps its scattering at density 1 and truncates that
