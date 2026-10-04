@@ -1011,7 +1011,13 @@ animate a deforming model with `set_instance_deformation`, which rays do not
 see. The renderer allocates the surface's targets (a depth and an RGBA16F
 layer, 12 bytes per render pixel) in the first frame whose scene holds a
 receiver and keeps them from then on; a renderer that has never rendered a
-receiver pays nothing.
+receiver pays nothing. The [water example](examples/water.rs) is a lake that
+receives reflections; it prints the GPU time of the passes receivers touch,
+before and after its lake is marked:
+
+```sh
+cargo run --release -p sgl-3d --example water
+```
 
 ## Skinned meshes and morph targets
 

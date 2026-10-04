@@ -56,9 +56,10 @@ its rendering `settings::Settings`.
 (`--decals` adds decals, `--motion-blur` motion blur, `--fog` volumetric
 fog);
 [`examples/skinned.rs`](../examples/skinned.rs) adds a skinned, morphed glTF
-and the game's side of animating it, and
+and the game's side of animating it,
 [`examples/instances.rs`](../examples/instances.rs) many instances of a few
-models. [`examples/browser_smoke.rs`](../examples/browser_smoke.rs) is the
+models, and [`examples/water.rs`](../examples/water.rs) a lake whose
+animated surface receives screen-space reflections. [`examples/browser_smoke.rs`](../examples/browser_smoke.rs) is the
 browser's version: a WebGPU device, procedural content with block-compressed
 bakes (a specular probe and an irradiance atlas), frames under several settings
 and an asynchronous readback.
