@@ -3,8 +3,8 @@
 //! read only this and the frame's authored values.
 use super::pipelines::LayerConstants;
 use crate::settings::{
-    AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, ReflectionMethod, ShadowQuality,
-    SmaaQuality,
+    AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, ReflectionMethod,
+    ShadowQuality, SmaaQuality,
 };
 
 /// The filter the camera's surfaces take their shadows with

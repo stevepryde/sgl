@@ -52,9 +52,9 @@ pub enum Fsr2Quality {
 }
 
 /// SMAA's quality presets (SMAA 2.8's `SMAA_PRESET_*`): Low and Medium
-/// search 4 and 8 steps along each edge, at a colour contrast threshold of
-/// 0.15 and 0.1; High searches 16 and adds diagonal and corner detection;
-/// Ultra searches 32 at a threshold of 0.05.
+/// search up to 4 and 8 steps of two pixels each way along an edge, at a
+/// colour contrast threshold of 0.15 and 0.1; High up to 16 and adds
+/// diagonal and corner detection; Ultra up to 32 at a threshold of 0.05.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SmaaQuality {
     Low,

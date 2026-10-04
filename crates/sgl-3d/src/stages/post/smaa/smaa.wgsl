@@ -261,7 +261,7 @@ fn calculate_diag_weights(uv: vec2<f32>, e: vec2<f32>) -> vec2<f32> {
 // SMAADetectHorizontalCornerPattern: less blending at a horizontal line's
 // sharp corners, at its ends `coords` (left in xy, right in zw), `d` pixels
 // away.
-fn horizontal_corners(weights: vec2<f32>, coords: vec4<f32>, d: vec2<f32>) -> vec2<f32> {
+fn detect_horizontal_corner_pattern(weights: vec2<f32>, coords: vec4<f32>, d: vec2<f32>) -> vec2<f32> {
     let left_right = step(d.xy, d.yx);
     // Less for pixels in the centre of a line.
     let rounding = (1.0 - SMAA_CORNER_ROUNDING / 100.0) * left_right / (left_right.x + left_right.y);
@@ -272,9 +272,9 @@ fn horizontal_corners(weights: vec2<f32>, coords: vec4<f32>, d: vec2<f32>) -> ve
     factor.y -= rounding.y * textureSampleLevel(edges, linear_sampler, coords.zw, 0.0, vec2<i32>(1, -2)).r;
     return weights * saturate(factor);
 }
-// SMAADetectVerticalCornerPattern: as horizontal_corners for a vertical
-// line, top in xy and bottom in zw.
-fn vertical_corners(weights: vec2<f32>, coords: vec4<f32>, d: vec2<f32>) -> vec2<f32> {
+// SMAADetectVerticalCornerPattern: as detect_horizontal_corner_pattern for
+// a vertical line, top in xy and bottom in zw.
+fn detect_vertical_corner_pattern(weights: vec2<f32>, coords: vec4<f32>, d: vec2<f32>) -> vec2<f32> {
     let left_right = step(d.xy, d.yx);
     let rounding = (1.0 - SMAA_CORNER_ROUNDING / 100.0) * left_right / (left_right.x + left_right.y);
     var factor = vec2<f32>(1.0);
@@ -309,7 +309,7 @@ fn vertical_corners(weights: vec2<f32>, coords: vec4<f32>, d: vec2<f32>) -> vec2
         let a = area_weight(sqrt(d),e1,e2);
         w = vec4<f32>(a,w.ba);
         if SMAA_CORNER_DETECTION {
-            w = vec4<f32>(horizontal_corners(w.rg, vec4<f32>(left, uv.y, right, uv.y), round(d)), w.ba);
+            w = vec4<f32>(detect_horizontal_corner_pattern(w.rg, vec4<f32>(left, uv.y, right, uv.y), round(d)), w.ba);
         }
     }
     if e.r>0.0 {
@@ -321,7 +321,7 @@ fn vertical_corners(weights: vec2<f32>, coords: vec4<f32>, d: vec2<f32>) -> vec2
         let a = area_weight(sqrt(d),e1,e2);
         w = vec4<f32>(w.rg,a);
         if SMAA_CORNER_DETECTION {
-            w = vec4<f32>(w.rg, vertical_corners(w.ba, vec4<f32>(uv.x, up, uv.x, down), round(d)));
+            w = vec4<f32>(w.rg, detect_vertical_corner_pattern(w.ba, vec4<f32>(uv.x, up, uv.x, down), round(d)));
         }
     }
     return w;

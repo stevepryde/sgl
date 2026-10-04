@@ -50,6 +50,10 @@ impl Renderer {
         validate_face_size(face_size, &device.limits())?;
         // Decals added since the last frame take their atlas first.
         scene.upload_decals(device, queue);
+        // Materials sample as the settings filter them, as a frame does.
+        scene
+            .materials
+            .set_anisotropy(device, settings.anisotropic_filtering.clamp());
         let scene = &*scene;
         self.pipelines.specialise(
             device,
