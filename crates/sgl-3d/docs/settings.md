@@ -80,7 +80,9 @@ is done (its algorithm and internal parameters) is SGL3D's.
   splits (Godot's) and the pancake. `None` casts none. Its
   `fog_energy`, as a scene light's
   (`Light::fog_energy`), scales its light in the volumetric fog: 1 by
-  default, at most 0.001 leaves it out.
+  default, at most 0.001 leaves it out. Its `shadow_opacity`, as a scene
+  light's (`Light::shadow_opacity`), is how dark its shadow is on surfaces
+  and in the fog: 1 by default, at most 0.001 draws none.
 - `baked_lighting`: `false` turns baked lighting off.
 - `atmosphere`: the volumetric fog and mist, off by default as Godot's
   (`volumetric_fog_enabled` and `fog_enabled`); `true` turns them on where

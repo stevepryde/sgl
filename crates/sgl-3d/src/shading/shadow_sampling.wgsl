@@ -49,6 +49,18 @@ const SHADOW_FILTER_TEMPORAL:u32=2u;
 const SHADOW_RECEIVER_CAPTURE:u32=0u;
 const SHADOW_RECEIVER_CAMERA:u32=1u;
 const SHADOW_RECEIVER_MEDIUM:u32=2u;
+// A light's shadow at its shadow opacity, Godot b130438's shadow_opacity,
+// MIT (src/LICENSE-godot.txt): its visibility blended toward unshadowed,
+// mix(1, shadow, opacity), as Godot's surfaces take it
+// (servers/rendering/renderer_rd/shaders/scene_forward_lights_inc.glsl and
+// forward_clustered/scene_forward_clustered.glsl) and its fog
+// (environment/volumetric_fog_process.glsl's mix(1 - opacity, 1, shadow),
+// the same blend). At or below SHADOW_OPACITY_CUTOFF Godot looks up no
+// shadow: the light is unshadowed.
+const SHADOW_OPACITY_CUTOFF:f32=.001;
+fn shadow_opacity_visibility(visibility:f32,opacity:f32)->f32 {
+ return mix(1.,visibility,opacity);
+}
 // The filter a receiver's shadows take.
 fn shadow_filter(receiver:u32)->u32 {
  if receiver==SHADOW_RECEIVER_MEDIUM {

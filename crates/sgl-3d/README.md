@@ -83,6 +83,7 @@ frame.directional_lights[0] = Some(DirectionalLight {
         distance: 150., // metres of view depth that are shadowed
         cascades: 4,    // 1 to 4
     }),
+    shadow_opacity: 0.8,  // lets a fifth of its light through its shadow
     ..Default::default() // fog_energy 1: its full light in the fog
 });
 frame.hemisphere_light = HemisphereLight {
@@ -98,11 +99,13 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
 - Up to two directional lights (Bevy's `DirectionalLight`, Godot's
   `DirectionalLight3D`). A light with zero illuminance, or a zero or
   non-finite direction, is off. The first light that is on and has a
-  `shadow` casts it; the other is unshadowed. `fog_energy` scales the light
-  it scatters in the [volumetric fog](#volumetric-fog), as a scene light's
-  does. `DirectionalLight::default()` is Godot's `DirectionalLight3D`:
-  white, shining along -Z, π lux (its light energy of 1, which it scales by
-  π), no shadow and fog energy 1.
+  `shadow` casts it and draws its cascades, even at a `shadow_opacity` of
+  at most 0.001, which shows none; the other is unshadowed. `fog_energy` scales the light it scatters in the
+  [volumetric fog](#volumetric-fog), and `shadow_opacity` how dark its
+  shadow is, as a scene light's do. `DirectionalLight::default()` is Godot's
+  `DirectionalLight3D`: white, shining along -Z, π lux (its light energy of
+  1, which it scales by π), no shadow (opacity 1 when it has one) and fog
+  energy 1.
 - The shadow is Bevy's cascaded shadow map, which SGL3D fits from the camera
   every frame: the view depth from the camera's near plane to `distance` is
   split into `cascades`, each a map of 2048 texels (1024 at the Low
@@ -348,8 +351,7 @@ Where it differs from Godot's fog, and why:
   box. Emission (the frame's medium's too), a volume's height falloff,
   density textures, negative density and other shapes are not ported, and
   there is no GI injection, which in Godot needs VoxelGI or SDFGI.
-- The lights are SGL3D's, in its units and falloff, and none has Godot's
-  `shadow_opacity` ([#65](https://github.com/stevepryde/sgl/issues/65)).
+- The lights are SGL3D's, in its units and falloff.
   The directional shadow has no fade toward the shadow distance: beyond it
   the fog is unshadowed, as surfaces are. A local light's light in the fog
   ends at its occluder instead of fading over about 10 cm behind it. A
@@ -390,8 +392,8 @@ let lamp = scene.add_light(&device, &queue, Light {
 
 `Light::default()` is Godot's `Light3D`: a white point light at the origin
 of π candela (its light energy of 1, which it scales by π) reaching 5 m,
-live, physical specular, fog energy 1 and no shadow. Set what differs and
-take the rest with `..Default::default()`.
+live, physical specular, fog energy 1 and no shadow (opacity 1 when cast).
+Set what differs and take the rest with `..Default::default()`.
 
 - Light falls off with the inverse square of distance and fades smoothly to
   nothing at `range`, Filament's punctual lights as Bevy shades them. A spot
@@ -437,6 +439,13 @@ take the rest with `..Default::default()`.
   which has no bake, and its `fog_energy` scales that.
 - `casts_shadow` gives the light a shadow in the local-light shadow atlas
   ([Local-light shadows](#local-light-shadows)).
+- `shadow_opacity` is how dark that shadow is, 0 to 1 (Godot's
+  `shadow_opacity`): its visibility is blended toward unshadowed,
+  mix(1, shadow, opacity), on surfaces and in the volumetric fog alike, so
+  0.8 lets a fifth of the light through behind its casters, a cheap stand-in
+  for bounced light. 1, the default, is the whole shadow; at most 0.001
+  draws none and skips the shadow lookup, as Godot does, though the light
+  still takes its room in the atlas. The directional lights take it too.
 - Each frame the renderer assigns the lights, with the
   [decals](#decals), to clusters of the camera's view on the CPU, as Bevy's
   clustered forward rendering does: a grid of render-target tiles and depth

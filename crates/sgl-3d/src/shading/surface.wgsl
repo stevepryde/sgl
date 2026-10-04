@@ -204,10 +204,7 @@ fn shade_receiver(context:ShadeContext)->u32 {
 fn directional_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,context:ShadeContext)->LightSample {
  let l=normalize(frame.directional_lights[index].direction_to_light);
  let radiance=frame.directional_lights[index].color*frame.directional_lights[index].illuminance;
- var shadow=1.;
- if (frame.directional_lights[index].flags&DIRECTIONAL_LIGHT_SHADOW)!=0u {
-  shadow=directional_shadow_visibility(index,position,normal,context.pixel,shade_receiver(context));
- }
+ let shadow=directional_light_shadow(index,position,normal,context.pixel,shade_receiver(context));
  return LightSample(l,radiance,shadow,1.,NO_RECT_LIGHT);
 }
 fn shade_lit(s:Surface,context:ShadeContext)->Shaded {

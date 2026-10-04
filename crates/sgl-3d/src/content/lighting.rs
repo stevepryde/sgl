@@ -28,14 +28,20 @@ pub struct DirectionalLight {
     /// take the light alike whatever its value, and its shadow is still
     /// drawn for them. A negative or non-finite value leaves it out too.
     pub fog_energy: f32,
+    /// How dark its shadow is, 0..=1 (Godot's `shadow_opacity`), on surfaces
+    /// and in the volumetric fog alike: 1 hides all of its light behind its
+    /// casters, 0.4 lets 0.6 of it through, and at most 0.001 (Godot's
+    /// cutoff) draws no shadow and skips the lookup. Above 1 is 1; a
+    /// negative or non-finite value draws none.
+    pub shadow_opacity: f32,
 }
 
 impl Default for DirectionalLight {
     /// Godot's `DirectionalLight3D` defaults: white, shining along -Z (as
     /// Godot's and Bevy's untransformed lights do), of π lux (its light
-    /// energy of 1, which its renderer scales by π), with no shadow and fog
-    /// energy 1. Set what differs and take the rest with
-    /// `..Default::default()`.
+    /// energy of 1, which its renderer scales by π), with no shadow (at
+    /// opacity 1 when it has one) and fog energy 1. Set what differs and
+    /// take the rest with `..Default::default()`.
     fn default() -> Self {
         Self {
             direction: Vec3::NEG_Z,
@@ -43,6 +49,7 @@ impl Default for DirectionalLight {
             illuminance: std::f32::consts::PI,
             shadow: None,
             fog_energy: 1.,
+            shadow_opacity: 1.,
         }
     }
 }

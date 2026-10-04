@@ -32,6 +32,9 @@ struct DirectionalLight {
  illuminance:f32,
  // Godot's volumetric_fog_energy: the scale of its light in the fog.
  fog_energy:f32,
+ // Godot's shadow_opacity: how dark its shadow is, 0 to 1
+ // (shadow_sampling.wgsl's shadow_opacity_visibility).
+ shadow_opacity:f32,
 }
 // DirectionalLight.flags: the light has the frame's shadow cascades.
 const DIRECTIONAL_LIGHT_SHADOW:u32=1u;

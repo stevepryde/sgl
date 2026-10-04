@@ -57,8 +57,10 @@ pub(crate) struct DirectionalLightUniform {
     pub illuminance: f32,
     /// The scale of its light in the volumetric fog.
     pub fog_energy: f32,
+    /// How dark its shadow is, 0..=1.
+    pub shadow_opacity: f32,
     /// WGSL rounds `DirectionalLight` up to its 16-byte alignment.
-    pub padding: [f32; 3],
+    pub padding: [f32; 2],
 }
 
 /// One directional shadow cascade (`ShadowCascade` in uniforms.wgsl).

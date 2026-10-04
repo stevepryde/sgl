@@ -96,7 +96,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   overlaps, filtered and biased as Bevy does, and cast by everything between
   the light and the view. A single-sided material casts from its front faces, a
   double-sided one from both. `fog_energy` scales its light in the
-  volumetric fog. A hemisphere fill
+  volumetric fog and `shadow_opacity` how dark its shadow is. A hemisphere
+  fill
   (`FrameInput::hemisphere_light`, `HemisphereLight`).
   [Frame lights and look](../README.md#frame-lights-and-look).
 - **Point, spot and rectangle lights**: scene content (`Scene::add_light`,
@@ -106,7 +107,9 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   no lightmap or assigned atlas chart), leaving the rest to the game's bake; `specular` scales its
   highlights (0 for a fixture already reflected as an emitter), and
   `fog_energy` its light in the volumetric fog (at most 0.001 leaves it out
-  of the fog, which then skips its attenuation and shadow lookup). `Light::default()` and
+  of the fog, which then skips its attenuation and shadow lookup), and
+  `shadow_opacity` how dark its shadow is on surfaces and in the fog
+  (Godot's; 1 by default). `Light::default()` and
   `DirectionalLight::default()` are Godot's light defaults, so a game sets
   only what differs (`..Default::default()`).
   `LightShape::Rect` is a one-sided panel or strip whose face is integrated

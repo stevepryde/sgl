@@ -3,7 +3,7 @@
 // shadow atlas (group 0's `local_shadows`). Rust mirrors: shading/lights.rs;
 // the layout test compares the two.
 // One point, spot or rectangle light. A point or spot light's shading reads
-// its first four rows; a rectangle's also its last.
+// its first four rows and, for its shadow, its last; a rectangle's all six.
 struct Light {
  position:vec3<f32>,
  // Filament's falloff: one over the squared range.
@@ -29,6 +29,9 @@ struct Light {
  // axis crossed with its normal.
  half_width:vec3<f32>,
  half_height:f32,
+ // Godot's shadow_opacity: how dark its shadow is, 0 to 1
+ // (shadow_sampling.wgsl's shadow_opacity_visibility).
+ shadow_opacity:f32,
 }
 // A rectangle's half height along its height's axis: its width's axis
 // crossed with its normal (Bevy's RectLight up).

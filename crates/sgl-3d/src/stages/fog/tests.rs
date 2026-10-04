@@ -5,7 +5,9 @@
 //! occluder hides from it; the filter blurs each slice by Godot's Gaussian
 //! while the history stays unfiltered; a light's fog energy scales its
 //! light in the medium and nowhere else; fog volumes add their medium to
-//! every froxel they reach; and the sky takes its sky affect of the fog.
+//! every froxel they reach; the sky takes its sky affect of the fog; and a
+//! light's shadow opacity blends its shadow toward unshadowed on surfaces
+//! and in the medium alike.
 use super::froxels;
 use crate::renderer::Renderer;
 use crate::settings::{self, FogQuality, Settings};
@@ -1019,6 +1021,120 @@ fn the_sky_takes_its_sky_affect_of_the_fog() {
             assert_eq!(
                 none[texel], whole[texel],
                 "texel {texel}: the sky affect fogged a surface"
+            );
+        }
+    }
+}
+
+// Defect: a light's shadow opacity does not lighten its shadow, lightens it
+// on surfaces or in the medium alone, or scales the light rather than its
+// shadow. Godot's shadow_opacity blends the shadow toward unshadowed,
+// mix(1, shadow, opacity), and lighting is linear in it: at 0.5 each
+// surface texel and froxel lies halfway between the light without a shadow
+// and with its whole shadow, and at 0 it is as without one.
+#[test]
+fn shadow_opacity_blends_a_lights_shadow_on_surfaces_and_in_the_medium() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let fog = Fog {
+        density: 0.05,
+        anisotropy: 0.3,
+        length: 20.,
+        ..Fog::default()
+    };
+    for (label, local) in [("scene light", true), ("directional light", false)] {
+        // Each froxel's in-scatter and the frame without fog, of a floor and
+        // a slab above it shadowing part of it and of the medium, lit by the
+        // light with a shadow at `opacity`, or without one.
+        let observe = |opacity: Option<f32>| {
+            let mut scene = Scene::new(&device, &queue);
+            add_box(
+                &device,
+                &queue,
+                &mut scene,
+                Vec3::new(0., -2., -10.),
+                Vec3::new(20., 1., 20.),
+            );
+            add_box(
+                &device,
+                &queue,
+                &mut scene,
+                Vec3::new(0., 1., -8.),
+                Vec3::new(3., 0.2, 3.),
+            );
+            let mut frame = input(fog);
+            if local {
+                scene
+                    .add_light(
+                        &device,
+                        &queue,
+                        Light {
+                            position: Vec3::new(0., 3., -8.),
+                            shape: LightShape::Spot {
+                                direction: Vec3::NEG_Y,
+                                inner_angle: 0.6,
+                                outer_angle: 0.9,
+                            },
+                            intensity: 60.,
+                            range: 12.,
+                            casts_shadow: opacity.is_some(),
+                            shadow_opacity: opacity.unwrap_or(1.),
+                            ..Light::default()
+                        },
+                    )
+                    .unwrap();
+            } else {
+                frame.directional_lights[0] = Some(DirectionalLight {
+                    direction: Vec3::new(0.2, -1., 0.1),
+                    illuminance: 3.,
+                    shadow: opacity.map(|_| DirectionalShadow {
+                        distance: 30.,
+                        cascades: 2,
+                    }),
+                    shadow_opacity: opacity.unwrap_or(1.),
+                    ..DirectionalLight::default()
+                });
+            }
+            let fogged = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
+            let medium: Vec<f32> = texels(&read(&device, &queue, fogged.fog_volumes()[0]))
+                .into_iter()
+                .flat_map(|froxel| [froxel[0], froxel[1], froxel[2]])
+                .collect();
+            let unfogged = render(&device, &queue, &mut scene, &frame, &settings(false), 1);
+            let surfaces: Vec<f32> = texels(&read(&device, &queue, &unfogged.targets().composite))
+                .into_iter()
+                .flat_map(|texel| [texel[0], texel[1], texel[2]])
+                .collect();
+            [medium, surfaces]
+        };
+        let unshadowed = observe(None);
+        let shadowed = observe(Some(1.));
+        let half = observe(Some(0.5));
+        let clear = observe(Some(0.));
+        for (part, receiver) in ["medium", "surfaces"].into_iter().enumerate() {
+            let (unshadowed, shadowed, half) = (&unshadowed[part], &shadowed[part], &half[part]);
+            let darkened = unshadowed
+                .iter()
+                .zip(shadowed)
+                .filter(|(lit, dark)| *lit - *dark > 1e-2 * *lit + 1e-4)
+                .count();
+            assert!(
+                darkened > 100,
+                "{label}: the slab shadowed {darkened} values of the {receiver}"
+            );
+            for (index, ((lit, dark), blended)) in
+                unshadowed.iter().zip(shadowed).zip(half).enumerate()
+            {
+                let expected = (lit + dark) / 2.;
+                assert!(
+                    (blended - expected).abs() <= 2e-3 * lit.abs() + 1e-4,
+                    "{label}: {receiver} value {index} is {blended} at shadow opacity 0.5, halfway from {dark} to {lit} is {expected}"
+                );
+            }
+            assert!(
+                clear[part] == *unshadowed,
+                "{label}: shadow opacity 0 drew a shadow on the {receiver}"
             );
         }
     }

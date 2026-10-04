@@ -15,6 +15,24 @@ full API details.
 
 ## Unreleased
 
+### Per-light shadow opacity
+
+- **Scope:** `sgl-3d` `Light::shadow_opacity` and
+  `DirectionalLight::shadow_opacity`, Godot's `shadow_opacity`: how dark the
+  light's shadow is, 0..=1. A shadow's visibility is blended toward
+  unshadowed, mix(1, shadow, opacity), on every surface (the camera's, probe
+  captures' and ray hits') and in the volumetric fog, as Godot b130438's
+  forward and volumetric fog shaders do; at most 0.001 draws no shadow and
+  skips the lookup. 1, the default (Godot's), is the previous look.
+  `Scene::add_light` and `set_light` refuse a light whose opacity is
+  outside 0..=1 or not finite (`SceneError::InvalidLight`); a directional
+  light's is clamped to 0..=1, and a non-finite one draws no shadow.
+- **Migration:** none where a game builds its lights with
+  `..Default::default()`. A `Light` or `DirectionalLight` struct literal
+  that lists every field adds `shadow_opacity: 1.`. Afterwards, lower it
+  where a light's shadows should let some light through (a cheap stand-in
+  for bounced light) and look at those shadows on surfaces and in the fog.
+
 ### World-space reflection rays cost what they reach, not the instance count
 
 - **Scope:** `sgl-3d` scene rays (world-space reflections). A ray walked
