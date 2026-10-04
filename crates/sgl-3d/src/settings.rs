@@ -1,5 +1,6 @@
-//! The player's rendering choices: one [`Settings`] value the game stores and
-//! passes to the renderer. Preset choices leave explicit overrides intact.
+//! The game's rendering settings: one [`Settings`] value the game chooses,
+//! stores and passes to the renderer, offering players as many of them as it
+//! wants. Preset choices leave explicit overrides intact.
 use serde::{Deserialize, Serialize};
 
 /// The quality tier `Preset` choices resolve against.
@@ -191,7 +192,7 @@ pub enum SceneResolution {
     Half,
 }
 
-/// Every player choice the renderer resolves into its effective
+/// Every rendering setting the renderer resolves into its effective
 /// configuration each frame. Size-affecting choices (preset, scene
 /// resolution, FSR2 and its quality) take effect at `Renderer::resize`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -211,7 +212,7 @@ pub struct Settings {
     /// the scene's ray buffers; only effective with screen-space reflections.
     pub world_space_reflections: bool,
     /// The volumetric fog and mist, while the frame turns its atmosphere on
-    /// (`FrameInput::atmosphere`, off by default): the player's allowance,
+    /// (`FrameInput::atmosphere`, off by default); this allows them, and is
     /// on by default.
     pub atmosphere: bool,
     /// The volumetric fog's resolution.

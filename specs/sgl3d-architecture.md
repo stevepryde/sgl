@@ -148,7 +148,8 @@ One frame, as the game sees it: edit the `Scene`;
 they changed; `Renderer::render(scene, input, settings, output)` into the
 game's encoder; submit; `Renderer::finish_frame(scene)`. `FrameInput` holds the
 camera, the authored look and per-frame state (time, visibility, lights).
-Player choices are `settings::Settings`, one value the game stores (S3D-6).
+The rendering settings a game chooses are `settings::Settings`, one value the
+game stores (S3D-6).
 Authored look, such as exposure, bloom, colour grading or fog, is frame input,
 not a setting.
 

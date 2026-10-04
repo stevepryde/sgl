@@ -1,7 +1,7 @@
 # SGL3D features
 
-What SGL3D renders, the API to reach for, and where the detail is. Player-facing
-choices are listed in [settings](settings.md).
+What SGL3D renders, the API to reach for, and where the detail is. The
+settings a game chooses are listed in [settings](settings.md).
 
 ## Platforms
 
