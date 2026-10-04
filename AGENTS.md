@@ -94,7 +94,7 @@ compatibility shims solely to avoid updating consumers.
   in prose; link to the workspace manifest and lockfile. Retain version numbers where
   they identify a release migration, an exact-pin example, or upstream provenance.
 - `crates/sgl-3d/docs/` is SGL3D's guide for agents building games: what it
-  contains, its features, and every setting a game can offer players. Update
+  contains, its features, and every setting a game can choose. Update
   it in the same change whenever a feature, setting, value, default, preset
   behaviour or the frame workflow is added, changed or removed. Keep it short:
   it steers and points to the code and package README, which hold the detail.

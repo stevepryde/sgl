@@ -1,6 +1,6 @@
 //! What the caller supplies for one frame: the camera, the authored look and
 //! per-frame state. Linear colours and metres. No simulation clock is
-//! advanced here; player choices are `settings::Settings`, and point and
+//! advanced here; rendering settings are `settings::Settings`, and point and
 //! spot lights are scene content (`Scene::add_light`).
 mod look;
 

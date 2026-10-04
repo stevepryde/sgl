@@ -36,7 +36,7 @@ use wgpu::util::DeviceExt;
 /// Retained content and the GPU buffers mirroring it, which a
 /// [`Renderer`](crate::Renderer) renders. A scene starts empty; the game
 /// adds, edits and removes content between frames, and each addition
-/// returns the content's identity. Content only: player choices are
+/// returns the content's identity. Content only: rendering settings are
 /// `settings::Settings` and each frame's camera and look are a
 /// [`FrameInput`](crate::FrameInput). All dimensions are metres, Y-up.
 pub struct Scene {

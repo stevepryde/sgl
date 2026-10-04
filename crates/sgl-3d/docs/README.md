@@ -6,8 +6,8 @@ the code. They are kept current with every feature change; the code and the
 [package README](../README.md) hold the detail.
 
 - [Features](features.md): what SGL3D renders and where each feature's API is.
-- [Settings](settings.md): every rendering choice a game can offer players,
-  with values, defaults and preset behaviour.
+- [Settings](settings.md): every rendering setting a game can choose, with
+  values, defaults and preset behaviour.
 
 ## What SGL3D is
 

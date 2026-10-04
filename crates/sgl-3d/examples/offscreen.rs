@@ -450,7 +450,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         view_formats: &[],
     });
     let output_view = output.create_view(&Default::default());
-    // The player's choices; a game stores this value.
+    // The game's rendering settings; a game stores this value.
     let settings = Settings {
         preset: RenderPreset::Low,
         atmosphere: options.fog,

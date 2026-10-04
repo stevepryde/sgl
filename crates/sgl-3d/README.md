@@ -147,7 +147,7 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   ([Volumetric fog](#volumetric-fog)) and `mist` (`Mist`) the look of the
   scene's mist billboards (`Mist::default()` hides them); both draw while
   `FrameInput::atmosphere` (off by default, as Godot's fog) and
-  `Settings::atmosphere` (the player's allowance, on by default) are on.
+  `Settings::atmosphere` (the setting's allowance, on by default) are on.
 
 ## Exposure, bloom and colour grading
 
@@ -717,7 +717,7 @@ its source. It antialiases like TAA while upscaling:
 
 ```rust,ignore
 use sgl_3d::settings::AmbientOcclusionQuality;
-settings.ambient_occlusion = AmbientOcclusionQuality::High; // the player's choice
+settings.ambient_occlusion = AmbientOcclusionQuality::High; // a setting
 input.ambient_occlusion_radius = 0.5; // FrameInput: consumer-authored metres
 ```
 
@@ -1461,7 +1461,7 @@ let plume = positions.map(|position| HeatDistortion {
     position, displacement: [0.75, 0.25], weight: 1.0,
 });
 scene.update_heat_distortion(&queue, &plume)?;
-settings.heat_distortion = true; // The player's choice; default is Off.
+settings.heat_distortion = true; // A setting; default is Off.
 ```
 
 The retained list holds at most 6,144 vertices (2,048 triangles), with finite

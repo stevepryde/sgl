@@ -1,11 +1,13 @@
 # SGL3D settings
 
-The rendering choices a game can offer players. They are the fields of
+The rendering settings a game chooses: which mode or implementation to use,
+and how much. They are the fields of
 `settings::Settings` ([`src/settings.rs`](../src/settings.rs)), one serde value:
 store it in the game's own settings record and pass it to `Renderer::new`,
 `resize` and `render`. `Settings::default()` is High with every choice at its
-default. The game owns the menu, the save file and its presets. Offer a
-setting only where it is a real trade-off for the player.
+default. The game decides which settings, if any, to show players, and owns
+the menu, the save file and its presets. A setting says which one or how much,
+never how: SGL3D chooses each feature's internals for the value.
 
 ## Presets
 
@@ -18,7 +20,7 @@ Settings without a `Preset` value have no tier default, so the game's own
 presets (for example Low, High and Ultra) must set them. A game preset should
 replace every choice with a complete bundle.
 
-## Player settings
+## Settings
 
 | Setting | Field | Values (default first) | `Preset` gives | Notes |
 | --- | --- | --- | --- | --- |
@@ -46,14 +48,13 @@ the game calls every frame. The rest apply on the next rendered frame.
 `fsr2_error()` why FSR2 did not; show players the effective choice without
 rewriting their saved one.
 
-## Not player settings
+## Frame and scene values
 
 These are the game's authored look or per-frame state, fields of `FrameInput`
-([`src/frame_input.rs`](../src/frame_input.rs)). Keep them out of settings
-menus. Under S3D-6 a game controls whether each image-changing feature is on
-and its level, as a player setting above, a diagnostics switch below, or a
-value here or on the scene type it belongs to, each with a default; how a
-feature is done (its algorithm and internal parameters) is SGL3D's.
+([`src/frame_input.rs`](../src/frame_input.rs)), and its content on the scene
+types. Under S3D-6 a game says which one or how much (a setting above, a
+diagnostics switch below, or a value here), each with a default; how a feature
+is done (its algorithm and internal parameters) is SGL3D's.
 
 - `exposure`: fixed stops, or automatic exposure with its histogram range,
   filter, speeds, limits, compensation curve and metering mask.
@@ -88,4 +89,4 @@ feature is done (its algorithm and internal parameters) is SGL3D's.
 
 With the `diagnostics` feature, `Settings::diagnostics` holds investigation
 switches (layers off, the frame probe, the tone-target capture). It is not
-serialized and is never a player setting.
+serialized and is never shown to players.
