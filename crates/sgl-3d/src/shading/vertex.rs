@@ -153,9 +153,11 @@ impl GlowVertex {
             GlowKind::Tapered { uv, profile } => Self {
                 kind: GLOW_TAPERED,
                 uv,
-                taper: profile.taper,
+                // In range, so the ripple never takes alpha below zero, which
+                // would subtract light under the additive blend.
+                taper: profile.taper.max(0.),
                 ripple_frequency: profile.ripple_frequency,
-                ripple_amplitude: profile.ripple_amplitude,
+                ripple_amplitude: profile.ripple_amplitude.clamp(0., 0.5),
                 ..vertex
             },
             GlowKind::Line { other, offset } => Self {
