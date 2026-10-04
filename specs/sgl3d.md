@@ -88,19 +88,20 @@ settings SGL3D has today.
    shows it to no player: a `Settings` field when it is a player's choice
    (quality, performance or comfort) or a diagnostics switch, otherwise a
    field of `FrameInput` or of the scene type it belongs to. A game need not
-   set any of them: a player choice defaults to its High-tier value, and any
-   other value to the ported engine's as RD-2 or a recorded decision adjusted
-   it, or to SGL3D's own where nothing was ported. Each type that holds them
-   has `Default`, or a constructor from its required inputs as
-   `FrameInput::new` takes the camera, and is not `#[non_exhaustive]`, so
-   code that builds one with `..` from that default keeps compiling when a
-   value is added. Correctness is not a setting: the shading model and
-   conventions (S3D-3, S3D-5), and a fix of a wrong result or a superseded
-   implementation (RD-3), replace the old behaviour without a value to
-   restore it. Offer a player choice only for a real quality/performance
-   trade-off; the top tier is the best implemented quality. `SceneResolution`
-   Hd/FullHd fit within 1280×720 and 1920×1080 physical pixels, preserving
-   aspect ratio without upscaling.
+   set any of them: a player choice defaults as `Settings::default()` sets it
+   (the High tier where it follows the tier), and any other value to the
+   ported engine's as RD-2 or a recorded decision adjusted it, or to SGL3D's
+   own where nothing was ported. Each type that holds them has `Default`, or a
+   constructor from its required inputs as `FrameInput::new` takes the camera,
+   and is not `#[non_exhaustive]`, so code that builds one with `..` from that
+   default keeps compiling when a value is added. Correctness is not a
+   setting: the shading model and conventions (S3D-3, S3D-5) have no values,
+   and a fix of a wrong result or a superseded implementation (RD-3) replaces
+   the old behaviour without a value to restore it. Offer a player choice only
+   for a real quality/performance trade-off or a comfort need; the top tier is
+   the best implemented quality. `SceneResolution` Hd/FullHd fit within
+   1280×720 and 1920×1080 physical pixels, preserving aspect ratio without
+   upscaling.
 7. **S3D-7 — Existing consumers.** Existing 2D/browser consumers and headless
    core/net builds keep working. SGL3D builds for `wasm32-unknown-unknown` and
    renders on WebGPU in the browser lane, both in the required check

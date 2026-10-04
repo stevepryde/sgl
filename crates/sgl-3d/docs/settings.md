@@ -50,8 +50,8 @@ rewriting their saved one.
 These are the game's authored look or per-frame state, fields of `FrameInput`
 ([`src/frame_input.rs`](../src/frame_input.rs)). Keep them out of settings
 menus. S3D-6 requires every behaviour that changes the image to be a player
-setting above, or a value here or on the scene type it belongs to, with a
-default so a game sets only what it changes.
+setting above, a diagnostics switch below, or a value here or on the scene
+type it belongs to, with a default so a game sets only what it changes.
 
 - `exposure`: fixed stops, or automatic exposure with its histogram range,
   filter, speeds, limits, compensation curve and metering mask.
