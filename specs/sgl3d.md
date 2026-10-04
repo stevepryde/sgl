@@ -80,22 +80,21 @@ settings SGL3D has today.
    between passes) instead of masking it with a compensating gain, clamp or
    per-content exception. Artistic parameters such as exposure, bloom, emissive
    strength, fog and reflection intensity are legitimate and game-owned.
-6. **S3D-6 — Settings.** SGL3D's settings are what a game specifies to change
-   how it renders, as one plain value, `settings::Settings`; games persist it,
-   own presets and settings UI, and decide which settings, if any, their
-   players see. Library preset resolution and capability fallback never
-   rewrite saved choices and report the effective result separately. A game
-   controls what each image-changing feature does and how much, whether or not
-   it shows the control to players: whether the feature is on, and its level:
-   a quality tier, a choice between implementations with a real trade-off
-   (AR-3, RD-3) such as the antialiasing method, a strength such as bloom
-   intensity or a light's share of the fog, or a reach in metres such as the
-   shadow distance. The authored look and content (S3D-2, S3D-5) stay the
-   game's. That is a `Settings` field when it configures how SGL3D renders (a
-   mode, an implementation, a quality, performance or comfort level) or is a
-   diagnostics switch, otherwise a field of `FrameInput` (the per-frame look)
-   or of the scene type it belongs to (content). How a feature is done is
-   SGL3D's: its algorithm, kernels, thresholds, history weights and other
+6. **S3D-6 — Settings.** SGL3D's settings are what a game specifies about its
+   rendering, as one plain value, `settings::Settings`; games persist it, own
+   presets and settings UI, and decide which settings, if any, their players
+   see. Library preset resolution and capability fallback never rewrite saved
+   choices and report the effective result separately. A game controls what
+   each image-changing feature does and how much: whether the feature is on,
+   and its level: a quality tier, a choice between implementations with a real
+   trade-off (AR-3, RD-3) such as the antialiasing method, a strength such as
+   bloom intensity or a light's share of the fog, or a reach in metres such as
+   the shadow distance. The authored look and content (S3D-2, S3D-5) stay the
+   game's. That is a `Settings` field when it selects which mode or
+   implementation SGL3D uses, or its quality, performance or comfort level, or
+   is a diagnostics switch, otherwise a field of `FrameInput` (the per-frame
+   look) or of the scene type it belongs to (content). How a feature is done
+   is SGL3D's: its algorithm, kernels, thresholds, history weights and other
    internal parameters are chosen by SGL3D for each level and are never game
    fields. A game need not set any control: a setting defaults as
    `Settings::default()` sets it (the High tier where it follows the tier),
@@ -107,9 +106,9 @@ settings SGL3D has today.
    is added. Correctness is not a setting: the shading model and conventions
    (S3D-3, S3D-5) have no controls, and a fix of a wrong result or a
    superseded implementation (RD-3) replaces the old behaviour without a
-   control to restore it. Add a setting only for a real choice (a
-   quality/performance trade-off, a comfort need, or which implementation or
-   mode to use); the top tier is the best implemented quality.
+   control to restore it. Add a setting only for a real trade-off:
+   quality/performance, a comfort need, or between implementations or modes
+   (AR-3, RD-3); the top tier is the best implemented quality.
    `SceneResolution` Hd/FullHd fit within 1280×720 and 1920×1080 physical
    pixels, preserving aspect ratio without upscaling.
 7. **S3D-7 — Existing consumers.** Existing 2D/browser consumers and headless
@@ -172,8 +171,8 @@ The code's structure follows the
    comparable cost, remove the old path with its settings, tests, docs and
    records in the same change, and update Hyperdrive in a paired change. A
    changed bake data format regenerates the consumer's baked assets in that
-   paired change. Keep an alternative only as a genuine player-facing
-   quality/performance choice.
+   paired change. Keep an alternative only as a setting with a real
+   quality/performance trade-off (S3D-6).
 4. **RD-4 — Proportionate checks.** `bun scripts/tasks.ts check` stays the
    required check. Add a test only where it can fail at a real boundary: API
    behaviour, resource and history lifetime, coordinate conventions, or frame

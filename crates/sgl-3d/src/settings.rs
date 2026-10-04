@@ -212,7 +212,7 @@ pub struct Settings {
     /// the scene's ray buffers; only effective with screen-space reflections.
     pub world_space_reflections: bool,
     /// The volumetric fog and mist, while the frame turns its atmosphere on
-    /// (`FrameInput::atmosphere`, off by default): the setting's allowance,
+    /// (`FrameInput::atmosphere`, off by default); this allows them, and is
     /// on by default.
     pub atmosphere: bool,
     /// The volumetric fog's resolution.

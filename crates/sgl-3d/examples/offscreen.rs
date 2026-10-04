@@ -12,7 +12,7 @@
 //! `export_example_grate`); it needs `wgpu::Features::TEXTURE_COMPRESSION_BC`.
 //! `--decals` projects painted hazard stripes, rough and matte, onto the
 //! ground in front of the cube. `--motion-blur` blurs the moving cube along
-//! its motion, the player's `MotionBlur::Full` over the default shutter.
+//! its motion, `MotionBlur::Full` over the default shutter.
 //! `--fog` fills the view with haze that the sun and lights scatter, denser
 //! in a box over the cubes.
 //! Printed pixel measurements are diagnostics,
@@ -487,7 +487,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         ..Default::default()
     });
     // A thin haze the sun scatters forward, thinning above 2 m, where the
-    // player's settings allow the atmosphere.
+    // settings allow the atmosphere.
     frame.atmosphere = true;
     frame.fog = Fog {
         density: 0.04,

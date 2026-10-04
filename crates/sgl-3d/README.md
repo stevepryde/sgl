@@ -147,7 +147,7 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   ([Volumetric fog](#volumetric-fog)) and `mist` (`Mist`) the look of the
   scene's mist billboards (`Mist::default()` hides them); both draw while
   `FrameInput::atmosphere` (off by default, as Godot's fog) and
-  `Settings::atmosphere` (the setting's allowance, on by default) are on.
+  `Settings::atmosphere` (which allows them, on by default) are on.
 
 ## Exposure, bloom and colour grading
 
@@ -204,7 +204,7 @@ frame.motion_blur.shutter_angle = 0.5; // the default, film's 180° shutter
 ```
 
 - Each pixel blurs over `shutter_angle` of its motion since the last frame,
-  centred on it, times the player's `Settings::motion_blur`: Full 1, Reduced
+  centred on it, times `Settings::motion_blur`: Full 1, Reduced
   0.5; Off (the default) does not run. The motion is the G-buffer's: the
   camera's, and moving and deforming instances' own. Like a shutter, the
   blur follows the frame rate: a faster frame moves less and blurs less.
@@ -717,7 +717,7 @@ its source. It antialiases like TAA while upscaling:
 
 ```rust,ignore
 use sgl_3d::settings::AmbientOcclusionQuality;
-settings.ambient_occlusion = AmbientOcclusionQuality::High; // a setting
+settings.ambient_occlusion = AmbientOcclusionQuality::High; // Settings: a quality level
 input.ambient_occlusion_radius = 0.5; // FrameInput: consumer-authored metres
 ```
 
@@ -956,7 +956,7 @@ cargo run -p sgl-3d --example skinned -- target/skinned.png
 
 A game holds a `Scene` (content: geometry, materials, instances, lights,
 decals, environments and bakes), a `Renderer` (targets, pipelines and histories) and
-its player's `settings::Settings`. Each frame it describes the camera, the
+its `settings::Settings`. Each frame it describes the camera, the
 authored look and per-frame state in a `FrameInput`.
 
 1. Select an adapter and request the renderer's device requirements:
@@ -1187,8 +1187,8 @@ Neither alters material albedo or paints light into emission.
 
 ## Settings and capability fallback
 
-`settings::Settings` holds every player rendering choice in one serde value
-the game stores and passes to `Renderer::new`, `resize` and `render`;
+`settings::Settings` holds every rendering setting a game chooses in one serde
+value the game stores and passes to `Renderer::new`, `resize` and `render`;
 `Settings::default()` is High with atmosphere allowed.
 [Settings](docs/settings.md) lists each field. The game owns its settings
 record, file format, controls, defaults, and saving. `settings::FrameRate`
@@ -1197,7 +1197,7 @@ describes presentation cadence; the renderer does not run a frame limiter.
 Keep a saved explicit choice distinct from `Preset`. Apply the preset only where
 the option requests it. Low → High → Low and application restart must preserve
 explicit values at the library boundary. A game may implement complete preset
-bundles by explicitly replacing its settings fields on player selection.
+bundles by explicitly replacing its settings fields when it applies one.
 `SceneResolution::Hd` and `FullHd` fit the scene within 1280×720 and 1920×1080
 physical pixels, preserving aspect ratio without upscaling. `Full` renders at
 the full output size; `ThreeQuarter`/`Half` scale it. UI output is unaffected.
@@ -1461,7 +1461,7 @@ let plume = positions.map(|position| HeatDistortion {
     position, displacement: [0.75, 0.25], weight: 1.0,
 });
 scene.update_heat_distortion(&queue, &plume)?;
-settings.heat_distortion = true; // A setting; default is Off.
+settings.heat_distortion = true; // Settings: on or off; default is Off.
 ```
 
 The retained list holds at most 6,144 vertices (2,048 triangles), with finite

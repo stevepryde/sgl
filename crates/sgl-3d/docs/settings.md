@@ -1,13 +1,13 @@
 # SGL3D settings
 
 The rendering settings a game chooses: which mode or implementation to use,
-and how much. They are the fields of
-`settings::Settings` ([`src/settings.rs`](../src/settings.rs)), one serde value:
-store it in the game's own settings record and pass it to `Renderer::new`,
-`resize` and `render`. `Settings::default()` is High with every choice at its
-default. The game decides which settings, if any, to show players, and owns
-the menu, the save file and its presets. A setting says which one or how much,
-never how: SGL3D chooses each feature's internals for the value.
+and how much. They are the fields of `settings::Settings`
+([`src/settings.rs`](../src/settings.rs)), one serde value: store it in the
+game's own settings record and pass it to `Renderer::new`, `resize` and
+`render`. `Settings::default()` is High with every choice at its default. The
+game decides which settings, if any, to show players, and owns the menu, the
+save file and its presets. A setting says which one or how much, never how:
+SGL3D chooses each feature's internals for the value.
 
 ## Presets
 
@@ -45,8 +45,8 @@ The preset, scene resolution, antialiasing changes to or from FSR2 and FSR2
 quality size the targets, so they apply at the next `Renderer::resize`, which
 the game calls every frame. The rest apply on the next rendered frame.
 `Renderer::antialiasing_in_effect(&settings)` reports what actually runs and
-`fsr2_error()` why FSR2 did not; show players the effective choice without
-rewriting their saved one.
+`fsr2_error()` why FSR2 did not; show the effective choice without rewriting
+the saved value.
 
 ## Frame and scene values
 

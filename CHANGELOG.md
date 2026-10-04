@@ -24,7 +24,7 @@ full API details.
   game opted out; it is now `false`, as Godot's `volumetric_fog_enabled` and
   `fog_enabled` default to false (b130438 `scene/resources/environment.h`).
   A frame from `FrameInput::new` draws no fog or mist until the game turns
-  its atmosphere on. `Settings::atmosphere`, the player's allowance, stays
+  its atmosphere on. `Settings::atmosphere`, which allows it, stays
   `true` by default, so the game needs no settings change.
 - **Migration:** set the frame's atmosphere where the game wants fog or
   mist:

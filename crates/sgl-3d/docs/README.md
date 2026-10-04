@@ -22,7 +22,7 @@ or asset pipeline, and none should be added around it.
 ## A frame
 
 A game holds three values: a `Scene` (content), a `Renderer` (the frame) and
-the player's `settings::Settings`.
+its rendering `settings::Settings`.
 
 1. Device: request `graphics_device::limits(&adapter)`,
    `graphics_device::features(&adapter)` and
