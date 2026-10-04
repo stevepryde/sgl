@@ -3,6 +3,14 @@
 // f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b). Copyright Diligent Graphics LLC,
 // licensed under the Apache License, Version 2.0 (vendor/DiligentFX/License.txt).
 // Modified: translated from HLSL to WGSL; see crates/sgl-post-fx/README.md.
+// DFX-14 replaces upstream's motion-rejection and variance constants with the
+// motion-difference rejection and variance box constants of Godot's TAA,
+// servers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl and
+// servers/rendering/renderer_rd/effects/taa.cpp
+// (https://github.com/godotengine/godot, revision
+// b13043816a0f234985030ec035363a005bc86c32), MIT licensed (LICENSE-godot.txt);
+// taa_resolve.glsl is based on Spartan Engine's TAA, Copyright (c) 2016-2022
+// Panos Karabelas, MIT licensed (LICENSE-spartan.txt).
 
 #ifndef _TEMPORAL_ANTI_ALIASING_STRUCTURES_FXH_
 #define _TEMPORAL_ANTI_ALIASING_STRUCTURES_FXH_
@@ -10,29 +18,31 @@
 #include "ShaderDefinitions.fxh"
 
 
-// This parameter sets the minimum value for the variance gamma.
-// The variance gamma is used to adjust the influence of historical data in the anti-aliasing process.
-// A lower value means that the algorithm is less influenced by past frames, making it more responsive to changes but potentially less smooth
-#define TAA_MIN_VARIANCE_GAMMA           0.75
+// PROVENANCE.md DFX-14: Godot's velocity disocclusion. History is kept while the difference between
+// a pixel's motion and the previous frame's motion where it was stays within this many pixels
+// (taa.cpp disocclusion_threshold); beyond it, this share of the frame's weight per pixel moves from
+// history to the current frame (taa_resolve.glsl DISOCCLUSION_SCALE), none left 93.75 pixels
+// further under the default 0.9375 history cap (TemporalStabilityFactor).
+#define TAA_MOTION_DIFF_THRESHOLD_PIXELS    2.5
+#define TAA_MOTION_DIFF_REJECTION_PER_PIXEL 0.01
 
-// This parameter sets the maximum value for the variance gamma.
-// A higher maximum value allows the algorithm to rely more heavily on historical data,
-// which can produce smoother results but may also introduce more motion blur or ghosting effects in fast-moving scenes.
-#define TAA_MAX_VARIANCE_GAMMA           2.5
+// PROVENANCE.md DFX-14: Godot's speed-scaled variance box (taa_resolve.glsl clip_history_3x3).
+// The box spans Godot's variance_dynamic standard deviations at rest and narrows smoothly to none
+// at this speed of the pixel's closest motion, in screen fractions per frame.
+#define TAA_VARIANCE_BOX_ZERO_SPEED 0.02
 
-// This parameter defines the threshold for pixel velocity difference that determines whether a pixel is considered to have "no history."
-// If the difference in motion vectors between the current frame and the previous frame exceeds this value, the pixel is treated as if it has no historical data.
-// This helps to prevent ghosting effects by not blending pixels with significantly different motion vectors.
-#define TAA_MOTION_VECTOR_DIFF_FACTOR  256.0
+// Godot's variance_dynamic (taa.cpp): 1.1 standard deviations at 1080 rows, scaled inversely with
+// the height and kept between 0.75 and 1. 1.1 clamps to 1, so the box is 1 deviation up to 1188
+// rows and 1188/height deviations above, 0.75 from 1584 rows.
+#define TAA_VARIANCE_DYNAMIC_BASE        1.1
+#define TAA_VARIANCE_DYNAMIC_BASE_HEIGHT 1080.0
+#define TAA_VARIANCE_DYNAMIC_MIN         0.75
+#define TAA_VARIANCE_DYNAMIC_MAX         1.0
 
 // This parameter sets the threshold for depth disocclusion. It is used to determine how much a change in depth between frames should be considered as disocclusion,
 // which occurs when previously occluded objects become visible. A small threshold value means that only significant depth changes will be treated as disocclusion,
 // which can help in maintaining the stability of the image but may ignore some smaller, yet visually important changes.
 #define TAA_DEPTH_DISOCCLUSION_THRESHOLD 0.9
-
-// This parameter sets the max "distance" between source colour and target colour.
-// Setting this to a larger value allows more bright pixels from the history buffer to be leaved unchanged.
-#define TAA_VARIANCE_INTERSECTION_MAX_T  10.0
 
 // Defaults are those of the host structure (src/structures.rs).
 struct TemporalAntiAliasingAttribs

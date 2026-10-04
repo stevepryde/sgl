@@ -2,7 +2,12 @@ Godot Engine, https://github.com/godotengine/godot
 Revision d851ae838de54a0bd3dde9043912f39c74265cdd, LICENSE.txt. The DiligentFX
 port adds the depth-tolerance pass-through of
 servers/rendering/renderer_rd/shaders/effects/screen_space_reflection.glsl to
-SSR_ComputeIntersection.wgsl (PROVENANCE.md DFX-18).
+SSR_ComputeIntersection.wgsl (PROVENANCE.md DFX-18), and from revision
+b13043816a0f234985030ec035363a005bc86c32 the motion-difference rejection,
+speed-scaled variance box and history clip of
+servers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl and
+servers/rendering/renderer_rd/effects/taa.cpp to
+TAA_ComputeTemporalAccumulation.wgsl (DFX-14).
 
 Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md).
 Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.
