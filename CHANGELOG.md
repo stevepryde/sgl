@@ -54,7 +54,8 @@ full API details.
   Mark water and glass that should reflect the scene with `true`, place
   them as moving instances, and animate their normals in the mesh (see the
   package README's
-  [blended receivers](crates/sgl-3d/README.md#blended-receivers)). A mesh
+  [blended receivers](crates/sgl-3d/README.md#blended-receivers) and the
+  `water` example). A mesh
   replaced with `Scene::set_model` every frame rebuilds its ray BVH every
   frame. Devices requested with
   `graphics_device::limits` need no change. Afterwards, look at a marked
