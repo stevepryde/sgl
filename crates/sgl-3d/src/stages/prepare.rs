@@ -116,7 +116,12 @@ impl Prepare {
             flags: 0,
             padding: [0; 3],
         };
-        let shadow = FrameShadow::camera(input, effective.taa || effective.fsr2, history.frames);
+        let shadow = FrameShadow::camera(
+            input,
+            effective.shadow_quality.cascade_size(),
+            effective.shadow_filter,
+            history.frames,
+        );
         let frame = frame_uniform(
             input,
             &scene.static_lighting,
@@ -208,9 +213,11 @@ impl Prepare {
     }
 
     /// The views of a probe capture at `center` with `input`'s lights, the
-    /// directional shadow's cascades about `center` and, when
-    /// `local_lights`, the scene's lights, without their shadow. A capture
-    /// has no fog: completion fogs what reflects it at the receiver.
+    /// directional shadow's cascades about `center` in maps of
+    /// `cascade_size` texels and, when `local_lights`, the scene's lights,
+    /// without their shadow. A capture has no fog: completion fogs what
+    /// reflects it at the receiver.
+    #[allow(clippy::too_many_arguments)]
     pub fn capture(
         &self,
         device: &wgpu::Device,
@@ -219,8 +226,9 @@ impl Prepare {
         input: &FrameInput,
         local_lights: bool,
         center: Vec3,
+        cascade_size: u32,
     ) -> CaptureViews {
-        let shadow = FrameShadow::capture(input, center);
+        let shadow = FrameShadow::capture(input, center, cascade_size);
         let frame = frame_uniform(input, &scene.static_lighting, &shadow, false);
         let uniform = |label, bytes: &[u8]| {
             crate::scene::buffer(device, label, bytes, wgpu::BufferUsages::UNIFORM)

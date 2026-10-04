@@ -113,6 +113,7 @@ pub(super) fn render(
         views,
         &bindings.frame,
     );
+    shadows.resize(device, effective.shadow_quality);
     shadows.local.prepare(
         device,
         queue,
@@ -126,8 +127,8 @@ pub(super) fn render(
     views.instances.upload(device, queue);
     fog.prepare(device, effective.fog, sizes.render);
     // After prepare, the local shadows' and the fog's, which may replace a
-    // light cluster buffer, the shadow records or the fog volume group 0
-    // binds.
+    // light cluster buffer, a shadow map, the shadow records or the fog
+    // volume group 0 binds.
     bindings.refresh(
         device,
         scene,

@@ -57,6 +57,10 @@ impl Renderer {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("author static specular probe"),
         });
+        // The capture draws into the frame's shadow maps, at the settings'
+        // quality, and its groups bind them.
+        self.shadows.resize(device, settings.shadow_quality);
+        self.bindings.shadow_maps = self.shadows.maps();
         let mut views = self.prepare.capture(
             device,
             queue,
@@ -64,6 +68,7 @@ impl Renderer {
             input,
             !settings.diagnostics_in_effect().disable.local_lights,
             center,
+            settings.shadow_quality.cascade_size(),
         );
         // Their lights' shadows sample static layers placed for the capture.
         let local_records = self.shadows.local.plan_capture(

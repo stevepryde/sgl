@@ -6,7 +6,7 @@
 use crate::asset::{self, Vertex};
 use crate::renderer::Renderer;
 use crate::scene::buffer;
-use crate::settings::Settings;
+use crate::settings::{Antialiasing, Settings, ShadowQuality};
 use crate::shading;
 use crate::{
     AssetIds, Camera, FrameInput, InstanceId, InstanceState, Light, LightId, LightShape,
@@ -86,6 +86,9 @@ struct Harness {
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: Renderer,
+    /// What its frames render with: the defaults, unless a test changes
+    /// them.
+    settings: Settings,
     output: wgpu::TextureView,
     /// Observers of the camera's view and of ray hits'.
     observers: [wgpu::ComputePipeline; 2],
@@ -186,6 +189,7 @@ override camera:bool=true;
             device,
             queue,
             renderer,
+            settings: Settings::default(),
             output,
             observers,
         })
@@ -199,7 +203,7 @@ override camera:bool=true;
             &mut encoder,
             scene,
             input,
-            &Settings::default(),
+            &self.settings,
             &self.output,
             None,
         );
@@ -640,6 +644,91 @@ fn unfinished_frames_leave_nothing_reusable() {
         light,
         &[(BEHIND_MOVING, 0.)],
         "after a submitted, unfinished frame",
+    );
+}
+
+// Plausible defects: a change of shadow quality that leaves lit group 0
+// binding the old atlas, keeps placements made in the old atlas's layout
+// (slots past the new atlas's edge, or records naming the old places), or
+// keeps static layers or frame faces the old atlas held as if the new one
+// held them, so a shadow vanishes, stays where it was or falls elsewhere.
+// The oracle is geometric placement, as above, on the first frame at each
+// quality: the moving blocker comes and goes with each change, so an atlas
+// kept from the last quality shows where it was.
+#[test]
+fn shadows_follow_a_change_of_shadow_quality() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (mut scene, light, far, model) = cached_scene(&mut harness);
+    let queue = harness.queue.clone();
+    let input = input();
+    harness.frame(&mut scene, &input);
+    for (quality, z) in [
+        (ShadowQuality::Low, 2.),
+        (ShadowQuality::High, 50.),
+        (ShadowQuality::Low, 50.),
+        (ShadowQuality::High, 2.),
+    ] {
+        harness.settings.shadow_quality = quality;
+        scene
+            .set_instance(&queue, far, at(model, Vec3::new(0., 0., z)))
+            .unwrap();
+        let stats = harness.frame(&mut scene, &input);
+        let label = format!("{quality:?}, moving blocker at z = {z}");
+        assert_eq!(stats.shadowed, 1, "{label}: {stats:?}");
+        let behind_moving = if z < 9. { 0. } else { 1. };
+        harness.expect(
+            light,
+            &[
+                (BEHIND_STATIC, 0.),
+                (BEHIND_MOVING, behind_moving),
+                (-BEHIND_STATIC, 1.),
+            ],
+            &label,
+        );
+    }
+}
+
+// Plausible defects: the Low quality's camera shadows taking Castaño's
+// kernel, as High's do, rather than Godot's hard filter. The oracle is the
+// filters' footprints: one hardware 2×2 comparison blends the four texels
+// about a point, so the light rises from none to full across one texel; the
+// 9-tap kernel spans five. Low's texels are twice High's, so across the
+// static blocker's shadow edge Low's camera penumbra is narrower than
+// High's, where the kernel's would be twice as wide.
+#[test]
+fn the_low_quality_takes_its_camera_shadows_with_one_hardware_tap() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    // Castaño's kernel at High, where TAA would take the spiral.
+    harness.settings.antialiasing = Antialiasing::Off;
+    let (mut scene, light, _, _) = cached_scene(&mut harness);
+    let input = input();
+    // The blocker's edge at z = 0.6, 2 m from the light, falls at z = 1.2 on
+    // receivers 4 m from it.
+    let receivers: Vec<_> = (0..=120)
+        .map(|step| (Vec3::new(4., 0., 0.9 + step as f32 * 0.005), Vec3::ZERO))
+        .collect();
+    let mut penumbra = |quality| {
+        harness.settings.shadow_quality = quality;
+        harness.frame(&mut scene, &input);
+        let visibility = harness.visibility(light, &receivers, Seen::Camera);
+        assert!(
+            visibility[0] < 0.01 && visibility[120] > 0.99,
+            "{quality:?}: the receivers do not cross the shadow's edge: {visibility:?}"
+        );
+        visibility
+            .iter()
+            .filter(|v| (0.01..0.99).contains(*v))
+            .count()
+    };
+    let high = penumbra(ShadowQuality::High);
+    let low = penumbra(ShadowQuality::Low);
+    assert!(
+        low > 0 && low < high,
+        "the penumbra spans {low} receivers at Low and {high} at High"
     );
 }
 

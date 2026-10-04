@@ -153,6 +153,45 @@ impl FogQuality {
     }
 }
 
+/// The shadows' map sizes and the filter the camera's surfaces take them
+/// with, as Godot's desktop and mobile project settings set them
+/// (b130438: `directional_shadow/size`, `positional_shadow/atlas_size` and
+/// both `soft_shadow_filter_quality` settings, and their `.mobile`
+/// overrides). Probe captures and world-space ray hits keep Castaño's
+/// kernel, and the fog its one tap, at either.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShadowQuality {
+    /// Godot's mobile defaults: 1024-texel cascades (its 2048 directional
+    /// atlas holds four), a 2048-texel local-light atlas, and one hardware
+    /// 2×2 comparison tap (its `Hard` filter).
+    Low,
+    /// Godot's desktop defaults: 2048-texel cascades (its 4096 atlas holds
+    /// four; Bevy's `DirectionalLightShadowMap` default), a 4096-texel
+    /// local-light atlas, and Bevy's soft filters: Jimenez's spiral, turned
+    /// each frame, while TAA or FSR2 resolves it, else Castaño's kernel.
+    #[default]
+    High,
+}
+
+impl ShadowQuality {
+    /// Each directional shadow cascade's size in texels: a power of two, as
+    /// the cascade fit's texel snapping needs.
+    pub(crate) fn cascade_size(self) -> u32 {
+        match self {
+            Self::Low => 1024,
+            Self::High => 2048,
+        }
+    }
+
+    /// The local-light shadow atlas's width and height in texels.
+    pub(crate) fn atlas_size(self) -> u32 {
+        match self {
+            Self::Low => 2048,
+            Self::High => 4096,
+        }
+    }
+}
+
 /// Presentation cadence. Display follows the surface's refresh-paced FIFO;
 /// explicit limits cap rendering without changing the simulation tick rate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +242,8 @@ pub struct Settings {
     pub antialiasing: Antialiasing,
     pub fsr2_quality: Fsr2Quality,
     pub bloom: Bloom,
+    /// The shadow maps' sizes and the camera's shadow filter.
+    pub shadow_quality: ShadowQuality,
     /// Diffuse sky and fill visibility, and the specular occlusion of
     /// environment and probe reflections (not screen-space hits).
     pub ambient_occlusion: AmbientOcclusionQuality,
@@ -243,6 +284,7 @@ impl Default for Settings {
             antialiasing: Antialiasing::default(),
             fsr2_quality: Fsr2Quality::default(),
             bloom: Bloom::default(),
+            shadow_quality: ShadowQuality::default(),
             ambient_occlusion: AmbientOcclusionQuality::default(),
             screen_space_reflections: ScreenSpaceReflections::default(),
             reflection_method: ReflectionMethod::default(),

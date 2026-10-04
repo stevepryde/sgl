@@ -31,20 +31,17 @@ use crate::content::lighting::{Backdrop, DirectionalLight, DirectionalShadow};
 use crate::scene::static_lighting::StaticLighting;
 use crate::shading::uniforms::{
     DIRECTIONAL_LIGHT_SHADOW, DirectionalLightUniform, FRAME_BACKDROP_COLOR, FRAME_BAKED_LIGHTING,
-    FRAME_FOG, FRAME_IRRADIANCE_ATLAS, FRAME_TEMPORAL_SHADOW_FILTER, FrameUniform,
-    ShadowCascadeUniform, VIEW_PROBE_CAPTURE, ViewUniform,
+    FRAME_FOG, FRAME_HARDWARE_SHADOW_FILTER, FRAME_IRRADIANCE_ATLAS, FRAME_TEMPORAL_SHADOW_FILTER,
+    FrameUniform, ShadowCascadeUniform, VIEW_PROBE_CAPTURE, ViewUniform,
 };
 use bytemuck::Zeroable;
 use cascades::{Cascades, MAX_SHADOW_CASCADES};
+use effective::ShadowFilter;
 use glam::camera;
 use glam::{Mat4, Vec3};
 
 /// The near plane of local-light shadow faces, in metres.
 pub(crate) const LOCAL_SHADOW_NEAR: f32 = 0.02;
-/// Each directional shadow cascade's size in texels: Bevy's
-/// `DirectionalLightShadowMap` default, a power of two, as its cascade fit
-/// needs for exact texel snapping.
-pub(crate) const DIRECTIONAL_SHADOW_MAP_SIZE: u32 = 2048;
 /// Each local-light shadow cube face's direction and up, in face order.
 const LOCAL_SHADOW_FACES: [(Vec3, Vec3); 6] = [
     (Vec3::X, Vec3::NEG_Y),
@@ -85,42 +82,47 @@ pub(crate) fn directional_shadow(input: &FrameInput) -> Option<(usize, Direction
 }
 
 /// The directional shadow of one frame's views: the light that casts it and
-/// its cascades, whether the camera filters it temporally, and the frames
-/// since history restarted, which turn the temporal filter's noise. A light
-/// casts it only when it has cascades.
+/// its cascades, the camera's filter, and the frames since history
+/// restarted, which turn the temporal filter's noise. A light casts it only
+/// when it has cascades.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct FrameShadow {
     pub light: Option<usize>,
     pub cascades: Cascades,
-    pub temporal: bool,
+    pub filter: ShadowFilter,
     pub frame_count: u32,
 }
 
 impl FrameShadow {
-    /// The shadow `input`'s camera sees; `temporal` while TAA or FSR2 runs.
-    pub fn camera(input: &FrameInput, temporal: bool, frame_count: u32) -> Self {
+    /// The shadow `input`'s camera sees in cascades of `map_size` texels.
+    /// Its surfaces take every shadow, local lights' too, with `filter`,
+    /// whether or not a directional light casts one.
+    pub fn camera(
+        input: &FrameInput,
+        map_size: u32,
+        filter: ShadowFilter,
+        frame_count: u32,
+    ) -> Self {
         let camera = input.camera;
-        Self::fit(input, |direction, shadow| {
-            Cascades::camera(
-                camera.view,
-                camera.projection,
-                direction,
-                shadow,
-                DIRECTIONAL_SHADOW_MAP_SIZE,
-            )
+        let (light, cascades) = Self::fit(input, |direction, shadow| {
+            Cascades::camera(camera.view, camera.projection, direction, shadow, map_size)
         })
-        .map_or_else(Self::default, |(light, cascades)| Self {
-            light: Some(light),
+        .map_or((None, Cascades::default()), |(light, cascades)| {
+            (Some(light), cascades)
+        });
+        Self {
+            light,
             cascades,
-            temporal,
+            filter,
             frame_count,
-        })
+        }
     }
 
-    /// The shadow of `input`'s light for a probe capture at `center`.
-    pub fn capture(input: &FrameInput, center: Vec3) -> Self {
+    /// The shadow of `input`'s light for a probe capture at `center`, in
+    /// cascades of `map_size` texels.
+    pub fn capture(input: &FrameInput, center: Vec3, map_size: u32) -> Self {
         Self::fit(input, |direction, shadow| {
-            Cascades::capture(center, direction, shadow, DIRECTIONAL_SHADOW_MAP_SIZE)
+            Cascades::capture(center, direction, shadow, map_size)
         })
         .map_or_else(Self::default, |(light, cascades)| Self {
             light: Some(light),
@@ -219,7 +221,14 @@ pub(crate) fn frame_uniform(
                 matches!(input.backdrop, Backdrop::Color(_)),
                 FRAME_BACKDROP_COLOR,
             )
-            | flag(shadow.temporal, FRAME_TEMPORAL_SHADOW_FILTER),
+            | flag(
+                shadow.filter == ShadowFilter::Temporal,
+                FRAME_TEMPORAL_SHADOW_FILTER,
+            )
+            | flag(
+                shadow.filter == ShadowFilter::Hardware,
+                FRAME_HARDWARE_SHADOW_FILTER,
+            ),
         shadow_cascade_count: cascades.len() as u32,
         frame_count: shadow.frame_count,
         padding: 0,

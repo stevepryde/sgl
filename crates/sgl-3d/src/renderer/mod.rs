@@ -149,7 +149,7 @@ impl Renderer {
             output: output_size,
         };
         let views = FrameViews::new(device);
-        let shadows = Shadows::new(device);
+        let shadows = Shadows::new(device, settings.shadow_quality);
         let lit = crate::shading::bind::lit(device);
         let fog = VolumetricFog::new(device, &lit);
         let bindings = FrameBindings::new(device, lit, &views, shadows.maps(), fog.volume());

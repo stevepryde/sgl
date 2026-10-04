@@ -105,7 +105,8 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   π), no shadow and fog energy 1.
 - The shadow is Bevy's cascaded shadow map, which SGL3D fits from the camera
   every frame: the view depth from the camera's near plane to `distance` is
-  split into `cascades`, each a 2048-texel map. SGL3D places the splits as
+  split into `cascades`, each a map of 2048 texels (1024 at the Low
+  `Settings::shadow_quality`). SGL3D places the splits as
   Godot's `DirectionalLight3D` does by default: each cascade but the last
   ends 0.1, 0.2 and 0.5 of the way from the near plane to `distance` (two
   cascades split at 0.1, three at 0.1 and 0.2), and the last at `distance`.
@@ -127,7 +128,9 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   texels (times √2) and toward the light by 2 cm, so no bias is authored.
   While TAA or FSR2 runs the camera's surfaces filter with Jimenez's 8-tap
   spiral, turned per pixel and per frame for them to resolve; otherwise, and
-  in probe captures and ray hits, with Castaño's fixed 9-tap kernel. A probe
+  in probe captures and ray hits, with Castaño's fixed 9-tap kernel. At the
+  Low shadow quality the camera's surfaces take one hardware 2×2 comparison
+  instead, Godot's hard filter, with Godot's mobile map sizes. A probe
   capture fits its own cascades about its centre; it and world-space ray
   hits take the first cascade whose map holds a surface, which the pancake
   makes a nearer, finer one for a surface toward the light from a cascade's
@@ -527,9 +530,10 @@ and no normal fade.
 
 ## Local-light shadows
 
-Lights with `casts_shadow` share one 4096² depth atlas, split
+Lights with `casts_shadow` share one 4096² depth atlas (2048² at the Low
+`Settings::shadow_quality`, Godot's desktop and mobile `atlas_size`), split
 as Godot's shadow atlas is into four quadrants, of 16 slots of 512 texels, 64
-of 256, 256 of 128 and 1024 of 64. Each frame the casting lights whose range reaches the camera's view
+of 256, 256 of 128 and 1024 of 64 (half those sizes at Low). Each frame the casting lights whose range reaches the camera's view
 are ranked by screen coverage and given slots of the size their coverage
 wants, largest first. A light keeps its slots while it is seen, and moves to
 another size only after holding them for half a second at 60 frames per
@@ -561,7 +565,8 @@ unfinished frame is drawn again.
 
 Shadows are filtered and biased as the directional cascades are, with
 Bevy's filters (Castaño's 13-tap kernel, or the Jimenez spiral while TAA or
-FSR2 resolves it) and Bevy's spot-light receiver offset for every face,
+FSR2 resolves it, whether or not a directional light casts; one hardware
+2×2 tap at Low) and Bevy's spot-light receiver offset for every face,
 cube faces included: Bevy tunes its spot biases for these 2D filters and its
 point biases for its cube-map filter, which the atlas does not use. Each
 tap stays inside its face, as Wicked Engine clamps to its atlas

@@ -100,6 +100,8 @@ const FRAME_IRRADIANCE_ATLAS:u32=4u;
 const FRAME_BACKDROP_COLOR:u32=8u;
 // The camera's shadows take the temporal filter, for TAA or FSR2 to resolve.
 const FRAME_TEMPORAL_SHADOW_FILTER:u32=16u;
+// The camera's shadows take one hardware 2x2 tap (the Low shadow quality).
+const FRAME_HARDWARE_SHADOW_FILTER:u32=32u;
 // One instance's record, at its index in the scene's object buffer. That
 // index plus one is the source identity the G-buffer stores.
 struct Object {

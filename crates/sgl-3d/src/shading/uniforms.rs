@@ -16,6 +16,8 @@ pub(crate) const FRAME_IRRADIANCE_ATLAS: u32 = 4;
 pub(crate) const FRAME_BACKDROP_COLOR: u32 = 8;
 /// `Frame::flags`: the camera's shadows take the temporal filter.
 pub(crate) const FRAME_TEMPORAL_SHADOW_FILTER: u32 = 16;
+/// `Frame::flags`: the camera's shadows take one hardware 2×2 tap.
+pub(crate) const FRAME_HARDWARE_SHADOW_FILTER: u32 = 32;
 /// `Object::flags`: a static instance; a moving one has the bit clear.
 pub(crate) const OBJECT_STATIC: u32 = 1;
 

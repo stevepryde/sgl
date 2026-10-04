@@ -55,6 +55,11 @@ impl Directional {
         }
     }
 
+    /// Each cascade's size in texels.
+    pub fn size(&self) -> u32 {
+        self.array.texture().width()
+    }
+
     /// Each of the frame's cascades from its view and draw list.
     pub fn encode(&self, ctx: &mut FrameContext<'_>) {
         let count = ctx.views.cascade_count;

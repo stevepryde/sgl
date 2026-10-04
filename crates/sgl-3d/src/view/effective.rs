@@ -3,8 +3,22 @@
 //! read only this and the frame's authored values.
 use super::pipelines::LayerConstants;
 use crate::settings::{
-    AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, ReflectionMethod,
+    AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, ReflectionMethod, ShadowQuality,
 };
+
+/// The filter the camera's surfaces take their shadows with
+/// (`shadow_filter` in shadow_sampling.wgsl).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ShadowFilter {
+    /// One hardware 2×2 comparison tap.
+    Hardware,
+    /// Castaño's fixed kernel.
+    #[default]
+    Gaussian,
+    /// Jimenez's spiral, turned each frame for temporal antialiasing to
+    /// resolve.
+    Temporal,
+}
 
 /// The size-affecting choices `Renderer::resize` resolves: what the stages'
 /// targets are made for.
@@ -43,6 +57,10 @@ pub(crate) struct Effective {
     pub fsr2: bool,
     /// DiligentFX's post-effect context runs: for TAA, and for Crystal SSR.
     pub post_fx: bool,
+    /// The shadow maps' sizes.
+    pub shadow_quality: ShadowQuality,
+    /// The camera's shadow filter: the quality's, for the antialiasing.
+    pub shadow_filter: ShadowFilter,
     pub ambient_occlusion: Option<AmbientOcclusion>,
     pub screen_space: Option<ScreenSpace>,
     /// World-space rays fill the screen-space method's misses (only with a

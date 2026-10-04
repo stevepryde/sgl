@@ -94,6 +94,7 @@ impl Renderer {
             &mut self.views,
             &self.bindings.frame,
         );
+        self.shadows.resize(device, effective.shadow_quality);
         self.shadows.local.prepare(
             device,
             queue,

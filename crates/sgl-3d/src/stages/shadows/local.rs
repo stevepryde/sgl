@@ -83,12 +83,13 @@ struct Atlas {
 }
 
 impl Atlas {
-    fn new(device: &wgpu::Device, label: &str) -> Self {
+    /// An atlas of `size` texels a side.
+    fn new(device: &wgpu::Device, label: &str, size: u32) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
-                width: atlas::ATLAS_SIZE,
-                height: atlas::ATLAS_SIZE,
+                width: size,
+                height: size,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -166,9 +167,26 @@ fn face_pipeline(
     })
 }
 
+/// The copy's group: the static layers it copies faces from.
+fn copy_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    layers: &Atlas,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("local light shadow static layers"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&layers.target),
+        }],
+    })
+}
+
 impl Local {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let layers = Atlas::new(device, "local light shadow static layers");
+    /// Atlases of `size` texels a side.
+    pub fn new(device: &wgpu::Device, size: u32) -> Self {
+        let layers = Atlas::new(device, "local light shadow static layers", size);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("local light shadow copy"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&COPY]).into()),
@@ -207,24 +225,29 @@ impl Local {
             &pipeline_layout("local light shadow layer copy", &[Some(&copy_layout)]),
             Some("copy_fs"),
         );
-        let copy_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("local light shadow static layers"),
-            layout: &copy_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&layers.target),
-            }],
-        });
         Self {
-            frame: Atlas::new(device, "local light shadow atlas"),
+            frame: Atlas::new(device, "local light shadow atlas", size),
+            copy_group: copy_group(device, &copy_layout, &layers),
             layers,
             records: records_buffer(device, 1),
             clear,
             copy,
-            copy_group,
-            plan: plan::Plan::default(),
+            plan: plan::Plan::new(size),
             views: Vec::new(),
         }
+    }
+
+    /// Reallocates both atlases at `size` texels a side unless they are
+    /// that size, forgetting every placement and static layer, so the next
+    /// frame places and draws every shadow anew.
+    pub fn resize(&mut self, device: &wgpu::Device, size: u32) {
+        if self.frame.target.texture().width() == size {
+            return;
+        }
+        self.frame = Atlas::new(device, "local light shadow atlas", size);
+        self.layers = Atlas::new(device, "local light shadow static layers", size);
+        self.copy_group = copy_group(device, &self.copy.get_bind_group_layout(0), &self.layers);
+        self.plan = plan::Plan::new(size);
     }
 
     /// The frame's atlas, as group 0 samples it.

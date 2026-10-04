@@ -29,10 +29,10 @@
 use crate::content::identity::LightId;
 use std::collections::HashMap;
 
-/// The atlas's width and height in texels.
-pub(crate) const ATLAS_SIZE: u32 = 4096;
-/// Each quadrant's slots per side: slots of 512, 256, 128 and 64 texels,
-/// room for over two hundred cubes.
+/// Each quadrant's slots per side: room for over two hundred cubes, in slots
+/// of 512, 256, 128 and 64 texels in a 4096-texel atlas, and half that in a
+/// 2048-texel one (`ShadowQuality::atlas_size`), as Godot's slots follow its
+/// atlas size.
 const SUBDIVISIONS: [u32; 4] = [4, 8, 16, 32];
 /// Frames a light holds its slots before it may move to another size, and
 /// before another light may take them.
@@ -62,6 +62,8 @@ pub(crate) struct Placement {
     first: usize,
     /// A slot's width and height in texels.
     pub size: u32,
+    /// The atlas's width and height in texels.
+    pub atlas: u32,
 }
 
 impl Placement {
@@ -74,7 +76,7 @@ impl Placement {
     pub fn origin(&self, face: usize) -> [u32; 2] {
         let subdivision = SUBDIVISIONS[self.quadrant] as usize;
         let slot = self.first + face;
-        let quadrant = ATLAS_SIZE / 2;
+        let quadrant = self.atlas / 2;
         [
             (self.quadrant as u32 & 1) * quadrant + (slot % subdivision) as u32 * self.size,
             (self.quadrant as u32 >> 1) * quadrant + (slot / subdivision) as u32 * self.size,
@@ -96,6 +98,8 @@ pub(crate) fn cell_count() -> usize {
 }
 
 pub(crate) struct Atlas {
+    /// Its width and height in texels.
+    size: u32,
     quadrants: [Vec<Slot>; 4],
     /// Quadrants by subdivision, finest first.
     size_order: [usize; 4],
@@ -104,11 +108,13 @@ pub(crate) struct Atlas {
     seen: HashMap<LightId, u64>,
 }
 
-impl Default for Atlas {
-    fn default() -> Self {
+impl Atlas {
+    /// An empty atlas of `size` texels a side.
+    pub fn new(size: u32) -> Self {
         let mut size_order = [0, 1, 2, 3];
         size_order.sort_by_key(|&quadrant| std::cmp::Reverse(SUBDIVISIONS[quadrant]));
         Self {
+            size,
             quadrants: SUBDIVISIONS
                 .map(|subdivision| vec![Slot::default(); (subdivision * subdivision) as usize]),
             size_order,
@@ -116,9 +122,7 @@ impl Default for Atlas {
             seen: HashMap::new(),
         }
     }
-}
 
-impl Atlas {
     /// The placement of `light`'s `faces` slots for its screen `coverage`
     /// (its screen diameter over the view's half extents, as Godot's) at
     /// `frame`, marking it seen; `None` when the atlas has no room for it.
@@ -132,7 +136,7 @@ impl Atlas {
         frame: u64,
     ) -> Option<Placement> {
         self.seen.insert(light, frame);
-        let quadrant_size = ATLAS_SIZE >> 1;
+        let quadrant_size = self.size >> 1;
         let smallest_subdivision = *SUBDIVISIONS.iter().min().unwrap();
         let wanted = (quadrant_size as f32 * coverage.max(0.)).min(u32::MAX as f32) as u32;
         let desired_fit = (quadrant_size / smallest_subdivision).min(wanted.next_power_of_two());
@@ -218,7 +222,8 @@ impl Atlas {
         Placement {
             quadrant: allocation.quadrant,
             first: allocation.first,
-            size: (ATLAS_SIZE >> 1) / SUBDIVISIONS[allocation.quadrant],
+            size: (self.size >> 1) / SUBDIVISIONS[allocation.quadrant],
+            atlas: self.size,
         }
     }
 
