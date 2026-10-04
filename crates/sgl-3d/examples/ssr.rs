@@ -25,7 +25,7 @@ use sgl_3d::{
     Camera, DirectionalLight, Exposure, FrameInput, InstanceState, Mobility, Renderer, Scene,
     asset::{Asset, CpuMesh, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
-    glam::{Mat4, Vec3},
+    glam::Vec3,
     settings::{self, Settings},
     timing::{FrameTime, GpuTiming},
 };
@@ -40,29 +40,14 @@ const SPEED: f32 = 1.;
 
 fn material(base: [f32; 4], roughness: f32, unlit: bool) -> Material {
     Material {
-        anisotropy_strength: 0.,
-        anisotropy_rotation: 0.,
-        anisotropy_texture: None,
         name: "ssr example".into(),
-        visibility_group: 0,
         casts_directional_shadow: false,
         base,
-        emissive: [0.; 3],
         metallic: 0.,
         roughness,
-        clearcoat: 0.,
-        coat_roughness: 0.,
-        base_texture: None,
-        mr_texture: None,
-        emissive_texture: None,
-        normal_texture: None,
-        normal_scale: 1.,
-        bump_texture: None,
-        bump_scale: 0.,
-        wrap: [gltf::texture::WrappingMode::Repeat; 2],
         double_sided: true,
         unlit,
-        alpha: sgl_3d::AlphaMode::Opaque,
+        ..Default::default()
     }
 }
 
@@ -246,12 +231,7 @@ fn run(
     scene.add_instance(
         &device,
         &queue,
-        InstanceState {
-            model: ground,
-            pose: Mat4::IDENTITY,
-            visible: true,
-            capture_visible: true,
-        },
+        InstanceState::new(ground),
         Mobility::Static,
     )?;
     let environment = scene.add_environment(&device, &queue, &environment())?;

@@ -145,9 +145,9 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   environment's panorama or one colour.
 - `fog` (`Fog`) is the frame's participating medium
   ([Volumetric fog](#volumetric-fog)) and `mist` (`Mist`) the look of the
-  scene's mist billboards (`Mist::default()` hides them); both draw while `FrameInput::atmosphere` (off by
-  default, as Godot's fog) and `Settings::atmosphere` (the player's
-  allowance, on by default) are on.
+  scene's mist billboards (`Mist::default()` hides them); both draw while
+  `FrameInput::atmosphere` (off by default, as Godot's fog) and
+  `Settings::atmosphere` (the player's allowance, on by default) are on.
 
 ## Exposure, bloom and colour grading
 

@@ -322,28 +322,10 @@ fn ground() -> Asset {
     let mut ground = asset::empty();
     ground.materials.push(Material {
         name: "ground".into(),
-        visibility_group: 0,
-        casts_directional_shadow: true,
         base: [0.35, 0.37, 0.4, 1.],
-        emissive: [0.; 3],
         metallic: 0.,
         roughness: 0.8,
-        clearcoat: 0.,
-        coat_roughness: 0.,
-        anisotropy_strength: 0.,
-        anisotropy_rotation: 0.,
-        anisotropy_texture: None,
-        base_texture: None,
-        mr_texture: None,
-        emissive_texture: None,
-        normal_texture: None,
-        normal_scale: 1.,
-        bump_texture: None,
-        bump_scale: 0.,
-        wrap: [gltf::texture::WrappingMode::Repeat; 2],
-        double_sided: false,
-        unlit: false,
-        alpha: sgl_3d::AlphaMode::Opaque,
+        ..Default::default()
     });
     ground.meshes.push(CpuMesh {
         vertices: [(-6., -6.), (6., -6.), (6., 6.), (-6., 6.)]
@@ -379,16 +361,10 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
     let rig = tentacle.rig.clone();
     let mut scene = Scene::new(&device, &queue);
     let ground = scene.add_asset(&device, &queue, ground())?.model;
-    let placed = |model, pose| InstanceState {
-        model,
-        pose,
-        visible: true,
-        capture_visible: true,
-    };
     scene.add_instance(
         &device,
         &queue,
-        placed(ground, Mat4::IDENTITY),
+        InstanceState::new(ground),
         Mobility::Static,
     )?;
     // A deforming model's instances move: the game poses them every frame.
@@ -399,7 +375,10 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
             scene.add_instance(
                 &device,
                 &queue,
-                placed(model, Mat4::from_translation(Vec3::X * x)),
+                InstanceState {
+                    pose: Mat4::from_translation(Vec3::X * x),
+                    ..InstanceState::new(model)
+                },
                 Mobility::Moving,
             )
         })
