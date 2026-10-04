@@ -25,13 +25,30 @@ full API details.
   Godot's volumetric fog lookup: the one cascade at its view depth, no
   offset, one linear tap of the occluder's depth, and the light faded by
   exp(−10 × the metres the froxel lies behind its occluder) rather than cut
-  off, so fog just behind an occluder keeps some of the light (61 % 5 cm
-  behind, 37 % 10 cm behind) and shadow edges in the fog are softer.
+  off, so fog fades into an occluder's shadow over its first 10–30 cm (61 %
+  of the light 5 cm behind, 37 % 10 cm behind).
   Surfaces' shadows, local lights' shadows in the fog, and fog beyond the
   shadow distance (unshadowed) are unchanged.
 - **Migration:** no game-code changes. Afterwards, look at light shafts and
   at fog behind thin occluders (railings, foliage, window frames) under the
   shadowed directional light.
+
+### Fog volumes cost only the froxels they reach
+
+- **Scope:** `sgl-3d` volumetric fog with scene fog volumes
+  (`Scene::update_fog_volumes`, `FogVolume`). The fog injection tested every
+  fog volume in every froxel; each frame now bounds the froxels each volume
+  may reach from its corners (Godot's per-volume froxel bounds), leaves out
+  volumes behind the camera, beyond `Fog::length`, or wholly in front of the
+  camera and beside the frame, and sums in each froxel only the volumes
+  whose bounds hold it, in the same order. A volume that holds or crosses
+  the camera's plane is bounded by the whole frame up to its far end. Each
+  froxel's density and albedo-weighted scattering are unchanged; the
+  `fog injection` timing group falls by the volumes a froxel no longer
+  evaluates.
+- **Migration:** no game-code changes. A long fog volume that holds or
+  crosses the camera's plane, such as a tunnel's, still costs every froxel
+  up to its far end; split it into segments to bound it more tightly.
 
 ### Per-light fog energy; `Light` and `DirectionalLight` implement `Default`
 

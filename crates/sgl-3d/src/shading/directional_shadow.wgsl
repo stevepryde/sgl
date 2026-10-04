@@ -138,7 +138,8 @@ fn directional_shadow_medium(position:vec3<f32>,view_z:f32)->f32 {
  // orthographic projection's depth per metre.
  let clip_from_world=frame.shadow_cascades[cascade_index].clip_from_world;
  let depth_per_metre=vec3(clip_from_world[0].z,clip_from_world[1].z,clip_from_world[2].z);
- return sample_shadow_map_fog(directional_shadow_map,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,inverseSqrt(dot(depth_per_metre,depth_per_metre)));
+ let z_range=inverseSqrt(dot(depth_per_metre,depth_per_metre));
+ return sample_shadow_map_fog(directional_shadow_map,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,z_range);
 }
 
 // Directional light `light_id`'s shadow at `receiver` (SHADOW_RECEIVER_*).

@@ -178,12 +178,12 @@ fn sample_shadow_map(shadow_map:texture_depth_2d_array,comparison:sampler_compar
 
 // Godot's INV_FOG_FADE: how fast the light a point in the fog receives
 // fades, per metre it lies behind its occluder.
-const SHADOW_FOG_FADE:f32=10.;
+const INV_FOG_FADE:f32=10.;
 // Godot's fog tap: the occluder's depth at `light_local`, linearly filtered
 // with the map's edge clamped, and the light faded exponentially with the
-// metres the receiver at `depth` lies behind it, `depth_range` metres per
+// metres the receiver at `depth` lies behind it, `z_range` metres per
 // unit of depth.
-fn sample_shadow_map_fog(shadow_map:texture_depth_2d_array,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,depth_range:f32)->f32 {
+fn sample_shadow_map_fog(shadow_map:texture_depth_2d_array,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,z_range:f32)->f32 {
  let size=vec2<i32>(textureDimensions(shadow_map));
  let texel=clamp(light_local,bounds.xy,bounds.zw)*vec2<f32>(size)-.5;
  let weight=fract(texel);
@@ -194,7 +194,7 @@ fn sample_shadow_map_fog(shadow_map:texture_depth_2d_array,light_local:vec2<f32>
  let second_row=mix(textureLoad(shadow_map,vec2(columns.x,rows.y),array_index,0),textureLoad(shadow_map,vec2(columns.y,rows.y),array_index,0),weight.x);
  let occluder=mix(first_row,second_row,weight.y);
  // Reversed Z: a receiver behind its occluder is deeper, nearer 0.
- return exp(min(0.,depth-occluder)*depth_range*SHADOW_FOG_FADE);
+ return exp(min(0.,depth-occluder)*z_range*INV_FOG_FADE);
 }
 
 // Bevy's receiver offset (shadows.wesl sample_directional_cascade): along
