@@ -1271,7 +1271,9 @@ Preserve the highest implemented fidelity as a selectable choice.
 
 ## Browser (WASM + WebGPU)
 
-The browser is a first-class target ([D-20](../../specs/decisions.md)): the
+The browser is a first-class, maintained target ([D-20](../../specs/decisions.md),
+[D-27](../../specs/decisions.md)), not a parity target: features or
+speed-ups the browser cannot have fall back or are absent there. The
 same `Scene`, `Renderer` and frame run on the page's WebGPU device, built for
 `wasm32-unknown-unknown` (sgl-3d enables wgpu's `webgpu` backend). WebGL2 is
 not supported, since SGL3D needs compute.

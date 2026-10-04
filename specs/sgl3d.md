@@ -2,8 +2,10 @@
 
 SGL3D (`sgl-3d`) is SGL's Rust/wgpu 3D renderer, extracted from Hyperdrive
 ([D-12](decisions.md)) and imported by games as an ordinary library. Native
-and the browser (WASM + WebGPU) are equal, first-class targets
-([D-20](decisions.md)).
+and the browser (WASM + WebGPU) are both first-class targets: the browser is
+maintained, not a ceiling, and takes fallbacks or goes without what it cannot
+do while native supports everything the device can ([D-20](decisions.md),
+[D-27](decisions.md)).
 Games keep composition and art direction; it is not an engine. It aims for a
 modern-looking, fast game, not equivalence to a reference
 ([D-14](decisions.md)).
@@ -256,7 +258,8 @@ Remaining work, in the existing roadmap order:
 
 These are planned capabilities, not APIs a game can depend on yet. Implement
 them under RD-1 and the architecture rules, retaining native and browser
-support with explicit capability fallbacks where required.
+support: native takes every capability the device has, and the browser an
+explicit fallback or none where it cannot (D-27).
 
 ## Acceptance boundaries
 

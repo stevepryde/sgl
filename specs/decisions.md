@@ -247,3 +247,15 @@ Use the [current specs](README.md) for implementation and the
   pin exact crate versions or Git revisions and upgrade deliberately.
   Rationale: agents can migrate game code as the library improves; explicit
   upgrade instructions and opt-in dependency updates make that practical.
+
+- **D-27** Owner direction, 2026-10-05: the browser stays a first-class SGL3D
+  target in that it is maintained: SGL3D builds for it and renders on it in
+  the required check, and a game runs on it. It is not a feature-parity
+  target. Native supports everything the device can do; where a feature or
+  speed-up is not feasible in the browser, the browser takes a fallback or
+  goes without it, reported through the effective configuration. A native
+  feature or optimisation is never held back for browser parity. This
+  supersedes D-20's "equal to native" and its limit of platform differences
+  to what the browser forces.
+  Rationale: the browser is a target to keep working, not a ceiling on
+  native.
