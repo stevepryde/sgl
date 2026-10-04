@@ -16,7 +16,8 @@ struct Mist {
  return o;
 }
 fn mist_color(i:Mist)->vec4<f32> {
- let drift=i.uv*vec2(7.,3.)+vec2(frame.elapsed_seconds*.025,frame.elapsed_seconds*-.035);
+ // The noise, 7 by 3 cells across the billboard, moves with the mist's drift.
+ let drift=(i.uv-frame.mist_drift*frame.elapsed_seconds)*vec2(7.,3.);
  let noise=noise2(drift)*.325+.325+noise2(drift*2.1)*.125+.125+noise2(drift*4.3)*.05+.05;
  let alpha=(1.-smoothstep(.15,.52,length(i.uv-vec2(.5))))*smoothstep(.15,.7,noise)*frame.mist_opacity;
  let color=mix(frame.mist_thin_color,frame.mist_dense_color,noise);

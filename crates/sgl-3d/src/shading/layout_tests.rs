@@ -160,6 +160,7 @@ fn rust_mirrors_match_wgsl_layouts() {
                 mist_dense_color,
                 backdrop_yaw,
                 mist_size,
+                mist_drift,
                 backdrop_brightness,
                 fog_inverse_length,
                 fog_inverse_detail_spread,
@@ -642,6 +643,7 @@ fn rust_constants_match_wgsl_twins() {
     .into_iter()
     .chain(super::lights::constants())
     .chain(super::clusters::constants())
+    .chain(super::vertex::constants())
     .chain(crate::scene::lookup_tables::constants())
     .chain(crate::scene::rays::constants())
     .chain(crate::shading::deformation::constants())

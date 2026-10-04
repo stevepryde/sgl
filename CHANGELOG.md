@@ -15,6 +15,99 @@ full API details.
 
 ## Unreleased
 
+### Glow kinds are typed and the tapered profile is the game's
+
+- **Scope:** `sgl-3d` `effects::Glow`. `Glow::kind: f32` (0 uniform, 1
+  tapered, 2 line) is now `GlowKind`, whose variants carry what each kind
+  reads: `Uniform`; `Tapered { uv, profile }`; `Line { other, offset }`.
+  `Glow::uv` and `Glow::other` are removed (a line's `uv[0]` is now
+  `offset`; `uv[1]` was unused). The tapered kind's profile, a tapered sine
+  hard-coded in the shader, is the new `GlowProfile`: `taper` (alpha ×
+  (1 − v)^taper), `ripple_frequency` (radians per unit of u and v) and
+  `ripple_amplitude`. `GlowProfile::default()` is the old profile (2,
+  [62.83, 18], 0.3), so glow that keeps it looks the same. `Glow` is no
+  longer `bytemuck::Pod` or `Zeroable`; it gains `Debug` and `PartialEq`.
+- **Migration:** map each kind to its variant and move its values in:
+
+  ```rust
+  // Before
+  Glow { position, uv: [u, v], color, kind: 1., other: [0.; 3], soft_distance }
+  Glow { position: a, uv: [offset, 0.], color, kind: 2., other: b, soft_distance: 0. }
+  Glow { position, color, ..Default::default() } // kind 0
+  // After
+  use sgl_3d::effects::{Glow, GlowKind, GlowProfile};
+  Glow { position, color, soft_distance, kind: GlowKind::Tapered { uv: [u, v], profile: GlowProfile::default() } }
+  Glow { position: a, color, soft_distance: 0., kind: GlowKind::Line { other: b, offset } }
+  Glow { position, color, ..Default::default() } // GlowKind::Uniform
+  ```
+
+  A game that cast `&[Glow]` to bytes itself must build the values instead.
+  Afterwards, look at the game's tapered and line glow.
+
+### Fog sky affect
+
+- **Scope:** `sgl-3d` `Fog::sky_affect`, Godot's
+  `volumetric_fog_sky_affect`: how much of its fog the sky takes, 0..=1.
+  Source completion mixes the sky with its fogged self by it (Godot
+  b130438 `sky.glsl`); 1, the default (Godot's), is the previous look, in
+  which the sky took the whole fog; 0 leaves the sky clear behind fogged
+  surfaces.
+- **Migration:** none where a game builds `Fog` with `..Fog::default()`. A
+  struct literal that lists every field, as the README's example did, adds
+  `sky_affect: 1.` (or `..Fog::default()`). Afterwards, set it where the
+  game wants a clearer sky and look at its fogged skies.
+
+### Mist drift is the game's
+
+- **Scope:** `sgl-3d` `Mist::drift`: how fast and which way the mist's
+  noise moves across each billboard, in billboard widths per second
+  rightward and heights per second upward on screen. It was hard-coded;
+  `Mist::default()` keeps the old motion, slowly up and to the left. The
+  noise's scale, edge and threshold stay SGL3D's.
+- **Migration:** none where a game builds `Mist` with `..Default::default()`
+  or from `Mist::default()`; a struct literal that lists every field adds
+  `drift: Mist::default().drift`. Afterwards, set the drift the game's wind
+  wants and look at its mist.
+
+### Auto exposure's histogram range, filter and blend are SGL3D's
+
+- **Scope:** `sgl-3d` `AutoExposure::min_log_luminance`,
+  `max_log_luminance`, `filter_low`, `filter_high` and
+  `exponential_transition_distance` are removed (S3D-6: how a feature is
+  done is SGL3D's). SGL3D meters a histogram of log2 luminance from -8 to
+  8, ignores the darkest and brightest 10% of samples, and turns the
+  adaptation exponential within 1.5 stops of its target: Bevy's
+  `AutoExposure` defaults (9d12036), the values `AutoExposure::default()`
+  set. Metering follows `Exposure::stops`, so the fixed range serves any
+  scene. `speed_brighten`, `speed_darken`, `correction_min`,
+  `correction_max`, `compensation` and `metering_mask` stay the game's. Auto
+  exposure that used the defaults looks the same; one that set other values
+  now takes these.
+- **Migration:** delete the five fields from game code:
+
+  ```rust
+  // Before
+  input.exposure.automatic = Some(AutoExposure {
+      min_log_luminance: -10.,
+      max_log_luminance: 6.,
+      filter_low: 0.2,
+      speed_darken: 2.,
+      ..AutoExposure::default()
+  });
+  // After
+  input.exposure.automatic = Some(AutoExposure {
+      speed_darken: 2.,
+      ..AutoExposure::default()
+  });
+  ```
+
+  A game that set a custom range covering scenes outside −8..8 moves them
+  into −8..8 with `Exposure::stops = s`, which metering follows and the
+  correction adds to; to keep its look it also moves its compensation
+  curve's x-coordinates by +s and `correction_min` / `correction_max` by −s.
+  Afterwards, check the game's auto-exposed scenes, their brightest and
+  darkest especially.
+
 ### Ambient occlusion's radius no longer turns it off
 
 - **Scope:** `sgl-3d` `FrameInput::ambient_occlusion_radius` is only the

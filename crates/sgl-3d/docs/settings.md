@@ -56,8 +56,9 @@ types. Under S3D-6 a game says which one or how much (a setting above, a
 diagnostics switch below, or a value here), each with a default; how a feature
 is done (its algorithm and internal parameters) is SGL3D's.
 
-- `exposure`: fixed stops, or automatic exposure with its histogram range,
-  filter, speeds, limits, compensation curve and metering mask.
+- `exposure`: fixed stops, or automatic exposure with its brightening and
+  darkening speeds, limits, compensation curve and metering mask. SGL3D
+  keeps Bevy's histogram range, outlier filter and exponential blend.
 - `bloom`: intensity, low-frequency boost and its curvature, and high-pass
   frequency.
 - `motion_blur`: the shutter angle, the share of each frame's motion that
@@ -78,7 +79,9 @@ is done (its algorithm and internal parameters) is SGL3D's.
   (`volumetric_fog_enabled` and `fog_enabled`); `true` turns them on where
   the setting allows them; `fog` (the medium: density, height and falloff,
   albedo, anisotropy, the share of ambient light it scatters (none by
-  default, as Godot's), and the volume's length) and `mist` shape them;
+  default, as Godot's), the volume's length, and how much of it the sky
+  takes (all by default, as Godot's)) and `mist` (its colours, opacity,
+  billboard size and drift) shape them;
   SGL3D spaces the volume's slices and weights its history. Fog volumes are
   scene content (`Scene::update_fog_volumes`).
 - `environment`: the scene's environment that lights the frame and draws its

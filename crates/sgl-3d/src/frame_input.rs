@@ -61,14 +61,18 @@ pub struct Fog {
     /// `height_falloff`: density × 2^(-falloff × metres above)); zero is
     /// uniform.
     pub height_falloff: f32,
-    /// The view depth in metres the froxel volume covers; anything farther,
-    /// the sky included, takes the fog as far as it.
+    /// The view depth in metres the froxel volume covers; anything farther
+    /// takes the fog as far as it, the sky by `sky_affect`.
     pub length: f32,
+    /// How much of its fog the sky takes, 0..=1 (Godot's
+    /// `volumetric_fog_sky_affect`): 1 fogs it as if at `length`, 0 leaves
+    /// it clear. Fog volumes in front of the sky are part of its fog.
+    pub sky_affect: f32,
 }
 
 impl Default for Fog {
     /// No medium, with Godot's defaults: albedo white, anisotropy 0.2, no
-    /// ambient light, uniform, and a 64 m volume.
+    /// ambient light, uniform, a 64 m volume and the whole fog on the sky.
     fn default() -> Self {
         Self {
             density: 0.,
@@ -78,6 +82,7 @@ impl Default for Fog {
             height: 0.,
             height_falloff: 0.,
             length: 64.,
+            sky_affect: 1.,
         }
     }
 }

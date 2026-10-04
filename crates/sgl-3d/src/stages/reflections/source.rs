@@ -76,9 +76,8 @@ pub(crate) struct Environment<'a> {
 pub(crate) struct Inputs<'a> {
     /// The frame's fog volume and its sampler.
     pub fog: FogVolume<'a>,
-    /// One over the fog volume's length and over its detail spread, while
-    /// the frame has fog.
-    pub fog_slices: Option<[f32; 2]>,
+    /// How completion and composition fog, while the frame has fog.
+    pub frame_fog: Option<SourceFog>,
     pub camera: reflection_camera::Camera,
     pub scene: &'a wgpu::TextureView,
     /// The ambient diffuse within `scene` before occlusion.
@@ -109,17 +108,34 @@ struct SourceCamera {
 }
 /// `SourceCamera::flags`: completion and composition apply the fog.
 const SOURCE_FOG: u32 = 1;
+
+/// The frame's fog as completion and composition apply it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SourceFog {
+    /// One over the fog volume's length and over its detail spread.
+    pub inverse_length: f32,
+    pub inverse_detail_spread: f32,
+    /// The share of its fog the sky takes, 0..=1 (`Fog::sky_affect`).
+    pub sky_affect: f32,
+}
+
 impl SourceCamera {
-    /// `camera`, fogged by a volume of `fog`'s inverse length and detail
-    /// spread.
-    fn new(camera: reflection_camera::Camera, fog: Option<[f32; 2]>) -> Self {
+    /// `camera`, fogged by `fog`.
+    fn new(camera: reflection_camera::Camera, fog: Option<SourceFog>) -> Self {
         let forward = -glam::Mat4::from_cols_array_2d(&camera.view)
             .row(2)
             .truncate();
         Self {
             inverse: camera.inverse_view_proj,
             eye: camera.camera_position,
-            fog: fog.map_or([0.; 4], |[length, spread]| [length, spread, 0., 0.]),
+            fog: fog.map_or([0.; 4], |fog| {
+                [
+                    fog.inverse_length,
+                    fog.inverse_detail_spread,
+                    fog.sky_affect,
+                    0.,
+                ]
+            }),
             forward: forward.to_array(),
             flags: if fog.is_some() { SOURCE_FOG } else { 0 },
         }
@@ -394,7 +410,7 @@ impl ReflectionSource {
         queue.write_buffer(
             &self.camera,
             0,
-            bytemuck::bytes_of(&SourceCamera::new(input.camera, input.fog_slices)),
+            bytemuck::bytes_of(&SourceCamera::new(input.camera, input.frame_fog)),
         );
         self.cull(
             encoder,

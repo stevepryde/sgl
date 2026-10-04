@@ -1,9 +1,8 @@
 //! Caller-authored additive glow (`Glow` vertices in the scene's transient
 //! geometry) with metric soft intersections against the opaque depth.
-use crate::content::transient::Glow;
 use crate::scene::transient::Transient;
 use crate::shading::gbuffer;
-use crate::shading::vertex::{VertexLayout, vertex_layout};
+use crate::shading::vertex::{GlowVertex, VertexLayout, vertex_layout};
 use crate::view::targets::mask_targets;
 
 /// Additive glow, under the unlit group 0.
@@ -13,8 +12,21 @@ pub(crate) static GLOW: crate::shading::Module = crate::shading::Module {
     deps: &[&crate::shading::BIND_UNLIT, &crate::shading::FRAME_FOG],
 };
 /// The glow's vertex buffer, read by `glow_vs`.
-pub(crate) const GLOW_LAYOUT: VertexLayout =
-    vertex_layout!(Glow, [position, uv, color, kind, other, soft_distance]);
+pub(crate) const GLOW_LAYOUT: VertexLayout = vertex_layout!(
+    GlowVertex,
+    [
+        position,
+        color,
+        kind,
+        soft_distance,
+        uv,
+        taper,
+        ripple_frequency,
+        ripple_amplitude,
+        other,
+        offset,
+    ]
+);
 
 pub(crate) struct Effects {
     soft_glow: wgpu::RenderPipeline,

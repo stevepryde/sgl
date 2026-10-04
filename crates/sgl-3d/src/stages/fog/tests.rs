@@ -4,8 +4,8 @@
 //! shadowed light, local or directional, scatters nothing in the medium its
 //! occluder hides from it; the filter blurs each slice by Godot's Gaussian
 //! while the history stays unfiltered; a light's fog energy scales its
-//! light in the medium and nowhere else; and fog volumes add their medium to
-//! every froxel they reach.
+//! light in the medium and nowhere else; fog volumes add their medium to
+//! every froxel they reach; and the sky takes its sky affect of the fog.
 use super::froxels;
 use crate::renderer::Renderer;
 use crate::settings::{self, FogQuality, Settings};
@@ -946,5 +946,80 @@ fn a_blended_surface_is_fogged_at_its_depth() {
             "channel {channel}: {} of the quad's colour against Beer-Lambert's {transmittance}",
             share
         );
+    }
+}
+
+// Defect: the sky ignores `Fog::sky_affect`, it reaches the surfaces too, or
+// it scales one part of the fog (its scattering or its transmittance) alone.
+// Godot's sky affect (b130438 sky.glsl) mixes the sky with the fogged sky:
+// at 0 the sky stays as without fog while surfaces fog as at 1, and at 0.5
+// each sky texel lies halfway between those two frames.
+#[test]
+fn the_sky_takes_its_sky_affect_of_the_fog() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    add_box(
+        &device,
+        &queue,
+        &mut scene,
+        Vec3::new(0., -1., -6.),
+        Vec3::new(4., 1., 3.),
+    );
+    // The medium scatters the hemisphere fill, so the sky's fog both dims it
+    // and adds light.
+    let mut frame = input(Fog {
+        density: 0.05,
+        length: 30.,
+        ambient: 1.,
+        ..Fog::default()
+    });
+    frame.hemisphere_light = HemisphereLight {
+        sky_color: [0.4, 0.5, 0.7],
+        ground_color: [0.1, 0.1, 0.1],
+        intensity: 1.,
+    };
+    frame.backdrop = Backdrop::Color([0.2, 0.3, 0.45]);
+    let mut composite = |frame: &FrameInput, atmosphere: bool| {
+        let renderer = render(&device, &queue, &mut scene, frame, &settings(atmosphere), 1);
+        texels(&read(&device, &queue, &renderer.targets().composite))
+    };
+    let clear = composite(&frame, false);
+    let whole = composite(&frame, true);
+    frame.fog.sky_affect = 0.;
+    let none = composite(&frame, true);
+    frame.fog.sky_affect = 0.5;
+    let half = composite(&frame, true);
+    // The frame's top row looks up into the sky, whose backdrop is one colour.
+    let sky_colour = clear[0];
+    let sky: Vec<_> = (0..clear.len())
+        .filter(|&texel| clear[texel] == sky_colour)
+        .collect();
+    assert!(
+        sky.len() < clear.len(),
+        "the frame holds no surface: {sky_colour:?}"
+    );
+    assert!(whole[0] != clear[0], "the whole fog left the sky clear");
+    for texel in 0..clear.len() {
+        if sky.contains(&texel) {
+            assert_eq!(
+                none[texel], clear[texel],
+                "texel {texel}: no sky affect fogged the sky"
+            );
+            for channel in 0..3 {
+                let midway = (clear[texel][channel] + whole[texel][channel]) / 2.;
+                assert!(
+                    (half[texel][channel] - midway).abs() < 2e-3,
+                    "texel {texel} channel {channel}: half the sky affect gave {} against {midway}",
+                    half[texel][channel]
+                );
+            }
+        } else {
+            assert_eq!(
+                none[texel], whole[texel],
+                "texel {texel}: the sky affect fogged a surface"
+            );
+        }
     }
 }

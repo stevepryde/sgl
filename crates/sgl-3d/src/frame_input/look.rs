@@ -15,32 +15,23 @@ pub struct Exposure {
 }
 
 /// Bevy's auto exposure: a 64-bin histogram of the frame's log2 luminance
-/// (after `Exposure::stops`) through a metering mask, whose average outside
-/// the filtered ends sets a target that makes that average the compensation
-/// curve's stops above 1. The correction moves toward the target at the
-/// authored speeds, linearly while far from it and exponentially within
-/// `exponential_transition_distance`, and restarts at the target when
-/// history does. `frame_time_ms` times it.
+/// (after `Exposure::stops`) from -8 to 8 through a metering mask, whose
+/// average without the darkest and brightest 10% of samples sets a target
+/// that makes that average the compensation curve's stops above 1.
+/// Luminance below the range is metered at -8; above it counts in the
+/// highest bin. The correction moves toward the target at the authored
+/// speeds, linearly while far from it and exponentially within 1.5 stops,
+/// against jitter when the target keeps moving slightly, and restarts at the
+/// target when history does. `frame_time_ms` times it. The range, filter and
+/// 1.5 stops are Bevy's defaults and SGL3D's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AutoExposure {
-    /// The log2 luminance the histogram spans. Luminance below it is metered
-    /// at `min_log_luminance`; above it counts in the highest bin.
-    pub min_log_luminance: f32,
-    /// Greater than `min_log_luminance`.
-    pub max_log_luminance: f32,
-    /// The fraction of the darkest samples metering ignores.
-    pub filter_low: f32,
-    /// The fraction of samples, from the darkest, metering keeps.
-    pub filter_high: f32,
     /// Stops per second at which the exposure follows a scene that got
     /// brighter.
     pub speed_brighten: f32,
     /// Stops per second at which the exposure follows a scene that got
     /// darker.
     pub speed_darken: f32,
-    /// How far in stops from the target the adaptation turns from linear to
-    /// exponential, against jitter when the target keeps moving slightly.
-    pub exponential_transition_distance: f32,
     /// The least correction in stops, relative to `Exposure::stops`: the
     /// limit on darkening. With a nonfinite limit, or one above
     /// `correction_max`, the correction is unlimited both ways, as in Bevy.
@@ -54,19 +45,12 @@ pub struct AutoExposure {
 }
 
 impl Default for AutoExposure {
-    /// Bevy's: the histogram from -8 to 8, the darkest and brightest 10%
-    /// ignored, brightening at 3 stops per second and darkening at 1, the
-    /// exponential section within 1.5 stops, an unlimited correction, no
-    /// compensation and every pixel metered alike.
+    /// Bevy's: brightening at 3 stops per second and darkening at 1, an
+    /// unlimited correction, no compensation and every pixel metered alike.
     fn default() -> Self {
         Self {
-            min_log_luminance: -8.,
-            max_log_luminance: 8.,
-            filter_low: 0.1,
-            filter_high: 0.9,
             speed_brighten: 3.,
             speed_darken: 1.,
-            exponential_transition_distance: 1.5,
             correction_min: f32::MIN,
             correction_max: f32::MAX,
             compensation: CompensationCurve::default(),

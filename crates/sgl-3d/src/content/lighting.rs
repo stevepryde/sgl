@@ -163,11 +163,15 @@ pub struct Mist {
     pub width: f32,
     /// Each billboard's height in metres.
     pub height: f32,
+    /// How fast and which way the noise moves across each billboard, in
+    /// billboard widths per second rightward and heights per second upward
+    /// on screen.
+    pub drift: [f32; 2],
 }
 
 impl Default for Mist {
-    /// Hidden: black, opacity 0, on 1 m square billboards. Set the colours
-    /// and opacity to show it.
+    /// Hidden: black, opacity 0, on 1 m square billboards, drifting slowly
+    /// up and to the left. Set the colours and opacity to show it.
     fn default() -> Self {
         Self {
             thin_color: [0.; 3],
@@ -175,6 +179,9 @@ impl Default for Mist {
             opacity: 0.,
             width: 1.,
             height: 1.,
+            // SGL3D's own, from Hyperdrive: its noise, 7 by 3 cells across
+            // a billboard (mist.wgsl), moved -0.025 and 0.035 cells a second.
+            drift: [-0.025 / 7., 0.035 / 3.],
         }
     }
 }

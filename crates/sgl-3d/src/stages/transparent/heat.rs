@@ -367,11 +367,8 @@ mod tests {
         ]
         .map(|(position, red)| Glow {
             position,
-            uv: [0.; 2],
             color: [red, 0., 0., 1.],
-            kind: 0.,
-            other: [0.; 3],
-            soft_distance: 0.,
+            ..Glow::default()
         });
         scene.update_effects(&device, &queue, &glow);
         // One mist billboard across the middle of the frame.
@@ -402,6 +399,7 @@ mod tests {
             opacity: 1.,
             width: 3.,
             height: 3.,
+            ..Mist::default()
         };
         let settings = Settings {
             scene_resolution: SceneResolution::Full,
