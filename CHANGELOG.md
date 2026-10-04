@@ -15,6 +15,29 @@ full API details.
 
 ## Unreleased
 
+### TAA keeps history at racing speed, as Godot's TAA
+
+- **Scope:** `sgl-post-fx` `TemporalAntiAliasing`, and so `sgl-3d` TAA
+  (`Antialiasing::Taa`, High's default). TAA dropped all history where a
+  pixel's motion differed from the previous frame's by more than 1/256 of the
+  screen height (about 4 pixels at 1080p), which under forward motion left
+  most of the frame, and nearly all of its lower third, unantialiased at
+  racing speed. It now follows Godot's TAA (`taa_resolve.glsl`, `taa.cpp`):
+  history fades by 1 % per pixel of motion difference beyond 2.5 pixels, and
+  is clipped towards the 3×3 neighbourhood's mean within a box of about 1
+  standard deviation at rest (0.75–1, by height) that narrows to none at 2 %
+  of the screen per frame. Still pixels take the same box instead of 2.5
+  deviations; their longer history and depth rule (DFX-19) and depth
+  disocclusion elsewhere are unchanged. Fast-moving surfaces therefore look
+  antialiased and softer instead of aliased, and trails behind moving
+  objects over still backgrounds clear sooner. `sgl-post-fx` now carries
+  Spartan Engine's MIT notice (`LICENSE-spartan.txt`), from which Godot's TAA
+  resolve derives.
+- **Migration:** no game-code changes. Regenerate the game's distribution
+  notices for the new bundled notice. Afterwards, look at fast camera motion
+  (the near field at speed) and at a stopped camera with moving objects, with
+  TAA on.
+
 ### A directional shadow's distance no longer turns it off
 
 - **Scope:** `sgl-3d` `DirectionalShadow::distance` is only the shadow's

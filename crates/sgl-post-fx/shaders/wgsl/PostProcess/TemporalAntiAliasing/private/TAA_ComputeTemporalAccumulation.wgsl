@@ -7,6 +7,13 @@
 // crates/bevy_anti_alias/src/taa/taa.wesl (https://github.com/bevyengine/bevy,
 // revision 92a29e701a6b0bf8846484c3999c2ba97d90dd06), MIT licensed
 // (LICENSE-bevy.txt).
+// DFX-14 adds the motion-difference rejection, speed-scaled variance box and
+// history clip of Godot's TAA, servers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl
+// and servers/rendering/renderer_rd/effects/taa.cpp
+// (https://github.com/godotengine/godot, revision
+// b13043816a0f234985030ec035363a005bc86c32), MIT licensed (LICENSE-godot.txt);
+// taa_resolve.glsl is based on Spartan Engine's TAA, Copyright (c) 2016-2022
+// Panos Karabelas, MIT licensed (LICENSE-spartan.txt).
 
 #include "BasicStructures.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
@@ -123,14 +130,23 @@ fn SamplePrevMotion(PixelCoord: vec2<i32>) -> vec2<f32>
     return HlslLoad(g_TexturePrevMotion, PixelCoord, 0).xy * F3NDC_XYZ_TO_UVD_SCALE.xy;
 }
 
-fn ClipToAABB(ColorPrev: vec3<f32>, ColorCurr: vec3<f32>, AABBCentre: vec3<f32>, AABBExtents: vec3<f32>) -> vec3<f32>
+// PROVENANCE.md DFX-14: Godot's clip_aabb (taa_resolve.glsl, after Playdead's
+// temporal reprojection): ColorPrev moves towards the box's centre, the
+// neighbourhood mean, until it lies in the box. Godot clips towards the mean
+// clamped to the box, which is the mean itself. Godot's FLT_MIN is the margin.
+fn ClipToAABB(ColorPrev: vec3<f32>, AABBCentre: vec3<f32>, AABBExtents: vec3<f32>) -> vec3<f32>
 {
-    let MaxT = TAA_VARIANCE_INTERSECTION_MAX_T;
-    let Direction = ColorCurr - ColorPrev;
-    let Intersection = ((AABBCentre - sign(Direction) * AABBExtents) - ColorPrev) / Direction;
-    let PossibleT = mix(vec3<f32>(MaxT + 1.0, MaxT + 1.0, MaxT + 1.0), Intersection, vec3<f32>(Intersection >= vec3<f32>(0.0, 0.0, 0.0)));
-    let T = min(MaxT, min(PossibleT.x, min(PossibleT.y, PossibleT.z)));
-    return mix(ColorPrev, ColorPrev + Direction * T, vec3<f32>(vec3<f32>(T, T, T) < vec3<f32>(MaxT, MaxT, MaxT)));
+    const Margin = 0.00000001;
+    var R = ColorPrev - AABBCentre;
+    let RMax = AABBExtents;
+    let RMin = -AABBExtents;
+    if (R.x > RMax.x + Margin) { R *= RMax.x / R.x; }
+    if (R.y > RMax.y + Margin) { R *= RMax.y / R.y; }
+    if (R.z > RMax.z + Margin) { R *= RMax.z / R.z; }
+    if (R.x < RMin.x - Margin) { R *= RMin.x / R.x; }
+    if (R.y < RMin.y - Margin) { R *= RMin.y / R.y; }
+    if (R.z < RMin.z - Margin) { R *= RMin.z / R.z; }
+    return AABBCentre + R;
 }
 
 fn ComputeDepthDisocclusionWeight(CurrDepth: f32, PrevDepth: f32) -> f32
@@ -249,6 +265,17 @@ fn ComputePixelStatisticYCoCgSDR(PixelCoord: vec2<i32>) -> PixelStatistic
     return Desc;
 }
 
+// PROVENANCE.md DFX-14: Godot's speed-scaled variance box (taa_resolve.glsl
+// clip_history_3x3, taa.cpp variance_dynamic) for a pixel whose closest motion
+// is Speed screen fractions per frame. Godot's smoothstep(0.02, 0.0, speed) is
+// 1 - smoothstep(0.0, 0.02, speed); WGSL requires low < high.
+fn ComputeVarianceGamma(Speed: f32) -> f32
+{
+    let VarianceDynamic = clamp(TAA_VARIANCE_DYNAMIC_BASE * TAA_VARIANCE_DYNAMIC_BASE_HEIGHT / cbCameraAttribs.g_CurrCamera.f4ViewportSize.y,
+                                TAA_VARIANCE_DYNAMIC_MIN, TAA_VARIANCE_DYNAMIC_MAX);
+    return VarianceDynamic * (1.0 - smoothstep(0.0, TAA_VARIANCE_BOX_ZERO_SPEED, Speed));
+}
+
 fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
 {
     // PROVENANCE.md DFX-19: still pixels accumulate up to TAA_STILL_HISTORY_FACTOR.
@@ -267,14 +294,14 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> @location
         return vec4<f32>(SampleCurrColor(vec2<i32>(Position)), 0.5);
     }
 
-    let AspectRatio = cbCameraAttribs.g_CurrCamera.f4ViewportSize.x * cbCameraAttribs.g_CurrCamera.f4ViewportSize.w;
-    let MotionFactor = saturate(1.0 - length(vec2<f32>(Motion.x * AspectRatio, Motion.y)) * TAA_MOTION_VECTOR_DIFF_FACTOR);
-    // PROVENANCE.md DFX-14: history is rejected by the difference between
-    // this pixel's motion and the previous frame's motion where it was, as
-    // TAA_MOTION_VECTOR_DIFF_FACTOR documents. The speed alone (MotionFactor)
-    // still sets the variance gamma.
-    let MotionDiff = Motion - SamplePrevMotion(vec2<i32>(PrevPosition));
-    let MotionDiffFactor = saturate(1.0 - length(vec2<f32>(MotionDiff.x * AspectRatio, MotionDiff.y)) * TAA_MOTION_VECTOR_DIFF_FACTOR);
+    // PROVENANCE.md DFX-14: Godot's velocity disocclusion (taa_resolve.glsl
+    // get_factor_disocclusion). History is rejected gradually by the
+    // difference in pixels between this pixel's motion and the previous
+    // frame's motion where it was. Godot adds the rejection to its current
+    // weight; here it scales the history weight, as DiligentFX combines its
+    // rejections.
+    let MotionDiffPixels = (Motion - SamplePrevMotion(vec2<i32>(PrevPosition))) * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
+    let MotionDiffFactor = 1.0 - saturate((length(MotionDiffPixels) - TAA_MOTION_DIFF_THRESHOLD_PIXELS) * TAA_MOTION_DIFF_REJECTION_PER_PIXEL);
     // PROVENANCE.md DFX-19: nothing moved at a still pixel, and the depth buffers differ only by
     // their jitter, which on sub-pixel geometry would reject its history every few frames.
     let MotionPixels = abs(Motion * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
@@ -293,9 +320,9 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> @location
         return vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(RGBHDRPrevColor.a, false));
     }
 
-    let VarianceGamma = mix(TAA_MIN_VARIANCE_GAMMA, TAA_MAX_VARIANCE_GAMMA, MotionFactor * MotionFactor);
+    let VarianceGamma = ComputeVarianceGamma(length(Motion));
     let PixelStat = ComputePixelStatisticYCoCgSDR(vec2<i32>(Position.xy));
-    let YCoCgSDRClampedColor = ClipToAABB(YCoCgSDRPrevColor, YCoCgSDRCurrColor, PixelStat.Mean, VarianceGamma * PixelStat.StdDev);
+    let YCoCgSDRClampedColor = ClipToAABB(YCoCgSDRPrevColor, PixelStat.Mean, VarianceGamma * PixelStat.StdDev);
 
     let Alpha = RGBHDRPrevColor.a * MotionDiffFactor * DepthFactor;
     let RGBHDROutput = SDRToHDR(YCoCgToRGB(mix(YCoCgSDRCurrColor, YCoCgSDRClampedColor, Alpha)));

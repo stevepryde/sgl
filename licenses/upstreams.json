@@ -33,7 +33,7 @@
     "component": "Godot",
     "path": "crates/sgl-post-fx/LICENSE-godot.txt",
     "url": "https://raw.githubusercontent.com/godotengine/godot/d851ae838de54a0bd3dde9043912f39c74265cdd/LICENSE.txt",
-    "prefix": "Godot Engine, https://github.com/godotengine/godot\nRevision d851ae838de54a0bd3dde9043912f39c74265cdd, LICENSE.txt. The DiligentFX\nport adds the depth-tolerance pass-through of\nservers/rendering/renderer_rd/shaders/effects/screen_space_reflection.glsl to\nSSR_ComputeIntersection.wgsl (PROVENANCE.md DFX-18).\n\n"
+    "prefix": "Godot Engine, https://github.com/godotengine/godot\nRevision d851ae838de54a0bd3dde9043912f39c74265cdd, LICENSE.txt. The DiligentFX\nport adds the depth-tolerance pass-through of\nservers/rendering/renderer_rd/shaders/effects/screen_space_reflection.glsl to\nSSR_ComputeIntersection.wgsl (PROVENANCE.md DFX-18), and from revision\nb13043816a0f234985030ec035363a005bc86c32 the motion-difference rejection,\nspeed-scaled variance box and history clip of\nservers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl and\nservers/rendering/renderer_rd/effects/taa.cpp to\nTAA_ComputeTemporalAccumulation.wgsl (DFX-14).\n\n"
   },
   {
     "component": "Intel XeGTAO",
@@ -51,6 +51,12 @@
     "path": "crates/sgl-3d/src/stages/post/smaa/LICENSE-smaa.txt",
     "url": "https://raw.githubusercontent.com/iryoku/smaa/27fad0bf7313765b0472bef46b280734e558a26b/LICENSE.txt",
     "note": "SMAA licence revision matching the notice accompanying the port; v2.8 in the README identifies the algorithm, not this later permissive licence."
+  },
+  {
+    "component": "Spartan Engine (Godot's TAA resolve)",
+    "path": "crates/sgl-post-fx/LICENSE-spartan.txt",
+    "url": "https://raw.githubusercontent.com/PanosK92/SpartanEngine/a8338d0609b85dc32f3732a5c27fb4463816a3b9/LICENSE.txt",
+    "prefix": "Spartan Engine, https://github.com/PanosK92/SpartanEngine\nRevision a8338d0609b85dc32f3732a5c27fb4463816a3b9, LICENSE.txt. Godot's\nservers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl (revision\nb13043816a0f234985030ec035363a005bc86c32) is based on Spartan Engine's TAA at\nthis revision and carries this notice; the DiligentFX port adds its\nmotion-difference rejection, speed-scaled variance box and history clip to\nTAA_ComputeTemporalAccumulation.wgsl (PROVENANCE.md DFX-14).\n\n"
   },
   {
     "component": "Three.js (SMAA and mist noise)",

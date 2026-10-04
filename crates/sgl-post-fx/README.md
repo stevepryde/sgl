@@ -32,8 +32,10 @@ files unedited.
 - TAA accumulates a Halton-jittered frame into a history, rejecting by depth
   disocclusion and motion and clipping to the neighbourhood's variance box;
   `vendor/DiligentFX/PostProcess/TemporalAntiAliasing/README.md` describes it.
-  It rejects history where motion changes between frames, not by speed
-  (DFX-14). A pixel that has not moved keeps a longer history and is not
+  As Godot's TAA, it rejects history gradually where motion changes between
+  frames, not by speed, and clips it towards the neighbourhood mean within a
+  box that narrows with speed (DFX-14). A pixel that has not moved keeps a
+  longer history and is not
   rejected by depth, as Bevy's TAA treats still pixels (DFX-19).
 - Host: derived from `ScreenSpaceReflection.cpp`, `TemporalAntiAliasing.cpp`,
   `PostFXContext.cpp` and `PostFXRenderTechnique.cpp`, recording into a
@@ -123,7 +125,8 @@ on the device and checks the output stays finite. SGL3D's integration
 
 DiligentFX and DiligentCore are Copyright Diligent Graphics LLC and licensed
 under the Apache License, Version 2.0 (`LICENSE.txt`, `vendor/*/License.txt`);
-neither ships a NOTICE file. DFX-18 ports Godot Engine code under the MIT
-licence (`LICENSE-godot.txt`), and DFX-19 Bevy code under the MIT licence
-(`LICENSE-bevy.txt`). Every ported file states its origin and that it
+neither ships a NOTICE file. DFX-14 and DFX-18 port Godot Engine code under
+the MIT licence (`LICENSE-godot.txt`); DFX-14's comes from Godot's TAA
+resolve, based on Spartan Engine's TAA, also MIT (`LICENSE-spartan.txt`).
+DFX-19 ports Bevy code under the MIT licence (`LICENSE-bevy.txt`). Every ported file states its origin and that it
 was modified.

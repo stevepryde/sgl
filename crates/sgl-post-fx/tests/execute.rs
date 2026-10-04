@@ -472,20 +472,20 @@ fn read_rgba16f(
 }
 
 // PROVENANCE.md DFX-14: history survives fast motion that is consistent
-// between frames (upstream rejects any pixel moving faster than
-// 1/TAA_MOTION_VECTOR_DIFF_FACTOR of the viewport per frame) and is rejected
-// where the motion changes. The accumulated weight is the output's alpha:
-// 0.5 for a pixel without history (`ResetAccumulation`'s value, and
-// `ComputeCorrectedAlpha(0)`).
+// between frames (upstream rejects any pixel moving faster than 1/256 of the
+// viewport height per frame) and, as Godot's TAA, loses it gradually as the
+// motion changes by more than 2.5 pixels between frames. The accumulated
+// weight is the output's alpha: 0.5 for a pixel without history
+// (`ResetAccumulation`'s value, and `ComputeCorrectedAlpha(0)`).
 #[test]
-fn taa_rejects_history_by_motion_change_not_speed() {
+fn taa_rejects_history_gradually_by_motion_change_not_speed() {
     let Some((device, queue)) = device() else {
         return;
     };
-    // 0.04 NDC across 64 pixels: 1.28 pixels per frame, over five times the
-    // upstream speed limit.
-    let motions = |alternate: bool| {
-        [0.04f32, if alternate { -0.04 } else { 0.04 }].map(|x| {
+    // Even frames move by `even`, odd ones by `odd`, in NDC x: 32 pixels per
+    // unit across 64 pixels.
+    let motions = |even: f32, odd: f32| {
+        [even, odd].map(|x| {
             texture(
                 &device,
                 &queue,
@@ -494,7 +494,7 @@ fn taa_rejects_history_by_motion_change_not_speed() {
             )
         })
     };
-    let alpha = |alternate: bool| {
+    let alpha = |even: f32, odd: f32| {
         let mut context = PostFXContext::new(&device, &queue, Default::default());
         let mut taa = TemporalAntiAliasing::new(&device);
         let color = texture(
@@ -503,7 +503,7 @@ fn taa_rejects_history_by_motion_change_not_speed() {
             wgpu::TextureFormat::Rgba16Float,
             &half(&[4.0, 2.0, 1.0, 1.0]),
         );
-        let motion = motions(alternate);
+        let motion = motions(even, odd);
         let mut encoder = device.create_command_encoder(&Default::default());
         let current_depth = depth(&device, &mut encoder, 0.05);
         let previous_depth = depth(&device, &mut encoder, 0.05);
@@ -558,13 +558,27 @@ fn taa_rejects_history_by_motion_change_not_speed() {
         let texels = read_rgba16f(&device, &queue, taa.get_accumulated_frame_srv(false, 0));
         texels[(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize][3]
     };
-    let consistent = alpha(false);
+    // 1.28 pixels per frame, over five times upstream's speed limit.
+    let consistent = alpha(0.04, 0.04);
     assert!(
         consistent > 0.5,
         "consistent fast motion lost its history (weight {consistent})"
     );
-    let changing = alpha(true);
-    assert_eq!(changing, 0.5, "changing motion kept its history");
+    // A change of 2.24 pixels per frame, within Godot's threshold.
+    let within = alpha(0.04, -0.03);
+    assert_eq!(
+        within, consistent,
+        "a motion change within 2.5 pixels lost history"
+    );
+    // Changes of 25.6 and 51.2 pixels per frame keep less history the larger
+    // they are, but some, short of the 100 pixels that reject it all.
+    let moderate = alpha(0.4, -0.4);
+    let large = alpha(0.8, -0.8);
+    assert!(
+        0.5 < large && large < moderate && moderate < consistent,
+        "history weights {large} and {moderate} for motion changes of 51.2 and \
+         25.6 pixels are not between none (0.5) and consistent motion's ({consistent})"
+    );
 }
 
 /// A depth buffer of per-texel `values`, row-major, written by a full-screen

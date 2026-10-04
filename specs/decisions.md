@@ -112,7 +112,10 @@ Use the [current specs](README.md) for implementation and the
     Hydrogent does. The Stevecraft TAA is removed. TAA rejects history where
     motion changes between frames, as its constant documents and Godot does,
     not by speed as upstream's code does, so fast racing motion keeps its
-    history (DFX-14).
+    history (DFX-14). Amended 2026-10-05 (#93): the 4-pixel limit left the
+    near field without history at racing speed, so TAA follows Godot's rule
+    itself: gradual rejection by motion difference, with history clipped to a
+    neighbourhood box that narrows with speed.
   - Probe captures include area-light emitters, as in Frostbite and Wicked.
     Reflections then count a fixture's emission alongside its light's analytic
     highlight.

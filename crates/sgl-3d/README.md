@@ -713,10 +713,13 @@ integrated as Diligent's Hydrogent renderer does:
   clip.
 
 SSR and TAA share DiligentFX's post-effect context. History restarts with
-SSR's, and a restarted frame renders without jitter. TAA keeps history for
-fast motion that is consistent between frames and rejects it where motion
-changes (1/256 of the screen height per frame), as Godot's TAA does; upstream
-rejects by speed (`sgl-post-fx` PROVENANCE.md DFX-14).
+SSR's, and a restarted frame renders without jitter. As Godot's TAA, it keeps
+history for fast motion that is consistent between frames, rejects it
+gradually where motion changes by more than 2.5 pixels per frame (all of it
+about 100 pixels further), and clips it towards the neighbourhood mean within a
+variance box that narrows with speed, to none at 2% of the screen per frame:
+fast motion resolves softened rather than aliased. Upstream rejects by speed
+(`sgl-post-fx` PROVENANCE.md DFX-14).
 
 ### FSR2
 
