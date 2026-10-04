@@ -84,8 +84,8 @@ pub(crate) struct Prepare;
 
 impl Prepare {
     /// Uploads the view and frame data of `input` seen with `history` and
-    /// `jitter` at `render_size`, and builds the frame's views. Returns the
-    /// data as uploaded.
+    /// `jitter` at `render_size`, and builds the frame's views. `history`'s
+    /// camera carries `jitter`'s offset. Returns the data as uploaded.
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         &mut self,
@@ -133,10 +133,10 @@ impl Prepare {
         if let Some(jitter) = jitter {
             // As Diligent's `TemporalAntiAliasing::GetJitteredProjMatrix`
             // and FSR2's documented jitter translation apply it to the
-            // projection. Motion vectors stay unjittered
-            // (`stable_view_projection`).
-            let projection = Mat4::from_translation(Vec3::new(jitter.ndc[0], jitter.ndc[1], 0.))
-                * camera.projection;
+            // projection, which the camera history records with the jitter
+            // (`CameraFrame::jittered_projection`). Motion vectors stay
+            // unjittered (`stable_view_projection`).
+            let projection = history.camera.jittered_projection();
             let raster = projection * camera.view;
             view.view_projection = raster.to_cols_array_2d();
             view.inverse_view_projection = raster.inverse().to_cols_array_2d();

@@ -192,7 +192,9 @@ impl Instances {
     /// instance's pose and the pose its motion is measured from, so a
     /// static instance still writes no motion and a moving one the same, a
     /// static instance's caster bounds, every object record in one write,
-    /// and each rigid instance's ray entry.
+    /// and each rigid instance's ray entry. The write zeroes the records of
+    /// removed indices below the highest live one, which no draw or ray
+    /// reads until an instance reuses the index and writes its own.
     pub fn move_origin(
         &mut self,
         queue: &wgpu::Queue,

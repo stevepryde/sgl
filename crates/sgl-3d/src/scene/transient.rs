@@ -9,6 +9,12 @@ use crate::shading::fog::{self, FogVolumeRecord};
 use crate::shading::vertex::GlowVertex;
 use glam::Vec3;
 
+/// The glow and heat buffers' usage: drawn from, written, and read back by
+/// tests, which compare what a render origin move left in them.
+const GLOW_USAGE: wgpu::BufferUsages = wgpu::BufferUsages::VERTEX
+    .union(wgpu::BufferUsages::COPY_DST)
+    .union(wgpu::BufferUsages::COPY_SRC);
+
 pub(crate) struct Transient {
     /// Additive glow vertices; `glow_count` of them are drawn.
     pub glow: wgpu::Buffer,
@@ -40,7 +46,7 @@ impl Transient {
             glow: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("transient glow"),
                 size: std::mem::size_of::<GlowVertex>() as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: GLOW_USAGE,
                 mapped_at_creation: false,
             }),
             glow_count: 0,
@@ -48,7 +54,7 @@ impl Transient {
             heat: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("bounded heat vertices"),
                 size: (MAX_VERTICES * std::mem::size_of::<HeatDistortion>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: GLOW_USAGE,
                 mapped_at_creation: false,
             }),
             heat_count: 0,
@@ -133,7 +139,7 @@ impl Transient {
             self.glow = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("transient glow"),
                 size: (bytes.len() as u64).max(self.glow.size() * 2),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                usage: GLOW_USAGE,
                 mapped_at_creation: false,
             });
         }

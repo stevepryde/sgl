@@ -7,7 +7,7 @@ use crate::asset::Image;
 use crate::baked_specular_probe::{
     BakedSpecularProbe, SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels,
 };
-use crate::content::transient::FogVolume;
+use crate::content::transient::{FogVolume, Glow, GlowKind, HeatDistortion};
 use crate::renderer::Renderer;
 use crate::settings::Settings;
 use crate::*;
@@ -164,6 +164,53 @@ fn content(device: &wgpu::Device, queue: &wgpu::Queue, shift: Vec3) -> Scene {
         queue,
         &[(Vec3::new(4097.1, 0.2, -8195.7) - shift).to_array()],
     );
+    let at = |position: Vec3| (position - shift).to_array();
+    let glow = |position: Vec3, kind: GlowKind| Glow {
+        position: at(position),
+        color: [1., 0.5, 0.25, 1.],
+        kind,
+        soft_distance: 0.5,
+    };
+    let line = |other: Vec3, offset: f32| GlowKind::Line {
+        other: at(other),
+        offset,
+    };
+    scene.update_effects(
+        device,
+        queue,
+        &[
+            glow(Vec3::new(4094.3, 1.1, -8199.7), GlowKind::Uniform),
+            glow(Vec3::new(4095.3, 2.1, -8198.7), GlowKind::Uniform),
+            glow(Vec3::new(4094.8, 3.1, -8199.2), GlowKind::Uniform),
+            glow(
+                Vec3::new(4090.6, 1.5, -8196.1),
+                line(Vec3::new(4093.9, 4.2, -8191.3), -0.5),
+            ),
+            glow(
+                Vec3::new(4093.9, 4.2, -8191.3),
+                line(Vec3::new(4090.6, 1.5, -8196.1), 0.5),
+            ),
+            glow(
+                Vec3::new(4090.6, 1.5, -8196.1),
+                line(Vec3::new(4093.9, 4.2, -8191.3), 0.5),
+            ),
+        ],
+    );
+    let heat = |position: Vec3| HeatDistortion {
+        position: at(position),
+        displacement: [2., -1.],
+        weight: 0.5,
+    };
+    scene
+        .update_heat_distortion(
+            queue,
+            &[
+                heat(Vec3::new(4099.2, 0.5, -8201.4)),
+                heat(Vec3::new(4100.2, 0.5, -8201.4)),
+                heat(Vec3::new(4099.7, 1.5, -8201.4)),
+            ],
+        )
+        .unwrap();
     scene
         .set_baked_specular_probes(
             device,
@@ -175,8 +222,9 @@ fn content(device: &wgpu::Device, queue: &wgpu::Queue, shift: Vec3) -> Scene {
 }
 
 // Plausible defects: a move that leaves a light, a decal, a fog volume, the
-// mist, a probe, its world grid, an object record or the ray source where it
-// was, translates one the wrong way, or forgets a record's GPU mirror. The
+// mist, glow (a line's other endpoint too) or heat geometry, a probe, its
+// world grid, an object record or the ray source where it was, translates
+// one the wrong way, or forgets a record's GPU mirror. The
 // oracle is the same content given by the game in the new frame: each
 // position less the move. The two scenes' GPU records match word for word.
 #[test]
@@ -213,11 +261,18 @@ fn a_move_holds_what_the_game_would_give_in_the_new_frame() {
     for ((label, moved), given) in labels.iter().zip(storage(&moved)).zip(storage(&given)) {
         assert_eq!(moved, given, "{label}");
     }
-    assert_eq!(
-        test_support::read_words(&device, &queue, moved.rays.source()),
-        test_support::read_words(&device, &queue, given.rays.source()),
-        "the ray source and its instance BVHs"
-    );
+    let copied = |scene: &Scene| {
+        [
+            scene.rays.source(),
+            &scene.transient.glow,
+            &scene.transient.heat,
+        ]
+        .map(|buffer| test_support::read_words(&device, &queue, buffer))
+    };
+    let labels = ["the ray source and its instance BVHs", "glow", "heat"];
+    for ((label, moved), given) in labels.iter().zip(copied(&moved)).zip(copied(&given)) {
+        assert_eq!(moved, given, "{label}");
+    }
     assert_eq!(
         moved.transient.mist_positions,
         given.transient.mist_positions

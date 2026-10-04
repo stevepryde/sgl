@@ -17,8 +17,8 @@ pub(crate) struct CameraFrame {
 }
 
 impl CameraFrame {
-    /// Its projection as it rasterized: the jitter applied, as prepare
-    /// applies it.
+    /// Its projection as it rasterized, the jitter applied: the projection
+    /// prepare draws the frame with.
     pub fn jittered_projection(&self) -> Mat4 {
         Mat4::from_translation(Vec3::new(self.jitter[0], self.jitter[1], 0.)) * self.projection
     }
