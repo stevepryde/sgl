@@ -52,6 +52,11 @@ struct ShadeContext {
  // The lights and decals that reach the surface: the cluster that holds
  // it (clusters.wgsl), looked up once for its decals and its lights.
  clusters:ClusterRange,
+ // What the frame's screen-space method returned for the surface's traced
+ // lobe, which shade_lit composes in place of that lobe's environment
+ // specular: a blended receiver's where it is the surface at its pixel,
+ // else untraced_reflection().
+ traced:TracedReflection,
 }
 // A shaded surface's outgoing radiance, and the ambient diffuse within it
 // (environment diffuse and hemisphere fill, not multiscattering) before
@@ -255,12 +260,18 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  }
  if context.environment_specular {
   let lobes=specular_lobes(n,coat_n,v,f0,rough,dfg,coat,coat_rough,s.anisotropy,lookup_tables,environment_sampler);
+  let traced=context.traced;
   for (var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
    if lobe==SPECULAR_COAT && coat<=0. {
     continue;
    }
    let environment=probe_environment(s.position,lobes[lobe].direction,lobes[lobe].roughness)*s.environment_scale;
-   color+=lobes[lobe].response*environment;
+   if lobe==specular_traced_lobe(coat) && specular_traces(lobes[lobe].roughness,traced.cutoff*traced.cutoff) {
+    let fade=specular_trace_fade(lobes[lobe].roughness,traced.cutoff,traced.fade);
+    color+=specular_traced(lobes[lobe],traced.reflected,fade,environment);
+   } else {
+    color+=lobes[lobe].response*environment;
+   }
   }
  }
  color+=emission*(1.-reflectance.coat_fresnel);

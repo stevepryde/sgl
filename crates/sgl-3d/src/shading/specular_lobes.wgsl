@@ -58,6 +58,19 @@ fn specular_traced_lobe(coat:f32)->u32 {
 fn specular_traces(roughness:f32,traced:f32)->bool {
  return roughness*roughness<traced;
 }
+// What a screen-space method returned for a surface's traced lobe at its
+// pixel: radiance premultiplied by the confidence in it (rgb) and that
+// confidence (a), with the method's cutoff and fade in perceptual roughness
+// (specular_trace_fade). A cutoff of 0 is no result: the lobe takes its
+// environment specular alone.
+struct TracedReflection {
+ reflected:vec4<f32>,
+ cutoff:f32,
+ fade:f32,
+}
+fn untraced_reflection()->TracedReflection {
+ return TracedReflection(vec4(0.),0.,0.);
+}
 // The share of a screen-space method's result a lobe of perceptual
 // `roughness` takes: none at the method's `cutoff`, rising smoothly over the
 // `fade` of perceptual roughness below it to all, so no seam shows where a

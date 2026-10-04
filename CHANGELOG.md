@@ -15,6 +15,53 @@ full API details.
 
 ## Unreleased
 
+### Blended surfaces can receive screen-space reflections
+
+- **Scope:** `sgl-3d` `AlphaMode::Blend` is now a struct variant,
+  `AlphaMode::Blend { receives_screen_space_reflections: bool }`. Unmarked
+  (`false`, as the glTF loader reads `BLEND`), a blended material renders as
+  before. Marked, it is a receiver: where it is the nearest receiver it is
+  the surface that Crystal and Velvet trace, that composes their result into
+  its traced lobe in place of its probe and sky specular, and that TAA, FSR2
+  and motion blur reproject and blur by its own depth and motion. This
+  changes how a marked material is antialiased even with screen-space
+  reflections off: while TAA, FSR2 or motion blur runs, a receiver pass
+  (timing group `receivers`, after the opaque stage) draws the receivers'
+  depth and motion, so TAA reprojects them by the receiver rather than by
+  what lies behind it, and what is seen through a receiver follows the
+  receiver's motion. The opaque surface under a receiver keeps its probe and
+  sky specular, and world-space rays skip it. A scene that holds a receiver
+  allocates two render-size targets (12 bytes per pixel); one without pays
+  nothing. The blended pipelines bind two more textures, so the device floor
+  (S3D-1) rises from 17 to 19 sampled textures per shader stage; no known
+  adapter offers 17 or 18 (WebGPU in Chromium reports 16 or 48, Metal, DX12
+  and Vulkan 31 or more).
+- **Migration:** name the flag wherever `AlphaMode::Blend` is built, and match
+  it with `AlphaMode::Blend { .. }`. Keep `false` for today's behaviour:
+
+  ```rust
+  // Before
+  glass.alpha = AlphaMode::Blend;
+  if material.alpha == AlphaMode::Blend { /* ... */ }
+  // After
+  glass.alpha = AlphaMode::Blend {
+      receives_screen_space_reflections: false,
+  };
+  if matches!(material.alpha, AlphaMode::Blend { .. }) { /* ... */ }
+  ```
+
+  Mark water and glass that should reflect the scene with `true`, place
+  them as moving instances, and animate their normals in the mesh (see the
+  package README's
+  [blended receivers](crates/sgl-3d/README.md#blended-receivers)). A mesh
+  replaced with `Scene::set_model` every frame rebuilds its ray BVH every
+  frame. Devices requested with
+  `graphics_device::limits` need no change. Afterwards, look at a marked
+  surface with screen-space reflections on and off, in motion with TAA and
+  FSR2, across a resize and a camera cut, and compare the `receivers`,
+  `SSR *` or `Godot SSR *`, `reflection composition`, `blended`, `TAA` and
+  `motion blur` timing groups on the game's route.
+
 ### Per-light shadow opacity
 
 - **Scope:** `sgl-3d` `Light::shadow_opacity` and

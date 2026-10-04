@@ -50,7 +50,9 @@ fn frames(device: &wgpu::Device, queue: &wgpu::Queue, shown: bool) -> [Vec<u8>; 
     let glass = scene.add_asset(device, queue, square(-3., 0.5)).unwrap();
     let mut values = scene.material(glass.materials[0]).unwrap();
     values.base = [0.2, 0.9, 0.3, 0.5];
-    values.alpha = AlphaMode::Blend;
+    values.alpha = AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+    };
     scene
         .set_material(queue, glass.materials[0], values)
         .unwrap();
@@ -161,7 +163,9 @@ fn blended_surfaces_write_fsr2s_masks() {
     for (x, alpha) in [(-0.7, 0.4), (0.7, 0.95)] {
         let mut glass = square(-3., 0.5);
         glass.materials[0].base = [0.2, 0.9, 0.3, alpha];
-        glass.materials[0].alpha = AlphaMode::Blend;
+        glass.materials[0].alpha = AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+        };
         let model = scene.add_asset(&device, &queue, glass).unwrap().model;
         let state = InstanceState {
             model,

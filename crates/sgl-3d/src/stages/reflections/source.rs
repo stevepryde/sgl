@@ -501,13 +501,18 @@ impl ReflectionSource {
     /// Adds each traced lobe's specular into `input.output`: its split-sum
     /// response times `screen_space` (rgb radiance, a confidence) blended over
     /// the receiver's environment and probe specular, fogged as completion
-    /// fogs, with `world_space` filling its misses when world-space rays ran.
-    /// `encode` must have run this frame with the same inputs.
+    /// fogs, with `world_space` filling its misses when world-space rays ran;
+    /// where `surface_depth` is nearer than the opaque depth (under a blended
+    /// receiver, whose `screen_space` is), the environment and probe
+    /// specular alone. `encode` must have run this frame with the same
+    /// inputs.
+    #[allow(clippy::too_many_arguments)]
     pub fn compose(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
         input: Inputs<'_>,
+        surface_depth: &wgpu::TextureView,
         screen_space: &wgpu::TextureView,
         world_space: Option<&wgpu::TextureView>,
         timing: Option<&crate::timing::GpuTiming>,
@@ -537,6 +542,7 @@ impl ReflectionSource {
             (23, texture(world_space)),
             (25, texture(fog.view)),
             (26, wgpu::BindingResource::Sampler(fog.sampler)),
+            (27, texture(surface_depth)),
         ];
         let group = self.completion.compose_group.get(
             device,
@@ -605,3 +611,6 @@ mod tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod incident_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod receiver_tests;

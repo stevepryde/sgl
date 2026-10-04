@@ -20,6 +20,7 @@ pub(crate) static GEOMETRY: shading::Module = shading::Module {
         &shading::BIND_LIT,
         &shading::BIND_SCENE,
         &shading::BIND_MATERIAL,
+        &shading::BIND_BLENDED,
         &shading::GBUFFER,
         &shading::VERTEX,
         &shading::VERTEX_PULL,
@@ -59,11 +60,17 @@ pub(crate) enum GeometryPass {
     DirectionalShadow,
     LocalShadow,
     /// Blended surfaces' lit colour over the beauty, tested against the
-    /// opaque depth without writing it; with `fsr2_masks`, also FSR2's
-    /// reactive and transparency-and-composition masks (`mask_targets`).
+    /// opaque depth without writing it, with the blended group 3
+    /// (`shading::bind::blended`); with `fsr2_masks`, also FSR2's reactive
+    /// and transparency-and-composition masks (`mask_targets`).
     Blended {
         fsr2_masks: bool,
     },
+    /// Blended receivers of screen-space reflections as the surface: their
+    /// traced lobe into the receiver layer and their motion into the
+    /// G-buffer's, over the surface depth, tested strictly nearer and
+    /// written. Draws only the receiver batches of the blended list.
+    Receivers,
 }
 
 impl GeometryPass {
@@ -73,7 +80,7 @@ impl GeometryPass {
 
     /// Whether this pass draws materials whose alpha mode requires `alpha`.
     fn draws(self, alpha: Alpha) -> bool {
-        matches!(self, Self::Blended { .. }) == (alpha == Alpha::Blend)
+        matches!(self, Self::Blended { .. } | Self::Receivers) == (alpha == Alpha::Blend)
     }
 
     /// Whether the pass draws nonindexed pulled vertices instead of indexed
@@ -229,13 +236,15 @@ impl PipelineKey {
     }
 }
 
-/// Which alpha modes the scene's materials use beyond opaque, and whether
-/// it holds a deforming model: the masked, blended and deformed pipelines
-/// are prepared once it holds such content.
+/// Which alpha modes the scene's materials use beyond opaque, whether one
+/// is a receiver of screen-space reflections, and whether it holds a
+/// deforming model: the masked, blended, receiver and deformed pipelines are
+/// prepared once it holds such content.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Content {
     mask: bool,
     blend: bool,
+    receivers: bool,
     deformed: bool,
 }
 
@@ -245,6 +254,7 @@ impl Content {
         Self {
             mask: scene.materials.holds_masked(),
             blend: scene.materials.holds_blended(),
+            receivers: scene.materials.holds_receivers(),
             deformed: scene.models.holds_deforming(),
         }
     }
@@ -252,13 +262,16 @@ impl Content {
 
 /// The depth write and test of each pass. A material/depth prepass and its
 /// Equal passes must select the same last draw when distinct materials have
-/// indistinguishable device depth.
+/// indistinguishable device depth. The receiver pass tests strictly nearer,
+/// so a receiver coplanar with opaque geometry leaves that the surface, and
+/// the blended draw nearer or equal.
 pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
     use wgpu::CompareFunction::*;
     match pass {
-        GeometryPass::Forward | GeometryPass::DirectionalShadow | GeometryPass::LocalShadow => {
-            (true, Greater)
-        }
+        GeometryPass::Forward
+        | GeometryPass::DirectionalShadow
+        | GeometryPass::LocalShadow
+        | GeometryPass::Receivers => (true, Greater),
         GeometryPass::GBuffer | GeometryPass::Fused => (true, GreaterEqual),
         GeometryPass::GBufferAnisotropy | GeometryPass::Lighting => (false, Equal),
         GeometryPass::Blended { .. } => (false, GreaterEqual),
@@ -268,6 +281,8 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
 pub(crate) struct GeometryPipelines {
     /// Group 0 lit, then scene and material.
     lit: wgpu::PipelineLayout,
+    /// `lit`'s, then the blended group 3.
+    blended: wgpu::PipelineLayout,
     /// Group 0 shadow, then scene and material.
     shadow: wgpu::PipelineLayout,
     geometry: wgpu::ShaderModule,
@@ -327,6 +342,7 @@ fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::TextureForm
         ],
         DirectionalShadow | LocalShadow => Vec::new(),
         Blended { .. } => vec![gbuffer::COLOR],
+        Receivers => vec![gbuffer::RECEIVER, gbuffer::MOTION],
     }
 }
 
@@ -350,20 +366,21 @@ impl GeometryPipelines {
     /// `layers`.
     pub fn new(
         device: &wgpu::Device,
-        [lit, shadow, scene, material]: [&wgpu::BindGroupLayout; 4],
+        [lit, shadow, scene, material, blended]: [&wgpu::BindGroupLayout; 5],
         layers: LayerConstants,
     ) -> Self {
-        let layout = |label, frame| {
+        let layout = |label, groups: &[&wgpu::BindGroupLayout]| {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
-                bind_group_layouts: &[Some(frame), Some(scene), Some(material)],
+                bind_group_layouts: &groups.iter().map(|&group| Some(group)).collect::<Vec<_>>(),
                 immediate_size: 0,
             })
         };
         let limits = device.limits();
         let mut pipelines = Self {
-            lit: layout("lit scene geometry", lit),
-            shadow: layout("shadow casters", shadow),
+            lit: layout("lit scene geometry", &[lit, scene, material]),
+            blended: layout("blended scene geometry", &[lit, scene, material, blended]),
+            shadow: layout("shadow casters", &[shadow, scene, material]),
             geometry: device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("SGL material"),
                 source: wgpu::ShaderSource::Wgsl(shading::compose(&[&GEOMETRY]).into()),
@@ -423,6 +440,9 @@ impl GeometryPipelines {
         if self.fused_supported {
             passes.push(GeometryPass::Fused);
         }
+        if self.content.receivers {
+            passes.push(GeometryPass::Receivers);
+        }
         let mut alphas = vec![Alpha::Opaque];
         if self.content.mask {
             alphas.push(Alpha::Mask);
@@ -472,10 +492,11 @@ impl GeometryPipelines {
         use GeometryPass::*;
         let masked = key.variant.alpha == Alpha::Mask;
         let vertex_buffers = &shading::vertex::GEOMETRY_BUFFERS;
-        let (module, layout, label) = if key.pass.caster() {
-            (&self.caster, &self.shadow, "shadow caster")
-        } else {
-            (&self.geometry, &self.lit, "lit scene geometry")
+        let (module, layout, label) = match key.pass {
+            DirectionalShadow | LocalShadow => (&self.caster, &self.shadow, "shadow caster"),
+            Blended { .. } => (&self.geometry, &self.blended, "blended scene geometry"),
+            Receivers => (&self.geometry, &self.lit, "blended receivers"),
+            _ => (&self.geometry, &self.lit, "lit scene geometry"),
         };
         // Casters are depth-only: their cull selects the side that casts. A
         // directional cascade's depth is unclipped, so casters between the
@@ -504,6 +525,7 @@ impl GeometryPipelines {
             DirectionalShadow | LocalShadow => ("shadow_vs", None),
             Blended { fsr2_masks: false } => ("source_vs", Some("blended_fs")),
             Blended { fsr2_masks: true } => ("source_vs", Some("blended_fsr2_masked_fs")),
+            Receivers => ("source_vs", Some("receiver_fs")),
         };
         let unclipped_depth = key.pass == DirectionalShadow && self.unclipped_depth;
         // Blended surfaces blend over the beauty with their alpha, as Bevy's

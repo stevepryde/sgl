@@ -231,6 +231,7 @@ fn rust_mirrors_match_wgsl_layouts() {
         ),
     ]
     .into_iter()
+    .chain(super::bind::mirrors())
     .chain(super::lights::mirrors())
     .chain(super::clusters::mirrors())
     .chain(super::decals::mirrors())
@@ -328,6 +329,10 @@ fn rust_mirrors_match_wgsl_layouts() {
         (
             "MATERIAL_ALPHA_BLEND",
             super::material::MATERIAL_ALPHA_BLEND,
+        ),
+        (
+            "MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS",
+            super::material::MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS,
         ),
     ] {
         assert_eq!(
@@ -492,7 +497,7 @@ fn declared_bindings(label: &str, source: &str, group: u32) -> Vec<(String, u32)
 // numbers come from naga's parse of the WGSL.
 #[wasm_bindgen_test(unsupported = test)]
 fn rust_binding_names_match_wgsl_bindings() {
-    use super::bind::{self, group0, group1, group2};
+    use super::bind::{self, blended, group0, group1, group2};
     let named = [
         (0, "view", group0::VIEW),
         (0, "frame", group0::FRAME),
@@ -538,6 +543,9 @@ fn rust_binding_names_match_wgsl_bindings() {
         (2, "bump_map", group2::BUMP_MAP),
         (2, "baked_material", group2::BAKED_MATERIAL),
         (2, "anisotropy_map", group2::ANISOTROPY_MAP),
+        (3, "blended_reflections", blended::REFLECTIONS),
+        (3, "blended_surface_depth", blended::SURFACE_DEPTH),
+        (3, "blended_trace", blended::TRACE),
     ];
     let numbers = |entries: &[wgpu::BindGroupLayoutEntry]| -> Vec<u32> {
         entries.iter().map(|entry| entry.binding).collect()
@@ -572,6 +580,12 @@ fn rust_binding_names_match_wgsl_bindings() {
             &[&super::BIND_MATERIAL],
             2,
             numbers(&bind::material_entries()),
+        ),
+        (
+            "bind_blended",
+            &[&super::BIND_BLENDED],
+            3,
+            numbers(&bind::blended_entries()),
         ),
     ];
     let mut used = vec![false; named.len()];

@@ -414,6 +414,12 @@ impl DrawList {
         self.batches.is_empty()
     }
 
+    /// Whether it draws a blended receiver of screen-space reflections,
+    /// which the `Receivers` pass draws.
+    pub fn holds_receivers(&self, scene: &Scene) -> bool {
+        self.batches.iter().any(|batch| receives(scene, batch))
+    }
+
     /// The instances `batch` draws, in draw order.
     fn instances_of(&self, batch: &DrawBatch) -> &[DrawInstance] {
         &self.instances[batch.instances.start as usize..batch.instances.end as usize]
@@ -455,8 +461,9 @@ impl DrawList {
 
     /// Issues this list's draws in `pass`, whose group 0 the caller bound,
     /// with the uploaded draw instances it was built into, and returns how
-    /// many it issued. The only place scene geometry is drawn: it binds the
-    /// scene's group 1 and the draw instances once, and each batch's
+    /// many it issued: of a blended list, only its receivers' for the
+    /// `Receivers` pass. The only place scene geometry is drawn: it binds
+    /// the scene's group 1 and the draw instances once, and each batch's
     /// pipeline, material and buffers when they change.
     pub fn draw(
         &self,
@@ -478,7 +485,11 @@ impl DrawList {
         let mut variant = None;
         let mut material = None;
         let mut geometry = None;
+        let receivers = kind == GeometryPass::Receivers;
         for (batch, range) in self.calls() {
+            if receivers && !receives(scene, batch) {
+                continue;
+            }
             let key = batch.key;
             if variant != Some(key.variant) {
                 let pipeline = by_variant[key.variant.index()]
@@ -541,6 +552,14 @@ impl DrawList {
         }
         draws
     }
+}
+
+/// Whether `batch` draws a blended receiver of screen-space reflections.
+fn receives(scene: &Scene, batch: &DrawBatch) -> bool {
+    scene
+        .drawn_material(batch.key.material)
+        .values
+        .receives_screen_space_reflections()
 }
 
 /// The view depth of the bounds centre of the mesh a blended draw draws,

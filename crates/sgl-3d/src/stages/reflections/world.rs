@@ -18,7 +18,10 @@ const DOWNSCALE: u32 = 2;
 const RANGE: f32 = 1000.;
 
 pub(crate) struct Inputs<'a> {
+    /// The opaque depth, and the surface depth nearer than it under a
+    /// receiver, whose pixels the rays skip.
     pub depth: &'a wgpu::TextureView,
+    pub surface_depth: &'a wgpu::TextureView,
     pub normal: &'a wgpu::TextureView,
     pub material: &'a wgpu::TextureView,
     pub f0: &'a wgpu::TextureView,
@@ -225,6 +228,7 @@ impl WorldReflections {
                 ),
                 entry(5, unfilterable),
                 entry(6, sampled(wgpu::TextureSampleType::Uint)),
+                entry(7, sampled(wgpu::TextureSampleType::Depth)),
             ],
         });
         let trace_pipeline_layout =
@@ -384,7 +388,11 @@ impl WorldReflections {
             "world-space reflection receivers",
             &[
                 receivers.as_slice(),
-                &[(5, view(input.screen_space)), (6, view(input.source_id))],
+                &[
+                    (5, view(input.screen_space)),
+                    (6, view(input.source_id)),
+                    (7, view(input.surface_depth)),
+                ],
             ]
             .concat(),
         );

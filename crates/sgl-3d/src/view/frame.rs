@@ -5,7 +5,7 @@ use super::bindings::FrameBindings;
 use super::effective::Effective;
 use super::history::HistoryFrame;
 use super::pipelines::GeometryPipelines;
-use super::targets::{SharedTargets, Sizes};
+use super::targets::{SharedTargets, Sizes, Surface};
 use crate::shading::uniforms::FrameValues;
 use crate::timing::GpuTiming;
 use crate::{FrameInput, Scene};
@@ -19,6 +19,10 @@ pub(crate) struct FrameContext<'a> {
     pub effective: &'a Effective,
     pub sizes: Sizes,
     pub targets: &'a SharedTargets,
+    /// The surface reflections and the temporal consumers read: the opaque
+    /// depth lent until the receiver pass draws receivers, then the
+    /// surface's own targets (`SharedTargets::surface`).
+    pub surface: Surface<'a>,
     pub scene: &'a Scene,
     /// The camera's view data and the frame's data as uploaded.
     pub values: &'a FrameValues,

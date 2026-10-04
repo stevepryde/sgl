@@ -6,6 +6,7 @@ use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, FogQuality, ReflectionMethod, RenderPreset,
     ScreenSpaceReflections, Settings, ShadowQuality,
 };
+use crate::stages::reflections::velvet;
 use crate::view::effective::{AmbientOcclusion, Effective, ScreenSpace, ShadowFilter, Sizing};
 use crate::view::pipelines::LayerConstants;
 
@@ -74,9 +75,10 @@ fn fsr2_sharpness(settings: &Settings, fsr2: bool) -> Option<f32> {
 }
 
 /// The effective configuration of a first frame from a `perspective` camera
-/// with `FrameInput::new`'s values and no fog volumes: what `Renderer::new`
-/// builds stages for, so that such a frame finds their pipelines built.
-/// `fsr2_running` and `fused_supported` are as for `resolve`.
+/// with `FrameInput::new`'s values and a scene with no fog volumes or
+/// receivers: what `Renderer::new` builds stages for, so that such a frame
+/// finds their pipelines built. `fsr2_running` and `fused_supported` are as
+/// for `resolve`.
 pub(super) fn first_frame(
     settings: &Settings,
     fsr2_running: bool,
@@ -90,20 +92,50 @@ pub(super) fn first_frame(
     resolve(
         settings,
         &FrameInput::new(camera),
-        false,
+        SceneContent::default(),
         fsr2_running,
         fused_supported,
     )
 }
 
-/// The effective configuration of a frame. `fog_volumes` is whether the
-/// scene holds fog volumes, `fsr2_running` whether FSR2's context runs on
-/// this device and `fused_supported` whether the device has the fused pass's
-/// attachments.
+/// What a frame's scene holds that its effective configuration follows.
+#[derive(Clone, Copy, Default)]
+pub(super) struct SceneContent {
+    pub fog_volumes: bool,
+    /// A blended receiver of screen-space reflections.
+    pub receivers: bool,
+}
+
+impl SceneContent {
+    pub fn of(scene: &crate::Scene) -> Self {
+        Self {
+            fog_volumes: !scene.transient.fog_volume_corners.is_empty(),
+            receivers: scene.materials.holds_receivers(),
+        }
+    }
+}
+
+/// The perceptual roughness at which `method` stops tracing and the width
+/// of the fade below it: Crystal's DiligentFX `RoughnessThreshold`, fading
+/// over the last 0.05 as Bevy's SSR fades out; Velvet's Godot cutoff and
+/// forward-pass fade.
+fn trace_cutoff(method: ReflectionMethod) -> (f32, f32) {
+    match method {
+        ReflectionMethod::Crystal => (
+            crate::view::post_fx::ssr_attribs().roughness_threshold,
+            0.05,
+        ),
+        ReflectionMethod::Velvet => (velvet::ROUGHNESS_CUTOFF, velvet::ROUGHNESS_FADE),
+    }
+}
+
+/// The effective configuration of a frame of a scene holding `content`.
+/// `fsr2_running` is whether FSR2's context runs on this device and
+/// `fused_supported` whether the device has the fused pass's attachments.
 pub(super) fn resolve(
     settings: &Settings,
     input: &FrameInput,
-    fog_volumes: bool,
+    content: SceneContent,
     fsr2_running: bool,
     fused_supported: bool,
 ) -> Effective {
@@ -138,9 +170,14 @@ pub(super) fn resolve(
         ScreenSpaceReflections::Half => Some(true),
         ScreenSpaceReflections::Full => Some(false),
     }
-    .map(|half_resolution| ScreenSpace {
-        method: settings.reflection_method,
-        half_resolution,
+    .map(|half_resolution| {
+        let (cutoff, fade) = trace_cutoff(settings.reflection_method);
+        ScreenSpace {
+            method: settings.reflection_method,
+            half_resolution,
+            cutoff,
+            fade,
+        }
     });
     // DiligentFX's SSR shares TAA's post-effect context.
     let crystal = screen_space.is_some_and(|ssr| ssr.method == ReflectionMethod::Crystal);
@@ -151,6 +188,7 @@ pub(super) fn resolve(
         ShadowQuality::High if taa || fsr2 => ShadowFilter::Temporal,
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
+    let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
     Effective {
         antialiasing,
         taa,
@@ -162,18 +200,20 @@ pub(super) fn resolve(
         ambient_occlusion,
         screen_space,
         world_space: settings.world_space_reflections && screen_space.is_some(),
+        receivers: content.receivers
+            && (screen_space.is_some() || taa || fsr2 || motion_blur.is_some()),
         fused: fused_supported && !disable.fused_opaque,
         local_lights: !disable.local_lights,
         atmosphere: atmosphere(settings, input),
         fog: fog(
             settings,
             input,
-            fog_volumes,
+            content.fog_volumes,
             p[3][3] == 0. && p[2][3] == -1.,
         ),
         fog_filter: settings.fog_filter,
         bloom: settings.bloom.enabled(low) && !disable.bloom,
-        motion_blur: motion_blur(settings, input).filter(|_| post_fx_camera),
+        motion_blur,
         heat: settings.heat_distortion,
         effects: !disable.effects,
         culling: !disable.culling,

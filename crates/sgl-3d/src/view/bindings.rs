@@ -76,6 +76,9 @@ pub(crate) struct FrameBindings {
     pub scene: wgpu::BindGroupLayout,
     /// Group 2's layout (`shading::bind::material`).
     pub material: wgpu::BindGroupLayout,
+    /// The blended pipelines' group 3 (`shading::bind::blended`), which the
+    /// transparent stage binds.
+    pub blended: wgpu::BindGroupLayout,
     /// The frame's `FrameUniform`, shared by every view of the frame.
     pub frame: wgpu::Buffer,
     /// No specular probes: lit groups bind this while the scene has none
@@ -124,6 +127,7 @@ impl FrameBindings {
             shadow,
             scene: shading::bind::scene(device),
             material: shading::bind::material(device),
+            blended: shading::bind::blended(device),
             frame,
             empty_probes: UploadedProbes::empty(device),
             shadow_maps,

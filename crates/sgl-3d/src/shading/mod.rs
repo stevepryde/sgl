@@ -96,6 +96,13 @@ pub(crate) static BIND_MATERIAL: Module = Module {
     source: include_str!("bind_material.wgsl"),
     deps: &[&MATERIAL],
 };
+/// The blended pipelines' group 3: the screen-space method's result, the
+/// surface depth and the method's cutoff and fade.
+pub(crate) static BIND_BLENDED: Module = Module {
+    name: "bind_blended",
+    source: include_str!("bind_blended.wgsl"),
+    deps: &[],
+};
 /// A material's values and flags, and which texels it cuts out.
 pub(crate) static MATERIAL: Module = Module {
     name: "material",

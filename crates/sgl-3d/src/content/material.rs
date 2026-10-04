@@ -14,9 +14,15 @@ pub enum AlphaMode {
     /// every view, shadow and ray (glTF `MASK` and its `alphaCutoff`).
     Mask { cutoff: f32 },
     /// Blended over what lies behind it, sorted back to front by each mesh's
-    /// bounds centre (glTF `BLEND`). It writes no depth or motion, casts no
-    /// shadow, and rays pass through it.
-    Blend,
+    /// bounds centre (glTF `BLEND`, which loads unmarked). It casts no
+    /// shadow, and rays pass through it. Unmarked, it writes no depth or
+    /// motion. Marked `receives_screen_space_reflections`, it is the surface
+    /// the frame's screen-space reflections trace and its temporal effects
+    /// reproject at the pixels where it is the nearest receiver: water or
+    /// glass that reflects the scene in front of it.
+    Blend {
+        receives_screen_space_reflections: bool,
+    },
 }
 
 /// A material's values, read by [`Scene::material`](crate::Scene::material)
@@ -95,7 +101,18 @@ impl SurfaceMaterial {
     /// Whether the material is drawn by the transparent stage rather than
     /// with opaque surfaces.
     pub(crate) fn blended(&self) -> bool {
-        self.alpha == AlphaMode::Blend
+        matches!(self.alpha, AlphaMode::Blend { .. })
+    }
+
+    /// Whether the material is a blended receiver of screen-space
+    /// reflections.
+    pub(crate) fn receives_screen_space_reflections(&self) -> bool {
+        matches!(
+            self.alpha,
+            AlphaMode::Blend {
+                receives_screen_space_reflections: true
+            }
+        )
     }
 
     /// What its shadow casters depend on: its side, its visibility group

@@ -15,6 +15,8 @@ pub(crate) const F0: TextureFormat = TextureFormat::Rgba8Unorm;
 pub(crate) const ANISOTROPY: TextureFormat = TextureFormat::Rgba16Float;
 /// Current minus previous unjittered UV.
 pub(crate) const MOTION: TextureFormat = TextureFormat::Rg16Float;
+/// The receiver layer: a receiver's traced lobe's normal and roughness.
+pub(crate) const RECEIVER: TextureFormat = TextureFormat::Rgba16Float;
 /// Reversed-Z depth.
 pub(crate) const DEPTH: TextureFormat = TextureFormat::Depth32Float;
 /// Each pixel's raster source and primitive.

@@ -12,10 +12,15 @@
 // offset UV); hashes replace the
 // blue-noise texture; a miss stores no radiance and no coverage (a = 0) and a
 // zero length, so the composition keeps probe and sky specular there; receivers
-// the screen-space method fully resolved trace nothing.
+// the screen-space method fully resolved, and opaque ones under a blended
+// receiver, trace nothing.
 @group(3) @binding(5) var world_screen_space:texture_2d<f32>;
 // Raster identity of each receiver's triangle, excluded from its own ray.
 @group(3) @binding(6) var world_source_id:texture_2d<u32>;
+// The surface depth (the Surface contract, specs/sgl3d-architecture.md): the
+// method's result where it is nearer than the opaque depth is a blended
+// receiver's, which composes its own.
+@group(3) @binding(7) var world_surface_depth:texture_depth_2d;
 
 // Bias used on the GGX importance sample when denoising, to remove part of the
 // tail that creates much more noise.
@@ -84,6 +89,10 @@ struct WorldRay {
  let pixel=vec2<i32>(jitter+tracing*downscale);
  let receiver=world_receiver(pixel);
  if !receiver.traced || textureLoad(world_screen_space,pixel,0).a>=0.999 {
+  return output;
+ }
+ let surface_depth=textureLoad(world_surface_depth,clamp(pixel,vec2(0),vec2<i32>(world.full.xy)-vec2(1)),0);
+ if gbuffer_under_receiver(surface_depth,receiver.depth) {
   return output;
  }
  let uv=(vec2<f32>(pixel)+.5)*world.full.zw;

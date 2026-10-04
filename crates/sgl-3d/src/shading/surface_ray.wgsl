@@ -115,6 +115,6 @@ fn shade_ray_hit(hit:SceneHit,outgoing:vec3<f32>)->vec3<f32> {
  if (material.values.flags&MATERIAL_UNLIT)!=0u {
   return shade_unlit(unlit_surface(base,emission)).color;
  }
- let context=ShadeContext(vec2(0.),false,true,cluster_range(hit.position,vec2(0.)));
+ let context=ShadeContext(vec2(0.),false,true,cluster_range(hit.position,vec2(0.)),untraced_reflection());
  return max(vec3(0.),shade_lit(ray_surface(hit,material,base,emission,outgoing,context.clusters),context).color);
 }

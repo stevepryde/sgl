@@ -106,9 +106,11 @@ pub(crate) struct Materials {
     /// Changes when an edit changes a value casters read
     /// (`SurfaceMaterial::caster_values`).
     pub casters: u64,
-    /// How many of its materials are masked, and how many blended.
+    /// How many of its materials are masked, how many blended and how many
+    /// of those receive screen-space reflections.
     masked: usize,
     blended: usize,
+    receivers: usize,
     textures: Textures,
     /// White, for maps a material does not have.
     fallback: wgpu::TextureView,
@@ -138,6 +140,7 @@ impl Materials {
             casters: 0,
             masked: 0,
             blended: 0,
+            receivers: 0,
             textures: Textures::default(),
             fallback: textures::upload(device, queue, &white, false),
             layout: crate::shading::bind::material(device),
@@ -155,14 +158,26 @@ impl Materials {
         self.blended > 0
     }
 
+    /// Whether a material is a blended receiver of screen-space reflections.
+    pub fn holds_receivers(&self) -> bool {
+        self.receivers > 0
+    }
+
     /// Counts `by` more materials of alpha mode `alpha`.
     fn count(&mut self, alpha: AlphaMode, by: isize) {
-        let count = match alpha {
-            AlphaMode::Opaque => return,
-            AlphaMode::Mask { .. } => &mut self.masked,
-            AlphaMode::Blend => &mut self.blended,
-        };
-        *count = count.checked_add_signed(by).unwrap();
+        let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
+        match alpha {
+            AlphaMode::Opaque => {}
+            AlphaMode::Mask { .. } => add(&mut self.masked),
+            AlphaMode::Blend {
+                receives_screen_space_reflections,
+            } => {
+                add(&mut self.blended);
+                if receives_screen_space_reflections {
+                    add(&mut self.receivers);
+                }
+            }
+        }
     }
 
     /// The texture at `index`.

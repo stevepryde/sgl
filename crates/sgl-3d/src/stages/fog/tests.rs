@@ -917,7 +917,9 @@ fn a_blended_surface_is_fogged_at_its_depth() {
     };
     quad.materials[0].unlit = true;
     quad.materials[0].base = [1., 0.6, 0.3, 1.];
-    quad.materials[0].alpha = crate::AlphaMode::Blend;
+    quad.materials[0].alpha = crate::AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+    };
     let mut scene = Scene::new(&device, &queue);
     test_support::add_static(&device, &queue, &mut scene, quad);
     let fog = Fog {

@@ -9,10 +9,10 @@ use crate::view::targets::SharedTargets;
 use crate::{FrameInput, Scene};
 
 /// Encodes one frame of `scene` seen as `input` into `output`: prepare (with
-/// its deformation), shadows, volumetric fog, opaque,
-/// reflections with the transparent stage drawn into their input (while a
-/// screen-space method traces it) and onto their result, heat,
-/// exposure, antialiasing, motion blur, then post.
+/// its deformation), shadows, volumetric fog, opaque, the transparent
+/// stage's receivers, reflections with the transparent stage drawn into
+/// their input (while a screen-space method traces it) and onto their
+/// result, heat, exposure, antialiasing, motion blur, then post.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render(
     renderer: &mut Renderer,
@@ -50,11 +50,15 @@ pub(super) fn render(
         probe,
         ..
     } = renderer;
+    // The surface's own targets, from a scene's first receiver on.
+    if scene.materials.holds_receivers() {
+        targets.hold_surface(device);
+    }
     let targets: &SharedTargets = targets;
     let effective = super::effective::resolve(
         settings,
         input,
-        !scene.transient.fog_volume_corners.is_empty(),
+        super::effective::SceneContent::of(scene),
         antialiasing.fsr2_running(),
         pipelines.fused_supported,
     );
@@ -146,6 +150,7 @@ pub(super) fn render(
         effective: &effective,
         sizes: *sizes,
         targets,
+        surface: targets.surface(false),
         scene: &*scene,
         values: &values,
         input,
@@ -173,6 +178,10 @@ pub(super) fn render(
         );
         probe.coverage(device, ctx.encoder, &targets.depth, &targets.source_id);
     }
+    // The surface reflections and the temporal consumers read from here on:
+    // the nearest receiver's over the opaque depth.
+    let receivers = transparent.encode_receivers(&mut ctx);
+    ctx.surface = targets.surface(receivers);
     // Every reflection producer initializes composite before reading it.
     if let Some(post_fx) = post_fx.as_mut() {
         let camera = ctx.views.reflection_camera;
@@ -181,6 +190,7 @@ pub(super) fn render(
             queue,
             ctx.encoder,
             targets,
+            ctx.surface,
             sizes.render,
             glam::Mat4::from_cols_array_2d(&camera.view),
             glam::Mat4::from_cols_array_2d(&camera.proj),
@@ -198,8 +208,13 @@ pub(super) fn render(
             crate::stages::transparent::Beauty::Incident(incident),
         );
     }
-    reflections.resolve(&mut ctx, post_fx.as_mut(), ambient_occlusion);
-    transparent.encode(&mut ctx, crate::stages::transparent::Beauty::Composite);
+    let reflected = reflections.resolve(&mut ctx, post_fx.as_mut(), ambient_occlusion);
+    transparent.encode(
+        &mut ctx,
+        crate::stages::transparent::Beauty::Composite {
+            reflections: reflected.as_ref(),
+        },
+    );
     #[cfg(feature = "diagnostics")]
     if let Some(probe) = probe.as_deref() {
         probe.observe(

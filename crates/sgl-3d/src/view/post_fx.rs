@@ -4,11 +4,12 @@
 //!
 //! Per frame, as in Diligent's Hydrogent renderer (`HnPostProcessTask`):
 //! `prepare` before any geometry decides whether history continues and, with
-//! TAA, the frame's jitter; after the G-buffer, `begin` converts SGL3D's
-//! G-buffer and camera into DiligentFX's inputs in one fullscreen pass and
-//! runs `PostFXContext::Execute` once for every effect; SSR and TAA then read
-//! that context.
-use super::targets::SharedTargets;
+//! TAA, the frame's jitter; after the G-buffer and the receivers, `begin`
+//! converts SGL3D's surface (the receivers' over the G-buffer's) and camera
+//! into DiligentFX's inputs in one fullscreen pass and runs
+//! `PostFXContext::Execute` once for every effect; SSR and TAA then read that
+//! context.
+use super::targets::{SharedTargets, Surface};
 use crate::shading;
 use glam::{Mat4, Vec4};
 use sgl_post_fx::post_fx_context::{self, FrameDesc, PostFXContext};
@@ -350,10 +351,11 @@ impl PostFx {
         self.jitter = jitter;
     }
 
-    /// After `prepare` and the G-buffer: converts the G-buffer into
-    /// DiligentFX's inputs and executes the post-effect context. `view` is
-    /// right-handed and `projection` is `perspective`'s infinite reversed-Z
-    /// form with the frame's jitter applied.
+    /// After `prepare`, the G-buffer and the receivers: converts the
+    /// `surface` over the G-buffer into DiligentFX's inputs and executes the
+    /// post-effect context. `view` is right-handed and `projection` is
+    /// `perspective`'s infinite reversed-Z form with the frame's jitter
+    /// applied.
     #[allow(clippy::too_many_arguments)]
     pub fn begin(
         &mut self,
@@ -361,6 +363,7 @@ impl PostFx {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         t: &SharedTargets,
+        surface: Surface<'_>,
         size: [u32; 2],
         view: Mat4,
         projection: Mat4,
@@ -393,11 +396,13 @@ impl PostFx {
                     resource(1, &t.material),
                     resource(2, &t.f0),
                     resource(3, &t.motion),
-                    resource(4, &t.depth),
+                    resource(4, surface.depth),
                     wgpu::BindGroupEntry {
                         binding: 5,
                         resource: self.planes.as_entire_binding(),
                     },
+                    resource(6, &t.depth),
+                    resource(7, surface.receivers),
                 ],
             });
             let attachment = |view| {

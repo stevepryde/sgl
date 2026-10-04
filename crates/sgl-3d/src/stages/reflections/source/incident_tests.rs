@@ -191,7 +191,15 @@ fn incident_environment_is_complete_without_doubling_primary() {
                     let incident = read(&source.incident);
                     let base = read(&output);
                     let mut encoder = device.create_command_encoder(&Default::default());
-                    source.compose(&mut encoder, &device, input(), &zero, Some(&zero), None);
+                    source.compose(
+                        &mut encoder,
+                        &device,
+                        input(),
+                        &depth_view,
+                        &zero,
+                        Some(&zero),
+                        None,
+                    );
                     queue.submit([encoder.finish()]);
                     let primary = read(&output);
                     eprintln!(

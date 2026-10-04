@@ -38,6 +38,11 @@ pub(crate) struct ScreenSpace {
     pub method: ReflectionMethod,
     /// Rays traced at half resolution.
     pub half_resolution: bool,
+    /// The perceptual roughness at and above which the method traces no
+    /// lobe, and the width of the fade below it over which composition
+    /// takes its result in (`specular_trace_fade` in specular_lobes.wgsl).
+    pub cutoff: f32,
+    pub fade: f32,
 }
 
 /// Ambient occlusion that runs.
@@ -69,6 +74,10 @@ pub(crate) struct Effective {
     /// World-space rays fill the screen-space method's misses (only with a
     /// method).
     pub world_space: bool,
+    /// The receiver pass runs: the scene holds a blended receiver of
+    /// screen-space reflections, and a screen-space method, TAA, FSR2 or
+    /// motion blur reads the surface it draws.
+    pub receivers: bool,
     /// The G-buffer and lighting are one pass.
     pub fused: bool,
     /// The scene's point and spot lights render (a diagnostics layer).

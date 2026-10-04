@@ -13,9 +13,9 @@
 //! `motion_blur/mod.rs`), and Wicked Engine 4323a33 after TAA and before
 //! tone mapping and bloom (`wiRenderPath3D.cpp` `Postprocess_MotionBlur`).
 //!
-//! Reads: the antialiased HDR frame (`Completed`), depth and motion at the
-//! render size, the camera's projection and the frames since history
-//! restarted.
+//! Reads: the antialiased HDR frame (`Completed`), the surface's depth and
+//! motion at the render size (the Surface contract), the camera's
+//! projection and the frames since history restarted.
 //! Writes: its tile targets and the blurred frame, at the frame's size.
 //! Honours: the effective shutter (`Settings::motion_blur` and
 //! `FrameInput::motion_blur`); without one it does not run.
@@ -108,8 +108,9 @@ pub(crate) struct MotionBlur {
     uniform: wgpu::Buffer,
     targets: Option<Targets>,
     /// The groups of each pass, one set per frame view blurred (TAA
-    /// alternates two), until the targets or the views are replaced.
-    groups: Vec<(wgpu::TextureView, [wgpu::BindGroup; 4])>,
+    /// alternates two) and surface depth, until the targets or the views
+    /// are replaced.
+    groups: Vec<(wgpu::TextureView, wgpu::TextureView, [wgpu::BindGroup; 4])>,
 }
 
 impl MotionBlur {
@@ -232,7 +233,7 @@ impl MotionBlur {
             ctx.device,
             ctx.encoder,
             frame,
-            [&ctx.targets.motion, &ctx.targets.depth],
+            [&ctx.targets.motion, ctx.surface.depth],
             ctx.timing,
         );
         self.targets.as_ref().map(|targets| &targets.output)
@@ -272,8 +273,9 @@ impl MotionBlur {
         }
     }
 
-    /// Each pass's group for `frame`, made once while it is the frame
-    /// blurred: binding 4 is the tiles a pass reads, 5 what it writes.
+    /// Each pass's group for `frame` and `depth`, made once while they are
+    /// the frame blurred and the surface depth (the opaque depth, or the
+    /// receivers'): binding 4 is the tiles a pass reads, 5 what it writes.
     fn groups(
         &mut self,
         device: &wgpu::Device,
@@ -281,7 +283,11 @@ impl MotionBlur {
         motion: &wgpu::TextureView,
         depth: &wgpu::TextureView,
     ) -> [wgpu::BindGroup; 4] {
-        if let Some((_, groups)) = self.groups.iter().find(|(view, _)| view == frame) {
+        if let Some((.., groups)) = self
+            .groups
+            .iter()
+            .find(|(view, surface, _)| view == frame && surface == depth)
+        {
             return groups.clone();
         }
         let targets = self.targets.as_ref().unwrap();
@@ -312,7 +318,8 @@ impl MotionBlur {
                 entries: &entries,
             })
         });
-        self.groups.push((frame.clone(), groups.clone()));
+        self.groups
+            .push((frame.clone(), depth.clone(), groups.clone()));
         groups
     }
 }

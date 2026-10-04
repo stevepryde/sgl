@@ -66,10 +66,47 @@ pub(crate) struct SharedTargets {
     /// R8: FSR2's reactive mask and its transparency and composition mask,
     /// written by the composite's transparent draws while FSR2 runs.
     pub fsr2_masks: [wgpu::TextureView; 2],
+    /// The surface's own targets, from the first frame of a scene that
+    /// holds a blended receiver of screen-space reflections.
+    pub surface: Option<SurfaceTargets>,
+}
+
+/// The targets of the Surface contract (specs/sgl3d-architecture.md) that
+/// the receiver pass draws, at the render size.
+pub(crate) struct SurfaceTargets {
+    /// The surface depth: a copy of the opaque depth with the receivers
+    /// drawn over it, the nearest winning.
+    pub depth: wgpu::TextureView,
+    /// RGBA16F: the receiver layer, the traced lobe's normal and perceptual
+    /// roughness at the pixels a receiver covers (shading/gbuffer.wgsl).
+    pub receivers: wgpu::TextureView,
+}
+
+impl SurfaceTargets {
+    fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
+        Self {
+            depth: target(device, "surface depth", size, gbuffer::DEPTH),
+            receivers: target(device, "receiver layer", size, gbuffer::RECEIVER),
+        }
+    }
+}
+
+/// The nearest reflective surface at each pixel, opaque or receiver, which
+/// the screen-space method, world-space rays, composition and the temporal
+/// consumers read (the Surface contract): the surface depth and the receiver
+/// layer, with the G-buffer's motion. A pixel is under a receiver where the
+/// surface depth is nearer than the opaque depth.
+#[derive(Clone, Copy)]
+pub(crate) struct Surface<'a> {
+    pub depth: &'a wgpu::TextureView,
+    /// The receiver layer; a frame that drew no receiver lends a stand-in,
+    /// which nothing reads where the depths are equal.
+    pub receivers: &'a wgpu::TextureView,
 }
 
 impl SharedTargets {
-    pub fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
+    /// The targets at `size`, with the surface's own while `surface`.
+    pub fn new(device: &wgpu::Device, size: [u32; 2], surface: bool) -> Self {
         let gbuffer_target = |label, format| target(device, label, size, format);
         let depth = gbuffer_target("stable depth", gbuffer::DEPTH);
         Self {
@@ -97,6 +134,31 @@ impl SharedTargets {
                 "FSR2 transparency and composition mask",
             ]
             .map(|label| target(device, label, size, MASK_FORMAT)),
+            surface: surface.then(|| SurfaceTargets::new(device, size)),
+        }
+    }
+
+    /// Allocates the surface's own targets, once a scene holds a receiver.
+    pub fn hold_surface(&mut self, device: &wgpu::Device) {
+        if self.surface.is_none() {
+            let size = self.depth.texture().size();
+            self.surface = Some(SurfaceTargets::new(device, [size.width, size.height]));
+        }
+    }
+
+    /// The surface of a frame: its own targets' when the receiver pass
+    /// `drew` receivers over them, else the opaque depth lent as the
+    /// surface depth.
+    pub fn surface(&self, drew: bool) -> Surface<'_> {
+        match &self.surface {
+            Some(surface) if drew => Surface {
+                depth: &surface.depth,
+                receivers: &surface.receivers,
+            },
+            _ => Surface {
+                depth: &self.depth,
+                receivers: &self.normal,
+            },
         }
     }
 }

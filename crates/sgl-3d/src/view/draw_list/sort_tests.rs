@@ -27,7 +27,9 @@ fn blended_draws_are_sorted_back_to_front_by_mesh_bounds_centre() {
     let mut asset = test_support::cube();
     let cube = asset.meshes[0].clone();
     asset.materials.push(asset.materials[0].clone());
-    asset.materials[0].alpha = AlphaMode::Blend;
+    asset.materials[0].alpha = AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+    };
     // Two blended meshes whose bounds centres lie away from the model's
     // origin, and an opaque one at it.
     let offsets = [Vec3::new(0., 0., 3.), Vec3::new(2., 1., -4.)];
@@ -163,7 +165,9 @@ fn culled_blended_draws_keep_each_instance_whole_and_back_to_front() {
         return;
     };
     let mut asset = test_support::cube();
-    asset.materials[0].alpha = AlphaMode::Blend;
+    asset.materials[0].alpha = AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+    };
     asset.meshes = vec![test_support::leaf_clusters(&[
         Vec3::new(-2., 0., -10.),
         Vec3::new(0., 0., 20.),

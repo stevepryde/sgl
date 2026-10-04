@@ -214,11 +214,17 @@ override incident_radiance_enabled:bool=true;
 // then fogged as source completion fogs: by the fog's transmittance alone,
 // since completion added the light it scatters. The method fades out over the last
 // env.fade of perceptual roughness below its cutoff (Bevy's SSR over 0.05,
-// Godot's over 0.1), so no seam shows where a roughness crosses it.
+// Godot's over 0.1), so no seam shows where a roughness crosses it. Under a
+// blended receiver (the surface depth nearer than the opaque depth) the
+// method traced the receiver, which composes its result itself, and world
+// rays skipped the pixel: the opaque lobe takes its environment and probe
+// specular alone.
 @group(0) @binding(20) var screen_space:texture_2d<f32>;
 // World-space reflection rays (world_reflections.wgsl): radiance premultiplied
 // by the share of rays that hit a moving object (a); probes and sky fill the rest.
 @group(0) @binding(23) var world_space:texture_2d<f32>;
+// The surface depth (the Surface contract, specs/sgl3d-architecture.md).
+@group(0) @binding(27) var source_surface_depth:texture_depth_2d;
 @fragment fn compose_screen_space(@builtin(position) position:vec4<f32>)->@location(0) vec4<f32> {
  let p=vec2<i32>(position.xy);
  let z=textureLoad(source_depth,p,0);
@@ -226,15 +232,19 @@ override incident_radiance_enabled:bool=true;
  if z<=0. || !gbuffer_lit(f0) {
   return vec4(0.);
  }
+ let under_receiver=gbuffer_under_receiver(textureLoad(source_surface_depth,p,0),z);
  let id=vec2<u32>(p);
  let size=textureDimensions(source_depth);
  let world=source_world(z,id,size,source_camera);
  let material=gbuffer_material(textureLoad(receiver_material,p,0));
  let lobes=source_lobes(textureLoad(source_normal,p,0),material,f0,textureLoad(source_anisotropy,p,0),world,source_camera);
- let reflected=textureLoad(screen_space,p,0);
+ var reflected=vec4(0.);
  var world_hit=vec4(0.);
- if all(id<textureDimensions(world_space)) {
-  world_hit=textureLoad(world_space,p,0);
+ if !under_receiver {
+  reflected=textureLoad(screen_space,p,0);
+  if all(id<textureDimensions(world_space)) {
+   world_hit=textureLoad(world_space,p,0);
+  }
  }
  let visibility=source_ambient_visibility(id);
  var specular=vec3(0.);
