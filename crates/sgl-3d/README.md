@@ -1000,7 +1000,9 @@ authored look and per-frame state in a `FrameInput`.
    material), and images: decoded RGBA8, or BC7 mip chains
    ([Compressed material images](#compressed-material-images)). Apply game-specific adaptations
    explicitly; `LoadOptions` can bound emissive strength when the game requests
-   that behavior. Default loading preserves authored strength.
+   that behavior, and supply any of the glTF's images (`images`) so the
+   loader never reads or decodes them. Default loading preserves authored
+   strength and decodes every image.
 3. `Scene::new(&device, &queue)` starts empty. Add content between frames;
    each addition returns its identity (`MaterialId`, `ModelId`, `InstanceId`,
    `LightId`, `DecalImageId`, `DecalId`, `EnvironmentId`), and every operation
@@ -1283,7 +1285,8 @@ error scopes. It loads no glTF and sets no lightmap or mesh LODs.
 nodes by a caller-owned predicate for rigid-part animation. Each mesh node is
 tested independently; excluded parents still contribute their transforms. It
 uses the same decoding, material support, validation, and batching as file
-loading. Embedded imports require embedded buffers/images; games add their
+loading. Embedded imports require embedded buffers, and embedded images
+unless the game supplies them (`LoadOptions::images`); games add their
 asset label to errors. An empty selection is an error.
 
 The loader supports glTF triangle meshes, baked rigid node transforms,
@@ -1302,8 +1305,29 @@ adaptation.
 loading yields), whose mip chain the scene filters when the image is added,
 in linear light where a material samples it as colour, or a block-compressed
 chain (`Image::Compressed`), uploaded as stored with no mip generation, at a
-quarter of RGBA8's memory. Games compress in their export step and replace
-the loaded asset's images. `CompressedImage::from_ktx2(bytes)` reads a KTX2
+quarter of RGBA8's memory. Games compress in their export step and supply
+the chains as the glTF loads, so its own images are never decoded:
+
+```rust,ignore
+use sgl_3d::asset::{self, CompressedImage, GltfImage, Image, ImageSource, LoadOptions};
+// Each glTF image by its index, name and, for an external file, its URI;
+// return the game's chain, or `Decode` for the glTF's own.
+let sources = |image: GltfImage<'_>| -> asset::Result<ImageSource> {
+    Ok(match image.uri.and_then(|uri| uri.strip_suffix(".png")) {
+        Some(stem) => ImageSource::Supplied(Image::Compressed(
+            CompressedImage::from_ktx2(&std::fs::read(dir.join(format!("{stem}.ktx2")))?)?,
+        )),
+        None => ImageSource::Decode,
+    })
+};
+let asset = asset::load_with_options(&path, LoadOptions { images: Some(&sources), ..Default::default() })?;
+```
+
+The loader asks once per image, in image order, as Bevy's glTF loader
+resolves each image's source; a supplied image takes the glTF image's index,
+which its materials address. An embedded glTF (`load_slice_with_options`)
+may refer to external image files when every one is supplied.
+`CompressedImage::from_ktx2(bytes)` reads a KTX2
 file of one 2D BC7 image (`VK_FORMAT_BC7_UNORM_BLOCK` or `_SRGB_BLOCK`) with
 its stored levels, uncompressed or Zstandard-supercompressed, as Bevy reads
 them. As for RGBA8, the channel picks the colour space: base and emissive

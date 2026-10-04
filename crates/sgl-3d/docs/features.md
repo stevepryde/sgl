@@ -18,7 +18,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   bump maps, clearcoat, emission, unlit and `KHR_materials_anisotropy`.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
   `load_with_options` and `load_slice_with_options` (an emissive strength
-  cap), `load_slice_filtered` (named rigid parts), or a
+  cap, and images the game supplies, which are never decoded),
+  `load_slice_filtered` (named rigid parts), or a
   procedural `asset::Asset` (`asset::Material::default()` is glTF's default
   material). Unsupported features return errors rather than
   partial models. [Limits](../README.md#asset-and-environment-limits).
@@ -26,7 +27,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   mips SGL3D filters when it is added, or a BC7 mip chain uploaded as stored
   (`asset::Image::Compressed`, read from KTX2 with
   `CompressedImage::from_ktx2`; needs `TEXTURE_COMPRESSION_BC`). Games compress
-  in their export step. Rays read a compressed image's level 0 decoded.
+  in their export step and supply the chains while a glTF loads
+  (`LoadOptions::images`). Rays read a compressed image's level 0 decoded.
   [Compressed material images](../README.md#compressed-material-images).
 - **Skinned meshes and morph targets**: the loader imports skins (four
   influences per vertex), morph targets, the node hierarchy and animation

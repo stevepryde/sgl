@@ -44,7 +44,8 @@ settings SGL3D has today.
    never identifies a game's content by a hardcoded name or path. The glTF
    loader reports unsupported visible features with the asset path rather
    than silently returning a partial model; file and embedded-byte imports share
-   one decoder. Explicit node selection preserves ancestor transforms and rejects
+   one decoder, which decodes each image the game does not supply and never
+   reads one it does. Explicit node selection preserves ancestor transforms and rejects
    an empty selection. Games keep authored sources, export recipes and gameplay RON.
 3. **S3D-3 — Coordinates and state.** The boundary uses metres, +Y up,
    right-handed view/projection matrices, camera-local forward −Z, reversed-Z
