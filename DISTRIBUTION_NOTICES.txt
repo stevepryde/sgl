@@ -227,8 +227,8 @@ slotmap@1.1.1 — authors: Orson Peters <orsonpeters@gmail.com>
 smallvec@1.15.2 — authors: The Servo Project Developers
 smithay-client-toolkit@0.19.2 — authors: Elinor Berger <elinor@safaradeg.net>, i509VCB <mail@i509.me>, Ashley Wulber <ashley@system76.com>
 smol_str@0.2.2 — authors: Aleksey Kladov <aleksey.kladov@gmail.com>
-sp-fidelity-wgpu@0.1.0
-sp-fidelity@0.1.0
+sp-fidelity-wgpu@0.1.1
+sp-fidelity@0.1.1
 spirv@0.4.0+sdk-1.4.341.0 — authors: Lei Zhang <antiagainst@gmail.com>
 static_assertions@1.1.0 — authors: Nikolai Vazquez
 syn@2.0.119 — authors: David Tolnay <dtolnay@gmail.com>
@@ -6060,7 +6060,7 @@ The `cfg_aliases!` macro uses a lot of the code from [`tectonic_cfg_support::tar
     SOFTWARE.
 ---
 
---- Applies to: sp-fidelity@0.1.0
+--- Applies to: sp-fidelity@0.1.1
 
 # This file is part of the FidelityFX SDK.
 #
@@ -6091,7 +6091,7 @@ set(FSR2_API_BASE_ARGS
 # Compile hlsl shaders
 include("${FFX_GPU_PATH}/fsr2/CMakeCompileFSR2Shaders.txt")
 
---- Applies to: sp-fidelity@0.1.0
+--- Applies to: sp-fidelity@0.1.1
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6142,7 +6142,7 @@ void ffxSafeReleaseResource(FfxInterface* backendInterface, FfxResourceInternal 
     backendInterface->fpDestroyResource(backendInterface, resource, effectContextId);
 }
 
---- Applies to: sp-fidelity@0.1.0
+--- Applies to: sp-fidelity@0.1.1
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6189,7 +6189,7 @@ FfxErrorCode fsr2IsWave64(uint32_t permutationOptions, bool& isWave64);
 }
 #endif // #if defined(__cplusplus)
 
---- Applies to: sp-fidelity@0.1.0
+--- Applies to: sp-fidelity@0.1.1
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6230,7 +6230,7 @@ FFX_API void ffxSafeReleaseResource(FfxInterface* backendInterface, FfxResourceI
 }
 #endif  // #if defined(__cplusplus)
 
---- Applies to: sp-fidelity@0.1.0
+--- Applies to: sp-fidelity@0.1.1
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6279,7 +6279,7 @@ FfxErrorCode ffxIsWave64(FfxEffect effectId, uint32_t permutationOptions, bool& 
 }
 #endif // #if defined(__cplusplus)
 
---- Applies to: sp-fidelity@0.1.0
+--- Applies to: sp-fidelity@0.1.1
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6811,7 +6811,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- Applies to: sp-fidelity-wgpu@0.1.0
+--- Applies to: sp-fidelity-wgpu@0.1.1
 
 MIT License
 
@@ -7219,7 +7219,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- Applies to: sp-fidelity@0.1.0
+--- Applies to: sp-fidelity@0.1.1
 
 This file is part of the FidelityFX SDK.
 
@@ -7243,7 +7243,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- Applies to: sp-fidelity@0.1.0
+--- Applies to: sp-fidelity@0.1.1
 
 This file is part of the FidelityFX SDK.
 

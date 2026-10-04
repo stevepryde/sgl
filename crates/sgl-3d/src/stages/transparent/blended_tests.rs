@@ -147,9 +147,7 @@ fn blended_surfaces_write_fsr2s_masks() {
         atmosphere: false,
         ..Settings::default()
     };
-    // FSR2's luminance pyramid needs more than SIZE's texels.
-    const FSR2_SIZE: [u32; 2] = [96, 96];
-    let mut renderer = Renderer::for_test(&device, &queue, FSR2_SIZE, &settings);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
     if renderer.antialiasing_in_effect(&settings) != settings::Antialiasing::Fsr2 {
         eprintln!(
             "skipping: FSR2 does not run here: {:?}",
@@ -180,8 +178,7 @@ fn blended_surfaces_write_fsr2s_masks() {
         eye: Vec3::ZERO,
     });
     input.camera_cut = true;
-    let output =
-        crate::view::targets::target(&device, "FSR2 masks frame", FSR2_SIZE, gbuffer::COLOR);
+    let output = crate::view::targets::target(&device, "FSR2 masks frame", SIZE, gbuffer::COLOR);
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.render(
         &device,
@@ -200,9 +197,12 @@ fn blended_surfaces_write_fsr2s_masks() {
         .fsr2_masks
         .each_ref()
         .map(|mask| test_support::read(&device, &queue, mask.texture(), 1));
-    // Behind the squares' centres (x = -0.7 and +0.7 m) and between them.
-    for (column, expected) in [(27, [0.4, 0.4]), (68, [0.9, 0.95]), (49, [0., 0.])] {
-        let at = (FSR2_SIZE[1] / 2 * FSR2_SIZE[0] + column) as usize;
+    // Behind the squares' centres and between them, on the middle row. At
+    // 3 m with cot(0.5) = 1.83, x = -0.7 and +0.7 m project to NDC -0.43 and
+    // +0.43, texels 9.2 and 22.8 of 32; the squares' inner edges (x = -0.2
+    // and +0.2 m) to texels 14.0 and 18.0.
+    for (column, expected) in [(9, [0.4, 0.4]), (22, [0.9, 0.95]), (16, [0., 0.])] {
+        let at = (SIZE[1] / 2 * SIZE[0] + column) as usize;
         let actual = [reactive[at], composition[at]].map(|byte| f32::from(byte) / 255.);
         for (name, actual, expected) in [
             ("reactive", actual[0], expected[0]),

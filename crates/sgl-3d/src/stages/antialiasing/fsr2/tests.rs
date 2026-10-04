@@ -253,3 +253,70 @@ fn additive_effects_mark_fsr2_reactivity_for_their_frame_only() {
         "the previous frame's glow stayed reactive"
     );
 }
+
+// Defect: FSR2 stops below a 64-pixel render size. Its luminance pyramid
+// binds mips 4 and 5 of a texture half the maximum render size
+// (`ffx_fsr2.cpp`), which sp-fidelity-wgpu before 0.1.1 viewed even where
+// the texture lacked them, so wgpu rejected the frame. Expected: wgpu's
+// validation accepts every frame and FSR2 stays in effect, at the smallest
+// size (a single mip), either side of the 32-pixel (mip 4) boundary and just
+// below 64 (mip 5).
+#[test]
+fn fsr2_runs_below_a_64_pixel_render_size() {
+    let Some((device, queue)) = test_support::fsr2_device() else {
+        return;
+    };
+    if !device
+        .features()
+        .contains(sp_fidelity_wgpu::required_features())
+    {
+        eprintln!("skipping: the device lacks FSR2's features");
+        return;
+    }
+    let (mut scene, environment) = scene(&device, &queue);
+    let settings = Settings {
+        scene_resolution: settings::SceneResolution::Full,
+        antialiasing: Antialiasing::Fsr2,
+        fsr2_quality: Fsr2Quality::NativeAa,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    for size in [[2, 2], [31, 31], [32, 32], [33, 33], [63, 63]] {
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        renderer.resize(&device, size, 1., &settings);
+        let output = view::targets::target(&device, "FSR2 frame", size, shading::gbuffer::COLOR);
+        for frame in 0..2 {
+            let eye = glam::Vec3::new(2.4 + frame as f32 * 0.05, 2., 3.3);
+            let mut input = FrameInput::new(Camera {
+                eye,
+                view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
+                projection: perspective(55f32.to_radians(), 1., 0.1),
+            });
+            input.camera_cut = frame == 0;
+            input.environment = Some(environment);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+        }
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        if let Some(error) = pollster::block_on(scope.pop()) {
+            panic!("{size:?}: {error}");
+        }
+        assert_eq!(
+            renderer.antialiasing_in_effect(&settings),
+            Antialiasing::Fsr2,
+            "{size:?}: {:?}",
+            renderer.fsr2_error()
+        );
+    }
+}
