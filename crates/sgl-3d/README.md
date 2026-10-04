@@ -19,7 +19,7 @@ This page is the detailed reference:
 
 - [Frame lifecycle](#retained-scene-and-frame-lifecycle), [data conventions](#dependencies-and-data-conventions), [browser differences](#browser-wasm--webgpu)
 - [Lights and look](#frame-lights-and-look), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
-- [Reflections](#reflections), [TAA and FSR2](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
+- [Reflections](#reflections), [TAA, SMAA and FSR2](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [asset limits](#asset-and-environment-limits)
 - [Skinning and morphs](#skinned-meshes-and-morph-targets), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
@@ -721,6 +721,15 @@ variance box that narrows with speed, to none at 2% of the screen per frame:
 fast motion resolves softened rather than aliased. Upstream rejects by speed
 (`sgl-post-fx` PROVENANCE.md DFX-14).
 
+### SMAA
+
+SMAA 1x runs on the linear HDR scene before tone mapping
+([`src/stages/post/smaa/README.md`](src/stages/post/smaa/README.md)) at
+`Settings::smaa_quality` (`settings::SmaaQuality`), SMAA 2.8's presets:
+Low, Medium (the default), High and Ultra. They search 4, 8, 16 and 32
+pixels along an edge, at a colour contrast threshold of 0.15, 0.1, 0.1 and
+0.05; High and Ultra also detect diagonal lines and corners.
+
 ### FSR2
 
 FSR2 is AMD's FidelityFX Super Resolution 2 from the `sp-fidelity` port (SDK
@@ -737,7 +746,9 @@ its source. It antialiases like TAA while upscaling:
 - The frame renders with FSR2's jitter sequence and a texture mip bias of
   `log2(render / scene) - 1`. FSR2 reads the linear HDR frame, the unjittered
   motion vectors and depth, the frame's exposure, and
-  `FrameInput::frame_time_ms`; it sharpens with RCAS at AMD's sample default (0.8).
+  `FrameInput::frame_time_ms`. It sharpens with RCAS while
+  `Settings::fsr2_sharpening` is on (the default), at `fsr2_sharpness` in
+  AMD's 0..=1 (0.8 by default, as AMD's sample).
   The camera's blended surfaces, additive effects and mist also write FSR2's
   reactive and transparency-and-composition masks, as AMD's FSR documentation
   and sample write them from translucent draws.
@@ -1313,6 +1324,11 @@ normal and bump maps, scalar clearcoat, emissive strength, unlit materials, and
 asset-path errors. Occlusion textures and unimplemented material extensions
 require a separate implementation or an explicit game-side export
 adaptation.
+
+Material textures are filtered trilinearly with the material's glTF
+wrapping, and anisotropically up to `Settings::anisotropic_filtering`
+(`settings::AnisotropicFiltering`: Off, 2×, 4×, 8× by default, or 16×, as
+Godot's levels).
 
 ### Compressed material images
 

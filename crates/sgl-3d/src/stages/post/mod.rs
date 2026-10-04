@@ -9,15 +9,15 @@
 //! and the output.
 //! Honours: bloom (and the frame's authored bloom parameters, and the
 //! effective sizing's bloom targets), the frame's colour grading, the
-//! antialiasing in effect, the bloom and SMAA diagnostics layers and the
-//! diagnostics tone-map capture.
+//! antialiasing in effect and SMAA's quality, the bloom and SMAA diagnostics
+//! layers and the diagnostics tone-map capture.
 //! Timing groups: `bloom`, `SMAA`, `tone map`.
 pub(crate) mod bloom;
 mod inputs;
 pub(crate) mod smaa;
 pub(crate) mod tone_map;
 
-use crate::settings::Antialiasing;
+use crate::settings::{Antialiasing, SmaaQuality};
 use crate::shading::gbuffer::COLOR as HDR;
 use crate::view::effective::Effective;
 use crate::view::frame::{Completed, FrameContext};
@@ -27,8 +27,8 @@ use crate::view::targets::{Sizes, target};
 #[derive(Clone, Copy, Debug)]
 struct Presentation {
     bloom: bool,
-    /// SMAA antialiases the scene.
-    smaa: bool,
+    /// SMAA antialiases the scene, at this preset.
+    smaa: Option<SmaaQuality>,
     /// Tone mapping writes the tone-mapped target, which is then presented.
     capture: bool,
 }
@@ -55,18 +55,27 @@ pub(crate) struct Post {
 
 impl Post {
     /// Presentation to `format` for `sizes`; bloom's targets start full
-    /// size with `bloom_targets`.
+    /// size with `bloom_targets`, and SMAA's pipelines are built for
+    /// `smaa_quality`.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
         sizes: Sizes,
         bloom_targets: bool,
+        smaa_quality: SmaaQuality,
     ) -> Result<Self, image::ImageError> {
         let inputs = inputs::Inputs::new(device);
         Ok(Self {
             bloom: bloom::Bloom::new(device, &inputs, sizes.scene, bloom_targets),
-            smaa: smaa::Smaa::new(device, queue, sizes.scene[0], sizes.scene[1], HDR)?,
+            smaa: smaa::Smaa::new(
+                device,
+                queue,
+                sizes.scene[0],
+                sizes.scene[1],
+                HDR,
+                smaa_quality,
+            )?,
             antialiased: target(device, "antialiased HDR scene", sizes.scene, HDR),
             tone_map: tone_map::ToneMap::new(device, &inputs, format, sizes.output),
             inputs,
@@ -111,7 +120,8 @@ impl Post {
     ) {
         let presentation = Presentation {
             bloom: ctx.effective.bloom,
-            smaa: smaa_resolves(ctx.effective, ctx.sizes, kind),
+            smaa: smaa_resolves(ctx.effective, ctx.sizes, kind)
+                .then_some(ctx.effective.smaa_quality),
             capture: ctx.effective.capture_tone_target,
         };
         let look = Look {
@@ -162,7 +172,8 @@ impl Post {
         } else {
             completed
         };
-        let hdr = if presentation.smaa {
+        let hdr = if let Some(quality) = presentation.smaa {
+            self.smaa.set_quality(device, quality);
             self.smaa
                 .encode(device, encoder, combined, &self.antialiased, timing);
             &self.antialiased

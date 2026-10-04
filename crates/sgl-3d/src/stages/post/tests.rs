@@ -72,7 +72,15 @@ fn antialiasing_off_preserves_captured_pixels() {
             wgpu::TextureFormat::Rgba8UnormSrgb,
             wgpu::TextureFormat::Bgra8UnormSrgb,
         ] {
-            let mut post = Post::new(&device, &queue, format, sizes([80, 64]), true).unwrap();
+            let mut post = Post::new(
+                &device,
+                &queue,
+                format,
+                sizes([80, 64]),
+                true,
+                SmaaQuality::default(),
+            )
+            .unwrap();
             for size in [[80, 64], [37, 29]] {
                 post.resize(&device, sizes(size), true);
                 let bytes = &capture[..(size[0] * size[1] * 8) as usize];
@@ -178,7 +186,15 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
             .request_device(&crate::test_support::diagnostic_device_descriptor(&adapter))
             .await
             .unwrap();
-        let mut post = Post::new(&device, &queue, HDR, sizes([64, 64]), true).unwrap();
+        let mut post = Post::new(
+            &device,
+            &queue,
+            HDR,
+            sizes([64, 64]),
+            true,
+            SmaaQuality::default(),
+        )
+        .unwrap();
         let output = target(&device, "bloom switch result", [64, 64], HDR);
         let exposure = unit_exposure(&device, &queue);
         let scene = target(&device, "impulse", [64, 64], HDR);
@@ -205,7 +221,7 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 let presentation = Presentation {
                     bloom: enabled,
-                    smaa: false,
+                    smaa: None,
                     capture: true,
                 };
                 post.present(

@@ -1,6 +1,8 @@
-//! Deterministic SMAA 1x Medium, matching the browser's Three.js SMAANode.
-//! Input is linear HDR color before tone mapping and sRGB; HUD follows output.
-//! See README.md and the adjacent upstream licenses for shader/atlas provenance.
+//! Deterministic SMAA 1x at SMAA 2.8's quality presets; Medium matches the
+//! browser's Three.js SMAANode. Input is linear HDR color before tone mapping
+//! and sRGB; HUD follows output. See README.md and the adjacent upstream
+//! licenses for shader/atlas provenance.
+use crate::settings::SmaaQuality;
 use std::cell::RefCell;
 use wgpu::util::DeviceExt;
 
@@ -24,9 +26,35 @@ pub(crate) struct Smaa {
     linear: wgpu::Sampler,
     point: wgpu::Sampler,
     inverse_size: wgpu::Buffer,
+    shader: wgpu::ShaderModule,
+    /// The preset `detect` and `calculate` run.
+    quality: SmaaQuality,
     detect: wgpu::RenderPipeline,
     calculate: wgpu::RenderPipeline,
     blend: wgpu::RenderPipeline,
+}
+
+/// SMAA.hlsl's `SMAA_PRESET_*` for `quality`, as `smaa.wgsl`'s pipeline
+/// constants: the threshold and search steps, and High's and Ultra's
+/// diagonal search steps and corner rounding, whose detection Low and
+/// Medium disable.
+fn preset(quality: SmaaQuality) -> [(&'static str, f64); 6] {
+    let (threshold, steps, diagonal_and_corners) = match quality {
+        SmaaQuality::Low => (0.15, 4, None),
+        SmaaQuality::Medium => (0.1, 8, None),
+        SmaaQuality::High => (0.1, 16, Some((8, 25))),
+        SmaaQuality::Ultra => (0.05, 32, Some((16, 25))),
+    };
+    let detects = f64::from(u8::from(diagonal_and_corners.is_some()));
+    let (diagonal_steps, rounding) = diagonal_and_corners.unwrap_or_default();
+    [
+        ("SMAA_THRESHOLD", threshold),
+        ("SMAA_MAX_SEARCH_STEPS", f64::from(steps)),
+        ("SMAA_DIAG_DETECTION", detects),
+        ("SMAA_MAX_SEARCH_STEPS_DIAG", f64::from(diagonal_steps)),
+        ("SMAA_CORNER_DETECTION", detects),
+        ("SMAA_CORNER_ROUNDING", f64::from(rounding)),
+    ]
 }
 
 fn target(device: &wgpu::Device, size: [u32; 2], label: &str) -> wgpu::TextureView {
@@ -89,26 +117,33 @@ fn lookup(
     Ok(texture.create_view(&Default::default()))
 }
 
+/// A pipeline of `shader`'s `vertex_entry` and `entry` into `format`, with
+/// its pipeline `constants`.
 fn pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     entry: &str,
     vertex_entry: &str,
     format: wgpu::TextureFormat,
+    constants: &[(&str, f64)],
 ) -> wgpu::RenderPipeline {
+    let options = || wgpu::PipelineCompilationOptions {
+        constants,
+        ..Default::default()
+    };
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(entry),
         layout: None,
         vertex: wgpu::VertexState {
             module: shader,
             entry_point: Some(vertex_entry),
-            compilation_options: Default::default(),
+            compilation_options: options(),
             buffers: &[],
         },
         fragment: Some(wgpu::FragmentState {
             module: shader,
             entry_point: Some(entry),
-            compilation_options: Default::default(),
+            compilation_options: options(),
             targets: &[Some(wgpu::ColorTargetState {
                 format,
                 blend: None,
@@ -149,18 +184,21 @@ fn sampler(binding: u32, sampler: &wgpu::Sampler) -> wgpu::BindGroupEntry<'_> {
 }
 
 impl Smaa {
+    /// SMAA at `quality` into `output_format`.
     pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         width: u32,
         height: u32,
         output_format: wgpu::TextureFormat,
+        quality: SmaaQuality,
     ) -> Result<Self, image::ImageError> {
         let size = [width.max(1), height.max(1)];
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("SMAA 1x Medium"),
+            label: Some("SMAA 1x"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&SMAA]).into()),
         });
+        let [detect, calculate] = Self::preset_pipelines(device, &shader, quality);
         Ok(Self {
             size,
             bindings: RefCell::new(None),
@@ -184,22 +222,54 @@ impl Smaa {
                 label: Some("SMAA point clamp"),
                 ..Default::default()
             }),
-            detect: pipeline(
+            detect,
+            calculate,
+            // Blending is the same at every preset.
+            blend: pipeline(
                 device,
                 &shader,
-                "detect",
-                "detect_vertex",
-                wgpu::TextureFormat::Rgba16Float,
+                "blend",
+                "blend_vertex",
+                output_format,
+                &preset(quality),
             ),
-            calculate: pipeline(
-                device,
-                &shader,
-                "calculate",
-                "calculate_vertex",
-                wgpu::TextureFormat::Rgba16Float,
-            ),
-            blend: pipeline(device, &shader, "blend", "blend_vertex", output_format),
+            shader,
+            quality,
         })
+    }
+
+    /// The edge detection and weight pipelines of `quality`'s preset.
+    fn preset_pipelines(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        quality: SmaaQuality,
+    ) -> [wgpu::RenderPipeline; 2] {
+        let constants = preset(quality);
+        [
+            ("detect", "detect_vertex"),
+            ("calculate", "calculate_vertex"),
+        ]
+        .map(|(entry, vertex)| {
+            pipeline(
+                device,
+                shader,
+                entry,
+                vertex,
+                wgpu::TextureFormat::Rgba16Float,
+                &constants,
+            )
+        })
+    }
+
+    /// Runs at `quality` from now on, rebuilding the pipelines whose preset
+    /// changed.
+    pub(crate) fn set_quality(&mut self, device: &wgpu::Device, quality: SmaaQuality) {
+        if quality != self.quality {
+            [self.detect, self.calculate] = Self::preset_pipelines(device, &self.shader, quality);
+            self.quality = quality;
+            // Groups made for the old pipelines' layouts.
+            self.bindings.get_mut().take();
+        }
     }
 
     /// Replaces only size-dependent targets; pipelines and atlases stay resident.
@@ -303,5 +373,5 @@ impl Smaa {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(super) mod tests;

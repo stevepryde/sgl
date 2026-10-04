@@ -51,6 +51,45 @@ pub enum Fsr2Quality {
     UltraPerformance,
 }
 
+/// SMAA's quality presets (SMAA 2.8's `SMAA_PRESET_*`): Low and Medium
+/// search 4 and 8 steps along each edge, at a colour contrast threshold of
+/// 0.15 and 0.1; High searches 16 and adds diagonal and corner detection;
+/// Ultra searches 32 at a threshold of 0.05.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SmaaQuality {
+    Low,
+    #[default]
+    Medium,
+    High,
+    Ultra,
+}
+
+/// The most anisotropic filtering material textures sample with, as
+/// Godot's `anisotropic_filtering_level`: Off filters trilinearly, the
+/// others take up to 2, 4, 8 or 16 samples along a surface seen at a
+/// grazing angle, sharper there at more texture bandwidth.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnisotropicFiltering {
+    Off,
+    X2,
+    X4,
+    #[default]
+    X8,
+    X16,
+}
+impl AnisotropicFiltering {
+    /// The sampler's `anisotropy_clamp`.
+    pub(crate) fn clamp(self) -> u16 {
+        match self {
+            Self::Off => 1,
+            Self::X2 => 2,
+            Self::X4 => 4,
+            Self::X8 => 8,
+            Self::X16 => 16,
+        }
+    }
+}
+
 /// Screen-space reflections, traced by the `ReflectionMethod` and composited
 /// over each receiver's probe and sky specular. Off reflects environment and
 /// probe specular only.
@@ -241,6 +280,13 @@ pub struct Settings {
     pub scene_resolution: SceneResolution,
     pub antialiasing: Antialiasing,
     pub fsr2_quality: Fsr2Quality,
+    /// FSR2's robust contrast-adaptive sharpening (RCAS) of its output.
+    pub fsr2_sharpening: bool,
+    /// How much FSR2 sharpens while `fsr2_sharpening` is on, 0..=1 as AMD's
+    /// `sharpness`: 0 is the least, 1 the most. Others are clamped, NaN to 0.
+    pub fsr2_sharpness: f32,
+    pub smaa_quality: SmaaQuality,
+    pub anisotropic_filtering: AnisotropicFiltering,
     pub bloom: Bloom,
     /// The shadow maps' sizes and the camera's shadow filter.
     pub shadow_quality: ShadowQuality,
@@ -275,14 +321,19 @@ pub struct Settings {
 
 impl Default for Settings {
     /// High, with atmosphere allowed and the fog filter on, heat distortion,
-    /// world-space reflections and motion blur off, and every other choice
-    /// at its default.
+    /// world-space reflections and motion blur off, FSR2 sharpening on at
+    /// AMD's FSR sample's 0.8 (`m_RCASSharpen`, `m_Sharpness`), and every
+    /// other choice at its default.
     fn default() -> Self {
         Self {
             preset: RenderPreset::High,
             scene_resolution: SceneResolution::default(),
             antialiasing: Antialiasing::default(),
             fsr2_quality: Fsr2Quality::default(),
+            fsr2_sharpening: true,
+            fsr2_sharpness: 0.8,
+            smaa_quality: SmaaQuality::default(),
+            anisotropic_filtering: AnisotropicFiltering::default(),
             bloom: Bloom::default(),
             shadow_quality: ShadowQuality::default(),
             ambient_occlusion: AmbientOcclusionQuality::default(),

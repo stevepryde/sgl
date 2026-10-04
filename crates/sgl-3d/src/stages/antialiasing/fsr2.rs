@@ -39,8 +39,9 @@
 //! - `FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE`: linear HDR input (docs 478–482).
 //! - `frameTimeDelta` in milliseconds from the frame's `frame_time_ms`
 //!   (docs 472–476).
-//! - Sharpening: RCAS on with sharpness 0.8, the sample's `m_RCASSharpen`
-//!   and `m_Sharpness`.
+//! - Sharpening: RCAS as `Settings::fsr2_sharpening` and `fsr2_sharpness`
+//!   choose, a slider as the docs (110) ask applications to expose; by
+//!   default on at 0.8, the sample's `m_RCASSharpen` and `m_Sharpness`.
 //! - Reactive and transparency-and-composition masks (docs 222–242) at the
 //!   render size, written as AMD's FSR sample writes them from its
 //!   translucency pass (`view::targets::mask_targets`): cleared before the camera's
@@ -118,10 +119,6 @@ pub(crate) fn mip_bias(render: [u32; 2], display: [u32; 2]) -> f32 {
     (render[0] as f32 / display[0] as f32).log2() - 1.
 }
 
-/// The sample's RCAS defaults (`m_RCASSharpen`, `m_Sharpness`).
-const SHARPENING: bool = true;
-const SHARPNESS: f32 = 0.8;
-
 /// Compute passes one dispatch may record: its clears and passes
 /// (`fsr2Dispatch`), with room to spare. Timed together as "FSR2", as AMD's
 /// sample profiles the whole upscale.
@@ -161,6 +158,8 @@ pub(crate) struct Inputs<'a> {
     pub frame_time_ms: f32,
     /// The frame's 1×1 R32Float exposure multiplier.
     pub exposure: &'a wgpu::Texture,
+    /// RCAS's sharpness in 0..=1, `None` for no sharpening.
+    pub sharpness: Option<f32>,
 }
 
 pub(crate) struct Fsr2 {
@@ -314,8 +313,8 @@ impl Fsr2 {
                 width: self.render_size[0],
                 height: self.render_size[1],
             },
-            enable_sharpening: SHARPENING,
-            sharpness: SHARPNESS,
+            enable_sharpening: inputs.sharpness.is_some(),
+            sharpness: inputs.sharpness.unwrap_or_default(),
             frame_time_delta: inputs.frame_time_ms,
             pre_exposure: 1.,
             reset: self.reset,

@@ -60,6 +60,7 @@ pub(super) fn render(
     );
     pipelines.specialise(device, effective.layers, scene);
     let pipelines: &GeometryPipelines = pipelines;
+    scene.materials.set_anisotropy(device, effective.anisotropy);
     #[cfg(feature = "diagnostics")]
     let mut probe =
         crate::stages::frame_probe::FrameProbe::for_frame(probe, device, effective.frame_probe);
