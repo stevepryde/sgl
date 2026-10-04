@@ -342,125 +342,124 @@ mod tests {
         });
     }
 
-    // Defect: warping an incomplete pre-effect/pre-volume source, wrong atmosphere
-    // target, applying medium twice, or leaving stale distortion when switched Off.
-    // Oracle: independently captured complete Off frame shifted by exactly two pixels.
+    // Defect: heat distorting anything but the complete composed frame: run
+    // before a transparent draw (glow or mist would land on the composite
+    // unwarped) or on another target than the composite that exposure and
+    // antialiasing read (the frame would not warp). Oracle: the same frame
+    // without heat, its composite shifted by the authored two pixels wherever
+    // the heat covers it and its footprint stays on screen.
     #[test]
-    #[ignore = "real GPU: complete HDR composition order"]
-    fn complete_frame_order() {
-        pollster::block_on(async {
-            use crate::settings::Settings;
-            use crate::{Camera, FrameInput, Renderer, Scene};
-            use glam::{Mat4, Vec3};
-            let adapter = wgpu::Instance::default()
-                .request_adapter(&Default::default())
-                .await
-                .unwrap();
-            let (device, queue) = adapter
-                .request_device(&crate::test_support::diagnostic_device_descriptor(&adapter))
-                .await
-                .unwrap();
-            let mut scene = Scene::new(&device, &queue);
-            let size = [32, 24];
-            let mut settings = Settings {
-                antialiasing: crate::settings::Antialiasing::Off,
-                bloom: crate::settings::Bloom::Off,
-                ..Settings::default()
-            };
-            let mut renderer = Renderer::new(
-                &device,
-                &queue,
-                crate::shading::gbuffer::COLOR,
-                size,
-                1.,
-                &settings,
-            )
-            .unwrap();
-            let output = crate::view::targets::target(
-                &device,
-                "caller output",
-                size,
-                crate::shading::gbuffer::COLOR,
-            );
-            let positions = [[-2., -2., -2.], [6., -2., -2.], [-2., 6., -2.]];
-            let glows = positions
-                .into_iter()
-                .zip([[0., 0., 0., 1.], [4., 0., 0., 1.], [0., 4., 0., 1.]])
-                .map(|(position, color)| crate::effects::Glow {
-                    position,
-                    color,
-                    uv: [0.; 2],
-                    kind: 0.,
-                    other: [0.; 3],
-                    soft_distance: 0.,
-                })
-                .collect::<Vec<_>>();
-            scene.update_effects(&device, &queue, &glows);
-            let heat_vertices =
-                [[-1., -1., -1.], [3., -1., -1.], [-1., 3., -1.]].map(|position| HeatDistortion {
-                    position,
-                    displacement: [2., 0.],
-                    weight: 1.,
-                });
-            scene
-                .update_heat_distortion(&queue, &heat_vertices)
-                .unwrap();
-            for atmosphere in [false, true] {
-                settings.atmosphere = atmosphere;
-                let mut baseline = None;
-                for enabled in [false, true, false] {
-                    settings.heat_distortion = enabled;
-                    let mut frame = FrameInput::new(Camera {
-                        view: Mat4::IDENTITY,
-                        projection: crate::perspective(std::f32::consts::FRAC_PI_2, 1., 0.1),
-                        eye: Vec3::ZERO,
-                    });
-                    frame.camera_cut = true;
-                    frame.atmosphere = true;
-                    let mut encoder = device.create_command_encoder(&Default::default());
-                    renderer.render(
-                        &device,
-                        &queue,
-                        &mut encoder,
-                        &mut scene,
-                        &frame,
-                        &settings,
-                        &output,
-                        None,
-                    );
-                    queue.submit([encoder.finish()]);
-                    renderer.finish_frame(&mut scene);
-                    let targets = renderer.targets();
-                    let target = if atmosphere {
-                        &targets.color
-                    } else {
-                        &targets.composite
-                    };
-                    let actual = crate::test_support::read(&device, &queue, target.texture(), 8);
-                    if let Some(ref reference) = baseline {
-                        let reference: &Vec<u8> = reference;
-                        for y in 0..size[1] {
-                            for x in 0..size[0] {
-                                let source_x = if enabled && x + 2 < size[0] { x + 2 } else { x };
-                                let dst = ((y * size[0] + x) * 8) as usize;
-                                let src = ((y * size[0] + source_x) * 8) as usize;
-                                assert_eq!(
-                                    &actual[dst..dst + 8],
-                                    &reference[src..src + 8],
-                                    "complete source {atmosphere} enabled {enabled} ({x},{y})"
-                                );
-                            }
-                        }
-                    } else {
-                        assert_ne!(
-                            &actual[8 * 32 * 12..8 * 32 * 12 + 8],
-                            &actual[8 * (32 * 12 + 16)..8 * (32 * 12 + 16) + 8],
-                            "fixture must carry a visible gradient"
-                        );
-                        baseline = Some(actual);
-                    }
-                }
+    fn heat_warps_the_composite_after_its_transparent_draws() {
+        use crate::effects::Glow;
+        use crate::settings::{Antialiasing, Bloom, SceneResolution, Settings};
+        use crate::{Camera, FrameInput, Mist, Renderer, Scene};
+        use glam::{Mat4, Vec3};
+        let Some((device, queue)) = crate::test_support::device() else {
+            return;
+        };
+        let size = [32, 24];
+        let mut scene = Scene::new(&device, &queue);
+        // Glow over the whole frame, its red growing to the right.
+        let glow = [
+            ([-20., -20., -2.], 0.),
+            ([60., -20., -2.], 4.),
+            ([-20., 60., -2.], 0.),
+        ]
+        .map(|(position, red)| Glow {
+            position,
+            uv: [0.; 2],
+            color: [red, 0., 0., 1.],
+            kind: 0.,
+            other: [0.; 3],
+            soft_distance: 0.,
+        });
+        scene.update_effects(&device, &queue, &glow);
+        // One mist billboard across the middle of the frame.
+        scene.update_mist(&device, &queue, &[[0., 0., -2.]]);
+        // Heat over the whole frame, shifting it two pixels.
+        let heat = [[-10., -10., -1.], [30., -10., -1.], [-10., 30., -1.]].map(|position| {
+            HeatDistortion {
+                position,
+                displacement: [2., 0.],
+                weight: 1.,
             }
         });
+        scene.update_heat_distortion(&queue, &heat).unwrap();
+        let mut input = FrameInput::new(Camera {
+            view: Mat4::IDENTITY,
+            projection: crate::perspective(
+                std::f32::consts::FRAC_PI_2,
+                size[0] as f32 / size[1] as f32,
+                0.1,
+            ),
+            eye: Vec3::ZERO,
+        });
+        input.camera_cut = true;
+        input.atmosphere = true;
+        input.mist = Mist {
+            thin_color: [0., 0., 1.],
+            dense_color: [0., 4., 0.],
+            opacity: 1.,
+            width: 3.,
+            height: 3.,
+        };
+        let settings = Settings {
+            scene_resolution: SceneResolution::Full,
+            antialiasing: Antialiasing::Off,
+            bloom: Bloom::Off,
+            ..Settings::default()
+        };
+        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let output = crate::view::targets::target(
+            &device,
+            "caller output",
+            size,
+            crate::shading::gbuffer::COLOR,
+        );
+        let mut composite = |heat_distortion| {
+            let settings = Settings {
+                heat_distortion,
+                ..settings
+            };
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+            crate::test_support::read(&device, &queue, renderer.targets().composite.texture(), 8)
+        };
+        let unwarped = composite(false);
+        let warped = composite(true);
+        let texel = |frame: &[u8], x: u32, y: u32| {
+            let i = ((y * size[0] + x) * 8) as usize;
+            frame[i..i + 8].to_vec()
+        };
+        // A misplaced heat shows only where the frame varies across it.
+        let channel = |x, channel: usize| {
+            crate::test_support::half(&texel(&unwarped, x, size[1] / 2)[channel * 2..])
+        };
+        assert!(
+            channel(4, 0) < channel(28, 0),
+            "the glow must brighten to the right"
+        );
+        assert!(channel(16, 1) > 0., "the mist must show");
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                let source = if x + 2 < size[0] { x + 2 } else { x };
+                assert_eq!(
+                    texel(&warped, x, y),
+                    texel(&unwarped, source, y),
+                    "({x},{y}) is not the unwarped frame's ({source},{y})"
+                );
+            }
+        }
     }
 }
