@@ -645,6 +645,10 @@ code; it does not redeclare a struct, binding or function another module owns.
    not build a path around it. A second implementation of a stage exists only
    as a setting with a real trade-off (S3D-6) or for a benefit measured on the
    consumer's route, and it writes the same targets under the same contract.
+   Using an optional device feature where the adapter has it (S3D-1), such
+   as subgroup operations, with the portable code as the fallback, is that
+   stage specialised, not a path around it: take a measured native speed-up
+   even where the browser cannot have it.
 4. **AR-4 — Thin renderer.** `renderer` holds no pipelines, shaders or
    per-feature logic. It selects and orders stages and lends them what they
    share.
