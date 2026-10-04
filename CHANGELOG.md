@@ -15,6 +15,19 @@ full API details.
 
 ## Unreleased
 
+### Reflection source completion is built at renderer creation
+
+- **Scope:** `sgl-3d` `Renderer::new`. It built reflection source completion
+  and composition for no screen-space method and no ambient occlusion, so a
+  renderer whose settings turn on `Settings::screen_space_reflections` or
+  `Settings::ambient_occlusion` compiled a shader module, a compute and a
+  render pipeline during its first frame. `Renderer::new` now builds them for
+  its settings as a `perspective` camera's frame takes them, and turning
+  either setting on or off later still rebuilds them on the next frame.
+  Rendered frames are unchanged.
+- **Migration:** no game-code changes. Renderer creation now takes that
+  compile instead of the first frame.
+
 ### The fog's detail spread and history weight are SGL3D's
 
 - **Scope:** `sgl-3d` `Fog::detail_spread` and `Fog::temporal_reprojection`

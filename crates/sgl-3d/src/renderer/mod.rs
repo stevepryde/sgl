@@ -124,7 +124,9 @@ fn scene_size(
 impl Renderer {
     /// A renderer presenting to `output_format` at `output_size` physical
     /// pixels, for a window of `device_scale` physical pixels per logical
-    /// pixel, sized for `settings`.
+    /// pixel, sized for `settings`. Reflection source completion is built for
+    /// them, so a first frame from a `perspective` camera builds it no
+    /// pipeline.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -164,9 +166,14 @@ impl Renderer {
             layers,
         );
         let targets = SharedTargets::new(device, render);
+        let first_frame = effective::first_frame(
+            settings,
+            antialiasing.fsr2_running(),
+            pipelines.fused_supported,
+        );
         Ok(Self {
             opaque: Opaque::new(device, &bindings.unlit),
-            reflections: Reflections::new(device, queue, render),
+            reflections: Reflections::new(device, queue, render, &first_frame),
             transparent: Transparent::new(device, &bindings.unlit, &targets),
             exposure: Exposure::new(device),
             antialiasing,

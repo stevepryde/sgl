@@ -248,6 +248,11 @@ impl Renderer {
         self.pipelines.anisotropy_inline
     }
 
+    /// The reflections stage.
+    pub(crate) fn test_reflections(&self) -> &crate::stages::reflections::Reflections {
+        &self.reflections
+    }
+
     /// The last frame's FSR2 context.
     pub(crate) fn test_fsr2(&self) -> Option<&crate::stages::antialiasing::fsr2::Fsr2> {
         self.antialiasing.fsr2()

@@ -1,8 +1,17 @@
-//! Source completion's environment and probe specular, and probe culling.
+//! Source completion's environment and probe specular, probe culling, and
+//! the variant a renderer builds completion for.
 use super::*;
 use crate::view::bindings::FogVolume;
 use glam::camera;
 use glam::{Mat4, Vec3, Vec4};
+
+/// Environment and probe specular, without incident radiance or ambient
+/// occlusion.
+const ENVIRONMENT: Variant = Variant {
+    environment: true,
+    incident: false,
+    diffuse_occlusion: false,
+};
 
 /// Full ambient visibility, which `Scene` binds while ambient occlusion is off.
 pub(super) fn visible(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
@@ -242,7 +251,7 @@ fn source_environment_blends_overlapping_probes_and_the_sky_by_influence() {
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
         let depth_view = depth.create_view(&Default::default());
-        let mut source = ReflectionSource::new(&device, size);
+        let mut source = ReflectionSource::new(&device, size, ENVIRONMENT);
         let output = ReflectionSource::target(&device, size, "complete opaque beauty");
         let mut encoder = device.create_command_encoder(&Default::default());
         {
@@ -421,7 +430,7 @@ fn probe_tiles_keep_the_probes_whose_influence_reaches_their_geometry() {
     };
     // Culled first at another size, so a group kept from then binds other
     // tiles and depth.
-    let mut source = ReflectionSource::new(&device, [32, 32]);
+    let mut source = ReflectionSource::new(&device, [32, 32], ENVIRONMENT);
     queue.submit([cull(&mut source, &depth_target([32, 32])).finish()]);
     source.resize(&device, size);
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -441,4 +450,90 @@ fn probe_tiles_keep_the_probes_whose_influence_reaches_their_geometry() {
     expected[0] = 0b101;
     expected[buckets] = 0b100;
     assert_eq!(tiles, expected, "left then right tile buckets");
+}
+
+// A renderer builds source completion for its settings' screen-space method
+// and ambient occlusion, so a first frame from a `perspective` camera keeps
+// the pipeline it was created with.
+#[test]
+fn first_frame_keeps_the_source_completion_built_for_the_settings() {
+    use crate::settings::{
+        AmbientOcclusionQuality, Antialiasing, Bloom, ReflectionMethod, ScreenSpaceReflections,
+        Settings,
+    };
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let size = [64, 48];
+    let cases = [
+        (
+            ScreenSpaceReflections::Off,
+            ReflectionMethod::Crystal,
+            AmbientOcclusionQuality::Off,
+        ),
+        (
+            ScreenSpaceReflections::Half,
+            ReflectionMethod::Crystal,
+            AmbientOcclusionQuality::Off,
+        ),
+        (
+            ScreenSpaceReflections::Full,
+            ReflectionMethod::Velvet,
+            AmbientOcclusionQuality::Medium,
+        ),
+        (
+            ScreenSpaceReflections::Off,
+            ReflectionMethod::Crystal,
+            AmbientOcclusionQuality::Low,
+        ),
+    ];
+    for (screen_space_reflections, reflection_method, ambient_occlusion) in cases {
+        let settings = Settings {
+            antialiasing: Antialiasing::Off,
+            bloom: Bloom::Off,
+            atmosphere: false,
+            ambient_occlusion,
+            screen_space_reflections,
+            reflection_method,
+            ..Settings::default()
+        };
+        let mut renderer = crate::Renderer::for_test(&device, &queue, size, &settings);
+        let created = renderer
+            .test_reflections()
+            .source
+            .completion
+            .pipeline
+            .clone();
+        let mut scene = crate::Scene::new(&device, &queue);
+        let input = crate::FrameInput::new(crate::Camera {
+            view: Mat4::IDENTITY,
+            projection: crate::perspective(1., size[0] as f32 / size[1] as f32, 0.1),
+            eye: Vec3::ZERO,
+        });
+        let output = crate::view::targets::target(
+            &device,
+            "first frame",
+            size,
+            crate::shading::gbuffer::COLOR,
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+        assert_eq!(
+            renderer.test_reflections().source.completion.pipeline,
+            created,
+            "{screen_space_reflections:?} {reflection_method:?} with \
+             {ambient_occlusion:?} ambient occlusion rebuilt source completion",
+        );
+    }
 }
