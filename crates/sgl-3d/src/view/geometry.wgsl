@@ -9,12 +9,6 @@ struct SceneOutput {
  @location(0) color:vec4<f32>,
  @location(1) motion:vec2<f32>,
 }
-// The G-buffer's motion (shading/gbuffer.wgsl).
-fn motion_vector(i:Fragment)->vec2<f32> {
- let current=i.current_clip.xy/i.current_clip.w*vec2(0.5,-0.5)+vec2(0.5);
- let previous=i.previous_clip.xy/max(i.previous_clip.w,0.00001)*vec2(0.5,-0.5)+vec2(0.5);
- return current-previous;
-}
 struct StableMaterial {
  normal:vec4<f32>,
  material:vec4<f32>,
@@ -39,7 +33,7 @@ struct StableOutput {
 }
 fn stable_surface(i:Fragment,s:Surface)->StableOutput {
  let m=stable_material(s);
- return StableOutput(m.normal,m.material,motion_vector(i),m.f0,m.anisotropy);
+ return StableOutput(m.normal,m.material,gbuffer_encode_motion(i.current_clip,i.previous_clip),m.f0,m.anisotropy);
 }
 // The G-buffer records no emission.
 fn stable_raster_surface(i:Fragment,front:bool)->Surface {
@@ -73,7 +67,7 @@ fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
   material_alpha_discard(base.a);
   shaded=shade_lit(s,context);
  }
- return ShadedFragment(vec4(shaded.color,base.a),vec4(shaded.ambient,0.),motion_vector(i));
+ return ShadedFragment(vec4(shaded.color,base.a),vec4(shaded.ambient,0.),gbuffer_encode_motion(i.current_clip,i.previous_clip));
 }
 // Probe captures, which keep the ambient diffuse in color.
 @fragment fn fs(i:Fragment,@builtin(front_facing) front:bool)->SceneOutput {

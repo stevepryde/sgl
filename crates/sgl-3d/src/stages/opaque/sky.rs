@@ -8,6 +8,7 @@ pub(crate) static SKY: shading::Module = shading::Module {
         &shading::BIND_UNLIT,
         &shading::ENVIRONMENT,
         &shading::FULLSCREEN,
+        &shading::GBUFFER,
     ],
 };
 

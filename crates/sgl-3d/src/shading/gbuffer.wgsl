@@ -7,8 +7,8 @@
 //  strength, environment scale.
 // f0: specular reflectance at normal incidence; alpha 1 on lit surfaces.
 // anisotropy: world tangent in xyz, strength in w.
-// motion: current minus previous unjittered UV, +y down (view/geometry.wgsl
-//  motion_vector).
+// motion: current minus previous unjittered UV, +y down, at most two screens
+//  along its longer axis (gbuffer_encode_motion).
 // ambient: in rgb, the ambient diffuse radiance within lit colour (Shaded in
 //  surface.wgsl) before occlusion; source completion subtracts the share its
 //  ambient visibility hides. Zero where nothing lit was drawn.
@@ -76,4 +76,35 @@ fn gbuffer_encode_f0(f0:vec3<f32>,lit:bool)->vec4<f32> {
 }
 fn gbuffer_lit(packed:vec4<f32>)->bool {
  return packed.a>=0.5;
+}
+
+// The motion of a point from its unjittered clip positions in this frame and
+// the last submitted one, for geometry and the sky alike, at most
+// GBUFFER_MOTION_LIMIT screens along its longer axis with its direction kept.
+// Two screens is off-screen for every temporal consumer, even after the
+// reflections' 3x3 vicinity search moves the reprojected position a few
+// texels, and finite in the half-float target. A previous position on or
+// behind the previous camera's plane (w <= 0) has no place on screen: its
+// motion is the limit, away from where its clip position points, as a point
+// in front tends to as its w reaches zero. Wicked Engine 4323a33
+// (WickedEngine/shaders/visibility_velocityCS.hlsl) likewise writes velocity
+// only for a positive previous w, clamped to one screen. The current w must
+// be positive, as a rasterized fragment's is; callers handle a point the
+// current camera cannot place on screen.
+const GBUFFER_MOTION_LIMIT:f32=2.;
+fn gbuffer_encode_motion(current_clip:vec4<f32>,previous_clip:vec4<f32>)->vec2<f32> {
+ let current=current_clip.xy/current_clip.w*vec2(0.5,-0.5);
+ // The motion times the previous w, finite as w reaches zero; at or behind
+ // the plane only the previous position's direction remains.
+ let previous_w=max(previous_clip.w,0.);
+ let scaled=current*previous_w-previous_clip.xy*vec2(0.5,-0.5);
+ let longest=max(abs(scaled.x),abs(scaled.y));
+ if previous_w>0. && longest<=GBUFFER_MOTION_LIMIT*previous_w {
+  return scaled/previous_w;
+ }
+ // Directly behind the previous camera no direction remains.
+ if longest==0. {
+  return vec2(GBUFFER_MOTION_LIMIT,0.);
+ }
+ return scaled/longest*GBUFFER_MOTION_LIMIT;
 }
