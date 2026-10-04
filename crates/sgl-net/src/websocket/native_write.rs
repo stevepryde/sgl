@@ -57,12 +57,12 @@ where
     }
 }
 
-/// Writes and flushes a ping or pong. On `WouldBlock` the frame stays
-/// buffered and goes out on the next writable edge, as game frames do, so a
-/// blocked socket is not a failure: the caller-clock timeout decides whether
-/// a slow peer is dead.
-pub(super) fn send_control<S: MessageSink>(sink: &mut S, message: Message) -> WebSocketResult<()> {
-    match sink.write_message(message) {
+/// Writes and flushes a ping. On `WouldBlock` the ping stays buffered and
+/// goes out on the next writable edge, as game frames do, so a blocked socket
+/// is not a failure: the caller-clock timeout decides whether a slow peer is
+/// dead.
+pub(super) fn send_ping<S: MessageSink>(sink: &mut S, payload: Vec<u8>) -> WebSocketResult<()> {
+    match sink.write_message(Message::Ping(payload.into())) {
         Ok(()) => flush(sink).map(|_| ()),
         Err(WebSocketError::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => Ok(()),
         Err(error) => Err(error),

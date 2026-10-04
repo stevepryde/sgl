@@ -20,10 +20,13 @@ full API details.
 - **Scope:** `sgl-net` `NativeWebSocketServer` and `NativeWebSocketClient`.
   A ping, or a pong reply, that met a full send buffer (a slow peer while the
   other side streams state) disconnected the peer with
-  `DisconnectReason::Transport`. The frame now stays buffered and goes out
-  when the socket takes writes again, as game frames already did; the
-  caller-clock `timeout_ms` still decides when a silent peer has timed out.
+  `DisconnectReason::Transport`. Both now stay buffered and go out when the
+  socket takes writes again, as game frames already did; the caller-clock
+  `timeout_ms` still decides when a silent peer has timed out.
 - **Migration:** no game-code changes.
+- **Validate:** throttle or stall a client while the server streams state;
+  it stays connected until the timeout (or reliable overflow) rather than
+  dropping as `Transport` at the next ping.
 
 ### `sgl_2d::ui::edit_apply` removed
 

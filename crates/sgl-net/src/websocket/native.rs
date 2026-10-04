@@ -24,7 +24,7 @@ use tungstenite::http::{HeaderValue, StatusCode, Uri};
 use tungstenite::protocol::{Message, WebSocketConfig};
 
 use self::worker::{IoWorker, WorkerHandle};
-use super::native_write::{drain_outbound, send_control};
+use super::native_write::{drain_outbound, send_ping};
 use super::queue::{PeerState, QueuedFrame};
 use super::{MAX_WEBSOCKET_FRAME_BYTES, WebSocketIdentity, decode_envelope, encode_envelope};
 use crate::{
@@ -967,13 +967,11 @@ where
                     generation: 0,
                 });
             }
-            Ok(Message::Ping(payload)) => {
+            // Tungstenite queues the pong itself; the next read or flush
+            // writes it.
+            Ok(Message::Ping(_)) => {
                 reads += 1;
                 shared.observe_activity();
-                if send_control(socket, Message::Pong(payload)).is_err() {
-                    shared.close(DisconnectReason::Transport);
-                    closing = true;
-                }
             }
             Ok(Message::Pong(payload)) => {
                 reads += 1;
@@ -1002,7 +1000,7 @@ where
     let saturated = reads >= MAX_READS_PER_WAKE;
 
     if let Some(payload) = shared.take_ping()
-        && send_control(socket, Message::Ping(payload.into())).is_err()
+        && send_ping(socket, payload).is_err()
     {
         shared.close(DisconnectReason::Transport);
         return SocketTick::Continue { idle: false };
@@ -1293,7 +1291,6 @@ mod tests {
             SocketTick::Continue { idle: true }
         );
         assert_eq!(lock(&shared.state).terminal(), None);
-        assert!(socket.get_ref().outbound.is_empty());
 
         socket.get_mut().writes_blocked = false;
         assert_eq!(
