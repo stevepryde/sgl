@@ -166,14 +166,14 @@ Environment and probe specular always apply. On top of them:
   highlights, then AgX tone mapping and a post-saturation.
 - **Volumetric fog** (`FrameInput::fog`, `Fog`): Godot's froxel fog. The
   frame's medium (density with height falloff, albedo, anisotropy, the
-  share of ambient light it scatters) and denser boxes of it
-  (`Scene::update_fog_volumes`, `FogVolume`), lit by the directional lights
-  through their cascades, the clustered point, spot and rectangle lights
-  through their shadows, each scaled by its `fog_energy`, and the ambient
-  light, so light shafts form where openings let a shadowed light through.
-  Opaque surfaces, the sky, blended surfaces, glow and mist all fog from one
-  volume. `Settings::fog_quality` sets its resolution and
-  `Settings::fog_filter` its blur.
+  share of ambient light it scatters, none by default as Godot's) and
+  denser boxes of it (`Scene::update_fog_volumes`, `FogVolume`), lit by the
+  directional lights through their cascades, the clustered point, spot and
+  rectangle lights through their shadows, each scaled by its `fog_energy`,
+  and that share of the ambient light, so light shafts form where openings
+  let a shadowed light through. Opaque surfaces, the sky, blended surfaces,
+  glow and mist all fog from one volume. `Settings::fog_quality` sets its
+  resolution and `Settings::fog_filter` its blur.
   [Volumetric fog](../README.md#volumetric-fog).
 - **Mist**: positioned billboards (`Scene::update_mist`, their look
   `FrameInput::mist`).

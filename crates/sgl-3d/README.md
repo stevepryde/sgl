@@ -230,7 +230,7 @@ frame.fog = Fog {
     density: 0.002,          // extinction per metre at and below `height`
     albedo: [0.9, 0.95, 1.], // the share of extinction that scatters
     anisotropy: 0.3,         // Henyey-Greenstein g: forward scattering
-    ambient: 1.,             // the share of the ambient light it scatters
+    ambient: 1.,             // the share of the ambient light it scatters (default 0)
     height: 0.,
     height_falloff: 0.05,    // density halves every 20 m above `height`
     length: 400.,            // metres of view depth the volume covers
@@ -264,8 +264,9 @@ fog stage:
   point, spot and rectangle lights (baked ones too) through the local-light
   atlas, each shadow one tap that the reprojection resolves (a local light's
   one hardware 2×2 tap, as Bevy's volumetric fog samples them), and
-  `ambient` of the hemisphere fill and environment diffuse, scattered toward
-  the camera by Henyey–Greenstein's phase function of `anisotropy`; each
+  `ambient` (0 by default, as Godot's `volumetric_fog_ambient_inject`) of
+  the hemisphere fill and environment diffuse, scattered toward the camera by
+  Henyey–Greenstein's phase function of `anisotropy`; each
   light's `fog_energy` scales its share, and a light at or below 0.001 is
   skipped, attenuation and shadow lookup, as Godot does;
 - blends each froxel with where it lay in the last frame's volume, keeping

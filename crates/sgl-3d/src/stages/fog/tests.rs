@@ -161,10 +161,13 @@ fn an_empty_medium_leaves_the_frame_as_no_fog_does() {
         Vec3::new(0., -0.5, -6.),
         Vec3::new(3., 1., 3.),
     );
+    // All of the hemisphere fill's ambient light, so the ambient's
+    // scattering is among what an empty medium must not add.
     let mut frame = input(Fog {
         density: 0.,
         length: 30.,
         anisotropy: 0.5,
+        ambient: 1.,
         ..Fog::default()
     });
     frame.directional_lights[0] = Some(DirectionalLight {

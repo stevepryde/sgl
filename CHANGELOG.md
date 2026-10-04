@@ -15,6 +15,31 @@ full API details.
 
 ## Unreleased
 
+### The fog scatters no ambient light by default, as Godot's
+
+- **Scope:** `sgl-3d` `Fog::ambient` (`FrameInput::fog`), the share of the
+  frame's ambient light (hemisphere fill and environment diffuse) the
+  medium scatters. `Fog::default()`, and so `FrameInput::new`, set it to 1;
+  it is now 0, Godot's `volumetric_fog_ambient_inject` default (b130438
+  `scene/resources/environment.h`). With the default, only the directional
+  and scene lights light the fog: fog outside their reach and in their
+  shadows only dims what lies behind it instead of glowing with the ambient
+  light. A game that sets `ambient` sees no change.
+- **Migration:** to keep the previous look, set the share explicitly where
+  the game builds its fog:
+
+  ```rust
+  // Before
+  frame.fog = Fog { density: 0.02, ..Fog::default() };
+  // After
+  frame.fog = Fog { density: 0.02, ambient: 1., ..Fog::default() };
+  ```
+
+  Fog volumes (`Scene::update_fog_volumes`) scatter this share too: a game
+  that only adds volumes sets `frame.fog.ambient = 1.` to keep their look.
+  Afterwards, look at fog in shadow and away from lights, and at distant
+  fog against the sky.
+
 ### The fog takes one directional shadow cascade and one tap, as Godot's fog
 
 - **Scope:** `sgl-3d` volumetric fog (`FrameInput::fog`) lit by a
