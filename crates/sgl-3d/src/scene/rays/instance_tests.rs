@@ -685,3 +685,73 @@ fn a_frame_after_an_abandoned_one_traces_the_edited_scene() {
     assert_eq!(observed[0].nearest[0], 1);
     assert_eq!(f32::from_bits(observed[0].nearest[4]), 6.);
 }
+
+// Plausible defect: every entry set while no frame traces (world-space
+// reflections off) queues another upload, so the scene retains memory
+// without bound and uploads it all when tracing starts. Retained resources
+// follow content: at most one pending entry per instance, and the frame
+// that traces next shows each instance's last pose.
+#[test]
+fn entries_set_over_untraced_frames_stay_one_per_instance() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let model = scene
+        .add_asset(
+            &device,
+            &queue,
+            asset(vec![triangle(0., 0., false, 0)], true),
+        )
+        .unwrap()
+        .model;
+    let at = |instance: usize, depth: f32| {
+        Mat4::from_translation(Vec3::new(instance as f32 * 4., 0., -depth))
+    };
+    let instances: Vec<_> = (0..32)
+        .map(|instance| {
+            scene
+                .add_instance(
+                    &device,
+                    &queue,
+                    state(model, at(instance, 1.), true),
+                    Mobility::Moving,
+                )
+                .unwrap()
+        })
+        .collect();
+    for frame in 0..200 {
+        for (instance, &id) in instances.iter().enumerate() {
+            let depth = 1. + (frame % 7) as f32 + instance as f32 * 0.01;
+            scene
+                .set_instance(&queue, id, state(model, at(instance, depth), true))
+                .unwrap();
+        }
+        scene.finish_frame();
+    }
+    assert!(
+        scene.ray_instances.pending() <= instances.len(),
+        "{} entries pending for {} instances",
+        scene.ray_instances.pending(),
+        instances.len()
+    );
+    let observer = Observer::new(&device, &scene);
+    let rays: Vec<_> = (0..instances.len())
+        .map(|instance| down(Vec3::new(instance as f32 * 4., 0., 0.), 20.))
+        .collect();
+    let observed = observer.observe(&device, &queue, &mut scene, &rays);
+    for (instance, observed) in observed.iter().enumerate() {
+        let depth = 1. + (199 % 7) as f32 + instance as f32 * 0.01;
+        assert_eq!(observed.nearest[0], 1, "instance {instance}");
+        assert!(
+            (f32::from_bits(observed.nearest[4]) - depth).abs() < 1e-5,
+            "instance {instance} at {}, expected {depth}",
+            f32::from_bits(observed.nearest[4])
+        );
+    }
+    assert_eq!(
+        scene.ray_instances.pending(),
+        0,
+        "a traced frame uploads them"
+    );
+}

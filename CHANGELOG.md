@@ -27,7 +27,10 @@ full API details.
   are built on the CPU, the moving one every traced frame and the static
   one after a static edit. A ray walks the BVH of the kind it needs, then
   the models it reaches. Rays see the same geometry as before (capture-visible,
-  non-deforming instances), so reflections look the same.
+  non-deforming instances), so reflections look the same. Adding an
+  instance also reserves room for its kind's instance BVH in the ray
+  source, about 30 bytes an instance in doubling steps, so `add_instance`
+  can return `SceneError::DeviceLimit` when the ray source is nearly full.
 - **Migration:** no game-code changes. Afterwards, compare the
   `world reflection rays` timing group on the game's route; scenes with many
   instances should see it fall.

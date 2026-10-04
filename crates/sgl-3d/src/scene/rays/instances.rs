@@ -26,7 +26,8 @@ use super::bvh::{self, Primitive};
 use super::{RayModel, SceneRays};
 use crate::content::instance::Mobility;
 use crate::scene::SceneError;
-use glam::{DVec3, Mat4, Vec3};
+use crate::scene::static_edits::posed_bounds;
+use glam::{Mat4, Vec3};
 use std::ops::Range;
 
 /// An instance's entry, at its index in the entry buffer.
@@ -53,42 +54,14 @@ pub(crate) struct InstanceLeaf {
 /// An instance an instance BVH bounds (`bounded`).
 pub(crate) type Bounded = Primitive<InstanceLeaf>;
 
-/// Instance `index`, whose model has triangles within `bounds`, at `pose`:
-/// the bounds' corners are posed in double precision and rounded outward,
-/// so the box holds the posed model whatever the rounding.
+/// Instance `index`, whose model has triangles within `bounds`, at `pose`,
+/// bounded by `posed_bounds`, which holds the posed model whatever the
+/// rounding.
 pub(crate) fn bounded(index: usize, bounds: [Vec3; 2], pose: Mat4) -> Bounded {
-    let pose = pose.as_dmat4();
-    let [low, high] = bounds.map(|corner| corner.as_dvec3());
-    let mut min = DVec3::splat(f64::INFINITY);
-    let mut max = DVec3::splat(f64::NEG_INFINITY);
-    for corner in 0..8 {
-        let p = pose.transform_point3(DVec3::select(
-            glam::BVec3::new(corner & 1 != 0, corner & 2 != 0, corner & 4 != 0),
-            high,
-            low,
-        ));
-        min = min.min(p);
-        max = max.max(p);
-    }
-    let down = |v: f64| {
-        let rounded = v as f32;
-        if f64::from(rounded) > v {
-            rounded.next_down()
-        } else {
-            rounded
-        }
-    };
-    let up = |v: f64| {
-        let rounded = v as f32;
-        if f64::from(rounded) < v {
-            rounded.next_up()
-        } else {
-            rounded
-        }
-    };
+    let [min, max] = posed_bounds(bounds, pose);
     Primitive {
-        min: Vec3::from_array(min.to_array().map(down)),
-        max: Vec3::from_array(max.to_array().map(up)),
+        min,
+        max,
         leaf: InstanceLeaf {
             index: index as u32,
         },
@@ -146,7 +119,10 @@ pub(crate) struct RayInstances {
     buffer: wgpu::Buffer,
     /// The entries as last set, which `buffer` mirrors once uploaded.
     entries: Vec<InstanceEntry>,
-    /// The indices of entries set since the last upload.
+    /// Whether each entry was set since the last upload.
+    dirty: Vec<bool>,
+    /// The indices of the dirty entries, each once, so frames that trace
+    /// nothing keep at most one per entry however often they set it.
     written: Vec<u32>,
     /// The entries an upload copies from, packed.
     staging: wgpu::Buffer,
@@ -168,6 +144,7 @@ impl RayInstances {
         Self {
             buffer: entry_buffer(device, 1),
             entries: Vec::new(),
+            dirty: Vec::new(),
             written: Vec::new(),
             staging: staging_buffer(device, 1),
             packed: Vec::new(),
@@ -208,7 +185,9 @@ impl RayInstances {
                 return Err(SceneError::DeviceLimit);
             }
             self.buffer = entry_buffer(device, (count as u64).max(capacity * 2).min(limit));
-            self.written.extend(0..self.entries.len() as u32);
+            for index in 0..self.entries.len() {
+                self.mark(index);
+            }
         }
         match kind {
             Mobility::Static => {
@@ -228,6 +207,7 @@ impl RayInstances {
     pub fn set(&mut self, index: usize, model: RayModel, pose: Mat4) {
         if self.entries.len() <= index {
             self.entries.resize(index + 1, bytemuck::Zeroable::zeroed());
+            self.dirty.resize(index + 1, false);
         }
         self.entries[index] = InstanceEntry {
             inverse_world: pose.inverse().to_cols_array_2d(),
@@ -235,7 +215,21 @@ impl RayInstances {
             bvh_root: model.bvh_root,
             padding: [0; 2],
         };
-        self.written.push(index as u32);
+        self.mark(index);
+    }
+
+    /// Marks entry `index` for the next upload.
+    fn mark(&mut self, index: usize) {
+        if !self.dirty[index] {
+            self.dirty[index] = true;
+            self.written.push(index as u32);
+        }
+    }
+
+    /// The entries the next upload writes.
+    #[cfg(test)]
+    pub fn pending(&self) -> usize {
+        self.written.len()
     }
 
     /// Whether the static BVH must be built again after `edits` static
@@ -279,13 +273,11 @@ impl RayInstances {
             return;
         }
         self.written.sort_unstable();
-        self.written.dedup();
         self.packed.clear();
-        self.packed.extend(
-            self.written
-                .iter()
-                .map(|&index| self.entries[index as usize]),
-        );
+        for &index in &self.written {
+            self.dirty[index as usize] = false;
+            self.packed.push(self.entries[index as usize]);
+        }
         let stride = std::mem::size_of::<InstanceEntry>() as u64;
         let capacity = self.staging.size() / stride;
         if self.packed.len() as u64 > capacity {
