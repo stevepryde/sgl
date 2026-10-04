@@ -49,7 +49,9 @@ rewriting their saved one.
 
 These are the game's authored look or per-frame state, fields of `FrameInput`
 ([`src/frame_input.rs`](../src/frame_input.rs)). Keep them out of settings
-menus.
+menus. Every behaviour that changes the image is either a player setting above
+or a value here or on the scene type it belongs to (S3D-6); none is fixed
+beyond the game's reach.
 
 - `exposure`: fixed stops, or automatic exposure with its histogram range,
   filter, speeds, limits, compensation curve and metering mask.

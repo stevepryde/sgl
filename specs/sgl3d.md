@@ -82,9 +82,14 @@ settings SGL3D has today.
 6. **S3D-6 — Settings.** SGL3D exposes quality choices as one plain value,
    `settings::Settings`; games persist it and own presets and settings UI.
    Library preset resolution and capability fallback never rewrite saved
-   choices and report the effective result separately. Offer a choice only for
-   a real quality/performance trade-off; the top tier is the best implemented
-   quality. `SceneResolution` Hd/FullHd fit within 1280×720 and 1920×1080
+   choices and report the effective result separately. Every behaviour that
+   changes the image (an effect, its strength, a filter, a temporal blend, a
+   light's part in an effect) is a value the game can set, even when the game
+   shows it to no player: a `Settings` field when it is a player's
+   quality/performance choice, otherwise a field of `FrameInput` or of the
+   scene type it belongs to. Its default follows the engine it was ported
+   from. Offer a player choice only for a real quality/performance trade-off;
+   the top tier is the best implemented quality. `SceneResolution` Hd/FullHd fit within 1280×720 and 1920×1080
    physical pixels, preserving aspect ratio without upscaling.
 7. **S3D-7 — Existing consumers.** Existing 2D/browser consumers and headless
    core/net builds keep working. SGL3D builds for `wasm32-unknown-unknown` and
