@@ -15,6 +15,23 @@ full API details.
 
 ## Unreleased
 
+### FSR2 runs below a 64-pixel scene size
+
+- **Scope:** `sgl-3d` with `Antialiasing::Fsr2`, through the `sp-fidelity`
+  and `sp-fidelity-wgpu` 0.1.1 dependencies. When the scene size (FSR2's
+  maximum render size) had no side of 64 pixels or more, the first FSR2 frame
+  failed wgpu validation in the luminance pyramid and FSR2 fell back to TAA.
+  The backend now binds a luminance mip the texture lacks as its last mip, as
+  AMD's Vulkan backend does, so FSR2 runs at those sizes. A scene size with a
+  1-pixel side still cannot create FSR2's context (AMD's SDK sizes a texture
+  at half the maximum render size, which would be empty) and falls back to
+  TAA with `Renderer::fsr2_error` set.
+- **Migration:** no game-code changes. Regenerate the game's distribution
+  notices for the new `sp-fidelity` versions; their licences are unchanged.
+- **Validate:** with FSR2 chosen, render at a small scene size (for example a
+  32×32 view) and check that `Renderer::antialiasing_in_effect` stays
+  `Antialiasing::Fsr2` with no `Renderer::fsr2_error`.
+
 ### Native WebSocket keeps a backpressured peer when a ping or pong is due
 
 - **Scope:** `sgl-net` `NativeWebSocketServer` and `NativeWebSocketClient`.
