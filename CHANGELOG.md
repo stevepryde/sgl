@@ -35,13 +35,16 @@ full API details.
   counts every buffer the library creates, not only those created with
   contents, and `Counters::geometry_growths` counts slab growths.
 - **Migration:** no game-code changes, except for diagnostics code that
-  reads the renamed `SceneResources` fields:
+  reads the renamed `SceneResources` fields. `geometry` is the slabs'
+  capacity, which includes room they have not filled; the bytes the old
+  `mesh_buffers` summed are now `geometry_live`, and `mesh_buffer_count` is
+  `geometry_buffers`, the slabs:
 
   ```rust
   // Before
-  let bytes = resources.mesh_buffers;
+  let (bytes, buffers) = (resources.mesh_buffers, resources.mesh_buffer_count);
   // After
-  let bytes = resources.geometry;
+  let (bytes, buffers) = (resources.geometry_live, resources.geometry_buffers);
   ```
 
   Afterwards, exercise the game's shadows (directional and local, with

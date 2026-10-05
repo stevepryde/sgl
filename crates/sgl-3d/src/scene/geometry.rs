@@ -174,7 +174,7 @@ impl GeometryBuffers {
                 count,
             };
         }
-        let capacity = ((MIN_SLAB_BYTES / elements.size()) as u32)
+        let capacity = (MIN_SLAB_BYTES.div_ceil(elements.size()) as u32)
             .max(count)
             .min(most);
         let mut ranges = Ranges::new(0);
@@ -294,4 +294,57 @@ fn slab_buffer(device: &wgpu::Device, elements: Elements, capacity: u32) -> wgpu
             mapped_at_creation: false,
         },
     )
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::{Elements, GeometryBuffers, MIN_SLAB_BYTES};
+    use crate::shading::vertex::CasterVertex;
+    use crate::test_support;
+
+    // Plausible defect: a slab that grows loses what it held (a copy left
+    // out, short or at the wrong offset), so every mesh placed before the
+    // growth casts the wrong shadow. The oracle is the test's own data: a
+    // mesh's positions, placed before a larger mesh outgrows the slab's
+    // first megabyte, read back from the grown slab as they were given.
+    #[test]
+    fn a_grown_slab_keeps_what_it_held() {
+        let Some((device, queue)) = test_support::device() else {
+            return;
+        };
+        let mut geometry = GeometryBuffers::new(&device);
+        let positions = |count: usize, from: f32| -> Vec<CasterVertex> {
+            (0..count)
+                .map(|index| CasterVertex {
+                    position: [from + index as f32, -(index as f32), 0.5 * index as f32],
+                })
+                .collect()
+        };
+        let first = positions(100, 1.);
+        let placed = geometry
+            .place(
+                &device,
+                &queue,
+                Elements::Positions,
+                bytemuck::cast_slice(&first),
+            )
+            .unwrap();
+        let larger = (MIN_SLAB_BYTES / Elements::Positions.size()) as usize;
+        let grown = geometry
+            .place(
+                &device,
+                &queue,
+                Elements::Positions,
+                bytemuck::cast_slice(&positions(larger, 1e4)),
+            )
+            .unwrap();
+        assert_eq!(
+            grown.slab, placed.slab,
+            "the larger mesh grew the first slab"
+        );
+        let words = test_support::read_words(&device, &queue, geometry.buffer(placed.slab));
+        let given: &[u32] = bytemuck::cast_slice(&first);
+        let at = placed.first as usize * 3;
+        assert_eq!(&words[at..at + given.len()], given);
+    }
 }

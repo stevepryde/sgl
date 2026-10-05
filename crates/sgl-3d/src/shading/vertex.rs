@@ -73,7 +73,8 @@ macro_rules! vertex_layout {
 pub(crate) use vertex_layout;
 
 /// What a shadow caster reads of a vertex from a vertex buffer: its
-/// position, from its mesh's position buffer or a deforming instance's
+/// position, from its mesh's range of a positions slab (`scene::geometry`)
+/// or a deforming instance's
 /// deformed positions (`shading::deformation`). A masked material's casters
 /// pull its texel coordinates and colour from the scene source. Every camera
 /// and probe pass pulls whole vertices from the scene source instead

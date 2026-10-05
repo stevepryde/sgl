@@ -16,11 +16,13 @@ pub enum BuildStep {
     /// Writing a model's ray-source range: its records, vertices, indices
     /// and BVH.
     RayWrite,
-    /// Creating a mesh's position and index buffers.
+    /// Placing a mesh's positions and indices in the scene's geometry slabs
+    /// and writing them, growing a slab when one must.
     MeshBuffers,
     /// A mesh's culling hierarchy.
     Ranges,
-    /// A mesh's local-light shadow caster clusters and their index buffer.
+    /// A mesh's local-light shadow caster clusters, with their indices placed
+    /// in a geometry slab and written, growing it when it must.
     Clusters,
     /// Building the static instance BVH (after a static edit).
     StaticInstanceBvh,
