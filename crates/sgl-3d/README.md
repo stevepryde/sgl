@@ -749,7 +749,9 @@ integrated as Diligent's Hydrogent renderer does:
   follow the camera's rotation, as a background at infinity does. Motion is
   capped at two screens along its longer axis; a surface or sky direction that
   was behind the last frame's camera gets that length, so every temporal
-  effect drops the history it reprojects by motion.
+  effect drops the history it reprojects by motion. The reflections' temporal
+  passes likewise take no history by a reflection hit that was behind the
+  last frame's camera.
 - SSR and TAA need `perspective`'s infinite reversed-Z projection; with any
   other camera SSR is off and SMAA replaces TAA.
 - TAA resolves the complete linear HDR frame, including reflections, fog,

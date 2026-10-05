@@ -187,6 +187,27 @@ fn camera(reversed: bool, frame_index: u32) -> CameraAttribs {
     attribs
 }
 
+/// `camera` turned half around its vertical axis, its view x and z negated:
+/// what was ahead of it is behind.
+fn turned_around(camera: CameraAttribs) -> CameraAttribs {
+    let turn = [
+        -1., 0., 0., 0., 0., 1., 0., 0., 0., 0., -1., 0., 0., 0., 0., 1.,
+    ];
+    // Column-major, columns listed: view-projection P V negates P's columns
+    // 0 and 2, its inverse V P^-1 the inverse's rows 0 and 2.
+    let columns =
+        |m: [f32; 16]| std::array::from_fn(|i| if matches!(i / 4, 0 | 2) { -m[i] } else { m[i] });
+    let rows =
+        |m: [f32; 16]| std::array::from_fn(|i| if matches!(i % 4, 0 | 2) { -m[i] } else { m[i] });
+    CameraAttribs {
+        m_view: turn,
+        m_view_inv: turn,
+        m_view_proj: columns(camera.m_view_proj),
+        m_view_proj_inv: rows(camera.m_view_proj_inv),
+        ..camera
+    }
+}
+
 fn read_rgba16f(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -728,7 +749,10 @@ struct Denoised {
 /// boundary: a ray at `(x, y)` of the ray grid where `hit` holds found a
 /// white surface with full confidence; every other ray missed. `filter`
 /// gives the reconstruction radius and the bilateral sigma. With
-/// `all_tiles`, every denoiser tile is active, as before DFX-29.
+/// `all_tiles`, every denoiser tile is active, as before DFX-29. With
+/// `turned`, the previous frame's camera faced the other way
+/// (`turned_around`) and the surface moved two screens since, as a surface
+/// behind the previous camera does.
 #[allow(clippy::too_many_arguments)]
 fn denoise_frame(
     device: &wgpu::Device,
@@ -739,6 +763,7 @@ fn denoise_frame(
     filter: [f32; 2],
     index: u32,
     all_tiles: bool,
+    turned: bool,
     hit: impl Fn(u32, u32) -> bool,
 ) -> Denoised {
     use wgpu::util::DeviceExt;
@@ -753,11 +778,12 @@ fn denoise_frame(
         &half(&[0.0, 0.0, -1.0, 0.0]),
     );
     let material = texture(device, queue, wgpu::TextureFormat::R8Unorm, &[50]);
+    // Motion in NDC: 4 is two screens.
     let motion = texture(
         device,
         queue,
         wgpu::TextureFormat::Rg16Float,
-        &half(&[0.0, 0.0]),
+        &half(&[if turned { 4.0 } else { 0.0 }, 0.0]),
     );
     context.prepare_resources(
         device,
@@ -773,6 +799,11 @@ fn denoise_frame(
     ssr.prepare_resources(device, &mut encoder, context, flags);
     ssr.prepare_shaders_and_pso(device);
     let camera = camera(false, index);
+    let previous = if turned {
+        turned_around(camera)
+    } else {
+        camera
+    };
     context.execute(&mut post_fx_context::RenderAttributes {
         device,
         queue,
@@ -780,7 +811,7 @@ fn denoise_frame(
         curr_depth_buffer_srv: &scene_depth,
         prev_depth_buffer_srv: &scene_depth,
         curr_camera: Some(&camera),
-        prev_camera: Some(&camera),
+        prev_camera: Some(&previous),
         camera_attribs_cb: None,
         pass_timestamps: None,
     });
@@ -928,6 +959,7 @@ fn skipping_tiles_without_hits_changes_no_radiance() {
                             filter,
                             index,
                             all_tiles,
+                            false,
                             |x, y| {
                                 if index < 2 {
                                     checkerboard(x, y)
@@ -1000,6 +1032,7 @@ fn tiles_that_stop_hitting_keep_no_history() {
                 DEFAULT_FILTER,
                 index,
                 false,
+                false,
                 |x, y| index < 2 || columns(x, y),
             );
             for pixel in far_from_hit_columns() {
@@ -1019,6 +1052,46 @@ fn tiles_that_stop_hitting_keep_no_history() {
                         "{flags:?} frame {index}: pixel {pixel} kept an older reflection"
                     );
                 }
+            }
+        }
+    }
+}
+
+// PROVENANCE.md DFX-31: a reflection's virtual point on or behind the
+// previous camera's plane was nowhere on its screen. One frame of hits
+// everywhere fills the histories with white; then the camera is found to
+// have faced the other way the frame before, so every virtual point, a
+// metre beyond the plane ahead of it, lies behind the previous camera,
+// where dividing by its negative clip w would mirror it onto the screen at
+// the plane's depth. The surface moved two screens, as a surface behind the
+// previous camera does. With neither reprojection valid, every pixel keeps
+// no history: its variance is 1.
+#[test]
+fn reflection_hits_behind_the_previous_camera_take_no_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut ssr = ScreenSpaceReflection::new(&device);
+    let mut context = PostFXContext::new(&device, &queue, Default::default());
+    for index in 0..2 {
+        let frame = denoise_frame(
+            &device,
+            &queue,
+            &mut ssr,
+            &mut context,
+            FeatureFlags::NONE,
+            DEFAULT_FILTER,
+            index,
+            false,
+            index == 1,
+            |x, y| index == 0 || checkerboard(x, y),
+        );
+        if index == 1 {
+            for (pixel, variance) in frame.variance_history.iter().enumerate() {
+                assert_eq!(
+                    *variance, 1.0,
+                    "pixel {pixel} took history from behind the previous camera"
+                );
             }
         }
     }

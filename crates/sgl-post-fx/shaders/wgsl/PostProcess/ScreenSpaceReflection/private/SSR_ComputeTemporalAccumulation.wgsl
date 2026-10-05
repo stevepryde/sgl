@@ -121,6 +121,13 @@ fn ComputeReflectionHitPosition(PixelCoord: vec2<i32>, Depth: f32) -> vec2<f32>
 {
     let Texcoord = (vec2<f32>(PixelCoord) + 0.5) * cbCameraAttribs.g_CurrCamera.f4ViewportSize.zw + F3NDC_XYZ_TO_UVD_SCALE.xy * cbCameraAttribs.g_CurrCamera.f2Jitter;
     let PositionWS = InvProjectPosition(vec3<f32>(Texcoord, Depth), cbCameraAttribs.g_CurrCamera.mViewProjInv);
+    // PROVENANCE.md DFX-31: a point on or behind the previous camera's plane
+    // was not on its screen. It lies a screen off, where ComputeReprojection
+    // rejects it, rather than mirrored onto the screen by ProjectPosition's
+    // division by its negative w.
+    if ((cbCameraAttribs.g_PrevCamera.mViewProj * vec4<f32>(PositionWS, 1.0)).w <= 0.0) {
+        return -cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
+    }
     let PrevCoordUV = ProjectPosition(PositionWS, cbCameraAttribs.g_PrevCamera.mViewProj);
     return (PrevCoordUV.xy - F3NDC_XYZ_TO_UVD_SCALE.xy * cbCameraAttribs.g_PrevCamera.f2Jitter) * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
 }

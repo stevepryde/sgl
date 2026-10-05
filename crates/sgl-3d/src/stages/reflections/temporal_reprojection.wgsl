@@ -9,7 +9,9 @@
 // WGSL; loads outside the grid are clamped where HLSL would read zero; the
 // pass keeps its own depth history at its traced size in place of the
 // previous frame's depth buffer, and supplies the velocity (SGL3D motion,
-// current minus previous, negated into Wicked's).
+// current minus previous, negated into Wicked's); a reflection hit on or
+// behind the previous camera's plane reprojects off the screen rather than
+// mirrored onto it (temporal_reprojection_uv).
 // Reads `temporal_current`, `temporal_history`, `temporal_depth_history` and
 // `linear_sampler`.
 const TEMPORAL_RESPONSE:f32=.95;
@@ -28,9 +30,28 @@ struct TemporalView {
 fn temporal_saturated(uv:vec2<f32>)->bool {
  return all(uv==clamp(uv,vec2(0.),vec2(1.)));
 }
+// Where the point at `depth` seen at `uv` was on the previous frame's screen.
+// A point on or behind the previous camera's plane (clip w <= 0) was not on
+// it: dividing by a negative w mirrors it onto the screen (a zero one gives
+// no finite position), so it lies a screen off, where temporal_saturated
+// rejects it. SGL3D's correction: Wicked's
+// ssr_temporalCS (2ff1d9e, and 4323a33) divides unguarded, as AMD's
+// reflection denoiser (FidelityFX SDK c6efa6b,
+// FFX_DNSR_Reflections_GetHitPositionReprojection through ProjectPosition,
+// ffx_denoiser_reflections_reproject.h and _common.h), Bevy 9d12036's motion
+// vectors (prepass.wesl, and bevy_solari's virtual reflection points in
+// resolve_dlss_rr_textures.wesl), Godot b130438's reflection hits
+// (effects/screen_space_reflection.glsl) and Filament ef1a133's
+// (surface_light_reflections.fs, ssrReprojection) and TAA history
+// (antiAliasing/taa/taa.mat) do; Wicked 4323a33's own velocity
+// (visibility_velocityCS.hlsl) keeps only a positive previous w, as
+// gbuffer_encode_motion does.
 fn temporal_reprojection_uv(view:TemporalView,uv:vec2<f32>,depth:f32)->vec2<f32> {
  let screen=vec2(uv.x*2.-1.,1.-uv.y*2.);
  let previous=view.previous_view_projection*(view.inverse_view_projection*vec4(screen,depth,1.));
+ if previous.w<=0. {
+  return vec2(-1.);
+ }
  return previous.xy/previous.w*vec2(.5,-.5)+vec2(.5);
 }
 fn temporal_linear_depth(view:TemporalView,z:f32)->f32 {

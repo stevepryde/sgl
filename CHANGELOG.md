@@ -15,6 +15,30 @@ full API details.
 
 ## Unreleased
 
+### Reflections take no history by a hit behind the last frame's camera
+
+- **Scope:** `sgl-3d` world-space reflections and Velvet
+  (`temporal_reprojection.wgsl`), and `sgl-post-fx` screen-space
+  reflections, which `sgl-3d`'s Crystal method runs (DFX-31). Each
+  reflection's temporal pass reprojects its history two ways: by the
+  surface's motion, and by the reflection's virtual hit point through the
+  last frame's camera. When that point was behind the last frame's camera
+  (clip w below 0), as after a sharp turn or a quick move backwards, the
+  division by its negative w mirrored it onto the screen, and where the
+  history's depth matched there the pass blended in history from the wrong
+  place, clamped to the colour box, at 95%; on the camera's plane (w = 0)
+  the result was non-finite and already rejected. Such a point now
+  reprojects off the screen and takes no history, as a surface behind the
+  last frame's camera already took none by its motion (AMD's reflection
+  denoiser and Wicked Engine's, Bevy's, Godot's and Filament's reflection
+  reprojections divide unguarded; Wicked's own velocity keeps only a
+  positive w). This is a correctness fix with no setting. Frames where no
+  hit point lies behind the previous camera are unchanged.
+- **Migration:** no game-code changes. Afterwards, turn the camera sharply
+  between frames (towards a half turn), or move it quickly backwards, over
+  reflective floors and water: the next frame shows its own reflections,
+  without reflections blended in from elsewhere on the screen.
+
 ### Bloom accepts a scene far wider than it is high
 
 - **Scope:** `sgl-3d`. Bloom scales the scene into a mip chain 512 texels
