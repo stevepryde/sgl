@@ -3,7 +3,10 @@
 //! an open volume holds a uniform environment's radiance and the hemisphere
 //! fill's irradiance, and a closed room's emitters' with their bounces,
 //! damped, while light outside the room reaches no probe inside but through
-//! its shadow opacity; its share fades over the spacing past its extent; the
+//! its shadow opacity or as a light that casts none, and the backs of
+//! single-sided walls keep the sky out of a room seen from within and an
+//! inside-out box's light in; its share fades over the spacing past its
+//! extent; the
 //! one determination puts it below charts and above ambient cubes, and in
 //! place of the frame's ambient; the probes continue across renderer resets,
 //! abandoned frames and render origin moves, light probe captures as the
@@ -441,15 +444,17 @@ fn add_room(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene) {
 
 // A point light and the sun outside a closed room light the outside of its
 // walls and, through them, the inside faces turned toward them: a probe
-// hit's light takes its visibility from a ray, so none of it reaches a
-// probe inside. At shadow opacity 0 no ray is cast and it does.
+// hit takes the visibility of a light that casts a shadow from a ray, so
+// none of it reaches a probe inside. At shadow opacity 0 no ray is cast and
+// it does, and a light that casts no shadow lights the hit unoccluded, as
+// it lights every other receiver.
 #[test]
 fn light_outside_a_closed_room_reaches_its_probes_only_without_a_shadow() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
     let mut maxima = Vec::new();
-    for shadow_opacity in [1., 0.] {
+    for (casts_shadow, shadow_opacity) in [(true, 1.), (true, 0.), (false, 1.)] {
         let mut scene = Scene::new(&device, &queue);
         add_room(&device, &queue, &mut scene);
         scene
@@ -460,6 +465,7 @@ fn light_outside_a_closed_room_reaches_its_probes_only_without_a_shadow() {
                     position: Vec3::new(7., 0., 0.),
                     intensity: 200.,
                     range: 30.,
+                    casts_shadow,
                     shadow_opacity,
                     ..Default::default()
                 },
@@ -470,6 +476,7 @@ fn light_outside_a_closed_room_reaches_its_probes_only_without_a_shadow() {
         input.directional_lights[0] = Some(crate::DirectionalLight {
             direction: Vec3::new(-1., -0.2, 0.1),
             illuminance: 20.,
+            shadow: casts_shadow.then(crate::DirectionalShadow::default),
             shadow_opacity,
             ..Default::default()
         });
@@ -495,6 +502,208 @@ fn light_outside_a_closed_room_reaches_its_probes_only_without_a_shadow() {
     }
     assert_eq!(maxima[0], 0., "light leaked into the room");
     assert!(maxima[1] > 0.01, "{maxima:?}");
+    assert!(maxima[2] > 0.01, "{maxima:?}");
+}
+
+/// `asset` turned inside out and single-sided: each triangle's winding and
+/// each normal reversed, so its faces are seen from within, as a room built
+/// to be seen from inside is.
+fn inward(mut asset: crate::asset::Asset) -> crate::asset::Asset {
+    for mesh in &mut asset.meshes {
+        for triangle in mesh.indices.chunks_exact_mut(3) {
+            triangle.swap(1, 2);
+        }
+        for vertex in &mut mesh.vertices {
+            vertex.normal = vertex.normal.map(|n| -n);
+        }
+    }
+    for material in &mut asset.materials {
+        material.double_sided = false;
+    }
+    asset
+}
+
+/// A static instance of `asset`, posed by `pose`.
+fn add_static(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &mut Scene,
+    asset: crate::asset::Asset,
+    pose: Mat4,
+) {
+    let ids = scene.add_asset(device, queue, asset).unwrap();
+    scene
+        .add_instance(
+            device,
+            queue,
+            InstanceState {
+                model: ids.model,
+                pose,
+                visible: true,
+                capture_visible: true,
+            },
+            Mobility::Static,
+        )
+        .unwrap();
+}
+
+// A room of black single-sided walls facing inward, under a bright sky,
+// with probes inside it and beyond its walls. A probe outside sees the
+// walls' backs, which take no light and shorten its depth, so a receiver
+// inside weighs it as occluded and takes only the dark room; were the
+// probe ray to pass through the walls' backs, the probe would see the
+// room's far side as unoccluded and bring the sky in. The walls reflect
+// nothing, so no bounce from them carries light either way.
+#[test]
+fn an_inward_facing_room_keeps_the_sky_outside() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let environment = uniform_environment(&device, &queue, &mut scene, [1.; 3]);
+    let mut room = inward(test_support::cube());
+    room.materials[0].base = [0., 0., 0., 1.];
+    room.materials[0].metallic = 0.;
+    // Walls at ±3; probes at -4, -2, 0, 2 and 4 on each axis.
+    add_static(
+        &device,
+        &queue,
+        &mut scene,
+        room,
+        Mat4::from_scale(Vec3::splat(6.)),
+    );
+    scene
+        .set_dynamic_gi_volume(
+            &device,
+            Some(DynamicGiVolume {
+                origin: Vec3::splat(-4.),
+                spacing: Vec3::splat(2.),
+                probes: [5, 5, 5],
+            }),
+        )
+        .unwrap();
+    let mut input = input(Vec3::new(0., 0., 1.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    render(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        3,
+    );
+    // Inside, near a wall and facing along it, so the probes beyond the
+    // wall lie in front of the receiver; one facing the wall would weigh
+    // the probes inside as behind it and every probe at Wicked's floor.
+    let queries = [
+        (Vec3::new(2.7, 0.3, 0.1), Vec3::Y),
+        (Vec3::new(-2.6, 0.2, 1.1), Vec3::Z),
+        (Vec3::new(0.3, 2.7, -0.4), Vec3::X),
+        (Vec3::new(0.4, -2.7, 0.9), Vec3::NEG_Z),
+    ];
+    for (query, answer) in queries
+        .iter()
+        .zip(irradiance(&device, &queue, &renderer, &queries))
+    {
+        assert_eq!(answer[3], 1., "{query:?}");
+        assert!(
+            answer[..3].iter().all(|&channel| channel < 0.01),
+            "{query:?}: {answer:?}"
+        );
+    }
+}
+
+// A closed box of single-sided faces turned inward, which glow and hold a
+// shadowed light, over a floor, with every probe outside it and nothing
+// else lit: the probes' rays meet the box's backs and take nothing from
+// within, and the light's visibility rays from the floor meet them too, so
+// no probe holds any light.
+#[test]
+fn a_probe_outside_an_inward_facing_box_takes_nothing_from_inside() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut lamp = inward(test_support::cube());
+    lamp.materials[0].base = [0., 0., 0., 1.];
+    lamp.materials[0].metallic = 0.;
+    lamp.materials[0].emissive = [0.5; 3];
+    // The box spans ±1.
+    add_static(
+        &device,
+        &queue,
+        &mut scene,
+        lamp,
+        Mat4::from_scale(Vec3::splat(2.)),
+    );
+    add_cube(
+        &device,
+        &queue,
+        &mut scene,
+        Mat4::from_translation(Vec3::new(0., -1.6, 0.))
+            * Mat4::from_scale(Vec3::new(20., 0.2, 20.)),
+        Mobility::Static,
+        |material| {
+            material.base = [0.5, 0.5, 0.5, 1.];
+            material.metallic = 0.;
+        },
+    );
+    scene
+        .add_light(
+            &device,
+            &queue,
+            crate::Light {
+                intensity: 200.,
+                range: 20.,
+                casts_shadow: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    // Probes at -5, -2.5, 0, 2.5 and 5 along x and z, and at -1.2 and 1.3
+    // along y, between the floor's top (-1.5) and the box and above it.
+    scene
+        .set_dynamic_gi_volume(
+            &device,
+            Some(DynamicGiVolume {
+                origin: Vec3::new(-5., -1.2, -5.),
+                spacing: Vec3::new(2.5, 2.5, 2.5),
+                probes: [5, 2, 5],
+            }),
+        )
+        .unwrap();
+    let input = input(Vec3::new(0., 0., 4.));
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    render(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        3,
+    );
+    // Outside the box, facing it.
+    let queries = [
+        (Vec3::new(2., 0.3, 0.4), Vec3::NEG_X),
+        (Vec3::new(0.2, -1.15, 0.3), Vec3::Y),
+        (Vec3::new(0.3, 1.25, -0.2), Vec3::NEG_Y),
+        (Vec3::new(-0.4, 0.1, -2.2), Vec3::Z),
+    ];
+    for (query, answer) in queries
+        .iter()
+        .zip(irradiance(&device, &queue, &renderer, &queries))
+    {
+        assert_eq!(answer[3], 1., "{query:?}");
+        assert!(
+            answer[..3].iter().all(|&channel| channel < 1e-6),
+            "{query:?}: {answer:?}"
+        );
+    }
 }
 
 // The volume's share is whole within its extent and fades to nothing over

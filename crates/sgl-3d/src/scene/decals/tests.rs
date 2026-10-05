@@ -237,7 +237,7 @@ fn decals_change_base_colour_normal_and_roughness_inside_their_box_alone() {
  let directions=array<vec3<f32>,{count}>({directions});
  for (var i=0u;i<{count}u;i++) {{
   let ray=SceneRay(vec4(0.,0.,0.,0.),vec4(directions[i],100.));
-  let hit=scene_decode_hit(scene_trace_nearest(ray),ray.origin.xyz,ray.direction.xyz);
+  let hit=scene_decode_hit(scene_trace_nearest(ray,SCENE_SIDES_AS_RASTER),ray.origin.xyz,ray.direction.xyz);
   let material=scene_material(hit.material_word);
   let s=ray_surface(hit,material,ray_base_color(hit,material),vec3(0.),-normalize(directions[i]),cluster_range(hit.position,vec2(0.)));
   output[i*2u]=vec4(s.base.rgb,s.metallic);

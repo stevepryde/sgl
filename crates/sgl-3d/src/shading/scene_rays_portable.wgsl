@@ -20,6 +20,12 @@ const SCENE_BVH_PRIMITIVE_MESH:u32=0u;
 const SCENE_BVH_PRIMITIVE_TRIANGLE:u32=1u;
 // An instance BVH leaf's: the index of the instance entry it names.
 const SCENE_BVH_INSTANCE_WORDS:u32=1u;
+// Which sides of a triangle a ray accepts, beside the receiver it leaves:
+// a camera-origin ray rejects a single-sided material's back faces, as
+// raster culls them; a dynamic GI probe ray and its visibility ray accept
+// both sides of every triangle, as Wicked Engine's DDGI trace culls none.
+const SCENE_SIDES_AS_RASTER:u32=0u;
+const SCENE_SIDES_BOTH:u32=1u;
 fn scene_finite(v:f32)->bool {
  return abs(v)<=3.402823466e+38;
 }
@@ -64,9 +70,10 @@ fn scene_portable_bounds(node:u32,origin:vec3<f32>,direction:vec3<f32>,minimum:f
 
 // One primitive acceptance predicate for every traversal and, with the
 // hardware path, its candidate loop: the receiver's own triangle, visibility
-// group, alpha mode, interval and its open end, side and cut-out texels.
-// Keep geometric arithmetic, intervals and materials identical.
-fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32,origin:vec3<f32>,direction:vec3<f32>,maximum:f32,receiver:vec2<u32>,open_end:bool)->RawSceneHit {
+// group, alpha mode, interval and its open end, side under the ray's `sides`
+// (SCENE_SIDES_*) and cut-out texels. Keep geometric arithmetic, intervals
+// and materials identical.
+fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32,origin:vec3<f32>,direction:vec3<f32>,maximum:f32,receiver:vec2<u32>,sides:u32,open_end:bool)->RawSceneHit {
  let miss=RawSceneHit(vec4(0u),vec4(0.));
  let instance=scene_instances[index];
  let mesh=instance.mesh_word+mesh_id*SCENE_MESH_WORDS;
@@ -114,7 +121,7 @@ fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32
  // Object-space winding preserves authored sides even under mirrored poses;
  // a rejected candidate never narrows the interval.
  let front=determinant>0.;
- if !front && (material.values.flags&MATERIAL_DOUBLE_SIDED)==0u {
+ if !front && sides==SCENE_SIDES_AS_RASTER && (material.values.flags&MATERIAL_DOUBLE_SIDED)==0u {
   return miss;
  }
  // A masked material's cut-out texels are no surface to any traversal,
@@ -134,7 +141,7 @@ fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32
 // Instance `index`'s nearest accepted hit closer than `maximum`, or with
 // `any_hit` its first: its model's BVH walked with the ray in model space.
 // A leaf names only instances whose model has triangles.
-fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,open_end:bool,maximum_before:f32)->RawSceneHit {
+fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,maximum_before:f32)->RawSceneHit {
  var closest=RawSceneHit(vec4(0u),vec4(0.));
  let instance=scene_instances[index];
  // Do not normalize the transformed direction: retaining its magnitude
@@ -164,7 +171,7 @@ fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,open
    let leaf=first+primitive*SCENE_BVH_PRIMITIVE_WORDS;
    let mesh_id=scene_source[leaf+SCENE_BVH_PRIMITIVE_MESH];
    let primitive_id=scene_source[leaf+SCENE_BVH_PRIMITIVE_TRIANGLE];
-   let hit=scene_intersect_primitive(ray,index,mesh_id,primitive_id,origin,direction,maximum,receiver,open_end);
+   let hit=scene_intersect_primitive(ray,index,mesh_id,primitive_id,origin,direction,maximum,receiver,sides,open_end);
    if hit.intersection.x==0u {
     continue;
    }
@@ -182,7 +189,7 @@ fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,open
 // The instance BVH at `root` (a header root, zero when it bounds nothing)
 // walked with the world-space ray after `nearest`: the nearest accepted hit
 // closer than it, or with `any_hit` the first; else `nearest`.
-fn scene_trace_instances(root:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,open_end:bool,nearest:RawSceneHit)->RawSceneHit {
+fn scene_trace_instances(root:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,nearest:RawSceneHit)->RawSceneHit {
  var closest=nearest;
  if root==0u {
   return closest;
@@ -204,7 +211,7 @@ fn scene_trace_instances(root:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,o
   let first=scene_source[node+SCENE_BVH_NODE_FIRST];
   for(var leaf=0u;leaf<count;leaf++) {
    let index=scene_source[first+leaf*SCENE_BVH_INSTANCE_WORDS];
-   let hit=scene_trace_model(index,ray,any_hit,receiver,open_end,maximum);
+   let hit=scene_trace_model(index,ray,any_hit,receiver,sides,open_end,maximum);
    if hit.intersection.x==0u {
     continue;
    }
@@ -226,17 +233,18 @@ fn scene_ray_valid(ray:SceneRay)->bool {
     ray.origin.w>=0. && ray.direction.w>=ray.origin.w && any(ray.direction.xyz!=vec3(0.));
 }
 
-// Both kinds: the static BVH, then the moving one within its nearest hit.
-fn scene_trace_portable(ray:SceneRay,any_hit:bool)->RawSceneHit {
+// Both kinds: the static BVH, then the moving one within its nearest hit,
+// accepting `sides` (SCENE_SIDES_*).
+fn scene_trace_portable(ray:SceneRay,any_hit:bool,sides:u32)->RawSceneHit {
  let miss=RawSceneHit(vec4(0u),vec4(0.));
  if !scene_ray_valid(ray) {
   return miss;
  }
- let statics=scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,any_hit,vec2(0u),false,miss);
+ let statics=scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,any_hit,vec2(0u),sides,false,miss);
  if any_hit && statics.intersection.x!=0u {
   return statics;
  }
- return scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,any_hit,vec2(0u),false,statics);
+ return scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,any_hit,vec2(0u),sides,false,statics);
 }
 
 fn scene_trace_moving_except_receiver(ray:SceneRay,receiver:vec2<u32>)->RawSceneHit {
@@ -244,7 +252,7 @@ fn scene_trace_moving_except_receiver(ray:SceneRay,receiver:vec2<u32>)->RawScene
  if !scene_ray_valid(ray) {
   return miss;
  }
- return scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,false,receiver,false,miss);
+ return scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,false,receiver,SCENE_SIDES_AS_RASTER,false,miss);
 }
 
 // Visibility to a moving hit needs only a static any-hit in [t_min,t_hit).
@@ -255,15 +263,17 @@ fn scene_static_segment_visible_except_receiver(ray:SceneRay,receiver:vec2<u32>)
  if !scene_ray_valid(ray) {
   return true;
  }
- return scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,true,receiver,true,miss).intersection.x==0u;
+ return scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,true,receiver,SCENE_SIDES_AS_RASTER,true,miss).intersection.x==0u;
 }
 
-fn scene_trace_nearest(ray:SceneRay)->RawSceneHit {
- return scene_trace_portable(ray,false);
+// The nearest hit accepting `sides` (SCENE_SIDES_*).
+fn scene_trace_nearest(ray:SceneRay,sides:u32)->RawSceneHit {
+ return scene_trace_portable(ray,false,sides);
 }
 
-// Closed [t_min,t_max] visibility interval. Direction may be non-unit. Callers
+// Closed [t_min,t_max] visibility interval, blocked by the triangles whose
+// `sides` (SCENE_SIDES_*) it accepts. Direction may be non-unit. Callers
 // choose geometric ray-origin offsets and emitter endpoints; this adds no bias.
-fn scene_segment_visible(origin:vec3<f32>,direction:vec3<f32>,t_min:f32,t_max:f32)->bool {
- return scene_trace_portable(SceneRay(vec4(origin,t_min),vec4(direction,t_max)),true).intersection.x==0u;
+fn scene_segment_visible(origin:vec3<f32>,direction:vec3<f32>,t_min:f32,t_max:f32,sides:u32)->bool {
+ return scene_trace_portable(SceneRay(vec4(origin,t_min),vec4(direction,t_max)),true,sides).intersection.x==0u;
 }

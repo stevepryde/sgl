@@ -348,8 +348,8 @@ fn portable_scene_fragment_segment_visibility() {
  let origin=vec3(select(0.,2.,pixel==1u),0.,0.);
  let maximum=select(select(3.,1.,pixel==2u),2.,pixel==3u);
  let direction=vec3(0.,0.,-1.);
- let visible=scene_segment_visible(origin,direction,0.,maximum);
- let hit=scene_decode_hit(scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,maximum))),origin,direction);
+ let visible=scene_segment_visible(origin,direction,0.,maximum,SCENE_SIDES_AS_RASTER);
+ let hit=scene_decode_hit(scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,maximum)),SCENE_SIDES_AS_RASTER),origin,direction);
  return vec4(select(0.,1.,visible),f32(hit.instance_id),hit.distance,select(0.,1.,hit.hit));
 }
 "#).into()),
