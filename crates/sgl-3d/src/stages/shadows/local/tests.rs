@@ -49,7 +49,9 @@ fn blocker() -> asset::Asset {
 fn point(position: Vec3, range: f32) -> Light {
     Light {
         position,
-        shape: LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
+        shape: LightShape::Point {
+            radius: LightShape::DEFAULT_RADIUS,
+        },
         color: [1.; 3],
         intensity: 8.,
         range,

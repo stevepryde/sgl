@@ -101,7 +101,8 @@ pub(super) struct Inputs<'a> {
     pub depth: &'a wgpu::TextureView,
     pub normal: &'a wgpu::TextureView,
     pub motion: &'a wgpu::TextureView,
-    /// The tracing resolution's linear depth last frame.
+    /// The tracing resolution's linear depth this frame and last.
+    pub half_depth: &'a wgpu::TextureView,
     pub previous_depth: &'a wgpu::TextureView,
     pub params: &'a wgpu::Buffer,
     pub slot_table: &'a wgpu::Buffer,
@@ -178,6 +179,7 @@ impl Denoiser {
                 (9, resource(&targets.metadata)),
                 (10, resource(scratch_a)),
                 (11, resource(&targets.moments[current])),
+                (12, resource(inputs.half_depth)),
             ],
         );
         dispatch(
@@ -189,15 +191,21 @@ impl Denoiser {
         // Pass 0 filters A into B, which the next frame's classification
         // reads as its history; pass 1 B into A; pass 2 A into the denoised
         // layers, binding B, which it does not write.
-        for (pass, (input, history)) in self
-            .filters
-            .iter_mut()
-            .zip([(scratch_a, scratch_b), (scratch_b, scratch_a), (scratch_a, scratch_b)])
-        {
+        for (pass, (input, history)) in self.filters.iter_mut().zip([
+            (scratch_a, scratch_b),
+            (scratch_b, scratch_a),
+            (scratch_a, scratch_b),
+        ]) {
             let group = filter_group(
-                &mut pass.groups[0],
+                &mut pass.groups[current],
                 device,
-                [inputs.depth, inputs.normal, &targets.metadata, input],
+                [
+                    inputs.depth,
+                    inputs.normal,
+                    &targets.metadata,
+                    input,
+                    inputs.half_depth,
+                ],
                 inputs.params,
                 [history, &targets.denoised],
             );
@@ -207,12 +215,12 @@ impl Denoiser {
 }
 
 /// A filter pass's group 0: the G-buffer's depth and normals, the tiles'
-/// metadata and the pass's input, the parameters, and its history and
-/// denoised outputs.
+/// metadata, the pass's input and the tracing resolution's linear depth,
+/// the parameters, and its history and denoised outputs.
 fn filter_group<'a>(
     group: &'a mut CachedGroup,
     device: &wgpu::Device,
-    [depth, normal, metadata, input]: [&wgpu::TextureView; 4],
+    [depth, normal, metadata, input, half_depth]: [&wgpu::TextureView; 5],
     params: &wgpu::Buffer,
     [history, denoised]: [&wgpu::TextureView; 2],
 ) -> &'a wgpu::BindGroup {
@@ -228,6 +236,7 @@ fn filter_group<'a>(
             (4, params.as_entire_binding()),
             (5, resource(history)),
             (6, resource(denoised)),
+            (7, resource(half_depth)),
         ],
     )
 }

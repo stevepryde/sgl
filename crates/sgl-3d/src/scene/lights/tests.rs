@@ -33,7 +33,9 @@ fn quad(center: Vec3) -> CpuMesh {
 fn light(position: Vec3) -> Light {
     Light {
         position,
-        shape: LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
+        shape: LightShape::Point {
+            radius: LightShape::DEFAULT_RADIUS,
+        },
         color: [1.; 3],
         intensity: 2.,
         range: 3.,

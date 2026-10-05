@@ -271,6 +271,44 @@ fn render(
     }
 }
 
+/// Three faint casting lights about `eye`, whose ranges hold the camera so
+/// that they cover the whole view and outrank, in the atlas's ranking, the
+/// lights a test watches, which then take slots 4 and on: those the
+/// temporal blend alone fills, where the denoiser filters slots 0 to 3.
+fn decoys(eye: Vec3) -> [Light; 3] {
+    [-1., 0., 1.].map(|offset| Light {
+        position: eye + Vec3::new(offset, 0.5, 0.),
+        intensity: 1e-3,
+        range: 40.,
+        casts_shadow: true,
+        ..Light::default()
+    })
+}
+
+/// The tracing texels of `decisions` (by their full-resolution pixel 2q)
+/// whose decision every texel within `reach` texels shares, each of them a
+/// decided floor texel: the texels the denoiser's filters (7 texels) and
+/// neighbourhood (8) see as uniform, which it leaves 0 or 1.
+fn interior(decisions: &std::collections::HashMap<[u32; 2], bool>, reach: i32) -> Vec<[u32; 2]> {
+    decisions
+        .iter()
+        .filter(|&(&[x, y], &decided)| {
+            (-reach..=reach).all(|dy| {
+                (-reach..=reach).all(|dx| {
+                    let near = [x as i32 + dx * 2, y as i32 + dy * 2];
+                    near.iter().all(|&side| side >= 0)
+                        && decisions.get(&near.map(|side| side as u32)) == Some(&decided)
+                })
+            })
+        })
+        .map(|(&pixel, _)| pixel)
+        .collect()
+}
+
+/// The denoiser's reach in tracing texels: its local neighbourhood's
+/// radius, beyond its filters' 1 + 2 + 4.
+const DENOISER_REACH: i32 = 8;
+
 /// The floor pixels of tracing texels: each full-resolution pixel 2q the
 /// trace and the mask share, with the world position its depth gives, on
 /// the floor (height 0).
@@ -322,7 +360,9 @@ fn local_visibility(light: &Light, position: DVec3, blocks: &[Block]) -> Option<
 // Plausible defects: the trace reading another pixel's depth or normal than
 // the mask's, the visibility of one light written into another's slot or
 // another slot's layer or channel, rays toward the wrong end (a light's
-// direction reversed), rays meeting the receiver's own face, rays that
+// direction reversed), the denoiser's tiles or filters scrambling a
+// denoised slot away from its shadows' edges, rays meeting the receiver's
+// own face, rays that
 // ignore static or moving instances, a light's slot naming another light,
 // rays toward a light that does not reach the receiver (beyond its range
 // or a spot's cone), and the upsample fetching other texels than the one
@@ -352,9 +392,18 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
             Vec3::new(0.3, 0.2, 0.3),
             Mobility::Static,
         ),
+        // Above the local lights: a broad shadow of the sun alone, whose
+        // inside lies beyond the denoiser's reach from its edges.
+        Block::new(
+            Vec3::new(-1.5, 5.5, -4.),
+            Vec3::new(2.2, 0.05, 1.8),
+            Mobility::Static,
+        ),
     ];
+    // Hard lights: rays end at their centres and directions.
     let point = Light {
         position: Vec3::new(-2., 4., 1.),
+        shape: LightShape::Point { radius: 0. },
         intensity: 50.,
         range: 9.,
         casts_shadow: true,
@@ -366,22 +415,25 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
             direction: Vec3::new(0., -1., 0.1),
             inner_angle: 0.3,
             outer_angle: 0.45,
-            radius: LightShape::DEFAULT_RADIUS,
+            radius: 0.,
         },
         intensity: 80.,
         range: 15.,
         casts_shadow: true,
         ..Light::default()
     };
-    let (mut scene, ids) = scene(gpu, 8., &blocks, &[point, spot]);
+    let eye = Vec3::new(0., 10., 8.);
+    let [first, second, third] = decoys(eye);
+    let (mut scene, ids) = scene(gpu, 8., &blocks, &[first, second, third, point, spot]);
     let sun = DirectionalLight {
         direction: Vec3::new(0.35, -1., 0.25),
         illuminance: 3.,
         shadow: Some(DirectionalShadow::DEFAULT),
+        angular_diameter: 0.,
         ..DirectionalLight::default()
     };
     let size = [128, 96];
-    let camera = camera(Vec3::new(0., 10., 8.), Vec3::new(0., 0., -0.5), size);
+    let camera = camera(eye, Vec3::new(0., 0., -0.5), size);
     let settings = settings(true);
     let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, Some(sun));
@@ -390,13 +442,20 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
     assert!(renderer.ray_traced_shadows_in_effect(&settings));
     let slots = [
         observed.slot(SHADOW_MASK_DIRECTIONAL),
-        observed.slot(ids[0].index() as u32),
-        observed.slot(ids[1].index() as u32),
+        observed.slot(ids[3].index() as u32),
+        observed.slot(ids[4].index() as u32),
     ];
     assert_eq!(slots[0], 0, "the directional light holds slot 0");
+    assert!(
+        slots[1] >= 4 && slots[2] >= 4,
+        "the decoys outrank the point and spot lights: {slots:?}"
+    );
     let to_sun = -sun.direction.as_dvec3().normalize();
     let texels = floor_texels(&observed, &camera);
     let mut decided = [[0; 2]; 3];
+    // The denoised directional slot is the oracle's away from its edges,
+    // which the denoiser filters.
+    let mut sunlit = std::collections::HashMap::new();
     for &(pixel, position) in &texels {
         let expected = [
             occluded(&blocks, position, to_sun, (0.01, f64::from(f32::MAX))).map(|o| Some(!o)),
@@ -407,6 +466,10 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
             let Some(visible) = expected else {
                 continue;
             };
+            if light == 0 {
+                sunlit.insert(pixel, visible == Some(true));
+                continue;
+            }
             let byte = observed.mask(slot, pixel);
             let expected = if visible == Some(true) { 255 } else { 0 };
             assert_eq!(
@@ -415,6 +478,15 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
             );
             decided[light][usize::from(visible == Some(true))] += 1;
         }
+    }
+    for pixel in interior(&sunlit, DENOISER_REACH) {
+        let visible = sunlit[&pixel];
+        assert_eq!(
+            observed.mask(slots[0], pixel),
+            if visible { 255 } else { 0 },
+            "the sun in slot 0 at {pixel:?}: the oracle says {visible}"
+        );
+        decided[0][usize::from(visible)] += 1;
     }
     for (light, [shadowed, lit]) in decided.into_iter().enumerate() {
         assert!(
@@ -431,18 +503,19 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
         .flatten()
         .filter(|&&key| key != crate::shading::shadow_mask::SHADOW_MASK_EMPTY)
         .count();
-    assert_eq!(held, 3, "of {RT_SHADOW_LIGHTS} slots");
+    assert_eq!(held, 6, "of {RT_SHADOW_LIGHTS} slots");
 }
 
 /// The lit colour's red over the floor pixels of tracing texels where the
 /// oracle `visible` decides a light's visibility (Some), with ray-traced
-/// shadows and without: (decided visibility, red with, red without).
+/// shadows and without: (pixel, decided visibility, red with, red
+/// without).
 fn lit_with_and_without(
     gpu: (&wgpu::Device, &wgpu::Queue),
     (scene, input): (&mut Scene, &FrameInput),
     size: [u32; 2],
     visible: impl Fn(DVec3) -> Option<bool>,
-) -> Vec<(bool, f32, f32)> {
+) -> Vec<([u32; 2], bool, f32, f32)> {
     let frames: Vec<_> = [true, false]
         .map(|traced| {
             let settings = settings(traced);
@@ -456,14 +529,26 @@ fn lit_with_and_without(
         .into_iter()
         .filter_map(|([x, y], position)| {
             let at = (y * size[0] + x) as usize;
-            visible(position).map(|visible| (visible, frames[0].red[at], frames[1].red[at]))
+            visible(position).map(|visible| ([x, y], visible, frames[0].red[at], frames[1].red[at]))
         })
         .collect()
 }
 
 /// Asserts that ray-traced shadows darken the `samples` the oracle shadows
-/// and leave the lit ones as the maps light them, which leave every one lit.
-fn assert_rays_alone_shadow(samples: &[(bool, f32, f32)], label: &str) {
+/// and leave the lit ones as the maps light them, which leave every one lit,
+/// away from the shadows' edges, which the denoiser filters.
+fn assert_rays_alone_shadow(samples: &[([u32; 2], bool, f32, f32)], label: &str) {
+    let decisions = samples
+        .iter()
+        .map(|&(pixel, visible, _, _)| (pixel, visible))
+        .collect();
+    let inside: std::collections::HashSet<_> =
+        interior(&decisions, DENOISER_REACH).into_iter().collect();
+    let samples: Vec<_> = samples
+        .iter()
+        .filter(|sample| inside.contains(&sample.0))
+        .map(|&(_, visible, with, without)| (visible, with, without))
+        .collect();
     let shadowed: Vec<_> = samples.iter().filter(|sample| !sample.0).collect();
     let lit: Vec<_> = samples.iter().filter(|sample| sample.0).collect();
     assert!(
@@ -510,7 +595,7 @@ fn the_lighting_pass_takes_the_shadows_the_maps_lack_from_the_mask() {
     // The directional light beyond its cascades.
     let block = Block::new(
         Vec3::new(0., 1., 0.),
-        Vec3::new(1., 0.2, 0.6),
+        Vec3::new(2., 0.2, 1.5),
         Mobility::Static,
     );
     let (mut sun_scene, _) = scene(gpu, 8., &[block], &[]);
@@ -521,6 +606,7 @@ fn the_lighting_pass_takes_the_shadows_the_maps_lack_from_the_mask() {
             distance: 1.,
             cascades: 1,
         }),
+        angular_diameter: 0.,
         ..DirectionalLight::default()
     };
     let to_sun = -sun.direction.as_dvec3().normalize();
@@ -534,6 +620,7 @@ fn the_lighting_pass_takes_the_shadows_the_maps_lack_from_the_mask() {
     // A point light over a plate within its maps' near plane.
     let light = Light {
         position: Vec3::new(0., 3., 0.),
+        shape: LightShape::Point { radius: 0. },
         intensity: 40.,
         range: 10.,
         casts_shadow: true,
@@ -632,14 +719,22 @@ fn a_slot_whose_light_changed_and_a_camera_cut_restart_its_history() {
     let size = [128, 128];
     let at = |z: f32, casts_shadow: bool| Light {
         position: Vec3::new(0., 6., z),
+        shape: LightShape::Point { radius: 0. },
         intensity: 60.,
         range: 20.,
         casts_shadow,
         ..Light::default()
     };
-    let (mut scene, ids) = scene(gpu, 6., &grate(), &[at(-0.3, true), at(0.3, false)]);
-    let [first, second] = [ids[0], ids[1]];
-    let camera = camera(Vec3::new(0., 9., 3.), Vec3::ZERO, size);
+    let eye = Vec3::new(0., 9., 3.);
+    let [one, two, three] = decoys(eye);
+    let (mut scene, ids) = scene(
+        gpu,
+        6.,
+        &grate(),
+        &[one, two, three, at(-0.3, true), at(0.3, false)],
+    );
+    let [first, second] = [ids[3], ids[4]];
+    let camera = camera(eye, Vec3::ZERO, size);
     let settings = settings(true);
     let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, None);
@@ -730,14 +825,16 @@ fn history_follows_the_camera_and_odd_pixels_take_the_texels_about_them() {
     let size = [128, 128];
     let light = Light {
         position: Vec3::new(0., 6., -0.3),
+        shape: LightShape::Point { radius: 0. },
         intensity: 60.,
         range: 20.,
         casts_shadow: true,
         ..Light::default()
     };
-    let (mut scene, ids) = scene(gpu, 6., &grate(), &[light]);
-    let key = ids[0].index() as u32;
     let height = 9.;
+    let [one, two, three] = decoys(Vec3::new(0., height, 0.));
+    let (mut scene, ids) = scene(gpu, 6., &grate(), &[one, two, three, light]);
+    let key = ids[3].index() as u32;
     let fov = 0.9_f32;
     let looking_down = |x: f32| Camera {
         view: glam::camera::rh::view::look_at_mat4(
@@ -802,5 +899,253 @@ fn history_follows_the_camera_and_odd_pixels_take_the_texels_about_them() {
     assert!(
         between == 0 && shadowed > 100 && lit > 100,
         "after the camera moved the slot holds {shadowed} shadowed, {between} blended, {lit} lit"
+    );
+}
+
+/// Wicked Engine's get_tangentspace and hemispherepoint_cos in f64: the
+/// point of the cosine-weighted unit hemisphere about unit `normal` that
+/// `u` and `v` in [0, 1) draw.
+fn hemisphere_point(normal: DVec3, u: f64, v: f64) -> DVec3 {
+    let helper = if normal.x.abs() > 0.99 {
+        DVec3::Z
+    } else {
+        DVec3::X
+    };
+    let tangent = normal.cross(helper).normalize();
+    let binormal = normal.cross(tangent).normalize();
+    let phi = v * std::f64::consts::TAU;
+    let cos_theta = (1. - u).sqrt();
+    let sin_theta = (1. - cos_theta * cos_theta).sqrt();
+    tangent * (phi.cos() * sin_theta) + binormal * (phi.sin() * sin_theta) + normal * cos_theta
+}
+
+/// The share of the rays toward a light, over a stratified grid of the
+/// draws light_surface.wgsl makes, that `blocks` grown by `grow` leave
+/// clear from `position`; `ray` gives each draw's direction and length.
+fn lit_share(
+    blocks: &[Block],
+    grow: f64,
+    position: DVec3,
+    ray: impl Fn(f64, f64) -> (DVec3, f64),
+) -> f64 {
+    const STRATA: usize = 12;
+    let mut clear = 0;
+    for i in 0..STRATA {
+        for j in 0..STRATA {
+            let (u, v) = (
+                (i as f64 + 0.5) / STRATA as f64,
+                (j as f64 + 0.5) / STRATA as f64,
+            );
+            let (direction, length) = ray(u, v);
+            if !blocks
+                .iter()
+                .any(|block| block.crosses(grow, position, direction, (0.01, length)))
+            {
+                clear += 1;
+            }
+        }
+    }
+    f64::from(clear) / (STRATA * STRATA) as f64
+}
+
+/// Where the oracle puts a floor texel against a light with a size: wholly
+/// shadowed, wholly lit, or in the middle of its penumbra (a quarter to
+/// three quarters lit); none near those bounds.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Penumbra {
+    Umbra,
+    Lit,
+    Middle,
+}
+
+/// The oracle's `Penumbra` of each floor texel of `observed` against a
+/// light whose rays `ray` draws, which `blocks` occlude: decided only where
+/// growing and shrinking the blocks by `MARGIN` agree.
+fn penumbrae(
+    observed: &Observed,
+    camera: &Camera,
+    blocks: &[Block],
+    ray: impl Fn(DVec3, f64, f64) -> (DVec3, f64),
+) -> std::collections::HashMap<[u32; 2], Penumbra> {
+    floor_texels(observed, camera)
+        .into_iter()
+        .filter_map(|(pixel, position)| {
+            let most = lit_share(blocks, -MARGIN, position, |u, v| ray(position, u, v));
+            let least = lit_share(blocks, MARGIN, position, |u, v| ray(position, u, v));
+            let penumbra = if most == 0. {
+                Penumbra::Umbra
+            } else if least == 1. {
+                Penumbra::Lit
+            } else if least > 0.25 && most < 0.75 {
+                Penumbra::Middle
+            } else {
+                return None;
+            };
+            Some((pixel, penumbra))
+        })
+        .collect()
+}
+
+/// Asserts that `observed`'s `slot` holds `penumbrae`: under 0.1 inside the
+/// umbra and over 0.9 inside the lit floor (3 texels from either's edge,
+/// within which the denoiser filters), and between in most of the
+/// penumbra's middle. Returns how many of the floor's texels hold a
+/// visibility between 0.04 and 0.96.
+fn assert_penumbrae(
+    observed: &Observed,
+    slot: usize,
+    penumbrae: &std::collections::HashMap<[u32; 2], Penumbra>,
+    label: &str,
+) -> usize {
+    let inside = |kind: Penumbra| {
+        let decisions = penumbrae
+            .iter()
+            .map(|(&pixel, &penumbra)| (pixel, penumbra == kind))
+            .collect();
+        interior(&decisions, 3)
+            .into_iter()
+            .filter(move |pixel| penumbrae[pixel] == kind)
+    };
+    let umbra: Vec<_> = inside(Penumbra::Umbra).collect();
+    let lit: Vec<_> = inside(Penumbra::Lit).collect();
+    assert!(
+        umbra.len() > 20 && lit.len() > 20,
+        "{label}: {} umbra and {} lit texels inside",
+        umbra.len(),
+        lit.len()
+    );
+    for pixel in umbra {
+        let byte = observed.mask(slot, pixel);
+        assert!(byte < 26, "{label}: umbra texel {pixel:?} holds {byte}");
+    }
+    for pixel in lit {
+        let byte = observed.mask(slot, pixel);
+        assert!(byte > 229, "{label}: lit texel {pixel:?} holds {byte}");
+    }
+    let middle: Vec<_> = penumbrae
+        .iter()
+        .filter(|&(_, &penumbra)| penumbra == Penumbra::Middle)
+        .map(|(&pixel, _)| observed.mask(slot, pixel))
+        .collect();
+    let between = middle
+        .iter()
+        .filter(|&&byte| byte > 10 && byte < 245)
+        .count();
+    assert!(
+        middle.len() > 30 && between * 10 > middle.len() * 6,
+        "{label}: {between} of {} texels in the penumbra's middle hold neither 0 nor 1",
+        middle.len()
+    );
+    penumbrae
+        .keys()
+        .filter(|&&pixel| (10..245).contains(&observed.mask(slot, pixel)))
+        .count()
+}
+
+// Plausible defects: a light's size ignored, so its rays all end at its
+// centre (a point or spot light's radius, a directional light's angular
+// diameter) and its shadow stays hard; the size taken in other units (a
+// diameter for a radius, degrees for radians) or drawn about the wrong
+// axis, which moves the penumbra's bounds; and the draws not turning from
+// frame to frame, which leaves a penumbra's texels 0 or 1, never between.
+// The oracle is the geometry: a slab between the floor and the light, and
+// the share of the rays toward the light, drawn over a stratified grid as
+// light_surface.wgsl draws them, that each floor texel sees clear, in f64.
+// After the denoiser converges, the umbra holds 0, the lit floor 1 and the
+// penumbra's middle neither, and a light of size 0 leaves far fewer texels
+// between.
+#[test]
+fn a_light_with_a_size_softens_its_shadow() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = [128, 128];
+    let height = 9.;
+    let camera = Camera {
+        view: glam::camera::rh::view::look_at_mat4(
+            Vec3::new(0., height, 0.),
+            Vec3::ZERO,
+            Vec3::NEG_Z,
+        ),
+        projection: crate::perspective(0.9, 1., 0.1),
+        eye: Vec3::new(0., height, 0.),
+    };
+    let slab = Block::new(
+        Vec3::new(0., 2.5, 0.),
+        Vec3::new(1.2, 0.05, 1.2),
+        Mobility::Static,
+    );
+    // Converged frames of a scene with the slab, `lights` and `sun`.
+    let frames = |lights: &[Light], sun: Option<DirectionalLight>| {
+        let (mut scene, ids) = scene(gpu, 8., &[slab], lights);
+        let settings = settings(true);
+        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let mut input = input(camera, sun);
+        let mut observed = None;
+        for frame in 0..32 {
+            input.camera_cut = frame == 0;
+            observed = Some(render(gpu, &mut renderer, &mut scene, &input, &settings));
+        }
+        (observed.unwrap(), ids)
+    };
+    // A point light, 0.8 m across.
+    let point = |radius: f32| Light {
+        position: Vec3::new(0.4, 6., 0.3),
+        shape: LightShape::Point { radius },
+        intensity: 60.,
+        range: 20.,
+        casts_shadow: true,
+        ..Light::default()
+    };
+    let (soft, ids) = frames(&[point(0.8)], None);
+    let key = ids[0].index() as u32;
+    let centre = point(0.8).position.as_dvec3();
+    let point_penumbrae = penumbrae(&soft, &camera, &[slab], |position, u, v| {
+        let end = centre + hemisphere_point((centre - position).normalize(), u, v) * 0.8;
+        let to = end - position;
+        (to.normalize(), to.length())
+    });
+    let soft_between = assert_penumbrae(&soft, soft.slot(key), &point_penumbrae, "point light");
+    let (hard, ids) = frames(&[point(0.)], None);
+    let hard_between = point_penumbrae
+        .keys()
+        .filter(|&&pixel| (10..245).contains(&hard.mask(hard.slot(ids[0].index() as u32), pixel)))
+        .count();
+    assert!(
+        hard_between * 4 < soft_between,
+        "a point light of size 0 leaves {hard_between} texels between, one 0.8 m across {soft_between}"
+    );
+    // The sun, 20° across.
+    let sun = |angular_diameter: f32| DirectionalLight {
+        direction: Vec3::new(0.2, -1., 0.1),
+        illuminance: 3.,
+        shadow: Some(DirectionalShadow::DEFAULT),
+        angular_diameter,
+        ..DirectionalLight::default()
+    };
+    let (soft, _) = frames(&[], Some(sun(20.)));
+    let toward = -sun(20.).direction.as_dvec3().normalize();
+    let disc = (10f64).to_radians().tan();
+    let sun_penumbrae = penumbrae(&soft, &camera, &[slab], |_, u, v| {
+        (
+            (toward + hemisphere_point(toward, u, v) * disc).normalize(),
+            f64::from(f32::MAX),
+        )
+    });
+    let soft_between = assert_penumbrae(
+        &soft,
+        soft.slot(SHADOW_MASK_DIRECTIONAL),
+        &sun_penumbrae,
+        "the sun",
+    );
+    let (hard, _) = frames(&[], Some(sun(0.)));
+    let hard_between = sun_penumbrae
+        .keys()
+        .filter(|&&pixel| (10..245).contains(&hard.mask(0, pixel)))
+        .count();
+    assert!(
+        hard_between * 4 < soft_between,
+        "a sun of size 0 leaves {hard_between} texels between, one 20° across {soft_between}"
     );
 }

@@ -274,7 +274,9 @@ fn point_light_scattering_matches_a_single_scattering_integral() {
             &queue,
             Light {
                 position: light_position,
-                shape: LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
+                shape: LightShape::Point {
+                    radius: LightShape::DEFAULT_RADIUS,
+                },
                 color: [1.; 3],
                 intensity,
                 range,
@@ -408,7 +410,9 @@ fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfilte
             &queue,
             Light {
                 position: Vec3::new(0.5, 0.3, -3.),
-                shape: LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
+                shape: LightShape::Point {
+                    radius: LightShape::DEFAULT_RADIUS,
+                },
                 color: [1.; 3],
                 intensity: 40.,
                 range: 25.,

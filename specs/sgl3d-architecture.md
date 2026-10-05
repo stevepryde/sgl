@@ -607,7 +607,15 @@ code; it does not redeclare a struct, binding or function another module owns.
   ray wherever lighting shades the light; the denoiser's wave reduction
   takes its own workgroup fallback
   (`ffx_denoiser_shadows_tileclassification.h` 28–45), subgroups being a
-  measured specialisation later (AR-3); and the directional light's rays
+  measured specialisation later (AR-3), and its quad reads exchange
+  through workgroup memory; the trace gathers each 8×4 tile's bits by
+  workgroup atomics into a storage texture, where Wicked ORs them into a
+  buffer, so the trace binds no storage buffer beyond lit group 0's and
+  group 1's eight; one dispatch a denoiser pass covers the four denoised
+  slots, a slot a group's z, where Wicked dispatches each light; the
+  denoiser's scratch packs its two halves in a word (`pack2x16float`) and
+  its history is filtered bilinearly by the pass, its motion is the
+  surface's in UV and its previous depth the stage's own, linear; and the directional light's rays
   ignore the cascades' distance, which bounds the maps alone, so a
   ray-traced shadow reaches as far as the scene. The lights in a pixel's
   mask, the slots, the filter taps and the upsample's four texels are the

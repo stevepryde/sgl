@@ -39,7 +39,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 24] = [
+    let roots: [&'static super::Module; 26] = [
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
@@ -64,6 +64,8 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::motion_blur::MOTION_BLUR,
         &crate::stages::shadows::traced::TEMPORAL,
         &crate::stages::shadows::traced::UPSAMPLE,
+        &crate::stages::shadows::traced::denoise::TILE_CLASSIFICATION,
+        &crate::stages::shadows::traced::denoise::FILTER,
     ];
     let mut programs: Vec<_> = roots
         .into_iter()
@@ -922,7 +924,8 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::stages::exposure::constants())
     .chain(crate::stages::opaque::ambient_occlusion::constants())
     .chain(crate::stages::fog::constants())
-    .chain(super::shadow_mask::constants());
+    .chain(super::shadow_mask::constants())
+    .chain(crate::stages::shadows::traced::denoise::constants());
     let programs = programs();
     for constant in constants {
         let (label, source) = programs

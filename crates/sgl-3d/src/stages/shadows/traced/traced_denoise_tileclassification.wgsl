@@ -12,7 +12,8 @@
 // depth and normals are the G-buffer's at the full-resolution pixel of
 // each tracing pixel (Wicked's depth reads at did * 2, its normals from its
 // half-resolution copy); the previous depth is the stage's own, linear;
-// a slot's first frame is the stage's history restarting or the slot's
+// a pixel the trace found nothing lit at reads as the sky, as the trace
+// records it; a slot's first frame is the stage's history restarting or the slot's
 // light changing (ShadowMaskSlots.restart), whose previous moments read as
 // zero, as Wicked clears its resources on its first frame; the history is
 // sampled bilinearly from two packed halves (pack2x16float), where Wicked
@@ -30,6 +31,9 @@
 @group(0) @binding(9) var denoise_metadata:texture_storage_2d_array<r32uint,write>;
 @group(0) @binding(10) var denoise_reprojection:texture_storage_2d_array<r32uint,write>;
 @group(0) @binding(11) var denoise_moments:texture_storage_2d_array<rgba16float,write>;
+// The tracing resolution's linear depth this frame, the sky's where the
+// G-buffer drew nothing lit.
+@group(0) @binding(12) var denoise_half_depth:texture_2d<f32>;
 
 // The slot the invocation's group denoises.
 var<private> rtshadow_denoise_lightindex:u32;
@@ -62,7 +66,13 @@ fn FFX_DNSR_Shadows_ReadPreviousLinearDepth(idx:vec2<i32>)->f32 {
  return textureLoad(denoise_previous_depth,clamp(idx,vec2(0),last),0).x;
 }
 
+// The G-buffer's depth at the tracing pixel, the sky's (0) where the trace
+// found nothing lit, so that an unlit pixel is no receiver.
 fn FFX_DNSR_Shadows_ReadDepth(did:vec2<u32>)->f32 {
+ let texel=min(did,FFX_DNSR_Shadows_GetBufferDimensions()-1u);
+ if textureLoad(denoise_half_depth,texel,0).x>=TRACED_SKY_DEPTH {
+  return 0.;
+ }
  return textureLoad(denoise_depth,traced_full_pixel(did),0);
 }
 fn FFX_DNSR_Shadows_ReadNormals(did:vec2<u32>)->vec3<f32> {

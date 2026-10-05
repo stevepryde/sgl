@@ -943,7 +943,9 @@ fn content_edits_keep_history() {
                         &frames.queue,
                         sgl_3d::Light {
                             position: Vec3::new(0., 2., -4.),
-                            shape: sgl_3d::LightShape::Point { radius: sgl_3d::LightShape::DEFAULT_RADIUS },
+                            shape: sgl_3d::LightShape::Point {
+                                radius: sgl_3d::LightShape::DEFAULT_RADIUS,
+                            },
                             color: [1.; 3],
                             intensity: 0.,
                             range: 10.,

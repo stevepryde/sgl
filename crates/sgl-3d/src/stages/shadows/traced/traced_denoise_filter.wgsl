@@ -13,7 +13,8 @@
 // and the last pass's contrast recovery (79–82). Changed at the port
 // boundary: one dispatch for the four slots, the slot the group's z; the
 // pass a pipeline constant, where Wicked pushes it; depth and normals the
-// G-buffer's at the full-resolution pixel of each tracing pixel; the tile's
+// G-buffer's at the full-resolution pixel of each tracing pixel, a pixel
+// the trace found nothing lit at reading as the sky; the tile's
 // metadata read once by the group through workgroupUniformLoad; and the
 // denoised visibility written to a layer a slot, where Wicked writes a
 // channel a light.
@@ -25,6 +26,9 @@ override filter_pass:u32;
 @group(0) @binding(4) var<uniform> traced:TracedParams;
 @group(0) @binding(5) var denoise_history:texture_storage_2d_array<r32uint,write>;
 @group(0) @binding(6) var denoise_output:texture_storage_2d_array<r32float,write>;
+// The tracing resolution's linear depth this frame, the sky's where the
+// G-buffer drew nothing lit.
+@group(0) @binding(7) var denoise_half_depth:texture_2d<f32>;
 
 // The slot the invocation's group denoises.
 var<private> rtshadow_denoise_lightindex:u32;
@@ -45,7 +49,13 @@ fn FFX_DNSR_Shadows_GetDepthSimilaritySigma()->f32 {
  return 1.;
 }
 
+// The G-buffer's depth at the tracing pixel, the sky's (0) where the trace
+// found nothing lit, so that an unlit pixel is no receiver.
 fn FFX_DNSR_Shadows_ReadDepth(p:vec2<i32>)->f32 {
+ let texel=min(vec2<u32>(p),FFX_DNSR_Shadows_GetBufferDimensions()-1u);
+ if textureLoad(denoise_half_depth,texel,0).x>=TRACED_SKY_DEPTH {
+  return 0.;
+ }
  return textureLoad(denoise_depth,traced_full_pixel(vec2<u32>(p)),0);
 }
 fn FFX_DNSR_Shadows_ReadNormals(p:vec2<i32>)->vec3<f32> {

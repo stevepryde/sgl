@@ -15,6 +15,38 @@ full API details.
 
 ## Unreleased
 
+### Ray-traced shadows are soft and denoised; lights gain a size
+
+- **Scope:** `sgl-3d` (#23). `LightShape::Point` becomes
+  `LightShape::Point { radius }`, and `LightShape::Spot` gains `radius`
+  (metres, nonnegative; `LightShape::DEFAULT_RADIUS` is Wicked Engine's
+  0.025, which `Light::default()` takes). `DirectionalLight` gains
+  `angular_diameter` (degrees, clamped to 0..=90, NaN as 0; the default is
+  `DirectionalLight::SUN_ANGULAR_DIAMETER`, 0.53). Only rays see a light's
+  size. Ray-traced shadows (`Settings::ray_traced_shadows`) end each ray
+  at a point drawn on the light, each frame another: a point or spot
+  light's sphere, a rectangle's face, or a direction within the
+  directional light's disc, so a shadow is sharp near its caster and
+  widens away from it. AMD's FidelityFX shadow denoiser (FidelityFX-Denoiser
+  d7dfecb, MIT, now registered for `sgl-3d` in its notices) filters the
+  directional light's and the three longest-held local lights'
+  visibilities, as Wicked Engine runs it; the other twelve keep the
+  temporal blend. The dynamic GI volume's visibility rays end on the light
+  the same way, which is new for point, spot and directional lights. No
+  preset turns ray-traced shadows on (D-28). TIMINGS.
+- **Migration:** replace `LightShape::Point` with
+  `LightShape::Point { radius: LightShape::DEFAULT_RADIUS }` (or `0.` for
+  a hard shadow), add `radius: LightShape::DEFAULT_RADIUS` to each
+  `LightShape::Spot { .. }`, and write a pattern `LightShape::Point =>` as
+  `LightShape::Point { .. } =>`. Code that builds a `DirectionalLight`
+  without `..Default::default()` adds `angular_diameter`. `Scene::add_light`
+  and `set_light` refuse a negative or non-finite radius
+  (`SceneError::InvalidLight`). With ray-traced shadows off, only a dynamic
+  GI volume renders differently: its probes' bounce near the shadows of
+  point, spot and directional lights softens slightly. Afterwards, with
+  ray-traced shadows on, look at the shadows of small and large lights and
+  of the sun in motion, and at a dynamic GI volume near shadowed lights.
+
 ### Ray-traced shadows
 
 - **Scope:** `sgl-3d` (#23): new `Settings::ray_traced_shadows` (`bool`,

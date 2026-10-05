@@ -20,7 +20,7 @@
 //! trace in hardware.
 //! Timing groups: `ray-traced shadow rays`, `ray-traced shadow temporal`,
 //! `ray-traced shadow upsample`.
-mod denoise;
+pub(crate) mod denoise;
 pub(crate) mod slots;
 
 use crate::shading::RayQueryForm;
@@ -427,6 +427,7 @@ impl TracedShadows {
                 depth: &shared.depth,
                 normal: &shared.normal,
                 motion: &shared.motion,
+                half_depth: &targets.depth[current],
                 previous_depth: &targets.depth[previous],
                 params: &self.params,
                 slot_table: &self.slot_table,

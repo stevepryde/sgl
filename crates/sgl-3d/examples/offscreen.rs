@@ -388,7 +388,9 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         &queue,
         Light {
             position: Vec3::new(-2.1, 1.6, 0.3),
-            shape: LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
+            shape: LightShape::Point {
+                radius: LightShape::DEFAULT_RADIUS,
+            },
             color: [0.1, 0.55, 1.],
             intensity: 2. * options.emission,
             range: 8.,
