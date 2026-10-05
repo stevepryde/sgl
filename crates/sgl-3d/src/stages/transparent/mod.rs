@@ -84,12 +84,15 @@ impl Transparent {
         let effects = effects::Effects::new(device, unlit);
         let group = |label| BlendedGroup {
             group: CachedGroup::new(blended.clone()),
-            trace: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: size_of::<BlendedTrace>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            trace: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: size_of::<BlendedTrace>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             written: None,
         };
         Self {

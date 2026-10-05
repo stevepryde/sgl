@@ -1,8 +1,8 @@
 //! What the library counts on each thread while the `diagnostics` feature is
 //! on (`diagnostics::counters`): its uploads by call site, the buffers it
-//! creates with contents, the time each step of building a model and each
-//! instance BVH takes, the ray source's growths and the static-edit boxes
-//! recorded and merged. Without the feature every function here is a
+//! creates, the time each step of building a model and each
+//! instance BVH takes, the ray source's and geometry slabs' growths and the
+//! static-edit boxes recorded and merged. Without the feature every function here is a
 //! pass-through and nothing is kept.
 
 /// A step of building a model's GPU content or an instance BVH, which
@@ -58,12 +58,14 @@ pub struct StepTime {
 pub struct Counters {
     /// Uploads by call site, in the order the sites first uploaded.
     pub uploads: Vec<UploadSite>,
-    /// Buffers created with contents.
+    /// Buffers created, with contents or without.
     pub buffers_created: u64,
     /// Build steps, in the order they first ran.
     pub steps: Vec<StepTime>,
     /// Growths of the ray source, each a copy of it whole.
     pub ray_source_growths: u64,
+    /// Growths of a geometry slab, each a copy of it whole.
+    pub geometry_growths: u64,
     /// Static-edit boxes recorded, and those merged into another: the scene
     /// keeps at most 1024 pending, and past them halves the list, merging
     /// 512 pairs at once.
@@ -128,6 +130,7 @@ impl Counters {
             buffers_created: self.buffers_created - earlier.buffers_created,
             steps,
             ray_source_growths: self.ray_source_growths - earlier.ray_source_growths,
+            geometry_growths: self.geometry_growths - earlier.geometry_growths,
             static_edit_boxes: self.static_edit_boxes - earlier.static_edit_boxes,
             static_edit_boxes_merged: self.static_edit_boxes_merged
                 - earlier.static_edit_boxes_merged,
@@ -185,6 +188,17 @@ pub(crate) fn write_texture(
     #[cfg(any(test, feature = "diagnostics"))]
     upload(data.len());
     queue.write_texture(texture, data, layout, size);
+}
+
+/// `device.create_buffer`, counted as a buffer created.
+#[cfg_attr(any(test, feature = "diagnostics"), track_caller)]
+pub(crate) fn buffer(
+    device: &wgpu::Device,
+    descriptor: &wgpu::BufferDescriptor<'_>,
+) -> wgpu::Buffer {
+    #[cfg(any(test, feature = "diagnostics"))]
+    COUNTERS.with_borrow_mut(|counters| counters.buffers_created += 1);
+    device.create_buffer(descriptor)
 }
 
 /// `device.create_buffer_init`, counted as an upload and a buffer created.
@@ -258,6 +272,12 @@ pub(crate) fn step<T>(step: BuildStep, work: impl FnOnce() -> T) -> T {
 pub(crate) fn ray_source_growth() {
     #[cfg(any(test, feature = "diagnostics"))]
     COUNTERS.with_borrow_mut(|counters| counters.ray_source_growths += 1);
+}
+
+/// Counts a growth of a geometry slab, which copies it whole.
+pub(crate) fn geometry_growth() {
+    #[cfg(any(test, feature = "diagnostics"))]
+    COUNTERS.with_borrow_mut(|counters| counters.geometry_growths += 1);
 }
 
 /// Counts a static-edit box recorded, and the `merged` pairs of pending

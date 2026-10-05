@@ -32,7 +32,9 @@ struct UnclippedCaster {
 }
 // A masked material's casters: the texel coordinates and colour of its base
 // alpha, pulled from the scene source's vertex records of the drawn mesh
-// (whose record the draw instance names), reach the fragment, which
+// (whose record the draw instance names, at the vertex index less the draw's
+// base vertex, as Bevy b56fc29's morph_vertex subtracts
+// first_vertex_index), reach the fragment, which
 // discards what the material cuts out (material_alpha_discard), as Bevy
 // 9d12036's shadow casters of masked materials do (MAY_DISCARD in
 // crates/bevy_pbr/src/render/light.rs, prepass_alpha_discard). The unclipped
@@ -45,7 +47,7 @@ struct MaskedCaster {
  @location(2) unclipped_depth:f32,
 }
 fn masked_caster(position:vec3<f32>,drawn:DrawInstance,index:u32)->MaskedCaster {
- let vertex=scene_source[drawn.mesh+SCENE_MESH_VERTICES]+index*SCENE_VERTEX_WORDS;
+ let vertex=scene_source[drawn.mesh+SCENE_MESH_VERTICES]+(index-drawn.first_vertex)*SCENE_VERTEX_WORDS;
  var out:MaskedCaster;
  out.position=view.view_projection*objects[drawn.object].model*vec4(position,1.);
  out.uv=scene_v2(vertex+SCENE_VERTEX_UV);

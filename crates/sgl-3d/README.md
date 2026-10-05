@@ -1209,7 +1209,11 @@ authored look and per-frame state in a `FrameInput`.
      pays nothing.
 
    Buffers grow as content is added and reuse removed content's ranges;
-   content beyond a device limit is refused. `Renderer::new(&device, &queue,
+   content beyond a device limit is refused. Models share their buffers:
+   the ray source, and slabs that hold every mesh's shadow-caster positions
+   and indices from 1 MiB up to 512 MiB each, grown by half again when
+   full, so adding, replacing and removing models creates no buffer per
+   mesh. `Renderer::new(&device, &queue,
    output_format, output_size, device_scale, &settings)` creates the targets
    for an output of `output_size` physical pixels in a window of
    `device_scale` physical pixels per logical pixel.
@@ -1815,8 +1819,8 @@ the tone-target capture), `Renderer::diagnostic_target`,
 `diagnostics::source_id`, the value the source-identity target holds for an
 instance's pixels, `diagnostics::crystal_roughness_threshold`, where
 Crystal stops tracing, `diagnostics::counters` (what `sgl-3d` itself counted on
-the thread: uploads by file and line, buffers created with contents, model and
-instance BVH build steps, ray-source growths and static-edit boxes; subtract
+the thread: uploads by file and line, buffers created, model and
+instance BVH build steps, ray-source and geometry-slab growths and static-edit boxes; subtract
 two with `Counters::since`, and compare versions by totals since lines move),
 `Scene::diagnostic_resources` (the scene's buffer sizes) and
 `Renderer::diagnostic_draws` (the last frame's camera, blended and cascade

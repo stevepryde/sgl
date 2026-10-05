@@ -147,12 +147,15 @@ fn view_entry(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_
 }
 
 fn storage_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: size.max(4),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some(label),
+            size: size.max(4),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 /// How many probes a lattice of `probes` holds.
@@ -215,15 +218,18 @@ impl Volume {
         let probe_states = storage_buffer(device, "dynamic GI probe states", count * 8);
         let ray_counts = storage_buffer(device, "dynamic GI ray counts", count * 4);
         let traced_probes = storage_buffer(device, "dynamic GI traced probes", count * 4);
-        let allocation = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("dynamic GI ray allocation"),
-            size: ALLOCATION_BYTES,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
+        let allocation = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("dynamic GI ray allocation"),
+                size: ALLOCATION_BYTES,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            },
+        );
         let mut volume = Self {
             key,
             max_rays,

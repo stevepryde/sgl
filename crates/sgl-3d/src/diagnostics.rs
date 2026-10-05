@@ -78,12 +78,15 @@ pub fn read(
 ) -> Vec<u8> {
     let size = texture.size();
     let row = (size.width * bpp).div_ceil(256) * 256;
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("frame evidence"),
-        size: u64::from(row * size.height),
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let buffer = crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("frame evidence"),
+            size: u64::from(row * size.height),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    );
     let mut encoder = device.create_command_encoder(&Default::default());
     encoder.copy_texture_to_buffer(
         texture.as_image_copy(),

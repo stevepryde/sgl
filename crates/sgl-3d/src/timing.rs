@@ -92,18 +92,24 @@ impl GpuTiming {
                     ty: wgpu::QueryType::Timestamp,
                     count: MAX_PASSES as u32 * 2,
                 }),
-                resolve: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("pass timestamp resolve"),
-                    size,
-                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                }),
-                readback: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("pass timestamp readback"),
-                    size,
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    mapped_at_creation: false,
-                }),
+                resolve: crate::counters::buffer(
+                    device,
+                    &wgpu::BufferDescriptor {
+                        label: Some("pass timestamp resolve"),
+                        size,
+                        usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                        mapped_at_creation: false,
+                    },
+                ),
+                readback: crate::counters::buffer(
+                    device,
+                    &wgpu::BufferDescriptor {
+                        label: Some("pass timestamp readback"),
+                        size,
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    },
+                ),
                 names: Vec::new(),
                 frame: 0,
                 newest: 0,

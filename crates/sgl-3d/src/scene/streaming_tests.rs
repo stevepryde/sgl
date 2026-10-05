@@ -44,12 +44,13 @@ fn chunk_mesh(quads: usize, seed: u64, material: MaterialId) -> ModelMesh {
 }
 
 /// The sizes of the buffers content grows: the ray source, the object
-/// records and the ray entries.
-fn retained(scene: &Scene) -> [u64; 3] {
+/// records, the ray entries and the geometry buffers.
+fn retained(scene: &Scene) -> [u64; 4] {
     [
         scene.rays.source().size(),
         scene.instances.objects.buffer().size(),
         scene.ray_instances.buffer().size(),
+        scene.geometry.sizes()[0],
     ]
 }
 

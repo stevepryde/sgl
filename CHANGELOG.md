@@ -15,6 +15,38 @@ full API details.
 
 ## Unreleased
 
+### Models share their shadow-caster buffers
+
+- **Scope:** `sgl-3d` no longer creates three GPU buffers per mesh (shadow
+  casters' positions, indices and caster-cluster indices). Every model's
+  meshes are placed in shared slabs, as Bevy's mesh allocator packs them:
+  one kind for positions and one for indices, each slab starting at 1 MiB
+  and growing by half again up to 512 MiB (or the device's largest buffer),
+  data of 256 MiB or more in a slab of its own, and an emptied slab
+  released. Adding, replacing and removing models (`add_model`,
+  `set_model`, `remove_model`, `add_asset`) creates no buffer once the slabs
+  hold a stream's peak; a scene with any geometry now holds at least 2 MiB
+  of slabs (a deforming model's meshes take indices only, since their
+  casters read deformed positions), and up to half again what its geometry needs while a slab has
+  room to fill. A mesh with no indices draws nothing (before, it issued an
+  empty draw). With the `diagnostics` feature, `SceneResources` reports
+  `geometry`, `geometry_live` and `geometry_buffers` instead of
+  `mesh_buffers` and `mesh_buffer_count`, `Counters::buffers_created`
+  counts every buffer the library creates, not only those created with
+  contents, and `Counters::geometry_growths` counts slab growths.
+- **Migration:** no game-code changes, except for diagnostics code that
+  reads the renamed `SceneResources` fields:
+
+  ```rust
+  // Before
+  let bytes = resources.mesh_buffers;
+  // After
+  let bytes = resources.geometry;
+  ```
+
+  Afterwards, exercise the game's shadows (directional and local, with
+  masked materials) on its route; nothing should change.
+
 ### Local-light shadow records upload only when they change
 
 - **Scope:** `sgl-3d`'s local-light shadow stage. Each frame wrote every

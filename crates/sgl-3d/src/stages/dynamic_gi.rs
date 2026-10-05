@@ -266,12 +266,15 @@ impl DynamicGi {
             prepare_trace,
             update_irradiance,
             update_depth,
-            uniform: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("dynamic GI volume"),
-                size: std::mem::size_of::<VolumeUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            uniform: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("dynamic GI volume"),
+                    size: std::mem::size_of::<VolumeUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             stand_in: texture(device, "no dynamic GI probes", [1, 1], layout::FORMAT),
             layouts,
             committed: None,

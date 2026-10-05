@@ -253,12 +253,15 @@ impl Exposure {
         Self {
             histogram_pipeline: pipeline("compute_histogram"),
             average_pipeline: pipeline("compute_average"),
-            settings: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("auto exposure settings"),
-                size: size_of::<AutoExposureUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            settings: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("auto exposure settings"),
+                    size: size_of::<AutoExposureUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             histogram: crate::counters::buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {

@@ -18,8 +18,9 @@ use super::culling::clip_intersects;
 use super::pipelines::{GeometryPass, GeometryPipelines, Variant};
 use super::population::{LightReach, Population, moving_caster_reaches, within};
 use crate::content::identity::{Identity, ModelId};
+use crate::scene::geometry::GeometryRange;
 use crate::scene::instances::Instance;
-use crate::scene::models::Model;
+use crate::scene::models::{Mesh, Model};
 use crate::shading::vertex::{CASTER_SLOT, DRAW_INSTANCE_SLOT, DrawInstance};
 use crate::{Mobility, Scene};
 use batching::{BatchKey, Batcher, InstanceDraw};
@@ -266,7 +267,7 @@ impl DrawList {
                     }
                     None => drawn.ranges.visible(frustum, push),
                 }
-            } else {
+            } else if drawn.count > 0 {
                 self.ranges.push(0..drawn.count);
             }
             if self.ranges.len() == start {
@@ -283,6 +284,7 @@ impl DrawList {
                 instance: DrawInstance {
                     object: index as u32,
                     mesh: drawn_owner.ray.mesh_word(drawn_index),
+                    first_vertex: base_vertex(instance, drawn),
                 },
                 order: (rank, mesh_index as u32),
             });
@@ -358,6 +360,7 @@ impl DrawList {
                 instance: DrawInstance {
                     object: index as u32,
                     mesh: model.ray.mesh_word(mesh_index),
+                    first_vertex: base_vertex(instance, mesh),
                 },
                 order: (rank, mesh_index as u32),
             });
@@ -386,6 +389,9 @@ impl DrawList {
             if !population.draws(material, mask) {
                 continue;
             }
+            if mesh.count == 0 {
+                continue;
+            }
             let start = self.ranges.len();
             self.ranges.push(0..mesh.count);
             self.batcher.push(InstanceDraw {
@@ -403,6 +409,7 @@ impl DrawList {
                 instance: DrawInstance {
                     object: index as u32,
                     mesh: model.ray.mesh_word(mesh_index),
+                    first_vertex: base_vertex(instance, mesh),
                 },
                 order: (rank, mesh_index as u32),
             });
@@ -470,7 +477,10 @@ impl DrawList {
     /// many it issued: of a blended list, only its receivers' for the
     /// `Receivers` pass. The only place scene geometry is drawn: it binds
     /// the scene's group 1 and the draw instances once, and each batch's
-    /// pipeline, material and buffers when they change.
+    /// pipeline, material and, for an indexed pass, the geometry buffers
+    /// when they change. An indexed draw draws its mesh's own index range
+    /// at the mesh's first index in its slab, with the mesh's first vertex
+    /// as the base vertex (`scene::geometry`).
     pub fn draw(
         &self,
         scene: &Scene,
@@ -491,6 +501,11 @@ impl DrawList {
         let mut variant = None;
         let mut material = None;
         let mut geometry = None;
+        // The bound positions (a slab, or a deformed instance's in the ray
+        // source) and index slab, and where the batch's geometry starts.
+        let mut positions = None;
+        let mut index_slab = None;
+        let mut first_index = 0;
         let receivers = kind == GeometryPass::Receivers;
         for (batch, range) in self.calls() {
             if receivers && !receives(scene, batch) {
@@ -508,10 +523,10 @@ impl DrawList {
                 material = Some(key.material);
             }
             if !pulled && geometry != Some(key.geometry) {
-                let (positions, indices) = match key.geometry {
+                let (vertices, indices) = match key.geometry {
                     Geometry::Mesh { model, mesh } => {
                         let mesh = &scene.drawn_model(model).meshes[mesh];
-                        (mesh.positions.slice(..), &mesh.indices)
+                        (Positions::Slab(mesh.positions), mesh.indices)
                     }
                     Geometry::Clusters { model, mesh } => {
                         let mesh = &scene.drawn_model(model).meshes[mesh];
@@ -519,7 +534,7 @@ impl DrawList {
                             .clusters
                             .as_ref()
                             .expect("a cluster batch's mesh has clusters");
-                        (mesh.positions.slice(..), &clustered.indices)
+                        (Positions::Slab(mesh.positions), clustered.indices)
                     }
                     Geometry::Deformed {
                         instance,
@@ -537,26 +552,71 @@ impl DrawList {
                                 owner.deformation.as_ref().expect("its model deforms"),
                                 mesh,
                             );
-                        let source = scene.rays.source();
-                        (
-                            source.slice(u64::from(word) * 4..),
-                            &owner.meshes[mesh].indices,
-                        )
+                        (Positions::Deformed(word), owner.meshes[mesh].indices)
                     }
                 };
-                pass.set_vertex_buffer(CASTER_SLOT, positions);
-                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                if positions != Some(vertices.binding()) {
+                    let buffer = match vertices {
+                        Positions::Slab(range) => scene.geometry.buffer(range.slab).slice(..),
+                        Positions::Deformed(word) => {
+                            scene.rays.source().slice(u64::from(word) * 4..)
+                        }
+                    };
+                    pass.set_vertex_buffer(CASTER_SLOT, buffer);
+                    positions = Some(vertices.binding());
+                }
+                if index_slab != Some(indices.slab) {
+                    let buffer = scene.geometry.buffer(indices.slab);
+                    pass.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    index_slab = Some(indices.slab);
+                }
+                first_index = indices.first;
                 geometry = Some(key.geometry);
             }
             let instances = self.first + batch.instances.start..self.first + batch.instances.end;
             if pulled {
                 pass.draw(range.clone(), instances);
             } else {
-                pass.draw_indexed(range.clone(), 0, instances);
+                let indices = first_index + range.start..first_index + range.end;
+                // Every instance of a batch draws its geometry, so the first's
+                // base vertex is all of theirs.
+                let base_vertex = self.instances[batch.instances.start as usize].first_vertex;
+                let base_vertex =
+                    i32::try_from(base_vertex).expect("a slab's vertices fit a base vertex");
+                pass.draw_indexed(indices, base_vertex, instances);
             }
             draws += 1;
         }
         draws
+    }
+}
+
+/// The base vertex an indexed draw of `mesh` as `instance` shows it adds to
+/// the mesh's indices: its first vertex in its positions slab, or zero for a
+/// deforming instance, whose own positions the draw binds.
+fn base_vertex(instance: &Instance, mesh: &Mesh) -> u32 {
+    match instance.deformation {
+        Some(_) => 0,
+        None => mesh.positions.first,
+    }
+}
+
+/// Where an indexed draw's positions come from: a mesh's range of a
+/// positions slab, or a deforming instance's deformed positions at a word
+/// of the ray source.
+#[derive(Clone, Copy)]
+enum Positions {
+    Slab(GeometryRange),
+    Deformed(u32),
+}
+
+impl Positions {
+    /// What binding them sets: a slab, or a word of the ray source.
+    fn binding(self) -> (bool, u32) {
+        match self {
+            Self::Slab(range) => (true, range.slab),
+            Self::Deformed(word) => (false, word),
+        }
     }
 }
 

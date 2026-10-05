@@ -602,10 +602,11 @@ impl Measured {
         let counted = &self.counted;
         let per_frame = |count: u64| count as f64 / frames.max(1) as f64;
         println!(
-            "  static-edit boxes {:.2} a frame, {:.2} merged into another; ray source growths {}",
+            "  static-edit boxes {:.2} a frame, {:.2} merged into another; ray source growths {}, geometry slab growths {}",
             per_frame(counted.static_edit_boxes),
             per_frame(counted.static_edit_boxes_merged),
-            counted.ray_source_growths
+            counted.ray_source_growths,
+            counted.geometry_growths
         );
         for time in &counted.steps {
             println!(
@@ -647,13 +648,14 @@ impl Measured {
             row("object record bytes", |r| r.object_records);
             row("instance entry bytes", |r| r.instance_entries);
             row("light record bytes", |r| r.light_records);
-            row("mesh buffer bytes", |r| r.mesh_buffers);
-            row("mesh buffers", |r| r.mesh_buffer_count);
+            row("geometry buffer bytes", |r| r.geometry);
+            row("geometry bytes content holds", |r| r.geometry_live);
+            row("geometry buffers", |r| r.geometry_buffers);
             let quads = self.quads.last().copied().unwrap_or(0.).max(1.);
             println!(
-                "  bytes a resident quad: ray source {:.0}, mesh buffers {:.0}",
+                "  bytes a resident quad: ray source {:.0}, geometry {:.0}",
                 last.ray_source_live as f64 / quads,
-                last.mesh_buffers as f64 / quads
+                last.geometry_live as f64 / quads
             );
         }
         println!(

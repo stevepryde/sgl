@@ -289,12 +289,15 @@ impl VolumetricFog {
             "integrate",
             &[],
         );
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("volumetric fog froxels"),
-            size: size_of::<FroxelVolumeUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("volumetric fog froxels"),
+                size: size_of::<FroxelVolumeUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("volumetric fog"),
             mag_filter: wgpu::FilterMode::Linear,

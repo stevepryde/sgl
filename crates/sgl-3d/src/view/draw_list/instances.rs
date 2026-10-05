@@ -38,12 +38,15 @@ impl DrawInstances {
             .as_ref()
             .is_none_or(|buffer| buffer.size() < size)
         {
-            self.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("draw instances"),
-                size: size.next_power_of_two(),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
+            self.buffer = Some(crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("draw instances"),
+                    size: size.next_power_of_two(),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ));
         }
         crate::counters::write_buffer(queue, self.buffer.as_ref().unwrap(), 0, bytes);
     }

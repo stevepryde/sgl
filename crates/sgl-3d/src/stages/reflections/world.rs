@@ -261,12 +261,15 @@ impl WorldReflections {
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             }),
-            params: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("world-space reflection parameters"),
-                size: std::mem::size_of::<Params>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            params: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("world-space reflection parameters"),
+                    size: std::mem::size_of::<Params>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             targets: Targets::new(device, size),
             frame: 0,
             previous_scene_frame: None,

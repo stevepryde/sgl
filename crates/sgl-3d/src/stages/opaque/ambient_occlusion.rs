@@ -77,12 +77,15 @@ impl AmbientOcclusion {
             main: pipeline("main_pass"),
             denoise: pipeline("denoise"),
             params: std::array::from_fn(|_| {
-                device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("XeGTAO constants"),
-                    size: std::mem::size_of::<Params>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
+                crate::counters::buffer(
+                    device,
+                    &wgpu::BufferDescriptor {
+                        label: Some("XeGTAO constants"),
+                        size: std::mem::size_of::<Params>() as u64,
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    },
+                )
             }),
             targets: None,
         }

@@ -362,15 +362,18 @@ impl SceneRays {
 }
 
 fn source_buffer(device: &wgpu::Device, words: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("scene ray source geometry and materials"),
-        size: words * 4,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::VERTEX
-            | wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("scene ray source geometry and materials"),
+            size: words * 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

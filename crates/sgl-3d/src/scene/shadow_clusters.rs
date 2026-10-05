@@ -5,7 +5,9 @@
 //! centroid's cell. Cells are ordered by 64 m group, so a face tests a
 //! group's bounds before its cells'. A static instance keeps its clusters'
 //! and groups' world bounds (`posed`), so a face tests them without
-//! transforming them.
+//! transforming them. Their indices live in the scene's geometry buffers
+//! (`geometry`).
+use super::geometry::GeometryRange;
 use super::static_edits::posed_bounds;
 use crate::asset::Vertex;
 use glam::{Mat4, Vec3};
@@ -21,12 +23,20 @@ pub(crate) struct Cluster {
     pub indices: Range<u32>,
 }
 
-/// One mesh's clusters: an index buffer over its vertices, cell by cell,
-/// cells in group order.
+/// One mesh's clusters: indices over its vertices, cell by cell, cells in
+/// group order, placed in the scene's geometry buffers.
 pub(crate) struct MeshClusters {
-    pub indices: wgpu::Buffer,
+    pub indices: GeometryRange,
     pub clusters: Vec<Cluster>,
     /// Each group's clusters: consecutive ranges of `clusters`.
+    pub groups: Vec<Range<usize>>,
+}
+
+/// One mesh's clusters before they are placed: their indices, and the
+/// clusters and groups that name ranges of them.
+pub(crate) struct ClusteredIndices {
+    pub indices: Vec<u32>,
+    pub clusters: Vec<Cluster>,
     pub groups: Vec<Range<usize>>,
 }
 
@@ -57,9 +67,11 @@ impl MeshClusters {
             .collect();
         PosedClusters { clusters, groups }
     }
+}
 
+impl ClusteredIndices {
     /// None for a mesh without triangles.
-    pub fn new(device: &wgpu::Device, vertices: &[Vertex], indices: &[u32]) -> Option<Self> {
+    pub fn new(vertices: &[Vertex], indices: &[u32]) -> Option<Self> {
         // Cells by group, then by cell.
         let mut cells = BTreeMap::<([i32; 3], [i32; 3]), Vec<([u32; 3], [Vec3; 2])>>::new();
         for triangle in indices.chunks_exact(3) {
@@ -97,15 +109,8 @@ impl MeshClusters {
             });
             groups.last_mut().expect("a group per cluster").end = clusters.len();
         }
-        (!clustered.is_empty()).then(|| Self {
-            indices: crate::counters::buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("local light shadow caster indices"),
-                    contents: bytemuck::cast_slice(&clustered),
-                    usage: wgpu::BufferUsages::INDEX,
-                },
-            ),
+        (!clustered.is_empty()).then_some(Self {
+            indices: clustered,
             clusters,
             groups,
         })
