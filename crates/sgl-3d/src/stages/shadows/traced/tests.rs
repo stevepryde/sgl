@@ -1079,30 +1079,36 @@ fn assert_penumbrae(
 // diameter for a radius, degrees for radians) or drawn about the wrong
 // axis, which moves the penumbra's bounds; and the draws not turning from
 // frame to frame, which leaves a penumbra's texels 0 or 1, never between.
-// The oracle is the geometry: a slab between the floor and the light, and
-// the share of the rays toward the light, drawn over a stratified grid as
-// light_surface.wgsl draws them, that each floor texel sees clear, in f64.
-// After the denoiser converges, the umbra holds 0, the lit floor 1 and the
-// penumbra's middle neither, and a light of size 0 leaves far fewer texels
-// between.
+// The oracle is the geometry: an occluder between the floor and the light,
+// and the share of the rays toward the light, drawn over a stratified grid
+// as light_surface.wgsl draws them, that each floor texel sees clear, in
+// f64. Once converged, the umbra holds 0, the lit floor 1 and the
+// penumbra's middle neither.
+//
+// A denoised slot cannot tell a soft shadow from a hard one at its edge:
+// AMD's tile classification softens a hard edge by design
+// (ffx_denoiser_shadows_tileclassification.h 380-405, which Wicked runs),
+// as the spatial variance about the edge keeps the sample count damped
+// and the variance boosted, so its filters blur a few texels each side.
+// So the point light is compared with a hard one in a slot the denoiser
+// leaves (decoys outrank it for the denoised ones), where the temporal
+// blend keeps a hard edge exactly 0 or 1; and the sun, which always holds
+// denoised slot 0, beyond the denoiser's reach of its hard edge, where a
+// hard sun leaves 0 or 1 and one with a size leaves its penumbra's middle.
 #[test]
 fn a_light_with_a_size_softens_its_shadow() {
     let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
         return;
     };
     let gpu = (&device, &queue);
-    let size = [256, 256];
-    // Looking down at the floor beneath the slab from the side, so that the
-    // slab hides only the floor beyond its shadows.
-    let camera = camera(Vec3::new(0., 9., 9.), Vec3::ZERO, size);
-    let slab = Block::new(
-        Vec3::new(0., 2.5, 0.),
-        Vec3::new(1.6, 0.05, 1.6),
-        Mobility::Static,
-    );
-    // Converged frames of a scene with the slab, `lights` and `sun`.
-    let frames = |lights: &[Light], sun: Option<DirectionalLight>| {
-        let (mut scene, ids) = scene(gpu, 8., &[slab], lights);
+    // Converged frames of a scene with `blocks`, `lights` and `sun`, seen by
+    // `camera` over `size`.
+    let frames = |blocks: &[Block],
+                  lights: &[Light],
+                  sun: Option<DirectionalLight>,
+                  camera: Camera,
+                  size: [u32; 2]| {
+        let (mut scene, ids) = scene(gpu, 8., blocks, lights);
         let settings = settings(true);
         let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
         let mut input = input(camera, sun);
@@ -1113,7 +1119,16 @@ fn a_light_with_a_size_softens_its_shadow() {
         }
         (observed.unwrap(), ids)
     };
-    // A point light, 0.8 m across.
+    // A point light, 0.8 m across, over a slab, looked at from the side so
+    // that the slab hides only the floor beyond its shadows.
+    let size = [256, 256];
+    let eye = Vec3::new(0., 9., 9.);
+    let camera = camera(eye, Vec3::ZERO, size);
+    let slab = Block::new(
+        Vec3::new(0., 2.5, 0.),
+        Vec3::new(1.6, 0.05, 1.6),
+        Mobility::Static,
+    );
     let point = |radius: f32| Light {
         position: Vec3::new(0.4, 6., 0.3),
         shape: LightShape::Point { radius },
@@ -1122,54 +1137,95 @@ fn a_light_with_a_size_softens_its_shadow() {
         casts_shadow: true,
         ..Light::default()
     };
-    let (soft, ids) = frames(&[point(0.8)], None);
-    let key = ids[0].index() as u32;
+    let decoys = decoys(eye);
+    let point_frames = |radius: f32| {
+        let lights: Vec<Light> = decoys.iter().copied().chain([point(radius)]).collect();
+        let (observed, ids) = frames(&[slab], &lights, None, camera, size);
+        let slot = observed.slot(ids[decoys.len()].index() as u32);
+        assert!(
+            slot >= super::denoise::DENOISED_SLOTS as usize,
+            "the decoys outrank the point light: slot {slot}"
+        );
+        (observed, slot)
+    };
+    let (soft, slot) = point_frames(0.8);
     let centre = point(0.8).position.as_dvec3();
     let point_penumbrae = penumbrae(&soft, &camera, &[slab], |position, u, v| {
         let end = centre + hemisphere_point((centre - position).normalize(), u, v) * 0.8;
         let to = end - position;
         (to.normalize(), to.length())
     });
-    let soft_between = assert_penumbrae(&soft, soft.slot(key), &point_penumbrae, "point light");
-    let (hard, ids) = frames(&[point(0.)], None);
+    let soft_between = assert_penumbrae(&soft, slot, &point_penumbrae, "point light");
+    let (hard, slot) = point_frames(0.);
     let hard_between = point_penumbrae
         .keys()
-        .filter(|&&pixel| (10..245).contains(&hard.mask(hard.slot(ids[0].index() as u32), pixel)))
+        .filter(|&&pixel| (10..245).contains(&hard.mask(slot, pixel)))
         .count();
     assert!(
         hard_between * 4 < soft_between,
         "a point light of size 0 leaves {hard_between} texels between, one 0.8 m across {soft_between}"
     );
-    // The sun, 20° across.
+    // The sun, 30° across, past a wall, looked at from above: the wall's
+    // shadow widens away from it, its penumbra's middle reaching beyond the
+    // denoiser's reach of the hard shadow's edge.
+    let size = [512, 512];
+    let height = 9.;
+    let looking_at = Vec3::new(1.2, 0., 0.);
+    let camera = Camera {
+        view: glam::camera::rh::view::look_at_mat4(
+            looking_at + Vec3::Y * height,
+            looking_at,
+            Vec3::NEG_Z,
+        ),
+        projection: crate::perspective(0.9, 1., 0.1),
+        eye: looking_at + Vec3::Y * height,
+    };
+    let wall = Block::new(
+        Vec3::new(0., 1.5, 0.),
+        Vec3::new(0.05, 1.5, 3.),
+        Mobility::Static,
+    );
     let sun = |angular_diameter: f32| DirectionalLight {
-        direction: Vec3::new(0.2, -1., 0.1),
+        direction: Vec3::new(0.6, -1., 0.),
         illuminance: 3.,
         shadow: Some(DirectionalShadow::DEFAULT),
         angular_diameter,
         ..DirectionalLight::default()
     };
-    let (soft, _) = frames(&[], Some(sun(20.)));
-    let toward = -sun(20.).direction.as_dvec3().normalize();
-    let disc = (10f64).to_radians().tan();
-    let sun_penumbrae = penumbrae(&soft, &camera, &[slab], |_, u, v| {
+    let toward = -sun(0.).direction.as_dvec3().normalize();
+    let disc = (15f64).to_radians().tan();
+    let (soft, _) = frames(&[wall], &[], Some(sun(30.)), camera, size);
+    let sun_penumbrae = penumbrae(&soft, &camera, &[wall], |_, u, v| {
         (
             (toward + hemisphere_point(toward, u, v) * disc).normalize(),
             f64::from(f32::MAX),
         )
     });
-    let soft_between = assert_penumbrae(
-        &soft,
-        soft.slot(SHADOW_MASK_DIRECTIONAL),
-        &sun_penumbrae,
-        "the sun",
-    );
-    let (hard, _) = frames(&[], Some(sun(0.)));
-    let hard_between = sun_penumbrae
-        .keys()
-        .filter(|&&pixel| (10..245).contains(&hard.mask(0, pixel)))
-        .count();
+    assert_penumbrae(&soft, 0, &sun_penumbrae, "the sun");
+    let (hard, _) = frames(&[wall], &[], Some(sun(0.)), camera, size);
+    let hard_decisions: std::collections::HashMap<[u32; 2], bool> =
+        penumbrae(&hard, &camera, &[wall], |_, _, _| {
+            (toward, f64::from(f32::MAX))
+        })
+        .into_iter()
+        .map(|(pixel, penumbra)| (pixel, penumbra == Penumbra::Lit))
+        .collect();
+    let mut beyond = 0;
+    let mut between = 0;
+    for pixel in interior(&hard_decisions, DENOISER_REACH) {
+        let byte = hard.mask(0, pixel);
+        let lit = hard_decisions[&pixel];
+        assert!(
+            if lit { byte > 229 } else { byte < 26 },
+            "a hard sun holds {byte} at {pixel:?}, which the oracle lights: {lit}"
+        );
+        if sun_penumbrae.get(&pixel) == Some(&Penumbra::Middle) {
+            beyond += 1;
+            between += usize::from((10..245).contains(&soft.mask(0, pixel)));
+        }
+    }
     assert!(
-        hard_between * 4 < soft_between,
-        "a sun of size 0 leaves {hard_between} texels between, one 20° across {soft_between}"
+        beyond > 20 && between * 10 > beyond * 6,
+        "{between} of {beyond} texels of the sun's penumbra beyond the denoiser's reach of the hard edge hold neither 0 nor 1"
     );
 }

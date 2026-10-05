@@ -10,6 +10,9 @@ use super::{Pass, texture};
 use crate::shading;
 use crate::view::cached_group::CachedGroup;
 
+/// The entry points the denoiser's pipelines are created with.
+pub(crate) const TILE_CLASSIFICATION_ENTRY: &str = "traced_denoise_tile_classification";
+pub(crate) const FILTER_ENTRY: &str = "traced_denoise_filter";
 /// The slots the denoiser filters (`TRACED_DENOISED_SLOTS`): Wicked's first
 /// four.
 pub(super) const DENOISED_SLOTS: u32 = 4;
@@ -119,17 +122,12 @@ pub(super) struct Denoiser {
 impl Denoiser {
     pub fn new(device: &wgpu::Device) -> Self {
         Self {
-            classification: Pass::new(
-                device,
-                &TILE_CLASSIFICATION,
-                "traced_denoise_tile_classification",
-                &[],
-            ),
+            classification: Pass::new(device, &TILE_CLASSIFICATION, TILE_CLASSIFICATION_ENTRY, &[]),
             filters: std::array::from_fn(|pass| {
                 Pass::new(
                     device,
                     &FILTER,
-                    "traced_denoise_filter",
+                    FILTER_ENTRY,
                     &[("filter_pass", pass as f64)],
                 )
             }),

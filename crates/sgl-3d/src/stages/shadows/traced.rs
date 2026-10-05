@@ -72,6 +72,10 @@ pub(crate) static TRACE: shading::Module = shading::Module {
         &COMMON,
     ],
 };
+/// The entry points the stage's pipelines are created with.
+pub(crate) const TRACE_ENTRY: &str = "traced_shadow_rays";
+pub(crate) const TEMPORAL_ENTRY: &str = "traced_shadow_temporal";
+pub(crate) const UPSAMPLE_ENTRY: &str = "traced_shadow_upsample";
 pub(crate) static TEMPORAL: shading::Module = shading::Module {
     name: "traced_shadows_temporal",
     source: include_str!("traced/traced_temporal.wgsl"),
@@ -271,8 +275,8 @@ impl TracedShadows {
         Self {
             paths: TracePaths::new("ray-traced shadow rays", &TRACE, &entries, [lit, scene]),
             trace: HashMap::new(),
-            temporal: Pass::new(device, &TEMPORAL, "traced_shadow_temporal", &[]),
-            upsample: Pass::new(device, &UPSAMPLE, "traced_shadow_upsample", &[]),
+            temporal: Pass::new(device, &TEMPORAL, TEMPORAL_ENTRY, &[]),
+            upsample: Pass::new(device, &UPSAMPLE, UPSAMPLE_ENTRY, &[]),
             denoiser: denoise::Denoiser::new(device),
             params: uniform_buffer(
                 "ray-traced shadow parameters",
@@ -380,7 +384,7 @@ impl TracedShadows {
                     label: Some("ray-traced shadow rays"),
                     layout: Some(layout),
                     module: shader,
-                    entry_point: Some("traced_shadow_rays"),
+                    entry_point: Some(TRACE_ENTRY),
                     compilation_options: Default::default(),
                     cache: None,
                 })
