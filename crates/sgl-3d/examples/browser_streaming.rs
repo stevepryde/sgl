@@ -13,7 +13,7 @@
 //! the warm-up and the measured frames, and the render origin stays put.
 //! Each frame waits for the one before it to complete, as the native loop
 //! keeps one frame in flight. It reports, median / p95 over the measured
-//! frames, what `support/culling.rs` reports without `--visibility`, and the
+//! frames, what `support/culling.rs` reports, and the
 //! draws each view encoded.
 #![cfg(target_arch = "wasm32")]
 
@@ -195,7 +195,7 @@ async fn measured(frames: usize, [across, up]: [i32; 2]) -> Result<String, Strin
         let camera = voxel_world::camera((eye - origin).as_vec3());
         let mut input = voxel_world::input(camera, seconds, sky, SHADOW_DISTANCE);
         input.camera_cut = index == 0;
-        options.apply(&mut settings, index);
+        options.apply(&mut settings);
         if let Some(timing) = &mut timing {
             for done in timing.begin_frame(&device, &queue) {
                 culling.gpu(&done);
@@ -229,12 +229,7 @@ async fn measured(frames: usize, [across, up]: [i32; 2]) -> Result<String, Strin
         }
         renderer.finish_frame(&mut scene);
         let measure = index >= WARM_UP;
-        culling.frame(
-            (&mut renderer, &device),
-            index,
-            measure,
-            (rendered, finished),
-        );
+        culling.frame(&renderer, index, measure, (rendered, finished));
         if measure {
             draws.push(renderer.diagnostic_draws());
         }

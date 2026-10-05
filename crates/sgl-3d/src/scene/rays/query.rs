@@ -31,6 +31,8 @@ pub(crate) enum Function {
     /// then its shading normal's bits, then its geometric normal and
     /// distance.
     Decoded = 4,
+    /// `scene_trace_nearest_except_receiver`, leaving the bound receiver.
+    NearestExceptReceiver = 5,
 }
 
 /// The tests' standalone dispatch over one path.

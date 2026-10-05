@@ -106,11 +106,18 @@ SGL3D needs compute.
   whose default is glTF's default material).
 - **Visibility groups**: `FrameInput::visibility_mask` switches material
   groups on and off per frame, including in probe captures.
-- **Culling and LOD**: frustum culling of mesh sections is automatic.
-  `Scene::set_mesh_lods` registers authored coarser chunks
-  ([spatial mesh LOD](../README.md#spatial-mesh-lod)).
-- **Instanced draws**: automatic. Instances that draw the same mesh with the
-  same material, face culling and mobility share one draw in every view, each
+- **Culling and LOD**: automatic. The GPU builds the camera's opaque and
+  masked draws and each directional cascade's every frame: frustum culling
+  of each instance, then of its mesh's 128-triangle sections, one indirect
+  draw per material and pose kind whatever the instance count, on native
+  and in the browser alike. A mesh holds at most 65,536 sections.
+  `Scene::set_mesh_lods` registers up to 8 authored coarser chunks a mesh
+  ([spatial mesh LOD](../README.md#spatial-mesh-lod)). Coplanar surfaces of
+  different draws have no defined winner at equal depth: give an overlay a
+  depth offset or make it a decal.
+- **Instanced draws**: automatic. In the CPU-built lists (blended surfaces,
+  local-light shadows, probe captures), instances that draw the same mesh
+  with the same material, face culling and mobility share one draw, each
   keeping its own pose, motion and identity; deforming instances draw alone.
   [Visible work](../README.md#visible-work-and-pass-selection).
 
@@ -215,10 +222,12 @@ Environment and probe specular always apply. On top of them:
   Bevy, over opaque surfaces and blended receivers. Crystal runs in SGL's
   `sgl-post-fx` effects library.
   [Reflections](../README.md#reflections) credits each source.
-- **World-space reflections**: rays for moving objects up to 1000 m from
-  the reflecting surface that screen-space reflections miss, through a
-  software BVH or, with hardware ray tracing, the scene's acceleration
-  structures.
+- **World-space reflections**: rays up to 1000 m from the reflecting
+  surface where screen-space reflections miss, through a software BVH or,
+  with hardware ray tracing, the scene's acceleration structures. They
+  reach moving objects (`Moving`), or everything (`All`), which shows
+  static surfaces as they stand rather than as their probes recorded them
+  and is meant for hardware ray tracing.
 - **Hardware ray tracing** (opt-in): on a device with ray queries and with
   `Settings::hardware_ray_tracing` on, world-space reflections' rays and
   the dynamic GI volume's trace the scene's acceleration structures, built
@@ -288,24 +297,24 @@ Environment and probe specular always apply. On top of them:
 
 - **GPU timing** per pass: `timing::GpuTiming`.
   [Pass timing](../README.md#gpu-pass-timing).
-- **Geometry counts**: `Renderer::geometry_stats` and
+- **Geometry counts**: `Renderer::geometry_stats`, the camera's draws and
+  triangles in the most recent completed frame, read back without blocking
+  (`None` until one completes), and, with diagnostics,
   `geometry_stats_for_model`.
 - **CPU rays** against scene triangles: `geometry::triangles` and
   `obstructed_distance`.
-- **Diagnostics** feature: `Settings::diagnostics` turns layers off, runs the
-  frame probe, captures the tone-mapped target and observes which of the
-  camera's instances a frame drew without a pixel, or skips them as an
-  oracle of occlusion culling; `Renderer::diagnostic_target`,
-  `take_frame_probe_reports`, `take_instance_visibility` and
-  `diagnostic_view_times` return what they observed. Configuration only:
+- **Diagnostics** feature: `Settings::diagnostics` turns layers off (culling
+  among them), runs the frame probe and captures the tone-mapped target;
+  `Renderer::diagnostic_target`, `take_frame_probe_reports`,
+  `diagnostic_draws` and `diagnostic_view_times` return what they observed. Configuration only:
   no environment variables or files. Shipping builds leave it off.
 
 ## Not provided
 
 Animation playback (sampling and blending clips is the game's).
-DLSS/MetalFX, ray-traced shadows, and GPU-driven/occlusion culling are
-[planned](../../../specs/sgl3d.md#planned). Current culling runs on the
-CPU. Compressed images
+DLSS/MetalFX, ray-traced shadows, and occlusion culling are
+[planned](../../../specs/sgl3d.md#planned). Current culling is by frustum
+alone. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
 not provided.
 

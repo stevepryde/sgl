@@ -4,7 +4,7 @@
 use super::pipelines::LayerConstants;
 use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, ReflectionMethod,
-    ShadowQuality, SmaaQuality,
+    ShadowQuality, SmaaQuality, WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 
@@ -85,9 +85,9 @@ pub(crate) struct Effective {
     pub shadow_filter: ShadowFilter,
     pub ambient_occlusion: Option<AmbientOcclusion>,
     pub screen_space: Option<ScreenSpace>,
-    /// World-space rays fill the screen-space method's misses (only with a
-    /// method).
-    pub world_space: bool,
+    /// What world-space rays reach where they fill the screen-space
+    /// method's misses: Off without a method.
+    pub world_space: WorldSpaceReflections,
     /// The hardware path: while it is on, the scene keeps its acceleration
     /// structures, built on the frames that trace rays, whose rays then
     /// trace through them.
@@ -134,10 +134,6 @@ pub(crate) struct Effective {
     /// The numerical frame probe observes this frame.
     #[cfg(feature = "diagnostics")]
     pub frame_probe: bool,
-    /// The camera's instance visibility: observed, or the hidden instances
-    /// skipped.
-    #[cfg(feature = "diagnostics")]
-    pub instance_visibility: crate::settings::InstanceVisibility,
     /// The dynamic GI stage observes this frame, while it runs.
     #[cfg(feature = "diagnostics")]
     pub dynamic_gi_observation: bool,

@@ -32,7 +32,7 @@ fn settings() -> Settings {
         bloom: settings::Bloom::Off,
         ambient_occlusion: settings::AmbientOcclusionQuality::Off,
         screen_space_reflections: settings::ScreenSpaceReflections::Off,
-        world_space_reflections: false,
+        world_space_reflections: settings::WorldSpaceReflections::Off,
         dynamic_gi: DynamicGiQuality::Off,
         ..Settings::default()
     }

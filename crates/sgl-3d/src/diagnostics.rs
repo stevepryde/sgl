@@ -20,9 +20,11 @@ pub fn counters() -> Counters {
 }
 
 /// The draws the last frame's camera and directional-cascade views encoded
-/// (`Renderer::diagnostic_draws`): one per instanced draw call. Local-light
-/// shadow faces, probe captures and full-screen passes are not counted; the
-/// local-light shadow atlas's draws are `LocalShadowStats::draws`.
+/// (`Renderer::diagnostic_draws`): one per instanced draw call of the
+/// CPU-built blended list, and one per set of the GPU-built lists, an
+/// indirect draw of the sections the GPU appended. Local-light shadow faces,
+/// probe captures and full-screen passes are not counted; the local-light
+/// shadow atlas's draws are `LocalShadowStats::draws`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ViewDraws {
     /// The camera's opaque and masked surfaces, and its blended ones.
@@ -41,29 +43,16 @@ pub struct ViewTimes {
     pub cascades: Vec<ViewTime>,
 }
 
-/// One view's CPU time in a frame, in milliseconds: building its draw list
-/// (walking, culling, LOD-selecting and batching the instances), and
-/// recording its passes' draws from it into the game's encoder, from each
-/// pass's start to its end. On WebGPU, recording issues each command to the
+/// One view's CPU time in a frame, in milliseconds: building its GPU-built
+/// draw list (preparing its cull and encoding its reset and cull
+/// dispatches), and recording its passes' draws from it into the game's
+/// encoder, from each pass's start to its end. On WebGPU, recording issues each command to the
 /// browser; natively, wgpu validates and encodes a pass's commands when the
 /// game finishes the encoder, which this does not include.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ViewTime {
     pub build_ms: f64,
     pub encode_ms: f64,
-}
-
-/// One frame's camera visibility (`InstanceVisibility::Observe`,
-/// `Renderer::take_instance_visibility`): the instances of the camera's
-/// opaque and masked draws and the triangles the frame submitted for them,
-/// and those of them with no pixel in its source identity target.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct InstanceVisibilityReport {
-    pub drawn_instances: usize,
-    pub drawn_triangles: u64,
-    /// The drawn instances without a pixel, and their triangles.
-    pub hidden_instances: usize,
-    pub hidden_triangles: u64,
 }
 
 /// One frame of the dynamic GI stage, observed (`Diagnostics::dynamic_gi`,

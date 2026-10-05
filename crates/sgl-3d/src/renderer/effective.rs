@@ -4,7 +4,7 @@
 use crate::FrameInput;
 use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, FogQuality, ReflectionMethod, RenderPreset,
-    ScreenSpaceReflections, Settings, ShadowQuality,
+    ScreenSpaceReflections, Settings, ShadowQuality, WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 use crate::stages::reflections::velvet;
@@ -215,7 +215,11 @@ pub(super) fn resolve(
         shadow_filter,
         ambient_occlusion,
         screen_space,
-        world_space: settings.world_space_reflections && screen_space.is_some(),
+        world_space: if screen_space.is_some() {
+            settings.world_space_reflections
+        } else {
+            WorldSpaceReflections::Off
+        },
         hardware_ray_tracing: match (settings.hardware_ray_tracing, ray_queries) {
             (false, _) => HardwareRayTracing::Off,
             (true, None) => HardwareRayTracing::Unsupported,
@@ -249,8 +253,6 @@ pub(super) fn resolve(
         source_environment: !disable.source_environment,
         #[cfg(feature = "diagnostics")]
         frame_probe: diagnostics.frame_probe,
-        #[cfg(feature = "diagnostics")]
-        instance_visibility: diagnostics.instance_visibility,
         #[cfg(feature = "diagnostics")]
         dynamic_gi_observation: diagnostics.dynamic_gi,
         capture_tone_target: diagnostics.frame_probe || diagnostics.capture_tone_target,

@@ -3,6 +3,7 @@
 //! freed, so bounded content keeps a bounded buffer.
 use std::ops::Range;
 
+#[derive(Clone)]
 pub(crate) struct Ranges {
     /// Free ranges below `end`, sorted, never adjacent to each other or to
     /// `end`.

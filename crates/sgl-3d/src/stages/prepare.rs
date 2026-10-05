@@ -8,28 +8,31 @@
 //! acceleration-structure builds, which it records after the deform pass
 //! (`encode_acceleration_structures`), clusters the
 //! scene's lights and decals for the camera and culls them for ray hits and
-//! the dynamic GI volume's probe hits, and builds the
-//! camera's draw lists (culled, LOD-selected; its blended surfaces' sorted
-//! back to front) and each directional shadow cascade's. The local-light shadow atlas places its own faces
+//! the dynamic GI volume's probe hits, builds the camera's blended draw list
+//! (culled, LOD-selected, sorted back to front) on the CPU, and prepares
+//! the GPU-built lists of the camera's opaque and masked surfaces and each
+//! directional shadow cascade, which the cull stage builds after the
+//! deform pass (`stages::cull`). The local-light shadow atlas places its own faces
 //! (`shadows::local`). For a probe capture it builds the capture's own
 //! views, cascades and light and decal list (`capture`).
 //!
 //! Reads: the frame input, the camera history and the scene. Writes:
 //! `FrameViews` (view uniforms, draw lists, their draw instances and
-//! clusters), the frame uniform, the scene's stale object records, ray
-//! instances, acceleration structures and mist order.
+//! clusters), the frame uniform, the scene's stale object records, draw
+//! candidates, ray instances, acceleration structures and mist order.
 //! Honours: the effective local lights, temporal antialiasing (the shadow
 //! filter), atmosphere, baked lighting, culling, world-space reflections,
 //! dynamic GI and hardware ray tracing.
 //! Timing groups: none.
 use crate::scene::dynamic_gi::ProbePlacement;
 use crate::scene::rays::acceleration::RayTracingStats;
+use crate::settings::WorldSpaceReflections;
 use crate::shading::uniforms::{FrameValues, ViewUniform};
 use crate::view::clusters::{BoxVolume, CAMERA_CLUSTERS, Clusters, ViewVolume};
+use crate::view::draw_list::gpu::{camera_cull, cascade_cull};
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::effective::{Effective, HardwareRayTracing};
 use crate::view::frame::FrameContext;
-use crate::view::hidden::HiddenInstances;
 use crate::view::history::HistoryFrame;
 use crate::view::population::Population;
 use crate::view::reflection_camera;
@@ -62,13 +65,14 @@ pub(crate) struct CaptureViews {
 }
 
 /// Sets the frame's directional shadow cascades to views with
-/// `clip_from_world`, nearest first, and builds each one's casters, which
-/// are its own, independently of the main view's.
+/// `clip_from_world`, nearest first, and prepares each one's GPU-built list
+/// of casters under the frame's `mask`, which are its own, independently of
+/// the main view's.
 pub(crate) fn set_cascades(
-    queue: &wgpu::Queue,
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
     scene: &Scene,
     views: &mut FrameViews,
-    mask: Option<u32>,
+    mask: u32,
     clip_from_world: impl ExactSizeIterator<Item = Mat4>,
 ) {
     views.cascade_count = clip_from_world.len();
@@ -76,16 +80,8 @@ pub(crate) fn set_cascades(
         let view = View::shadow_cascade(clip_from_world);
         slot.set(queue, view);
         let started = crate::counters::Moment::now();
-        slot.list.build(
-            &mut views.instances,
-            scene,
-            &view,
-            mask,
-            Population::DirectionalShadow {
-                cull: true,
-                moving: true,
-            },
-        );
+        slot.list
+            .prepare(device, queue, scene, cascade_cull(&view, mask));
         slot.built(started);
     }
 }
@@ -110,10 +106,8 @@ pub(crate) struct Prepare {
 
 impl Prepare {
     /// Uploads the view and frame data of `input` seen with `history` and
-    /// `jitter` at `render_size`, and builds the frame's views, the camera's
-    /// opaque and masked list without the `hidden` instances (the
-    /// diagnostics oracle's). `history`'s camera carries `jitter`'s offset.
-    /// Returns the data as uploaded.
+    /// `jitter` at `render_size`, and builds the frame's views. `history`'s
+    /// camera carries `jitter`'s offset. Returns the data as uploaded.
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         &mut self,
@@ -127,7 +121,6 @@ impl Prepare {
         render_size: [u32; 2],
         views: &mut FrameViews,
         frame_buffer: &wgpu::Buffer,
-        hidden: Option<&HiddenInstances>,
     ) -> FrameValues {
         let camera = input.camera;
         let stable = history.stable;
@@ -186,7 +179,8 @@ impl Prepare {
         // instances and visibility mask. The entries set and static edits
         // made since the last traced frame wait for the next, so the frames
         // that skip it leave it nothing stale.
-        let traced = effective.world_space || volume.is_some();
+        let world_space = effective.world_space != WorldSpaceReflections::Off;
+        let traced = world_space || volume.is_some();
         // The acceleration structures are built on the frames that trace,
         // and freed by a frame with hardware ray tracing off. The portable
         // BVHs then cover what the TLAS does not hold.
@@ -222,7 +216,7 @@ impl Prepare {
             render_size,
             CAMERA_CLUSTERS,
         );
-        if effective.world_space {
+        if world_space {
             // Ray hits shade with the lights and decals in the camera's
             // view, as Wicked Engine's take the frame's culled light list.
             let volume = ViewVolume::new(camera.projection * camera.view);
@@ -253,32 +247,28 @@ impl Prepare {
                 |decal| extent.reaches_decal(decal),
             );
         }
-        let mask = Some(frame.visibility_mask);
-        // The frame's lists, these and the local-light shadow faces', are
-        // built into its draw instances, which the renderer then uploads.
+        let mask = frame.visibility_mask;
+        // The frame's CPU-built lists, these and the local-light shadow
+        // faces', are built into its draw instances, which the renderer then
+        // uploads.
         views.instances.clear();
         let camera_view = views.camera.view;
-        let lod = LodSelector::new(camera.view, camera.projection, render_size);
         let cull = effective.culling;
         let started = crate::counters::Moment::now();
-        views.camera.list.build(
-            &mut views.instances,
-            scene,
-            &camera_view,
-            mask,
-            Population::Camera { lod, cull, hidden },
-        );
+        let camera_cull = camera_cull(&camera_view, render_size, mask, cull);
+        views.camera.list.prepare(device, queue, scene, camera_cull);
         views.camera.built(started);
+        let lod = LodSelector::new(camera.view, camera.projection, render_size);
         views.blended.build(
             &mut views.instances,
             scene,
             &camera_view,
-            mask,
+            Some(mask),
             Population::Blended { lod, cull },
         );
         let cascades = shadow.cascades.as_slice().iter();
         set_cascades(
-            queue,
+            (device, queue),
             scene,
             views,
             mask,
@@ -360,10 +350,7 @@ impl Prepare {
                 scene,
                 cascade,
                 mask,
-                Population::DirectionalShadow {
-                    cull: false,
-                    moving: false,
-                },
+                Population::CaptureShadow,
             );
         }
         let cascades = cascades

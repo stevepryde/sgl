@@ -40,7 +40,7 @@ use sgl_3d::{
     heat_distortion::HeatDistortion,
     settings::{
         AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, MotionBlur, ReflectionMethod,
-        RenderPreset, ScreenSpaceReflections, Settings,
+        RenderPreset, ScreenSpaceReflections, Settings, WorldSpaceReflections,
     },
     static_lighting::{AmbientCube, CompressedIrradianceAtlas, IrradianceAtlas},
     timing::GpuTiming,
@@ -862,7 +862,7 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             Settings {
                 screen_space_reflections: ScreenSpaceReflections::Half,
                 reflection_method: ReflectionMethod::Velvet,
-                world_space_reflections: true,
+                world_space_reflections: WorldSpaceReflections::Moving,
                 motion_blur: MotionBlur::Full,
                 heat_distortion: true,
                 ..high

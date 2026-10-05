@@ -118,6 +118,23 @@ pub enum ReflectionMethod {
     Velvet,
 }
 
+/// What world-space rays reach where the screen-space method misses, at
+/// half resolution up to 1000 m from the reflecting surface. Off reflects
+/// what the method and the probes and sky give.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorldSpaceReflections {
+    #[default]
+    Off,
+    /// Moving objects, which baked probes cannot hold: a static surface in
+    /// front of one leaves the probes and sky in charge.
+    Moving,
+    /// Everything, static surfaces included, which then reflect as they
+    /// stand rather than as their probe recorded them, as Wicked Engine's
+    /// ray-traced reflections trace the whole scene. Meant for hardware ray
+    /// tracing; without it the software BVH walk costs more than `Moving`'s.
+    All,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Bloom {
     #[default]
@@ -324,16 +341,16 @@ pub struct Settings {
     pub ambient_occlusion: AmbientOcclusionQuality,
     pub screen_space_reflections: ScreenSpaceReflections,
     pub reflection_method: ReflectionMethod,
-    /// Traces what screen-space reflections miss on moving objects through
-    /// the scene's ray buffers; only effective with screen-space reflections.
-    pub world_space_reflections: bool,
+    /// Traces what screen-space reflections miss through the scene's ray
+    /// buffers; only effective with screen-space reflections.
+    pub world_space_reflections: WorldSpaceReflections,
     /// Hardware ray tracing, off by default and in no preset: a game opts
     /// in by turning it on and requesting the device's feature
     /// (`graphics_device::ray_tracing_features`). Where the device has it, on
     /// frames that trace rays (world-space reflections, the dynamic GI
     /// volume), the scene builds acceleration structures over its geometry
-    /// and keeps them (`Renderer::ray_tracing_stats`); off frees them. Rays
-    /// still trace the scene's portable BVHs.
+    /// and keeps them (`Renderer::ray_tracing_stats`), and the rays trace
+    /// them; off frees them.
     pub hardware_ray_tracing: bool,
     /// The volumetric fog and mist, while the frame turns its atmosphere on
     /// (`FrameInput::atmosphere`, off by default); this allows them, and is
@@ -379,7 +396,7 @@ impl Default for Settings {
             ambient_occlusion: AmbientOcclusionQuality::default(),
             screen_space_reflections: ScreenSpaceReflections::default(),
             reflection_method: ReflectionMethod::default(),
-            world_space_reflections: false,
+            world_space_reflections: WorldSpaceReflections::Off,
             hardware_ray_tracing: false,
             atmosphere: true,
             fog_quality: FogQuality::default(),
@@ -415,7 +432,7 @@ impl Settings {
 #[cfg(not(feature = "diagnostics"))]
 pub(crate) use diagnostics::{Diagnostics, DisabledLayers};
 #[cfg(feature = "diagnostics")]
-pub use diagnostics::{Diagnostics, DisabledLayers, InstanceVisibility};
+pub use diagnostics::{Diagnostics, DisabledLayers};
 
 mod diagnostics {
     /// Debug and test tooling's renderer configuration (feature
@@ -437,42 +454,12 @@ mod diagnostics {
         /// (`DiagnosticTarget::ToneMapped`), which is then presented, instead
         /// of tone mapping straight to the output. The output is identical.
         pub capture_tone_target: bool,
-        /// Which of the camera's opaque and masked instances show, an
-        /// oracle for occlusion culling.
-        pub instance_visibility: InstanceVisibility,
         /// Each frame that runs the dynamic GI volume counts its probes,
         /// its rays and the BVH walks they and their visibility rays make,
         /// read back without blocking: `Renderer::take_dynamic_gi_reports`.
         /// The observed frame's trace writes each ray's costs, which a pass
         /// sums, so observe separately from timing it.
         pub dynamic_gi: bool,
-    }
-
-    /// The camera's instance visibility, measured from the source identity
-    /// target (`DiagnosticTarget::SourceId`), and an oracle of what culling
-    /// the hidden instances would save.
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    #[cfg_attr(
-        not(feature = "diagnostics"),
-        allow(dead_code, reason = "a game sets it through the feature")
-    )]
-    pub enum InstanceVisibility {
-        #[default]
-        Off,
-        /// After the opaque stage, a pass marks each instance with at least
-        /// one pixel in the source identity target, and the marks are read
-        /// back without blocking: `Renderer::take_instance_visibility`
-        /// reports which of the camera's opaque and masked instances the
-        /// frame drew without a pixel.
-        Observe,
-        /// The camera's opaque and masked draws skip the instances that the
-        /// newest `Observe` frame read back drew without a pixel: what a
-        /// culler of hidden instances could save at most, with an image
-        /// incorrect by design, since an instance that comes into view
-        /// stays missing until a later `Observe` frame shows it. It
-        /// observes nothing; a game alternates it with `Observe` to keep it
-        /// current.
-        SkipHidden,
     }
 
     /// Layers switched off, each named after what it removes. The first five
@@ -505,7 +492,8 @@ mod diagnostics {
         /// The fused G-buffer and lighting pass: the two run as separate
         /// passes, as on devices without its attachments.
         pub fused_opaque: bool,
-        /// The camera's view culling: every LOD-selected draw is submitted.
+        /// The camera's view culling: every LOD-selected draw is submitted,
+        /// its GPU cull accepting every candidate and section.
         pub culling: bool,
         /// Additive effects (glow).
         pub effects: bool,

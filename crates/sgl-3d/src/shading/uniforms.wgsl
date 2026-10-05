@@ -145,5 +145,10 @@ struct Object {
  previous_positions:u32,
  deformed_normals:u32,
 }
-// Object.flags: a static instance; a moving one has the bit clear.
+// Object.flags: a static instance (a moving one has the bit clear); the
+// main camera draws it (InstanceState::visible); the other views show it
+// (InstanceState::capture_visible); it deforms.
 const OBJECT_STATIC:u32=1u;
+const OBJECT_VISIBLE:u32=2u;
+const OBJECT_CAPTURE_VISIBLE:u32=4u;
+const OBJECT_DEFORMING:u32=8u;

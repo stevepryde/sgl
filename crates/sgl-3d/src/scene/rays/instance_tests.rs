@@ -13,18 +13,21 @@ use glam::{Mat4, Quat, Vec3};
 use wgpu::util::DeviceExt;
 
 /// Each ray's nearest hit of both kinds, its nearest moving hit except its
-/// moving receiver, whether no static surface but its static receiver lies
-/// in its interval with the end open, whether no surface lies in it closed,
+/// moving receiver, its nearest hit of both kinds except its receiver of
+/// either kind, whether no static surface but its static receiver lies in
+/// its interval with the end open, whether no surface lies in it closed,
 /// and the decoded nearest hit's object flags plus one (zero for a miss).
 const OBSERVER: &str = r#"
 struct TestRay {
  ray:SceneRay,
  moving_receiver:vec4<u32>,
  static_receiver:vec4<u32>,
+ all_receiver:vec4<u32>,
 }
 struct Observed {
  nearest:RawSceneHit,
  moving:RawSceneHit,
+ all:RawSceneHit,
  visible:vec4<u32>,
 }
 @group(3) @binding(0) var<storage,read> test_rays:array<TestRay>;
@@ -47,11 +50,12 @@ fn test_receiver(receiver:vec4<u32>)->vec2<u32> {
  var result:Observed;
  result.nearest=scene_trace_nearest(ray,SCENE_SIDES_AS_RASTER);
  result.moving=scene_trace_moving_except_receiver(ray,test_receiver(test.moving_receiver));
+ result.all=scene_trace_nearest_except_receiver(ray,test_receiver(test.all_receiver));
  let hit=scene_decode_hit(result.nearest,ray.origin.xyz,ray.direction.xyz);
  result.visible=vec4(
   select(0u,1u,scene_static_segment_visible_except_receiver(ray,test_receiver(test.static_receiver))),
   select(0u,1u,scene_segment_visible(ray.origin.xyz,ray.direction.xyz,ray.origin.w,ray.direction.w,SCENE_SIDES_AS_RASTER)),
-  select(0u,hit.instance_flags+1u,hit.hit),
+  select(0u,(hit.instance_flags&OBJECT_STATIC)+1u,hit.hit),
   0u);
  observed[id.x]=result;
 }
@@ -65,6 +69,7 @@ struct TestRay {
     /// Index plus one, mesh and triangle, or zeros for none.
     moving_receiver: [u32; 4],
     static_receiver: [u32; 4],
+    all_receiver: [u32; 4],
 }
 
 #[repr(C)]
@@ -72,6 +77,7 @@ struct TestRay {
 struct Observed {
     nearest: [u32; 8],
     moving: [u32; 8],
+    all: [u32; 8],
     visible: [u32; 4],
 }
 
@@ -186,6 +192,7 @@ fn down(origin: Vec3, length: f32) -> TestRay {
         ray: [origin.x, origin.y, origin.z, 0., 0., 0., -1., length],
         moving_receiver: [0; 4],
         static_receiver: [0; 4],
+        all_receiver: [0; 4],
     }
 }
 
@@ -228,8 +235,8 @@ fn words(hit: Option<(f64, u32, u32, u32)>) -> [u32; 4] {
 }
 
 /// Compares `observed` with the oracle over `placed`, for each ray its
-/// nearest hit, nearest moving hit except its receiver, and static and
-/// total visibility.
+/// nearest hit, nearest moving hit and nearest hit of both kinds except its
+/// receivers, and static and total visibility.
 fn compare(
     round: &str,
     assets: &[Asset],
@@ -280,6 +287,11 @@ fn compare(
             ),
             "moving",
         );
+        close(
+            actual.all,
+            oracle_except(assets, &all, test.ray, false, receiver(test.all_receiver)),
+            "nearest except receiver",
+        );
         let blocked = oracle_except(
             assets,
             &statics,
@@ -310,13 +322,14 @@ fn compare(
 // Plausible defects: an instance BVH whose posed bounds miss part of an
 // instance (rotated, scaled or mirrored) or name the wrong entry; a kind
 // traversed by the other kind's query; instances that are not capture
-// visible, or whose model is empty, traversed; a removed instance, or a
-// reused index's earlier instance, still hit; entries not rewritten when an
-// instance is posed again or its model's geometry is replaced; the static
-// BVH not rebuilt after a static edit whose frame traced nothing; receiver
-// exclusion or the open end applied in one traversal and not another. The
-// oracle is an f64 world-space plane and edge test over the placed
-// instances of each kind.
+// visible, or whose model is empty, traversed; a nearest ray leaving a
+// receiver of either kind (world-space reflections' `All` reach) that walks
+// one kind only; a removed instance, or a reused index's earlier instance,
+// still hit; entries not rewritten when an instance is posed again or its
+// model's geometry is replaced; the static BVH not rebuilt after a static
+// edit whose frame traced nothing; receiver exclusion or the open end
+// applied in one traversal and not another. The oracle is an f64
+// world-space plane and edge test over the placed instances of each kind.
 #[test]
 fn two_level_traversal_matches_brute_force_over_edited_instances() {
     let Some((device, queue)) = crate::test_support::device() else {
@@ -427,20 +440,25 @@ fn two_level_traversal_matches_brute_force_over_edited_instances() {
                 ],
                 moving_receiver: [0; 4],
                 static_receiver: [0; 4],
+                all_receiver: [0; 4],
             }
         })
         .collect();
-    // Odd rays exclude the moving and static triangles they would meet
+    // Odd rays exclude the moving, static and any triangles they would meet
     // first, as a receiver's own triangle.
     let receivers = |assets: &[Asset], placed: &[Placed], rays: &mut [TestRay]| {
-        let kind = |mobility| -> Vec<Pose> {
+        let kind = |mobility: Option<Mobility>| -> Vec<Pose> {
             placed
                 .iter()
-                .filter(|p| p.capture_visible && p.mobility == mobility)
+                .filter(|p| p.capture_visible && mobility.is_none_or(|kind| p.mobility == kind))
                 .map(Placed::pose)
                 .collect()
         };
-        let (moving, statics) = (kind(Mobility::Moving), kind(Mobility::Static));
+        let (moving, statics, all) = (
+            kind(Some(Mobility::Moving)),
+            kind(Some(Mobility::Static)),
+            kind(None),
+        );
         for test in rays.iter_mut().skip(1).step_by(2) {
             let first = |poses: &[Pose]| {
                 oracle_except(assets, poses, test.ray, false, None)
@@ -450,6 +468,7 @@ fn two_level_traversal_matches_brute_force_over_edited_instances() {
             };
             test.moving_receiver = first(&moving);
             test.static_receiver = first(&statics);
+            test.all_receiver = first(&all);
         }
     };
     receivers(&assets, &placed, &mut rays);

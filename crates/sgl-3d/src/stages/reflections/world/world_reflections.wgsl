@@ -1,13 +1,17 @@
 // World-space reflection rays for what screen-space reflections cannot see:
-// moving objects, which baked probes cannot hold. Ported
+// moving objects, which baked probes cannot hold, or everything. Ported
 // from Wicked Engine (revision 2ff1d9e7b36091d6edf9f823af77e6bc9af20e3b,
 // MIT, see LICENSE-wicked.txt): shaders/rtreflectionCS.hlsl, traced through
-// the portable scene BVH as ddgi_raytraceCS.hlsl traces Wicked's software BVH,
-// with ReflectionDir_GGX, ImportanceSampleVisibleGGX, GetTangentBasis and
+// the scene ray function set (the portable scene BVH, as ddgi_raytraceCS.hlsl
+// traces Wicked's software BVH, or the hardware path's TLAS), with
+// ReflectionDir_GGX, ImportanceSampleVisibleGGX, GetTangentBasis and
 // SampleDisk from stochasticSSRHF.hlsli. Modified: translated to WGSL; a
 // fragment pass (the lit bindings are fragment-visible); hits are shaded as
-// raster shades surfaces (surface_ray.wgsl); rays test all scene
-// geometry: closest moving hit, then static any-hit visibility to that hit.
+// raster shades surfaces (surface_ray.wgsl); rays test all scene geometry
+// and reach what `Settings::world_space_reflections` says: `Moving`, the
+// closest moving hit, then static any-hit visibility to that hit; `All`,
+// the closest hit of either kind, as Wicked's ray traces every instance in
+// its reflection mask (rtreflectionCS.hlsl 74–81).
 // Every sample reads the same full-resolution receiver pixel (Wicked samples depth at a differently
 // offset UV); hashes replace the
 // blue-noise texture; a miss stores no radiance and no coverage (a = 0) and a
@@ -21,6 +25,10 @@
 // method's result where it is nearer than the opaque depth is a blended
 // receiver's, which composes its own.
 @group(3) @binding(7) var world_surface_depth:texture_depth_2d;
+
+// The rays reach static geometry too (`WorldSpaceReflections::All`), else
+// moving objects alone.
+override world_reach_all:bool;
 
 // Bias used on the GGX importance sample when denoising, to remove part of the
 // tail that creates much more noise.
@@ -102,15 +110,21 @@ struct WorldRay {
  let direction=normalize(ggx.xyz);
  output.direction_pdf=vec4(direction,ggx.w);
  let ray=SceneRay(vec4(p,.01),vec4(direction,world.range));
- // Moving misses need no static traversal: probes/sky already supply fallback.
  let receiver_id=textureLoad(world_source_id,pixel,0).xy;
- let raw=scene_trace_moving_except_receiver(ray,receiver_id);
+ var raw:RawSceneHit;
+ if world_reach_all {
+  raw=scene_trace_nearest_except_receiver(ray,receiver_id);
+ } else {
+  // Moving misses need no static traversal: probes/sky already supply fallback.
+  raw=scene_trace_moving_except_receiver(ray,receiver_id);
+ }
  if raw.intersection.x==0u {
   return output;
  }
- // A static blocker before the closest moving hit leaves probes/sky in charge.
+ // Under `Moving`, a static blocker before the closest moving hit leaves
+ // probes/sky in charge.
  let segment=SceneRay(ray.origin,vec4(direction,raw.coords.x));
- if !scene_static_segment_visible_except_receiver(segment,receiver_id) {
+ if !world_reach_all && !scene_static_segment_visible_except_receiver(segment,receiver_id) {
   return output;
  }
  let hit=scene_decode_hit(raw,p,direction);
