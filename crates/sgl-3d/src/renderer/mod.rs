@@ -434,6 +434,18 @@ impl Renderer {
         self.fog.test_volumes()
     }
 
+    /// The last frame's ray-traced shadow mask and slot table, where the
+    /// stage ran.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn traced_shadows(
+        &self,
+    ) -> Option<(
+        &wgpu::TextureView,
+        crate::shading::shadow_mask::ShadowMaskSlots,
+    )> {
+        self.traced_shadows.last()
+    }
+
     /// FSR2's upscaled frame of the last frame it ran.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn fsr2_output(&self) -> &wgpu::TextureView {

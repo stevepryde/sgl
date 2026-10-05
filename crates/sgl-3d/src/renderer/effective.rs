@@ -212,8 +212,8 @@ pub(super) fn resolve(
     };
     // Ray-traced shadows trace through the hardware path alone (the
     // architecture's Ray-traced shadows); elsewhere the maps shadow.
-    let ray_traced_shadows = settings.ray_traced_shadows
-        && matches!(hardware_ray_tracing, HardwareRayTracing::On(_));
+    let ray_traced_shadows =
+        settings.ray_traced_shadows && matches!(hardware_ray_tracing, HardwareRayTracing::On(_));
     Effective {
         antialiasing,
         taa,

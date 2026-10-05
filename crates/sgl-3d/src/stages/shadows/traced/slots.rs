@@ -43,9 +43,7 @@ impl Slots {
         // The free slots, lowest first, go to the highest-ranked lights
         // without one.
         let held = self.local;
-        let mut newcomers = ranked
-            .iter()
-            .filter(|light| !held.contains(&Some(**light)));
+        let mut newcomers = ranked.iter().filter(|light| !held.contains(&Some(**light)));
         for (slot, held) in self.local.iter_mut().enumerate() {
             if held.is_some() {
                 continue;
@@ -107,7 +105,11 @@ mod tests {
             [Some(1), Some(2), Some(3)]
         );
         assert_eq!(first.restart, 0b1111, "every new light restarts");
-        assert!(keys(&first)[4..].iter().all(|&key| key == SHADOW_MASK_EMPTY));
+        assert!(
+            keys(&first)[4..]
+                .iter()
+                .all(|&key| key == SHADOW_MASK_EMPTY)
+        );
 
         // Reranked, each keeps its slot and its history.
         let reranked = slots.assign(Some(1), &[c, a, b]);

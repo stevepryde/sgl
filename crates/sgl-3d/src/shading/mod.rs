@@ -24,9 +24,9 @@ pub(crate) mod material;
 pub(crate) mod packed_vertex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod packed_vertex_tests;
-pub(crate) mod shadow_mask;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rect_light_tests;
+pub(crate) mod shadow_mask;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod shadow_normal_tests;
 pub(crate) mod srgb;

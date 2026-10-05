@@ -1,7 +1,7 @@
 //! One frame: the one ordered render body.
 use super::Renderer;
-use crate::settings::{ReflectionMethod, Settings};
 use crate::content::identity::LightId;
+use crate::settings::{ReflectionMethod, Settings};
 use crate::stages::opaque::Opaque;
 use crate::stages::shadows::traced::TracedShadows;
 use crate::timing::GpuTiming;

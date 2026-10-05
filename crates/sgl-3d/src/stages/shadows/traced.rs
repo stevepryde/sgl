@@ -92,7 +92,9 @@ fn texture(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let dimension = (layers > 1).then_some(wgpu::TextureViewDimension::D2Array);
@@ -184,6 +186,9 @@ pub(crate) struct TracedShadows {
     /// The slot table, which the lighting pass reads too.
     slot_table: wgpu::Buffer,
     slots: slots::Slots,
+    /// The last frame's slot table, and whether the stage ran in it.
+    table: shadow_mask::ShadowMaskSlots,
+    ran: bool,
     targets: Option<Targets>,
     /// Frames since the history last restarted; 0 restarts it.
     frame: u32,
@@ -255,6 +260,11 @@ impl TracedShadows {
                 std::mem::size_of::<shadow_mask::ShadowMaskSlots>() as u64,
             ),
             slots: slots::Slots::default(),
+            table: shadow_mask::ShadowMaskSlots::new(
+                [shadow_mask::SHADOW_MASK_EMPTY; shadow_mask::RT_SHADOW_LIGHTS],
+                0,
+            ),
+            ran: false,
             targets: None,
             frame: 0,
             previous_frame: None,
@@ -271,7 +281,10 @@ impl TracedShadows {
         ctx: &mut FrameContext<'_>,
         ranked: &[LightId],
     ) -> Option<ShadowMask<'s>> {
-        let hardware = ctx.hardware_rays.filter(|_| ctx.effective.ray_traced_shadows)?;
+        self.ran = false;
+        let hardware = ctx
+            .hardware_rays
+            .filter(|_| ctx.effective.ray_traced_shadows)?;
         let size = ctx.sizes.render;
         let resized = self.targets.as_ref().is_none_or(|t| t.full != size);
         if resized {
@@ -290,6 +303,7 @@ impl TracedShadows {
         self.previous_frame = Some(history.frames);
         let directional = crate::view::directional_shadow(ctx.input).map(|(index, _)| index);
         let table = self.slots.assign(directional, ranked);
+        self.table = table;
         crate::counters::write_buffer(ctx.queue, &self.slot_table, 0, bytemuck::bytes_of(&table));
         let targets = self.targets.as_ref().unwrap();
         let [width, height] = targets.full.map(|side| side as f32);
@@ -343,17 +357,23 @@ impl TracedShadows {
             ],
         );
         {
-            let mut pass = ctx.encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("ray-traced shadow rays"),
-                timestamp_writes: ctx
-                    .timing
-                    .and_then(|t| t.compute_pass("ray-traced shadow rays")),
-            });
+            let mut pass = ctx
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("ray-traced shadow rays"),
+                    timestamp_writes: ctx
+                        .timing
+                        .and_then(|t| t.compute_pass("ray-traced shadow rays")),
+                });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
             pass.set_bind_group(1, &ctx.scene.scene_group, &[]);
             pass.set_bind_group(3, trace_group, &[]);
-            pass.dispatch_workgroups(targets.reduced[0].div_ceil(8), targets.reduced[1].div_ceil(4), 1);
+            pass.dispatch_workgroups(
+                targets.reduced[0].div_ceil(8),
+                targets.reduced[1].div_ceil(4),
+                1,
+            );
         }
         let temporal_group = self.temporal.groups[current].get(
             ctx.device,
@@ -370,15 +390,21 @@ impl TracedShadows {
             ],
         );
         {
-            let mut pass = ctx.encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("ray-traced shadow temporal"),
-                timestamp_writes: ctx
-                    .timing
-                    .and_then(|t| t.compute_pass("ray-traced shadow temporal")),
-            });
+            let mut pass = ctx
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("ray-traced shadow temporal"),
+                    timestamp_writes: ctx
+                        .timing
+                        .and_then(|t| t.compute_pass("ray-traced shadow temporal")),
+                });
             pass.set_pipeline(&self.temporal.pipeline);
             pass.set_bind_group(0, temporal_group, &[]);
-            pass.dispatch_workgroups(targets.reduced[0].div_ceil(8), targets.reduced[1].div_ceil(8), 1);
+            pass.dispatch_workgroups(
+                targets.reduced[0].div_ceil(8),
+                targets.reduced[1].div_ceil(8),
+                1,
+            );
         }
         let upsample_group = self.upsample.groups[current].get(
             ctx.device,
@@ -392,21 +418,33 @@ impl TracedShadows {
             ],
         );
         {
-            let mut pass = ctx.encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("ray-traced shadow upsample"),
-                timestamp_writes: ctx
-                    .timing
-                    .and_then(|t| t.compute_pass("ray-traced shadow upsample")),
-            });
+            let mut pass = ctx
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("ray-traced shadow upsample"),
+                    timestamp_writes: ctx
+                        .timing
+                        .and_then(|t| t.compute_pass("ray-traced shadow upsample")),
+                });
             pass.set_pipeline(&self.upsample.pipeline);
             pass.set_bind_group(0, upsample_group, &[]);
             pass.dispatch_workgroups(targets.full[0].div_ceil(8), targets.full[1].div_ceil(8), 1);
         }
         self.frame = self.frame.wrapping_add(1).max(1);
+        self.ran = true;
         Some(ShadowMask {
             mask: &targets.mask,
             slots: &self.slot_table,
         })
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl TracedShadows {
+    /// The last frame's shadow mask and slot table, where the stage ran.
+    pub fn last(&self) -> Option<(&wgpu::TextureView, shadow_mask::ShadowMaskSlots)> {
+        let targets = self.targets.as_ref().filter(|_| self.ran)?;
+        Some((&targets.mask, self.table))
     }
 }
 
