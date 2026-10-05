@@ -45,7 +45,7 @@ pub(super) struct LightView {
 impl LightView {
     pub fn new(light: &Light) -> Self {
         let shape = match light.shape {
-            LightShape::Point => Shape::Cube { faces: 0b11_1111 },
+            LightShape::Point { .. } => Shape::Cube { faces: 0b11_1111 },
             LightShape::Spot {
                 direction,
                 outer_angle,

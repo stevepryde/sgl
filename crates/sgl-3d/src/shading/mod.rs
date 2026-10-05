@@ -290,6 +290,21 @@ pub(crate) static DEPTH: Module = Module {
     source: include_str!("depth.wgsl"),
     deps: &[],
 };
+/// Pseudo-random numbers from a pixel and a frame, where Wicked reads blue
+/// noise: its hash33.
+pub(crate) static HASH: Module = Module {
+    name: "hash",
+    source: include_str!("hash.wgsl"),
+    deps: &[],
+};
+/// Where a ray toward a light ends on it: a point of a point or spot light's
+/// sphere, of a rectangle's face, or a direction within a directional
+/// light's disc. Reads nothing.
+pub(crate) static LIGHT_SURFACE: Module = Module {
+    name: "light_surface",
+    source: include_str!("light_surface.wgsl"),
+    deps: &[&LIGHT_RECORDS],
+};
 /// Interleaved gradient noise.
 pub(crate) static NOISE: Module = Module {
     name: "noise",
@@ -635,6 +650,7 @@ pub(crate) static SURFACE_RAY: Module = Module {
         &ANISOTROPY,
         &BAKED_LIGHTING,
         &SURFACE,
+        &LIGHT_SURFACE,
     ],
 };
 

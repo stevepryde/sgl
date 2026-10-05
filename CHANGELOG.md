@@ -15,6 +15,49 @@ full API details.
 
 ## Unreleased
 
+### Ray-traced shadows are soft and denoised; lights gain a size
+
+- **Scope:** `sgl-3d` (#23). `LightShape::Point` becomes
+  `LightShape::Point { radius }`, and `LightShape::Spot` gains `radius`
+  (metres, nonnegative; `LightShape::DEFAULT_RADIUS` is Wicked Engine's
+  0.025, which `Light::default()` takes). `DirectionalLight` gains
+  `angular_diameter` (radians, as every angle of SGL3D's content is;
+  clamped to 0..=π/2, NaN as 0; the default is
+  `DirectionalLight::SUN_ANGULAR_DIAMETER`, 0.53° or about 0.00925). Only
+  rays see a light's size. Ray-traced shadows (`Settings::ray_traced_shadows`) end each ray
+  at a point drawn on the light, each frame another: a point or spot
+  light's sphere, a rectangle's face, or a direction within the
+  directional light's disc, so a shadow is sharp near its caster and
+  widens away from it. AMD's FidelityFX shadow denoiser (FidelityFX-Denoiser
+  d7dfecb, MIT, now registered for `sgl-3d` in its notices) filters the
+  directional light's and the three longest-held local lights'
+  visibilities, as Wicked Engine runs it; the other twelve keep the
+  temporal blend. The dynamic GI volume's visibility rays end on the light
+  the same way, which is new for point, spot and directional lights. No
+  preset turns ray-traced shadows on (D-28).
+- **Cost:** measured on an Apple M5 at 1920×1080, natively on Metal
+  (median GPU frame time, against the maps with hardware ray tracing off):
+  - the `streaming` example's walk: 10.1 ms against 6.5 ms;
+  - its fly: 9.2 ms against 6.1 ms;
+  - 1000 props under the sun and eight shadowed point and spot lights,
+    all of the default size: 7.6 ms against 4.9 ms.
+  The denoiser takes 1.8–2.1 ms of that (its tile classification
+  0.4–0.6 ms, its three filter passes 1.4–1.5 ms), on top of the
+  ray-traced shadows' earlier cost; it does not run while none of the
+  first four slots holds a light.
+- **Migration:** replace `LightShape::Point` with
+  `LightShape::Point { radius: LightShape::DEFAULT_RADIUS }` (or `0.` for
+  a hard shadow), add `radius: LightShape::DEFAULT_RADIUS` to each
+  `LightShape::Spot { .. }`, and write a pattern `LightShape::Point =>` as
+  `LightShape::Point { .. } =>`. Code that builds a `DirectionalLight`
+  without `..Default::default()` adds `angular_diameter`. `Scene::add_light`
+  and `set_light` refuse a negative or non-finite radius
+  (`SceneError::InvalidLight`). With ray-traced shadows off, only a dynamic
+  GI volume renders differently: its probes' bounce near the shadows of
+  point, spot and directional lights softens slightly. Afterwards, with
+  ray-traced shadows on, look at the shadows of small and large lights and
+  of the sun in motion, and at a dynamic GI volume near shadowed lights.
+
 ### Directional cascades cost less GPU time
 
 - **Scope:** `sgl-3d` (#192). No API change. Since #190 the directional
@@ -75,8 +118,8 @@ full API details.
   from rays instead of the shadow maps, as Wicked Engine's ray-traced
   shadows do: traced at half the render size from 1 cm past each surface
   toward each light that reaches it, blended over frames, and upsampled by
-  depth. Shadows are hard (lights have no size yet) and reach as far as
-  the scene: the directional light's beyond its `DirectionalShadow`
+  depth. Shadows soften with the light's size (see the entry above) and
+  reach as far as the scene: the directional light's beyond its `DirectionalShadow`
   distance. The fog, blended surfaces, probe captures, reflections' ray
   hits and lights beyond those sixteen keep the maps, which are still
   drawn. While the setting runs, the opaque stage takes its two-pass form

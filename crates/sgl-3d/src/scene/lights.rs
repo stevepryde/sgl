@@ -146,13 +146,16 @@ fn validate(light: &Light) -> Result<(), SceneError> {
         && light.range.is_finite()
         && light.range > 0.
         && match light.shape {
-            LightShape::Point => true,
+            LightShape::Point { radius } => radius.is_finite() && radius >= 0.,
             LightShape::Spot {
                 direction,
                 inner_angle,
                 outer_angle,
+                radius,
             } => {
-                direction.is_finite()
+                radius.is_finite()
+                    && radius >= 0.
+                    && direction.is_finite()
                     && direction.length_squared() > 0.
                     && direction.normalize().is_finite()
                     && inner_angle >= 0.

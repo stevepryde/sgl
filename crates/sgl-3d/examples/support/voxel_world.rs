@@ -470,7 +470,9 @@ pub fn torches(world: &World, chunk: IVec3, count: u32) -> Vec<(IVec3, bool)> {
 pub fn torch(at: IVec3, shadowed: bool, origin: DVec3) -> Light {
     Light {
         position: (at.as_dvec3() + DVec3::new(0.5, 1., 0.5) - origin).as_vec3(),
-        shape: LightShape::Point,
+        shape: LightShape::Point {
+            radius: LightShape::DEFAULT_RADIUS,
+        },
         color: [1., 0.7, 0.4],
         intensity: 20.,
         range: 10.,

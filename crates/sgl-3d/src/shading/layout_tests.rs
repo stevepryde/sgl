@@ -39,7 +39,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 25] = [
+    let roots: [&'static super::Module; 27] = [
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
@@ -65,6 +65,8 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::motion_blur::MOTION_BLUR,
         &crate::stages::shadows::traced::TEMPORAL,
         &crate::stages::shadows::traced::UPSAMPLE,
+        &crate::stages::shadows::traced::denoise::TILE_CLASSIFICATION,
+        &crate::stages::shadows::traced::denoise::FILTER,
     ];
     let mut programs: Vec<_> = roots
         .into_iter()
@@ -112,6 +114,28 @@ fn programs() -> Vec<(&'static str, String)> {
 /// A program's label, source and entry points.
 type Program = (&'static str, String, Vec<(naga::ShaderStage, &'static str)>);
 
+/// The entry points the pipeline code creates pipelines with, by the label
+/// of the program that must hold each.
+fn pipeline_entries() -> Vec<(&'static str, &'static str)> {
+    use crate::stages::shadows::traced::{self, denoise};
+    let mut entries = vec![
+        (traced::TEMPORAL.name, traced::TEMPORAL_ENTRY),
+        (traced::UPSAMPLE.name, traced::UPSAMPLE_ENTRY),
+        (
+            denoise::TILE_CLASSIFICATION.name,
+            denoise::TILE_CLASSIFICATION_ENTRY,
+        ),
+        (denoise::FILTER.name, denoise::FILTER_ENTRY),
+    ];
+    entries.extend(
+        traced_programs(None)
+            .into_iter()
+            .chain(hardware_programs())
+            .flat_map(|(label, _, points)| points.into_iter().map(move |(_, name)| (label, name))),
+    );
+    entries
+}
+
 /// The tracing stages' programs, and the tests' scene ray dispatch, on the
 /// path `form` takes (`ray_trace_root`), each with the pipeline constants
 /// it needs and its entry points.
@@ -153,7 +177,7 @@ fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
                 "traced_shadows_trace_candidates",
             ),
             compose(&[traced_shadows, root]),
-            vec![(Compute, "traced_shadow_rays")],
+            vec![(Compute, crate::stages::shadows::traced::TRACE_ENTRY)],
         ),
         (
             label(
@@ -187,6 +211,7 @@ fn parse(label: &str, source: &str) -> naga::Module {
 // declaration made twice, or a type error fails here, without a GPU.
 #[wasm_bindgen_test(unsupported = test)]
 fn every_program_composes_and_validates() {
+    let entries = pipeline_entries();
     for (label, source) in programs() {
         let module = parse(label, &source);
         naga::valid::Validator::new(
@@ -195,6 +220,21 @@ fn every_program_composes_and_validates() {
         )
         .validate(&module)
         .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(&source)));
+        // A module that swallows the code after it, as a block comment left
+        // open does (naga reads it to the program's end), leaves a valid
+        // program without the entry points its pipelines are created with.
+        // Only the two libraries validated whole hold none.
+        assert!(
+            [super::PACKED_VERTEX.name, "lit_compute_library"].contains(&label)
+                || !module.entry_points.is_empty(),
+            "{label} holds no entry point"
+        );
+        for &(_, entry) in entries.iter().filter(|&&(program, _)| program == label) {
+            assert!(
+                module.entry_points.iter().any(|point| point.name == entry),
+                "{label} lacks {entry}, which its pipeline is created with"
+            );
+        }
     }
 }
 
@@ -365,7 +405,8 @@ fn rust_mirrors_match_wgsl_layouts() {
                 color,
                 illuminance,
                 fog_energy,
-                shadow_opacity
+                shadow_opacity,
+                disc_radius
             ]
         ),
         mirror!(
@@ -929,7 +970,8 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::stages::exposure::constants())
     .chain(crate::stages::opaque::ambient_occlusion::constants())
     .chain(crate::stages::fog::constants())
-    .chain(super::shadow_mask::constants());
+    .chain(super::shadow_mask::constants())
+    .chain(crate::stages::shadows::traced::denoise::constants());
     let programs = programs();
     for constant in constants {
         let (label, source) = programs

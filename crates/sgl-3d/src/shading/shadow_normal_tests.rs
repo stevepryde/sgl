@@ -148,6 +148,7 @@ fn visibility(gpu: (&wgpu::Device, &wgpu::Queue), tilted: bool, shining: Shining
                     direction: Vec3::NEG_Z,
                     inner_angle: 0.6,
                     outer_angle: 0.7,
+                    radius: LightShape::DEFAULT_RADIUS,
                 },
                 intensity: DEPTH * DEPTH,
                 range: 20.,

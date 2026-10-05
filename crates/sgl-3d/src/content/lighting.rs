@@ -34,14 +34,27 @@ pub struct DirectionalLight {
     /// cutoff) draws no shadow and skips the lookup. Above 1 is 1; a
     /// negative or non-finite value draws none.
     pub shadow_opacity: f32,
+    /// The angle the light's disc spans in the sky, in radians: the sun's,
+    /// about 0.00925 (0.53°), is the default. Only rays see it, ray-traced
+    /// shadows' and the dynamic GI volume's visibility rays: each ray
+    /// toward the light leaves in a direction within the disc, so the
+    /// shadow softens with the distance from its caster; 0 casts a hard
+    /// shadow. Clamped to 0..=π/2 (NaN as 0).
+    pub angular_diameter: f32,
+}
+
+impl DirectionalLight {
+    /// The sun's angular diameter seen from the Earth, in radians (0.53°).
+    pub const SUN_ANGULAR_DIAMETER: f32 = 0.53 * std::f32::consts::PI / 180.;
 }
 
 impl Default for DirectionalLight {
     /// Godot's `DirectionalLight3D` defaults: white, shining along -Z (as
     /// Godot's and Bevy's untransformed lights do), of π lux (its light
     /// energy of 1, which its renderer scales by π), with no shadow (at
-    /// opacity 1 when it has one) and fog energy 1. Set what differs and
-    /// take the rest with `..Default::default()`.
+    /// opacity 1 when it has one) and fog energy 1, and the sun's angular
+    /// diameter. Set what differs and take the rest with
+    /// `..Default::default()`.
     fn default() -> Self {
         Self {
             direction: Vec3::NEG_Z,
@@ -50,6 +63,7 @@ impl Default for DirectionalLight {
             shadow: None,
             fog_energy: 1.,
             shadow_opacity: 1.,
+            angular_diameter: Self::SUN_ANGULAR_DIAMETER,
         }
     }
 }

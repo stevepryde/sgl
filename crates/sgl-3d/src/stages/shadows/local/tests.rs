@@ -49,7 +49,9 @@ fn blocker() -> asset::Asset {
 fn point(position: Vec3, range: f32) -> Light {
     Light {
         position,
-        shape: LightShape::Point,
+        shape: LightShape::Point {
+            radius: LightShape::DEFAULT_RADIUS,
+        },
         color: [1.; 3],
         intensity: 8.,
         range,
@@ -856,6 +858,7 @@ fn spot_lights_shadow_within_their_cones() {
             direction,
             inner_angle: 0.,
             outer_angle,
+            radius: LightShape::DEFAULT_RADIUS,
         },
         ..point(Vec3::ZERO, 9.)
     };
@@ -1061,6 +1064,7 @@ fn lit_surfaces_do_not_shadow_themselves() {
                 direction: Vec3::new(1., -1., 0.).normalize(),
                 inner_angle: 0.,
                 outer_angle: 0.7,
+                radius: LightShape::DEFAULT_RADIUS,
             },
             position: Vec3::new(0., 0., 30.),
             ..point(Vec3::ZERO, 9.)

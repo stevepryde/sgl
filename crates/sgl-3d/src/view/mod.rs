@@ -73,6 +73,17 @@ fn flag(on: bool, flag: u32) -> u32 {
     if on { flag } else { 0 }
 }
 
+/// The radius at unit distance of a disc spanning `angular_diameter`
+/// radians, clamped to 0..=π/2 (NaN as 0).
+fn disc_radius(angular_diameter: f32) -> f32 {
+    let angle = if angular_diameter.is_nan() {
+        0.
+    } else {
+        angular_diameter.clamp(0., std::f32::consts::FRAC_PI_2)
+    };
+    (angle * 0.5).tan()
+}
+
 /// Directional light `index` of `input`, unless it is absent or off.
 fn directional_light(input: &FrameInput, index: usize) -> Option<DirectionalLight> {
     input.directional_lights[index].filter(DirectionalLight::is_on)
@@ -193,7 +204,8 @@ pub(crate) fn frame_uniform(
                 } else {
                     0.
                 },
-                padding: [0.; 2],
+                disc_radius: disc_radius(light.angular_diameter),
+                padding: 0.,
             }
         })
     });

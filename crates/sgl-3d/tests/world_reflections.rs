@@ -408,7 +408,9 @@ fn ray_hits_on_a_moving_instance_take_scene_lights() {
             &frames.queue,
             sgl_3d::Light {
                 position: Vec3::new(0., 0., 1.),
-                shape: sgl_3d::LightShape::Point,
+                shape: sgl_3d::LightShape::Point {
+                    radius: sgl_3d::LightShape::DEFAULT_RADIUS,
+                },
                 color: [1.; 3],
                 intensity: 20.,
                 range: 4.,

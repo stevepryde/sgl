@@ -91,7 +91,7 @@ impl Clusterable {
                 radius: light.range,
             },
             spot: match light.shape {
-                LightShape::Point => None,
+                LightShape::Point { .. } => None,
                 LightShape::Spot {
                     direction,
                     outer_angle,
