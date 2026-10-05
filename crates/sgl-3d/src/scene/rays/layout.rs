@@ -1,8 +1,9 @@
 //! The WGSL twins of the ray source's layouts, which the layout test
 //! compares with `scene_source.wgsl` and `scene_rays.wgsl`.
+use super::charts::Chart;
 use super::instances::{InstanceEntry, InstanceLeaf};
 use super::{
-    Chart, IMAGE_BC7, IMAGE_RGBA8, ImageHeader, MaterialRecord, MaterialTextures, MeshRecord,
+    IMAGE_BC7, IMAGE_RGBA8, ImageHeader, MaterialRecord, MaterialTextures, MeshRecord,
     SourceHeader, bvh,
 };
 use crate::shading::material::{MaterialUniform, NormalLayerUniform};

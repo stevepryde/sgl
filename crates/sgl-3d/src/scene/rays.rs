@@ -20,10 +20,11 @@ use crate::asset::{CompressedFormat, Image, Vertex};
 use crate::counters::{BuildStep, step};
 use crate::shading::material::MaterialUniform;
 use crate::shading::packed_vertex::{self, PackedVertex, UvRect};
-use std::collections::HashMap;
+use charts::{CHART_WORDS, ChartTables, chart_tables};
 
 pub(crate) mod acceleration;
 mod bvh;
+mod charts;
 pub(crate) mod instances;
 #[cfg(test)]
 mod layout;
@@ -95,53 +96,6 @@ pub(crate) struct PreparedRayModel {
     root: u32,
     /// Where each mesh's vertices and indices lie in `words`.
     mesh_words: Vec<RayMeshWords>,
-}
-
-/// A model's lightmap chart tables, one a mesh (`chart_tables`).
-struct ChartTables {
-    /// Each mesh's table of the distinct chart bounds its vertices name, in
-    /// the order they first appear, the tables one after another in mesh
-    /// order. A chart that two meshes name is in both tables.
-    entries: Vec<Chart>,
-    /// The entry where each mesh's table starts.
-    starts: Vec<usize>,
-    /// Each vertex's index into its mesh's table, mesh by mesh.
-    indices: Vec<Vec<u16>>,
-}
-
-/// `meshes`' chart tables. Refuses a mesh past 65,536 bounds, naming it, as
-/// a packed vertex holds its chart's index in 16 bits.
-fn chart_tables(meshes: &[RayMesh<'_>]) -> Result<ChartTables, SceneError> {
-    let mut entries = Vec::new();
-    let mut starts = Vec::with_capacity(meshes.len());
-    let mut index: HashMap<[u32; 4], u16> = HashMap::new();
-    let mut indices = Vec::with_capacity(meshes.len());
-    for (mesh_index, mesh) in meshes.iter().enumerate() {
-        let start = entries.len();
-        starts.push(start);
-        index.clear();
-        let mut mesh_charts = Vec::with_capacity(mesh.vertices.len());
-        for vertex in mesh.vertices {
-            let key = vertex.lightmap_bounds.map(f32::to_bits);
-            let chart = match index.get(&key) {
-                Some(&chart) => chart,
-                None => {
-                    let chart = u16::try_from(entries.len() - start)
-                        .map_err(|_| SceneError::TooManyLightmapCharts { mesh: mesh_index })?;
-                    entries.push(vertex.lightmap_bounds);
-                    index.insert(key, chart);
-                    chart
-                }
-            };
-            mesh_charts.push(chart);
-        }
-        indices.push(mesh_charts);
-    }
-    Ok(ChartTables {
-        entries,
-        starts,
-        indices,
-    })
 }
 
 /// `meshes`' words, addressed from zero, which `SceneRays::place_model`
@@ -287,13 +241,6 @@ struct MeshRecord {
     charts: u32,
     uv_rect: [f32; 4],
 }
-
-/// A chart table's entry: a lightmap chart's normalized atlas bounds, min
-/// then max, as `asset::Vertex::lightmap_bounds`.
-type Chart = [f32; 4];
-
-/// A chart table entry's words.
-const CHART_WORDS: usize = std::mem::size_of::<Chart>() / 4;
 
 /// A mesh record's words; a model's records are consecutive.
 const MESH_WORDS: usize = std::mem::size_of::<MeshRecord>() / 4;
