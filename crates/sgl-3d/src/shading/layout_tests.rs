@@ -242,7 +242,8 @@ fn rust_mirrors_match_wgsl_layouts() {
                 color,
                 illuminance,
                 fog_energy,
-                shadow_opacity
+                shadow_opacity,
+                disc_radius
             ]
         ),
         mirror!(

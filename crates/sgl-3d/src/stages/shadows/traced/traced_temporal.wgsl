@@ -14,9 +14,10 @@
 // computes and then leaves unused, so a shadow that moves takes the
 // current value where its history falls outside the box, as Wicked's own
 // SSR and RT diffuse temporal passes clamp theirs (ssr_temporalCS.hlsl
-// 209, rtdiffuse_temporalCS.hlsl 197); every slot is blended, where Wicked
-// blends slots 4 to 15 and denoises 0 to 3, a denoiser this stage does not
-// run yet; a slot whose light changed takes its current value
+// 209, rtdiffuse_temporalCS.hlsl 197); the denoised slots take the
+// denoiser's result as Wicked's first four do (74–79), each from its layer
+// where Wicked reads a channel a light; a slot whose light changed takes
+// its current value
 // (ShadowMaskSlots.restart), and so does every slot after the stage's
 // history restarts (TracedParams.frame 0); the history is the stage's own
 // linear depth at the tracing resolution, where Wicked reads its
@@ -30,6 +31,8 @@
 @group(0) @binding(5) var<uniform> traced:TracedParams;
 @group(0) @binding(6) var<uniform> shadow_mask_slots:ShadowMaskSlots;
 @group(0) @binding(7) var temporal_output:texture_storage_2d<rgba32uint,write>;
+// The denoiser's result for each denoised slot, a layer a slot.
+@group(0) @binding(8) var temporal_denoised:texture_2d_array<f32>;
 
 // Wicked's temporalResponseMin and temporalResponseMax: the history's
 // least and greatest share.
@@ -47,6 +50,20 @@ const TEMPORAL_VELOCITY_RESPONSE:f32=.2;
 // The neighbourhood's offsets: Wicked's 3×3 SampleOffset.
 const TEMPORAL_TAPS:u32=9u;
 
+// `current`'s visibilities with the denoised slots' the denoiser's, at
+// tracing texel `texel`.
+fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
+ var words=vec4(0u);
+ for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
+  var value=traced_load(current,slot);
+  if slot<TRACED_DENOISED_SLOTS {
+   value=textureLoad(temporal_denoised,texel,slot,0).x;
+  }
+  words=traced_store(words,slot,value);
+ }
+ return words;
+}
+
 @compute @workgroup_size(8,8) fn traced_shadow_temporal(@builtin(global_invocation_id) id:vec3<u32>) {
  let reduced=vec2<u32>(traced.reduced.xy);
  if any(id.xy>=reduced) {
@@ -55,21 +72,21 @@ const TEMPORAL_TAPS:u32=9u;
  let current=textureLoad(temporal_current,id.xy,0);
  let depth=textureLoad(temporal_depth,id.xy,0).x;
  if traced.frame==0u || depth>=TRACED_SKY_DEPTH {
-  textureStore(temporal_output,id.xy,current);
+  textureStore(temporal_output,id.xy,temporal_denoised_words(current,id.xy));
   return;
  }
  // The texel's surface at its full-resolution pixel, where it was last
  // frame.
- let pixel=min(id.xy*2u,vec2<u32>(traced.full.xy)-1u);
+ let pixel=traced_full_pixel(id.xy);
  let motion=textureLoad(temporal_motion,pixel,0).xy;
  let previous=vec2<f32>(pixel)+.5-motion*traced.full.xy;
  if any(previous<vec2(0.)) || any(previous>=traced.full.xy) {
-  textureStore(temporal_output,id.xy,current);
+  textureStore(temporal_output,id.xy,temporal_denoised_words(current,id.xy));
   return;
  }
  let previous_texel=min(vec2<u32>(previous*.5),reduced-1u);
  if abs(depth-textureLoad(temporal_previous_depth,previous_texel,0).x)>TEMPORAL_DISOCCLUSION {
-  textureStore(temporal_output,id.xy,current);
+  textureStore(temporal_output,id.xy,temporal_denoised_words(current,id.xy));
   return;
  }
  let history=textureLoad(temporal_history,previous_texel,0);
@@ -84,6 +101,10 @@ const TEMPORAL_TAPS:u32=9u;
  var words=vec4(0u);
  for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
   let value=traced_load(current,slot);
+  if slot<TRACED_DENOISED_SLOTS {
+   words=traced_store(words,slot,textureLoad(temporal_denoised,id.xy,slot,0).x);
+   continue;
+  }
   if (shadow_mask_slots.restart&(1u<<slot))!=0u {
    words=traced_store(words,slot,value);
    continue;

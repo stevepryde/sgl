@@ -164,7 +164,7 @@ pub(crate) struct WorldReflections {
 static COMMON: shading::Module = shading::Module {
     name: "world_reflections_common",
     source: include_str!("world/world_reflections_common.wgsl"),
-    deps: &[&shading::GBUFFER, &shading::DEPTH],
+    deps: &[&shading::GBUFFER, &shading::DEPTH, &shading::HASH],
 };
 /// The trace: the lit layout at group 0 (the camera's ray-hit group, with the
 /// installed probes), the scene at group 1 and its receivers at group 3, with

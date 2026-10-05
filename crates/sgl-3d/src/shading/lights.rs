@@ -33,8 +33,11 @@ pub(crate) struct LightRecord {
     pub shadow_opacity: f32,
     /// `LIGHT_*` bits.
     pub flags: u32,
+    /// A point or spot light's radius in metres, which only rays see
+    /// (`LightShape`); zero for a rectangle.
+    pub radius: f32,
     /// WGSL rounds `Light` up to its 16-byte alignment.
-    pub padding: [f32; 2],
+    pub padding: f32,
 }
 
 /// `LightRecord::shape`: a point or spot light.
@@ -55,11 +58,12 @@ impl LightRecord {
         let mut color = light.color.map(|channel| channel * light.intensity);
         let (shape, direction, half_width, half_height, spot_scale, spot_offset) = match light.shape
         {
-            LightShape::Point => (LIGHT_PUNCTUAL, [0.; 3], [0.; 3], 0., 0., 1.),
+            LightShape::Point { .. } => (LIGHT_PUNCTUAL, [0.; 3], [0.; 3], 0., 0., 1.),
             LightShape::Spot {
                 direction,
                 inner_angle,
                 outer_angle,
+                ..
             } => {
                 let cos_outer = outer_angle.cos();
                 let scale = 1. / (inner_angle.cos() - cos_outer).max(1e-4);
@@ -110,7 +114,11 @@ impl LightRecord {
             } else {
                 0
             },
-            padding: [0.; 2],
+            radius: match light.shape {
+                LightShape::Point { radius } | LightShape::Spot { radius, .. } => radius,
+                LightShape::Rect { .. } => 0.,
+            },
+            padding: 0.,
         }
     }
 }
@@ -196,6 +204,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
                 half_height,
                 shadow_opacity,
                 flags,
+                radius,
             ]
         ),
         mirror!(

@@ -36,13 +36,14 @@ impl Random {
 fn random_light(random: &mut Random, center: Vec3, extent: Vec3) -> Light {
     let kind = random.unit();
     let shape = if kind < 1. / 3. {
-        LightShape::Point
+        LightShape::Point { radius: LightShape::DEFAULT_RADIUS }
     } else if kind < 2. / 3. {
         let outer_angle = random.range(0.05, 1.55);
         LightShape::Spot {
             direction: random.direction() * random.range(0.5, 3.),
             inner_angle: outer_angle * random.unit(),
             outer_angle,
+            radius: LightShape::DEFAULT_RADIUS,
         }
     } else {
         LightShape::Rect {
@@ -82,7 +83,7 @@ fn reaches(light: &Light, point: Vec3) -> bool {
         return false;
     }
     match light.shape {
-        LightShape::Point => true,
+        LightShape::Point { .. } => true,
         LightShape::Spot {
             direction,
             outer_angle,
@@ -498,11 +499,12 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
             lights.push(Light {
                 position,
                 shape: match station % 3 {
-                    0 => LightShape::Point,
+                    0 => LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
                     1 => LightShape::Spot {
                         direction,
                         inner_angle: 0.3,
                         outer_angle: 1.4,
+                        radius: LightShape::DEFAULT_RADIUS,
                     },
                     _ => LightShape::Rect {
                         direction,
@@ -523,7 +525,7 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
     }
     lights.push(Light {
         position: Vec3::new(0., 0.6, 2.9),
-        shape: LightShape::Point,
+        shape: LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
         color: [1.; 3],
         intensity: 1.,
         range: 9.,

@@ -378,7 +378,7 @@ fn add_content(
     for light in [
         Light {
             position: Vec3::new(-3., 1.5, -1.),
-            shape: LightShape::Point,
+            shape: LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
             color: [0.4, 0.6, 1.],
             intensity: 2.,
             range: 6.,
@@ -393,6 +393,7 @@ fn add_content(
                 direction: Vec3::NEG_Y,
                 inner_angle: 0.3,
                 outer_angle: 0.5,
+                radius: LightShape::DEFAULT_RADIUS,
             },
             color: [1., 0.8, 0.6],
             intensity: 10.,

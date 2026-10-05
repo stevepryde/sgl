@@ -366,6 +366,7 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
             direction: Vec3::new(0., -1., 0.1),
             inner_angle: 0.3,
             outer_angle: 0.45,
+            radius: LightShape::DEFAULT_RADIUS,
         },
         intensity: 80.,
         range: 15.,

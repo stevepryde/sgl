@@ -87,7 +87,7 @@ fn world_hammersley(index:u32,count:u32,random:vec2<u32>)->vec2<f32> {
  var mean=0.;
  var s=0.;
  var closest_length=0.;
- let random=world_hash33(vec3(id.xy,world.frame)).xy;
+ let random=hash33(vec3(id.xy,world.frame)).xy;
  for(var i=0u;i<RESOLVE_SPATIAL_RECONSTRUCTION_COUNT;i++) {
   let offset=(world_hammersley(i,RESOLVE_SPATIAL_RECONSTRUCTION_COUNT,random)-vec2(.5))*spatial;
   let neighbor=vec2<i32>(vec2<f32>(p)+offset);

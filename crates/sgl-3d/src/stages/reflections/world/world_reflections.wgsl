@@ -79,7 +79,7 @@ fn world_reflection_ggx(v:vec3<f32>,n:vec3<f32>,roughness_in:f32,random:vec2<f32
  return vec4(reflect(-v,n),1.);
 }
 fn world_random(p:vec2<u32>,frame:u32)->vec2<f32> {
- return vec2<f32>(world_hash33(vec3(p,frame)).xy)*(1./4294967296.);
+ return hash33_unit(vec3(p,frame)).xy;
 }
 struct WorldRay {
  @location(0) indirect:vec4<f32>,

@@ -20,6 +20,7 @@
 //! trace in hardware.
 //! Timing groups: `ray-traced shadow rays`, `ray-traced shadow temporal`,
 //! `ray-traced shadow upsample`.
+mod denoise;
 pub(crate) mod slots;
 
 use crate::content::identity::LightId;
@@ -37,10 +38,14 @@ const DOWNSAMPLE: u32 = 2;
 struct Params {
     inverse_view_projection: [[f32; 4]; 4],
     view: [[f32; 4]; 4],
+    inverse_projection: [[f32; 4]; 4],
+    previous_view: [[f32; 4]; 4],
     full: [f32; 4],
     reduced: [f32; 4],
+    eye: [f32; 4],
     frame: u32,
-    padding: [u32; 3],
+    seed: u32,
+    padding: [u32; 2],
 }
 
 static COMMON: shading::Module = shading::Module {
@@ -58,6 +63,8 @@ pub(crate) static TRACE: shading::Module = shading::Module {
         &shading::BIND_LIT,
         &shading::GBUFFER,
         &shading::LIGHT_REACH,
+        &shading::LIGHT_SURFACE,
+        &shading::HASH,
         &shading::SHADOW_MASK_SLOT_KEY,
         &shading::SCENE_RAYS_PREDICATE,
         &COMMON,
@@ -80,7 +87,7 @@ fn texture(
     [width, height]: [u32; 2],
     layers: u32,
     format: wgpu::TextureFormat,
-) -> (wgpu::TextureView, wgpu::TextureView) {
+) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -97,14 +104,10 @@ fn texture(
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    let dimension = (layers > 1).then_some(wgpu::TextureViewDimension::D2Array);
-    let view = |dimension| {
-        texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension,
-            ..Default::default()
-        })
-    };
-    (view(dimension), view(dimension))
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: (layers > 1).then_some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
 }
 
 /// The stage's targets at one render size: the trace's words and linear
@@ -120,13 +123,15 @@ struct Targets {
     depth: [wgpu::TextureView; 2],
     temporal: [wgpu::TextureView; 2],
     mask: wgpu::TextureView,
+    /// The denoiser's.
+    denoise: denoise::Targets,
 }
 
 impl Targets {
     fn new(device: &wgpu::Device, full: [u32; 2]) -> Self {
         let reduced = full.map(|side| side.div_ceil(DOWNSAMPLE).max(1));
         let words = wgpu::TextureFormat::Rgba32Uint;
-        let half = |label, format| texture(device, label, reduced, 1, format).0;
+        let half = |label, format| texture(device, label, reduced, 1, format);
         Self {
             full,
             reduced,
@@ -139,8 +144,8 @@ impl Targets {
                 full,
                 shadow_mask::LAYERS,
                 shadow_mask::FORMAT,
-            )
-            .0,
+            ),
+            denoise: denoise::Targets::new(device, reduced),
         }
     }
 }
@@ -152,7 +157,13 @@ struct Pass {
 }
 
 impl Pass {
-    fn new(device: &wgpu::Device, module: &'static shading::Module, entry: &str) -> Self {
+    /// The pass `entry` of `module`, its pipeline constants `constants`.
+    fn new(
+        device: &wgpu::Device,
+        module: &'static shading::Module,
+        entry: &str,
+        constants: &[(&str, f64)],
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(entry),
             source: wgpu::ShaderSource::Wgsl(shading::compose(&[module]).into()),
@@ -162,7 +173,10 @@ impl Pass {
             layout: None,
             module: &shader,
             entry_point: Some(entry),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants,
+                ..Default::default()
+            },
             cache: None,
         });
         let group = || CachedGroup::new(pipeline.get_bind_group_layout(0));
@@ -182,6 +196,8 @@ pub(crate) struct TracedShadows {
     trace: Option<wgpu::ComputePipeline>,
     temporal: Pass,
     upsample: Pass,
+    /// AMD's shadow denoiser over the first four slots.
+    denoiser: denoise::Denoiser,
     params: wgpu::Buffer,
     /// The slot table, which the lighting pass reads too.
     slot_table: wgpu::Buffer,
@@ -192,6 +208,8 @@ pub(crate) struct TracedShadows {
     targets: Option<Targets>,
     /// Frames since the history last restarted; 0 restarts it.
     frame: u32,
+    /// Turns the rays' draws on the lights each frame the stage runs.
+    seed: u32,
     /// The camera history's frame count of the last frame the stage ran.
     previous_frame: Option<u32>,
 }
@@ -234,6 +252,7 @@ impl TracedShadows {
             entry(4, uniform),
             entry(5, storage(wgpu::TextureFormat::Rgba32Uint)),
             entry(6, storage(wgpu::TextureFormat::R32Float)),
+            entry(7, storage(wgpu::TextureFormat::Rgba32Uint)),
         ];
         let uniform_buffer = |label, size| {
             crate::counters::buffer(
@@ -249,8 +268,9 @@ impl TracedShadows {
         Self {
             paths: TracePaths::new("ray-traced shadow rays", &TRACE, &entries, [lit, scene]),
             trace: None,
-            temporal: Pass::new(device, &TEMPORAL, "traced_shadow_temporal"),
-            upsample: Pass::new(device, &UPSAMPLE, "traced_shadow_upsample"),
+            temporal: Pass::new(device, &TEMPORAL, "traced_shadow_temporal", &[]),
+            upsample: Pass::new(device, &UPSAMPLE, "traced_shadow_upsample", &[]),
+            denoiser: denoise::Denoiser::new(device),
             params: uniform_buffer(
                 "ray-traced shadow parameters",
                 std::mem::size_of::<Params>() as u64,
@@ -267,6 +287,7 @@ impl TracedShadows {
             ran: false,
             targets: None,
             frame: 0,
+            seed: 0,
             previous_frame: None,
         }
     }
@@ -309,6 +330,13 @@ impl TracedShadows {
         let [width, height] = targets.full.map(|side| side as f32);
         let [reduced_width, reduced_height] = targets.reduced.map(|side| side as f32);
         let view = &ctx.values.view;
+        // The projection as it rasterized, jitter and all, and the last
+        // submitted frame's view, this frame's after a restart.
+        let camera = history.camera;
+        let previous_view = history
+            .previous_camera
+            .map_or(camera.view, |previous| previous.view);
+        let eye = ctx.input.camera.eye;
         crate::counters::write_buffer(
             ctx.queue,
             &self.params,
@@ -316,6 +344,8 @@ impl TracedShadows {
             bytemuck::bytes_of(&Params {
                 inverse_view_projection: view.inverse_view_projection,
                 view: view.view,
+                inverse_projection: camera.jittered_projection().inverse().to_cols_array_2d(),
+                previous_view: previous_view.to_cols_array_2d(),
                 full: [width, height, 1. / width, 1. / height],
                 reduced: [
                     reduced_width,
@@ -323,10 +353,13 @@ impl TracedShadows {
                     1. / reduced_width,
                     1. / reduced_height,
                 ],
+                eye: [eye.x, eye.y, eye.z, 1.],
                 frame: self.frame,
-                padding: [0; 3],
+                seed: self.seed,
+                padding: [0; 2],
             }),
         );
+        self.seed = self.seed.wrapping_add(1);
         let current = (self.frame % 2) as usize;
         let previous = 1 - current;
         let shared = ctx.targets;
@@ -354,6 +387,7 @@ impl TracedShadows {
                 (4, self.slot_table.as_entire_binding()),
                 (5, resource(&targets.raw)),
                 (6, resource(&targets.depth[current])),
+                (7, resource(&targets.denoise.tiles)),
             ],
         );
         {
@@ -375,6 +409,22 @@ impl TracedShadows {
                 1,
             );
         }
+        self.denoiser.encode(
+            ctx.device,
+            ctx.encoder,
+            ctx.timing,
+            &targets.denoise,
+            denoise::Inputs {
+                depth: &shared.depth,
+                normal: &shared.normal,
+                motion: &shared.motion,
+                previous_depth: &targets.depth[previous],
+                params: &self.params,
+                slot_table: &self.slot_table,
+                reduced: targets.reduced,
+                current,
+            },
+        );
         let temporal_group = self.temporal.groups[current].get(
             ctx.device,
             "ray-traced shadow temporal",
@@ -387,6 +437,7 @@ impl TracedShadows {
                 (5, self.params.as_entire_binding()),
                 (6, self.slot_table.as_entire_binding()),
                 (7, resource(&targets.temporal[current])),
+                (8, resource(&targets.denoise.denoised)),
             ],
         );
         {
@@ -454,7 +505,17 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
         "traced_shadows_temporal",
         "TracedParams",
         Params,
-        [inverse_view_projection, view, full, reduced, frame]
+        [
+            inverse_view_projection,
+            view,
+            inverse_projection,
+            previous_view,
+            full,
+            reduced,
+            eye,
+            frame,
+            seed
+        ]
     )]
 }
 

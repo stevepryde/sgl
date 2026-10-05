@@ -229,7 +229,7 @@ fn captures_shade_scene_lights_by_the_ownership_rule() {
     let dark = captured(&mut scene);
     let light = Light {
         position: Vec3::new(0., -0.5, 0.),
-        shape: LightShape::Point,
+        shape: LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
         color: [1.; 3],
         intensity: 4.,
         range: 3.,
@@ -482,7 +482,7 @@ fn a_capture_shadows_scene_lights_from_static_layers_it_places() {
             &queue,
             Light {
                 position: Vec3::new(0., 5., 0.),
-                shape: LightShape::Point,
+                shape: LightShape::Point { radius: LightShape::DEFAULT_RADIUS },
                 color: [1.; 3],
                 intensity: 20.,
                 range: 10.,
