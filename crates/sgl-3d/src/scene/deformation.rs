@@ -10,7 +10,7 @@
 use super::rays::SceneRays;
 use super::static_edits::posed_bounds;
 use super::{Scene, SceneError};
-use crate::content::deformation::{MAX_INDEX, MeshDeformation};
+use crate::content::deformation::{MAX_INDEX, MAX_MORPH_TARGETS, MeshDeformation};
 use crate::content::identity::InstanceId;
 use crate::content::model::ModelMesh;
 use crate::shading::deformation::{
@@ -134,7 +134,8 @@ pub(crate) struct ModelDeformation {
 /// Whether `meshes`' deformations fit their vertices: as many influences as
 /// vertices or none, each with finite nonnegative weights of positive sum,
 /// and each morph target a finite displacement of every vertex, with
-/// indices of at most `MAX_INDEX`; and whether the deform stage can dispatch
+/// indices of at most `MAX_INDEX` and at most `MAX_MORPH_TARGETS` of them;
+/// and whether the deform stage can dispatch
 /// each deforming mesh's vertices on `device`.
 pub(crate) fn validate(device: &wgpu::Device, meshes: &[ModelMesh]) -> Result<(), SceneError> {
     let dispatchable = u64::from(device.limits().max_compute_workgroups_per_dimension) * 64;
@@ -151,16 +152,18 @@ pub(crate) fn validate(device: &wgpu::Device, meshes: &[ModelMesh]) -> Result<()
         }) {
             return Err(SceneError::InvalidDeformation);
         }
-        if deformation.morph_targets.iter().any(|target| {
-            target.weight > MAX_INDEX
-                || target.deltas.len() != count
-                || !target.deltas.iter().all(|delta| {
-                    [delta.position, delta.normal, delta.tangent]
-                        .iter()
-                        .flatten()
-                        .all(|v| v.is_finite())
-                })
-        }) {
+        if deformation.morph_targets.len() > MAX_MORPH_TARGETS
+            || deformation.morph_targets.iter().any(|target| {
+                target.weight > MAX_INDEX
+                    || target.deltas.len() != count
+                    || !target.deltas.iter().all(|delta| {
+                        [delta.position, delta.normal, delta.tangent]
+                            .iter()
+                            .flatten()
+                            .all(|v| v.is_finite())
+                    })
+            })
+        {
             return Err(SceneError::InvalidDeformation);
         }
         if !deformation.is_rigid() && count as u64 > dispatchable {

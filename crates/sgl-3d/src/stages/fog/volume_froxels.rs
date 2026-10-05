@@ -22,6 +22,12 @@ struct FogVolumeFroxels {
     padding: u32,
 }
 
+/// The most fog volumes a frame's fog sums (`FOG_MOST_VOLUMES`, AR-12): the
+/// first that reach it, in the scene's order. Fog volumes are authored
+/// boxes, a handful in a view; each froxel loops over those reaching the
+/// frame, and the cap bounds that loop far above any scene's.
+pub(super) const MOST_VOLUMES: usize = 1024;
+
 /// The share of a froxel by which a volume's bounds grow on every side, so
 /// rounding between them and the injection's froxel positions never leaves
 /// out a froxel the volume reaches.
@@ -64,9 +70,10 @@ impl ReachedFroxels {
 }
 
 /// The froxels of `froxel_volume`, seen through `view_from_world`, that
-/// each of the boxes with world corners `corners` reaches, in their order;
-/// none for a box behind the camera, beyond the volume, or wholly in front
-/// of the camera and beside the frame.
+/// each of the boxes with world corners `corners` reaches, in their order,
+/// for at most the first `MOST_VOLUMES` that reach any; none for a box
+/// behind the camera, beyond the volume, or wholly in front of the camera
+/// and beside the frame.
 fn reached(
     corners: &[[Vec3; 8]],
     view_from_world: Mat4,
@@ -84,6 +91,7 @@ fn reached(
                 padding: 0,
             })
         })
+        .take(MOST_VOLUMES)
         .collect()
 }
 

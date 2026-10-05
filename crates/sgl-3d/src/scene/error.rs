@@ -101,8 +101,8 @@ pub enum SceneError {
     InvalidFogVolume,
     /// A mesh's influences or morph targets do not match its vertices, a
     /// vertex's weights are not finite and nonnegative with a positive sum,
-    /// a displacement is not finite, or a joint or morph weight index is
-    /// above 65535.
+    /// a displacement is not finite, a joint or morph weight index is above
+    /// 65535, or the mesh has more than 256 morph targets.
     InvalidDeformation,
     /// The instance's model does not deform, or its joint matrices or morph
     /// weights are fewer than its model takes, or not finite.
@@ -205,7 +205,7 @@ impl std::fmt::Display for SceneError {
                 "fog volumes require a finite centre and rotation, a positive size and finite nonnegative density, albedo and edge fade"
             }
             Self::InvalidDeformation => {
-                "influences and morph targets must match their mesh's vertices, with finite nonnegative weights of positive sum, finite displacements and indices of at most 65535"
+                "influences and morph targets must match their mesh's vertices, with finite nonnegative weights of positive sum, finite displacements, indices of at most 65535 and at most 256 morph targets a mesh"
             }
             Self::DeformationMismatch => {
                 "a deformation needs a deforming instance and at least as many finite joint matrices and morph weights as its model takes"

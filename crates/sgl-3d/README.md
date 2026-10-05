@@ -1088,7 +1088,8 @@ stay in the game (S3D-1).
 - **Procedural.** `ModelMesh::deformation` takes the same data; a model with
   any deforming mesh deforms. `add_model` refuses influences or targets that
   do not match their vertices, negative or non-finite weights, weights
-  summing to zero, and indices above 65535 (`SceneError::InvalidDeformation`).
+  summing to zero, indices above 65535 and more than 256 morph targets on a
+  mesh, as Bevy refuses (`SceneError::InvalidDeformation`).
   Weights are normalized.
 - **Posing.** A deforming model's instances are `Mobility::Moving`. Each
   frame, `Scene::set_instance_deformation(&queue, instance, &joints,

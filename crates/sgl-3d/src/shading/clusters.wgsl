@@ -30,6 +30,14 @@ struct Clusters {
  data:array<u32>,
 }
 const CLUSTER_HEADER_WORDS:u32=4u;
+// The most lights and decals a point shades from its cluster (AR-12): the
+// top of Godot's `rendering/limits/cluster_builder/max_clustered_elements`
+// range, the most elements its cluster builder holds a view
+// (servers/rendering/rendering_server.cpp, revision
+// ed1daf0bf001b61586d9930840f2f1394092c079; its default is 512). Lights
+// first, then decals, so a cluster past it loses its last decals, then its
+// last baked lights.
+const CLUSTER_MOST_ITEMS:u32=8192u;
 // What reaches one cluster: items `first` onwards in clusters.data, `live`
 // lights that every receiver takes, then `baked` lights that only receivers
 // without baked lighting take (takes_baked_lights in baked_lighting.wgsl),
@@ -64,15 +72,16 @@ fn cluster_index(position:vec3<f32>,pixel:vec2<f32>)->u32 {
  return min(index,grid.dimensions.x*grid.dimensions.y*grid.dimensions.z-1u);
 }
 // The lights and decals that reach a point at `position`, seen at the
-// view's `pixel`. The range lies within clusters.data, so a loop over it
-// ends whatever the header says.
+// view's `pixel`: at most CLUSTER_MOST_ITEMS of them, all within
+// clusters.data, so a loop over them ends whatever the header says.
 fn cluster_range(position:vec3<f32>,pixel:vec2<f32>)->ClusterRange {
  let at=cluster_index(position,pixel)*CLUSTER_HEADER_WORDS;
  let length=arrayLength(&clusters.data);
  let first=min(clusters.data[at],length);
- let live=min(clusters.data[at+1u],length-first);
- let baked=min(clusters.data[at+2u],length-first-live);
- return ClusterRange(first,live,baked,min(clusters.data[at+3u],length-first-live-baked));
+ let room=min(length-first,CLUSTER_MOST_ITEMS);
+ let live=min(clusters.data[at+1u],room);
+ let baked=min(clusters.data[at+2u],room-live);
+ return ClusterRange(first,live,baked,min(clusters.data[at+3u],room-live-baked));
 }
 // The light or decal index at `at` in clusters.data.
 fn cluster_item(at:u32)->u32 {

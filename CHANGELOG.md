@@ -20,26 +20,37 @@ full API details.
 - **Scope:** `sgl-3d` and `sgl-post-fx` shaders. A loop whose count came from
   a buffer, uniform or texture could run as long as corrupt or stale data
   said, and a GPU kept busy that long hangs, freezing the machine's display
-  with it. Every such loop now has a fixed bound, so bad data costs a wrong
-  frame instead. The ray source's BVH walks (world reflections, dynamic GI
-  and anything else that traces the scene) stop at a node whose escape does
-  not lead forward, stay within the ray source and take at most four records
-  from a leaf. The other loops are clamped to the array or texture they read
-  or to the most the library writes: a cluster's lights and decals, a probe
-  grid cell's probes, morph targets, fog volumes and froxel slices, shadow
-  cascades (4), exposure compensation points (8), dynamic GI rays per probe
-  (256), XeGTAO slices and steps (9 and 3), the reflection probe collection
-  (256), Velvet's trace steps (512, Godot's most) and world reflections'
-  upsample radius. In `sgl-post-fx`,
+  with it. Every loop now has a named constant cap that no data can raise;
+  data may end a loop earlier, never later, and a loop that reaches its cap
+  fails safe. The ray source's BVH walks stop at a node whose escape does not
+  lead forward, stay within the ray source, take at most four records from
+  a leaf, and a ray visits at most 65,536 nodes across its instance and
+  model walks, after which it reports a miss (the most measured in a
+  pathological forest of 40,000 instances was 19,238). Other caps, each
+  above what valid content needs: a point shades at most 8,192 of the
+  lights and decals of its cluster (Godot's most clustered elements; decals
+  then baked lights go first past it); a probe grid cell names at most the
+  collection's 256 probes; a frame's fog sums at most the first 1,024 fog
+  volumes that reach it, over at most 512 depth slices (Godot's most);
+  shadow cascades (4), exposure compensation points (8), dynamic GI rays per
+  probe (256), XeGTAO slices and steps (9 and 3), the reflection probe
+  collection (256), Velvet's trace steps (512, Godot's most) and world
+  reflections' upsample radius (2). A mesh may have at most 256 morph
+  targets, as Bevy allows: `add_model` and `add_asset` refuse more with
+  `SceneError::InvalidDeformation`. In `sgl-post-fx`,
   `ScreenSpaceReflectionAttribs::max_traversal_intersections` above 256 now
-  counts as 256 and `spatial_reconstruction_radius` above 8 as 8, the tops of
-  DiligentFX's own ranges (PROVENANCE.md DFX-30), and the bilateral kernel
-  keeps its radius of at most 2 whatever `bilateral_cleanup_spatial_sigma_factor`
-  holds. Valid data renders as before.
-- **Migration:** no game-code changes; a corrupt-data hang can no longer
-  freeze the machine. Code that drives `sgl-post-fx` directly with
-  `max_traversal_intersections` above 256 or `spatial_reconstruction_radius`
-  above 8 now gets those maxima (SGL3D sets 64 and 4).
+  counts as 256 and `spatial_reconstruction_radius` above 8 as 8, the tops
+  of DiligentFX's own ranges (PROVENANCE.md DFX-30), and the bilateral
+  kernel keeps its radius of at most 2 whatever
+  `bilateral_cleanup_spatial_sigma_factor` holds. Valid data renders as
+  before.
+- **Migration:** no game-code changes, except for a mesh with more than 256
+  morph targets, which is now refused: split its targets across meshes or
+  drop unused ones in the asset. A corrupt-data hang can no longer freeze
+  the machine. Code
+  that drives `sgl-post-fx` directly with `max_traversal_intersections`
+  above 256 or `spatial_reconstruction_radius` above 8 now gets those maxima
+  (SGL3D sets 64 and 4).
 
 ### Models share their shadow-caster buffers
 

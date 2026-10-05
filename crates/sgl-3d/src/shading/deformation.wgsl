@@ -6,6 +6,8 @@ const INFLUENCE_WEIGHTS:u32=4u;
 const MORPH_DELTA_WORDS:u32=9u;
 const MORPH_DELTA_NORMAL:u32=3u;
 const MORPH_DELTA_TANGENT:u32=6u;
+// The most morph targets a mesh has (content::deformation::MAX_MORPH_TARGETS).
+const DEFORM_MOST_MORPH_TARGETS:u32=256u;
 // A joint matrix, column-major.
 const JOINT_WORDS:u32=16u;
 // A deforming instance's vertex: its position, in one of two slots so that

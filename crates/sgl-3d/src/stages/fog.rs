@@ -122,6 +122,16 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
     )]
 }
 
+/// The constant this stage shares with its shader.
+#[cfg(test)]
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 1] {
+    [crate::shading::layout_tests::Constant::new(
+        "volumetric_fog",
+        "FOG_MOST_VOLUMES",
+        naga::Literal::U32(volume_froxels::MOST_VOLUMES as u32),
+    )]
+}
+
 /// The froxels of `quality` for a frame of `render` pixels: Godot's volume
 /// size across the frame's mean side, so its froxels stay near square, and
 /// its depth slices.

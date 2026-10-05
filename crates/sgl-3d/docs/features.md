@@ -32,12 +32,13 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   stored blocks.
   [Compressed material images](../README.md#compressed-material-images).
 - **Skinned meshes and morph targets**: the loader imports skins (four
-  influences per vertex), morph targets, the node hierarchy and animation
-  clips as plain data (`deformation`, `Asset::rig`); the game samples and
-  blends clips and gives each instance its joint matrices and morph weights
-  every frame (`Scene::set_instance_deformation`, `Rig::joint_matrices`).
-  SGL3D morphs and skins each changed instance once per frame in compute, and
-  every pass draws the result: motion from the last submitted frame's pose,
+  influences per vertex), morph targets (up to 256 a mesh), the node
+  hierarchy and animation clips as plain data (`deformation`, `Asset::rig`);
+  the game samples and blends clips and gives each instance its joint
+  matrices and morph weights every frame
+  (`Scene::set_instance_deformation`, `Rig::joint_matrices`). SGL3D morphs
+  and skins each changed instance once per frame in compute, and every pass
+  draws the result: motion from the last submitted frame's pose,
   culling by skinned bounds, shadows in the cascades and the local-light
   atlas. A deforming instance moves and keeps its model; rays do not see it.
   Each `set_instance_deformation` call deforms it again and redraws its
