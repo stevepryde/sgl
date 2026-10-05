@@ -1033,8 +1033,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   spot's position, a directional light's direction, and for a rectangle a
   point drawn uniformly on its face, as Wicked draws it) through the one
   acceptance predicate over both kinds and both sides
-  (`scene_segment_visible`; on the hardware path a ray query that confirms
-  and terminates at its first accepted candidate),
+  (`scene_segment_visible`; on the hardware path a query whose traversal
+  ends at its first accepted hit, `TERMINATE_ON_FIRST_HIT`),
   as Wicked's `ddgi_raytraceCS` samples one light per hit with one shadow
   ray, and never a shadow map; that visibility takes the light's shadow
   opacity through `shadow_opacity_visibility`, and at or below
@@ -1391,9 +1391,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   the baseline.
   *Budget.* One budget per ray, `SCENE_MOST_HARDWARE_STEPS`, counts every
   query the ray starts and every candidate it examines, nested loops
-  sharing it (AR-12); at the cap the query terminates and the ray reports
-  a miss, or a visibility ray unoccluded, as the portable walk does at its
-  visit cap. The constant sits above the most steps a ray took on the
+  sharing it (AR-12); at the cap the query stops by returning and the ray
+  reports a miss, or a visibility ray unoccluded, as the portable walk does
+  at its visit cap. The constant sits above the most steps a ray took on the
   examples and the consumer's content, counted on the GPU by an
   instrumented build of the hardware module, since the CPU oracle's brute
   force does not reach their scale (grazing rays

@@ -472,6 +472,73 @@ fn the_candidate_form_holds_masked_models_and_rebuilds_them_when_edited() {
     assert!(error.is_none(), "{error:?}");
 }
 
+// A model re-pended for its opacity keeps its geometry, so its BLAS's
+// compaction entry from before must not stand for its new BLAS. Plausible
+// defect: the older entry left in Bevy's queue beside the new BLAS's,
+// never looked at because a frame's compaction budget ran out before it,
+// so both prepare the new BLAS's compaction, which wgpu refuses the second
+// time (`CompactionPreparingAlready`, a validation error), or the older
+// entry outlives the BLAS it was queued for. The oracles are wgpu's
+// validation and the architecture's rule that each built BLAS is compacted
+// once, counted through `counters`, with the device polled after each
+// frame so that a prepared compaction is ready by the next.
+#[test]
+fn a_re_pended_model_is_compacted_once() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut scene = Scene::new(&device, &queue);
+    // A model of the budget's vertices: its compaction spends a frame's
+    // compaction budget.
+    let mut vertices = triangles(Vec3::ZERO, 1);
+    let corner = vertices.vertices[0];
+    vertices
+        .vertices
+        .resize(super::blas::MOST_VERTICES_PER_FRAME as usize, corner);
+    let large = scene
+        .add_asset(&device, &queue, asset(vec![vertices]))
+        .unwrap()
+        .model;
+    place(gpu, &mut scene, large, Mat4::IDENTITY, Mobility::Static);
+    let eye = Vec3::Z * 5.;
+    let frame = |scene: &mut Scene| {
+        let before = crate::counters::snapshot();
+        build_in(gpu, scene, eye, RayQueryForm::Candidates);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let counted = crate::counters::snapshot().since(&before);
+        [counted.blas_builds, counted.blas_compactions]
+    };
+    assert_eq!(frame(&mut scene), [1, 0]);
+    // The large model's compaction is prepared, and the edited model's BLAS
+    // is built and queued behind it.
+    let edited = scene
+        .add_asset(&device, &queue, asset(vec![triangles(Vec3::ZERO, 1)]))
+        .unwrap();
+    let behind = Mat4::from_translation(Vec3::Z * -2.);
+    place(gpu, &mut scene, edited.model, behind, Mobility::Static);
+    assert_eq!(frame(&mut scene), [1, 0]);
+    // Masked now, the edited model is re-pended in a frame whose
+    // compaction budget the large model spends, so its first entry is never
+    // looked at.
+    let mask = crate::AlphaMode::Mask { cutoff: 0.5 };
+    realpha(&queue, &mut scene, edited.materials[0], mask);
+    assert_eq!(frame(&mut scene), [1, 1]);
+    // Its new BLAS is prepared and compacted once.
+    let mut compactions = 0;
+    for _ in 0..4 {
+        let [builds, compacted] = frame(&mut scene);
+        assert_eq!(builds, 0);
+        compactions += compacted;
+    }
+    assert_eq!(compactions, 1);
+    bind_tlas(gpu, &scene);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let error = pollster::block_on(validation.pop());
+    assert!(error.is_none(), "{error:?}");
+}
+
 /// One frame of `scene` through `renderer` into `output`, submitted and
 /// finished unless `abandoned`.
 fn frame(

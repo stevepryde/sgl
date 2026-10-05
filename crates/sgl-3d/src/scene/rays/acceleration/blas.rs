@@ -98,10 +98,12 @@ enum DeformedBlas {
     },
 }
 
-/// A built model BLAS waiting to be compacted (Bevy's queue entry).
+/// A built model BLAS waiting to be compacted (Bevy's queue entry): its
+/// model's current BLAS, since committing a model's BLAS drops the queue's
+/// older entries for it. A re-pend keeps the model's geometry, and wgpu
+/// refuses to prepare one BLAS's compaction twice.
 struct Compaction {
     model: ModelId,
-    geometry: u64,
     vertices: u32,
     started: bool,
 }
@@ -375,13 +377,9 @@ impl Blases {
         while !self.compaction.is_empty() && vertices < MOST_VERTICES_PER_FRAME && looked < queued {
             looked += 1;
             let mut next = self.compaction.pop_front().expect("a queued BLAS");
-            let Some(ModelBlas::Built { blas, geometry, .. }) = self.models.get_mut(&next.model)
-            else {
+            let Some(ModelBlas::Built { blas, .. }) = self.models.get_mut(&next.model) else {
                 continue;
             };
-            if *geometry != next.geometry {
-                continue;
-            }
             if !next.started {
                 blas.prepare_compaction_async(|_| {});
             }
@@ -610,9 +608,9 @@ impl Blases {
                             triangles,
                         },
                     );
+                    self.compaction.retain(|queued| queued.model != id);
                     self.compaction.push_back(Compaction {
                         model: id,
-                        geometry,
                         vertices,
                         started: false,
                     });
