@@ -152,8 +152,9 @@ SGL3D needs compute.
   of the fog, which then skips its attenuation and shadow lookup), and
   `shadow_opacity` how dark its shadow is on surfaces and in the fog
   (Godot's; 1 by default). `Light::default()` and
-  `DirectionalLight::default()` are Godot's light defaults, so a game sets
-  only what differs (`..Default::default()`).
+  `DirectionalLight::default()` are Godot's light defaults, with Wicked
+  Engine's 2.5 cm light radius and the sun's angular diameter, so a game
+  sets only what differs (`..Default::default()`).
   `LightShape::Rect` is a one-sided panel or strip whose face is integrated
   by linearly transformed cosines: soft light and stretched highlights
   nearby, a spot of the same intensity far away. It costs more per pixel

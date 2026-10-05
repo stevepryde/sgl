@@ -66,14 +66,8 @@ fn FFX_DNSR_Shadows_ReadPreviousLinearDepth(idx:vec2<i32>)->f32 {
  return textureLoad(denoise_previous_depth,clamp(idx,vec2(0),last),0).x;
 }
 
-// The G-buffer's depth at the tracing pixel, the sky's (0) where the trace
-// found nothing lit, so that an unlit pixel is no receiver.
 fn FFX_DNSR_Shadows_ReadDepth(did:vec2<u32>)->f32 {
- let texel=min(did,FFX_DNSR_Shadows_GetBufferDimensions()-1u);
- if textureLoad(denoise_half_depth,texel,0).x>=TRACED_SKY_DEPTH {
-  return 0.;
- }
- return textureLoad(denoise_depth,traced_full_pixel(did),0);
+ return traced_denoise_depth(did);
 }
 fn FFX_DNSR_Shadows_ReadNormals(did:vec2<u32>)->vec3<f32> {
  return gbuffer_base_normal(textureLoad(denoise_normal,traced_full_pixel(did),0));
@@ -90,15 +84,17 @@ fn FFX_DNSR_Shadows_ReadPreviousMomentsBuffer(history_pos:vec2<i32>)->vec3<f32> 
  return textureLoad(denoise_moments_previous,clamp(history_pos,vec2(0),last),rtshadow_denoise_lightindex,0).xyz;
 }
 // The history's mean at `history_uv`, filtered bilinearly and clamped to
-// the edge, as Wicked's sampler_linear_clamp filters it.
+// the edge, as Wicked's sampler_linear_clamp filters it, from its four
+// texels about it.
+const DENOISE_BILINEAR_TAPS:i32=4;
 fn FFX_DNSR_Shadows_ReadHistory(history_uv:vec2<f32>)->f32 {
  let dims=vec2<f32>(FFX_DNSR_Shadows_GetBufferDimensions());
  let position=history_uv*dims-.5;
  let base=floor(position);
  let fraction=position-base;
  let last=vec2<i32>(dims)-1;
- var corners=array<f32,4>(0.,0.,0.,0.);
- for (var corner=0;corner<4;corner++) {
+ var corners=array<f32,DENOISE_BILINEAR_TAPS>(0.,0.,0.,0.);
+ for (var corner=0;corner<DENOISE_BILINEAR_TAPS;corner++) {
   let texel=clamp(vec2<i32>(base)+vec2(corner%2,corner/2),vec2(0),last);
   corners[corner]=unpack2x16float(textureLoad(denoise_history,texel,rtshadow_denoise_lightindex,0).x).x;
  }
@@ -120,8 +116,7 @@ fn FFX_DNSR_Shadows_WriteMetadata(idx:u32,mask:u32) {
 }
 
 fn FFX_DNSR_Shadows_IsShadowReciever(did:vec2<u32>)->bool {
- let depth=FFX_DNSR_Shadows_ReadDepth(did);
- return (depth>0.) && (depth<1.);
+ return traced_denoise_receiver(did);
 }
 
 @compute @workgroup_size(64) fn traced_denoise_tile_classification(@builtin(workgroup_id) gid:vec3<u32>,@builtin(local_invocation_index) group_index:u32) {

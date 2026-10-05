@@ -34,6 +34,12 @@ static FFX_FILTER: shading::Module = shading::Module {
     source: include_str!("ffx_denoiser_shadows_filter.wgsl"),
     deps: &[&UTIL],
 };
+/// The passes' reading of the G-buffer's depth for AMD's callbacks.
+static COMMON: shading::Module = shading::Module {
+    name: "traced_denoise_common",
+    source: include_str!("traced_denoise_common.wgsl"),
+    deps: &[&super::COMMON],
+};
 pub(crate) static TILE_CLASSIFICATION: shading::Module = shading::Module {
     name: "traced_denoise_tileclassification",
     source: include_str!("traced_denoise_tileclassification.wgsl"),
@@ -41,13 +47,13 @@ pub(crate) static TILE_CLASSIFICATION: shading::Module = shading::Module {
         &FFX_TILE_CLASSIFICATION,
         &shading::GBUFFER,
         &shading::SHADOW_MASK_SLOTS,
-        &super::COMMON,
+        &COMMON,
     ],
 };
 pub(crate) static FILTER: shading::Module = shading::Module {
     name: "traced_denoise_filter",
     source: include_str!("traced_denoise_filter.wgsl"),
-    deps: &[&FFX_FILTER, &shading::GBUFFER, &super::COMMON],
+    deps: &[&FFX_FILTER, &shading::GBUFFER, &COMMON],
 };
 
 /// The denoiser's targets at one tracing size: each 8×4 tile's hit masks,

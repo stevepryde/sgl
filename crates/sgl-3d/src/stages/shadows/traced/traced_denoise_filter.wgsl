@@ -49,22 +49,15 @@ fn FFX_DNSR_Shadows_GetDepthSimilaritySigma()->f32 {
  return 1.;
 }
 
-// The G-buffer's depth at the tracing pixel, the sky's (0) where the trace
-// found nothing lit, so that an unlit pixel is no receiver.
 fn FFX_DNSR_Shadows_ReadDepth(p:vec2<i32>)->f32 {
- let texel=min(vec2<u32>(p),FFX_DNSR_Shadows_GetBufferDimensions()-1u);
- if textureLoad(denoise_half_depth,texel,0).x>=TRACED_SKY_DEPTH {
-  return 0.;
- }
- return textureLoad(denoise_depth,traced_full_pixel(vec2<u32>(p)),0);
+ return traced_denoise_depth(vec2<u32>(p));
 }
 fn FFX_DNSR_Shadows_ReadNormals(p:vec2<i32>)->vec3<f32> {
  return gbuffer_base_normal(textureLoad(denoise_normal,traced_full_pixel(vec2<u32>(p)),0));
 }
 
 fn FFX_DNSR_Shadows_IsShadowReciever(did:vec2<u32>)->bool {
- let depth=FFX_DNSR_Shadows_ReadDepth(vec2<i32>(did));
- return (depth>0.) && (depth<1.);
+ return traced_denoise_receiver(did);
 }
 
 fn FFX_DNSR_Shadows_ReadInput(p:vec2<i32>)->vec2<f32> {

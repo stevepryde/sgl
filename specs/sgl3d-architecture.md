@@ -576,7 +576,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   `LightComponent::radius`, 0.025) about a point or spot light, a point on
   a rectangle's face as the dynamic GI visibility ray draws it (which from
   now on draws its end on a point's or spot's radius too, S3D-5), and
-  within `DirectionalLight::angular_diameter` (degrees; the sun's 0.53,
+  within `DirectionalLight::angular_diameter` (radians; the sun's 0.53°,
   SGL3D's own where Wicked spreads a directional light by the same
   `radius` in direction units) about a directional light's direction, one
   draw per pixel per frame from the hash world-space reflections took in

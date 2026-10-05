@@ -10,7 +10,8 @@ fn hash33(x:vec3<u32>)->vec3<u32> {
  let n=base_hash(x);
  return vec3(n,n*16807u,n*48271u);
 }
-// Three numbers in [0, 1) from hash33.
+// Three numbers in [0, 1] from hash33: a word near 2^32 rounds up to 1 in
+// f32.
 fn hash33_unit(x:vec3<u32>)->vec3<f32> {
  return vec3<f32>(hash33(x))*(1./4294967296.);
 }

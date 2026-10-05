@@ -27,7 +27,10 @@ THE SOFTWARE.
 // the group's memory as upstream's PackFloat16 and UnpackFloat16 do. The
 // tile's metadata reaches every thread of the group through
 // workgroupUniformLoad, which WGSL needs before the branch whose barrier
-// follows. The caller supplies the FFX_DNSR_Shadows_* callbacks upstream's
+// follows. A sky neighbour, and the centre, are skipped before the depth's
+// linearisation, where upstream weighs them by zero after it, which at the
+// sky's depth of 0 divides by zero. The loops' literal bounds are named
+// (AR-12). The caller supplies the FFX_DNSR_Shadows_* callbacks upstream's
 // host shader does.
 
 var<workgroup> g_FFX_DNSR_Shadows_shared_input:array<array<u32,16>,16>;
@@ -126,8 +129,11 @@ fn FFX_DNSR_Shadows_GetLinearDepth(did:vec2<u32>,depth:f32)->f32 {
  return abs(projected.z/projected.w);
 }
 
+// The filters' radius in steps, upstream's literal k (AR-12).
+const FFX_DNSR_SHADOWS_FILTER_RADIUS:i32=1;
+
 fn FFX_DNSR_Shadows_FetchFilteredVarianceFromGroupSharedMemory(pos:vec2<i32>)->f32 {
- let k=1;
+ let k=FFX_DNSR_SHADOWS_FILTER_RADIUS;
  var variance=0.;
  var kernel=array<array<f32,2>,2>(
   array<f32,2>(1./4.,1./8.),
@@ -160,7 +166,7 @@ fn FFX_DNSR_Shadows_DenoiseFromGroupSharedMemory(did:vec2<u32>,gtid:vec2<u32>,de
  let depth_center=FFX_DNSR_Shadows_GetLinearDepth(did,depth); // linearize the depth value
 
  // Iterate filter kernel
- let k=1;
+ let k=FFX_DNSR_SHADOWS_FILTER_RADIUS;
  var kernel=array<f32,3>(1.,2./3.,1./6.);
 
  for (var y=-k;y<=k;y++) {
@@ -174,7 +180,11 @@ fn FFX_DNSR_Shadows_DenoiseFromGroupSharedMemory(did:vec2<u32>,gtid:vec2<u32>,de
    let normal_neigh=FFX_DNSR_Shadows_LoadNormalsFromGroupSharedMemory(gtid_idx);
    let shadow_neigh=FFX_DNSR_Shadows_LoadInputFromGroupSharedMemory(gtid_idx);
 
-   let sky_pixel_multiplier=select(1.,0.,(x==0 && y==0) || depth_neigh>=1. || depth_neigh<=0.); // Zero weight for sky pixels
+   // Zero weight for sky pixels, and the centre, already summed: skipped
+   // before the depth's linearisation, which divides by zero at the sky's.
+   if (x==0 && y==0) || depth_neigh>=1. || depth_neigh<=0. {
+    continue;
+   }
 
    // Fetch our filtering values
    depth_neigh=FFX_DNSR_Shadows_GetLinearDepth(vec2<u32>(max(did_idx,vec2(0))),depth_neigh);
@@ -184,7 +194,6 @@ fn FFX_DNSR_Shadows_DenoiseFromGroupSharedMemory(did:vec2<u32>,gtid:vec2<u32>,de
    w*=FFX_DNSR_Shadows_GetShadowSimilarity(shadow_center.x,shadow_neigh.x,std_deviation);
    w*=FFX_DNSR_Shadows_GetDepthSimilarity(depth_center,depth_neigh,FFX_DNSR_Shadows_GetDepthSimilaritySigma());
    w*=FFX_DNSR_Shadows_GetNormalSimilarity(normal_center,normal_neigh);
-   w*=sky_pixel_multiplier;
 
    // Accumulate the filtered sample
    shadow_sum+=vec2(w,w*w)*shadow_neigh;

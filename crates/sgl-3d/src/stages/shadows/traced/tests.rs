@@ -1119,7 +1119,7 @@ fn a_light_with_a_size_softens_its_shadow() {
         }
         (observed.unwrap(), ids)
     };
-    // A point light, 0.8 m across, over a slab, looked at from the side so
+    // A point light of radius 0.8 m, over a slab, looked at from the side so
     // that the slab hides only the floor beyond its shadows.
     let size = [256, 256];
     let eye = Vec3::new(0., 9., 9.);
@@ -1163,7 +1163,7 @@ fn a_light_with_a_size_softens_its_shadow() {
         .count();
     assert!(
         hard_between * 4 < soft_between,
-        "a point light of size 0 leaves {hard_between} texels between, one 0.8 m across {soft_between}"
+        "a point light of size 0 leaves {hard_between} texels between, one of radius 0.8 m {soft_between}"
     );
     // The sun, 30° across, past a wall, looked at from above: the wall's
     // shadow widens away from it, its penumbra's middle reaching beyond the
@@ -1194,7 +1194,7 @@ fn a_light_with_a_size_softens_its_shadow() {
     };
     let toward = -sun(0.).direction.as_dvec3().normalize();
     let disc = (15f64).to_radians().tan();
-    let (soft, _) = frames(&[wall], &[], Some(sun(30.)), camera, size);
+    let (soft, _) = frames(&[wall], &[], Some(sun(30f32.to_radians())), camera, size);
     let sun_penumbrae = penumbrae(&soft, &camera, &[wall], |_, u, v| {
         (
             (toward + hemisphere_point(toward, u, v) * disc).normalize(),

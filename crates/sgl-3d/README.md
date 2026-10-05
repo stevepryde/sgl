@@ -409,8 +409,8 @@ A point or spot light's `radius` (metres) is the size of the sphere it
 shines from, which only rays see: ray-traced shadows' rays and the
 dynamic GI volume's visibility rays end on it, so a larger light casts a
 softer shadow. Shading and the shadow maps treat the light as a point. A
-directional light's `angular_diameter` (degrees, the sun's 0.53 by
-default) does the same for the directional light's rays.
+directional light's `angular_diameter` (radians, the sun's 0.00925, 0.53°,
+by default) does the same for the directional light's rays.
 
 - Light falls off with the inverse square of distance and fades smoothly to
   nothing at `range`, Filament's punctual lights as Bevy shades them. A spot

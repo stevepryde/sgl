@@ -562,7 +562,7 @@ fn floor_under(
 // casts no shadow. Plausible defects: a visibility ray toward the light's
 // centre or the sun's direction whatever its size, the size dropped from
 // the light's record or the frame's directional light, and a ray ending
-// short of or beyond the drawn point.
+// short of the drawn point.
 #[test]
 fn a_lights_size_lets_its_visibility_rays_past_an_occluder() {
     let Some((device, queue)) = test_support::device() else {
@@ -603,8 +603,8 @@ fn a_lights_size_lets_its_visibility_rays_past_an_occluder() {
             plate,
             [
                 (None, Some(sun(0., true))),
-                (None, Some(sun(60., true))),
-                (None, Some(sun(60., false))),
+                (None, Some(sun(60f32.to_radians(), true))),
+                (None, Some(sun(60f32.to_radians(), false))),
             ],
         ),
     ] {

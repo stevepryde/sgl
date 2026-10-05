@@ -74,14 +74,14 @@ fn flag(on: bool, flag: u32) -> u32 {
 }
 
 /// The radius at unit distance of a disc spanning `angular_diameter`
-/// degrees, clamped to 0..=90 degrees (NaN as 0).
+/// radians, clamped to 0..=π/2 (NaN as 0).
 fn disc_radius(angular_diameter: f32) -> f32 {
-    let degrees = if angular_diameter.is_nan() {
+    let angle = if angular_diameter.is_nan() {
         0.
     } else {
-        angular_diameter.clamp(0., 90.)
+        angular_diameter.clamp(0., std::f32::consts::FRAC_PI_2)
     };
-    (degrees.to_radians() * 0.5).tan()
+    (angle * 0.5).tan()
 }
 
 /// Directional light `index` of `input`, unless it is absent or off.

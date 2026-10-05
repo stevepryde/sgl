@@ -35,8 +35,9 @@ THE SOFTWARE.
 // the previous view directly, as the stage keeps its previous depth linear
 // (FFX_DNSR_Shadows_GetPreviousLinearDepth and
 // FFX_DNSR_Shadows_ReadPreviousLinearDepth stand in for the reprojection
-// matrix and the previous depth buffer). The caller supplies the
-// FFX_DNSR_Shadows_* callbacks upstream's host shader does.
+// matrix and the previous depth buffer). The loops' literal bounds are
+// named (AR-12). The caller supplies the FFX_DNSR_Shadows_* callbacks
+// upstream's host shader does.
 
 var<workgroup> g_FFX_DNSR_Shadows_false_count:i32;
 fn FFX_DNSR_Shadows_ThreadGroupAllTrue(val:bool)->bool {
@@ -77,8 +78,8 @@ fn FFX_DNSR_Shadows_SearchSpatialRegion(gid:vec2<u32>)->FFX_DNSR_Shadows_Spatial
  var combined_and_mask=0xFFFFFFFFu;
  let dimensions=FFX_DNSR_Shadows_GetBufferDimensions();
  let tiles=vec2<i32>(vec2(FFX_DNSR_Shadows_RoundedDivide(dimensions.x,8u),FFX_DNSR_Shadows_RoundedDivide(dimensions.y,4u)));
- for (var j=-2;j<=3;j++) {
-  for (var i=-1;i<=1;i++) {
+ for (var j=-FFX_DNSR_SHADOWS_REGION_ROWS_ABOVE;j<=FFX_DNSR_SHADOWS_REGION_ROWS_BELOW;j++) {
+  for (var i=-FFX_DNSR_SHADOWS_REGION_COLUMNS;i<=FFX_DNSR_SHADOWS_REGION_COLUMNS;i++) {
    let tile_index=clamp(base_tile+vec2(i,j),vec2(0),tiles-1);
    let linear_tile_index=FFX_DNSR_Shadows_LinearTileIndex(vec2<u32>(tile_index),dimensions.x);
    let shadow_mask=FFX_DNSR_Shadows_ReadRaytracedShadowMask(linear_tile_index);
@@ -170,6 +171,14 @@ fn FFX_DNSR_Shadows_GetClosestVelocity(did:vec2<i32>,gtid:vec2<u32>,depth:f32)->
 }
 
 const KERNEL_RADIUS:i32=8;
+// The loops' bounds upstream writes as literals (AR-12): the tiles about a
+// group's that SearchSpatialRegion reads, from two rows above to three
+// below and a column each side; and the pixels of a tile's row, whose
+// bits HorizontalNeighborhood weighs either side of the centre.
+const FFX_DNSR_SHADOWS_REGION_ROWS_ABOVE:i32=2;
+const FFX_DNSR_SHADOWS_REGION_ROWS_BELOW:i32=3;
+const FFX_DNSR_SHADOWS_REGION_COLUMNS:i32=1;
+const FFX_DNSR_SHADOWS_TILE_ROW:i32=8;
 fn FFX_DNSR_Shadows_KERNEL_WEIGHT(i:f32)->f32 {
  return exp(-3.*i*i/((f32(KERNEL_RADIUS)+1.)*(f32(KERNEL_RADIUS)+1.)));
 }
@@ -239,18 +248,18 @@ fn FFX_DNSR_Shadows_HorizontalNeighborhood(did:vec2<i32>)->f32 {
 
  // First 8 bits up to the center pixel
  var mask:u32;
- for (var i=0;i<8;i++) {
+ for (var i=0;i<FFX_DNSR_SHADOWS_TILE_ROW;i++) {
   mask=1u<<u32(i);
-  moment+=select(0.,FFX_DNSR_Shadows_KernelWeight(f32(8-i)),(mask&neighborhood)!=0u);
+  moment+=select(0.,FFX_DNSR_Shadows_KernelWeight(f32(FFX_DNSR_SHADOWS_TILE_ROW-i)),(mask&neighborhood)!=0u);
  }
 
  // Center pixel
- mask=1u<<8u;
+ mask=1u<<u32(FFX_DNSR_SHADOWS_TILE_ROW);
  moment+=select(0.,FFX_DNSR_Shadows_KernelWeight(0.),(mask&neighborhood)!=0u);
 
  // Last 8 bits
- for (var i=1;i<=8;i++) {
-  mask=1u<<u32(8+i);
+ for (var i=1;i<=FFX_DNSR_SHADOWS_TILE_ROW;i++) {
+  mask=1u<<u32(FFX_DNSR_SHADOWS_TILE_ROW+i);
   moment+=select(0.,FFX_DNSR_Shadows_KernelWeight(f32(i)),(mask&neighborhood)!=0u);
  }
 

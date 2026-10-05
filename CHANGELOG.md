@@ -21,8 +21,9 @@ full API details.
   `LightShape::Point { radius }`, and `LightShape::Spot` gains `radius`
   (metres, nonnegative; `LightShape::DEFAULT_RADIUS` is Wicked Engine's
   0.025, which `Light::default()` takes). `DirectionalLight` gains
-  `angular_diameter` (degrees, clamped to 0..=90, NaN as 0; the default is
-  `DirectionalLight::SUN_ANGULAR_DIAMETER`, 0.53). Only rays see a light's
+  `angular_diameter` (radians, as every angle of SGL3D's content is;
+  clamped to 0..=π/2, NaN as 0; the default is
+  `DirectionalLight::SUN_ANGULAR_DIAMETER`, 0.53° or about 0.00925). Only rays see a light's
   size. Ray-traced shadows (`Settings::ray_traced_shadows`) end each ray
   at a point drawn on the light, each frame another: a point or spot
   light's sphere, a rectangle's face, or a direction within the
