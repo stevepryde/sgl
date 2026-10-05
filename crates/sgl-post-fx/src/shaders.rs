@@ -38,6 +38,8 @@ const MODULES: &[(&str, &str)] = modules![
     "PostProcess/ScreenSpaceReflection/private/SSR_ComputeStencilMaskAndExtractRoughness.wgsl",
     "PostProcess/ScreenSpaceReflection/private/SSR_ComputeDownsampledStencilMask.wgsl",
     "PostProcess/ScreenSpaceReflection/private/SSR_ComputeIntersection.wgsl",
+    "PostProcess/ScreenSpaceReflection/private/SSR_DenoiserTiles.wgsl",
+    "PostProcess/ScreenSpaceReflection/private/SSR_ComputeDenoiserTiles.wgsl",
     "PostProcess/ScreenSpaceReflection/private/SSR_ComputeSpatialReconstruction.wgsl",
     "PostProcess/ScreenSpaceReflection/private/SSR_ComputeTemporalAccumulation.wgsl",
     "PostProcess/ScreenSpaceReflection/private/SSR_ComputeBilateralCleanup.wgsl",

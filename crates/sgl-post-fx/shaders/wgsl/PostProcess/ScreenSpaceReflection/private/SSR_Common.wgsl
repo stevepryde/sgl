@@ -38,19 +38,6 @@ fn IsReflectionSample(Roughness: f32, Depth: f32, RoughnessThreshold: f32) -> bo
     return Roughness <= RoughnessThreshold && !IsBackground(Depth);
 }
 
-// PROVENANCE.md DFX-29: the denoiser passes work only on active tiles, as
-// AMD's denoiser runs only over ClassifyTiles' tile list. A tile is active
-// when a ray in it or in a neighbouring tile found a confident hit; the
-// passes' footprint (spatial reconstruction's radius, the 3×3 temporal
-// neighbourhood and the bilateral kernel) stays within one tile, so a pixel
-// of an inactive tile denoises to zero.
-#define SSR_DENOISER_TILE_SIZE 8
-
-fn IsActiveDenoiserTile(DenoiserTiles: texture_2d<f32>, PixelCoord: vec2<i32>) -> bool
-{
-    return HlslLoad(DenoiserTiles, PixelCoord / SSR_DENOISER_TILE_SIZE, 0).x > 0.0;
-}
-
 fn IsMirrorReflection(Roughness: f32) -> bool
 {
     return Roughness < 0.01;

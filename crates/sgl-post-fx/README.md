@@ -35,8 +35,9 @@ files unedited.
   denoiser places it, rejects a surface history far from the current
   neighbourhood as AMD's does, and clamps to Wicked Engine's 2-deviation box
   (DFX-25). Its denoiser passes run only on the 8×8 tiles with a confident
-  hit in or beside them, as AMD's denoiser runs only over its tile list; a
-  skipped tile's histories hold zero radiance and variance 1 (DFX-29).
+  hit within their reach, as AMD's denoiser runs only over its tile list; a
+  skipped tile's histories hold zero radiance and DiligentFX's no-history
+  variance (DFX-29).
 - TAA accumulates a Halton-jittered frame into a history, rejecting by depth
   disocclusion and motion and clipping to the neighbourhood's variance box;
   `vendor/DiligentFX/PostProcess/TemporalAntiAliasing/README.md` describes it.
@@ -50,8 +51,10 @@ files unedited.
   caller's `wgpu::CommandEncoder` where
   Diligent records into a device context (module table in `src/lib.rs`).
 - GPU: `shaders/wgsl/` mirrors the upstream shader files one WGSL module per
-  HLSL file; `src/shaders.rs` assembles a shader as Diligent's shader factory
-  compiles one (`HLSLDefinitions.fxh`, the macros, the file, its includes).
+  HLSL file, beside SGL's own `SSR_DenoiserTiles` and
+  `SSR_ComputeDenoiserTiles` (DFX-29); `src/shaders.rs` assembles a shader
+  as Diligent's shader factory compiles one (`HLSLDefinitions.fxh`, the
+  macros, the file, its includes).
 - Structures: `src/structures.rs` holds the host halves of `CameraAttribs`,
   `ScreenSpaceReflectionAttribs` and `TemporalAntiAliasingAttribs` with the
   headers' defaults.

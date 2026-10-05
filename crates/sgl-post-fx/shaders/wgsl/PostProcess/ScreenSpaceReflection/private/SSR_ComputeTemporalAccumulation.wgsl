@@ -11,6 +11,7 @@
 
 #include "ScreenSpaceReflectionStructures.fxh"
 #include "SSR_Common.fxh"
+#include "SSR_DenoiserTiles.fxh"
 #include "BasicStructures.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
 

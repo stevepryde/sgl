@@ -23,11 +23,15 @@ full API details.
   confident hit in or beside them, as AMD's SSSR denoiser runs only over
   its tile list; elsewhere their result was already zero. On an Apple M5
   at 1920×1080 the three passes take about half the time (a lake 1.22 →
-  0.60 ms, a scene of mixed ray lengths 1.62 → 0.66 ms). Reflections are
-  unchanged, but a skipped tile's history now holds zero radiance and
-  variance 1, so a reflection returning there can be filtered slightly
-  differently for its first frames. The `SSR spatial reconstruction` timing
-  group includes the two small passes that find the tiles.
+  0.60 ms, a scene of mixed ray lengths 1.62 → 0.66 ms). The tiles' reach
+  follows `spatial_reconstruction_radius` and
+  `bilateral_cleanup_spatial_sigma_factor`, so reflections are unchanged at
+  any settings. A skipped tile's history now holds zero radiance and, as
+  where a pixel has no history, variance 1: a reflection returning there is
+  blurred over 3×3 pixels by bilateral cleanup for about 65 frames (about
+  1 s at 60 fps) where its perceptual roughness is 1/16 or more, rather
+  than from the variance its misses left. The `SSR spatial reconstruction`
+  timing group includes the two small passes that find the tiles.
 - **Migration:** no game-code changes. Afterwards, compare the `SSR`
   timing groups on the game's route.
 

@@ -726,7 +726,8 @@ struct Denoised {
 
 /// One frame of SSR's denoiser over rays supplied at the reconstruction
 /// boundary: a ray at `(x, y)` of the ray grid where `hit` holds found a
-/// white surface with full confidence; every other ray missed. With
+/// white surface with full confidence; every other ray missed. `filter`
+/// gives the reconstruction radius and the bilateral sigma. With
 /// `all_tiles`, every denoiser tile is active, as before DFX-29.
 #[allow(clippy::too_many_arguments)]
 fn denoise_frame(
@@ -735,6 +736,7 @@ fn denoise_frame(
     ssr: &mut ScreenSpaceReflection,
     context: &mut PostFXContext,
     flags: FeatureFlags,
+    filter: [f32; 2],
     index: u32,
     all_tiles: bool,
     hit: impl Fn(u32, u32) -> bool,
@@ -821,6 +823,8 @@ fn denoise_frame(
     });
     let attribs = ScreenSpaceReflectionAttribs {
         temporal_radiance_stability_factor: 0.95,
+        spatial_reconstruction_radius: filter[0],
+        bilateral_cleanup_spatial_sigma_factor: filter[1],
         ..Default::default()
     };
     let mut render = RenderAttributes {
@@ -860,84 +864,116 @@ fn denoise_frame(
     }
 }
 
-/// Rays along one column, the last of the third denoiser tile (pixel 23).
-fn hit_column(flags: FeatureFlags) -> impl Fn(u32, u32) -> bool {
-    let column = if flags.contains(FeatureFlags::HALF_RESOLUTION) {
-        11
+/// The default reconstruction radius and bilateral sigma.
+const DEFAULT_FILTER: [f32; 2] = [4.0, 0.9];
+/// The widest reconstruction radius and a bilateral sigma of 2: hits reach
+/// past the neighbouring tile.
+const WIDE_FILTER: [f32; 2] = [8.0, 2.0];
+
+/// The ray grid's columns that cover pixels `first` and `last`, the first
+/// and last of the third denoiser tile: rays along them hit.
+fn hit_columns(flags: FeatureFlags) -> impl Fn(u32, u32) -> bool {
+    let scale = if flags.contains(FeatureFlags::HALF_RESOLUTION) {
+        2
     } else {
-        23
+        1
     };
-    move |x, _| x == column
+    move |x, _| x == 16 / scale || x == 23 / scale
 }
 
-/// Pixels of tiles two or more from the hit column's tile, which no
-/// denoiser pass reaches from it.
-fn far_from_hit_column(pixel: usize) -> bool {
-    let tile = pixel % SIZE[0] as usize / 8;
-    tile.abs_diff(2) >= 2
+/// A checkerboard of hits and misses over the whole ray grid.
+fn checkerboard(x: u32, y: u32) -> bool {
+    (x + y).is_multiple_of(2)
+}
+
+/// The pixel indices of the denoiser tiles three or more from the hit
+/// columns' tile, beyond the reach of these filters.
+fn far_from_hit_columns() -> impl Iterator<Item = usize> {
+    (0..(SIZE[0] * SIZE[1]) as usize).filter(|pixel| pixel % SIZE[0] as usize / 8 >= 5)
 }
 
 // PROVENANCE.md DFX-29: skipping the tiles where every ray in reach missed
-// changes no radiance. A column of hits on a tile's last pixel reaches the
-// next tile through spatial reconstruction, the temporal neighbourhood and
-// the bilateral kernel; denoising every tile is the reference. The skipped
-// tiles' variance history holds 1, as DFX-29 defines.
+// changes no radiance, for any reconstruction radius and bilateral sigma.
+// Two frames of a checkerboard of hits fill the histories with uneven
+// radiance, so the bilateral filter and the history clamp work at the tiles'
+// edges; then only the first and last ray columns of one tile hit, reaching
+// into the tiles on both sides. Denoising every tile is the reference. The
+// wide filter reaches two tiles, which a fixed one-tile margin would miss.
 #[test]
 fn skipping_tiles_without_hits_changes_no_radiance() {
     let Some((device, queue)) = device() else {
         return;
     };
     for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
-        let run = |all_tiles| {
-            let mut ssr = ScreenSpaceReflection::new(&device);
-            // No fade-in, so the first frame's output is the denoised radiance.
-            let mut context = PostFXContext::new(
-                &device,
-                &queue,
-                post_fx_context::CreateInfo {
-                    transition_duration: 0.0,
-                },
-            );
-            denoise_frame(
-                &device,
-                &queue,
-                &mut ssr,
-                &mut context,
-                flags,
-                0,
-                all_tiles,
-                hit_column(flags),
-            )
-        };
-        let (skipped, reference) = (run(false), run(true));
-        assert_eq!(
-            skipped.output, reference.output,
-            "{flags:?}: skipping tiles changed the denoised radiance"
-        );
-        assert_eq!(
-            skipped.radiance_history, reference.radiance_history,
-            "{flags:?}: skipping tiles changed the radiance history"
-        );
-        let next_tile = (24..32).map(|x| (SIZE[0] * 24 + x) as usize);
-        assert!(
-            next_tile
-                .clone()
-                .any(|pixel| reference.output[pixel][3] > 0.0),
-            "{flags:?}: the hits must reach the next tile for this check to bite"
-        );
-        for pixel in (0..(SIZE[0] * SIZE[1]) as usize).filter(|&p| far_from_hit_column(p)) {
+        for filter in [DEFAULT_FILTER, WIDE_FILTER] {
+            let run = |all_tiles| {
+                let mut ssr = ScreenSpaceReflection::new(&device);
+                // No fade-in, so the first frame's output is the denoised radiance.
+                let mut context = PostFXContext::new(
+                    &device,
+                    &queue,
+                    post_fx_context::CreateInfo {
+                        transition_duration: 0.0,
+                    },
+                );
+                let columns = hit_columns(flags);
+                (0..3)
+                    .map(|index| {
+                        denoise_frame(
+                            &device,
+                            &queue,
+                            &mut ssr,
+                            &mut context,
+                            flags,
+                            filter,
+                            index,
+                            all_tiles,
+                            |x, y| {
+                                if index < 2 {
+                                    checkerboard(x, y)
+                                } else {
+                                    columns(x, y)
+                                }
+                            },
+                        )
+                    })
+                    .last()
+                    .unwrap()
+            };
+            let (skipped, reference) = (run(false), run(true));
             assert_eq!(
-                skipped.variance_history[pixel], 1.0,
-                "{flags:?}: pixel {pixel} of a tile without hits was denoised"
+                skipped.output, reference.output,
+                "{flags:?} {filter:?}: skipping tiles changed the denoised radiance"
             );
+            assert_eq!(
+                skipped.radiance_history, reference.radiance_history,
+                "{flags:?} {filter:?}: skipping tiles changed the radiance history"
+            );
+            // The hits reach the neighbouring tiles, and with the wide filter
+            // the tiles beyond them, so the checks above bite.
+            let reach = if filter == WIDE_FILTER { 2 } else { 1 };
+            for tile in [2 - reach, 2 + reach] {
+                assert!(
+                    (0..(SIZE[0] * SIZE[1]) as usize)
+                        .filter(|pixel| pixel % SIZE[0] as usize / 8 == tile)
+                        .any(|pixel| reference.output[pixel][3] > 0.0),
+                    "{flags:?} {filter:?}: the hits must reach tile {tile} for this check to bite"
+                );
+            }
+            for pixel in far_from_hit_columns() {
+                assert_eq!(
+                    skipped.variance_history[pixel], 1.0,
+                    "{flags:?} {filter:?}: pixel {pixel} of a tile without hits was denoised"
+                );
+            }
         }
     }
 }
 
 // PROVENANCE.md DFX-29: a tile whose rays all start to miss keeps no older
 // reflection. Two frames of hits everywhere fill both radiance histories;
-// then only one column hits, and the histories of the tiles out of its reach
-// hold zero radiance and variance 1 after each frame.
+// then only one tile's edge columns hit, and the histories of the tiles out
+// of their reach hold zero radiance and variance 1 after each frame.
 #[test]
 fn tiles_that_stop_hitting_keep_no_history() {
     let Some((device, queue)) = device() else {
@@ -953,19 +989,20 @@ fn tiles_that_stop_hitting_keep_no_history() {
                 transition_duration: 0.0,
             },
         );
+        let columns = hit_columns(flags);
         for index in 0..4 {
-            let column = hit_column(flags);
             let frame = denoise_frame(
                 &device,
                 &queue,
                 &mut ssr,
                 &mut context,
                 flags,
+                DEFAULT_FILTER,
                 index,
                 false,
-                |x, y| index < 2 || column(x, y),
+                |x, y| index < 2 || columns(x, y),
             );
-            for pixel in (0..(SIZE[0] * SIZE[1]) as usize).filter(|&p| far_from_hit_column(p)) {
+            for pixel in far_from_hit_columns() {
                 if index < 2 {
                     assert!(
                         frame.radiance_history[pixel][3] > 0.5,

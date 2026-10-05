@@ -7,6 +7,7 @@
 #include "ScreenSpaceReflectionStructures.fxh"
 #include "BasicStructures.fxh"
 #include "SSR_Common.fxh"
+#include "SSR_DenoiserTiles.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
 
 // cbuffer cbCameraAttribs

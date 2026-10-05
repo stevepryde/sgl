@@ -106,8 +106,11 @@ struct RenderTechniqueKey {
 
 const DEPTH_HIERARCHY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const ROUGHNESS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
-/// DFX-29: `SSR_DENOISER_TILE_SIZE`, the side of a denoiser tile in pixels.
+/// DFX-29: the side of a denoiser tile in pixels, the shaders'
+/// `SSR_DENOISER_TILE_SIZE`. The classification marks blocks of half that
+/// side (`SSR_DENOISER_BLOCK_SIZE`).
 const DENOISER_TILE_SIZE: u32 = 8;
+const DENOISER_BLOCK_SIZE: u32 = DENOISER_TILE_SIZE / 2;
 const DENOISER_TILE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 const RADIANCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -468,8 +471,8 @@ impl ScreenSpaceReflection {
             denoiser_hits: view(&texture_2d(
                 device,
                 "ScreenSpaceReflection::DenoiserHits",
-                width.div_ceil(DENOISER_TILE_SIZE / 2),
-                height.div_ceil(DENOISER_TILE_SIZE / 2),
+                width.div_ceil(DENOISER_BLOCK_SIZE),
+                height.div_ceil(DENOISER_BLOCK_SIZE),
                 DENOISER_TILE_FORMAT,
                 1,
             )),
@@ -571,6 +574,7 @@ impl ScreenSpaceReflection {
 
     fn prepare_shaders_and_pso(&mut self, device: &wgpu::Device) -> bool {
         let flag = |set: bool| if set { "1" } else { "0" };
+        let tile_size = DENOISER_TILE_SIZE.to_string();
         let macros = [
             // TextureSubresourceViews
             ("SUPPORTED_SHADER_SRV", "1"),
@@ -583,6 +587,7 @@ impl ScreenSpaceReflection {
                 "SSR_OPTION_HALF_RESOLUTION",
                 flag(self.feature_flags.contains(FeatureFlags::HALF_RESOLUTION)),
             ),
+            ("SSR_DENOISER_TILE_SIZE", tile_size.as_str()),
         ];
         let previous_frame = self.feature_flags.contains(FeatureFlags::PREVIOUS_FRAME);
 
@@ -689,13 +694,26 @@ impl ScreenSpaceReflection {
             }
         }
         {
-            for (render_tech, entry, input) in [
+            let classify: &[_] = &[
+                (1, Resource::FilterableTexture),
+                (3, Resource::Sampler { filtering: true }),
+            ];
+            let dilate: &[_] = &[
+                (0, Resource::ConstantBuffer),
+                (2, Resource::FilterableTexture),
+                (3, Resource::Sampler { filtering: true }),
+            ];
+            for (render_tech, entry, layout) in [
                 (
                     RenderTech::ClassifyDenoiserTiles,
                     "ClassifyDenoiserTilesPS",
-                    6,
+                    classify,
                 ),
-                (RenderTech::DilateDenoiserTiles, "DilateDenoiserTilesPS", 7),
+                (
+                    RenderTech::DilateDenoiserTiles,
+                    "DilateDenoiserTilesPS",
+                    dilate,
+                ),
             ] {
                 let tech = self.render_technique(render_tech);
                 if !tech.is_initialized_pso() {
@@ -703,11 +721,8 @@ impl ScreenSpaceReflection {
                         device,
                         "ScreenSpaceReflection::DenoiserTiles",
                         &vs(&[]),
-                        &ps("SSR_ComputeSpatialReconstruction.fx", entry),
-                        &[
-                            (input, Resource::FilterableTexture),
-                            (8, Resource::Sampler { filtering: true }),
-                        ],
+                        &ps("SSR_ComputeDenoiserTiles.fx", entry),
+                        layout,
                         &[DENOISER_TILE_FORMAT],
                         None,
                         DepthStencilStateDesc::DisableDepth,
@@ -1046,33 +1061,40 @@ impl ScreenSpaceReflection {
     /// them.
     fn classify_denoiser_tiles(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
         let r = self.resources();
-        for (render_tech, input, output) in [
+        let sampler = wgpu::BindGroupEntry {
+            binding: 3,
+            resource: wgpu::BindingResource::Sampler(&self.linear_clamp),
+        };
+        for (render_tech, entries, output) in [
             (
                 RenderTech::ClassifyDenoiserTiles,
-                (6, &r.radiance),
+                vec![
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: texture(&r.radiance),
+                    },
+                    sampler.clone(),
+                ],
                 &r.denoiser_hits,
             ),
             (
                 RenderTech::DilateDenoiserTiles,
-                (7, &r.denoiser_hits),
+                vec![
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.constant_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: texture(&r.denoiser_hits),
+                    },
+                    sampler.clone(),
+                ],
                 &r.denoiser_tiles,
             ),
         ] {
             let tech = self.technique(render_tech);
-            let group = tech.bind_group(
-                render_attribs.device,
-                "DenoiserTiles",
-                &[
-                    wgpu::BindGroupEntry {
-                        binding: input.0,
-                        resource: texture(input.1),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 8,
-                        resource: wgpu::BindingResource::Sampler(&self.linear_clamp),
-                    },
-                ],
-            );
+            let group = tech.bind_group(render_attribs.device, "DenoiserTiles", &entries);
             draw_pass(
                 render_attribs.device_context,
                 "DenoiserTiles",
