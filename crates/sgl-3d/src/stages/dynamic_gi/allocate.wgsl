@@ -190,17 +190,21 @@ fn ddgi_most_rays(spacings:f32)->u32 {
  let buckets=u32(round(rays/f32(DDGI_RAY_BUCKET_COUNT)));
  return clamp(buckets*DDGI_RAY_BUCKET_COUNT,DDGI_RAY_BUCKET_COUNT,u32(most));
 }
-// A blended probe's request (Wicked's allocation): its most rays scaled by
-// its most inconsistent texel, a tenth outside the camera's frustum, in
-// buckets, at least one; the fewest where it is inactive, or dormant with
-// no moving instance about it.
-fn ddgi_request(probe_index:u32,probe:DdgiProbe,position:vec3<f32>,spacings:f32)->u32 {
+// A blended probe's most inconsistent irradiance texel's inconsistency.
+fn ddgi_inconsistency(probe_index:u32)->f32 {
  let texels=DDGI_COLOR_RESOLUTION*DDGI_COLOR_RESOLUTION;
  var inconsistency=0.;
  for (var i=0u;i<texels;i++) {
   let at=(probe_index*texels+i)*DDGI_VARIANCE_WORDS+5u;
   inconsistency=max(inconsistency,unpack2x16float(variance[at]).x);
  }
+ return inconsistency;
+}
+// A blended probe's request (Wicked's allocation): its most rays scaled by
+// its most inconsistent texel, a tenth outside the camera's frustum, in
+// buckets, at least one; the fewest where it is inactive, or dormant with
+// no moving instance about it.
+fn ddgi_request(inconsistency:f32,probe:DdgiProbe,position:vec3<f32>,spacings:f32)->u32 {
  let most_rays=ddgi_most_rays(spacings);
  var ray_count=u32(saturate(inconsistency)*f32(most_rays));
  let spacing=volume.spacing;
@@ -240,8 +244,15 @@ fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) gro
   atomicAdd(&allocation.unblended_rays,starting);
   return;
  }
- let request=ddgi_request(probe_index,probe,ddgi_probe_position(lattice,volume.origin,volume.spacing,probe.offset),spacings);
- let period=ddgi_period(spacings);
+ let inconsistency=ddgi_inconsistency(probe_index);
+ let request=ddgi_request(inconsistency,probe,ddgi_probe_position(lattice,volume.origin,volume.spacing,probe.offset),spacings);
+ // A probe whose light changes takes its turns the more often, every frame
+ // at the most inconsistency, and one whose light has settled at its
+ // distance's period; one held to the fewest rays at its distance's.
+ var period=ddgi_period(spacings);
+ if request>DDGI_RAY_BUCKET_COUNT {
+  period=u32(round(1.+f32(period-1u)*(1.-saturate(inconsistency))));
+ }
  ray_counts[probe_index]=request|(period<<16u);
  for (var stride=0u;stride<DDGI_STRIDES;stride++) {
   if ddgi_turn(probe_index,period<<stride) {
