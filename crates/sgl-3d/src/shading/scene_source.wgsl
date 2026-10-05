@@ -1,7 +1,7 @@
 // The scene source's layout: a header, then the ranges content owns
 // (scene::rays): each image's level 0, each material's record, each model's
-// consecutive mesh records, packed exact Vertex arrays and indices, and its
-// BVH (`scene_rays_portable.wgsl`), a deforming model's influences and morph
+// consecutive mesh records, its chart table, each mesh's packed vertices
+// (packed_vertex.wgsl) and indices, and its BVH (`scene_rays_portable.wgsl`), a deforming model's influences and morph
 // targets, a deforming instance's joint matrices, morph weights and
 // deformed vertices (deformation.wgsl), and the static and moving instance
 // BVHs (scene::rays::instances). Every address is a word of the source.
@@ -20,23 +20,21 @@ const SCENE_IMAGE_TEXELS:u32=3u;
 // An image's formats.
 const SCENE_IMAGE_RGBA8:u32=0u;
 const SCENE_IMAGE_BC7:u32=1u;
-// A vertex's stride and its fields' offsets, in words.
-const SCENE_VERTEX_WORDS:u32=22u;
-const SCENE_VERTEX_POSITION:u32=0u;
-const SCENE_VERTEX_NORMAL:u32=3u;
-const SCENE_VERTEX_UV:u32=6u;
-const SCENE_VERTEX_COLOR:u32=8u;
-const SCENE_VERTEX_LIGHTMAP_UV:u32=12u;
-const SCENE_VERTEX_LIGHTMAP_BOUNDS:u32=14u;
-const SCENE_VERTEX_TANGENT:u32=18u;
-// A mesh record's: its vertices', indices' and material record's words, and
-// its first vertex among its model's, where a deforming instance's vertices
-// of it start (deformation.wgsl).
-const SCENE_MESH_WORDS:u32=4u;
+// A mesh record's: its packed vertices', indices' and material record's
+// words; its first vertex among its model's, where a deforming instance's
+// vertices of it start (deformation.wgsl); the word where its model's chart
+// table starts; and the rectangle its packed UVs span (min in xy, extent in
+// zw).
+const SCENE_MESH_WORDS:u32=9u;
 const SCENE_MESH_VERTICES:u32=0u;
 const SCENE_MESH_INDICES:u32=1u;
 const SCENE_MESH_MATERIAL_WORD:u32=2u;
 const SCENE_MESH_FIRST_VERTEX:u32=3u;
+const SCENE_MESH_CHARTS:u32=4u;
+const SCENE_MESH_UV_RECT:u32=5u;
+// A chart table entry's: a lightmap chart's normalized atlas bounds, min
+// then max.
+const SCENE_CHART_WORDS:u32=4u;
 // A material record's: its values (material.wgsl's Material, each member's
 // word), then its textures' image words, wraps and whether lightmap charts
 // light it.

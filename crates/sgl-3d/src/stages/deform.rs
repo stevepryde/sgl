@@ -12,7 +12,11 @@ use crate::view::frame::FrameContext;
 pub(crate) static DEFORM: crate::shading::Module = crate::shading::Module {
     name: "deform",
     source: include_str!("deform.wgsl"),
-    deps: &[&crate::shading::SCENE_SOURCE, &crate::shading::DEFORMATION],
+    deps: &[
+        &crate::shading::SCENE_SOURCE,
+        &crate::shading::PACKED_VERTEX,
+        &crate::shading::DEFORMATION,
+    ],
 };
 
 /// The bytes between dispatch records: the device's uniform offset

@@ -62,10 +62,11 @@ fn skin_normals(model:mat4x4<f32>,normal:vec3<f32>)->vec3<f32> {
  if vertex_index>=dispatch.vertex_count {
   return;
  }
- let vertex=dispatch.vertices+vertex_index*SCENE_VERTEX_WORDS;
- var position=source_v3(vertex+SCENE_VERTEX_POSITION);
- var normal=source_v3(vertex+SCENE_VERTEX_NORMAL);
- var tangent=source_v4(vertex+SCENE_VERTEX_TANGENT);
+ let vertex=dispatch.vertices+vertex_index*PACKED_VERTEX_WORDS;
+ var position=source_v3(vertex+PACKED_VERTEX_POSITION);
+ let frame=packed_vertex_frame(source[vertex+PACKED_VERTEX_AXIS],source[vertex+PACKED_VERTEX_ANGLE_CHART]);
+ var normal=frame.normal;
+ var tangent=frame.tangent;
  // Bevy's morph_vertex: each target's displacement at its weight.
  let deltas=dispatch.morph_targets+dispatch.morph_target_count;
  // At most a mesh's most targets, their weight offsets within the source,

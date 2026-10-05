@@ -17,6 +17,8 @@ use super::ranges::Ranges;
 use crate::asset::{CompressedFormat, Image, Vertex};
 use crate::counters::{BuildStep, step};
 use crate::shading::material::MaterialUniform;
+use crate::shading::packed_vertex::{self, PackedVertex, UvRect};
+use std::collections::HashMap;
 
 mod bvh;
 pub(crate) mod instances;
@@ -75,26 +77,66 @@ pub(crate) struct PreparedRayModel {
     vertices: Vec<u32>,
 }
 
+/// A model's table of the distinct lightmap chart bounds its vertices name,
+/// in the order they first appear, and each vertex's index into it, mesh by
+/// mesh; none past 65,536 bounds, as a packed vertex holds its chart's index
+/// in 16 bits.
+fn chart_table(meshes: &[RayMesh<'_>]) -> Option<(Vec<Chart>, Vec<Vec<u16>>)> {
+    let mut table = Vec::new();
+    let mut index: HashMap<[u32; 4], u16> = HashMap::new();
+    let mut charts = Vec::with_capacity(meshes.len());
+    for mesh in meshes {
+        let mut mesh_charts = Vec::with_capacity(mesh.vertices.len());
+        for vertex in mesh.vertices {
+            let key = vertex.lightmap_bounds.map(f32::to_bits);
+            let chart = match index.get(&key) {
+                Some(&chart) => chart,
+                None => {
+                    let chart = u16::try_from(table.len()).ok()?;
+                    table.push(vertex.lightmap_bounds);
+                    index.insert(key, chart);
+                    chart
+                }
+            };
+            mesh_charts.push(chart);
+        }
+        charts.push(mesh_charts);
+    }
+    Some((table, charts))
+}
+
 /// `meshes`' words, addressed from zero, which `SceneRays::place_model`
-/// places. The geometry is validated: indices name vertices and positions
-/// are finite.
-pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> PreparedRayModel {
+/// places: its mesh records, its chart table, each mesh's packed vertices
+/// (`shading::packed_vertex`) and indices, and its BVH. The geometry is
+/// validated: indices name vertices, positions are finite and normals are
+/// finite and not zero. Refuses a model whose vertices name more than
+/// 65,536 distinct lightmap chart bounds.
+pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, SceneError> {
     let triangles: usize = meshes.iter().map(|mesh| mesh.indices.len() / 3).sum();
-    let len = meshes.len() * MESH_WORDS
-        + meshes
-            .iter()
-            .map(|mesh| mesh.vertices.len() * words::<Vertex>() + mesh.indices.len())
-            .sum::<usize>()
-        + bvh::model_words(triangles);
-    let mut words = vec![0u32; meshes.len() * MESH_WORDS];
-    words.reserve(len - words.len());
-    let mut first_vertex = 0;
-    let mut vertex_words = Vec::with_capacity(meshes.len());
-    step(BuildStep::Pack, || {
-        for (index, mesh) in meshes.iter().enumerate() {
+    let table_word = meshes.len() * MESH_WORDS;
+    let (mut words, vertex_words, len) = step(BuildStep::Pack, || {
+        let (table, charts) = chart_table(meshes).ok_or(SceneError::TooManyLightmapCharts)?;
+        let len = table_word
+            + table.len() * CHART_WORDS
+            + meshes
+                .iter()
+                .map(|mesh| mesh.vertices.len() * words::<PackedVertex>() + mesh.indices.len())
+                .sum::<usize>()
+            + bvh::model_words(triangles);
+        let mut words = vec![0u32; table_word];
+        words.reserve(len - words.len());
+        words.extend_from_slice(bytemuck::cast_slice(&table));
+        let mut first_vertex = 0;
+        let mut vertex_words = Vec::with_capacity(meshes.len());
+        for (index, (mesh, charts)) in meshes.iter().zip(&charts).enumerate() {
+            let uv = UvRect::of(mesh.vertices);
             let vertices = words.len() as u32;
             vertex_words.push(vertices);
-            words.extend_from_slice(bytemuck::cast_slice(mesh.vertices));
+            for (vertex, &chart) in mesh.vertices.iter().zip(charts) {
+                words.extend_from_slice(bytemuck::cast_slice(&[packed_vertex::pack(
+                    vertex, &uv, chart,
+                )]));
+            }
             let indices = words.len() as u32;
             words.extend_from_slice(mesh.indices);
             let at = index * MESH_WORDS;
@@ -103,25 +145,28 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> PreparedRayModel {
                 indices,
                 material_word: 0,
                 first_vertex,
+                charts: table_word as u32,
+                uv_rect: uv.words(),
             }]));
             first_vertex += mesh.vertices.len() as u32;
         }
-    });
+        Ok::<_, SceneError>((words, vertex_words, len))
+    })?;
     let bvh = words.len();
     let root = step(BuildStep::RayBvh, || bvh::append(meshes, &mut words, 0));
     debug_assert_eq!(words.len(), len, "a model fills its words");
-    PreparedRayModel {
+    Ok(PreparedRayModel {
         words,
         meshes: meshes.len(),
         bvh,
         root,
         vertices: vertex_words,
-    }
+    })
 }
 
 /// Names each mesh's material record in the mesh records `records` holds,
 /// one material word per record, and adds `base` to the words where each
-/// record's vertices and indices start.
+/// record's vertices, indices and its model's chart table start.
 fn rebase_records(records: &mut [u32], base: u32, materials: &[u32]) {
     let records: &mut [MeshRecord] = bytemuck::cast_slice_mut(records);
     assert_eq!(
@@ -132,6 +177,7 @@ fn rebase_records(records: &mut [u32], base: u32, materials: &[u32]) {
     for (record, &material_word) in records.iter_mut().zip(materials) {
         record.vertices += base;
         record.indices += base;
+        record.charts += base;
         record.material_word = material_word;
     }
 }
@@ -175,8 +221,10 @@ const IMAGE_RGBA8: u32 = 0;
 /// `ImageHeader::format` of BC7 blocks.
 const IMAGE_BC7: u32 = 1;
 
-/// A mesh's record in the source: where its vertices and indices start, its
-/// material's record, and its first vertex among its model's.
+/// A mesh's record in the source: where its packed vertices and indices
+/// start, its material's record, its first vertex among its model's, where
+/// its model's chart table starts, and the rectangle its packed UVs span
+/// (`UvRect::words`).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct MeshRecord {
@@ -184,7 +232,16 @@ struct MeshRecord {
     indices: u32,
     material_word: u32,
     first_vertex: u32,
+    charts: u32,
+    uv_rect: [f32; 4],
 }
+
+/// A chart table's entry: a lightmap chart's normalized atlas bounds, min
+/// then max, as `asset::Vertex::lightmap_bounds`.
+type Chart = [f32; 4];
+
+/// A chart table entry's words.
+const CHART_WORDS: usize = std::mem::size_of::<Chart>() / 4;
 
 /// A mesh record's words; a model's records are consecutive.
 const MESH_WORDS: usize = std::mem::size_of::<MeshRecord>() / 4;
@@ -460,26 +517,30 @@ mod instance_tests;
 
 #[cfg(test)]
 mod record_tests {
-    use super::{MESH_WORDS, MeshRecord, RayMesh, prepare_model, rebase_records};
+    use super::{CHART_WORDS, MESH_WORDS, MeshRecord, RayMesh, prepare_model, rebase_records};
     use crate::asset::Vertex;
+    use crate::shading::packed_vertex::PackedVertex;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     // Plausible defects: a rebased mesh record that names another mesh's
-    // vertices or indices, or the block's first words, so a ray or pulled
-    // pass reads the wrong geometry (as when the base is added to the
-    // wrong field, or a record is skipped); or a material word given to
-    // the wrong mesh. The oracle is the test's own meshes: each rebased
-    // record, less the base, must start at its mesh's own vertices and
-    // indices in the prepared words, and carry its mesh's material word.
-    // CPU only.
+    // vertices, indices or chart table, or the block's first words, so a
+    // ray or pulled pass reads the wrong geometry (as when the base is added
+    // to the wrong field, or a record is skipped); or a material word given
+    // to the wrong mesh. The oracle is the test's own meshes: each rebased
+    // record, less the base, must start at its mesh's own vertices (their
+    // positions, which pack as given) and indices in the prepared words,
+    // name through its vertices' chart indices its mesh's own lightmap
+    // bounds in the table, and carry its mesh's material word. CPU only.
     #[wasm_bindgen_test(unsupported = test)]
     fn rebased_records_address_their_own_geometry() {
-        // Each mesh's vertices and indices differ from every other's from
-        // their first word.
+        // Each mesh's vertices, indices and chart bounds differ from every
+        // other's from their first word.
         let mesh = |count: u32, salt: f32| -> (Vec<Vertex>, Vec<u32>) {
             let vertices = (0..count)
                 .map(|index| Vertex {
                     position: [salt, index as f32, -salt],
+                    normal: [0., 0., 1.],
+                    lightmap_bounds: [salt, 0., salt + 0.5, 1.],
                     ..bytemuck::Zeroable::zeroed()
                 })
                 .collect();
@@ -493,7 +554,7 @@ mod record_tests {
             .iter()
             .map(|(vertices, indices)| RayMesh { vertices, indices })
             .collect();
-        let mut prepared = prepare_model(&rays);
+        let mut prepared = prepare_model(&rays).unwrap();
         let (base, materials) = (70_000, [11, 22, 33]);
         rebase_records(
             &mut prepared.words[..meshes.len() * MESH_WORDS],
@@ -502,10 +563,21 @@ mod record_tests {
         );
         let records: &[MeshRecord] =
             bytemuck::cast_slice(&prepared.words[..meshes.len() * MESH_WORDS]);
+        let packed_words = std::mem::size_of::<PackedVertex>() / 4;
         for (((vertices, indices), record), material) in meshes.iter().zip(records).zip(materials) {
-            let at = (record.vertices - base) as usize;
-            let own: &[u32] = bytemuck::cast_slice(vertices);
-            assert_eq!(&prepared.words[at..at + own.len()], own);
+            let first = (record.vertices - base) as usize;
+            let charts = (record.charts - base) as usize;
+            for (index, vertex) in vertices.iter().enumerate() {
+                let packed: &PackedVertex = bytemuck::from_bytes(bytemuck::cast_slice(
+                    &prepared.words[first + index * packed_words..][..packed_words],
+                ));
+                assert_eq!(packed.position, vertex.position);
+                let chart = (packed.angle_chart >> 16) as usize;
+                let bounds: &[f32] = bytemuck::cast_slice(
+                    &prepared.words[charts + chart * CHART_WORDS..][..CHART_WORDS],
+                );
+                assert_eq!(bounds, vertex.lightmap_bounds);
+            }
             let at = (record.indices - base) as usize;
             assert_eq!(&prepared.words[at..at + indices.len()], &indices[..]);
             assert_eq!(record.material_word, material);

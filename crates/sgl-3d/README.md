@@ -1728,6 +1728,19 @@ asset-path errors. Occlusion textures and unimplemented material extensions
 require a separate implementation or an explicit game-side export
 adaptation.
 
+On the GPU the scene keeps each `asset::Vertex` (88 bytes) in 32, packed by
+`PreparedModel::new` after Godot's attribute compression: the position
+exact; the normal and tangent as one rotation, each within 0.01°, the
+tangent made perpendicular to the normal and unit; the UV as 16-bit
+fractions of its mesh's UV rectangle, within the rectangle's extent over
+131,070 per axis, so a mesh whose UVs span many repeats loses precision in
+proportion; the colour as 8-bit sRGB with linear alpha, clamped to 0..1 as
+glTF's `COLOR_0` is; the lightmap UV as 16-bit fractions (a negative one is
+unassigned, as before); and the lightmap chart bounds once per distinct
+chart in a table of its model's. A vertex normal must be finite and not
+zero (`SceneError::NonFiniteGeometry`), and a model's vertices may name at
+most 65,536 distinct `lightmap_bounds` (`SceneError::TooManyLightmapCharts`).
+
 Material textures are filtered trilinearly with the material's glTF
 wrapping, and anisotropically up to `Settings::anisotropic_filtering`
 (`settings::AnisotropicFiltering`: Off, 2×, 4×, 8× by default, or 16×, as

@@ -109,22 +109,48 @@ fn scene_sample_texture(image_word:u32,uv:vec2<f32>,wrap:vec2<u32>,srgb:bool)->v
 fn scene_base_color(material:SceneMaterial,uv:vec2<f32>,color:vec4<f32>)->vec4<f32> {
  return material.values.base*color*scene_sample_texture(material.textures[SCENE_TEXTURE_BASE],uv,material.wrap,true);
 }
-fn scene_vertex_words(mesh:u32,primitive:u32)->vec3<u32> {
- let vertices=scene_source[mesh+SCENE_MESH_VERTICES];
- let indices=scene_source[mesh+SCENE_MESH_INDICES]+primitive*3u;
- return vec3(vertices+scene_source[indices]*SCENE_VERTEX_WORDS,vertices+scene_source[indices+1u]*SCENE_VERTEX_WORDS,vertices+scene_source[indices+2u]*SCENE_VERTEX_WORDS);
+// The packed vertex (packed_vertex.wgsl) whose record starts at word `at`
+// of the mesh whose record is at `mesh`, field by field.
+fn scene_vertex_position(at:u32)->vec3<f32> {
+ return scene_v3(at+PACKED_VERTEX_POSITION);
 }
-// The texture coordinates and colour of triangle `vertices` at barycentrics
-// `b`, as a hit's shading and the masked any-hit test read them.
-fn scene_interpolated_uv(vertices:vec3<u32>,b:vec3<f32>)->vec2<f32> {
- return scene_v2(vertices.x+SCENE_VERTEX_UV)*b.x+scene_v2(vertices.y+SCENE_VERTEX_UV)*b.y+scene_v2(vertices.z+SCENE_VERTEX_UV)*b.z;
+fn scene_vertex_frame(at:u32)->PackedFrame {
+ return packed_vertex_frame(scene_source[at+PACKED_VERTEX_AXIS],scene_source[at+PACKED_VERTEX_ANGLE_CHART]);
+}
+fn scene_vertex_uv(mesh:u32,at:u32)->vec2<f32> {
+ return packed_vertex_uv(scene_source[at+PACKED_VERTEX_UV],scene_v4(mesh+SCENE_MESH_UV_RECT));
+}
+fn scene_vertex_color(at:u32)->vec4<f32> {
+ return packed_vertex_color(scene_source[at+PACKED_VERTEX_COLOR]);
+}
+fn scene_vertex_lightmap_uv(at:u32)->vec2<f32> {
+ return packed_vertex_lightmap_uv(scene_source[at+PACKED_VERTEX_LIGHTMAP_UV]);
+}
+// Its lightmap chart's bounds, from its model's chart table.
+fn scene_vertex_lightmap_bounds(mesh:u32,at:u32)->vec4<f32> {
+ let chart=packed_vertex_chart(scene_source[at+PACKED_VERTEX_ANGLE_CHART]);
+ return scene_v4(scene_source[mesh+SCENE_MESH_CHARTS]+chart*SCENE_CHART_WORDS);
+}
+// The record words of vertex `vertex` of the mesh whose record is at `mesh`.
+fn scene_vertex_word(mesh:u32,vertex:u32)->u32 {
+ return scene_source[mesh+SCENE_MESH_VERTICES]+vertex*PACKED_VERTEX_WORDS;
+}
+fn scene_vertex_words(mesh:u32,primitive:u32)->vec3<u32> {
+ let indices=scene_source[mesh+SCENE_MESH_INDICES]+primitive*3u;
+ return vec3(scene_vertex_word(mesh,scene_source[indices]),scene_vertex_word(mesh,scene_source[indices+1u]),scene_vertex_word(mesh,scene_source[indices+2u]));
+}
+// The texture coordinates and colour of triangle `vertices` of the mesh
+// whose record is at `mesh`, at barycentrics `b`, as a hit's shading and the
+// masked any-hit test read them.
+fn scene_interpolated_uv(mesh:u32,vertices:vec3<u32>,b:vec3<f32>)->vec2<f32> {
+ return scene_vertex_uv(mesh,vertices.x)*b.x+scene_vertex_uv(mesh,vertices.y)*b.y+scene_vertex_uv(mesh,vertices.z)*b.z;
 }
 fn scene_interpolated_color(vertices:vec3<u32>,b:vec3<f32>)->vec4<f32> {
- return scene_v4(vertices.x+SCENE_VERTEX_COLOR)*b.x+scene_v4(vertices.y+SCENE_VERTEX_COLOR)*b.y+scene_v4(vertices.z+SCENE_VERTEX_COLOR)*b.z;
+ return scene_vertex_color(vertices.x)*b.x+scene_vertex_color(vertices.y)*b.y+scene_vertex_color(vertices.z)*b.z;
 }
 fn scene_world_geometric(normal_matrix:mat4x4<f32>,v:vec3<u32>)->vec3<f32> {
- let e1=scene_v3(v.y+SCENE_VERTEX_POSITION)-scene_v3(v.x+SCENE_VERTEX_POSITION);
- let e2=scene_v3(v.z+SCENE_VERTEX_POSITION)-scene_v3(v.x+SCENE_VERTEX_POSITION);
+ let e1=scene_vertex_position(v.y)-scene_vertex_position(v.x);
+ let e2=scene_vertex_position(v.z)-scene_vertex_position(v.x);
  // Preserve the authored front side under mirrored instances, as raster does.
  return normalize((normal_matrix*vec4(cross(e1,e2),0.)).xyz);
 }
@@ -150,10 +176,11 @@ fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->Scene
  let mesh=instance.mesh_word+raw.intersection.z*SCENE_MESH_WORDS;
  let vertices=scene_vertex_words(mesh,raw.intersection.w);
  let b=vec3(1.-raw.coords.yz.x-raw.coords.yz.y,raw.coords.yz);
- let uv0=scene_v2(vertices.x+SCENE_VERTEX_UV);
- let uv1=scene_v2(vertices.y+SCENE_VERTEX_UV);
- let uv2=scene_v2(vertices.z+SCENE_VERTEX_UV);
- let n=scene_v3(vertices.x+SCENE_VERTEX_NORMAL)*b.x+scene_v3(vertices.y+SCENE_VERTEX_NORMAL)*b.y+scene_v3(vertices.z+SCENE_VERTEX_NORMAL)*b.z;
+ let uv0=scene_vertex_uv(mesh,vertices.x);
+ let uv1=scene_vertex_uv(mesh,vertices.y);
+ let uv2=scene_vertex_uv(mesh,vertices.z);
+ var frames=array<PackedFrame,3>(scene_vertex_frame(vertices.x),scene_vertex_frame(vertices.y),scene_vertex_frame(vertices.z));
+ let n=frames[0].normal*b.x+frames[1].normal*b.y+frames[2].normal*b.z;
  result.hit=true;
  result.distance=raw.coords.x;
  // Reconstruct from the ACTUAL offset query origin, never the receiver position.
@@ -165,8 +192,8 @@ fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->Scene
  // interpolation, then reorthogonalize the interpolated tangent at shading.
  var tangent=vec4(0.);
  for(var k=0u;k<3u;k++) {
-  let authored=scene_v4(vertices[k]+SCENE_VERTEX_TANGENT);
-  let vertex_n=normalize((normal_matrix*vec4(scene_v3(vertices[k]+SCENE_VERTEX_NORMAL),0.)).xyz);
+  let authored=frames[k].tangent;
+  let vertex_n=normalize((normal_matrix*vec4(frames[k].normal,0.)).xyz);
   let transformed=(world*vec4(authored.xyz,0.)).xyz;
   let projected=transformed-vertex_n*dot(vertex_n,transformed);
   if dot(projected,projected)>0. {
@@ -178,18 +205,18 @@ fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->Scene
  if !result.front_face {
   result.normal=-result.normal;
  }
- result.uv=scene_interpolated_uv(vertices,b);
+ result.uv=uv0*b.x+uv1*b.y+uv2*b.z;
  result.color=scene_interpolated_color(vertices,b);
- result.lightmap_uv=scene_v2(vertices.x+SCENE_VERTEX_LIGHTMAP_UV)*b.x+scene_v2(vertices.y+SCENE_VERTEX_LIGHTMAP_UV)*b.y+scene_v2(vertices.z+SCENE_VERTEX_LIGHTMAP_UV)*b.z;
- result.lightmap_bounds=scene_v4(vertices.x+SCENE_VERTEX_LIGHTMAP_BOUNDS);
+ result.lightmap_uv=scene_vertex_lightmap_uv(vertices.x)*b.x+scene_vertex_lightmap_uv(vertices.y)*b.y+scene_vertex_lightmap_uv(vertices.z)*b.z;
+ result.lightmap_bounds=scene_vertex_lightmap_bounds(mesh,vertices.x);
  result.instance_id=index;
  result.instance_flags=objects[index].flags;
  result.mesh_id=raw.intersection.z;
  result.primitive_id=raw.intersection.w;
  result.material_word=scene_source[mesh+SCENE_MESH_MATERIAL_WORD];
  result.barycentrics=raw.coords.yz;
- let dp1=(world*vec4(scene_v3(vertices.y+SCENE_VERTEX_POSITION)-scene_v3(vertices.x+SCENE_VERTEX_POSITION),0.)).xyz;
- let dp2=(world*vec4(scene_v3(vertices.z+SCENE_VERTEX_POSITION)-scene_v3(vertices.x+SCENE_VERTEX_POSITION),0.)).xyz;
+ let dp1=(world*vec4(scene_vertex_position(vertices.y)-scene_vertex_position(vertices.x),0.)).xyz;
+ let dp2=(world*vec4(scene_vertex_position(vertices.z)-scene_vertex_position(vertices.x),0.)).xyz;
  let duv1=uv1-uv0;
  let duv2=uv2-uv0;
  let determinant=duv1.x*duv2.y-duv1.y*duv2.x;

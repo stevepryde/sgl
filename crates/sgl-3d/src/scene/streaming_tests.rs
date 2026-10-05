@@ -58,14 +58,14 @@ fn retained(scene: &Scene) -> [u64; 4] {
 /// The slots chunks stream through.
 const SLOTS: usize = 48;
 /// The most words the ray source holds for a quad of a chunk: its four
-/// vertices, six indices, and for each of its two triangles at most a BVH
-/// node (12 words) and a leaf record (2).
-const QUAD_WORDS: usize = 4 * std::mem::size_of::<Vertex>() / 4 + 6 + 2 * (12 + 2);
+/// packed vertices (8 words each), six indices, and for each of its two
+/// triangles at most a BVH node (12 words) and a leaf record (2).
+const QUAD_WORDS: usize = 4 * 8 + 6 + 2 * (12 + 2);
 /// The most words a slot's chunk holds besides its quads: its model's mesh
-/// record (4), and its instance's share of the instance BVHs, whose ranges
-/// keep room for twice their instances, at most a node and a leaf record
-/// for each.
-const SLOT_WORDS: usize = 4 + 2 * (12 + 2);
+/// record (9), its chart table of one chart (4), and its instance's share
+/// of the instance BVHs, whose ranges keep room for twice their instances,
+/// at most a node and a leaf record for each.
+const SLOT_WORDS: usize = 9 + 4 + 2 * (12 + 2);
 
 // Plausible defects: removed or replaced content's ranges or records never
 // freed or reused, so each insert grows a buffer; or freed ranges left so

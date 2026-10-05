@@ -19,7 +19,6 @@ pub(crate) mod layout_tests;
 pub(crate) mod lights;
 pub(crate) mod material;
 // Wired into the ray source and its readers with #135's prepared models.
-#[allow(dead_code)]
 pub(crate) mod packed_vertex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod packed_vertex_tests;
@@ -137,7 +136,6 @@ pub(crate) static PBR: Module = Module {
 };
 /// The scene's packed vertex: its words and their decoding
 /// (`shading::packed_vertex`).
-#[allow(dead_code)]
 pub(crate) static PACKED_VERTEX: Module = Module {
     name: "packed_vertex",
     source: include_str!("packed_vertex.wgsl"),
@@ -361,7 +359,7 @@ pub(crate) static BC7: Module = Module {
 pub(crate) static SCENE_RAYS: Module = Module {
     name: "scene_rays",
     source: include_str!("scene_rays.wgsl"),
-    deps: &[&MATERIAL, &SCENE_SOURCE, &BIND_SCENE, &BC7],
+    deps: &[&MATERIAL, &SCENE_SOURCE, &PACKED_VERTEX, &BIND_SCENE, &BC7],
 };
 /// A scene vertex pulled from the scene source, as an instance shows it:
 /// deformed when it deforms. Reads `object`.

@@ -149,9 +149,9 @@ fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32
   return miss;
  }
  let vertices=scene_vertex_words(mesh,primitive_id);
- let a=scene_v3(vertices.x+SCENE_VERTEX_POSITION);
- let e1=scene_v3(vertices.y+SCENE_VERTEX_POSITION)-a;
- let e2=scene_v3(vertices.z+SCENE_VERTEX_POSITION)-a;
+ let a=scene_vertex_position(vertices.x);
+ let e1=scene_vertex_position(vertices.y)-a;
+ let e2=scene_vertex_position(vertices.z)-a;
  let p=cross(direction,e2);
  let determinant=dot(e1,p);
  // No grazing-angle epsilon: a small nonzero determinant is a valid solve.
@@ -184,7 +184,7 @@ fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32
  // test samples the base alpha as a hit's shading does (scene_base_color).
  if (material.values.flags&MATERIAL_ALPHA_MASK)!=0u {
   let b=vec3(1.-u-v,u,v);
-  let uv=scene_interpolated_uv(vertices,b);
+  let uv=scene_interpolated_uv(mesh,vertices,b);
   let color=scene_interpolated_color(vertices,b);
   if material_cut_out(material.values,scene_base_color(material,uv,color).a) {
    return miss;

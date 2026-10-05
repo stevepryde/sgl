@@ -159,8 +159,8 @@ part of building a model that depends only on its meshes: it validates them
 zero, a deformation fits its vertices), records whether each has authored
 tangent frames, builds each mesh's culling hierarchy and local-light caster
 clusters and the model's BVH, and packs the model's ray-source words (its
-mesh records, vertices ([Vertex encoding](#shared-contracts)), indices and
-BVH, and a deforming model's influences and morph targets) and raster
+mesh records, chart table, vertices ([Vertex encoding](#shared-contracts)),
+indices and BVH, and a deforming model's influences and morph targets) and raster
 geometry, addressed from zero. `add_model` and `set_model` then do only what needs the scene or
 the device: check what the prepared model names against the scene (its
 materials, an anisotropic material's need for tangents, a deforming model's

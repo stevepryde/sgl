@@ -29,7 +29,11 @@ fn quad(x: f32, z: f32, half: f32, deformation: MeshDeformation) -> CpuMesh {
                 color: [1.; 4],
                 lightmap_uv: [0.; 2],
                 lightmap_bounds: [0., 0., 1., 1.],
-                tangent: [1., 0., -0.3 * u, if i == 2 { -1. } else { 1. }],
+                // Unit and perpendicular to the normal, as glTF requires.
+                tangent: Vec3::new(1., 0., -0.3 * u)
+                    .normalize()
+                    .extend(if i == 2 { -1. } else { 1. })
+                    .to_array(),
             })
             .collect(),
         indices: vec![0, 1, 2, 0, 2, 3],
@@ -184,8 +188,11 @@ fn fixture() -> (Vec<CpuMesh>, [Mat4; 5]) {
 
 /// `mesh`'s vertices under `joints` and `weights` by glTF 2.0's definition:
 /// each displaced by its targets at their weights, then transformed by the
-/// weighted sum of its joint matrices (normals by its inverse transpose).
-fn cpu_blend(mesh: &CpuMesh, joints: &[Mat4], weights: &[f32]) -> Vec<(Vec3, Vec3, Vec4)> {
+/// weighted sum of its joint matrices (normals by its inverse transpose);
+/// and for each, a bound on how much that transform can magnify an error in
+/// its rest normal or tangent (the Frobenius condition number of its linear
+/// part, 1 unskinned).
+fn cpu_blend(mesh: &CpuMesh, joints: &[Mat4], weights: &[f32]) -> Vec<((Vec3, Vec3, Vec4), f32)> {
     let deformation = &mesh.deformation;
     mesh.vertices
         .iter()
@@ -203,7 +210,7 @@ fn cpu_blend(mesh: &CpuMesh, joints: &[Mat4], weights: &[f32]) -> Vec<(Vec3, Vec
                 direction += weight * Vec3::from_array(delta.tangent);
             }
             let Some(influence) = deformation.influences.get(v) else {
-                return (position, normal, direction.extend(tangent.w));
+                return ((position, normal, direction.extend(tangent.w)), 1.);
             };
             let sum: f32 = influence.weights.iter().sum();
             let matrix = influence
@@ -214,10 +221,17 @@ fn cpu_blend(mesh: &CpuMesh, joints: &[Mat4], weights: &[f32]) -> Vec<(Vec3, Vec
                     m + joints[joint as usize] * (weight / sum)
                 });
             let linear = Mat3::from_mat4(matrix);
+            let frobenius = |m: Mat3| {
+                (m.x_axis.length_squared() + m.y_axis.length_squared() + m.z_axis.length_squared())
+                    .sqrt()
+            };
             (
-                matrix.transform_point3(position),
-                (linear.inverse().transpose() * normal).normalize(),
-                (linear * direction).normalize().extend(tangent.w),
+                (
+                    matrix.transform_point3(position),
+                    (linear.inverse().transpose() * normal).normalize(),
+                    (linear * direction).normalize().extend(tangent.w),
+                ),
+                frobenius(linear) * frobenius(linear.inverse()),
             )
         })
         .collect()
@@ -229,7 +243,10 @@ fn cpu_blend(mesh: &CpuMesh, joints: &[Mat4], weights: &[f32]) -> Vec<(Vec3, Vec
 // layout, skips weight normalization, skins before morphing, transforms
 // normals by the matrix instead of its inverse transpose, or writes one
 // mesh's vertices over another's. The oracle is glTF 2.0's definition
-// evaluated on the CPU from the same inputs (`cpu_blend`).
+// evaluated on the CPU from the same inputs (`cpu_blend`). The deform stage
+// reads its rest normal and tangent packed, each within 0.01° (the Vertex
+// encoding), so they are held to that error as the blend can magnify it;
+// positions stay exact.
 #[test]
 fn deformed_vertices_match_the_cpu_morph_and_skin_blends() {
     let Some((device, queue)) = test_support::device() else {
@@ -248,12 +265,17 @@ fn deformed_vertices_match_the_cpu_morph_and_skin_blends() {
         .unwrap();
     let observed = deformed(&device, &queue, &mut scene, instance, 8);
     for (mesh_index, mesh) in meshes.iter().enumerate() {
-        for (v, expected) in cpu_blend(mesh, &joints, &weights).into_iter().enumerate() {
+        for (v, (expected, condition)) in cpu_blend(mesh, &joints, &weights).into_iter().enumerate()
+        {
             let (p, n, t) = observed[mesh_index * 4 + v];
+            let packed = |a: Vec4, b: Vec4| {
+                (a - b).abs().max_element()
+                    <= 0.01f32.to_radians() * condition * b.abs().max_element().max(1.)
+            };
             assert!(
                 close(p.extend(0.), expected.0.extend(0.))
-                    && close(n.extend(0.), expected.1.extend(0.))
-                    && close(t, expected.2),
+                    && packed(n.extend(0.), expected.1.extend(0.))
+                    && packed(t, expected.2),
                 "mesh {mesh_index} vertex {v}: deformed {:?}, expected {expected:?}",
                 (p, n, t)
             );
@@ -286,7 +308,7 @@ fn skinned_and_morphed_bounds_hold_every_deformed_vertex() {
                 let [low, high] =
                     DeformedMesh::new(&mesh.vertices, &mesh.deformation).bounds(&joints, &weights);
                 let slack = 1e-5 * low.abs().max(high.abs()).max_element().max(1.);
-                for (position, _, _) in cpu_blend(mesh, &joints, &weights) {
+                for ((position, _, _), _) in cpu_blend(mesh, &joints, &weights) {
                     assert!(
                         position.cmpge(low - slack).all() && position.cmple(high + slack).all(),
                         "{position} outside {low}..{high} at weights {weights:?}"

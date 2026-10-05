@@ -42,8 +42,12 @@ pub enum SceneError {
     CompressedImageViews,
     /// A mesh index names no vertex of its mesh.
     IndexOutOfRange,
-    /// A vertex position is not finite.
+    /// A vertex position is not finite, or a vertex normal is zero or not
+    /// finite.
     NonFiniteGeometry,
+    /// A model's vertices name more than 65,536 distinct lightmap chart
+    /// bounds (`Vertex::lightmap_bounds`).
+    TooManyLightmapCharts,
     /// A pose is not finite or not invertible.
     InvalidPose,
     /// Anisotropy strength is outside 0..=1 or its rotation is not finite.
@@ -156,7 +160,12 @@ impl std::fmt::Display for SceneError {
                 "a compressed image needs sides that are multiples of its block size and one to a full chain of levels, each of its size"
             }
             Self::IndexOutOfRange => "a mesh index names no vertex",
-            Self::NonFiniteGeometry => "a vertex position is not finite",
+            Self::NonFiniteGeometry => {
+                "vertex positions must be finite and normals finite and not zero"
+            }
+            Self::TooManyLightmapCharts => {
+                "a model's vertices may name at most 65536 distinct lightmap chart bounds"
+            }
             Self::InvalidPose => "a pose must be finite and invertible",
             Self::InvalidAnisotropy => {
                 "anisotropy strength must be finite in 0..1 and rotation finite"
