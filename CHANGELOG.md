@@ -27,11 +27,12 @@ full API details.
   coated surface more than the same light live. Baked diffuse is now dimmed
   by `1 - clearcoat * F` too, as Three.js 0.185.1 and Godot dim baked light
   and Filament dims all image-based diffuse (Bevy does not). This is a
-  correctness fix with no setting. At `clearcoat` 1, baked diffuse is 4% dimmer head-on and 20%
-  dimmer at a view cosine of 0.3, more toward grazing. Camera views, probe
-  captures and ray hits (world-space reflections, dynamic GI probe hits)
-  change alike. Emission under a coat stays dimmed as before, as
-  KHR_materials_clearcoat defines it. Uncoated materials are unchanged.
+  correctness fix with no setting. At `clearcoat` 1, baked diffuse is 4%
+  dimmer head-on and 20% dimmer at a view cosine of 0.3, more toward
+  grazing. Camera views, probe captures and ray hits (world-space
+  reflections, dynamic GI probe hits) change alike. Emission under a coat
+  stays dimmed as before, as KHR_materials_clearcoat defines it. Uncoated
+  materials are unchanged.
 - **Migration:** no game-code changes and no re-bake. Afterwards, look at
   coated surfaces lit by lightmaps or atlas charts, and moving coated
   instances lit by their ambient cube, toward grazing angles: they are
