@@ -286,9 +286,13 @@ Remaining work, in the existing roadmap order:
    captures keep CPU-built, instanced lists. The camera's two-phase
    occlusion culling runs behind `Settings::occlusion_culling` (off by
    default), as the architecture designs it
-   ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages));
-   the cascades' occlusion culling, a design of its own, and the consumer's
-   adoption remain.
+   ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages)).
+   The cascades cost the GPU what the CPU-built indexed draws did
+   ([#192](https://github.com/stevepryde/sgl/issues/192)): their casters
+   read the slabs' 12-byte positions, and sections whose triangles pair
+   draw indexed. The cascades' occlusion culling, a design of its own
+   whose pyramids #192 found would cost more than they save on the
+   examples' routes, and the consumer's adoption remain.
 
 These are planned capabilities, not APIs a game can depend on yet. Implement
 them under RD-1 and the architecture rules, retaining native and browser

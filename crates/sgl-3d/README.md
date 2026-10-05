@@ -2148,7 +2148,8 @@ two with `Counters::since`, and compare versions by totals since lines move),
 `Scene::diagnostic_resources` (the scene's buffer sizes and BLASes, and the
 draw candidates', sets', level chains' and each GPU-built view's cluster
 list's bytes), `Renderer::diagnostic_draws` (the last frame's camera, blended
-and cascade draws as encoded: a GPU-built view's one per set) and
+and cascade draws as encoded: a GPU-built view's one per set and phase,
+and a cascade's second per set, its paired sections' indexed draw) and
 `Renderer::diagnostic_view_times` (the CPU time the camera's and each
 cascade's draw list took to build, preparing and encoding its cull, and to
 record). The `streaming` and
