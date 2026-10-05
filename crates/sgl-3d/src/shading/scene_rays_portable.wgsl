@@ -2,9 +2,10 @@
 // two-level ray source: the instance BVH of each kind, static and moving,
 // over the instances' posed model bounds, whose leaves name instance entries,
 // then each instance's model BVH with the ray in that model's space, as DXR
-// and Vulkan traverse a TLAS and its BLASes (Wald et al. 2003). PBRT4
-// EqualCounts BVHs; Moller-Trumbore triangle solve. `scene::rays::bvh` builds
-// every tree, and `scene::rays::instances` the instance BVHs.
+// and Vulkan traverse a TLAS and its BLASes (Wald et al. 2003). Binned SAH
+// model BVHs and EqualCounts instance BVHs; Moller-Trumbore triangle solve.
+// `scene::rays::bvh` builds every tree, and `scene::rays::instances` the
+// instance BVHs.
 // A BVH node's words in the source (`scene::rays::bvh::Node`): its bounds, the
 // word after its subtree, and a leaf's primitive count and first primitive. An
 // interior node's first child follows it.
@@ -31,8 +32,10 @@ const SCENE_BVH_LEAF_PRIMITIVES:u32=4u;
 // visited in this walk was 2,081 over a 2-million-triangle terrain at grazing
 // angles, 1,173 inside half a million foliage triangles and 19,238 across a
 // forest of 40,000 instances of a 5,000-triangle tree at 0 to 3 degrees
-// (#160); the cap is over three times the forest's. A ray that reaches it
-// reports a miss.
+// (#160), with median-split model BVHs. Rebuilt with surface area model BVHs
+// (#187), a forest of that size took at most 30,367 where its median-split
+// one took 29,027, and a terrain 2,171 where it took 2,153; the cap is over
+// twice the forest's. A ray that reaches it reports a miss.
 const SCENE_BVH_MOST_VISITS:u32=65536u;
 // A walk of a BVH ends whatever the source holds, so corrupt words (a stale
 // range, a rebase error) cost a wrong answer, never an unbounded loop that

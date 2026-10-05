@@ -15,6 +15,27 @@ full API details.
 
 ## Unreleased
 
+### Model BVHs built by the surface area heuristic
+
+- **Scope:** `sgl-3d`: `PreparedModel::new` (and `Scene::add_asset`,
+  `add_model` and `set_model` through it) builds each model's ray BVH by
+  the binned surface area heuristic (Wald 2007) instead of a median split,
+  whose halves overlapped on long, thin triangles (#187). A portable scene
+  ray (world-space reflections, dynamic GI probe and visibility rays) visits
+  about half the BVH nodes and tests about a quarter of the triangles over
+  such content: a dynamic GI probe ray over Hyperdrive's track, 204 nodes
+  and 34 triangles before, 103 and 8 after (CPU replay). Instance BVHs keep
+  the median split, which builds fastest on the render thread, so
+  `add_instance` and static edits cost what they did. Hits are unchanged.
+  Building a model's BVH takes about three times as long (39 ms for a
+  134,000-triangle model on an Apple M5, 12 ms before), and the BVH takes
+  about 50 bytes a triangle of the ray source rather than 34.
+- **Migration:** no game-code changes. A game that prepares models under a
+  per-frame or per-tick budget (`PreparedModel::new` on its workers) should
+  check that budget, and one near its ray-source memory should check
+  `Scene::diagnostic_resources`. Afterwards, exercise the game's streaming
+  and model loading, and its world-space reflections and dynamic GI.
+
 ### A model may name any number of lightmap charts across its meshes
 
 - **Scope:** `sgl-3d`. Since scene vertices were packed (below),

@@ -109,7 +109,8 @@ impl InstanceBvh {
         words: &mut Vec<u32>,
     ) {
         words.clear();
-        self.root = bvh::append_primitives(instances, words, self.range.start);
+        self.root =
+            bvh::append_primitives(instances, bvh::Split::EqualCounts, words, self.range.start);
         debug_assert!(words.len() <= self.range.len(), "a BVH fits its range");
         rays.write(queue, self.range.start, words);
     }
