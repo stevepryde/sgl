@@ -11,8 +11,8 @@ this spec owns the shape of the code.
 Games use two objects.
 
 - **`Scene`** is retained content: geometry, materials, textures, instances,
-  lights, decals, environments, baked lighting, probes and the dynamic GI
-  volume's placement, with stable identities
+  lights, decals, environments, baked lighting, probes, the irradiance
+  volume and the dynamic GI volume's placement, with stable identities
   ([Scene content](#scene-content)). It holds the CPU state and the GPU buffers
   that mirror it, and nothing that depends on a camera, an output size or a
   quality setting.
@@ -84,6 +84,46 @@ RTXGI's infinite scrolling volume keeps its probes; a residual beyond a
 small tolerance of the spacing, or another spacing or count, is another
 placement and restarts it ([Dynamic diffuse GI](#designs-that-span-stages)).
 
+The irradiance volume is game-authored diffuse light the game keeps up by
+regions ([Irradiance volume](#designs-that-span-stages)). Its placement
+(`IrradianceVolume`: its origin, the least corner of its first cell; its
+cell size on each axis, in metres; and its cell counts, at least one on each
+axis) is installed whole (`Scene::set_irradiance_volume`; `None` removes
+it), and refused with the typed error when its texture, Bevy's layout of the
+six faces (twice the cells on y, three times on z), would exceed the device's
+3D texture limit (under WebGPU's default `maxTextureDimension3D` of 2048:
+2048 cells on x, 1024 on y, 682 on z); a scene holds one, and a game that installs none pays nothing
+for it. Its cells are content the game writes by region
+(`Scene::write_irradiance_cells`): a box of cells named by the position of
+its least corner, on the lattice within a small tolerance of the cell size,
+and its cell counts, with one `IrradianceCell` per cell (its six faces' own
+light as an `AmbientCube`, irradiance / PI, finite and nonnegative, and the
+sky's visibility toward each face, 0 to 1, both in the cube's face order
++X, −X, +Y, −Y, +Z, −Z, which the type documents), x fastest, then y, then
+z; a box that is not on the lattice, lies partly outside the volume or
+brings the wrong count or an invalid cell is refused and writes nothing.
+The write takes the region prepared: a pure `Send` step
+(`PreparedIrradianceRegion`, as `ModelMesh::prepare` prepares a mesh)
+validates and packs the cells' faces without a device on whichever thread
+the game chooses, and the write only copies them to the queue, so a
+relight's packing stays off the render-critical thread. A cell the game has not written reads as the frame's
+ambient whole with no light of its own: where a receiver's fallback is the
+frame's ambient nothing changes, and where the dynamic GI volume or an
+ambient cube would light it the volume covers them with that ambient, since
+authored light wins across its extent and a game that wants the dynamic GI
+volume or its cubes in a region leaves that region uncovered.
+The scene keeps the lattice the volume was installed on: installing it again
+with the same cell size and counts moves its origin by the whole number of
+cells nearest the move and scrolls it, the cells that stay keeping their
+content at their new texels and the ones that enter reading as the fallback
+until written, as RTXGI's infinite scrolling volume keeps its probes and
+Godot's SDFGI scrolls its cascades; a residual beyond a small
+tolerance of the cell size, or another cell size or count, is another
+placement, whose cells all read as the fallback. A region write is an edit
+under the rule below and not a static edit: it records no bounds, makes no
+cache stale and cuts no history; a specular probe capture that showed the
+old light is the game's to capture again, as any bake.
+
 **Identities.** Adding content returns its identity: a typed value
 (`MaterialId`, `ModelId`, `InstanceId`, `LightId`, `DecalImageId`, `DecalId`,
 `EnvironmentId`) holding an
@@ -118,12 +158,13 @@ placed geometry from another:
 - A **static** instance is expected to stay as it was added. It is what bakes
   and probe captures contain and what shadow slots cache; it takes baked
   diffuse light from its lightmap charts, and where it has none its indirect
-  diffuse light from the dynamic GI volume where one lights it, and writes
-  no motion. Changing it in any way is a static edit.
+  diffuse light from the irradiance volume, else the dynamic GI volume,
+  where one lights it, and writes no motion. Changing it in any way is a static edit.
 - A **moving** instance is expected to be posed every frame. Nothing caches
   it: a view that shows it draws it every frame. It takes its indirect
-  diffuse light from the dynamic GI volume where one lights it, else from
-  the ambient cube the game sets for it, and writes motion from its
+  diffuse light from the irradiance volume, else the dynamic GI volume,
+  where one lights it, else from the ambient cube the game sets for it, and
+  writes motion from its
   pose in the last submitted frame. It has no motion in a frame where that pose
   does not apply: it is new, its state names a different model, or it was not
   `visible` in the last submitted frame. There is no caller key that cuts
@@ -172,9 +213,10 @@ each instance's pose and the pose its motion is measured from, its bounds
 and the culling hierarchy, the object records, the ray source's instances
 and whatever is built over them, lights, decals, fog volumes, transient
 geometry, the installed probes with their grid, the dynamic GI volume's
-origin, and the pending static-edit bounds.
+origin, the irradiance volume's origin, and the pending static-edit bounds.
 Geometry, deformed vertices and joint matrices are model-local; lightmaps,
-irradiance atlases and ambient cubes have no position; a specular probe's
+irradiance atlases and ambient cubes have no position; the irradiance
+volume's cells are about its origin; a specular probe's
 capture, and a dynamic GI probe's irradiance, depth and offset, are about
 its centre: none changes, and a move is not a scroll. An inverse transform (a probe's
 `world_to_local`, a shadow face's view) is rebuilt from its translated
@@ -275,12 +317,12 @@ Each has one definition, which every producer and consumer uses.
 | Contract | Definition |
 | --- | --- |
 | Conventions | Units, axes, depth and colour are S3D-3. |
-| View and frame data | `View`, one per view (matrices, previous matrices, jitter, eye, viewport), and `Frame`, one per frame (time, the material animation's phase, the directional lights with the shadowed light's cascades, the hemisphere fill, the environment's diffuse lighting, reflection sky and backdrop, the fog volume's slicing and whether the frame has fog, mist, the visibility mask, the scene's baked-lighting constants: the atlas scale and the lightmap's chart transform, and the dynamic GI volume's placement, its scroll and whether it lights the frame), declared with their flag bits in `shading::uniforms`. Named fields; flags are integers with named bits. The renderer packs `Frame` from `FrameInput`'s typed values; no GPU layout is public. The phase is where `FrameInput::elapsed_seconds`, a double, falls within the hour over which material animation repeats exactly, reduced on the CPU, so the GPU's `f32` keeps its precision however long a session runs; Godot rolls its shader time over and Bevy wraps its time at the same hour, each with a jump, which the period's whole repeats avoid ([Material records](#shared-contracts)). |
-| Bind groups | For pipelines that draw scene geometry through the shading library. Group 0 has three layouts: lit (view and frame data, lights, decals and the atlas their images are packed in, clusters, shadows, environment, probes, the dynamic GI volume's probe texture, lookup tables and the fog volume), unlit (view and frame data, the frame's environment with its backdrop and the fog volume, for the sky, additive effects and mist) and shadow (view and frame data). The fog volume and its sampler are visible to fragment stages only. A view that renders into one of those binds a neutral stand-in for it; ray hits bind the lit layout with their light and decal lists, the local-light atlas's static layers and, as probe captures do, the installed probes; the dynamic GI probe rays' hits bind it with the volume's lists. Group 1: the object records, one storage buffer bound whole that geometry passes read, and the geometry buffers ray queries read. Group 2: material. Group 3: the stage's own. Ports, full-screen passes and the deform stage lay out their own. Four groups is the limit. Lit group 0 and group 1 bind 8 storage buffers to a fragment stage, wgpu's default limit and S3D-1's floor: `graphics_device::limits` requests the adapter's `max_storage_buffers_per_shader_stage`, and the change that adds another states the floor it needs in S3D-1 or folds two buffers into one (the probe collection holds its world grid; the decals' indices share the clusters' lists). Lit group 0, the dynamic GI volume's probe texture among it, and a material bind 18 sampled textures to a fragment stage, and the blended pipelines' group 3 (the screen-space method's result and the surface depth) two more: 20, the floor S3D-1 states (Dawn tiers `maxSampledTexturesPerShaderStage` at 16 or 48, and Metal, DX12 and Vulkan adapters offer 31 or more, so no device sits between 17 and 20: the practical cut stays above WebGPU's default 16); lit group 0 and the world-space trace's own targets, with the surface depth, bind 19 to the trace's fragment stage, where the fog volume counts; the dynamic GI trace binds 12 (lit group 0's ten that a compute stage sees, the probe texture it samples for the bounce, and its ray list), where the fog volume does not count: `graphics_device::limits` requests the adapter's, and the change that adds another states the floor it needs in S3D-1 or folds two textures into one (one lookup-table texture holds the rectangle lights' fit and the DFG table; one texture holds the dynamic GI volume's irradiance maps, depth maps and probe data). A stage whose passes bind lit group 0 and group 1 passes its own per-ray or per-probe data as textures, not storage buffers, as the dynamic GI stage does. |
+| View and frame data | `View`, one per view (matrices, previous matrices, jitter, eye, viewport), and `Frame`, one per frame (time, the material animation's phase, the directional lights with the shadowed light's cascades, the hemisphere fill, the environment's diffuse lighting, reflection sky and backdrop, the fog volume's slicing and whether the frame has fog, mist, the visibility mask, the scene's baked-lighting constants: the atlas scale and the lightmap's chart transform, the irradiance volume's placement and whether it lights the frame, and the dynamic GI volume's placement, its scroll and whether it lights the frame), declared with their flag bits in `shading::uniforms`. Named fields; flags are integers with named bits. The renderer packs `Frame` from `FrameInput`'s typed values; no GPU layout is public. The phase is where `FrameInput::elapsed_seconds`, a double, falls within the hour over which material animation repeats exactly, reduced on the CPU, so the GPU's `f32` keeps its precision however long a session runs; Godot rolls its shader time over and Bevy wraps its time at the same hour, each with a jump, which the period's whole repeats avoid ([Material records](#shared-contracts)). |
+| Bind groups | For pipelines that draw scene geometry through the shading library. Group 0 has three layouts: lit (view and frame data, lights, decals and the atlas their images are packed in, clusters, shadows, environment, probes, the irradiance volume's cells, the dynamic GI volume's probe texture, lookup tables and the fog volume), unlit (view and frame data, the frame's environment with its backdrop and the fog volume, for the sky, additive effects and mist) and shadow (view and frame data). The fog volume and its sampler are visible to fragment stages only. A view that renders into one of those binds a neutral stand-in for it; ray hits bind the lit layout with their light and decal lists, the local-light atlas's static layers and, as probe captures do, the installed probes; the dynamic GI probe rays' hits bind it with the volume's lists. Group 1: the object records, one storage buffer bound whole that geometry passes read, and the geometry buffers ray queries read. Group 2: material. Group 3: the stage's own. Ports, full-screen passes and the deform stage lay out their own. Four groups is the limit. Lit group 0 and group 1 bind 8 storage buffers to a fragment stage, wgpu's default limit and S3D-1's floor: `graphics_device::limits` requests the adapter's `max_storage_buffers_per_shader_stage`, and the change that adds another states the floor it needs in S3D-1 or folds two buffers into one (the probe collection holds its world grid; the decals' indices share the clusters' lists). Lit group 0, the dynamic GI volume's probe texture among it, and a material bind 18 sampled textures to a fragment stage, and the blended pipelines' group 3 (the screen-space method's result and the surface depth) two more: 20, the floor S3D-1 states, which the irradiance volume's cell texture raises to 21 when it lands (Dawn tiers `maxSampledTexturesPerShaderStage` at 16 or 48, and Metal, DX12 and Vulkan adapters offer 31 or more, so no device sits between 17 and 21: the practical cut stays above WebGPU's default 16, and the change that lands the cell texture states its floor in S3D-1, the README and the docs); lit group 0 and the world-space trace's own targets, with the surface depth, bind 19 to the trace's fragment stage, where the fog volume counts, 20 with the cell texture; the dynamic GI trace binds 12 (lit group 0's ten that a compute stage sees, the probe texture it samples for the bounce, and its ray list), 13 with the irradiance volume's cells, which its hits sample, where the fog volume does not count: `graphics_device::limits` requests the adapter's, and the change that adds another states the floor it needs in S3D-1 or folds two textures into one (one lookup-table texture holds the rectangle lights' fit and the DFG table; one texture holds the dynamic GI volume's irradiance maps, depth maps and probe data). A stage whose passes bind lit group 0 and group 1 passes its own per-ray or per-probe data as textures, not storage buffers, as the dynamic GI stage does. |
 | Layout mirroring | A struct shared between Rust and WGSL is declared once in each, side by side in `shading`. A test compares the Rust layout with naga's layout of the composed WGSL. A vertex buffer's layout is derived once from the Rust type it holds, and a test compares it with naga's inputs of the vertex entry points that read it. |
-| G-buffer | What the opaque stage records for later stages, including the ambient diffuse within lit colour before occlusion. Its depth, normals, roughness, F0, anisotropy and source identity are the opaque surface's for the whole frame; its motion is the surface's ([Surface](#shared-contracts)), since nothing reads the opaque surface's motion once the receivers have drawn theirs. One WGSL module defines its targets and encodings with `encode` and `decode`, the receiver layer's included; a port converts at its adapter. |
+| G-buffer | What the opaque stage records for later stages, including the ambient diffuse within lit colour before occlusion. Its depth, normals, roughness, F0, anisotropy and source identity are the opaque surface's for the whole frame; its motion is the surface's ([Surface](#shared-contracts)), since nothing reads the opaque surface's motion once the receivers have drawn theirs. One WGSL module defines its targets and encodings with `encode` and `decode`, the receiver layer's included; a port converts at its adapter. The ambient target (`AMBIENT`, Rgba16Float) carries in its alpha the irradiance volume's sky visibility a(n) at the pixel, 1 where no volume lights it, which completion's occlusion of the sky's specular reads ([Irradiance volume](#designs-that-span-stages)). |
 | Surface | The nearest reflective surface at each pixel, opaque or blended receiver, which the screen-space method, world-space rays, composition, TAA, FSR2 and motion blur see: the **surface depth**, a copy of the opaque depth that the receiver pass draws its receivers over, tested strictly nearer and written, so the nearest receiver wins and one coplanar with opaque geometry leaves it the surface; the **receiver layer**, the traced lobe's normal and perceptual roughness at receiver pixels, in the G-buffer module's encodings; and the G-buffer's motion. A pixel is under a receiver where the surface depth is nearer than the opaque depth; no mask is stored. The renderer owns both targets, allocates them at the render size when the scene first holds a receiver, and lends the opaque depth as the surface depth in a frame that draws no receiver, so a game without receivers pays nothing. Each screen-space method's adapter converts the surface: the receiver layer where a receiver is nearer, else the G-buffer, through one accessor the G-buffer module owns, and the surface depth; TAA's context, FSR2 and motion blur read the surface depth and motion. World-space rays and composition read both depths; completion, probe culling, the transparent stage's depth tests and the diagnostics read the opaque depth. |
-| Surface shading | One evaluated `Surface` and one set of functions for direct, environment and baked light, and one for the decals that change a lit surface before it is lit. Raster shading, probe captures and ray hits call the same functions (S3D-5). A material's mapped normal, its normal map or that map's scrolling layers at the frame's animation phase, comes from `shading/material.wgsl`'s functions, which raster's builder (the G-buffer, the receiver layer, lit, blended and capture passes) and ray hits call with their own samples, so every view sees one moving surface. One determination gives a receiver its indirect diffuse light: its lightmap, else its irradiance atlas chart, else the dynamic GI volume where it lights the frame, reaches the receiver and has a blended probe about it, else a moving instance's ambient cube, else the frame's ambient (the environment's diffuse light and the hemisphere fill); the light loop's baked lights and the ambient occlusion's ambient diffuse follow it ([Dynamic diffuse GI](#designs-that-span-stages)). |
+| Surface shading | One evaluated `Surface` and one set of functions for direct, environment and baked light, and one for the decals that change a lit surface before it is lit. Raster shading, probe captures and ray hits call the same functions (S3D-5). A material's mapped normal, its normal map or that map's scrolling layers at the frame's animation phase, comes from `shading/material.wgsl`'s functions, which raster's builder (the G-buffer, the receiver layer, lit, blended and capture passes) and ray hits call with their own samples, so every view sees one moving surface. One determination gives a receiver its indirect diffuse light: its lightmap, else its irradiance atlas chart, else the irradiance volume where it lights the frame and reaches the receiver, else the dynamic GI volume where it lights the frame, reaches the receiver and has a blended probe about it, else a moving instance's ambient cube, else the frame's ambient (the environment's diffuse light and the hemisphere fill); the light loop's baked lights and the ambient occlusion's ambient diffuse follow it ([Irradiance volume](#designs-that-span-stages), [Dynamic diffuse GI](#designs-that-span-stages)). |
 | Lights and shadows | One light record, at its identity's index in the scene's light buffer, and one accessor for the lights and decals that reach a point: the cluster in a camera view, culled lists elsewhere, which are a grid of one cluster. One writer packs every view's clusters; each list holds its live lights, then its baked ones, then its decals. The record has six rows: a point or spot light's shading reads its first four and, for its shadow, its sixth (its shadow opacity); a rectangle's reads all six, and `surface_direct_light` integrates its face by linearly transformed cosines, from lit group 0's table, in one loop over its lobes. A light's shadow record, at the same index in a buffer the shadow stage writes each frame, places its faces in the local-light atlas; a light without one is unshadowed. One sampling function per shadow kind, and one set of filters and receiver bias for every 2D shadow map, in `shading::shadow_sampling`: Bevy's Castano '13 kernel, its Jimenez '14 spiral where temporal antialiasing resolves it, its one hardware 2×2 tap for the camera's surfaces at the Low shadow quality (Godot's hard filter; `Settings::shadow_quality` also sets the cascades' and the local-light atlas's sizes, as Godot's desktop and mobile defaults), and for the fog, whose reprojection resolves it, its one hardware 2×2 tap for a local light and Godot's fog tap for the directional cascades (the one cascade at the point's view depth, one linear tap of the occluder's depth, the light fading exponentially with the metres the point lies behind it), chosen by what receives the shadow (a capture's or ray hit's surface, the camera's surface or the fog; a dynamic GI probe ray's hit is a fourth kind that takes no map: its one light's visibility is a ray, [Dynamic diffuse GI](#designs-that-span-stages)), and, but for Godot's fog tap, which takes none, its normal offset scaled by the map's texel size plus a depth offset toward the light. Each kernel tap is clamped to the map's rectangle in its texture, as Wicked Engine clamps to a light's atlas rectangle. A light's shadow opacity (Godot's `shadow_opacity`, on scene and directional lights) has one owner, `shading::shadow_sampling`'s `shadow_opacity_visibility` and `SHADOW_OPACITY_CUTOFF`: every receiver's visibility of a light is blended toward unshadowed by it, mix(1, visibility, opacity), and at or below the cutoff no visibility is looked up. The directional cascades and the local-light atlas use them. Every shadow kind culls casters as the camera does, as Bevy's shadow pipelines do and its bias assumes: a single-sided material casts from its front faces, a double-sided one from both. |
 | Material records | A material's values reach the GPU as one record, `Material` in `shading/material.wgsl`, mirrored by `MaterialUniform`: named fields, and flags as integer `MATERIAL_*` bits (unlit, double-sided, the maps it was added with, its alpha mode and, for a blended one, whether it receives screen-space reflections, and whether it scrolls its normal map). The scene packs it from the public typed `SurfaceMaterial` (named fields, `bool`s and the `AlphaMode` enum, whose `Blend { receives_screen_space_reflections }` carries the receiver flag where it applies, and `normal_layers`) and from the maps the material was added with, which no edit changes; group 2 binds it and the ray source holds the same record. No GPU layout is public. Normal layers are content (S3D-6): two `NormalLayer`s, each the material's repeating normal map at its own scale, moving across the surface at its velocity, its slopes taken at its strength, the two layers' slopes added (Barré-Brisebois and Hill's partial derivative blend), as Wicked Engine's water draws its normal map twice offset by its material's texture animation and Bevy's water example sums octaves of one map scrolled by velocity times time. The record holds each layer's speed as the whole repeats of its map it moves per animation period, rounded from the velocity and scale and at most 2^24, which `f32` holds exactly, so the frame's phase places it and nothing is uploaded per frame; how they move and blend is SGL3D's. A layer's time is the frame's, so a material moves in every view of a frame alike; nothing it changes is static content a cache holds (shadow layers hold depth, and bakes and probe captures stay the game's to take again), so it is no static edit. |
 | Scene records | An instance has one object record, declared in `shading::uniforms`, at its identity's index in the scene's object buffer, a storage buffer. Its flags are named bits; static or moving is one of them, never a range of indices. A deforming instance's record names its deformed vertices this frame and its positions in the last submitted frame. That index is the source identity the G-buffer stores and a ray hit reports; it names an instance within one frame only. Each instance of a draw reaches its record through its draw instance (`shading::vertex::DrawInstance`, a vertex buffer stepped per instance): the record's index and the drawn mesh's record in the ray source, as Bevy's batched draws reach each instance's `MeshUniform` from its instance index. A fragment reads the record at the source identity it carries. Instancing renumbers no instance. |
@@ -376,8 +418,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   in the forward pass, never from the G-buffer; environment specular and
   reflections are computed from it. Ambient occlusion is applied after the
   forward pass, by source completion, to the ambient diffuse (environment
-  diffuse and the hemisphere fill, or the dynamic GI volume's irradiance
-  where it stands in for them) that the pass records apart, as completion
+  diffuse and the hemisphere fill, or the irradiance volume's or the
+  dynamic GI volume's irradiance where it stands in for them) that the pass
+  records apart, as completion
   already occludes environment specular. Bevy, Godot, Filament and Wicked
   occlude only indirect light by default (Bevy 9d12036
   `pbr_fragment.wesl:538-548`, Godot b130438
@@ -471,7 +514,11 @@ code; it does not redeclare a struct, binding or function another module owns.
   surface's ambient diffuse that its ambient visibility hides out of the
   opaque colour, and occludes the specular it adds by the same visibility.
   Captures and ray hits have no ambient occlusion and keep their ambient
-  diffuse whole. A
+  diffuse whole. Where the irradiance volume lights a surface, its sky
+  visibility multiplies the visibility that specular occlusion takes, in
+  completion and in lit shading's environment specular alike, so captures
+  and ray hits take the sky's visibility alone
+  ([Irradiance volume](#designs-that-span-stages)). A
   screen-space method traces the surface ([Surface](#shared-contracts)),
   converted at its adapter, and returns premultiplied radiance and
   confidence ([D-17](decisions.md)); world-space rays, from the opaque
@@ -537,6 +584,152 @@ code; it does not redeclare a struct, binding or function another module owns.
   FSR2 and the tone map. Automatic exposure keeps its adapted correction as
   history, which takes its target when history restarts and when automatic
   exposure follows a fixed one.
+- **Irradiance volume.** Diffuse light the game computes over a lattice of
+  cells and keeps up by region (a voxel world's propagated sky and block
+  light at a metre, a level's bake), which every receiver within the lattice
+  samples by its position: a port of Bevy's irradiance volume (revision
+  9d12036: `crates/bevy_pbr/src/light_probe/irradiance_volume.rs`, the voxel
+  texture and its bindings, its layout at 36-57 and its case for ambient
+  cubes over spherical harmonics at 71-114; `irradiance_volume.wesl`, the
+  sample, 51-74; `light_probe.wesl`, the containing test and the border
+  weight, 126-141; `render/pbr_functions.wesl` 683-711, the lightmap, else
+  the volume, else the environment's diffuse; `bevy_light/src/probe.rs`
+  338-363, `IrradianceVolume`). Each cell is an ambient cube, Valve's six
+  colours along +X, −X, +Y, −Y, +Z and −Z (Mitchell 2006, as Bevy cites
+  it), the `AmbientCube` a moving instance carries, and a receiver takes the
+  three faces its normal points to, weighted by the normal's squared
+  components, as Bevy samples (irradiance_volume.wesl 59-73) and as
+  `ambient_cube_irradiance` already blends an instance's cube: one formula,
+  one owner. Taken: Bevy's one 3D texture of the six faces, (Rx, 2Ry, 3Rz),
+  the negative faces below the positive and the X, Y and Z faces in turn
+  along z (36-57), filtered by three hardware trilinear taps, which Bevy
+  chose its cells for over the fetches that packed spherical harmonics need
+  (84-95); the sample clamped to the edge cells' centres (54-57), so any
+  filtering sampler serves and `baked_sampler` does; values in irradiance /
+  PI on the directional lights' scale; and the volume's place between the
+  charts and the environment's diffuse. Changed, each a decision beside the
+  port's provenance: a face is one RGBA16F texel, not Bevy's RGB9E5: its rgb
+  the face's own light (irradiance / PI from the world's emitters, and
+  whatever bounce the game's field carries) and its a the sky's occlusion
+  toward that face, one less the share of the frame's ambient (the
+  environment's diffuse light and the hemisphere fill) that reaches the cell
+  from that side, so a zero texel is the fallback. The sky changes with the
+  frame, and a cell that holds it baked, as Bevy's do, rewrites every cell
+  when it does (78.6 MB over 160 × 128 × 160 m at 1 m in Bevy's format)
+  where a visibility rewrites none, as Frostbite's baker outputs sky
+  visibility beside its lightmaps and irradiance volumes (O'Donnell,
+  Precomputed Global Illumination in Frostbite, GDC 2018, p. 4) and
+  Unreal's stationary sky light bakes its occlusion as a bent normal so its
+  colour changes at runtime; the sky-specular occlusion below needs the
+  visibility apart from the colour; and RGB9E5 has no fourth channel, so a
+  visibility beside it costs a second texture and binding and either a
+  second set of taps (a face's visibility, 30 bytes a cell) or its direction
+  (a cell's, 25 bytes). RGBA16F holds both in one texture at three taps, 48
+  bytes a cell against Bevy's 24 (157 MB against 79 MB for that volume,
+  5.3 MB against 2.7 MB for a relight of 27 chunks of 16³), the encoding
+  every baked irradiance source shares (`irradiance_half`), its 10-bit
+  mantissa above RGB9E5's 9. RGBA8 in an sRGB encoding under a maximum the
+  game declares for the volume, Bevy's 24 bytes a cell, keeps the dark
+  values, the curve spending its codes on them, about two and a half
+  decades below that maximum; its cost is the maximum itself, a field of
+  the placement the game must choose and above which light clips, and the
+  range beneath it, so it is not taken while memory allows and is the
+  measured fallback should the consumer's route prove memory the limit
+  (Bevy's case against LDR cells, 84-95, is against a scale per cell, which
+  breaks the hardware's filter, not against one for the volume). A game
+  whose bake holds the sky,
+  as Bevy's Blender bakes do, writes it into rgb at an occlusion of 1 and
+  has Bevy's volume at a static sky. One volume, an axis-aligned lattice in
+  the render frame as the dynamic GI volume is, in place of Bevy's eight
+  transformed cubes blended per fragment: no consumer needs several or a
+  rotated one, and the determination has one place for it. A scroll
+  ([Scene content](#scene-content)) copies the cells that stay to their new
+  texels and clears the ones that enter, as Godot's SDFGI scrolls its
+  cascades' textures and probe history by a copy when its camera crosses a
+  cell (sdfgi_preprocess.glsl `MODE_SCROLL` 174-183, gi.cpp 2121-2175), in
+  one command buffer the scene submits at once, so the region writes the
+  game makes next land on the moved field; the faces share one texture,
+  whose filter cannot wrap within a slab, so the cells are not stored
+  toroidally as the dynamic GI volume's probes are, and Bevy's clamp stands.
+  Considered and not taken: stacking the six faces along y alone, (Rx, 6Ry,
+  Rz), whose x and z a sampler could repeat so a horizontal scroll moved no
+  cell; it is taken up only if the example's measurements show the scroll
+  copy hitching. The volume's share is 1 within the extent, fading to 0 over the one cell
+  past each face, as the dynamic GI volume's share fades past its edge,
+  through the one fade function (AR-2), so a receiver hands over to its
+  fallback without a seam; Bevy's falloff is not taken: its default is 0 and
+  its ramp lies inside the cube. Before the clamp the position is offset
+  along the receiver's geometry normal, not its shading normal, by half a
+  cell, the offset that lands a receiver on a cell face at the adjacent
+  cell's centre, so a voxel face reads the air cell before it, never the
+  solid one behind it, and the hardware filter smooths it across the face's
+  corners; the precedent is Godot's SDFGI `normal_bias` (gi.glsl 195; 1.1
+  cells by default, environment.h 161), while its VoxelGI's (gi.glsl 538)
+  defaults to 0 (voxel_gi.h 53). The faces are blended by the shading
+  normal, as Bevy's `N` and an instance's cube are. Not taken: Bevy's
+  `intensity` and `affects_lightmapped_meshes` (a charted receiver keeps its
+  bake, as with the dynamic GI volume) and its per-view clustering of
+  volumes. A receiver the volume lights takes a(n) × ambient(n) + rgb(n),
+  the blended visibility (one less the blended occlusion) and the blended
+  own light, in place of the environment's diffuse light and the hemisphere
+  fill, through the one path the dynamic GI volume's irradiance takes,
+  recorded apart as the ambient that ambient occlusion weights: a(n) scales
+  both terms of the ambient, of which the environment's keeps the surface's
+  `environment_scale` and the hemisphere fill has none, and rgb(n) takes no
+  `environment_scale`, as the dynamic GI volume's irradiance takes none; at
+  a dynamic GI probe's hit the field is taken whole, `DYNAMIC_GI_BOUNCE`
+  damping the dynamic GI volume's own share alone. The field holds the
+  metres-scale visibility of caves and overhangs, the screen-space occlusion
+  the sub-metre, as Godot occludes its VoxelGI's and SDFGI's ambient by its
+  AO (scene_forward_clustered.glsl 2141); the rest of its share, at its
+  border, comes from what follows it in the determination. Across its
+  extent it covers the dynamic GI volume and the ambient cubes: authored
+  light wins, an unwritten cell reading as the frame's ambient whole, and a
+  game that wants the dynamic GI volume or its cubes in a region leaves that
+  region uncovered. The sky's visibility occludes the sky's specular too, as
+  Frostbite's sky visibility and Unreal's baked sky occlusion occlude their
+  sky light (O'Donnell p. 4; Unreal's Sky Lights), where Bevy's volume
+  touches no specular: where the volume lights a receiver, a(n), the
+  visibility blended at its normal, multiplies the visibility from which
+  Lagarde's occlusion is derived (Lagarde and de Rousiers 2014; Filament's
+  `SpecularAO_Lagarde`, today `source_specular_occlusion` in
+  `stages/reflections/source.wgsl`, which moves into
+  `shading/specular_lobes.wgsl`, the one owner of the specular lobes, so
+  completion and `shade_lit` call one function, AR-1), for the sky's share
+  of a lobe's environment specular alone: a probe captured in the cave
+  already shows the cave, as Unreal's sky occlusion occludes its sky light
+  and not its reflection captures, so probe specular keeps the occlusion
+  completion derives from the ambient visibility. It applies in completion
+  for the camera's opaque surfaces, which read a(n) from the alpha of the
+  ambient target ([G-buffer](#shared-contracts)), in `shade_lit`'s
+  environment specular for probe captures, world-space ray hits and blended
+  surfaces, and in the sky's share of a receiver's traced lobe's fallback; a
+  surface without ambient occlusion (a capture, a hit) takes the sky's
+  visibility alone. It does not touch what a trace returned (the
+  screen-space method's radiance, a world-space ray's hit), which the scene
+  itself occludes, nor direct light from any light, nor emission. It is no
+  chart: a receiver it lights still takes baked scene lights, so a fixture
+  the game writes into the field is not also a scene light, or the game
+  leaves the field's share of it out, as for ambient cubes; and it is
+  game-authored lighting, which `FrameInput::baked_lighting` turns off with
+  the charts and cubes. It has no pass and takes no place in the stage
+  order: region writes go through the queue when the game makes them,
+  prepare uploads nothing for it, and lit group 0 lends its texture to
+  every view that shades, so the camera's opaque, masked and blended
+  surfaces (receivers included), probe captures, world-space ray hits and
+  the dynamic GI probes' hits sample one field. The fog's ambient share
+  does not sample it; Godot's volumetric fog takes its VoxelGI and SDFGI
+  (volumetric_fog_process.glsl 705-760), the practice to follow in a change
+  of its own. The game owns the field's values, lattice and extent, when it
+  scrolls and which regions it writes and when; SGL3D owns storage,
+  encoding, layout, upload, sampling and composition, and nothing about it
+  is a setting (S3D-6). It costs 48 bytes a cell, three 3D taps per
+  fragment it lights, each region write's six faces once through the queue
+  (one write per face slab, packed before the write on the game's thread)
+  and, on a scroll, one copy of the cells that
+  stay and a clear of the ones that enter; a frame uploads nothing. A
+  filtered RGBA16F 3D texture written and copied by region is core WebGPU,
+  so the browser runs the same volume within its `maxTextureDimension3D`.
 - **Dynamic diffuse GI.** Coloured bounce light from the frame's lights, the
   scene's lights, emitters and the sky on static and moving surfaces, from a
   volume of probes the game places ([Scene content](#scene-content)), kept up
@@ -619,8 +812,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   a receiver keeps its fallback, the volume's share fading to nothing over
   the one probe spacing past its edge, as RTXGI's volume blend weight fades,
   so no seam shows there. Lightmapped and atlas-charted static receivers
-  keep their bake and the ambient as before; moving instances and unbaked
-  static ones take the volume where it lights them. Ambient cubes stay as
+  keep their bake and the ambient as before, and a receiver the irradiance
+  volume lights keeps it ([Irradiance volume](#designs-that-span-stages));
+  moving instances and other unbaked receivers take the volume where it
+  lights them. Ambient cubes stay as
   the fallback beneath it: the volume takes precedence where it lights a
   receiver, and a moving instance's cube covers it elsewhere (no volume,
   the setting `Off`, beyond the volume's fade), as Wicked, Godot and Bevy
