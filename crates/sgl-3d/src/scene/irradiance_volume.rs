@@ -54,13 +54,14 @@ fn face_texel(face: usize, cell: [u32; 3], cells: [u32; 3]) -> wgpu::Origin3d {
 /// A 3D texture of `size` texels, every texel zero (the fallback).
 ///
 /// It is initialised at once, through `queue`, by a write of one zero
-/// texel, which clears the rest: wgpu-core 29 tracks a 3D texture's
+/// texel, which clears the rest, so no copy into it ever meets an
+/// uninitialised texture: wgpu-core 29 tracks a 3D texture's
 /// initialisation as one layer, which a queue write takes whole
 /// (device/queue.rs `write_texture`), but registers a command encoder's
 /// copy by its depth slices (command/transfer.rs `handle_texture_init`), so
-/// a scroll's copy at a nonzero depth into a texture not yet initialised
-/// leaves it marked uninitialised, and its next use clears what the copy
-/// wrote.
+/// a copy at a nonzero depth into a texture not yet initialised (a
+/// scroll's into a volume the game has not yet written) would leave it
+/// marked uninitialised, and its next use would clear what the copy wrote.
 fn zeroed(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -417,7 +418,11 @@ fn scroll(device: &wgpu::Device, queue: &wgpu::Queue, placement: &mut Placement,
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("irradiance volume scroll"),
     });
-    for axis in 0..3 {
+    // A move of the volume's size or more along an axis leaves no cell:
+    // one clear along that axis, and nothing to move along the others.
+    let whole = (0..3).find(|&axis| shift[axis].unsigned_abs() >= u64::from(cells[axis]));
+    let axes = whole.map_or(0..3, |axis| axis..axis + 1);
+    for axis in axes {
         let by = shift[axis];
         if by == 0 {
             continue;

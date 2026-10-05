@@ -1474,10 +1474,6 @@ scene.write_irradiance_cells(&queue, &region)?;
   walls stop reflecting the sky; specular probes, which a game captures
   where they are, keep theirs. A probe captured before a relight is the
   game's to capture again.
-- **Example.** [`examples/irradiance_volume.rs`](examples/irradiance_volume.rs)
-  lights a block world's cave from a propagated sky and torch light field at
-  a metre, relights a torch as a region write, scrolls the volume with the
-  camera and moves the render origin, and prints what each costs.
 - **Scrolling.** Install the same cell size and counts at a new origin: the
   volume moves by the nearest whole number of cells (read the placement back
   with `Scene::irradiance_volume`), keeps the cells that stay, and starts
@@ -1488,14 +1484,19 @@ scene.write_irradiance_cells(&queue, &region)?;
 - **Cost and limits.** 48 bytes a cell (160 × 128 × 160 cells, 157 MB), three
   3D taps per lit fragment, a region write's 48 bytes a cell through the
   queue, and on a scroll the cells that stay copied in place through a
-  stripe of 16 cells across the axis, which with a stripe of zeros stays
-  for each axis the volume has scrolled along (each about 3% of a volume
-  160 cells across it). The texture is
+  stripe 16 cells thick across the axis, which stays with a stripe of zeros
+  once for each axis scrolled along (each about 2% of a volume 160 cells
+  across it). The texture is
   `cells.x × 2 cells.y × 3 cells.z` texels within the device's
   `max_texture_dimension_3d` (2048 at WebGPU's default: 2048, 1024 and 682
   cells), else `SceneError::DeviceLimit`; a placement that is not a lattice
   is `SceneError::InvalidIrradianceVolume` and a region with invalid cells
   `SceneError::InvalidIrradianceRegion`. The browser runs the same volume.
+- **Example.** [`examples/irradiance_volume.rs`](examples/irradiance_volume.rs)
+  lights a block world's cave from a propagated sky and torch light field at
+  a metre, relights a torch as a region write, scrolls the volume with the
+  camera while the render origin follows it, and prints the per-pass GPU
+  time and what relights, scrolls and whole installs cost.
 
 ## Dynamic diffuse GI
 

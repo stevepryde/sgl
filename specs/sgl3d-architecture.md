@@ -767,10 +767,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   fragment it lights, each region write's six faces once through the queue
   (one write per face slab, packed before the write on the game's thread)
   and, on a scroll, two copies of the cells that stay (into the stripe and
-  out of it), a clear of the ones that enter and, for each axis it has
-  scrolled along, the stripe and a stripe of zeros; a frame uploads
-  nothing. A
-  filtered RGBA16F 3D texture written and copied by region is core WebGPU,
+  out of it), a clear of the ones that enter, and the stripe and a stripe
+  of zeros, kept once for each axis scrolled along; a frame uploads
+  nothing. A filtered RGBA16F 3D texture written and copied by region is core WebGPU,
   so the browser runs the same volume within its `maxTextureDimension3D`.
 - **Dynamic diffuse GI.** Coloured bounce light from the frame's lights, the
   scene's lights, emitters and the sky on static and moving surfaces, from a

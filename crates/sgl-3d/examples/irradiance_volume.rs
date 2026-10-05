@@ -575,7 +575,9 @@ fn completed<R>(gpu: (&wgpu::Device, &wgpu::Queue), call: impl FnOnce() -> R) ->
 
 /// A region of the world's cells from `min` of `size`, built and prepared
 /// on a worker thread: the region, and the times building and preparing it
-/// took.
+/// took. The example waits for it so that it can time the write that
+/// follows; a game sends the region back from its worker and writes it in
+/// a later frame, so the thread that renders never waits on the packing.
 fn prepare(
     world: &World,
     curves: &Curves,
@@ -836,9 +838,7 @@ impl Game {
         scene: &mut Scene,
         gpu: (&wgpu::Device, &wgpu::Queue),
     ) -> Result<(), Box<dyn Error>> {
-        let start = Instant::now();
         self.world.light_torches();
-        let _propagation = ms(start);
         let Some(volume) = self.volume else {
             return Ok(());
         };
@@ -1091,7 +1091,12 @@ fn walk(
     let mut timing = GpuTiming::new(device, queue);
     let mut times = Vec::new();
     let mut in_flight = None;
-    let name = if with_volume { "volume" } else { "ambient" };
+    let name = match (with_volume, night) {
+        (true, false) => "volume",
+        (false, false) => "ambient",
+        (true, true) => "volume-night",
+        (false, true) => "ambient-night",
+    };
     for frame in 0..frames {
         let seconds = frame as f64 * DT;
         game.follow(&mut scene, gpu, Game::eye(seconds))?;
