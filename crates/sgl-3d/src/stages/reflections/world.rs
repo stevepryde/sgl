@@ -144,11 +144,11 @@ pub(crate) struct WorldReflections {
     /// The trace's programs for each path its rays take, with its receivers
     /// at group 3.
     paths: TracePaths,
-    /// The trace's pipelines for each set of lit constants, path and
-    /// whether the rays reach static geometry (`world_reach_all`), each
+    /// The trace's pipelines for each set of lit constants, whether the
+    /// rays reach static geometry (`world_reach_all`) and path, each
     /// created when a frame first needs it, as the geometry pipelines
     /// specialise on the scene's rectangle lights and decals.
-    trace: HashMap<(LitConstants, Option<RayQueryForm>, bool), wgpu::RenderPipeline>,
+    trace: HashMap<((LitConstants, bool), Option<RayQueryForm>), wgpu::RenderPipeline>,
     resolve: Denoise,
     temporal: Denoise,
     upsample: Denoise,
@@ -277,51 +277,56 @@ impl WorldReflections {
         &self.targets.output
     }
 
-    /// The trace's pipeline compiled with `lit` for the path `form` takes,
-    /// its rays reaching static geometry where `all`.
+    /// Makes the trace's pipeline compiled with `lit` for the path
+    /// `hardware` takes, its rays reaching static geometry where `all`;
+    /// returns the path it took (`TracePaths::pipeline`).
     fn trace(
         &mut self,
         device: &wgpu::Device,
         lit: LitConstants,
-        form: Option<RayQueryForm>,
+        hardware: Option<HardwareRays<'_>>,
         all: bool,
-    ) -> &wgpu::RenderPipeline {
-        let TracePath { shader, layout, .. } = self.paths.path(device, form);
-        self.trace.entry((lit, form, all)).or_insert_with(|| {
-            let constants = [
-                lit.constants().as_slice(),
-                &[("world_reach_all", f64::from(u8::from(all)))],
-            ]
-            .concat();
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("world-space reflection rays"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some("fullscreen_vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("world_trace"),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &constants,
-                        ..Default::default()
+    ) -> Option<RayQueryForm> {
+        self.paths.pipeline(
+            device,
+            hardware,
+            (&mut self.trace, (lit, all)),
+            |TracePath { shader, layout, .. }| {
+                let constants = [
+                    lit.constants().as_slice(),
+                    &[("world_reach_all", f64::from(u8::from(all)))],
+                ]
+                .concat();
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("world-space reflection rays"),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some("fullscreen_vs"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
                     },
-                    targets: &[
-                        Some(crate::shading::gbuffer::COLOR.into()),
-                        Some(crate::shading::gbuffer::COLOR.into()),
-                        Some(wgpu::TextureFormat::R32Float.into()),
-                    ],
-                }),
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                multiview_mask: None,
-                cache: None,
-            })
-        })
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some("world_trace"),
+                        compilation_options: wgpu::PipelineCompilationOptions {
+                            constants: &constants,
+                            ..Default::default()
+                        },
+                        targets: &[
+                            Some(crate::shading::gbuffer::COLOR.into()),
+                            Some(crate::shading::gbuffer::COLOR.into()),
+                            Some(wgpu::TextureFormat::R32Float.into()),
+                        ],
+                    }),
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            },
+        )
     }
 
     /// `groups` are the camera's ray-hit lit group 0 (with the installed
@@ -343,9 +348,8 @@ impl WorldReflections {
         input: Inputs<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        let form = hardware.map(|rays| rays.form);
         let all = reach == WorldSpaceReflections::All;
-        self.trace(device, lit_constants, form, all);
+        let form = self.trace(device, lit_constants, hardware, all);
         let resized = self.targets.full != size;
         if resized {
             self.targets = Targets::new(device, size);
@@ -425,7 +429,7 @@ impl WorldReflections {
                 timestamp_writes: timing.and_then(|t| t.render_pass("world reflection rays")),
                 ..Default::default()
             });
-            pass.set_pipeline(&self.trace[&(lit_constants, form, all)]);
+            pass.set_pipeline(&self.trace[&((lit_constants, all), form)]);
             pass.set_bind_group(0, lit, &[]);
             pass.set_bind_group(1, scene, &[]);
             pass.set_bind_group(3, trace_group, &[]);

@@ -70,7 +70,7 @@ pub struct Renderer {
     post: Post,
     history: CameraHistory,
     /// The device traces rays in hardware, in this form.
-    ray_queries: Option<crate::shading::RayQueryForm>,
+    ray_form: Option<crate::view::trace_paths::DeviceRayForm>,
     /// Targets changed since the last finished frame: history restarts.
     pending_reset: bool,
     /// The scene of the last finished frame.
@@ -190,16 +190,20 @@ impl Renderer {
             layers,
         );
         let targets = SharedTargets::new(device, render, false);
-        // Every native backend runs the baseline form
-        // (`shading::RayQueryForm`).
-        let ray_queries = crate::scene::rays::acceleration::supported(device)
-            .then_some(crate::shading::RayQueryForm::Baseline);
+        // Metal runs the baseline form; Vulkan and DX12 the form recorded
+        // for backends that lower the candidate loop (`shading::LOWERED_FORM`).
+        let ray_form = crate::scene::rays::acceleration::supported(device).then(|| {
+            crate::view::trace_paths::DeviceRayForm::new(crate::shading::RayQueryForm::of_backend(
+                device.adapter_info().backend,
+                crate::shading::LOWERED_FORM,
+            ))
+        });
         let first_frame = effective::first_frame(
             settings,
             effective::Device {
                 fsr2_running: antialiasing.fsr2_running(),
                 fused_supported: pipelines.fused_supported,
-                ray_queries,
+                ray_queries: ray_form.as_ref().map(|form| form.form()),
             },
         );
         Ok(Self {
@@ -233,7 +237,7 @@ impl Renderer {
             shadows,
             fog,
             history: CameraHistory::default(),
-            ray_queries,
+            ray_form,
             pending_reset: false,
             last_scene: None,
             rendered: None,
@@ -394,20 +398,27 @@ impl Renderer {
     /// Whether the hardware path traces the scene's rays for `settings`:
     /// `Settings::hardware_ray_tracing` is on, the device has ray queries
     /// (`graphics_device::ray_tracing_features`) and nothing stopped it
-    /// (`ray_tracing_error`). Otherwise the portable BVHs trace them. The
+    /// (`ray_tracing_error`, but for a fall back to the baseline form,
+    /// which still traces). Otherwise the portable BVHs trace them. The
     /// saved choice is unchanged.
     pub fn ray_tracing_in_effect(&self, settings: &Settings) -> bool {
         settings.hardware_ray_tracing
-            && self.ray_queries.is_some()
+            && self.ray_form.is_some()
             && self.prepare.ray_tracing_error().is_none()
     }
 
     /// Why the hardware path did not trace the last rendered frame's rays
     /// although `Settings::hardware_ray_tracing` was on: the device has no
-    /// ray queries, or its memory could not hold the scene's TLAS. The
-    /// portable BVHs traced them instead.
+    /// ray queries, or its memory could not hold the scene's TLAS, and the
+    /// portable BVHs traced them instead; or why the device fell back from
+    /// the candidate form to the baseline form, which traced them.
     pub fn ray_tracing_error(&self) -> Option<&str> {
-        self.prepare.ray_tracing_error()
+        self.prepare.ray_tracing_error().or_else(|| {
+            self.prepare
+                .hardware_requested()
+                .then(|| self.ray_form.as_ref()?.failure())
+                .flatten()
+        })
     }
 
     #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -15,6 +15,23 @@ full API details.
 
 ## Unreleased
 
+### Hardware ray tracing gains a candidate form for Vulkan and DX12, off by default
+
+- **Scope:** `sgl-3d` hardware ray tracing (#23). Behind
+  `Settings::hardware_ray_tracing`, SGL3D now holds a second form of its
+  ray queries for backends whose shader compilers lower the hardware's
+  candidate loop (Vulkan, DX12): masked models join the acceleration
+  structures with their masked meshes not opaque, and the loop cuts out
+  their texels instead of the software BVHs. Every backend still runs the
+  baseline form by default, Metal always: the candidate form becomes the
+  Vulkan and DX12 default only once it is measured on their hardware, and
+  it has not yet run on any. Behaviour is unchanged on every backend.
+  `Renderer::ray_tracing_error` can now also report that a device fell
+  back from the candidate form to the baseline after a candidate program
+  failed to compile; `ray_tracing_in_effect` stays true then, since the
+  baseline still traces.
+- **Migration:** no game-code changes.
+
 ### Dynamic GI traces within a per-frame ray budget
 
 - **Scope:** `sgl-3d` dynamic GI (#185). A volume now traces at most a
