@@ -212,6 +212,7 @@ fn material(double_sided: bool) -> Material {
         wrap: [gltf::texture::WrappingMode::Repeat; 2],
         double_sided,
         unlit: false,
+        emits_into_gi: true,
         alpha: crate::AlphaMode::Opaque,
     }
 }

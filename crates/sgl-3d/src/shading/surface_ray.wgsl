@@ -210,14 +210,37 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
 // the reflection sky beyond them, as a probe capture's surfaces take it. A
 // probe ray's hit takes its diffuse light alone and the one light `random`
 // draws (probe_hit_light); other hits ignore `random`.
+//
+// A probe ray's hit on a material that does not emit into global
+// illumination (MATERIAL_EMITS_INTO_GI clear, from
+// SurfaceMaterial::emits_into_gi), a fixture a scene light stands for,
+// takes none of the light the material gives off itself: its emission, and
+// an unlit material's whole colour, all of which is its own light. That light
+// reaches the probes once, through the scene light and the hits it lights.
+// The hit still ends the ray, so the surface occludes, and a lit one still
+// reflects the light that reaches it, as Unity's emission GI flag None
+// keeps a glowing material's light out of its GI while the object stays a
+// GI contributor (MaterialGlobalIlluminationFlags.None, practice only).
+// Not taken: Godot's GeometryInstance3D.gi_mode, Unity's Contribute GI and
+// Unreal's Affect Dynamic Indirect Lighting, which take the whole object out
+// of GI, occluder and bounce too. A reflection ray's hit keeps it: a
+// reflection shows the fixture as it glows.
 fn shade_ray_hit(hit:SceneHit,outgoing:vec3<f32>,receiver:u32,random:vec3<f32>)->vec3<f32> {
  let material=scene_material(hit.material_word);
+ let probe_hit=receiver==SHADOW_RECEIVER_PROBE_HIT;
+ let own_light=!probe_hit || (material.values.flags&MATERIAL_EMITS_INTO_GI)!=0u;
+ let unlit=(material.values.flags&MATERIAL_UNLIT)!=0u;
+ if unlit && !own_light {
+  return vec3(0.);
+ }
  let base=ray_base_color(hit,material);
- let emission=ray_emission(hit,material);
- if (material.values.flags&MATERIAL_UNLIT)!=0u {
+ var emission=vec3(0.);
+ if own_light {
+  emission=ray_emission(hit,material);
+ }
+ if unlit {
   return shade_unlit(unlit_surface(base,emission)).color;
  }
- let probe_hit=receiver==SHADOW_RECEIVER_PROBE_HIT;
  let context=ShadeContext(vec2(0.),receiver,!probe_hit,cluster_range(hit.position,vec2(0.)),untraced_reflection());
  let s=ray_surface(hit,material,base,emission,outgoing,context.clusters);
  var color=shade_lit(s,context).color;

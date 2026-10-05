@@ -5,8 +5,9 @@
 //! damped, while light outside the room reaches no probe inside but through
 //! its shadow opacity or as a light that casts none, and the backs of
 //! single-sided walls keep the sky out of a room seen from within and an
-//! inside-out box's light in; its share fades over the spacing past its
-//! extent; the
+//! inside-out box's light in; a material that does not emit into GI gives
+//! the probes none of its own light, yet blocks their rays and reflects a
+//! lamp's light; its share fades over the spacing past its extent; the
 //! one determination puts it below charts and above ambient cubes, and in
 //! place of the frame's ambient; the probes continue across renderer resets,
 //! abandoned frames and render origin moves, light probe captures as the
@@ -372,63 +373,6 @@ fn an_open_volume_holds_the_hemisphere_fills_irradiance() {
         let up = normal.y * 0.5 + 0.5;
         assert!(close(answer[0], up, 0.02), "{normal}: {answer:?}");
         assert!(close(answer[2], 1. - up, 0.02), "{normal}: {answer:?}");
-    }
-}
-
-// A probe inside a closed room of black walls that emit `emission` sees that
-// radiance in every direction and nothing of the brighter environment
-// outside: the volume holds it as its irradiance / PI.
-#[test]
-fn a_volume_inside_an_emissive_room_holds_its_radiance() {
-    let Some((device, queue)) = test_support::device() else {
-        return;
-    };
-    let mut scene = Scene::new(&device, &queue);
-    let emission = [0.4, 0.2, 0.1];
-    let environment = uniform_environment(&device, &queue, &mut scene, [4.; 3]);
-    let mut room = test_support::cube();
-    room.materials[0].base = [0., 0., 0., 1.];
-    room.materials[0].metallic = 0.;
-    room.materials[0].emissive = emission;
-    let ids = scene.add_asset(&device, &queue, room).unwrap();
-    scene
-        .add_instance(
-            &device,
-            &queue,
-            InstanceState {
-                model: ids.model,
-                pose: Mat4::from_scale(Vec3::splat(10.)),
-                visible: true,
-                capture_visible: true,
-            },
-            Mobility::Static,
-        )
-        .unwrap();
-    scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
-    let mut input = input(Vec3::new(0., 0., 4.));
-    input.environment = Some(environment);
-    let settings = settings(DynamicGiQuality::High);
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
-    render(
-        &device,
-        &queue,
-        &mut renderer,
-        &mut scene,
-        &input,
-        &settings,
-        3,
-    );
-    for (query, answer) in queries()
-        .iter()
-        .zip(irradiance(&device, &queue, &renderer, &queries()))
-    {
-        assert_eq!(answer[3], 1., "{query:?}: the volume's share");
-        for channel in 0..3 {
-            assert!(
-                close(answer[channel], emission[channel], emission[channel] * 0.01),
-                "{query:?}: {answer:?}"
-            );
-        }
     }
 }
 
@@ -1325,6 +1269,96 @@ fn a_converged_volume_traces_nothing_until_what_its_light_follows_changes() {
             !renderer.test_dynamic_gi().test_paused(&device, &queue),
             "the scene's lights left out"
         );
+    }
+}
+
+// The probes on the hardware path (the architecture's Hardware ray
+// tracing), on a device with ray queries; reported unsupported, never
+// passed, elsewhere. Plausible defects: the trace's pipeline composing the
+// portable function set or binding no TLAS on the hardware path, or its
+// hits decoded wrongly there, which changes the light it converges to; and
+// a deforming instance's deformation not waking a converged volume while
+// the hardware path's rays see it, or waking it on the portable path,
+// whose rays see no deforming instance. The oracles: the light the
+// portable path converges to, which the tests above check, and whether the
+// frame after the deformation traces rays. The deforming cube lies sealed
+// under the floor, where no probe ray reaches, so both paths' light is
+// the same.
+#[test]
+fn a_deformation_wakes_a_converged_volume_while_the_hardware_path_traces() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let queries = [
+        (Vec3::new(0.3, -2.9, 0.4), Vec3::Y),
+        (Vec3::new(1.51, -2.5, 0.1), Vec3::X),
+        (Vec3::new(-2., 1., 0.5), Vec3::NEG_Y),
+    ];
+    let mut light = Vec::new();
+    for hardware in [false, true] {
+        let (mut scene, input, _) = floor_scene(&device, &queue);
+        let mut cube = test_support::cube();
+        cube.meshes[0].deformation.influences = vec![
+            crate::deformation::Influence {
+                joints: [0; 4],
+                weights: [1., 0., 0., 0.],
+            };
+            cube.meshes[0].vertices.len()
+        ];
+        let model = scene.add_asset(&device, &queue, cube).unwrap().model;
+        let deforming = scene
+            .add_instance(
+                &device,
+                &queue,
+                InstanceState {
+                    model,
+                    pose: Mat4::from_translation(Vec3::new(0., -10., 0.)),
+                    visible: true,
+                    capture_visible: true,
+                },
+                Mobility::Moving,
+            )
+            .unwrap();
+        let settings = Settings {
+            hardware_ray_tracing: hardware,
+            ..settings(DynamicGiQuality::High)
+        };
+        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let paused = render_until_paused(gpu, &mut renderer, &mut scene, &input, &settings, 400);
+        assert!(paused.is_some(), "hardware {hardware}: never paused");
+        assert_eq!(renderer.ray_tracing_in_effect(&settings), hardware);
+        light.push(irradiance(&device, &queue, &renderer, &queries));
+        scene
+            .set_instance_deformation(
+                &queue,
+                deforming,
+                &[Mat4::from_translation(Vec3::Y * 0.1)],
+                &[],
+            )
+            .unwrap();
+        render(
+            &device,
+            &queue,
+            &mut renderer,
+            &mut scene,
+            &input,
+            &settings,
+            1,
+        );
+        assert_eq!(
+            !renderer.test_dynamic_gi().test_paused(&device, &queue),
+            hardware,
+            "hardware {hardware}: a deformation wakes the volume"
+        );
+    }
+    for (portable, hardware) in light[0].iter().zip(&light[1]) {
+        for channel in 0..4 {
+            assert!(
+                close(hardware[channel], portable[channel], 0.02),
+                "hardware {hardware:?}, portable {portable:?}"
+            );
+        }
     }
 }
 
@@ -2431,4 +2465,136 @@ fn a_capture_takes_the_submitted_probes_not_an_abandoned_frames() {
         &settings,
     );
     assert_eq!(after, submitted, "scrolled back");
+}
+
+/// The volume's irradiance at `queries()` after three frames inside a closed
+/// room ten metres across, its walls `test_support::cube`'s with
+/// `material`'s changes, under an environment four times brighter than any
+/// wall, with a point light at its centre that casts no shadow when `lamp`.
+fn room_probes(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    material: impl FnOnce(&mut crate::asset::Material),
+    lamp: bool,
+) -> Vec<[f32; 4]> {
+    let mut scene = Scene::new(device, queue);
+    let environment = uniform_environment(device, queue, &mut scene, [4.; 3]);
+    add_cube(
+        device,
+        queue,
+        &mut scene,
+        Mat4::from_scale(Vec3::splat(10.)),
+        Mobility::Static,
+        material,
+    );
+    if lamp {
+        scene
+            .add_light(
+                device,
+                queue,
+                crate::Light {
+                    position: Vec3::ZERO,
+                    intensity: 50.,
+                    range: 30.,
+                    casts_shadow: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    }
+    scene.set_dynamic_gi_volume(device, Some(VOLUME)).unwrap();
+    let mut input = input(Vec3::new(0., 0., 4.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    render(
+        device,
+        queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        3,
+    );
+    let answers = irradiance(device, queue, &renderer, &queries());
+    assert!(answers.iter().all(|answer| answer[3] == 1.), "{answers:?}");
+    answers
+}
+
+// A fixture that a scene light stands for keeps its own light out of the
+// probes. A probe inside a closed room of walls that give off light sees that
+// radiance in every direction, so the volume holds it as its irradiance / PI:
+// a lit wall's emission, or an unlit wall's colour. With `emits_into_gi`
+// false it holds none of it, and none of the brighter environment outside
+// either, so the walls still block the probes' rays. Lit grey walls still
+// reflect a lamp's light into the probes as walls that give off none do.
+#[test]
+fn a_material_that_does_not_emit_into_gi_gives_the_probes_none_of_its_light() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let emission = [0.4, 0.2, 0.1];
+    let colour = [0.3, 0.15, 0.6];
+    for emits_into_gi in [true, false] {
+        let lit = room_probes(
+            &device,
+            &queue,
+            |material| {
+                material.base = [0., 0., 0., 1.];
+                material.metallic = 0.;
+                material.emissive = emission;
+                material.emits_into_gi = emits_into_gi;
+            },
+            false,
+        );
+        let unlit = room_probes(
+            &device,
+            &queue,
+            |material| {
+                material.unlit = true;
+                material.base = [colour[0], colour[1], colour[2], 1.];
+                material.emits_into_gi = emits_into_gi;
+            },
+            false,
+        );
+        for (radiance, answers) in [(emission, lit), (colour, unlit)] {
+            for (query, answer) in queries().iter().zip(answers) {
+                for channel in 0..3 {
+                    let expected = if emits_into_gi { radiance[channel] } else { 0. };
+                    assert!(
+                        close(answer[channel], expected, radiance[channel] * 0.01),
+                        "emits_into_gi {emits_into_gi}, {radiance:?}, {query:?}: {answer:?}"
+                    );
+                }
+            }
+        }
+    }
+    let grey = |material: &mut crate::asset::Material| {
+        material.base = [0.5, 0.5, 0.5, 1.];
+        material.metallic = 0.;
+        material.roughness = 1.;
+    };
+    let dark = room_probes(&device, &queue, grey, true);
+    let kept_out = room_probes(
+        &device,
+        &queue,
+        |material| {
+            grey(material);
+            material.emissive = emission;
+            material.emits_into_gi = false;
+        },
+        true,
+    );
+    for ((query, expected), answer) in queries().iter().zip(dark).zip(kept_out) {
+        assert!(
+            expected[0] > 0.01,
+            "{query:?}: the lamp's bounce {expected:?}"
+        );
+        for channel in 0..3 {
+            assert!(
+                close(answer[channel], expected[channel], expected[channel] * 0.01),
+                "{query:?}: {answer:?} against {expected:?}"
+            );
+        }
+    }
 }

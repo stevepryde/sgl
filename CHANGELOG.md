@@ -17,24 +17,90 @@ full API details.
 
 ### Model BVHs built by the surface area heuristic
 
-- **Scope:** `sgl-3d`: `PreparedModel::new` (and `Scene::add_asset`,
-  `add_model` and `set_model` through it) builds each model's ray BVH by
-  the binned surface area heuristic (Wald 2007) instead of a median split,
-  whose halves overlapped on long, thin triangles (#187). A portable scene
-  ray (world-space reflections, dynamic GI probe and visibility rays) visits
-  about half the BVH nodes and tests about a quarter of the triangles over
-  such content: a dynamic GI probe ray over Hyperdrive's track, 204 nodes
-  and 34 triangles before, 103 and 8 after (CPU replay). Instance BVHs keep
-  the median split, which builds fastest on the render thread, so
-  `add_instance` and static edits cost what they did. Hits are unchanged.
-  Building a model's BVH takes about three times as long (39 ms for a
-  134,000-triangle model on an Apple M5, 12 ms before), and the BVH takes
-  about 50 bytes a triangle of the ray source rather than 34.
-- **Migration:** no game-code changes. A game that prepares models under a
-  per-frame or per-tick budget (`PreparedModel::new` on its workers) should
-  check that budget, and one near its ray-source memory should check
-  `Scene::diagnostic_resources`. Afterwards, exercise the game's streaming
-  and model loading, and its world-space reflections and dynamic GI.
+- **Scope:** `sgl-3d`: `PreparedModel::new`, and `Scene::add_asset`, which
+  prepares on its calling thread, build each model's ray BVH by the binned
+  surface area heuristic (Wald 2007; nodes of four or fewer triangles stay
+  leaves, as in Embree's builder) instead of a median split, whose halves
+  overlapped on long, thin triangles (#187). `add_model` and `set_model`
+  take a prepared model and build nothing. A portable scene ray
+  (world-space reflections, dynamic GI probe and visibility rays) visits
+  about half the BVH nodes and tests about a third of the triangles over
+  such content: a dynamic GI probe ray over Hyperdrive's track visited 204
+  nodes and tested 34 triangles before, 101 and 10 after (CPU replay), and
+  its route's `dynamic GI rays` pass took 11.8 ms rather than 27.9 (Apple
+  M5). Instance BVHs keep the median split, which builds fastest on the
+  render thread, so `add_instance` and static edits cost what they did.
+  A ray's hit is unchanged, except that between two surfaces at exactly the
+  same distance along it, the one it meets first in the new tree's order
+  may differ. Preparing a model takes longer: a 134,000-triangle model's
+  BVH 25 ms rather than 13, and the 128×128 grid the `water` example's
+  `set-model` run prepares again every frame on the render thread 5.3 ms
+  rather than 4.9 (`PreparedModel::new` whole). The BVH takes about 41
+  bytes a triangle of the ray source on Hyperdrive's track rather than 36,
+  and as before on a grid or a block world.
+- **Migration:** no game-code changes. A game that replaces a model every
+  frame, or prepares models under a per-frame or per-tick budget, should
+  check that budget. Afterwards, exercise the game's streaming and model
+  loading, and its world-space reflections and dynamic GI.
+
+### Hardware-traced scene rays
+
+- **Scope:** `sgl-3d`: `Settings::hardware_ray_tracing` (now traces rays),
+  `Renderer::ray_tracing_in_effect` and `Renderer::ray_tracing_error`
+  (new), world-space reflections, the dynamic GI volume. The second step
+  of hardware ray tracing (roadmap 13, #23). With the setting on, on a
+  device with ray queries, world-space reflections' rays and the dynamic
+  GI volume's probe and visibility rays now trace the scene's acceleration
+  structures instead of the portable BVHs. They take the same acceptance
+  rules (sides, blended and hidden content, the reflecting surface's own
+  triangle, cut-out texels), and the portable BVHs now cover only the
+  instances the TLAS does not hold: models with a masked mesh, models whose
+  BLAS is pending, and what the device cannot hold (a deforming instance
+  the device cannot hold is seen by no ray). Unlike the portable
+  path, these rays see skinned and morphed instances, at their deformed
+  pose: deforming characters now appear in world-space reflections, cast
+  the dynamic GI volume's visibility shadows and block its rays, and their
+  animation counts as an edit that wakes a converged volume. Every native
+  backend runs one form of the trace (opaque queries, with a re-trace past
+  a hit the rules reject); a triangle at exactly a rejected one's distance,
+  such as back-to-back single-sided faces, may be skipped.
+  `Renderer::ray_tracing_in_effect(&settings)` says whether the hardware
+  path traces the rays; `Renderer::ray_tracing_error()` says why a frame
+  that asked for it traced the portable BVHs instead (no ray queries, or no
+  memory for the TLAS).
+- **Migration:** no game-code changes are required, and a game that does
+  not turn `Settings::hardware_ray_tracing` on renders as before. A game
+  that turned it on now gets hardware-traced world-space reflections and
+  dynamic GI; exercise both with its skinned characters in view, and a
+  dynamic GI volume about them, which now repaints as they animate. A game
+  that showed `Settings::hardware_ray_tracing` to players can report
+  `ray_tracing_in_effect` and `ray_tracing_error` beside it.
+
+### A material can keep its own light out of dynamic GI
+
+- **Scope:** `sgl-3d`: `asset::Material::emits_into_gi` and
+  `SurfaceMaterial::emits_into_gi` (new, `true` by default). A glowing
+  fixture that is also a scene light reached the dynamic GI volume twice:
+  its probes' rays met the fixture and took its light, and the light lit
+  the same surfaces. With the field `false`, a probe ray's hit on the
+  material takes none of the light it gives off itself (its emission, and
+  an unlit material's whole colour); the surface still blocks the ray and,
+  when lit, reflects the light that reaches it. World-space reflections
+  and probe captures still show it glowing.
+- **Migration:** no game-code changes for code that builds these structs
+  with `..Default::default()` or from `Scene::material`, and nothing renders
+  differently until a game sets the field `false`. Code that names every
+  field of `asset::Material` or `SurfaceMaterial` adds `emits_into_gi:
+  true`. To stop a fixture's light counting twice, set it `false` on the
+  materials of glowing geometry that a scene light stands for:
+
+  ```rust
+  // After, before Scene::add_asset
+  material.emits_into_gi = false; // a lamp panel with its own rectangle light
+  ```
+
+  Afterwards, with dynamic GI on, look at surfaces near those fixtures,
+  which take the fixtures' light once.
 
 ### A model may name any number of lightmap charts across its meshes
 

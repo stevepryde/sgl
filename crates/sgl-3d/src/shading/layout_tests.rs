@@ -39,7 +39,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 24] = [
+    let roots: [&'static super::Module; 22] = [
         &crate::view::pipelines::GEOMETRY,
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
@@ -52,7 +52,6 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::view::post_fx::INPUTS,
         &crate::stages::reflections::source::COMPLETION,
         &crate::stages::reflections::source::PROBE_CULLING,
-        &crate::stages::reflections::world::TRACE,
         &crate::stages::reflections::world::DENOISE,
         &crate::stages::post::smaa::SMAA,
         &crate::stages::probe_prefilter::PREFILTER,
@@ -61,7 +60,6 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::exposure::EXPOSURE,
         &crate::stages::deform::DEFORM,
         &crate::stages::dynamic_gi::ALLOCATE,
-        &crate::stages::dynamic_gi::TRACE,
         &crate::stages::dynamic_gi::UPDATE,
         &crate::stages::motion_blur::MOTION_BLUR,
     ];
@@ -70,18 +68,33 @@ fn programs() -> Vec<(&'static str, String)> {
         .chain(crate::stages::reflections::velvet::PROGRAMS)
         .map(|root| (root.name, compose(&[root])))
         .collect();
+    // The tracing stages' programs on each path their rays take, with the
+    // portable function set or the hardware form's query module as root
+    // (`ray_trace_root`); the hardware module's `enable` directive must
+    // reach the head.
+    let hardware = Some(super::RayQueryForm::Baseline);
+    let world = &crate::stages::reflections::world::TRACE;
+    let gi = &crate::stages::dynamic_gi::TRACE;
     programs.extend([
+        (world.name, compose(&[world, super::ray_trace_root(None)])),
+        (
+            "world_reflections_hardware",
+            compose(&[world, super::ray_trace_root(hardware)]),
+        ),
+        (gi.name, compose(&[gi, super::ray_trace_root(None)])),
+        (
+            "dynamic_gi_trace_hardware",
+            compose(&[gi, super::ray_trace_root(hardware)]),
+        ),
         (
             "scene_rays_portable_query",
-            compose(&[&crate::scene::rays::QUERY]),
+            compose(&[&crate::scene::rays::QUERY, super::ray_trace_root(None)]),
+        ),
+        (
+            "scene_rays_hardware_query",
+            compose(&[&crate::scene::rays::QUERY, super::ray_trace_root(hardware)]),
         ),
         ("lit_compute_library", crate::shading::lit_compute_library()),
-        // The hardware module after the portable walk, as a tracing pass
-        // composes them: its `enable` directive must reach the head.
-        (
-            "scene_rays_hardware",
-            compose(&[&super::SCENE_RAYS_PORTABLE, &super::SCENE_RAYS_HARDWARE]),
-        ),
     ]);
     #[cfg(feature = "diagnostics")]
     programs.extend([
@@ -374,6 +387,10 @@ fn rust_mirrors_match_wgsl_layouts() {
             "MATERIAL_NORMAL_LAYERS",
             super::material::MATERIAL_NORMAL_LAYERS,
         ),
+        (
+            "MATERIAL_EMITS_INTO_GI",
+            super::material::MATERIAL_EMITS_INTO_GI,
+        ),
     ] {
         assert_eq!(
             wgsl_constant(&uniforms, name),
@@ -632,7 +649,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         ),
         (
             "scene_rays_hardware",
-            &[&super::SCENE_RAYS_HARDWARE],
+            &[&super::SCENE_RAYS_QUERY_OPAQUE],
             3,
             numbers(&[bind::tlas_entry()]),
         ),

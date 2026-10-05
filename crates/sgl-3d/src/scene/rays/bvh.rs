@@ -6,14 +6,15 @@
 //! a model's BVH, whose leaf records name its triangles, and the instance
 //! BVHs (`instances`), whose leaf records name instance entries.
 //!
-//! Each level splits as a ray-tracing API builds its level (`Split`): a
-//! model's BVH, built once off the render thread, for fast traversal by the
-//! binned surface area heuristic (Wald 2007, "On fast construction of
-//! SAH-based bounding volume hierarchies"); the instance BVHs, built on the
-//! render thread every traced frame or after a static edit, for fast
-//! building by PBRT 4e's EqualCounts median split, as DXR and Vulkan
-//! applications build a TLAS to build fast and a static BLAS to trace fast
-//! (practice).
+//! Each level splits as Wicked Engine builds its acceleration structures
+//! (`Split`; 4323a33c `wiScene.cpp` 487, its TLAS `FLAG_PREFER_FAST_BUILD`,
+//! and `wiScene_Components.cpp` 1392, a static BLAS
+//! `FLAG_PREFER_FAST_TRACE`): a model's BVH, built once where it is
+//! prepared, for fast traversal by the binned surface area heuristic (Wald
+//! 2007, "On fast construction of SAH-based bounding volume hierarchies");
+//! the instance BVHs, rebuilt on the render thread every traced frame or
+//! after a static edit, for fast building by PBRT 4e's EqualCounts median
+//! split.
 use super::RayMesh;
 use glam::Vec3;
 
@@ -41,46 +42,56 @@ pub(super) const LEAF_PRIMITIVES: usize = 4;
 /// How a BVH splits its nodes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Split {
-    /// The binned surface area heuristic: a node's split is the cheapest
-    /// among the boundaries of `SAH_BINS` equal bins of its primitives'
-    /// centroid bounds along each axis, as the binned builder Godot ships
-    /// through Embree evaluates all three (b130438
-    /// `thirdparty/embree/kernels/builders/heuristic_binning.h`,
-    /// Apache-2.0; practice), each costed as Embree costs one, a traversal
-    /// as much as an intersection (`bvh_builder_sah.h` `travCost` and
-    /// `intCost`). A node of more than `LEAF_PRIMITIVES` always splits; a
-    /// smaller one is a leaf unless its split costs less. Primitives whose
-    /// centroids coincide, and nodes deeper than `MOST_SAH_DEPTH`, split at
-    /// their median. It replaced EqualCounts for models, whose halves
-    /// overlap on long, thin triangles (sgl#187: a dynamic GI probe ray over
+    /// The binned surface area heuristic: a node of more than
+    /// `LEAF_PRIMITIVES` splits at the cheapest of the boundaries of
+    /// `SAH_BINS` equal bins of its primitives' centroid bounds along each
+    /// axis, each side costed by its area times its primitives, as the
+    /// binned builder Godot ships through Embree evaluates all three axes
+    /// (b130438 `thirdparty/embree/kernels/builders/heuristic_binning.h`,
+    /// Apache-2.0; practice); a node of four or fewer is a leaf, as
+    /// Embree's Triangle4 builder never splits one (`bvh/bvh_builder_sah.cpp`
+    /// 453, its least leaf of four). Changed from Embree, measured on
+    /// Hyperdrive's route (sgl#187): it costs each primitive where Embree
+    /// costs blocks of four, and bins 16 where Embree bins 32
+    /// (`builders/bvh_builder_sah.h` 10); together they cost 5% more of its
+    /// dynamic GI rays' GPU time, and 32 bins alone a third more build time
+    /// for no fewer visits. PBRT 4e's leaf rule, which splits four or fewer
+    /// where that costs less, traced as fast but took a quarter more memory
+    /// and a fifth more visits in a forest's worst ray. Primitives whose
+    /// centroids coincide, and nodes at `MOST_SAH_DEPTH` and deeper, split
+    /// at their median. It replaced EqualCounts for models, whose halves
+    /// overlap on long, thin triangles: a dynamic GI probe ray over
     /// Hyperdrive's route visited 204 nodes and tested 34 triangles on the
-    /// CPU, 103 and 8 with this build).
+    /// CPU, 101 and 10 with this build.
     SurfaceArea,
     /// PBRT 4e's EqualCounts: the longest axis of the node's bounds, at the
-    /// median by centroid. A tree's size depends only on its primitive
-    /// count (`words`).
+    /// median by centroid (`median`). A tree's size depends only on its
+    /// primitive count (`words`).
     EqualCounts,
 }
 
 /// The bins along each axis of a node's centroid bounds: Wald 2007's 16.
 const SAH_BINS: usize = 16;
-/// A node's traversal cost in primitive intersections: Embree's default.
-const TRAVERSAL_COST: f32 = 1.;
-/// The depth past which a surface area split takes the median instead, so
+/// The depth from which a surface area split takes the median instead, so
 /// a tree's depth stays bounded however its primitives lie: twice Embree's
 /// `maxDepth`, past which Embree makes leaves. Hyperdrive's 134,000-triangle
 /// world reaches 25.
 const MOST_SAH_DEPTH: usize = 64;
+
+/// Where a node of `count` primitives splits at their median, or None for
+/// a leaf: EqualCounts, and a surface area split that no boundary serves.
+fn median(count: usize) -> Option<usize> {
+    (count > LEAF_PRIMITIVES).then_some(count / 2)
+}
 
 /// The words an EqualCounts BVH over `primitives` leaf records of `T`
 /// takes. It grows with their count: one more primitive splits no fewer
 /// nodes.
 pub(super) fn words<T>(primitives: usize) -> usize {
     fn nodes(primitives: usize) -> usize {
-        if primitives > LEAF_PRIMITIVES {
-            1 + nodes(primitives / 2) + nodes(primitives - primitives / 2)
-        } else {
-            1
+        match median(primitives) {
+            Some(middle) => 1 + nodes(middle) + nodes(primitives - middle),
+            None => 1,
         }
     }
     if primitives == 0 {
@@ -89,59 +100,89 @@ pub(super) fn words<T>(primitives: usize) -> usize {
     nodes(primitives) * NODE_WORDS + primitives * std::mem::size_of::<T>() / 4
 }
 
-fn centroid<T>(primitive: &Primitive<T>) -> Vec3 {
-    primitive.min * 0.5 + primitive.max * 0.5
-}
-
 /// Half the surface area of a box, which the SAH compares.
 fn half_area(min: Vec3, max: Vec3) -> f32 {
     let extent = (max - min).max(Vec3::ZERO);
     extent.x * extent.y + extent.y * extent.z + extent.z * extent.x
 }
 
-/// Splits `primitives` at their median by centroid along the longest axis
-/// of `min` to `max` (EqualCounts), or None for a leaf.
-fn split_median<T>(primitives: &mut [Primitive<T>], min: Vec3, max: Vec3) -> Option<usize> {
-    if primitives.len() <= LEAF_PRIMITIVES {
-        return None;
-    }
-    let middle = primitives.len() / 2;
-    let axis = (max - min).max_position();
-    primitives.select_nth_unstable_by(middle, |a, b| {
-        centroid(a)[axis].total_cmp(&centroid(b)[axis])
-    });
-    Some(middle)
+/// The bounds of a node's primitives and of their centroids, which a split
+/// finds for each child as it partitions them, as Embree's PrimInfo carries
+/// them, so no level passes over its primitives to bound them again.
+#[derive(Clone, Copy)]
+struct Bounds {
+    min: Vec3,
+    max: Vec3,
+    centroid_min: Vec3,
+    centroid_max: Vec3,
 }
 
-/// Where a node of `primitives`, bounded by `min` and `max`, splits them by
-/// the surface area heuristic, ordered so the first that many go left; None
-/// for a leaf.
-fn split_surface_area<T>(primitives: &mut [Primitive<T>], min: Vec3, max: Vec3) -> Option<usize> {
+impl Bounds {
+    const EMPTY: Self = Self {
+        min: Vec3::INFINITY,
+        max: Vec3::NEG_INFINITY,
+        centroid_min: Vec3::INFINITY,
+        centroid_max: Vec3::NEG_INFINITY,
+    };
+
+    fn add<T>(&mut self, p: &Primitive<T>) {
+        self.min = self.min.min(p.min);
+        self.max = self.max.max(p.max);
+        self.centroid_min = self.centroid_min.min(p.centroid);
+        self.centroid_max = self.centroid_max.max(p.centroid);
+    }
+
+    fn of<T>(primitives: &[Primitive<T>]) -> Self {
+        let mut bounds = Self::EMPTY;
+        for p in primitives {
+            bounds.add(p);
+        }
+        bounds
+    }
+}
+
+/// A node's split: how many of its reordered primitives go left, and the
+/// bounds of each side.
+type Halves = (usize, Bounds, Bounds);
+
+/// Splits `primitives`, bounded by `bounds`, at their median by centroid
+/// along its longest axis (EqualCounts), or None for a leaf.
+fn split_median<T>(primitives: &mut [Primitive<T>], bounds: &Bounds) -> Option<Halves> {
+    let middle = median(primitives.len())?;
+    let axis = (bounds.max - bounds.min).max_position();
+    primitives.select_nth_unstable_by(middle, |a, b| a.centroid[axis].total_cmp(&b.centroid[axis]));
+    let (left, right) = primitives.split_at(middle);
+    Some((middle, Bounds::of(left), Bounds::of(right)))
+}
+
+/// Where a node of `primitives`, bounded by `bounds`, splits them by the
+/// surface area heuristic, ordered so the first that many go left; None for
+/// a leaf.
+fn split_surface_area<T>(primitives: &mut [Primitive<T>], bounds: &Bounds) -> Option<Halves> {
     let count = primitives.len();
-    if count <= 1 {
+    if count <= LEAF_PRIMITIVES {
         return None;
     }
-    let (low, high) = primitives.iter().fold(
-        (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
-        |(low, high), p| (low.min(centroid(p)), high.max(centroid(p))),
+    let low = bounds.centroid_min;
+    let extent = bounds.centroid_max - low;
+    // Each axis's bins per unit, as Embree's BinMapping scales once a node;
+    // none along an axis the centroids do not span.
+    let scale = Vec3::select(
+        extent.cmpgt(Vec3::ZERO),
+        SAH_BINS as f32 / extent,
+        Vec3::ZERO,
     );
-    let extent = high - low;
     // Each centroid's bin along `axis`, the first at `low`, the last at
-    // `high`.
+    // the centroids' greatest.
     let bin = |p: &Primitive<T>, axis: usize| {
-        let at = (centroid(p)[axis] - low[axis]) / extent[axis] * SAH_BINS as f32;
-        (at as usize).min(SAH_BINS - 1)
+        (((p.centroid[axis] - low[axis]) * scale[axis]) as usize).min(SAH_BINS - 1)
     };
-    let empty = (
-        0,
-        Vec3::splat(f32::INFINITY),
-        Vec3::splat(f32::NEG_INFINITY),
-    );
+    let empty = (0, Vec3::INFINITY, Vec3::NEG_INFINITY);
     // Every axis's bins in one pass over the primitives.
     let mut bins = [[empty; SAH_BINS]; 3];
     for p in primitives.iter() {
         for (axis, bins) in bins.iter_mut().enumerate() {
-            if extent[axis] > 0. {
+            if scale[axis] > 0. {
                 let b = &mut bins[bin(p, axis)];
                 *b = (b.0 + 1, b.1.min(p.min), b.2.max(p.max));
             }
@@ -149,7 +190,7 @@ fn split_surface_area<T>(primitives: &mut [Primitive<T>], min: Vec3, max: Vec3) 
     }
     // The cheapest boundary: (cost, axis, the first bin to the right).
     let mut best: Option<(f32, usize, usize)> = None;
-    for axis in (0..3).filter(|&axis| extent[axis] > 0.) {
+    for axis in (0..3).filter(|&axis| scale[axis] > 0.) {
         let bins = &bins[axis];
         // Each boundary's left count and area, then its right ones.
         let mut left = [(0, 0.); SAH_BINS];
@@ -173,23 +214,23 @@ fn split_surface_area<T>(primitives: &mut [Primitive<T>], min: Vec3, max: Vec3) 
         }
     }
     // Coincident centroids: no boundary separates them.
-    let Some((cost, axis, first_right)) = best else {
-        return split_median(primitives, min, max);
+    let Some((_, axis, first_right)) = best else {
+        return split_median(primitives, bounds);
     };
-    let area = half_area(min, max);
-    let split_cost = TRAVERSAL_COST + if area > 0. { cost / area } else { 0. };
-    if count <= LEAF_PRIMITIVES && count as f32 <= split_cost {
-        return None;
-    }
-    // Partition by the same bins the costs counted.
+    // Partition by the same bins the costs counted, bounding each side.
+    let (mut left, mut right) = (Bounds::EMPTY, Bounds::EMPTY);
     let mut middle = 0;
     for at in 0..count {
-        if bin(&primitives[at], axis) < first_right {
+        let p = &primitives[at];
+        if bin(p, axis) < first_right {
+            left.add(p);
             primitives.swap(middle, at);
             middle += 1;
+        } else {
+            right.add(p);
         }
     }
-    Some(middle)
+    Some((middle, left, right))
 }
 
 /// Adds `by` to every word of the BVH `words` holds, as `append` laid it
@@ -221,11 +262,25 @@ struct LeafPrimitive {
     triangle: u32,
 }
 
-/// A primitive a BVH bounds, and its leaf record.
+/// A primitive a BVH bounds, its centroid, which the splits order it by,
+/// and its leaf record.
 pub(crate) struct Primitive<T> {
-    pub min: Vec3,
-    pub max: Vec3,
-    pub leaf: T,
+    min: Vec3,
+    max: Vec3,
+    centroid: Vec3,
+    leaf: T,
+}
+
+impl<T> Primitive<T> {
+    /// A primitive within `min` and `max`, finite, named by `leaf`.
+    pub fn new(min: Vec3, max: Vec3, leaf: T) -> Self {
+        Self {
+            min,
+            max,
+            centroid: min * 0.5 + max * 0.5,
+            leaf,
+        }
+    }
 }
 
 /// Appends the BVH of `meshes`' triangles to `words` by the surface area
@@ -238,14 +293,14 @@ pub(super) fn append(meshes: &[RayMesh<'_>], words: &mut Vec<u32>, base: u32) ->
         for (triangle, indices) in mesh.indices.chunks_exact(3).enumerate() {
             let p =
                 [0, 1, 2].map(|i| Vec3::from_array(mesh.vertices[indices[i] as usize].position));
-            primitives.push(Primitive {
-                min: p[0].min(p[1]).min(p[2]),
-                max: p[0].max(p[1]).max(p[2]),
-                leaf: LeafPrimitive {
+            primitives.push(Primitive::new(
+                p[0].min(p[1]).min(p[2]),
+                p[0].max(p[1]).max(p[2]),
+                LeafPrimitive {
                     mesh: mesh_id as u32,
                     triangle: triangle as u32,
                 },
-            });
+            ));
         }
     }
     append_primitives(&mut primitives, Split::SurfaceArea, words, base)
@@ -264,33 +319,30 @@ pub(super) fn append_primitives<T: bytemuck::Pod>(
         return 0;
     }
     let root = base + words.len() as u32;
-    build(primitives, (split, 0), words, base);
+    build(primitives, &Bounds::of(primitives), split, 0, words, base);
     root
 }
 
-/// Builds the subtree over `primitives`, `depth` below the root.
+/// Builds the subtree over `primitives`, bounded by `bounds`, `depth`
+/// below the root.
 fn build<T: bytemuck::Pod>(
     primitives: &mut [Primitive<T>],
-    (split, depth): (Split, usize),
+    bounds: &Bounds,
+    split: Split,
+    depth: usize,
     words: &mut Vec<u32>,
     base: u32,
 ) {
     let at = words.len();
     words.resize(at + NODE_WORDS, 0);
-    let min = primitives
-        .iter()
-        .fold(Vec3::splat(f32::INFINITY), |b, p| b.min(p.min));
-    let max = primitives
-        .iter()
-        .fold(Vec3::splat(f32::NEG_INFINITY), |b, p| b.max(p.max));
-    let middle = match split {
-        Split::SurfaceArea if depth < MOST_SAH_DEPTH => split_surface_area(primitives, min, max),
-        _ => split_median(primitives, min, max),
+    let halves = match split {
+        Split::SurfaceArea if depth < MOST_SAH_DEPTH => split_surface_area(primitives, bounds),
+        _ => split_median(primitives, bounds),
     };
-    let (count, first) = if let Some(middle) = middle {
+    let (count, first) = if let Some((middle, left_bounds, right_bounds)) = halves {
         let (left, right) = primitives.split_at_mut(middle);
-        build(left, (split, depth + 1), words, base);
-        build(right, (split, depth + 1), words, base);
+        build(left, &left_bounds, split, depth + 1, words, base);
+        build(right, &right_bounds, split, depth + 1, words, base);
         (0, 0)
     } else {
         let first = base + words.len() as u32;
@@ -302,8 +354,8 @@ fn build<T: bytemuck::Pod>(
     let node = Node {
         // Outward rounded bounds compensate representational rounding only;
         // they never enlarge the actual triangle or the caller's query interval.
-        min: min.to_array().map(|v| v.next_down().max(f32::MIN)),
-        max: max.to_array().map(|v| v.next_up().min(f32::MAX)),
+        min: bounds.min.to_array().map(|v| v.next_down().max(f32::MIN)),
+        max: bounds.max.to_array().map(|v| v.next_up().min(f32::MAX)),
         // Exclusive subtree end is also the next sibling/ancestor sibling. A
         // root's escape is the traversal bound, so there is no fixed-depth
         // stack.
@@ -431,11 +483,7 @@ mod tests {
             let mut primitives: Vec<Primitive<u32>> = bounds
                 .iter()
                 .enumerate()
-                .map(|(index, &[min, max])| Primitive {
-                    min,
-                    max,
-                    leaf: index as u32,
-                })
+                .map(|(index, &[min, max])| Primitive::new(min, max, index as u32))
                 .collect();
             let mut words = Vec::new();
             let root = append_primitives(&mut primitives, split, &mut words, 0);

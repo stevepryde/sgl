@@ -8,6 +8,7 @@
 //! scene, frame sequence and device.
 use super::{ALLOCATION_TRACED, Allocation, Convergence, DynamicGiChanges, TRACE, volume};
 use crate::diagnostics::DynamicGiReport;
+use crate::shading::RayQueryForm;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
 use std::collections::{HashMap, VecDeque};
@@ -87,12 +88,13 @@ pub(super) struct Observer {
 }
 
 impl Observer {
-    /// `lit`, `scene` and `trace` are the trace's groups 0, 1 and 3.
+    /// `lit` and `scene` are the trace's groups 0 and 1, and `trace` its
+    /// group 3's entries on the portable path.
     pub fn new(
         device: &wgpu::Device,
         lit: &wgpu::BindGroupLayout,
         scene: &wgpu::BindGroupLayout,
-        trace: &wgpu::BindGroupLayout,
+        trace: &[wgpu::BindGroupLayoutEntry],
     ) -> Self {
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
@@ -144,9 +146,13 @@ impl Observer {
                 },
             )],
         });
+        let trace = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("dynamic GI rays observed"),
+            entries: trace,
+        });
         let trace_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("dynamic GI rays observed"),
-            bind_group_layouts: &[Some(lit), Some(scene), Some(&costs_layout), Some(trace)],
+            bind_group_layouts: &[Some(lit), Some(scene), Some(&costs_layout), Some(&trace)],
             immediate_size: 0,
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -194,15 +200,17 @@ impl Observer {
     }
 
     /// The observer in `slot`, created on first use, while the frame is
-    /// observed and can be, with its trace's pipeline for `lit` ready.
-    /// `layouts` are the trace's groups 0 and 1, and its own group 3.
+    /// observed and can be, with its trace's pipeline for `lit` ready: the
+    /// portable path's alone (`form` none), whose walks it counts.
+    /// `layouts` are the trace's groups 0 and 1, and its own group 3's
+    /// entries.
     pub fn for_frame<'a>(
         slot: &'a mut Option<Self>,
-        (groups, trace): (&[wgpu::BindGroupLayout; 2], &wgpu::BindGroupLayout),
+        (groups, trace): (&[wgpu::BindGroupLayout; 2], &[wgpu::BindGroupLayoutEntry]),
         ctx: &FrameContext<'_>,
-        lit: LitConstants,
+        (lit, form): (LitConstants, Option<RayQueryForm>),
     ) -> Option<&'a mut Self> {
-        if !ctx.effective.dynamic_gi_observation {
+        if !ctx.effective.dynamic_gi_observation || form.is_some() {
             return None;
         }
         let observer =
@@ -233,7 +241,9 @@ impl Observer {
         self.trace.entry(lit).or_insert_with(|| {
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("dynamic GI rays observed"),
-                source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&TRACE]).into()),
+                source: wgpu::ShaderSource::Wgsl(
+                    crate::shading::compose(&[&TRACE, crate::shading::ray_trace_root(None)]).into(),
+                ),
             });
             let mut constants = lit.constants().to_vec();
             constants.push(("ray_observation_enabled", 1.));

@@ -21,7 +21,13 @@
 //! `--scroll` walks the camera along the room with a volume half as long
 //! that follows it, installed each frame with its origin moved by whole
 //! spacings, so it scrolls: the probes that stay keep their light, and those
-//! that enter start afresh. Printed numbers are diagnostics, not image QA.
+//! that enter start afresh. `--hardware-ray-tracing` opts in to hardware ray
+//! tracing: the device is requested with its feature
+//! (`graphics_device::ray_tracing_features`, under wgpu's experimental
+//! token) and `Settings::hardware_ray_tracing` is on, so a device that has
+//! it traces the probes' rays through the scene's acceleration structures;
+//! it prints whether it did (`Renderer::ray_tracing_in_effect`). Printed
+//! numbers are diagnostics, not image QA.
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, DynamicGiVolume, FrameInput, HemisphereLight,
@@ -44,6 +50,7 @@ struct Options {
     still: bool,
     scroll: bool,
     edit: Option<u32>,
+    hardware: bool,
 }
 
 impl Options {
@@ -58,6 +65,7 @@ impl Options {
             still: false,
             scroll: false,
             edit: None,
+            hardware: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -87,12 +95,13 @@ impl Options {
                 "--counters" => options.counters = true,
                 "--still" => options.still = true,
                 "--scroll" => options.scroll = true,
+                "--hardware-ray-tracing" => options.hardware = true,
                 "--edit" => {
                     options.edit = Some(args.next().ok_or("--edit requires a frame")?.parse()?)
                 }
                 "--help" | "-h" => {
                     println!(
-                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing] [--counters] [--still] [--scroll] [--edit N]"
+                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing] [--counters] [--still] [--scroll] [--edit N] [--hardware-ray-tracing]"
                     );
                     std::process::exit(0);
                 }
@@ -263,15 +272,28 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .request_adapter(&Default::default())
         .await?;
     let timestamps = options.timing && adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    let ray_tracing = if options.hardware {
+        sgl_3d::graphics_device::ray_tracing_features(&adapter)
+    } else {
+        wgpu::Features::empty()
+    };
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             required_features: sgl_3d::graphics_device::features(&adapter)
+                | ray_tracing
                 | if timestamps {
                     wgpu::Features::TIMESTAMP_QUERY
                 } else {
                     wgpu::Features::empty()
                 },
             required_limits: sgl_3d::graphics_device::limits(&adapter),
+            experimental_features: if options.hardware {
+                // SAFETY: with `--hardware-ray-tracing` the example accepts
+                // wgpu's experimental ray queries.
+                unsafe { wgpu::ExperimentalFeatures::enabled() }
+            } else {
+                wgpu::ExperimentalFeatures::disabled()
+            },
             ..Default::default()
         })
         .await?;
@@ -363,6 +385,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let output_view = output.create_view(&Default::default());
     let mut settings = Settings {
         dynamic_gi: options.quality,
+        hardware_ray_tracing: options.hardware,
         ..Settings::default()
     };
     settings.diagnostics.dynamic_gi = options.counters;
@@ -488,6 +511,15 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         probes[2],
         options.output.display()
     );
+    if options.hardware {
+        println!(
+            "hardware ray tracing in effect: {}{}",
+            renderer.ray_tracing_in_effect(&settings),
+            renderer
+                .ray_tracing_error()
+                .map_or(String::new(), |error| format!(" ({error})"))
+        );
+    }
     Ok(())
 }
 

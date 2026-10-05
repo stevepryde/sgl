@@ -112,9 +112,15 @@ struct FrameWork {
 pub(crate) struct AccelerationStructures {
     blases: Blases,
     tlas: wgpu::Tlas,
+    /// Changes whenever `tlas` is replaced, so that a tracing pass's cached
+    /// group binds the TLAS it holds (`CachedGroup::get_with_structures`).
+    tlas_generation: u64,
     /// The instances `tlas` can hold, and how many the last frame set.
     capacity: usize,
     held: usize,
+    /// Whether the last prepared frame's TLAS holds each entry, by index:
+    /// the portable walk covers the capture-visible instances it does not.
+    holds: Vec<bool>,
     frame: Option<FrameWork>,
 }
 
@@ -172,8 +178,10 @@ impl AccelerationStructures {
         Some(Self {
             blases: Blases::default(),
             tlas: tlas(device, 1)?,
+            tlas_generation: crate::scene::next_generation(),
             capacity: 1,
             held: 0,
+            holds: Vec::new(),
             frame: None,
         })
     }
@@ -294,6 +302,7 @@ impl AccelerationStructures {
             && let Some(grown) = tlas(device, capacity)
         {
             self.tlas = grown;
+            self.tlas_generation = crate::scene::next_generation();
             self.capacity = capacity;
             self.held = 0;
         }
@@ -310,6 +319,13 @@ impl AccelerationStructures {
     /// Sets the TLAS's instances to `held`, each named by its entry's
     /// index, and clears the slots the last frame set beyond them.
     fn hold(&mut self, held: &[TlasEntry]) {
+        self.holds.clear();
+        for entry in held {
+            if self.holds.len() <= entry.index {
+                self.holds.resize(entry.index + 1, false);
+            }
+            self.holds[entry.index] = true;
+        }
         for (slot, entry) in held.iter().enumerate() {
             self.tlas[slot] = Some(wgpu::TlasInstance::new(
                 &entry.blas,
@@ -352,10 +368,16 @@ impl AccelerationStructures {
         }
     }
 
-    /// The TLAS, which a tracing pass binds.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub fn tlas(&self) -> &wgpu::Tlas {
-        &self.tlas
+    /// The TLAS, which a tracing pass binds, and its generation, which
+    /// changes whenever it is replaced.
+    pub fn tlas(&self) -> (&wgpu::Tlas, u64) {
+        (&self.tlas, self.tlas_generation)
+    }
+
+    /// Whether the last prepared frame's TLAS holds the instance whose
+    /// entry is at `index`.
+    pub fn holds(&self, index: usize) -> bool {
+        self.holds.get(index).copied().unwrap_or(false)
     }
 
     /// The BLASes it holds and their triangles.

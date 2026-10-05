@@ -6,8 +6,11 @@ use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, FogQuality, ReflectionMethod, RenderPreset,
     ScreenSpaceReflections, Settings, ShadowQuality,
 };
+use crate::shading::RayQueryForm;
 use crate::stages::reflections::velvet;
-use crate::view::effective::{AmbientOcclusion, Effective, ScreenSpace, ShadowFilter, Sizing};
+use crate::view::effective::{
+    AmbientOcclusion, Effective, HardwareRayTracing, ScreenSpace, ShadowFilter, Sizing,
+};
 use crate::view::pipelines::LayerConstants;
 
 /// The size-affecting choices of `settings`.
@@ -100,8 +103,9 @@ pub(super) struct Device {
     pub fsr2_running: bool,
     /// It has the fused pass's attachments.
     pub fused_supported: bool,
-    /// It traces rays in hardware (`scene::rays::acceleration::supported`).
-    pub ray_queries: bool,
+    /// It traces rays in hardware, in this form
+    /// (`scene::rays::acceleration::supported`).
+    pub ray_queries: Option<RayQueryForm>,
 }
 
 /// What a frame's scene holds that its effective configuration follows.
@@ -212,7 +216,11 @@ pub(super) fn resolve(
         ambient_occlusion,
         screen_space,
         world_space: settings.world_space_reflections && screen_space.is_some(),
-        hardware_ray_tracing: ray_queries && settings.hardware_ray_tracing,
+        hardware_ray_tracing: match (settings.hardware_ray_tracing, ray_queries) {
+            (false, _) => HardwareRayTracing::Off,
+            (true, None) => HardwareRayTracing::Unsupported,
+            (true, Some(form)) => HardwareRayTracing::On(form),
+        },
         receivers: content.receivers
             && (screen_space.is_some() || taa || fsr2 || motion_blur.is_some()),
         fused: fused_supported && !disable.fused_opaque,

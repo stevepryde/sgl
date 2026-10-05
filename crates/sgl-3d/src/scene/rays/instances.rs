@@ -2,10 +2,12 @@
 //! identity's index, holding what its object record lacks (its model's ray
 //! words and its inverse pose), and two instance BVHs, static and moving,
 //! over the posed model bounds of the capture-visible instances of each kind
-//! that do not deform, whose leaves name entries. Two-level, as DXR and
+//! that do not deform, on a frame the hardware path traces those its TLAS
+//! does not hold alone, whose leaves name entries. Two-level, as DXR and
 //! Vulkan acceleration structures, Bevy's ray-traced scene and Wicked
 //! Engine's hardware path are (Wald et al. 2003; Meister et al. 2021,
-//! §5.3.3).
+//! §5.3.3). A deforming instance's entry, which only the hardware path
+//! reads, is written as any other.
 //!
 //! Entries set since the last traced frame are uploaded together: one write
 //! of them, packed, and a copy of each run of consecutive indices to its
@@ -17,7 +19,9 @@
 //! built on the CPU with the model BVHs' builder and node record (`bvh`),
 //! each into its own range of the source, kept until it outgrows it: the
 //! moving one on every traced frame and the static one on the first traced
-//! frame after a static edit. They are rebuilt rather than refitted, as Bevy
+//! frame after a static edit or a change of the static instances it covers
+//! (a model's ray class, a pending BLAS built, an instance left out, the
+//! hardware path turned on or off). They are rebuilt rather than refitted, as Bevy
 //! (`scene/binder/tlas.rs`) and Wicked Engine 2ff1d9e
 //! (`wiRenderer.cpp`, `UpdateRaytracingAccelerationStructures`) rebuild
 //! their TLAS every frame and NVIDIA's and AMD's ray-tracing guides advise.
@@ -55,18 +59,27 @@ pub(crate) struct InstanceLeaf {
 /// An instance an instance BVH bounds (`bounded`).
 pub(crate) type Bounded = Primitive<InstanceLeaf>;
 
+/// A static BVH to build: over `instances`, the scene's static instances
+/// after `edits` static edits (`StaticEdits::edits`), whose entries are
+/// `covered`, in index order.
+pub(crate) struct StaticBuild<'a> {
+    pub instances: &'a mut [Bounded],
+    pub edits: u64,
+    pub covered: Vec<u32>,
+}
+
 /// Instance `index`, whose model has triangles within `bounds`, at `pose`,
 /// bounded by `posed_bounds`, which holds the posed model whatever the
 /// rounding.
 pub(crate) fn bounded(index: usize, bounds: [Vec3; 2], pose: Mat4) -> Bounded {
     let [min, max] = posed_bounds(bounds, pose);
-    Primitive {
+    Primitive::new(
         min,
         max,
-        leaf: InstanceLeaf {
+        InstanceLeaf {
             index: index as u32,
         },
-    }
+    )
 }
 
 /// One instance BVH: its range of the source and its root, zero when it
@@ -134,6 +147,8 @@ pub(crate) struct RayInstances {
     /// The static edits the static BVH bounds the scene after (`StaticEdits::
     /// edits`); none until it is built in its current range.
     statics_built: Option<u64>,
+    /// The entries of the static instances it bounds, in index order.
+    statics_covered: Vec<u32>,
     /// The roots the source's header names.
     roots: [u32; 2],
     /// A build's words.
@@ -153,6 +168,7 @@ impl RayInstances {
             statics: InstanceBvh::default(),
             moving: InstanceBvh::default(),
             statics_built: None,
+            statics_covered: Vec::new(),
             roots: [0; 2],
             words: Vec::new(),
         }
@@ -246,31 +262,33 @@ impl RayInstances {
         self.statics_built = None;
     }
 
-    /// Whether the static BVH must be built again after `edits` static
-    /// edits (`StaticEdits::edits`).
-    pub fn statics_stale(&self, edits: u64) -> bool {
-        self.statics_built != Some(edits)
+    /// Whether the static BVH must be built again to bound the static
+    /// instances whose entries are `covered`, in index order, after `edits`
+    /// static edits (`StaticEdits::edits`).
+    pub fn statics_stale(&self, edits: u64, covered: &[u32]) -> bool {
+        self.statics_built != Some(edits) || self.statics_covered != covered
     }
 
     /// Before a traced frame: uploads the entries set since the last update,
-    /// builds the moving BVH over `moving` and, given them, the static BVH
-    /// over the scene's static instances after `edits` static edits, and
-    /// names their roots in the header. Through the queue, never a frame's
-    /// encoder, so an abandoned frame loses none of it.
+    /// builds the moving BVH over `moving` and, given one, the static BVH,
+    /// and names their roots in the header. Through the queue, never a
+    /// frame's encoder, so an abandoned frame loses none of it.
     pub fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         rays: &SceneRays,
-        statics: Option<(&mut [Bounded], u64)>,
+        statics: Option<StaticBuild<'_>>,
         moving: &mut [Bounded],
     ) {
         self.upload_entries(device, queue);
-        if let Some((statics, edits)) = statics {
+        if let Some(statics) = statics {
             step(BuildStep::StaticInstanceBvh, || {
-                self.statics.build(queue, rays, statics, &mut self.words)
+                self.statics
+                    .build(queue, rays, statics.instances, &mut self.words)
             });
-            self.statics_built = Some(edits);
+            self.statics_built = Some(statics.edits);
+            self.statics_covered = statics.covered;
         }
         step(BuildStep::MovingInstanceBvh, || {
             self.moving.build(queue, rays, moving, &mut self.words)

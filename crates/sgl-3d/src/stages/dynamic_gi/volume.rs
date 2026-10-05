@@ -7,7 +7,8 @@ use crate::shading::dynamic_gi as layout;
 /// The bind group layouts of the stage's own groups.
 pub(super) struct Layouts {
     pub allocate: wgpu::BindGroupLayout,
-    pub trace: wgpu::BindGroupLayout,
+    /// The trace's group 3, which `TracePaths` lays out for each path.
+    pub trace: [wgpu::BindGroupLayoutEntry; 3],
     pub update: wgpu::BindGroupLayout,
 }
 
@@ -78,14 +79,11 @@ impl Layouts {
                     storage(8, false),
                 ],
             ),
-            trace: layout(
-                "dynamic GI rays",
-                &[
-                    uniform,
-                    rays(1),
-                    written(2, wgpu::TextureFormat::Rgba32Uint),
-                ],
-            ),
+            trace: [
+                uniform,
+                rays(1),
+                written(2, wgpu::TextureFormat::Rgba32Uint),
+            ],
             update: layout(
                 "dynamic GI blend",
                 &[
@@ -139,12 +137,12 @@ pub(super) struct Volume {
 /// bind them.
 pub(super) struct Rays {
     pub allocate: wgpu::BindGroup,
-    pub trace: wgpu::BindGroup,
-    pub update: wgpu::BindGroup,
-    /// The list, which an observed frame's sums read (feature
-    /// `diagnostics`).
-    #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
+    /// The list the allocation writes and the trace reads, and the results
+    /// the trace writes, which the trace's group 3 binds
+    /// (`Layouts::trace`).
     pub list: wgpu::TextureView,
+    pub results: wgpu::TextureView,
+    pub update: wgpu::BindGroup,
 }
 
 fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -322,11 +320,6 @@ impl Volume {
                     buffer(8, &self.convergence),
                 ],
             ),
-            trace: group(
-                "dynamic GI rays",
-                &layouts.trace,
-                &[buffer(0, uniform), view(1, &list), view(2, &results)],
-            ),
             update: group(
                 "dynamic GI blend",
                 &layouts.update,
@@ -343,6 +336,7 @@ impl Volume {
                 ],
             ),
             list,
+            results,
         }
     }
 }

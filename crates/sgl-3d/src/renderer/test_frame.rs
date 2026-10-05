@@ -31,6 +31,11 @@ macro_rules! context {
             bindings: &mut $renderer.bindings,
             pipelines: &$renderer.pipelines,
             history: $frame.history,
+            hardware_rays: crate::view::frame::HardwareRays::of(
+                &$frame.effective,
+                $scene,
+                $renderer.prepare.hardware_rays(),
+            ),
         }
     };
 }

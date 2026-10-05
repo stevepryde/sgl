@@ -6,6 +6,7 @@ use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, ReflectionMethod,
     ShadowQuality, SmaaQuality,
 };
+use crate::shading::RayQueryForm;
 
 /// The filter the camera's surfaces take their shadows with
 /// (`shadow_filter` in shadow_sampling.wgsl).
@@ -30,6 +31,19 @@ pub(crate) struct Sizing {
     /// Bloom's targets start full size (the High preset), else 1×1; bloom
     /// sizes them each frame for whether it runs.
     pub bloom_targets: bool,
+}
+
+/// The hardware path as the settings and the device resolve it (the
+/// architecture's Hardware ray tracing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HardwareRayTracing {
+    /// `Settings::hardware_ray_tracing` is off.
+    Off,
+    /// It is on, and the device has no ray queries
+    /// (`graphics_device::ray_tracing_features`).
+    Unsupported,
+    /// It is on, and the device traces rays in this form.
+    On(RayQueryForm),
 }
 
 /// The screen-space reflection method that runs.
@@ -74,10 +88,10 @@ pub(crate) struct Effective {
     /// World-space rays fill the screen-space method's misses (only with a
     /// method).
     pub world_space: bool,
-    /// The scene keeps its acceleration structures for hardware ray
-    /// tracing, built on the frames that trace rays: the device has ray
-    /// queries and `Settings::hardware_ray_tracing` is on.
-    pub hardware_ray_tracing: bool,
+    /// The hardware path: while it is on, the scene keeps its acceleration
+    /// structures, built on the frames that trace rays, whose rays then
+    /// trace through them.
+    pub hardware_ray_tracing: HardwareRayTracing,
     /// The receiver pass runs: the scene holds a blended receiver of
     /// screen-space reflections, and a screen-space method, TAA, FSR2 or
     /// motion blur reads the surface it draws.
