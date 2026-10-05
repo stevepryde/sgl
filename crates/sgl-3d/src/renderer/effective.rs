@@ -253,6 +253,8 @@ pub(super) fn resolve(
         source_environment: !disable.source_environment,
         #[cfg(feature = "diagnostics")]
         frame_probe: diagnostics.frame_probe,
+        #[cfg(feature = "diagnostics")]
+        dynamic_gi_observation: diagnostics.dynamic_gi,
         capture_tone_target: diagnostics.frame_probe || diagnostics.capture_tone_target,
     }
 }

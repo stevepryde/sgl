@@ -7,6 +7,7 @@ use crate::InstanceId;
 use crate::content::identity::Identity;
 pub use crate::counters::{BuildStep, Counters, StepTime, UploadSite};
 pub use crate::scene::SceneResources;
+pub use crate::stages::dynamic_gi::DynamicGiChanges;
 
 /// What the library counted on this thread since it started. Take two and
 /// `Counters::since` for what a frame or an operation cost.
@@ -52,6 +53,57 @@ pub struct ViewTimes {
 pub struct ViewTime {
     pub build_ms: f64,
     pub encode_ms: f64,
+}
+
+/// One frame of the dynamic GI stage, observed (`Diagnostics::dynamic_gi`,
+/// `Renderer::take_dynamic_gi_reports`). A probe's rays are those its
+/// irradiance takes; its fixed rays classify it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DynamicGiReport {
+    /// The volume's probes, those that traced rays, and those not yet
+    /// blended.
+    pub probes: u32,
+    pub traced_probes: u32,
+    pub unblended_probes: u32,
+    /// The rays, fixed rays included, the blended probes asked for on
+    /// their turns at their own periods, and the stride the frame
+    /// lengthened every period by so they fit the frame's budget beside the
+    /// probes that start.
+    pub blended_requests: u32,
+    pub stride: u32,
+    /// The probes that traced, by how many rays each traced beside its
+    /// fixed rays: 4, 5–8, 9–16, 17–32, 33–64, 65–128, 129–255 and 256.
+    pub probes_by_rays: [u32; 8],
+    /// The rays and fixed rays traced, and those of them that hit.
+    pub rays: u32,
+    pub fixed_rays: u32,
+    pub hits: u32,
+    /// The visibility rays the rays' hits cast toward the light each drew.
+    pub visibility_rays: u32,
+    /// The BVH nodes the rays and fixed rays visited, and the most one of
+    /// them visited.
+    pub ray_visits: u64,
+    pub most_ray_visits: u32,
+    /// The BVH nodes the visibility rays visited, and the most one visited.
+    pub visibility_visits: u64,
+    pub most_visibility_visits: u32,
+    /// The queries of either kind that stopped at the most nodes a ray
+    /// visits (AR-12), or at a link that does not lead forward, and so
+    /// reported a miss.
+    pub exhausted_queries: u32,
+    /// Whether the volume paused, tracing nothing, having converged while
+    /// what its light follows held still, and whether it has converged
+    /// after the frame.
+    pub paused: bool,
+    pub converged: bool,
+    /// What its light follows that changed since the last frame that ran
+    /// it.
+    pub changes: DynamicGiChanges,
+    /// The whole spacings it scrolled by since that frame.
+    pub scrolled: [i32; 3],
+    /// The moving instances' bounds about which its probes trace as active
+    /// ones.
+    pub moving_bounds: u32,
 }
 
 /// The value `DiagnosticTarget::SourceId`'s R channel holds for `instance`'s

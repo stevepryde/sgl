@@ -969,20 +969,41 @@ code; it does not redeclare a struct, binding or function another module owns.
   bounce is kept, without df44c3d's further division by π, which dims every
   bounce by π: the colour map holds irradiance / π, what a hit reflects per
   unit of its diffuse colour, as 95e357f bounces it. The stage runs first
-  after prepare ([Frame](#frame)). It allocates each probe's rays as
-  Wicked's allocation does: the tier's most rays scaled by the probe's
+  after prepare ([Frame](#frame)). Each probe asks for rays as Wicked's
+  allocation does: the tier's most rays scaled by the probe's
   inconsistency, a tenth of that outside the camera's frustum, in buckets
-  of four and at least four; a probe not yet blended at the tier's most, as
+  of four and at least four; a probe not yet blended the tier's most, as
   Wicked serves every probe on the first frame after a restart, and a probe
-  that enters by a scroll likewise; so a volume whose light has settled
-  costs what its probes' remaining inconsistency asks and a changed one
-  ramps to the most and back. One improvement on Wicked (RD-2): where Wicked
-  starts every probe of a restarted volume in one frame, a hitch on a large
-  volume, a frame starts no more probes not yet blended than a fixed budget
-  of rays holds at the tier's most, the nearest the camera first (a
-  histogram of their distances in the least spacing); a probe not yet
-  started traces nothing and weighs nothing, so its receivers keep their
-  fallback, and the blends run over the probes that traced, which
+  that enters by a scroll likewise. A frame traces at most the tier's
+  budget of rays, its fixed rays included: 128 probes at the tier's most,
+  as Wicked's surfel GI traces at most its `SURFEL_RAY_BUDGET` a frame
+  (4323a33c), which #120 had left to the per-probe maximum alone. A blended
+  probe traces on its turn alone, once in a period that grows with the
+  log2 of its distance from the camera in the least spacing, from every
+  frame within one spacing to every eighth at 128 and doubling beyond to
+  every 32nd, at a phase its hash staggers, as Wicked's surfels re-trace by
+  their distance level (`SURFEL_RAY_UPDATE_PERIOD_MAX` and `_CAP`), keeping
+  its light between turns; so a volume whose content keeps moving costs at
+  most its budget, its near probes keeping up the most. Two improvements on
+  Wicked (RD-2). Where its requests past the budget trace nothing in
+  dispatch order, so some may starve, every period is lengthened by the
+  least power of two under which the blended probes' requests on their
+  turns fit the budget beside the probes that start, so each probe keeps
+  its turns, near ones the more often; what still exceeds the budget traces
+  nothing, as Wicked's. A probe whose light is changing takes its turns the more often, its
+  period shortened by its most inconsistent texel's inconsistency toward
+  one (every frame at full inconsistency, its distance's period once
+  settled), so a lamp moved is answered near the speed of tracing every
+  probe every frame; neither Wicked nor RTXGI shortens periods (Wicked's
+  inconsistency sets rays per turn, RTXGI leaves scheduling to the
+  application), so this is SGL3D's own, kept within the budget by the same
+  stride. And where Wicked starts every probe of a restarted
+  volume in one frame, a hitch on a large volume, probes not yet blended
+  start at the tier's most, the nearest the camera first (a histogram of
+  their distances in the least spacing), with the budget the blended
+  probes leave, at least half of it, all of it after a restart; a probe not
+  yet started traces nothing and weighs nothing, so its receivers keep
+  their fallback, and the blends run over the probes that traced, which
   Wicked's, whose probes always trace, need not. Each probe's
   estimator, depth and offset start afresh when it is first blended, where
   Wicked starts them all on the first frame. A scroll moves no probe: each
@@ -1090,8 +1111,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   traces the fewest rays. Its fixed rays are RTXGI's 32 directions spread
   evenly and never rotated, unshaded and not blended, so its class holds
   still while what it sees does; where RTXGI traces all of them every
-  update, a probe traces four a frame after its others and is classified
-  from all of them once a cycle of eight frames, a probe's first frame's
+  update, a probe traces four each turn after its others and is
+  classified from all of them once a cycle of eight turns, a probe's first frame's
   rays classifying it until its first whole cycle (the share of each
   frame's rotated rays, even blended over frames, wandered across the
   threshold). Its second phase finds whether a fixed ray met a front face
@@ -1109,7 +1130,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   them, the nearest the camera, the cap on the allocation's walk over them
   (AR-12). A static object so small that no probe's fixed rays meet it
   within their cells takes its other indirect light, and a probe's class
-  follows a change in what it sees within a cycle. A probe not yet blended,
+  follows a change in what it sees within a cycle of its turns. A probe not yet blended,
   inactive, or dormant for a static receiver weighs nothing, and a receiver
   whose eight probes all weigh nothing keeps its fallback; a probe ray's hit
   takes the volume's own zero there instead, as Wicked's and RTXGI's hits
@@ -1131,8 +1152,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   the scene's lights (a diagnostic setting) and the placement. Improved on
   RTXGI (RD-2), whose sample pauses below a threshold each scene sets,
   which SGL3D has no scene to ask for: the volume has converged once the
-  mean of its variability over a window of 16 frames falls by less than a
-  tenth from the last window's, the plateau RTXGI describes, and never
+  mean of its variability over a window of 16 updates of the volume, a
+  frame that blends some probes on their turns counting that share of one,
+  falls by less than a tenth from the last window's, the plateau RTXGI describes, and never
   while a probe has yet to start. The allocation decides it on the GPU from
   the blends' last windows, so nothing is read back, and a paused frame
   costs the allocation alone. A receiver the volume lights takes its

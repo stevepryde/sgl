@@ -107,6 +107,10 @@ fn programs() -> Vec<(&'static str, String)> {
             "frame_probe_coverage",
             compose(&[&crate::stages::frame_probe::COVERAGE]),
         ),
+        (
+            "dynamic_gi_observe",
+            compose(&[&crate::stages::dynamic_gi::observe::OBSERVE]),
+        ),
     ]);
     programs
 }

@@ -454,6 +454,12 @@ mod diagnostics {
         /// (`DiagnosticTarget::ToneMapped`), which is then presented, instead
         /// of tone mapping straight to the output. The output is identical.
         pub capture_tone_target: bool,
+        /// Each frame that runs the dynamic GI volume counts its probes,
+        /// its rays and the BVH walks they and their visibility rays make,
+        /// read back without blocking: `Renderer::take_dynamic_gi_reports`.
+        /// The observed frame's trace writes each ray's costs, which a pass
+        /// sums, so observe separately from timing it.
+        pub dynamic_gi: bool,
     }
 
     /// Layers switched off, each named after what it removes. The first five

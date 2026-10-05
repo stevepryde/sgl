@@ -15,6 +15,28 @@ full API details.
 
 ## Unreleased
 
+### Dynamic GI traces within a per-frame ray budget
+
+- **Scope:** `sgl-3d` dynamic GI (#185). A volume now traces at most a
+  per-frame budget of rays, fixed rays included: 32,768 at
+  `DynamicGiQuality::High`, 16,384 at `Low`, after Wicked Engine's surfel
+  GI (4323a33c `SURFEL_RAY_BUDGET`). Probes take turns at a period that
+  grows with their distance from the camera, and far probes trace fewer
+  rays (Wicked's distance boost, 8:1); a probe whose light is changing
+  takes its turns more often. Where requests exceed the budget, every
+  period lengthens so each probe keeps its turns. A volume whose content
+  keeps moving now costs a bounded amount: on Hyperdrive's moving route
+  (3,179 probes, High) rays fell from about 124k to 32k a frame and the
+  dynamic GI rays pass from about 12 ms (after #187) to about 3.4 ms, about
+  1.4 ms with the camera still. A volume converges over volume updates
+  rather than frames. New diagnostics observation: `Diagnostics::dynamic_gi`
+  with `Renderer::take_dynamic_gi_reports` (probes, rays, BVH visits,
+  budget stride, what kept the volume awake).
+- **Migration:** no game-code changes. Code that names every field of
+  `Diagnostics` adds `dynamic_gi: false`. Afterwards, move a light inside a
+  dynamic GI volume and watch how quickly the bounce follows, and fly
+  through a large volume to check far probes light up.
+
 ### World-space reflections can reach static geometry
 
 - **Scope:** `sgl-3d`: `Settings::world_space_reflections` changes from

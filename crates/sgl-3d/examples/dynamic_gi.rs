@@ -15,6 +15,9 @@
 //! of the frames, where the device has timestamp queries; `--still` parks
 //! the boxes, so the room's light settles and the volume pauses once it has,
 //! and `--edit N` moves the lamp at frame N, which starts it again.
+//! `--counters` observes the stage (`Diagnostics::dynamic_gi`) and prints
+//! each frame's probes, rays and BVH node visits, which are deterministic;
+//! time it in a separate run, as observing adds work to the frame.
 //! `--scroll` walks the camera along the room with a volume half as long
 //! that follows it, installed each frame with its origin moved by whole
 //! spacings, so it scrolls: the probes that stay keep their light, and those
@@ -43,6 +46,7 @@ struct Options {
     quality: DynamicGiQuality,
     probes: [u32; 3],
     timing: bool,
+    counters: bool,
     still: bool,
     scroll: bool,
     edit: Option<u32>,
@@ -57,6 +61,7 @@ impl Options {
             quality: DynamicGiQuality::High,
             probes: [8, 5, 8],
             timing: false,
+            counters: false,
             still: false,
             scroll: false,
             edit: None,
@@ -87,6 +92,7 @@ impl Options {
                         .map_err(|_| "--probes requires three counts")?;
                 }
                 "--timing" => options.timing = true,
+                "--counters" => options.counters = true,
                 "--still" => options.still = true,
                 "--scroll" => options.scroll = true,
                 "--hardware-ray-tracing" => options.hardware = true,
@@ -95,7 +101,7 @@ impl Options {
                 }
                 "--help" | "-h" => {
                     println!(
-                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing] [--still] [--scroll] [--edit N] [--hardware-ray-tracing]"
+                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing] [--counters] [--still] [--scroll] [--edit N] [--hardware-ray-tracing]"
                     );
                     std::process::exit(0);
                 }
@@ -377,11 +383,12 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         view_formats: &[],
     });
     let output_view = output.create_view(&Default::default());
-    let settings = Settings {
+    let mut settings = Settings {
         dynamic_gi: options.quality,
         hardware_ray_tracing: options.hardware,
         ..Settings::default()
     };
+    settings.diagnostics.dynamic_gi = options.counters;
     let mut renderer = Renderer::new(&device, &queue, output.format(), size, 1., &settings)?;
     let projection = sgl_3d::perspective(65f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1);
     let camera_at = |eye: Vec3| Camera {
@@ -413,6 +420,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .then(|| GpuTiming::new(&device, &queue))
         .flatten();
     let mut times = Vec::new();
+    let mut counts = Vec::new();
     for frame_index in 0..options.frames {
         let phase = if options.still {
             0.
@@ -463,6 +471,12 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             // Each frame's timings in turn, for the ramp's first frames.
             device.poll(wgpu::PollType::wait_indefinitely())?;
         }
+        counts.extend(renderer.take_dynamic_gi_reports(&device));
+    }
+    if options.counters {
+        device.poll(wgpu::PollType::wait_indefinitely())?;
+        counts.extend(renderer.take_dynamic_gi_reports(&device));
+        report_counts(&counts);
     }
     if let Some(timing) = &mut timing {
         for _ in 0..8 {
@@ -537,6 +551,53 @@ fn report(times: &[FrameTime]) {
         let (median, p95) = median_p95(&mut values);
         println!("{name:>32}: median {median:.3} ms, p95 {p95:.3} ms");
     }
+}
+
+/// Prints each observed frame's probes, rays and BVH node visits, then
+/// their medians over the second half of the frames.
+fn report_counts(reports: &[sgl_3d::diagnostics::DynamicGiReport]) {
+    let per_ray = |visits: u64, rays: u32| visits as f64 / f64::from(rays.max(1));
+    for (frame, r) in reports.iter().enumerate() {
+        println!(
+            "frame {frame}: probes {}/{} traced ({} unblended), blended asked {} rays, stride {}, by rays {:?}; rays {} + {} fixed, {} hits; visits/ray {:.1} (most {}); visibility rays {}, visits/ray {:.1} (most {}); exhausted {}; paused {}, converged {}, changes {:?}",
+            r.traced_probes,
+            r.probes,
+            r.unblended_probes,
+            r.blended_requests,
+            r.stride,
+            r.probes_by_rays,
+            r.rays,
+            r.fixed_rays,
+            r.hits,
+            per_ray(r.ray_visits, r.rays + r.fixed_rays),
+            r.most_ray_visits,
+            r.visibility_rays,
+            per_ray(r.visibility_visits, r.visibility_rays),
+            r.most_visibility_visits,
+            r.exhausted_queries,
+            r.paused,
+            r.converged,
+            r.changes,
+        );
+    }
+    let rest = &reports[reports.len() / 2..];
+    if rest.is_empty() {
+        return;
+    }
+    let median = |value: &dyn Fn(&sgl_3d::diagnostics::DynamicGiReport) -> f64| {
+        let mut values: Vec<f64> = rest.iter().map(value).collect();
+        median_p95(&mut values).0
+    };
+    println!(
+        "second half medians: traced probes {:.0}, rays {:.0}, fixed rays {:.0}, visibility rays {:.0}, visits/ray {:.1}, visibility visits/ray {:.1}, node visits {:.0}",
+        median(&|r| f64::from(r.traced_probes)),
+        median(&|r| f64::from(r.rays)),
+        median(&|r| f64::from(r.fixed_rays)),
+        median(&|r| f64::from(r.visibility_rays)),
+        median(&|r| per_ray(r.ray_visits, r.rays + r.fixed_rays)),
+        median(&|r| per_ray(r.visibility_visits, r.visibility_rays)),
+        median(&|r| (r.ray_visits + r.visibility_visits) as f64),
+    );
 }
 
 fn read_pixels(

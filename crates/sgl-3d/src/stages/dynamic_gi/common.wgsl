@@ -26,6 +26,18 @@ const DDGI_GROUP_ROW:u32=32768u;
 const DDGI_TRACE_THREADS:u32=32u;
 // Half's largest finite value: Wicked's MEDIUMP_FLT_MAX.
 const DDGI_HALF_MAX:f32=65504.;
+// A ray's costs in the observed trace's ray costs (feature diagnostics):
+// a word for its own query and one for the visibility query its hit cast,
+// each the nodes the query's walks visited, whether it was made, whether
+// its walks stopped at the cap (scene_rays_portable.wgsl's
+// SceneRayWalks), and for the ray's own whether it hit and whether it is a
+// fixed ray. A query visits at most SCENE_BVH_MOST_VISITS, which the low
+// bits hold.
+const DDGI_COST_VISITS:u32=0x1ffffu;
+const DDGI_COST_QUERIED:u32=0x20000u;
+const DDGI_COST_EXHAUSTED:u32=0x40000u;
+const DDGI_COST_HIT:u32=0x80000u;
+const DDGI_COST_FIXED:u32=0x100000u;
 // The frame's volume.
 struct DdgiVolume {
  origin:vec3<f32>,
@@ -49,8 +61,8 @@ struct DdgiVolume {
  // The rays the frame traces, which the allocation counts and a copy
  // brings here before the trace.
  rays:u32,
- // The most probes not yet blended that start this frame.
- ramp_probes:u32,
+ // The most rays the frame traces, fixed rays included.
+ budget:u32,
  // The probes that trace rays this frame, which a copy brings here before
  // the blends.
  traced:u32,
@@ -70,7 +82,8 @@ struct DdgiVolume {
 }
 // Whether the volume has converged: NVIDIA RTXGI's probe variability, the
 // mean coefficient of variation of the active probes' irradiance texels,
-// which the blends sum and the settle pass averages over windows of frames.
+// which the blends sum and the settle pass averages over windows of updates
+// of the volume.
 struct DdgiConvergence {
  // The frame's sum of the active probes' mean variability, in
  // DDGI_VARIABILITY_UNITs, and how many; cleared each frame.
@@ -78,19 +91,23 @@ struct DdgiConvergence {
  probes:atomic<u32>,
  // The last average, of the frames whose blends ran.
  average:f32,
- // The window's sum of averages and its frames.
+ // The window's sum of averages, each weighed by the share of the volume's
+ // probes that blended, and the volume's updates it holds: those shares'
+ // sum.
  window_sum:f32,
- window_frames:u32,
+ window_updates:f32,
  // The last whole window's mean, or -1 before one since the last change.
  previous:f32,
  // 1 once a window's mean has stopped falling, until a change.
  converged:u32,
 }
-// The frames of a convergence window: RTXGI's sample's least frames of
-// variability before it pauses a volume (RTXGI-DDGI f33e496,
+// The updates of the volume a convergence window holds: RTXGI's sample's
+// least frames of variability before it pauses a volume, each of which
+// updates every probe (RTXGI-DDGI f33e496,
 // samples/test-harness/src/graphics/DDGI_VK.cpp 1629-1637 and
-// DDGI_D3D12.cpp 1239-1246).
-const DDGI_CONVERGENCE_WINDOW:u32=16u;
+// DDGI_D3D12.cpp 1239-1246). A frame that blends some of the probes, on
+// their turns, is that share of an update.
+const DDGI_CONVERGENCE_WINDOW:f32=16.;
 // The fall from one window's mean variability to the next below which the
 // volume has converged.
 const DDGI_CONVERGENCE_FALL:f32=.1;
@@ -102,6 +119,22 @@ struct DdgiBounds {
 }
 // The most moving instances' bounds a frame takes.
 const DDGI_MOST_MOVING_BOUNDS:u32=256u;
+// A ray of the frame's ray list: its probe, its index among the probe's
+// rays (past `rays`, its fixed rays), the rays the probe traces beside its
+// fixed rays, and which of its cycle's fixed rays it traces (the probe's
+// turns in its cycle so far, DdgiProbe::fixed_frames).
+struct DdgiRayEntry {
+ probe:u32,
+ ray:u32,
+ rays:u32,
+ cycle:u32,
+}
+fn ddgi_pack_ray_entry(entry:DdgiRayEntry)->vec2<u32> {
+ return vec2(entry.probe,entry.ray|(entry.cycle<<12u)|(entry.rays<<16u));
+}
+fn ddgi_unpack_ray_entry(words:vec2<u32>)->DdgiRayEntry {
+ return DdgiRayEntry(words.x,words.y&0xfffu,words.y>>16u,(words.y>>12u)&0xfu);
+}
 // The probe a workgroup of a two-dimensional dispatch over probes serves.
 fn ddgi_group_probe(group:vec3<u32>)->u32 {
  return group.x+group.y*DDGI_GROUP_ROW;
@@ -160,8 +193,8 @@ fn ddgi_unpack_variance(words:array<u32,6>)->DdgiVariance {
 // A probe's state in the stage's probe buffer: its relocated offset in half
 // spacings, whether it has been blended since the volume restarted, the
 // share of its rays that meet single-sided surfaces from behind, which
-// classifies it, and the back faces its fixed rays have met over the frames
-// of the cycle it has traced so far.
+// classifies it, and the back faces its fixed rays have met over the turns
+// of the cycle it has traced so far (fixed_frames).
 struct DdgiProbe {
  offset:vec3<f32>,
  blended:bool,
@@ -187,8 +220,8 @@ fn ddgi_fresh_probe()->DdgiProbe {
 // RTXGI's RTXGI_DDGI_NUM_FIXED_RAYS: the fixed directions that classify a
 // probe, spread evenly over the sphere and never rotated, so a probe's class
 // holds still while what it sees does. A probe traces
-// DDGI_FIXED_RAYS_PER_FRAME of them a frame, all of them over a cycle of
-// DDGI_FIXED_CYCLE frames.
+// DDGI_FIXED_RAYS_PER_FRAME of them each turn it traces, all of them over a
+// cycle of DDGI_FIXED_CYCLE turns.
 const DDGI_FIXED_RAYS:u32=32u;
 const DDGI_FIXED_CYCLE:u32=DDGI_FIXED_RAYS/DDGI_FIXED_RAYS_PER_FRAME;
 // RTXGI's probeBackfaceThreshold: a probe more than this share of whose rays

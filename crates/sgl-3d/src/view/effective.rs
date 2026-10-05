@@ -134,6 +134,9 @@ pub(crate) struct Effective {
     /// The numerical frame probe observes this frame.
     #[cfg(feature = "diagnostics")]
     pub frame_probe: bool,
+    /// The dynamic GI stage observes this frame, while it runs.
+    #[cfg(feature = "diagnostics")]
+    pub dynamic_gi_observation: bool,
     /// Tone mapping writes a target before presentation, for diagnostics.
     pub capture_tone_target: bool,
 }

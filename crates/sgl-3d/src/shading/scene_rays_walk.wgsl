@@ -69,6 +69,26 @@ fn scene_bvh_visit(visits:ptr<function,u32>)->bool {
 fn scene_bvh_exhausted(visits:u32)->bool {
  return visits>SCENE_BVH_MOST_VISITS;
 }
+// What a pipeline that observes its rays (feature diagnostics: the dynamic
+// GI stage's observation) counts of its invocation's walks so far: the
+// queries, the nodes their walks visited, and those that stopped at
+// SCENE_BVH_MOST_VISITS or at a link that does not lead forward. Every
+// other pipeline leaves ray_observation_enabled off and counts nothing.
+override ray_observation_enabled:bool=false;
+struct SceneRayWalks {
+ queries:u32,
+ visits:u32,
+ exhausted:u32,
+}
+var<private> scene_ray_walks:SceneRayWalks;
+// Counts one query whose walks visited `visits` nodes.
+fn scene_observe_walks(visits:u32) {
+ if ray_observation_enabled {
+  scene_ray_walks.queries+=1u;
+  scene_ray_walks.visits+=min(visits,SCENE_BVH_MOST_VISITS);
+  scene_ray_walks.exhausted+=select(0u,1u,scene_bvh_exhausted(visits));
+ }
+}
 // The word a walk of the BVH at `root` ends before.
 fn scene_bvh_end(root:u32)->u32 {
  let length=arrayLength(&scene_source);
@@ -274,17 +294,20 @@ fn scene_walk(ray:SceneRay,kinds:u32,any_hit:bool,receiver:vec2<u32>,sides:u32,o
  if (kinds&SCENE_KIND_STATIC)!=0u {
   hit=scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,any_hit,receiver,sides,open_end,hit,&visits);
   if scene_bvh_exhausted(visits) {
+   scene_observe_walks(visits);
    return miss;
   }
   if any_hit && hit.intersection.x!=0u {
+   scene_observe_walks(visits);
    return hit;
   }
  }
  if (kinds&SCENE_KIND_MOVING)!=0u {
   hit=scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,any_hit,receiver,sides,open_end,hit,&visits);
-  if scene_bvh_exhausted(visits) {
-   return miss;
-  }
+ }
+ scene_observe_walks(visits);
+ if scene_bvh_exhausted(visits) {
+  return miss;
  }
  return hit;
 }
