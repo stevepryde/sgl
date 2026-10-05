@@ -265,6 +265,9 @@ Use the [current specs](README.md) for implementation and the
   on; a game that wants it requests the device's feature
   (`graphics_device::ray_tracing_features`, with wgpu's experimental token)
   and turns the setting on. This supersedes the default of on in the design
-  of roadmap 13 (#174), and later changes keep it.
+  of roadmap 13 (#174), and later changes keep it. Ray-traced shadows, which
+  need it, follow it: `Settings::ray_traced_shadows` is a `bool`, off by
+  default and in every preset, superseding the design's `Preset` that would
+  have resolved them on at High once their denoiser landed.
   Rationale: wgpu 29 marks its ray queries experimental, so a game takes
   them on deliberately.

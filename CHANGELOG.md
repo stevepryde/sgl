@@ -15,6 +15,50 @@ full API details.
 
 ## Unreleased
 
+### Ray-traced shadows
+
+- **Scope:** `sgl-3d` (#23): new `Settings::ray_traced_shadows` (`bool`,
+  off by default and in every preset, as `Settings::hardware_ray_tracing`
+  is, D-28) and `Renderer::ray_traced_shadows_in_effect`. While hardware
+  ray tracing is in effect and the setting is on, the camera's opaque
+  surfaces take the shadows of the directional light with the frame's
+  cascades and of up to fifteen casting local lights (those the local-light
+  atlas places, by screen coverage, each keeping its place while placed)
+  from rays instead of the shadow maps, as Wicked Engine's ray-traced
+  shadows do: traced at half the render size from 1 cm past each surface
+  toward each light that reaches it, blended over frames, and upsampled by
+  depth. Shadows are hard (lights have no size yet) and reach as far as
+  the scene: the directional light's beyond its `DirectionalShadow`
+  distance. The fog, blended surfaces, probe captures, reflections' ray
+  hits and lights beyond those sixteen keep the maps, which are still
+  drawn. While the setting runs, the opaque stage takes its two-pass form
+  (a G-buffer pass, then a lighting pass) instead of the fused pass, and
+  frames build the acceleration structures. Without hardware ray tracing
+  in effect (the browser, a device without ray queries, the setting off),
+  the setting does nothing and the maps shadow everything. The streaming
+  example takes it with `--ray-traced-shadows`.
+- **Cost:** measured on an Apple M5 at 1920×1080, natively on Metal
+  (median GPU frame time, against the maps with hardware ray tracing off):
+  - the `streaming` example's walk (the sun and up to fifteen shadowed
+    torches): 7.8 ms against 6.5 ms;
+  - its fly: 7.1 ms against 6.2 ms;
+  - 1000 props under the sun and eight shadowed point and spot lights:
+    5.5 ms against 5.1 ms.
+  Of that, the trace took 0.4–0.6 ms, the temporal blend 0.1–0.3 ms, the
+  upsample 0.2–0.4 ms, and the opaque stage's two-pass form up to 0.4 ms.
+  The props' frame grew by less than those passes sum, since there the
+  two-pass form is faster than the fused pass and the lighting pass skips
+  the maps' filtering for the lights the mask holds.
+- **Migration:** no game-code changes unless code names every field of
+  `Settings` without `..`: add `ray_traced_shadows: false`. A saved
+  settings file without the field loads it off. A game that offers
+  ray-traced shadows turns `Settings::hardware_ray_tracing` on with it
+  (requesting `graphics_device::ray_tracing_features`) and shows
+  `Renderer::ray_traced_shadows_in_effect`. Afterwards, with both on, walk
+  past shadowed lights and moving casters: shadows should stay where the
+  maps put them, sharper, and stretch beyond the directional shadow's
+  distance; look for noise or lag at shadow edges in motion.
+
 ### Two-phase occlusion culling of the camera's list (opt-in)
 
 - **Scope:** `sgl-3d` (#24, roadmap 22). New `Settings::occlusion_culling`

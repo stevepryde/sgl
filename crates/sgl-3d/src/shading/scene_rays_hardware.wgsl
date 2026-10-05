@@ -37,7 +37,14 @@ enable wgpu_ray_query;
 // baseline form (#23): every one of
 // the dynamic GI example's 6.79 million probe and visibility rays took one
 // query; of 6.9 million world-space reflection rays over a glossy floor
-// among moving boxes the most took three; and among skinned characters
+// among moving boxes the most took three, and of 6.6 million of the same
+// floor's rays under WorldSpaceReflections::All, which reach static
+// geometry too, the most took two; of ray-traced shadow rays, which reject
+// a single-sided occluder's front face (SCENE_SIDES_SHADOW) and so take
+// three queries where their any-hit look meets one, the most of 121
+// million took four over a thousand props under eight shadowed lights and
+// the sun, and the most of 95 million took five on the streaming
+// example's walk; and among skinned characters
 // each crowned with a swaying bundle of 24 masked, double-sided hair cards
 // three quarters cut out, under a dynamic GI volume with world-space
 // reflections, the most of 7.8 million rays took 29, each cut-out card it

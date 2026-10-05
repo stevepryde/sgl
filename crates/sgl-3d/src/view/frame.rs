@@ -85,6 +85,15 @@ impl<'a> HardwareRays<'a> {
     }
 }
 
+/// What the ray-traced shadow stage lends the opaque stage's lighting pass,
+/// which binds them at its group 3 (`shading::bind::shadow_mask`): the
+/// shadow mask and the slot table.
+#[derive(Clone, Copy)]
+pub(crate) struct ShadowMask<'a> {
+    pub mask: &'a wgpu::TextureView,
+    pub slots: &'a wgpu::Buffer,
+}
+
 /// Which view holds the completed scene, passed from the transparent
 /// stage through antialiasing to post.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -7,10 +7,10 @@ pub(crate) fn read(
 ) -> Vec<u8> {
     let size = texture.size();
     let row = (size.width * bpp).div_ceil(256) * 256;
-    // A 3D texture's slices follow one another.
+    // A 3D texture's slices, and a 2D array's layers, follow one another.
     let slices = match texture.dimension() {
-        wgpu::TextureDimension::D3 => size.depth_or_array_layers,
-        _ => 1,
+        wgpu::TextureDimension::D1 => 1,
+        _ => size.depth_or_array_layers,
     };
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("frame evidence"),

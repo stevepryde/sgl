@@ -25,7 +25,8 @@ use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
     antialiasing, cull::Cull, deform::Deform, dynamic_gi::DynamicGi, exposure::Exposure,
     fog::VolumetricFog, motion_blur::MotionBlur, opaque::Opaque, post::Post, prepare::Prepare,
-    reflections::Reflections, shadows::Shadows, transparent::Transparent,
+    reflections::Reflections, shadows::Shadows, shadows::traced::TracedShadows,
+    transparent::Transparent,
 };
 use crate::view::FrameViews;
 use crate::view::bindings::FrameBindings;
@@ -60,6 +61,7 @@ pub struct Renderer {
     statistics: StatisticsReadback,
     dynamic_gi: DynamicGi,
     shadows: Shadows,
+    traced_shadows: TracedShadows,
     fog: VolumetricFog,
     opaque: Opaque,
     reflections: Reflections,
@@ -186,6 +188,7 @@ impl Renderer {
                 &bindings.scene,
                 &bindings.material,
                 &bindings.blended,
+                &bindings.shadow_mask,
             ],
             layers,
         );
@@ -209,7 +212,8 @@ impl Renderer {
             },
         );
         Ok(Self {
-            opaque: Opaque::new(device, &bindings.unlit),
+            opaque: Opaque::new(device, &bindings.unlit, &bindings.shadow_mask),
+            traced_shadows: TracedShadows::new(device, &bindings.lit, &bindings.scene),
             reflections: Reflections::new(device, queue, render, &first_frame),
             transparent: Transparent::new(device, &bindings.unlit, &bindings.blended, &targets),
             exposure: Exposure::new(device),
@@ -410,6 +414,15 @@ impl Renderer {
             && self.prepare.ray_tracing_error().is_none()
     }
 
+    /// Whether ray-traced shadows are in effect for `settings`:
+    /// `Settings::ray_traced_shadows` is on and hardware ray tracing is in
+    /// effect (`ray_tracing_in_effect`). The camera's opaque surfaces then
+    /// take them on the frames where a light holds a slot; otherwise the
+    /// shadow maps shadow them. The saved choice is unchanged.
+    pub fn ray_traced_shadows_in_effect(&self, settings: &Settings) -> bool {
+        settings.ray_traced_shadows && self.ray_tracing_in_effect(settings)
+    }
+
     /// Whether `Settings::occlusion_culling` runs for `settings`: it is on,
     /// the device binds the depth pyramid's six storage textures a stage
     /// (`graphics_device::limits` requests the adapter's) and, with the
@@ -445,6 +458,18 @@ impl Renderer {
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn fog_volumes(&self) -> [&wgpu::TextureView; 3] {
         self.fog.test_volumes()
+    }
+
+    /// The last frame's ray-traced shadow mask and slot table, where the
+    /// stage ran.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn traced_shadows(
+        &self,
+    ) -> Option<(
+        &wgpu::TextureView,
+        crate::shading::shadow_mask::ShadowMaskSlots,
+    )> {
+        self.traced_shadows.last()
     }
 
     /// FSR2's upscaled frame of the last frame it ran.

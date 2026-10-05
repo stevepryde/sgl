@@ -265,7 +265,11 @@ Remaining work, in the existing roadmap order:
    BVHs. World-space reflections reach static content too where the game
    chooses `WorldSpaceReflections::All`. The candidate form exists for
    Vulkan and DX12 but is not their default until it is measured on their
-   hardware, which it has not run on yet. Ray-traced shadows remain. The design is settled in the architecture
+   hardware, which it has not run on yet. Behind the opt-in
+   `Settings::ray_traced_shadows` (off by default, D-28), the camera's
+   opaque surfaces take hard ray-traced shadows of the directional light
+   and up to fifteen local lights, temporally blended. Their denoiser and
+   soft shadows from lights with a size remain. The design is settled in the architecture
    ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
    [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
    acceleration structures beside the portable BVHs behind

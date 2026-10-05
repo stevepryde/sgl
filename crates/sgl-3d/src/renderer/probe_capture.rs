@@ -59,6 +59,7 @@ impl Renderer {
             device,
             LayerConstants::new(&settings.diagnostics_in_effect().disable),
             scene,
+            false,
         );
         let prefilter = ProbePrefilter::new(device, face_size);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

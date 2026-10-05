@@ -80,6 +80,14 @@ pub(crate) mod blended {
     pub(crate) const TRACE: u32 = 2;
 }
 
+/// The opaque stage's lighting pass's group 3 while ray-traced shadows run,
+/// as bind_shadow_mask.wgsl declares it: numbers clear of the blended
+/// group 3's, which the same program declares.
+pub(crate) mod shadow_mask {
+    pub(crate) const MASK: u32 = 8;
+    pub(crate) const SLOTS: u32 = 9;
+}
+
 /// The screen-space method's cutoff and fade the blended draw composes its
 /// result with; matches `BlendedTrace` in bind_blended.wgsl.
 #[repr(C)]
@@ -390,6 +398,38 @@ pub(crate) fn blended_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
         texture(blended::SURFACE_DEPTH, wgpu::TextureSampleType::Depth),
         wgpu::BindGroupLayoutEntry {
             binding: blended::TRACE,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+    ]
+}
+
+/// The lighting pass's group 3 while ray-traced shadows run:
+/// bind_shadow_mask.wgsl's mask and slot table.
+pub(crate) fn shadow_mask(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    layout(device, "ray-traced shadow mask", &shadow_mask_entries())
+}
+
+/// Group 3's entries for the lighting pass while ray-traced shadows run.
+pub(crate) fn shadow_mask_entries() -> [wgpu::BindGroupLayoutEntry; 2] {
+    [
+        wgpu::BindGroupLayoutEntry {
+            binding: shadow_mask::MASK,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+                multisampled: false,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: shadow_mask::SLOTS,
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,

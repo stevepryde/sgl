@@ -44,6 +44,8 @@ macro_rules! context {
 /// A frame prepared by `Renderer::prepare_test_frame`.
 pub(crate) struct TestFrame {
     effective: Effective,
+    /// The lights its ray-traced shadow slots may hold.
+    slot_lights: crate::stages::shadows::traced::slots::SlotLights,
     values: FrameValues,
     input: FrameInput,
     history: HistoryFrame,
@@ -92,7 +94,12 @@ impl Renderer {
                 ray_queries: self.ray_form.as_ref().map(|form| form.form()),
             },
         );
-        self.pipelines.specialise(device, effective.layers, scene);
+        self.pipelines.specialise(
+            device,
+            effective.layers,
+            scene,
+            effective.ray_traced_shadows,
+        );
         let history = self.begin_history(scene, &input);
         let values = self.prepare.run(
             device,
@@ -123,6 +130,14 @@ impl Renderer {
         self.fog.prepare(device, effective.fog, self.sizes.render);
         self.dynamic_gi.prepare(device, scene, &effective);
         self.cull_test_views(device, queue, scene);
+        let slot_lights = crate::stages::shadows::traced::slots::SlotLights::of(
+            &input,
+            &values.frame,
+            scene,
+            self.shadows.local.ranking(),
+        );
+        let effective =
+            super::effective::traced_shadows(effective, self.prepare.hardware_rays(), &slot_lights);
         self.bindings.refresh(
             device,
             scene,
@@ -134,6 +149,7 @@ impl Renderer {
         );
         TestFrame {
             effective,
+            slot_lights,
             values,
             input,
             history,
@@ -215,7 +231,13 @@ impl Renderer {
     ) {
         frame.effective.fused = fused;
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
-        super::frame::encode_opaque(&mut self.opaque, &mut self.cull, &mut ctx);
+        super::frame::encode_opaque(
+            &mut self.opaque,
+            &mut self.cull,
+            &mut self.traced_shadows,
+            &frame.slot_lights,
+            &mut ctx,
+        );
     }
 
     /// The transparent stage's glow and mist into `beauty`, over the
