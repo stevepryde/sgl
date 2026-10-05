@@ -41,8 +41,9 @@ wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan",
 js-sys = { workspace = true, optional = true }
 
 [dev-dependencies]
-# The layout tests parse and validate the composed WGSL.
-naga = { workspace = true, features = ["wgsl-in"] }
+# The layout tests parse and validate the composed WGSL, and write the
+# hardware path's programs as Vulkan's SPIR-V and DX12's HLSL.
+naga = { workspace = true, features = ["wgsl-in", "spv-out", "hlsl-out"] }
 pollster.workspace = true
 wasm-bindgen-test.workspace = true
 # Integration tests read the frame's targets through the diagnostics accessors.

@@ -22,10 +22,12 @@
 //! `ray-traced shadow upsample`.
 pub(crate) mod slots;
 
+use crate::shading::RayQueryForm;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
 use crate::view::frame::{FrameContext, ShadowMask};
-use crate::view::trace_paths::TracePaths;
+use crate::view::trace_paths::{TracePath, TracePaths};
+use std::collections::HashMap;
 
 /// Wicked's `DOWNSAMPLE`: the trace runs at half the render size.
 const DOWNSAMPLE: u32 = 2;
@@ -178,7 +180,8 @@ impl Pass {
 pub(crate) struct TracedShadows {
     /// The trace's programs, with its group 3.
     paths: TracePaths,
-    trace: Option<wgpu::ComputePipeline>,
+    /// The trace's pipeline for each form a frame's rays took.
+    trace: HashMap<((), Option<RayQueryForm>), wgpu::ComputePipeline>,
     temporal: Pass,
     upsample: Pass,
     params: wgpu::Buffer,
@@ -247,7 +250,7 @@ impl TracedShadows {
         };
         Self {
             paths: TracePaths::new("ray-traced shadow rays", &TRACE, &entries, [lit, scene]),
-            trace: None,
+            trace: HashMap::new(),
             temporal: Pass::new(device, &TEMPORAL, "traced_shadow_temporal"),
             upsample: Pass::new(device, &UPSAMPLE, "traced_shadow_upsample"),
             params: uniform_buffer(
@@ -330,18 +333,25 @@ impl TracedShadows {
         let previous = 1 - current;
         let shared = ctx.targets;
         let resource = wgpu::BindingResource::TextureView;
-        let trace = self.paths.path(ctx.device, Some(hardware.form));
-        let pipeline = self.trace.get_or_insert_with(|| {
-            ctx.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        // The trace's pipeline for the device's form, made through
+        // `TracePaths::pipeline`, so that a candidate program that fails
+        // falls the device back to the baseline before the group is made.
+        let device = ctx.device;
+        let form = self.paths.pipeline(
+            device,
+            Some(hardware),
+            (&mut self.trace, ()),
+            |TracePath { shader, layout, .. }| {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("ray-traced shadow rays"),
-                    layout: Some(&trace.layout),
-                    module: &trace.shader,
+                    layout: Some(layout),
+                    module: shader,
                     entry_point: Some("traced_shadow_rays"),
                     compilation_options: Default::default(),
                     cache: None,
                 })
-        });
+            },
+        );
         let trace_group = self.paths.group(
             ctx.device,
             Some(hardware),
@@ -364,7 +374,7 @@ impl TracedShadows {
                         .timing
                         .and_then(|t| t.compute_pass("ray-traced shadow rays")),
                 });
-            pass.set_pipeline(pipeline);
+            pass.set_pipeline(&self.trace[&((), form)]);
             pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
             pass.set_bind_group(1, &ctx.scene.scene_group, &[]);
             pass.set_bind_group(3, trace_group, &[]);

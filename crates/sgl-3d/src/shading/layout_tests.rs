@@ -80,38 +80,16 @@ fn programs() -> Vec<(&'static str, String)> {
         ),
     ]);
     // The tracing stages' programs on each path their rays take, with the
-    // portable function set or the hardware form's query module as root
+    // portable function set or a hardware form's query module as root
     // (`ray_trace_root`); the hardware module's `enable` directive must
     // reach the head.
-    let hardware = Some(super::RayQueryForm::Baseline);
-    let world = &crate::stages::reflections::world::TRACE;
-    let gi = &crate::stages::dynamic_gi::TRACE;
-    let traced_shadows = &crate::stages::shadows::traced::TRACE;
-    programs.extend([
-        (
-            traced_shadows.name,
-            compose(&[traced_shadows, super::ray_trace_root(hardware)]),
-        ),
-        (world.name, compose(&[world, super::ray_trace_root(None)])),
-        (
-            "world_reflections_hardware",
-            compose(&[world, super::ray_trace_root(hardware)]),
-        ),
-        (gi.name, compose(&[gi, super::ray_trace_root(None)])),
-        (
-            "dynamic_gi_trace_hardware",
-            compose(&[gi, super::ray_trace_root(hardware)]),
-        ),
-        (
-            "scene_rays_portable_query",
-            compose(&[&crate::scene::rays::QUERY, super::ray_trace_root(None)]),
-        ),
-        (
-            "scene_rays_hardware_query",
-            compose(&[&crate::scene::rays::QUERY, super::ray_trace_root(hardware)]),
-        ),
-        ("lit_compute_library", crate::shading::lit_compute_library()),
-    ]);
+    programs.extend(
+        traced_programs(None)
+            .into_iter()
+            .chain(hardware_programs())
+            .map(|(label, source, _)| (label, source)),
+    );
+    programs.push(("lit_compute_library", crate::shading::lit_compute_library()));
     #[cfg(feature = "diagnostics")]
     programs.extend([
         (
@@ -128,6 +106,75 @@ fn programs() -> Vec<(&'static str, String)> {
         ),
     ]);
     programs
+}
+
+/// A program's label, source and entry points.
+type Program = (&'static str, String, Vec<(naga::ShaderStage, &'static str)>);
+
+/// The tracing stages' programs, and the tests' scene ray dispatch, on the
+/// path `form` takes (`ray_trace_root`), each with the pipeline constants
+/// it needs and its entry points.
+fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
+    use naga::ShaderStage::{Compute, Fragment, Vertex};
+    let root = super::ray_trace_root(form);
+    let world = &crate::stages::reflections::world::TRACE;
+    let gi = &crate::stages::dynamic_gi::TRACE;
+    let query = &crate::scene::rays::QUERY;
+    let traced_shadows = &crate::stages::shadows::traced::TRACE;
+    let label = |portable, baseline, candidates| match form {
+        None => portable,
+        Some(super::RayQueryForm::Baseline) => baseline,
+        Some(super::RayQueryForm::Candidates) => candidates,
+    };
+    vec![
+        (
+            label(
+                world.name,
+                "world_reflections_hardware",
+                "world_reflections_candidates",
+            ),
+            compose(&[world, root]),
+            vec![(Vertex, "fullscreen_vs"), (Fragment, "world_trace")],
+        ),
+        (
+            label(
+                gi.name,
+                "dynamic_gi_trace_hardware",
+                "dynamic_gi_trace_candidates",
+            ),
+            compose(&[gi, root]),
+            vec![(Compute, "trace")],
+        ),
+        (
+            label(
+                traced_shadows.name,
+                "traced_shadows_trace_hardware",
+                "traced_shadows_trace_candidates",
+            ),
+            compose(&[traced_shadows, root]),
+            vec![(Compute, "traced_shadow_rays")],
+        ),
+        (
+            label(
+                "scene_rays_portable_query",
+                "scene_rays_hardware_query",
+                "scene_rays_candidates_query",
+            ),
+            compose(&[query, root]),
+            vec![(Compute, "scene_intersect")],
+        ),
+    ]
+}
+
+/// Every hardware form's traced programs.
+fn hardware_programs() -> Vec<Program> {
+    [
+        super::RayQueryForm::Baseline,
+        super::RayQueryForm::Candidates,
+    ]
+    .into_iter()
+    .flat_map(|form| traced_programs(Some(form)))
+    .collect()
 }
 
 fn parse(label: &str, source: &str) -> naga::Module {
@@ -147,6 +194,81 @@ fn every_program_composes_and_validates() {
         )
         .validate(&module)
         .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(&source)));
+    }
+}
+
+// The hardware path's programs of both forms through naga 29's SPIR-V and
+// HLSL writers, as wgpu-hal's Vulkan and DX12 backends write each entry
+// point when they create its pipeline (`vulkan/adapter.rs` 2620–2715 sets
+// the SPIR-V options followed here; DX12 needs shader model 6.5 for ray
+// queries). Plausible defects: a construct that validates but that either
+// writer cannot emit in the candidate loop or the baseline query, such as a
+// hit's vertex positions read from the query, which naga's HLSL writer
+// does not lower (`back/hlsl/writer.rs` 4382–4386): on that backend every
+// tracing pipeline of the form would fail, the candidate form falling back
+// to the baseline and the baseline leaving the device without a hardware
+// trace, where no GPU here can show it. The oracle is the writers the
+// backends run; DXC's compile of the HLSL and the driver's of the SPIR-V
+// are not run here.
+#[wasm_bindgen_test(unsupported = test)]
+fn hardware_programs_write_for_vulkan_and_dx12() {
+    let spv = naga::back::spv::Options {
+        lang_version: (1, 5),
+        capabilities: None,
+        force_loop_bounding: true,
+        ray_query_initialization_tracking: true,
+        ..Default::default()
+    };
+    let hlsl = naga::back::hlsl::Options {
+        shader_model: naga::back::hlsl::ShaderModel::V6_5,
+        ..Default::default()
+    };
+    for (label, source, entry_points) in hardware_programs() {
+        let module = parse(label, &source);
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(&source)));
+        // The world-space trace's reach, which its pipelines set.
+        let mut constants = naga::back::PipelineConstants::default();
+        if module
+            .overrides
+            .iter()
+            .any(|(_, value)| value.name.as_deref() == Some("world_reach_all"))
+        {
+            constants.insert("world_reach_all".into(), 1.);
+        }
+        for (stage, name) in entry_points {
+            let (module, info) = naga::back::pipeline_constants::process_overrides(
+                &module,
+                &info,
+                Some((stage, name)),
+                &constants,
+            )
+            .unwrap_or_else(|error| panic!("{label} {name}: {error}"));
+            naga::back::spv::write_vec(
+                &module,
+                &info,
+                &spv,
+                Some(&naga::back::spv::PipelineOptions {
+                    shader_stage: stage,
+                    entry_point: name.into(),
+                }),
+            )
+            .unwrap_or_else(|error| panic!("{label} {name} as SPIR-V: {error}"));
+            let mut written = String::new();
+            naga::back::hlsl::Writer::new(
+                &mut written,
+                &hlsl,
+                &naga::back::hlsl::PipelineOptions {
+                    entry_point: Some((stage, name.into())),
+                },
+            )
+            .write(&module, &info, None)
+            .unwrap_or_else(|error| panic!("{label} {name} as HLSL: {error}"));
+        }
     }
 }
 

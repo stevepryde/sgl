@@ -35,6 +35,7 @@ macro_rules! context {
                 &$frame.effective,
                 $scene,
                 $renderer.prepare.hardware_rays(),
+                $renderer.ray_form.as_ref(),
             ),
         }
     };
@@ -89,7 +90,7 @@ impl Renderer {
             super::effective::Device {
                 fsr2_running: false,
                 fused_supported: self.pipelines.fused_supported,
-                ray_queries: self.ray_queries,
+                ray_queries: self.ray_form.as_ref().map(|form| form.form()),
             },
         );
         self.pipelines.specialise(

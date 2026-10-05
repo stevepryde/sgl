@@ -259,8 +259,9 @@ impl Scene {
     /// the static one after a static edit or a change of the instances it
     /// covers. Where the frame traces in `hardware` (after
     /// `prepare_acceleration_structures`), they cover only the instances
-    /// its TLAS does not hold (predicate instances, pending and left out;
-    /// the architecture's Hardware ray tracing, *Portable coverage*), and
+    /// its TLAS does not hold (predicate instances under the baseline form,
+    /// pending and left out; the architecture's Hardware ray tracing,
+    /// *Portable coverage*), and
     /// none whose model rays pass through whole (`RayClass::None`). The
     /// portable path sees no deforming instance, as Bevy 9d12036's
     /// ray-traced scene leaves out meshes with joint attributes
@@ -326,17 +327,19 @@ impl Scene {
     }
 
     /// Before a frame that builds the hardware path's acceleration
-    /// structures, seen from `eye`, and before `update_rays`, which covers
-    /// what its TLAS does not hold: chooses its builds and sets the TLAS
-    /// (`rays::acceleration`), creating the structures on the first such
-    /// frame; none when the device's memory cannot hold them. The frame
-    /// records the builds with `encode_acceleration_structures` after its
-    /// deform pass, and `finish_frame` commits them.
+    /// structures for the query form `form`, seen from `eye`, and before
+    /// `update_rays`, which covers what its TLAS does not hold: chooses its
+    /// builds and sets the TLAS (`rays::acceleration`), creating the
+    /// structures on the first such frame; none when the device's memory
+    /// cannot hold them. The frame records the builds with
+    /// `encode_acceleration_structures` after its deform pass, and
+    /// `finish_frame` commits them.
     pub(crate) fn prepare_acceleration_structures(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         eye: glam::Vec3,
+        form: crate::shading::RayQueryForm,
     ) -> Option<rays::acceleration::RayTracingStats> {
         if self.acceleration.is_none() {
             self.acceleration = rays::acceleration::AccelerationStructures::new(device);
@@ -346,8 +349,7 @@ impl Scene {
             device,
             queue,
             (&self.models, &self.instances),
-            self.ray_instances.capacity(),
-            eye,
+            (self.ray_instances.capacity(), eye, form),
         ))
     }
 
