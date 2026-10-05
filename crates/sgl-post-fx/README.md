@@ -35,7 +35,8 @@ files unedited.
   denoiser places it, rejects a surface history far from the current
   neighbourhood as AMD's does, and clamps to Wicked Engine's 2-deviation box
   (DFX-25); a virtual point behind the previous camera finds no history
-  (DFX-31). Its denoiser passes run only on the 8×8 tiles with a confident
+  (DFX-31), nor does a surface that was behind it, in SSR and TAA alike
+  (DFX-32). Its denoiser passes run only on the 8×8 tiles with a confident
   hit within their reach, as AMD's denoiser runs only over its tile list; a
   skipped tile's histories hold zero radiance and DiligentFX's no-history
   variance (DFX-29).

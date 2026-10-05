@@ -15,6 +15,29 @@ full API details.
 
 ## Unreleased
 
+### SSR and TAA take no history for a surface behind the last frame's camera
+
+- **Scope:** `sgl-post-fx` screen-space reflections' and TAA's temporal
+  accumulation, and so `sgl-3d`'s Crystal method and TAA (DFX-32). Both
+  compare each surface's depth reprojected into the last frame
+  (`ComputeReprojectedDepth`) with that frame's depth buffer. A surface that
+  was behind the last frame's camera (clip w below 0), as after a quick move
+  backwards with a turn, got a depth mirrored to as far in front of it, and
+  where a surface the last frame saw lay near that depth, the passes kept
+  history the surface never had; Crystal took it through its reflection-hit
+  reprojection, whose virtual point can still lie in front of that camera.
+  Such a surface now reprojects to the last frame's near plane, and both
+  passes treat a reprojected depth at or nearer than that plane as
+  disoccluded, as they do a surface the near plane would have clipped. This
+  is a correctness fix with no setting; DiligentFX divides unguarded. In
+  `sgl-3d`, TAA already dropped that history by its motion, which is two
+  screens long for such a surface, so only a game passing its own motion
+  vectors to `sgl-post-fx`'s TAA sees its change. Frames where no surface
+  lies behind the previous camera are unchanged.
+- **Migration:** no game-code changes. Afterwards, move the camera quickly
+  backwards while turning over glossy floors with Crystal reflections: the
+  next frame shows its own reflections, without history from elsewhere.
+
 ### Reflections take no history by a hit behind the last frame's camera
 
 - **Scope:** `sgl-3d` world-space reflections and Velvet

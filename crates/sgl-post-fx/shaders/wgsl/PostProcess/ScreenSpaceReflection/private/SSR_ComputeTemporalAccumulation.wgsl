@@ -242,6 +242,10 @@ fn ComputeReprojection(PrevPos: vec2<f32>, CurrDepth: f32) -> ProjectionDesc
     }
 
     Desc.IsSuccess = Desc.IsSuccess && IsInsideScreen_f2(Desc.PrevCoord, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
+    // PROVENANCE.md DFX-32: a surface the previous camera could not see (its
+    // reprojected depth at or nearer than that camera's near plane) has no
+    // history.
+    Desc.IsSuccess = Desc.IsSuccess && !IsAtOrNearerThanNearPlane(CurrDepth, cbCameraAttribs.g_PrevCamera.fNearPlaneDepth, cbCameraAttribs.g_PrevCamera.fFarPlaneDepth);
     return Desc;
 }
 

@@ -34,6 +34,14 @@ fn ComputeReprojectedDepthPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) 
     var CurrScreenCoord = vec3<f32>(Position.xy * cbCameraAttribs.g_CurrCamera.f4ViewportSize.zw, Depth);
     CurrScreenCoord = vec3<f32>(CurrScreenCoord.xy + F3NDC_XYZ_TO_UVD_SCALE.xy * cbCameraAttribs.g_CurrCamera.f2Jitter, CurrScreenCoord.z);
     let WorldPosition = InvProjectPosition(CurrScreenCoord, cbCameraAttribs.g_CurrCamera.mViewProjInv);
+    // PROVENANCE.md DFX-32: a surface on or behind the previous camera's plane
+    // (clip w <= 0) had no depth in its frame; dividing by a negative w would
+    // mirror it to a depth as far in front. It takes the previous camera's
+    // near-plane depth, which the temporal passes read as disoccluded
+    // (IsAtOrNearerThanNearPlane).
+    if ((cbCameraAttribs.g_PrevCamera.mViewProj * vec4<f32>(WorldPosition, 1.0)).w <= 0.0) {
+        return cbCameraAttribs.g_PrevCamera.fNearPlaneDepth;
+    }
     let PrevScreenCoord = ProjectPosition(WorldPosition, cbCameraAttribs.g_PrevCamera.mViewProj);
     return PrevScreenCoord.z;
 }

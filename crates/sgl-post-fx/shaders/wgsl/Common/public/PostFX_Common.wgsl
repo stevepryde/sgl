@@ -110,4 +110,14 @@ fn ComputeSpatialWeight(Distance: f32, Sigma: f32) -> f32
     return exp(-(Distance) / (2.0 * Sigma * Sigma));
 }
 
+// PROVENANCE.md DFX-32: whether `Depth` lies on or nearer than the near plane
+// of a camera whose near and far planes have depths `NearPlaneDepth` and
+// `FarPlaneDepth`, where the camera drew nothing. ComputeReprojectedDepth
+// writes the previous camera's near-plane depth for a surface on or behind
+// that camera.
+fn IsAtOrNearerThanNearPlane(Depth: f32, NearPlaneDepth: f32, FarPlaneDepth: f32) -> bool
+{
+    return (Depth - NearPlaneDepth) * (FarPlaneDepth - NearPlaneDepth) <= 0.0;
+}
+
 #endif // _POST_FX_COMMON_FXH_
