@@ -18,6 +18,8 @@ pub(crate) const FRAME_BACKDROP_COLOR: u32 = 8;
 pub(crate) const FRAME_TEMPORAL_SHADOW_FILTER: u32 = 16;
 /// `Frame::flags`: the camera's shadows take one hardware 2×2 tap.
 pub(crate) const FRAME_HARDWARE_SHADOW_FILTER: u32 = 32;
+/// `Frame::flags`: the dynamic GI volume lights the frame.
+pub(crate) const FRAME_DYNAMIC_GI: u32 = 64;
 /// `Object::flags`: a static instance; a moving one has the bit clear.
 pub(crate) const OBJECT_STATIC: u32 = 1;
 
@@ -108,6 +110,15 @@ pub(crate) struct FrameUniform {
     pub frame_count: u32,
     pub padding: u32,
     pub lightmap_chart: [f32; 4],
+    /// With `FRAME_DYNAMIC_GI`, the scene's dynamic GI volume: its first
+    /// probe's position, its probes' spacing and their count on each axis.
+    pub dynamic_gi_origin: [f32; 3],
+    /// WGSL aligns each `vec3` to 16 bytes.
+    pub padding_origin: f32,
+    pub dynamic_gi_spacing: [f32; 3],
+    pub padding_spacing: f32,
+    pub dynamic_gi_probes: [u32; 3],
+    pub padding_probes: u32,
 }
 
 /// One instance's record (`Object` in uniforms.wgsl), at its index in the

@@ -20,6 +20,7 @@ pub use content::baked_specular_probe::{
     BakedSpecularProbe, ProbeError, SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels,
 };
 pub use content::decal::Decal;
+pub use content::dynamic_gi::DynamicGiVolume;
 pub use content::identity::{
     DecalId, DecalImageId, EnvironmentId, InstanceId, LightId, MaterialId, ModelId,
 };

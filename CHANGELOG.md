@@ -15,6 +15,50 @@ full API details.
 
 ## Unreleased
 
+### Dynamic diffuse GI from a volume of probes
+
+- **Scope:** `sgl-3d` adds `DynamicGiVolume { origin, spacing, probes }`,
+  `Scene::set_dynamic_gi_volume` and `Scene::dynamic_gi_volume`,
+  `SceneError::InvalidDynamicGiVolume`, and `settings::DynamicGiQuality`
+  (`Off`, `Low`, `High`) as `Settings::dynamic_gi`, `High` by default. A
+  scene holds at most one volume, a lattice of probes the game places; a
+  new stage, first after prepare, keeps the probes up every frame with rays
+  through the scene's ray source, a port of Wicked Engine's DDGI: coloured
+  bounce light from the frame's directional lights, the scene lights whose
+  range reaches the volume (each hit's light shadowed by a ray at its
+  shadow opacity, never a shadow map), emitters, the sky and further
+  bounces; `Scene::move_origin` translates the volume and keeps its probes.
+  Within the volume (fading out over one spacing past it) static surfaces
+  without a lightmap or atlas chart and moving instances take its
+  irradiance in place of the environment's diffuse light and the hemisphere
+  fill, and moving instances in place of their ambient cube; ambient
+  occlusion occludes it as it did those. Lightmapped and charted surfaces
+  keep their bake. `SurfaceMaterial::environment_scale` does not scale it.
+  The first frame after a placement change traces every probe at the most
+  rays, as Wicked's does. Timing groups `dynamic GI allocation`,
+  `dynamic GI rays` and `dynamic GI blend` report its cost, and frames that
+  run it rebuild the ray source's instance BVHs, as world-space reflections
+  do. A volume costs about 11 KB of GPU memory a probe at High (8 KB at
+  Low). Lit group 0 binds one more texture, so the device floor (S3D-1)
+  rises from 19 to 20 sampled textures per shader stage; no known adapter
+  offers 19 (WebGPU in Chromium reports 16 or 48, Metal, DX12 and Vulkan 31
+  or more).
+- **Migration:** none for a game without a volume: nothing runs, and its
+  frames are unchanged. A `Settings` literal that lists every field adds
+  `dynamic_gi: DynamicGiQuality::High` (saved settings without the field
+  load with it); an exhaustive `match` on `SceneError` adds
+  `InvalidDynamicGiVolume`. Devices requested with `graphics_device::limits`
+  need no change. To light a level, install a volume that covers the
+  surfaces it should light with no probe on or inside a surface (rays pass
+  through the back of a single-sided one), one to a few metres apart, and
+  offer `Settings::dynamic_gi` to players
+  ([dynamic GI](crates/sgl-3d/README.md#dynamic-diffuse-gi)). Afterwards,
+  look at rooms and their corners
+  lit through openings and by lamps, moving objects passing through the
+  volume and leaving it, and the first second after loading a level or
+  moving the volume; compare the `dynamic GI *` timing groups on the
+  game's route at High and Low.
+
 ### The scene's render origin moves without a cut
 
 - **Scope:** `sgl-3d` adds `Scene::move_origin(&device, &queue, to: Vec3)`

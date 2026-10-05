@@ -90,6 +90,9 @@ pub(crate) struct Effective {
     pub fog: Option<FogQuality>,
     /// The fog filters its froxels before it integrates them, while it runs.
     pub fog_filter: bool,
+    /// The most rays a probe of the dynamic GI volume traces, while it
+    /// runs: the scene holds a volume and `Settings::dynamic_gi` is not Off.
+    pub dynamic_gi: Option<u32>,
     pub bloom: bool,
     /// The share of each pixel's motion that motion blur spreads it over:
     /// the authored shutter scaled by the setting, while positive.

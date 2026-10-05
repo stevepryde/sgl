@@ -9,7 +9,7 @@ use crate::view::targets::SharedTargets;
 use crate::{FrameInput, Scene};
 
 /// Encodes one frame of `scene` seen as `input` into `output`: prepare (with
-/// its deformation), shadows, volumetric fog, opaque, the transparent
+/// its deformation), dynamic GI, shadows, volumetric fog, opaque, the transparent
 /// stage's receivers, reflections with the transparent stage drawn into
 /// their input (while a screen-space method traces it) and onto their
 /// result, heat, exposure, antialiasing, motion blur, then post.
@@ -36,6 +36,7 @@ pub(super) fn render(
         post_fx,
         prepare,
         deform,
+        dynamic_gi,
         shadows,
         fog,
         opaque,
@@ -134,9 +135,10 @@ pub(super) fn render(
     // Every list the frame draws is built.
     views.instances.upload(device, queue);
     fog.prepare(device, effective.fog, sizes.render);
-    // After prepare, the local shadows' and the fog's, which may replace a
-    // light cluster buffer, a shadow map, the shadow records or the fog
-    // volume group 0 binds.
+    dynamic_gi.prepare(device, scene, &effective);
+    // After prepare, the local shadows', the fog's and dynamic GI's, which
+    // may replace a light cluster buffer, a shadow map, the shadow records,
+    // the fog volume or the probes group 0 binds.
     bindings.refresh(
         device,
         scene,
@@ -144,6 +146,7 @@ pub(super) fn render(
         views,
         shadows.maps(),
         fog.volume(),
+        dynamic_gi.probes(),
     );
     let mut ctx = FrameContext {
         device,
@@ -164,6 +167,8 @@ pub(super) fn render(
     };
     // Prepare's GPU step, before any pass draws scene geometry.
     deform.encode(&mut ctx);
+    // First after prepare: every pass that shades reads the probes.
+    dynamic_gi.encode(&mut ctx);
     // The stage order's: the local-light atlas, then the directional cascades.
     shadows.encode_local(&mut ctx);
     shadows.encode_directional(&mut ctx);

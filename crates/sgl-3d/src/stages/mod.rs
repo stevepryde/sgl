@@ -8,6 +8,7 @@
 //! the diagnostics frame probe (`frame_probe`).
 pub(crate) mod antialiasing;
 pub(crate) mod deform;
+pub(crate) mod dynamic_gi;
 pub(crate) mod exposure;
 pub(crate) mod fog;
 #[cfg(feature = "diagnostics")]

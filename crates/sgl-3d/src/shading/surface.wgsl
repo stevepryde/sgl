@@ -40,10 +40,13 @@ struct Surface {
 struct ShadeContext {
  // The view's pixel: it seeds the directional shadow filter's rotation.
  pixel:vec2<f32>,
- // Whether the frame's camera sees the surface, which selects its
- // directional shadow cascade by view depth; probe captures and ray hits
- // select the first cascade that holds the surface.
- camera:bool,
+ // The shadow receiver the surface is (SHADOW_RECEIVER_*): the frame's
+ // camera sees it, which selects its directional shadow cascade by view
+ // depth; a probe capture or world-space ray hit, which selects the first
+ // cascade that holds it; or a dynamic GI probe ray's hit, which shade_lit
+ // shades for its diffuse light alone and lights with no light of its
+ // own: its caller adds the one light it draws (surface_ray.wgsl).
+ receiver:u32,
  // Whether shade_lit adds the surface's environment specular
  // (probe_environment). The main view does not: source completion adds it
  // from the G-buffer. Probe captures and ray hits run no source completion,
@@ -199,19 +202,42 @@ fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,
  }
  return base*(1.-reflectance.coat_fresnel)+coat;
 }
-// The shadow receiver a shaded surface is (SHADOW_RECEIVER_*).
-fn shade_receiver(context:ShadeContext)->u32 {
- return select(SHADOW_RECEIVER_CAPTURE,SHADOW_RECEIVER_CAMERA,context.camera);
-}
 // Directional light `index` (Frame.directional_lights) as it reaches a
 // surface at `position` with `normal`, shadowed when it has the frame's
 // shadow cascades.
 fn directional_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,context:ShadeContext)->LightSample {
  let l=normalize(frame.directional_lights[index].direction_to_light);
  let radiance=frame.directional_lights[index].color*frame.directional_lights[index].illuminance;
- let shadow=directional_light_shadow(index,position,normal,context.pixel,shade_receiver(context));
+ let shadow=directional_light_shadow(index,position,normal,context.pixel,context.receiver);
  return LightSample(l,radiance,shadow,1.,NO_RECT_LIGHT);
 }
+// A receiver's indirect diffuse light, by the one determination: its
+// lightmap or irradiance atlas chart (baked_diffuse_source), else the
+// dynamic GI volume where it lights the frame, reaches the receiver and has
+// a blended probe about it (dynamic_gi_irradiance), else a moving instance's
+// ambient cube, else the frame's ambient alone. `baked` is the chart's or
+// cube's irradiance / PI and `volume` the volume's, with its share in a:
+// the cube and the frame's ambient keep the rest, and a chart all of it, as
+// the volume never lights a charted receiver.
+struct IndirectDiffuse {
+ baked:vec3<f32>,
+ volume:vec4<f32>,
+}
+fn surface_indirect_diffuse(s:Surface,normal:vec3<f32>)->IndirectDiffuse {
+ let source=baked_diffuse_source(s.baked,s.lightmap_uv,s.moving);
+ var volume=vec4(0.);
+ if source!=BAKED_LIGHTMAP && source!=BAKED_ATLAS {
+  volume=dynamic_gi_irradiance(s.position,normal);
+ }
+ return IndirectDiffuse(surface_fixed_irradiance(s.baked,s.uv,s.lightmap_uv,s.lightmap_bounds,normal,s.front,s.moving,s.baked_irradiance),volume);
+}
+// The share of the dynamic GI volume's last frame a probe hit reflects
+// again, so the bounces it carries converge: Wicked's energy_conservation
+// (95e357f ddgi_raytraceCS.hlsl 270–275, MIT, src/LICENSE-wicked.txt). The
+// volume holds irradiance / PI, the radiance a hit reflects per unit of its
+// diffuse colour, so nothing else scales it; df44c3d's further division by
+// PI (492–498) dims every bounce by a further PI and is not taken.
+const DYNAMIC_GI_BOUNCE:f32=.95;
 fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let base=s.base;
  let metallic=s.metallic;
@@ -226,36 +252,53 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let reflectance=surface_reflectance(s,dfg);
  let f0=reflectance.f0;
  let diffuse=reflectance.diffuse;
+ let probe_hit=context.receiver==SHADOW_RECEIVER_PROBE_HIT;
  // The retained cosine convolution stores irradiance / PI. It is already
  // a lighting integral, so neither a second PI nor a brightness fudge belongs here.
  let ibl=pbr_ibl_weights(base.rgb,metallic,dfg);
- var color=(ibl.diffuse+ibl.multi)*diffuse_environment(n)*s.environment_scale*(1.-reflectance.coat_fresnel);
+ // A probe hit takes diffuse light alone: no multiscattered specular.
+ let multi=select(ibl.multi,vec3(0.),probe_hit);
+ let indirect=surface_indirect_diffuse(s,n);
+ let volume=indirect.volume;
+ let fallback=(1.-volume.a)*(1.-reflectance.coat_fresnel);
+ let environment=diffuse_environment(n)*s.environment_scale*fallback;
+ var color=(ibl.diffuse+multi)*environment;
  let sky=frame.hemisphere_sky_color;
  let hemisphere_intensity=frame.hemisphere_intensity;
  let ground=frame.hemisphere_ground_color;
- let hemisphere=diffuse/3.14159265359*pbr_hemisphere(n,sky,ground,hemisphere_intensity)*(1.-reflectance.coat_fresnel);
+ let hemisphere=diffuse/3.14159265359*pbr_hemisphere(n,sky,ground,hemisphere_intensity)*fallback;
  color+=hemisphere;
  // The ambient diffuse that ambient occlusion weights: the diffuse
- // environment and hemisphere terms; multiscattering stays apart from it.
- let ambient=ibl.diffuse*diffuse_environment(n)*s.environment_scale*(1.-reflectance.coat_fresnel)+hemisphere;
- if frame.directional_lights[0].illuminance>0. {
-  color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,n,context));
+ // environment and hemisphere terms, or the volume's irradiance in their
+ // place; multiscattering stays apart from it.
+ var ambient=ibl.diffuse*environment+hemisphere;
+ // A probe hit takes the volume's last frame damped, as Wicked's bounce is.
+ if volume.a>0. {
+  let bounce=select(1.,DYNAMIC_GI_BOUNCE,probe_hit);
+  let irradiance=volume.rgb*volume.a*bounce*(1.-reflectance.coat_fresnel);
+  color+=(ibl.diffuse+multi)*irradiance;
+  ambient+=ibl.diffuse*irradiance;
  }
- if frame.directional_lights[1].illuminance>0. {
-  color+=surface_direct_light(s,reflectance,directional_light_sample(1u,s.position,n,context));
- }
- color+=surface_fixed_irradiance(s.baked,s.uv,s.lightmap_uv,s.lightmap_bounds,n,s.front,s.moving,s.baked_irradiance)*diffuse*(vec3(1.)-f0);
- // The scene lights that reach the surface: live ones, then baked ones where
- // no baked map already holds their light.
- let lights=context.clusters;
- var end=lights.first+lights.live;
- if takes_baked_lights(s.baked,s.lightmap_uv,s.moving) {
-  end+=lights.baked;
- }
- for (var at=lights.first;at<end;at++) {
-  let light=scene_light_sample(cluster_item(at),s.position,n,context.pixel,shade_receiver(context));
-  if light.visibility>0. {
-   color+=surface_direct_light(s,reflectance,light);
+ color+=indirect.baked*diffuse*(vec3(1.)-f0)*(1.-volume.a);
+ if !probe_hit {
+  if frame.directional_lights[0].illuminance>0. {
+   color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,n,context));
+  }
+  if frame.directional_lights[1].illuminance>0. {
+   color+=surface_direct_light(s,reflectance,directional_light_sample(1u,s.position,n,context));
+  }
+  // The scene lights that reach the surface: live ones, then baked ones
+  // where no baked map already holds their light.
+  let lights=context.clusters;
+  var end=lights.first+lights.live;
+  if takes_baked_lights(s.baked,s.lightmap_uv,s.moving) {
+   end+=lights.baked;
+  }
+  for (var at=lights.first;at<end;at++) {
+   let light=scene_light_sample(cluster_item(at),s.position,n,context.pixel,context.receiver);
+   if light.visibility>0. {
+    color+=surface_direct_light(s,reflectance,light);
+   }
   }
  }
  if context.environment_specular {

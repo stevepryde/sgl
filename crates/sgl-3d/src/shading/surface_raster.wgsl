@@ -112,5 +112,5 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
 // capture is not the frame's camera and adds its own environment specular.
 fn raster_context(i:Fragment)->ShadeContext {
  let capture=(view.flags&VIEW_PROBE_CAPTURE)!=0u;
- return ShadeContext(i.clip.xy,!capture,capture,cluster_range(i.world,i.clip.xy),untraced_reflection());
+ return ShadeContext(i.clip.xy,select(SHADOW_RECEIVER_CAMERA,SHADOW_RECEIVER_CAPTURE,capture),capture,cluster_range(i.world,i.clip.xy),untraced_reflection());
 }

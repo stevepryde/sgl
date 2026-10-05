@@ -639,7 +639,14 @@ trace and denoiser (rtreflectionCS.hlsl, ssr_resolveCS.hlsl, ssr_temporalCS.hlsl
 ssr_upsampleCS.hlsl, stochasticSSRHF.hlsli and brdf.hlsli in
 WickedEngine/shaders/) in world_reflections*.wgsl and temporal_reprojection.wgsl,
 through which Godot's screen-space reflections (godot_reflections_temporal.wgsl)
-also accumulate.
+also accumulate; from revision df44c3db4c4927492bc9c791eac715d98d7ed091 its
+dynamic diffuse GI (ddgi_rayallocationCS.hlsl, ddgi_indirectprepareCS.hlsl,
+ddgi_raytraceCS.hlsl, ddgi_updateCS.hlsl, ShaderInterop_DDGI.h and the RNG
+and octahedral helpers of globals.hlsli in WickedEngine/shaders/, and
+wiRenderer.cpp's DDGI) in shading/dynamic_gi*.wgsl, shading/surface_ray.wgsl
+and stages/dynamic_gi/, with the irradiance map of revision
+95e357f73f28d24e70ce7a1ab8f9fb954de457e4 (ShaderInterop_DDGI.h and
+ddgi_updateCS.hlsl).
 
 The MIT License (MIT)
 

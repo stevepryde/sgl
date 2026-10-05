@@ -1,11 +1,13 @@
 //! The scene layer: [`Scene`], the retained content a game adds, edits and
 //! removes (materials, models, instances, lights, decals, environments,
-//! baked lighting, probes and transient geometry), with the GPU buffers that
+//! baked lighting, probes, the dynamic GI volume's placement and transient
+//! geometry), with the GPU buffers that
 //! mirror it and the ray-query structure built from its geometry. Nothing here depends on a
 //! camera, an output size or a quality setting.
 mod decal_atlas;
 pub(crate) mod decals;
 pub(crate) mod deformation;
+pub(crate) mod dynamic_gi;
 pub(crate) mod environments;
 pub(crate) mod error;
 pub(crate) mod instances;
@@ -60,6 +62,8 @@ pub struct Scene {
     scene_layout: wgpu::BindGroupLayout,
     pub(crate) static_lighting: static_lighting::StaticLighting,
     baked_specular_probes: Option<probes::UploadedProbes>,
+    /// The dynamic GI volume's placement (`Scene::set_dynamic_gi_volume`).
+    pub(crate) dynamic_gi: Option<dynamic_gi::InstalledVolume>,
     /// This scene among every scene created: a renderer given another scene
     /// restarts its history.
     pub(crate) id: u64,
@@ -129,6 +133,7 @@ impl Scene {
             rays,
             static_lighting: static_lighting::StaticLighting::empty(device, queue),
             baked_specular_probes: None,
+            dynamic_gi: None,
             id: next_generation(),
             resources: next_generation(),
             transient: transient::Transient::new(device),

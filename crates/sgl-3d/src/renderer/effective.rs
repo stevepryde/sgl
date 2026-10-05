@@ -104,6 +104,8 @@ pub(super) struct SceneContent {
     pub fog_volumes: bool,
     /// A blended receiver of screen-space reflections.
     pub receivers: bool,
+    /// A dynamic GI volume.
+    pub dynamic_gi_volume: bool,
 }
 
 impl SceneContent {
@@ -111,6 +113,7 @@ impl SceneContent {
         Self {
             fog_volumes: !scene.transient.fog_volume_corners.is_empty(),
             receivers: scene.materials.holds_receivers(),
+            dynamic_gi_volume: scene.dynamic_gi.is_some(),
         }
     }
 }
@@ -212,6 +215,10 @@ pub(super) fn resolve(
             p[3][3] == 0. && p[2][3] == -1.,
         ),
         fog_filter: settings.fog_filter,
+        dynamic_gi: settings
+            .dynamic_gi
+            .rays()
+            .filter(|_| content.dynamic_gi_volume),
         bloom: settings.bloom.enabled(low) && !disable.bloom,
         motion_blur,
         heat: settings.heat_distortion,

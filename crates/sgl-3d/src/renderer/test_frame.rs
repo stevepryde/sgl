@@ -110,6 +110,7 @@ impl Renderer {
         );
         self.views.instances.upload(device, queue);
         self.fog.prepare(device, effective.fog, self.sizes.render);
+        self.dynamic_gi.prepare(device, scene, &effective);
         self.bindings.refresh(
             device,
             scene,
@@ -117,6 +118,7 @@ impl Renderer {
             &self.views,
             self.shadows.maps(),
             self.fog.volume(),
+            self.dynamic_gi.probes(),
         );
         TestFrame {
             effective,
@@ -258,6 +260,10 @@ impl Renderer {
     /// World-space ray hits' lit group 0, as the frame binds it.
     pub(crate) fn test_ray_hit_lit(&self) -> &wgpu::BindGroup {
         self.bindings.ray_hit_lit()
+    }
+
+    pub(crate) fn test_dynamic_gi(&self) -> &crate::stages::dynamic_gi::DynamicGi {
+        &self.dynamic_gi
     }
 
     pub(crate) fn test_lit_layout(&self) -> &wgpu::BindGroupLayout {

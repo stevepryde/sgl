@@ -45,10 +45,13 @@ const SHADOW_FILTER_TEMPORAL:u32=2u;
 // camera's fog, which has no side and takes the frame's maps with one tap
 // that the fog's reprojection resolves: a local light's one hardware tap,
 // as Bevy's volumetric fog samples it, and the directional cascade's
-// Godot's fog tap (directional_shadow.wgsl).
+// Godot's fog tap (directional_shadow.wgsl). A dynamic GI probe ray's hit
+// is a fourth kind, which takes no map: the visibility of its one light is
+// a ray (surface_ray.wgsl's probe_hit_light).
 const SHADOW_RECEIVER_CAPTURE:u32=0u;
 const SHADOW_RECEIVER_CAMERA:u32=1u;
 const SHADOW_RECEIVER_MEDIUM:u32=2u;
+const SHADOW_RECEIVER_PROBE_HIT:u32=3u;
 // A light's shadow at its shadow opacity, Godot b130438's shadow_opacity,
 // MIT (src/LICENSE-godot.txt): its visibility blended toward unshadowed,
 // mix(1, shadow, opacity), as Godot's surfaces take it
