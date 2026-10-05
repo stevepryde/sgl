@@ -721,8 +721,10 @@ objects, which baked probes cannot hold, as Lumen and HDRP's mixed tracing
 continue failed screen traces in world space. Each traced lobe of an opaque
 surface that SSR did not fully resolve, and that no blended receiver covers,
 casts one GGX-sampled ray at half resolution through the portable scene BVHs,
+or the scene's acceleration structures with
+[hardware ray tracing](#hardware-ray-tracing),
 reaching 1000 m (Wicked Engine's default `Postprocess_RTReflection`
-range). They are two-level, as hardware acceleration structures are: a BVH over
+range). The BVHs are two-level, as hardware acceleration structures are: a BVH over
 the static instances and one over the moving instances, rebuilt on the CPU
 when static content changes and every traced frame respectively, then each
 model's own BVH, so a ray's cost follows the instances it reaches rather than
@@ -1163,10 +1165,12 @@ stay in the game (S3D-1).
 - **Limits.** A deforming instance keeps its model (`set_instance` to another
   model, or from a rigid model to a deforming one, is refused with
   `SceneError::DeformingModel`; remove and add it), and a deforming model
-  takes no part in levels of detail. Scene rays (world-space reflections) do
-  not see deforming instances, as Bevy's ray-traced scene leaves out meshes
-  with joints; screen-space reflections do. Probe captures, which show static
-  content, never contain them.
+  takes no part in levels of detail. Scene rays (world-space reflections,
+  the dynamic GI volume) see deforming instances only with
+  [hardware ray tracing](#hardware-ray-tracing), which traces each one's
+  deformed positions; the portable BVHs leave them out, as Bevy's
+  ray-traced scene leaves out meshes with joints. Screen-space reflections
+  see them. Probe captures, which show static content, never contain them.
 
 The `skinned` example generates a skinned, morphed glTF with a clip, and
 samples, poses and renders it:
@@ -1695,12 +1699,13 @@ is any edit to the scene that changes what rays see or light (an instance
 that does not deform, a model, material, light, decal, environment, bake
 or the irradiance volume), the frame's directional lights, hemisphere fill
 or environment, `Settings::dynamic_gi`, or the volume's placement; the
-camera, the clock and a deforming instance's animation are not. Setting a
+camera and the clock are not, nor a deforming instance's animation unless
+hardware ray tracing traces the volume's rays, which then see it. Setting a
 pose or a value to what it already is changes nothing. A scene whose
 materials scroll their normal maps changes every frame and never pauses.
 Frames that run the volume trace the ray source, so its instance BVHs
 rebuild on them as for world-space reflections. Deforming instances are
-lit by the volume but do not block its rays. Per-pass cost is reported in
+lit by the volume, and block its rays only with hardware ray tracing. Per-pass cost is reported in
 the `dynamic GI *` timing groups. The [dynamic GI example](examples/dynamic_gi.rs)
 lights a room through a window and with a lamp, two boxes moving through
 it; `--timing` prints the stage's GPU time in each frame as its probes
@@ -1715,12 +1720,14 @@ cargo run --release -p sgl-3d --example dynamic_gi -- target/dynamic_gi.png --ti
 
 ## Hardware ray tracing
 
-A native device with wgpu's ray queries traces the scene's rays in hardware
-once roadmap 13 ([#23](https://github.com/stevepryde/sgl/issues/23))
-lands; this version builds the scene's acceleration structures, and every
-ray still traverses the portable BVHs. It is opt-in: off by default and in
-every preset, a game takes it by requesting the feature and turning
-`Settings::hardware_ray_tracing` on.
+A native device with wgpu's ray queries traces the scene's rays in
+hardware: world-space reflections' rays and the dynamic GI volume's probe
+rays and visibility rays go through the scene's acceleration structures
+instead of the portable BVHs, through the same functions and the same hit,
+so they see what they saw before and, in addition, skinned and morphed
+instances. It is opt-in: off by default and in every preset, a game takes
+it by requesting the feature and turning `Settings::hardware_ray_tracing`
+on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
 
 - **Device.** Request `graphics_device::ray_tracing_features(&adapter)`
   with `graphics_device::limits(&adapter)`, which requests the adapter's
@@ -1748,22 +1755,53 @@ every preset, a game takes it by requesting the feature and turning
   masked mesh, of one whose BLAS is pending, or that the device cannot hold
   (a model past `max_blas_primitive_count` or `max_blas_geometry_count`,
   instances past `max_tlas_instance_count`, the farthest left out, or a
-  structure its memory cannot hold) stays on the portable BVHs. Turning
-  the setting off frees the structures; a scene on a device without the
-  feature holds none. A mesh's indices past its last whole triangle are
-  left out of its BLAS, as of its BVH. The one allocation no error scope
-  reaches is the builds' scratch buffer, which wgpu allocates when the
-  game finishes the frame's encoder: its out-of-memory error reaches the
-  game's error handler, as any failure of its encoder does.
-- **Reporting.** `Renderer::ray_tracing_stats()` returns the last rendered
-  frame's `RayTracingStats`: the instances the TLAS held, those that do not
-  deform it did not hold (on the portable BVHs), and those the device left
-  out. With the `diagnostics` feature, `diagnostics::counters` counts the
-  BLAS and TLAS builds and compactions, and `Scene::diagnostic_resources`
-  the BLASes held and their triangles.
+  structure its memory cannot hold) stays on the portable BVHs, which then
+  cover those instances alone; a deforming instance the device cannot
+  hold is seen by no ray, since the portable BVHs never hold deforming
+  instances. Turning the setting off frees the
+  structures; a scene on a device without the feature holds none. A mesh's
+  indices past its last whole triangle are left out of its BLAS, as of its
+  BVH. The one allocation no error scope reaches is the builds' scratch
+  buffer, which wgpu allocates when the game finishes the frame's encoder:
+  its out-of-memory error reaches the game's error handler, as any failure
+  of its encoder does.
+- **Tracing.** Every native backend runs one form, the baseline: each ray
+  asks the hardware for the nearest opaque hit over the kinds it wants
+  (any hit for a visibility ray), and the same acceptance rules as the
+  portable path judge it: a back face a ray's side policy rejects (a
+  camera-origin ray rejects a single-sided material's, judged from the
+  triangle's own winding, so mirrored instances keep their sides), a
+  blended mesh of a model that also has opaque ones, a hidden visibility
+  group, the reflecting surface's own triangle, a cut-out texel of a
+  masked deforming instance. A rejected hit is traced past, up to 256
+  queries a ray, after which the ray reports a miss: a ray through
+  hair cards spends one for each cut-out card it crosses, at most 29 in
+  a crowd of 24-card bundles. The portable BVHs trace the
+  instances the TLAS does not hold, cut-out texels included, and the
+  nearer hit wins. A deforming instance's hits take its deformed
+  positions, normals and tangents, and a masked mesh on it cuts out at the
+  hit. One limitation: a triangle at exactly the distance of a rejected
+  one (back-to-back single-sided faces, coplanar meshes of a shown and a
+  hidden group) may be skipped, since one opaque query cannot list ties.
+  While hardware ray tracing traces the dynamic GI volume's rays, a
+  capture-visible deforming instance's pose or deformation is an edit that
+  wakes a converged volume, since its rays see it.
+- **Reporting.** `Renderer::ray_tracing_in_effect(&settings)` says whether
+  the hardware path traces the scene's rays, as
+  `antialiasing_in_effect` does for antialiasing, and
+  `Renderer::ray_tracing_error()` why it did not trace the last frame that
+  asked for it (the device has no ray queries, or its memory could not
+  hold the TLAS); the portable BVHs traced it instead.
+  `Renderer::ray_tracing_stats()` returns the last rendered frame's
+  `RayTracingStats`: the instances the TLAS held, those that do not deform
+  it did not hold (on the portable BVHs), and those the device left out.
+  With the `diagnostics` feature, `diagnostics::counters` counts the BLAS
+  and TLAS builds and compactions, and `Scene::diagnostic_resources` the
+  BLASes held and their triangles.
 
-The [streaming example](examples/streaming.rs) opts in with
-`--hardware-ray-tracing` and reports the builds.
+The [streaming example](examples/streaming.rs) and the
+[dynamic GI example](examples/dynamic_gi.rs) opt in with
+`--hardware-ray-tracing`.
 
 ## Settings and capability fallback
 

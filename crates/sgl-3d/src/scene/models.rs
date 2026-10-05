@@ -506,7 +506,7 @@ impl Scene {
         self.instances.pose_casters(model, id);
         // Rays see its instances' new geometry from their entries.
         for (instance, shown) in self.instances.slots.iter() {
-            if shown.state.model == id && shown.deformation.is_none() {
+            if shown.state.model == id {
                 self.ray_instances
                     .set(instance.index(), model.ray, shown.state.pose);
             }

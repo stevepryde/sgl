@@ -94,9 +94,14 @@ pub struct Scene {
     /// Changes with every edit to the content the dynamic GI volume's rays
     /// see and light (`Scene::edited`): each public edit that changes
     /// something, but the transient effects' and a deforming instance's
-    /// pose and deformation, which no ray sees. A converged volume pauses
-    /// while it holds still.
+    /// pose and deformation, which the portable path's rays do not see
+    /// (`deformation_edits`). A converged volume pauses while it holds
+    /// still.
     pub(crate) edits: u64,
+    /// Changes with every edit of a capture-visible deforming instance's
+    /// pose or deformation, which rays see while the hardware path traces
+    /// them, so the dynamic GI volume's pause counts them then.
+    pub(crate) deformation_edits: u64,
     /// Caller-authored glow, heat and mist geometry.
     pub(crate) transient: transient::Transient,
     /// The world bounds static edits touched since the last submitted frame.
@@ -167,6 +172,7 @@ impl Scene {
             id: next_generation(),
             resources: next_generation(),
             edits: 0,
+            deformation_edits: 0,
             transient: transient::Transient::new(device),
             static_edits: static_edits::StaticEdits::default(),
             deformations: Vec::new(),
@@ -177,6 +183,12 @@ impl Scene {
     /// Records an edit to content the dynamic GI volume sees (`edits`).
     pub(crate) fn edited(&mut self) {
         self.edits = self.edits.wrapping_add(1);
+    }
+
+    /// Records an edit of a capture-visible deforming instance
+    /// (`deformation_edits`).
+    pub(crate) fn deformation_edited(&mut self) {
+        self.deformation_edits = self.deformation_edits.wrapping_add(1);
     }
 
     /// Whether a material scrolls its normal map with the frame's time, so
@@ -244,73 +256,99 @@ impl Scene {
     /// instance entries set since the last traced frame, and builds the
     /// instance BVHs over the capture-visible instances whose model has
     /// triangles and does not deform: the moving one every traced frame and
-    /// the static one after a static edit. Rays see no deforming instance,
-    /// as Bevy 9d12036's ray-traced scene leaves out meshes with joint
-    /// attributes (crates/bevy_solari/src/scene/blas.rs,
-    /// `is_mesh_raytracing_compatible`).
+    /// the static one after a static edit or a change of the instances it
+    /// covers. Where the frame traces in `hardware` (after
+    /// `prepare_acceleration_structures`), they cover only the instances
+    /// its TLAS does not hold (predicate instances, pending and left out;
+    /// the architecture's Hardware ray tracing, *Portable coverage*), and
+    /// none whose model rays pass through whole (`RayClass::None`). The
+    /// portable path sees no deforming instance, as Bevy 9d12036's
+    /// ray-traced scene leaves out meshes with joint attributes
+    /// (crates/bevy_solari/src/scene/blas.rs, `is_mesh_raytracing_compatible`).
     pub(crate) fn update_rays(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         visibility_mask: u32,
+        hardware: bool,
     ) {
         self.rays.set_visibility_mask(queue, visibility_mask);
-        let edits = self.static_edits.edits();
-        let rebuild_statics = self.ray_instances.statics_stale(edits);
-        let mut statics = Vec::new();
+        let tlas = self.acceleration.as_ref().filter(|_| hardware);
+        let mut covered = Vec::new();
         let mut moving = Vec::new();
         for (id, instance) in self.instances.slots.iter() {
-            let rebuilt = match instance.mobility {
-                Mobility::Static => rebuild_statics,
-                Mobility::Moving => true,
-            };
-            if !rebuilt || !instance.state.capture_visible || instance.deformation.is_some() {
+            if !instance.state.capture_visible || instance.deformation.is_some() {
                 continue;
             }
             let model = self.drawn_model(instance.state.model);
             if model.ray.bvh_root == 0 {
                 continue;
             }
-            let bounded = rays::instances::bounded(id.index(), model.bounds, instance.state.pose);
-            match instance.mobility {
-                Mobility::Static => statics.push(bounded),
-                Mobility::Moving => moving.push(bounded),
+            if let Some(tlas) = tlas
+                && (tlas.holds(id.index()) || model.ray_class == ray_class::RayClass::None)
+            {
+                continue;
             }
+            match instance.mobility {
+                Mobility::Static => covered.push(id.index() as u32),
+                Mobility::Moving => moving.push(rays::instances::bounded(
+                    id.index(),
+                    model.bounds,
+                    instance.state.pose,
+                )),
+            }
+        }
+        let edits = self.static_edits.edits();
+        let mut statics = Vec::new();
+        let rebuild_statics = self.ray_instances.statics_stale(edits, &covered);
+        if rebuild_statics {
+            statics.extend(covered.iter().map(|&index| {
+                let instance = self
+                    .instances
+                    .slots
+                    .at(index as usize)
+                    .expect("a covered instance lives");
+                let model = self.drawn_model(instance.state.model);
+                rays::instances::bounded(index as usize, model.bounds, instance.state.pose)
+            }));
         }
         self.ray_instances.update(
             device,
             queue,
             &self.rays,
-            rebuild_statics.then_some((statics.as_mut_slice(), edits)),
+            rebuild_statics.then_some(rays::instances::StaticBuild {
+                instances: statics.as_mut_slice(),
+                edits,
+                covered,
+            }),
             &mut moving,
         );
     }
 
     /// Before a frame that builds the hardware path's acceleration
-    /// structures, seen from `eye`: chooses its builds and sets the TLAS
+    /// structures, seen from `eye`, and before `update_rays`, which covers
+    /// what its TLAS does not hold: chooses its builds and sets the TLAS
     /// (`rays::acceleration`), creating the structures on the first such
-    /// frame. The frame records the builds with
-    /// `encode_acceleration_structures` after its deform pass, and
-    /// `finish_frame` commits them.
+    /// frame; none when the device's memory cannot hold them. The frame
+    /// records the builds with `encode_acceleration_structures` after its
+    /// deform pass, and `finish_frame` commits them.
     pub(crate) fn prepare_acceleration_structures(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         eye: glam::Vec3,
-    ) -> rays::acceleration::RayTracingStats {
+    ) -> Option<rays::acceleration::RayTracingStats> {
         if self.acceleration.is_none() {
             self.acceleration = rays::acceleration::AccelerationStructures::new(device);
         }
-        let Some(acceleration) = &mut self.acceleration else {
-            return Default::default();
-        };
-        acceleration.prepare(
+        let acceleration = self.acceleration.as_mut()?;
+        Some(acceleration.prepare(
             device,
             queue,
             (&self.models, &self.instances),
             self.ray_instances.capacity(),
             eye,
-        )
+        ))
     }
 
     /// Records the frame's acceleration-structure builds, which
@@ -337,7 +375,6 @@ impl Scene {
     }
 
     /// The hardware path's acceleration structures.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn acceleration_structures(
         &self,
     ) -> Option<&rays::acceleration::AccelerationStructures> {

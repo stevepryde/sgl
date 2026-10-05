@@ -138,9 +138,46 @@ fn scene_vertex_lightmap_bounds(mesh:u32,at:u32)->vec4<f32> {
 fn scene_vertex_word(mesh:u32,vertex:u32)->u32 {
  return scene_source[mesh+SCENE_MESH_VERTICES]+vertex*PACKED_VERTEX_WORDS;
 }
-fn scene_vertex_words(mesh:u32,primitive:u32)->vec3<u32> {
+// The vertices of triangle `primitive` of the mesh whose record is at `mesh`.
+fn scene_triangle(mesh:u32,primitive:u32)->vec3<u32> {
  let indices=scene_source[mesh+SCENE_MESH_INDICES]+primitive*3u;
- return vec3(scene_vertex_word(mesh,scene_source[indices]),scene_vertex_word(mesh,scene_source[indices+1u]),scene_vertex_word(mesh,scene_source[indices+2u]));
+ return vec3(scene_source[indices],scene_source[indices+1u],scene_source[indices+2u]);
+}
+fn scene_vertex_words(mesh:u32,primitive:u32)->vec3<u32> {
+ let triangle=scene_triangle(mesh,primitive);
+ return vec3(scene_vertex_word(mesh,triangle.x),scene_vertex_word(mesh,triangle.y),scene_vertex_word(mesh,triangle.z));
+}
+// Vertex `vertex` of the mesh whose record is at `mesh` as a deforming
+// instance deforms it (deformation.wgsl): its position in the slot that
+// starts at word `slot`, one of its object record's position slots, and
+// its normal and tangent among the normals that start at word `normals`.
+fn scene_deformed_vertex(mesh:u32,vertex:u32)->u32 {
+ return scene_source[mesh+SCENE_MESH_FIRST_VERTEX]+vertex;
+}
+fn scene_deformed_position(slot:u32,mesh:u32,vertex:u32)->vec3<f32> {
+ return scene_v3(slot+scene_deformed_vertex(mesh,vertex)*DEFORMED_POSITION_WORDS);
+}
+fn scene_deformed_frame(normals:u32,mesh:u32,vertex:u32)->PackedFrame {
+ let at=normals+scene_deformed_vertex(mesh,vertex)*DEFORMED_NORMAL_WORDS;
+ return PackedFrame(scene_v3(at),scene_v4(at+DEFORMED_TANGENT));
+}
+// Vertex `vertex` of the mesh whose record is at `mesh` as instance `index`
+// shows it this frame, as the pulled passes read it: deformed when the
+// instance deforms (its object record's deformed slot), else its packed
+// rest position and frame. Its UV, colour and lightmap UV are its packed
+// ones either way, which deformation leaves.
+fn scene_shown_position(index:u32,mesh:u32,vertex:u32)->vec3<f32> {
+ let deformed=objects[index].deformed_positions;
+ if deformed!=0u {
+  return scene_deformed_position(deformed,mesh,vertex);
+ }
+ return scene_vertex_position(scene_vertex_word(mesh,vertex));
+}
+fn scene_shown_frame(index:u32,mesh:u32,vertex:u32)->PackedFrame {
+ if objects[index].deformed_positions!=0u {
+  return scene_deformed_frame(objects[index].deformed_normals,mesh,vertex);
+ }
+ return scene_vertex_frame(scene_vertex_word(mesh,vertex));
 }
 // The texture coordinates of triangle `vertices` of a mesh whose UVs span
 // `rect`, and its colour, at barycentrics `b`, as a hit's shading and the
@@ -151,9 +188,9 @@ fn scene_interpolated_uv(rect:vec4<f32>,vertices:vec3<u32>,b:vec3<f32>)->vec2<f3
 fn scene_interpolated_color(vertices:vec3<u32>,b:vec3<f32>)->vec4<f32> {
  return scene_vertex_color(vertices.x)*b.x+scene_vertex_color(vertices.y)*b.y+scene_vertex_color(vertices.z)*b.z;
 }
-fn scene_world_geometric(normal_matrix:mat4x4<f32>,v:vec3<u32>)->vec3<f32> {
- let e1=scene_vertex_position(v.y)-scene_vertex_position(v.x);
- let e2=scene_vertex_position(v.z)-scene_vertex_position(v.x);
+fn scene_world_geometric(normal_matrix:mat4x4<f32>,positions:array<vec3<f32>,3>)->vec3<f32> {
+ let e1=positions[1]-positions[0];
+ let e2=positions[2]-positions[0];
  // Preserve the authored front side under mirrored instances, as raster does.
  return normalize((normal_matrix*vec4(cross(e1,e2),0.)).xyz);
 }
@@ -167,6 +204,9 @@ struct RawSceneHit {
  intersection:vec4<u32>,
  coords:vec4<f32>,
 }
+// The one hit decode of every trace, portable or hardware: the raw hit's
+// instance, mesh and triangle read through its entry, its positions,
+// normals and tangents as the instance shows them (scene_shown_position).
 fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->SceneHit {
  var result:SceneHit;
  if raw.intersection.x==0u {
@@ -177,19 +217,21 @@ fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->Scene
  let world=objects[index].model;
  let normal_matrix=transpose(instance.inverse_world);
  let mesh=instance.mesh_word+raw.intersection.z*SCENE_MESH_WORDS;
- let vertices=scene_vertex_words(mesh,raw.intersection.w);
+ let triangle=scene_triangle(mesh,raw.intersection.w);
+ let vertices=vec3(scene_vertex_word(mesh,triangle.x),scene_vertex_word(mesh,triangle.y),scene_vertex_word(mesh,triangle.z));
+ let positions=array<vec3<f32>,3>(scene_shown_position(index,mesh,triangle.x),scene_shown_position(index,mesh,triangle.y),scene_shown_position(index,mesh,triangle.z));
  let b=vec3(1.-raw.coords.yz.x-raw.coords.yz.y,raw.coords.yz);
  let rect=scene_mesh_uv_rect(mesh);
  let uv0=scene_vertex_uv(vertices.x,rect);
  let uv1=scene_vertex_uv(vertices.y,rect);
  let uv2=scene_vertex_uv(vertices.z,rect);
- var frames=array<PackedFrame,3>(scene_vertex_frame(vertices.x),scene_vertex_frame(vertices.y),scene_vertex_frame(vertices.z));
+ var frames=array<PackedFrame,3>(scene_shown_frame(index,mesh,triangle.x),scene_shown_frame(index,mesh,triangle.y),scene_shown_frame(index,mesh,triangle.z));
  let n=frames[0].normal*b.x+frames[1].normal*b.y+frames[2].normal*b.z;
  result.hit=true;
  result.distance=raw.coords.x;
  // Reconstruct from the ACTUAL offset query origin, never the receiver position.
  result.position=origin+direction*raw.coords.x;
- result.geometric_normal=scene_world_geometric(normal_matrix,vertices);
+ result.geometric_normal=scene_world_geometric(normal_matrix,positions);
  result.front_face=dot(result.geometric_normal,direction)<0.;
  result.normal=normalize((normal_matrix*vec4(n,0.)).xyz);
  // Match raster: transform and orthogonalize each authored vertex frame before
@@ -219,8 +261,8 @@ fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->Scene
  result.primitive_id=raw.intersection.w;
  result.material_word=scene_source[mesh+SCENE_MESH_MATERIAL_WORD];
  result.barycentrics=raw.coords.yz;
- let dp1=(world*vec4(scene_vertex_position(vertices.y)-scene_vertex_position(vertices.x),0.)).xyz;
- let dp2=(world*vec4(scene_vertex_position(vertices.z)-scene_vertex_position(vertices.x),0.)).xyz;
+ let dp1=(world*vec4(positions[1]-positions[0],0.)).xyz;
+ let dp2=(world*vec4(positions[2]-positions[0],0.)).xyz;
  let duv1=uv1-uv0;
  let duv2=uv2-uv0;
  let determinant=duv1.x*duv2.y-duv1.y*duv2.x;

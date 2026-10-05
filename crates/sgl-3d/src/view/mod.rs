@@ -11,8 +11,9 @@
 //! The types stages share, which the renderer owns and lends them, are
 //! here too: the frame's context (`frame`), the effective configuration
 //! (`effective`), the sizes and shared targets (`targets`), group 0
-//! (`bindings`), DiligentFX's post-effect context (`post_fx`), and the bind
-//! group cache stages keep for their own passes (`cached_group`).
+//! (`bindings`), DiligentFX's post-effect context (`post_fx`), the bind
+//! group cache stages keep for their own passes (`cached_group`), and a
+//! tracing stage's programs for each path its rays take (`trace_paths`).
 pub(crate) mod bindings;
 pub(crate) mod cached_group;
 pub(crate) mod cascades;
@@ -28,6 +29,7 @@ pub(crate) mod population;
 pub(crate) mod post_fx;
 pub(crate) mod reflection_camera;
 pub(crate) mod targets;
+pub(crate) mod trace_paths;
 
 use crate::FrameInput;
 use crate::content::irradiance_volume::IrradianceVolume;

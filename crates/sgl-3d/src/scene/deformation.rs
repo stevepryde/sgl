@@ -513,9 +513,13 @@ impl Scene {
         else {
             return Err(SceneError::DeformationMismatch);
         };
+        let seen = instance.state.capture_visible;
         deformation.set(queue, &self.rays, model, joints, morph_weights)?;
         // Its candidates take its deformed bounds.
         self.candidates.deformed(id.index(), deformation);
+        if seen {
+            self.deformation_edited();
+        }
         Ok(())
     }
 }

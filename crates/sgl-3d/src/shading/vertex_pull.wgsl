@@ -34,37 +34,33 @@ fn scene_pulled_vertex(mesh:u32,index:u32)->u32 {
 }
 // Vertex `vertex_index`'s position of the mesh whose record is at `mesh`,
 // as the instance whose object record is at index `object` shows it: its
-// deformed position where it deforms.
+// deformed position this frame where it deforms.
 fn scene_pulled_position(object:u32,mesh:u32,vertex_index:u32)->vec3<f32> {
  if deformed_vertices {
-  let deformed=scene_source[mesh+SCENE_MESH_FIRST_VERTEX]+vertex_index;
-  return scene_v3(objects[object].deformed_positions+deformed*DEFORMED_POSITION_WORDS);
+  return scene_deformed_position(objects[object].deformed_positions,mesh,vertex_index);
  }
  return scene_vertex_position(scene_vertex_word(mesh,vertex_index));
 }
 // Vertex `index` of the drawn mesh whose record is at `mesh`, as the instance
 // whose object record is at index `object` shows it. Its source identity is
-// that index plus one.
+// that index plus one, and its primitive's first index word.
 fn scene_source_vertex(object:u32,mesh:u32,index:u32)->PulledSceneVertex {
- let index_word=scene_source[mesh+SCENE_MESH_INDICES];
- let vertex_index=scene_source[index_word+index];
+ let vertex_index=scene_pulled_vertex(mesh,index);
  let vertex=scene_vertex_word(mesh,vertex_index);
- let position=scene_vertex_position(vertex);
+ let position=scene_pulled_position(object,mesh,vertex_index);
+ let primitive=scene_source[mesh+SCENE_MESH_INDICES]+(index/3u)*3u;
  var pulled=PulledSceneVertex(position,position,vec3(0.),scene_vertex_uv(vertex,scene_mesh_uv_rect(mesh)),scene_vertex_color(vertex),
-  vec2(object+1u,index_word+(index/3u)*3u),scene_vertex_lightmap_uv(vertex),scene_vertex_lightmap_bounds(mesh,vertex),vec4(0.));
+  vec2(object+1u,primitive),scene_vertex_lightmap_uv(vertex),scene_vertex_lightmap_bounds(mesh,vertex),vec4(0.));
  // A deforming instance's frame is its deformed one, so its rest frame is
  // decoded only for rigid ones.
- if !deformed_vertices {
-  let frame=scene_vertex_frame(vertex);
-  pulled.normal=frame.normal;
-  pulled.tangent=frame.tangent;
+ var frame:PackedFrame;
+ if deformed_vertices {
+  pulled.previous_position=scene_deformed_position(objects[object].previous_positions,mesh,vertex_index);
+  frame=scene_deformed_frame(objects[object].deformed_normals,mesh,vertex_index);
  } else {
-  let deformed=scene_source[mesh+SCENE_MESH_FIRST_VERTEX]+vertex_index;
-  pulled.position=scene_v3(objects[object].deformed_positions+deformed*DEFORMED_POSITION_WORDS);
-  pulled.previous_position=scene_v3(objects[object].previous_positions+deformed*DEFORMED_POSITION_WORDS);
-  let tangent_frame=objects[object].deformed_normals+deformed*DEFORMED_NORMAL_WORDS;
-  pulled.normal=scene_v3(tangent_frame);
-  pulled.tangent=scene_v4(tangent_frame+DEFORMED_TANGENT);
+  frame=scene_vertex_frame(vertex);
  }
+ pulled.normal=frame.normal;
+ pulled.tangent=frame.tangent;
  return pulled;
 }

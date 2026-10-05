@@ -2,7 +2,7 @@
 use super::Renderer;
 use crate::settings::{ReflectionMethod, Settings};
 use crate::timing::GpuTiming;
-use crate::view::frame::{Completed, FrameContext};
+use crate::view::frame::{Completed, FrameContext, HardwareRays};
 use crate::view::pipelines::GeometryPipelines;
 use crate::view::post_fx::PostFx;
 use crate::view::targets::SharedTargets;
@@ -175,6 +175,7 @@ pub(super) fn render(
         bindings,
         pipelines,
         history,
+        hardware_rays: HardwareRays::of(&effective, scene, prepare.hardware_rays()),
     };
     // Prepare's GPU steps, before any pass draws scene geometry or traces:
     // the deformations, then the acceleration structures over them, then

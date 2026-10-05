@@ -24,6 +24,8 @@ use crate::shading::packed_vertex::PackedVertex;
 pub(crate) mod acceleration;
 mod bvh;
 mod charts;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod hardware_tests;
 pub(crate) mod instances;
 #[cfg(test)]
 mod layout;
@@ -36,7 +38,7 @@ mod query;
 #[cfg(test)]
 pub(crate) use query::QUERY;
 #[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) use query::Query;
+pub(crate) use query::{Function, Query};
 
 /// What a ray instance reads of its model.
 #[derive(Clone, Copy)]

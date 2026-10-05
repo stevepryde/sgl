@@ -42,8 +42,9 @@
 //! ray tracing: the device is requested with its feature
 //! (`graphics_device::ray_tracing_features`, under wgpu's experimental
 //! token) and `Settings::hardware_ray_tracing` is on, so a device that has
-//! it builds the scene's acceleration structures; without the flag the runs
-//! are as before it existed, comparable with earlier measurements.
+//! it builds the scene's acceleration structures and traces the world-space
+//! reflections' rays through them; without the flag the runs are as before
+//! it existed, comparable with earlier measurements.
 //!
 //! Each run then prints what its views' draw lists cost on its route
 //! (`support/culling.rs`): the CPU time each GPU-built view's draw list

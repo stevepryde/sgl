@@ -9,8 +9,8 @@ Native (Metal, Vulkan, DX12) and the browser (WASM + WebGPU) run the same
 features, with two exceptions: FSR2 needs native-only device features, so the
 browser runs TAA in its place and `Renderer::fsr2_error` says why, and
 `Renderer::capture_specular_probe`, an authoring tool that blocks for its
-readback, runs natively only. Hardware ray tracing's acceleration structures
-are native too, where the device has ray queries. WebGL2 is not a target:
+readback, runs natively only. Hardware ray tracing is native too, where the
+device has ray queries; elsewhere rays trace the software BVHs. WebGL2 is not a target:
 SGL3D needs compute.
 [Browser](../README.md#browser-wasm--webgpu).
 
@@ -42,7 +42,8 @@ SGL3D needs compute.
   and skins each changed instance once per frame in compute, and every pass
   draws the result: motion from the last submitted frame's pose,
   culling by skinned bounds, shadows in the cascades and the local-light
-  atlas. A deforming instance moves and keeps its model; rays do not see it.
+  atlas. A deforming instance moves and keeps its model; rays see it only
+  with hardware ray tracing.
   Each `set_instance_deformation` call deforms it again and redraws its
   shadow faces, so skip it for unchanged poses. Rigid meshes stay baked at
   their nodes' rest transforms; clips move them only as named rigid parts.
@@ -221,12 +222,18 @@ Environment and probe specular always apply. On top of them:
   Bevy, over opaque surfaces and blended receivers. Crystal runs in SGL's
   `sgl-post-fx` effects library.
   [Reflections](../README.md#reflections) credits each source.
-- **World-space reflections**: rays through a software BVH for moving objects
-  up to 1000 m from the reflecting surface that screen-space reflections miss.
-- **Hardware ray tracing** (first part, opt-in): on a device with ray
-  queries and with `Settings::hardware_ray_tracing` on, the scene's
-  acceleration structures, built on frames that trace rays; rays do not
-  trace them yet.
+- **World-space reflections**: rays for moving objects up to 1000 m from
+  the reflecting surface that screen-space reflections miss, through a
+  software BVH or, with hardware ray tracing, the scene's acceleration
+  structures.
+- **Hardware ray tracing** (opt-in): on a device with ray queries and with
+  `Settings::hardware_ray_tracing` on, world-space reflections' rays and
+  the dynamic GI volume's trace the scene's acceleration structures, built
+  on the frames that trace rays; masked models and what the device cannot
+  hold stay on the software BVHs. Skinned and morphed instances are seen by
+  those rays only on this path, and not at all where the device cannot
+  hold them. `Renderer::ray_tracing_in_effect` and
+  `ray_tracing_error` report it.
   [Hardware ray tracing](../README.md#hardware-ray-tracing).
 
 ## Image quality and post-processing
@@ -303,9 +310,9 @@ Environment and probe specular always apply. On top of them:
 ## Not provided
 
 Animation playback (sampling and blending clips is the game's).
-DLSS/MetalFX, rays traced in hardware, and occlusion culling are
-[planned](../../../specs/sgl3d.md#planned). Current world-space reflections
-use software rays; current culling is by frustum alone. Compressed images
+DLSS/MetalFX, ray-traced shadows, and occlusion culling are
+[planned](../../../specs/sgl3d.md#planned). Current culling is by frustum
+alone. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
 not provided.
 

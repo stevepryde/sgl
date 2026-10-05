@@ -8,18 +8,24 @@ enum Bound {
     View(wgpu::TextureView),
     Sampler(wgpu::Sampler),
     Buffer(wgpu::Buffer, wgpu::BufferAddress, Option<wgpu::BufferSize>),
+    /// An acceleration structure the group's `structures` generation names
+    /// (`CachedGroup::get_with_structures`).
+    Structure,
     /// An array or other binding, which is never reused.
     Other,
 }
 
 impl Bound {
-    fn new(resource: &wgpu::BindingResource<'_>) -> Self {
+    /// What `resource` binds; an acceleration structure by the generation
+    /// the caller names, where it names one (`named`).
+    fn new(resource: &wgpu::BindingResource<'_>, named: bool) -> Self {
         match resource {
             wgpu::BindingResource::TextureView(view) => Self::View((*view).clone()),
             wgpu::BindingResource::Sampler(sampler) => Self::Sampler((*sampler).clone()),
             wgpu::BindingResource::Buffer(binding) => {
                 Self::Buffer(binding.buffer.clone(), binding.offset, binding.size)
             }
+            wgpu::BindingResource::AccelerationStructure(_) if named => Self::Structure,
             _ => Self::Other,
         }
     }
@@ -31,6 +37,7 @@ impl Bound {
             (Self::Buffer(buffer, offset, size), wgpu::BindingResource::Buffer(binding)) => {
                 buffer == binding.buffer && *offset == binding.offset && *size == binding.size
             }
+            (Self::Structure, wgpu::BindingResource::AccelerationStructure(_)) => true,
             _ => false,
         }
     }
@@ -42,6 +49,8 @@ impl Bound {
 pub(crate) struct CachedGroup {
     layout: wgpu::BindGroupLayout,
     bound: Vec<(u32, Bound)>,
+    /// The generation of the acceleration structures `group` binds.
+    structures: Option<u64>,
     group: Option<wgpu::BindGroup>,
 }
 
@@ -50,6 +59,7 @@ impl CachedGroup {
         Self {
             layout,
             bound: Vec::new(),
+            structures: None,
             group: None,
         }
     }
@@ -61,7 +71,23 @@ impl CachedGroup {
         label: &str,
         entries: &[(u32, wgpu::BindingResource<'_>)],
     ) -> &wgpu::BindGroup {
+        self.get_with_structures(device, label, entries, None)
+    }
+
+    /// The group binding `entries`, whose acceleration structures, which
+    /// wgpu gives no identity a binding can keep, are those of generation
+    /// `structures`: their owner's count of the structures it replaced, so
+    /// that the group is remade only when it replaces one. With none, a
+    /// group binding one is made again every time.
+    pub fn get_with_structures(
+        &mut self,
+        device: &wgpu::Device,
+        label: &str,
+        entries: &[(u32, wgpu::BindingResource<'_>)],
+        structures: Option<u64>,
+    ) -> &wgpu::BindGroup {
         let current = self.group.is_some()
+            && self.structures == structures
             && self.bound.len() == entries.len()
             && self.bound.iter().zip(entries).all(
                 |((bound_binding, bound), (binding, resource))| {
@@ -71,8 +97,9 @@ impl CachedGroup {
         if !current {
             self.bound = entries
                 .iter()
-                .map(|(binding, resource)| (*binding, Bound::new(resource)))
+                .map(|(binding, resource)| (*binding, Bound::new(resource, structures.is_some())))
                 .collect();
+            self.structures = structures;
             let entries: Vec<_> = entries
                 .iter()
                 .map(|(binding, resource)| wgpu::BindGroupEntry {

@@ -56,14 +56,12 @@ pub(crate) mod group2 {
 
 /// The scene's TLAS, which each tracing pass binds in its own group 3, as
 /// scene_rays_hardware.wgsl declares it.
-#[cfg(test)]
 pub(crate) mod hardware {
     pub(crate) const SCENE_TLAS: u32 = 16;
 }
 
 /// The entry a tracing pass's group 3 binds the scene's TLAS at
 /// (`hardware::SCENE_TLAS`), which its fragment and compute stages read.
-#[cfg(test)]
 pub(crate) fn tlas_entry() -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding: hardware::SCENE_TLAS,

@@ -408,6 +408,7 @@ pub(crate) static SCENE_RAYS: Module = Module {
         &PACKED_VERTEX,
         &BIND_SCENE,
         &BC7,
+        &DEFORMATION,
     ],
 };
 /// A scene vertex pulled from the scene source, as an instance shows it:
@@ -417,20 +418,70 @@ pub(crate) static VERTEX_PULL: Module = Module {
     source: include_str!("vertex_pull.wgsl"),
     deps: &[&BIND_SCENE, &SCENE_RAYS, &DEFORMATION],
 };
-/// The hardware path's shared module: the scene's TLAS binding. Its first
-/// tracing pass composes it with the hardware trace; until then only the
-/// acceleration structures' build-and-bind test does.
-#[cfg(test)]
-pub(crate) static SCENE_RAYS_HARDWARE: Module = Module {
-    name: "scene_rays_hardware",
-    source: include_str!("scene_rays_hardware.wgsl"),
-    deps: &[],
+/// The one acceptance predicate of every scene ray, the ray's validity test
+/// and the side policies (`SCENE_SIDES_*`), which every trace composes.
+pub(crate) static SCENE_RAYS_PREDICATE: Module = Module {
+    name: "scene_rays_predicate",
+    source: include_str!("scene_rays_predicate.wgsl"),
+    deps: &[&SCENE_RAYS],
 };
+/// The portable walk: the BVH traversal over the source header's roots,
+/// which the portable function set and the hardware module both compose.
+pub(crate) static SCENE_RAYS_WALK: Module = Module {
+    name: "scene_rays_walk",
+    source: include_str!("scene_rays_walk.wgsl"),
+    deps: &[&SCENE_RAYS_PREDICATE],
+};
+/// The scene ray function set through the portable walk alone: a tracing
+/// pipeline's root where the hardware path is not in effect
+/// (`ray_trace_root`).
 pub(crate) static SCENE_RAYS_PORTABLE: Module = Module {
     name: "scene_rays_portable",
     source: include_str!("scene_rays_portable.wgsl"),
-    deps: &[&SCENE_RAYS],
+    deps: &[&SCENE_RAYS_WALK],
 };
+/// The hardware path's shared module: the TLAS binding, the re-trace, the
+/// composition with the portable walk, the per-ray budget and the scene ray
+/// function set. It calls the query of the form in effect, whose module is
+/// the root that composes it, never a dependency of it: `compose` recurses
+/// forever on a cycle.
+pub(crate) static SCENE_RAYS_HARDWARE: Module = Module {
+    name: "scene_rays_hardware",
+    source: include_str!("scene_rays_hardware.wgsl"),
+    deps: &[&SCENE_RAYS_WALK],
+};
+/// The baseline form's query (`RayQueryForm::Baseline`), the root of a
+/// hardware-traced pipeline on every native backend.
+pub(crate) static SCENE_RAYS_QUERY_OPAQUE: Module = Module {
+    name: "scene_rays_query_opaque",
+    source: include_str!("scene_rays_query_opaque.wgsl"),
+    deps: &[&SCENE_RAYS_HARDWARE],
+};
+
+/// The form of the hardware path's ray queries (the architecture's Hardware
+/// ray tracing, *Two forms, one stage*), a capability of the device's
+/// backend: it selects the query module a tracing pipeline composes and the
+/// geometry flags the scene builds its BLASes with; nothing else branches
+/// on it. Every native backend runs the baseline form: naga 29's MSL writer
+/// cannot run a candidate loop, and the candidate specialisation that
+/// Vulkan and DX12 could run is a later, separate change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum RayQueryForm {
+    /// Every BLAS geometry opaque, one query per look and a re-trace past
+    /// a committed hit the shared predicate rejects; masked models'
+    /// instances are traced by the portable walk.
+    Baseline,
+}
+
+/// The root a tracing pipeline composes after its own modules: the hardware
+/// path's query module for the form in effect, else the portable function
+/// set. Each defines the scene ray function set once in the program.
+pub(crate) fn ray_trace_root(form: Option<RayQueryForm>) -> &'static Module {
+    match form {
+        None => &SCENE_RAYS_PORTABLE,
+        Some(RayQueryForm::Baseline) => &SCENE_RAYS_QUERY_OPAQUE,
+    }
+}
 /// A surface's specular lobes, the lobe a screen-space method traces and
 /// the formula that composes its result: one owner for source completion,
 /// composition and lit shading.
@@ -468,14 +519,15 @@ pub(crate) static SURFACE_RASTER: Module = Module {
     deps: &[&VERTEX, &PBR, &ANISOTROPY, &MATERIAL_RASTER, &SURFACE],
 };
 /// A ray hit's `Surface` and its shading, a dynamic GI probe ray's hit's
-/// light with its visibility ray among it. Reads the lit bindings and the
-/// scene's ray buffers.
+/// light with its visibility ray among it, which goes through the ray
+/// function set of the root its pipeline composes (`ray_trace_root`).
+/// Reads the lit bindings and the scene's ray buffers.
 pub(crate) static SURFACE_RAY: Module = Module {
     name: "surface_ray",
     source: include_str!("surface_ray.wgsl"),
     deps: &[
         &SCENE_RAYS,
-        &SCENE_RAYS_PORTABLE,
+        &SCENE_RAYS_PREDICATE,
         &ANISOTROPY,
         &BAKED_LIGHTING,
         &SURFACE,

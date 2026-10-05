@@ -184,6 +184,18 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
                     "SCENE_BVH_LEAF_PRIMITIVES",
                     bvh::LEAF_PRIMITIVES as u32,
                 ),
+                // The kinds' bits, the TLAS instance masks the scene builds
+                // with and a ray's cull mask selects.
+                (
+                    "world_reflections",
+                    "SCENE_KIND_STATIC",
+                    u32::from(super::acceleration::MASK_STATIC),
+                ),
+                (
+                    "world_reflections",
+                    "SCENE_KIND_MOVING",
+                    u32::from(super::acceleration::MASK_MOVING),
+                ),
             ]
             .map(|(program, name, value)| {
                 crate::shading::layout_tests::Constant::new(

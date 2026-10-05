@@ -3,10 +3,13 @@
 //! (`Postprocess_RTReflection`, wiRenderer.cpp): trace at half resolution,
 //! spatial resolve, temporal accumulation, bilateral upsample.
 use crate::shading;
+use crate::shading::RayQueryForm;
 use crate::view::cached_group::CachedGroup;
+use crate::view::frame::HardwareRays;
 use crate::view::history::HistoryFrame;
 use crate::view::pipelines::LitConstants;
 use crate::view::reflection_camera;
+use crate::view::trace_paths::{TracePath, TracePaths};
 use glam::Mat4;
 use std::collections::HashMap;
 
@@ -137,14 +140,13 @@ impl Denoise {
 /// its targets (reallocated when the render size changes) and its history,
 /// which continues across consecutive valid frames.
 pub(crate) struct WorldReflections {
-    trace_shader: wgpu::ShaderModule,
-    trace_layout: wgpu::PipelineLayout,
-    /// The trace's pipelines for each set of lit constants, each created
-    /// when a frame first needs it, as the geometry pipelines specialise on
-    /// the scene's rectangle lights and decals.
-    trace: HashMap<LitConstants, wgpu::RenderPipeline>,
-    /// The trace's receivers at group 3.
-    trace_group: CachedGroup,
+    /// The trace's programs for each path its rays take, with its receivers
+    /// at group 3.
+    paths: TracePaths,
+    /// The trace's pipelines for each set of lit constants and path, each
+    /// created when a frame first needs it, as the geometry pipelines
+    /// specialise on the scene's rectangle lights and decals.
+    trace: HashMap<(LitConstants, Option<RayQueryForm>), wgpu::RenderPipeline>,
     resolve: Denoise,
     temporal: Denoise,
     upsample: Denoise,
@@ -163,14 +165,15 @@ static COMMON: shading::Module = shading::Module {
     deps: &[&shading::GBUFFER, &shading::DEPTH],
 };
 /// The trace: the lit layout at group 0 (the camera's ray-hit group, with the
-/// installed probes), the scene at group 1 and its receivers at group 3. The
-/// denoiser's receivers are at group 3 too, its own bindings at group 0.
+/// installed probes), the scene at group 1 and its receivers at group 3, with
+/// the TLAS on the hardware path. Its pipelines compose the ray function set
+/// of the path the frame's rays take (`TracePaths`). The denoiser's
+/// receivers are at group 3 too, its own bindings at group 0.
 pub(crate) static TRACE: shading::Module = shading::Module {
     name: "world_reflections",
     source: include_str!("world/world_reflections.wgsl"),
     deps: &[
         &shading::BIND_LIT,
-        &shading::SCENE_RAYS_PORTABLE,
         &shading::SURFACE_RAY,
         &shading::FULLSCREEN,
         &COMMON,
@@ -190,10 +193,6 @@ impl WorldReflections {
         scene: &wgpu::BindGroupLayout,
         size: [u32; 2],
     ) -> Self {
-        let trace_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("world-space reflection rays"),
-            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&TRACE]).into()),
-        });
         let denoise_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("world-space reflection denoise"),
             source: wgpu::ShaderSource::Wgsl(shading::compose(&[&DENOISE]).into()),
@@ -210,32 +209,23 @@ impl WorldReflections {
             multisampled: false,
         };
         let unfilterable = sampled(wgpu::TextureSampleType::Float { filterable: false });
-        let trace_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("world-space reflection receivers"),
-            entries: &[
-                entry(0, sampled(wgpu::TextureSampleType::Depth)),
-                entry(1, unfilterable),
-                entry(2, unfilterable),
-                entry(3, unfilterable),
-                entry(
-                    4,
-                    wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                ),
-                entry(5, unfilterable),
-                entry(6, sampled(wgpu::TextureSampleType::Uint)),
-                entry(7, sampled(wgpu::TextureSampleType::Depth)),
-            ],
-        });
-        let trace_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("world-space reflection rays"),
-                bind_group_layouts: &[Some(lit), Some(scene), None, Some(&trace_layout)],
-                immediate_size: 0,
-            });
+        let receivers = [
+            entry(0, sampled(wgpu::TextureSampleType::Depth)),
+            entry(1, unfilterable),
+            entry(2, unfilterable),
+            entry(3, unfilterable),
+            entry(
+                4,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+            ),
+            entry(5, unfilterable),
+            entry(6, sampled(wgpu::TextureSampleType::Uint)),
+            entry(7, sampled(wgpu::TextureSampleType::Depth)),
+        ];
         let compute = |entry_point| {
             Denoise::new(
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -249,10 +239,13 @@ impl WorldReflections {
             )
         };
         Self {
-            trace_shader,
-            trace_layout: trace_pipeline_layout,
+            paths: TracePaths::new(
+                "world-space reflection rays",
+                &TRACE,
+                &receivers,
+                [lit, scene],
+            ),
             trace: HashMap::new(),
-            trace_group: CachedGroup::new(trace_layout),
             resolve: compute("world_resolve"),
             temporal: compute("world_temporal"),
             upsample: compute("world_upsample"),
@@ -282,10 +275,15 @@ impl WorldReflections {
         &self.targets.output
     }
 
-    /// The trace's pipeline compiled with `lit`.
-    fn trace(&mut self, device: &wgpu::Device, lit: LitConstants) -> &wgpu::RenderPipeline {
-        let (shader, layout) = (&self.trace_shader, &self.trace_layout);
-        self.trace.entry(lit).or_insert_with(|| {
+    /// The trace's pipeline compiled with `lit` for the path `form` takes.
+    fn trace(
+        &mut self,
+        device: &wgpu::Device,
+        lit: LitConstants,
+        form: Option<RayQueryForm>,
+    ) -> &wgpu::RenderPipeline {
+        let TracePath { shader, layout, .. } = self.paths.path(device, form);
+        self.trace.entry((lit, form)).or_insert_with(|| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("world-space reflection rays"),
                 layout: Some(layout),
@@ -319,7 +317,8 @@ impl WorldReflections {
 
     /// `groups` are the camera's ray-hit lit group 0 (with the installed
     /// probes) and the scene's group 1; `lit_constants`, the scene's
-    /// (`LitConstants::of`).
+    /// (`LitConstants::of`); `hardware`, the hardware path the frame's rays
+    /// take, if any.
     #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
@@ -328,12 +327,14 @@ impl WorldReflections {
         queue: &wgpu::Queue,
         [lit, scene]: [&wgpu::BindGroup; 2],
         lit_constants: LitConstants,
+        hardware: Option<HardwareRays<'_>>,
         history: HistoryFrame,
         size: [u32; 2],
         input: Inputs<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        self.trace(device, lit_constants);
+        let form = hardware.map(|rays| rays.form);
+        self.trace(device, lit_constants, form);
         let resized = self.targets.full != size;
         if resized {
             self.targets = Targets::new(device, size);
@@ -389,9 +390,9 @@ impl WorldReflections {
             (3, view(input.f0)),
             (4, self.params.as_entire_binding()),
         ];
-        let trace_group = self.trace_group.get(
+        let trace_group = self.paths.group(
             device,
-            "world-space reflection receivers",
+            hardware,
             &[
                 receivers.as_slice(),
                 &[
@@ -413,7 +414,7 @@ impl WorldReflections {
                 timestamp_writes: timing.and_then(|t| t.render_pass("world reflection rays")),
                 ..Default::default()
             });
-            pass.set_pipeline(&self.trace[&lit_constants]);
+            pass.set_pipeline(&self.trace[&(lit_constants, form)]);
             pass.set_bind_group(0, lit, &[]);
             pass.set_bind_group(1, scene, &[]);
             pass.set_bind_group(3, trace_group, &[]);

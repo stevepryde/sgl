@@ -30,7 +30,7 @@ use crate::shading::uniforms::{FrameValues, ViewUniform};
 use crate::view::clusters::{BoxVolume, CAMERA_CLUSTERS, Clusters, ViewVolume};
 use crate::view::draw_list::gpu::{camera_cull, cascade_cull};
 use crate::view::draw_list::{DrawInstances, DrawList};
-use crate::view::effective::Effective;
+use crate::view::effective::{Effective, HardwareRayTracing};
 use crate::view::frame::FrameContext;
 use crate::view::history::HistoryFrame;
 use crate::view::population::Population;
@@ -85,10 +85,22 @@ pub(crate) fn set_cascades(
     }
 }
 
+/// Why the hardware path did not trace a frame that asked for it.
+const NO_RAY_QUERIES: &str = "the device has no hardware ray queries: the browser's WebGPU \
+    has none, and a native device has them where its adapter does and the game requested \
+    graphics_device::ray_tracing_features";
+const NO_MEMORY: &str = "the device's memory could not hold the scene's TLAS";
+
 #[derive(Default)]
 pub(crate) struct Prepare {
     /// The last rendered frame's hardware ray tracing.
     ray_tracing: RayTracingStats,
+    /// The last rendered frame's rays trace in hardware: the scene holds
+    /// its acceleration structures, prepared for it.
+    hardware_rays: bool,
+    /// Why the hardware path did not trace the last frame that asked for
+    /// it, a frame with `Settings::hardware_ray_tracing` on.
+    ray_tracing_error: Option<&'static str>,
 }
 
 impl Prepare {
@@ -167,18 +179,28 @@ impl Prepare {
         // made since the last traced frame wait for the next, so the frames
         // that skip it leave it nothing stale.
         let traced = effective.world_space || volume.is_some();
-        if traced {
-            scene.update_rays(device, queue, frame.visibility_mask);
-        }
         // The acceleration structures are built on the frames that trace,
-        // and freed by a frame with hardware ray tracing off.
+        // and freed by a frame with hardware ray tracing off. The portable
+        // BVHs then cover what the TLAS does not hold.
         self.ray_tracing = RayTracingStats::default();
-        if !effective.hardware_ray_tracing {
-            scene.free_acceleration_structures();
-        } else if traced {
-            self.ray_tracing = scene.prepare_acceleration_structures(device, queue, camera.eye);
-        } else {
-            scene.skip_acceleration_structures();
+        self.hardware_rays = false;
+        match effective.hardware_ray_tracing {
+            HardwareRayTracing::Off | HardwareRayTracing::Unsupported => {
+                scene.free_acceleration_structures();
+                self.ray_tracing_error = (effective.hardware_ray_tracing
+                    == HardwareRayTracing::Unsupported)
+                    .then_some(NO_RAY_QUERIES);
+            }
+            HardwareRayTracing::On(_) if traced => {
+                let prepared = scene.prepare_acceleration_structures(device, queue, camera.eye);
+                self.hardware_rays = prepared.is_some();
+                self.ray_tracing = prepared.unwrap_or_default();
+                self.ray_tracing_error = prepared.is_none().then_some(NO_MEMORY);
+            }
+            HardwareRayTracing::On(_) => scene.skip_acceleration_structures(),
+        }
+        if traced {
+            scene.update_rays(device, queue, frame.visibility_mask, self.hardware_rays);
         }
         let scene = &*scene;
         views.clusters.cluster(
@@ -262,6 +284,16 @@ impl Prepare {
     /// The last rendered frame's hardware ray tracing.
     pub fn ray_tracing_stats(&self) -> RayTracingStats {
         self.ray_tracing
+    }
+
+    /// Whether the last rendered frame's rays trace in hardware.
+    pub fn hardware_rays(&self) -> bool {
+        self.hardware_rays
+    }
+
+    /// Why the hardware path did not trace the last frame that asked for it.
+    pub fn ray_tracing_error(&self) -> Option<&'static str> {
+        self.ray_tracing_error
     }
 
     /// The views of a probe capture at `center` with `input`'s lights, the
