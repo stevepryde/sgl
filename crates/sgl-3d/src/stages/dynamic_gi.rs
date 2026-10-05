@@ -94,15 +94,39 @@ pub(crate) struct VolumeUniform {
     eye: [f32; 3],
     frame: u32,
     rays: u32,
-    padding: [u32; 3],
+    ramp_probes: u32,
+    traced: u32,
+    padding: u32,
 }
 
-/// Where the allocation's ray count is in its buffer (`DdgiAllocation` in
-/// allocate.wgsl, after the dispatch's three words), and where the trace
-/// reads it in the volume's uniform.
-const ALLOCATION_RAYS: u64 = 12;
-const ALLOCATION_BYTES: u64 = 16;
+/// The allocation's buffer (`DdgiAllocation` in allocate.wgsl): the
+/// trace's indirect dispatch and ray count, the blends' dispatch and the
+/// count of probes that trace, the ramp's words and its bins. The trace and
+/// the blends read the counts in the volume's uniform.
+#[repr(C)]
+struct Allocation {
+    groups: [u32; 3],
+    rays: u32,
+    blend_groups: [u32; 3],
+    traced: u32,
+    ramp_bins: u32,
+    ramp_room: u32,
+    ramp_taken: u32,
+    unblended: u32,
+    bins: [u32; RAMP_BINS as usize],
+}
+const ALLOCATION_RAYS: u64 = std::mem::offset_of!(Allocation, rays) as u64;
+const ALLOCATION_BLEND_GROUPS: u64 = std::mem::offset_of!(Allocation, blend_groups) as u64;
+const ALLOCATION_TRACED: u64 = std::mem::offset_of!(Allocation, traced) as u64;
+const ALLOCATION_BYTES: u64 = std::mem::size_of::<Allocation>() as u64;
+/// The ramp's bins of distance (`RAMP_BINS` in allocate.wgsl).
+const RAMP_BINS: u32 = 1024;
+/// The rays a frame gives the probes it starts while some have not
+/// started: at most this many over the quality's most rays start a frame,
+/// where Wicked starts every probe at once.
+const RAMP_RAYS: u32 = 32768;
 const UNIFORM_RAYS: u64 = std::mem::offset_of!(VolumeUniform, rays) as u64;
+const UNIFORM_TRACED: u64 = std::mem::offset_of!(VolumeUniform, traced) as u64;
 
 /// What the probes' state is kept for: a scene and its volume's placement,
 /// in the frame the scene was created in, so a move of the render origin
@@ -127,6 +151,8 @@ impl Key {
 /// state, and a stand-in lit group 0 binds while no volume runs.
 pub(crate) struct DynamicGi {
     layouts: Layouts,
+    rank: wgpu::ComputePipeline,
+    threshold: wgpu::ComputePipeline,
     allocate: wgpu::ComputePipeline,
     prepare_trace: wgpu::ComputePipeline,
     update_irradiance: wgpu::ComputePipeline,
@@ -189,6 +215,18 @@ impl DynamicGi {
                 cache: None,
             })
         };
+        let rank = pipeline(
+            "dynamic GI ramp rank",
+            &layouts.allocate,
+            &allocate_shader,
+            "rank",
+        );
+        let threshold = pipeline(
+            "dynamic GI ramp threshold",
+            &layouts.allocate,
+            &allocate_shader,
+            "threshold",
+        );
         let allocate = pipeline(
             "dynamic GI allocation",
             &layouts.allocate,
@@ -222,6 +260,8 @@ impl DynamicGi {
             trace_shader: module("dynamic GI rays", &TRACE),
             trace_layout,
             trace: HashMap::new(),
+            rank,
+            threshold,
             allocate,
             prepare_trace,
             update_irradiance,
@@ -363,7 +403,9 @@ impl DynamicGi {
             eye: camera.eye.to_array(),
             frame,
             rays: 0,
-            padding: [0; 3],
+            ramp_probes: (RAMP_RAYS / max_rays).max(1),
+            traced: 0,
+            padding: 0,
         };
         crate::counters::write_buffer(ctx.queue, &self.uniform, 0, bytemuck::bytes_of(&uniform));
         let probes = dispatch(uniform.probe_count);
@@ -376,6 +418,10 @@ impl DynamicGi {
                 timestamp_writes: timing.and_then(|t| t.compute_pass("dynamic GI allocation")),
             });
             pass.set_bind_group(0, &rays.allocate, &[]);
+            pass.set_pipeline(&self.rank);
+            pass.dispatch_workgroups(uniform.probe_count.div_ceil(64), 1, 1);
+            pass.set_pipeline(&self.threshold);
+            pass.dispatch_workgroups(1, 1, 1);
             pass.set_pipeline(&self.allocate);
             pass.dispatch_workgroups(probes[0], probes[1], 1);
             pass.set_pipeline(&self.prepare_trace);
@@ -386,6 +432,13 @@ impl DynamicGi {
             ALLOCATION_RAYS,
             &self.uniform,
             UNIFORM_RAYS,
+            4,
+        );
+        encoder.copy_buffer_to_buffer(
+            &volume.allocation,
+            ALLOCATION_TRACED,
+            &self.uniform,
+            UNIFORM_TRACED,
             4,
         );
         {
@@ -405,9 +458,9 @@ impl DynamicGi {
         });
         pass.set_bind_group(0, &rays.update, &[]);
         pass.set_pipeline(&self.update_irradiance);
-        pass.dispatch_workgroups(probes[0], probes[1], 1);
+        pass.dispatch_workgroups_indirect(&volume.allocation, ALLOCATION_BLEND_GROUPS);
         pass.set_pipeline(&self.update_depth);
-        pass.dispatch_workgroups(probes[0], probes[1], 1);
+        pass.dispatch_workgroups_indirect(&volume.allocation, ALLOCATION_BLEND_GROUPS);
     }
 }
 
@@ -476,35 +529,62 @@ fn frustum(clip_from_world: Mat4) -> [[f32; 4]; 6] {
 #[cfg(test)]
 pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
     use crate::shading::layout_tests::mirror;
-    vec![mirror!(
-        "dynamic_gi_trace",
-        "DdgiVolume",
-        VolumeUniform,
-        [
-            origin,
-            max_distance,
-            spacing,
-            max_rays,
-            probes,
-            probe_count,
-            rotation,
-            frustum,
-            eye,
-            frame,
-            rays,
-        ]
-    )]
+    vec![
+        mirror!(
+            "dynamic_gi_trace",
+            "DdgiVolume",
+            VolumeUniform,
+            [
+                origin,
+                max_distance,
+                spacing,
+                max_rays,
+                probes,
+                probe_count,
+                rotation,
+                frustum,
+                eye,
+                frame,
+                rays,
+                ramp_probes,
+                traced,
+            ]
+        ),
+        mirror!(
+            "dynamic_gi_allocate",
+            "DdgiAllocation",
+            Allocation,
+            [
+                groups,
+                rays,
+                blend_groups,
+                traced,
+                ramp_bins,
+                ramp_room,
+                ramp_taken,
+                unblended,
+                bins,
+            ]
+        ),
+    ]
 }
 
 /// The constants this stage shares with its shaders.
 #[cfg(test)]
 pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
     use crate::shading::layout_tests::Constant;
-    vec![Constant::new(
-        "dynamic_gi_trace",
-        "DDGI_GROUP_ROW",
-        naga::Literal::U32(GROUP_ROW),
-    )]
+    vec![
+        Constant::new(
+            "dynamic_gi_trace",
+            "DDGI_GROUP_ROW",
+            naga::Literal::U32(GROUP_ROW),
+        ),
+        Constant::new(
+            "dynamic_gi_allocate",
+            "RAMP_BINS",
+            naga::Literal::U32(RAMP_BINS),
+        ),
+    ]
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
