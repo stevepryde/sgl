@@ -27,17 +27,26 @@
 // Chebyshev weight is not taken: it raises what an occluded probe gives.
 // Changed, the visibility point: offset by Majercik et al. 2021's
 // self-shadow bias (JCGT 10(2), equation 2: (n 0.2 + v 0.8) 0.75 times the
-// least spacing times 0.3, v toward the viewer) in place of Wicked's 1 mm
-// along the normal. The wrap weight lets the probes behind a surface weigh,
-// and without the bias the surface shadows itself against the probes in
-// front: a black floor under that sky took 0.96-0.99 of it, and takes
-// 0.998 with the bias. A receiver nearer a wall than the bias, facing it and
-// seen head-on, tests visibility from beyond the wall (0.3 m from that wall
-// with probes 2 m apart: up to 0.11 of the sky; 1e-5 seen 60 degrees off its
-// normal). The probes behind a small object's faces also return to it light
-// it reflected, so a change in the bounce about it fades over tens of frames
-// where Wicked's faded within a few.
-// Majercik et al. 2021's TunableShadowBias, at its default.
+// least spacing times 0.3, v toward the viewer), the form of the paper's
+// reference implementation in G3D (DDGIVolume.glsl 303, DDGIVolume.cpp 341,
+// selfShadowBias 0.3 in DDGIVolumeSpecification.h 43; BSD, practice only),
+// in place of Wicked's 1 mm along the normal. RTXGI's DDGIGetSurfaceBias is
+// another form, fixed world-space normal and view biases, and is not taken.
+// The wrap weight lets the probes behind a surface weigh, and without the
+// bias the surface shadows itself against the probes in front: a black
+// floor under that sky took 0.96-0.99 of it, and takes 0.998 with the bias.
+// A receiver nearer a wall than the bias, facing it and seen head-on, tests
+// visibility from beyond the wall (0.3 m from that wall with probes 2 m
+// apart: up to 0.11 of the sky; 2e-5 seen 60 degrees off its normal). Only
+// visibility takes the offset point: G3D (DDGIVolume.glsl 313, 325) and
+// RTXGI (Irradiance.hlsl 76-87) also find the base cell and the trilinear
+// weights from it, where here they stay the receiver's own, as Wicked's are,
+// so a surface's light does not shift as its viewer moves. The probes behind
+// a small object's faces also return to it light it reflected, so a change
+// in the bounce about it fades over tens of frames where Wicked's faded
+// within a few.
+// Majercik et al. 2021's TunableShadowBias (G3D's selfShadowBias), at its
+// default.
 const DDGI_SELF_SHADOW_BIAS:f32=.3;
 // The volume's irradiance / PI at `position` along `normal`, seen from
 // `view` (toward the viewer), in rgb, and in a its share of the receiver's
@@ -62,7 +71,9 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>)->ve
  // Taking the rest pose, as Wicked does.
  let reference_probe_pos=ddgi_probe_position_rest(base_grid_coord,origin,spacing);
  let alpha=saturate((position-reference_probe_pos)/spacing);
- // The self-shadow bias, from the receiver toward its viewer and normal.
+ // The self-shadow bias, from the receiver toward its viewer and normal,
+ // which moves the visibility test alone: the cell and the trilinear
+ // weights above are the receiver's own.
  let bias=(normal*.2+view*.8)*(.75*min(spacing.x,min(spacing.y,spacing.z)))*DDGI_SELF_SHADOW_BIAS;
  var sum_irradiance=vec3(0.);
  var sum_weight=0.;

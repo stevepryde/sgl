@@ -862,20 +862,23 @@ code; it does not redeclare a struct, binding or function another module owns.
   in every camera. The sample is Wicked's `ddgi_sample_irradiance`: the
   eight probes about the point, weighted trilinearly, by a backface test and
   by Chebyshev visibility from the probe's depth moments, reading irradiance
-  by the surface normal. Improved on Wicked (RD-2), with the weights RTXGI
-  takes (practice only): the backface test is the whole wrap-shading weight
-  and the weight's floor RTXGI's, where Wicked's hard backface test and
-  higher floor tie every probe of a receiver facing a nearby wall at the
-  floor, so it takes the light beyond the wall; and visibility is tested
-  from the point offset by Majercik et al. 2021's self-shadow bias toward
-  the viewer and the normal, scaled by the least spacing, where Wicked
+  by the surface normal. Improved on Wicked (RD-2) twice. The weights are
+  RTXGI's (practice only): the backface test is the whole wrap-shading
+  weight and the weight's floor RTXGI's, where Wicked's hard backface test
+  and higher floor tie every probe of a receiver facing a nearby wall at the
+  floor, so it takes the light beyond the wall. Visibility is tested from
+  the point offset by Majercik et al. 2021's self-shadow bias toward the
+  viewer and the normal, scaled by the least spacing, in the form of the
+  paper's reference implementation in G3D (practice only), where Wicked
   offsets it a millimetre along the normal, so a surface does not shadow
-  itself against the probes the wrap weight lets weigh. A receiver nearer a
-  wall than that bias, facing it and seen head-on, tests visibility from
-  beyond the wall. A probe not yet blended weighs nothing, and a receiver
-  whose eight probes all weigh nothing keeps its
-  fallback. A receiver the volume lights takes its irradiance in place of
-  the environment's diffuse light and the hemisphere fill, recorded apart
+  itself against the probes the wrap weight lets weigh. The receiver's cell
+  and trilinear weights stay its own position's, where G3D and RTXGI take
+  them from the offset point, so a surface's light does not shift as its
+  viewer moves. A receiver nearer a wall than that bias, facing it and seen
+  head-on, tests visibility from beyond the wall. A probe not yet blended
+  weighs nothing, and a receiver whose eight probes all weigh nothing keeps
+  its fallback. A receiver the volume lights takes its irradiance in place
+  of the environment's diffuse light and the hemisphere fill, recorded apart
   as the ambient that ambient occlusion weights; beyond the volume's extent
   a receiver keeps its fallback, the volume's share fading to nothing over
   the one probe spacing past its edge, as RTXGI's volume blend weight fades,
