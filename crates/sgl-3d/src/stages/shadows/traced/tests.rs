@@ -397,11 +397,12 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
             Vec3::new(0.3, 0.2, 0.3),
             Mobility::Static,
         ),
-        // Above the local lights: a broad shadow of the sun alone, whose
-        // inside lies beyond the denoiser's reach from its edges.
+        // Above the local lights: a broad shadow of the sun alone on the
+        // floor before the other blocks, in full view, whose inside lies
+        // beyond the denoiser's reach from its edges.
         Block::new(
-            Vec3::new(-1.5, 5.5, -4.),
-            Vec3::new(2.2, 0.05, 1.8),
+            Vec3::new(-3.9, 5.5, 2.35),
+            Vec3::new(3., 0.05, 1.75),
             Mobility::Static,
         ),
     ];
@@ -607,7 +608,7 @@ fn assert_rays_alone_shadow(samples: &[([u32; 2], bool, f32, f32)], label: &str)
 // directional light's rays stopping at the cascades' distance. The oracle
 // is geometric, where the maps hold no shadow and rays do: a directional
 // shadow whose cascades reach 1 m from the camera, while the floor lies
-// beyond 9 m; and a point light 1 cm above a double-sided plate, within
+// beyond 7 m; and a point light 1 cm above a double-sided plate, within
 // the 2 cm the local-light maps' faces clip at their near plane, while a
 // ray from the floor beneath it ends at the light and so meets the plate,
 // which covers the rays from the floor's +x half alone.
@@ -621,15 +622,16 @@ fn the_lighting_pass_takes_the_shadows_the_maps_lack_from_the_mask() {
     let gpu = (&device, &queue);
     let size = [256, 192];
     let camera = camera(Vec3::new(0., 7., 7.), Vec3::ZERO, size);
-    // The directional light beyond its cascades.
+    // The directional light beyond its cascades: a broad plate whose
+    // shadow falls toward the camera, in full view.
     let block = Block::new(
-        Vec3::new(0., 1., 0.),
-        Vec3::new(2., 0.2, 1.5),
+        Vec3::new(0., 4., -2.),
+        Vec3::new(3., 0.1, 2.5),
         Mobility::Static,
     );
     let (mut sun_scene, _) = scene(gpu, 8., &[block], &[]);
     let sun = DirectionalLight {
-        direction: Vec3::new(0.8, -1., 0.5),
+        direction: Vec3::new(0.3, -1., 0.8),
         illuminance: 3.,
         shadow: Some(DirectionalShadow {
             distance: 1.,
