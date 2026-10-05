@@ -508,3 +508,57 @@ fn frames_build_the_structures_after_their_deformations() {
     let error = pollster::block_on(validation.pop());
     assert!(error.is_none(), "{error:?}");
 }
+
+// What a game is told of the hardware path, on a device without ray queries
+// and on one with them. Plausible defects: the hardware path reported in
+// effect on a device that has no ray queries, which then traces the
+// portable BVHs, or no reason given; or a reason given where it runs. The
+// oracle is the device each frame ran on: one requested without the
+// feature, and one with it.
+#[test]
+fn the_renderer_reports_whether_the_hardware_path_traces() {
+    let settings = crate::settings::Settings {
+        screen_space_reflections: crate::settings::ScreenSpaceReflections::Half,
+        world_space_reflections: true,
+        hardware_ray_tracing: true,
+        ..Default::default()
+    };
+    let devices = [
+        test_support::device(),
+        test_support::ray_tracing_device(|limits| limits),
+    ];
+    for (ray_queries, device) in [false, true].into_iter().zip(devices) {
+        let Some((device, queue)) = device else {
+            return;
+        };
+        let gpu = (&device, &queue);
+        let mut scene = Scene::new(&device, &queue);
+        let model = scene
+            .add_asset(&device, &queue, asset(vec![triangles(Vec3::ZERO, 1)]))
+            .unwrap()
+            .model;
+        place(gpu, &mut scene, model, Mat4::IDENTITY, Mobility::Static);
+        let size = [16, 16];
+        let mut renderer = crate::Renderer::for_test(&device, &queue, size, &settings);
+        let output = crate::view::targets::target(
+            &device,
+            "ray tracing reports",
+            size,
+            crate::shading::gbuffer::COLOR,
+        );
+        let stats = frame(gpu, (&mut renderer, &mut scene), &settings, &output, false);
+        assert_eq!(renderer.ray_tracing_in_effect(&settings), ray_queries);
+        assert_eq!(renderer.ray_tracing_error().is_none(), ray_queries);
+        assert_eq!(stats.hardware, u32::from(ray_queries));
+        let off = crate::settings::Settings {
+            hardware_ray_tracing: false,
+            ..settings
+        };
+        frame(gpu, (&mut renderer, &mut scene), &off, &output, false);
+        assert!(!renderer.ray_tracing_in_effect(&off));
+        assert!(
+            renderer.ray_tracing_error().is_none(),
+            "nothing asked for it"
+        );
+    }
+}

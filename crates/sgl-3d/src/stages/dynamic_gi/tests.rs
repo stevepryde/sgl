@@ -1247,6 +1247,96 @@ fn a_converged_volume_traces_nothing_until_what_its_light_follows_changes() {
     }
 }
 
+// The probes on the hardware path (the architecture's Hardware ray
+// tracing), on a device with ray queries; reported unsupported, never
+// passed, elsewhere. Plausible defects: the trace's pipeline composing the
+// portable function set or binding no TLAS on the hardware path, or its
+// hits decoded wrongly there, which changes the light it converges to; and
+// a deforming instance's deformation not waking a converged volume while
+// the hardware path's rays see it, or waking it on the portable path,
+// whose rays see no deforming instance. The oracles: the light the
+// portable path converges to, which the tests above check, and whether the
+// frame after the deformation traces rays. The deforming cube lies sealed
+// under the floor, where no probe ray reaches, so both paths' light is
+// the same.
+#[test]
+fn a_deformation_wakes_a_converged_volume_while_the_hardware_path_traces() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let queries = [
+        (Vec3::new(0.3, -2.9, 0.4), Vec3::Y),
+        (Vec3::new(1.51, -2.5, 0.1), Vec3::X),
+        (Vec3::new(-2., 1., 0.5), Vec3::NEG_Y),
+    ];
+    let mut light = Vec::new();
+    for hardware in [false, true] {
+        let (mut scene, input, _) = floor_scene(&device, &queue);
+        let mut cube = test_support::cube();
+        cube.meshes[0].deformation.influences = vec![
+            crate::deformation::Influence {
+                joints: [0; 4],
+                weights: [1., 0., 0., 0.],
+            };
+            cube.meshes[0].vertices.len()
+        ];
+        let model = scene.add_asset(&device, &queue, cube).unwrap().model;
+        let deforming = scene
+            .add_instance(
+                &device,
+                &queue,
+                InstanceState {
+                    model,
+                    pose: Mat4::from_translation(Vec3::new(0., -10., 0.)),
+                    visible: true,
+                    capture_visible: true,
+                },
+                Mobility::Moving,
+            )
+            .unwrap();
+        let settings = Settings {
+            hardware_ray_tracing: hardware,
+            ..settings(DynamicGiQuality::High)
+        };
+        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let paused = render_until_paused(gpu, &mut renderer, &mut scene, &input, &settings, 400);
+        assert!(paused.is_some(), "hardware {hardware}: never paused");
+        assert_eq!(renderer.ray_tracing_in_effect(&settings), hardware);
+        light.push(irradiance(&device, &queue, &renderer, &queries));
+        scene
+            .set_instance_deformation(
+                &queue,
+                deforming,
+                &[Mat4::from_translation(Vec3::Y * 0.1)],
+                &[],
+            )
+            .unwrap();
+        render(
+            &device,
+            &queue,
+            &mut renderer,
+            &mut scene,
+            &input,
+            &settings,
+            1,
+        );
+        assert_eq!(
+            renderer.test_dynamic_gi().test_traced_rays(&device, &queue) > 0,
+            hardware,
+            "hardware {hardware}: a deformation wakes the volume"
+        );
+    }
+    for (portable, hardware) in light[0].iter().zip(&light[1]) {
+        for channel in 0..4 {
+            assert!(
+                close(hardware[channel], portable[channel], 0.02),
+                "hardware {hardware:?}, portable {portable:?}"
+            );
+        }
+    }
+}
+
 // Under an open sky, with nothing about its probes, a volume's variability
 // is nothing from the start; one too large for its first frames to start
 // every probe still starts them all before it pauses.

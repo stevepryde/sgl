@@ -15,6 +15,38 @@ full API details.
 
 ## Unreleased
 
+### Hardware-traced scene rays
+
+- **Scope:** `sgl-3d`: `Settings::hardware_ray_tracing` (now traces rays),
+  `Renderer::ray_tracing_in_effect` and `Renderer::ray_tracing_error`
+  (new), world-space reflections, the dynamic GI volume. The second step
+  of hardware ray tracing (roadmap 13, #23). With the setting on, on a
+  device with ray queries, world-space reflections' rays and the dynamic
+  GI volume's probe and visibility rays now trace the scene's acceleration
+  structures instead of the portable BVHs. They take the same acceptance
+  rules (sides, blended and hidden content, the reflecting surface's own
+  triangle, cut-out texels), and the portable BVHs now cover only the
+  instances the TLAS does not hold: models with a masked mesh, models whose
+  BLAS is pending, and what the device cannot hold. Unlike the portable
+  path, these rays see skinned and morphed instances, at their deformed
+  pose: deforming characters now appear in world-space reflections, cast
+  the dynamic GI volume's visibility shadows and block its rays, and their
+  animation counts as an edit that wakes a converged volume. Every native
+  backend runs one form of the trace (opaque queries, with a re-trace past
+  a hit the rules reject); a triangle at exactly a rejected one's distance,
+  such as back-to-back single-sided faces, may be skipped.
+  `Renderer::ray_tracing_in_effect(&settings)` says whether the hardware
+  path traces the rays; `Renderer::ray_tracing_error()` says why a frame
+  that asked for it traced the portable BVHs instead (no ray queries, or no
+  memory for the TLAS).
+- **Migration:** no game-code changes are required, and a game that does
+  not turn `Settings::hardware_ray_tracing` on renders as before. A game
+  that turned it on now gets hardware-traced world-space reflections and
+  dynamic GI; exercise both with its skinned characters in view, and a
+  dynamic GI volume about them, which now repaints as they animate. A game
+  that showed `Settings::hardware_ray_tracing` to players can report
+  `ray_tracing_in_effect` and `ray_tracing_error` beside it.
+
 ### A material can keep its own light out of dynamic GI
 
 - **Scope:** `sgl-3d`: `asset::Material::emits_into_gi` and
