@@ -10,7 +10,8 @@
 //  in rgb, two slabs of the lattice's z to each band of eight rows: slab z's
 //  tile at column ((z % 2) nx ny + x + y nx) 8 and row 18 nz + (z / 2) 8;
 // data: one texel per probe, eighteen slabs to a row: its relocated offset
-//  in half spacings in rgb, and in a 1 once it has been blended, at column
+//  in half spacings in rgb, and in a 1 once it has been blended while it is
+//  active (stages/dynamic_gi/common.wgsl's ddgi_probe_active), at column
 //  (z % 18) nx ny + x + y nx and row 18 nz + 8 ceil(nz / 2) + z / 18.
 //
 // A probe's place in each region, and its index in the stage's buffers, are
@@ -44,6 +45,9 @@ const DDGI_RAY_ROW:u32=2048u;
 // The most rays a probe traces a frame at any quality, which bounds every
 // loop over a probe's rays whatever the volume says.
 const DDGI_MOST_RAYS:u32=256u;
+// The fixed rays each probe traces a frame beside its others, which classify
+// it and are not blended.
+const DDGI_FIXED_RAYS_PER_FRAME:u32=4u;
 fn ddgi_sign_not_zero(v:vec2<f32>)->vec2<f32> {
  return select(vec2(-1.),vec2(1.),v>=vec2(0.));
 }
@@ -102,6 +106,11 @@ fn ddgi_probe_color_pixel(coord:vec3<u32>,probes:vec3<u32>)->vec2<u32> {
 fn ddgi_probe_data_pixel(coord:vec3<u32>,probes:vec3<u32>)->vec2<u32> {
  let row=probes.z*DDGI_DEPTH_TEXELS+(probes.z+1u)/2u*DDGI_COLOR_TEXELS+coord.z/DDGI_DATA_SLABS;
  return vec2((coord.z%DDGI_DATA_SLABS)*probes.x*probes.y+ddgi_probe_column(coord,probes),row);
+}
+// Ray `ray` of probe `probe` among all the probes' rays, each probe's
+// `max_rays` and then its fixed rays.
+fn ddgi_ray_slot(probe:u32,ray:u32,max_rays:u32)->u32 {
+ return probe*(max_rays+DDGI_FIXED_RAYS_PER_FRAME)+ray;
 }
 // The texel of the ray list and ray results that holds ray `ray` of all
 // the probes' rays.

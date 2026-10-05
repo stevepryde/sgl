@@ -12,6 +12,8 @@
 // half range they are packed into.
 // How far probes keep from surfaces, in their rays' greatest distance.
 const DDGI_KEEP_DISTANCE:f32=.1;
+// Each frame's share in a depth map: Wicked's 0.02.
+const DDGI_DEPTH_BLEND:f32=.02;
 // Rays a probe traces in buckets of this many.
 const DDGI_RAY_BUCKET_COUNT:u32=4u;
 // Wicked's default blend speed: the estimator's short window.
@@ -68,16 +70,19 @@ struct DdgiRay {
  // To what it hit, or -1 where it missed.
  depth:f32,
  radiance:vec3<f32>,
+ // It met a single-sided surface from behind, as RTXGI marks a back-face
+ // hit by a negative distance.
+ backface:bool,
 }
 fn ddgi_pack_ray(ray:DdgiRay)->vec4<u32> {
  let depth=min(ray.depth,DDGI_HALF_MAX);
  let radiance=clamp(ray.radiance,vec3(0.),vec3(DDGI_HALF_MAX));
- return vec4(pack2x16float(ray.direction.xy),pack2x16float(vec2(ray.direction.z,depth)),pack2x16float(radiance.rg),pack2x16float(vec2(radiance.b,0.)));
+ return vec4(pack2x16float(ray.direction.xy),pack2x16float(vec2(ray.direction.z,depth)),pack2x16float(radiance.rg),pack2x16float(vec2(radiance.b,select(0.,1.,ray.backface))));
 }
 fn ddgi_unpack_ray(data:vec4<u32>)->DdgiRay {
  let direction_depth=vec4(unpack2x16float(data.x),unpack2x16float(data.y));
  let radiance=vec4(unpack2x16float(data.z),unpack2x16float(data.w));
- return DdgiRay(direction_depth.xyz,direction_depth.w,radiance.rgb);
+ return DdgiRay(direction_depth.xyz,direction_depth.w,radiance.rgb,radiance.w>0.);
 }
 // One irradiance texel's estimator: Wicked's DDGIVarianceData.
 struct DdgiVariance {
@@ -112,17 +117,43 @@ fn ddgi_unpack_variance(words:array<u32,6>)->DdgiVariance {
  return DdgiVariance(vec3(a,b.x),vec3(b.y,c),e.y,vec3(d,e.x),f.x);
 }
 // A probe's state in the stage's probe buffer: its relocated offset in half
-// spacings, and whether it has been blended since the volume restarted.
+// spacings, whether it has been blended since the volume restarted, the
+// share of its rays that meet single-sided surfaces from behind, which
+// classifies it, and the back faces its fixed rays have met over the frames
+// of the cycle it has traced so far.
 struct DdgiProbe {
  offset:vec3<f32>,
  blended:bool,
+ backfaces:f32,
+ fixed_backfaces:u32,
+ fixed_frames:u32,
 }
-fn ddgi_pack_probe(probe:DdgiProbe)->vec2<u32> {
- return vec2(ddgi_pack_half2(probe.offset.x,probe.offset.y),ddgi_pack_half2(probe.offset.z,select(0.,1.,probe.blended)));
+fn ddgi_pack_probe(probe:DdgiProbe)->vec4<u32> {
+ return vec4(ddgi_pack_half2(probe.offset.x,probe.offset.y),ddgi_pack_half2(probe.offset.z,select(0.,1.,probe.blended)),bitcast<u32>(probe.backfaces),probe.fixed_backfaces|(probe.fixed_frames<<16u));
 }
-fn ddgi_unpack_probe(words:vec2<u32>)->DdgiProbe {
+fn ddgi_unpack_probe(words:vec4<u32>)->DdgiProbe {
  let offset=vec4(unpack2x16float(words.x),unpack2x16float(words.y));
- return DdgiProbe(offset.xyz,offset.w>0.);
+ return DdgiProbe(offset.xyz,offset.w>0.,bitcast<f32>(words.z),words.w&0xffffu,words.w>>16u);
+}
+// A probe not yet blended, at rest, as a restart or a scroll starts one.
+fn ddgi_fresh_probe()->DdgiProbe {
+ return DdgiProbe(vec3(0.),false,0.,0u,0u);
+}
+// RTXGI's RTXGI_DDGI_NUM_FIXED_RAYS: the fixed directions that classify a
+// probe, spread evenly over the sphere and never rotated, so a probe's class
+// holds still while what it sees does. A probe traces
+// DDGI_FIXED_RAYS_PER_FRAME of them a frame, all of them over a cycle of
+// DDGI_FIXED_CYCLE frames.
+const DDGI_FIXED_RAYS:u32=32u;
+const DDGI_FIXED_CYCLE:u32=DDGI_FIXED_RAYS/DDGI_FIXED_RAYS_PER_FRAME;
+// RTXGI's probeBackfaceThreshold: a probe more than this share of whose rays
+// meet single-sided surfaces from behind is inside geometry or beyond a
+// wall, and inactive.
+const DDGI_BACKFACE_THRESHOLD:f32=.25;
+// Whether a probe lights receivers: RTXGI's probe classification. An
+// inactive probe weighs nothing in the sample and traces the fewest rays.
+fn ddgi_probe_active(probe:DdgiProbe)->bool {
+ return probe.backfaces<=DDGI_BACKFACE_THRESHOLD;
 }
 fn ddgi_luminance_weights()->vec3<f32> {
  return vec3(.299,.587,.114);

@@ -122,7 +122,7 @@ fn irradiance_seen(
         queue,
         renderer,
         queries,
-        "dynamic_gi_irradiance(queries[id.x].position.xyz,normalize(queries[id.x].normal.xyz),normalize(queries[id.x].view.xyz))",
+        "dynamic_gi_irradiance(queries[id.x].position.xyz,normalize(queries[id.x].normal.xyz),normalize(queries[id.x].view.xyz),false)",
     )
 }
 
@@ -234,7 +234,7 @@ fn indirect_of(position:vec3<f32>,moving:bool,lightmapped:bool)->vec4<f32> {
  for (var face=0u;face<6u;face++) {
   s.baked_irradiance[face]=vec4(.25);
  }
- let indirect=surface_indirect_diffuse(s,s.normal);
+ let indirect=surface_indirect_diffuse(s,s.normal,false);
  return select(vec4(indirect.baked,0.),indirect.dynamic_gi,indirect.dynamic_gi.a>0.);
 }
 "#;
@@ -711,6 +711,193 @@ fn a_floor_under_an_open_sky_takes_all_of_it() {
     }
 }
 
+// A closed room of grey single-sided walls facing inward, under a bright
+// sky, holds no light: nothing within it glows, so the probes inside take
+// none from their first frame on. Probes beyond its walls see their backs
+// and weigh nothing, and the first frame's hits, about which no probe has
+// yet been blended, take the volume's zero rather than the sky's fallback,
+// which the bounce would otherwise carry about the room for seconds (0.74
+// of the sky after three frames).
+#[test]
+fn a_closed_room_holds_no_light_from_the_sky_beyond_it() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let environment = uniform_environment(&device, &queue, &mut scene, [1.; 3]);
+    let mut room = inward(test_support::cube());
+    room.materials[0].base = [0.8, 0.8, 0.8, 1.];
+    room.materials[0].metallic = 0.;
+    // Walls at ±3; probes at -4, -2, 0, 2 and 4 on each axis.
+    add_static(
+        &device,
+        &queue,
+        &mut scene,
+        room,
+        Mat4::from_scale(Vec3::splat(6.)),
+    );
+    scene
+        .set_dynamic_gi_volume(
+            &device,
+            Some(DynamicGiVolume {
+                origin: Vec3::splat(-4.),
+                spacing: Vec3::splat(2.),
+                probes: [5, 5, 5],
+            }),
+        )
+        .unwrap();
+    let mut input = input(Vec3::new(0., 0., 1.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    render(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        3,
+    );
+    // Through the room and on its walls, away from its edges.
+    let queries = [
+        (Vec3::new(0.7, 0.3, 0.1), Vec3::X),
+        (Vec3::new(-0.7, 0.2, 1.1), Vec3::NEG_X),
+        (Vec3::new(1., -1., 0.5), Vec3::Y),
+        (Vec3::new(2.999, 0.3, 0.1), Vec3::NEG_X),
+        (Vec3::new(0.3, 2.999, -0.4), Vec3::NEG_Y),
+        (Vec3::new(0.4, -2.999, 0.9), Vec3::Y),
+    ];
+    for (query, answer) in queries
+        .iter()
+        .zip(irradiance(&device, &queue, &renderer, &queries))
+    {
+        assert!(
+            answer[..3].iter().all(|&channel| channel < 1e-3),
+            "{query:?}: {answer:?}"
+        );
+    }
+}
+
+// Probes inside a closed box see only its faces' backs, every one of their
+// fixed rays meeting one, so the first frame classifies them inactive and
+// from then on each traces the fewest rays and its fixed rays, where a
+// probe whose light has only just started traces nearly the most.
+#[test]
+fn probes_inside_closed_geometry_trace_the_fewest_rays() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let environment = uniform_environment(&device, &queue, &mut scene, [1.; 3]);
+    let mut solid = test_support::cube();
+    solid.materials[0].double_sided = false;
+    add_static(
+        &device,
+        &queue,
+        &mut scene,
+        solid,
+        Mat4::from_scale(Vec3::splat(4.)),
+    );
+    scene
+        .set_dynamic_gi_volume(
+            &device,
+            Some(DynamicGiVolume {
+                origin: Vec3::splat(-1.),
+                spacing: Vec3::ONE,
+                probes: [3, 3, 3],
+            }),
+        )
+        .unwrap();
+    let mut input = input(Vec3::new(0., 0., 6.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut rays = || {
+        render(
+            &device,
+            &queue,
+            &mut renderer,
+            &mut scene,
+            &input,
+            &settings,
+            1,
+        );
+        renderer.test_dynamic_gi().test_traced_rays(&device, &queue)
+    };
+    assert_eq!(rays(), 27 * STARTING_RAYS, "the start");
+    assert_eq!(rays(), 27 * SETTLED_RAYS, "inactive");
+}
+
+// Probes 2 m beyond the walls of a room of single-sided walls facing inward
+// see about a quarter of the walls' backs, near the threshold of their
+// class, and lie far enough from every face that none moves them. Their
+// fixed rays meet the same faces every cycle, so while nothing moves each
+// probe's share, and so its class, holds still, where the share of its
+// rotated rays would wander across the threshold.
+#[test]
+fn a_probes_class_holds_still_while_what_it_sees_does() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let environment = uniform_environment(&device, &queue, &mut scene, [1.; 3]);
+    let mut room = inward(test_support::cube());
+    room.materials[0].base = [0., 0., 0., 1.];
+    room.materials[0].metallic = 0.;
+    add_static(
+        &device,
+        &queue,
+        &mut scene,
+        room,
+        Mat4::from_scale(Vec3::splat(6.)),
+    );
+    scene
+        .set_dynamic_gi_volume(
+            &device,
+            Some(DynamicGiVolume {
+                origin: Vec3::splat(-5.),
+                spacing: Vec3::splat(2.5),
+                probes: [5, 5, 5],
+            }),
+        )
+        .unwrap();
+    let mut input = input(Vec3::new(0., 0., 1.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    render(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        16,
+    );
+    let first = renderer
+        .test_dynamic_gi()
+        .test_backface_shares(&device, &queue);
+    for _ in 0..40 {
+        render(
+            &device,
+            &queue,
+            &mut renderer,
+            &mut scene,
+            &input,
+            &settings,
+            1,
+        );
+        let shares = renderer
+            .test_dynamic_gi()
+            .test_backface_shares(&device, &queue);
+        assert_eq!(shares, first);
+    }
+    // Several of them lie about the threshold.
+    let near = first.iter().filter(|&&share| (share - 0.25).abs() < 0.05);
+    assert!(near.count() >= 4, "{first:?}");
+}
+
 // A closed box of single-sided faces turned inward, which glow and hold a
 // shadowed light, over a floor, with every probe outside it and nothing
 // else lit: the probes' rays meet the box's backs and take nothing from
@@ -975,7 +1162,7 @@ fn a_receiver_the_volume_lights_takes_it_in_place_of_the_frames_ambient() {
         let settings = settings(quality);
         let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
         let output = crate::view::targets::target(&device, "receiver", SIZE, gbuffer::COLOR);
-        for _ in 0..30 {
+        for _ in 0..3 {
             let mut encoder = device.create_command_encoder(&Default::default());
             renderer.render(
                 &device,
@@ -1000,14 +1187,11 @@ fn a_receiver_the_volume_lights_takes_it_in_place_of_the_frames_ambient() {
     let [lit, filled, without] = pixels.try_into().unwrap();
     assert!(lit[0] > 0.2 && lit[0] > lit[2] * 2., "{lit:?}");
     // The first frame's probe hits, about which no probe has yet been
-    // blended, take the fill as their fallback, and the probes keep a
-    // trace of it that fades as the bounce carries it between the receiver
-    // and the probes about it (up to 2% of the receiver's light after
-    // three frames, 0.5% after thirty); added to the receiver the fill would
-    // bring 8 / PI.
+    // blended, take the volume's zero, not the fill, so the probes hold
+    // nothing of it; added to the receiver the fill would bring 8 / PI.
     for channel in 0..3 {
         assert!(
-            close(filled[channel], lit[channel], lit[channel] * 0.01),
+            close(filled[channel], lit[channel], lit[channel] * 1e-3),
             "the fill reached a receiver the volume lights: {lit:?}, {filled:?}"
         );
     }
@@ -1085,7 +1269,7 @@ fn a_restart_starts_the_probes_nearest_the_camera_first() {
     let most = crate::shading::dynamic_gi::MOST_RAYS;
     assert_eq!(
         renderer.test_dynamic_gi().test_traced_rays(&device, &queue),
-        super::RAMP_RAYS / most * most,
+        super::RAMP_RAYS / most * STARTING_RAYS,
         "the first frame's rays"
     );
     assert_eq!(shares(&device, &queue, &renderer, Vec3::ZERO), [1., 0.]);
@@ -1353,8 +1537,12 @@ const SCROLLED: DynamicGiVolume = DynamicGiVolume {
 };
 
 // The rays a probe traces once its light has settled: the fewest, a bucket
-// (DDGI_RAY_BUCKET_COUNT).
-const SETTLED_RAYS: u32 = 4;
+// (DDGI_RAY_BUCKET_COUNT), and its fixed rays.
+const SETTLED_RAYS: u32 = 4 + crate::shading::dynamic_gi::FIXED_RAYS_PER_FRAME;
+// The rays a probe that starts afresh traces: the most at High, and its
+// fixed rays.
+const STARTING_RAYS: u32 =
+    crate::shading::dynamic_gi::MOST_RAYS + crate::shading::dynamic_gi::FIXED_RAYS_PER_FRAME;
 
 // Under an unchanging sky every probe's light settles, so each traces the
 // fewest rays; a probe that starts afresh traces the most, as a restart's
@@ -1377,7 +1565,7 @@ fn a_scroll_starts_only_the_probes_that_enter() {
     input.environment = Some(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
-    let most = crate::shading::dynamic_gi::MOST_RAYS;
+    let most = STARTING_RAYS;
     // Installs the volume with its origin at `origin`, renders one frame,
     // and returns the rays it traced, then lets the light settle again.
     let mut scroll_to = |scene: &mut Scene, input: &FrameInput, origin: Vec3| {

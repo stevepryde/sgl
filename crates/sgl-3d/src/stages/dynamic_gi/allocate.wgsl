@@ -18,9 +18,15 @@
 // and weighs nothing in the sample, so its receivers keep their fallback
 // (`rank` and `threshold` choose them). The blends run over the probes that
 // trace, where Wicked's run over every probe, each of which always traces.
+// Added: each probe that traces also traces DDGI_FIXED_RAYS_PER_FRAME
+// fixed rays after its others, which classify it, and an inactive probe
+// (ddgi_probe_active) traces the fewest others, as NVIDIA RTXGI's probes
+// trace their fixed rays beside their others and its inactive probes their
+// fixed rays alone (RTXGI-DDGI f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6,
+// docs/DDGIVolume.md 736-767; practice only).
 @group(0) @binding(0) var<uniform> volume:DdgiVolume;
 @group(0) @binding(1) var<storage,read> variance:array<u32>;
-@group(0) @binding(2) var<storage,read> probe_states:array<vec2<u32>>;
+@group(0) @binding(2) var<storage,read> probe_states:array<vec4<u32>>;
 @group(0) @binding(3) var<storage,read_write> ray_counts:array<u32>;
 @group(0) @binding(4) var<storage,read_write> allocation:DdgiAllocation;
 @group(0) @binding(5) var ray_list:texture_storage_2d<rg32uint,write>;
@@ -146,19 +152,27 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   }
   ray_count=(ray_count+DDGI_RAY_BUCKET_COUNT-1u)/DDGI_RAY_BUCKET_COUNT*DDGI_RAY_BUCKET_COUNT;
   ray_count=clamp(ray_count,DDGI_RAY_BUCKET_COUNT,most_rays);
+  // An inactive probe traces the fewest, which follow what it sees, as
+  // RTXGI's inactive probes trace their fixed rays alone.
+  if probe.blended && !ddgi_probe_active(probe) {
+   ray_count=DDGI_RAY_BUCKET_COUNT;
+  }
   if !probe.blended {
    ray_count=select(0u,most_rays,ramp_starts(ddgi_probe_position_rest(probe_coord,volume.origin,volume.spacing)));
   }
   ray_counts[probe_index]=ray_count;
   shared_ray_count=ray_count;
-  shared_ray_allocation=atomicAdd(&allocation.rays,ray_count);
+  // A probe that traces traces its fixed rays after its others.
+  let traced=select(0u,ray_count+DDGI_FIXED_RAYS_PER_FRAME,ray_count>0u);
+  shared_ray_allocation=atomicAdd(&allocation.rays,traced);
   if ray_count>0u {
    traced_probes[atomicAdd(&allocation.traced,1u)]=probe_index;
   }
  }
  let ray_count=workgroupUniformLoad(&shared_ray_count);
  let ray_allocation=workgroupUniformLoad(&shared_ray_allocation);
- for (var i=group_index;i<ray_count;i+=ALLOCATION_THREADS) {
+ let traced=select(0u,ray_count+DDGI_FIXED_RAYS_PER_FRAME,ray_count>0u);
+ for (var i=group_index;i<traced;i+=ALLOCATION_THREADS) {
   textureStore(ray_list,ddgi_ray_texel(ray_allocation+i),vec4(probe_index,i|(ray_count<<16u),0u,0u));
  }
 }

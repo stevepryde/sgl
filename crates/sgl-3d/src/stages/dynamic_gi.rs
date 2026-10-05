@@ -516,6 +516,20 @@ impl DynamicGi {
         crate::test_support::read_words(device, queue, &volume.allocation)
             [(ALLOCATION_RAYS / 4) as usize]
     }
+
+    /// Each probe's share of back faces (`DdgiProbe::backfaces`), by its
+    /// stored index, after the last frame that ran the stage.
+    pub fn test_backface_shares(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<f32> {
+        let volume = match (&self.rendered, &self.committed) {
+            (Some(Rendered::Fresh(volume)), _) => volume,
+            (_, Some((volume, _))) => volume,
+            _ => return Vec::new(),
+        };
+        crate::test_support::read_words(device, queue, &volume.probe_states)
+            .chunks_exact(4)
+            .map(|state| f32::from_bits(state[2]))
+            .collect()
+    }
 }
 
 /// A workgroup per probe of `count`, in rows of `GROUP_ROW`.

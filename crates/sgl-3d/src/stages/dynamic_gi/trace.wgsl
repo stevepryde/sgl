@@ -89,26 +89,38 @@ fn trace(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index)
  let lattice=ddgi_probe_lattice(stored,volume.probes,volume.scroll);
  let probe_pos=ddgi_probe_position(lattice,volume.origin,volume.spacing,probe_data.rgb);
  var rng=ddgi_rng_init(vec2(id,id),volume.frame);
- let direction=normalize(volume.rotation*ddgi_spherical_fibonacci(f32(ray_index),f32(ray_count)));
- var ray=DdgiRay(direction,-1.,vec3(0.));
+ // Past its rays, its fixed rays: this frame's of the cycle, unrotated,
+ // which classify it and bring no light.
+ let fixed=ray_index>=ray_count;
+ var direction=normalize(volume.rotation*ddgi_spherical_fibonacci(f32(ray_index),f32(ray_count)));
+ if fixed {
+  let ray=(volume.frame%DDGI_FIXED_CYCLE)*DDGI_FIXED_RAYS_PER_FRAME+ray_index-ray_count;
+  direction=ddgi_spherical_fibonacci(f32(ray),f32(DDGI_FIXED_RAYS));
+ }
+ var ray=DdgiRay(direction,-1.,vec3(0.),false);
  // No interval start: the ray leaves a probe, not a surface.
  let raw=scene_trace_nearest(SceneRay(vec4(probe_pos,0.),vec4(direction,3.402823466e+38)),SCENE_SIDES_BOTH);
  if raw.intersection.x==0u {
-  ray.radiance=sample_environment(direction,0.)+pbr_hemisphere_radiance(direction,frame.hemisphere_sky_color,frame.hemisphere_ground_color,frame.hemisphere_intensity);
+  if !fixed {
+   ray.radiance=sample_environment(direction,0.)+pbr_hemisphere_radiance(direction,frame.hemisphere_sky_color,frame.hemisphere_ground_color,frame.hemisphere_intensity);
+  }
  } else {
   let hit=scene_decode_hit(raw,probe_pos,direction);
   ray.depth=hit.distance;
   let double_sided=(scene_material(hit.material_word).values.flags&MATERIAL_DOUBLE_SIDED)!=0u;
   if !hit.front_face && !double_sided {
    ray.depth*=DDGI_BACKFACE_DEPTH;
+   ray.backface=true;
   } else {
    if !hit.front_face {
     // Pushed inwards, which helps keep light inside from leaking out.
     ray.depth*=DDGI_DOUBLE_SIDED_BACKFACE_DEPTH;
    }
-   let random=vec3(ddgi_rng_next_float(&rng),ddgi_rng_next_float(&rng),ddgi_rng_next_float(&rng));
-   ray.radiance=shade_ray_hit(hit,-direction,SHADOW_RECEIVER_PROBE_HIT,random);
+   if !fixed {
+    let random=vec3(ddgi_rng_next_float(&rng),ddgi_rng_next_float(&rng),ddgi_rng_next_float(&rng));
+    ray.radiance=shade_ray_hit(hit,-direction,SHADOW_RECEIVER_PROBE_HIT,random);
+   }
   }
  }
- textureStore(ray_results,ddgi_ray_texel(probe_index*volume.max_rays+ray_index),ddgi_pack_ray(ray));
+ textureStore(ray_results,ddgi_ray_texel(ddgi_ray_slot(probe_index,ray_index,volume.max_rays)),ddgi_pack_ray(ray));
 }

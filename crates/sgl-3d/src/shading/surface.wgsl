@@ -231,8 +231,10 @@ fn directional_light_sample(index:u32,position:vec3<f32>,geometry_normal:vec3<f3
 // (baked_diffuse_source), else the irradiance volume where it lights the
 // frame and reaches the receiver (irradiance_volume_light), else the dynamic
 // GI volume where it lights the frame, reaches the receiver and has a
-// blended probe about it (dynamic_gi_irradiance), else a moving instance's
-// ambient cube, else the frame's ambient alone. Each volume takes its share
+// blended, active probe about it (dynamic_gi_irradiance; for a probe ray's
+// hit, wherever it reaches the hit, its light zero where no probe about the
+// hit weighs), else a moving instance's ambient cube, else the frame's
+// ambient alone. Each volume takes its share
 // and leaves the rest to what follows it, so a receiver hands over at its
 // border without a seam. A chart takes all of it, as no volume lights a
 // charted receiver.
@@ -251,7 +253,7 @@ struct IndirectDiffuse {
  // The irradiance volume's sky visibility a(n), 1 beyond its share.
  sky_visibility:f32,
 }
-fn surface_indirect_diffuse(s:Surface,normal:vec3<f32>)->IndirectDiffuse {
+fn surface_indirect_diffuse(s:Surface,normal:vec3<f32>,probe_hit:bool)->IndirectDiffuse {
  let source=baked_diffuse_source(s.baked,s.lightmap_uv,s.moving);
  let baked=surface_fixed_irradiance(s.baked,s.uv,s.lightmap_uv,s.lightmap_bounds,normal,s.front,s.moving,s.baked_irradiance);
  var indirect=IndirectDiffuse(baked,vec3(0.),vec4(0.),1.,1.);
@@ -263,7 +265,7 @@ fn surface_indirect_diffuse(s:Surface,normal:vec3<f32>)->IndirectDiffuse {
  let rest=1.-field.share;
  var dynamic_gi=vec4(0.);
  if rest>0. {
-  dynamic_gi=dynamic_gi_irradiance(s.position,normal,s.view);
+  dynamic_gi=dynamic_gi_irradiance(s.position,normal,s.view,probe_hit);
   dynamic_gi.a*=rest;
  }
  let fallback=rest-dynamic_gi.a;
@@ -302,7 +304,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let ibl=pbr_ibl_weights(base.rgb,metallic,dfg);
  // A probe hit takes diffuse light alone: no multiscattered specular.
  let multi=select(ibl.multi,vec3(0.),probe_hit);
- let indirect=surface_indirect_diffuse(s,n);
+ let indirect=surface_indirect_diffuse(s,n,probe_hit);
  let fallback=indirect.ambient*(1.-reflectance.coat_fresnel);
  let environment=diffuse_environment(n)*s.environment_scale*fallback;
  var color=(ibl.diffuse+multi)*environment;

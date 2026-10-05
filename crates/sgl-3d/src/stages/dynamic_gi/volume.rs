@@ -114,7 +114,8 @@ pub(super) struct Volume {
     pub variance: wgpu::Buffer,
     /// Each depth texel's mean and mean square distance.
     pub depth_history: wgpu::Buffer,
-    /// Each probe's offset and whether it has been blended.
+    /// Each probe's offset, whether it has been blended, and its share of
+    /// back faces, which classifies it.
     pub probe_states: wgpu::Buffer,
     /// The rays each probe traces this frame.
     pub ray_counts: wgpu::Buffer,
@@ -218,7 +219,7 @@ impl Volume {
         );
         let depth_history =
             storage_buffer(device, "dynamic GI depth moments", count * depth_texels * 4);
-        let probe_states = storage_buffer(device, "dynamic GI probe states", count * 8);
+        let probe_states = storage_buffer(device, "dynamic GI probe states", count * 16);
         let ray_counts = storage_buffer(device, "dynamic GI ray counts", count * 4);
         let traced_probes = storage_buffer(device, "dynamic GI traced probes", count * 4);
         let allocation = crate::counters::buffer(

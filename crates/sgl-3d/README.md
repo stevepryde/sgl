@@ -1582,7 +1582,13 @@ Placement:
 - Probes may lie beyond walls, inside closed geometry or outside a room
   built of single-sided walls facing inward: a probe that sees a
   single-sided surface from behind takes nothing from beyond it, and the
-  receivers on the surface's other side weigh it as occluded. Keep probes
+  receivers on the surface's other side weigh it as occluded. A probe more
+  than a quarter of whose view is such backs is inactive: it lights nothing
+  and traces few rays, so probes inside walls cost little. A probe
+  diagonally beyond the edge or corner of single-sided walls sees few of
+  their backs and stays active, so a surface within about a tenth of a
+  metre of two such walls can take light from beyond them; walls built as
+  closed solids keep it out. Keep probes
   off the surfaces themselves, where a probe sees both sides at once:
   offset the lattice so walls fall between probes. Probes near a surface
   move off it, up to half a spacing, as they trace.
