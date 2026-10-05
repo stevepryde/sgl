@@ -279,7 +279,8 @@ before opaque, the fog stage:
 - sums each froxel's medium: the frame's, whose density halves every
   `1 / height_falloff` metres above `height`, and that of every fog volume
   (`Scene::update_fog_volumes`, Godot's box `FogVolume` with its fog
-  material's density, albedo and edge fade) it lies in;
+  material's density, albedo and edge fade) it lies in, of the first 1,024
+  in the scene's order that reach the frame;
 - lights it with the directional lights through the one shadow cascade at
   the froxel's depth, whose light fades with the metres the froxel lies
   behind its occluder (Godot's fog; an occluder beyond the cascade's 20 m
@@ -454,7 +455,13 @@ Set what differs and take the rest with `..Default::default()`.
   reach. A pixel loops over its cluster's lights, live ones
   first; a receiver with baked lighting stops there. Probe captures shade
   every light that is on; world-space ray hits shade the lights that reach
-  the camera's view, as Wicked Engine's ray-traced reflections do.
+  the camera's view, as Wicked Engine's ray-traced reflections do. A
+  cluster lists at most 8,192 lights and decals (the top of Godot's
+  `max_clustered_elements` range), live lights first, then baked lights,
+  then decals, in the scene's order. A probe capture's list is the whole
+  scene's, a world-space ray hit's that of the whole view and a dynamic GI
+  probe ray's that of the whole volume, so for them this is a limit on the
+  scene.
 - Values must be finite, colour, intensity, specular and fog energy
   nonnegative, the range positive, a spot's direction nonzero, and a
   rectangle's direction nonzero, its width axis not parallel to it and its
@@ -517,7 +524,11 @@ and no normal fade.
   apply in an order SGL3D chooses.
 - The camera's clusters list decals after the lights, each as the sphere
   about its box, as Bevy clusters its decals, so a pixel pays only for the
-  decals whose bounds reach its cluster.
+  decals whose bounds reach its cluster. A cluster lists at most 8,192
+  lights and decals together, decals last
+  ([lights](#point-spot-and-rectangle-lights)); a probe capture's list is
+  the scene's, a ray hit's the view's and a dynamic GI probe ray's the
+  volume's.
 - The lit pipelines apply decals only while the scene holds one, so a scene
   without them pays nothing for them; the first decal added, or the last
   removed, compiles the other set. Neither Godot (b130438, whose clustered

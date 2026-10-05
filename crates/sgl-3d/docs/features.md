@@ -122,8 +122,10 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   (`FrameInput::hemisphere_light`, `HemisphereLight`).
   [Frame lights and look](../README.md#frame-lights-and-look).
 - **Point, spot and rectangle lights**: scene content (`Scene::add_light`,
-  `Light`, `LightShape`), any number, clustered on the CPU each frame so each
-  pixel pays only for the lights that reach it. A `baked` light lights only
+  `Light`, `LightShape`), clustered on the CPU each frame so each pixel
+  pays only for the lights that reach it, up to 8,192 lights and decals a
+  cluster (a probe capture's cluster is the whole scene, a ray hit's the
+  view, a dynamic GI probe ray's the volume). A `baked` light lights only
   receivers without baked lighting (moving instances, and static ones with
   no lightmap or assigned atlas chart), leaving the rest to the game's bake; `specular` scales its
   highlights (0 for a fixture already reflected as an emitter), and
@@ -232,7 +234,7 @@ Environment and probe specular always apply. On top of them:
   frame's medium (density with height falloff, albedo, anisotropy, the
   share of ambient light it scatters, none by default as Godot's) and
   denser boxes of it (`Scene::update_fog_volumes`, `FogVolume`, by default
-  Godot's), lit by the
+  Godot's; the first 1,024 that reach the frame), lit by the
   directional lights through their cascades, the clustered point, spot and
   rectangle lights through their shadows, each scaled by its `fog_energy`,
   and that share of the ambient light, so light shafts form where openings

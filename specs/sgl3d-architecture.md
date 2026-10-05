@@ -946,10 +946,13 @@ code; it does not redeclare a struct, binding or function another module owns.
     breach of these rules in the code it touches fixes it or files the issue.
 12. **AR-12 — Loops end.** Every GPU loop (`loop`, `while`, `for`) has an
     explicit upper bound that no data can raise: a named compile-time
-    constant, or a product of such constants. A count read from a buffer is
-    not a bound, nor is one only clamped to a buffer's length, which can
-    still mean millions of iterations. Data may end a loop earlier, never
-    later. This covers BVH traversal, ray marching, light, decal and probe
+    constant, or a product of such constants. A pipeline-overridable
+    constant set from a Rust constant counts as one. A count read from a
+    buffer is not a bound, nor is one only clamped to a buffer's length,
+    which can still mean millions of iterations. The bound counts every
+    iteration one invocation makes, nested loops included: walks nested in
+    one another share one budget, not caps per level whose product dodges
+    the rule. Data may end a loop earlier, never later. This covers BVH traversal, ray marching, light, decal and probe
     list walks, particle updates, linked lists, work queues, culling passes
     and anything else whose termination depends on data. Each cap has one
     owner (AR-2), with a Rust twin tied by the layout test where it crosses

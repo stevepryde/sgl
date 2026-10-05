@@ -30,13 +30,8 @@ struct Clusters {
  data:array<u32>,
 }
 const CLUSTER_HEADER_WORDS:u32=4u;
-// The most lights and decals a point shades from its cluster (AR-12): the
-// top of Godot's `rendering/limits/cluster_builder/max_clustered_elements`
-// range, the most elements its cluster builder holds a view
-// (servers/rendering/rendering_server.cpp, revision
-// ed1daf0bf001b61586d9930840f2f1394092c079; its default is 512). Lights
-// first, then decals, so a cluster past it loses its last decals, then its
-// last baked lights.
+// The most lights and decals a cluster lists (shading::clusters::
+// CLUSTER_MOST_ITEMS), which view::clusters packs no more than.
 const CLUSTER_MOST_ITEMS:u32=8192u;
 // What reaches one cluster: items `first` onwards in clusters.data, `live`
 // lights that every receiver takes, then `baked` lights that only receivers

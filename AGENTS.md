@@ -116,8 +116,9 @@ compatibility shims solely to avoid updating consumers.
   obtain and resolve an independent agent review against it. Do not add a
   parallel path, a compatibility shim or a second copy to get a feature in.
 - Every GPU loop (`loop`, `while`, `for`) in SGL's WGSL has a named
-  compile-time cap that no buffer's contents or length can raise, generous
-  above the legitimate worst case with its reason beside it. Data may end a
+  compile-time cap that no buffer's contents or length can raise, counting
+  every iteration an invocation makes (nested walks share one budget),
+  generous above the legitimate worst case with its reason beside it. Data may end a
   loop earlier, never later, and a loop that reaches its cap fails safe (a
   ray reports a miss, a list stops). This covers traversal, ray marching,
   list walks, particles, linked lists, work queues and culling (AR-12).

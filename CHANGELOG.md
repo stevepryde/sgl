@@ -27,9 +27,13 @@ full API details.
   a leaf, and a ray visits at most 65,536 nodes across its instance and
   model walks, after which it reports a miss (the most measured in a
   pathological forest of 40,000 instances was 19,238). Other caps, each
-  above what valid content needs: a point shades at most 8,192 of the
-  lights and decals of its cluster (Godot's most clustered elements; decals
-  then baked lights go first past it); a probe grid cell names at most the
+  above what valid content needs: a cluster lists at most 8,192 lights and
+  decals (Godot's most clustered elements), keeping live lights, then baked
+  lights, then decals, in the scene's order, on the CPU and the GPU alike.
+  For probe captures the cluster is the whole scene (every light that is on
+  and every decal), for world-space ray hits the whole view and for dynamic
+  GI probe rays the whole volume, so there it limits the scene. A probe grid
+  cell names at most the
   collection's 256 probes; a frame's fog sums at most the first 1,024 fog
   volumes that reach it, over at most 512 depth slices (Godot's most);
   shadow cascades (4), exposure compensation points (8), dynamic GI rays per

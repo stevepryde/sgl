@@ -39,8 +39,8 @@ const SCENE_BVH_MOST_VISITS:u32=65536u;
 // hangs the GPU: a ray visits at most SCENE_BVH_MOST_VISITS nodes; every node
 // a walk visits lies whole within the source, its end clamped there; each
 // step moves forward, as a node's subtree ends after the node, so a walk
-// stops at an escape that does not; and a leaf names at most a leaf's
-// records, all within the source.
+// stops at an escape that does not, and its ray reports a miss as at the
+// cap; and a leaf names at most a leaf's records, all within the source.
 // Counts one more node visit of a ray's `visits`, false once the ray has
 // made SCENE_BVH_MOST_VISITS, after which it stays exhausted.
 fn scene_bvh_visit(visits:ptr<function,u32>)->bool {
@@ -51,7 +51,8 @@ fn scene_bvh_visit(visits:ptr<function,u32>)->bool {
  *visits+=1u;
  return true;
 }
-// Whether a ray's walks stopped at SCENE_BVH_MOST_VISITS.
+// Whether a ray's walks stopped at SCENE_BVH_MOST_VISITS or at a link that
+// does not lead forward: either way the ray reports a miss.
 fn scene_bvh_exhausted(visits:u32)->bool {
  return visits>SCENE_BVH_MOST_VISITS;
 }
@@ -215,6 +216,7 @@ fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,side
   }
   let escape=scene_source[node+SCENE_BVH_NODE_ESCAPE];
   if !scene_bvh_forward(node,escape) {
+   *visits=SCENE_BVH_MOST_VISITS+1u;
    break;
   }
   if !scene_portable_bounds(node,origin,direction,ray.origin.w,maximum) {
@@ -262,6 +264,7 @@ fn scene_trace_instances(root:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,s
   }
   let escape=scene_source[node+SCENE_BVH_NODE_ESCAPE];
   if !scene_bvh_forward(node,escape) {
+   *visits=SCENE_BVH_MOST_VISITS+1u;
    break;
   }
   if !scene_portable_bounds(node,ray.origin.xyz,ray.direction.xyz,ray.origin.w,maximum) {
