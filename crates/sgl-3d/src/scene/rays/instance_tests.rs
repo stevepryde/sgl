@@ -55,7 +55,7 @@ fn test_receiver(receiver:vec4<u32>)->vec2<u32> {
  result.visible=vec4(
   select(0u,1u,scene_static_segment_visible_except_receiver(ray,test_receiver(test.static_receiver))),
   select(0u,1u,scene_segment_visible(ray.origin.xyz,ray.direction.xyz,ray.origin.w,ray.direction.w,SCENE_SIDES_AS_RASTER)),
-  select(0u,hit.instance_flags+1u,hit.hit),
+  select(0u,(hit.instance_flags&OBJECT_STATIC)+1u,hit.hit),
   0u);
  observed[id.x]=result;
 }

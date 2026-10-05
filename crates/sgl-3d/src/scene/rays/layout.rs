@@ -2,9 +2,9 @@
 //! compares with `scene_source.wgsl` and `scene_rays.wgsl`.
 use super::charts::Chart;
 use super::instances::{InstanceEntry, InstanceLeaf};
+use super::model::{MeshRecord, SectionRecord};
 use super::{
-    IMAGE_BC7, IMAGE_RGBA8, ImageHeader, MaterialRecord, MaterialTextures, MeshRecord,
-    SourceHeader, bvh,
+    IMAGE_BC7, IMAGE_RGBA8, ImageHeader, MaterialRecord, MaterialTextures, SourceHeader, bvh,
 };
 use crate::shading::material::{MaterialUniform, NormalLayerUniform};
 
@@ -46,6 +46,22 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         ),
         ("SCENE_MESH_CHARTS", offset_of!(MeshRecord, charts)),
         ("SCENE_MESH_UV_RECT", offset_of!(MeshRecord, uv_rect)),
+        ("SCENE_MESH_SECTIONS", offset_of!(MeshRecord, sections)),
+        (
+            "SCENE_MESH_SECTION_COUNT",
+            offset_of!(MeshRecord, section_count),
+        ),
+        ("SCENE_SECTION_WORDS", size_of::<SectionRecord>()),
+        ("SCENE_SECTION_MIN", offset_of!(SectionRecord, bounds_min)),
+        ("SCENE_SECTION_MAX", offset_of!(SectionRecord, bounds_max)),
+        (
+            "SCENE_SECTION_FIRST_INDEX",
+            offset_of!(SectionRecord, first_index),
+        ),
+        (
+            "SCENE_SECTION_TRIANGLES",
+            offset_of!(SectionRecord, triangles),
+        ),
         ("SCENE_CHART_WORDS", size_of::<Chart>()),
         (
             "SCENE_MATERIAL_BASE",

@@ -11,7 +11,7 @@ use super::rays::SceneRays;
 use super::static_edits::posed_bounds;
 use super::{Scene, SceneError};
 use crate::content::deformation::{MAX_INDEX, MAX_MORPH_TARGETS, MeshDeformation};
-use crate::content::identity::InstanceId;
+use crate::content::identity::{Identity, InstanceId};
 use crate::content::model::ModelMesh;
 use crate::shading::deformation::{
     DEFORMED_NORMAL_WORDS, DEFORMED_POSITION_WORDS, DeformDispatch, InfluenceRecord, JOINT_WORDS,
@@ -515,6 +515,8 @@ impl Scene {
         };
         let seen = instance.state.capture_visible;
         deformation.set(queue, &self.rays, model, joints, morph_weights)?;
+        // Its candidates take its deformed bounds.
+        self.candidates.deformed(id.index(), deformation);
         if seen {
             self.deformation_edited();
         }

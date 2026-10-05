@@ -171,6 +171,12 @@ fn one_instanced_draw_renders_each_instance_at_its_own_pose() {
     );
     queue.submit([encoder.finish()]);
     renderer.finish_frame(&mut scene);
+    // The first frame's draws, read back once it completes: each quad one
+    // section of two triangles, by mobility; the hidden instance none.
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let stats = renderer.geometry_stats(&device).expect("a completed frame");
+    assert_eq!(stats.moving_instances, (4, 4 * 2), "the moving quads");
+    assert_eq!(stats.static_instances, (2, 2 * 2), "the static quads");
     for (&(position, motion), &instance) in placed.iter().zip(&instances) {
         if let Some((offset, mirrored, _)) = motion {
             let state = InstanceState {
@@ -187,18 +193,6 @@ fn one_instanced_draw_renders_each_instance_at_its_own_pose() {
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.encode_test_opaque(&device, &queue, &mut encoder, &scene, &mut frame, fused);
     queue.submit([encoder.finish()]);
-    // One draw of the moving quads and one of the static ones.
-    let stats = renderer.geometry_stats();
-    assert_eq!(
-        stats.moving_instances,
-        (1, 4 * 2),
-        "the moving quads' draws"
-    );
-    assert_eq!(
-        stats.static_instances,
-        (1, 2 * 2),
-        "the static quads' draws"
-    );
     let targets = renderer.targets();
     let identities = test_support::read(&device, &queue, targets.source_id.texture(), 8);
     let motions = test_support::read(&device, &queue, targets.motion.texture(), 4);

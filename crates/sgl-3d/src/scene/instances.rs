@@ -12,7 +12,9 @@ use super::static_edits::posed_bounds;
 use super::{Scene, SceneError};
 use crate::content::identity::{Identity, InstanceId, ModelId};
 use crate::content::instance::{InstanceState, Mobility};
-use crate::shading::uniforms::{OBJECT_STATIC, ObjectUniform};
+use crate::shading::uniforms::{
+    OBJECT_CAPTURE_VISIBLE, OBJECT_DEFORMING, OBJECT_STATIC, OBJECT_VISIBLE, ObjectUniform,
+};
 use crate::static_lighting::AmbientCube;
 use glam::{Mat4, Vec3};
 
@@ -61,11 +63,14 @@ impl Instance {
         }
     }
 
+    /// Its object record's bits: static, `visible`, `capture_visible` and
+    /// deforming, which the GPU draw lists' cull reads.
     pub fn flags(&self) -> u32 {
-        match self.mobility {
-            Mobility::Static => OBJECT_STATIC,
-            Mobility::Moving => 0,
-        }
+        let bit = |on: bool, bit: u32| if on { bit } else { 0 };
+        bit(self.mobility == Mobility::Static, OBJECT_STATIC)
+            | bit(self.state.visible, OBJECT_VISIBLE)
+            | bit(self.state.capture_visible, OBJECT_CAPTURE_VISIBLE)
+            | bit(self.deformation.is_some(), OBJECT_DEFORMING)
     }
 
     /// The pose motion is measured from: a moving instance's pose in the
@@ -150,6 +155,15 @@ impl Instances {
     fn write(&self, queue: &wgpu::Queue, id: InstanceId) {
         let instance = self.slots.get(id).expect("a live instance");
         self.objects.write(queue, id.index(), &instance.record());
+    }
+
+    /// Rewrites the object records of `model`'s instances.
+    pub fn write_of_model(&self, queue: &wgpu::Queue, model: ModelId) {
+        for (id, instance) in self.slots.iter() {
+            if instance.state.model == model {
+                self.objects.write(queue, id.index(), &instance.record());
+            }
+        }
     }
 
     /// Room for `count` records, rewriting every record when the buffer
@@ -302,6 +316,21 @@ impl Scene {
             });
         self.refresh_scene_group(device);
         let deformation = reserved?;
+        let index = self.instances.slots.next_index();
+        let meshes = self.candidate_meshes(state.model, self.models.get(state.model)?);
+        let deformed = deformation
+            .as_ref()
+            .map(|deformation| deformation.mesh_bounds.as_slice());
+        let mirrored = state.pose.determinant() < 0.;
+        if let Err(error) = self
+            .candidates
+            .place(index, (state.model, &meshes), mirrored, deformed)
+        {
+            if let Some(deformation) = deformation {
+                deformation.free(&mut self.rays);
+            }
+            return Err(error);
+        }
         let model = self.models.get_mut(state.model)?;
         model.instances += 1;
         if mobility == Mobility::Static {
@@ -361,6 +390,24 @@ impl Scene {
         if previous != state.model && (deforms || self.instances.get(id)?.deformation.is_some()) {
             return Err(SceneError::DeformingModel);
         }
+        // Its candidates name its model's meshes and, by whether its pose
+        // mirrors, their sets.
+        let mirrored = |pose: glam::Mat4| pose.determinant() < 0.;
+        if previous != state.model || mirrored(old.pose) != mirrored(state.pose) {
+            let meshes = self.candidate_meshes(state.model, self.models.get(state.model)?);
+            let deformed = self
+                .instances
+                .get(id)?
+                .deformation
+                .as_ref()
+                .map(|deformation| deformation.mesh_bounds.as_slice());
+            self.candidates.place(
+                id.index(),
+                (state.model, &meshes),
+                mirrored(state.pose),
+                deformed,
+            )?;
+        }
         if previous != state.model {
             self.models.get_mut(previous)?.instances -= 1;
             self.models.get_mut(state.model)?.instances += 1;
@@ -394,6 +441,7 @@ impl Scene {
             .slots
             .remove(id)
             .ok_or(SceneError::UnknownInstance)?;
+        self.candidates.remove(id.index());
         if let Some(deformation) = instance.deformation.take() {
             deformation.free(&mut self.rays);
         }

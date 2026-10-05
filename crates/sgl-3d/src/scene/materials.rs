@@ -1,20 +1,20 @@
 //! Materials: each one's values, raster group 2 (values, maps, sampler and
 //! lightmap eligibility) and record in the ray source, with the `Scene`
 //! operations that add, read, edit and remove them.
+use super::candidates::CandidateMesh;
 use super::rays::{MaterialTextures, SceneRays};
 use super::slots::Slots;
 use super::textures::{self, Textures};
 use super::{Scene, SceneError, buffer};
-use crate::asset::{self, Image, Material as AuthoredMaterial};
+use crate::asset::{Image, Material as AuthoredMaterial};
 use crate::content::identity::{MaterialId, ModelId};
-use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
+use crate::content::material::{AlphaMode, SurfaceMaterial};
 use crate::shading::bind::group2;
-use crate::shading::material::{
-    MATERIAL_NORMAL_MAP, MAX_LAYER_CYCLES, MaterialMaps, MaterialUniform, layer_cycles,
-};
+use crate::shading::material::{MaterialMaps, MaterialUniform};
 use gltf::texture::WrappingMode;
 use std::collections::HashMap;
 use std::ops::Range;
+use validate::{validate_alpha, validate_anisotropy, validate_normal_layers};
 
 pub(crate) struct Material {
     pub values: SurfaceMaterial,
@@ -76,64 +76,15 @@ impl Material {
     pub fn casts_directional_shadow(&self, mask: u32) -> bool {
         self.casts_directional_shadow && self.enabled(Some(mask))
     }
+
+    /// Whether it casts the directional shadow where its group is enabled.
+    pub fn casts_directional_shadows(&self) -> bool {
+        self.casts_directional_shadow
+    }
     /// Group 2's values uniform.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn uniform_buffer(&self) -> &wgpu::Buffer {
         &self.buffer
-    }
-}
-
-/// Anisotropy `values` may take on meshes of which `untangented` lack
-/// authored tangent frames.
-fn validate_anisotropy(values: &SurfaceMaterial, untangented: u32) -> Result<(), SceneError> {
-    if !asset::valid_anisotropy(values.anisotropy_strength, values.anisotropy_rotation) {
-        return Err(SceneError::InvalidAnisotropy);
-    }
-    if values.anisotropy_strength > 0. && untangented > 0 {
-        return Err(SceneError::MissingAnisotropyTangents);
-    }
-    Ok(())
-}
-
-/// A masked material's cutoff, as glTF bounds `alphaCutoff`: finite and
-/// nonnegative. A NaN cutoff would cut out nothing.
-fn validate_alpha(values: &SurfaceMaterial) -> Result<(), SceneError> {
-    match values.alpha {
-        AlphaMode::Mask { cutoff } if !(cutoff.is_finite() && cutoff >= 0.) => {
-            Err(SceneError::InvalidAlphaCutoff)
-        }
-        _ => Ok(()),
-    }
-}
-
-/// Normal layers `values` may take on a material added with `maps` and
-/// `wrap`: they scroll its normal map, which must be there and repeat on both
-/// axes, at finite velocities and strengths, positive finite scales, and
-/// speeds whose whole repeats per period the record holds exactly.
-fn validate_normal_layers(
-    values: &SurfaceMaterial,
-    maps: MaterialMaps,
-    wrap: [WrappingMode; 2],
-) -> Result<(), SceneError> {
-    let Some(layers) = values.normal_layers else {
-        return Ok(());
-    };
-    let valid = |layer: &NormalLayer| {
-        layer.velocity.iter().all(|speed| speed.is_finite())
-            && layer.scale.is_finite()
-            && layer.scale > 0.
-            && layer.strength.is_finite()
-            && layer_cycles(layer)
-                .iter()
-                .all(|cycles| cycles.abs() <= MAX_LAYER_CYCLES)
-    };
-    if maps.0 & MATERIAL_NORMAL_MAP != 0
-        && wrap == [WrappingMode::Repeat; 2]
-        && layers.iter().all(valid)
-    {
-        Ok(())
-    } else {
-        Err(SceneError::InvalidNormalLayers)
     }
 }
 
@@ -584,10 +535,44 @@ impl Scene {
         if self.materials.get(id)?.values != values {
             self.edited();
         }
+        // Blended meshes have no draw candidates: a material that becomes or
+        // stops being blended adds or removes its users' instances' ones.
+        let blending = matches!(alpha, AlphaMode::Blend { .. }) != values.blended();
+        let users: Vec<ModelId> = self.materials.get(id)?.users.keys().copied().collect();
+        if blending {
+            // Each user model's instances, in the order they are placed
+            // again below, take the material's meshes as blended or not.
+            let meshes: Vec<Vec<CandidateMesh>> = users
+                .iter()
+                .map(|&model| {
+                    let mut meshes = self.candidate_meshes(model, self.drawn_model(model));
+                    let owner = &self.drawn_model(model).meshes;
+                    for (mesh, shape) in owner.iter().zip(&mut meshes) {
+                        if mesh.material == id {
+                            shape.blended = values.blended();
+                        }
+                    }
+                    meshes
+                })
+                .collect();
+            let plan: Vec<_> = users
+                .iter()
+                .zip(&meshes)
+                .map(|(&model, meshes)| (model, meshes.as_slice(), None))
+                .collect();
+            if !self.candidates_fit(&plan) {
+                return Err(SceneError::DeviceLimit);
+            }
+        }
         self.materials.set(queue, &self.rays, id, values)?;
         if std::mem::discriminant(&alpha) != std::mem::discriminant(&values.alpha) {
             self.models.classify_users(id, &self.materials);
         }
+        if blending {
+            self.place_candidates_of(&users);
+        }
+        self.candidates
+            .material_changed(id, super::candidates::look(self.materials.get(id)?));
         Ok(())
     }
 
@@ -600,3 +585,4 @@ impl Scene {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod normal_layer_tests;
+mod validate;

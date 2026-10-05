@@ -337,10 +337,12 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         size[1],
         image::ColorType::Rgba8,
     )?;
-    let stats = renderer.geometry_stats();
+    // The last frame's statistics, read back once it completed.
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    let stats = renderer.geometry_stats(&device).unwrap_or_default();
     recording.sort_by(f64::total_cmp);
     println!(
-        "{} props: camera draws static {} / moving {}, triangles {}; recording CPU median {:.3} ms over {} frames; {}",
+        "{} props: camera sections static {} / moving {}, triangles {}; recording CPU median {:.3} ms over {} frames; {}",
         options.count,
         stats.static_instances.0,
         stats.moving_instances.0,

@@ -3,7 +3,7 @@ use crate::asset::{CpuMesh, Vertex};
 use glam::camera;
 use wasm_bindgen_test::wasm_bindgen_test;
 
-fn mesh(triangles: impl IntoIterator<Item = [Vec3; 3]>) -> CpuMesh {
+pub(crate) fn mesh(triangles: impl IntoIterator<Item = [Vec3; 3]>) -> CpuMesh {
     let vertices: Vec<_> = triangles
         .into_iter()
         .flatten()
@@ -28,7 +28,7 @@ fn mesh(triangles: impl IntoIterator<Item = [Vec3; 3]>) -> CpuMesh {
 
 // Independent oracle clips each actual triangle, rather than testing any bound.
 // The six inequalities are WebGPU's homogeneous clip volume.
-fn clipped_triangle(mut polygon: Vec<DVec4>) -> bool {
+pub(crate) fn clipped_triangle(mut polygon: Vec<DVec4>) -> bool {
     for plane in 0..6 {
         let distance = |p: DVec4| match plane {
             0 => p.x + p.w,

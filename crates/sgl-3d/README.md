@@ -942,22 +942,44 @@ walks only the probes whose influence can reach that cell.
 
 ## Visible work and pass selection
 
-[Camera culling](src/view/culling/README.md) retains mesh-range bounds and rejects
-out-of-frame sections, including sections within a large batched course mesh.
-Hardware culling preserves authored single/double-sided and mirrored materials.
-Each probe face uses its own camera; shadow and scene-ray populations are separate.
+The camera's opaque and masked surfaces and each directional shadow cascade
+draw from lists the GPU builds every frame ([GPU draw
+lists](src/view/culling/README.md)), with nothing to configure. After the
+deform pass, a cull stage tests each instance's meshes (the draw candidates
+the scene keeps up as it is edited) for the view's population (the camera's
+`visible` instances, a cascade's `capture_visible` ones whose material casts,
+both under the frame's visibility mask), chooses the camera's level of
+detail, tests the view's frustum, then tests each of the chosen mesh's
+sections, the 128-triangle leaves of its range hierarchy, and appends those
+that pass to their set's draw. A set is what draws with one pipeline and one
+material: a material, whether its instances' poses mirror and whether they
+deform. Each set draws with one indirect draw, whatever its instances and
+their mobility, so recording a view costs the same at a hundred instances as
+at a hundred thousand. The CPU walks no instance for these views: it builds
+the camera's blended list (culled per instance, sorted back to front), the
+local-light shadow faces and probe captures. Hardware culling preserves
+authored single/double-sided and mirrored materials. Each probe face uses
+its own camera; shadow and scene-ray populations are separate.
 
-Instances draw instanced, with nothing to configure: in every view, the
-instances that draw the same mesh of a model with the same material, face
-culling and mobility, after their own culling and level-of-detail choice,
-share one draw per index range, as Bevy batches its phases. Opaque, masked,
-shadow and capture draws merge wherever they are; blended ones only where
-they follow one another back to front. Each instance keeps its own pose,
-motion, ambient cube and source identity: a draw reads every instance's
-record from the scene's object buffer. A deforming instance draws alone.
-The [instances example](examples/instances.rs) places many props of three
-models and prints the camera's draws and the CPU time each frame took to
-record:
+A GPU-built list draws its sets in their order and each set's sections in
+the order the cull appended them, so two coplanar surfaces of different
+draws have no defined winner at equal depth: give a coplanar overlay a depth
+offset or make it a decal. wgpu validates indirect draws with a compute pass
+before each render pass that issues them, on native backends, unless the
+game creates its instance without `InstanceFlags::VALIDATION_INDIRECT_CALL`
+(set by default); the lists' few draws need no validation, so a game may
+clear the flag, and keeping it costs that small pass.
+
+The CPU-built lists draw instanced: the instances that draw the same mesh
+of a model with the same material, face culling and mobility, after their
+own culling and level-of-detail choice, share one draw per index range, as
+Bevy batches its phases. Shadow and capture draws merge wherever they are;
+blended ones only where they follow one another back to front. In every
+list each instance keeps its own pose, motion, ambient cube and source
+identity: a draw reads every instance's record from the scene's object
+buffer. The [instances example](examples/instances.rs) places many props of
+three models and prints the camera's sections and the CPU time each frame
+took to record:
 
 ```sh
 cargo run --release -p sgl-3d --example instances -- target/instances.png --count 10000
@@ -1206,9 +1228,11 @@ authored look and per-frame state in a `FrameInput`.
      `add_materials` (texture indices index the images passed with them) and
      `add_model` add procedural content. A model's meshes (`ModelMesh`es
      naming materials already added) reach `add_model` and `set_model`
-     prepared: `PreparedModel::new(meshes)` validates them, builds their
-     culling hierarchies, shadow-caster clusters and ray-query BVH and packs
-     their GPU data without a device or the scene, and the value is `Send`,
+     prepared: `PreparedModel::new(meshes)` validates them (a mesh holds at
+     most 65,536 sections of 128 triangles, 8,388,608 triangles;
+     `SceneError::TooManySections` past it), builds their culling
+     hierarchies, shadow-caster clusters and ray-query BVH and packs their
+     GPU data without a device or the scene, and the value is `Send`,
      so a game prepares on its own worker threads (SGL3D starts none) and the
      thread that edits the scene only places and copies it. `add_model` and
      `set_model` check what needs the scene (materials, an anisotropic
@@ -2038,13 +2062,11 @@ example on WebGPU in headless Chromium
 retained capture inputs; the ordinary test command does not establish those
 results. Run relevant cases explicitly when changing their boundary. The
 `diagnostics` feature adds `Settings::diagnostics` (`settings::Diagnostics`,
-not serialized: switches that turn a layer off, the numerical frame probe,
-the tone-target capture and the camera's instance visibility), `Renderer::diagnostic_target`,
-`Renderer::take_frame_probe_reports`, `Renderer::take_instance_visibility`
-(with `InstanceVisibility::Observe`, which of the camera's opaque and masked
-instances a frame drew without a pixel, read back without blocking;
-`SkipHidden` frames leave those out, an oracle of what culling them would
-save whose image is incorrect by design), `diagnostics::read`,
+not serialized: switches that turn a layer off, the numerical frame probe
+and the tone-target capture), `Renderer::diagnostic_target`,
+`Renderer::take_frame_probe_reports`,
+`Renderer::geometry_stats_for_model` (the camera's sections of one model's
+instances, read back with `geometry_stats`), `diagnostics::read`,
 `diagnostics::source_id`, the value the source-identity target holds for an
 instance's pixels, `diagnostics::crystal_roughness_threshold`, where
 Crystal stops tracing, `diagnostics::counters` (what `sgl-3d` itself counted on
@@ -2053,10 +2075,13 @@ preparing and placing models and of building instance BVHs, ray-source and
 geometry-slab growths, static-edit boxes and the hardware path's
 acceleration-structure builds and compactions; subtract
 two with `Counters::since`, and compare versions by totals since lines move),
-`Scene::diagnostic_resources` (the scene's buffer sizes and BLASes),
-`Renderer::diagnostic_draws` (the last frame's camera, blended and cascade
-draws) and `Renderer::diagnostic_view_times` (the CPU time the camera's and
-each cascade's draw list took to build and to record). The `streaming` and
+`Scene::diagnostic_resources` (the scene's buffer sizes and BLASes, and the
+draw candidates', sets', level chains' and each GPU-built view's cluster
+list's bytes), `Renderer::diagnostic_draws` (the last frame's camera, blended
+and cascade draws as encoded: a GPU-built view's one per set) and
+`Renderer::diagnostic_view_times` (the CPU time the camera's and each
+cascade's draw list took to build, preparing and encoding its cull, and to
+record). The `streaming` and
 `irradiance_volume` examples print these for their routes, and
 `bun scripts/tasks.ts measure-browser` the view times of the streaming world
 in headless Chromium.
@@ -2078,7 +2103,8 @@ Ported code keeps its licence text beside the source and is listed in
 Games can split a large model's mesh into spatial chunks and add authored
 alternatives as other models that no instance places (a model draws all its
 meshes, so an alternative never comes from the model it details). Then
-register each chunk's detailed-to-coarse alternatives:
+register each chunk's detailed-to-coarse alternatives, at most
+`lod::MAX_MESH_LODS` (8) a mesh (`SceneError::TooManyLods` past it):
 
 ```rust,ignore
 scene.set_mesh_lods(base_model, chunk_mesh, vec![
@@ -2099,19 +2125,28 @@ All primary raster passes choose the last alternative whose conservative project
 error is at most 0.5 pixels, using the `FrameInput` camera and the render size.
 The bound includes scale, perspective division and
 distance to the nearest chunk corner; chunks crossing the near plane retain full
-detail. Original object/material bindings retain lightmap and atlas lighting. Pulled
+detail. The camera's opaque and masked surfaces choose on the GPU, by the
+same bound computed in `f32` under margins that cover its rounding, so they
+never draw an alternative coarser than the CPU bound admits, and may keep a
+finer one at the margin; the blended list chooses on the CPU. Original object/material bindings retain lightmap and atlas lighting. Pulled
 reflection-source geometry uses the selected alternative's actual triangle words,
 not the original triangle IDs. Probes, shadows and scene rays deliberately retain
 the original geometry: this feature reduces primary raster work, not ray geometry
 storage or offscreen capture costs. No LOD registration leaves rendering unchanged.
 
-`Renderer::geometry_stats()` returns static- and moving-instance (draw call,
-triangle) pairs (`GeometryStats`, summed by `total()`) for the last rendered
-primary raster population after frustum/material culling and before GPU
-backface culling. An instanced draw holds instances of one mobility and counts
-once; its triangles count once per instance. It excludes shadow, probe and ray
-work. `Renderer::geometry_stats_for_model(&scene, model)` counts the draws that
-hold visible instances of one model, and those instances' triangles.
+`Renderer::geometry_stats(&device)` returns static- and moving-instance
+(draws, triangles) pairs (`GeometryStats`, summed by `total()`) for the
+primary raster population of the most recent completed frame, after
+visibility, frustum, material and level-of-detail culling and before GPU
+backface culling: its opaque and masked surfaces counted on the GPU, a draw
+per section of at most 128 triangles, read back without blocking (the map is
+requested at `finish_frame`), with its blended surfaces' instanced draws
+from the same frame, a draw per batch and range, whose triangles count once
+per instance. It is `None` until a frame's readback has arrived, a few
+frames after the first. It excludes shadow, probe and ray work. With the
+`diagnostics` feature, `Renderer::geometry_stats_for_model(&device, &scene,
+model)` counts the same frame's sections of one model's instances and the
+blended draws that hold one, with their triangles.
 
 ## Soft additive effects
 

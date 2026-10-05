@@ -7,6 +7,7 @@
 //! hardware path's acceleration structures, which a frame asks the scene to
 //! build while hardware ray tracing is in effect, nearest its camera first
 //! (`rays::acceleration`).
+pub(crate) mod candidates;
 mod decal_atlas;
 pub(crate) mod decals;
 pub(crate) mod deformation;
@@ -28,7 +29,7 @@ pub(crate) mod origin;
 pub(crate) mod prepared;
 pub(crate) mod probe_grid;
 pub(crate) mod probes;
-mod ranges;
+pub(crate) mod ranges;
 pub(crate) mod ray_class;
 pub(crate) mod rays;
 pub(crate) mod shadow_clusters;
@@ -55,6 +56,9 @@ pub struct Scene {
     pub(crate) materials: materials::Materials,
     pub(crate) models: models::Models,
     pub(crate) instances: instances::Instances,
+    /// Each instance's draw candidates, with the sets and level chains they
+    /// name, which the GPU draw lists cull.
+    pub(crate) candidates: candidates::Candidates,
     pub(crate) lights: lights::Lights,
     pub(crate) decals: decals::Decals,
     pub(crate) environments: environments::Environments,
@@ -148,6 +152,7 @@ impl Scene {
         Self {
             materials: materials::Materials::new(device, queue),
             models: models::Models::default(),
+            candidates: candidates::Candidates::new(&device.limits()),
             lights: lights::Lights::new(device),
             decals: decals::Decals::new(device, queue),
             environments: environments::Environments::new(device, queue),
@@ -230,10 +235,10 @@ impl Scene {
             .expect("a mesh's material lives")
     }
 
-    /// Before a frame: uploads a decal atlas packed since the last one,
-    /// rewrites records whose motion the last submitted frame ended, chooses
-    /// the deformations the frame writes and shows, and orders the mist from
-    /// `eye`.
+    /// Before a frame: uploads a decal atlas packed since the last one and
+    /// the draw candidates, sets and chains edits changed, rewrites records
+    /// whose motion the last submitted frame ended, chooses the deformations
+    /// the frame writes and shows, and orders the mist from `eye`.
     pub(crate) fn prepare_frame(
         &mut self,
         device: &wgpu::Device,
@@ -241,6 +246,7 @@ impl Scene {
         eye: glam::Vec3,
     ) {
         self.upload_decals(device, queue);
+        self.candidates.upload(device, queue);
         self.instances
             .prepare_frame(queue, &self.models, &mut self.deformations);
         self.transient.sort_mist(queue, eye);
@@ -467,6 +473,13 @@ pub struct SceneResources {
     /// structure's size.
     pub blases: u64,
     pub blas_triangles: u64,
+    /// The GPU draw lists' buffers: the draw candidates', the draw sets'
+    /// and the level chains' bytes, and the bytes the sets' regions take
+    /// in each GPU-built view's cluster list.
+    pub draw_candidates: u64,
+    pub draw_sets: u64,
+    pub level_chains: u64,
+    pub cluster_list: u64,
 }
 
 #[cfg(any(test, feature = "diagnostics"))]
@@ -479,6 +492,7 @@ impl Scene {
             .acceleration
             .as_ref()
             .map_or((0, 0), |acceleration| acceleration.held());
+        let [draw_candidates, draw_sets, level_chains] = self.candidates.bytes();
         SceneResources {
             ray_source: self.rays.source().size(),
             ray_source_used: ray_source_used * 4,
@@ -491,6 +505,11 @@ impl Scene {
             geometry_buffers,
             blases,
             blas_triangles,
+            draw_candidates,
+            draw_sets,
+            level_chains,
+            cluster_list: u64::from(self.candidates.sets.region_end())
+                * std::mem::size_of::<crate::shading::vertex::DrawInstance>() as u64,
         }
     }
 }

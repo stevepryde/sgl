@@ -6,8 +6,6 @@ use std::ops::Range;
 pub(crate) struct Frustum {
     planes: [DVec4; 6],
     error: [DVec4; 6],
-    /// Whether the near plane (the last) culls.
-    near: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -48,18 +46,27 @@ impl Frustum {
         Self {
             planes: planes(rows),
             error: error.map(|row| row * (32. * f64::from(f32::EPSILON))),
-            near: true,
         }
     }
 
-    /// This frustum without its near plane, for a directional shadow
-    /// cascade, whose casters between the light and the cascade still cast
-    /// (Bevy pushes a cascade frustum's near plane to infinity).
-    pub fn without_near(self) -> Self {
-        Self {
-            near: false,
-            ..self
-        }
+    /// The clip volume of `projection` (jittered by `jitter`) times `view`
+    /// for the GPU draw lists' cull (`shading::culling::CullView`): its
+    /// planes in world space and their tolerance rows, built here in double
+    /// precision without a pose. The cull applies each candidate's pose in
+    /// `f32` and scales the rows by its absolute values, as `new` composes
+    /// them with a pose; the rows allow twice what raster's own rounding
+    /// needs, which covers the cull's rounding of the pose's product, so its
+    /// test stays conservative.
+    pub fn planes(
+        view: Mat4,
+        projection: Mat4,
+        jitter: [f32; 2],
+    ) -> ([[f32; 4]; 6], [[f32; 4]; 6]) {
+        let frustum = Self::new(view, projection, Mat4::IDENTITY, jitter);
+        (
+            frustum.planes.map(|plane| plane.as_vec4().to_array()),
+            frustum.error.map(|row| (row * 2.).as_vec4().to_array()),
+        )
     }
 
     /// Whether any part of `bounds` may lie inside it.
@@ -78,8 +85,7 @@ impl Frustum {
         let extent = ((hi - lo) * 0.5).extend(0.);
         let largest = lo.abs().max(hi.abs()).extend(1.);
         let mut inside = true;
-        let planes = if self.near { 6 } else { 5 };
-        for (plane, error) in self.planes[..planes].iter().zip(&self.error) {
+        for (plane, error) in self.planes.iter().zip(&self.error) {
             let distance = plane.dot(center);
             let radius = plane.abs().dot(extent);
             let tolerance = error.dot(largest);
@@ -163,4 +169,4 @@ impl MeshRanges {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -432,7 +432,7 @@ impl Settings {
 #[cfg(not(feature = "diagnostics"))]
 pub(crate) use diagnostics::{Diagnostics, DisabledLayers};
 #[cfg(feature = "diagnostics")]
-pub use diagnostics::{Diagnostics, DisabledLayers, InstanceVisibility};
+pub use diagnostics::{Diagnostics, DisabledLayers};
 
 mod diagnostics {
     /// Debug and test tooling's renderer configuration (feature
@@ -454,36 +454,6 @@ mod diagnostics {
         /// (`DiagnosticTarget::ToneMapped`), which is then presented, instead
         /// of tone mapping straight to the output. The output is identical.
         pub capture_tone_target: bool,
-        /// Which of the camera's opaque and masked instances show, an
-        /// oracle for occlusion culling.
-        pub instance_visibility: InstanceVisibility,
-    }
-
-    /// The camera's instance visibility, measured from the source identity
-    /// target (`DiagnosticTarget::SourceId`), and an oracle of what culling
-    /// the hidden instances would save.
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    #[cfg_attr(
-        not(feature = "diagnostics"),
-        allow(dead_code, reason = "a game sets it through the feature")
-    )]
-    pub enum InstanceVisibility {
-        #[default]
-        Off,
-        /// After the opaque stage, a pass marks each instance with at least
-        /// one pixel in the source identity target, and the marks are read
-        /// back without blocking: `Renderer::take_instance_visibility`
-        /// reports which of the camera's opaque and masked instances the
-        /// frame drew without a pixel.
-        Observe,
-        /// The camera's opaque and masked draws skip the instances that the
-        /// newest `Observe` frame read back drew without a pixel: what a
-        /// culler of hidden instances could save at most, with an image
-        /// incorrect by design, since an instance that comes into view
-        /// stays missing until a later `Observe` frame shows it. It
-        /// observes nothing; a game alternates it with `Observe` to keep it
-        /// current.
-        SkipHidden,
     }
 
     /// Layers switched off, each named after what it removes. The first five
@@ -516,7 +486,8 @@ mod diagnostics {
         /// The fused G-buffer and lighting pass: the two run as separate
         /// passes, as on devices without its attachments.
         pub fused_opaque: bool,
-        /// The camera's view culling: every LOD-selected draw is submitted.
+        /// The camera's view culling: every LOD-selected draw is submitted,
+        /// its GPU cull accepting every candidate and section.
         pub culling: bool,
         /// Additive effects (glow).
         pub effects: bool,

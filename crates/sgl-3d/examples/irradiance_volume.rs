@@ -12,7 +12,7 @@
 //! walk in and out of the cave mouth through the field.
 //!
 //! `cargo run --release -p sgl-3d --example irradiance_volume [-- --night]
-//! [--frames N] [--split] [--visibility]`
+//! [--frames N] [--split]`
 //!
 //! It renders the walk twice at 1920×1080 with TAA, screen-space and
 //! world-space reflections and shadows: with the volume, and with the
@@ -29,15 +29,12 @@
 //! have no pass timestamps). `--night` turns the sun off and dims the sky,
 //! with no cell rewritten. Printed numbers are diagnostics, not image QA.
 //!
-//! The walk with the volume then prints what occlusion culling could save
+//! The walk with the volume then prints what its views' draw lists cost
 //! inside the cave, over the frames after the warm-up with the camera past
-//! the cliff (`support/culling.rs`): the CPU time each view's draw list
-//! takes to build and record; with `--visibility`, which walks with the
-//! volume alone, frames alternately draw every instance, observing which of
-//! the camera's the frame drew without a pixel, and skip those hidden
-//! instances, and it prints the hidden share and each pass group's GPU time
-//! in both kinds of frame. `--split` renders the opaque stage's two-pass
-//! form instead of its fused pass.
+//! the cliff (`support/culling.rs`): the CPU time each GPU-built view's draw
+//! list takes to build and record, and each pass group's GPU time.
+//! `--split` renders the opaque stage's two-pass form instead of its fused
+//! pass.
 //!
 //! The light field and its cells are the game's: each air cell's face
 //! toward a side takes the levels of the air cell on that side (or its own
@@ -1123,7 +1120,7 @@ fn walk(
         game.creatures(&mut scene, queue, seconds)?;
         let mut input = game.input(seconds);
         input.camera_cut = frame == 0;
-        options.apply(&mut settings, frame);
+        options.apply(&mut settings);
         if let Some(timing) = &mut timing {
             let done: Vec<_> = timing.begin_frame(device, queue).collect();
             done.iter().for_each(|done| culling.gpu(done));
@@ -1158,7 +1155,7 @@ fn walk(
         // Inside the cave: past the cliff, after the warm-up.
         let inside = frame >= WARM_UP as usize && Game::eye(seconds).z >= CLIFF as f32;
         culling.frame(
-            (&mut renderer, device),
+            &renderer,
             frame,
             with_volume && inside,
             (rendered, finished),
@@ -1182,8 +1179,6 @@ fn walk(
             times.extend(done);
         }
     }
-    let _ = device.poll(wgpu::PollType::wait_indefinitely());
-    culling.take_visibility(&mut renderer, device);
     times.retain(|frame| frame.frame >= WARM_UP);
     if with_volume {
         // Repeated updates on an otherwise idle GPU: the torch toggled,
@@ -1256,7 +1251,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "--night" => night = true,
             "--frames" => frames = args.next().ok_or("--frames requires a count")?.parse()?,
             "--help" | "-h" => {
-                println!("irradiance_volume [--night] [--frames N] [--split] [--visibility]");
+                println!("irradiance_volume [--night] [--frames N] [--split]");
                 return Ok(());
             }
             option if options.take(option) => {}
@@ -1287,11 +1282,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         directory.display()
     );
     let (volume, measured, culling) = walk(gpu, (true, night), frames, &directory, options)?;
-    if options.visibility {
-        println!("Inside the cave:");
-        print!("{}", culling.report());
-        return Ok(());
-    }
     let (ambient, _, _) = walk(gpu, (false, night), frames, &directory, options)?;
     report_passes(&volume, &ambient);
     println!("Keeping the volume up, median / p95:");
