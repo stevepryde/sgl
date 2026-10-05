@@ -28,7 +28,9 @@ settings SGL3D has today.
    Rust render data on a caller-owned wgpu device and queue: native (Metal,
    Vulkan, DX12) or the browser's WebGPU, requested with the adapter's limits
    (`graphics_device::limits`). The device must support compute shaders,
-   eight storage buffers per shader stage (wgpu's default limit) and 21
+   indirect dispatch and draw (`DownlevelFlags::INDIRECT_EXECUTION`, which
+   the dynamic GI volume's dispatches and the GPU draw lists use), eight
+   storage buffers per shader stage (wgpu's default limit) and 21
    sampled textures per shader stage (five above it). That rules out wgpu's
    GL and GLES backend, WebGL2 included, which lacks compute and whose
    wgpu-hal fixes `MAX_TEXTURE_SLOTS` at 16, and a WebGPU device left at the
@@ -269,7 +271,9 @@ Remaining work, in the existing roadmap order:
 4. **GPU-driven culling and occlusion culling (22,
    [#24](https://github.com/stevepryde/sgl/issues/24)).** Current visibility
    uses CPU frustum/mesh-section culling, authored mesh LOD, and instanced
-   draws.
+   draws. The design is settled in the architecture
+   ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages));
+   its implementation follows it.
 
 These are planned capabilities, not APIs a game can depend on yet. Implement
 them under RD-1 and the architecture rules, retaining native and browser
