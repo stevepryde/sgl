@@ -18,6 +18,7 @@ use wgpu::util::DeviceExt;
 
 const AS_RASTER: u32 = 0;
 const BOTH: u32 = 1;
+const SHADOW: u32 = 2;
 
 /// A vertex at `position` facing `normal`, with alpha `alpha`.
 fn vertex(position: Vec3, normal: Vec3, alpha: f32) -> Vertex {
@@ -262,7 +263,8 @@ const MARGIN: f64 = 1e-4;
 
 /// Every triangle of `triangles` but `receiver` that `ray` meets within its
 /// interval, its end excluded where `open_end`, nearest first, each judged
-/// by the ray's `sides` (AS_RASTER rejects a single-sided back face); none
+/// by the ray's `sides` (AS_RASTER rejects a single-sided back face, SHADOW
+/// a single-sided front face, BOTH neither); none
 /// for a ray whose meetings f32 arithmetic could decide otherwise (near an
 /// edge, a cut-out boundary or grazing).
 fn meet(
@@ -322,7 +324,12 @@ fn meet(
                 cutoff,
             } => (double_sided, Some(f64::from(cutoff))),
         };
-        let mut accepted = front || sides == BOTH || double_sided;
+        let mut accepted = double_sided
+            || match sides {
+                AS_RASTER => front,
+                SHADOW => !front,
+                _ => true,
+            };
         if let Some(cutoff) = cutoff {
             let alpha: f64 = (0..3).map(|i| bary[i] * triangle.alphas[i]).sum();
             if (alpha - cutoff).abs() < MARGIN * 10. {
@@ -858,7 +865,9 @@ fn check(
 
 // Plausible defects, each a wrong answer against the oracle: the hardware's
 // side or winding read instead of the object-space winding (mirrored square,
-// boxes seen from inside); a double-sided material's back face rejected; no re-trace past a rejected hit, or one that skips
+// boxes seen from inside); a double-sided material's back face rejected; a
+// ray-traced shadow ray's side policy taking a single-sided front face, or
+// rejecting a back face or a double-sided face; no re-trace past a rejected hit, or one that skips
 // a nearer occluder (blended, hidden and back faces before an opaque one;
 // nested boxes; any-hit visibility rays whose first hit is rejected); the
 // re-trace stepping back onto the same hit; masks selecting the wrong kinds
@@ -911,8 +920,10 @@ fn hardware_rays_match_the_oracle() {
         let batches = [
             (Function::Nearest, AS_RASTER, none, &nearest),
             (Function::Nearest, BOTH, none, &nearest),
+            (Function::Nearest, SHADOW, none, &nearest),
             (Function::Visible, AS_RASTER, none, &segments),
             (Function::Visible, BOTH, none, &segments),
+            (Function::Visible, SHADOW, none, &segments),
             (Function::MovingNearest, AS_RASTER, none, &nearest),
             (
                 Function::MovingNearest,

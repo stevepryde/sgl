@@ -72,7 +72,12 @@ pub(crate) static ALLOCATE: shading::Module = shading::Module {
 pub(crate) static TRACE: shading::Module = shading::Module {
     name: "dynamic_gi_trace",
     source: include_str!("dynamic_gi/trace.wgsl"),
-    deps: &[&shading::BIND_LIT, &shading::SURFACE_RAY, &COMMON],
+    deps: &[
+        &shading::BIND_LIT,
+        &shading::SURFACE_RAY,
+        &shading::SHADOW_MASK_NONE,
+        &COMMON,
+    ],
 };
 /// The irradiance and depth blends, at the stage's own group 0.
 pub(crate) static UPDATE: shading::Module = shading::Module {

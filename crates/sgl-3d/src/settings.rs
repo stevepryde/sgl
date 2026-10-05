@@ -352,6 +352,15 @@ pub struct Settings {
     /// and keeps them (`Renderer::ray_tracing_stats`), and the rays trace
     /// them; off frees them.
     pub hardware_ray_tracing: bool,
+    /// Ray-traced shadows, off by default and in no preset: while hardware
+    /// ray tracing is in effect (`Renderer::ray_tracing_in_effect`), the
+    /// camera's opaque surfaces take the shadows of the directional light
+    /// and of up to fifteen casting local lights from rays toward each
+    /// light instead of from the shadow maps, which still shadow the fog,
+    /// blended surfaces, reflections and the lights the rays leave out.
+    /// Without hardware ray tracing the maps shadow everything
+    /// (`Renderer::ray_traced_shadows_in_effect`).
+    pub ray_traced_shadows: bool,
     /// The volumetric fog and mist, while the frame turns its atmosphere on
     /// (`FrameInput::atmosphere`, off by default); this allows them, and is
     /// on by default.
@@ -377,8 +386,8 @@ pub struct Settings {
 
 impl Default for Settings {
     /// High, with atmosphere allowed and the fog filter on, heat
-    /// distortion, world-space reflections, hardware ray tracing and motion
-    /// blur off, FSR2 sharpening on at AMD's FSR sample's 0.8
+    /// distortion, world-space reflections, hardware ray tracing,
+    /// ray-traced shadows and motion blur off, FSR2 sharpening on at AMD's FSR sample's 0.8
     /// (`m_RCASSharpen`, `m_Sharpness`), and every other choice at its
     /// default.
     fn default() -> Self {
@@ -398,6 +407,7 @@ impl Default for Settings {
             reflection_method: ReflectionMethod::default(),
             world_space_reflections: WorldSpaceReflections::Off,
             hardware_ray_tracing: false,
+            ray_traced_shadows: false,
             atmosphere: true,
             fog_quality: FogQuality::default(),
             dynamic_gi: DynamicGiQuality::default(),
