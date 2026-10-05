@@ -1692,7 +1692,7 @@ Placement:
   beyond a room's corner lights none of its walls, and probes in open air
   cost little yet light whatever moves among them. A static object so small
   that no probe about it finds it (a probe classifies from 32 fixed
-  directions, all of them on its first turn and over each 8 of its turns
+  directions, all of them on its second turn and over each 8 of its turns
   after) takes its other indirect light. A probe's class follows a change
   in what it sees within 8 of its turns: 8 frames within a spacing of the
   camera, up to 64 at 128 spacings while the budget holds. Keep probes

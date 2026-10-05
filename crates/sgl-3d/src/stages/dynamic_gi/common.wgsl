@@ -129,7 +129,7 @@ const DDGI_MOST_MOVING_BOUNDS:u32=256u;
 // rays (past `rays`, its fixed rays), the rays the probe traces beside its
 // fixed rays, and which of its cycle's fixed rays it traces (the probe's
 // turns in its cycle so far, DdgiProbe::fixed_frames), or DDGI_FIXED_CYCLE
-// on its first turn, which traces all of them.
+// where the turn traces all of them.
 struct DdgiRayEntry {
  probe:u32,
  ray:u32,
@@ -202,8 +202,8 @@ fn ddgi_unpack_variance(words:array<u32,6>)->DdgiVariance {
 // share of its fixed rays that met single-sided surfaces from behind over
 // its last whole cycle, which classifies it, the back faces its fixed rays
 // have met over the turns of the cycle it has traced so far
-// (fixed_frames), and the turns after its first that trace no fixed rays
-// (fixed_rest), its first having traced the cycle's.
+// (fixed_frames), and where its first cycle stands (fixed_rest,
+// ddgi_turn_fixed_rays).
 struct DdgiProbe {
  offset:vec3<f32>,
  blended:bool,
@@ -227,18 +227,27 @@ fn ddgi_unpack_probe(words:vec4<u32>)->DdgiProbe {
 fn ddgi_fresh_probe()->DdgiProbe {
  return DdgiProbe(vec3(0.),false,0.,false,0u,0u,0u,0u);
 }
-// The fixed rays a blended probe traces on its turn after its others: the
-// next DDGI_FIXED_RAYS_PER_FRAME of its cycle, or none on the turns after
-// its first, which traced their cycle's.
+// The fixed rays a probe traces on its turn after its others: none on its
+// first, which its other rays classify; all DDGI_FIXED_RAYS on its second
+// (fixed_rest at DDGI_FIXED_CYCLE), a whole cycle's, which classify it;
+// none on the DDGI_FIXED_CYCLE - 1 after, whose fixed rays that turn
+// traced; then the next DDGI_FIXED_RAYS_PER_FRAME of its cycle.
 fn ddgi_turn_fixed_rays(probe:DdgiProbe)->u32 {
+ if !probe.blended {
+  return 0u;
+ }
+ if probe.fixed_rest==DDGI_FIXED_CYCLE {
+  return DDGI_FIXED_RAYS;
+ }
  return select(DDGI_FIXED_RAYS_PER_FRAME,0u,probe.fixed_rest>0u);
 }
 // RTXGI's RTXGI_DDGI_NUM_FIXED_RAYS: the fixed directions that classify a
 // probe, spread evenly over the sphere and never rotated, so a probe's class
 // holds still while what it sees does. A probe traces all of them on its
-// first turn, as RTXGI traces them every update, and none on its next
+// second turn, as RTXGI traces them every update, and none on its next
 // DDGI_FIXED_CYCLE - 1 turns, then DDGI_FIXED_RAYS_PER_FRAME of them each
-// turn, all of them over a cycle of DDGI_FIXED_CYCLE turns.
+// turn, all of them over a cycle of DDGI_FIXED_CYCLE turns
+// (ddgi_turn_fixed_rays).
 const DDGI_FIXED_RAYS:u32=32u;
 const DDGI_FIXED_CYCLE:u32=DDGI_FIXED_RAYS/DDGI_FIXED_RAYS_PER_FRAME;
 // RTXGI's probeBackfaceThreshold: a probe more than this share of whose rays

@@ -66,10 +66,13 @@
 // NVIDIA RTXGI's probes trace their fixed rays among their others each
 // update (RTXGI-DDGI f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6,
 // docs/DDGIVolume.md 736-767; practice only), and as RTXGI's they are not
-// blended; on its first turn all DDGI_FIXED_RAYS of them, so it is
-// classified at once, and none on its next DDGI_FIXED_CYCLE - 1 turns, so
-// its first cycle costs what any other does and the starts a frame holds
-// keep up as before. Changed: an inactive probe (ddgi_probe_active)
+// blended. Changed: a probe's first turn traces none, its other rays
+// classifying it; its second all DDGI_FIXED_RAYS, which classify it, and
+// its next DDGI_FIXED_CYCLE - 1 none, so its first cycles cost what any
+// other's do (ddgi_turn_fixed_rays). Its first turn tracing them all, as
+// RTXGI's every update does, cut the probes a moving camera's frame starts
+// by a fifth, as the budget leaves starting probes their share, and
+// tripled those waiting to start on Hyperdrive's course (#196). Changed: an inactive probe (ddgi_probe_active)
 // traces the fewest others, a bucket, beside its fixed rays, and still
 // blends them, where RTXGI's inactive probes trace their fixed rays alone
 // and blend nothing: its depth and irradiance stay warm, so it lights
@@ -220,12 +223,12 @@ fn ddgi_most_rays(spacings:f32)->u32 {
  let buckets=u32(round(rays/f32(DDGI_RAY_BUCKET_COUNT)));
  return clamp(buckets*DDGI_RAY_BUCKET_COUNT,DDGI_RAY_BUCKET_COUNT,u32(most));
 }
-// The rays a probe that far away traces beside its fixed rays on its first
-// turn, which traces all DDGI_FIXED_RAYS of them: its most rays, within the
-// slots each probe's rays take (ddgi_ray_slot).
-fn ddgi_starting_rays(spacings:f32)->u32 {
+// The rays a probe traces on its turn beside `fixed_rays` fixed rays, of
+// `rays` it asks for: within the slots each probe's rays take
+// (ddgi_ray_slot), which its turn tracing all its fixed rays may cut.
+fn ddgi_turn_rays(rays:u32,fixed_rays:u32)->u32 {
  let slots=min(volume.max_rays,DDGI_MOST_RAYS)+DDGI_FIXED_RAYS_PER_FRAME;
- return min(ddgi_most_rays(spacings),max(slots,DDGI_FIXED_RAYS+DDGI_RAY_BUCKET_COUNT)-DDGI_FIXED_RAYS);
+ return min(rays,max(slots,fixed_rays+DDGI_RAY_BUCKET_COUNT)-fixed_rays);
 }
 // A blended probe's most inconsistent irradiance texel's inconsistency.
 fn ddgi_inconsistency(probe_index:u32)->f32 {
@@ -285,7 +288,7 @@ fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) gro
  let lattice=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
  let spacings=ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing));
  if !probe.blended {
-  let starting=ddgi_starting_rays(spacings)+DDGI_FIXED_RAYS;
+  let starting=ddgi_most_rays(spacings);
   atomicAdd(&allocation.bins[ramp_bin(spacings)],starting);
   atomicAdd(&allocation.unblended,1u);
   atomicAdd(&allocation.unblended_rays,starting);
@@ -297,9 +300,10 @@ fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) gro
  let shortened=ddgi_shortened_period(period,inconsistency,request);
  ray_counts[probe_index]=request|(period<<16u)|(shortened<<24u);
  let fixed_rays=ddgi_turn_fixed_rays(probe);
+ let traced=ddgi_turn_rays(request,fixed_rays)+fixed_rays;
  for (var stride=0u;stride<DDGI_STRIDES;stride++) {
   if ddgi_turn(probe_index,period,stride,volume.frame) {
-   atomicAdd(&allocation.demand[stride],request+fixed_rays);
+   atomicAdd(&allocation.demand[stride],traced);
   }
  }
  // The probes whose variability the convergence follows (update.wgsl).
@@ -383,14 +387,12 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   if !probe.blended {
    let lattice=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
    let spacings=ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing));
-   let starting=ddgi_starting_rays(spacings);
-   if ramp_starts(spacings,starting+DDGI_FIXED_RAYS) {
-    // Its first turn traces a whole cycle's fixed rays after its others
-    // (DDGI_FIXED_CYCLE marks it).
-    traced=starting+DDGI_FIXED_RAYS;
+   let starting=ddgi_most_rays(spacings);
+   // Its first turn traces no fixed rays.
+   if ramp_starts(spacings,starting) {
+    traced=starting;
     blended=starting;
     entry_rays=starting;
-    cycle=DDGI_FIXED_CYCLE;
    }
   } else {
    let requested=ray_counts[probe_index];
@@ -398,11 +400,16 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
    let period=(requested>>16u)&0xffu;
    let shortened=requested>>24u;
    let fixed_rays=ddgi_turn_fixed_rays(probe);
-   if ddgi_turn(probe_index,period,allocation.stride,volume.frame) || ddgi_shortened_turn(probe_index,period,shortened,rays+fixed_rays) {
-    // Its fixed rays after its others.
-    traced=rays+fixed_rays;
-    blended=rays;
-    entry_rays=rays;
+   let turn_rays=ddgi_turn_rays(rays,fixed_rays);
+   if ddgi_turn(probe_index,period,allocation.stride,volume.frame) || ddgi_shortened_turn(probe_index,period,shortened,turn_rays+fixed_rays) {
+    // Its fixed rays after its others, a whole cycle's marked
+    // DDGI_FIXED_CYCLE.
+    traced=turn_rays+fixed_rays;
+    blended=turn_rays;
+    entry_rays=turn_rays;
+    if fixed_rays==DDGI_FIXED_RAYS {
+     cycle=DDGI_FIXED_CYCLE;
+    }
    }
   }
   // A paused volume traces nothing; its probes keep what they hold. A

@@ -1151,15 +1151,18 @@ code; it does not redeclare a struct, binding or function another module owns.
   traces the fewest rays. Its fixed rays are RTXGI's 32 directions spread
   evenly and never rotated, unshaded and not blended, as RTXGI blends none,
   so its class holds still while what it sees does; where RTXGI traces all
-  of them every update, a probe traces all of them on its first turn,
-  which classifies it at once, none on its next seven, so its first cycle
-  costs no more rays than another, then four each turn after its others,
-  and is classified again from all of them once a cycle of eight turns
-  (the share of each frame's rotated rays, even blended over frames,
-  wandered across the threshold, and a far probe's first turn traced as
-  few as 32). Its
-  second phase finds whether a fixed ray met a front face within the
-  probe's cell, the spacing about it on each axis. Improved on RTXGI
+  of them every update, a probe's first turn is classified from the share
+  of its rays that met back faces, its second traces all of them, which
+  classify it, and its next seven none, so its first turns cost no more
+  rays than any (all of them on its first turn cut the probes a moving
+  camera's frame starts by a fifth, the budget leaving starting probes
+  their share), then it traces four each turn after its others and is
+  classified again from all of them once a cycle of eight turns (the share
+  of each frame's rotated rays, even blended over frames, wandered across
+  the threshold, and a far probe's first turn traces as few as 32, whose
+  class it had kept for its whole first cycle). Its second phase finds
+  whether a fixed ray met a front face within the probe's cell, the
+  spacing about it on each axis. Improved on RTXGI
   (RD-2), which deactivates a probe without one for every receiver,
   such a probe is dormant: static receivers skip it, so a probe diagonally
   beyond the edge or corner of a room of single-sided walls, which sees few

@@ -28,13 +28,15 @@
 // probe more than probeBackfaceThreshold (0.25) of whose fixed rays meet
 // single-sided surfaces from behind, one inside geometry or beyond a wall,
 // is inactive. Changed: RTXGI traces all 32 fixed rays every update; here a
-// probe traces all 32 on its first turn, which classify it at once, none
-// on its next 7, then 4 each turn and is classified again from all 32 once
-// a cycle of 8 turns, so they cost an eighth; as RTXGI's, they are not
+// probe's first turn is classified from the share of its rays that met
+// back faces, its second traces all 32, which classify it, and its next 7
+// none, then it traces 4 each turn and is classified again from all 32
+// once a cycle of 8 turns, so they cost an eighth; as RTXGI's, they are not
 // blended. The share of each frame's rotated rays, blended as
 // the depths are, flickered: in a room whose probes beyond the walls see a
 // quarter of back faces, 66 changes of class in 200 frames among 125
-// probes; and a far probe's first turn traces as few as 32 rotated rays.
+// probes; and a far probe's first turn traces as few as 32 rotated rays,
+// whose class it kept for its whole first cycle where now for one turn.
 // Its second phase (172-214) finds whether a fixed ray met a front face
 // within the probe's cell, the spacing about it along each axis
 // (ddgi_in_cell); RTXGI deactivates a probe where none did. Improved: such a probe is dormant, not inactive: static
@@ -357,6 +359,8 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
  let texel_direction=ddgi_decode_oct(((vec2<f32>(thread.xy)+.5)/f32(DDGI_DEPTH_RESOLUTION))*2.-1.);
  var result=vec2(0.);
  var total_weight=0.;
+ var backfaces=0u;
+ var nearby=0u;
  var remaining_rays=ray_count;
  var offset=0u;
  while remaining_rays>0u {
@@ -367,6 +371,8 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   workgroupBarrier();
   for (var r=0u;r<num_rays;r++) {
    let ray=depth_cache[r];
+   backfaces+=select(0u,1u,ray.backface);
+   nearby+=select(0u,1u,ddgi_in_cell(ray));
    var depth=max_distance;
    if ray.depth>0. {
     depth=clamp(ray.depth-.01,0.,max_distance);
@@ -413,17 +419,21 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   probe_offset/=probe_limit;
   var blended=probe;
   blended.offset=probe_offset;
-  // Its class, from its fixed rays' share over each cycle of
+  // Its class: on its first turn from the share of its rays that met back
+  // faces, then from its fixed rays' share over each cycle of
   // DDGI_FIXED_CYCLE turns it traces, as RTXGI classifies from its fixed
-  // rays: its first turn traced all of them, a whole cycle, its next
+  // rays: its second turn traced all of them, a whole cycle, its next
   // DDGI_FIXED_CYCLE - 1 none, and each turn since the next
-  // DDGI_FIXED_RAYS_PER_FRAME, after the rays it blends (allocate.wgsl).
-  var fixed_rays=ddgi_turn_fixed_rays(probe);
+  // DDGI_FIXED_RAYS_PER_FRAME, after the rays it blends
+  // (ddgi_turn_fixed_rays).
+  let fixed_rays=ddgi_turn_fixed_rays(probe);
+  blended.fixed_rest=max(probe.fixed_rest,1u)-1u;
   if !probe.blended {
    blended=ddgi_fresh_probe();
    blended.offset=probe_offset;
+   blended.backfaces=f32(backfaces)/f32(ray_count);
+   blended.surfaced=nearby>0u;
    blended.fixed_rest=DDGI_FIXED_CYCLE;
-   fixed_rays=DDGI_FIXED_RAYS;
   }
   blended.blended=true;
   for (var ray=0u;ray<DDGI_FIXED_RAYS;ray++) {
@@ -435,7 +445,6 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
    blended.fixed_nearby+=select(0u,1u,ddgi_in_cell(fixed));
   }
   blended.fixed_frames+=fixed_rays/DDGI_FIXED_RAYS_PER_FRAME;
-  blended.fixed_rest=max(blended.fixed_rest,1u)-1u;
   if blended.fixed_frames>=DDGI_FIXED_CYCLE {
    blended.backfaces=f32(blended.fixed_backfaces)/f32(DDGI_FIXED_RAYS);
    blended.surfaced=blended.fixed_nearby>0u;

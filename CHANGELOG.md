@@ -149,10 +149,11 @@ full API details.
   frame. A probe whose light is changing (its most inconsistent texel above
   the estimator's noise, 0.2) also takes turns more often, from the rays
   the frame's turns and starting probes leave, never lengthening another
-  probe's turns. A probe's first turn traces all 32 of its classifying
-  fixed rays and its next 7 turns none, so it is classified at once rather
-  than from its first rotated rays until its first whole cycle of 8 turns,
-  for no more rays over that cycle. A volume's convergence window now spans 16 turns of every
+  probe's turns. A probe's second turn traces all 32 of its classifying
+  fixed rays and its next 7 turns none, so the class its first turn's
+  rotated rays give it lasts one turn rather than its first whole cycle of
+  8, for no more rays over those turns (all 32 on its first turn, as RTXGI
+  traces them, cut the probes a moving camera's frame starts by a fifth). A volume's convergence window now spans 16 turns of every
   active probe (16 times the longest period among them), so it can pause
   later than before while far probes catch up. A restart or a scroll's
   entering planes start as many probes a frame as the budget holds beside
@@ -992,8 +993,9 @@ full API details.
   rather than a few. A probe more than a quarter of whose fixed rays meet
   single-sided surfaces from behind (inside geometry, beyond a wall) is
   inactive, as RTXGI classifies its probes: it lights nothing and traces the
-  fewest rays, and every probe traces all 32 of its fixed rays on its
-  first turn and 4 each turn after beside its others. A probe with no surface within a spacing of it is dormant: it
+  fewest rays, and every probe traces its 32 fixed rays beside its
+  others, all of them on its second turn and 4 a turn from its tenth. A
+  probe with no surface within a spacing of it is dormant: it
   lights moving instances alone (static surfaces skip it, so none takes
   light from beyond a room's corner) and traces the fewest rays unless a
   moving instance's bounds come within that spacing; a static object so

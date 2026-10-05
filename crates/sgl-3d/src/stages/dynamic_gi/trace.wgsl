@@ -96,8 +96,8 @@ fn ddgi_trace_ray(id:u32)->DdgiTraced {
  let probe_pos=ddgi_probe_position(lattice,volume.origin,volume.spacing,probe_data.rgb);
  var rng=ddgi_rng_init(vec2(id,id),volume.frame);
  // Past its rays, its fixed rays, unrotated, which classify it and bring
- // no light: this turn's of its cycle, or on its first turn
- // (DDGI_FIXED_CYCLE) all of them.
+ // no light: this turn's of its cycle, or all of them where the turn
+ // traces a whole cycle's (DDGI_FIXED_CYCLE).
  let fixed=ray_index>=ray_count;
  var direction=normalize(volume.rotation*ddgi_spherical_fibonacci(f32(ray_index),f32(ray_count)));
  if fixed {

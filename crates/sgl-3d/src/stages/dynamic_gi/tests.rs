@@ -824,11 +824,11 @@ fn most_over_turns(rays: &mut dyn FnMut() -> Vec<u32>) -> Vec<u32> {
 // see about a quarter of the walls' backs, near the threshold of their
 // class, and lie far enough from every face that none moves them. Their
 // fixed rays meet the same faces every cycle, so while nothing moves each
-// probe's share, and so its class, holds still, from its first turn, which
-// traces all of them, through every cycle of its turns after: where the
-// share of its rotated rays would wander across the threshold, and its
+// probe's share, and so its class, holds still, from its second turn,
+// which traces all of them, through every cycle of its turns after: where
+// the share of its rotated rays would wander across the threshold, and its
 // first turn's rotated rays, as few as 32 for a far probe, classed it
-// otherwise until its first whole cycle.
+// otherwise until its first whole cycle ended.
 #[test]
 fn a_probes_class_holds_still_while_what_it_sees_does() {
     let Some((device, queue)) = test_support::device() else {
@@ -860,7 +860,8 @@ fn a_probes_class_holds_still_while_what_it_sees_does() {
     input.environment = Some(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
-    // The first frame starts every probe.
+    // The first frame starts every probe, and each takes its second turn
+    // within the PERIOD frames after.
     render(
         &device,
         &queue,
@@ -868,7 +869,7 @@ fn a_probes_class_holds_still_while_what_it_sees_does() {
         &mut scene,
         &input,
         &settings,
-        1,
+        1 + PERIOD,
     );
     let first = renderer
         .test_dynamic_gi()
@@ -2735,8 +2736,8 @@ fn a_material_that_does_not_emit_into_gi_gives_the_probes_none_of_its_light() {
 // An observed frame's report (`Diagnostics::dynamic_gi`) carries its frame's
 // number and what the allocation traced: the rays and fixed rays the
 // observation summed over the ray list, which the allocation counted; a
-// probe's first turn with all 32 fixed rays, its next 7 with none and those
-// after with 4. Readbacks not taken fill after 8 frames; the frames past
+// probe's first turn with no fixed rays, its second with all 32, its next 7
+// with none and those after with 4. Readbacks not taken fill after 8 frames; the frames past
 // them are skipped and counted in the next report.
 #[cfg(feature = "diagnostics")]
 #[test]
@@ -2772,7 +2773,7 @@ fn reports_number_their_frames_and_count_those_skipped() {
     // The first frame starts all 64 probes.
     assert_eq!(
         (reports[0].traced_probes, reports[0].fixed_rays),
-        (64, 64 * 32),
+        (64, 0),
         "{:?}",
         reports[0]
     );
@@ -2785,8 +2786,12 @@ fn reports_number_their_frames_and_count_those_skipped() {
     assert_eq!((report.frame, report.skipped), (12, 4));
     let tracing = rays.iter().filter(|&&rays| rays > 0).count() as u32;
     let fixed: u32 = (0..64)
-        .filter(|&probe| rays[probe] > 0 && turns[probe] > 8)
-        .map(|_| FIXED_RAYS)
+        .filter(|&probe| rays[probe] > 0)
+        .map(|probe| match turns[probe] {
+            2 => 32,
+            turn if turn > 9 => FIXED_RAYS,
+            _ => 0,
+        })
         .sum();
     assert!(tracing > 0);
     assert_eq!(
