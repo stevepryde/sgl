@@ -42,7 +42,6 @@ pub(crate) struct PreparedRayModel {
 /// finite and not zero. Refuses a mesh whose vertices name more than 65,536
 /// distinct lightmap chart bounds.
 pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, SceneError> {
-    let triangles: usize = meshes.iter().map(|mesh| mesh.indices.len() / 3).sum();
     let table_word = meshes.len() * MESH_WORDS;
     let vertex_block = |word: usize| word.next_multiple_of(VERTEX_WORDS as usize);
     let (mut words, mesh_words, len) = step(BuildStep::Pack, || {
@@ -66,7 +65,7 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
                     + mesh.vertices.len() * words::<PackedVertex>()
                     + mesh.indices.len()
             },
-        ) + bvh::model_words(triangles);
+        );
         let mut words = vec![0u32; table_word];
         words.reserve(len - words.len());
         words.extend_from_slice(bytemuck::cast_slice(&table));
@@ -109,9 +108,10 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
         }
         Ok::<_, SceneError>((words, mesh_words, len))
     })?;
+    debug_assert_eq!(words.len(), len, "a model's geometry fills its words");
+    // Its BVH's size follows its splits, so it grows the words it follows.
     let bvh = words.len();
     let root = step(BuildStep::RayBvh, || bvh::append(meshes, &mut words, 0));
-    debug_assert_eq!(words.len(), len, "a model fills its words");
     Ok(PreparedRayModel {
         words,
         meshes: meshes.len(),
