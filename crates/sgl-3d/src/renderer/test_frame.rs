@@ -201,7 +201,8 @@ impl Renderer {
     }
 
     /// The opaque stage of `frame`, fused or split, with the ambient
-    /// occlusion its settings choose.
+    /// occlusion its settings choose, in the parts and order `render`
+    /// encodes them.
     pub(crate) fn encode_test_opaque(
         &mut self,
         device: &wgpu::Device,
@@ -213,7 +214,7 @@ impl Renderer {
     ) {
         frame.effective.fused = fused;
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
-        self.opaque.encode(&mut ctx);
+        super::frame::encode_opaque(&mut self.opaque, &mut ctx);
     }
 
     /// The transparent stage's glow and mist into `beauty`, over the
