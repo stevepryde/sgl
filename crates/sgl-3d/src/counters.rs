@@ -1,9 +1,10 @@
 //! What the library counts on each thread while the `diagnostics` feature is
 //! on (`diagnostics::counters`): its uploads by call site, the buffers it
 //! creates, the time each step of building a model and each
-//! instance BVH takes, the ray source's and geometry slabs' growths and the
-//! static-edit boxes recorded and merged. Without the feature every function here is a
-//! pass-through and nothing is kept.
+//! instance BVH takes, the ray source's and geometry slabs' growths, the
+//! static-edit boxes recorded and merged, and the hardware path's
+//! acceleration-structure builds and compactions. Without the feature every
+//! function here is a pass-through and nothing is kept.
 
 /// A step of preparing or placing a model, or of building an instance BVH,
 /// which `Counters::steps` times. Preparing a model (`PreparedModel::new`)
@@ -79,6 +80,16 @@ pub struct Counters {
     /// 512 pairs at once.
     pub static_edit_boxes: u64,
     pub static_edit_boxes_merged: u64,
+    /// The hardware path's builds recorded into frames: models' BLASes and
+    /// the vertices they hold, deforming instances' BLASes and TLASes. A
+    /// frame abandoned before it was submitted records its builds again.
+    pub blas_builds: u64,
+    pub blas_build_vertices: u64,
+    pub deformed_blas_builds: u64,
+    pub tlas_builds: u64,
+    /// Models' BLASes compacted, and the vertices they hold.
+    pub blas_compactions: u64,
+    pub blas_compacted_vertices: u64,
 }
 
 #[cfg(any(test, feature = "diagnostics"))]
@@ -142,6 +153,12 @@ impl Counters {
             static_edit_boxes: self.static_edit_boxes - earlier.static_edit_boxes,
             static_edit_boxes_merged: self.static_edit_boxes_merged
                 - earlier.static_edit_boxes_merged,
+            blas_builds: self.blas_builds - earlier.blas_builds,
+            blas_build_vertices: self.blas_build_vertices - earlier.blas_build_vertices,
+            deformed_blas_builds: self.deformed_blas_builds - earlier.deformed_blas_builds,
+            tlas_builds: self.tlas_builds - earlier.tlas_builds,
+            blas_compactions: self.blas_compactions - earlier.blas_compactions,
+            blas_compacted_vertices: self.blas_compacted_vertices - earlier.blas_compacted_vertices,
         }
     }
 }
@@ -353,6 +370,40 @@ pub(crate) fn static_edit(merged: usize) {
     });
     #[cfg(not(any(test, feature = "diagnostics")))]
     let _ = merged;
+}
+
+/// Counts a model's BLAS of `vertices` built into a frame.
+pub(crate) fn blas_build(vertices: u32) {
+    #[cfg(any(test, feature = "diagnostics"))]
+    COUNTERS.with_borrow_mut(|counters| {
+        counters.blas_builds += 1;
+        counters.blas_build_vertices += u64::from(vertices);
+    });
+    #[cfg(not(any(test, feature = "diagnostics")))]
+    let _ = vertices;
+}
+
+/// Counts a deforming instance's BLAS built into a frame.
+pub(crate) fn deformed_blas_build() {
+    #[cfg(any(test, feature = "diagnostics"))]
+    COUNTERS.with_borrow_mut(|counters| counters.deformed_blas_builds += 1);
+}
+
+/// Counts a TLAS built into a frame.
+pub(crate) fn tlas_build() {
+    #[cfg(any(test, feature = "diagnostics"))]
+    COUNTERS.with_borrow_mut(|counters| counters.tlas_builds += 1);
+}
+
+/// Counts a model's BLAS of `vertices` compacted.
+pub(crate) fn blas_compaction(vertices: u32) {
+    #[cfg(any(test, feature = "diagnostics"))]
+    COUNTERS.with_borrow_mut(|counters| {
+        counters.blas_compactions += 1;
+        counters.blas_compacted_vertices += u64::from(vertices);
+    });
+    #[cfg(not(any(test, feature = "diagnostics")))]
+    let _ = vertices;
 }
 
 /// This thread's counters so far.

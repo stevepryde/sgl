@@ -78,8 +78,11 @@ impl Renderer {
             settings,
             &input,
             super::effective::SceneContent::of(scene),
-            false,
-            self.pipelines.fused_supported,
+            super::effective::Device {
+                fsr2_running: false,
+                fused_supported: self.pipelines.fused_supported,
+                ray_queries: self.ray_queries,
+            },
         );
         self.pipelines.specialise(device, effective.layers, scene);
         let history = self.begin_history(scene, &input);

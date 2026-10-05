@@ -463,6 +463,34 @@ pub(crate) fn fsr2_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     })
 }
 
+/// A device that traces rays in hardware, with the renderer's limits as
+/// `limits` changes them and its optional features, or `None` after printing
+/// that the adapter has no ray queries: a test then reports itself
+/// unsupported, never passed.
+#[allow(unsafe_code)]
+pub(crate) fn ray_tracing_device(
+    limits: impl FnOnce(wgpu::Limits) -> wgpu::Limits,
+) -> Option<(wgpu::Device, wgpu::Queue)> {
+    let adapter = adapter()?;
+    let ray_tracing = crate::graphics_device::ray_tracing_features(&adapter);
+    if ray_tracing.is_empty() {
+        eprintln!("unsupported: the adapter has no hardware ray queries");
+        return None;
+    }
+    Some(
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: (adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC)
+                | crate::graphics_device::features(&adapter)
+                | ray_tracing,
+            required_limits: limits(crate::graphics_device::limits(&adapter)),
+            // SAFETY: the tests accept wgpu's experimental ray queries.
+            experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
+            ..Default::default()
+        }))
+        .unwrap(),
+    )
+}
+
 /// A device with the renderer's limits and the optional features `features`
 /// chooses for the adapter, or `None` after printing why.
 fn device_choosing(

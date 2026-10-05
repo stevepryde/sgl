@@ -6,13 +6,14 @@ use super::slots::Slots;
 use super::textures::{self, Textures};
 use super::{Scene, SceneError, buffer};
 use crate::asset::{self, Image, Material as AuthoredMaterial};
-use crate::content::identity::MaterialId;
+use crate::content::identity::{MaterialId, ModelId};
 use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 use crate::shading::bind::group2;
 use crate::shading::material::{
     MATERIAL_NORMAL_MAP, MAX_LAYER_CYCLES, MaterialMaps, MaterialUniform, layer_cycles,
 };
 use gltf::texture::WrappingMode;
+use std::collections::HashMap;
 use std::ops::Range;
 
 pub(crate) struct Material {
@@ -31,8 +32,9 @@ pub(crate) struct Material {
     textures: Vec<usize>,
     /// Its record in the ray source.
     record: Range<u32>,
-    /// Model meshes drawn with it.
-    pub users: u32,
+    /// Its use list: the models whose meshes are drawn with it, each with
+    /// how many of its meshes are.
+    pub users: HashMap<ModelId, u32>,
     /// Meshes drawn with it, model meshes and their levels of detail alike,
     /// without authored tangent frames.
     pub untangented: u32,
@@ -396,7 +398,7 @@ impl Materials {
             casts_directional_shadow: material.casts_directional_shadow,
             textures: distinct,
             record,
-            users: 0,
+            users: HashMap::new(),
             untangented: 0,
         }))
     }
@@ -529,7 +531,7 @@ impl Materials {
     }
 
     pub fn remove(&mut self, rays: &mut SceneRays, id: MaterialId) -> Result<(), SceneError> {
-        if self.get(id)?.users > 0 {
+        if !self.get(id)?.users.is_empty() {
             return Err(SceneError::MaterialInUse);
         }
         let material = self.slots.remove(id).unwrap();
@@ -578,10 +580,15 @@ impl Scene {
         id: MaterialId,
         values: SurfaceMaterial,
     ) -> Result<(), SceneError> {
+        let alpha = self.materials.get(id)?.values.alpha;
         if self.materials.get(id)?.values != values {
             self.edited();
         }
-        self.materials.set(queue, &self.rays, id, values)
+        self.materials.set(queue, &self.rays, id, values)?;
+        if std::mem::discriminant(&alpha) != std::mem::discriminant(&values.alpha) {
+            self.models.classify_users(id, &self.materials);
+        }
+        Ok(())
     }
 
     /// Removes a material no model's mesh uses.

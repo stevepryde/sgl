@@ -8,7 +8,7 @@
 //! about the camera. The render origin follows the camera, chunk-aligned.
 //!
 //! `cargo run --release -p sgl-3d --example streaming [-- RUN... [--split]
-//! [--visibility] | --check]`
+//! [--visibility] [--hardware-ray-tracing] | --check [--hardware-ray-tracing]]`
 //!
 //! The game's side is modelled on a block game's: its mesher finishes up to
 //! 24 chunks a 33 ms tick, nearest the camera first, meshing and preparing
@@ -29,14 +29,21 @@
 //! (`diagnostics::counters`, each thread's own): the workers' steps of
 //! preparing models and, on the thread that edits the scene, bytes uploaded
 //! by call site, buffers created, the steps of placing and writing models,
-//! static-edit boxes and ray-source growths; the scene's buffer sizes
-//! (`Scene::diagnostic_resources`); draws per view
+//! static-edit boxes, ray-source growths and, with hardware ray tracing,
+//! the acceleration structures built and compacted; the scene's buffer
+//! sizes and BLASes (`Scene::diagnostic_resources`); what the TLAS held
+//! (`Renderer::ray_tracing_stats`); draws per view
 //! (`Renderer::diagnostic_draws`); the local-light shadow faces and layers
 //! redrawn; what streamed; and GPU time per pass group. The last frame of
 //! each run is written to `target/streaming-example/<run>.png`. Examples
 //! build with the `diagnostics` feature, whose counters add a thread-local
 //! update to each upload and build step, so these CPU times sit slightly
-//! above a game's without it.
+//! above a game's without it. `--hardware-ray-tracing` opts in to hardware
+//! ray tracing: the device is requested with its feature
+//! (`graphics_device::ray_tracing_features`, under wgpu's experimental
+//! token) and `Settings::hardware_ray_tracing` is on, so a device that has
+//! it builds the scene's acceleration structures; without the flag the runs
+//! are as before it existed, comparable with earlier measurements.
 //!
 //! Each run then prints what occlusion culling could save on its route
 //! (`support/culling.rs`): the CPU time each view's draw list takes to build
@@ -51,12 +58,12 @@
 //! motion and no shadow is redrawn; then it remeshes the chunks holding
 //! shadowed torches and fails unless the next submitted frame redraws their
 //! static shadow layers and the one after redraws none. An abandoned frame
-//! precedes each submitted one.
+//! precedes each submitted one. `--hardware-ray-tracing` applies to it too.
 use sgl_3d::diagnostics::{Counters, DiagnosticTarget, SceneResources};
 use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3};
 use sgl_3d::{
     EnvironmentId, FrameInput, InstanceId, InstanceState, LightId, MaterialId, Mobility, ModelId,
-    ModelMesh, PreparedModel, Renderer, Scene, SceneError,
+    ModelMesh, PreparedModel, RayTracingStats, Renderer, Scene, SceneError,
     timing::{FrameTime, GpuTiming},
 };
 use std::collections::{BTreeMap, VecDeque};
@@ -295,6 +302,7 @@ struct Measured {
     /// What the library counted over the measured frames.
     counted: Counters,
     resources: Vec<SceneResources>,
+    ray_tracing: Vec<RayTracingStats>,
     resident: Vec<f64>,
     quads: Vec<f64>,
     inserted: usize,
@@ -383,6 +391,24 @@ impl Measured {
             counted.ray_source_growths,
             counted.geometry_growths
         );
+        println!(
+            "  acceleration structures a frame: {:.2} model BLASes of {:.0} vertices, {:.2} deformed BLASes, {:.2} TLASes; {} BLASes of {} vertices compacted",
+            per_frame(counted.blas_builds),
+            per_frame(counted.blas_build_vertices),
+            per_frame(counted.deformed_blas_builds),
+            per_frame(counted.tlas_builds),
+            counted.blas_compactions,
+            counted.blas_compacted_vertices
+        );
+        let held = |pick: fn(&RayTracingStats) -> u32| {
+            self.ray_tracing
+                .iter()
+                .map(|stats| f64::from(pick(stats)))
+                .collect::<Vec<_>>()
+        };
+        line("instances the TLAS held", &held(|s| s.hardware), "");
+        line("instances on the portable BVHs", &held(|s| s.portable), "");
+        line("instances left out", &held(|s| s.left_out), "");
         println!("  on the {WORKERS} worker threads that mesh and prepare:");
         for (step, (calls, nanoseconds)) in &self.prepared_steps {
             println!(
@@ -434,6 +460,8 @@ impl Measured {
             row("geometry buffer bytes", |r| r.geometry);
             row("geometry bytes content holds", |r| r.geometry_live);
             row("geometry buffers", |r| r.geometry_buffers);
+            row("BLASes", |r| r.blases);
+            row("BLAS triangles", |r| r.blas_triangles);
             let quads = self.quads.last().copied().unwrap_or(0.).max(1.);
             println!(
                 "  bytes a resident quad: ray source {:.0}, geometry {:.0}",
@@ -1037,9 +1065,11 @@ fn render(
     gpu: (&wgpu::Device, &wgpu::Queue),
     directory: &Path,
     options: culling::Options,
+    hardware: bool,
 ) -> Result<(Game, culling::Culling), Box<dyn Error>> {
     let (device, queue) = gpu;
     let mut settings = settings();
+    settings.hardware_ray_tracing = hardware;
     let mut culling = culling::Culling::new(options);
     let mut scene = Scene::new(device, queue);
     let mut game = Game::new(run, &mut scene, gpu)?;
@@ -1148,6 +1178,7 @@ fn render(
             m.layers.push(shadows.layers_drawn as f64);
             m.shadow_draws.push(shadows.draws as f64);
             m.resources.push(scene.diagnostic_resources());
+            m.ray_tracing.push(renderer.ray_tracing_stats());
             m.quads
                 .push(game.resident.values().map(|r| r.quads).sum::<usize>() as f64);
             m.resident.push(
@@ -1200,7 +1231,7 @@ fn largest_motion(
 /// `--check`: a still camera across render origin moves of one chunk and
 /// of 256 m, then a remesh of the chunks holding shadowed torches, each
 /// followed by an abandoned frame and then a submitted one.
-fn check(gpu: (&wgpu::Device, &wgpu::Queue)) -> Result<(), Box<dyn Error>> {
+fn check(gpu: (&wgpu::Device, &wgpu::Queue), hardware: bool) -> Result<(), Box<dyn Error>> {
     let (device, queue) = gpu;
     let run = Run {
         name: "check",
@@ -1214,7 +1245,10 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue)) -> Result<(), Box<dyn Error>> {
         edits: false,
         frames: 0,
     };
-    let settings = settings();
+    let settings = sgl_3d::settings::Settings {
+        hardware_ray_tracing: hardware,
+        ..settings()
+    };
     let mut scene = Scene::new(device, queue);
     let mut game = Game::new(&run, &mut scene, gpu)?;
     // Creatures move; this check is about static content.
@@ -1324,11 +1358,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut names = Vec::new();
     let mut check_only = false;
     let mut options = culling::Options::default();
+    let mut hardware = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--frames" => frames = args.next().ok_or("--frames requires a count")?.parse()?,
             "--check" => check_only = true,
+            "--hardware-ray-tracing" => hardware = true,
             option if options.take(option) => {}
             name => names.push(name.to_owned()),
         }
@@ -1338,15 +1374,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let adapter =
         pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default()))?;
+    let ray_tracing = if hardware {
+        sgl_3d::graphics_device::ray_tracing_features(&adapter)
+    } else {
+        wgpu::Features::empty()
+    };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: (adapter.features() & wgpu::Features::TIMESTAMP_QUERY)
-            | sgl_3d::graphics_device::features(&adapter),
+            | sgl_3d::graphics_device::features(&adapter)
+            | ray_tracing,
         required_limits: sgl_3d::graphics_device::limits(&adapter),
+        experimental_features: if hardware {
+            // SAFETY: with `--hardware-ray-tracing` the example accepts
+            // wgpu's experimental ray queries.
+            unsafe { wgpu::ExperimentalFeatures::enabled() }
+        } else {
+            wgpu::ExperimentalFeatures::disabled()
+        },
         ..Default::default()
     }))?;
     let gpu = (&device, &queue);
     if check_only {
-        return check(gpu);
+        return check(gpu, hardware);
     }
     let all = runs(frames);
     let chosen: Vec<&Run> = if names.is_empty() {
@@ -1371,7 +1420,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         directory.display()
     );
     for run in chosen {
-        let (game, culling) = render(run, gpu, &directory, options)?;
+        let (game, culling) = render(run, gpu, &directory, options, hardware)?;
         game.measured.report(run);
         print!("{}", culling.report());
     }

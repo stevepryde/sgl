@@ -74,6 +74,10 @@ pub(crate) struct Effective {
     /// World-space rays fill the screen-space method's misses (only with a
     /// method).
     pub world_space: bool,
+    /// The scene keeps its acceleration structures for hardware ray
+    /// tracing, built on the frames that trace rays: the device has ray
+    /// queries and `Settings::hardware_ray_tracing` is on.
+    pub hardware_ray_tracing: bool,
     /// The receiver pass runs: the scene holds a blended receiver of
     /// screen-space reflections, and a screen-space method, TAA, FSR2 or
     /// motion blur reads the surface it draws.

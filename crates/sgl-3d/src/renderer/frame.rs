@@ -47,6 +47,7 @@ pub(super) fn render(
         motion_blur,
         post,
         rendered,
+        ray_queries,
         #[cfg(feature = "diagnostics")]
         probe,
         #[cfg(feature = "diagnostics")]
@@ -62,8 +63,11 @@ pub(super) fn render(
         settings,
         input,
         super::effective::SceneContent::of(scene),
-        antialiasing.fsr2_running(),
-        pipelines.fused_supported,
+        super::effective::Device {
+            fsr2_running: antialiasing.fsr2_running(),
+            fused_supported: pipelines.fused_supported,
+            ray_queries: *ray_queries,
+        },
     );
     pipelines.specialise(device, effective.layers, scene);
     let pipelines: &GeometryPipelines = pipelines;
@@ -192,8 +196,10 @@ pub(super) fn render(
         pipelines,
         history,
     };
-    // Prepare's GPU step, before any pass draws scene geometry.
+    // Prepare's GPU steps, before any pass draws scene geometry or traces:
+    // the deformations, then the acceleration structures over them.
     deform.encode(&mut ctx);
+    prepare.encode_acceleration_structures(&mut ctx);
     // First after prepare: every pass that shades reads the probes.
     dynamic_gi.encode(&mut ctx);
     // The stage order's: the local-light atlas, then the directional cascades.

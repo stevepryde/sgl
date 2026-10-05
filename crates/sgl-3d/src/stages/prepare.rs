@@ -3,7 +3,10 @@
 //! cascades, fit from the camera, baked lighting and fog, the
 //! jitter antialiasing chose), uploads them, ends the motion of moving
 //! instances not posed since the last submitted frame, sorts the mist,
-//! updates the scene's ray instances on frames that trace them, clusters the
+//! updates the scene's ray instances on frames that trace them and, while
+//! hardware ray tracing is in effect, chooses those frames'
+//! acceleration-structure builds, which it records after the deform pass
+//! (`encode_acceleration_structures`), clusters the
 //! scene's lights and decals for the camera and culls them for ray hits and
 //! the dynamic GI volume's probe hits, and builds the
 //! camera's draw lists (culled, LOD-selected; its blended surfaces' sorted
@@ -14,16 +17,18 @@
 //! Reads: the frame input, the camera history and the scene. Writes:
 //! `FrameViews` (view uniforms, draw lists, their draw instances and
 //! clusters), the frame uniform, the scene's stale object records, ray
-//! instances and mist order.
+//! instances, acceleration structures and mist order.
 //! Honours: the effective local lights, temporal antialiasing (the shadow
-//! filter), atmosphere, baked lighting, culling, world-space reflections and
-//! dynamic GI.
+//! filter), atmosphere, baked lighting, culling, world-space reflections,
+//! dynamic GI and hardware ray tracing.
 //! Timing groups: none.
 use crate::scene::dynamic_gi::ProbePlacement;
+use crate::scene::rays::acceleration::RayTracingStats;
 use crate::shading::uniforms::{FrameValues, ViewUniform};
 use crate::view::clusters::{BoxVolume, CAMERA_CLUSTERS, Clusters, ViewVolume};
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::effective::Effective;
+use crate::view::frame::FrameContext;
 use crate::view::hidden::HiddenInstances;
 use crate::view::history::HistoryFrame;
 use crate::view::population::Population;
@@ -86,7 +91,10 @@ pub(crate) fn set_cascades(
 }
 
 #[derive(Default)]
-pub(crate) struct Prepare;
+pub(crate) struct Prepare {
+    /// The last rendered frame's hardware ray tracing.
+    ray_tracing: RayTracingStats,
+}
 
 impl Prepare {
     /// Uploads the view and frame data of `input` seen with `history` and
@@ -166,8 +174,19 @@ impl Prepare {
         // instances and visibility mask. The entries set and static edits
         // made since the last traced frame wait for the next, so the frames
         // that skip it leave it nothing stale.
-        if effective.world_space || volume.is_some() {
+        let traced = effective.world_space || volume.is_some();
+        if traced {
             scene.update_rays(device, queue, frame.visibility_mask);
+        }
+        // The acceleration structures are built on the frames that trace,
+        // and freed by a frame with hardware ray tracing off.
+        self.ray_tracing = RayTracingStats::default();
+        if !effective.hardware_ray_tracing {
+            scene.free_acceleration_structures();
+        } else if traced {
+            self.ray_tracing = scene.prepare_acceleration_structures(device, queue, camera.eye);
+        } else {
+            scene.skip_acceleration_structures();
         }
         let scene = &*scene;
         views.clusters.cluster(
@@ -244,6 +263,17 @@ impl Prepare {
             cascades.map(|cascade| cascade.clip_from_world),
         );
         values
+    }
+
+    /// Records the frame's acceleration-structure builds that `run` chose,
+    /// after the deform pass and before any pass traces.
+    pub fn encode_acceleration_structures(&self, ctx: &mut FrameContext<'_>) {
+        ctx.scene.encode_acceleration_structures(ctx.encoder);
+    }
+
+    /// The last rendered frame's hardware ray tracing.
+    pub fn ray_tracing_stats(&self) -> RayTracingStats {
+        self.ray_tracing
     }
 
     /// The views of a probe capture at `center` with `input`'s lights, the

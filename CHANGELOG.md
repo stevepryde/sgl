@@ -15,6 +15,81 @@ full API details.
 
 ## Unreleased
 
+### Scene acceleration structures for hardware ray tracing
+
+- **Scope:** `sgl-3d`: `graphics_device::ray_tracing_features` (new),
+  `graphics_device::limits`, `Settings::hardware_ray_tracing` (new, off by
+  default and in every preset), `Renderer::ray_tracing_stats` and
+  `RayTracingStats` (new), `diagnostics::Counters` and
+  `diagnostics::SceneResources` (new fields). The first step of hardware
+  ray tracing (roadmap 13, #23), which a game opts in to: on a device with
+  wgpu's ray queries and with the setting on, the scene builds
+  acceleration structures over its geometry on the frames that trace rays
+  (world-space reflections, the dynamic GI volume) — a BLAS for each model
+  that does not deform and has no masked mesh, built nearest the camera
+  first under a budget of 400 000 vertices a frame (a replaced model at
+  once) and then compacted; one for each deforming instance, rebuilt in
+  each frame that deforms it; and a TLAS over the instances, rebuilt every
+  such frame. Rays still trace the portable BVHs, as before: the hardware
+  trace comes in a later change. Models with a masked mesh, models whose
+  BLAS is pending and what the device cannot hold (its limits, or memory)
+  stay on the portable BVHs, counted by `Renderer::ray_tracing_stats`.
+  Turning the setting off frees the structures. `graphics_device::limits`
+  now also requests the adapter's `max_blas_primitive_count`,
+  `max_blas_geometry_count`, `max_tlas_instance_count` and
+  `max_acceleration_structures_per_shader_stage`; an adapter may report
+  them without the feature (Metal does), and they take effect only on a
+  device with it. `diagnostics::Counters` gains `blas_builds`,
+  `blas_build_vertices`, `deformed_blas_builds`, `tlas_builds`,
+  `blas_compactions` and `blas_compacted_vertices`, and `SceneResources`
+  gains `blases` and `blas_triangles` (wgpu 29 reports no acceleration
+  structure's size).
+- **Migration:** no game-code changes are required, and nothing renders
+  differently: the setting is off unless the game turns it on. A game that
+  opts in turns `Settings::hardware_ray_tracing` on and requests the
+  feature with wgpu's `unsafe` experimental token, by which it accepts that
+  wgpu's ray tracing is experimental:
+
+  ```rust
+  // Before
+  let (device, queue) = adapter
+      .request_device(&wgpu::DeviceDescriptor {
+          required_features: sgl_3d::graphics_device::features(&adapter),
+          required_limits: sgl_3d::graphics_device::limits(&adapter),
+          ..Default::default()
+      })
+      .await?;
+  // After
+  let (device, queue) = adapter
+      .request_device(&wgpu::DeviceDescriptor {
+          required_features: sgl_3d::graphics_device::features(&adapter)
+              | sgl_3d::graphics_device::ray_tracing_features(&adapter),
+          required_limits: sgl_3d::graphics_device::limits(&adapter),
+          // SAFETY: the game accepts wgpu's experimental ray queries.
+          experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
+          ..Default::default()
+      })
+      .await?;
+  let settings = sgl_3d::settings::Settings {
+      hardware_ray_tracing: true,
+      ..saved_settings
+  };
+  ```
+
+  Metal has the feature from macOS 15 on Apple silicon (in hardware from
+  M3), Vulkan with ray queries, and DX12 at ray-tracing tier 1.1 where the
+  game ships DXC (wgpu's `static-dxc`, or `dxcompiler.dll` beside the
+  executable); no browser has it. Until the hardware trace lands, a game
+  that opts in pays the structures' memory and build time on frames that
+  trace rays without faster rays. Each deforming instance's BLAS is rebuilt
+  in every traced frame that deforms it, about 16 µs of GPU time per
+  768-triangle instance on an Apple M5 (a crowd of 64 skinned instances
+  added about 1 ms a frame), so a game with large crowds budgets for it.
+  Saved settings that predate the field load it off (`Settings` is
+  `#[serde(default)]`). A game that opts in runs its world-space
+  reflections or dynamic GI on a ray-tracing device afterwards and checks
+  `Renderer::ray_tracing_stats`.
+
 ### Diagnostics measure the camera's hidden instances and each view's CPU time
 
 - **Scope:** `sgl-3d` with the `diagnostics` feature (#24's measurement).

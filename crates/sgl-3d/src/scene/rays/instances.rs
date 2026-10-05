@@ -162,6 +162,12 @@ impl RayInstances {
         &self.buffer
     }
 
+    /// The entries the entry buffer holds, which the hardware path's TLAS
+    /// grows with.
+    pub fn capacity(&self) -> usize {
+        (self.buffer.size() / std::mem::size_of::<InstanceEntry>() as u64) as usize
+    }
+
     /// Room for entries below index `count`, and for `kind`'s BVH over
     /// `instances` of it in `rays`' source. A grown entry buffer replaces
     /// the one group 1 binds, and every entry is uploaded to it again.

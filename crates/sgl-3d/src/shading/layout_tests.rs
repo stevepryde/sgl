@@ -76,6 +76,12 @@ fn programs() -> Vec<(&'static str, String)> {
             compose(&[&crate::scene::rays::QUERY]),
         ),
         ("lit_compute_library", crate::shading::lit_compute_library()),
+        // The hardware module after the portable walk, as a tracing pass
+        // composes them: its `enable` directive must reach the head.
+        (
+            "scene_rays_hardware",
+            compose(&[&super::SCENE_RAYS_PORTABLE, &super::SCENE_RAYS_HARDWARE]),
+        ),
     ]);
     #[cfg(feature = "diagnostics")]
     programs.extend([
@@ -527,7 +533,7 @@ fn declared_bindings(label: &str, source: &str, group: u32) -> Vec<(String, u32)
 // numbers come from naga's parse of the WGSL.
 #[wasm_bindgen_test(unsupported = test)]
 fn rust_binding_names_match_wgsl_bindings() {
-    use super::bind::{self, blended, group0, group1, group2};
+    use super::bind::{self, blended, group0, group1, group2, hardware};
     let named = [
         (0, "view", group0::VIEW),
         (0, "frame", group0::FRAME),
@@ -578,6 +584,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         (3, "blended_reflections", blended::REFLECTIONS),
         (3, "blended_surface_depth", blended::SURFACE_DEPTH),
         (3, "blended_trace", blended::TRACE),
+        (3, "scene_tlas", hardware::SCENE_TLAS),
     ];
     let numbers = |entries: &[wgpu::BindGroupLayoutEntry]| -> Vec<u32> {
         entries.iter().map(|entry| entry.binding).collect()
@@ -618,6 +625,12 @@ fn rust_binding_names_match_wgsl_bindings() {
             &[&super::BIND_BLENDED],
             3,
             numbers(&bind::blended_entries()),
+        ),
+        (
+            "scene_rays_hardware",
+            &[&super::SCENE_RAYS_HARDWARE],
+            3,
+            numbers(&[bind::tlas_entry()]),
         ),
     ];
     let mut used = vec![false; named.len()];

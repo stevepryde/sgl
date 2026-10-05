@@ -9,7 +9,9 @@
 //! Pulled raster passes read vertices from it too, so it is always current,
 //! and shadow casters read a deforming instance's positions from it as a
 //! vertex buffer. Above the model BVHs, the instances' entries and the
-//! instance BVHs built over them are `instances`'.
+//! instance BVHs built over them are `instances`'; the hardware path's
+//! acceleration structures, built over the same geometry and entries where
+//! the device traces rays in hardware, are `acceleration`'s.
 use std::ops::Range;
 
 use super::SceneError;
@@ -20,6 +22,7 @@ use crate::shading::material::MaterialUniform;
 use crate::shading::packed_vertex::{self, PackedVertex, UvRect};
 use std::collections::HashMap;
 
+pub(crate) mod acceleration;
 mod bvh;
 pub(crate) mod instances;
 #[cfg(test)]
@@ -42,13 +45,30 @@ pub(crate) struct RayModel {
     pub bvh_root: u32,
 }
 
-/// A model's words in the source: what rays read, its range, and each
-/// mesh's first vertex record.
+/// A model's words in the source: what rays read, its range, and where each
+/// mesh's vertices and indices lie.
 pub(crate) struct RayModelWords {
     pub ray: RayModel,
     pub range: Range<u32>,
-    pub vertices: Vec<u32>,
+    pub meshes: Vec<RayMeshWords>,
 }
+
+/// Where a mesh's packed vertices and its indices lie in the source, which a
+/// BLAS reads: its first vertex record, at a multiple of `VERTEX_WORDS`, and
+/// its first index, with their counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RayMeshWords {
+    pub vertices: u32,
+    pub vertex_count: u32,
+    pub indices: u32,
+    pub index_count: u32,
+}
+
+/// A packed vertex's words (`shading::packed_vertex`): the stride a BLAS
+/// reads a model's positions at in whole strides, so each mesh's vertex
+/// block, and the model's range, starts at a multiple of it
+/// (`BlasTriangleGeometry::first_vertex` counts strides).
+pub(crate) const VERTEX_WORDS: u32 = (std::mem::size_of::<PackedVertex>() / 4) as u32;
 
 impl RayModel {
     /// Mesh `mesh`'s record, which pulled raster passes read.
@@ -73,8 +93,8 @@ pub(crate) struct PreparedRayModel {
     /// triangles.
     bvh: usize,
     root: u32,
-    /// Each mesh's first vertex record.
-    vertices: Vec<u32>,
+    /// Where each mesh's vertices and indices lie in `words`.
+    mesh_words: Vec<RayMeshWords>,
 }
 
 /// A model's table of the distinct lightmap chart bounds its vertices name,
@@ -107,31 +127,33 @@ fn chart_table(meshes: &[RayMesh<'_>]) -> Option<(Vec<Chart>, Vec<Vec<u16>>)> {
 
 /// `meshes`' words, addressed from zero, which `SceneRays::place_model`
 /// places: its mesh records, its chart table, each mesh's packed vertices
-/// (`shading::packed_vertex`) and indices, and its BVH. The geometry is
-/// validated: indices name vertices, positions are finite and normals are
-/// finite and not zero. Refuses a model whose vertices name more than
-/// 65,536 distinct lightmap chart bounds.
+/// (`shading::packed_vertex`), from a multiple of `VERTEX_WORDS`, and
+/// indices, and its BVH. The geometry is validated: indices name vertices,
+/// positions are finite and normals are finite and not zero. Refuses a model
+/// whose vertices name more than 65,536 distinct lightmap chart bounds.
 pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, SceneError> {
     let triangles: usize = meshes.iter().map(|mesh| mesh.indices.len() / 3).sum();
     let table_word = meshes.len() * MESH_WORDS;
-    let (mut words, vertex_words, len) = step(BuildStep::Pack, || {
+    let vertex_block = |word: usize| word.next_multiple_of(VERTEX_WORDS as usize);
+    let (mut words, mesh_words, len) = step(BuildStep::Pack, || {
         let (table, charts) = chart_table(meshes).ok_or(SceneError::TooManyLightmapCharts)?;
-        let len = table_word
-            + table.len() * CHART_WORDS
-            + meshes
-                .iter()
-                .map(|mesh| mesh.vertices.len() * words::<PackedVertex>() + mesh.indices.len())
-                .sum::<usize>()
+        let len = meshes
+            .iter()
+            .fold(table_word + table.len() * CHART_WORDS, |len, mesh| {
+                vertex_block(len)
+                    + mesh.vertices.len() * words::<PackedVertex>()
+                    + mesh.indices.len()
+            })
             + bvh::model_words(triangles);
         let mut words = vec![0u32; table_word];
         words.reserve(len - words.len());
         words.extend_from_slice(bytemuck::cast_slice(&table));
         let mut first_vertex = 0;
-        let mut vertex_words = Vec::with_capacity(meshes.len());
+        let mut mesh_words = Vec::with_capacity(meshes.len());
         for (index, (mesh, charts)) in meshes.iter().zip(&charts).enumerate() {
             let uv = UvRect::of(mesh.vertices);
+            words.resize(vertex_block(words.len()), 0);
             let vertices = words.len() as u32;
-            vertex_words.push(vertices);
             for (vertex, &chart) in mesh.vertices.iter().zip(charts) {
                 words.extend_from_slice(bytemuck::cast_slice(&[packed_vertex::pack(
                     vertex, &uv, chart,
@@ -139,6 +161,12 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
             }
             let indices = words.len() as u32;
             words.extend_from_slice(mesh.indices);
+            mesh_words.push(RayMeshWords {
+                vertices,
+                vertex_count: mesh.vertices.len() as u32,
+                indices,
+                index_count: mesh.indices.len() as u32,
+            });
             let at = index * MESH_WORDS;
             words[at..at + MESH_WORDS].copy_from_slice(bytemuck::cast_slice(&[MeshRecord {
                 vertices,
@@ -150,7 +178,7 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
             }]));
             first_vertex += mesh.vertices.len() as u32;
         }
-        Ok::<_, SceneError>((words, vertex_words, len))
+        Ok::<_, SceneError>((words, mesh_words, len))
     })?;
     let bvh = words.len();
     let root = step(BuildStep::RayBvh, || bvh::append(meshes, &mut words, 0));
@@ -160,7 +188,7 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
         meshes: meshes.len(),
         bvh,
         root,
-        vertices: vertex_words,
+        mesh_words,
     })
 }
 
@@ -311,8 +339,22 @@ impl SceneRays {
         queue: &wgpu::Queue,
         len: usize,
     ) -> Result<Range<u32>, SceneError> {
+        self.allocate_aligned(device, queue, len, 1)
+    }
+
+    /// `allocate`, starting at a multiple of `align` words.
+    pub fn allocate_aligned(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        len: usize,
+        align: u32,
+    ) -> Result<Range<u32>, SceneError> {
         let len = u32::try_from(len).map_err(|_| SceneError::DeviceLimit)?;
-        let range = self.words.allocate(len).ok_or(SceneError::DeviceLimit)?;
+        let range = self
+            .words
+            .allocate_aligned(len, align)
+            .ok_or(SceneError::DeviceLimit)?;
         let needed = u64::from(self.words.end());
         if needed > self.word_limit {
             self.words.free(range);
@@ -427,7 +469,8 @@ impl SceneRays {
         self.write(queue, word + field as u32, &[u32::from(baked)]);
     }
 
-    /// Places prepared `model`: allocates its range, names each mesh's
+    /// Places prepared `model`: allocates its range at a multiple of
+    /// `VERTEX_WORDS`, so its vertex blocks keep theirs, names each mesh's
     /// material record (`materials`, in mesh order) and adds the range's
     /// start to every word that addresses the source, so its words are
     /// ready to write at the range's start.
@@ -438,7 +481,7 @@ impl SceneRays {
         model: &mut PreparedRayModel,
         materials: &[u32],
     ) -> Result<RayModelWords, SceneError> {
-        let range = self.allocate(device, queue, model.words.len())?;
+        let range = self.allocate_aligned(device, queue, model.words.len(), VERTEX_WORDS)?;
         let base = range.start;
         rebase_records(
             &mut model.words[..model.meshes * MESH_WORDS],
@@ -456,10 +499,14 @@ impl SceneRays {
                 },
             },
             range,
-            vertices: model
-                .vertices
+            meshes: model
+                .mesh_words
                 .iter()
-                .map(|&vertices| vertices + base)
+                .map(|mesh| RayMeshWords {
+                    vertices: mesh.vertices + base,
+                    indices: mesh.indices + base,
+                    ..*mesh
+                })
                 .collect(),
         })
     }
@@ -488,7 +535,14 @@ impl SceneRays {
     }
 }
 
+/// A source of `words`. Where the device traces rays in hardware, BLASes
+/// read their positions and indices from it (`BLAS_INPUT`).
 fn source_buffer(device: &wgpu::Device, words: u64) -> wgpu::Buffer {
+    let blas_input = if acceleration::supported(device) {
+        wgpu::BufferUsages::BLAS_INPUT
+    } else {
+        wgpu::BufferUsages::empty()
+    };
     crate::counters::buffer(
         device,
         &wgpu::BufferDescriptor {
@@ -497,7 +551,8 @@ fn source_buffer(device: &wgpu::Device, words: u64) -> wgpu::Buffer {
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::VERTEX
                 | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
+                | wgpu::BufferUsages::COPY_SRC
+                | blas_input,
             mapped_at_creation: false,
         },
     )
@@ -517,7 +572,9 @@ mod instance_tests;
 
 #[cfg(test)]
 mod record_tests {
-    use super::{CHART_WORDS, MESH_WORDS, MeshRecord, RayMesh, prepare_model, rebase_records};
+    use super::{
+        CHART_WORDS, MESH_WORDS, MeshRecord, RayMesh, VERTEX_WORDS, prepare_model, rebase_records,
+    };
     use crate::asset::Vertex;
     use crate::shading::packed_vertex::PackedVertex;
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -530,7 +587,11 @@ mod record_tests {
     // record, less the base, must start at its mesh's own vertices (their
     // positions, which pack as given) and indices in the prepared words,
     // name through its vertices' chart indices its mesh's own lightmap
-    // bounds in the table, and carry its mesh's material word. CPU only.
+    // bounds in the table, and carry its mesh's material word. A BLAS reads
+    // a mesh's positions from the same words in whole packed-vertex strides
+    // (the architecture's Hardware ray tracing), so each mesh's vertex block
+    // must start at a multiple of the stride, and the words the scene gives
+    // a BLAS must be the record's. CPU only.
     #[wasm_bindgen_test(unsupported = test)]
     fn rebased_records_address_their_own_geometry() {
         // Each mesh's vertices, indices and chart bounds differ from every
@@ -555,7 +616,8 @@ mod record_tests {
             .map(|(vertices, indices)| RayMesh { vertices, indices })
             .collect();
         let mut prepared = prepare_model(&rays).unwrap();
-        let (base, materials) = (70_000, [11, 22, 33]);
+        // A model's range starts at a multiple of the stride.
+        let (base, materials) = (8_750 * VERTEX_WORDS, [11, 22, 33]);
         rebase_records(
             &mut prepared.words[..meshes.len() * MESH_WORDS],
             base,
@@ -564,7 +626,21 @@ mod record_tests {
         let records: &[MeshRecord] =
             bytemuck::cast_slice(&prepared.words[..meshes.len() * MESH_WORDS]);
         let packed_words = std::mem::size_of::<PackedVertex>() / 4;
-        for (((vertices, indices), record), material) in meshes.iter().zip(records).zip(materials) {
+        for ((((vertices, indices), record), material), words) in meshes
+            .iter()
+            .zip(records)
+            .zip(materials)
+            .zip(&prepared.mesh_words)
+        {
+            assert_eq!(record.vertices % VERTEX_WORDS, 0, "an aligned vertex block");
+            assert_eq!(
+                [words.vertices + base, words.indices + base],
+                [record.vertices, record.indices]
+            );
+            assert_eq!(
+                [words.vertex_count, words.index_count],
+                [vertices.len(), indices.len()].map(|count| count as u32)
+            );
             let first = (record.vertices - base) as usize;
             let charts = (record.charts - base) as usize;
             for (index, vertex) in vertices.iter().enumerate() {

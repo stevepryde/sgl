@@ -2,8 +2,11 @@
 //! removes (materials, models, instances, lights, decals, environments,
 //! baked lighting, probes, the irradiance volume, the dynamic GI volume's
 //! placement and transient geometry), with the GPU buffers that mirror it
-//! and the ray-query structure built from its geometry. Nothing here
-//! depends on a camera, an output size or a quality setting.
+//! and the ray-query structures built from its geometry. Nothing here
+//! depends on a camera, an output size or a quality setting, but the
+//! hardware path's acceleration structures, which a frame asks the scene to
+//! build while hardware ray tracing is in effect, nearest its camera first
+//! (`rays::acceleration`).
 mod decal_atlas;
 pub(crate) mod decals;
 pub(crate) mod deformation;
@@ -26,6 +29,7 @@ pub(crate) mod prepared;
 pub(crate) mod probe_grid;
 pub(crate) mod probes;
 mod ranges;
+pub(crate) mod ray_class;
 pub(crate) mod rays;
 pub(crate) mod shadow_clusters;
 mod slots;
@@ -61,6 +65,10 @@ pub struct Scene {
     pub(crate) geometry: geometry::GeometryBuffers,
     /// The ray source's instance entries and instance BVHs.
     pub(crate) ray_instances: rays::instances::RayInstances,
+    /// The hardware path's acceleration structures, while hardware ray
+    /// tracing is in effect on a device that has it; none until a frame
+    /// builds them and after one runs with the setting off.
+    acceleration: Option<rays::acceleration::AccelerationStructures>,
     /// Group 1: the object records and the ray buffers.
     pub(crate) scene_group: wgpu::BindGroup,
     /// The buffers `scene_group` binds: objects, ray source, ray instances.
@@ -140,6 +148,7 @@ impl Scene {
             environments: environments::Environments::new(device, queue),
             lookup_tables: lookup_tables::lookup_tables(device, queue),
             ray_instances,
+            acceleration: None,
             scene_group: scene_group(device, &scene_layout, &bound),
             bound,
             scene_layout,
@@ -271,6 +280,64 @@ impl Scene {
         );
     }
 
+    /// Before a frame that builds the hardware path's acceleration
+    /// structures, seen from `eye`: chooses its builds and sets the TLAS
+    /// (`rays::acceleration`), creating the structures on the first such
+    /// frame. The frame records the builds with
+    /// `encode_acceleration_structures` after its deform pass, and
+    /// `finish_frame` commits them.
+    pub(crate) fn prepare_acceleration_structures(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        eye: glam::Vec3,
+    ) -> rays::acceleration::RayTracingStats {
+        if self.acceleration.is_none() {
+            self.acceleration = rays::acceleration::AccelerationStructures::new(device);
+        }
+        let Some(acceleration) = &mut self.acceleration else {
+            return Default::default();
+        };
+        acceleration.prepare(
+            device,
+            queue,
+            (&self.models, &self.instances),
+            self.ray_instances.capacity(),
+            eye,
+        )
+    }
+
+    /// Records the frame's acceleration-structure builds, which
+    /// `prepare_acceleration_structures` chose, into `encoder`.
+    pub(crate) fn encode_acceleration_structures(&self, encoder: &mut wgpu::CommandEncoder) {
+        if let Some(acceleration) = &self.acceleration {
+            acceleration.encode(encoder, self.rays.source());
+        }
+    }
+
+    /// A frame that keeps the hardware path's acceleration structures but
+    /// does not build them, tracing no rays: it records no builds.
+    pub(crate) fn skip_acceleration_structures(&mut self) {
+        if let Some(acceleration) = &mut self.acceleration {
+            acceleration.skip_frame();
+        }
+    }
+
+    /// Frees the hardware path's acceleration structures: a frame runs with
+    /// hardware ray tracing off. A frame that turns it on again builds them
+    /// anew.
+    pub(crate) fn free_acceleration_structures(&mut self) {
+        self.acceleration = None;
+    }
+
+    /// The hardware path's acceleration structures.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn acceleration_structures(
+        &self,
+    ) -> Option<&rays::acceleration::AccelerationStructures> {
+        self.acceleration.as_ref()
+    }
+
     /// Upload caller-generated additive geometry, growing the retained buffer when necessary.
     pub fn update_effects(
         &mut self,
@@ -319,6 +386,9 @@ impl Scene {
     pub(crate) fn finish_frame(&mut self) {
         self.instances.finish_frame();
         self.static_edits.finish();
+        if let Some(acceleration) = &mut self.acceleration {
+            acceleration.finish_frame();
+        }
     }
 }
 
@@ -355,6 +425,11 @@ pub struct SceneResources {
     pub geometry: u64,
     pub geometry_live: u64,
     pub geometry_buffers: u64,
+    /// The hardware path's BLASes, its models' and deforming instances',
+    /// and the triangles they hold. wgpu 29 reports no acceleration
+    /// structure's size.
+    pub blases: u64,
+    pub blas_triangles: u64,
 }
 
 #[cfg(any(test, feature = "diagnostics"))]
@@ -363,6 +438,10 @@ impl Scene {
     pub fn diagnostic_resources(&self) -> SceneResources {
         let (ray_source_used, ray_source_live) = self.rays.words_in_use();
         let [geometry, geometry_live, geometry_buffers] = self.geometry.sizes();
+        let (blases, blas_triangles) = self
+            .acceleration
+            .as_ref()
+            .map_or((0, 0), |acceleration| acceleration.held());
         SceneResources {
             ray_source: self.rays.source().size(),
             ray_source_used: ray_source_used * 4,
@@ -373,6 +452,8 @@ impl Scene {
             geometry,
             geometry_live,
             geometry_buffers,
+            blases,
+            blas_triangles,
         }
     }
 }
