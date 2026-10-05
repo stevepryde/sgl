@@ -58,6 +58,19 @@ pub(crate) const CULL_LOD: u32 = 8;
 /// counted at `CullView::candidate_statistics` (diagnostics, the camera).
 pub(crate) const CULL_CANDIDATE_STATISTICS: u32 = 16;
 
+/// `CullOcclusion::flags`: the early phase tests the camera's candidates
+/// and sections against the last submitted frame's depth pyramid.
+pub(crate) const OCCLUSION_EARLY: u32 = 1;
+
+/// A view's dispatch buffer: the indirect dispatches the finalizes write
+/// (`wgpu::util::DispatchIndirectArgs`, three words each), at these words:
+/// the early section cull's, the late instance cull's and the late section
+/// cull's.
+pub(crate) const DISPATCH_EARLY_SECTIONS: u32 = 0;
+pub(crate) const DISPATCH_LATE_INSTANCES: u32 = 3;
+pub(crate) const DISPATCH_LATE_SECTIONS: u32 = 6;
+pub(crate) const CULL_DISPATCH_WORDS: u32 = 9;
+
 /// One instance's mesh, which a GPU-built view may draw (`DrawCandidate` in
 /// culling.wgsl): its bounds in its model's space (the mesh's, or a
 /// deforming instance's deformed ones), its object record's index, its
@@ -149,22 +162,64 @@ pub(crate) struct CullView {
     /// Where each candidate's appended sections and triangles start in the
     /// view's draws, in words (`CULL_CANDIDATE_STATISTICS`).
     pub candidate_statistics: u32,
-    pub padding: u32,
+    /// The index of the view's first late command in its draws: set `s`'s
+    /// late draw is command `late_command + s`.
+    pub late_command: u32,
+    /// The late section queue's entries, zero for a view without a late
+    /// phase.
+    pub queue_capacity: u32,
+    pub padding: [u32; 3],
 }
 
-/// The head of a view's lists (`CullLists` in culling.wgsl): how many
-/// candidates the instance cull appended to the visible list, the count the
-/// finalize clamped to its capacity, and its dispatch's workgroups along x,
-/// from which the section cull linearises its workgroup's index. The
-/// visible list's entries follow, a candidate and its chosen level's mesh
-/// record word each.
+/// The camera's occlusion test for a frame (`CullOcclusion` in
+/// culling.wgsl), which the cull stage writes: the last submitted frame's
+/// view-projection with its jitter (`CameraFrame::jittered_view_projection`),
+/// through which the early phase projects each object at its previous
+/// pose, this frame's, through which the late phase projects it at its
+/// pose, the pyramid's levels the test may read, and `OCCLUSION_*` bits.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct CullOcclusion {
+    pub previous: [[f32; 4]; 4],
+    pub current: [[f32; 4]; 4],
+    pub levels: u32,
+    pub flags: u32,
+    pub padding: [u32; 2],
+}
+
+/// The head of a view's lists (`CullLists` in culling.wgsl): for each list,
+/// the appends its producer made, the count its consumer runs over, which a
+/// finalize clamped to the list's capacity, and that dispatch's workgroups
+/// along x, from which the consumer linearises its index: the early visible
+/// list (the early section cull's), the late list (the late instance
+/// cull's), the late visible list and the late section queue (the late
+/// section cull's, one dispatch over both). The entries follow, two words
+/// each: of a view's candidate count N, the early visible list at
+/// [0, N), the late list at [N, 2N), the late visible list at [2N, 3N) and
+/// the queue after them (`late_entries`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct CullListsHeader {
     pub visible_count: u32,
     pub visible_dispatched: u32,
     pub visible_side: u32,
+    pub late_count: u32,
+    pub late_dispatched: u32,
+    pub late_side: u32,
+    pub late_visible_count: u32,
+    pub late_visible_dispatched: u32,
+    pub queue_count: u32,
+    pub queue_dispatched: u32,
+    pub late_sections_side: u32,
     pub padding: u32,
+}
+
+/// The entries of the lists of a view with `candidates` candidates and a
+/// late section queue of `queue` entries, when it culls a late phase: its
+/// early visible list, late list and late visible list, a slot for every
+/// candidate each, then the queue.
+pub(crate) fn late_entries(candidates: u32, queue: u32) -> u64 {
+    3 * u64::from(candidates) + u64::from(queue)
 }
 
 /// A view's statistics words, at the start of its draws: the sections the
@@ -240,6 +295,11 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         ("CULL_NEAR", CULL_NEAR),
         ("CULL_LOD", CULL_LOD),
         ("CULL_CANDIDATE_STATISTICS", CULL_CANDIDATE_STATISTICS),
+        ("OCCLUSION_EARLY", OCCLUSION_EARLY),
+        ("DISPATCH_EARLY_SECTIONS", DISPATCH_EARLY_SECTIONS),
+        ("DISPATCH_LATE_INSTANCES", DISPATCH_LATE_INSTANCES),
+        ("DISPATCH_LATE_SECTIONS", DISPATCH_LATE_SECTIONS),
+        ("CULL_DISPATCH_WORDS", CULL_DISPATCH_WORDS),
         ("CULL_STATISTICS_WORDS", words::<CullStatistics>()),
         (
             "CULL_STATIC_SECTIONS",
@@ -270,7 +330,7 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
 }
 
 #[cfg(test)]
-pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 6] {
+pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 7] {
     use crate::shading::layout_tests::mirror;
     [
         mirror!(
@@ -307,13 +367,33 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 6] {
                 visibility_mask,
                 flags,
                 candidate_statistics,
+                late_command,
+                queue_capacity,
             ]
+        ),
+        mirror!(
+            "cull",
+            "CullOcclusion",
+            CullOcclusion,
+            [previous, current, levels, flags]
         ),
         mirror!(
             "cull",
             "CullLists",
             CullListsHeader,
-            [visible_count, visible_dispatched, visible_side]
+            [
+                visible_count,
+                visible_dispatched,
+                visible_side,
+                late_count,
+                late_dispatched,
+                late_side,
+                late_visible_count,
+                late_visible_dispatched,
+                queue_count,
+                queue_dispatched,
+                late_sections_side,
+            ]
         ),
     ]
 }

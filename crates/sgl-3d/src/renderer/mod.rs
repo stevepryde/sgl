@@ -198,11 +198,13 @@ impl Renderer {
                 crate::shading::LOWERED_FORM,
             ))
         });
+        let cull = Cull::new(device);
         let first_frame = effective::first_frame(
             settings,
             effective::Device {
                 fsr2_running: antialiasing.fsr2_running(),
                 fused_supported: pipelines.fused_supported,
+                occlusion_supported: cull.occlusion_supported(),
                 ray_queries: ray_form.as_ref().map(|form| form.form()),
             },
         );
@@ -224,7 +226,7 @@ impl Renderer {
             .map_err(RendererError::LookupTextures)?,
             prepare: Prepare::default(),
             deform: Deform::new(device),
-            cull: Cull::new(device),
+            cull,
             statistics: StatisticsReadback::default(),
             dynamic_gi,
             sizes,
@@ -323,6 +325,7 @@ impl Renderer {
             scene.finish_frame();
             self.shadows.local.finish_frame();
             self.dynamic_gi.finish_frame();
+            self.cull.finish_frame();
             self.statistics.submitted();
             #[cfg(feature = "diagnostics")]
             if let Some(probe) = &mut self.probe {
@@ -405,6 +408,17 @@ impl Renderer {
         settings.hardware_ray_tracing
             && self.ray_form.is_some()
             && self.prepare.ray_tracing_error().is_none()
+    }
+
+    /// Whether `Settings::occlusion_culling` runs for `settings`: it is on,
+    /// the device binds the depth pyramid's six storage textures a stage
+    /// (`graphics_device::limits` requests the adapter's) and, with the
+    /// `diagnostics` feature, the culling layer is on. Otherwise the camera
+    /// culls by frustum alone. The saved choice is unchanged.
+    pub fn occlusion_culling_in_effect(&self, settings: &Settings) -> bool {
+        settings.occlusion_culling
+            && self.cull.occlusion_supported()
+            && !settings.diagnostics_in_effect().disable.culling
     }
 
     /// Why the hardware path did not trace the last rendered frame's rays
