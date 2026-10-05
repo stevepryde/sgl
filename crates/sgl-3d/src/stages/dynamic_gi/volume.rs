@@ -120,8 +120,8 @@ pub(super) struct Volume {
     /// Each probe's offset, whether it has been blended, and its share of
     /// back faces, which classifies it.
     pub probe_states: wgpu::Buffer,
-    /// Each probe's request and periods, then the rays it blends this
-    /// frame.
+    /// Each probe's request and periods, then the rays it traces this
+    /// frame beside its fixed rays.
     pub ray_counts: wgpu::Buffer,
     /// The probes that trace this frame, which the blends gather.
     pub traced_probes: wgpu::Buffer,

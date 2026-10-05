@@ -28,10 +28,9 @@
 // probe more than probeBackfaceThreshold (0.25) of whose fixed rays meet
 // single-sided surfaces from behind, one inside geometry or beyond a wall,
 // is inactive. Changed: RTXGI traces all 32 fixed rays every update; here a
-// probe traces all 32 on its first turn, in place of as many of its others
-// and blended with them, which classify it at once, then 4 each turn and is
-// classified again from all 32 once a cycle of 8 turns, so they cost an
-// eighth. The share of each frame's rotated rays, blended as
+// probe traces all 32 on its first turn, which classify it at once, then 4
+// each turn and is classified again from all 32 once a cycle of 8 turns, so
+// they cost an eighth; as RTXGI's, they are not blended. The share of each frame's rotated rays, blended as
 // the depths are, flickered: in a room whose probes beyond the walls see a
 // quarter of back faces, 66 changes of class in 200 frames among 125
 // probes; and a far probe's first turn traces as few as 32 rotated rays.
@@ -186,12 +185,6 @@ const DDGI_DEPTH_BORDER_OFFSETS=array<vec4<u32>,68>(
  vec4(16u,1u,0u,17u),
  vec4(1u,1u,17u,17u),
 );
-// The most rays a probe blends, which its slots in the ray results hold:
-// the tier's most, or on its first turn, which blends its fixed rays too,
-// its most and a turn's fixed rays.
-fn ddgi_ray_slots()->u32 {
- return min(volume.max_rays,DDGI_MOST_RAYS)+DDGI_FIXED_RAYS_PER_FRAME;
-}
 // Ray `ray` of probe `probe` in the ray results.
 fn ddgi_load_ray(probe:u32,ray:u32)->DdgiRay {
  return ddgi_unpack_ray(textureLoad(ray_results,ddgi_ray_texel(ddgi_ray_slot(probe,ray,volume.max_rays)),0));
@@ -219,7 +212,7 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
   return;
  }
  if group_index==0u {
-  irradiance_ray_count=min(ray_counts[probe_index],ddgi_ray_slots());
+  irradiance_ray_count=min(ray_counts[probe_index],min(volume.max_rays,DDGI_MOST_RAYS));
   atomicStore(&probe_variability,0u);
  }
  let ray_count=workgroupUniformLoad(&irradiance_ray_count);
@@ -348,7 +341,7 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   return;
  }
  if group_index==0u {
-  depth_ray_count=min(ray_counts[probe_index],ddgi_ray_slots());
+  depth_ray_count=min(ray_counts[probe_index],min(volume.max_rays,DDGI_MOST_RAYS));
  }
  let ray_count=workgroupUniformLoad(&depth_ray_count);
  if ray_count==0u {
@@ -421,23 +414,21 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   blended.offset=probe_offset;
   // Its class, from its fixed rays' share over each cycle of
   // DDGI_FIXED_CYCLE turns it traces, as RTXGI classifies from its fixed
-  // rays: its first turn traced all of them, a whole cycle, the last of the
-  // rays it blended, and each turn since the next
-  // DDGI_FIXED_RAYS_PER_FRAME after them (allocate.wgsl).
+  // rays: its first turn traced all of them, a whole cycle, and each turn
+  // since the next DDGI_FIXED_RAYS_PER_FRAME, after the rays it blends
+  // (allocate.wgsl).
   var fixed_rays=DDGI_FIXED_RAYS_PER_FRAME;
-  var first_fixed=ray_count;
   if !probe.blended {
    blended=ddgi_fresh_probe();
    blended.offset=probe_offset;
    fixed_rays=DDGI_FIXED_RAYS;
-   first_fixed=ray_count-min(ray_count,DDGI_FIXED_RAYS);
   }
   blended.blended=true;
   for (var ray=0u;ray<DDGI_FIXED_RAYS;ray++) {
    if ray>=fixed_rays {
     break;
    }
-   let fixed=ddgi_load_ray(probe_index,first_fixed+ray);
+   let fixed=ddgi_load_ray(probe_index,ray_count+ray);
    blended.fixed_backfaces+=select(0u,1u,fixed.backface);
    blended.fixed_nearby+=select(0u,1u,ddgi_in_cell(fixed));
   }

@@ -1122,17 +1122,17 @@ code; it does not redeclare a struct, binding or function another module owns.
   of whose fixed rays meet single-sided surfaces from behind, inside
   geometry or beyond a wall, is inactive, weighs nothing in the sample and
   traces the fewest rays. Its fixed rays are RTXGI's 32 directions spread
-  evenly and never rotated, so its class holds still while what it sees
-  does; where RTXGI traces all of them every update, a probe traces all of
-  them on its first turn, in place of as many of its others and shaded and
-  blended with them, which classifies it at once, then four each turn
-  after its others, unshaded and not blended, and is classified again from
-  all of them once a cycle of eight turns (the share of each frame's
-  rotated rays, even blended over frames, wandered across the threshold,
-  and a far probe's first turn traced as few as 32). Its second phase
-  finds whether a fixed ray met a front face within the probe's cell, the
-  spacing about it on each axis. Improved on
-  RTXGI (RD-2), which deactivates a probe without one for every receiver,
+  evenly and never rotated, unshaded and not blended, as RTXGI blends none,
+  so its class holds still while what it sees does; where RTXGI traces all
+  of them every update, a probe traces all of them on its first turn, in
+  place of as many of its others while it keeps at least 32 of those, which
+  classifies it at once, then four each turn after its others, and is
+  classified again from all of them once a cycle of eight turns (the share
+  of each frame's rotated rays, even blended over frames, wandered across
+  the threshold, and a far probe's first turn traced as few as 32). Its
+  second phase finds whether a fixed ray met a front face within the
+  probe's cell, the spacing about it on each axis. Improved on RTXGI
+  (RD-2), which deactivates a probe without one for every receiver,
   such a probe is dormant: static receivers skip it, so a probe diagonally
   beyond the edge or corner of a room of single-sided walls, which sees few
   of their backs and so passes the first phase, lights no wall; moving

@@ -65,9 +65,11 @@
 // fixed rays after its others, the next of its cycle, which classify it, as
 // NVIDIA RTXGI's probes trace their fixed rays among their others each
 // update (RTXGI-DDGI f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6,
-// docs/DDGIVolume.md 736-767; practice only); on its first turn all
-// DDGI_FIXED_RAYS of them, in place of as many of its others, shaded and
-// blended with them, so it is classified at once at no more rays. Changed: an inactive probe (ddgi_probe_active)
+// docs/DDGIVolume.md 736-767; practice only), and as RTXGI's they are not
+// blended; on its first turn all DDGI_FIXED_RAYS of them, so it is
+// classified at once, in place of as many of its others while it keeps at
+// least DDGI_FIXED_RAYS others, so a first turn costs no more rays than
+// another but for the farthest probes'. Changed: an inactive probe (ddgi_probe_active)
 // traces the fewest others, a bucket, beside its fixed rays, and still
 // blends them, where RTXGI's inactive probes trace their fixed rays alone
 // and blend nothing: its depth and irradiance stay warm, so it lights
@@ -84,8 +86,7 @@
 @group(0) @binding(1) var<storage,read> variance:array<u32>;
 @group(0) @binding(2) var<storage,read> probe_states:array<vec4<u32>>;
 // Each blended probe's request and periods (`rank`), then the rays it
-// blends this frame (`allocate`): beside its fixed rays, or on its first
-// turn with them.
+// traces this frame beside its fixed rays (`allocate`), which it blends.
 @group(0) @binding(3) var<storage,read_write> ray_counts:array<u32>;
 @group(0) @binding(4) var<storage,read_write> allocation:DdgiAllocation;
 @group(0) @binding(5) var ray_list:texture_storage_2d<rg32uint,write>;
@@ -219,11 +220,14 @@ fn ddgi_most_rays(spacings:f32)->u32 {
  let buckets=u32(round(rays/f32(DDGI_RAY_BUCKET_COUNT)));
  return clamp(buckets*DDGI_RAY_BUCKET_COUNT,DDGI_RAY_BUCKET_COUNT,u32(most));
 }
-// The rays a probe that far away traces on its first turn, its fixed rays
-// included: its most rays and a turn's fixed rays, as any turn, and at least
-// all DDGI_FIXED_RAYS fixed rays and a bucket of others.
+// The rays a probe that far away traces beside its fixed rays on its first
+// turn, which traces all DDGI_FIXED_RAYS of them: its most rays less the
+// fixed rays a turn does not trace, but at least DDGI_FIXED_RAYS of them,
+// or its most where it has fewer.
 fn ddgi_starting_rays(spacings:f32)->u32 {
- return max(ddgi_most_rays(spacings)+DDGI_FIXED_RAYS_PER_FRAME,DDGI_FIXED_RAYS+DDGI_RAY_BUCKET_COUNT);
+ let most=ddgi_most_rays(spacings);
+ let extra=DDGI_FIXED_RAYS-DDGI_FIXED_RAYS_PER_FRAME;
+ return max(max(most,extra)-extra,min(most,DDGI_FIXED_RAYS));
 }
 // A blended probe's most inconsistent irradiance texel's inconsistency.
 fn ddgi_inconsistency(probe_index:u32)->f32 {
@@ -283,7 +287,7 @@ fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) gro
  let lattice=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
  let spacings=ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing));
  if !probe.blended {
-  let starting=ddgi_starting_rays(spacings);
+  let starting=ddgi_starting_rays(spacings)+DDGI_FIXED_RAYS;
   atomicAdd(&allocation.bins[ramp_bin(spacings)],starting);
   atomicAdd(&allocation.unblended,1u);
   atomicAdd(&allocation.unblended_rays,starting);
@@ -381,12 +385,12 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
    let lattice=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
    let spacings=ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing));
    let starting=ddgi_starting_rays(spacings);
-   if ramp_starts(spacings,starting) {
-    // Its first turn's last DDGI_FIXED_RAYS are its fixed rays, a whole
-    // cycle's (DDGI_FIXED_CYCLE marks it), which it blends with the others.
-    traced=starting;
+   if ramp_starts(spacings,starting+DDGI_FIXED_RAYS) {
+    // Its first turn traces a whole cycle's fixed rays after its others
+    // (DDGI_FIXED_CYCLE marks it).
+    traced=starting+DDGI_FIXED_RAYS;
     blended=starting;
-    entry_rays=starting-DDGI_FIXED_RAYS;
+    entry_rays=starting;
     cycle=DDGI_FIXED_CYCLE;
    }
   } else {
