@@ -242,8 +242,8 @@ fn requests_past_the_budget_lengthen_every_period_and_starve_none() {
 // under every shorter one, so a stride that changes from frame to frame
 // never skips its turns. (Phases that did not nest let probes miss every
 // turn while the stride alternated between two values near the budget: on
-// Hyperdrive at Low with the camera still, 2.2k rays a frame of the 8.5k
-// the probes asked for.) Checked over whole cycles of the longest stride
+// Hyperdrive at Low with the camera still, 2.2k rays a frame where their
+// turns take 8.5k.) Checked over whole cycles of the longest stride
 // for 256 probes and a spread of periods.
 #[test]
 fn a_probes_turns_under_a_stride_are_among_its_turns_under_every_shorter_one() {

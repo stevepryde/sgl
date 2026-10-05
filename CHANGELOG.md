@@ -172,8 +172,8 @@ full API details.
   shortened turns, counted toward it, made it 4 or more in two thirds;
   the rays pass costs more because it now uses the budget those strides
   left idle. #185's lower Low cost with the camera still came from probes
-  that missed every turn while the stride alternated (2.2k rays a frame of
-  the 8.5k they asked for). The probes waiting to start in motion are as
+  that missed every turn while the stride alternated (2.2k rays a frame,
+  where their turns take 8.5k to 9.8k). The probes waiting to start in motion are as
   before (median 187). The `dynamic GI blend` pass takes 0.30 / 0.39 ms
   moving at High. In the `dynamic_gi` example a lamp moved at frame 150
   is 90% answered within about 100 frames at High, as with #185 merged
