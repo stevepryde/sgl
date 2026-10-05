@@ -157,15 +157,9 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
         Ok::<_, SceneError>((words, mesh_words, len))
     })?;
     debug_assert_eq!(words.len(), len, "a model's geometry fills its words");
-    // Its size follows its splits: built apart, addressed from where it
-    // goes, then appended.
+    // Its BVH's size follows its splits, so it grows the words it follows.
     let bvh = words.len();
-    let root = step(BuildStep::RayBvh, || {
-        let mut tree = Vec::new();
-        let root = bvh::append(meshes, &mut tree, bvh as u32);
-        words.extend_from_slice(&tree);
-        root
-    });
+    let root = step(BuildStep::RayBvh, || bvh::append(meshes, &mut words, 0));
     Ok(PreparedRayModel {
         words,
         meshes: meshes.len(),

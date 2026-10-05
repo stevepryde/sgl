@@ -33,8 +33,8 @@ const SCENE_BVH_LEAF_PRIMITIVES:u32=4u;
 // angles, 1,173 inside half a million foliage triangles and 19,238 across a
 // forest of 40,000 instances of a 5,000-triangle tree at 0 to 3 degrees
 // (#160), with median-split model BVHs. Rebuilt with surface area model BVHs
-// (#187), a forest of that size took at most 30,367 where its median-split
-// one took 29,027, and a terrain 2,171 where it took 2,153; the cap is over
+// (#187), a forest of that size took at most 24,977 where its median-split
+// one took 29,027, and a terrain 1,799 where it took 2,153; the cap is over
 // twice the forest's. A ray that reaches it reports a miss.
 const SCENE_BVH_MOST_VISITS:u32=65536u;
 // A walk of a BVH ends whatever the source holds, so corrupt words (a stale

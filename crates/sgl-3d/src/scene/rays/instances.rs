@@ -60,13 +60,13 @@ pub(crate) type Bounded = Primitive<InstanceLeaf>;
 /// rounding.
 pub(crate) fn bounded(index: usize, bounds: [Vec3; 2], pose: Mat4) -> Bounded {
     let [min, max] = posed_bounds(bounds, pose);
-    Primitive {
+    Primitive::new(
         min,
         max,
-        leaf: InstanceLeaf {
+        InstanceLeaf {
             index: index as u32,
         },
-    }
+    )
 }
 
 /// One instance BVH: its range of the source and its root, zero when it
