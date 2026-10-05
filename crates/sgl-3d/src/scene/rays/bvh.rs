@@ -55,7 +55,7 @@ pub(super) enum Split {
     /// costs blocks of four, and bins 16 where Embree bins 32
     /// (`builders/bvh_builder_sah.h` 10); together they cost 5% more of its
     /// dynamic GI rays' GPU time, and 32 bins alone a third more build time
-    /// for no fewer visits. PBRT 4e's leaf rule, which splits four or fewer
+    /// for 2% fewer visits. PBRT 4e's leaf rule, which splits four or fewer
     /// where that costs less, traced as fast but took a quarter more memory
     /// and a fifth more visits in a forest's worst ray. Primitives whose
     /// centroids coincide, and nodes at `MOST_SAH_DEPTH` and deeper, split
