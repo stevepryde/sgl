@@ -1037,11 +1037,14 @@ code; it does not redeclare a struct, binding or function another module owns.
   surface's light. Not taken: Godot's `GeometryInstance3D.gi_mode`, Unity's
   Contribute GI and Unreal's Affect Dynamic Indirect Lighting, which take
   the whole object out of GI, occluder and bounce surface too, and would let
-  the probes' rays through a lamp to what lies behind it; Wicked's DDGI
-  gathers every hit's emission (df44c3d `ddgi_raytraceCS.hlsl` 502, under
-  an inclusion mask of 0xFF) and Bevy Solari's emissive meshes are its
-  lights, so neither has a control. It is the material's content (S3D-6),
-  as a light's `specular`
+  the probes' rays through a lamp to what lies behind it; the per-light GI
+  scales (Godot's `Light3D.light_indirect_energy`, Unity's
+  `Light.bounceIntensity`, Unreal's Indirect Lighting Intensity), which
+  remove the light's own bounce, the share the probes should keep, and
+  leave the emitter's duplicate. Wicked's DDGI gathers every hit's emission
+  (df44c3d `ddgi_raytraceCS.hlsl` 502, under an inclusion mask of 0xFF)
+  and Bevy Solari's emissive meshes are its lights, so neither has a
+  control. It is the material's content (S3D-6), as a light's `specular`
   pairs with a fixture reflected as an emitter, and `shade_ray_hit` applies
   it for the probe-hit receiver alone, so the portable and hardware paths
   share it and world-space reflection hits and probe captures show the

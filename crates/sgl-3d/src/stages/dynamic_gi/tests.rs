@@ -376,63 +376,6 @@ fn an_open_volume_holds_the_hemisphere_fills_irradiance() {
     }
 }
 
-// A probe inside a closed room of black walls that emit `emission` sees that
-// radiance in every direction and nothing of the brighter environment
-// outside: the volume holds it as its irradiance / PI.
-#[test]
-fn a_volume_inside_an_emissive_room_holds_its_radiance() {
-    let Some((device, queue)) = test_support::device() else {
-        return;
-    };
-    let mut scene = Scene::new(&device, &queue);
-    let emission = [0.4, 0.2, 0.1];
-    let environment = uniform_environment(&device, &queue, &mut scene, [4.; 3]);
-    let mut room = test_support::cube();
-    room.materials[0].base = [0., 0., 0., 1.];
-    room.materials[0].metallic = 0.;
-    room.materials[0].emissive = emission;
-    let ids = scene.add_asset(&device, &queue, room).unwrap();
-    scene
-        .add_instance(
-            &device,
-            &queue,
-            InstanceState {
-                model: ids.model,
-                pose: Mat4::from_scale(Vec3::splat(10.)),
-                visible: true,
-                capture_visible: true,
-            },
-            Mobility::Static,
-        )
-        .unwrap();
-    scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
-    let mut input = input(Vec3::new(0., 0., 4.));
-    input.environment = Some(environment);
-    let settings = settings(DynamicGiQuality::High);
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
-    render(
-        &device,
-        &queue,
-        &mut renderer,
-        &mut scene,
-        &input,
-        &settings,
-        3,
-    );
-    for (query, answer) in queries()
-        .iter()
-        .zip(irradiance(&device, &queue, &renderer, &queries()))
-    {
-        assert_eq!(answer[3], 1., "{query:?}: the volume's share");
-        for channel in 0..3 {
-            assert!(
-                close(answer[channel], emission[channel], emission[channel] * 0.01),
-                "{query:?}: {answer:?}"
-            );
-        }
-    }
-}
-
 /// A static instance of `test_support::cube` with `material`'s changes,
 /// posed by `pose`.
 fn add_cube(

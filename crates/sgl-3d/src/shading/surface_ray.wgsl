@@ -229,15 +229,16 @@ fn shade_ray_hit(hit:SceneHit,outgoing:vec3<f32>,receiver:u32,random:vec3<f32>)-
  let material=scene_material(hit.material_word);
  let probe_hit=receiver==SHADOW_RECEIVER_PROBE_HIT;
  let own_light=!probe_hit || (material.values.flags&MATERIAL_EMITS_INTO_GI)!=0u;
+ let unlit=(material.values.flags&MATERIAL_UNLIT)!=0u;
+ if unlit && !own_light {
+  return vec3(0.);
+ }
  let base=ray_base_color(hit,material);
  var emission=vec3(0.);
  if own_light {
   emission=ray_emission(hit,material);
  }
- if (material.values.flags&MATERIAL_UNLIT)!=0u {
-  if !own_light {
-   return vec3(0.);
-  }
+ if unlit {
   return shade_unlit(unlit_surface(base,emission)).color;
  }
  let context=ShadeContext(vec2(0.),receiver,!probe_hit,cluster_range(hit.position,vec2(0.)),untraced_reflection());
