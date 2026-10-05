@@ -309,8 +309,9 @@ fn layers_move_smoothly_across_the_hours() {
 
 // Plausible defects: layers accepted on a material whose normal map is
 // missing or does not repeat, so they scroll nothing or smear its edge, or
-// with values that reach the shaders as NaN or a collapsed map; a refused
-// edit applied anyway. The oracles are the documented conditions and the
+// with values that reach the shaders as NaN, a collapsed map or a speed whose
+// repeats per hour `f32` cannot hold, so the hour's end jumps; a refused edit
+// applied anyway. The oracles are the documented conditions and the
 // refusal's contract: nothing changes.
 #[test]
 fn invalid_normal_layers_are_refused() {
@@ -350,6 +351,16 @@ fn invalid_normal_layers_are_refused() {
         },
         NormalLayer {
             strength: f32::NAN,
+            ..NormalLayer::default()
+        },
+        // 5000 repeats a second: 18 million an hour, past 2^24.
+        NormalLayer {
+            velocity: [0., 5000.],
+            ..NormalLayer::default()
+        },
+        NormalLayer {
+            velocity: [f32::MAX, 0.],
+            scale: 2.,
             ..NormalLayer::default()
         },
     ] {

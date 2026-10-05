@@ -32,9 +32,11 @@ pub enum AlphaMode {
 pub struct NormalLayer {
     /// The direction and speed the layer moves across the surface, in the
     /// material's UV units per second along U and V. SGL3D rounds it to a
-    /// whole number of the layer's repeats per hour (a change of at most
-    /// 1/7200 of a repeat per second), so the layer is where it was an hour
-    /// earlier and long sessions keep their precision.
+    /// whole number of repeats of the layer's map per hour, so the layer is
+    /// where it was an hour earlier and long sessions keep their precision:
+    /// in steps of 1/(3600 × `scale`) UV units per second, at most half a
+    /// step off, and a layer slower than 1/7200 of a repeat per second
+    /// stands still. At most 2^24 repeats per hour (about 4660 a second).
     pub velocity: [f32; 2],
     /// How many times the normal map repeats per unit of the material's UVs;
     /// positive.

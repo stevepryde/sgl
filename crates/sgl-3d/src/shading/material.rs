@@ -63,13 +63,24 @@ pub(crate) struct NormalLayerUniform {
     pub strength: f32,
 }
 
+/// The most whole repeats per period a layer may move along an axis: `f32`,
+/// in which the record holds them, holds every whole number up to it, so
+/// the period's end lands where it began.
+pub(crate) const MAX_LAYER_CYCLES: f64 = 16_777_216.;
+
+/// The whole repeats of its map `layer` moves along U and V each animation
+/// period (`NormalLayerUniform::cycles`), before they are checked against
+/// `MAX_LAYER_CYCLES`.
+pub(crate) fn layer_cycles(layer: &NormalLayer) -> [f64; 2] {
+    layer.velocity.map(|velocity| {
+        (f64::from(velocity) * f64::from(layer.scale) * ANIMATION_PERIOD_SECONDS).round()
+    })
+}
+
 impl NormalLayerUniform {
     fn new(layer: &NormalLayer) -> Self {
-        let cycles = |velocity: f32| {
-            (f64::from(velocity) * f64::from(layer.scale) * ANIMATION_PERIOD_SECONDS).round() as f32
-        };
         Self {
-            cycles: layer.velocity.map(cycles),
+            cycles: layer_cycles(layer).map(|cycles| cycles as f32),
             scale: layer.scale,
             strength: layer.strength,
         }

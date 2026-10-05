@@ -9,7 +9,9 @@ use crate::asset::{self, Image, Material as AuthoredMaterial};
 use crate::content::identity::MaterialId;
 use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 use crate::shading::bind::group2;
-use crate::shading::material::{MATERIAL_NORMAL_MAP, MaterialMaps, MaterialUniform};
+use crate::shading::material::{
+    MATERIAL_NORMAL_MAP, MAX_LAYER_CYCLES, MaterialMaps, MaterialUniform, layer_cycles,
+};
 use gltf::texture::WrappingMode;
 use std::ops::Range;
 
@@ -104,7 +106,8 @@ fn validate_alpha(values: &SurfaceMaterial) -> Result<(), SceneError> {
 
 /// Normal layers `values` may take on a material added with `maps` and
 /// `wrap`: they scroll its normal map, which must be there and repeat on both
-/// axes, at finite velocities and strengths and positive finite scales.
+/// axes, at finite velocities and strengths, positive finite scales, and
+/// speeds whose whole repeats per period the record holds exactly.
 fn validate_normal_layers(
     values: &SurfaceMaterial,
     maps: MaterialMaps,
@@ -118,6 +121,9 @@ fn validate_normal_layers(
             && layer.scale.is_finite()
             && layer.scale > 0.
             && layer.strength.is_finite()
+            && layer_cycles(layer)
+                .iter()
+                .all(|cycles| cycles.abs() <= MAX_LAYER_CYCLES)
     };
     if maps.0 & MATERIAL_NORMAL_MAP != 0
         && wrap == [WrappingMode::Repeat; 2]

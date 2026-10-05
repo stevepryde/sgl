@@ -53,8 +53,9 @@ pub enum SceneError {
     /// A masked material's alpha cutoff is not finite and nonnegative.
     InvalidAlphaCutoff,
     /// A material's normal layers have a velocity, scale or strength that is
-    /// not finite or a scale that is not positive, or the material has no
-    /// normal map that repeats on both axes for them to scroll.
+    /// not finite, a scale that is not positive or a speed beyond 2^24
+    /// repeats of the map per hour, or the material has no normal map that
+    /// repeats on both axes for them to scroll.
     InvalidNormalLayers,
     /// A level of detail's error is not finite and nonnegative.
     InvalidLod,
@@ -154,7 +155,7 @@ impl std::fmt::Display for SceneError {
             }
             Self::InvalidAlphaCutoff => "an alpha cutoff must be finite and nonnegative",
             Self::InvalidNormalLayers => {
-                "normal layers need finite velocities and strengths, positive finite scales and a normal map that repeats on both axes"
+                "normal layers need finite velocities and strengths, positive finite scales, at most 2^24 repeats per hour and a normal map that repeats on both axes"
             }
             Self::InvalidLod => "LOD error must be finite and nonnegative",
             Self::LodInSameModel => "a level of detail must be a mesh of another model",

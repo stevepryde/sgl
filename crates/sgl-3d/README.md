@@ -947,20 +947,25 @@ twice or more.
   G-buffer, the receiver pass, blended surfaces, probe captures and
   world-space ray hits) sees one surface. SGL3D reduces it modulo an hour on
   the CPU and rounds each layer's speed to whole repeats of its map per hour
-  (at most 1/7200 of a repeat per second off), so the waves keep their
-  precision however long a session runs and nothing jumps when the hour
-  turns.
+  (steps of 1/(3600 × `scale`) UV units per second, so at most 1/7200 of a
+  repeat per second off, and a layer slower than that stands still), so the
+  waves keep their precision however long a session runs and nothing jumps
+  when the hour turns.
 - **Requirements.** A normal map that repeats on both axes, finite
-  velocities and strengths, and positive finite scales; otherwise
-  `add_materials`, `add_asset` and `set_material` refuse the material with
-  `SceneError::InvalidNormalLayers`. `set_material` changes the layers like
-  any value; the glTF loader leaves them `None`.
+  velocities and strengths, positive finite scales, and at most 2^24
+  repeats of the map per hour (about 4660 a second) along each axis;
+  otherwise `add_materials`, `add_asset` and `set_material` refuse the
+  material with `SceneError::InvalidNormalLayers`. `set_material` changes
+  the layers like any value; the glTF loader leaves them `None`.
 - **Cost.** Two normal map samples in place of one in each pass that
   evaluates the material. Moving layers are no scene edit: a static instance
   can hold the material, and its shadow layers stay valid.
 - **History.** The layers change shading, not geometry: they write no
-  motion, and TAA, FSR2 and the reflection methods' accumulation reject what
-  they change by their colour clamps, as for any change of shading.
+  motion. TAA and the reflection methods' accumulation reject what they
+  change by their colour clamps, as for any change of shading. FSR2 takes a
+  blended surface's changing shading, a receiver's included, from the
+  reactive and transparency-and-composition masks blended surfaces write;
+  an opaque material's layers write no mask.
 
 The [water example](examples/water.rs) scrolls a procedural wave map.
 
@@ -1044,10 +1049,10 @@ static instance, and many water chunks cost nothing per frame beyond their
 pixels. A mesh replaced every frame belongs on a moving instance, so that
 the replacement is no static edit; `Scene::set_model` rebuilds that model's
 buffers, ray source and BVH each call. A deforming model animated with
-`set_instance_deformation` is not seen by rays. The renderer allocates the surface's targets (a depth and an RGBA16F
-layer, 12 bytes per render pixel) in the first frame whose scene holds a
-receiver and keeps them from then on; a renderer that has never rendered a
-receiver pays nothing. The [water example](examples/water.rs) is a lake that
+`set_instance_deformation` is not seen by rays. The renderer allocates the
+surface's targets (a depth and an RGBA16F layer, 12 bytes per render pixel)
+in the first frame whose scene holds a receiver and keeps them from then
+on; a renderer that has never rendered a receiver pays nothing. The [water example](examples/water.rs) is a lake that
 receives reflections, its waves from its material's normal layers; it prints
 the GPU time of the passes receivers touch before and after its lake is
 marked, and with its waves instead replaced every frame by `set_model`

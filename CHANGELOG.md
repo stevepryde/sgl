@@ -27,9 +27,12 @@ full API details.
   uploaded per frame, seen alike by the G-buffer, the receiver pass, blended
   surfaces, probe captures and world-space ray hits. Speeds are rounded to
   whole repeats of the map per hour (at most 1/7200 of a repeat per second
-  off). A material with layers needs a normal map that repeats on both
-  axes, finite velocities and strengths and positive finite scales;
-  `add_materials`, `add_asset` and `set_material` refuse others.
+  off; a layer slower than that stands still). A material with layers needs
+  a normal map that repeats on both axes, finite velocities and strengths,
+  positive finite scales and at most 2^24 repeats of the map per hour;
+  `add_materials`, `add_asset` and `set_material` refuse others. FSR2 takes
+  a blended surface's moving layers from the masks blended surfaces write;
+  an opaque material's layers write none.
   `FrameInput::elapsed_seconds` is now `f64` (was `f32`): SGL3D reduces it
   modulo an hour on the CPU, so the layers keep their precision however long
   a session runs. The mist drifts as before. The `water` example's lake is
