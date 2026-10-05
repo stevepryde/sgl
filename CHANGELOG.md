@@ -15,6 +15,18 @@ full API details.
 
 ## Unreleased
 
+### Bloom accepts a scene far wider than it is high
+
+- **Scope:** `sgl-3d`. Bloom scales the scene into a mip chain 512 texels
+  high, as Bevy does. For a scene more than 32 times as wide as it is high
+  on a device whose largest texture is 16,384 texels (16 times at 8,192),
+  such as a window dragged to one pixel tall, that chain was wider than the
+  device allows, and creating or resizing the renderer panicked in wgpu.
+  Such a chain now takes the device's widest texture at the scene's aspect,
+  so 64×1 renders with default settings. Every size that rendered before
+  keeps its chain and its look.
+- **Migration:** no game-code changes.
+
 ### A coat dims the baked diffuse light beneath it
 
 - **Scope:** `sgl-3d` shading of coated materials (`clearcoat` above 0)
