@@ -50,6 +50,20 @@ full API details.
     candidate and one a section its sets can draw) always fit within the
     limits the scene already refuses content past
     (`SceneError::DeviceLimit`): no new refusal.
+  - Measured on an Apple M5 at 1920×1080 (median GPU frame time):
+    - Natively on Metal it cost:
+      - 0.2 ms on the `streaming` example's walk, where camera triangles
+        fell from 83,612 to 6,834;
+      - 0.5 ms at its headroom scale, where they fell from 308,158 to
+        170,516;
+      - 0.4 ms in the `irradiance_volume` cave.
+    - There the two-pass form and the two pyramids (0.2 ms together) cost
+      more than the culling saves, since the tile-based GPU already
+      discards hidden fragments cheaply.
+    - In Chrome it cost 0.26 ms in the walk-sized window. In the
+      headroom-sized window seen from a walker's eye it saved 0.9–1.4 ms:
+      the opaque stage's time halved.
+    - So it stays off by default.
 - **Migration:** no game-code changes. Code that builds `Settings` naming
   every field adds `occlusion_culling: false`. A saved settings file loads
   unchanged (`Settings` is `#[serde(default)]`). To opt in, set

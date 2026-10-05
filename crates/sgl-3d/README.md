@@ -982,8 +982,11 @@ depth for the next frame. Lighting then shades both sets once. Something
 hidden last frame and visible now is drawn in the same frame, so nothing
 appears late; a camera cut or a resize tests nothing early. The opaque stage
 runs as two passes while it is on (the fused pass cannot be split), so it
-pays only where a frame submits much hidden geometry.
-It needs six storage textures a shader stage, which `graphics_device::limits`
+pays only where a frame submits much hidden geometry. On an Apple M5 at
+1920×1080 it cost 0.2–0.5 ms a frame natively on Metal on the `streaming`
+and `irradiance_volume` examples' routes, though it culled up to 92% of the
+camera's triangles, and saved 0.9–1.4 ms in Chrome over a headroom-sized
+window seen from a walker's eye (#24). It needs six storage textures a shader stage, which `graphics_device::limits`
 requests from the adapter; a device with fewer culls by frustum alone, and
 `Renderer::occlusion_culling_in_effect` reports it. The directional cascades
 cull by frustum alone.
