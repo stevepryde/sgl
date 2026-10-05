@@ -186,14 +186,21 @@ fn pass_groups_report_completed_frames_in_flight() {
             added <= frame.total_ms + 1e-6 && frame.total_ms < 1000.,
             "{frame:?}"
         );
-        let [light, heavy] = [0, 1].map(|i| frame.passes[i].ms);
-        assert!(light > 0., "{frame:?}");
-        // Each group clears and stores a 1080p target, which costs the
-        // one-layer group about 1.4 ms on Apple M5 against about 5.4 ms for
-        // 400 layers; misattributed timestamps put heavy at or below light.
-        assert!(
-            heavy > 2. * light,
-            "400 blended layers versus one: {frame:?}"
-        );
+        assert!(frame.passes[0].ms > 0., "{frame:?}");
     }
+    // Each group clears and stores a 1080p target, which costs the one-layer
+    // group about 1.4 ms on Apple M5 against about 5.4 ms for 400 layers;
+    // misattributed timestamps put heavy at or below light in every frame.
+    // Other processes' GPU work only adds to a frame's spans, so each
+    // group's fastest frame is its own cost.
+    let [light, heavy] = [0, 1].map(|i| {
+        completed
+            .iter()
+            .map(|frame| frame.passes[i].ms)
+            .fold(f64::INFINITY, f64::min)
+    });
+    assert!(
+        heavy > 2. * light,
+        "400 blended layers versus one: fastest {heavy} ms versus {light} ms"
+    );
 }
