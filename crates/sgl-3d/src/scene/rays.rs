@@ -119,6 +119,23 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> PreparedRayModel {
     }
 }
 
+/// Names each mesh's material record in the mesh records `records` holds,
+/// one material word per record, and adds `base` to the words where each
+/// record's vertices and indices start.
+fn rebase_records(records: &mut [u32], base: u32, materials: &[u32]) {
+    let records: &mut [MeshRecord] = bytemuck::cast_slice_mut(records);
+    assert_eq!(
+        records.len(),
+        materials.len(),
+        "a material word for each mesh"
+    );
+    for (record, &material_word) in records.iter_mut().zip(materials) {
+        record.vertices += base;
+        record.indices += base;
+        record.material_word = material_word;
+    }
+}
+
 impl PreparedRayModel {
     /// Its words, which the scene writes where `SceneRays::place_model`
     /// placed them.
@@ -366,15 +383,11 @@ impl SceneRays {
     ) -> Result<RayModelWords, SceneError> {
         let range = self.allocate(device, queue, model.words.len())?;
         let base = range.start;
-        for (index, &material_word) in materials.iter().enumerate().take(model.meshes) {
-            let at = index * MESH_WORDS;
-            let record: &mut MeshRecord = bytemuck::from_bytes_mut(bytemuck::cast_slice_mut(
-                &mut model.words[at..at + MESH_WORDS],
-            ));
-            record.vertices += base;
-            record.indices += base;
-            record.material_word = material_word;
-        }
+        rebase_records(
+            &mut model.words[..model.meshes * MESH_WORDS],
+            base,
+            materials,
+        );
         bvh::rebase(&mut model.words[model.bvh..], base);
         Ok(RayModelWords {
             ray: RayModel {
@@ -444,3 +457,58 @@ mod secondary_normal_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod instance_tests;
+
+#[cfg(test)]
+mod record_tests {
+    use super::{MESH_WORDS, MeshRecord, RayMesh, prepare_model, rebase_records};
+    use crate::asset::Vertex;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Plausible defects: a rebased mesh record that names another mesh's
+    // vertices or indices, or the block's first words, so a ray or pulled
+    // pass reads the wrong geometry (as when the base is added to the
+    // wrong field, or a record is skipped); or a material word given to
+    // the wrong mesh. The oracle is the test's own meshes: each rebased
+    // record, less the base, must start at its mesh's own vertices and
+    // indices in the prepared words, and carry its mesh's material word.
+    // CPU only.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn rebased_records_address_their_own_geometry() {
+        // Each mesh's vertices and indices differ from every other's from
+        // their first word.
+        let mesh = |count: u32, salt: f32| -> (Vec<Vertex>, Vec<u32>) {
+            let vertices = (0..count)
+                .map(|index| Vertex {
+                    position: [salt, index as f32, -salt],
+                    ..bytemuck::Zeroable::zeroed()
+                })
+                .collect();
+            let indices = (0..3 * salt as u32)
+                .map(|index| count - 1 - index % count)
+                .collect();
+            (vertices, indices)
+        };
+        let meshes = [mesh(3, 1.), mesh(5, 2.), mesh(4, 3.)];
+        let rays: Vec<_> = meshes
+            .iter()
+            .map(|(vertices, indices)| RayMesh { vertices, indices })
+            .collect();
+        let mut prepared = prepare_model(&rays);
+        let (base, materials) = (70_000, [11, 22, 33]);
+        rebase_records(
+            &mut prepared.words[..meshes.len() * MESH_WORDS],
+            base,
+            &materials,
+        );
+        let records: &[MeshRecord] =
+            bytemuck::cast_slice(&prepared.words[..meshes.len() * MESH_WORDS]);
+        for (((vertices, indices), record), material) in meshes.iter().zip(records).zip(materials) {
+            let at = (record.vertices - base) as usize;
+            let own: &[u32] = bytemuck::cast_slice(vertices);
+            assert_eq!(&prepared.words[at..at + own.len()], own);
+            let at = (record.indices - base) as usize;
+            assert_eq!(&prepared.words[at..at + indices.len()], &indices[..]);
+            assert_eq!(record.material_word, material);
+        }
+    }
+}

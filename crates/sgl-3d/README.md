@@ -1864,8 +1864,9 @@ the tone-target capture), `Renderer::diagnostic_target`,
 `diagnostics::source_id`, the value the source-identity target holds for an
 instance's pixels, `diagnostics::crystal_roughness_threshold`, where
 Crystal stops tracing, `diagnostics::counters` (what `sgl-3d` itself counted on
-the thread: uploads by file and line, buffers created, model and
-instance BVH build steps, ray-source and geometry-slab growths and static-edit boxes; subtract
+the thread: uploads by file and line, buffers created, the steps of
+preparing and placing models and of building instance BVHs, ray-source and
+geometry-slab growths and static-edit boxes; subtract
 two with `Counters::since`, and compare versions by totals since lines move),
 `Scene::diagnostic_resources` (the scene's buffer sizes) and
 `Renderer::diagnostic_draws` (the last frame's camera, blended and cascade

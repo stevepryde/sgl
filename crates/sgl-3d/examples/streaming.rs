@@ -547,7 +547,9 @@ impl Mesher<'_> {
 
     /// Prepares `jobs` on the game's worker threads and returns them in
     /// order, with what the library counted on the workers: counters are
-    /// each thread's own.
+    /// each thread's own. A game keeps a worker pool and takes what it
+    /// prepared on a later frame; the example waits within the frame so
+    /// each frame's figures hold its own preparation.
     fn prepare_all(
         &self,
         jobs: &[(IVec3, [bool; 2])],
@@ -1180,10 +1182,20 @@ impl Game {
         if !self.resident.contains_key(&chunk) {
             return;
         }
-        if terrain {
+        // A chunk asked for twice in a frame is meshed and prepared once.
+        let at = match self.remeshes.iter().position(|(asked, _)| *asked == chunk) {
+            Some(at) => at,
+            None => {
+                self.remeshes.push((chunk, [false; 2]));
+                self.remeshes.len() - 1
+            }
+        };
+        let parts = &mut self.remeshes[at].1;
+        if terrain && !parts[0] {
             *self.world.revisions.entry(chunk).or_default() += 1;
         }
-        self.remeshes.push((chunk, [terrain, water]));
+        parts[0] |= terrain;
+        parts[1] |= water;
     }
 
     /// Meshes and prepares the frame's remeshes on the workers, then gives

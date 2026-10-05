@@ -32,7 +32,11 @@ full API details.
   them to the queue: in the streaming example a chunk's `set_model` on the
   thread that edits the scene takes about a third of what it did. A failed
   operation places nothing and consumes the prepared model. `add_asset` is
-  unchanged and prepares inside. With the `diagnostics` feature,
+  unchanged and prepares inside. A deforming model's rigid meshes now count
+  toward the deform stage's dispatch limit too (`SceneError::DeviceLimit`
+  past about 4.19 million vertices in one mesh on a typical device), since
+  the stage deforms every mesh of a deforming model. With the
+  `diagnostics` feature,
   `BuildStep` loses `RayWrite` and `MeshBuffers` and gains `Pack`, `Place`
   and `Write`; counters are each thread's own, so preparation's steps are
   counted on the thread that prepares.
