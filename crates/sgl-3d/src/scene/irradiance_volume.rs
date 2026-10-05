@@ -91,13 +91,31 @@ fn texture(device: &wgpu::Device, queue: &wgpu::Queue, cells: [u32; 3]) -> wgpu:
 /// texture holds them, without a device, on whichever thread the game
 /// chooses, so a relight's packing stays off the thread that renders. The
 /// write then only copies it to the queue.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PreparedIrradianceRegion {
     corner: Vec3,
     cells: [u32; 3],
     /// Each face's cells in turn, in the cube's face order, x fastest, then
     /// y, then z: RGBA16F texels.
     texels: Vec<u16>,
+}
+
+// Relight packing runs on the game's worker threads.
+const _: () = {
+    const fn send<T: Send>() {}
+    send::<PreparedIrradianceRegion>();
+};
+
+impl std::fmt::Debug for PreparedIrradianceRegion {
+    /// Its box and how many texels it holds, not the texels: a relight
+    /// holds millions.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedIrradianceRegion")
+            .field("corner", &self.corner)
+            .field("cells", &self.cells)
+            .field("texels", &(self.texels.len() / 4))
+            .finish()
+    }
 }
 
 impl PreparedIrradianceRegion {

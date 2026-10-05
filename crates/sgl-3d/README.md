@@ -1457,7 +1457,10 @@ scene.write_irradiance_cells(&queue, &region)?;
 - **Which surfaces.** Lightmap and irradiance atlas charts keep their bake.
   Within the volume it covers the dynamic GI volume and ambient cubes, its
   share fading over the one cell past each face to what follows it: leave a
-  region uncovered to light it from the dynamic GI volume or cubes. Ambient
+  region uncovered to light it from the dynamic GI volume or cubes. A face
+  lying exactly on the volume's boundary and facing out samples half a cell
+  past it and takes half the volume's share, so let the volume reach a cell
+  past what it should light whole. Ambient
   occlusion occludes it as it does the ambient, and
   `FrameInput::baked_lighting` turns it off with the charts and cubes. Its
   own light is not a scene light: a fixture written into the field is not
