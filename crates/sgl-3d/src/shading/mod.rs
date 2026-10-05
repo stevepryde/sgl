@@ -18,10 +18,15 @@ pub(crate) mod gbuffer;
 pub(crate) mod layout_tests;
 pub(crate) mod lights;
 pub(crate) mod material;
+// Wired into the ray source and its readers with #135's prepared models.
+pub(crate) mod packed_vertex;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod packed_vertex_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rect_light_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod shadow_normal_tests;
+pub(crate) mod srgb;
 pub(crate) mod uniforms;
 pub(crate) mod vertex;
 
@@ -129,6 +134,19 @@ pub(crate) static PBR: Module = Module {
     name: "pbr",
     source: include_str!("pbr.wgsl"),
     deps: &[],
+};
+/// sRGB decoding (`shading::srgb`).
+pub(crate) static SRGB: Module = Module {
+    name: "srgb",
+    source: include_str!("srgb.wgsl"),
+    deps: &[],
+};
+/// The scene's packed vertex: its words and their decoding
+/// (`shading::packed_vertex`).
+pub(crate) static PACKED_VERTEX: Module = Module {
+    name: "packed_vertex",
+    source: include_str!("packed_vertex.wgsl"),
+    deps: &[&SRGB],
 };
 pub(crate) static ANISOTROPY: Module = Module {
     name: "anisotropy",
@@ -348,7 +366,14 @@ pub(crate) static BC7: Module = Module {
 pub(crate) static SCENE_RAYS: Module = Module {
     name: "scene_rays",
     source: include_str!("scene_rays.wgsl"),
-    deps: &[&MATERIAL, &SCENE_SOURCE, &BIND_SCENE, &BC7],
+    deps: &[
+        &MATERIAL,
+        &SCENE_SOURCE,
+        &SRGB,
+        &PACKED_VERTEX,
+        &BIND_SCENE,
+        &BC7,
+    ],
 };
 /// A scene vertex pulled from the scene source, as an instance shows it:
 /// deformed when it deforms. Reads `object`.

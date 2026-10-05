@@ -15,11 +15,17 @@ struct PulledSceneVertex {
 fn scene_source_vertex(object:u32,mesh:u32,index:u32)->PulledSceneVertex {
  let index_word=scene_source[mesh+SCENE_MESH_INDICES];
  let vertex_index=scene_source[index_word+index];
- let vertex=scene_source[mesh+SCENE_MESH_VERTICES]+vertex_index*SCENE_VERTEX_WORDS;
- let position=scene_v3(vertex+SCENE_VERTEX_POSITION);
- var pulled=PulledSceneVertex(position,position,scene_v3(vertex+SCENE_VERTEX_NORMAL),scene_v2(vertex+SCENE_VERTEX_UV),scene_v4(vertex+SCENE_VERTEX_COLOR),
-  vec2(object+1u,index_word+(index/3u)*3u),scene_v2(vertex+SCENE_VERTEX_LIGHTMAP_UV),scene_v4(vertex+SCENE_VERTEX_LIGHTMAP_BOUNDS),scene_v4(vertex+SCENE_VERTEX_TANGENT));
- if deformed_vertices {
+ let vertex=scene_vertex_word(mesh,vertex_index);
+ let position=scene_vertex_position(vertex);
+ var pulled=PulledSceneVertex(position,position,vec3(0.),scene_vertex_uv(vertex,scene_mesh_uv_rect(mesh)),scene_vertex_color(vertex),
+  vec2(object+1u,index_word+(index/3u)*3u),scene_vertex_lightmap_uv(vertex),scene_vertex_lightmap_bounds(mesh,vertex),vec4(0.));
+ // A deforming instance's frame is its deformed one, so its rest frame is
+ // decoded only for rigid ones.
+ if !deformed_vertices {
+  let frame=scene_vertex_frame(vertex);
+  pulled.normal=frame.normal;
+  pulled.tangent=frame.tangent;
+ } else {
   let deformed=scene_source[mesh+SCENE_MESH_FIRST_VERTEX]+vertex_index;
   pulled.position=scene_v3(objects[object].deformed_positions+deformed*DEFORMED_POSITION_WORDS);
   pulled.previous_position=scene_v3(objects[object].previous_positions+deformed*DEFORMED_POSITION_WORDS);

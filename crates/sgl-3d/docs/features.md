@@ -51,6 +51,10 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   A model arrives as a `PreparedModel`, built from its meshes with
   `PreparedModel::new` on any thread, so geometry made at run time is
   prepared on the game's workers and the scene only places and copies it.
+  Each vertex packs into 32 bytes: exact positions, normals and tangents
+  within 0.01°, 16-bit UVs across each mesh's UV rectangle, vertex colours
+  as 8-bit sRGB clamped to 0..1
+  ([limits](../README.md#asset-and-environment-limits)).
   Buffers grow as content is added; content in use cannot be removed.
   [Lifecycle](../README.md#retained-scene-and-frame-lifecycle).
 - **Instances**: model placements (`InstanceState`; `InstanceState::new(model)`

@@ -2,17 +2,17 @@
 //! compares with `scene_source.wgsl` and `scene_rays.wgsl`.
 use super::instances::{InstanceEntry, InstanceLeaf};
 use super::{
-    IMAGE_BC7, IMAGE_RGBA8, ImageHeader, MaterialRecord, MaterialTextures, MeshRecord,
+    Chart, IMAGE_BC7, IMAGE_RGBA8, ImageHeader, MaterialRecord, MaterialTextures, MeshRecord,
     SourceHeader, bvh,
 };
 use crate::shading::material::{MaterialUniform, NormalLayerUniform};
 
 /// The WGSL twins of the source's record layouts, in words: `SourceHeader`,
-/// `ImageHeader` and its formats, `asset::Vertex` (which the source holds
-/// verbatim), `MeshRecord`, `MaterialRecord` with its normal layers, the
-/// BVH's node and leaf primitive and an instance BVH's leaf.
+/// `ImageHeader` and its formats, `MeshRecord` and a chart table entry,
+/// `MaterialRecord` with its normal layers, the BVH's node and leaf
+/// primitive and an instance BVH's leaf. The packed vertex's are
+/// `shading::packed_vertex`'s.
 pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
-    use crate::asset::Vertex;
     use std::mem::{offset_of, size_of};
     let material = |field: usize| offset_of!(MaterialRecord, material) + field;
     let source = [
@@ -32,17 +32,6 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         ("SCENE_IMAGE_HEIGHT", offset_of!(ImageHeader, height)),
         ("SCENE_IMAGE_FORMAT", offset_of!(ImageHeader, format)),
         ("SCENE_IMAGE_TEXELS", size_of::<ImageHeader>()),
-        ("SCENE_VERTEX_WORDS", size_of::<Vertex>()),
-        ("SCENE_VERTEX_POSITION", offset_of!(Vertex, position)),
-        ("SCENE_VERTEX_NORMAL", offset_of!(Vertex, normal)),
-        ("SCENE_VERTEX_UV", offset_of!(Vertex, uv)),
-        ("SCENE_VERTEX_COLOR", offset_of!(Vertex, color)),
-        ("SCENE_VERTEX_LIGHTMAP_UV", offset_of!(Vertex, lightmap_uv)),
-        (
-            "SCENE_VERTEX_LIGHTMAP_BOUNDS",
-            offset_of!(Vertex, lightmap_bounds),
-        ),
-        ("SCENE_VERTEX_TANGENT", offset_of!(Vertex, tangent)),
         ("SCENE_MESH_WORDS", size_of::<MeshRecord>()),
         ("SCENE_MESH_VERTICES", offset_of!(MeshRecord, vertices)),
         ("SCENE_MESH_INDICES", offset_of!(MeshRecord, indices)),
@@ -54,6 +43,9 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MESH_FIRST_VERTEX",
             offset_of!(MeshRecord, first_vertex),
         ),
+        ("SCENE_MESH_CHARTS", offset_of!(MeshRecord, charts)),
+        ("SCENE_MESH_UV_RECT", offset_of!(MeshRecord, uv_rect)),
+        ("SCENE_CHART_WORDS", size_of::<Chart>()),
         (
             "SCENE_MATERIAL_BASE",
             material(offset_of!(MaterialUniform, base)),

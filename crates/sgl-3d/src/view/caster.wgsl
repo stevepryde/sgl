@@ -47,11 +47,11 @@ struct MaskedCaster {
  @location(2) unclipped_depth:f32,
 }
 fn masked_caster(position:vec3<f32>,drawn:DrawInstance,index:u32)->MaskedCaster {
- let vertex=scene_source[drawn.mesh+SCENE_MESH_VERTICES]+(index-drawn.first_vertex)*SCENE_VERTEX_WORDS;
+ let vertex=scene_vertex_word(drawn.mesh,index-drawn.first_vertex);
  var out:MaskedCaster;
  out.position=view.view_projection*objects[drawn.object].model*vec4(position,1.);
- out.uv=scene_v2(vertex+SCENE_VERTEX_UV);
- out.color=scene_v4(vertex+SCENE_VERTEX_COLOR);
+ out.uv=scene_vertex_uv(vertex,scene_mesh_uv_rect(drawn.mesh));
+ out.color=scene_vertex_color(vertex);
  out.unclipped_depth=out.position.z;
  return out;
 }

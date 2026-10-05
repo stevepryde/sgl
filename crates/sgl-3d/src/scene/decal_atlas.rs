@@ -155,7 +155,7 @@ impl DecalAtlas {
                 for channel in 0..4 {
                     let value = f32::from(texel[channel]) / 255.;
                     level[at + channel] = if color && channel < 3 {
-                        srgb_to_linear(value)
+                        crate::shading::srgb::to_linear(value)
                     } else {
                         value
                     };
@@ -250,15 +250,6 @@ fn place(items: &mut [Item]) -> [u32; 2] {
         base_size * BORDER,
         (atlas_height * BORDER).next_power_of_two(),
     ]
-}
-
-/// The sRGB transfer function's inverse.
-fn srgb_to_linear(value: f32) -> f32 {
-    if value <= 0.04045 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 /// An RGBA16F texture of `size` with mips `levels`, each RGBA in [0, 1].

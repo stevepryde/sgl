@@ -25,26 +25,33 @@ use super::material::{AlphaMode, NormalLayer};
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 /// Interleaved vertex input used by the renderer, in the asset's coordinate system.
+/// The scene packs each into 32 bytes when its model is prepared
+/// (`PreparedModel::new`; the README's asset limits give the precision).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
-    /// Position after authored node transforms have been applied.
+    /// Position after authored node transforms have been applied, kept exact.
     pub position: [f32; 3],
     /// Unit surface normal, transformed by the inverse transpose of the node matrix.
+    /// Finite and not zero, or the mesh is refused; kept within 0.01°.
     pub normal: [f32; 3],
-    /// First texture coordinate set (`TEXCOORD_0`).
+    /// First texture coordinate set (`TEXCOORD_0`), kept as 16-bit fractions
+    /// of the rectangle its mesh's UVs span.
     pub uv: [f32; 2],
-    /// Linear vertex color multiplier, including alpha.
+    /// Linear vertex color multiplier, including alpha. Clamped to 0..=1 and
+    /// kept as 8-bit sRGB with 8-bit linear alpha.
     pub color: [f32; 4],
     /// TEXCOORD_1: secondary normalized UV into the caller-baked static irradiance atlas.
     /// (0, 0) or a negative UV marks a surface without an atlas chart: it has no
-    /// baked lighting, so baked scene lights light it.
+    /// baked lighting, so baked scene lights light it. Kept as 16-bit fractions.
     pub lightmap_uv: [f32; 2],
     /// Normalized atlas min/max for a conservatively cropped triangle chart.
     /// Supply the same bounds on all triangle vertices; outside is black.
+    /// A model's vertices may name at most 65,536 distinct bounds.
     pub lightmap_bounds: [f32; 4],
     /// Unit tangent XYZ and bitangent handedness W after node transforms.
     /// Zero means absent for legacy isotropic geometry; anisotropy requires a valid frame.
+    /// Made perpendicular to the normal and unit, then kept within 0.01°.
     pub tangent: [f32; 4],
 }
 
@@ -178,14 +185,18 @@ pub struct Asset {
 /// handedness +1 or -1, which anisotropy requires of each mesh drawn with an
 /// anisotropic material.
 pub(crate) fn tangent_frames(vertices: &[Vertex]) -> bool {
-    vertices.iter().all(|vertex| {
-        let n = Vec3::from_array(vertex.normal);
-        let t = Vec3::from_slice(&vertex.tangent[..3]);
-        n.try_normalize().is_some()
-            && t.try_normalize().is_some()
-            && n.cross(t).try_normalize().is_some()
-            && matches!(vertex.tangent[3], -1.0 | 1.0)
-    })
+    vertices.iter().all(tangent_frame)
+}
+
+/// Whether `vertex` carries a finite, nonzero authored tangent frame: a
+/// tangent that keeps a length off its normal, with handedness +1 or -1.
+pub(crate) fn tangent_frame(vertex: &Vertex) -> bool {
+    let n = Vec3::from_array(vertex.normal);
+    let t = Vec3::from_slice(&vertex.tangent[..3]);
+    n.try_normalize().is_some()
+        && t.try_normalize().is_some()
+        && n.cross(t).try_normalize().is_some()
+        && matches!(vertex.tangent[3], -1.0 | 1.0)
 }
 
 pub(crate) fn valid_anisotropy(strength: f32, rotation: f32) -> bool {

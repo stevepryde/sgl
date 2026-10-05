@@ -95,7 +95,7 @@ impl Fixture {
                     [min.min(p), max.max(p)]
                 },
             );
-            let mut prepared = super::prepare_model(&meshes);
+            let mut prepared = super::prepare_model(&meshes).unwrap();
             let placed = rays
                 .place_model(device, queue, &mut prepared, &material_words)
                 .unwrap();
@@ -456,8 +456,21 @@ struct TestResult { position_t:vec4<f32>, normal_front:vec4<f32>, ids:vec4<f32>,
             close(result[7][11], 0.);
             close(result[0][12], 0.5);
             close(result[0][13], 0.5);
-            close(result[0][14], 0.2);
-            close(result[0][15], 0.4);
+            // Vertex colours are packed sRGB8 (the Vertex encoding): within
+            // half an 8-bit step of their sRGB encoding (IEC 61966-2-1).
+            let srgb = |linear: f32| {
+                if linear <= 0.0031308 {
+                    12.92 * linear
+                } else {
+                    1.055 * linear.powf(1. / 2.4) - 0.055
+                }
+            };
+            for (actual, expected) in [(result[0][14], 0.2), (result[0][15], 0.4)] {
+                assert!(
+                    (srgb(actual) - srgb(expected)).abs() <= 0.5 / 255. + 1e-5,
+                    "expected colour {expected}, actual {actual}"
+                );
+            }
             for channel in &result[0][16..19] {
                 close(*channel, 0.5);
             }

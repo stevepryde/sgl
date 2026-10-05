@@ -77,9 +77,6 @@ struct PbrIblWeights {
  multi:vec3<f32>,
  diffuse:vec3<f32>
 }
-fn pbr_srgb_to_linear(value:vec3<f32>)->vec3<f32> {
- return select(pow((value+vec3(.055))/1.055,vec3(2.4)),value/12.92,value<=vec3(.04045));
-}
 fn pbr_hemisphere(n:vec3<f32>,upper:vec3<f32>,ground:vec3<f32>,intensity:f32)->vec3<f32> {
  return mix(ground,upper,n.y*.5+.5)*intensity;
 }

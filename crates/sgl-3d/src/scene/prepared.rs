@@ -40,8 +40,10 @@ pub(super) struct PreparedMesh {
     pub clusters: Option<ClusteredIndices>,
 }
 
-/// `vertices` and `indices` as a mesh: indices name vertices and positions
-/// are finite. Returns whether every vertex has an authored tangent frame.
+/// `vertices` and `indices` as a mesh: indices name vertices, positions are
+/// finite and normals finite and not zero, as a packed vertex's frame needs
+/// (`shading::packed_vertex`). Returns whether every vertex has an authored
+/// tangent frame.
 pub(super) fn validate_geometry(vertices: &[Vertex], indices: &[u32]) -> Result<bool, SceneError> {
     if indices
         .iter()
@@ -49,10 +51,13 @@ pub(super) fn validate_geometry(vertices: &[Vertex], indices: &[u32]) -> Result<
     {
         return Err(SceneError::IndexOutOfRange);
     }
-    if !vertices
-        .iter()
-        .all(|vertex| vertex.position.iter().all(|x| x.is_finite()))
-    {
+    if !vertices.iter().all(|vertex| {
+        vertex.position.iter().all(|x| x.is_finite())
+            && Vec3::from_array(vertex.normal)
+                .as_dvec3()
+                .try_normalize()
+                .is_some()
+    }) {
         return Err(SceneError::NonFiniteGeometry);
     }
     Ok(asset::tangent_frames(vertices))
@@ -82,7 +87,7 @@ impl PreparedModel {
                 indices: &mesh.indices,
             })
             .collect();
-        let rays = rays::prepare_model(&ray_meshes);
+        let rays = rays::prepare_model(&ray_meshes)?;
         let deformation = step(BuildStep::Pack, || PreparedDeformation::new(&meshes));
         let deforms = deformation.is_some();
         let bounds = meshes.iter().flat_map(|mesh| &mesh.vertices).fold(
@@ -128,5 +133,65 @@ impl PreparedModel {
             rays,
             deformation,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::identity::Identity;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    /// One mesh of triangles at `vertices`, three to a triangle.
+    fn model(vertices: Vec<Vertex>) -> Result<PreparedModel, SceneError> {
+        let indices = (0..vertices.len() as u32).collect();
+        PreparedModel::new(vec![ModelMesh {
+            material: MaterialId::issue(0, 0),
+            vertices,
+            indices,
+            deformation: Default::default(),
+        }])
+    }
+
+    fn vertex(normal: [f32; 3], lightmap_bounds: [f32; 4]) -> Vertex {
+        Vertex {
+            position: [0.; 3],
+            normal,
+            lightmap_bounds,
+            ..bytemuck::Zeroable::zeroed()
+        }
+    }
+
+    // Plausible defects: a vertex whose normal has no frame reaching the
+    // encoder, which cannot pack it; or a model past what a packed vertex's
+    // 16-bit chart index can name accepted, aliasing charts, or one at the
+    // limit refused (an off-by-one). The oracle is the Vertex encoding's
+    // contract: a zero or non-finite normal refuses the mesh as a
+    // non-finite position does, and a model may name up to 65,536 distinct
+    // chart bounds. CPU only.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn unpackable_vertices_are_refused() {
+        let unit = [0., 0., 1.];
+        assert!(model(vec![vertex(unit, [0.; 4]); 3]).is_ok());
+        for normal in [[0.; 3], [f32::NAN, 0., 1.], [f32::INFINITY, 0., 0.]] {
+            assert!(matches!(
+                model(vec![
+                    vertex(unit, [0.; 4]),
+                    vertex(normal, [0.; 4]),
+                    vertex(unit, [0.; 4])
+                ]),
+                Err(SceneError::NonFiniteGeometry)
+            ));
+        }
+        let charts = |count: usize| {
+            (0..count.div_ceil(3) * 3)
+                .map(|index| vertex(unit, [(index.min(count - 1)) as f32, 0., 1., 1.]))
+                .collect::<Vec<_>>()
+        };
+        assert!(model(charts(1 << 16)).is_ok());
+        assert!(matches!(
+            model(charts((1 << 16) + 1)),
+            Err(SceneError::TooManyLightmapCharts)
+        ));
     }
 }

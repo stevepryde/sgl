@@ -15,6 +15,42 @@ full API details.
 
 ## Unreleased
 
+### Scene vertices are packed into 32 bytes
+
+- **Scope:** `sgl-3d`. The ray source, which the pulled raster passes,
+  masked shadow casters, the deform stage and rays read every vertex from,
+  kept each `asset::Vertex` as its 88 bytes; `PreparedModel::new` now packs
+  each into 32, after Godot's attribute compression. Positions stay exact
+  `f32`. The normal and tangent are one rotation, each within 0.01°; the
+  tangent is made perpendicular to the normal and unit first, as shading
+  already made it (the deform stage now morphs that unit tangent), and a
+  mesh without authored tangents gets an arbitrary one, which nothing
+  reads. UVs are 16-bit fractions of
+  each mesh's UV rectangle, within the rectangle's extent over 131,070 per
+  axis. Vertex colours are 8-bit sRGB with linear 8-bit alpha, clamped to
+  0..1 as glTF's `COLOR_0` is (a colour above 1 or below 0 was used as
+  given). Lightmap UVs are 16-bit (within 1/131,070); a negative one is
+  unassigned, as before. Lightmap chart bounds are stored once per distinct
+  chart in a table per model. On the streaming example's walk, the ray
+  source holds 235 bytes a resident quad instead of 464 (25.8 MB instead of
+  50.8 MB of content, a 41 MB buffer instead of 82 MB), and the scene thread
+  uploads 232 KB of model words a frame instead of 449 KB. Preparing a model
+  costs its workers more: they pack each vertex.
+- **Refusals:** `PreparedModel::new` (and `add_asset` through it) refuses a
+  vertex normal that is zero or not finite with
+  `SceneError::NonFiniteGeometry`, as a non-finite position is refused, and
+  a model whose vertices name more than 65,536 distinct `lightmap_bounds`
+  with the new `SceneError::TooManyLightmapCharts`.
+- **Migration:** no game-code changes for content within those limits; a
+  `match` over every `SceneError` needs an arm for `TooManyLightmapCharts`.
+  Give every vertex a nonzero normal. Scale colour through the material's
+  base colour rather than vertex colours outside 0..1, and split a mesh whose
+  UVs span so many repeats that 1/131,070 of their extent is visible (a mesh
+  tiled 1,000 times holds its UVs to about 1/131 of a repeat). Afterwards,
+  exercise the game's vertex-coloured and masked materials, lightmapped and
+  atlas-lit surfaces, anisotropic materials, skinned and morphed models,
+  shadows and reflections on its route.
+
 ### Models are prepared before the scene takes them
 
 - **Scope:** `sgl-3d` adds `PreparedModel`. `Scene::add_model` and
