@@ -13,7 +13,8 @@
 //!
 //! Reads: the G-buffer's depth, normals, F0 and motion, the camera's lit
 //! group 0 (its frame's directional lights and the scene's lights), the
-//! scene's group 1 and TLAS, and the frame's projection.
+//! scene's group 1 and TLAS, the frame's view and the camera history's
+//! last view.
 //! Writes: its own tracing targets and history, the shadow mask and the
 //! slot table, which it lends to the opaque stage's lighting pass.
 //! Honours: the effective ray-traced shadows, on the frames whose rays
@@ -40,7 +41,6 @@ const DOWNSAMPLE: u32 = 2;
 struct Params {
     inverse_view_projection: [[f32; 4]; 4],
     view: [[f32; 4]; 4],
-    inverse_projection: [[f32; 4]; 4],
     previous_view: [[f32; 4]; 4],
     full: [f32; 4],
     reduced: [f32; 4],
@@ -338,12 +338,10 @@ impl TracedShadows {
         let [width, height] = targets.full.map(|side| side as f32);
         let [reduced_width, reduced_height] = targets.reduced.map(|side| side as f32);
         let view = &ctx.values.view;
-        // The projection as it rasterized, jitter and all, and the last
-        // submitted frame's view, this frame's after a restart.
-        let camera = history.camera;
+        // The last submitted frame's view, this frame's after a restart.
         let previous_view = history
             .previous_camera
-            .map_or(camera.view, |previous| previous.view);
+            .map_or(history.camera.view, |previous| previous.view);
         let eye = ctx.input.camera.eye;
         crate::counters::write_buffer(
             ctx.queue,
@@ -352,7 +350,6 @@ impl TracedShadows {
             bytemuck::bytes_of(&Params {
                 inverse_view_projection: view.inverse_view_projection,
                 view: view.view,
-                inverse_projection: camera.jittered_projection().inverse().to_cols_array_2d(),
                 previous_view: previous_view.to_cols_array_2d(),
                 full: [width, height, 1. / width, 1. / height],
                 reduced: [
@@ -529,7 +526,6 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
         [
             inverse_view_projection,
             view,
-            inverse_projection,
             previous_view,
             full,
             reduced,

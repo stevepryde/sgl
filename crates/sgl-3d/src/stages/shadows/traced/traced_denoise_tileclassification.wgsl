@@ -20,8 +20,9 @@
 // a slot's first frame is the stage's history restarting or the slot's
 // light changing (ShadowMaskSlots.restart), whose previous moments read as
 // zero, as Wicked clears its resources on its first frame; the history is
-// sampled bilinearly from two packed halves (pack2x16float) a lane, where
-// Wicked keeps it in R16G16 and samples it through a linear sampler; and
+// sampled bilinearly from the scratch's two packed halves a lane
+// (traced_denoise_common.wgsl), where Wicked keeps it in R16G16 and
+// samples it through a linear sampler; and
 // the moments are kept in RGBA16F, a layer a slot, where Wicked keeps
 // R11G11B10.
 @group(0) @binding(0) var denoise_depth:texture_depth_2d;
@@ -55,9 +56,6 @@ fn FFX_DNSR_Shadows_GetInvBufferDimensions()->vec2<f32> {
 }
 fn FFX_DNSR_Shadows_GetEye()->vec3<f32> {
  return traced.eye.xyz;
-}
-fn FFX_DNSR_Shadows_GetProjectionInverse()->mat4x4<f32> {
- return traced.inverse_projection;
 }
 fn FFX_DNSR_Shadows_GetViewProjectionInverse()->mat4x4<f32> {
  return traced.inverse_view_projection;
@@ -105,12 +103,10 @@ fn FFX_DNSR_Shadows_ReadPreviousMomentsBuffer(history_pos:vec2<i32>)->FFX_DNSR_S
   select(moments[2],vec4(0.),first),
  );
 }
-// The history's means at `texel`, a slot a lane, packed with their
-// variances as two halves of a word.
+// The history's means at `texel`, a slot a lane.
 fn traced_denoise_history(texel:vec2<i32>)->vec4<f32> {
  let last=vec2<i32>(FFX_DNSR_Shadows_GetBufferDimensions())-1;
- let words=textureLoad(denoise_history,clamp(texel,vec2(0),last),0);
- return vec4(unpack2x16float(words.x).x,unpack2x16float(words.y).x,unpack2x16float(words.z).x,unpack2x16float(words.w).x);
+ return traced_denoise_unpack(textureLoad(denoise_history,clamp(texel,vec2(0),last),0)).mean;
 }
 // The history's means at `history_uv`, filtered bilinearly and clamped to
 // the edge, as Wicked's sampler_linear_clamp filters it, from its four
@@ -129,12 +125,7 @@ fn FFX_DNSR_Shadows_ReadVelocity(did:vec2<u32>)->vec2<f32> {
 }
 
 fn FFX_DNSR_Shadows_WriteReprojectionResults(did:vec2<u32>,mean:vec4<f32>,variance:vec4<f32>) {
- textureStore(denoise_reprojection,did,vec4(
-  pack2x16float(vec2(mean.x,variance.x)),
-  pack2x16float(vec2(mean.y,variance.y)),
-  pack2x16float(vec2(mean.z,variance.z)),
-  pack2x16float(vec2(mean.w,variance.w)),
- ));
+ textureStore(denoise_reprojection,did,traced_denoise_pack(mean,variance));
 }
 fn FFX_DNSR_Shadows_WriteMoments(did:vec2<u32>,m:vec4<f32>,s:vec4<f32>,count:vec4<f32>) {
  let moments=transpose(mat4x4(m,s,count,vec4(0.)));
