@@ -60,6 +60,7 @@ full API details.
   37 KB instead of 11 to 88 MB. Shadows are unchanged, after abandoned
   frames as well.
 - **Migration:** no game-code changes.
+
 ### A game-authored irradiance volume, relit by region
 
 - **Scope:** `sgl-3d` adds `IrradianceVolume { origin, cell_size, cells }`,
@@ -76,7 +77,9 @@ full API details.
   prepared on any thread (`PreparedIrradianceRegion` is `Send`); a write
   queues one texture write per face and is not a static edit. Installing the
   same cell size and counts at another origin scrolls the volume by whole
-  cells, keeping the cells that stay; `Scene::move_origin` translates it.
+  cells, keeping the cells that stay, which move in place through a stripe
+  16 cells thick (kept with a stripe of zeros for each axis the volume has
+  scrolled along); `Scene::move_origin` translates it.
   Static surfaces without a lightmap or atlas chart and moving instances
   within it take `sky_visibility × ambient + irradiance` in place of the
   environment's diffuse light and the hemisphere fill, and of the dynamic GI
@@ -101,8 +104,10 @@ full API details.
   stage. To light a world from a field the game computes (a voxel world's
   sky and block light), install a volume over what the field covers and
   write it by region as the field changes, scrolling it with the camera
-  ([irradiance volume](crates/sgl-3d/README.md#irradiance-volume)); a
-  fixture written into the field is not also a baked `Light`. Afterwards,
+  ([irradiance volume](crates/sgl-3d/README.md#irradiance-volume);
+  `examples/irradiance_volume.rs` does so for a block world's cave and
+  prints what relights, scrolls and installs cost); a fixture written into
+  the field is not also a baked `Light`. Afterwards,
   look at caves and overhangs beyond the shadow cascades, a torch placed
   and removed, moving objects entering and leaving lit and dark cells, the
   sky's reflection on wet or metal surfaces in caves, the volume's border

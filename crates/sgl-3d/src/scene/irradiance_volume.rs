@@ -14,8 +14,8 @@
 //! other way about, its table and its sample this way). Changed: a texel is
 //! RGBA16F, not RGB9E5, its rgb the face's own light and its a the sky's
 //! occlusion toward the face, one less its visibility, so a zero texel is
-//! the fallback; the game writes cells by region, and a scroll copies the
-//! cells that stay.
+//! the fallback; the game writes cells by region, and a scroll moves the
+//! cells that stay in place, through a stripe.
 use super::{Scene, SceneError};
 use crate::content::irradiance_volume::{IrradianceCell, IrradianceVolume};
 use crate::static_lighting::irradiance_half;
@@ -27,6 +27,8 @@ const TEXEL_BYTES: u32 = 8;
 /// How far, in cells, a position may lie from the lattice and still name a
 /// place on it, beyond the rounding of its `f32` magnitude.
 const LATTICE_TOLERANCE: f64 = 1e-3;
+/// The cells a scroll moves at once along its axis: a voxel world's chunk.
+const STRIPE: u32 = 16;
 
 /// The texel extent of a volume of `cells`: Bevy's (Rx, 2Ry, 3Rz).
 fn texture_size(cells: [u32; 3]) -> [u64; 3] {
@@ -49,20 +51,26 @@ fn face_texel(face: usize, cell: [u32; 3], cells: [u32; 3]) -> wgpu::Origin3d {
     }
 }
 
-/// A texture for a volume of `cells`, every texel zero (the fallback).
+/// A 3D texture of `size` texels, every texel zero (the fallback).
 ///
 /// It is initialised at once, through `queue`, by a write of one zero
-/// texel, which clears the rest: wgpu-core 29 tracks a 3D texture's
+/// texel, which clears the rest, so no copy into it ever meets an
+/// uninitialised texture: wgpu-core 29 tracks a 3D texture's
 /// initialisation as one layer, which a queue write takes whole
 /// (device/queue.rs `write_texture`), but registers a command encoder's
 /// copy by its depth slices (command/transfer.rs `handle_texture_init`), so
-/// a scroll's copy at a nonzero depth into a texture not yet initialised
-/// leaves it marked uninitialised, and its next use clears what the copy
-/// wrote.
-fn texture(device: &wgpu::Device, queue: &wgpu::Queue, cells: [u32; 3]) -> wgpu::Texture {
-    let [width, height, depth] = texture_size(cells).map(|side| side as u32);
+/// a copy at a nonzero depth into a texture not yet initialised (a
+/// scroll's into a volume the game has not yet written) would leave it
+/// marked uninitialised, and its next use would clear what the copy wrote.
+fn zeroed(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    [width, height, depth]: [u32; 3],
+    usage: wgpu::TextureUsages,
+) -> wgpu::Texture {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("irradiance volume"),
+        label: Some(label),
         size: wgpu::Extent3d {
             width,
             height,
@@ -72,9 +80,7 @@ fn texture(device: &wgpu::Device, queue: &wgpu::Queue, cells: [u32; 3]) -> wgpu:
         sample_count: 1,
         dimension: wgpu::TextureDimension::D3,
         format: FORMAT,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_DST
-            | wgpu::TextureUsages::COPY_SRC,
+        usage: usage | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     crate::counters::write_texture(
@@ -85,6 +91,36 @@ fn texture(device: &wgpu::Device, queue: &wgpu::Queue, cells: [u32; 3]) -> wgpu:
         wgpu::Extent3d::default(),
     );
     texture
+}
+
+/// A volume of `cells`' texture.
+fn texture(device: &wgpu::Device, queue: &wgpu::Queue, cells: [u32; 3]) -> wgpu::Texture {
+    let size = texture_size(cells).map(|side| side as u32);
+    let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
+    zeroed(device, queue, "irradiance volume", size, usage)
+}
+
+/// What a scroll along one axis moves cells through: a face's box of cells
+/// `STRIPE` thick across that axis, and one of zeros, which clears the
+/// cells that enter.
+struct Stripe {
+    staging: wgpu::Texture,
+    zero: wgpu::Texture,
+    /// Cells across the axis.
+    thickness: u32,
+}
+
+impl Stripe {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, cells: [u32; 3], axis: usize) -> Self {
+        let mut size = cells;
+        size[axis] = cells[axis].min(STRIPE);
+        let usage = wgpu::TextureUsages::COPY_SRC;
+        Self {
+            staging: zeroed(device, queue, "irradiance volume scroll", size, usage),
+            zero: zeroed(device, queue, "irradiance volume zeros", size, usage),
+            thickness: size[axis],
+        }
+    }
 }
 
 /// A box of irradiance volume cells packed for
@@ -159,12 +195,14 @@ impl PreparedIrradianceRegion {
 
 /// The installed volume: its placement, with its origin in the frame the
 /// scene was created in, so a move of the render origin translates it
-/// without rounding it again, and its texture.
+/// without rounding it again, its texture and, once it has scrolled along
+/// an axis, that axis's stripe.
 struct Placement {
     origin: DVec3,
     cell_size: Vec3,
     cells: [u32; 3],
     texture: wgpu::Texture,
+    stripes: [Option<Stripe>; 3],
 }
 
 impl Placement {
@@ -271,17 +309,18 @@ impl Scene {
                     .then(|| current.cells_to(origin, volume.origin))
                     .flatten()
             });
-        if shift == Some(I64Vec3::ZERO) {
+        if let (Some(current), Some(shift)) = (&mut self.irradiance_cells.placement, shift) {
+            if shift != I64Vec3::ZERO {
+                scroll(device, queue, current, shift);
+            }
             return Ok(());
         }
-        let placement = match (self.irradiance_cells.placement.take(), shift) {
-            (Some(current), Some(shift)) => scroll(device, queue, current, shift),
-            _ => Placement {
-                origin,
-                cell_size: volume.cell_size,
-                cells: volume.cells,
-                texture: texture(device, queue, volume.cells),
-            },
+        let placement = Placement {
+            origin,
+            cell_size: volume.cell_size,
+            cells: volume.cells,
+            texture: texture(device, queue, volume.cells),
+            stripes: [None, None, None],
         };
         // Group 0 binds the new texture.
         self.irradiance_cells.set(Some(placement));
@@ -361,65 +400,97 @@ impl Scene {
     }
 }
 
-/// `current` moved by `shift` whole cells: a fresh texture, all fallback,
-/// into which one command buffer, submitted at once, copies the cells that
-/// stay, each face's box of them to its new texels, as Godot ed1daf0's
-/// SDFGI scrolls its cascades by a copy when its camera crosses a cell
+/// `placement` moved by `shift` whole cells, in place: along each axis
+/// in turn, each face's cells that stay move to their new texels a stripe
+/// at a time, through the axis's stripe, in the order that reads each
+/// stripe before another overwrites it, and the cells that enter are
+/// cleared from its stripe of zeros, in one command buffer submitted at
+/// once, as Godot ed1daf0's SDFGI scrolls its cascades by a copy when its
+/// camera crosses a cell
 /// (servers/rendering/renderer_rd/shaders/environment/sdfgi_preprocess.glsl
 /// `MODE_SCROLL` 174-183, servers/rendering/renderer_rd/environment/gi.cpp
 /// 2121-2175). A cell at index i before the move is at i − shift after it.
-fn scroll(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    current: Placement,
-    shift: I64Vec3,
-) -> Placement {
-    let cells = current.cells;
-    let moved = Placement {
-        origin: current.origin + shift.as_dvec3() * current.cell_size.as_dvec3(),
-        cell_size: current.cell_size,
-        cells,
-        texture: texture(device, queue, cells),
-    };
-    let mut source = [0; 3];
-    let mut target = [0; 3];
-    let mut kept = [0; 3];
-    for axis in 0..3 {
-        let count = i64::from(cells[axis]);
-        let by = shift[axis].clamp(-count, count);
-        source[axis] = by.max(0) as u32;
-        target[axis] = (-by).max(0) as u32;
-        kept[axis] = (count - by.abs()) as u32;
-    }
-    if kept.contains(&0) {
-        return moved;
-    }
+/// A stripe, a chunk thick, replaces copying into a fresh texture, which
+/// wgpu clears whole first (it clears a 3D texture by buffer copies), at
+/// twice the copies of the cells that stay.
+fn scroll(device: &wgpu::Device, queue: &wgpu::Queue, placement: &mut Placement, shift: I64Vec3) {
+    let cells = placement.cells;
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("irradiance volume scroll"),
     });
-    for face in 0..6 {
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &current.texture,
-                mip_level: 0,
-                origin: face_texel(face, source, cells),
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &moved.texture,
-                mip_level: 0,
-                origin: face_texel(face, target, cells),
-                aspect: wgpu::TextureAspect::All,
-            },
+    // A move of the volume's size or more along an axis leaves no cell:
+    // one clear along that axis, and nothing to move along the others.
+    let whole = (0..3).find(|&axis| shift[axis].unsigned_abs() >= u64::from(cells[axis]));
+    let axes = whole.map_or(0..3, |axis| axis..axis + 1);
+    for axis in axes {
+        let by = shift[axis];
+        if by == 0 {
+            continue;
+        }
+        let entering = by.unsigned_abs().min(u64::from(cells[axis])) as u32;
+        let kept = cells[axis] - entering;
+        let stripe =
+            placement.stripes[axis].get_or_insert_with(|| Stripe::new(device, queue, cells, axis));
+        let texture = &placement.texture;
+        // A box of `depth` cells across the axis from `at` along it.
+        let extent = |depth: u32| {
+            let mut size = cells;
+            size[axis] = depth;
             wgpu::Extent3d {
-                width: kept[0],
-                height: kept[1],
-                depth_or_array_layers: kept[2],
-            },
-        );
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: size[2],
+            }
+        };
+        let face_at = |face: usize, at: u32| {
+            let mut cell = [0; 3];
+            cell[axis] = at;
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: face_texel(face, cell, cells),
+                aspect: wgpu::TextureAspect::All,
+            }
+        };
+        for face in 0..6 {
+            let mut moved = 0;
+            while moved < kept {
+                let depth = (kept - moved).min(stripe.thickness);
+                // Moving down the axis, the lowest cells first; moving up
+                // it, the highest.
+                let to = if by > 0 {
+                    moved
+                } else {
+                    cells[axis] - moved - depth
+                };
+                let from = if by > 0 { to + entering } else { to - entering };
+                encoder.copy_texture_to_texture(
+                    face_at(face, from),
+                    stripe.staging.as_image_copy(),
+                    extent(depth),
+                );
+                encoder.copy_texture_to_texture(
+                    stripe.staging.as_image_copy(),
+                    face_at(face, to),
+                    extent(depth),
+                );
+                moved += depth;
+            }
+            let first = if by > 0 { kept } else { 0 };
+            let mut cleared = 0;
+            while cleared < entering {
+                let depth = (entering - cleared).min(stripe.thickness);
+                encoder.copy_texture_to_texture(
+                    stripe.zero.as_image_copy(),
+                    face_at(face, first + cleared),
+                    extent(depth),
+                );
+                cleared += depth;
+            }
+        }
     }
     queue.submit([encoder.finish()]);
-    moved
+    placement.origin += shift.as_dvec3() * placement.cell_size.as_dvec3();
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

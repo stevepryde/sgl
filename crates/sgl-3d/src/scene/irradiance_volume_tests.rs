@@ -214,6 +214,45 @@ fn floors(
     field(gpu, (renderer, scene), &input(), &queries)
 }
 
+/// A cell whose face `f`, in the cube's order, holds light `base + f / 8`,
+/// the sky half visible from each, so each face of every cell is told apart
+/// (exactly, in RGBA16F, below a base of 128).
+fn faced(base: f32) -> IrradianceCell {
+    IrradianceCell {
+        irradiance: AmbientCube {
+            irradiance: std::array::from_fn(|face| [base + face as f32 / 8.; 3]),
+        },
+        sky_visibility: [0.5; 6],
+    }
+}
+
+/// The light of each face, in the cube's order, of each of `cells` of
+/// `volume`, read through the shading normals along the six axes at the
+/// floor of the cell.
+fn faces(
+    gpu: Gpu,
+    (renderer, scene): (&mut Renderer, &mut Scene),
+    volume: IrradianceVolume,
+    cells: &[[u32; 3]],
+) -> Vec<[f32; 6]> {
+    let normals = [
+        Vec3::X,
+        Vec3::NEG_X,
+        Vec3::Y,
+        Vec3::NEG_Y,
+        Vec3::Z,
+        Vec3::NEG_Z,
+    ];
+    let queries: Vec<_> = cells
+        .iter()
+        .flat_map(|&index| normals.map(|normal| (floor_of(volume, index), Vec3::Y, normal)))
+        .collect();
+    field(gpu, (renderer, scene), &input(), &queries)
+        .chunks_exact(6)
+        .map(|cell| std::array::from_fn(|face| cell[face][0]))
+        .collect()
+}
+
 fn every_cell(cells: [u32; 3]) -> Vec<[u32; 3]> {
     let [nx, ny, nz] = cells;
     (0..nz)
@@ -398,7 +437,8 @@ fn a_face_reads_the_cell_before_it_along_its_geometry_normal() {
 }
 
 /// A volume of 4 by 3 by 4 cells of 2 metres, each holding light 1 + its
-/// index in the world lattice (x + 4 y + 12 z) and visibility 0.5.
+/// index in the world lattice (x + 4 y + 12 z) and visibility 0.5, each
+/// face's light an eighth more than the one before it (`faced`).
 const WORLD: IrradianceVolume = IrradianceVolume {
     origin: Vec3::new(-4., 0., -4.),
     cell_size: Vec3::splat(2.),
@@ -415,7 +455,7 @@ fn add_world(gpu: Gpu, scene: &mut Scene) {
         .set_irradiance_volume(device, queue, Some(WORLD))
         .unwrap();
     fill(queue, scene, WORLD, |index| {
-        cell(world_light(index.map(i64::from)), 0.5)
+        faced(world_light(index.map(i64::from)))
     });
 }
 
@@ -426,9 +466,9 @@ fn add_world(gpu: Gpu, scene: &mut Scene) {
 // world: installed again 1 cell along +x and 2 along -z (with a residual of
 // a hundred-thousandth of a cell), the volume's origin moves by exactly
 // those cells, each cell that stays reads the light written at its world
-// position, and each cell that entered the fallback, light 0 and
-// visibility 1; installed 0.3 cells off its lattice, or with another
-// count, every cell is the fallback.
+// position on each of its six faces, and each cell that entered the
+// fallback, light 0 and visibility 1; installed 0.3 cells off its lattice,
+// or with another count, every cell is the fallback.
 #[test]
 fn a_scroll_keeps_the_cells_that_stay_where_they_were_in_the_world() {
     let Some((device, queue)) = test_support::device() else {
@@ -454,21 +494,29 @@ fn a_scroll_keeps_the_cells_that_stay_where_they_were_in_the_world() {
         "{placed:?}"
     );
     let cells = every_cell(WORLD.cells);
+    let lights = faces(
+        (&device, &queue),
+        (&mut renderer, &mut scene),
+        placed,
+        &cells,
+    );
     let answers = floors(
         (&device, &queue),
         (&mut renderer, &mut scene),
         placed,
         &cells,
     );
-    for (index, answer) in cells.iter().zip(&answers) {
+    for ((index, light), answer) in cells.iter().zip(&lights).zip(&answers) {
         let world: [i64; 3] = std::array::from_fn(|axis| i64::from(index[axis]) + shift[axis]);
         let stayed = (0..3).all(|axis| (0..i64::from(WORLD.cells[axis])).contains(&world[axis]));
-        let expected = if stayed {
-            [world_light(world), 0.5, 1.]
+        let (expected, visible) = if stayed {
+            let base = world_light(world);
+            (std::array::from_fn(|face| base + face as f32 / 8.), 0.5)
         } else {
-            [0., 1., 1.]
+            ([0.; 6], 1.)
         };
-        assert_eq!(*answer, expected, "cell {index:?}, world cell {world:?}");
+        assert_eq!(*light, expected, "cell {index:?}, world cell {world:?}");
+        assert_eq!(answer[1], visible, "cell {index:?}, world cell {world:?}");
     }
     for volume in [
         IrradianceVolume {
@@ -495,6 +543,74 @@ fn a_scroll_keeps_the_cells_that_stay_where_they_were_in_the_world() {
             answers.iter().all(|answer| *answer == [0., 1., 1.]),
             "another placement kept cells: {volume:?}"
         );
+    }
+}
+
+// Plausible defects: a scroll longer than the stripe it moves cells
+// through, or toward either end of an axis, overwrites cells before it
+// moves them (a move down the axis taken highest stripe first, or up it
+// lowest first), moves the last part-stripe or another face's slab
+// wrongly, or clears too few or too many of the cells that enter. The
+// oracle is the world: in a row of 40 cells along each axis in turn, each
+// face of each cell written with light 1 + its world index along the row
+// and an eighth more for each face before it, scrolled 17 cells up the
+// axis, then 9 down it (keeping 31, more than a stripe), then 45 up it,
+// each face of each cell reads the light written at its world position
+// where that cell has stayed in the volume throughout, and the fallback
+// where it entered.
+#[test]
+fn a_scroll_across_several_stripes_keeps_every_cell_that_stays() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let (mut renderer, mut scene) = fixture((&device, &queue));
+    for axis in 0..3 {
+        let along = Vec3::AXES[axis];
+        let mut cells = [1; 3];
+        cells[axis] = 40;
+        let row = IrradianceVolume {
+            origin: along * -20.,
+            cell_size: Vec3::ONE,
+            cells,
+        };
+        scene.set_irradiance_volume(&device, &queue, None).unwrap();
+        scene
+            .set_irradiance_volume(&device, &queue, Some(row))
+            .unwrap();
+        fill(&queue, &mut scene, row, |index| {
+            faced(1. + index[axis] as f32)
+        });
+        // The world cells that hold what was written: those of the first
+        // placement that stay in every later one.
+        let mut held: Vec<i64> = (0..40).collect();
+        let mut first = 0i64;
+        for by in [17i64, -9, 45] {
+            first += by;
+            let placed = IrradianceVolume {
+                origin: row.origin + along * first as f32,
+                ..row
+            };
+            scene
+                .set_irradiance_volume(&device, &queue, Some(placed))
+                .unwrap();
+            held.retain(|x| (first..first + 40).contains(x));
+            let cells = every_cell(row.cells);
+            let lights = faces(
+                (&device, &queue),
+                (&mut renderer, &mut scene),
+                placed,
+                &cells,
+            );
+            for (index, light) in cells.iter().zip(&lights) {
+                let world = first + i64::from(index[axis]);
+                let expected: [f32; 6] = if held.contains(&world) {
+                    std::array::from_fn(|face| 1. + world as f32 + face as f32 / 8.)
+                } else {
+                    [0.; 6]
+                };
+                assert_eq!(*light, expected, "axis {axis}, after {by}: cell {index:?}");
+            }
+        }
     }
 }
 
@@ -536,7 +652,8 @@ fn a_render_origin_move_keeps_the_field_where_it_was() {
         &queries,
     );
     for (index, answer) in cells.iter().zip(&answers) {
-        let expected = [world_light(index.map(i64::from)), 0.5, 1.];
+        // The +Y face, the third (`faced`).
+        let expected = [world_light(index.map(i64::from)) + 2. / 8., 0.5, 1.];
         assert_eq!(*answer, expected, "cell {index:?}");
     }
 }
