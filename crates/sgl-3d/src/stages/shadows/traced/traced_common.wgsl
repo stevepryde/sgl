@@ -37,6 +37,10 @@ fn traced_linear_depth(position:vec3<f32>)->f32 {
 fn traced_unpack(word:u32)->vec4<f32> {
  return vec4<f32>((vec4(word)>>vec4(0u,8u,16u,24u))&vec4(0xffu))/255.;
 }
+// A texel's four words' slots, word w's in column w.
+fn traced_unpack_words(words:vec4<u32>)->mat4x4<f32> {
+ return mat4x4(traced_unpack(words.x),traced_unpack(words.y),traced_unpack(words.z),traced_unpack(words.w));
+}
 fn traced_pack(visibility:vec4<f32>)->u32 {
  let bytes=vec4<u32>(round(saturate(visibility)*255.))<<vec4(0u,8u,16u,24u);
  return bytes.x|bytes.y|bytes.z|bytes.w;

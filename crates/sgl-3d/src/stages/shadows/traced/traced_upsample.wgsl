@@ -30,11 +30,12 @@ const UPSAMPLE_LEAST_WEIGHT:f32=.001;
 // The taps: (0,0), (1,0), (0,1), (1,1) from texel p / 2.
 const UPSAMPLE_TAPS:u32=4u;
 
-// Layer `layer` of the mask at `pixel`, its four slots' `visibility`,
-// unless none of them holds a light, which no pass reads.
-fn upsample_store(pixel:vec2<u32>,layer:u32,visibility:vec4<f32>) {
+// Layer `layer` of the mask at `pixel`, its four slots' visibility
+// `sums[layer] / total`, unless none of them holds a light, which no pass
+// reads.
+fn upsample_store(pixel:vec2<u32>,layer:u32,sums:mat4x4<f32>,total:f32) {
  if any(shadow_mask_slots.lights[layer]!=vec4(SHADOW_MASK_EMPTY)) {
-  textureStore(upsample_mask,pixel,layer,visibility);
+  textureStore(upsample_mask,pixel,layer,sums[layer]/total);
  }
 }
 
@@ -45,8 +46,9 @@ fn upsample_store(pixel:vec2<u32>,layer:u32,visibility:vec4<f32>) {
  }
  let z=textureLoad(upsample_depth,id.xy,0);
  if z<=0. {
+  let lit=mat4x4(vec4(1.),vec4(1.),vec4(1.),vec4(1.));
   for (var layer=0u;layer<SHADOW_MASK_LAYERS;layer++) {
-   upsample_store(id.xy,layer,vec4(1.));
+   upsample_store(id.xy,layer,lit,1.);
   }
   return;
  }
@@ -64,15 +66,11 @@ fn upsample_store(pixel:vec2<u32>,layer:u32,visibility:vec4<f32>) {
   let along=select(1.-fraction,fraction,vec2(tap%2u,tap/2u)==vec2(1u));
   let closeness=max(UPSAMPLE_LEAST_WEIGHT,1.-saturate(abs(textureLoad(upsample_half_depth,texel,0).x-depth)*UPSAMPLE_DEPTH_FALLOFF));
   let weight=along.x*along.y*closeness;
-  let words=textureLoad(upsample_visibility,texel,0);
-  sums[0]+=traced_unpack(words.x)*weight;
-  sums[1]+=traced_unpack(words.y)*weight;
-  sums[2]+=traced_unpack(words.z)*weight;
-  sums[3]+=traced_unpack(words.w)*weight;
+  sums+=traced_unpack_words(textureLoad(upsample_visibility,texel,0))*weight;
   total+=weight;
  }
- upsample_store(id.xy,0u,sums[0]/total);
- upsample_store(id.xy,1u,sums[1]/total);
- upsample_store(id.xy,2u,sums[2]/total);
- upsample_store(id.xy,3u,sums[3]/total);
+ upsample_store(id.xy,0u,sums,total);
+ upsample_store(id.xy,1u,sums,total);
+ upsample_store(id.xy,2u,sums,total);
+ upsample_store(id.xy,3u,sums,total);
 }

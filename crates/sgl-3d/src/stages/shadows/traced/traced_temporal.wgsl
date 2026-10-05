@@ -84,34 +84,34 @@ const TEMPORAL_TAPS:u32=9u;
  for (var tap=0u;tap<TEMPORAL_TAPS;tap++) {
   let offset=vec2<i32>(i32(tap%3u)-1,i32(tap/3u)-1);
   let texel=clamp(vec2<i32>(id.xy)+offset,vec2(0),vec2<i32>(reduced)-1);
-  let words=textureLoad(temporal_current,texel,0);
-  let samples=mat4x4(traced_unpack(words.x),traced_unpack(words.y),traced_unpack(words.z),traced_unpack(words.w));
+  let samples=traced_unpack_words(textureLoad(temporal_current,texel,0));
   m1+=samples;
   m2+=mat4x4(samples[0]*samples[0],samples[1]*samples[1],samples[2]*samples[2],samples[3]*samples[3]);
  }
  let velocity=length(motion*traced.reduced.xy);
  let refresh=saturate(velocity/TEMPORAL_VELOCITY_PIXELS);
  textureStore(temporal_output,id.xy,vec4(
-  temporal_blend(0u,current.x,history.x,m1[0],m2[0],refresh),
-  temporal_blend(1u,current.y,history.y,m1[1],m2[1],refresh),
-  temporal_blend(2u,current.z,history.z,m1[2],m2[2],refresh),
-  temporal_blend(3u,current.w,history.w,m1[3],m2[3],refresh),
+  temporal_blend(0u,current,history,m1,m2,refresh),
+  temporal_blend(1u,current,history,m1,m2,refresh),
+  temporal_blend(2u,current,history,m1,m2,refresh),
+  temporal_blend(3u,current,history,m1,m2,refresh),
  ));
 }
 
 // Word `word`'s four slots blended: traced as `current`, `history` the
-// reprojected history, `m1` and `m2` the neighbourhood's moments. A word
-// whose slots hold no light keeps its traced zeros.
-fn temporal_blend(word:u32,current:u32,history:u32,m1:vec4<f32>,m2:vec4<f32>,refresh:f32)->u32 {
+// reprojected history's words, `m1` and `m2` the neighbourhood's moments,
+// word w's in column w. A word whose slots hold no light keeps its traced
+// zeros.
+fn temporal_blend(word:u32,current:vec4<u32>,history:vec4<u32>,m1:mat4x4<f32>,m2:mat4x4<f32>,refresh:f32)->u32 {
  if all(shadow_mask_slots.lights[word]==vec4(SHADOW_MASK_EMPTY)) {
-  return current;
+  return current[word];
  }
- let value=traced_unpack(current);
- let mean=m1/f32(TEMPORAL_TAPS);
- let deviation=sqrt(max(m2/f32(TEMPORAL_TAPS)-mean*mean,vec4(0.)));
+ let value=traced_unpack(current[word]);
+ let mean=m1[word]/f32(TEMPORAL_TAPS);
+ let deviation=sqrt(max(m2[word]/f32(TEMPORAL_TAPS)-mean*mean,vec4(0.)));
  let low=min(mean-TEMPORAL_SCALE*deviation,value);
  let high=max(mean+TEMPORAL_SCALE*deviation,value);
- let past=clamp(traced_unpack(history),low,high);
+ let past=clamp(traced_unpack(history[word]),low,high);
  let difference=abs(value-past)/max(value,max(past,vec4(.2)));
  let weight=(1.-difference)*(1.-difference);
  let response=mix(mix(vec4(TEMPORAL_RESPONSE_MIN),vec4(TEMPORAL_RESPONSE_MAX),weight),vec4(TEMPORAL_VELOCITY_RESPONSE),refresh);
