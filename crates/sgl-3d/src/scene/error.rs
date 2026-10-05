@@ -115,6 +115,17 @@ pub enum SceneError {
     /// A dynamic GI volume's origin or spacing is not finite, its spacing
     /// not positive, or it has fewer than two probes along an axis.
     InvalidDynamicGiVolume,
+    /// An irradiance volume's origin or cell size is not finite, its cell
+    /// size not positive, or it has no cell along an axis.
+    InvalidIrradianceVolume,
+    /// A prepared irradiance region's corner is not finite, it has no cell
+    /// along an axis, its values are not one per cell, or a value's light is
+    /// not finite, nonnegative and within RGBA16F range or its sky
+    /// visibility not within 0..=1.
+    InvalidIrradianceRegion,
+    /// No irradiance volume is installed, or an irradiance region's corner
+    /// is off its lattice or the region not wholly within it.
+    IrradianceRegionOutside,
     /// The content would exceed a limit of the device.
     DeviceLimit,
     /// The specular probe collection was refused.
@@ -205,6 +216,15 @@ impl std::fmt::Display for SceneError {
             Self::InvalidOrigin => "a render origin must be finite",
             Self::InvalidDynamicGiVolume => {
                 "a dynamic GI volume needs a finite origin, a finite positive spacing and at least two probes along each axis"
+            }
+            Self::InvalidIrradianceVolume => {
+                "an irradiance volume needs a finite origin, a finite positive cell size and at least one cell along each axis"
+            }
+            Self::InvalidIrradianceRegion => {
+                "an irradiance region needs a finite corner, at least one cell along each axis and one valid cell value per cell: finite nonnegative light within RGBA16F range and sky visibility in 0..=1"
+            }
+            Self::IrradianceRegionOutside => {
+                "an irradiance region must lie on the installed irradiance volume's lattice and wholly within it"
             }
             Self::DeviceLimit => "the content exceeds a limit of the device",
             Self::Probe(error) => return error.fmt(f),

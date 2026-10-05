@@ -544,6 +544,7 @@ impl ReflectionSource {
             (21, self.tiles.as_entire_binding()),
             (22, texture(input.ambient_occlusion)),
             (23, texture(world_space)),
+            (24, texture(input.ambient)),
             (25, texture(fog.view)),
             (26, wgpu::BindingResource::Sampler(fog.sampler)),
             (27, texture(surface_depth)),

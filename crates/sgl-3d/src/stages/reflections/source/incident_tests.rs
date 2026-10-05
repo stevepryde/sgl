@@ -70,6 +70,8 @@ fn incident_environment_is_complete_without_doubling_primary() {
         };
         let scene = color("no direct light or emission", [0.; 4], false);
         let zero = color("zero emission", [0.; 4], false);
+        // No ambient diffuse, and no irradiance volume: its sky visibility 1.
+        let ambient = color("no ambient, open sky", [0., 0., 0., 1.], false);
         let normal = color("toward camera", [0.; 4], false);
         let f0 = color("metal source", [1., 1., 1., 1.], false);
         let sky = color("uniform HDR sky", [2., 2., 2., 1.], true);
@@ -168,7 +170,7 @@ fn incident_environment_is_complete_without_doubling_primary() {
                         frame_fog: None,
                         camera,
                         scene: &scene,
-                        ambient: &zero,
+                        ambient: &ambient,
                         output: &output,
                         normal: &normal,
                         anisotropy: &zero,

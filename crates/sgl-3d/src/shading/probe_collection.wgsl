@@ -63,14 +63,21 @@ fn collection_bucket(sum:ProbeSum,bucket:u32,bucket_bits:u32,world:vec3<f32>,dir
  }
  return result;
 }
-fn collection_resolve(sum:ProbeSum,direction:vec3<f32>,rough:f32,scale:f32,sky:texture_2d_array<f32>,filter_sampler:sampler,rotation:f32,strength:f32)->vec3<f32> {
+// A lobe's environment specular at a receiver, each share times `scale`:
+// the probes' and the sky's beyond them, which the irradiance volume's sky
+// visibility occludes apart (specular_occlusion).
+struct EnvironmentSpecular {
+ probes:vec3<f32>,
+ sky:vec3<f32>,
+}
+fn collection_resolve(sum:ProbeSum,direction:vec3<f32>,rough:f32,scale:f32,sky:texture_2d_array<f32>,filter_sampler:sampler,rotation:f32,strength:f32)->EnvironmentSpecular {
  let coverage=min(sum.weight,1.);
- var result=vec3(0.);
+ var result=EnvironmentSpecular(vec3(0.),vec3(0.));
  if sum.weight>0. {
-  result=sum.radiance/sum.weight*coverage;
+  result.probes=sum.radiance/sum.weight*coverage*scale;
  }
  if coverage<1. {
-  result+=collection_sky_radiance(sky,filter_sampler,direction,rough,rotation,strength)*(1.-coverage);
+  result.sky=collection_sky_radiance(sky,filter_sampler,direction,rough,rotation,strength)*(1.-coverage)*scale;
  }
- return result*scale;
+ return result;
 }

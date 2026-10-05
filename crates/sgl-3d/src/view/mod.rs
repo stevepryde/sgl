@@ -30,13 +30,14 @@ pub(crate) mod targets;
 
 use crate::FrameInput;
 use crate::content::dynamic_gi::DynamicGiVolume;
+use crate::content::irradiance_volume::IrradianceVolume;
 use crate::content::lighting::{Backdrop, DirectionalLight, DirectionalShadow};
 use crate::scene::static_lighting::StaticLighting;
 use crate::shading::uniforms::{
     DIRECTIONAL_LIGHT_SHADOW, DirectionalLightUniform, FRAME_BACKDROP_COLOR, FRAME_BAKED_LIGHTING,
     FRAME_DYNAMIC_GI, FRAME_FOG, FRAME_HARDWARE_SHADOW_FILTER, FRAME_IRRADIANCE_ATLAS,
-    FRAME_TEMPORAL_SHADOW_FILTER, FrameUniform, ShadowCascadeUniform, VIEW_PROBE_CAPTURE,
-    ViewUniform,
+    FRAME_IRRADIANCE_VOLUME, FRAME_TEMPORAL_SHADOW_FILTER, FrameUniform, ShadowCascadeUniform,
+    VIEW_PROBE_CAPTURE, ViewUniform,
 };
 use bytemuck::Zeroable;
 use cascades::{Cascades, MAX_SHADOW_CASCADES};
@@ -155,17 +156,19 @@ impl FrameShadow {
     }
 }
 
-/// The frame data of `input` for a scene with `baked` diffuse lighting, with
-/// the directional `shadow`; `fog` is whether the frame's volumetric fog ran,
-/// so draws fog from its volume, and `dynamic_gi` the dynamic GI volume
-/// whose probes group 0 binds, which then lights the frame.
+/// The frame data of `input` for a scene with `baked` diffuse lighting and
+/// `irradiance_volume`, which lights the frame with baked lighting, with the
+/// directional `shadow`; `fog` is whether the frame's volumetric fog ran, so
+/// draws fog from its volume, and `dynamic_gi` the dynamic GI volume whose
+/// probes group 0 binds, which then lights the frame.
 pub(crate) fn frame_uniform(
     input: &FrameInput,
-    baked: &StaticLighting,
+    (baked, irradiance_volume): (&StaticLighting, Option<IrradianceVolume>),
     shadow: &FrameShadow,
     fog: bool,
     dynamic_gi: Option<&DynamicGiVolume>,
 ) -> FrameUniform {
+    let irradiance_volume = irradiance_volume.filter(|_| input.baked_lighting);
     let cascades = shadow.cascades.as_slice();
     let directional_lights = std::array::from_fn(|index| {
         directional_light(input, index).map_or(DirectionalLightUniform::zeroed(), |light| {
@@ -249,7 +252,8 @@ pub(crate) fn frame_uniform(
                 shadow.filter == ShadowFilter::Hardware,
                 FRAME_HARDWARE_SHADOW_FILTER,
             )
-            | flag(dynamic_gi.is_some(), FRAME_DYNAMIC_GI),
+            | flag(dynamic_gi.is_some(), FRAME_DYNAMIC_GI)
+            | flag(irradiance_volume.is_some(), FRAME_IRRADIANCE_VOLUME),
         shadow_cascade_count: cascades.len() as u32,
         frame_count: shadow.frame_count,
         animation_phase: crate::shading::material::animation_phase(input.elapsed_seconds),
@@ -259,6 +263,14 @@ pub(crate) fn frame_uniform(
         padding_spacing: 0.,
         dynamic_gi_probes: dynamic_gi.map_or([0; 3], |volume| volume.probes),
         padding_probes: 0,
+        irradiance_volume_origin: irradiance_volume
+            .map_or([0.; 3], |volume| volume.origin.to_array()),
+        padding_volume_origin: 0.,
+        irradiance_volume_cell_size: irradiance_volume
+            .map_or([0.; 3], |volume| volume.cell_size.to_array()),
+        padding_cell_size: 0.,
+        irradiance_volume_cells: irradiance_volume.map_or([0; 3], |volume| volume.cells),
+        padding_cells: 0,
     }
 }
 

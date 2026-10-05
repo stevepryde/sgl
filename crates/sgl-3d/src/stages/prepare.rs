@@ -131,7 +131,7 @@ impl Prepare {
             .filter(|_| effective.dynamic_gi.is_some());
         let frame = frame_uniform(
             input,
-            &scene.static_lighting,
+            (&scene.static_lighting, scene.irradiance_volume()),
             &shadow,
             effective.fog.is_some(),
             volume.as_ref(),
@@ -257,7 +257,13 @@ impl Prepare {
         dynamic_gi: Option<&DynamicGiVolume>,
     ) -> CaptureViews {
         let shadow = FrameShadow::capture(input, center, cascade_size, scene.origin());
-        let frame = frame_uniform(input, &scene.static_lighting, &shadow, false, dynamic_gi);
+        let frame = frame_uniform(
+            input,
+            (&scene.static_lighting, scene.irradiance_volume()),
+            &shadow,
+            false,
+            dynamic_gi,
+        );
         let uniform = |label, bytes: &[u8]| {
             crate::scene::buffer(device, label, bytes, wgpu::BufferUsages::UNIFORM)
         };

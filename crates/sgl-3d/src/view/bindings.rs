@@ -293,9 +293,10 @@ impl FrameBindings {
         }
     }
 
-    /// A lit group 0: `view` and `frame`, the scene's lighting, decals and
-    /// `environment`, `probes`, the view's `clusters`, the `local` shadows
-    /// its lights take, the fog volume and the `dynamic_gi` volume's probes.
+    /// A lit group 0: `view` and `frame`, the scene's lighting, decals,
+    /// irradiance volume and `environment`, `probes`, the view's `clusters`,
+    /// the `local` shadows its lights take, the fog volume and the
+    /// `dynamic_gi` volume's probes.
     #[allow(clippy::too_many_arguments)]
     pub fn lit_group(
         &self,
@@ -379,6 +380,7 @@ impl FrameBindings {
                     resource: wgpu::BindingResource::Sampler(&self.fog.1),
                 },
                 texture(group0::DYNAMIC_GI_PROBES, dynamic_gi),
+                texture(group0::IRRADIANCE_VOLUME, scene.irradiance_cells.view()),
             ],
         })
     }

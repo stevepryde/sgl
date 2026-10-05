@@ -438,8 +438,8 @@ mod diagnostics {
         pub normal_maps: bool,
         /// Material bump maps of raster geometry.
         pub bump_maps: bool,
-        /// Baked lighting of raster geometry: lightmaps, irradiance atlases
-        /// and instances' baked irradiance.
+        /// Baked lighting of raster geometry: lightmaps, irradiance
+        /// atlases, instances' baked irradiance and the irradiance volume.
         pub baked_lighting: bool,
         /// Material emission of moving instances in raster geometry.
         pub instance_emission: bool,

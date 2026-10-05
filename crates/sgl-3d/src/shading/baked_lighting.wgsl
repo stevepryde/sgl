@@ -25,12 +25,22 @@ fn baked_map_irradiance(irradiance_map:texture_2d_array<f32>,direction_map:textu
  }
  return directional_irradiance(color,direction,normal);
 }
-fn ambient_cube_irradiance(cube:array<vec4<f32>,6>,normal:vec3<f32>)->vec3<f32> {
+// Valve's ambient cube (Mitchell, "Shading in Valve's Source Engine",
+// SIGGRAPH 2006, slide 28): `x`, `y` and `z` are the faces `normal` points
+// to along each axis, the positive face where its component is at least 0,
+// weighted by its squared components. A moving instance's cube and the
+// irradiance volume's cells (irradiance_volume.wgsl) blend through it.
+fn ambient_cube_blend(x:vec4<f32>,y:vec4<f32>,z:vec4<f32>,normal:vec3<f32>)->vec4<f32> {
  let n=normalize(normal);
  let weights=n*n;
- return cube[select(1u,0u,n.x>=0.)].rgb*weights.x
-  +cube[select(3u,2u,n.y>=0.)].rgb*weights.y
-  +cube[select(5u,4u,n.z>=0.)].rgb*weights.z;
+ return x*weights.x+y*weights.y+z*weights.z;
+}
+// A cube of six faces in the order +X, -X, +Y, -Y, +Z, -Z.
+fn ambient_cube_irradiance(cube:array<vec4<f32>,6>,normal:vec3<f32>)->vec3<f32> {
+ let x=cube[select(1u,0u,normal.x>=0.)];
+ let y=cube[select(3u,2u,normal.y>=0.)];
+ let z=cube[select(5u,4u,normal.z>=0.)];
+ return ambient_cube_blend(x,y,z,normal).rgb;
 }
 // Where a receiver's baked diffuse comes from: the one determination of
 // which receivers have baked lighting. A moving instance takes its ambient

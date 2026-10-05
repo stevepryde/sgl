@@ -20,6 +20,8 @@ pub(crate) const FRAME_TEMPORAL_SHADOW_FILTER: u32 = 16;
 pub(crate) const FRAME_HARDWARE_SHADOW_FILTER: u32 = 32;
 /// `Frame::flags`: the dynamic GI volume lights the frame.
 pub(crate) const FRAME_DYNAMIC_GI: u32 = 64;
+/// `Frame::flags`: the irradiance volume lights the frame.
+pub(crate) const FRAME_IRRADIANCE_VOLUME: u32 = 128;
 /// `Object::flags`: a static instance; a moving one has the bit clear.
 pub(crate) const OBJECT_STATIC: u32 = 1;
 
@@ -120,6 +122,15 @@ pub(crate) struct FrameUniform {
     pub padding_spacing: f32,
     pub dynamic_gi_probes: [u32; 3],
     pub padding_probes: u32,
+    /// With `FRAME_IRRADIANCE_VOLUME`, the scene's irradiance volume: its
+    /// first cell's least corner, its cells' size and their count on each
+    /// axis.
+    pub irradiance_volume_origin: [f32; 3],
+    pub padding_volume_origin: f32,
+    pub irradiance_volume_cell_size: [f32; 3],
+    pub padding_cell_size: f32,
+    pub irradiance_volume_cells: [u32; 3],
+    pub padding_cells: u32,
 }
 
 /// One instance's record (`Object` in uniforms.wgsl), at its index in the

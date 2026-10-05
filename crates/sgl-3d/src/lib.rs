@@ -26,6 +26,7 @@ pub use content::identity::{
     DecalId, DecalImageId, EnvironmentId, InstanceId, LightId, MaterialId, ModelId,
 };
 pub use content::instance::{InstanceState, Mobility};
+pub use content::irradiance_volume::{IrradianceCell, IrradianceVolume};
 pub use content::light::{Light, LightShape};
 pub use content::lighting::{
     Backdrop, DirectionalLight, DirectionalShadow, EnvironmentLight, HemisphereLight, Mist,
@@ -43,6 +44,7 @@ pub use frame_input::{
 };
 pub use glam;
 pub use renderer::{Renderer, RendererError};
+pub use scene::irradiance_volume::PreparedIrradianceRegion;
 pub use scene::{Scene, SceneError};
 pub use stages::shadows::local::LocalShadowStats;
 pub use view::draw_list::GeometryStats;

@@ -158,6 +158,18 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   instances (`set_instance_baked_irradiance`). A fixture in the bake can also
   be a baked scene light, which lights moving instances live; its light then
   stays out of their ambient cubes.
+- **Irradiance volume**: diffuse light the game computes over a lattice of
+  cells (`Scene::set_irradiance_volume`, `IrradianceVolume`), such as a
+  voxel world's propagated sky and block light at a metre, each cell an
+  ambient cube of its own light and the sky's visibility from each face
+  (`IrradianceCell`), written by region from a box prepared on any thread
+  (`PreparedIrradianceRegion`, `Scene::write_irradiance_cells`) with no
+  geometry or bake replaced, and scrolled with the camera by installing it
+  at a new origin. Static and moving surfaces without a chart take it in
+  place of the dynamic GI volume, ambient cubes and the frame's ambient,
+  which its sky visibility lets through; the visibility darkens the sky's
+  share of their environment specular too (Bevy's irradiance volume).
+  [Irradiance volume](../README.md#irradiance-volume).
 - **Dynamic diffuse GI**: a volume of probes the game places
   (`Scene::set_dynamic_gi_volume`, `DynamicGiVolume`), kept up every frame
   by rays through the scene (Wicked Engine's DDGI): coloured bounce light

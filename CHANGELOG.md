@@ -15,6 +15,56 @@ full API details.
 
 ## Unreleased
 
+### A game-authored irradiance volume, relit by region
+
+- **Scope:** `sgl-3d` adds `IrradianceVolume { origin, cell_size, cells }`,
+  `IrradianceCell { irradiance: AmbientCube, sky_visibility: [f32; 6] }`
+  (its `Default` is a cell never written: no light of its own, sky
+  visibility 1), `PreparedIrradianceRegion::new(corner, cells, &values)`,
+  `Scene::set_irradiance_volume(&device, &queue, Option<IrradianceVolume>)`,
+  `Scene::irradiance_volume`, `Scene::write_irradiance_cells(&queue,
+  &region)`, and `SceneError::InvalidIrradianceVolume`,
+  `InvalidIrradianceRegion` and `IrradianceRegionOutside`. A scene holds at
+  most one volume: a lattice of cells the game places, each an ambient cube
+  of its own light (irradiance / PI) and of the sky's visibility from each
+  face, a port of Bevy's irradiance volume. The game writes boxes of cells
+  prepared on any thread (`PreparedIrradianceRegion` is `Send`); a write
+  queues one texture write per face and is not a static edit. Installing the
+  same cell size and counts at another origin scrolls the volume by whole
+  cells, keeping the cells that stay; `Scene::move_origin` translates it.
+  Static surfaces without a lightmap or atlas chart and moving instances
+  within it take `sky_visibility × ambient + irradiance` in place of the
+  environment's diffuse light and the hemisphere fill, and of the dynamic GI
+  volume and their ambient cube, which it covers; its share fades over the
+  one cell past each face. Ambient occlusion occludes it as it did the
+  ambient, `FrameInput::baked_lighting` turns it off, and
+  `SurfaceMaterial::environment_scale` scales the ambient it lets through,
+  not its own light. Its sky visibility also occludes the sky's share of
+  environment specular (Lagarde's specular occlusion) on opaque, blended
+  and captured surfaces and ray hits, not specular probes. Dynamic GI probe
+  rays' hits take it whole. It costs 48 bytes a cell and three 3D taps a lit
+  fragment; nothing is uploaded per frame. Lit group 0 binds one more
+  texture, so the device floor (S3D-1) rises from 20 to 21 sampled textures
+  per shader stage; no known adapter offers 20 (WebGPU in Chromium reports
+  16 or 48, Metal, DX12 and Vulkan 31 or more). `graphics_device::limits`
+  now also requests the adapter's `max_texture_dimension_3d`, which bounds
+  the volume.
+- **Migration:** none for a game without a volume: its frames are
+  unchanged. An exhaustive `match` on `SceneError` adds the three arms.
+  Devices requested with `graphics_device::limits` need no change; a game
+  that requests its own limits requests at least 21 sampled textures per
+  stage. To light a world from a field the game computes (a voxel world's
+  sky and block light), install a volume over what the field covers and
+  write it by region as the field changes, scrolling it with the camera
+  ([irradiance volume](crates/sgl-3d/README.md#irradiance-volume)); a
+  fixture written into the field is not also a baked `Light`. Afterwards,
+  look at caves and overhangs beyond the shadow cascades, a torch placed
+  and removed, moving objects entering and leaving lit and dark cells, the
+  sky's reflection on wet or metal surfaces in caves, the volume's border
+  and a scroll, and compare the `opaque geometry + lighting` (or `opaque
+  lighting`) and `reflection source completion` timing groups on the game's
+  route.
+
 ### Shadows offset their receivers along the geometry normal
 
 - **Scope:** `sgl-3d` shadow lookups of the directional cascades and of

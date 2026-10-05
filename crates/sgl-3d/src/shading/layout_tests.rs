@@ -180,6 +180,9 @@ fn rust_mirrors_match_wgsl_layouts() {
                 dynamic_gi_origin,
                 dynamic_gi_spacing,
                 dynamic_gi_probes,
+                irradiance_volume_origin,
+                irradiance_volume_cell_size,
+                irradiance_volume_cells,
             ]
         ),
         mirror!(
@@ -330,6 +333,7 @@ fn rust_mirrors_match_wgsl_layouts() {
         ("FRAME_TEMPORAL_SHADOW_FILTER", FRAME_TEMPORAL_SHADOW_FILTER),
         ("FRAME_HARDWARE_SHADOW_FILTER", FRAME_HARDWARE_SHADOW_FILTER),
         ("FRAME_DYNAMIC_GI", FRAME_DYNAMIC_GI),
+        ("FRAME_IRRADIANCE_VOLUME", FRAME_IRRADIANCE_VOLUME),
         ("MATERIAL_UNLIT", super::material::MATERIAL_UNLIT),
         (
             "MATERIAL_DOUBLE_SIDED",
@@ -552,6 +556,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         (0, "fog_volume", group0::FOG_VOLUME),
         (0, "fog_sampler", group0::FOG_SAMPLER),
         (0, "dynamic_gi_probes", group0::DYNAMIC_GI_PROBES),
+        (0, "irradiance_volume", group0::IRRADIANCE_VOLUME),
         (1, "objects", group1::OBJECTS),
         (1, "scene_source", group1::SCENE_SOURCE),
         (1, "scene_instances", group1::SCENE_INSTANCES),
