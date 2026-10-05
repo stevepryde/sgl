@@ -19,16 +19,19 @@ const CULL_MAX_WORKGROUPS:u32=65535u;
 // without alternatives.
 const NO_SET:u32=4294967295u;
 const NO_CHAIN:u32=4294967295u;
-// DrawSet.flags: its material casts the directional shadow.
+// DrawSet.flags: its material casts the directional shadow; it is opaque,
+// so a cascade draws its paired sections indexed.
 const SET_CASTS_DIRECTIONAL_SHADOW:u32=1u;
+const SET_PAIRS:u32=2u;
 // CullView.flags: the camera's population (else a cascade's), the clip
-// volume test, its near plane, the level of detail, and per-candidate
-// statistics.
+// volume test, its near plane, the level of detail, per-candidate
+// statistics, and paired sections appended to their sets' paired regions.
 const CULL_CAMERA:u32=1u;
 const CULL_FRUSTUM:u32=2u;
 const CULL_NEAR:u32=4u;
 const CULL_LOD:u32=8u;
 const CULL_CANDIDATE_STATISTICS:u32=16u;
+const CULL_PAIRED:u32=32u;
 // CullOcclusion.flags: the early phase tests against the last submitted
 // frame's depth pyramid.
 const OCCLUSION_EARLY:u32=1u;
@@ -40,21 +43,22 @@ const DISPATCH_LATE_INSTANCES:u32=3u;
 const DISPATCH_LATE_SECTIONS:u32=6u;
 const CULL_DISPATCH_WORDS:u32=9u;
 // A view's draws (array<atomic<u32>>): its statistics' words, the sections
-// appended and their triangles by mobility, then each set's indirect draw,
-// whose instance count the section cull adds to, then, with
-// CULL_CANDIDATE_STATISTICS, each candidate's appended sections and
-// triangles from CullView.candidate_statistics.
+// appended and their triangles by mobility, then each set's indirect draws
+// (early, late, paired), whose instance count the section cull adds to,
+// then, with CULL_CANDIDATE_STATISTICS, each candidate's appended sections
+// and triangles from CullView.candidate_statistics.
 const CULL_STATISTICS_WORDS:u32=4u;
 const CULL_STATIC_SECTIONS:u32=0u;
 const CULL_STATIC_TRIANGLES:u32=1u;
 const CULL_MOVING_SECTIONS:u32=2u;
 const CULL_MOVING_TRIANGLES:u32=3u;
-const DRAW_COMMAND_WORDS:u32=4u;
+const DRAW_COMMAND_WORDS:u32=5u;
 const DRAW_COMMAND_INSTANCE_COUNT:u32=1u;
 const CANDIDATE_STATISTICS_WORDS:u32=2u;
 // One instance's mesh, which a GPU-built view may draw: its bounds in its
 // model's space, its object record's index, its mesh's record word in the
-// scene source, its set and its level chain.
+// scene source, its set, its level chain and its mesh's first vertex in its
+// set's positions slab, or NO_POSITIONS for a mesh without slab positions.
 struct DrawCandidate {
  bounds_min:vec3<f32>,
  object:u32,
@@ -62,6 +66,7 @@ struct DrawCandidate {
  mesh:u32,
  draw_set:u32,
  chain:u32,
+ positions:u32,
 }
 // One alternative of a mesh: its bounds in the base mesh's space, its error
 // bound in metres and its mesh's record word.
@@ -89,8 +94,9 @@ struct DrawSet {
 // plane's tolerance row, the level of detail's transforms and render size,
 // the early instance cull's candidates and its dispatch's workgroups along
 // x, the frame's visibility mask, CULL_* bits, where the per-candidate
-// statistics start in its draws, the index of its first late command and
-// its late section queue's capacity.
+// statistics start in its draws, the index of its first late command, its
+// late section queue's capacity, and the index of its first paired command
+// and where its paired regions start in its cluster list.
 struct CullView {
  planes:array<vec4<f32>,6>,
  plane_errors:array<vec4<f32>,6>,
@@ -104,6 +110,8 @@ struct CullView {
  candidate_statistics:u32,
  late_command:u32,
  queue_capacity:u32,
+ paired_command:u32,
+ paired_region:u32,
 }
 // The camera's occlusion test for a frame, the cull stage's own: the last
 // submitted frame's view-projection with that frame's jitter, which the

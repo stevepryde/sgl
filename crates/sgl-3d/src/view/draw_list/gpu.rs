@@ -5,29 +5,33 @@
 //! (the visible lists, the late list and the late section queue, with
 //! their counts), the dispatch buffer that drives the indirect dispatches,
 //! its cluster lists, which hold every set's region of draw instances, one
-//! for each phase it culls, and its draws: its statistics words, then each
-//! set's early indirect command, then each set's late one, then, for the
-//! camera with diagnostics, each candidate's appended sections. The cull
+//! for each phase it culls, and, for a cascade, a paired region past them,
+//! and its draws: its statistics words, then each set's early indirect
+//! command, then each set's late one, then each set's paired one, then, for
+//! the camera with diagnostics, each candidate's appended sections. The cull
 //! stage (`stages::cull`) writes them from the scene's candidates; the
 //! shadow and opaque stages draw them through the executor here, one
 //! `draw_indirect` per set and phase whose instances are the sections that
 //! passed, with the set's region of that phase's cluster list bound as the
 //! draw-instance buffer, as Bevy 9d12036's meshlet hardware raster draws
 //! its visible clusters (crates/bevy_pbr/src/meshlet/
-//! visibility_buffer_raster_node.rs 592, visibility_buffer_hardware_raster.wesl).
-//! Only the camera culls a late phase, while occlusion culling runs.
+//! visibility_buffer_raster_node.rs 592, visibility_buffer_hardware_raster.wesl),
+//! and for a cascade one `draw_indexed_indirect` per opaque set of its
+//! paired sections over `PAIRED_INDICES`, so they keep the vertex reuse an indexed draw has.
+//! Only the camera culls a late phase, while occlusion culling runs; only
+//! the cascades pair.
 use super::Binder;
 use crate::Scene;
 use crate::content::identity::MaterialId;
 use crate::shading::culling::{
     CANDIDATE_STATISTICS_WORDS, CULL_CAMERA, CULL_CANDIDATE_STATISTICS, CULL_DISPATCH_WORDS,
-    CULL_FRUSTUM, CULL_LOD, CULL_NEAR, CULL_WORKGROUP, CullListsHeader, CullStatistics, CullView,
-    DrawCommand, dispatch_side, late_entries, words,
+    CULL_FRUSTUM, CULL_LOD, CULL_NEAR, CULL_PAIRED, CULL_WORKGROUP, CullListsHeader,
+    CullStatistics, CullView, DrawCommand, PAIRED_INDICES, dispatch_side, late_entries, words,
 };
 use crate::shading::vertex::{DRAW_INSTANCE_SLOT, DrawInstance};
 use crate::view::View;
 use crate::view::culling::Frustum;
-use crate::view::pipelines::{GeometryPass, GeometryPipelines, Variant};
+use crate::view::pipelines::{Alpha, GeometryPass, GeometryPipelines, Variant};
 use crate::view::population::camera_variant;
 use glam::{DMat4, Mat4};
 use std::ops::Range;
@@ -41,13 +45,19 @@ pub(crate) enum Phase {
     Late,
 }
 
+/// The kinds of command a view's draws hold for each set: early, late and
+/// paired.
+const COMMAND_KINDS: u32 = 3;
+
 /// One set a view draws this frame: its index, which is its command's, its
-/// region, and the pipeline variant and material it draws with.
+/// region, the pipeline variant and material it draws with, and the
+/// positions slab a cascade's casters of it pull their positions from.
 struct DrawnSet {
     index: u32,
     region: Range<u32>,
     variant: Variant,
     material: MaterialId,
+    positions: u32,
 }
 
 pub(crate) struct GpuList {
@@ -58,21 +68,28 @@ pub(crate) struct GpuList {
     /// The indirect dispatches the finalizes write (`CULL_DISPATCH_WORDS`).
     dispatch: wgpu::Buffer,
     /// Every set's region of draw instances, for the early phase and for
-    /// the late, each placed as the set's record says.
+    /// the late, each placed as the set's record says; the early one's
+    /// paired regions follow its own, each placed alike.
     regions: wgpu::Buffer,
     late_regions: wgpu::Buffer,
-    /// Its statistics, each set's early command, each set's late command
-    /// and the candidates' statistics.
+    /// Its statistics, each set's early, late and paired commands, and the
+    /// candidates' statistics.
     draws: wgpu::Buffer,
     /// What `draws` holds as each frame starts, which the frame's encoder
     /// copies over it: zero statistics and counts, and every command
     /// `DrawCommand::RESET`.
     reset: wgpu::Buffer,
-    /// The commands a phase holds room for in `draws`: the late ones follow
-    /// the early ones, and the candidates' statistics both.
+    /// The commands each kind holds room for in `draws`: the late ones
+    /// follow the early ones, the paired ones the late ones, and the
+    /// candidates' statistics them all.
     commands: u32,
     /// Whether the frame culls a late phase.
     late: bool,
+    /// Whether the frame pairs (`CULL_PAIRED`), where its paired regions
+    /// start, and the indices its paired draws draw.
+    paired: bool,
+    paired_region: u32,
+    paired_indices: wgpu::Buffer,
     /// The candidates it culls this frame, and whether it counts their
     /// statistics.
     candidates: u32,
@@ -93,7 +110,8 @@ fn grown(
     }
     // Rounded up to a power of two, but never past what the device creates
     // and, for a storage buffer, binds whole: the scene refuses content
-    // past those, so `size` itself fits.
+    // past those, a cascade's cluster list, which holds every region twice,
+    // counted (`Candidates::most_regions`), so `size` itself fits.
     let limits = device.limits();
     let mut most = limits.max_buffer_size;
     if usage.contains(wgpu::BufferUsages::STORAGE) {
@@ -149,6 +167,16 @@ impl GpuList {
             reset: buffer("view draws reset", 16, wgpu::BufferUsages::COPY_SRC),
             commands: 0,
             late: false,
+            paired: false,
+            paired_region: 0,
+            paired_indices: crate::counters::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("paired indices"),
+                    contents: bytemuck::cast_slice(&PAIRED_INDICES),
+                    usage: wgpu::BufferUsages::INDEX,
+                },
+            ),
             candidates: 0,
             candidate_statistics: false,
             drawn: Vec::new(),
@@ -157,9 +185,10 @@ impl GpuList {
 
     /// Prepares the frame's cull of `scene` from `view` (its planes, level
     /// of detail and flags; the counts are filled here), with a late phase
-    /// when `late`: grows its buffers to the scene's candidates, sets and
-    /// regions, uploads the cull and chooses the sets it draws, those its
-    /// population can show under the frame's mask.
+    /// when `late` and paired regions where its flags pair: grows its
+    /// buffers to the scene's candidates, sets and regions, uploads the cull
+    /// and chooses the sets it draws, those its population can show under
+    /// the frame's mask.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -189,10 +218,11 @@ impl GpuList {
         );
         let regions_usage = STORAGE | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC;
         let regions = bytes_of::<DrawInstance>(sets.region_end());
+        let paired = view.flags & CULL_PAIRED != 0;
         grown(
             device,
             &mut self.regions,
-            regions,
+            if paired { 2 * regions } else { regions },
             "cluster list",
             regions_usage,
         );
@@ -212,7 +242,7 @@ impl GpuList {
             0
         };
         let draws = std::mem::size_of::<CullStatistics>() as u64
-            + 2 * u64::from(commands) * std::mem::size_of::<DrawCommand>() as u64
+            + u64::from(COMMAND_KINDS * commands) * std::mem::size_of::<DrawCommand>() as u64
             + u64::from(statistics_words) * 4;
         let usage = STORAGE
             | wgpu::BufferUsages::INDIRECT
@@ -233,7 +263,8 @@ impl GpuList {
             );
             let mut reset = vec![0u32; (self.draws.size() / 4) as usize];
             let first = words::<CullStatistics>() as usize;
-            for command in reset[first..first + (2 * commands * words::<DrawCommand>()) as usize]
+            let kinds = COMMAND_KINDS * commands * words::<DrawCommand>();
+            for command in reset[first..first + kinds as usize]
                 .chunks_exact_mut(words::<DrawCommand>() as usize)
             {
                 command.copy_from_slice(bytemuck::cast_slice(&[DrawCommand::RESET]));
@@ -244,13 +275,19 @@ impl GpuList {
         self.candidates = candidates;
         self.candidate_statistics = statistics;
         self.late = late;
+        self.paired = paired;
+        // The paired regions follow the early ones, which a set's region
+        // places alike: past the last, `region_end` draw instances on.
+        self.paired_region = if paired { sets.region_end().max(1) } else { 0 };
         let workgroups = candidates.div_ceil(CULL_WORKGROUP);
         view.candidates = candidates;
         view.candidate_side = dispatch_side(workgroups)[0];
         view.candidate_statistics =
-            words::<CullStatistics>() + 2 * commands * words::<DrawCommand>();
+            words::<CullStatistics>() + COMMAND_KINDS * commands * words::<DrawCommand>();
         view.late_command = commands;
         view.queue_capacity = queue_capacity;
+        view.paired_command = 2 * commands;
+        view.paired_region = self.paired_region;
         crate::counters::write_buffer(queue, &self.uniform, 0, bytemuck::bytes_of(&view));
         let camera = view.flags & CULL_CAMERA != 0;
         self.drawn.clear();
@@ -269,6 +306,7 @@ impl GpuList {
                 region,
                 variant: camera_variant(&material.values, key.mirrored, key.deforms),
                 material: key.material,
+                positions: key.positions,
             });
         }
     }
@@ -317,8 +355,9 @@ impl GpuList {
     /// Its draws and where its candidates' statistics start, in bytes,
     /// with how many there are; none without them.
     pub fn statistics(&self) -> (&wgpu::Buffer, Option<(u64, u32)>) {
-        let at =
-            u64::from(words::<CullStatistics>() + 2 * self.commands * words::<DrawCommand>()) * 4;
+        let at = u64::from(
+            words::<CullStatistics>() + COMMAND_KINDS * self.commands * words::<DrawCommand>(),
+        ) * 4;
         (
             &self.draws,
             self.candidate_statistics.then_some((at, self.candidates)),
@@ -335,15 +374,26 @@ impl GpuList {
         }
     }
 
-    /// The draws `draw` issues: one per set it draws and phase it culls.
+    /// The draws `draw` issues: one per set it draws and phase it culls,
+    /// and one more per opaque set where it pairs.
     #[cfg(any(test, feature = "diagnostics"))]
     pub fn draws(&self) -> usize {
-        self.drawn.len() * self.phases().len()
+        self.drawn.len() * self.phases().len() + if self.paired { self.paired_sets() } else { 0 }
+    }
+
+    /// The sets it draws whose paired sections it draws indexed: the
+    /// opaque ones (`SET_PAIRS`).
+    fn paired_sets(&self) -> usize {
+        self.drawn
+            .iter()
+            .filter(|set| set.variant.alpha == Alpha::Opaque)
+            .count()
     }
 
     /// Issues every phase's draws in `pass`, whose group 0 the caller
     /// bound, and returns how many it issued: per set, in set order, its
-    /// early draw, then its late one where the frame culls a late phase.
+    /// early draw, then its late one where the frame culls a late phase,
+    /// then its paired one where it pairs.
     pub fn draw(
         &self,
         scene: &Scene,
@@ -372,7 +422,12 @@ impl GpuList {
 
     /// Per set, in set order, one indirect draw of each of `phases`'
     /// commands, whose instances are the sections in the set's region of
-    /// that phase's cluster list, with its pipeline and material.
+    /// that phase's cluster list, with its pipeline and material and, in a
+    /// pass whose casters pull from it, its positions slab's group 3; then,
+    /// where the view pairs and the early phase draws, an opaque set's one
+    /// indexed indirect draw of its paired command over `PAIRED_INDICES`,
+    /// whose instances are the sections in its paired region, with its
+    /// paired pipeline.
     fn issue(
         &self,
         scene: &Scene,
@@ -385,60 +440,46 @@ impl GpuList {
             return 0;
         }
         pass.set_bind_group(1, &scene.scene_group, &[]);
+        let paired = self.paired && phases.contains(&Phase::Early);
+        debug_assert!(!paired || kind == GeometryPass::DirectionalShadow);
+        if paired {
+            pass.set_index_buffer(self.paired_indices.slice(..), wgpu::IndexFormat::Uint32);
+        }
         let mut binder = Binder::new(pipelines, kind);
         let stride = std::mem::size_of::<DrawInstance>() as u64;
         let command = std::mem::size_of::<DrawCommand>() as u64;
         let first = std::mem::size_of::<CullStatistics>() as u64;
+        let mut positions = None;
         for set in &self.drawn {
             binder.bind(pass, scene, set.variant, set.material);
-            let region = u64::from(set.region.start) * stride..u64::from(set.region.end) * stride;
+            if kind.binds_caster_positions() && positions != Some(set.positions) {
+                pass.set_bind_group(3, scene.geometry.positions_group(set.positions), &[]);
+                positions = Some(set.positions);
+            }
+            let region = |at: u32| {
+                u64::from(at + set.region.start) * stride..u64::from(at + set.region.end) * stride
+            };
             for phase in phases {
                 let (regions, index) = match phase {
                     Phase::Early => (&self.regions, set.index),
                     Phase::Late => (&self.late_regions, self.commands + set.index),
                 };
-                pass.set_vertex_buffer(DRAW_INSTANCE_SLOT, regions.slice(region.clone()));
+                pass.set_vertex_buffer(DRAW_INSTANCE_SLOT, regions.slice(region(0)));
                 pass.draw_indirect(&self.draws, first + u64::from(index) * command);
             }
+            if paired && set.variant.alpha == Alpha::Opaque {
+                pass.set_pipeline(pipelines.get(GeometryPass::PairedShadow, set.variant));
+                binder.forget_pipeline();
+                let index = 2 * self.commands + set.index;
+                pass.set_vertex_buffer(
+                    DRAW_INSTANCE_SLOT,
+                    self.regions.slice(region(self.paired_region)),
+                );
+                pass.draw_indexed_indirect(&self.draws, first + u64::from(index) * command);
+            }
         }
-        self.drawn.len() * phases.len()
+        self.drawn.len() * phases.len() + if paired { self.paired_sets() } else { 0 }
     }
-}
-
-/// What each phase appended to `list`'s sets' regions, read back: the
-/// early phase's draw instances, then the late phase's, each set's in set
-/// order.
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn read_phases(
-    list: &GpuList,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene: &Scene,
-) -> [Vec<DrawInstance>; 2] {
-    let read = |buffer| crate::test_support::read_words(device, queue, buffer);
-    let draws = read(&list.draws);
-    let regions = [read(&list.regions), read(&list.late_regions)];
-    let mut phases = [Vec::new(), Vec::new()];
-    for (index, _, region) in scene.candidates.sets.iter() {
-        for (phase, first_command) in [(0, 0), (1, list.commands)] {
-            let command = (words::<CullStatistics>()
-                + (first_command + index) * words::<DrawCommand>())
-                as usize;
-            let count: u32 = bytemuck::cast_slice::<u32, DrawCommand>(
-                &draws[command..command + words::<DrawCommand>() as usize],
-            )[0]
-            .instance_count;
-            assert!(
-                count as usize <= region.len(),
-                "a set's draw stays within its region"
-            );
-            let first = region.start as usize * words::<DrawInstance>() as usize;
-            let entries =
-                &regions[phase][first..first + count as usize * words::<DrawInstance>() as usize];
-            phases[phase].extend_from_slice(bytemuck::cast_slice::<u32, DrawInstance>(entries));
-        }
-    }
-    phases
 }
 
 /// What the cull stage binds of a GPU-built view.
@@ -493,7 +534,7 @@ pub(crate) fn camera_cull(view: &View, size: [u32; 2], mask: u32, culling: bool)
 /// its casters, against its clip volume without its near plane, since a
 /// caster between the light and the cascade casts into it (Bevy pushes a
 /// cascade frustum's near plane to infinity), at level 0, since shadows
-/// keep the original geometry.
+/// keep the original geometry, its paired sections drawn indexed.
 pub(crate) fn cascade_cull(view: &View, mask: u32) -> CullView {
     let (planes, plane_errors) = Frustum::planes(
         Mat4::from_cols_array_2d(&view.uniform.view),
@@ -504,7 +545,12 @@ pub(crate) fn cascade_cull(view: &View, mask: u32) -> CullView {
         planes,
         plane_errors,
         visibility_mask: mask,
-        flags: CULL_FRUSTUM,
+        flags: CULL_FRUSTUM | CULL_PAIRED,
         ..bytemuck::Zeroable::zeroed()
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod read;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use read::{read_early, read_phases};

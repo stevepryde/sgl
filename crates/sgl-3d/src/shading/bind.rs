@@ -1,6 +1,6 @@
 //! Group-0 layouts, one per bind module (bind_*.wgsl), group 1's, group
-//! 2's and the blended pipelines' group 3, and the binding numbers they and
-//! the groups built for them use. The layout test checks every number
+//! 2's, the blended pipelines' group 3 and the GPU-built cascades' casters'
+//! group 3, and the binding numbers they and the groups built for them use. The layout test checks every number
 //! against naga's binding of the WGSL variable it is named after.
 
 /// Group 0's bindings, as bind_lit.wgsl, bind_unlit.wgsl and bind_shadow.wgsl
@@ -71,6 +71,12 @@ pub(crate) fn tlas_entry() -> wgpu::BindGroupLayoutEntry {
         },
         count: None,
     }
+}
+
+/// The GPU-built directional cascades' casters' group 3, as
+/// bind_caster_positions.wgsl declares it.
+pub(crate) mod caster {
+    pub(crate) const POSITIONS: u32 = 0;
 }
 
 /// The blended pipelines' group 3, as bind_blended.wgsl declares it.
@@ -370,6 +376,27 @@ pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
         storage(group1::SCENE_SOURCE, rays),
         storage(group1::SCENE_INSTANCES, rays),
     ]
+}
+
+/// The GPU-built directional cascades' casters' group 3:
+/// bind_caster_positions.wgsl's positions slab (`scene::geometry`), which
+/// their vertex stage reads.
+pub(crate) fn caster_positions(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    layout(device, "caster positions", &caster_positions_entries())
+}
+
+/// Group 3's entries for the GPU-built cascades' casters.
+pub(crate) fn caster_positions_entries() -> [wgpu::BindGroupLayoutEntry; 1] {
+    [wgpu::BindGroupLayoutEntry {
+        binding: caster::POSITIONS,
+        visibility: wgpu::ShaderStages::VERTEX,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }]
 }
 
 /// The blended pipelines' group 3: bind_blended.wgsl's screen-space

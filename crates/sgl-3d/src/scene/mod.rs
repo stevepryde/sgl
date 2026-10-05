@@ -477,7 +477,9 @@ pub struct SceneResources {
     pub blas_triangles: u64,
     /// The GPU draw lists' buffers: the draw candidates', the draw sets'
     /// and the level chains' bytes, and the bytes the sets' regions take
-    /// in each GPU-built view's cluster list.
+    /// in each GPU-built view's cluster list, which holds them once for
+    /// each phase it culls and, a cascade's, once more for its paired
+    /// regions.
     pub draw_candidates: u64,
     pub draw_sets: u64,
     pub level_chains: u64,

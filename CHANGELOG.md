@@ -15,6 +15,54 @@ full API details.
 
 ## Unreleased
 
+### Directional cascades cost less GPU time
+
+- **Scope:** `sgl-3d` (#192). No API change. Since #190 the directional
+  cascades, drawn from GPU-built lists, cost the GPU more than the
+  CPU-built indexed draws they replaced. On quad content like the
+  examples' voxel worlds, they now cost what those draws did. Other
+  content gets part of that back.
+- **Behaviour:**
+  - A cascade's casters read each vertex's position from the scene's
+    12-byte caster positions, the slabs the CPU-built casters draw from,
+    rather than the scene source's 32-byte vertex records. All content
+    gets this.
+  - A cascade draws an opaque set's sections whose triangles pair with a
+    second, indexed draw over one fixed pattern, so each pair's shared
+    corners are shaded once. Triangles pair when each even triangle of a
+    section and the next are (a, b, c) and (a, c, d): quads split
+    `[0, 1, 2, 0, 2, 3]`, in index order and starting on an even
+    triangle, as the examples' meshers and Blender's quads give them.
+    Other sections, and every masked set's, draw pulled as before. Other
+    quad splits (`[0, 1, 2, 2, 3, 0]`), cache-optimised index orders and
+    a section whose pairs start on an odd triangle get the positions'
+    saving alone. In 100 glTF models from the owner's games, 19% of
+    sections pair.
+  - Content and shadows are unchanged, bit for bit.
+  - Measured at 1920×1080, median GPU time of the four cascades, two runs
+    each, against `main` before this change and #190's parent:
+    - Apple M5, Metal: the `streaming` walk 0.76–0.77 → 0.56–0.57 ms (before
+      #190: 0.50–0.53); its headroom scale 1.88–1.94 → 1.31–1.32 ms
+      (1.32–1.33); the `irradiance_volume` cave 0.32 → 0.26 ms.
+    - Chrome (WebGPU on the same Mac): the walk window 0.79 → 0.59 ms; the
+      headroom window 2.62–2.69 → 1.84–1.90 ms. #190 measured 0.59 and
+      2.03 before it.
+  - `Renderer::diagnostic_draws` counts a cascade's opaque sets twice.
+  - Each cascade's cluster list holds the sets' regions twice, once for
+    each kind of draw: 110 KB instead of 55 KB on the `streaming` walk,
+    1 MB instead of 514 KB at its headroom scale.
+  - So the scene refuses content whose sets' regions pass half a storage
+    binding (`SceneError::DeviceLimit`), where it refused content past a
+    whole one: about 2.2 million sections of up to 128 triangles at
+    WebGPU's default 128 MiB binding.
+  - A positions slab is now also bound as storage, so it stays within the
+    device's `max_storage_buffer_binding_size`. The scene source holds
+    each vertex in 32 bytes and already refuses content past that size,
+    so this adds no refusal.
+- **Migration:** no game-code changes and no regenerated content. A HUD or
+  test that reads `diagnostic_draws` for the cascades sees an opaque set
+  counted twice.
+
 ### Ray-traced shadows
 
 - **Scope:** `sgl-3d` (#23): new `Settings::ray_traced_shadows` (`bool`,
