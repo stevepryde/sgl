@@ -19,6 +19,7 @@ pub(crate) use sets::{SetKey, SetLook};
 
 use super::SceneError;
 use super::deformation::InstanceDeformation;
+use super::geometry::GeometryRange;
 use super::materials::Material;
 use super::models::{Model, Models};
 use super::ranges::Ranges;
@@ -46,7 +47,9 @@ struct Slot {
 /// (`Scene::candidate_meshes`): its material and how its set's record takes
 /// it, whether it is blended (and has no candidate), the most sections among
 /// its levels (none: no candidate), its bounds in the model's space, its
-/// record word and its level chain.
+/// record word, its level chain, and its positions' slab and first vertex
+/// there (`GeometryRange::EMPTY`'s slab and `NO_POSITIONS` for a deforming
+/// model's mesh, which has none).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CandidateMesh {
     pub material: MaterialId,
@@ -56,6 +59,7 @@ pub(crate) struct CandidateMesh {
     pub bounds: [Vec3; 2],
     pub word: u32,
     pub chain: u32,
+    pub positions: (u32, u32),
 }
 
 /// One candidate a placement accounts for: its set's key, how its set's
@@ -79,6 +83,7 @@ fn keyed(
                 material: mesh.material,
                 mirrored,
                 deforms,
+                positions: mesh.positions.0,
             };
             (index, (key, mesh.look, mesh.need))
         })
@@ -117,10 +122,12 @@ pub(crate) struct Candidates {
     pub(crate) sets: Sets,
     chains: Chains,
     /// The most candidate slots and draw instances in regions a device
-    /// binds: a GPU-built view's lists and cluster lists hold them. The
-    /// camera's lists while it culls occlusion, an entry for each slot in
-    /// each of three lists and one for each draw instance in its queue, fit
-    /// within the same binding: at these caps they take at most 0.9 of it.
+    /// binds: a GPU-built view's lists and cluster lists hold them, a
+    /// cascade's cluster list each region twice, its pulled and its paired
+    /// draw instances. The camera's lists while it culls occlusion, an
+    /// entry for each slot in each of three lists and one for each draw
+    /// instance in its queue, fit within the same binding: at these caps
+    /// they take at most 0.9 of it.
     most_slots: u32,
     most_regions: u32,
     /// Each slot's instance's model, which a frame's statistics readback
@@ -151,7 +158,7 @@ impl Candidates {
             sets: Sets::new(),
             chains: Chains::new(),
             most_slots: most(candidate, 0).min(most(entry, std::mem::size_of::<CullListsHeader>())),
-            most_regions: most(std::mem::size_of::<DrawInstance>(), 0),
+            most_regions: most(2 * std::mem::size_of::<DrawInstance>(), 0),
             #[cfg(feature = "diagnostics")]
             models: Default::default(),
         }
@@ -249,7 +256,8 @@ impl Candidates {
                 mesh: shape.word,
                 draw_set: set,
                 chain: shape.chain,
-                padding: [0; 2],
+                positions: shape.positions.1,
+                padding: 0,
             };
             self.records.set(slot, record, DrawCandidate::FREE);
             if self.slots.len() <= slot as usize {
@@ -412,6 +420,7 @@ pub(crate) fn look(material: &Material) -> SetLook {
     SetLook {
         group: material.values.visibility_group,
         casts: material.casts_directional_shadows(),
+        opaque: material.values.alpha == crate::AlphaMode::Opaque,
     }
 }
 
@@ -450,6 +459,13 @@ impl super::Scene {
                     bounds: mesh.ranges.bounds().unwrap_or([Vec3::ZERO; 2]),
                     word: model.ray.mesh_word(index),
                     chain: self.candidates.chains.of(id, index),
+                    positions: match mesh.positions {
+                        GeometryRange { count: 0, .. } => (
+                            GeometryRange::EMPTY.slab,
+                            crate::shading::vertex::NO_POSITIONS,
+                        ),
+                        range => (range.slab, range.first),
+                    },
                 }
             })
             .collect()

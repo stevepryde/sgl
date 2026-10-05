@@ -88,6 +88,10 @@ pub(crate) struct FrameBindings {
     /// The lighting pass's group 3 while ray-traced shadows run
     /// (`shading::bind::shadow_mask`), which the opaque stage binds.
     pub shadow_mask: wgpu::BindGroupLayout,
+    /// The GPU-built cascades' casters' group 3
+    /// (`shading::bind::caster_positions`), which the scene's positions
+    /// slabs bind (`scene::geometry`).
+    pub caster_positions: wgpu::BindGroupLayout,
     /// The frame's `FrameUniform`, shared by every view of the frame.
     pub frame: wgpu::Buffer,
     /// No specular probes: lit groups bind this while the scene has none
@@ -142,6 +146,7 @@ impl FrameBindings {
             material: shading::bind::material(device),
             blended: shading::bind::blended(device),
             shadow_mask: shading::bind::shadow_mask(device),
+            caster_positions: shading::bind::caster_positions(device),
             frame,
             empty_probes: UploadedProbes::empty(device),
             shadow_maps,

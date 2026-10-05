@@ -189,6 +189,7 @@ impl Renderer {
                 &bindings.material,
                 &bindings.blended,
                 &bindings.shadow_mask,
+                &bindings.caster_positions,
             ],
             layers,
         );

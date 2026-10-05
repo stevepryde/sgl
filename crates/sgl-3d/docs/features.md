@@ -109,8 +109,10 @@ SGL3D needs compute.
 - **Culling and LOD**: automatic. The GPU builds the camera's opaque and
   masked draws and each directional cascade's every frame: frustum culling
   of each instance, then of its mesh's 128-triangle sections, one indirect
-  draw per material and pose kind whatever the instance count, on native
-  and in the browser alike. A mesh holds at most 65,536 sections.
+  draw per material, pose kind and positions slab whatever the instance
+  count, on native and in the browser alike; a cascade draws an opaque
+  material's sections whose triangles pair as quads a second, indexed
+  way. A mesh holds at most 65,536 sections.
   `Scene::set_mesh_lods` registers up to 8 authored coarser chunks a mesh
   ([spatial mesh LOD](../README.md#spatial-mesh-lod)). Coplanar surfaces of
   different draws have no defined winner at equal depth: give an overlay a

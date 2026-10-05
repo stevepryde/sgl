@@ -179,6 +179,7 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             [
                 ("geometry", "SCENE_IMAGE_RGBA8", IMAGE_RGBA8),
                 ("geometry", "SCENE_IMAGE_BC7", IMAGE_BC7),
+                ("cull", "SCENE_SECTION_PAIRED", super::model::SECTION_PAIRED),
                 (
                     "world_reflections",
                     "SCENE_BVH_LEAF_PRIMITIVES",
