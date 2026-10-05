@@ -104,6 +104,12 @@ struct Frame {
  dynamic_gi_origin:vec3<f32>,
  dynamic_gi_spacing:vec3<f32>,
  dynamic_gi_probes:vec3<u32>,
+ // With FRAME_IRRADIANCE_VOLUME, the scene's irradiance volume
+ // (irradiance_volume.wgsl): its first cell's least corner, the size of its
+ // cells and their count along each axis.
+ irradiance_volume_origin:vec3<f32>,
+ irradiance_volume_cell_size:vec3<f32>,
+ irradiance_volume_cells:vec3<u32>,
 }
 // The frame's volumetric fog ran: draws fog themselves from its volume.
 const FRAME_FOG:u32=1u;
@@ -118,6 +124,9 @@ const FRAME_HARDWARE_SHADOW_FILTER:u32=32u;
 // The dynamic GI volume lights the frame: the scene holds one and
 // Settings::dynamic_gi runs it, and group 0 binds its probes.
 const FRAME_DYNAMIC_GI:u32=64u;
+// The irradiance volume lights the frame: the scene holds one and baked
+// lighting is on, and group 0 binds its cells.
+const FRAME_IRRADIANCE_VOLUME:u32=128u;
 // One instance's record, at its index in the scene's object buffer. That
 // index plus one is the source identity the G-buffer stores.
 struct Object {

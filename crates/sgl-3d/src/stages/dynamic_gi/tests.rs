@@ -219,7 +219,7 @@ fn indirect_of(position:vec3<f32>,moving:bool,lightmapped:bool)->vec4<f32> {
   s.baked_irradiance[face]=vec4(.25);
  }
  let indirect=surface_indirect_diffuse(s,s.normal);
- return select(vec4(indirect.baked,0.),indirect.volume,indirect.volume.a>0.);
+ return select(vec4(indirect.baked,0.),indirect.dynamic_gi,indirect.dynamic_gi.a>0.);
 }
 "#;
 

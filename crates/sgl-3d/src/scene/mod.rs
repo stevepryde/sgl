@@ -1,9 +1,9 @@
 //! The scene layer: [`Scene`], the retained content a game adds, edits and
 //! removes (materials, models, instances, lights, decals, environments,
-//! baked lighting, probes, the dynamic GI volume's placement and transient
-//! geometry), with the GPU buffers that
-//! mirror it and the ray-query structure built from its geometry. Nothing here depends on a
-//! camera, an output size or a quality setting.
+//! baked lighting, probes, the irradiance volume, the dynamic GI volume's
+//! placement and transient geometry), with the GPU buffers that mirror it
+//! and the ray-query structure built from its geometry. Nothing here
+//! depends on a camera, an output size or a quality setting.
 mod decal_atlas;
 pub(crate) mod decals;
 pub(crate) mod deformation;
@@ -11,6 +11,7 @@ pub(crate) mod dynamic_gi;
 pub(crate) mod environments;
 pub(crate) mod error;
 pub(crate) mod instances;
+pub(crate) mod irradiance_volume;
 pub(crate) mod lights;
 pub(crate) mod lod;
 pub(crate) mod lookup_tables;
@@ -61,6 +62,8 @@ pub struct Scene {
     scene_layout: wgpu::BindGroupLayout,
     pub(crate) static_lighting: static_lighting::StaticLighting,
     baked_specular_probes: Option<probes::UploadedProbes>,
+    /// The irradiance volume (`Scene::set_irradiance_volume`).
+    pub(crate) irradiance_cells: irradiance_volume::IrradianceCells,
     /// The dynamic GI volume's placement (`Scene::set_dynamic_gi_volume`).
     pub(crate) dynamic_gi: Option<dynamic_gi::InstalledVolume>,
     /// This scene among every scene created: a renderer given another scene
@@ -68,7 +71,7 @@ pub struct Scene {
     pub(crate) id: u64,
     /// Changes whenever a resource renderers bind in group 0 is replaced
     /// (lights, decals, the decal atlas, lightmap, irradiance atlas,
-    /// specular probes).
+    /// specular probes, the irradiance volume's texture).
     pub(crate) resources: u64,
     /// Caller-authored glow, heat and mist geometry.
     pub(crate) transient: transient::Transient,
@@ -132,6 +135,7 @@ impl Scene {
             rays,
             static_lighting: static_lighting::StaticLighting::empty(device, queue),
             baked_specular_probes: None,
+            irradiance_cells: irradiance_volume::IrradianceCells::new(device, queue),
             dynamic_gi: None,
             id: next_generation(),
             resources: next_generation(),

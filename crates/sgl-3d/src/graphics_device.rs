@@ -17,6 +17,7 @@ pub fn limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
         max_storage_buffers_per_shader_stage: adapter.limits().max_storage_buffers_per_shader_stage,
         max_texture_array_layers: adapter.limits().max_texture_array_layers,
         max_texture_dimension_2d: adapter.limits().max_texture_dimension_2d,
+        max_texture_dimension_3d: adapter.limits().max_texture_dimension_3d,
         ..Default::default()
     }
 }

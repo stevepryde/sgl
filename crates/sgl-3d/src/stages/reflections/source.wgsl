@@ -42,24 +42,17 @@ fn source_lobes(normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotro
  let base_dfg=lookup_dfg(source_lookup_tables,env_sampler,specular_nv(normal,view),material.roughness);
  return specular_lobes(normal,gbuffer_coat_normal(normals),view,f0.rgb,material.roughness,base_dfg,material.coat,material.coat_roughness,anisotropy,source_lookup_tables,env_sampler);
 }
-// Specular occlusion of a lobe's environment and probe specular by the
-// receiver's ambient visibility, as Filament's desktop default evaluates it
-// (ef1a133 shaders/src/surface_ambient_occlusion.fs SpecularAO_Lagarde and
-// gtaoMultiBounce, applied as surface_light_indirect.fs evaluateIBL and
-// evaluateClearCoatIBL do; Apache-2.0, see LICENSE-filament.txt. Modified:
-// translated to WGSL). Lagarde and de Rousiers 2014, "Moving Frostbite to
-// PBR", with GTAO's multi-bounce on the base lobe's F0 (Jimenez et al. 2016).
-// Screen-space hits are visible surfaces and stay unoccluded, as in Filament.
-fn source_specular_occlusion(lobe:SpecularLobe,coat:bool,visibility:f32,f0:vec3<f32>)->vec3<f32> {
- let alpha=lobe.roughness*lobe.roughness;
- let ao=clamp(pow(lobe.nv+visibility,exp2(-16.*alpha-1.))-1.+visibility,0.,1.);
- if coat {
-  return vec3(ao);
+// A lobe's environment and probe specular at `world` along `lobe`, occluded
+// (specular_occlusion): the probes' by the receiver's ambient `visibility`,
+// the sky's by that times the irradiance volume's `sky_visibility` a(n).
+fn source_occluded_environment(world:vec3<f32>,lobe:SpecularLobe,coat:bool,environment_scale:f32,tile:u32,visibility:f32,sky_visibility:f32,f0:vec3<f32>)->vec3<f32> {
+ let environment=source_environment(world,lobe.direction,lobe.roughness,environment_scale,tile);
+ let occlusion=specular_occlusion(lobe,coat,visibility,f0);
+ var sky_occlusion=occlusion;
+ if sky_visibility<1. {
+  sky_occlusion=specular_occlusion(lobe,coat,visibility*sky_visibility,f0);
  }
- let a=2.0404*f0-vec3(.3324);
- let b=-4.7951*f0+vec3(.6417);
- let c=2.7552*f0+vec3(.6903);
- return max(vec3(ao),((ao*a+b)*ao+c)*ao);
+ return environment.probes*occlusion+environment.sky*sky_occlusion;
 }
 fn source_world(z:f32,id:vec2<u32>,size:vec2<u32>,camera:SourceCamera)->vec3<f32> {
  let uv=(vec2<f32>(id)+vec2(0.5))/vec2<f32>(size);
@@ -88,7 +81,9 @@ struct CompletedSource {
 // A screen-space method's traced lobe takes no environment specular here; the
 // method's composition adds it by confidence. Incident radiance includes both
 // lobes so another receiver sees the fully lit source, independently of tracing.
-fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotropy:vec4<f32>,z:f32,id:vec2<u32>,size:vec2<u32>,camera:SourceCamera,traced:f32)->CompletedSource {
+// `sky_visibility` is the irradiance volume's a(n) at the receiver, which the
+// ambient target's alpha holds (shading/gbuffer.wgsl).
+fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotropy:vec4<f32>,z:f32,id:vec2<u32>,size:vec2<u32>,camera:SourceCamera,traced:f32,sky_visibility:f32)->CompletedSource {
  var incoming=incoming_value;
  var incident=incoming_value;
  // The sky lies beyond the fog volume.
@@ -103,7 +98,7 @@ fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material
     if lobe==SPECULAR_COAT && material.coat<=0. {
      continue;
     }
-    let environment=source_environment(world,lobes[lobe].direction,lobes[lobe].roughness,material.environment_scale,source_probes(id))*lobes[lobe].response*source_specular_occlusion(lobes[lobe],lobe==SPECULAR_COAT,visibility,f0.rgb);
+    let environment=source_occluded_environment(world,lobes[lobe],lobe==SPECULAR_COAT,material.environment_scale,source_probes(id),visibility,sky_visibility,f0.rgb)*lobes[lobe].response;
     incident+=environment;
     if lobe!=traced_lobe || !specular_traces(lobes[lobe].roughness,traced) {
      incoming+=environment;
@@ -141,9 +136,9 @@ fn source_probes(p:vec2<u32>)->u32 {
  return ((p.y/PROBE_TILE_SIZE)*tiles_x+p.x/PROBE_TILE_SIZE)*PROBE_BUCKETS;
 }
 // Wicked's TiledLighting loads each bucket of the tile as it walks it.
-fn source_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32,sky_scale:f32,tile:u32)->vec3<f32> {
+fn source_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32,sky_scale:f32,tile:u32)->EnvironmentSpecular {
  if !application_environment_enabled {
-  return vec3(0.);
+  return EnvironmentSpecular(vec3(0.),vec3(0.));
  }
  var sum=ProbeSum(vec3(0.),0.);
  for(var bucket=0u;bucket<collection_buckets();bucket++) {
@@ -158,7 +153,8 @@ fn source_ambient_visibility(id:vec2<u32>)->f32 {
  return f32(textureLoad(source_ambient_occlusion,p,0).x)/255.;
 }
 @group(0) @binding(14) var incident_output:texture_storage_2d<rgba16float,write>;
-// The ambient diffuse within source_scene before occlusion (shading/gbuffer.wgsl).
+// The ambient diffuse within source_scene before occlusion, and in alpha the
+// irradiance volume's sky visibility (shading/gbuffer.wgsl).
 @group(0) @binding(24) var source_ambient:texture_2d<f32>;
 // True while ambient occlusion runs: completion takes the share of each lit
 // receiver's ambient diffuse that its ambient visibility hides out of the
@@ -193,14 +189,17 @@ override incident_radiance_enabled:bool=true;
  let f0=textureLoad(source_f0,p,0);
  var normals=vec4(0.);
  var material=gbuffer_material(vec4(0.));
+ var sky_visibility=1.;
  if z>0. && gbuffer_lit(f0) {
   normals=textureLoad(source_normal,p,0);
   material=gbuffer_material(textureLoad(receiver_material,p,0));
+  let ambient=textureLoad(source_ambient,p,0);
+  sky_visibility=ambient.a;
   if diffuse_occlusion_enabled {
-   incoming=source_diffuse_occlusion(incoming,textureLoad(source_ambient,p,0).rgb,source_ambient_visibility(id.xy));
+   incoming=source_diffuse_occlusion(incoming,ambient.rgb,source_ambient_visibility(id.xy));
   }
  }
- let completed=complete_source(incoming,c.a,normals,material,f0,textureLoad(source_anisotropy,p,0),z,id.xy,textureDimensions(source_output),source_camera,env.traced);
+ let completed=complete_source(incoming,c.a,normals,material,f0,textureLoad(source_anisotropy,p,0),z,id.xy,textureDimensions(source_output),source_camera,env.traced,sky_visibility);
  textureStore(source_output,p,completed.color);
  if incident_radiance_enabled {
   textureStore(incident_output,p,completed.incident);
@@ -251,7 +250,8 @@ override incident_radiance_enabled:bool=true;
  let traced_lobe=specular_traced_lobe(material.coat);
  let lobe=lobes[traced_lobe];
  if specular_traces(lobe.roughness,env.traced) {
-  let environment=source_environment(world,lobe.direction,lobe.roughness,material.environment_scale,source_probes(id))*source_specular_occlusion(lobe,traced_lobe==SPECULAR_COAT,visibility,f0.rgb);
+  let sky_visibility=textureLoad(source_ambient,p,0).a;
+  let environment=source_occluded_environment(world,lobe,traced_lobe==SPECULAR_COAT,material.environment_scale,source_probes(id),visibility,sky_visibility,f0.rgb);
   let fallback=world_hit.rgb+environment*(1.-world_hit.a);
   let fade=specular_trace_fade(lobe.roughness,sqrt(env.traced),env.fade);
   specular=specular_traced(lobe,reflected,fade,fallback);

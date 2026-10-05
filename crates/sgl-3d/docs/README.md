@@ -31,15 +31,16 @@ its rendering `settings::Settings`.
    `graphics_device::fsr2_features(&adapter)`, plus `TEXTURE_COMPRESSION_BC`
    for compressed bakes and material textures and `TIMESTAMP_QUERY` for GPU timing.
    In the browser the device is the page's WebGPU one, requested the same way;
-   it needs 20 sampled textures per stage (Chromium 149 and later).
+   it needs 21 sampled textures per stage (Chromium 149 and later).
 2. Load: `Scene::new` starts empty. Add content between frames and keep the
    identities it returns: `asset::load` (a file) or `asset::load_slice` (bytes,
    as a browser fetches them) into
    `Scene::add_asset`, instances with `add_instance` (static or moving),
    point, spot and rectangle lights with `add_light`, decals with
    `add_decal_image` and `add_decal`, environments with
-   `add_environment`, and a dynamic GI volume with
-   `set_dynamic_gi_volume`. `Renderer::new` takes the output
+   `add_environment`, an irradiance volume with `set_irradiance_volume`
+   (its cells written by region with `write_irradiance_cells`), and a
+   dynamic GI volume with `set_dynamic_gi_volume`. `Renderer::new` takes the output
    format, the output size in physical pixels, the window's scale factor and
    the settings.
 3. Each frame: `Scene::set_instance` per moving instance (pose, `visible`,
@@ -84,6 +85,7 @@ and an asynchronous readback.
 | Units, axes, glam version, poses, history | [Conventions](../README.md#dependencies-and-data-conventions), [3D development](../../../docs/3d-development.md) |
 | Frame lifecycle in detail | [Retained scene and frame lifecycle](../README.md#retained-scene-and-frame-lifecycle) |
 | Lightmaps, irradiance atlases and ambient cubes | [Baked diffuse lighting](../README.md#baked-diffuse-lighting) |
+| Light the game computes, relit by region (a voxel world's sky and block light) | [Irradiance volume](../README.md#irradiance-volume) |
 | Bounce light without a bake | [Dynamic diffuse GI](../README.md#dynamic-diffuse-gi) |
 | A feature's API, data format and limits | Its section in the [package README](../README.md) |
 | Rendering rules and roadmap | [SGL3D spec](../../../specs/sgl3d.md) |

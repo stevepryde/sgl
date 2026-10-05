@@ -1,6 +1,6 @@
 // Group 0 of lit scene geometry: view and frame data, lights, decals,
-// shadows, environment, probes, the dynamic GI volume's probes, lookup
-// tables and the fog volume. Rust layout: shading::bind::lit.
+// shadows, environment, probes, the irradiance volume's cells, the dynamic
+// GI volume's probes, lookup tables and the fog volume. Rust layout: shading::bind::lit.
 @group(0) @binding(0) var<uniform> view:View;
 @group(0) @binding(1) var<uniform> frame:Frame;
 @group(0) @binding(2) var shadow_sampler:sampler_comparison;
@@ -42,6 +42,9 @@
 // The dynamic GI volume's probes (dynamic_gi.wgsl), filtered through
 // `baked_sampler`; a stand-in in frames FRAME_DYNAMIC_GI leaves clear.
 @group(0) @binding(29) var dynamic_gi_probes:texture_2d<f32>;
+// The irradiance volume's cells (irradiance_volume.wgsl), filtered through
+// `baked_sampler`; a stand-in in frames FRAME_IRRADIANCE_VOLUME leaves clear.
+@group(0) @binding(30) var irradiance_volume:texture_3d<f32>;
 // The frame's fog volume (frame_fog.wgsl) and its sampler.
 @group(0) @binding(27) var fog_volume:texture_3d<f32>;
 @group(0) @binding(28) var fog_sampler:sampler;

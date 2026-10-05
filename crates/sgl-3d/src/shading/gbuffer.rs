@@ -3,7 +3,8 @@ use wgpu::TextureFormat;
 
 /// Lit colour, linear HDR.
 pub(crate) const COLOR: TextureFormat = TextureFormat::Rgba16Float;
-/// Unoccluded ambient diffuse radiance, linear HDR.
+/// Unoccluded ambient diffuse radiance, linear HDR, and the irradiance
+/// volume's sky visibility.
 pub(crate) const AMBIENT: TextureFormat = TextureFormat::Rgba16Float;
 /// Signed octahedral base and coat normals.
 pub(crate) const NORMAL: TextureFormat = TextureFormat::Rgba16Float;

@@ -31,6 +31,7 @@ pub(crate) mod group0 {
     pub(crate) const FOG_VOLUME: u32 = 27;
     pub(crate) const FOG_SAMPLER: u32 = 28;
     pub(crate) const DYNAMIC_GI_PROBES: u32 = 29;
+    pub(crate) const IRRADIANCE_VOLUME: u32 = 30;
 }
 
 /// Group 1's bindings, as bind_scene.wgsl and scene_rays.wgsl declare them.
@@ -208,6 +209,11 @@ fn entries() -> Vec<wgpu::BindGroupLayoutEntry> {
                 DYNAMIC_GI_PROBES,
                 filterable,
                 wgpu::TextureViewDimension::D2,
+            ),
+            texture(
+                IRRADIANCE_VOLUME,
+                filterable,
+                wgpu::TextureViewDimension::D3,
             ),
         ])
         .map(|mut entry| {

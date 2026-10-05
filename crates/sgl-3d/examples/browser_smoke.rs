@@ -10,7 +10,8 @@
 //! screen-space reflections; a skinned and morphed box
 //! with an ambient cube; a box lit by a static irradiance atlas; point, spot
 //! and rectangle lights; a decal; a baked specular probe; a dynamic GI volume
-//! over the ground; glow, heat shimmer and mist; a fog volume; and an
+//! over the ground, part of it covered by an irradiance volume written by
+//! region; glow, heat shimmer and mist; a fog volume; and an
 //! environment. Where the device has BC, the
 //! grate's image, the probe and the atlas are block-compressed, as a game
 //! ships them. Each
@@ -26,8 +27,9 @@ use sgl_3d::glam::camera;
 use sgl_3d::{
     AlphaMode, BakedSpecularProbe, Camera, Decal, DirectionalLight, DirectionalShadow,
     DynamicGiVolume, EnvironmentId, Fog, FogVolume, FrameInput, HemisphereLight, InstanceId,
-    InstanceState, Light, LightShape, Mist, Mobility, Renderer, Scene, SpecularProbeBox,
-    SpecularProbeRadiance, SpecularProbeTexels,
+    InstanceState, IrradianceCell, IrradianceVolume, Light, LightShape, Mist, Mobility,
+    PreparedIrradianceRegion, Renderer, Scene, SpecularProbeBox, SpecularProbeRadiance,
+    SpecularProbeTexels,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     deformation::{
         Influence, Joint, MeshDeformation, MorphDelta, MorphTarget, MorphWeight, Node, Rig,
@@ -524,6 +526,30 @@ fn add_content(
             }),
         )
         .map_err(|e| format!("set_dynamic_gi_volume: {e}"))?;
+    // An irradiance volume over the -x half of the ground, away from the
+    // shadow check's points, written by region: a warm own light, and the
+    // sky half hidden from its lower cells.
+    let field = IrradianceVolume {
+        origin: Vec3::new(-4., 0., -4.),
+        cell_size: Vec3::ONE,
+        cells: [4, 2, 8],
+    };
+    scene
+        .set_irradiance_volume(device, queue, Some(field))
+        .map_err(|e| format!("set_irradiance_volume: {e}"))?;
+    let cells: Vec<_> = (0..64)
+        .map(|index| IrradianceCell {
+            irradiance: AmbientCube {
+                irradiance: [[0.3, 0.2, 0.1]; 6],
+            },
+            sky_visibility: [if (index / 4) % 2 == 0 { 0.5 } else { 1. }; 6],
+        })
+        .collect();
+    let region = PreparedIrradianceRegion::new(field.origin, field.cells, &cells)
+        .map_err(|e| format!("PreparedIrradianceRegion: {e}"))?;
+    scene
+        .write_irradiance_cells(queue, &region)
+        .map_err(|e| format!("write_irradiance_cells: {e}"))?;
     let environment = scene
         .add_environment(device, queue, &environment())
         .map_err(|e| format!("add_environment: {e}"))?;

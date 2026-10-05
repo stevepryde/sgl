@@ -36,8 +36,10 @@ impl Scene {
         if to == Vec3::ZERO {
             return Ok(());
         }
-        // The dynamic GI volume's origin is kept in the frame the scene was
-        // created in (`dynamic_gi`), so it translates with the sum.
+        // The dynamic GI volume's and the irradiance volume's origins are
+        // kept in the frame the scene was created in (`dynamic_gi`,
+        // `irradiance_volume`), so they translate with the sum; the
+        // irradiance volume's cells are about its origin.
         self.origin += to.as_dvec3();
         self.instances
             .move_origin(queue, to, &self.models, &mut self.ray_instances);

@@ -14,6 +14,8 @@ pub(crate) mod test_frame;
 
 #[cfg(all(test, feature = "diagnostics", not(target_arch = "wasm32")))]
 mod diagnostics_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod floor_tests;
 
 use crate::settings::{Antialiasing, RenderPreset, SceneResolution, Settings};
 use crate::stages::shadows::local::LocalShadowStats;

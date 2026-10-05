@@ -22,7 +22,7 @@ fn probe_grid_cell(world:vec3<f32>)->i32 {
  let c=vec3<u32>(cell);
  return i32((c.x+size.x*(c.y+size.y*c.z))*PROBE_GRID_CELL_WORDS);
 }
-fn collection_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32,scale:f32,sky:texture_2d_array<f32>,filter_sampler:sampler,rotation:f32,strength:f32)->vec3<f32> {
+fn collection_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32,scale:f32,sky:texture_2d_array<f32>,filter_sampler:sampler,rotation:f32,strength:f32)->EnvironmentSpecular {
  var sum=ProbeSum(vec3(0.),0.);
  let cell=probe_grid_cell(world);
  if cell>=0 {

@@ -21,7 +21,7 @@ This page is the detailed reference:
 - [Lights and look](#frame-lights-and-look), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
 - [Reflections](#reflections), [TAA, SMAA and FSR2](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
-- [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
+- [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
 - [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
 - [Settings and fallbacks](#settings-and-capability-fallback), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
 
@@ -1410,6 +1410,82 @@ provides specular response. A state naming another model clears the cube, and
 a new instance starts without one.
 Neither alters material albedo or paints light into emission.
 
+## Irradiance volume
+
+A game that computes its own light field, such as a voxel world's
+propagated sky and block light or a level's bake, lights its world from it
+through the irradiance volume: a lattice of cells the game places and
+writes by region, which every surface within it, static or moving, samples
+by its position (a port of Bevy's irradiance volume, after Valve's ambient
+cubes). Changing the light, a torch placed or a cave opened, is a region
+write: no geometry replaced, no static edit, no texture installed again.
+
+```rust
+let volume = IrradianceVolume {
+    origin: Vec3::new(-80., -64., -80.), // the first cell's least corner
+    cell_size: Vec3::ONE,                // metres
+    cells: [160, 128, 160],
+};
+scene.set_irradiance_volume(&device, &queue, Some(volume))?;
+// On any thread: validate and pack a box of cells, x fastest, then y, then z.
+let region = PreparedIrradianceRegion::new(corner, [48, 48, 48], &cells)?;
+// Between frames:
+scene.write_irradiance_cells(&queue, &region)?;
+```
+
+- **Cells.** `IrradianceCell { irradiance: AmbientCube, sky_visibility: [f32;
+  6] }`, both in the order +X, −X, +Y, −Y, +Z, −Z, each face what a surface
+  facing that way receives. `irradiance` is the cell's own light,
+  irradiance / PI on the directional lights' scale: its emitters, block
+  light and whatever bounce the game's field carries. `sky_visibility`, 0 to
+  1, is how much of the frame's ambient (the environment's diffuse light and
+  the hemisphere fill) reaches the cell from that side. A surface the volume
+  lights takes `sky_visibility × ambient + irradiance` in place of the
+  ambient, so the sky can change with the frame (day and night) without a
+  cell being rewritten. A cell never written is `IrradianceCell::default()`:
+  the frame's ambient whole and no light of its own.
+- **Writes.** A region's corner is a cell's least corner on the volume's
+  lattice and the region lies within it, or the write is refused with
+  `SceneError::IrradianceRegionOutside` and writes nothing.
+  `PreparedIrradianceRegion` is plain `Send` data: prepare relights on
+  worker threads; the write only queues one texture write per face.
+- **Sampling.** A surface steps half a cell along its geometry normal, so a
+  voxel face reads the cell in front of it, then takes three trilinear taps
+  blended by its shading normal's squared components. Blending with dark
+  solid cells darkens convex edges, as smooth voxel lighting does; fill
+  solid cells from their air neighbours where that is unwanted.
+- **Which surfaces.** Lightmap and irradiance atlas charts keep their bake.
+  Within the volume it covers the dynamic GI volume and ambient cubes, its
+  share fading over the one cell past each face to what follows it: leave a
+  region uncovered to light it from the dynamic GI volume or cubes. A face
+  lying exactly on the volume's boundary and facing out samples half a cell
+  past it and takes half the volume's share, so let the volume reach a cell
+  past what it should light whole. Ambient
+  occlusion occludes it as it does the ambient, and
+  `FrameInput::baked_lighting` turns it off with the charts and cubes. Its
+  own light is not a scene light: a fixture written into the field is not
+  also added as a baked `Light`, or the field leaves its light out.
+- **Sky specular.** `sky_visibility` also darkens the sky's share of a
+  surface's environment specular (Lagarde's specular occlusion), so a cave's
+  walls stop reflecting the sky; specular probes, which a game captures
+  where they are, keep theirs. A probe captured before a relight is the
+  game's to capture again.
+- **Scrolling.** Install the same cell size and counts at a new origin: the
+  volume moves by the nearest whole number of cells (read the placement back
+  with `Scene::irradiance_volume`), keeps the cells that stay, and starts
+  the cells that enter as `IrradianceCell::default()`, for the game to write.
+  The copy is submitted on the queue at once. Another cell size or count, or
+  an origin off the lattice, is a new placement whose cells all start as the
+  default. `Scene::move_origin` translates the volume and keeps its cells.
+- **Cost and limits.** 48 bytes a cell (160 × 128 × 160 cells, 157 MB), three
+  3D taps per lit fragment, a region write's 48 bytes a cell through the
+  queue, and on a scroll a second texture for the copy. The texture is
+  `cells.x × 2 cells.y × 3 cells.z` texels within the device's
+  `max_texture_dimension_3d` (2048 at WebGPU's default: 2048, 1024 and 682
+  cells), else `SceneError::DeviceLimit`; a placement that is not a lattice
+  is `SceneError::InvalidIrradianceVolume` and a region with invalid cells
+  `SceneError::InvalidIrradianceRegion`. The browser runs the same volume.
+
 ## Dynamic diffuse GI
 
 A dynamic GI volume gives static and moving surfaces coloured bounce light
@@ -1444,8 +1520,9 @@ the distances to what surrounds it, so a surface takes light only from the
 probes that see it.
 
 Surfaces take their indirect diffuse light by one determination: a
-lightmap or irradiance atlas chart keeps its bake; else the volume lights
-the surface, in place of the environment's diffuse light and the hemisphere
+lightmap or irradiance atlas chart keeps its bake; else the
+[irradiance volume](#irradiance-volume) where it lights the surface; else
+the dynamic GI volume lights the surface, in place of the environment's diffuse light and the hemisphere
 fill, which ambient occlusion then occludes as it did them; else a moving
 instance takes its ambient cube, else the frame's ambient. The camera's
 opaque and blended surfaces, probe captures, world-space ray hits and the
@@ -1530,7 +1607,7 @@ same `Scene`, `Renderer` and frame run on the page's WebGPU device, built for
 not supported, since SGL3D needs compute.
 
 - **Device.** Request it as natively, with `graphics_device::limits` (the
-  adapter's limits: 20 sampled textures and 8 storage buffers per stage are
+  adapter's limits: 21 sampled textures and 8 storage buffers per stage are
   the floor, S3D-1) and `graphics_device::features`. Desktop Chrome on Apple
   silicon reports 48 sampled textures and 10 storage buffers from Chromium
   149; Chromium 145 reported 16 and cannot run SGL3D. Render into an
@@ -1564,8 +1641,8 @@ minimal page integration: device creation; procedural content (a textured
 ground, a shadow-casting box, a masked grate with a BC7 image, a blended
 pane that receives screen-space reflections, a skinned and morphed box with an ambient cube, a box lit by a BC6H/BC7
 static irradiance atlas, point, spot and rectangle lights, a decal, a BC6H
-specular probe, a dynamic GI volume, glow, heat shimmer, mist, a fog volume
-and an environment);
+specular probe, a dynamic GI volume, an irradiance volume written by region,
+glow, heat shimmer, mist, a fog volume and an environment);
 frames under four settings configurations; an asynchronous readback; and
 error scopes. It loads no glTF and sets no lightmap or mesh LODs.
 

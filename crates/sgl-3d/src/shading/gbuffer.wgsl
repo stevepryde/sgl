@@ -11,7 +11,9 @@
 //  along its longer axis (gbuffer_encode_motion).
 // ambient: in rgb, the ambient diffuse radiance within lit colour (Shaded in
 //  surface.wgsl) before occlusion; source completion subtracts the share its
-//  ambient visibility hides. Zero where nothing lit was drawn.
+//  ambient visibility hides. Zero where nothing lit was drawn. In alpha, the
+//  irradiance volume's sky visibility a(n) at a lit pixel, 1 where no volume
+//  lights it, which completion's occlusion of the sky's specular reads.
 // receiver (the Surface contract, specs/sgl3d-architecture.md): where a
 //  blended receiver is the surface, RG its traced lobe's normal as `normal`
 //  holds one and B that lobe's perceptual roughness. Read only under a

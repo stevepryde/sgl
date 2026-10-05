@@ -47,7 +47,8 @@ fn stable_raster_surface(i:Fragment,front:bool)->Surface {
  return stable_surface(i,s);
 }
 // A lit raster fragment: color with the surface's alpha, the ambient diffuse
-// within it (shading/gbuffer.wgsl) and motion.
+// within it with the irradiance volume's sky visibility (shading/gbuffer.wgsl)
+// and motion.
 struct ShadedFragment {
  color:vec4<f32>,
  ambient:vec4<f32>,
@@ -68,7 +69,7 @@ fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
   material_alpha_discard(base.a);
   shaded=shade_lit(s,context);
  }
- return ShadedFragment(vec4(shaded.color,base.a),vec4(shaded.ambient,0.),gbuffer_encode_motion(i.current_clip,i.previous_clip));
+ return ShadedFragment(vec4(shaded.color,base.a),vec4(shaded.ambient,shaded.sky_visibility),gbuffer_encode_motion(i.current_clip,i.previous_clip));
 }
 // Probe captures, which keep the ambient diffuse in color.
 @fragment fn fs(i:Fragment,@builtin(front_facing) front:bool)->SceneOutput {
@@ -149,7 +150,7 @@ struct FusedOpaqueOutput {
  } else {
   shaded=shade_lit(s,context);
  }
- return FusedOpaqueOutput(stable.normal,stable.material,stable.motion,stable.f0,vec4(shaded.color,s.base.a),vec4(shaded.ambient,0.),i.source_id,stable.anisotropy);
+ return FusedOpaqueOutput(stable.normal,stable.material,stable.motion,stable.f0,vec4(shaded.color,s.base.a),vec4(shaded.ambient,shaded.sky_visibility),i.source_id,stable.anisotropy);
 }
 
 // The receiver pass (stages/transparent): a blended receiver of screen-space

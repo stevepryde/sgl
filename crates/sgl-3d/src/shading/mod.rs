@@ -189,12 +189,26 @@ pub(crate) static DYNAMIC_GI: Module = Module {
     source: include_str!("dynamic_gi.wgsl"),
     deps: &[],
 };
+/// A volume's share of a receiver by where it lies on its lattice: the
+/// dynamic GI volume's and the irradiance volume's.
+pub(crate) static VOLUME_SHARE: Module = Module {
+    name: "volume_share",
+    source: include_str!("volume_share.wgsl"),
+    deps: &[],
+};
 /// The dynamic GI volume's irradiance at a receiver. Reads `frame`,
 /// `dynamic_gi_probes` and `baked_sampler`.
 pub(crate) static DYNAMIC_GI_SAMPLE: Module = Module {
     name: "dynamic_gi_sample",
     source: include_str!("dynamic_gi_sample.wgsl"),
-    deps: &[&DYNAMIC_GI],
+    deps: &[&DYNAMIC_GI, &VOLUME_SHARE],
+};
+/// The irradiance volume's light at a receiver. Reads `frame`,
+/// `irradiance_volume` and `baked_sampler`.
+pub(crate) static IRRADIANCE_VOLUME: Module = Module {
+    name: "irradiance_volume",
+    source: include_str!("irradiance_volume.wgsl"),
+    deps: &[&BAKED_LIGHTING, &VOLUME_SHARE],
 };
 /// The volumetric fog's froxel volume: its slices, where a point samples it
 /// and how it fogs a colour.
@@ -370,6 +384,7 @@ pub(crate) static SURFACE: Module = Module {
         &ENVIRONMENT,
         &PROBE_GRID,
         &BAKED_LIGHTING,
+        &IRRADIANCE_VOLUME,
         &DYNAMIC_GI_SAMPLE,
         &DIRECTIONAL_SHADOW,
         &LIGHTS,

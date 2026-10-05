@@ -115,8 +115,8 @@ pub struct FrameInput {
     /// lobe takes `reflection_environment`.
     pub diffuse_environment: EnvironmentLight,
     pub backdrop: Backdrop,
-    /// Baked (fixed) lighting: lightmaps, irradiance atlases and instances'
-    /// baked irradiance.
+    /// Baked (fixed) lighting: lightmaps, irradiance atlases, instances'
+    /// baked irradiance and the irradiance volume.
     pub baked_lighting: bool,
     /// The volumetric fog and mist, while `Settings::atmosphere` is on too.
     /// Off by default, as Godot's `volumetric_fog_enabled` and

@@ -56,6 +56,8 @@ fn opaque_surfaces_under_a_receiver_keep_their_environment_specular_once() {
     let size = [2, 1];
     let texture = |texel: [f32; 4]| hdr_texture(&device, &queue, size, &[texel; 2]);
     let black = texture([0.; 4]);
+    // No ambient diffuse, and no irradiance volume: its sky visibility 1.
+    let ambient = texture([0., 0., 0., 1.]);
     // An almost smooth (0.05) white metal facing the camera, lit.
     let normal = texture([0.; 4]);
     let material = texture([1., 0.05, 0., 1.]);
@@ -128,7 +130,7 @@ fn opaque_surfaces_under_a_receiver_keep_their_environment_specular_once() {
             frame_fog: None,
             camera: reflection_camera,
             scene: &black,
-            ambient: &black,
+            ambient: &ambient,
             output: &output,
             normal: &normal,
             anisotropy: &black,

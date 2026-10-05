@@ -13,7 +13,8 @@
 // Changed: a probe not yet blended weighs nothing, and a receiver whose
 // probes all weigh nothing keeps its fallback; the volume's share fades to
 // nothing over the one spacing past its extent, as RTXGI's volume blend
-// weight fades; f32 in place of half; the sampler is `baked_sampler`.
+// weight fades (volume_share.wgsl); f32 in place of half; the sampler is
+// `baked_sampler`.
 // Wicked's DDGI::smooth_backface (wiScene.h).
 const DDGI_SMOOTH_BACKFACE:f32=.01;
 // The volume's irradiance / PI at `position` along `normal` in rgb, and in
@@ -29,9 +30,7 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>)->vec4<f32> {
  let probes=frame.dynamic_gi_probes;
  let cells=(position-origin)/spacing;
  let last=vec3<f32>(probes-vec3(1u));
- let beyond=max(-cells,cells-last);
- let fade=saturate(1.-beyond);
- let share=fade.x*fade.y*fade.z;
+ let share=volume_share(cells,last);
  if share<=0. {
   return vec4(0.);
  }

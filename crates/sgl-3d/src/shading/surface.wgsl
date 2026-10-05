@@ -71,14 +71,17 @@ struct ShadeContext {
  // else untraced_reflection().
  traced:TracedReflection,
 }
-// A shaded surface's outgoing radiance, and the ambient diffuse within it
-// (environment diffuse and hemisphere fill, not multiscattering) before
-// occlusion. Source completion occludes the main view's ambient diffuse by
-// its ambient visibility (shading/gbuffer.wgsl); probe captures and ray hits
-// keep it whole.
+// A shaded surface's outgoing radiance, the ambient diffuse within it
+// (environment diffuse and hemisphere fill, or a volume's irradiance in
+// their place, not multiscattering) before occlusion, and the irradiance
+// volume's sky visibility a(n) at it, 1 where the volume does not light it.
+// Source completion occludes the main view's ambient diffuse by its ambient
+// visibility and its sky specular by a(n) too (shading/gbuffer.wgsl); probe
+// captures and ray hits keep their ambient diffuse whole.
 struct Shaded {
  color:vec3<f32>,
  ambient:vec3<f32>,
+ sky_visibility:f32,
 }
 // A surface described by its base color and emission alone.
 fn unlit_surface(base:vec4<f32>,emission:vec3<f32>)->Surface {
@@ -89,7 +92,7 @@ fn unlit_surface(base:vec4<f32>,emission:vec3<f32>)->Surface {
  return s;
 }
 fn shade_unlit(s:Surface)->Shaded {
- return Shaded(s.base.rgb+s.emission,vec3(0.));
+ return Shaded(s.base.rgb+s.emission,vec3(0.),1.);
 }
 // The environment specular source completion adds at runtime, for views
 // without it (probe captures and ray hits): the installed baked probes, then
@@ -97,8 +100,10 @@ fn shade_unlit(s:Surface)->Shaded {
 // them. A second capture pass then sees the first pass's probes, as Unity's
 // reflection bounces and Frostbite's iterative probe relighting bake
 // interreflection; a ray hit ends its path in them, as Unreal's and HDRP's
-// ray-traced reflections take reflection probes at the last bounce.
-fn probe_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32)->vec3<f32> {
+// ray-traced reflections take reflection probes at the last bounce. The
+// probes' and the sky's shares come apart (EnvironmentSpecular), for the
+// irradiance volume's sky visibility occludes the sky's alone.
+fn probe_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32)->EnvironmentSpecular {
  let rotation=frame.reflection_yaw;
  let strength=frame.reflection_intensity;
  return collection_environment(world,direction,rough,1.,environment_map,environment_sampler,rotation,strength);
@@ -221,32 +226,61 @@ fn directional_light_sample(index:u32,position:vec3<f32>,geometry_normal:vec3<f3
  let shadow=directional_light_shadow(index,position,geometry_normal,context.pixel,context.receiver);
  return LightSample(l,radiance,shadow,1.,NO_RECT_LIGHT);
 }
-// A receiver's indirect diffuse light, by the one determination: its
-// lightmap or irradiance atlas chart (baked_diffuse_source), else the
-// dynamic GI volume where it lights the frame, reaches the receiver and has
-// a blended probe about it (dynamic_gi_irradiance), else a moving instance's
-// ambient cube, else the frame's ambient alone. `baked` is the chart's or
-// cube's irradiance / PI and `volume` the volume's, with its share in a:
-// the cube and the frame's ambient keep the rest, and a chart all of it, as
-// the volume never lights a charted receiver.
+// A receiver's indirect diffuse light along `normal`, by the one
+// determination: its lightmap or irradiance atlas chart
+// (baked_diffuse_source), else the irradiance volume where it lights the
+// frame and reaches the receiver (irradiance_volume_light), else the dynamic
+// GI volume where it lights the frame, reaches the receiver and has a
+// blended probe about it (dynamic_gi_irradiance), else a moving instance's
+// ambient cube, else the frame's ambient alone. Each volume takes its share
+// and leaves the rest to what follows it, so a receiver hands over at its
+// border without a seam. A chart takes all of it, as no volume lights a
+// charted receiver.
 struct IndirectDiffuse {
+ // The chart's irradiance / PI, or the cube's times the share the volumes
+ // leave it.
  baked:vec3<f32>,
- volume:vec4<f32>,
+ // The irradiance volume's own light rgb(n) times its share.
+ field:vec3<f32>,
+ // The dynamic GI volume's irradiance / PI in rgb, and in a its share: of
+ // what the irradiance volume leaves.
+ dynamic_gi:vec4<f32>,
+ // The share of the frame's ambient the receiver takes: a(n) of the
+ // irradiance volume's share, and whatever neither volume takes.
+ ambient:f32,
+ // The irradiance volume's sky visibility a(n), 1 beyond its share.
+ sky_visibility:f32,
 }
 fn surface_indirect_diffuse(s:Surface,normal:vec3<f32>)->IndirectDiffuse {
  let source=baked_diffuse_source(s.baked,s.lightmap_uv,s.moving);
- var volume=vec4(0.);
- if source!=BAKED_LIGHTMAP && source!=BAKED_ATLAS {
-  volume=dynamic_gi_irradiance(s.position,normal);
+ let baked=surface_fixed_irradiance(s.baked,s.uv,s.lightmap_uv,s.lightmap_bounds,normal,s.front,s.moving,s.baked_irradiance);
+ var indirect=IndirectDiffuse(baked,vec3(0.),vec4(0.),1.,1.);
+ if source==BAKED_LIGHTMAP || source==BAKED_ATLAS {
+  return indirect;
  }
- return IndirectDiffuse(surface_fixed_irradiance(s.baked,s.uv,s.lightmap_uv,s.lightmap_bounds,normal,s.front,s.moving,s.baked_irradiance),volume);
+ // The irradiance volume steps half a cell along the geometry normal.
+ let field=irradiance_volume_light(s.position,s.geometry_normal,normal);
+ let rest=1.-field.share;
+ var dynamic_gi=vec4(0.);
+ if rest>0. {
+  dynamic_gi=dynamic_gi_irradiance(s.position,normal);
+  dynamic_gi.a*=rest;
+ }
+ let fallback=rest-dynamic_gi.a;
+ indirect.baked=baked*fallback;
+ indirect.field=field.light*field.share;
+ indirect.dynamic_gi=dynamic_gi;
+ indirect.ambient=field.sky_visibility*field.share+fallback;
+ indirect.sky_visibility=mix(1.,field.sky_visibility,field.share);
+ return indirect;
 }
 // The share of the dynamic GI volume's last frame a probe hit reflects
 // again, so the bounces it carries converge: Wicked's energy_conservation
 // (95e357f ddgi_raytraceCS.hlsl 270–275, MIT, src/LICENSE-wicked.txt). The
 // volume holds irradiance / PI, the radiance a hit reflects per unit of its
 // diffuse colour, so nothing else scales it; df44c3d's further division by
-// PI (492–498) dims every bounce by a further PI and is not taken.
+// PI (492–498) dims every bounce by a further PI and is not taken. A hit
+// takes the irradiance volume, the game's own field, whole.
 const DYNAMIC_GI_BOUNCE:f32=.95;
 fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let base=s.base;
@@ -269,8 +303,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // A probe hit takes diffuse light alone: no multiscattered specular.
  let multi=select(ibl.multi,vec3(0.),probe_hit);
  let indirect=surface_indirect_diffuse(s,n);
- let volume=indirect.volume;
- let fallback=(1.-volume.a)*(1.-reflectance.coat_fresnel);
+ let fallback=indirect.ambient*(1.-reflectance.coat_fresnel);
  let environment=diffuse_environment(n)*s.environment_scale*fallback;
  var color=(ibl.diffuse+multi)*environment;
  let sky=frame.hemisphere_sky_color;
@@ -279,17 +312,17 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let hemisphere=diffuse/3.14159265359*pbr_hemisphere(n,sky,ground,hemisphere_intensity)*fallback;
  color+=hemisphere;
  // The ambient diffuse that ambient occlusion weights: the diffuse
- // environment and hemisphere terms, or the volume's irradiance in their
+ // environment and hemisphere terms, or the volumes' irradiance in their
  // place; multiscattering stays apart from it.
  var ambient=ibl.diffuse*environment+hemisphere;
- // A probe hit takes the volume's last frame damped, as Wicked's bounce is.
- if volume.a>0. {
-  let bounce=select(1.,DYNAMIC_GI_BOUNCE,probe_hit);
-  let irradiance=volume.rgb*volume.a*bounce*(1.-reflectance.coat_fresnel);
-  color+=(ibl.diffuse+multi)*irradiance;
-  ambient+=ibl.diffuse*irradiance;
- }
- color+=indirect.baked*diffuse*(vec3(1.)-f0)*(1.-volume.a);
+ // A probe hit takes the dynamic GI volume's last frame damped, as Wicked's
+ // bounce is. Neither volume's irradiance takes environment_scale.
+ let dynamic_gi=indirect.dynamic_gi;
+ let bounce=select(1.,DYNAMIC_GI_BOUNCE,probe_hit);
+ let irradiance=(indirect.field+dynamic_gi.rgb*dynamic_gi.a*bounce)*(1.-reflectance.coat_fresnel);
+ color+=(ibl.diffuse+multi)*irradiance;
+ ambient+=ibl.diffuse*irradiance;
+ color+=indirect.baked*diffuse*(vec3(1.)-f0);
  if !probe_hit {
   if frame.directional_lights[0].illuminance>0. {
    color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,s.geometry_normal,context));
@@ -318,7 +351,14 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
    if lobe==SPECULAR_COAT && coat<=0. {
     continue;
    }
-   let environment=probe_environment(s.position,lobes[lobe].direction,lobes[lobe].roughness)*s.environment_scale;
+   // The irradiance volume's sky visibility occludes the sky's share alone
+   // (specular_occlusion).
+   let resolved=probe_environment(s.position,lobes[lobe].direction,lobes[lobe].roughness);
+   var sky=resolved.sky;
+   if indirect.sky_visibility<1. {
+    sky*=specular_occlusion(lobes[lobe],lobe==SPECULAR_COAT,indirect.sky_visibility,f0);
+   }
+   let environment=(resolved.probes+sky)*s.environment_scale;
    if lobe==specular_traced_lobe(coat) && specular_traces(lobes[lobe].roughness,traced.cutoff*traced.cutoff) {
     let fade=specular_trace_fade(lobes[lobe].roughness,traced.cutoff,traced.fade);
     color+=specular_traced(lobes[lobe],traced.reflected,fade,environment);
@@ -328,5 +368,5 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
   }
  }
  color+=emission*(1.-reflectance.coat_fresnel);
- return Shaded(color,ambient);
+ return Shaded(color,ambient,indirect.sky_visibility);
 }
