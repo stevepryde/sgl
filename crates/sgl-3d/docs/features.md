@@ -114,7 +114,9 @@ SGL3D needs compute.
   `Scene::set_mesh_lods` registers up to 8 authored coarser chunks a mesh
   ([spatial mesh LOD](../README.md#spatial-mesh-lod)). Coplanar surfaces of
   different draws have no defined winner at equal depth: give an overlay a
-  depth offset or make it a decal.
+  depth offset or make it a decal. Two-phase occlusion culling of the
+  camera's opaque and masked geometry is opt-in
+  (`Settings::occlusion_culling`, [settings](settings.md)).
 - **Instanced draws**: automatic. In the CPU-built lists (blended surfaces,
   local-light shadows, probe captures), instances that draw the same mesh
   with the same material, face culling and mobility share one draw, each
@@ -321,9 +323,9 @@ Environment and probe specular always apply. On top of them:
 ## Not provided
 
 Animation playback (sampling and blending clips is the game's).
-DLSS/MetalFX, soft ray-traced shadows, and occlusion culling are
-[planned](../../../specs/sgl3d.md#planned). Current culling is by frustum
-alone. Compressed images
+DLSS/MetalFX and soft ray-traced shadows are
+[planned](../../../specs/sgl3d.md#planned). The directional cascades cull by
+frustum alone. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
 not provided.
 

@@ -43,6 +43,37 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
+--- AMD FidelityFX
+Sources:
+crates/sgl-3d/src/LICENSE-amd-spd.txt
+
+AMD FidelityFX SDK, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK
+Revision d7531ae47d8b36a5d4025663e731a47a38be882f (SDK 1.0), LICENSE.txt. SGL3D
+ports the Single Pass Downsampler v2.1 (sdk/include/FidelityFX/gpu/spd/ffx_spd.h,
+SpdDownsample), as Bevy 9d12036 ports it in
+crates/bevy_core_pipeline/src/mip_generation/experimental/downsample_depth.wesl,
+into stages/cull/pyramid.wgsl.
+
+Copyright © 2023 Advanced Micro Devices, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files(the “Software”), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and /or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions :
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
 --- AMD FidelityFX Denoiser
 Sources:
 crates/sgl-post-fx/LICENSE-amd-fidelityfx-denoiser.txt

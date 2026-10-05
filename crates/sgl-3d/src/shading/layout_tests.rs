@@ -39,7 +39,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 24] = [
+    let roots: [&'static super::Module; 25] = [
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
@@ -59,6 +59,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::exposure::EXPOSURE,
         &crate::stages::deform::DEFORM,
         &crate::stages::cull::CULL,
+        &crate::stages::cull::pyramid::PYRAMID,
         &crate::stages::dynamic_gi::ALLOCATE,
         &crate::stages::dynamic_gi::UPDATE,
         &crate::stages::motion_blur::MOTION_BLUR,

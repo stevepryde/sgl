@@ -3,8 +3,9 @@
 //! the CPU time each GPU-built view's draw list takes to build (preparing
 //! its cull and encoding it) and record, and the GPU time of each pass
 //! group, the cull stage's among them. `--split` runs the opaque stage's
-//! two-pass form instead of the fused pass. The examples include this file
-//! by path.
+//! two-pass form instead of the fused pass; `--occlusion` turns
+//! `Settings::occlusion_culling` on, which runs the two-pass form. The
+//! examples include this file by path.
 use sgl_3d::Renderer;
 use sgl_3d::diagnostics::ViewTimes;
 use sgl_3d::settings::Settings;
@@ -18,6 +19,9 @@ pub struct Options {
     /// The opaque stage's two-pass form: a G-buffer pass, then lighting at
     /// its depth (`DisabledLayers::fused_opaque`).
     pub split: bool,
+    /// Two-phase occlusion culling of the camera's list
+    /// (`Settings::occlusion_culling`).
+    pub occlusion: bool,
 }
 
 impl Options {
@@ -25,6 +29,7 @@ impl Options {
     pub fn take(&mut self, arg: &str) -> bool {
         match arg {
             "--split" => self.split = true,
+            "--occlusion" => self.occlusion = true,
             _ => return false,
         }
         true
@@ -33,24 +38,40 @@ impl Options {
     /// Sets `settings` for the run.
     pub fn apply(self, settings: &mut Settings) {
         settings.diagnostics.disable.fused_opaque = self.split;
+        settings.occlusion_culling = self.occlusion;
     }
 
-    /// What the run renders, for its report.
-    pub fn describe(self) -> String {
-        format!("opaque {}", if self.split { "two-pass" } else { "fused" })
+    /// What the run renders, for its report: occlusion culling as the
+    /// renderer ran it (`occluded`, its last measured frame's
+    /// `Renderer::occlusion_culling_in_effect`), since a device without
+    /// the pyramid's storage textures culls by frustum alone.
+    pub fn describe(self, occluded: bool) -> String {
+        let form = if self.split || occluded {
+            "two-pass"
+        } else {
+            "fused"
+        };
+        let occlusion = match (self.occlusion, occluded) {
+            (_, true) => ", occlusion culling",
+            (true, false) => ", occlusion culling asked, not in effect",
+            (false, false) => "",
+        };
+        format!("opaque {form}{occlusion}")
     }
 }
 
 /// The opaque stage's timing groups before ambient occlusion, fused and
-/// two-pass.
-const OPAQUE: [&str; 4] = [
+/// two-pass, the late G-buffer pass's among them.
+const OPAQUE: [&str; 5] = [
     "sky",
     "opaque geometry + lighting",
     "geometry",
+    "geometry late",
     "opaque lighting",
 ];
-/// The cull stage's timing group.
-const CULL: &str = "cull";
+/// The cull stage's timing groups: its early phase, its late phase and its
+/// pyramids.
+const CULL: [&str; 3] = ["cull", "cull late", "depth pyramid"];
 
 /// One frame's GPU time: its total and each pass group's.
 type GpuFrame = (f64, BTreeMap<&'static str, f64>);
@@ -61,6 +82,8 @@ pub struct Culling {
     options: Options,
     /// Whether each loop index so far is measured.
     measured: Vec<bool>,
+    /// Whether occlusion culling ran in the last measured frame.
+    occluded: bool,
     views: Vec<ViewTimes>,
     render_ms: Vec<f64>,
     finish_ms: Vec<f64>,
@@ -75,12 +98,13 @@ impl Culling {
         }
     }
 
-    /// After the frame of loop index `index` was submitted and finished,
-    /// `measure` it or not, which took `render_ms` in `Renderer::render`
-    /// and `finish_ms` finishing its encoder.
+    /// After the frame of loop index `index`, rendered with `settings`,
+    /// was submitted and finished, `measure` it or not, which took
+    /// `render_ms` in `Renderer::render` and `finish_ms` finishing its
+    /// encoder.
     pub fn frame(
         &mut self,
-        renderer: &Renderer,
+        (renderer, settings): (&Renderer, &Settings),
         index: usize,
         measure: bool,
         (render_ms, finish_ms): (f64, f64),
@@ -90,6 +114,7 @@ impl Culling {
         if !measure {
             return;
         }
+        self.occluded = renderer.occlusion_culling_in_effect(settings);
         self.views.push(renderer.diagnostic_view_times());
         self.render_ms.push(render_ms);
         self.finish_ms.push(finish_ms);
@@ -117,7 +142,7 @@ impl Culling {
         let print = |text: String| {
             let _ = writeln!(out.borrow_mut(), "{text}");
         };
-        print(format!("  {}", self.options.describe()));
+        print(format!("  {}", self.options.describe(self.occluded)));
         let line = |label: &str, values: &[f64], unit: &str| {
             let (median, p95) = median_p95(values);
             print(format!("  {label:<40} {median:10.3} / {p95:10.3} {unit}"));
@@ -207,7 +232,7 @@ impl Culling {
         });
         row("cull + opaque stage + cascades", &|(_, groups)| {
             sum(groups, &|name| {
-                name == CULL
+                CULL.contains(&name)
                     || OPAQUE.contains(&name)
                     || name.starts_with("directional shadow cascade")
             })

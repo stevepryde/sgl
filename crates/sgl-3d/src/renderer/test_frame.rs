@@ -90,6 +90,7 @@ impl Renderer {
             super::effective::Device {
                 fsr2_running: false,
                 fused_supported: self.pipelines.fused_supported,
+                occlusion_supported: self.cull.occlusion_supported(),
                 ray_queries: self.ray_form.as_ref().map(|form| form.form()),
             },
         );
@@ -232,6 +233,7 @@ impl Renderer {
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
         super::frame::encode_opaque(
             &mut self.opaque,
+            &mut self.cull,
             &mut self.traced_shadows,
             &frame.slot_lights,
             &mut ctx,
@@ -312,6 +314,22 @@ impl Renderer {
 
     pub(crate) fn test_lit_layout(&self) -> &wgpu::BindGroupLayout {
         &self.bindings.lit
+    }
+
+    /// What each phase of the last frame appended to the camera's sets: the
+    /// early phase's draw instances, then the late phase's.
+    pub(crate) fn test_camera_phases(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+    ) -> [Vec<crate::shading::vertex::DrawInstance>; 2] {
+        crate::view::draw_list::gpu::read_phases(&self.views.camera.list, device, queue, scene)
+    }
+
+    /// The cull stage's depth pyramid, once a frame culled occlusion.
+    pub(crate) fn test_pyramid(&self) -> Option<&wgpu::Texture> {
+        self.cull.pyramid()
     }
 
     /// Whether this device writes the G-buffer and lighting in one pass.

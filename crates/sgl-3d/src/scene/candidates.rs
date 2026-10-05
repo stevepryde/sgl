@@ -117,7 +117,10 @@ pub(crate) struct Candidates {
     pub(crate) sets: Sets,
     chains: Chains,
     /// The most candidate slots and draw instances in regions a device
-    /// binds: a GPU-built view's lists and cluster list hold them.
+    /// binds: a GPU-built view's lists and cluster lists hold them. The
+    /// camera's lists while it culls occlusion, an entry for each slot in
+    /// each of three lists and one for each draw instance in its queue, fit
+    /// within the same binding: at these caps they take at most 0.9 of it.
     most_slots: u32,
     most_regions: u32,
     /// Each slot's instance's model, which a frame's statistics readback
