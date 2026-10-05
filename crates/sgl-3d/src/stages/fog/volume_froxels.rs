@@ -140,12 +140,15 @@ fn bounds(
 
 /// A buffer for `volumes` fog volumes' froxels.
 fn buffer(device: &wgpu::Device, volumes: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("fog volume froxels"),
-        size: (volumes.max(1) * size_of::<FogVolumeFroxels>()) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("fog volume froxels"),
+            size: (volumes.max(1) * size_of::<FogVolumeFroxels>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 /// The layouts this module mirrors.

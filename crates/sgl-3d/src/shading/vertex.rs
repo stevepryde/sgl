@@ -73,7 +73,8 @@ macro_rules! vertex_layout {
 pub(crate) use vertex_layout;
 
 /// What a shadow caster reads of a vertex from a vertex buffer: its
-/// position, from its mesh's position buffer or a deforming instance's
+/// position, from its mesh's range of a positions slab (`scene::geometry`)
+/// or a deforming instance's
 /// deformed positions (`shading::deformation`). A masked material's casters
 /// pull its texel coordinates and colour from the scene source. Every camera
 /// and probe pass pulls whole vertices from the scene source instead
@@ -90,19 +91,26 @@ pub(crate) const CASTER_LAYOUT: VertexLayout = vertex_layout!(CasterVertex, [pos
 /// (`view::draw_list::DrawInstances`), which every geometry pipeline steps
 /// per instance at vertex buffer `DRAW_INSTANCE_SLOT` (`DrawInstance` in
 /// bind_scene.wgsl): the index of the instance's object record in the
-/// scene's object buffer, and the drawn mesh's record in the scene source. A draw of many instances reaches
-/// each one's record through its entry, as Bevy reaches each instance's
-/// `MeshUniform` from its instance index.
+/// scene's object buffer, the drawn mesh's record in the scene source, and
+/// the base vertex an indexed draw of it adds to its indices (its first
+/// vertex in its positions slab, `scene::geometry`, zero for a deforming
+/// instance's own positions), which a caster that reads the source's vertex
+/// records by vertex index subtracts, as Bevy b56fc29's
+/// `MeshUniform::first_vertex_index` (crates/bevy_pbr/src/render/mesh.rs)
+/// is subtracted in `morph_vertex` (mesh.wgsl). A draw of many instances
+/// reaches each one's record through its entry, as Bevy reaches each
+/// instance's `MeshUniform` from its instance index.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DrawInstance {
     pub object: u32,
     pub mesh: u32,
+    pub first_vertex: u32,
 }
 
 /// Its attributes follow `CasterVertex`'s position, at location 0.
 pub(crate) const DRAW_INSTANCE_LAYOUT: VertexLayout =
-    vertex_layout!(DrawInstance, Instance, 1, [object, mesh]);
+    vertex_layout!(DrawInstance, Instance, 1, [object, mesh, first_vertex]);
 
 /// The vertex buffer every geometry pipeline reads `DrawInstance`s from.
 pub(crate) const DRAW_INSTANCE_SLOT: u32 = 0;

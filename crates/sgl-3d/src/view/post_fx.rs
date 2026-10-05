@@ -275,12 +275,15 @@ impl PostFx {
                 multiview_mask: None,
                 cache: None,
             }),
-            planes: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("DiligentFX input planes"),
-                size: 16,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            planes: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("DiligentFX input planes"),
+                    size: 16,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             frame_index: 0,
             jitter: [0.; 2],
             reset_accumulation: true,

@@ -10,6 +10,7 @@ pub(crate) mod deformation;
 pub(crate) mod dynamic_gi;
 pub(crate) mod environments;
 pub(crate) mod error;
+pub(crate) mod geometry;
 pub(crate) mod instances;
 pub(crate) mod irradiance_volume;
 pub(crate) mod lights;
@@ -53,6 +54,8 @@ pub struct Scene {
     /// Lit group 0's lookup tables (`lookup_tables`).
     pub(crate) lookup_tables: wgpu::TextureView,
     pub(crate) rays: rays::SceneRays,
+    /// What shadow casters draw from vertex and index buffers.
+    pub(crate) geometry: geometry::GeometryBuffers,
     /// The ray source's instance entries and instance BVHs.
     pub(crate) ray_instances: rays::instances::RayInstances,
     /// Group 1: the object records and the ray buffers.
@@ -133,6 +136,7 @@ impl Scene {
             scene_layout,
             instances,
             rays,
+            geometry: geometry::GeometryBuffers::new(device),
             static_lighting: static_lighting::StaticLighting::empty(device, queue),
             baked_specular_probes: None,
             irradiance_cells: irradiance_volume::IrradianceCells::new(device, queue),
@@ -321,10 +325,12 @@ pub struct SceneResources {
     pub object_records: u64,
     pub instance_entries: u64,
     pub light_records: u64,
-    /// Every model's mesh position, index and caster-cluster index buffers,
-    /// and how many there are.
-    pub mesh_buffers: u64,
-    pub mesh_buffer_count: u64,
+    /// The geometry buffers' bytes (models' positions, indices and caster
+    /// clusters' indices), the bytes their content holds, and how many
+    /// buffers there are.
+    pub geometry: u64,
+    pub geometry_live: u64,
+    pub geometry_buffers: u64,
 }
 
 #[cfg(any(test, feature = "diagnostics"))]
@@ -332,25 +338,18 @@ impl Scene {
     /// The GPU memory the scene's content holds.
     pub fn diagnostic_resources(&self) -> SceneResources {
         let (ray_source_used, ray_source_live) = self.rays.words_in_use();
-        let mut resources = SceneResources {
+        let [geometry, geometry_live, geometry_buffers] = self.geometry.sizes();
+        SceneResources {
             ray_source: self.rays.source().size(),
             ray_source_used: ray_source_used * 4,
             ray_source_live: ray_source_live * 4,
             object_records: self.instances.objects.buffer().size(),
             instance_entries: self.ray_instances.buffer().size(),
             light_records: self.lights.buffer().size(),
-            ..Default::default()
-        };
-        for (_, model) in self.models.slots.iter() {
-            for mesh in &model.meshes {
-                let clusters = mesh.clusters.as_ref().map(|clusters| &clusters.indices);
-                for buffer in [&mesh.positions, &mesh.indices].into_iter().chain(clusters) {
-                    resources.mesh_buffers += buffer.size();
-                    resources.mesh_buffer_count += 1;
-                }
-            }
+            geometry,
+            geometry_live,
+            geometry_buffers,
         }
-        resources
     }
 }
 

@@ -133,12 +133,15 @@ pub(crate) static COPY: crate::shading::Module = crate::shading::Module {
 };
 
 fn records_buffer(device: &wgpu::Device, count: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("local light shadow records"),
-        size: (count.max(1) * std::mem::size_of::<LocalShadowRecord>()) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("local light shadow records"),
+            size: (count.max(1) * std::mem::size_of::<LocalShadowRecord>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 /// A depth-only pipeline over `layout` that writes every texel of the

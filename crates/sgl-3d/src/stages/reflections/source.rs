@@ -181,12 +181,15 @@ fn tile_count(size: [u32; 2]) -> [u32; 2] {
 }
 fn tiles(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Buffer {
     let [x, y] = tile_count(size);
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("specular probe tiles"),
-        size: u64::from(x * y) * u64::from(PROBE_BUCKETS) * 4,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("specular probe tiles"),
+            size: u64::from(x * y) * u64::from(PROBE_BUCKETS) * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 /// What completion and composition are compiled for.
@@ -324,21 +327,27 @@ impl ReflectionSource {
         let mut source = Self {
             culling_group: CachedGroup::new(culling.get_bind_group_layout(0)),
             culling,
-            culling_camera: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("specular probe culling camera"),
-                size: std::mem::size_of::<CullingCamera>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            culling_camera: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("specular probe culling camera"),
+                    size: std::mem::size_of::<CullingCamera>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             tiles: tiles(device, size),
             completion: completion(device, variant),
             variant,
-            camera: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("reflection source camera"),
-                size: std::mem::size_of::<SourceCamera>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            camera: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("reflection source camera"),
+                    size: std::mem::size_of::<SourceCamera>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             size,
             incident: Self::target(device, [1, 1], "incident radiance"),
             no_world: Self::target(device, [1, 1], "no world-space reflections"),

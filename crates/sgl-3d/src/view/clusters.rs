@@ -212,12 +212,15 @@ impl Clusters {
 const GRID_BYTES: u64 = std::mem::size_of::<ClusterGrid>() as u64;
 
 fn clusters_buffer(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

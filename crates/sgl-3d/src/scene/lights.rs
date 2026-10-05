@@ -115,12 +115,15 @@ impl Lights {
 }
 
 fn light_buffer(device: &wgpu::Device, records: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("scene lights"),
-        size: records * RECORD,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("scene lights"),
+            size: records * RECORD,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 fn is_rect(light: &Light) -> bool {

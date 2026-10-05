@@ -157,12 +157,15 @@ impl ToneMap {
             present: pipeline(device, &layouts, &shader, "present", &[HDR], None),
             present_direct: pipeline(device, &layouts, &shader, "present_direct", &[format], None),
             present_copy: pipeline(device, &copy, &shader, "copy_pixel", &[format], None),
-            grading: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("colour grading"),
-                size: size_of::<ColorGradingUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            grading: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("colour grading"),
+                    size: size_of::<ColorGradingUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             look_layout,
             look: None,
             tone_mapped: target(device, "tone-mapped linear scene", output_size, HDR),

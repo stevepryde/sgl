@@ -106,14 +106,17 @@ impl FrameProbe {
             compilation_options: Default::default(),
             cache: None,
         });
-        let stats = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("frame probe counters"),
-            size: BYTES,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let stats = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("frame probe counters"),
+                size: BYTES,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
         Self {
             pipeline,
             coverage_pipeline,
@@ -141,12 +144,15 @@ impl FrameProbe {
         }
         encoder.clear_buffer(&self.stats, 0, None);
         self.next = Some(Pending {
-            buffer: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("frame probe readback"),
-                size: BYTES,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            }),
+            buffer: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("frame probe readback"),
+                    size: BYTES,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                },
+            ),
             ready: Arc::new(AtomicU8::new(0)),
             metadata,
         });

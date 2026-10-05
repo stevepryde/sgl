@@ -201,12 +201,15 @@ impl Velvet {
             })
         };
         let uniform = |label, size: usize| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: size as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
+            crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: size as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            )
         };
         Self {
             inputs: pipeline("Godot SSR inputs", &INPUTS, "main"),

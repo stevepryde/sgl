@@ -1,16 +1,17 @@
-//! Models: each one's meshes (position and index buffers, culling
-//! hierarchy, local-light shadow caster clusters, levels of detail), its
-//! range of the ray source and a deforming model's deformation, with the
-//! `Scene` operations that add, replace and remove them and add a loaded
-//! asset whole.
+//! Models: each one's meshes (their positions and indices in the scene's
+//! geometry buffers, culling hierarchy, local-light shadow caster clusters,
+//! levels of detail), its range of the ray source and a deforming model's
+//! deformation, with the `Scene` operations that add, replace and remove
+//! them and add a loaded asset whole.
 use super::deformation::{self, InstanceDeformation, ModelDeformation};
+use super::geometry::{Elements, GeometryBuffers, GeometryRange};
 use super::materials::Materials;
 use super::mesh_ranges::MeshRanges;
 use super::rays::{RayMesh, RayModel, SceneRays};
-use super::shadow_clusters::{MeshClusters, PosedClusters};
+use super::shadow_clusters::{ClusteredIndices, MeshClusters, PosedClusters};
 use super::slots::Slots;
 use super::static_edits::posed_bounds;
-use super::{Scene, SceneError, buffer};
+use super::{Scene, SceneError};
 use crate::asset::{self, Asset, Vertex};
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::content::model::{AssetIds, ModelMesh};
@@ -21,9 +22,9 @@ use glam::Vec3;
 use std::ops::Range;
 
 pub(crate) struct Mesh {
-    /// Its vertices' positions, which shadow casters read.
-    pub positions: wgpu::Buffer,
-    pub indices: wgpu::Buffer,
+    /// Its vertices' positions, which shadow casters read, and its indices.
+    pub positions: GeometryRange,
+    pub indices: GeometryRange,
     pub count: u32,
     pub material: MaterialId,
     pub ranges: MeshRanges,
@@ -47,6 +48,97 @@ pub(crate) struct Model {
     pub instances: u32,
     /// Levels of detail naming one of its meshes.
     pub lod_uses: u32,
+}
+
+impl Mesh {
+    /// Mesh `mesh` placed in `geometry`: its positions, unless its model
+    /// `deforms` (its instances' casters read their deformed positions from
+    /// the ray source), its indices and its caster clusters' indices, with
+    /// its culling hierarchy.
+    fn place(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        geometry: &mut GeometryBuffers,
+        mesh: &ModelMesh,
+        (tangents, deforms): (bool, bool),
+    ) -> Result<Self, SceneError> {
+        let (positions, indices) = step(BuildStep::MeshBuffers, || {
+            let positions: Vec<_> = if deforms {
+                Vec::new()
+            } else {
+                mesh.vertices
+                    .iter()
+                    .map(|vertex| CasterVertex {
+                        position: vertex.position,
+                    })
+                    .collect()
+            };
+            let positions = geometry.place(
+                device,
+                queue,
+                Elements::Positions,
+                bytemuck::cast_slice(&positions),
+            )?;
+            match geometry.place(
+                device,
+                queue,
+                Elements::Indices,
+                bytemuck::cast_slice(&mesh.indices),
+            ) {
+                Ok(indices) => Ok((positions, indices)),
+                Err(error) => {
+                    geometry.free(positions);
+                    Err(error)
+                }
+            }
+        })?;
+        let clusters = step(BuildStep::Clusters, || {
+            ClusteredIndices::new(&mesh.vertices, &mesh.indices)
+                .map(|clustered| {
+                    let placed = geometry.place(
+                        device,
+                        queue,
+                        Elements::Indices,
+                        bytemuck::cast_slice(&clustered.indices),
+                    )?;
+                    Ok(MeshClusters {
+                        indices: placed,
+                        clusters: clustered.clusters,
+                        groups: clustered.groups,
+                    })
+                })
+                .transpose()
+        });
+        let clusters = match clusters {
+            Ok(clusters) => clusters,
+            Err(error) => {
+                geometry.free(positions);
+                geometry.free(indices);
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            positions,
+            indices,
+            count: mesh.indices.len() as u32,
+            material: mesh.material,
+            ranges: step(BuildStep::Ranges, || {
+                MeshRanges::new(&mesh.vertices, &mesh.indices)
+            }),
+            lods: Vec::new(),
+            tangents,
+            clusters,
+        })
+    }
+
+    /// Frees its ranges of `geometry`.
+    fn free(&self, geometry: &mut GeometryBuffers) {
+        geometry.free(self.positions);
+        geometry.free(self.indices);
+        if let Some(clusters) = &self.clusters {
+            geometry.free(clusters.indices);
+        }
+    }
 }
 
 impl Model {
@@ -165,7 +257,7 @@ impl Models {
     fn build(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        rays: &mut SceneRays,
+        (rays, geometry): (&mut SceneRays, &mut GeometryBuffers),
         materials: &Materials,
         meshes: Vec<ModelMesh>,
     ) -> Result<Model, SceneError> {
@@ -208,52 +300,25 @@ impl Models {
                 [bounds[0].min(p), bounds[1].max(p)]
             },
         );
-        let meshes = meshes
-            .iter()
-            .zip(tangents)
-            .map(|(mesh, tangents)| {
-                let (positions, indices) = step(BuildStep::MeshBuffers, || {
-                    let positions: Vec<_> = mesh
-                        .vertices
-                        .iter()
-                        .map(|vertex| CasterVertex {
-                            position: vertex.position,
-                        })
-                        .collect();
-                    (
-                        buffer(
-                            device,
-                            "mesh positions",
-                            bytemuck::cast_slice(&positions),
-                            wgpu::BufferUsages::VERTEX,
-                        ),
-                        buffer(
-                            device,
-                            "mesh indices",
-                            bytemuck::cast_slice(&mesh.indices),
-                            wgpu::BufferUsages::INDEX,
-                        ),
-                    )
-                });
-                Mesh {
-                    positions,
-                    indices,
-                    count: mesh.indices.len() as u32,
-                    material: mesh.material,
-                    ranges: step(BuildStep::Ranges, || {
-                        MeshRanges::new(&mesh.vertices, &mesh.indices)
-                    }),
-                    lods: Vec::new(),
-                    tangents,
-                    clusters: step(BuildStep::Clusters, || {
-                        MeshClusters::new(device, &mesh.vertices, &mesh.indices)
-                    }),
+        let mut placed = Vec::with_capacity(meshes.len());
+        for (mesh, tangents) in meshes.iter().zip(tangents) {
+            match Mesh::place(
+                device,
+                queue,
+                geometry,
+                mesh,
+                (tangents, deformation.is_some()),
+            ) {
+                Ok(mesh) => placed.push(mesh),
+                Err(error) => {
+                    Models::free(rays, geometry, (ray_range, deformation, &placed));
+                    return Err(error);
                 }
-            })
-            .collect();
+            }
+        }
         Ok(Model {
             bounds,
-            meshes,
+            meshes: placed,
             geometry: super::next_generation(),
             ray,
             ray_range,
@@ -263,11 +328,19 @@ impl Models {
         })
     }
 
-    /// Frees a model's words in the ray source.
-    fn free(rays: &mut SceneRays, range: Range<u32>, deformation: Option<ModelDeformation>) {
+    /// Frees a model's words in the ray source and its meshes' ranges of the
+    /// geometry buffers.
+    fn free(
+        rays: &mut SceneRays,
+        geometry: &mut GeometryBuffers,
+        (range, deformation, meshes): (Range<u32>, Option<ModelDeformation>, &[Mesh]),
+    ) {
         rays.free(range);
         if let Some(deformation) = deformation {
             deformation.free(rays);
+        }
+        for mesh in meshes {
+            mesh.free(geometry);
         }
     }
 
@@ -292,7 +365,13 @@ impl Scene {
         queue: &wgpu::Queue,
         meshes: Vec<ModelMesh>,
     ) -> Result<ModelId, SceneError> {
-        let model = Models::build(device, queue, &mut self.rays, &self.materials, meshes);
+        let model = Models::build(
+            device,
+            queue,
+            (&mut self.rays, &mut self.geometry),
+            &self.materials,
+            meshes,
+        );
         self.refresh_scene_group(device);
         let model = model?;
         Models::take_materials(&mut self.materials, &model.meshes);
@@ -316,7 +395,13 @@ impl Scene {
         if deforms && self.instances.static_poses(id).next().is_some() {
             return Err(SceneError::DeformingModel);
         }
-        let built = Models::build(device, queue, &mut self.rays, &self.materials, meshes);
+        let built = Models::build(
+            device,
+            queue,
+            (&mut self.rays, &mut self.geometry),
+            &self.materials,
+            meshes,
+        );
         // The moving instances showing it deform as the new geometry does,
         // from its bind pose.
         let posed = built.and_then(|built| {
@@ -334,7 +419,11 @@ impl Scene {
                             for (_, added) in posed {
                                 InstanceDeformation::free(added, &mut self.rays);
                             }
-                            Models::free(&mut self.rays, built.ray_range, built.deformation);
+                            Models::free(
+                                &mut self.rays,
+                                &mut self.geometry,
+                                (built.ray_range, built.deformation, &built.meshes),
+                            );
                             return Err(error);
                         }
                     }
@@ -368,7 +457,11 @@ impl Scene {
         let previous_range = std::mem::replace(&mut model.ray_range, built.ray_range);
         let previous_deformation = std::mem::replace(&mut model.deformation, built.deformation);
         self.models.release(&mut self.materials, &previous);
-        Models::free(&mut self.rays, previous_range, previous_deformation);
+        Models::free(
+            &mut self.rays,
+            &mut self.geometry,
+            (previous_range, previous_deformation, &previous),
+        );
         let model = self.models.get(id).unwrap();
         self.instances.pose_casters(model, id);
         // Rays see its instances' new geometry from their entries.
@@ -388,7 +481,11 @@ impl Scene {
         }
         let model = self.models.slots.remove(id).unwrap();
         self.models.release(&mut self.materials, &model.meshes);
-        Models::free(&mut self.rays, model.ray_range, model.deformation);
+        Models::free(
+            &mut self.rays,
+            &mut self.geometry,
+            (model.ray_range, model.deformation, &model.meshes),
+        );
         Ok(())
     }
 

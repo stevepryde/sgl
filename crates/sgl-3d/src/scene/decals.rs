@@ -254,12 +254,15 @@ impl Decals {
 }
 
 fn decal_buffer(device: &wgpu::Device, records: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("scene decals"),
-        size: records * RECORD,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("scene decals"),
+            size: records * RECORD,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 /// A decal a record can hold: a finite position, a finite rotation of

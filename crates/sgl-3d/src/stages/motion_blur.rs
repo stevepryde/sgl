@@ -180,12 +180,15 @@ impl MotionBlur {
         Self {
             pipelines,
             layout,
-            uniform: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("motion blur settings"),
-                size: size_of::<MotionBlurUniform>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            uniform: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("motion blur settings"),
+                    size: size_of::<MotionBlurUniform>() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             targets: None,
             groups: Vec::new(),
         }

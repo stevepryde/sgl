@@ -180,7 +180,14 @@ impl Batcher {
             start += bin.count;
             bin.count = 0;
         }
-        instances.resize(start as usize, DrawInstance { object: 0, mesh: 0 });
+        instances.resize(
+            start as usize,
+            DrawInstance {
+                object: 0,
+                mesh: 0,
+                first_vertex: 0,
+            },
+        );
         for (draw, &bin) in self.draws.iter().zip(&self.bin_of) {
             let bin = &mut self.bins[bin as usize];
             instances[(bin.start + bin.count) as usize] = draw.instance;

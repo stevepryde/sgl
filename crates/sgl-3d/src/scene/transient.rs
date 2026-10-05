@@ -43,20 +43,26 @@ impl Transient {
     /// No glow, heat or mist.
     pub fn new(device: &wgpu::Device) -> Self {
         Self {
-            glow: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("transient glow"),
-                size: std::mem::size_of::<GlowVertex>() as u64,
-                usage: GLOW_USAGE,
-                mapped_at_creation: false,
-            }),
+            glow: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("transient glow"),
+                    size: std::mem::size_of::<GlowVertex>() as u64,
+                    usage: GLOW_USAGE,
+                    mapped_at_creation: false,
+                },
+            ),
             glow_count: 0,
             glow_vertices: Vec::new(),
-            heat: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("bounded heat vertices"),
-                size: (MAX_VERTICES * std::mem::size_of::<HeatDistortion>()) as u64,
-                usage: GLOW_USAGE,
-                mapped_at_creation: false,
-            }),
+            heat: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("bounded heat vertices"),
+                    size: (MAX_VERTICES * std::mem::size_of::<HeatDistortion>()) as u64,
+                    usage: GLOW_USAGE,
+                    mapped_at_creation: false,
+                },
+            ),
             heat_count: 0,
             heat_vertices: Vec::new(),
             mist: mist_buffer(device, 1),
@@ -136,12 +142,15 @@ impl Transient {
         let records: Vec<_> = vertices.iter().map(GlowVertex::new).collect();
         let bytes: &[u8] = bytemuck::cast_slice(&records);
         if bytes.len() as u64 > self.glow.size() {
-            self.glow = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("transient glow"),
-                size: (bytes.len() as u64).max(self.glow.size() * 2),
-                usage: GLOW_USAGE,
-                mapped_at_creation: false,
-            });
+            self.glow = crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("transient glow"),
+                    size: (bytes.len() as u64).max(self.glow.size() * 2),
+                    usage: GLOW_USAGE,
+                    mapped_at_creation: false,
+                },
+            );
         }
         self.glow_count = vertices.len() as u32;
         if !bytes.is_empty() {
@@ -230,19 +239,25 @@ impl Transient {
 }
 
 fn mist_buffer(device: &wgpu::Device, positions: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("retained mist positions"),
-        size: positions * std::mem::size_of::<[f32; 3]>() as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("retained mist positions"),
+            size: positions * std::mem::size_of::<[f32; 3]>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 fn fog_volume_buffer(device: &wgpu::Device, volumes: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("fog volumes"),
-        size: volumes * std::mem::size_of::<FogVolumeRecord>() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("fog volumes"),
+            size: volumes * std::mem::size_of::<FogVolumeRecord>() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
 }

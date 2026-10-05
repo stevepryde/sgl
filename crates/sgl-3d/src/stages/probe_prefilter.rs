@@ -240,12 +240,15 @@ impl ProbePrefilter {
             .iter()
             .map(|&(size, row)| u64::from(row) * u64::from(size) * 6)
             .sum();
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("static specular probe readback"),
-            size: bytes,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let readback = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("static specular probe readback"),
+                size: bytes,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            },
+        );
         let mut offset = 0;
         for (level, &(size, row)) in rows.iter().enumerate() {
             encoder.copy_texture_to_buffer(
