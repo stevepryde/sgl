@@ -566,8 +566,11 @@ drawn once. A frame draws only what changed. When a moving instance enters,
 leaves or moves within a face, the frame copies the face's static layer and
 draws the moving instances over it. The layer itself is drawn again when the
 face is new to its slot, a static edit reaches it (adding, removing or
-changing a static instance, or replacing a model one shows), the visibility
-mask changes, or a material's side, visibility group or alpha mode changes
+changing a static instance, or replacing a model one shows; each edit's own
+bounds are tested, so streaming many chunks in one frame redraws only the
+faces they reach, until more than 1024 edits in a frame merge in pairs),
+the visibility mask changes, or a material's side, visibility group or
+alpha mode changes
 (or a masked material's cutoff or base alpha). A light that
 moved since the last frame, such as one following a craft, has no reusable
 layer and draws every caster. A frame in which nothing moved in any shadowed

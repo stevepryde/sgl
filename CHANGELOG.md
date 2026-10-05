@@ -15,6 +15,24 @@ full API details.
 
 ## Unreleased
 
+### Static edits redraw only the shadow faces they reach
+
+- **Scope:** `sgl-3d` keeps each static edit's own bounds for the frame
+  (adding, removing or changing a static instance, or replacing a model one
+  shows), up to 1024 a frame, and the local-light shadow cache redraws a
+  face's static layer only where one of them reaches it: within its light's
+  range, then within the face. Before, a frame's edits merged into at most
+  16 boxes, so a frame that streamed in tens of chunks redrew faces of
+  lights between them that no chunk reached. Past 1024 edits in a frame,
+  the bounds merge in pairs of spatial neighbours. Shadows look as before.
+- **Migration:** no game-code changes. Afterwards, compare the local-light
+  shadow faces and layers drawn per frame (`Renderer::local_shadow_stats`)
+  and the `local shadows` and `local shadow layers` timing groups while
+  streaming or editing static content near shadowed lights. With the
+  `diagnostics` feature, `Counters::static_edit_boxes_merged` now counts
+  the pairs merged when the pending list halves past 1024 (before, the
+  boxes merged past 16).
+
 ### Shadows offset their receivers along the geometry normal
 
 - **Scope:** `sgl-3d` shadow lookups of the directional cascades and of

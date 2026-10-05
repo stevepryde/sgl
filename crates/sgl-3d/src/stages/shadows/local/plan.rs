@@ -22,10 +22,12 @@ use crate::shading::lights::{LOCAL_SHADOW_CUBE, LOCAL_SHADOW_SPOT, LocalShadowRe
 use crate::view::clusters::ViewVolume;
 use crate::view::culling::clip_intersects;
 use crate::view::draw_list::{DrawInstances, DrawList};
-use crate::view::population::{Casters, LightReach, Population, moving_caster_reaches};
+use crate::view::population::{Casters, LightReach, Population, moving_caster_reaches, within};
 use crate::view::{LOCAL_SHADOW_NEAR, View};
 use crate::{Mobility, Scene};
 use glam::{Mat4, Vec3};
+use std::collections::HashMap;
+use std::ops::Range;
 
 /// A moving caster with its bounds in its model's space and in the world.
 type Moving = (MovingCaster, [Vec3; 2], [Vec3; 2]);
@@ -66,6 +68,10 @@ pub(super) struct Plan {
     records: Vec<LocalShadowRecord>,
     /// The static cluster groups the light being planned reaches.
     reach: LightReach,
+    /// Marking static edits: each held light's position and range, and
+    /// where in `near_edits` the indices of the edits within it are.
+    edit_lights: HashMap<LightId, ((Vec3, f32), Range<usize>)>,
+    near_edits: Vec<usize>,
     pub stats: LocalShadowStats,
 }
 
@@ -80,6 +86,8 @@ impl Plan {
             drawn: 0,
             records: Vec::new(),
             reach: LightReach::default(),
+            edit_lights: HashMap::new(),
+            near_edits: Vec::new(),
             stats: LocalShadowStats::default(),
         }
     }
@@ -202,30 +210,53 @@ impl Plan {
             .resize(scene.lights.capacity(), LocalShadowRecord::NONE);
     }
 
-    /// Marks the slots that the scene's pending static edits reach as stale.
+    /// Marks the slots that the scene's pending static edits reach as stale:
+    /// each edit's own bounds, tested first against the range of the light
+    /// a slot shows and then against the slot's face, as Godot b130438
+    /// pairs instances with the lights whose bounds they meet and dirties
+    /// only the paired lights' shadows when one changes
+    /// (servers/rendering/renderer_scene_cull.cpp, `_instance_pair` and
+    /// `_update_instance`). A face no edit reaches keeps its layer however
+    /// many edits there are elsewhere.
     fn mark_static_edits(&mut self, scene: &Scene) {
         let edits = scene.static_edits.pending();
         if edits.is_empty() {
             return;
         }
+        // Each light's position and range, as its held slots show it, and
+        // the edits within that range.
+        let mut lights = std::mem::take(&mut self.edit_lights);
+        let mut near = std::mem::take(&mut self.near_edits);
+        lights.clear();
+        near.clear();
         for (_, slot) in self.cache.held() {
             let key = slot
                 .layer
                 .or_else(|| slot.face.as_ref().map(|(key, _)| *key))
                 .expect("held slots hold content");
+            let reach = (key.view.position, key.view.range);
+            let found = match lights.get(&key.light) {
+                Some((at, found)) if *at == reach => found.clone(),
+                _ => {
+                    let start = near.len();
+                    near.extend((0..edits.len()).filter(|&edit| within(edits[edit], reach)));
+                    lights.insert(key.light, (reach, start..near.len()));
+                    start..near.len()
+                }
+            };
+            if found.is_empty() {
+                continue;
+            }
             let view = key.view.face(key.face).view_projection();
-            let (position, range) = (key.view.position, key.view.range);
-            let reached = edits.iter().any(|&bounds| {
-                position
-                    .clamp(bounds[0], bounds[1])
-                    .distance_squared(position)
-                    <= range * range
-                    && clip_intersects(bounds, view)
-            });
-            if reached {
+            if near[found]
+                .iter()
+                .any(|&edit| clip_intersects(edits[edit], view))
+            {
                 *slot = Slot::default();
             }
         }
+        self.edit_lights = lights;
+        self.near_edits = near;
     }
 
     /// Plans the faces of light `id`, seen as `shadow` and placed at
@@ -257,10 +288,7 @@ impl Plan {
         let nearby: Vec<_> = moving
             .unwrap_or_default()
             .iter()
-            .filter(|(_, _, bounds)| {
-                let nearest = shadow.position.clamp(bounds[0], bounds[1]);
-                nearest.distance_squared(shadow.position) <= shadow.range * shadow.range
-            })
+            .filter(|(_, _, bounds)| within(*bounds, light))
             .collect();
         // The static cluster groups its range reaches, found once for every
         // face that draws its static casters.
