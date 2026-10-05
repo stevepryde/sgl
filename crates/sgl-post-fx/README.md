@@ -35,7 +35,8 @@ files unedited.
   denoiser places it, rejects a surface history far from the current
   neighbourhood as AMD's does, and clamps to Wicked Engine's 2-deviation box
   (DFX-25); a virtual point behind the previous camera finds no history
-  (DFX-31). Its denoiser passes run only on the 8×8 tiles with a confident
+  (DFX-31), nor does a surface that was behind it, in SSR and TAA alike
+  (DFX-32). Its denoiser passes run only on the 8×8 tiles with a confident
   hit within their reach, as AMD's denoiser runs only over its tile list; a
   skipped tile's histories hold zero radiance and DiligentFX's no-history
   variance (DFX-29).
@@ -89,7 +90,10 @@ taa.execute(&mut temporal_anti_aliasing::RenderAttributes { /* color, depth, mot
 The caller supplies Diligent's conventions: a left-handed camera (view space
 +z forward) with a finite far plane, the depth buffer as a depth texture,
 world normals in [-1, 1], NDC motion vectors (current − previous) and the
-previous frame's depth. The SSR output composites as
+previous frame's depth. Set each `CameraAttribs`' clip planes with
+`set_clip_planes(near, far)`, passing far before near for reversed-Z: SSR's
+and TAA's temporal passes read the near and far planes' depths (DFX-32), and
+left at `Default`'s 0 they keep no history. The SSR output composites as
 `(F0 · LUT.x + LUT.y) · lerp(environment, rgb, a)`.
 `RenderAttributes::pass_timestamps` optionally supplies per-pass timestamp
 writes by the name of each pass's upstream debug group.

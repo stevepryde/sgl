@@ -125,7 +125,7 @@ fn ComputeReflectionHitPosition(PixelCoord: vec2<i32>, Depth: f32) -> vec2<f32>
     // was not on its screen. It lies a screen off, where ComputeReprojection
     // rejects it, rather than mirrored onto the screen by ProjectPosition's
     // division by its negative w.
-    if ((cbCameraAttribs.g_PrevCamera.mViewProj * vec4<f32>(PositionWS, 1.0)).w <= 0.0) {
+    if (IsOnOrBehindCameraPlane(PositionWS, cbCameraAttribs.g_PrevCamera.mViewProj)) {
         return -cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
     }
     let PrevCoordUV = ProjectPosition(PositionWS, cbCameraAttribs.g_PrevCamera.mViewProj);
@@ -242,6 +242,10 @@ fn ComputeReprojection(PrevPos: vec2<f32>, CurrDepth: f32) -> ProjectionDesc
     }
 
     Desc.IsSuccess = Desc.IsSuccess && IsInsideScreen_f2(Desc.PrevCoord, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
+    // PROVENANCE.md DFX-32: a surface the previous camera could not see (its
+    // reprojected depth at or nearer than that camera's near plane) has no
+    // history.
+    Desc.IsSuccess = Desc.IsSuccess && !IsAtOrNearerThanNearPlane(CurrDepth, cbCameraAttribs.g_PrevCamera.fNearPlaneDepth, cbCameraAttribs.g_PrevCamera.fFarPlaneDepth);
     return Desc;
 }
 

@@ -110,4 +110,22 @@ fn ComputeSpatialWeight(Distance: f32, Sigma: f32) -> f32
     return exp(-(Distance) / (2.0 * Sigma * Sigma));
 }
 
+// PROVENANCE.md DFX-31 and DFX-32: whether `Position` lies on or behind the
+// plane of the camera whose view-projection is `ViewProj` (clip w <= 0),
+// where it has no place on that camera's screen or in its depth range.
+fn IsOnOrBehindCameraPlane(Position: vec3<f32>, ViewProj: mat4x4<f32>) -> bool
+{
+    return (ViewProj * vec4<f32>(Position, 1.0)).w <= 0.0;
+}
+
+// PROVENANCE.md DFX-32: whether `Depth` lies on or nearer than the near plane
+// of a camera whose near and far planes have depths `NearPlaneDepth` and
+// `FarPlaneDepth`, where the camera drew nothing. ComputeReprojectedDepth
+// writes the previous camera's near-plane depth for a surface on or behind
+// that camera.
+fn IsAtOrNearerThanNearPlane(Depth: f32, NearPlaneDepth: f32, FarPlaneDepth: f32) -> bool
+{
+    return (Depth - NearPlaneDepth) * (FarPlaneDepth - NearPlaneDepth) <= 0.0;
+}
+
 #endif // _POST_FX_COMMON_FXH_

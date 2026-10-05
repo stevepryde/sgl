@@ -187,23 +187,43 @@ fn camera(reversed: bool, frame_index: u32) -> CameraAttribs {
     attribs
 }
 
-/// `camera` turned half around its vertical axis, its view x and z negated:
-/// what was ahead of it is behind.
-fn turned_around(camera: CameraAttribs) -> CameraAttribs {
-    let turn = [
-        -1., 0., 0., 0., 0., 1., 0., 0., 0., 0., -1., 0., 0., 0., 0., 1.,
-    ];
-    // Column-major, columns listed: view-projection P V negates P's columns
-    // 0 and 2, its inverse V P^-1 the inverse's rows 0 and 2.
-    let columns =
-        |m: [f32; 16]| std::array::from_fn(|i| if matches!(i / 4, 0 | 2) { -m[i] } else { m[i] });
-    let rows =
-        |m: [f32; 16]| std::array::from_fn(|i| if matches!(i % 4, 0 | 2) { -m[i] } else { m[i] });
+/// The product `a b` of column-major matrices.
+fn multiply(a: [f32; 16], b: [f32; 16]) -> [f32; 16] {
+    std::array::from_fn(|i| (0..4).map(|k| a[k * 4 + i % 4] * b[i / 4 * 4 + k]).sum())
+}
+
+/// A turn by `yaw` radians about the vertical axis, which takes +z toward
+/// +x, then a move by `offset`: column-major.
+fn rigid(yaw: f32, offset: [f32; 3]) -> [f32; 16] {
+    let (sin, cos) = yaw.sin_cos();
+    [
+        cos, 0., -sin, 0., 0., 1., 0., 0., sin, 0., cos, 0., offset[0], offset[1], offset[2], 1.,
+    ]
+}
+
+/// Where the previous frame's camera stood: at `eye` in this frame's view
+/// space, turned by `yaw` from this frame's camera, with `depth` throughout
+/// its depth buffer.
+#[derive(Clone, Copy)]
+struct Previous {
+    eye: [f32; 3],
+    yaw: f32,
+    depth: f32,
+}
+
+/// `camera` standing at `previous.eye`, turned by `previous.yaw`.
+fn moved(camera: CameraAttribs, previous: Previous) -> CameraAttribs {
+    let world_from_view = rigid(previous.yaw, previous.eye);
+    let view_from_world = multiply(
+        rigid(-previous.yaw, [0.; 3]),
+        rigid(0., previous.eye.map(|c| -c)),
+    );
     CameraAttribs {
-        m_view: turn,
-        m_view_inv: turn,
-        m_view_proj: columns(camera.m_view_proj),
-        m_view_proj_inv: rows(camera.m_view_proj_inv),
+        f4_position: [previous.eye[0], previous.eye[1], previous.eye[2], 1.],
+        m_view: view_from_world,
+        m_view_inv: world_from_view,
+        m_view_proj: multiply(camera.m_proj, view_from_world),
+        m_view_proj_inv: multiply(world_from_view, camera.m_proj_inv),
         ..camera
     }
 }
@@ -750,9 +770,9 @@ struct Denoised {
 /// white surface with full confidence; every other ray missed. `filter`
 /// gives the reconstruction radius and the bilateral sigma. With
 /// `all_tiles`, every denoiser tile is active, as before DFX-29. With
-/// `turned`, the previous frame's camera faced the other way
-/// (`turned_around`) and the surface moved two screens since, as a surface
-/// behind the previous camera does.
+/// `previous`, the previous frame's camera stood elsewhere and the surface
+/// moved two screens since, as a surface behind the previous camera does;
+/// without, the camera stands still.
 #[allow(clippy::too_many_arguments)]
 fn denoise_frame(
     device: &wgpu::Device,
@@ -763,7 +783,7 @@ fn denoise_frame(
     filter: [f32; 2],
     index: u32,
     all_tiles: bool,
-    turned: bool,
+    previous: Option<Previous>,
     hit: impl Fn(u32, u32) -> bool,
 ) -> Denoised {
     use wgpu::util::DeviceExt;
@@ -783,7 +803,7 @@ fn denoise_frame(
         device,
         queue,
         wgpu::TextureFormat::Rg16Float,
-        &half(&[if turned { 4.0 } else { 0.0 }, 0.0]),
+        &half(&[if previous.is_some() { 4.0 } else { 0.0 }, 0.0]),
     );
     context.prepare_resources(
         device,
@@ -799,17 +819,14 @@ fn denoise_frame(
     ssr.prepare_resources(device, &mut encoder, context, flags);
     ssr.prepare_shaders_and_pso(device);
     let camera = camera(false, index);
-    let previous = if turned {
-        turned_around(camera)
-    } else {
-        camera
-    };
+    let previous_depth = depth(device, &mut encoder, previous.map_or(0.95, |p| p.depth));
+    let previous = previous.map_or(camera, |previous| moved(camera, previous));
     context.execute(&mut post_fx_context::RenderAttributes {
         device,
         queue,
         device_context: &mut encoder,
         curr_depth_buffer_srv: &scene_depth,
-        prev_depth_buffer_srv: &scene_depth,
+        prev_depth_buffer_srv: &previous_depth,
         curr_camera: Some(&camera),
         prev_camera: Some(&previous),
         camera_attribs_cb: None,
@@ -959,7 +976,7 @@ fn skipping_tiles_without_hits_changes_no_radiance() {
                             filter,
                             index,
                             all_tiles,
-                            false,
+                            None,
                             |x, y| {
                                 if index < 2 {
                                     checkerboard(x, y)
@@ -1032,7 +1049,7 @@ fn tiles_that_stop_hitting_keep_no_history() {
                 DEFAULT_FILTER,
                 index,
                 false,
-                false,
+                None,
                 |x, y| index < 2 || columns(x, y),
             );
             for pixel in far_from_hit_columns() {
@@ -1060,12 +1077,13 @@ fn tiles_that_stop_hitting_keep_no_history() {
 // PROVENANCE.md DFX-31: a reflection's virtual point on or behind the
 // previous camera's plane was nowhere on its screen. One frame of hits
 // everywhere fills the histories with white; then the camera is found to
-// have faced the other way the frame before, so every virtual point, a
-// metre beyond the plane ahead of it, lies behind the previous camera,
-// where dividing by its negative clip w would mirror it onto the screen at
-// the plane's depth. The surface moved two screens, as a surface behind the
-// previous camera does. With neither reprojection valid, every pixel keeps
-// no history: its variance is 1.
+// have stood 2.5 m further forward the frame before, facing back: between
+// the plane 2 m ahead, which lay in front of it, and its pixels' virtual
+// points a metre beyond the plane, which lay behind it, where dividing by
+// their negative clip w would mirror them onto the screen. The surface
+// moved two screens, as a surface behind the previous camera does. With
+// neither reprojection valid, every pixel keeps no history: its variance
+// is 1.
 #[test]
 fn reflection_hits_behind_the_previous_camera_take_no_history() {
     let Some((device, queue)) = device() else {
@@ -1083,7 +1101,11 @@ fn reflection_hits_behind_the_previous_camera_take_no_history() {
             DEFAULT_FILTER,
             index,
             false,
-            index == 1,
+            (index == 1).then_some(Previous {
+                eye: [0., 0., 2.5],
+                yaw: std::f32::consts::PI,
+                depth: 0.95,
+            }),
             |x, y| index == 0 || checkerboard(x, y),
         );
         if index == 1 {
@@ -1092,6 +1114,57 @@ fn reflection_hits_behind_the_previous_camera_take_no_history() {
                     *variance, 1.0,
                     "pixel {pixel} took history from behind the previous camera"
                 );
+            }
+        }
+    }
+}
+
+// PROVENANCE.md DFX-32: a surface on or behind the previous camera's plane
+// was not in that camera's depth buffer. One frame of hits everywhere fills
+// the histories with white; then the camera is found to have stood 2.5 m
+// further forward the frame before, turned 15°: the plane 2 m ahead lay
+// behind it, while some of its pixels' virtual points, a metre beyond the
+// plane, lay ahead of it on its screen. The surface moved two screens.
+// Reprojected with the negative w, the plane's depth mirrors to about half a
+// metre ahead of the previous camera, near enough to the previous frame's
+// surfaces, 2 m or 0.2 m away, for the hit reprojection's fallback search to
+// accept them; the previous camera's near plane, 0.1 m ahead, is near enough
+// the closer one. Every pixel must keep no history: its variance is 1.
+#[test]
+fn surfaces_behind_the_previous_camera_take_no_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // A surface's device depth at camera z `z` (column-major: z row of
+    // columns 2 and 3, over w = z).
+    let proj = camera(false, 0).m_proj;
+    for previous_z in [1.96f32, 0.2] {
+        let mut ssr = ScreenSpaceReflection::new(&device);
+        let mut context = PostFXContext::new(&device, &queue, Default::default());
+        for index in 0..2 {
+            let frame = denoise_frame(
+                &device,
+                &queue,
+                &mut ssr,
+                &mut context,
+                FeatureFlags::NONE,
+                DEFAULT_FILTER,
+                index,
+                false,
+                (index == 1).then_some(Previous {
+                    eye: [0., 0., 2.5],
+                    yaw: 15f32.to_radians(),
+                    depth: proj[10] + proj[14] / previous_z,
+                }),
+                |x, y| index == 0 || checkerboard(x, y),
+            );
+            if index == 1 {
+                for (pixel, variance) in frame.variance_history.iter().enumerate() {
+                    assert_eq!(
+                        *variance, 1.0,
+                        "previous surfaces {previous_z} m away: pixel {pixel} took history"
+                    );
+                }
             }
         }
     }

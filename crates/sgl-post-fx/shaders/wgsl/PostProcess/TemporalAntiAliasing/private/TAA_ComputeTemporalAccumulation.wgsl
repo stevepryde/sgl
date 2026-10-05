@@ -209,6 +209,12 @@ fn ComputeDepthDisocclusion(Position: vec2<f32>, PrevPosition: vec2<f32>) -> f32
 {
     let PrevPositioni = vec2<i32>(PrevPosition);
     let CurrDepth = SampleCurrDepth(vec2<i32>(Position));
+    // PROVENANCE.md DFX-32: a surface the previous camera could not see (its
+    // reprojected depth at or nearer than that camera's near plane) is
+    // disoccluded.
+    if (IsAtOrNearerThanNearPlane(CurrDepth, cbCameraAttribs.g_PrevCamera.fNearPlaneDepth, cbCameraAttribs.g_PrevCamera.fFarPlaneDepth)) {
+        return 0.0;
+    }
     var Disocclusion = 0.0;
 
     const SearchRadius = 1;

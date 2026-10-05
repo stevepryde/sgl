@@ -713,6 +713,132 @@ fn taa_closest_motion_is_the_nearest_depth_in_3x3() {
     }
 }
 
+/// The product `a b` of column-major matrices.
+fn multiply(a: [f32; 16], b: [f32; 16]) -> [f32; 16] {
+    std::array::from_fn(|i| (0..4).map(|k| a[k * 4 + i % 4] * b[i / 4 * 4 + k]).sum())
+}
+
+/// `camera` standing at `eye` in its own view space, turned by `yaw` radians
+/// about its vertical axis, which takes +z toward +x.
+fn moved(camera: CameraAttribs, eye: [f32; 3], yaw: f32) -> CameraAttribs {
+    let (sin, cos) = yaw.sin_cos();
+    let world_from_view = [
+        cos, 0., -sin, 0., 0., 1., 0., 0., sin, 0., cos, 0., eye[0], eye[1], eye[2], 1.,
+    ];
+    let view_from_world = inverse(world_from_view);
+    let view_proj = multiply(camera.m_proj, view_from_world);
+    CameraAttribs {
+        f4_position: [eye[0], eye[1], eye[2], 1.],
+        m_view: view_from_world,
+        m_view_inv: world_from_view,
+        m_view_proj: view_proj,
+        m_view_proj_inv: inverse(view_proj),
+        ..camera
+    }
+}
+
+/// Defect: TAA comparing a surface that was behind the previous camera with
+/// the previous depth buffer (PROVENANCE.md DFX-32). Reprojected with its
+/// negative clip w, its depth mirrors to as far in front of that camera,
+/// where a surface the previous camera saw can match it. Oracle: a surface
+/// the previous camera could not see has no history (alpha 0.5, as
+/// `ResetAccumulation` leaves a pixel), whatever its motion. Seven frames of
+/// a still camera and consistent motion build history; then the camera is
+/// found to have stood 2.08 m further forward the frame before, turned 15°,
+/// so the plane 1.96 m ahead lay 0.11 m behind it, while the surfaces it saw
+/// lay 0.104 m ahead: within TAA's depth tolerance of both the mirrored
+/// depth and that camera's 0.1 m near plane.
+#[test]
+fn taa_surfaces_behind_the_previous_camera_take_no_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // 1.28 pixels a frame, every frame: history survives it (DFX-14).
+    let motion = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0.04, 0.0]),
+    );
+    let color = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[4.0, 2.0, 1.0, 1.0]),
+    );
+    let camera = camera(true, 0);
+    let previous = moved(camera, [0., 0., 2.08], 15f32.to_radians());
+    // A surface's device depth at camera z `z`: the z row of the
+    // projection's columns 2 and 3, over w = z.
+    let depth_at = |z: f32| camera.m_proj[10] + camera.m_proj[14] / z;
+    let mut context = PostFXContext::new(&device, &queue, Default::default());
+    let mut taa = TemporalAntiAliasing::new(&device);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let current_depth = depth(&device, &mut encoder, 0.05);
+    let previous_depth = depth(&device, &mut encoder, depth_at(0.104));
+    let mut alphas = Vec::new();
+    for index in 0..8u32 {
+        let moved = index == 7;
+        context.prepare_resources(
+            &device,
+            &FrameDesc {
+                index,
+                width: SIZE[0],
+                height: SIZE[1],
+                output_width: SIZE[0],
+                output_height: SIZE[1],
+            },
+            post_fx_context::FeatureFlags::REVERSED_DEPTH,
+        );
+        taa.prepare_resources(
+            &device,
+            &mut encoder,
+            &context,
+            temporal_anti_aliasing::FeatureFlags::NONE,
+            0,
+        );
+        context.execute(&mut RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &current_depth,
+            prev_depth_buffer_srv: if moved {
+                &previous_depth
+            } else {
+                &current_depth
+            },
+            curr_camera: Some(&camera),
+            prev_camera: Some(if moved { &previous } else { &camera }),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            post_fx_context: &mut context,
+            color_buffer_srv: &color,
+            depth_buffer_srv: &current_depth,
+            motion_vectors_srv: &motion,
+            taa_attribs: &TemporalAntiAliasingAttribs::default(),
+            accumulation_buffer_idx: 0,
+            pass_timestamps: None,
+        });
+        queue.submit([std::mem::replace(
+            &mut encoder,
+            device.create_command_encoder(&Default::default()),
+        )
+        .finish()]);
+        let texels = read_rgba16f(&device, &queue, taa.get_accumulated_frame_srv(false, 0));
+        alphas.push(texels[(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize][3]);
+    }
+    // Per frame, for the message: the still frames' history, then none.
+    assert_eq!(
+        alphas[7], 0.5,
+        "a surface behind the previous camera kept history: {alphas:?}"
+    );
+}
+
 /// A depth buffer of per-texel `values`, row-major, written by a full-screen
 /// pass: depth formats accept no texel uploads.
 fn depth_values(

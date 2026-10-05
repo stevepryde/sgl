@@ -751,7 +751,8 @@ integrated as Diligent's Hydrogent renderer does:
   was behind the last frame's camera gets that length, so every temporal
   effect drops the history it reprojects by motion. The reflections' temporal
   passes likewise take no history by a reflection hit that was behind the
-  last frame's camera.
+  last frame's camera, and Crystal's and TAA's depth tests none for a surface
+  that was.
 - SSR and TAA need `perspective`'s infinite reversed-Z projection; with any
   other camera SSR is off and SMAA replaces TAA.
 - TAA resolves the complete linear HDR frame, including reflections, fog,
