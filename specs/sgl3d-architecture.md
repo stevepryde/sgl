@@ -1346,8 +1346,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   query the ray starts and every candidate it examines, nested loops
   sharing it (AR-12); at the cap the query terminates and the ray reports
   a miss, or a visibility ray unoccluded, as the portable walk does at its
-  visit cap. The constant sits above the most steps a ray took with the
-  CPU oracle on the examples and the consumer's content (grazing rays
+  visit cap. The constant sits above the most steps a ray took on the
+  examples and the consumer's content, counted on the GPU by an
+  instrumented build of the hardware module, since the CPU oracle's brute
+  force does not reach their scale (grazing rays
   through masked foliage, where the candidate form's candidates are every
   non-opaque triangle crossed; shadow rays through nested closed
   occluders), its reason beside it; the portable walk's visits are not

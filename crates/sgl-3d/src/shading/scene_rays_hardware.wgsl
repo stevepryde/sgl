@@ -23,10 +23,14 @@ const SCENE_TLAS_ALL:u32=3u;
 // predicate rejects. A ray re-traces past every rejected triangle in front
 // of the one it stops at: a back face of a single-sided closed mesh the
 // ray starts inside, a blended mesh of a mixed model, a hidden group's
-// triangle, its receiver's own triangle, the interval's open end.
-// UNMEASURED: set from the CPU oracle's most steps on the examples. A
-// ray that reaches it reports a miss, or a visibility ray unoccluded, as
-// the portable walk does at SCENE_BVH_MOST_VISITS.
+// triangle, its receiver's own triangle, the interval's open end; a
+// visibility ray whose first, any-hit look is rejected takes one more.
+// Counted on the GPU by an instrumented build, every one of the dynamic GI
+// example's 6.79 million probe and visibility rays took one query (#23);
+// the cap sits far above that, so that only content of many stacked
+// rejected surfaces, or corrupt data, reaches it. A ray that reaches it
+// reports a miss, or a visibility ray unoccluded, as the portable walk
+// does at SCENE_BVH_MOST_VISITS.
 const SCENE_MOST_HARDWARE_STEPS:u32=64u;
 // Counts one more hardware step of a ray's `steps`, false once the ray has
 // taken SCENE_MOST_HARDWARE_STEPS, after which it stays exhausted.
