@@ -484,9 +484,9 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
             judge(&device, &queue, &mut random, &camera, &lights, &decals);
         }
     }
-    // Down a tunnel 3 km long: fixtures on its ceiling and walls every 8 m,
-    // spots and strips shining down and inward, and a craft's light near the
-    // camera.
+    // Down a lit corridor 3 km long: fixtures on its ceiling and walls every
+    // 8 m, spots and strips shining down and inward, and a light near the
+    // camera that casts shadows.
     let mut lights = Vec::new();
     for station in 0..375 {
         let z = -(station as f32) * 8.;
@@ -532,7 +532,7 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
         casts_shadow: true,
         ..Default::default()
     });
-    // Markings on its road, a few degrees off true, and panels on its walls.
+    // Markings on its floor, a few degrees off true, and panels on its walls.
     let mut decals = Vec::new();
     for station in 0..375 {
         let z = -(station as f32) * 8. - 4.;
@@ -550,9 +550,9 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
         }
     }
     for (label, eye, target) in [
-        ("tunnel", Vec3::new(0., 2.5, 6.), Vec3::new(0., 2., -100.)),
+        ("corridor", Vec3::new(0., 2.5, 6.), Vec3::new(0., 2., -100.)),
         (
-            "tunnel, toward a wall",
+            "corridor, toward a wall",
             Vec3::new(-2., 2.5, -300.),
             Vec3::new(5., 3., -340.),
         ),
