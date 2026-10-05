@@ -26,9 +26,13 @@ use crate::view::population::{Casters, LightReach, Population, moving_caster_rea
 use crate::view::{LOCAL_SHADOW_NEAR, View};
 use crate::{Mobility, Scene};
 use glam::{Mat4, Vec3};
+use std::collections::HashMap;
 
 /// A moving caster with its bounds in its model's space and in the world.
 type Moving = (MovingCaster, [Vec3; 2], [Vec3; 2]);
+
+/// A light's position and range, and the static edits within that range.
+type LightEdits = ((Vec3, f32), Vec<[Vec3; 2]>);
 
 /// What a face draws this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,27 +206,41 @@ impl Plan {
             .resize(scene.lights.capacity(), LocalShadowRecord::NONE);
     }
 
-    /// Marks the slots that the scene's pending static edits reach as stale.
+    /// Marks the slots that the scene's pending static edits reach as stale:
+    /// each edit's own bounds, tested first against the range of the light
+    /// a slot shows and then against the slot's face, as Godot b130438
+    /// pairs instances with the lights whose bounds they meet and dirties
+    /// only the paired lights' shadows when one changes
+    /// (servers/rendering/renderer_scene_cull.cpp, `_instance_pair` and
+    /// `_update_instance`). A face no edit reaches keeps its layer however
+    /// many edits there are elsewhere.
     fn mark_static_edits(&mut self, scene: &Scene) {
         let edits = scene.static_edits.pending();
         if edits.is_empty() {
             return;
         }
+        // Each light's position and range, as its held slots show it, and
+        // the edits within that range.
+        let mut lights: HashMap<LightId, LightEdits> = HashMap::new();
         for (_, slot) in self.cache.held() {
             let key = slot
                 .layer
                 .or_else(|| slot.face.as_ref().map(|(key, _)| *key))
                 .expect("held slots hold content");
+            let reach = (key.view.position, key.view.range);
+            let (_, near) = lights
+                .entry(key.light)
+                .and_modify(|light| {
+                    if light.0 != reach {
+                        *light = (reach, within(edits, reach));
+                    }
+                })
+                .or_insert_with(|| (reach, within(edits, reach)));
+            if near.is_empty() {
+                continue;
+            }
             let view = key.view.face(key.face).view_projection();
-            let (position, range) = (key.view.position, key.view.range);
-            let reached = edits.iter().any(|&bounds| {
-                position
-                    .clamp(bounds[0], bounds[1])
-                    .distance_squared(position)
-                    <= range * range
-                    && clip_intersects(bounds, view)
-            });
-            if reached {
+            if near.iter().any(|&bounds| clip_intersects(bounds, view)) {
                 *slot = Slot::default();
             }
         }
@@ -374,6 +392,20 @@ impl Plan {
     pub fn finish(&mut self) {
         self.cache.finish();
     }
+}
+
+/// The `edits` within `range` of `position`.
+fn within(edits: &[[Vec3; 2]], (position, range): (Vec3, f32)) -> Vec<[Vec3; 2]> {
+    edits
+        .iter()
+        .copied()
+        .filter(|bounds| {
+            position
+                .clamp(bounds[0], bounds[1])
+                .distance_squared(position)
+                <= range * range
+        })
+        .collect()
 }
 
 /// The casting lights of `scene` that are on, when `enabled`, with what

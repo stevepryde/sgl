@@ -189,10 +189,15 @@ abandoning a frame loses none.
 
 A static edit (adding, removing or changing a static instance, or replacing
 the geometry of a model one uses) also records the world bounds it touched.
-The scene keeps those bounds pending until `finish_frame` and may merge them
-conservatively. A cache of static content marks what they reach as stale in
-any frame that shows them to it, whether or not it redraws then, and a cache
-that was not kept up in a frame starts over. Static-edit bounds are the
+The scene keeps each edit's bounds pending until `finish_frame`, merging
+them conservatively (spatial neighbours in pairs) only past a cap far above
+a streaming frame's edits. A cache of static content marks what each of them
+reaches as stale, never what their union would, in any frame that shows
+them to it, whether or not it redraws then, as Godot pairs an instance with
+the lights its bounds meet and dirties only the paired lights' shadows when
+it changes (b130438 `renderer_scene_cull.cpp`, `_instance_pair` and
+`_update_instance`); a cache that was not kept up in a frame starts over.
+The static instance BVH, rebuilt whole, counts the edits instead. Static-edit bounds are the
 scene's part; what else makes a cache stale (its light, the visibility mask,
 a material's caster values, another `Scene`) is its owner's. An abandoned
 frame commits nothing: the next frame measures motion from the last submitted
@@ -386,8 +391,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   lights, drawn in the cube faces that see the half-space in front of it. Each face caches its static instances in a
   static layer, in a second atlas of the same layout. A frame copies a face's
   layer and draws its moving instances over it only when they entered, left,
-  moved or deformed; it redraws the layer when the scene's static-edit bounds, the
-  visibility mask or a material's caster values make it stale, and draws
+  moved or deformed; it redraws the layer when a static edit's bounds reach
+  it (its light's range, then its face's frustum), or the visibility mask or
+  a material's caster values make it stale, and draws
   every caster of a light that moved. What a frame draws becomes reusable at
   `finish_frame`. The camera's surfaces sample the frame's atlas; probe
   captures and ray hits, which show static content, sample the static

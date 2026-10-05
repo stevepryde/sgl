@@ -602,7 +602,7 @@ impl Measured {
         let counted = &self.counted;
         let per_frame = |count: u64| count as f64 / frames.max(1) as f64;
         println!(
-            "  static-edit boxes {:.2} a frame, {:.2} of them merged; ray source growths {}",
+            "  static-edit boxes {:.2} a frame, {:.2} merged into another; ray source growths {}",
             per_frame(counted.static_edit_boxes),
             per_frame(counted.static_edit_boxes_merged),
             counted.ray_source_growths

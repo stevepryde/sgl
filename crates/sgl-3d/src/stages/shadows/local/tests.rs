@@ -794,6 +794,40 @@ fn static_edits_restale_only_the_faces_they_reach() {
     );
 }
 
+// Plausible defects: a frame's static edits merged into fewer boxes than
+// there are edits, so a box that joins edits on either side of a light
+// restales faces that none of them reaches; Godot b130438 dirties only the
+// lights an edited instance pairs with. The oracle is each edit's place:
+// seventeen static instances added in one frame, every one beyond the
+// light's range, the last 30 m to one side of it and the one before 30 m to
+// the other (the pair a 16-box merge joined across the light), leave every
+// face untouched.
+#[test]
+fn edits_beyond_a_light_leave_its_faces_however_many_there_are() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (mut scene, _, _, model) = cached_scene(&mut harness);
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let input = input();
+    harness.frame(&mut scene, &input);
+    let ring = (0..15).map(|step| {
+        let angle = (step as f32 * 24.).to_radians();
+        Vec3::new(angle.cos(), 0., angle.sin()) * 100.
+    });
+    for position in ring.chain([Vec3::X * 30., Vec3::NEG_X * 30.]) {
+        scene
+            .add_instance(&device, &queue, at(model, position), Mobility::Static)
+            .unwrap();
+    }
+    let stats = harness.frame(&mut scene, &input);
+    assert_eq!(
+        (stats.layers_drawn, stats.draws),
+        (0, 0),
+        "edits beyond the light's range: {stats:?}"
+    );
+}
+
 // Plausible defects: a spot's face projected differently when drawn and when
 // sampled, or a spot wider than one face missing the faces its cone reaches.
 // The oracle is geometric placement within each cone.

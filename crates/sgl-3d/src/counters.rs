@@ -64,8 +64,9 @@ pub struct Counters {
     pub steps: Vec<StepTime>,
     /// Growths of the ray source, each a copy of it whole.
     pub ray_source_growths: u64,
-    /// Static-edit boxes recorded, and those merged into a kept box because
-    /// the scene keeps at most 16 pending.
+    /// Static-edit boxes recorded, and those merged into another: the scene
+    /// keeps at most 1024 pending, and past them halves the list, merging
+    /// 512 pairs at once.
     pub static_edit_boxes: u64,
     pub static_edit_boxes_merged: u64,
 }
@@ -259,12 +260,13 @@ pub(crate) fn ray_source_growth() {
     COUNTERS.with_borrow_mut(|counters| counters.ray_source_growths += 1);
 }
 
-/// Counts a static-edit box recorded, `merged` into a kept one.
-pub(crate) fn static_edit(merged: bool) {
+/// Counts a static-edit box recorded, and the `merged` pairs of pending
+/// boxes that recording it merged.
+pub(crate) fn static_edit(merged: usize) {
     #[cfg(any(test, feature = "diagnostics"))]
     COUNTERS.with_borrow_mut(|counters| {
         counters.static_edit_boxes += 1;
-        counters.static_edit_boxes_merged += u64::from(merged);
+        counters.static_edit_boxes_merged += merged as u64;
     });
     #[cfg(not(any(test, feature = "diagnostics")))]
     let _ = merged;
