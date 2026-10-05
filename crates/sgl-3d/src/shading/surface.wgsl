@@ -15,12 +15,15 @@ struct Surface {
  view:vec3<f32>,
  // The mapped base normal, and the geometry normal: the interpolated vertex
  // normal toward the side shaded, which the coat follows and along which a
- // shadow lookup offsets the receiver, as Bevy 9d12036 offsets its point,
- // spot and directional shadows along `in.world_normal`
- // (crates/bevy_pbr/src/render/pbr_functions.wesl, apply_pbr_lighting) and
- // Filament ef1a133 its spot and cascade shadows along
- // getWorldGeometricNormalVector() (shaders/src/surface_getters.fs), so a
- // normal map or its scrolling layers move no shadow.
+ // shadow lookup offsets the receiver, never the mapped normal (normal or
+ // bump map, decals, scrolling layers), so none of them moves a shadow.
+ // Filament ef1a133 offsets its spot and cascade shadows along this normal,
+ // flipped to the side shaded (getWorldGeometricNormalVector(),
+ // shading_geometricNormal in shaders/src/surface_shading_parameters.fs and
+ // surface_getters.fs); Bevy 9d12036 its point, spot and directional
+ // shadows along the geometric normal too, `in.world_normal`
+ // (crates/bevy_pbr/src/render/pbr_functions.wesl, apply_pbr_lighting),
+ // which it flips only without tangents or a normal map.
  normal:vec3<f32>,
  geometry_normal:vec3<f32>,
  base:vec4<f32>,

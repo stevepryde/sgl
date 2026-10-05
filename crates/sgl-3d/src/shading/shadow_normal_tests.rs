@@ -201,9 +201,9 @@ fn visibility(gpu: (&wgpu::Device, &wgpu::Queue), tilted: bool, shining: Shining
 // geometric normal. The oracle is that requirement: an occluder casts an
 // edge onto a receiver facing the light at the centre of one pixel column,
 // where the filter leaves part of the light; a normal map tilting the
-// shading normal 37° across the edge, which moves a mapped-normal offset two
-// shadow texels across it, leaves the share of the light each column takes
-// as it is without the map.
+// shading normal 37° across the edge, which moves a mapped-normal offset
+// about 1.5 shadow texels across it, leaves the share of the light each
+// column takes as it is without the map.
 #[test]
 fn normal_maps_do_not_move_shadows() {
     let Some((device, queue)) = test_support::device() else {

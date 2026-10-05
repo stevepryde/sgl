@@ -25,8 +25,9 @@ full API details.
   On normal-mapped surfaces, shadow edges no longer shift texel by texel
   with the map, and on surfaces with scrolling normal layers, such as water,
   they no longer crawl from frame to frame. Surfaces without a normal or
-  bump map are unchanged, as are probe captures and ray hits of such
-  surfaces and the fog, which takes no offset.
+  bump map, normal-mapped decals or normal layers are unchanged, as are
+  probe captures and ray hits of such surfaces and the fog, which takes no
+  offset.
 - **Migration:** no game-code changes. Afterwards, look at shadow edges and
   contact shadows on normal-mapped and bump-mapped surfaces, and on water
   with normal layers, at grazing light: acne or peter-panning there may
