@@ -498,6 +498,64 @@ fn a_scroll_keeps_the_cells_that_stay_where_they_were_in_the_world() {
     }
 }
 
+// Plausible defects: a scroll longer than the stripe it moves cells
+// through, or toward either end of an axis, overwrites cells before it
+// moves them, moves the last part-stripe wrongly, or clears too few or too
+// many of the cells that enter. The oracle is the world: in a row of 40
+// cells along x, each written with light 1 + its world index, scrolled 17
+// cells up the axis, then 20 down it, then 45 up it, each cell reads the
+// light written at its world position where that cell has stayed in the
+// volume throughout, and the fallback where it entered.
+#[test]
+fn a_scroll_across_several_stripes_keeps_every_cell_that_stays() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let (mut renderer, mut scene) = fixture((&device, &queue));
+    let row = IrradianceVolume {
+        origin: Vec3::new(-20., 0., 0.),
+        cell_size: Vec3::ONE,
+        cells: [40, 1, 2],
+    };
+    scene
+        .set_irradiance_volume(&device, &queue, Some(row))
+        .unwrap();
+    fill(&queue, &mut scene, row, |[x, _, _]| {
+        cell(1. + x as f32, 0.5)
+    });
+    // The world cells that hold what was written: from the first scroll's
+    // view, those of the first placement that stay in every later one.
+    let mut held: Vec<i64> = (0..40).collect();
+    let mut first = 0i64;
+    for by in [17i64, -20, 45] {
+        first += by;
+        let placed = IrradianceVolume {
+            origin: row.origin + Vec3::X * first as f32,
+            ..row
+        };
+        scene
+            .set_irradiance_volume(&device, &queue, Some(placed))
+            .unwrap();
+        held.retain(|x| (first..first + 40).contains(x));
+        let cells = every_cell(row.cells);
+        let answers = floors(
+            (&device, &queue),
+            (&mut renderer, &mut scene),
+            placed,
+            &cells,
+        );
+        for (index, answer) in cells.iter().zip(&answers) {
+            let world = first + i64::from(index[0]);
+            let expected = if held.contains(&world) {
+                [1. + world as f32, 0.5, 1.]
+            } else {
+                [0., 1., 1.]
+            };
+            assert_eq!(*answer, expected, "after {by}: cell {index:?}");
+        }
+    }
+}
+
 // Plausible defects: a move of the render origin that leaves the volume's
 // origin where it was in the new frame, translates its cells, rounds its
 // origin twice, or takes the placement it then holds, installed again, for

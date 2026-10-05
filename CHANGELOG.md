@@ -84,7 +84,11 @@ full API details.
   one cell past each face. Ambient occlusion occludes it as it did the
   ambient, `FrameInput::baked_lighting` turns it off, and
   `SurfaceMaterial::environment_scale` scales the ambient it lets through,
-  not its own light. Its sky visibility also occludes the sky's share of
+  not its own light. A scroll moves the cells that stay in place through a
+  stripe 16 cells thick, kept with a stripe of zeros for each axis the
+  volume scrolls along. `examples/irradiance_volume.rs` lights a block
+  world's cave from a propagated sky and torch light field and prints what
+  relights, scrolls and installs cost. Its sky visibility also occludes the sky's share of
   environment specular (Lagarde's specular occlusion) on opaque, blended
   and captured surfaces and ray hits, not specular probes. Dynamic GI probe
   rays' hits take it whole. It costs 48 bytes a cell and three 3D taps a lit

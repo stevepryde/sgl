@@ -684,7 +684,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   transformed cubes blended per fragment: no consumer needs several or a
   rotated one, and the determination has one place for it. A scroll
   ([Scene content](#scene-content)) copies the cells that stay to their new
-  texels and clears the ones that enter, as Godot's SDFGI scrolls its
+  texels in place, through a stripe a chunk (16 cells) thick across the
+  axis, and clears the ones that enter, as Godot's SDFGI scrolls its
   cascades' textures and probe history by a copy when its camera crosses a
   cell (sdfgi_preprocess.glsl `MODE_SCROLL` 174-183, gi.cpp 2121-2175), in
   one command buffer the scene submits at once, so the region writes the
@@ -765,8 +766,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   is a setting (S3D-6). It costs 48 bytes a cell, three 3D taps per
   fragment it lights, each region write's six faces once through the queue
   (one write per face slab, packed before the write on the game's thread)
-  and, on a scroll, one copy of the cells that
-  stay and a clear of the ones that enter; a frame uploads nothing. A
+  and, on a scroll, two copies of the cells that stay (into the stripe and
+  out of it), a clear of the ones that enter and, for each axis it has
+  scrolled along, the stripe and a stripe of zeros; a frame uploads
+  nothing. A
   filtered RGBA16F 3D texture written and copied by region is core WebGPU,
   so the browser runs the same volume within its `maxTextureDimension3D`.
 - **Dynamic diffuse GI.** Coloured bounce light from the frame's lights, the

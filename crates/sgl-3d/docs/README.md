@@ -72,7 +72,8 @@ animated surface receives screen-space reflections,
 in 16 m chunks about a moving camera, edited and remeshed, with the render
 origin following it, and what each scene operation costs, and
 [`examples/dynamic_gi.rs`](../examples/dynamic_gi.rs) a room lit by a dynamic
-GI volume. [`examples/browser_smoke.rs`](../examples/browser_smoke.rs) is the
+GI volume, and [`examples/irradiance_volume.rs`](../examples/irradiance_volume.rs)
+a block world's cave lit by the game's own light field, relit by region. [`examples/browser_smoke.rs`](../examples/browser_smoke.rs) is the
 browser's version: a WebGPU device, procedural content with block-compressed
 bakes (a specular probe and an irradiance atlas), frames under several settings
 and an asynchronous readback.
