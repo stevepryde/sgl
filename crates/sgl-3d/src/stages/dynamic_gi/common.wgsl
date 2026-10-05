@@ -47,6 +47,11 @@ struct DdgiVolume {
  // The rays the frame traces, which the allocation counts and a copy
  // brings here before the trace.
  rays:u32,
+ // The most probes not yet blended that start this frame.
+ ramp_probes:u32,
+ // The probes that trace rays this frame, which a copy brings here before
+ // the blends.
+ traced:u32,
 }
 // The probe a workgroup of a two-dimensional dispatch over probes serves.
 fn ddgi_group_probe(group:vec3<u32>)->u32 {

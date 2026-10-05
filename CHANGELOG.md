@@ -65,6 +65,24 @@ full API details.
   lighting`) and `reflection source completion` timing groups on the game's
   route.
 
+### Static edits redraw only the shadow faces they reach
+
+- **Scope:** `sgl-3d` keeps each static edit's own bounds for the frame
+  (adding, removing or changing a static instance, or replacing a model one
+  shows), up to 1024 a frame, and the local-light shadow cache redraws a
+  face's static layer only where one of them reaches it: within its light's
+  range, then within the face. Before, a frame's edits merged into at most
+  16 boxes, so a frame that streamed in tens of chunks redrew faces of
+  lights between them that no chunk reached. Past 1024 edits in a frame,
+  the bounds merge in pairs of spatial neighbours. Shadows look as before.
+- **Migration:** no game-code changes. Afterwards, compare the local-light
+  shadow faces and layers drawn per frame (`Renderer::local_shadow_stats`)
+  and the `local shadows` and `local shadow layers` timing groups while
+  streaming or editing static content near shadowed lights. With the
+  `diagnostics` feature, `Counters::static_edit_boxes_merged` now counts
+  the pairs merged when the pending list halves past 1024 (before, the
+  boxes merged past 16).
+
 ### Shadows offset their receivers along the geometry normal
 
 - **Scope:** `sgl-3d` shadow lookups of the directional cascades and of
@@ -182,8 +200,11 @@ full API details.
   fill, and moving instances in place of their ambient cube; ambient
   occlusion occludes it as it did those. Lightmapped and charted surfaces
   keep their bake. `SurfaceMaterial::environment_scale` does not scale it.
-  The first frame after a placement change traces every probe at the most
-  rays, as Wicked's does. Timing groups `dynamic GI allocation`,
+  A restart (another placement or scene, or a frame without the volume)
+  starts at most 128 probes a frame at High (256 at Low), nearest the
+  camera first, where Wicked starts every probe in one frame; the surfaces
+  about a probe not yet started keep their other indirect light. The
+  `dynamic_gi` example lights a room and prints the stage's cost. Timing groups `dynamic GI allocation`,
   `dynamic GI rays` and `dynamic GI blend` report its cost, and frames that
   run it rebuild the ray source's instance BVHs, as world-space reflections
   do. A volume costs about 11 KB of GPU memory a probe at High (8 KB at

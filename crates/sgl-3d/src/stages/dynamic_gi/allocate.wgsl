@@ -12,16 +12,39 @@
 // of (probe, ray and the probe's ray count), the counts a buffer of rays
 // rather than buckets, and the count stays apart from the dispatch; a
 // two-dimensional dispatch where a row of workgroups would not hold them.
+// Improved: Wicked starts every probe of a restarted volume in one frame,
+// each at the most rays; here at most `volume.ramp_probes` start a frame,
+// the nearest the camera first, and a probe not yet started traces nothing
+// and weighs nothing in the sample, so its receivers keep their fallback
+// (`rank` and `threshold` choose them). The blends run over the probes that
+// trace, where Wicked's run over every probe, each of which always traces.
 @group(0) @binding(0) var<uniform> volume:DdgiVolume;
 @group(0) @binding(1) var<storage,read> variance:array<u32>;
 @group(0) @binding(2) var<storage,read> probe_states:array<vec2<u32>>;
 @group(0) @binding(3) var<storage,read_write> ray_counts:array<u32>;
 @group(0) @binding(4) var<storage,read_write> allocation:DdgiAllocation;
 @group(0) @binding(5) var ray_list:texture_storage_2d<rg32uint,write>;
-// The trace's indirect dispatch and the rays the frame traces.
+// The probes that trace rays this frame, which the blends gather.
+@group(0) @binding(6) var<storage,read_write> traced_probes:array<u32>;
+// The probes not yet blended, by their distance from the camera in
+// spacings, which the ramp starts nearest first.
+const RAMP_BINS:u32=1024u;
+// The trace's indirect dispatch and the rays the frame traces; the blends'
+// and the probes that trace them; and the ramp: the nearer bins whose
+// probes all start, how many of the probes in the bin after them start,
+// how many of those have, the probes not yet blended, and each bin's of
+// them.
 struct DdgiAllocation {
  groups:array<u32,3>,
  rays:atomic<u32>,
+ blend_groups:array<u32,3>,
+ traced:atomic<u32>,
+ ramp_bins:u32,
+ ramp_room:u32,
+ ramp_taken:atomic<u32>,
+ // The probes not yet blended.
+ unblended:atomic<u32>,
+ bins:array<atomic<u32>,RAMP_BINS>,
 }
 const ALLOCATION_THREADS:u32=32u;
 var<workgroup> shared_inconsistency:array<f32,ALLOCATION_THREADS>;
@@ -35,6 +58,59 @@ fn camera_frustum_intersects(center:vec3<f32>,radius:f32)->bool {
   }
  }
  return true;
+}
+// The ramp's bin of a probe at `position`: its distance from the camera in
+// the volume's least spacings.
+fn ramp_bin(position:vec3<f32>)->u32 {
+ let spacing=min(volume.spacing.x,min(volume.spacing.y,volume.spacing.z));
+ return u32(min(distance(position,volume.eye)/spacing,f32(RAMP_BINS-1u)));
+}
+// Counts the probes not yet blended in each bin.
+@compute @workgroup_size(64)
+fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) groups:vec3<u32>) {
+ let probe_index=id.x+id.y*groups.x*64u;
+ if probe_index>=volume.probe_count {
+  return;
+ }
+ let probe=ddgi_unpack_probe(probe_states[probe_index]);
+ if probe.blended {
+  return;
+ }
+ let position=ddgi_probe_position_rest(ddgi_probe_coord(probe_index,volume.probes),volume.origin,volume.spacing);
+ atomicAdd(&allocation.bins[ramp_bin(position)],1u);
+ atomicAdd(&allocation.unblended,1u);
+}
+// The bins whose probes all start this frame, and how many of the next
+// bin's do: `volume.ramp_probes` at most.
+@compute @workgroup_size(1)
+fn threshold() {
+ var started=0u;
+ var bin=0u;
+ // Where every probe not yet blended fits, all start without the scan.
+ if atomicLoad(&allocation.unblended)<=volume.ramp_probes {
+  bin=RAMP_BINS;
+ }
+ loop {
+  if bin>=RAMP_BINS {
+   break;
+  }
+  let count=atomicLoad(&allocation.bins[bin]);
+  if started+count>volume.ramp_probes {
+   break;
+  }
+  started+=count;
+  bin++;
+ }
+ allocation.ramp_bins=bin;
+ allocation.ramp_room=volume.ramp_probes-started;
+}
+// Whether a probe not yet blended at `position` starts this frame.
+fn ramp_starts(position:vec3<f32>)->bool {
+ let bin=ramp_bin(position);
+ if bin<allocation.ramp_bins {
+  return true;
+ }
+ return bin==allocation.ramp_bins && atomicAdd(&allocation.ramp_taken,1u)<allocation.ramp_room;
 }
 @compute @workgroup_size(ALLOCATION_THREADS)
 fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) group_index:u32) {
@@ -66,11 +142,14 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   ray_count=(ray_count+DDGI_RAY_BUCKET_COUNT-1u)/DDGI_RAY_BUCKET_COUNT*DDGI_RAY_BUCKET_COUNT;
   ray_count=clamp(ray_count,DDGI_RAY_BUCKET_COUNT,volume.max_rays);
   if !probe.blended {
-   ray_count=volume.max_rays;
+   ray_count=select(0u,volume.max_rays,ramp_starts(ddgi_probe_position_rest(probe_coord,volume.origin,volume.spacing)));
   }
   ray_counts[probe_index]=ray_count;
   shared_ray_count=ray_count;
   shared_ray_allocation=atomicAdd(&allocation.rays,ray_count);
+  if ray_count>0u {
+   traced_probes[atomicAdd(&allocation.traced,1u)]=probe_index;
+  }
  }
  let ray_count=workgroupUniformLoad(&shared_ray_count);
  let ray_allocation=workgroupUniformLoad(&shared_ray_allocation);
@@ -78,8 +157,9 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   textureStore(ray_list,ddgi_ray_texel(ray_allocation+i),vec4(probe_index,i|(ray_count<<16u),0u,0u));
  }
 }
-// The trace's indirect dispatch: a workgroup for each DDGI_TRACE_THREADS
-// rays, in rows of DDGI_GROUP_ROW.
+// The trace's indirect dispatch, a workgroup for each DDGI_TRACE_THREADS
+// rays, and the blends', one for each probe that traces, in rows of
+// DDGI_GROUP_ROW.
 @compute @workgroup_size(1)
 fn prepare_trace() {
  let rays=atomicLoad(&allocation.rays);
@@ -87,4 +167,8 @@ fn prepare_trace() {
  allocation.groups[0]=min(groups,DDGI_GROUP_ROW);
  allocation.groups[1]=(groups+DDGI_GROUP_ROW-1u)/DDGI_GROUP_ROW;
  allocation.groups[2]=1u;
+ let traced=atomicLoad(&allocation.traced);
+ allocation.blend_groups[0]=min(traced,DDGI_GROUP_ROW);
+ allocation.blend_groups[1]=(traced+DDGI_GROUP_ROW-1u)/DDGI_GROUP_ROW;
+ allocation.blend_groups[2]=1u;
 }

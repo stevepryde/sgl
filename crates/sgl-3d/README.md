@@ -566,8 +566,11 @@ drawn once. A frame draws only what changed. When a moving instance enters,
 leaves or moves within a face, the frame copies the face's static layer and
 draws the moving instances over it. The layer itself is drawn again when the
 face is new to its slot, a static edit reaches it (adding, removing or
-changing a static instance, or replacing a model one shows), the visibility
-mask changes, or a material's side, visibility group or alpha mode changes
+changing a static instance, or replacing a model one shows; each edit's own
+bounds are tested, so streaming many chunks in one frame redraws only the
+faces they reach, until more than 1024 edits in a frame merge in pairs),
+the visibility mask changes, or a material's side, visibility group or
+alpha mode changes
 (or a masked material's cutoff or base alpha). A light that
 moved since the last frame, such as one following a craft, has no reusable
 layer and draws every caster. A frame in which nothing moved in any shadowed
@@ -1541,10 +1544,13 @@ Placement:
   lights surfaces, unoccluded, through walls too: give a light that should
   stay in its room a shadow.
 - Installing another placement starts the probes afresh, as does a frame
-  that does not run them (another scene, the setting `Off`): that frame
-  traces every probe at the most rays, as Wicked's first frame does.
-  Installing the same placement changes nothing; camera cuts, resizes and
+  that does not run them (another scene, the setting `Off`). Installing the
+  same placement changes nothing; camera cuts, resizes and
   `Scene::move_origin` keep the probes.
+- A restart starts at most 128 probes a frame at High (256 at Low), nearest
+  the camera first; until a probe has started it lights nothing, and the
+  surfaces about it keep their other indirect light. Wicked starts every
+  probe in one frame, a hitch on a large volume.
 - Memory is about 11 KB a probe at High (8 KB at Low): its irradiance and
   depth maps, its share of the frame's ray list and results, and the blends'
   history. A volume is refused with `SceneError::DeviceLimit` where its
@@ -1560,7 +1566,14 @@ one whose light changes traces up to the most, so cost follows change.
 Frames that run the volume trace the ray source, so its instance BVHs
 rebuild on them as for world-space reflections. Deforming instances are
 lit by the volume but do not block its rays. Per-pass cost is reported in
-the `dynamic GI *` timing groups.
+the `dynamic GI *` timing groups. The [dynamic GI example](examples/dynamic_gi.rs)
+lights a room through a window and with a lamp, two boxes moving through
+it; `--timing` prints the stage's GPU time in each frame as its probes
+start and settle, and `--quality off` renders the room without the volume:
+
+```sh
+cargo run --release -p sgl-3d --example dynamic_gi -- target/dynamic_gi.png --timing
+```
 
 ## Settings and capability fallback
 

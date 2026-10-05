@@ -66,7 +66,7 @@ pub(crate) struct LightReach {
 }
 
 /// Whether `bounds` reach within `range` of `position`.
-pub(super) fn within(bounds: [Vec3; 2], (position, range): (Vec3, f32)) -> bool {
+pub(crate) fn within(bounds: [Vec3; 2], (position, range): (Vec3, f32)) -> bool {
     position
         .clamp(bounds[0], bounds[1])
         .distance_squared(position)
