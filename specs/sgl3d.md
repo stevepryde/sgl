@@ -23,8 +23,8 @@ settings SGL3D has today.
    input, simulation, networking, camera policy, interpolation, world and asset
    selection, UI, settings storage, process layout, and its threads and job
    scheduling: SGL3D starts no thread, and its work that can leave the render
-   thread (preparing a model's geometry) is a pure step the game runs where
-   it chooses ([architecture](sgl3d-architecture.md#scene-content)). SGL3D consumes ordinary
+   thread (loading content, preparing a model's geometry or an irradiance
+   region) is a pure step the game runs where it chooses ([architecture](sgl3d-architecture.md#scene-content)). SGL3D consumes ordinary
    Rust render data on a caller-owned wgpu device and queue: native (Metal,
    Vulkan, DX12) or the browser's WebGPU, requested with the adapter's limits
    (`graphics_device::limits`). The device must support compute shaders,
