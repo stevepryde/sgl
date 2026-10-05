@@ -145,7 +145,7 @@ fn a_bounded_stream_of_chunks_keeps_bounded_buffers() {
                 slots[slot] = Some((model, instance, quads));
             }
         }
-        scene.update_rays(&device, &queue, !0);
+        scene.update_rays(&device, &queue, !0, false);
         queue.submit([]);
         scene.finish_frame();
         let live_quads: usize = slots.iter().flatten().map(|(_, _, quads)| quads).sum();

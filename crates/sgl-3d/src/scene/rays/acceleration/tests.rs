@@ -3,7 +3,7 @@
 //! unsupported, never passed, where the adapter has no ray queries.
 use super::RayTracingStats;
 use crate::asset::{Asset, CpuMesh, Vertex};
-use crate::shading::{SCENE_RAYS_HARDWARE, bind, compose};
+use crate::shading::{SCENE_RAYS_QUERY_OPAQUE, bind, compose};
 use crate::test_support;
 use crate::{InstanceState, Mobility, Scene};
 use glam::{Mat4, Vec3};
@@ -69,7 +69,9 @@ fn build(
     scene: &mut Scene,
     eye: Vec3,
 ) -> RayTracingStats {
-    let stats = scene.prepare_acceleration_structures(device, queue, eye);
+    let stats = scene
+        .prepare_acceleration_structures(device, queue, eye)
+        .expect("the device holds a TLAS");
     let mut encoder = device.create_command_encoder(&Default::default());
     scene.encode_acceleration_structures(&mut encoder);
     queue.submit([encoder.finish()]);
@@ -86,7 +88,7 @@ fn bind_tlas((device, queue): (&wgpu::Device, &wgpu::Queue), scene: &Scene) {
         entries: &[bind::tlas_entry()],
     });
     let source =
-        compose(&[&SCENE_RAYS_HARDWARE]) + "@compute @workgroup_size(1) fn bind_tlas() {}\n";
+        compose(&[&SCENE_RAYS_QUERY_OPAQUE]) + "@compute @workgroup_size(1) fn bind_tlas() {}\n";
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("TLAS test"),
         source: wgpu::ShaderSource::Wgsl(source.into()),

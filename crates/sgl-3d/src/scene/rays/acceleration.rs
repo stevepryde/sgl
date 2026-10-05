@@ -115,6 +115,9 @@ pub(crate) struct AccelerationStructures {
     /// The instances `tlas` can hold, and how many the last frame set.
     capacity: usize,
     held: usize,
+    /// Whether the last prepared frame's TLAS holds each entry, by index:
+    /// the portable walk covers the capture-visible instances it does not.
+    holds: Vec<bool>,
     frame: Option<FrameWork>,
 }
 
@@ -174,6 +177,7 @@ impl AccelerationStructures {
             tlas: tlas(device, 1)?,
             capacity: 1,
             held: 0,
+            holds: Vec::new(),
             frame: None,
         })
     }
@@ -310,6 +314,13 @@ impl AccelerationStructures {
     /// Sets the TLAS's instances to `held`, each named by its entry's
     /// index, and clears the slots the last frame set beyond them.
     fn hold(&mut self, held: &[TlasEntry]) {
+        self.holds.clear();
+        for entry in held {
+            if self.holds.len() <= entry.index {
+                self.holds.resize(entry.index + 1, false);
+            }
+            self.holds[entry.index] = true;
+        }
         for (slot, entry) in held.iter().enumerate() {
             self.tlas[slot] = Some(wgpu::TlasInstance::new(
                 &entry.blas,
@@ -353,9 +364,14 @@ impl AccelerationStructures {
     }
 
     /// The TLAS, which a tracing pass binds.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn tlas(&self) -> &wgpu::Tlas {
         &self.tlas
+    }
+
+    /// Whether the last prepared frame's TLAS holds the instance whose
+    /// entry is at `index`.
+    pub fn holds(&self, index: usize) -> bool {
+        self.holds.get(index).copied().unwrap_or(false)
     }
 
     /// The BLASes it holds and their triangles.

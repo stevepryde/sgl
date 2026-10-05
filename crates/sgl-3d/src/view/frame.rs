@@ -2,10 +2,11 @@
 //! the completed scene as it passes from stage to stage.
 use super::FrameViews;
 use super::bindings::FrameBindings;
-use super::effective::Effective;
+use super::effective::{Effective, HardwareRayTracing};
 use super::history::HistoryFrame;
 use super::pipelines::GeometryPipelines;
 use super::targets::{SharedTargets, Sizes, Surface};
+use crate::shading::RayQueryForm;
 use crate::shading::uniforms::FrameValues;
 use crate::timing::GpuTiming;
 use crate::{FrameInput, Scene};
@@ -33,6 +34,32 @@ pub(crate) struct FrameContext<'a> {
     pub pipelines: &'a GeometryPipelines,
     /// The camera history every stage continues or restarts with.
     pub history: HistoryFrame,
+    /// The hardware path the frame's rays trace, if any.
+    pub hardware_rays: Option<HardwareRays<'a>>,
+}
+
+/// The hardware path a frame's rays trace (the architecture's Hardware ray
+/// tracing): the form in effect, whose query module a tracing pipeline
+/// composes (`shading::ray_trace_root`), and the scene's TLAS, which each
+/// tracing pass binds in its group 3 (`shading::bind::tlas_entry`), lent
+/// from the scene as the ray-hit group is.
+#[derive(Clone, Copy)]
+pub(crate) struct HardwareRays<'a> {
+    pub form: RayQueryForm,
+    pub tlas: &'a wgpu::Tlas,
+}
+
+impl<'a> HardwareRays<'a> {
+    /// The hardware path of a frame of `scene` under `effective`, whose
+    /// prepare built the scene's acceleration structures for it
+    /// (`prepared`); none where the portable path traces.
+    pub fn of(effective: &Effective, scene: &'a Scene, prepared: bool) -> Option<Self> {
+        let HardwareRayTracing::On(form) = effective.hardware_ray_tracing else {
+            return None;
+        };
+        let tlas = scene.acceleration_structures().filter(|_| prepared)?.tlas();
+        Some(Self { form, tlas })
+    }
 }
 
 /// Which view holds the completed scene, passed from the transparent

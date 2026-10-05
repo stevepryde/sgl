@@ -165,7 +165,7 @@ impl Observer {
         scene: &mut Scene,
         rays: &[TestRay],
     ) -> Vec<Observed> {
-        scene.update_rays(device, queue, 0);
+        scene.update_rays(device, queue, 0, false);
         let size = (rays.len() * std::mem::size_of::<Observed>()) as u64;
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -677,7 +677,7 @@ fn a_frame_after_an_abandoned_one_traces_the_edited_scene() {
         .unwrap();
     // The abandoned frame: its rays updated and a trace encoded, never
     // submitted, and the frame never finished.
-    scene.update_rays(&device, &queue, 0);
+    scene.update_rays(&device, &queue, 0, false);
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: std::mem::size_of::<Observed>() as u64,
