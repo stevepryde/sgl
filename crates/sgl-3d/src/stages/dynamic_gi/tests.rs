@@ -966,8 +966,11 @@ fn most_over_turns(rays: &mut dyn FnMut() -> Vec<u32>) -> Vec<u32> {
 // see about a quarter of the walls' backs, near the threshold of their
 // class, and lie far enough from every face that none moves them. Their
 // fixed rays meet the same faces every cycle, so while nothing moves each
-// probe's share, and so its class, holds still, where the share of its
-// rotated rays would wander across the threshold.
+// probe's share, and so its class, holds still, from its second turn,
+// which traces all of them, through every cycle of its turns after: where
+// the share of its rotated rays would wander across the threshold, and its
+// first turn's rotated rays, as few as 32 for a far probe, classed it
+// otherwise until its first whole cycle ended.
 #[test]
 fn a_probes_class_holds_still_while_what_it_sees_does() {
     let Some((device, queue)) = test_support::device() else {
@@ -999,6 +1002,8 @@ fn a_probes_class_holds_still_while_what_it_sees_does() {
     input.environment = Some(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    // The first frame starts every probe, and each takes its second turn
+    // within the PERIOD frames after.
     render(
         &device,
         &queue,
@@ -1006,16 +1011,15 @@ fn a_probes_class_holds_still_while_what_it_sees_does() {
         &mut scene,
         &input,
         &settings,
-        // Each probe's first cycle of fixed rays, which its first frame's
-        // rays classify it until, ends after 8 of its turns, at most 8
-        // frames apart while the frame's budget holds every request
-        // (DDGI_FIXED_CYCLE, DDGI_PERIOD_MAX): 64 frames.
-        64,
+        1 + PERIOD,
     );
     let first = renderer
         .test_dynamic_gi()
         .test_backface_shares(&device, &queue);
-    for _ in 0..40 {
+    // Each probe's cycles of 8 turns, at most 8 frames apart while the
+    // frame's budget holds every request (DDGI_FIXED_CYCLE,
+    // DDGI_PERIOD_MAX), end within 64 frames.
+    for _ in 0..104 {
         render(
             &device,
             &queue,
@@ -1234,12 +1238,16 @@ fn dormant_probes_trace_the_fewest_rays_but_about_a_moving_instance() {
     let open = second_frame(false);
     assert_eq!(open, vec![SETTLED; 125], "dormant");
     // Just started, their light is far from settled, so each about the box
-    // traces many on its turn; the others the fewest.
+    // traces many on its turn, with its fixed rays at least four times a
+    // settled probe's; the others the fewest.
     let about = second_frame(true);
     for (index, rays) in about.into_iter().enumerate() {
         let lattice = [index % 5, index / 5 % 5, index / 25];
         if lattice.iter().all(|at| (1..=3).contains(at)) {
-            assert!(rays > 4 * SETTLED, "probe {index}: {rays}");
+            assert!(
+                rays + FIXED_RAYS >= 4 * (SETTLED + FIXED_RAYS),
+                "probe {index}: {rays}"
+            );
         } else {
             assert_eq!(rays, SETTLED, "probe {index}");
         }
@@ -1549,6 +1557,77 @@ fn a_volume_does_not_pause_while_probes_have_yet_to_start() {
     // Far from the camera, among the last probes to start.
     let far = [(Vec3::new(-18.3, -10.2, -18.1), Vec3::Y)];
     assert_eq!(irradiance(&device, &queue, &renderer, &far)[0][3], 1.);
+}
+
+// A row of probes runs 30 m from the camera over a floor under an even
+// sky: the nearest take a turn every frame, the farthest every fifth. Those
+// a spacing above the floor are active and surfaced, so their variability
+// decides whether the volume has converged; it pauses after a window's
+// mean stops falling from the last's, so after two windows at least, and a
+// window spans 16 turns of every active probe, as RTXGI's sample's 16
+// frames each update every probe. So at the first pause every active probe
+// has taken about 32 turns, less one at each window's end, where windows of
+// 16 turns of the average probe paused it after about 18 of the farthest's.
+#[test]
+fn a_volume_pauses_only_once_every_active_probe_has_taken_its_windows_turns() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let environment = uniform_environment(&device, &queue, &mut scene, [0.5; 3]);
+    // Its top at y = -1.
+    add_cube(
+        &device,
+        &queue,
+        &mut scene,
+        Mat4::from_translation(Vec3::new(0., -1.5, -15.))
+            * Mat4::from_scale(Vec3::new(20., 1., 40.)),
+        Mobility::Static,
+        |material| {
+            material.base = [0.5, 0.5, 0.5, 1.];
+            material.metallic = 0.;
+        },
+    );
+    // Probes at y = -0.5, within their cells of the floor, and at y = 1.5,
+    // with nothing in theirs; from z = -1 to -31.
+    let volume = DynamicGiVolume {
+        origin: Vec3::new(-1., -0.5, -31.),
+        spacing: Vec3::splat(2.),
+        probes: [2, 2, 16],
+    };
+    scene.set_dynamic_gi_volume(&device, Some(volume)).unwrap();
+    let mut input = input(Vec3::new(0., 0.5, 1.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let active = |index: usize| (index / 2).is_multiple_of(2);
+    let mut turns = vec![0; 64];
+    let mut paused = false;
+    for _ in 0..1000 {
+        render(
+            &device,
+            &queue,
+            &mut renderer,
+            &mut scene,
+            &input,
+            &settings,
+            1,
+        );
+        if renderer.test_dynamic_gi().test_paused(&device, &queue) {
+            paused = true;
+            break;
+        }
+        let rays = renderer.test_dynamic_gi().test_probe_rays(&device, &queue);
+        for (turns, rays) in turns.iter_mut().zip(rays) {
+            *turns += usize::from(rays > 0);
+        }
+    }
+    assert!(paused, "never paused");
+    let least = (0..64)
+        .filter(|&index| active(index))
+        .map(|index| turns[index])
+        .min();
+    assert!(least >= Some(30), "{turns:?}");
 }
 
 // A closed box of single-sided faces turned inward, which glow and hold a
@@ -2276,14 +2355,16 @@ const SCROLLED: DynamicGiVolume = DynamicGiVolume {
 };
 
 // The rays a probe traces beside its fixed rays on its turns once its light
-// has settled: the fewest, a bucket (DDGI_RAY_BUCKET_COUNT).
+// has settled: the fewest, a bucket (DDGI_RAY_BUCKET_COUNT); and the fixed
+// rays it traces on each turn after its first.
 const SETTLED: u32 = 4;
+const FIXED_RAYS: u32 = crate::shading::dynamic_gi::FIXED_RAYS_PER_FRAME;
 // The most rays at High, which a probe that starts afresh within a spacing
 // of the camera traces, and with its fixed rays; and the fewest a probe that
 // starts afresh traces, an eighth of them, as Wicked's farthest surfels
 // trace an eighth of its nearest's.
 const MOST_RAYS: u32 = crate::shading::dynamic_gi::MOST_RAYS;
-const STARTING_RAYS: u32 = MOST_RAYS + crate::shading::dynamic_gi::FIXED_RAYS_PER_FRAME;
+const STARTING_RAYS: u32 = MOST_RAYS + FIXED_RAYS;
 const STARTING_LEAST: u32 = MOST_RAYS / 8;
 // The frames within which every probe within 128 spacings of the camera
 // takes a turn while the frame's budget holds every request
@@ -2792,4 +2873,80 @@ fn a_material_that_does_not_emit_into_gi_gives_the_probes_none_of_its_light() {
             );
         }
     }
+}
+
+// An observed frame's report (`Diagnostics::dynamic_gi`) carries its frame's
+// number and what the allocation traced: the rays and fixed rays the
+// observation summed over the ray list, which the allocation counted; a
+// probe's first turn with no fixed rays, its second with all 32, its next 7
+// with none and those after with 4. Readbacks not taken fill after 8 frames; the frames past
+// them are skipped and counted in the next report.
+#[cfg(feature = "diagnostics")]
+#[test]
+fn reports_number_their_frames_and_count_those_skipped() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let environment = uniform_environment(&device, &queue, &mut scene, [0.5; 3]);
+    scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
+    let mut input = input(Vec3::new(0., 0., 8.));
+    input.environment = Some(environment);
+    let mut settings = settings(DynamicGiQuality::High);
+    settings.diagnostics.dynamic_gi = true;
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    // Each probe's turns so far.
+    let mut turns = vec![0u32; 64];
+    let mut frame = |renderer: &mut Renderer, turns: &mut Vec<u32>| {
+        render(&device, &queue, renderer, &mut scene, &input, &settings, 1);
+        let rays = renderer.test_dynamic_gi().test_probe_rays(&device, &queue);
+        for (turns, &rays) in turns.iter_mut().zip(&rays) {
+            *turns += u32::from(rays > 0);
+        }
+        rays
+    };
+    for _ in 0..12 {
+        frame(&mut renderer, &mut turns);
+    }
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let reports = renderer.take_dynamic_gi_reports(&device);
+    let numbers: Vec<_> = reports.iter().map(|r| (r.frame, r.skipped)).collect();
+    assert_eq!(numbers, (0..8).map(|frame| (frame, 0)).collect::<Vec<_>>());
+    // The first frame starts all 64 probes.
+    assert_eq!(
+        (reports[0].traced_probes, reports[0].fixed_rays),
+        (64, 0),
+        "{:?}",
+        reports[0]
+    );
+    let rays = frame(&mut renderer, &mut turns);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let reports = renderer.take_dynamic_gi_reports(&device);
+    let [report] = reports[..] else {
+        panic!("{reports:?}");
+    };
+    assert_eq!((report.frame, report.skipped), (12, 4));
+    let tracing = rays.iter().filter(|&&rays| rays > 0).count() as u32;
+    let fixed: u32 = (0..64)
+        .filter(|&probe| rays[probe] > 0)
+        .map(|probe| match turns[probe] {
+            2 => 32,
+            turn if turn > 9 => FIXED_RAYS,
+            _ => 0,
+        })
+        .sum();
+    assert!(tracing > 0);
+    assert_eq!(
+        (
+            report.traced_probes,
+            report.probes_by_rays.iter().sum::<u32>()
+        ),
+        (tracing, tracing)
+    );
+    assert_eq!(report.rays, rays.iter().sum::<u32>());
+    assert_eq!(report.fixed_rays, fixed);
+    assert_eq!(
+        report.rays + report.fixed_rays,
+        renderer.test_dynamic_gi().test_traced_rays(&device, &queue)
+    );
 }

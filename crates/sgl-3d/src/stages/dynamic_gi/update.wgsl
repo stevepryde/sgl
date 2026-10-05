@@ -28,15 +28,19 @@
 // probe more than probeBackfaceThreshold (0.25) of whose fixed rays meet
 // single-sided surfaces from behind, one inside geometry or beyond a wall,
 // is inactive. Changed: RTXGI traces all 32 fixed rays every update; here a
-// probe traces 4 each turn it traces and is classified from all 32 once a
-// cycle of 8 turns, so they cost an eighth, and a probe's first blend takes
-// its first frame's rays' share until its first whole cycle. The share of each
-// frame's rotated rays, blended as the depths are, flickered: in a room
-// whose probes beyond the walls see a quarter of back faces, 66 changes of
-// class in 200 frames among 125 probes. Its second phase (172-214) finds
-// whether a fixed ray met a front face within the probe's cell, the spacing
-// about it along each axis (ddgi_in_cell); RTXGI deactivates a probe where
-// none did. Improved: such a probe is dormant, not inactive: static
+// probe's first turn is classified from the share of its rays that met
+// back faces, its second traces all 32, which classify it, and its next 7
+// none, then it traces 4 each turn and is classified again from all 32
+// once a cycle of 8 turns, so they cost an eighth; as RTXGI's, they are not
+// blended. The share of each frame's rotated rays, blended as
+// the depths are, flickered: in a room whose probes beyond the walls see a
+// quarter of back faces, 66 changes of class in 200 frames among 125
+// probes; and a far probe's first turn traces as few as 32 rotated rays,
+// whose class it kept for its whole first cycle where now for one turn.
+// Its second phase (172-214) finds whether a fixed ray met a front face
+// within the probe's cell, the spacing about it along each axis
+// (ddgi_in_cell); RTXGI deactivates a probe where none did. Improved: such
+// a probe is dormant, not inactive: static
 // receivers skip it, so a probe diagonally beyond the edge or corner of a
 // room's single-sided walls, which sees few of their backs and so passes
 // the first phase, lights no wall; moving receivers keep it, so a moving
@@ -46,14 +50,16 @@
 // near it (allocate.wgsl). Added: RTXGI's probe variability, the mean
 // coefficient of variation of the active probes' irradiance texels
 // (ProbeBlendingCS.hlsl 552-562, averaged as ReductionCS.hlsl averages it),
-// which `settle` takes over windows of 16 updates of the volume, as
+// which `settle` takes over windows of 16 turns of every active probe, as
 // RTXGI's sample waits 16 frames of it, each updating every probe, before
 // pausing a volume (samples/test-harness/src/graphics/DDGI_VK.cpp
-// 1629-1637 and DDGI_D3D12.cpp 1239-1246); a frame that blends some probes
-// on their turns is that share of an update, so a window spans as many of
-// each probe's turns however long its period, where a window of 16 frames
-// closed before the slower probes' bounces had settled (a closed room's
-// wall stopped at 0.298 of a bound between 0.300 and 0.381). Changed:
+// 1629-1637 and DDGI_D3D12.cpp 1239-1246): a window closes after 16 times
+// the longest period among the active probes, so the slowest has taken 16
+// turns, where a window of 16 frames closed before the slower probes'
+// bounces had settled (a closed room's wall stopped at 0.298 of a bound
+// between 0.300 and 0.381), and one of 16 turns of the average probe while
+// far probes were still catching up. Each frame's average is weighed by the
+// share of the probes that blended. Changed:
 // RTXGI's sample pauses below a threshold each scene sets (0.03 to 0.4 in
 // its configurations), where the variability settles; SGL3D has no scene to
 // ask, so the volume has converged once a window's mean falls by less than
@@ -284,12 +290,15 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
 // Averages the frame's variability over the active probes that blended,
 // none counting as none, and finds whether the volume has converged: once
 // a window's mean falls by less than DDGI_CONVERGENCE_FALL from the last's,
-// until what the probes' light follows changes.
+// until what the probes' light follows changes. A window holds
+// DDGI_CONVERGENCE_WINDOW turns of the active probe whose period, the
+// stride included, is longest (`rank` and `threshold`).
 @compute @workgroup_size(1)
 fn settle() {
  if volume.changed!=0u {
   convergence.window_sum=0.;
   convergence.window_updates=0.;
+  convergence.window_turns=0.;
   convergence.previous=-1.;
   convergence.converged=0u;
  }
@@ -306,13 +315,15 @@ fn settle() {
  let share=f32(volume.traced)/f32(max(volume.probe_count,1u));
  convergence.window_sum+=average*share;
  convergence.window_updates+=share;
- if convergence.window_updates>=DDGI_CONVERGENCE_WINDOW {
+ convergence.window_turns+=1./f32(max(atomicLoad(&convergence.longest),1u));
+ if convergence.window_turns>=DDGI_CONVERGENCE_WINDOW {
   let mean=convergence.window_sum/convergence.window_updates;
   let previous=convergence.previous;
   convergence.converged=select(0u,1u,previous>=0. && mean>=previous*(1.-DDGI_CONVERGENCE_FALL));
   convergence.previous=mean;
   convergence.window_sum=0.;
   convergence.window_updates=0.;
+  convergence.window_turns=0.;
  }
 }
 // Whether `ray` met a front face within its probe's cell, the spacing
@@ -409,23 +420,32 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   probe_offset/=probe_limit;
   var blended=probe;
   blended.offset=probe_offset;
-  // Its class: first from the share of its first frame's rays that met
-  // back faces, then from its fixed rays' share over each cycle of
+  // Its class: on its first turn from the share of its rays that met back
+  // faces, then from its fixed rays' share over each cycle of
   // DDGI_FIXED_CYCLE turns it traces, as RTXGI classifies from its fixed
-  // rays.
+  // rays: its second turn traced all of them, a whole cycle, its next
+  // DDGI_FIXED_CYCLE - 1 none, and each turn since the next
+  // DDGI_FIXED_RAYS_PER_FRAME, after the rays it blends
+  // (ddgi_turn_fixed_rays).
+  let fixed_rays=ddgi_turn_fixed_rays(probe);
+  blended.fixed_rest=max(probe.fixed_rest,1u)-1u;
   if !probe.blended {
    blended=ddgi_fresh_probe();
    blended.offset=probe_offset;
    blended.backfaces=f32(backfaces)/f32(ray_count);
    blended.surfaced=nearby>0u;
+   blended.fixed_rest=DDGI_FIXED_CYCLE;
   }
   blended.blended=true;
-  for (var ray=0u;ray<DDGI_FIXED_RAYS_PER_FRAME;ray++) {
+  for (var ray=0u;ray<DDGI_FIXED_RAYS;ray++) {
+   if ray>=fixed_rays {
+    break;
+   }
    let fixed=ddgi_load_ray(probe_index,ray_count+ray);
    blended.fixed_backfaces+=select(0u,1u,fixed.backface);
    blended.fixed_nearby+=select(0u,1u,ddgi_in_cell(fixed));
   }
-  blended.fixed_frames+=1u;
+  blended.fixed_frames+=fixed_rays/DDGI_FIXED_RAYS_PER_FRAME;
   if blended.fixed_frames>=DDGI_FIXED_CYCLE {
    blended.backfaces=f32(blended.fixed_backfaces)/f32(DDGI_FIXED_RAYS);
    blended.surfaced=blended.fixed_nearby>0u;

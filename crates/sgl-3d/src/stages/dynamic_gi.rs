@@ -1,9 +1,10 @@
-//! Dynamic GI: the scene's dynamic GI volume of probes, kept up every frame
-//! by rays through the scene's ray source, as Wicked Engine's DDGI keeps its
-//! own (`wiRenderer::DDGI`, df44c3d wiRenderer.cpp 12412–12618): each
-//! probe's rays allocated from its irradiance estimator, traced with each
-//! hit shaded as the probe-hit receiver kind, then blended into its
-//! irradiance and depth maps, the probe moving away from surfaces it nears.
+//! Dynamic GI: the scene's dynamic GI volume of probes, kept up by rays
+//! through the scene's ray source each frame, within a budget of rays, as
+//! Wicked Engine's DDGI keeps its own (`wiRenderer::DDGI`, df44c3d
+//! wiRenderer.cpp 12412–12618): each probe's rays allocated on its turns
+//! from its irradiance estimator, traced with each hit shaded as the
+//! probe-hit receiver kind, then blended into its irradiance and depth
+//! maps, the probe moving away from surfaces it nears.
 //! The shaders are in `dynamic_gi/`; the probe texture's layout and the
 //! sample are `shading::dynamic_gi`'s.
 //!
@@ -135,11 +136,12 @@ const MOST_MOVING_BOUNDS: u32 = 256;
 
 /// The allocation's buffer (`DdgiAllocation` in allocate.wgsl): the
 /// trace's indirect dispatch and ray count, the blends' dispatch and the
-/// count of probes that trace, the starting probes' words and rays, whether the
-/// volume paused, the stride the frame's periods take, the rays reserved
-/// against the budget, the blended
-/// probes' requests under each stride, and the starting probes' bins. The
-/// trace and the blends read the counts in the volume's uniform.
+/// count of probes that trace, the starting probes' words and rays, whether
+/// the volume paused, the stride the frame's periods take, the rays
+/// reserved against the budget, the rays the shortened turns may take and
+/// have taken, the blended probes' requests under each stride, and the
+/// starting probes' bins. The trace and the blends read the counts in the
+/// volume's uniform.
 #[repr(C)]
 struct Allocation {
     groups: [u32; 3],
@@ -154,6 +156,8 @@ struct Allocation {
     paused: u32,
     stride: u32,
     reserved: u32,
+    spare: u32,
+    spare_taken: u32,
     demand: [u32; STRIDES as usize],
     bins: [u32; RAMP_BINS as usize],
 }
@@ -163,15 +167,18 @@ const ALLOCATION_TRACED: u64 = std::mem::offset_of!(Allocation, traced) as u64;
 const ALLOCATION_BYTES: u64 = std::mem::size_of::<Allocation>() as u64;
 
 /// `DdgiConvergence` in common.wgsl: the frame's sums of the active probes'
-/// variability, which the blends add and each frame clears, and the
-/// windows the settle pass averages them over.
+/// variability and their longest period, which the allocation and the
+/// blends find and each frame clears, and the windows the settle pass
+/// averages them over.
 #[repr(C)]
 struct Convergence {
     variability: u32,
     probes: u32,
+    longest: u32,
     average: f32,
     window_sum: f32,
     window_updates: f32,
+    window_turns: f32,
     previous: f32,
     converged: u32,
 }
@@ -184,12 +191,18 @@ const STRIDES: u32 = 7;
 /// The frame's most rays, fixed rays included, in probes at the tier's
 /// most: 32,768 at High, 16,384 at Low. Wicked's surfel GI traces at most
 /// 100,000 a frame (4323a33c `SURFEL_RAY_BUDGET`) on hardware ray tracing;
-/// SGL3D's portable walk costs about 0.8 ns a BVH node visited on an Apple
-/// M5, and a dynamic GI ray over a large world visits about 120 with its
-/// visibility ray's share (#185), so this many cost a few milliseconds. It
-/// is the rays the restart's ramp gave the probes it started (#152), so a
-/// restart starts them as fast.
+/// on SGL3D's portable walk this many cost Hyperdrive's 3,179-probe course
+/// about 3.4 ms a frame in motion on an Apple M5 (#196). A restart starts
+/// as many probes as the budget holds at their starting rays, nearest
+/// first: 128 a frame within a spacing of the camera, at the tier's most
+/// rays, and more farther out, where a probe starts with fewer.
 const BUDGET_PROBES: u32 = 128;
+
+/// The frame's most rays, fixed rays included, at the tier's `max_rays`:
+/// the ray list holds them.
+fn budget(max_rays: u32) -> u32 {
+    max_rays * BUDGET_PROBES
+}
 const UNIFORM_RAYS: u64 = std::mem::offset_of!(VolumeUniform, rays) as u64;
 const UNIFORM_TRACED: u64 = std::mem::offset_of!(VolumeUniform, traced) as u64;
 
@@ -248,6 +261,10 @@ pub(crate) struct DynamicGi {
     observer: Option<observe::Observer>,
     #[cfg(feature = "diagnostics")]
     trace_groups: [wgpu::BindGroupLayout; 2],
+    /// The frames the renderer has finished: the number of the frame being
+    /// rendered, which its report carries.
+    #[cfg(feature = "diagnostics")]
+    finished: u64,
 }
 
 /// What a rendered frame does with the probes.
@@ -378,6 +395,8 @@ impl DynamicGi {
             observer: None,
             #[cfg(feature = "diagnostics")]
             trace_groups: [lit.clone(), scene.clone()],
+            #[cfg(feature = "diagnostics")]
+            finished: 0,
         }
     }
 
@@ -453,8 +472,11 @@ impl DynamicGi {
     /// committed ones.
     pub fn finish_frame(&mut self) {
         #[cfg(feature = "diagnostics")]
-        if let Some(observer) = &mut self.observer {
-            observer.submitted();
+        {
+            if let Some(observer) = &mut self.observer {
+                observer.submitted();
+            }
+            self.finished += 1;
         }
         let inputs = self.rendered_inputs.take();
         match self.rendered.take() {
@@ -512,6 +534,7 @@ impl DynamicGi {
         #[cfg(feature = "diagnostics")]
         let mut observer = observe::Observer::for_frame(
             &mut self.observer,
+            &mut self.paths,
             (&self.trace_groups, &self.layouts.trace),
             ctx,
             (lit, form),
@@ -553,7 +576,7 @@ impl DynamicGi {
             eye: camera.eye.to_array(),
             frame,
             rays: 0,
-            budget: max_rays * BUDGET_PROBES,
+            budget: budget(max_rays),
             traced: 0,
             padding: 0,
             scroll,
@@ -668,6 +691,7 @@ impl DynamicGi {
                 encoder,
                 (&self.uniform, rays, volume),
                 observe::Frame {
+                    number: self.finished,
                     probes: uniform.probe_count,
                     changes,
                     scrolled: uniform.scrolled,
@@ -859,9 +883,11 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
             [
                 variability,
                 probes,
+                longest,
                 average,
                 window_sum,
                 window_updates,
+                window_turns,
                 previous,
                 converged,
             ]
@@ -889,6 +915,8 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
                 paused,
                 stride,
                 reserved,
+                spare,
+                spare_taken,
                 demand,
                 bins,
             ]
@@ -930,5 +958,7 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
     constants
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod allocation_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

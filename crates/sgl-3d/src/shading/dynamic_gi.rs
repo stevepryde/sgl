@@ -22,9 +22,10 @@ pub(crate) const MOST_RAYS: u32 = 256;
 /// The fixed rays each probe traces a frame beside its others, which
 /// classify it and are not blended (`DDGI_FIXED_RAYS_PER_FRAME`).
 pub(crate) const FIXED_RAYS_PER_FRAME: u32 = 4;
-/// Texels to a row of the ray list and ray results (`DDGI_RAY_ROW`): a
-/// probe's rays, `max_rays` and its fixed rays, follow one another from
-/// texel `probe * ray_stride(max_rays)`.
+/// Texels to a row of the ray list and ray results (`DDGI_RAY_ROW`). The
+/// list holds the frame's rays one after another; in the results a probe's
+/// rays, `max_rays` and its fixed rays, follow one another from texel
+/// `probe * ray_stride(max_rays)`.
 pub(crate) const RAY_ROW: u32 = 2048;
 /// The bytes each probe's blend history takes in the dynamic GI stage's
 /// buffers: its irradiance estimator (six words per irradiance texel), its
@@ -52,10 +53,8 @@ pub(crate) fn texture_size(probes: [u32; 3]) -> [u64; 2] {
     ]
 }
 
-/// The ray list's and ray results' width and height for `probe_count`
-/// probes tracing at most `max_rays` each, and their fixed rays.
-pub(crate) fn ray_texture_size(probe_count: u64, max_rays: u32) -> [u64; 2] {
-    let rays = probe_count * u64::from(ray_stride(max_rays));
+/// The ray list's or ray results' width and height for `rays` texels.
+pub(crate) fn ray_texture_size(rays: u64) -> [u64; 2] {
     [u64::from(RAY_ROW), rays.div_ceil(u64::from(RAY_ROW)).max(1)]
 }
 
@@ -68,7 +67,10 @@ pub(crate) fn fits(probes: [u32; 3], limits: &wgpu::Limits) -> bool {
     let binding = limits
         .max_storage_buffer_binding_size
         .min(limits.max_buffer_size);
-    let textures = [texture_size(probes), ray_texture_size(count, MOST_RAYS)];
+    let textures = [
+        texture_size(probes),
+        ray_texture_size(count * u64::from(ray_stride(MOST_RAYS))),
+    ];
     textures
         .iter()
         .all(|size| size.iter().all(|&side| side <= largest))

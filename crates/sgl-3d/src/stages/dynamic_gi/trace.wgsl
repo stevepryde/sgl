@@ -95,12 +95,14 @@ fn ddgi_trace_ray(id:u32)->DdgiTraced {
  let lattice=ddgi_probe_lattice(stored,volume.probes,volume.scroll);
  let probe_pos=ddgi_probe_position(lattice,volume.origin,volume.spacing,probe_data.rgb);
  var rng=ddgi_rng_init(vec2(id,id),volume.frame);
- // Past its rays, its fixed rays: this turn's of its cycle, unrotated,
- // which classify it and bring no light.
+ // Past its rays, its fixed rays, unrotated, which classify it and bring
+ // no light: this turn's of its cycle, or all of them where the turn
+ // traces a whole cycle's (DDGI_FIXED_CYCLE).
  let fixed=ray_index>=ray_count;
  var direction=normalize(volume.rotation*ddgi_spherical_fibonacci(f32(ray_index),f32(ray_count)));
  if fixed {
-  let ray=entry.cycle*DDGI_FIXED_RAYS_PER_FRAME+ray_index-ray_count;
+  let first=entry.cycle>=DDGI_FIXED_CYCLE;
+  let ray=select(entry.cycle*DDGI_FIXED_RAYS_PER_FRAME,0u,first)+ray_index-ray_count;
   direction=ddgi_spherical_fibonacci(f32(ray),f32(DDGI_FIXED_RAYS));
  }
  var ray=DdgiRay(direction,-1.,vec3(0.),false);
@@ -151,8 +153,9 @@ fn ddgi_pack_ray_cost(walks:SceneRayWalks,fixed:bool,hit:bool)->u32 {
  return word;
 }
 // The trace observed (feature diagnostics), its pipeline with
-// ray_observation_enabled: each ray's slot in ray_costs also takes what its
-// walks cost (ddgi_pack_ray_cost), which observe.wgsl sums.
+// ray_observation_enabled: each ray's texel of the ray list's size in
+// ray_costs also takes what its walks cost (ddgi_pack_ray_cost), which
+// observe.wgsl sums.
 @group(2) @binding(0) var ray_costs:texture_storage_2d<rg32uint,write>;
 @compute @workgroup_size(DDGI_TRACE_THREADS)
 fn trace_observed(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
@@ -163,5 +166,5 @@ fn trace_observed(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocati
  let traced=ddgi_trace_ray(id);
  textureStore(ray_results,traced.texel,ddgi_pack_ray(traced.ray));
  let hit=traced.ray.depth>=0.;
- textureStore(ray_costs,traced.texel,vec4(ddgi_pack_ray_cost(traced.nearest,traced.fixed,hit),ddgi_pack_ray_cost(traced.visibility,false,false),0u,0u));
+ textureStore(ray_costs,ddgi_ray_texel(id),vec4(ddgi_pack_ray_cost(traced.nearest,traced.fixed,hit),ddgi_pack_ray_cost(traced.visibility,false,false),0u,0u));
 }

@@ -5,12 +5,15 @@
 //! are copied for a readback whose map is requested once the frame is
 //! submitted and never waited on, as the instance visibility's are
 //! (`stages::visible_instances`). Counts are deterministic for a given
-//! scene, frame sequence and device.
-use super::{ALLOCATION_TRACED, Allocation, Convergence, DynamicGiChanges, TRACE, volume};
+//! scene, frame sequence and device. Each report carries its frame's number
+//! and how many observed frames were skipped before it, while readbacks
+//! were full.
+use super::{ALLOCATION_TRACED, Allocation, Convergence, DynamicGiChanges, volume};
 use crate::diagnostics::DynamicGiReport;
 use crate::shading::RayQueryForm;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
+use crate::view::trace_paths::TracePaths;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -49,8 +52,9 @@ const ALLOCATION_COUNTS: u64 = std::mem::offset_of!(Allocation, bins) as u64;
 const CONVERGENCE_BYTES: u64 = std::mem::size_of::<Convergence>() as u64;
 const READBACK_BYTES: u64 = OBSERVATION_BYTES + ALLOCATION_COUNTS + CONVERGENCE_BYTES;
 
-/// Readbacks in flight at most; an observed frame past them is not
-/// observed, so a game that never polls keeps bounded memory.
+/// Readbacks in flight at most; an observed frame past them is skipped,
+/// and counted in the next report, so a game that never takes reports keeps
+/// bounded memory.
 const MOST_PENDING: usize = 8;
 const PENDING: u8 = 0;
 const READY: u8 = 1;
@@ -59,6 +63,8 @@ const FAILED: u8 = 2;
 /// What the CPU knows of an observed frame.
 #[derive(Clone, Copy)]
 pub(super) struct Frame {
+    /// The frames the renderer finished before it.
+    pub number: u64,
     pub probes: u32,
     pub changes: DynamicGiChanges,
     pub scrolled: [i32; 3],
@@ -69,6 +75,8 @@ struct Pending {
     readback: wgpu::Buffer,
     ready: Arc<AtomicU8>,
     frame: Frame,
+    /// The observed frames skipped since the last one read back.
+    skipped: u32,
 }
 
 pub(super) struct Observer {
@@ -85,6 +93,10 @@ pub(super) struct Observer {
     pending: VecDeque<Pending>,
     spare: Vec<wgpu::Buffer>,
     reports: Vec<DynamicGiReport>,
+    /// The frame being rendered was to be observed but readbacks were full.
+    skipping: bool,
+    /// The submitted frames skipped since the last observed one.
+    skipped: u32,
 }
 
 impl Observer {
@@ -196,16 +208,19 @@ impl Observer {
             pending: VecDeque::new(),
             spare: Vec::new(),
             reports: Vec::new(),
+            skipping: false,
+            skipped: 0,
         }
     }
 
     /// The observer in `slot`, created on first use, while the frame is
     /// observed and can be, with its trace's pipeline for `lit` ready: the
-    /// portable path's alone (`form` none), whose walks it counts.
-    /// `layouts` are the trace's groups 0 and 1, and its own group 3's
-    /// entries.
+    /// portable path's alone (`form` none), whose walks it counts, its
+    /// program `paths`' portable one. `layouts` are the trace's groups 0
+    /// and 1, and its own group 3's entries.
     pub fn for_frame<'a>(
         slot: &'a mut Option<Self>,
+        paths: &mut TracePaths,
         (groups, trace): (&[wgpu::BindGroupLayout; 2], &[wgpu::BindGroupLayoutEntry]),
         ctx: &FrameContext<'_>,
         (lit, form): (LitConstants, Option<RayQueryForm>),
@@ -216,9 +231,10 @@ impl Observer {
         let observer =
             slot.get_or_insert_with(|| Self::new(ctx.device, &groups[0], &groups[1], trace));
         if !observer.ready() {
+            observer.skipping = true;
             return None;
         }
-        observer.trace_pipeline(ctx.device, lit);
+        observer.trace_pipeline(ctx.device, lit, &paths.path(ctx.device, None).shader);
         Some(observer)
     }
 
@@ -227,30 +243,31 @@ impl Observer {
     /// ran, which no later frame may map.
     pub fn begin(&mut self) {
         self.next = None;
+        self.skipping = false;
     }
 
     /// Whether this frame can be observed: fewer readbacks than the most
     /// are in flight.
-    pub fn ready(&self) -> bool {
+    fn ready(&self) -> bool {
         self.pending.len() < MOST_PENDING
     }
 
-    /// The observed trace's pipeline for `lit`, created when first needed.
-    pub fn trace_pipeline(&mut self, device: &wgpu::Device, lit: LitConstants) {
+    /// The observed trace's pipeline for `lit` from `shader`, the trace's
+    /// portable program, created when first needed.
+    fn trace_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        lit: LitConstants,
+        shader: &wgpu::ShaderModule,
+    ) {
         let layout = &self.trace_layout;
         self.trace.entry(lit).or_insert_with(|| {
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("dynamic GI rays observed"),
-                source: wgpu::ShaderSource::Wgsl(
-                    crate::shading::compose(&[&TRACE, crate::shading::ray_trace_root(None)]).into(),
-                ),
-            });
             let mut constants = lit.constants().to_vec();
             constants.push(("ray_observation_enabled", 1.));
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("dynamic GI rays observed"),
                 layout: Some(layout),
-                module: &shader,
+                module: shader,
                 entry_point: Some("trace_observed"),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &constants,
@@ -369,12 +386,18 @@ impl Observer {
             readback,
             ready: Arc::new(AtomicU8::new(PENDING)),
             frame,
+            skipped: 0,
         });
     }
 
-    /// After the caller submitted the frame: requests its readback's map.
+    /// After the caller submitted the frame: requests its readback's map,
+    /// or counts it skipped.
     pub fn submitted(&mut self) {
-        if let Some(next) = self.next.take() {
+        if std::mem::take(&mut self.skipping) {
+            self.skipped += 1;
+        }
+        if let Some(mut next) = self.next.take() {
+            next.skipped = std::mem::take(&mut self.skipped);
             let ready = next.ready.clone();
             next.readback
                 .slice(..)
@@ -400,7 +423,7 @@ impl Observer {
             let pending = self.pending.pop_front().unwrap();
             let report = {
                 let mapped = pending.readback.slice(..).get_mapped_range();
-                report(&mapped, pending.frame)
+                report(&mapped, pending.frame, pending.skipped)
             };
             pending.readback.unmap();
             self.spare.push(pending.readback);
@@ -410,8 +433,9 @@ impl Observer {
     }
 }
 
-/// The report of a frame `frame` describes from its readback `bytes`.
-fn report(bytes: &[u8], frame: Frame) -> DynamicGiReport {
+/// The report of a frame `frame` describes from its readback `bytes`, with
+/// the observed frames `skipped` before it.
+fn report(bytes: &[u8], frame: Frame, skipped: u32) -> DynamicGiReport {
     let (observation, rest) = bytes.split_at(OBSERVATION_BYTES as usize);
     let (allocation, convergence) = rest.split_at(ALLOCATION_COUNTS as usize);
     let observation: Observation = bytemuck::pod_read_unaligned(observation);
@@ -423,6 +447,8 @@ fn report(bytes: &[u8], frame: Frame) -> DynamicGiReport {
         .unwrap();
     let wide = |low: u32, high: u32| u64::from(high) << 32 | u64::from(low);
     DynamicGiReport {
+        frame: frame.number,
+        skipped,
         probes: frame.probes,
         traced_probes: word(ALLOCATION_TRACED),
         unblended_probes: word(std::mem::offset_of!(Allocation, unblended) as u64),

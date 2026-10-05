@@ -418,7 +418,7 @@ Each has one definition, which every producer and consumer uses.
 | History | A stage owns its history. The receiver pass keeps none: the surface is rebuilt in every frame it runs. The renderer issues one reset for `FrameInput::camera_cut`, a `Renderer::resize` that changed the targets, or a different `Scene`. Content edits, lighting changes and material animation restart no history: each history rejects what changed by reprojection and clamping, as its upstream does (FSR2 takes a blended surface's changing shading from the reactive and composition masks blended surfaces write; an opaque material's moving normal layers write none); the scene's change tracking rebuilds bindings and instance motion and reports static edits to caches of static content ([Scene content](#scene-content)), nothing more. Camera history is the renderer's (S3D-4): the last submitted camera's unjittered view and projection, from which the `View`'s previous matrices come, and the jitter that frame applied; a stage reprojects through them, with the jitter where it reprojects what was rasterized jittered, and keeps no camera of its own. The frame's history carries the scene's render origin, its summed moves as a value ([Scene content](#scene-content)). Each holder of state retained in the render frame records the origin that state is expressed in and, where the frame's differs, translates the state by the difference and records the frame's origin with it: the renderer its camera history, committed at `finish_frame` as that history is, as Filament keeps its antialiasing history in the user's world across its origin snaps; a stage what it retains (a shadow face's light and the poses of the moving casters it drew), committed as that state is. Repeating the step is idempotent, so an abandoned frame, which commits nothing, translates nothing twice: the next frame compares the same origins. What a stage keeps in screen space (colour, depth, motion, confidence, the fog's volume) needs nothing, and nothing restarts; a reset records the frame's origin with the new history. The dynamic GI stage's probe state is world-space history about each probe's centre and takes no renderer reset: the stage keys it on the scene identity and the lattice the volume it sees in prepare lies on, restarting when either differs (a scroll keeps the probes that stay, clearing those that enter) and after frames in which it did not run; the placement a frame scrolled to is committed with it. The ray-traced shadow stage's history (its temporal mask pair, and the denoiser's moments and filter history for the slots it denoises) is screen space, reset by the renderer's one reset and after a frame in which the stage did not run; a slot whose light changed restarts alone, through the slot table's restart bit, and a move of the render origin touches none of it. The cull stage's history is the camera's depth pyramid, its own last executed build, so it holds the last submitted frame's; the next frame's early phase reads it through the camera history's previous matrices and jitter and the object records' previous poses, and a reset frame, or one whose last submitted frame built none, reads none and culls by frustum alone; a mismatch costs time, not a surface, since the late phase tests again ([GPU draw lists](#designs-that-span-stages)). |
 | Settings | The renderer resolves requested settings into one effective configuration per frame. Stages read only that, and report why a choice could not run. `Settings::dynamic_gi` (`DynamicGiQuality`: `Off`, `Low`, `High`; `High` by default) is the dynamic GI volume's quality tier: the most rays a probe traces a frame, Wicked's 256 at High; the volume's placement is content, and everything else about it is SGL3D's (S3D-6). `Settings::hardware_ray_tracing` (`bool`, `false`: off by default and in every preset, the game opts in, the owner's decision, [D-28](decisions.md)) traces every scene ray through the device's acceleration structures where it has ray queries, else through the portable BVHs; `Settings::ray_traced_shadows` (`bool`, `false`: off by default and in every preset, as hardware ray tracing is, [D-28](decisions.md)) gives the camera's opaque surfaces ray-traced shadows while hardware ray tracing is in effect, reported by `Renderer::ray_traced_shadows_in_effect`; `Settings::world_space_reflections` (`WorldSpaceReflections`: `Off`, `Moving`, `All`; `Off`, and no preset turns it on) is what world-space rays fill the screen-space method's misses with, `All` meant for the hardware path and allowed on the portable one ([Reflections](#designs-that-span-stages)). `Renderer::ray_tracing_in_effect` and `ray_tracing_error` report the hardware path as `antialiasing_in_effect` and `fsr2_error` report FSR2 ([Hardware ray tracing](#designs-that-span-stages), [Ray-traced shadows](#designs-that-span-stages)). `Settings::occlusion_culling` (a `bool`, off by default, as Bevy's `OcclusionCulling` is opt-in, until a net saving measured on the consumer's routes records otherwise) runs the two-phase occlusion test in the opaque stage's two-pass form with its pyramids, a cost that pays only where a frame submits much hidden geometry, which the game knows: on Apple's tile-based GPUs, which discard hidden fragments before shading them, #24's oracle found a saving in a large open view and none on a walk or in a cave, and the real culling cost 0.2–0.5 ms a frame natively on Metal on all three while saving 0.9–1.4 ms in Chrome over a large window seen from the ground; off, the GPU-built views draw everything their frustums hold. Which views build their lists on the GPU is SGL3D's ([GPU draw lists](#designs-that-span-stages)). |
 | Timing | Every pass belongs to its stage's timing group. |
-| Diagnostics | Behind the `diagnostics` feature. Switches are `Settings::diagnostics`, resolved into the effective configuration, never environment variables; observations return to the game, and the library writes no files. Every layer writes to the GPU, creates buffers (with contents or without; creating or growing a geometry slab or the ray source counts as a creation, and its copy as a growth), prepares and places models and builds instance BVHs through `counters`, a leaf module that counts them on the calling thread with the feature (`diagnostics::counters`) and passes straight through without it; `Scene::diagnostic_resources` and `Renderer::diagnostic_draws` report the buffers content holds (the candidates, chains and sets among them) and each view's draws as encoded; the hardware path's BLAS builds, compactions and TLAS builds count through `counters` too, and `diagnostic_resources` reports the BLASes it holds and their triangles: wgpu 29 reports no acceleration structure's size. `geometry_stats_for_model` reads back each candidate's visible sections under this feature. The `culling` layer makes both builders submit every level-selected draw, the GPU's cull accepting every candidate and section. `Renderer::diagnostic_view_times` reports the CPU time each camera and cascade list took to build and to record. |
+| Diagnostics | Behind the `diagnostics` feature. Switches are `Settings::diagnostics`, resolved into the effective configuration, never environment variables; observations return to the game, and the library writes no files. Every layer writes to the GPU, creates buffers (with contents or without; creating or growing a geometry slab or the ray source counts as a creation, and its copy as a growth), prepares and places models and builds instance BVHs through `counters`, a leaf module that counts them on the calling thread with the feature (`diagnostics::counters`) and passes straight through without it; `Scene::diagnostic_resources` and `Renderer::diagnostic_draws` report the buffers content holds (the candidates, chains and sets among them) and each view's draws as encoded; the hardware path's BLAS builds, compactions and TLAS builds count through `counters` too, and `diagnostic_resources` reports the BLASes it holds and their triangles: wgpu 29 reports no acceleration structure's size. `geometry_stats_for_model` reads back each candidate's visible sections under this feature. The `culling` layer makes both builders submit every level-selected draw, the GPU's cull accepting every candidate and section. `Renderer::diagnostic_view_times` reports the CPU time each camera and cascade list took to build and to record. `Diagnostics::dynamic_gi` observes the dynamic GI stage: an observed frame traces through the trace's portable program with its BVH walks counted (`ray_observation_enabled`), a pass sums them, and `Renderer::take_dynamic_gi_reports` returns each observed frame's probes, rays, visits, budget stride and what kept the volume awake, numbered by the frames the renderer finished before it, read back without blocking; at most 8 readbacks wait, and the next report counts the observed frames skipped past them. Off, the stage runs its plain trace program and counts nothing. |
 
 WGSL is composed from named modules by one function, `shading::compose`: each
 module declares the modules it uses, and a program is their concatenation in
@@ -994,10 +994,10 @@ code; it does not redeclare a struct, binding or function another module owns.
 - **Dynamic diffuse GI.** Coloured bounce light from the frame's lights, the
   scene's lights, emitters and the sky on static and moving surfaces, from a
   volume of probes the game places ([Scene content](#scene-content)), kept up
-  every frame by rays through the scene's ray source: a port of Wicked
-  Engine's DDGI (`ddgi_rayallocationCS`, `ddgi_raytraceCS`, `ddgi_updateCS`,
-  `ddgi_updateCS_depth`, `ShaderInterop_DDGI.h`, after Majercik et al. 2019
-  and 2021). Each probe's irradiance is the bordered octahedral colour map
+  by rays through the scene's ray source each frame within a budget: a
+  port of Wicked Engine's DDGI (`ddgi_rayallocationCS`, `ddgi_raytraceCS`,
+  `ddgi_updateCS`, `ddgi_updateCS_depth`, `ShaderInterop_DDGI.h`, after
+  Majercik et al. 2019 and 2021). Each probe's irradiance is the bordered octahedral colour map
   Wicked stored before it moved to spherical harmonics (revision 95e357f:
   `DDGI_COLOR_TEXELS`, `DDGI_COLOR_BORDER_OFFSETS`, `ddgi_probe_color_uv`,
   six by six texels and a border, as Godot's SDFGI probes are), its depth
@@ -1017,41 +1017,54 @@ code; it does not redeclare a struct, binding or function another module owns.
   bounce by π: the colour map holds irradiance / π, what a hit reflects per
   unit of its diffuse colour, as 95e357f bounces it. The stage runs first
   after prepare ([Frame](#frame)). Each probe asks for rays as Wicked's
-  allocation does: the tier's most rays scaled by the probe's
-  inconsistency, a tenth of that outside the camera's frustum, in buckets
-  of four and at least four; a probe not yet blended the tier's most, as
-  Wicked serves every probe on the first frame after a restart, and a probe
-  that enters by a scroll likewise. A frame traces at most the tier's
-  budget of rays, its fixed rays included: 128 probes at the tier's most,
-  as Wicked's surfel GI traces at most its `SURFEL_RAY_BUDGET` a frame
-  (4323a33c), which #120 had left to the per-probe maximum alone. A blended
-  probe traces on its turn alone, once in a period that grows with the
-  log2 of its distance from the camera in the least spacing, from every
-  frame within one spacing to every eighth at 128 and doubling beyond to
-  every 32nd, at a phase its hash staggers, as Wicked's surfels re-trace by
-  their distance level (`SURFEL_RAY_UPDATE_PERIOD_MAX` and `_CAP`), keeping
-  its light between turns; so a volume whose content keeps moving costs at
-  most its budget, its near probes keeping up the most. Two improvements on
-  Wicked (RD-2). Where its requests past the budget trace nothing in
-  dispatch order, so some may starve, every period is lengthened by the
-  least power of two under which the blended probes' requests on their
-  turns fit the budget beside the probes that start, so each probe keeps
-  its turns, near ones the more often; what still exceeds the budget traces
-  nothing, as Wicked's. A probe whose light is changing takes its turns the more often, its
-  period shortened by its most inconsistent texel's inconsistency toward
-  one (every frame at full inconsistency, its distance's period once
-  settled), so a lamp moved is answered near the speed of tracing every
-  probe every frame; neither Wicked nor RTXGI shortens periods (Wicked's
-  inconsistency sets rays per turn, RTXGI leaves scheduling to the
-  application), so this is SGL3D's own, kept within the budget by the same
-  stride. And where Wicked starts every probe of a restarted
-  volume in one frame, a hitch on a large volume, probes not yet blended
-  start at the tier's most, the nearest the camera first (a histogram of
-  their distances in the least spacing), with the budget the blended
-  probes leave, at least half of it, all of it after a restart; a probe not
-  yet started traces nothing and weighs nothing, so its receivers keep
-  their fallback, and the blends run over the probes that traced, which
-  Wicked's, whose probes always trace, need not. Each probe's
+  allocation does: its most rays scaled by its inconsistency, a tenth of
+  that outside the camera's frustum, in buckets of four and at least four;
+  a probe not yet blended its most, as Wicked serves every probe on the
+  first frame after a restart, and a probe that enters by a scroll
+  likewise. Its most rays fall with the log2 of its distance from the
+  camera in the least spacing, from the tier's most within one spacing to
+  an eighth of it at 128, as Wicked's surfels' rays fall by their level
+  (4323a33c `SURFEL_RAY_BOOST_MAX` to `_MIN`). A frame traces at most the
+  tier's budget of rays, its fixed rays included: 128 probes at the tier's
+  most, as Wicked's surfel GI traces at most its `SURFEL_RAY_BUDGET` a
+  frame, which #120 had left to the per-probe maximum alone. A blended
+  probe traces on its turn alone, once in a period that grows with that
+  level, from every frame within one spacing to every eighth at 128 and
+  doubling beyond to every 32nd, at a phase its hash staggers, as Wicked's
+  surfels re-trace by their distance level (`SURFEL_RAY_UPDATE_PERIOD_MAX`
+  and `_CAP`), keeping its light between turns; so a volume whose content
+  keeps moving costs at most its budget, its near probes keeping up the
+  most. Three improvements on Wicked (RD-2). Where its requests past the
+  budget trace nothing in dispatch order, so some may starve, every period
+  is lengthened by the least power of two (the stride) under which the
+  blended probes' requests on their turns fit the budget beside the probes
+  that start, so each probe keeps its turns, near ones the more often; a
+  probe's phase is Wicked's within its period plus whole periods its hash
+  chooses, so its turns under a longer stride are among its turns under a
+  shorter one and a stride that changes from frame to frame skips none
+  (phases that did not nest starved probes while the stride alternated);
+  what still exceeds the budget traces nothing, as Wicked's. A probe whose
+  light is changing, its most inconsistent texel above the estimator's
+  noise (0.2, below which Wicked's estimator catches a texel up at its
+  least), also takes turns at its period shortened toward one as its
+  inconsistency rises to one, from the rays the frame's turns and starting
+  probes leave, so it lengthens no other probe's turns; neither Wicked nor
+  RTXGI shortens periods (Wicked's inconsistency sets rays per turn, RTXGI
+  leaves scheduling to the application), so this is SGL3D's own. Counted
+  toward the stride, those turns doubled every probe's period on
+  Hyperdrive's course from noise alone; taken from what is left, they keep
+  a moved lamp answered as quickly (in the `dynamic_gi` example, 90% within
+  about 100 frames at High, against about 160 without them and 50 tracing
+  every probe every frame), and the noise threshold keeps a still scene's
+  probes from them (#196). And where Wicked starts every probe of a
+  restarted volume in one frame, a hitch on a large volume, probes not yet
+  blended start at their most rays, the nearest the camera first (a
+  histogram of their distances in the least spacing), with the budget the
+  blended probes leave, at least half of it, all of it after a restart,
+  leaving the shortened turns none while they wait; a probe not yet started
+  traces nothing and weighs nothing, so its receivers keep their fallback,
+  and the blends run over the probes that traced, which Wicked's, whose
+  probes always trace, need not. Each probe's
   estimator, depth and offset start afresh when it is first blended, where
   Wicked starts them all on the first frame. A scroll moves no probe: each
   is stored at its lattice coordinate plus the volume's scroll, wrapping, in
@@ -1156,15 +1169,21 @@ code; it does not redeclare a struct, binding or function another module owns.
   of whose fixed rays meet single-sided surfaces from behind, inside
   geometry or beyond a wall, is inactive, weighs nothing in the sample and
   traces the fewest rays. Its fixed rays are RTXGI's 32 directions spread
-  evenly and never rotated, unshaded and not blended, so its class holds
-  still while what it sees does; where RTXGI traces all of them every
-  update, a probe traces four each turn after its others and is
-  classified from all of them once a cycle of eight turns, a probe's first frame's
-  rays classifying it until its first whole cycle (the share of each
-  frame's rotated rays, even blended over frames, wandered across the
-  threshold). Its second phase finds whether a fixed ray met a front face
-  within the probe's cell, the spacing about it on each axis. Improved on
-  RTXGI (RD-2), which deactivates a probe without one for every receiver,
+  evenly and never rotated, unshaded and not blended, as RTXGI blends none,
+  so its class holds still while what it sees does; where RTXGI traces all
+  of them every update, a probe's first turn is classified from the share
+  of its rays that met back faces, its second traces all of them, which
+  classify it, and its next seven none, so its first turns cost no more
+  rays than any (all of them on its first turn tripled the probes a moving
+  camera leaves waiting to start at High, about 6.7 times at Low, the budget leaving starting probes their
+  share), then it traces four each turn after its others and is
+  classified again from all of them once a cycle of eight turns (the share
+  of each frame's rotated rays, even blended over frames, wandered across
+  the threshold, and a far probe's first turn traces as few as 32, whose
+  class it had kept for its whole first cycle). Its second phase finds
+  whether a fixed ray met a front face within the probe's cell, the
+  spacing about it on each axis. Improved on RTXGI
+  (RD-2), which deactivates a probe without one for every receiver,
   such a probe is dormant: static receivers skip it, so a probe diagonally
   beyond the edge or corner of a room of single-sided walls, which sees few
   of their backs and so passes the first phase, lights no wall; moving
@@ -1199,10 +1218,12 @@ code; it does not redeclare a struct, binding or function another module owns.
   the scene's lights (a diagnostic setting) and the placement. Improved on
   RTXGI (RD-2), whose sample pauses below a threshold each scene sets,
   which SGL3D has no scene to ask for: the volume has converged once the
-  mean of its variability over a window of 16 updates of the volume, a
-  frame that blends some probes on their turns counting that share of one,
-  falls by less than a tenth from the last window's, the plateau RTXGI describes, and never
-  while a probe has yet to start. The allocation decides it on the GPU from
+  mean of its variability over a window of 16 turns of every active probe
+  (16 times the longest period among them, the stride included, so the
+  slowest has taken 16 turns as RTXGI's every probe has in 16 frames;
+  each frame's variability weighed by the share of the probes that
+  blended) falls by less than a tenth from the last window's, the plateau
+  RTXGI describes, and never while a probe has yet to start. The allocation decides it on the GPU from
   the blends' last windows, so nothing is read back, and a paused frame
   costs the allocation alone. A receiver the volume lights takes its
   irradiance in place of the environment's diffuse light and the hemisphere

@@ -89,24 +89,30 @@ struct DdgiConvergence {
  // DDGI_VARIABILITY_UNITs, and how many; cleared each frame.
  variability:atomic<u32>,
  probes:atomic<u32>,
+ // The longest period at which an active probe takes its turns this frame,
+ // the stride included; cleared each frame.
+ longest:atomic<u32>,
  // The last average, of the frames whose blends ran.
  average:f32,
  // The window's sum of averages, each weighed by the share of the volume's
- // probes that blended, and the volume's updates it holds: those shares'
- // sum.
+ // probes that blended, and the sum of those shares.
  window_sum:f32,
  window_updates:f32,
+ // The turns the window holds of the active probe that takes them least
+ // often: each frame whose blends ran adds one over its period.
+ window_turns:f32,
  // The last whole window's mean, or -1 before one since the last change.
  previous:f32,
  // 1 once a window's mean has stopped falling, until a change.
  converged:u32,
 }
-// The updates of the volume a convergence window holds: RTXGI's sample's
-// least frames of variability before it pauses a volume, each of which
-// updates every probe (RTXGI-DDGI f33e496,
+// The turns of every active probe a convergence window holds: RTXGI's
+// sample's least frames of variability before it pauses a volume, each of
+// which updates every probe (RTXGI-DDGI f33e496,
 // samples/test-harness/src/graphics/DDGI_VK.cpp 1629-1637 and
-// DDGI_D3D12.cpp 1239-1246). A frame that blends some of the probes, on
-// their turns, is that share of an update.
+// DDGI_D3D12.cpp 1239-1246). Here a probe takes a turn once in its period,
+// so a window closes after this many turns of the active probe whose period
+// is longest.
 const DDGI_CONVERGENCE_WINDOW:f32=16.;
 // The fall from one window's mean variability to the next below which the
 // volume has converged.
@@ -122,7 +128,8 @@ const DDGI_MOST_MOVING_BOUNDS:u32=256u;
 // A ray of the frame's ray list: its probe, its index among the probe's
 // rays (past `rays`, its fixed rays), the rays the probe traces beside its
 // fixed rays, and which of its cycle's fixed rays it traces (the probe's
-// turns in its cycle so far, DdgiProbe::fixed_frames).
+// turns in its cycle so far, DdgiProbe::fixed_frames), or DDGI_FIXED_CYCLE
+// where the turn traces all of them.
 struct DdgiRayEntry {
  probe:u32,
  ray:u32,
@@ -192,9 +199,11 @@ fn ddgi_unpack_variance(words:array<u32,6>)->DdgiVariance {
 }
 // A probe's state in the stage's probe buffer: its relocated offset in half
 // spacings, whether it has been blended since the volume restarted, the
-// share of its rays that meet single-sided surfaces from behind, which
-// classifies it, and the back faces its fixed rays have met over the turns
-// of the cycle it has traced so far (fixed_frames).
+// share of its fixed rays that met single-sided surfaces from behind over
+// its last whole cycle, which classifies it, the back faces its fixed rays
+// have met over the turns of the cycle it has traced so far
+// (fixed_frames), and where its first cycle stands (fixed_rest,
+// ddgi_turn_fixed_rays).
 struct DdgiProbe {
  offset:vec3<f32>,
  blended:bool,
@@ -204,24 +213,41 @@ struct DdgiProbe {
  fixed_backfaces:u32,
  fixed_nearby:u32,
  fixed_frames:u32,
+ fixed_rest:u32,
 }
 fn ddgi_pack_probe(probe:DdgiProbe)->vec4<u32> {
- let counts=probe.fixed_backfaces|(probe.fixed_nearby<<8u)|(probe.fixed_frames<<16u)|(select(0u,1u,probe.surfaced)<<24u);
+ let counts=probe.fixed_backfaces|(probe.fixed_nearby<<8u)|(probe.fixed_frames<<16u)|(select(0u,1u,probe.surfaced)<<24u)|(probe.fixed_rest<<25u);
  return vec4(ddgi_pack_half2(probe.offset.x,probe.offset.y),ddgi_pack_half2(probe.offset.z,select(0.,1.,probe.blended)),bitcast<u32>(probe.backfaces),counts);
 }
 fn ddgi_unpack_probe(words:vec4<u32>)->DdgiProbe {
  let offset=vec4(unpack2x16float(words.x),unpack2x16float(words.y));
- return DdgiProbe(offset.xyz,offset.w>0.,bitcast<f32>(words.z),(words.w>>24u)!=0u,words.w&0xffu,(words.w>>8u)&0xffu,(words.w>>16u)&0xffu);
+ return DdgiProbe(offset.xyz,offset.w>0.,bitcast<f32>(words.z),((words.w>>24u)&1u)!=0u,words.w&0xffu,(words.w>>8u)&0xffu,(words.w>>16u)&0xffu,(words.w>>25u)&0xfu);
 }
 // A probe not yet blended, at rest, as a restart or a scroll starts one.
 fn ddgi_fresh_probe()->DdgiProbe {
- return DdgiProbe(vec3(0.),false,0.,false,0u,0u,0u);
+ return DdgiProbe(vec3(0.),false,0.,false,0u,0u,0u,0u);
+}
+// The fixed rays a probe traces on its turn after its others: none on its
+// first, which its other rays classify; all DDGI_FIXED_RAYS on its second
+// (fixed_rest at DDGI_FIXED_CYCLE), a whole cycle's, which classify it;
+// none on the DDGI_FIXED_CYCLE - 1 after, whose fixed rays that turn
+// traced; then the next DDGI_FIXED_RAYS_PER_FRAME of its cycle.
+fn ddgi_turn_fixed_rays(probe:DdgiProbe)->u32 {
+ if !probe.blended {
+  return 0u;
+ }
+ if probe.fixed_rest==DDGI_FIXED_CYCLE {
+  return DDGI_FIXED_RAYS;
+ }
+ return select(DDGI_FIXED_RAYS_PER_FRAME,0u,probe.fixed_rest>0u);
 }
 // RTXGI's RTXGI_DDGI_NUM_FIXED_RAYS: the fixed directions that classify a
 // probe, spread evenly over the sphere and never rotated, so a probe's class
-// holds still while what it sees does. A probe traces
-// DDGI_FIXED_RAYS_PER_FRAME of them each turn it traces, all of them over a
-// cycle of DDGI_FIXED_CYCLE turns.
+// holds still while what it sees does. A probe traces all of them on its
+// second turn, as RTXGI traces them every update, and none on its next
+// DDGI_FIXED_CYCLE - 1 turns, then DDGI_FIXED_RAYS_PER_FRAME of them each
+// turn, all of them over a cycle of DDGI_FIXED_CYCLE turns
+// (ddgi_turn_fixed_rays).
 const DDGI_FIXED_RAYS:u32=32u;
 const DDGI_FIXED_CYCLE:u32=DDGI_FIXED_RAYS/DDGI_FIXED_RAYS_PER_FRAME;
 // RTXGI's probeBackfaceThreshold: a probe more than this share of whose rays
@@ -238,6 +264,10 @@ fn ddgi_probe_active(probe:DdgiProbe)->bool {
 fn ddgi_luminance_weights()->vec3<f32> {
  return vec3(.299,.587,.114);
 }
+// The inconsistency below which Wicked's estimator takes a texel's samples
+// as noise, catching its mean up at its least (MultiscaleMeanEstimator's
+// 0.2): below it, a probe's light is not changing (allocate.wgsl).
+const DDGI_INCONSISTENCY_NOISE:f32=.2;
 // Wicked's MultiscaleMeanEstimator: the texel's mean follows its samples
 // `y` quickly where they are inconsistent with it and slowly where they
 // agree, with fireflies suppressed.
@@ -267,7 +297,7 @@ fn multiscale_mean_estimator(y_in:vec3<f32>,data:ptr<function,DdgiVariance>,shor
  let relative_diff=dot(ddgi_luminance_weights(),abs(short_diff)/max(vec3(1e-5),dev));
  inconsistency=mix(inconsistency,relative_diff,.08);
  let variance_based_blend_reduction=clamp(dot(ddgi_luminance_weights(),.5*short_mean/max(vec3(1e-5),dev)),1./32.,1.);
- var catch_up_blend=clamp(vec3(smoothstep(0.,1.,relative_diff*max(.02,inconsistency-.2))),vec3(1./256.),vec3(1.));
+ var catch_up_blend=clamp(vec3(smoothstep(0.,1.,relative_diff*max(.02,inconsistency-DDGI_INCONSISTENCY_NOISE))),vec3(1./256.),vec3(1.));
  catch_up_blend*=vbbr;
  vbbr=mix(vbbr,variance_based_blend_reduction,.1);
  mean=mix(mean,y,saturate(catch_up_blend));

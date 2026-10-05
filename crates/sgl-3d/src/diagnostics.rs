@@ -62,6 +62,12 @@ pub struct ViewTime {
 /// irradiance takes; its fixed rays classify it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DynamicGiReport {
+    /// The frame's number: the frames the renderer finished before it.
+    pub frame: u64,
+    /// The observed frames skipped since the last report, while 8 frames'
+    /// readbacks waited to be taken; none where reports are taken each
+    /// frame once its work has completed.
+    pub skipped: u32,
     /// The volume's probes, those that traced rays, and those not yet
     /// blended.
     pub probes: u32,
