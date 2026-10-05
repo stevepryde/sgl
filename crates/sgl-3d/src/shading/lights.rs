@@ -31,14 +31,18 @@ pub(crate) struct LightRecord {
     pub half_height: f32,
     /// How dark its shadow is (`Light::shadow_opacity`).
     pub shadow_opacity: f32,
+    /// `LIGHT_*` bits.
+    pub flags: u32,
     /// WGSL rounds `Light` up to its 16-byte alignment.
-    pub padding: [f32; 3],
+    pub padding: [f32; 2],
 }
 
 /// `LightRecord::shape`: a point or spot light.
 pub(crate) const LIGHT_PUNCTUAL: u32 = 0;
 /// `LightRecord::shape`: a rectangle.
 pub(crate) const LIGHT_RECT: u32 = 1;
+/// `LightRecord::flags`: the light casts a shadow (`Light::casts_shadow`).
+pub(crate) const LIGHT_CASTS_SHADOW: u32 = 1;
 
 impl LightRecord {
     /// `light`'s record, valid as `Scene::add_light` accepts it. A spot's
@@ -101,7 +105,12 @@ impl LightRecord {
             half_width,
             half_height,
             shadow_opacity: light.shadow_opacity,
-            padding: [0.; 3],
+            flags: if light.casts_shadow {
+                LIGHT_CASTS_SHADOW
+            } else {
+                0
+            },
+            padding: [0.; 2],
         }
     }
 }
@@ -151,12 +160,13 @@ impl LocalShadowRecord {
 }
 
 #[cfg(test)]
-pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 5] {
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 6] {
     use crate::shading::layout_tests::Constant;
     use naga::Literal::U32;
     [
         Constant::new("geometry", "LIGHT_PUNCTUAL", U32(LIGHT_PUNCTUAL)),
         Constant::new("geometry", "LIGHT_RECT", U32(LIGHT_RECT)),
+        Constant::new("geometry", "LIGHT_CASTS_SHADOW", U32(LIGHT_CASTS_SHADOW)),
         Constant::new("geometry", "LOCAL_SHADOW_NONE", U32(LOCAL_SHADOW_NONE)),
         Constant::new("geometry", "LOCAL_SHADOW_CUBE", U32(LOCAL_SHADOW_CUBE)),
         Constant::new("geometry", "LOCAL_SHADOW_SPOT", U32(LOCAL_SHADOW_SPOT)),
@@ -185,6 +195,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
                 half_width,
                 half_height,
                 shadow_opacity,
+                flags,
             ]
         ),
         mirror!(

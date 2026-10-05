@@ -122,7 +122,7 @@ fn ray_normals(
  let points=array<vec3<f32>,{count}>({points});
  for (var i=0u;i<{count}u;i++) {{
   let ray=SceneRay(vec4(0.,0.,0.,0.),vec4(normalize(points[i]),100.));
-  let hit=scene_decode_hit(scene_trace_nearest(ray),ray.origin.xyz,ray.direction.xyz);
+  let hit=scene_decode_hit(scene_trace_nearest(ray,SCENE_SIDES_AS_RASTER),ray.origin.xyz,ray.direction.xyz);
   output[i]=vec4(ray_normal(hit,scene_material(hit.material_word)),0.);
  }}
 }}

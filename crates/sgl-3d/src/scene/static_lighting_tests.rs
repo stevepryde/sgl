@@ -353,7 +353,7 @@ fn static_atlas_and_moving_cube_transport() {
 @group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
 @compute @workgroup_size(1) fn observe() {{
  let origin=vec3<f32>({},{},{});let direction=vec3<f32>({},{},{});
- let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,100.)));
+ let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,100.)),SCENE_SIDES_AS_RASTER);
  let h=scene_decode_hit(raw,origin,direction);
  let normal=select(-h.geometric_normal,h.geometric_normal,h.front_face);
  output[0]=vec4(surface_fixed_irradiance(false,h.uv,h.lightmap_uv,h.lightmap_bounds,normal,h.front_face,(h.instance_flags&OBJECT_STATIC)==0u,objects[h.instance_id].baked_irradiance),select(0.,1.,h.hit));
@@ -676,7 +676,7 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
 @group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
 @compute @workgroup_size(1) fn observe() {{
  let origin=vec3<f32>({x},{y},{eye_z});let direction=vec3(0.,0.,-1.);
- let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)));
+ let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)),SCENE_SIDES_AS_RASTER);
  let hit=scene_decode_hit(raw,origin,direction);
  output[0]=vec4(shade_ray_hit(hit,-direction,SHADOW_RECEIVER_CAPTURE,vec3(0.)),select(0.,1.,hit.hit));
 }}
@@ -875,7 +875,7 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
 @group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
 @compute @workgroup_size(1) fn observe() {{
  let origin=vec3<f32>({x},{y},{eye_z});let direction=vec3(0.,0.,-1.);
- let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)));
+ let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)),SCENE_SIDES_AS_RASTER);
  let hit=scene_decode_hit(raw,origin,direction);
  output[0]=vec4(shade_ray_hit(hit,-direction,SHADOW_RECEIVER_CAPTURE,vec3(0.)),select(0.,1.,hit.hit));
 }}

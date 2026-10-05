@@ -1404,12 +1404,15 @@ scene.set_dynamic_gi_volume(
 
 Each frame the dynamic GI stage, first after prepare, traces rays from the
 probes through the scene's ray source (static and moving instances that do
-not deform). A hit is lit by one light drawn from the frame's directional
-lights and the scene lights whose range reaches the volume, with one ray
-toward it for its shadow at the light's shadow opacity (no shadow map, so
-nothing leaks through walls into the probes), by its emission, and by the
+not deform), from either side of every triangle. A hit is lit by one light
+drawn from the frame's directional lights and the scene lights whose range
+reaches the volume, with one ray toward it for its shadow at the light's
+shadow opacity where the light casts a shadow (no shadow map, so nothing it
+lights leaks through walls into the probes), by its emission, and by the
 volume's own last frame for further bounces; a miss takes the environment
-and the hemisphere fill along the ray. Each probe keeps its irradiance and
+and the hemisphere fill along the ray. A ray that meets a single-sided
+surface from behind takes no light from it and counts the surface nearer,
+so the probe keeps out what lies behind it. Each probe keeps its irradiance and
 the distances to what surrounds it, so a surface takes light only from the
 probes that see it.
 
@@ -1428,11 +1431,17 @@ Placement:
 
 - Cover every surface the volume should light: one to a few metres apart
   suits rooms and streets. A volume need not cover the world.
-- Keep probes off surfaces. Rays pass through the back of a single-sided
-  surface, so a probe on or inside one sees past it and lights receivers
-  near it with what lies beyond; in a closed room, let the lattice reach half
-  a spacing past the walls. Probes near a surface move off it, up to half a
-  spacing, as they trace.
+- Probes may lie beyond walls, inside closed geometry or outside a room
+  built of single-sided walls facing inward: a probe that sees a
+  single-sided surface from behind takes nothing from beyond it, and the
+  receivers on the surface's other side weigh it as occluded. Keep probes
+  off the surfaces themselves, where a probe sees both sides at once:
+  offset the lattice so walls fall between probes. Probes near a surface
+  move off it, up to half a spacing, as they trace.
+- A light that casts no shadow (`Light::casts_shadow` false, or a
+  directional light without the frame's cascades) lights the probes as it
+  lights surfaces, unoccluded, through walls too: give a light that should
+  stay in its room a shadow.
 - Installing another placement starts the probes afresh, as does a frame
   that does not run them (another scene, the setting `Off`): that frame
   traces every probe at the most rays, as Wicked's first frame does.

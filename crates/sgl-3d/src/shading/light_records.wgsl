@@ -32,6 +32,8 @@ struct Light {
  // Godot's shadow_opacity: how dark its shadow is, 0 to 1
  // (shadow_sampling.wgsl's shadow_opacity_visibility).
  shadow_opacity:f32,
+ // LIGHT_* bits.
+ flags:u32,
 }
 // A rectangle's half height along its height's axis: its width's axis
 // crossed with its normal (Bevy's RectLight up).
@@ -63,6 +65,11 @@ struct LocalShadow {
 // Light.shape: a point or spot light, and a rectangle.
 const LIGHT_PUNCTUAL:u32=0u;
 const LIGHT_RECT:u32=1u;
+// Light.flags: the light casts a shadow (Light::casts_shadow). The camera's
+// surfaces, captures and ray hits take a light's shadow from its shadow
+// record; a dynamic GI probe hit, which takes its light's visibility from a
+// ray, casts none for a light without this bit.
+const LIGHT_CASTS_SHADOW:u32=1u;
 // LocalShadow.kind: a light without a shadow, one with six cube faces, and
 // a spot with one face.
 const LOCAL_SHADOW_NONE:u32=0u;

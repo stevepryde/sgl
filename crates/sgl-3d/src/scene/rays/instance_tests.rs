@@ -45,12 +45,12 @@ fn test_receiver(receiver:vec4<u32>)->vec2<u32> {
  let test=test_rays[id.x];
  let ray=test.ray;
  var result:Observed;
- result.nearest=scene_trace_nearest(ray);
+ result.nearest=scene_trace_nearest(ray,SCENE_SIDES_AS_RASTER);
  result.moving=scene_trace_moving_except_receiver(ray,test_receiver(test.moving_receiver));
  let hit=scene_decode_hit(result.nearest,ray.origin.xyz,ray.direction.xyz);
  result.visible=vec4(
   select(0u,1u,scene_static_segment_visible_except_receiver(ray,test_receiver(test.static_receiver))),
-  select(0u,1u,scene_segment_visible(ray.origin.xyz,ray.direction.xyz,ray.origin.w,ray.direction.w)),
+  select(0u,1u,scene_segment_visible(ray.origin.xyz,ray.direction.xyz,ray.origin.w,ray.direction.w,SCENE_SIDES_AS_RASTER)),
   select(0u,hit.instance_flags+1u,hit.hit),
   0u);
  observed[id.x]=result;

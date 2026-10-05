@@ -185,7 +185,7 @@ fn trace(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene, origin: 
 @compute @workgroup_size(1) fn observe() {{
  let origin=vec3<f32>({},{},{});
  let direction=vec3(0.,0.,-1.);
- let hit=scene_decode_hit(scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,100.))),origin,direction);
+ let hit=scene_decode_hit(scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,100.)),SCENE_SIDES_AS_RASTER),origin,direction);
  if hit.hit {{
   let material=scene_material(hit.material_word);
   result[0]=vec4(hit.distance,material.values.base.x,f32(material.baked),f32(hit.instance_id));
@@ -211,7 +211,7 @@ fn segment_visible(
         r#"
 @group(0) @binding(0) var<storage,read_write> result:array<vec4<f32>,1>;
 @compute @workgroup_size(1) fn observe() {{
- let visible=scene_segment_visible(vec3<f32>({},{},{}),vec3(0.,0.,-1.),0.,{length:?});
+ let visible=scene_segment_visible(vec3<f32>({},{},{}),vec3(0.,0.,-1.),0.,{length:?},SCENE_SIDES_AS_RASTER);
  result[0]=vec4(select(0.,1.,visible));
 }}
 "#,

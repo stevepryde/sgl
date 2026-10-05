@@ -115,20 +115,26 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
 // A dynamic GI probe ray's hit's direct light (SHADOW_RECEIVER_PROBE_HIT):
 // one light drawn uniformly by `random.x` from the frame's directional
 // lights and the lights of `list` the surface takes, times their count; its
-// diffuse light alone, unoccluded by a map, and its visibility one any-hit
-// ray toward it through the one acceptance predicate over both kinds of
-// instance, at its shadow opacity, the ray not cast at or below the
-// cutoff. A rectangle's ray ends at the point of its face `random.yz` draws.
+// diffuse light alone, unoccluded by a map, and, for a light that casts a
+// shadow, its visibility one any-hit ray toward it through the one
+// acceptance predicate over both kinds of instance and both sides of every
+// triangle, at its shadow opacity, the ray not cast at or below the cutoff.
+// A light that casts no shadow lights the hit unoccluded, as it lights every
+// other receiver, as Godot's VoxelGI traces a light only where it has one
+// (b13043816a0f234985030ec035363a005bc86c32,
+// servers/rendering/renderer_rd/shaders/environment/voxel_gi.glsl 297,
+// `has_shadow` from gi.cpp 3036; MIT, src/LICENSE-godot.txt). A rectangle's
+// ray ends at the point of its face `random.yz` draws.
 //
 // Ports Wicked Engine df44c3db4c4927492bc9c791eac715d98d7ed091's light
 // sampling at a hit (WickedEngine/shaders/ddgi_raytraceCS.hlsl 329–490: one
 // light drawn uniformly, its diffuse light times NdotL / PI times the light
 // count, and a TraceRay_Any shadow ray from 0.001 to the light, to infinity
-// for a directional light), MIT (src/LICENSE-wicked.txt). Changed: each
-// light reaches the hit as every receiver's does (scene_light_sample, a
-// rectangle integrated over its face), its shadow opacity applies, and
-// SGL3D's lights are punctual, so Wicked's radius jitter has no
-// counterpart.
+// for a directional light, culling no side), MIT (src/LICENSE-wicked.txt).
+// Changed: each light reaches the hit as every receiver's does
+// (scene_light_sample, a rectangle integrated over its face), its shadow
+// opacity applies, a light without a shadow casts no ray, and SGL3D's
+// lights are punctual, so Wicked's radius jitter has no counterpart.
 fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
  var directional=array<u32,2>(0u,0u);
  var directional_count=0u;
@@ -151,6 +157,7 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
  var direction=vec3(0.);
  // A light at infinity: Wicked's FLT_MAX.
  var distance=3.402823466e+38;
+ // The shadow opacity of a light that casts a shadow, else none.
  var opacity=0.;
  if pick<directional_count {
   let light=frame.directional_lights[directional[pick]];
@@ -159,7 +166,9 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
    return vec3(0.);
   }
   sample=LightSample(direction,light.color*light.illuminance,1.,0.,NO_RECT_LIGHT);
-  opacity=light.shadow_opacity;
+  // The light with the frame's cascades is the one directional light
+  // that casts a shadow.
+  opacity=select(0.,light.shadow_opacity,(light.flags&DIRECTIONAL_LIGHT_SHADOW)!=0u);
  } else {
   let index=cluster_item(list.first+pick-directional_count);
   sample=scene_light_sample(index,s.position,s.normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT);
@@ -174,11 +183,11 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
   let to_light=end-s.position;
   distance=length(to_light);
   direction=to_light/max(distance,1e-20);
-  opacity=light.shadow_opacity;
+  opacity=select(0.,light.shadow_opacity,(light.flags&LIGHT_CASTS_SHADOW)!=0u);
  }
  sample.specular=0.;
  if opacity>SHADOW_OPACITY_CUTOFF {
-  let visible=scene_segment_visible(s.position,direction,.001,distance);
+  let visible=scene_segment_visible(s.position,direction,.001,distance,SCENE_SIDES_BOTH);
   sample.visibility=shadow_opacity_visibility(select(0.,1.,visible),opacity);
  }
  // The surface's reflectance as shade_lit derives it, its DFG lookup at the

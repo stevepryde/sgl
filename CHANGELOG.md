@@ -81,9 +81,14 @@ full API details.
   new stage, first after prepare, keeps the probes up every frame with rays
   through the scene's ray source, a port of Wicked Engine's DDGI: coloured
   bounce light from the frame's directional lights, the scene lights whose
-  range reaches the volume (each hit's light shadowed by a ray at its
-  shadow opacity, never a shadow map), emitters, the sky and further
-  bounces; `Scene::move_origin` translates the volume and keeps its probes.
+  range reaches the volume (each hit's light, where it casts a shadow,
+  shadowed by a ray at its shadow opacity, never a shadow map; a light
+  without a shadow lights the probes unoccluded, as it lights surfaces),
+  emitters, the sky and further bounces. Probe rays meet single-sided
+  surfaces from either side: one met from behind brings no light and
+  counts as occluding, so probes inside closed geometry or beyond walls
+  keep what lies behind a surface from receivers on its other side.
+  `Scene::move_origin` translates the volume and keeps its probes.
   Within the volume (fading out over one spacing past it) static surfaces
   without a lightmap or atlas chart and moving instances take its
   irradiance in place of the environment's diffuse light and the hemisphere
@@ -105,9 +110,9 @@ full API details.
   load with it); an exhaustive `match` on `SceneError` adds
   `InvalidDynamicGiVolume`. Devices requested with `graphics_device::limits`
   need no change. To light a level, install a volume that covers the
-  surfaces it should light with no probe on or inside a surface (rays pass
-  through the back of a single-sided one), one to a few metres apart, and
-  offer `Settings::dynamic_gi` to players
+  surfaces it should light, its probes one to a few metres apart and off
+  the surfaces themselves, give lights that should stay in their rooms a
+  shadow, and offer `Settings::dynamic_gi` to players
   ([dynamic GI](crates/sgl-3d/README.md#dynamic-diffuse-gi)). Afterwards,
   look at rooms and their corners
   lit through openings and by lamps, moving objects passing through the
