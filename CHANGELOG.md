@@ -23,8 +23,8 @@ full API details.
   0.025, which `Light::default()` takes). `DirectionalLight` gains
   `angular_diameter` (radians, as every angle of SGL3D's content is;
   clamped to 0..=π/2, NaN as 0; the default is
-  `DirectionalLight::SUN_ANGULAR_DIAMETER`, 0.53° or about 0.00925). Only rays see a light's
-  size. Ray-traced shadows (`Settings::ray_traced_shadows`) end each ray
+  `DirectionalLight::SUN_ANGULAR_DIAMETER`, 0.53° or about 0.00925). Only
+  rays see a light's size. Ray-traced shadows (`Settings::ray_traced_shadows`) end each ray
   at a point drawn on the light, each frame another: a point or spot
   light's sphere, a rectangle's face, or a direction within the
   directional light's disc, so a shadow is sharp near its caster and
@@ -34,7 +34,17 @@ full API details.
   visibilities, as Wicked Engine runs it; the other twelve keep the
   temporal blend. The dynamic GI volume's visibility rays end on the light
   the same way, which is new for point, spot and directional lights. No
-  preset turns ray-traced shadows on (D-28). TIMINGS.
+  preset turns ray-traced shadows on (D-28).
+- **Cost:** measured on an Apple M5 at 1920×1080, natively on Metal
+  (median GPU frame time, against the maps with hardware ray tracing off):
+  - the `streaming` example's walk: 10.1 ms against 6.5 ms;
+  - its fly: 9.2 ms against 6.1 ms;
+  - 1000 props under the sun and eight shadowed point and spot lights,
+    all of the default size: 7.6 ms against 4.9 ms.
+  The denoiser takes 1.8–2.1 ms of that (its tile classification
+  0.4–0.6 ms, its three filter passes 1.4–1.5 ms), on top of the
+  ray-traced shadows' earlier cost; it does not run while none of the
+  first four slots holds a light.
 - **Migration:** replace `LightShape::Point` with
   `LightShape::Point { radius: LightShape::DEFAULT_RADIUS }` (or `0.` for
   a hard shadow), add `radius: LightShape::DEFAULT_RADIUS` to each
