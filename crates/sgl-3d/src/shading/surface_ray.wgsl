@@ -93,7 +93,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.position=hit.position;
  s.view=outgoing;
  s.normal=n;
- s.coat_normal=hit.normal;
+ s.geometry_normal=hit.normal;
  s.base=vec4(decaled.base,base.a);
  s.metallic=decaled.metallic;
  s.roughness=clamp(decaled.roughness,.0525,1.);
@@ -171,7 +171,7 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
   opacity=select(0.,light.shadow_opacity,(light.flags&DIRECTIONAL_LIGHT_SHADOW)!=0u);
  } else {
   let index=cluster_item(list.first+pick-directional_count);
-  sample=scene_light_sample(index,s.position,s.normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT);
+  sample=scene_light_sample(index,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT);
   if sample.visibility<=0. {
    return vec3(0.);
   }

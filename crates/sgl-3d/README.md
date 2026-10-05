@@ -129,8 +129,9 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   does not. Each cascade's map reaches 20 m toward the light beyond its
   part of the view (Godot's default pancake), so a caster within
   that margin is recorded at its own depth and one beyond it at the
-  margin's edge. Receivers are offset along their normal by Bevy's 1.8
-  texels (times √2) and toward the light by 2 cm, so no bias is authored.
+  margin's edge. Receivers are offset along their geometry normal (not the
+  normal map's) by Bevy's 1.8 texels (times √2) and toward the light by 2
+  cm, so no bias is authored.
   While TAA or FSR2 runs the camera's surfaces filter with Jimenez's 8-tap
   spiral, turned per pixel and per frame for them to resolve; otherwise, and
   in probe captures and ray hits, with Castaño's fixed 9-tap kernel. At the

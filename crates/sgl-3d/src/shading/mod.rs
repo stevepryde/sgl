@@ -20,6 +20,8 @@ pub(crate) mod lights;
 pub(crate) mod material;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rect_light_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod shadow_normal_tests;
 pub(crate) mod uniforms;
 pub(crate) mod vertex;
 

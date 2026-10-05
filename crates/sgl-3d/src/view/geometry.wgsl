@@ -19,7 +19,7 @@ struct StableMaterial {
 fn stable_material(s:Surface)->StableMaterial {
  // Preserve both lobes: the base follows normal/bump maps, the coat geometry.
  var o:StableMaterial;
- o.normal=gbuffer_encode_normals(s.normal,s.coat_normal);
+ o.normal=gbuffer_encode_normals(s.normal,s.geometry_normal);
  o.f0=gbuffer_encode_f0(mix(vec3(0.04),s.base.rgb,s.metallic),!s.unlit);
  o.material=gbuffer_encode_material(s.coat_roughness,s.roughness,s.coat,s.environment_scale);
  o.anisotropy=s.anisotropy;

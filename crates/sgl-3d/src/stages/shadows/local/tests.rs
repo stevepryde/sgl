@@ -144,7 +144,7 @@ override camera:bool=true;
   if all(normal==vec3(0.)) {{
    normal=normalize(lights[index].position-receiver);
   }}
-  output[id.x]=scene_light_sample(index,receiver,normal,vec2(0.),select(SHADOW_RECEIVER_CAPTURE,SHADOW_RECEIVER_CAMERA,camera)).visibility;
+  output[id.x]=scene_light_sample(index,receiver,normal,normal,vec2(0.),select(SHADOW_RECEIVER_CAPTURE,SHADOW_RECEIVER_CAMERA,camera)).visibility;
  }}
 }}
 "#,
