@@ -1392,8 +1392,10 @@ lightmapped. The caller must regenerate it when the static scene, source
 radiance, UV chart, or caster visibility changes.
 
 This opt-in application extension supplies Lambertian diffuse with constant
-`1-F0` surface transmission, independent of the camera. Use it for uncoated
-static diffuse surfaces.
+`1-F0` surface transmission. On a coated material the coat's Fresnel toward
+the view dims it, and the irradiance atlas's and a moving instance's
+ambient cube's light, as it dims the material's live light and emission
+(KHR_materials_clearcoat layers the coat over the whole base).
 
 Static instances' other surfaces can additionally carry `Vertex::lightmap_uv`
 and use `Scene::set_static_irradiance_atlas(device, queue, &IrradianceAtlas)`.

@@ -128,6 +128,56 @@ fn observe(
         .unwrap()
 }
 
+/// The lit colour, binary16 RGBA, that the fused opaque pass draws over the
+/// 64×64 pixels of `renderer` for the frame of `scene` that `input`
+/// describes.
+fn fused_lit_color(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    renderer: &mut Renderer,
+    scene: &mut Scene,
+    input: &FrameInput,
+    settings: &Settings,
+) -> Vec<u8> {
+    let size = [64, 64];
+    // Fused opaque attachments; lit color is location 4.
+    let targets: Vec<_> = [
+        shading::gbuffer::NORMAL,
+        shading::gbuffer::MATERIAL,
+        shading::gbuffer::MOTION,
+        shading::gbuffer::F0,
+        shading::gbuffer::COLOR,
+        shading::gbuffer::AMBIENT,
+        shading::gbuffer::SOURCE_ID,
+        shading::gbuffer::ANISOTROPY,
+    ]
+    .into_iter()
+    .map(|format| view::targets::target(device, "fused opaque", size, format))
+    .collect();
+    let depth = view::targets::target(device, "fused depth", size, shading::gbuffer::DEPTH);
+    renderer.prepare_test_frame(device, queue, scene, input, settings);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let attachments: Vec<_> = targets.iter().map(view::targets::attachment).collect();
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &attachments,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0.),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        renderer.draw_test_camera(scene, &mut pass, GeometryPass::Fused);
+    }
+    queue.submit([encoder.finish()]);
+    scene.finish_frame();
+    test_support::read(device, queue, targets[4].texture(), 8)
+}
+
 #[test]
 fn lightmap_is_baked_until_baked_lighting_is_switched_off() {
     let Some((device, queue)) = test_support::device() else {
@@ -592,35 +642,6 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
         let settings = Settings::default();
         let mut cube = AmbientCube::default();
         cube.irradiance[0] = [1. / std::f32::consts::PI, 0., 0.];
-        let size = [64, 64];
-        // Fused opaque attachments; lit color is location 4.
-        let targets = [
-            shading::gbuffer::NORMAL,
-            shading::gbuffer::MATERIAL,
-            shading::gbuffer::MOTION,
-            shading::gbuffer::F0,
-            shading::gbuffer::COLOR,
-            shading::gbuffer::AMBIENT,
-            shading::gbuffer::SOURCE_ID,
-            shading::gbuffer::ANISOTROPY,
-        ]
-        .map(|format| view::targets::target(&device, "bent normal response", size, format));
-        let depth = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: None,
-                size: wgpu::Extent3d {
-                    width: 64,
-                    height: 64,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
         for model in [0, 1] {
             let state = InstanceState {
                 model: models[model],
@@ -643,28 +664,13 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
                 view: camera::rh::view::look_at_mat4(Vec3::Z * eye_z, Vec3::ZERO, Vec3::Y),
                 projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
             });
-            renderer.prepare_test_frame(&device, &queue, &mut scene, &input, &settings);
-            let mut encoder = device.create_command_encoder(&Default::default());
-            {
-                let attachments: Vec<_> = targets.iter().map(view::targets::attachment).collect();
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: None,
-                    color_attachments: &attachments,
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &depth,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(0.),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    ..Default::default()
-                });
-                renderer.draw_test_camera(&scene, &mut pass, GeometryPass::Fused);
-            }
-            queue.submit([encoder.finish()]);
-            scene.finish_frame();
-            let bytes = test_support::read(&device, &queue, targets[4].texture(), 8);
+            let bytes = fused_lit_color(
+                (&device, &queue),
+                &mut renderer,
+                &mut scene,
+                &input,
+                &settings,
+            );
             let mut responses = Vec::new();
             for pixel_x in [17u32, 46u32] {
                 let pixel_y = 47u32;
@@ -788,38 +794,6 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
                 },
             )
             .unwrap();
-        let size = [64, 64];
-        // Fused opaque attachments; lit color is location 4.
-        let formats = [
-            shading::gbuffer::NORMAL,
-            shading::gbuffer::MATERIAL,
-            shading::gbuffer::MOTION,
-            shading::gbuffer::F0,
-            shading::gbuffer::COLOR,
-            shading::gbuffer::AMBIENT,
-            shading::gbuffer::SOURCE_ID,
-            shading::gbuffer::ANISOTROPY,
-        ];
-        let targets: Vec<_> = formats
-            .into_iter()
-            .map(|format| view::targets::target(&device, "bent normal response", size, format))
-            .collect();
-        let depth = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: None,
-                size: wgpu::Extent3d {
-                    width: 64,
-                    height: 64,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
         for lightmapped in [false, true] {
             if lightmapped {
                 scene
@@ -842,28 +816,13 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
                 view: camera::rh::view::look_at_mat4(Vec3::Z * eye_z, Vec3::ZERO, Vec3::Y),
                 projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
             });
-            renderer.prepare_test_frame(&device, &queue, &mut scene, &input, &settings);
-            let mut encoder = device.create_command_encoder(&Default::default());
-            {
-                let attachments: Vec<_> = targets.iter().map(view::targets::attachment).collect();
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: None,
-                    color_attachments: &attachments,
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &depth,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(0.),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    ..Default::default()
-                });
-                renderer.draw_test_camera(&scene, &mut pass, GeometryPass::Fused);
-            }
-            queue.submit([encoder.finish()]);
-            scene.finish_frame();
-            let bytes = test_support::read(&device, &queue, targets[4].texture(), 8);
+            let bytes = fused_lit_color(
+                (&device, &queue),
+                &mut renderer,
+                &mut scene,
+                &input,
+                &settings,
+            );
             let mut responses = Vec::new();
             for pixel_x in [17u32, 46u32] {
                 let pixel_y = 47u32;
@@ -913,6 +872,140 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
             );
         }
     });
+}
+
+// A coat layers over everything beneath it: KHR_materials_clearcoat (Khronos
+// glTF 8e69120, "Clearcoat" and "Implementation: Emission") weights the base,
+// emission included, by 1 - clearcoat * F, F being the Schlick Fresnel
+// 0.04 + 0.96 (1 - cos)^5 at the coat normal's cosine to the view. Plausible
+// defects: a term beneath the coat left whole, as baked diffuse was, or
+// dimmed at another cosine or weight, in raster or in a ray hit. The oracle
+// is that formula at the cosine each view's geometry gives. SGL3D's Fresnel
+// (Three.js 0.185.1's fit to Schlick's) is within 0.0025 of it at the cosines
+// tested (0.0036 at worst, near grazing) and binary16 colour puts each ratio
+// within 0.001; a term left whole is 0.04 off or more.
+#[test]
+fn a_coat_dims_baked_diffuse_and_emission_by_its_fresnel() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut model = test_support::cube();
+    model.materials[0].base = [0.5, 0.5, 0.5, 1.];
+    model.materials[0].metallic = 0.;
+    model.materials[0].roughness = 0.5;
+    model.materials[0].coat_roughness = 0.1;
+    // A square on z = 0 facing +Z.
+    model.meshes[0].vertices = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
+        .map(|(x, y)| asset::Vertex {
+            tangent: [0.; 4],
+            position: [x, y, 0.],
+            normal: [0., 0., 1.],
+            uv: [(x + 1.) * 0.5, (y + 1.) * 0.5],
+            color: [1.; 4],
+            lightmap_uv: [0.5; 2],
+            lightmap_bounds: [0., 0., 1., 1.],
+        })
+        .to_vec();
+    model.meshes[0].indices = vec![0, 1, 2, 0, 2, 3];
+    let mut scene = Scene::new(&device, &queue);
+    let (world, _) = test_support::add_static(&device, &queue, &mut scene, model);
+    let material = world.materials[0];
+    scene
+        .set_lightmap(
+            &device,
+            &queue,
+            &Lightmap {
+                size: [2, 2],
+                uv_scale_offset: [1., 1., 0., 0.],
+                irradiance: vec![[1., 0.5, 0.25]; 4],
+                directionality: vec![],
+            },
+            &world.materials,
+        )
+        .unwrap();
+    let settings = Settings::default();
+    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let fresnel = |cosine: f32| 0.04 + 0.96 * (1. - cosine).powi(5);
+    // Head-on, and at a cosine of 0.3 between the square's normal and the
+    // camera's backward axis.
+    for cosine in [1f32, 0.3] {
+        let backward = Vec3::new((1. - cosine * cosine).sqrt(), 0., cosine);
+        let eye = backward * 3.;
+        let view = camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
+        let mut input = FrameInput::new(Camera {
+            eye,
+            view,
+            projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
+        });
+        // Pixel (32, 32)'s centre on the camera's plane and, along the view,
+        // on the square. Raster's view runs from that point to the eye, a
+        // ray hit's back along the ray.
+        let start = view
+            .inverse()
+            .transform_point3(Vec3::new(1. / 64., -1. / 64., 0.));
+        let point = start - backward * (start.z / backward.z);
+        let raster_cosine = (eye - point).normalize().z;
+        let observation = format!(
+            r#"
+@group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
+@compute @workgroup_size(1) fn observe() {{
+ let origin=vec3<f32>({:?},{:?},{:?});let direction=vec3<f32>({:?},{:?},{:?});
+ let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)),SCENE_SIDES_AS_RASTER);
+ let hit=scene_decode_hit(raw,origin,direction);
+ output[0]=vec4(shade_ray_hit(hit,-direction,SHADOW_RECEIVER_CAPTURE,vec3(0.)),select(0.,1.,hit.hit));
+}}
+"#,
+            start.x, start.y, start.z, -backward.x, -backward.y, -backward.z
+        );
+        for (term, baked_lighting, emission) in [
+            ("baked diffuse", true, [0.; 3]),
+            ("emission", false, [0.3, 0.6, 0.9]),
+        ] {
+            input.baked_lighting = baked_lighting;
+            let [bare, coated] = [0., 1.].map(|coat| {
+                let mut values = scene.material(material).unwrap();
+                values.clearcoat = coat;
+                values.emission = emission;
+                scene.set_material(&queue, material, values).unwrap();
+                let bytes = fused_lit_color(
+                    (&device, &queue),
+                    &mut renderer,
+                    &mut scene,
+                    &input,
+                    &settings,
+                );
+                let pixel = &bytes[(32 * 64 + 32) * 8..];
+                assert_eq!(test_support::half(&pixel[6..]), 1., "square not drawn");
+                let hit = observe(
+                    &device,
+                    &queue,
+                    &mut renderer,
+                    &mut scene,
+                    &input,
+                    &settings,
+                    &observation,
+                );
+                assert_eq!(hit[3], 1., "ray missed the square");
+                [
+                    [0, 1, 2].map(|c| test_support::half(&pixel[c * 2..])),
+                    [hit[0], hit[1], hit[2]],
+                ]
+            });
+            for (path, cosine, bare, coated) in [
+                ("raster", raster_cosine, bare[0], coated[0]),
+                ("ray hit", cosine, bare[1], coated[1]),
+            ] {
+                let expected = 1. - fresnel(cosine);
+                for c in 0..3 {
+                    let ratio = coated[c] / bare[c];
+                    assert!(
+                        (ratio - expected).abs() < 0.004,
+                        "{term} under a coat, {path} at cosine {cosine}: {coated:?} / {bare:?} is {ratio}, not {expected}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 // A compressed atlas shades exactly as the float atlas holding what its blocks

@@ -112,7 +112,7 @@ fn probe_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32)->Environment
 // Filament's PixelParams: the diffuse colour, the specular reflectance at
 // normal incidence, the DFG lookup at the view, and the coat's Fresnel toward
 // the view, weighted by the coat (pbr_coat_fresnel), which also attenuates
-// shade_lit's ambient, environment and emitted light.
+// shade_lit's ambient, environment, baked and emitted light.
 struct SurfaceReflectance {
  diffuse:vec3<f32>,
  f0:vec3<f32>,
@@ -325,7 +325,14 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let irradiance=(indirect.field+dynamic_gi.rgb*dynamic_gi.a*bounce)*(1.-reflectance.coat_fresnel);
  color+=(ibl.diffuse+multi)*irradiance;
  ambient+=ibl.diffuse*irradiance;
- color+=indirect.baked*diffuse*(vec3(1.)-f0);
+ // Baked diffuse lies beneath the coat as live light does: Three.js 0.185.1's
+ // node path adds a light map to the irradiance its finish dims
+ // (NodeMaterial.setupLightMap, PhysicalLightingModel.finish), Godot b130438
+ // adds lightmaps to the ambient light its clearcoat then attenuates
+ // (scene_forward_clustered.glsl), and Filament ef1a133 dims all indirect
+ // diffuse (surface_light_indirect.fs evaluateClearCoatIBL). Bevy 9d12036
+ // adds its lightmap undimmed (pbr_functions.wesl).
+ color+=indirect.baked*diffuse*(vec3(1.)-f0)*(1.-reflectance.coat_fresnel);
  if !probe_hit {
   if frame.directional_lights[0].illuminance>0. {
    color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,s.geometry_normal,context));
@@ -370,6 +377,15 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
    }
   }
  }
+ // The coat lies over emission too. KHR_materials_clearcoat, SGL3D's
+ // material definition, layers the coat over the base "including emission"
+ // and darkens emission by its Fresnel (Khronos glTF 8e69120,
+ // KHR_materials_clearcoat/README.md, Clearcoat and Implementation:
+ // Emission), as Bevy 9d12036 (pbr_functions.wesl) and Three.js 0.185.1's
+ // WebGL meshphysical shader do. Three.js's node path
+ // (NodeMaterial.setupLighting), Filament ef1a133 (surface_shading_lit.fs
+ // evaluateMaterial) and Godot b130438 (scene_forward_clustered.glsl) add
+ // emission after the coat instead.
  color+=emission*(1.-reflectance.coat_fresnel);
  return Shaded(color,ambient,indirect.sky_visibility);
 }

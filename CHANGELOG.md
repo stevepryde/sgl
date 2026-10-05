@@ -15,6 +15,29 @@ full API details.
 
 ## Unreleased
 
+### A coat dims the baked diffuse light beneath it
+
+- **Scope:** `sgl-3d` shading of coated materials (`clearcoat` above 0)
+  that take baked diffuse light: a lightmap (`Scene::set_lightmap`), an
+  irradiance atlas chart (`Scene::set_static_irradiance_atlas`), or a moving
+  instance's ambient cube (`AmbientCube`). The coat's Fresnel toward the
+  view dimmed every other light beneath the coat (direct and environment
+  light, the hemisphere fill, the irradiance and dynamic GI volumes,
+  emission) but not baked diffuse, so light baked into a lightmap lit a
+  coated surface more than the same light live. Baked diffuse is now dimmed
+  by `1 - clearcoat * F` too, as Three.js 0.185.1 and Godot dim baked light
+  and Filament dims all image-based diffuse (Bevy does not). This is a
+  correctness fix with no setting. At `clearcoat` 1, baked diffuse is 4%
+  dimmer head-on and 20% dimmer at a view cosine of 0.3, more toward
+  grazing. Camera views, probe captures and ray hits (world-space
+  reflections, dynamic GI probe hits) change alike. Emission under a coat
+  stays dimmed as before, as KHR_materials_clearcoat defines it. Uncoated
+  materials are unchanged.
+- **Migration:** no game-code changes and no re-bake. Afterwards, look at
+  coated surfaces lit by lightmaps or atlas charts, and moving coated
+  instances lit by their ambient cube, toward grazing angles: they are
+  darker than before, as the same surfaces are under live lights.
+
 ### Scene vertices are packed into 32 bytes
 
 - **Scope:** `sgl-3d`. The ray source, which the pulled raster passes,
