@@ -1,6 +1,7 @@
 //! One frame: the one ordered render body.
 use super::Renderer;
 use crate::settings::{ReflectionMethod, Settings};
+use crate::stages::opaque::Opaque;
 use crate::timing::GpuTiming;
 use crate::view::frame::{Completed, FrameContext, HardwareRays};
 use crate::view::pipelines::GeometryPipelines;
@@ -200,7 +201,7 @@ pub(super) fn render(
     shadows.encode_local(&mut ctx);
     shadows.encode_directional(&mut ctx);
     fog.encode(&mut ctx);
-    opaque.encode(&mut ctx);
+    encode_opaque(opaque, &mut ctx);
     #[cfg(feature = "diagnostics")]
     if let Some(probe) = probe.as_deref() {
         probe.observe(
@@ -306,6 +307,14 @@ pub(super) fn render(
         );
         probe.finish(ctx.encoder);
     }
+}
+
+/// The opaque stage in the stage order's named parts: the G-buffer, the
+/// lighting at its depth, then ambient occlusion over it.
+pub(super) fn encode_opaque(opaque: &mut Opaque, ctx: &mut FrameContext<'_>) {
+    opaque.encode_gbuffer(ctx);
+    opaque.encode_lighting(ctx);
+    opaque.encode_ambient_occlusion(ctx);
 }
 
 /// The view holding `kind`.

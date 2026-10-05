@@ -6,6 +6,12 @@
 //! ambient diffuse whole and records it apart, for source completion to
 //! occlude by this stage's visibility.
 //!
+//! The renderer encodes it in the stage order's named parts: the G-buffer
+//! (`encode_gbuffer`), which leaves the G-buffer complete; the lighting
+//! (`encode_lighting`), the sky and the lighting pass at its depth; then
+//! ambient occlusion (`encode_ambient_occlusion`). The fused form's pass is
+//! its G-buffer part, and its lighting part encodes nothing.
+//!
 //! Reads: the camera view and its draw list, group 0's camera lit and unlit
 //! groups, the geometry pipelines; for a probe capture face (`encode_capture`),
 //! the capture's draw list and the face's groups.
@@ -41,14 +47,30 @@ impl Opaque {
         }
     }
 
-    /// The camera's opaque surfaces, fused or split, then ambient occlusion
-    /// over them.
-    pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
+    /// The G-buffer part: the sky and the fused pass, which lights the
+    /// surfaces as it writes the G-buffer, or the G-buffer pass and, where
+    /// the device cannot write anisotropy in it, the anisotropy fallback at
+    /// `Equal`.
+    pub fn encode_gbuffer(&mut self, ctx: &mut FrameContext<'_>) {
         if ctx.effective.fused {
             self.encode_fused(ctx);
         } else {
-            self.encode_split(ctx);
+            Self::encode_gbuffer_pass(ctx);
         }
+    }
+
+    /// The lighting part: in the two-pass form, the sky and the lighting
+    /// pass at the G-buffer's depth; nothing in the fused form, whose
+    /// G-buffer part lit the surfaces.
+    pub fn encode_lighting(&mut self, ctx: &mut FrameContext<'_>) {
+        if !ctx.effective.fused {
+            self.encode_lighting_pass(ctx);
+        }
+    }
+
+    /// Ambient occlusion over the G-buffer's depth and normals, where the
+    /// settings run it.
+    pub fn encode_ambient_occlusion(&mut self, ctx: &mut FrameContext<'_>) {
         self.ambient_occlusion_ran = ctx.effective.ambient_occlusion.is_some();
         if let Some(settings) = ctx.effective.ambient_occlusion {
             let targets = ctx.targets;
@@ -141,7 +163,10 @@ impl Opaque {
         ctx.views.camera.recorded_since(started);
     }
 
-    fn encode_split(&mut self, ctx: &mut FrameContext<'_>) {
+    /// The G-buffer pass over the camera's list, clearing depth, then, where
+    /// the device cannot write anisotropy in it, the anisotropy fallback at
+    /// `Equal`.
+    fn encode_gbuffer_pass(ctx: &mut FrameContext<'_>) {
         let targets = ctx.targets;
         let anisotropy_inline = ctx.pipelines.anisotropy_inline;
         // The G-buffer and depth.
@@ -202,6 +227,11 @@ impl Opaque {
             drop(pass);
             ctx.views.camera.recorded_since(started);
         }
+    }
+
+    /// The sky, then the lighting pass at the G-buffer's depth.
+    fn encode_lighting_pass(&mut self, ctx: &mut FrameContext<'_>) {
+        let targets = ctx.targets;
         // The sky writes color and motion; opaque geometry then writes color,
         // ambient diffuse and identity together once, and its motion over the
         // sky's.
