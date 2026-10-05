@@ -15,10 +15,20 @@
 //! moved, the face draws every caster at once. A frame in which nothing a
 //! face shows changed draws nothing.
 //!
+//! Each light's shadow record (`LocalShadowRecord`) is written only when it
+//! changed: a light placed, re-placed, moved or left without a shadow. As
+//! Bevy extracts a light to its render world only when what it shows changed
+//! (`extract_lights`'s `Changed` filters, crates/bevy_pbr/src/render/light.rs
+//! lines 333-436 at revision 9d120361303727a66b62f31f0d053793af62417a), the
+//! stage compares each record with the one its buffer holds. A queued write lands at the
+//! next submission whether or not the frame that queued it was submitted or
+//! finished, so what the buffer holds follows the writes queued, not the
+//! finished frames as the atlas's cache does.
+//!
 //! Reads: the scene's lights, instances, materials and static edits, the
 //! camera. Writes: its faces' draw instances into the frame's
 //! (`FrameViews::instances`), the frame atlas and the static atlas, and the
-//! lights' shadow records (`LocalShadowRecord`), which group 0 binds.
+//! lights' shadow records, which group 0 binds.
 //! Honours: the effective local lights.
 //! Timing groups: `local shadow layers`, `local shadows`.
 pub(crate) mod atlas;
@@ -66,6 +76,8 @@ pub(crate) struct Local {
     layers: Atlas,
     /// `LocalShadowRecord`s at each light's index, which group 0 binds.
     pub records: wgpu::Buffer,
+    /// What `records` holds once the writes queued so far land.
+    written: Vec<LocalShadowRecord>,
     clear: wgpu::RenderPipeline,
     copy: wgpu::RenderPipeline,
     copy_group: wgpu::BindGroup,
@@ -230,6 +242,7 @@ impl Local {
             copy_group: copy_group(device, &copy_layout, &layers),
             layers,
             records: records_buffer(device, 1),
+            written: vec![LocalShadowRecord::NONE],
             clear,
             copy,
             plan: plan::Plan::new(size),
@@ -284,10 +297,12 @@ impl Local {
         self.plan.prepare(drawn, scene, camera, mask, enabled);
         self.upload_views(device, queue, bindings);
         let records = self.plan.records();
-        if (self.records.size() as usize) < std::mem::size_of_val(records) {
+        if self.written.len() < records.len() {
+            // A new buffer holds zeros: every light without a shadow.
             self.records = records_buffer(device, records.len());
+            self.written = vec![LocalShadowRecord::NONE; records.len()];
         }
-        crate::counters::write_buffer(queue, &self.records, 0, bytemuck::cast_slice(records));
+        write_changed(queue, &self.records, &mut self.written, records);
     }
 
     /// Places the static layers a probe capture at `center` of `scene`
@@ -428,6 +443,37 @@ impl Local {
     /// Commits the last prepared frame, once submitted.
     pub fn finish_frame(&mut self) {
         self.plan.finish();
+    }
+}
+
+/// Writes the `records` that differ from what `buffer` holds, as `written`
+/// records it, a run of adjacent ones at a time, and records them.
+fn write_changed(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    written: &mut [LocalShadowRecord],
+    records: &[LocalShadowRecord],
+) {
+    let changed = |written: &[LocalShadowRecord], index: usize| {
+        bytemuck::bytes_of(&records[index]) != bytemuck::bytes_of(&written[index])
+    };
+    let mut index = 0;
+    while index < records.len() {
+        if !changed(written, index) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < records.len() && changed(written, index) {
+            index += 1;
+        }
+        written[start..index].copy_from_slice(&records[start..index]);
+        crate::counters::write_buffer(
+            queue,
+            buffer,
+            (start * std::mem::size_of::<LocalShadowRecord>()) as u64,
+            bytemuck::cast_slice(&records[start..index]),
+        );
     }
 }
 

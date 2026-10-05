@@ -15,6 +15,16 @@ full API details.
 
 ## Unreleased
 
+### Local-light shadow records upload only when they change
+
+- **Scope:** `sgl-3d`'s local-light shadow stage. Each frame wrote every
+  light slot's 144 B shadow record, 18 KB at 128 slots and 147 KB at 1,024;
+  it now writes only the records that changed, when a light is placed,
+  re-placed, moved or left without a shadow. Over 600 frames of the
+  `streaming` example's `walk`, `fly` and `torches-1024` runs that is 4 to
+  37 KB instead of 11 to 88 MB. Shadows are unchanged, after abandoned
+  frames as well.
+- **Migration:** no game-code changes.
 ### A game-authored irradiance volume, relit by region
 
 - **Scope:** `sgl-3d` adds `IrradianceVolume { origin, cell_size, cells }`,

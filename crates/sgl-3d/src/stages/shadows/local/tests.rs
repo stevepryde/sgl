@@ -1142,3 +1142,80 @@ fn a_render_origin_move_keeps_every_shadow_in_place_without_drawing() {
         "static layers after the move",
     );
 }
+
+// Plausible defects: a light's shadow record written only when the frame
+// that changed it finishes, or kept as the last finished frame left it, so a
+// record a dropped frame wrote (its writes land with the next submission)
+// stays in the buffer when the next frame's record matches the finished
+// one; or a record not rewritten when its light loses or regains its shadow
+// or its static layers. The oracles are the light's visibility behind the
+// static blocker through the frame's atlas and through the static layers
+// ray hits sample, which need the record's placement and its `layers`.
+#[test]
+fn shadow_records_follow_changes_and_dropped_frames() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (mut scene, light, _, _) = cached_scene(&mut harness);
+    let queue = harness.queue.clone();
+    let input = input();
+    let lit = |casts_shadow, position| Light {
+        casts_shadow,
+        ..point(position, 9.)
+    };
+    let expect = |harness: &Harness, shadowed: bool, label: &str| {
+        let behind = if shadowed { 0. } else { 1. };
+        harness.expect(light, &[(BEHIND_STATIC, behind)], label);
+        harness.expect_seen(light, &[(BEHIND_STATIC, behind)], Seen::RayHit, label);
+    };
+    harness.frame(&mut scene, &input);
+    expect(&harness, true, "shadowed");
+    // Its shadow turned off, and back on.
+    scene
+        .set_light(&queue, light, lit(false, Vec3::ZERO))
+        .unwrap();
+    harness.frame(&mut scene, &input);
+    expect(&harness, false, "shadow off");
+    scene
+        .set_light(&queue, light, lit(true, Vec3::ZERO))
+        .unwrap();
+    harness.frame(&mut scene, &input);
+    expect(&harness, true, "shadow back on");
+    // A dropped frame with the shadow off, then a frame with it on, whose
+    // record is the last finished frame's.
+    scene
+        .set_light(&queue, light, lit(false, Vec3::ZERO))
+        .unwrap();
+    drop(harness.encode(&mut scene, &input));
+    scene
+        .set_light(&queue, light, lit(true, Vec3::ZERO))
+        .unwrap();
+    harness.frame(&mut scene, &input);
+    expect(&harness, true, "after a dropped frame without the shadow");
+    // A dropped frame with the light moved, which leaves its static layers
+    // stale, then a frame with it back, whose layers are redrawn.
+    scene
+        .set_light(&queue, light, lit(true, Vec3::Y * 0.5))
+        .unwrap();
+    drop(harness.encode(&mut scene, &input));
+    scene
+        .set_light(&queue, light, lit(true, Vec3::ZERO))
+        .unwrap();
+    harness.frame(&mut scene, &input);
+    expect(&harness, true, "after a dropped frame with the light moved");
+    // The same, the moved frame submitted but never finished.
+    scene
+        .set_light(&queue, light, lit(true, Vec3::Y * 0.5))
+        .unwrap();
+    let encoder = harness.encode(&mut scene, &input);
+    harness.queue.submit([encoder.finish()]);
+    scene
+        .set_light(&queue, light, lit(true, Vec3::ZERO))
+        .unwrap();
+    harness.frame(&mut scene, &input);
+    expect(
+        &harness,
+        true,
+        "after an unfinished frame with the light moved",
+    );
+}
