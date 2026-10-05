@@ -240,6 +240,7 @@ impl Reflections {
                 ctx.queue,
                 [ctx.bindings.ray_hit_lit(), &ctx.scene.scene_group],
                 LitConstants::of(ctx.scene),
+                ctx.hardware_rays,
                 ctx.history,
                 ctx.sizes.render,
                 world::Inputs {

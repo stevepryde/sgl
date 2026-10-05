@@ -36,10 +36,12 @@
 use crate::Scene;
 use crate::content::dynamic_gi::DynamicGiVolume;
 use crate::scene::dynamic_gi::{InstalledVolume, ProbePlacement};
+use crate::shading::RayQueryForm;
 use crate::shading::{self, dynamic_gi as layout};
 use crate::view::effective::Effective;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
+use crate::view::trace_paths::{TracePath, TracePaths};
 use glam::{I64Vec3, IVec3, Mat3, Mat4, Vec3, Vec4};
 use std::collections::HashMap;
 use volume::{Layouts, Volume, texture};
@@ -64,12 +66,7 @@ pub(crate) static ALLOCATE: shading::Module = shading::Module {
 pub(crate) static TRACE: shading::Module = shading::Module {
     name: "dynamic_gi_trace",
     source: include_str!("dynamic_gi/trace.wgsl"),
-    deps: &[
-        &shading::BIND_LIT,
-        &shading::SCENE_RAYS_PORTABLE,
-        &shading::SURFACE_RAY,
-        &COMMON,
-    ],
+    deps: &[&shading::BIND_LIT, &shading::SURFACE_RAY, &COMMON],
 };
 /// The irradiance and depth blends, at the stage's own group 0.
 pub(crate) static UPDATE: shading::Module = shading::Module {
@@ -110,15 +107,17 @@ pub(crate) struct VolumeUniform {
     padding_changed: [u32; 3],
 }
 
-/// What the probes' light follows: the scene's content edits, the frame's
-/// lights and environment as the frame's data carries them (but for what
-/// the camera and the clock change), the environment it binds, the rays a
-/// probe may trace, and whether the probe hits' light list takes the
-/// scene's lights, as prepare builds it. While they hold still, a
-/// converged volume pauses.
+/// What the probes' light follows: the scene's content edits, its deforming
+/// instances' while the hardware path traces them (the portable path's rays
+/// see no deforming instance), the frame's lights and environment as the
+/// frame's data carries them (but for what the camera and the clock
+/// change), the environment it binds, the rays a probe may trace, and
+/// whether the probe hits' light list takes the scene's lights, as prepare
+/// builds it. While they hold still, a converged volume pauses.
 #[derive(Clone, Copy)]
 struct Inputs {
     edits: u64,
+    deformation_edits: Option<u64>,
     frame: crate::shading::uniforms::FrameUniform,
     environment: Option<crate::EnvironmentId>,
     max_rays: u32,
@@ -138,6 +137,7 @@ impl Inputs {
         }
         Self {
             edits: ctx.scene.edits,
+            deformation_edits: ctx.hardware_rays.map(|_| ctx.scene.deformation_edits),
             frame,
             environment: ctx.input.environment,
             max_rays,
@@ -147,6 +147,7 @@ impl Inputs {
 
     fn same(&self, other: &Self) -> bool {
         self.edits == other.edits
+            && self.deformation_edits == other.deformation_edits
             && bytemuck::bytes_of(&self.frame) == bytemuck::bytes_of(&other.frame)
             && self.environment == other.environment
             && self.max_rays == other.max_rays
@@ -244,12 +245,12 @@ pub(crate) struct DynamicGi {
     update_depth: wgpu::ComputePipeline,
     settle: wgpu::ComputePipeline,
     scroll: wgpu::ComputePipeline,
-    trace_shader: wgpu::ShaderModule,
-    trace_layout: wgpu::PipelineLayout,
-    /// The trace's pipelines for each set of lit constants, each created
-    /// when a frame first needs it, as the geometry pipelines specialise on
-    /// the scene's rectangle lights and decals.
-    trace: HashMap<LitConstants, wgpu::ComputePipeline>,
+    /// The trace's programs for each path its rays take.
+    paths: TracePaths,
+    /// The trace's pipelines for each set of lit constants and path, each
+    /// created when a frame first needs it, as the geometry pipelines
+    /// specialise on the scene's rectangle lights and decals.
+    trace: HashMap<(LitConstants, Option<RayQueryForm>), wgpu::ComputePipeline>,
     uniform: wgpu::Buffer,
     /// The moving instances' bounds the allocation takes.
     moving_bounds: wgpu::Buffer,
@@ -355,14 +356,8 @@ impl DynamicGi {
             &update_shader,
             "scroll",
         );
-        let trace_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("dynamic GI rays"),
-            bind_group_layouts: &[Some(lit), Some(scene), None, Some(&layouts.trace)],
-            immediate_size: 0,
-        });
         Self {
-            trace_shader: module("dynamic GI rays", &TRACE),
-            trace_layout,
+            paths: TracePaths::new("dynamic GI rays", &TRACE, &layouts.trace, [lit, scene]),
             trace: HashMap::new(),
             rank,
             threshold,
@@ -483,9 +478,14 @@ impl DynamicGi {
         }
     }
 
-    fn trace_pipeline(&mut self, device: &wgpu::Device, lit: LitConstants) {
-        let (shader, layout) = (&self.trace_shader, &self.trace_layout);
-        self.trace.entry(lit).or_insert_with(|| {
+    fn trace_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        lit: LitConstants,
+        form: Option<RayQueryForm>,
+    ) {
+        let TracePath { shader, layout, .. } = self.paths.path(device, form);
+        self.trace.entry((lit, form)).or_insert_with(|| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("dynamic GI rays"),
                 layout: Some(layout),
@@ -506,7 +506,8 @@ impl DynamicGi {
             return;
         };
         let lit = LitConstants::of(ctx.scene);
-        self.trace_pipeline(ctx.device, lit);
+        let form = ctx.hardware_rays.map(|rays| rays.form);
+        self.trace_pipeline(ctx.device, lit, form);
         // The whole spacings the volume has moved since the committed frame.
         let (volume, frame, installed, scrolled) = match (&self.rendered, &self.committed) {
             (Some(Rendered::Fresh(volume)), _) => (&**volume, 0, volume.installed, I64Vec3::ZERO),
@@ -556,6 +557,15 @@ impl DynamicGi {
         };
         let bounds = moving_bounds(ctx.scene, &placement, camera.eye);
         let inputs = Inputs::of(ctx, max_rays);
+        let trace_group = self.paths.group(
+            ctx.device,
+            ctx.hardware_rays,
+            &[
+                (0, self.uniform.as_entire_binding()),
+                (1, wgpu::BindingResource::TextureView(&rays.list)),
+                (2, wgpu::BindingResource::TextureView(&rays.results)),
+            ],
+        );
         let changed = match (&self.rendered, &self.committed) {
             (Some(Rendered::Continue(_)), Some((volume, _))) => volume
                 .inputs
@@ -622,10 +632,10 @@ impl DynamicGi {
                 label: Some("dynamic GI rays"),
                 timestamp_writes: timing.and_then(|t| t.compute_pass("dynamic GI rays")),
             });
-            pass.set_pipeline(&self.trace[&lit]);
+            pass.set_pipeline(&self.trace[&(lit, form)]);
             pass.set_bind_group(0, ctx.bindings.volume_lit(), &[]);
             pass.set_bind_group(1, &ctx.scene.scene_group, &[]);
-            pass.set_bind_group(3, &rays.trace, &[]);
+            pass.set_bind_group(3, trace_group, &[]);
             pass.dispatch_workgroups_indirect(&volume.allocation, 0);
         }
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

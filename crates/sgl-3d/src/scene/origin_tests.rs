@@ -237,7 +237,7 @@ fn a_move_holds_what_the_game_would_give_in_the_new_frame() {
     let mut given = content(&device, &queue, MOVE);
     for scene in [&mut moved, &mut given] {
         scene.prepare_frame(&device, &queue, Vec3::ZERO);
-        scene.update_rays(&device, &queue, !0);
+        scene.update_rays(&device, &queue, !0, false);
     }
     let storage = |scene: &Scene| {
         [

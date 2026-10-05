@@ -30,8 +30,8 @@ its rendering `settings::Settings`.
    `graphics_device::features(&adapter)` and
    `graphics_device::fsr2_features(&adapter)`, plus `TEXTURE_COMPRESSION_BC`
    for compressed bakes and material textures and `TIMESTAMP_QUERY` for GPU timing.
-   Hardware ray tracing is optional and opt-in, and rays do not trace its
-   structures yet: a game that takes it also requests
+   Hardware ray tracing is optional and opt-in: a game that takes it, so
+   that the scene's rays trace its acceleration structures, also requests
    `graphics_device::ray_tracing_features(&adapter)` with
    `experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() }`
    and turns `Settings::hardware_ray_tracing` on

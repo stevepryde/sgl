@@ -525,7 +525,7 @@ fn rays_pass_the_cut_out_texels_of_a_compressed_masked_material() {
     asset.materials[0].double_sided = true;
     let mut scene = Scene::new(&device, &queue);
     test_support::add_static(&device, &queue, &mut scene, asset);
-    scene.update_rays(&device, &queue, !0);
+    scene.update_rays(&device, &queue, !0, false);
     let rays: Vec<[f32; 8]> = (0..SIDE * SIDE)
         .map(|i| {
             let centre = |t: u32| (t as f32 + 0.5) / SIDE as f32;
