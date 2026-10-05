@@ -401,7 +401,7 @@ Each has one definition, which every producer and consumer uses.
 | --- | --- |
 | Conventions | Units, axes, depth and colour are S3D-3. |
 | View and frame data | `View`, one per view (matrices, previous matrices, jitter, eye, viewport), and `Frame`, one per frame (time, the material animation's phase, the directional lights with the shadowed light's cascades, the hemisphere fill, the environment's diffuse lighting, reflection sky and backdrop, the fog volume's slicing and whether the frame has fog, mist, the visibility mask, the scene's baked-lighting constants: the atlas scale and the lightmap's chart transform, the irradiance volume's placement and whether it lights the frame, and the dynamic GI volume's placement, its scroll and whether it lights the frame), declared with their flag bits in `shading::uniforms`. Named fields; flags are integers with named bits. The renderer packs `Frame` from `FrameInput`'s typed values; no GPU layout is public. The phase is where `FrameInput::elapsed_seconds`, a double, falls within the hour over which material animation repeats exactly, reduced on the CPU, so the GPU's `f32` keeps its precision however long a session runs; Godot rolls its shader time over and Bevy wraps its time at the same hour, each with a jump, which the period's whole repeats avoid ([Material records](#shared-contracts)). |
-| Bind groups | For pipelines that draw scene geometry through the shading library. Group 0 has three layouts: lit (view and frame data, lights, decals and the atlas their images are packed in, clusters, shadows, environment, probes, the irradiance volume's cells, the dynamic GI volume's probe texture, lookup tables and the fog volume), unlit (view and frame data, the frame's environment with its backdrop and the fog volume, for the sky, additive effects and mist) and shadow (view and frame data). The fog volume and its sampler are visible to fragment stages only. A view that renders into one of those binds a neutral stand-in for it; ray hits bind the lit layout with their light and decal lists, the local-light atlas's static layers and, as probe captures do, the installed probes; the dynamic GI probe rays' hits bind it with the volume's lists. Group 1: the object records, one storage buffer bound whole that geometry passes read, and the geometry buffers ray queries read. Group 2: material. Group 3: the stage's own. Ports, full-screen passes, the deform stage and the cull stage lay out their own. Four groups is the limit. Lit group 0 and group 1 bind 8 storage buffers to a fragment stage, wgpu's default limit and S3D-1's floor: `graphics_device::limits` requests the adapter's `max_storage_buffers_per_shader_stage`, and the change that adds another states the floor it needs in S3D-1 or folds two buffers into one (the probe collection holds its world grid; the decals' indices share the clusters' lists). Lit group 0, the irradiance volume's cell texture and the dynamic GI volume's probe texture among it, and a material bind 19 sampled textures to a fragment stage, and the blended pipelines' group 3 (the screen-space method's result and the surface depth) two more: 21, the floor S3D-1 states (Dawn tiers `maxSampledTexturesPerShaderStage` at 16 or 48, and Metal, DX12 and Vulkan adapters offer 31 or more, so no device sits between 17 and 21: the practical cut stays above WebGPU's default 16); lit group 0 and the world-space trace's own targets, with the surface depth, bind 20 to the trace's fragment stage, where the fog volume counts; the dynamic GI trace binds 13 (lit group 0's eleven that a compute stage sees, the irradiance volume's cells, which its hits sample, among them, the probe texture it samples for the bounce, and its ray list), where the fog volume does not count: `graphics_device::limits` requests the adapter's, and the change that adds another states the floor it needs in S3D-1 or folds two textures into one (one lookup-table texture holds the rectangle lights' fit and the DFG table; one texture holds the dynamic GI volume's irradiance maps, depth maps and probe data). A stage whose passes bind lit group 0 and group 1 passes its own per-ray or per-probe data as textures, not storage buffers, as the dynamic GI stage does. The hardware path's TLAS is bound only by the passes that trace through it, in each tracing stage's group 3 at the one entry `scene_rays_hardware.wgsl` declares and `shading::bind::tlas_entry` builds (FRAGMENT and COMPUTE visible), lent by the renderer from the scene as the ray-hit group is; group 1 is unchanged ([Hardware ray tracing](#designs-that-span-stages)). The opaque stage's lighting pass, in its two-pass form while ray-traced shadows run, binds the ray-traced shadow stage's mask and slot table at its group 3 (`bind_shadow_mask.wgsl`), one sampled texture more, 20 of the 21 floor; the fused pass and every other lit composition bind none ([Ray-traced shadows](#designs-that-span-stages)). |
+| Bind groups | For pipelines that draw scene geometry through the shading library. Group 0 has three layouts: lit (view and frame data, lights, decals and the atlas their images are packed in, clusters, shadows, environment, probes, the irradiance volume's cells, the dynamic GI volume's probe texture, lookup tables and the fog volume), unlit (view and frame data, the frame's environment with its backdrop and the fog volume, for the sky, additive effects and mist) and shadow (view and frame data). The fog volume and its sampler are visible to fragment stages only. A view that renders into one of those binds a neutral stand-in for it; ray hits bind the lit layout with their light and decal lists, the local-light atlas's static layers and, as probe captures do, the installed probes; the dynamic GI probe rays' hits bind it with the volume's lists. Group 1: the object records, one storage buffer bound whole that geometry passes read, and the geometry buffers ray queries read. Group 2: material. Group 3: the stage's own. Ports, full-screen passes, the deform stage and the cull stage lay out their own. Four groups is the limit. Lit group 0 and group 1 bind 8 storage buffers to a fragment stage, wgpu's default limit and S3D-1's floor: `graphics_device::limits` requests the adapter's `max_storage_buffers_per_shader_stage`, and the change that adds another states the floor it needs in S3D-1 or folds two buffers into one (the probe collection holds its world grid; the decals' indices share the clusters' lists). Lit group 0, the irradiance volume's cell texture and the dynamic GI volume's probe texture among it, and a material bind 19 sampled textures to a fragment stage, and the blended pipelines' group 3 (the screen-space method's result and the surface depth) two more: 21, the floor S3D-1 states (Dawn tiers `maxSampledTexturesPerShaderStage` at 16 or 48, and Metal, DX12 and Vulkan adapters offer 31 or more, so no device sits between 17 and 21: the practical cut stays above WebGPU's default 16); lit group 0 and the world-space trace's own targets, with the surface depth, bind 20 to the trace's fragment stage, where the fog volume counts; the dynamic GI trace binds 13 (lit group 0's eleven that a compute stage sees, the irradiance volume's cells, which its hits sample, among them, the probe texture it samples for the bounce, and its ray list), and the ray-traced shadow trace 14 (lit group 0's eleven and the G-buffer's depth, normals and F0), where the fog volume does not count: `graphics_device::limits` requests the adapter's, and the change that adds another states the floor it needs in S3D-1 or folds two textures into one (one lookup-table texture holds the rectangle lights' fit and the DFG table; one texture holds the dynamic GI volume's irradiance maps, depth maps and probe data). A stage whose passes bind lit group 0 and group 1 passes its own per-ray or per-probe data as textures, not storage buffers, as the dynamic GI stage does. The hardware path's TLAS is bound only by the passes that trace through it, in each tracing stage's group 3 at the one entry `scene_rays_hardware.wgsl` declares and `shading::bind::tlas_entry` builds (FRAGMENT and COMPUTE visible), lent by the renderer from the scene as the ray-hit group is; group 1 is unchanged ([Hardware ray tracing](#designs-that-span-stages)). The opaque stage's lighting pass, in its two-pass form while ray-traced shadows run, binds the ray-traced shadow stage's mask and slot table at its group 3 (`bind_shadow_mask.wgsl`), one sampled texture more, 20 of the 21 floor; the fused pass and every other lit composition bind none ([Ray-traced shadows](#designs-that-span-stages)). |
 | Layout mirroring | A struct shared between Rust and WGSL is declared once in each, side by side in `shading`. A test compares the Rust layout with naga's layout of the composed WGSL. A vertex buffer's layout is derived once from the Rust type it holds, and a test compares it with naga's inputs of the vertex entry points that read it. |
 | Vertex encoding | A game gives vertices as `asset::Vertex`, 88 bytes of `f32`; the ray source keeps each in eight words (32 bytes), packed where its model is prepared ([Prepared geometry](#scene-content)). Everything but the position follows Godot's attribute compression (b130438 `servers/rendering/rendering_server.cpp`, `_surface_set_data` and `_get_axis_angle` under `ARRAY_FLAG_COMPRESS_ATTRIBUTES`; decoded by `_unpack_vertex_attributes`, `oct_to_vec3` and `axis_angle_to_tbn` in `forward_clustered/scene_forward_clustered.glsl`), extended to SGL3D's attributes. Its layout and its encoding have one owner in each language, `shading::packed_vertex` and `packed_vertex.wgsl`, side by side (AR-2): the layout test ties the struct, and a round trip on the GPU against independent expectations ties the encoder to the decoder. A vertex holds its position as three `f32` (words 0–2); its normal and tangent as the axis and angle of the rotation whose matrix rows are (tangent, bitangent, normal), as Godot's `Basis` holds the frame in `_get_axis_angle` and `axis_angle_to_tbn` reconstructs its rows, with bitangent = normal × tangent and the handedness carried by the angle's half: the axis octahedral in two 16-bit unorms (`Vector3::octahedron_encode`; word 3) and the angle a 16-bit unorm, Godot's encoding (low half of word 4); its lightmap chart as a 16-bit index into its mesh's table of distinct chart bounds (high half of word 4), since a chart's bounds repeat on every vertex of it; its UV as two 16-bit unorms across its mesh's UV rectangle (word 5); its colour as RGBA8, the colour sRGB-encoded and the alpha linear, clamped to 0..1 as glTF's `COLOR_0` is (word 6); and its lightmap UV as two 16-bit unorms, a negative one packed as (0, 0), which means unassigned alike (word 7). Each element is a whole number of words, as the geometry buffers' allocator requires ([Raster geometry](#shared-contracts)). The frame is made orthonormal before it is encoded: the tangent is projected onto the normal's plane and normalised, as `pbr_tangent_frame` does at shading; a tangent that vanishes under the projection, or whose handedness is not ±1, is absent (`asset::tangent_frames`), and an absent one takes a unit tangent in the normal's plane, Duff et al.'s orthonormal vector (2017, glam's `any_orthonormal_vector`), with handedness +1, which nothing reads, since anisotropy needs authored tangents; Godot's arbitrary tangent (`rendering_server.cpp`, its no-tangent branch) vanishes for a normal along (1, 1, −1). Godot's glTF importer instead leaves a mesh uncompressed when a tangent is not perpendicular to its normal (`modules/gltf/gltf_document.cpp` 1829–1843), and takes the axis and angle from `Basis::get_axis_angle`, which assumes a rotation and loses precision approaching its singularities at 0° and 180°; SGL3D takes them from the frame's unit quaternion, conditioned alike at every angle, and decodes with `axis_angle_to_tbn`. A normal that is zero or not finite has no frame, and its mesh is refused with the typed error, as a position that is not finite is; so is a mesh with more than 65 536 distinct chart bounds, the error naming the mesh's index. Each mesh keeps its own chart table, as it keeps its own UV rectangle, so a model names any number of charts across its meshes, and a chart two meshes name is stored in each, 16 bytes a mesh: one table a model (#136's) refused Hyperdrive's courses, which name over 100 000 charts across their meshes, one a triangle, and at most 18 432 in a mesh (#182); a model-wide table that stores each chart once, each mesh indexing it from its own start, would save only those 16 bytes a shared chart and would need every chart a mesh names to lie within 65 536 entries of that mesh's start; and a wider index would grow the vertex or take its bits from the angle or the lightmap UV. Positions are SGL3D's departure from Godot, which packs them as 16-bit unorms within each surface's box and splits nothing: they stay `f32`, as Bevy keeps them (9d12036 `crates/bevy_mesh/src/mesh.rs`, `ATTRIBUTE_POSITION` as `Float32x3`), because on Hyperdrive's content a 16-bit grid errs by up to 6.25 cm across its 4.5 km environment and 7.8 mm across its 650 m course, tilting its 2 m tunnel panels by about 0.45° against the 0.05° its reflection test holds (#136's review). The ray source therefore keeps exact positions for intersection and for what the scene builds over them, the casters' vertex buffers keep their `f32` positions, and the hardware path (#23) builds its BLAS from them. Every 16-bit and 8-bit value is rounded to the nearest step, where Godot's casts truncate (`(uint16_t)CLAMP(v * 65535, 0, 65535)`), an RD-2 improvement: truncation errs by up to a whole step, which puts a normal or tangent 0.0146° off and a UV, colour or lightmap UV a full step off. Tolerances, which the round trip holds: a normal or tangent within 0.01°; a UV within its rectangle's extent over 131 070 per axis, so a mesh tiled across many repeats loses precision with its extent; a colour within half an 8-bit step of its sRGB encoding; a lightmap UV within 1/131 070. Every reader decodes through `packed_vertex.wgsl`: the pulled raster passes (G-buffer, lighting, receiver, blended and probe capture faces) and the GPU-built cascades' pulled casters, their positions and a masked material's UV and colour ([GPU draw lists](#designs-that-span-stages)); a masked caster's UV and colour; the deform stage's rest normal and tangent, which need nothing of the mesh, so its dispatch is unchanged; the portable traversal's leaf test, for a cut-out's UV and colour; and hit decoding for world-space reflections and dynamic GI probe rays and their visibility rays. A mesh's record in the ray source carries its UV rectangle, the word where its own chart table starts, its bounds, and its section table, each leaf of its range hierarchy's bounds, mesh-relative first index and triangle count, in the model's range, which the GPU draw lists cull by ([GPU draw lists](#designs-that-span-stages)). Deformed vertices, which the deform stage writes each frame, and morph targets' displacements stay `f32`. |
 | G-buffer | What the opaque stage records for later stages, including the ambient diffuse within lit colour before occlusion. Its depth, normals, roughness, F0, anisotropy and source identity are the opaque surface's for the whole frame; its motion is the surface's ([Surface](#shared-contracts)), since nothing reads the opaque surface's motion once the receivers have drawn theirs. One WGSL module defines its targets and encodings with `encode` and `decode`, the receiver layer's included; a port converts at its adapter. The ambient target (`AMBIENT`, Rgba16Float) carries in its alpha the irradiance volume's sky visibility a(n) at the pixel, 1 where no volume lights it, which completion's occlusion of the sky's specular reads ([Irradiance volume](#designs-that-span-stages)). |
@@ -559,14 +559,18 @@ code; it does not redeclare a struct, binding or function another module owns.
   `TMin` of 0.01 to the light (a directional light to infinity, 117), with
   no receiver exclusion, since the two-pass form writes the source identity
   in the lighting pass, after the trace, and Wicked uses none (its `TMin`
-  and its front-face cull suffice), under a third side policy,
+  alone keeps a ray from its receiver), under a third side policy,
   `SCENE_SIDES_SHADOW`: a single-sided material occludes only when met
   from behind, a double-sided one from either side, which is the maps' rule
   in a ray's terms (a shadow map draws a single-sided caster's front faces
   from the light, so a ray from the receiver meets that caster's back) and
   Wicked's `RAY_FLAG_CULL_FRONT_FACING_TRIANGLES` (227), applied by the
-  shared predicate as every side policy is, so the receiver's own lit face
-  is rejected too. The end of the ray is drawn on the light (Wicked
+  shared predicate as every side policy is: a ray whose origin lies a
+  rounding behind its lit face meets that face from behind, which the
+  policy accepts, so the `TMin` is what keeps it from its own receiver, as
+  in Wicked. A pixel the G-buffer drew nothing lit at (an unlit material)
+  casts no ray and is the sky to the passes that follow, which keeps its
+  zero visibility out of its lit neighbours' upsample. The end of the ray is drawn on the light (Wicked
   104–106, 124–127, 153–159, 186–188): a point on the disc of the light's
   radius (`LightShape::Point` and `Spot` gain `radius`, metres; Wicked's
   `LightComponent::radius`, 0.025) about a point or spot light, a point on
@@ -1043,8 +1047,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   spot's position, a directional light's direction, and for a rectangle a
   point drawn uniformly on its face, as Wicked draws it) through the one
   acceptance predicate over both kinds and both sides
-  (`scene_segment_visible`; on the hardware path a ray query that confirms
-  and terminates at its first accepted candidate),
+  (`scene_segment_visible`; on the hardware path a query whose traversal
+  ends at its first accepted hit, `TERMINATE_ON_FIRST_HIT`),
   as Wicked's `ddgi_raytraceCS` samples one light per hit with one shadow
   ray, and never a shadow map; that visibility takes the light's shadow
   opacity through `shadow_opacity_visibility`, and at or below
@@ -1254,15 +1258,17 @@ code; it does not redeclare a struct, binding or function another module owns.
   version, and Vulkan and DX12 are supported as well, with separate code
   where needed. So the hardware path has one **baseline form**, which every
   native backend runs, and one **candidate form**, a specialisation where
-  the backend lowers the loop: `RayQueryForm` (`Baseline`, `Candidates`,
-  the second variant landing with the candidate specialisation),
+  the backend lowers the loop: `RayQueryForm` (`Baseline`, `Candidates`),
   a typed capability the renderer derives once from the adapter's backend
-  (Metal the baseline; Vulkan and DX12 may run candidates), selects the
+  (`RayQueryForm::of_backend`: Metal the baseline; Vulkan and DX12 may run
+  candidates), selects the
   per-query module a tracing pipeline composes and the geometry flags the
   scene builds with; nothing else branches on it. The form in effect on
   Vulkan and DX12 is the baseline until the candidate form's benefit is
   measured on their hardware (RD-6), a recorded decision kept as a
-  constant beside `RayQueryForm`, never a setting (AR-3). Shared by both
+  constant beside `RayQueryForm` (`shading::LOWERED_FORM`), never a
+  setting (AR-3); the owner has no Vulkan or DX12 hardware that traces
+  rays, so the candidate form has run on no device yet. Shared by both
   forms, in one hardware module, `scene_rays_hardware.wgsl`: the TLAS
   binding, the query's setup from the ray and its side policy, the
   re-trace, the conversion of a committed hit into the one hit, the
@@ -1272,7 +1278,13 @@ code; it does not redeclare a struct, binding or function another module owns.
   compaction, the shared predicate, the settings and reporting, and the
   stage placements. Per form, one function, the query itself, which the
   shared module calls: `scene_rays_query_opaque.wgsl` (baseline) and
-  `scene_rays_query_candidates.wgsl` (candidates).
+  `scene_rays_query_candidates.wgsl` (candidates). It takes the ray, the
+  interval's current start, the kinds, whether it asks for any hit, the
+  predicate's inputs (receiver, side policy, open end) and the ray's
+  budget, and returns a miss, a committed hit for the shared predicate
+  and re-trace (`SCENE_HARDWARE_COMMITTED`), or one it accepted itself
+  (`SCENE_HARDWARE_ACCEPTED`, a confirmed candidate), so no hit is judged
+  twice; the baseline's judges nothing and takes no step.
   *Baseline form.* Every BLAS geometry is `OPAQUE` and a query asks the
   hardware for two things, which every backend enforces, the cull mask
   that selects the kinds (naga's MSL `intersect` takes it, 4123–4128;
@@ -1368,27 +1380,42 @@ code; it does not redeclare a struct, binding or function another module owns.
   material (`wiScene.cpp` 4232–4244). Opaque geometry never yields a
   candidate, so the re-trace and the side rules stay as the baseline has
   them; the candidate form does not take the side rules, since Wicked's
-  per-instance cull exemptions are not available. The portable walk then
-  covers the pending and left-out instances alone. Under this form a
+  per-instance cull exemptions are not available. The loop stops at the
+  budget's cap by returning a miss, never through `rayQueryTerminate`:
+  naga 29.0.4's SPIR-V writer caches its terminate helper under proceed's
+  key (`back/spv/ray/query.rs` 1869–1870), so a proceed it writes after
+  one would call the terminate helper. The portable walk then
+  covers the pending and left-out instances alone. A BLAS is built for
+  its geometry and its geometries' opacity under the form in effect, so
+  under this form a
   material edit that moves a mesh between masked and not re-pends every
   model using it, rebuilt outside the budget before the next traced frame,
-  as Wicked rebuilds (4244). The form reaches a device only through error
-  scopes around its module and pipeline creation, popped on native by
-  polling, sticky per device: a failure (a compile or validation error;
-  not a wrong result or a driver fault) falls the device back to the
-  baseline form, typed in `RayQueryForm`, and `ray_tracing_error` says so.
+  as Wicked rebuilds (4232–4247), and a deforming instance's BLAS is made
+  again with its new flags. The form reaches a device only through error
+  scopes (validation and internal) around its module and pipeline
+  creation, popped on native by polling, a scope still pending counting as
+  a failure, sticky for the renderer's device (`DeviceRayForm`, which
+  `TracePaths::pipeline` consults): a failure (a compile or validation
+  error; not a wrong result or a driver fault) falls the device back to the
+  baseline form, typed in `RayQueryForm`, and `ray_tracing_error` says so
+  while `ray_tracing_in_effect` stays true. The frame in which it fails
+  finishes on the baseline over structures built for candidates, which the
+  baseline traces correctly, since it forces opacity and its committed
+  masked hits take the cut-out test and re-trace; the next frame builds for
+  the baseline.
   *Budget.* One budget per ray, `SCENE_MOST_HARDWARE_STEPS`, counts every
   query the ray starts and every candidate it examines, nested loops
-  sharing it (AR-12); at the cap the query terminates and the ray reports
-  a miss, or a visibility ray unoccluded, as the portable walk does at its
-  visit cap. The constant sits above the most steps a ray took on the
+  sharing it (AR-12); at the cap the query stops by returning and the ray
+  reports a miss, or a visibility ray unoccluded, as the portable walk does
+  at its visit cap. The constant sits above the most steps a ray took on the
   examples and the consumer's content, counted on the GPU by an
   instrumented build of the hardware module, since the CPU oracle's brute
   force does not reach their scale (grazing rays
   through masked foliage, where the candidate form's candidates are every
   non-opaque triangle crossed; shadow rays through nested closed
   occluders), its reason beside it; the portable walk's visits are not
-  that measure.
+  that measure. The candidate form's steps are unmeasured until it runs on
+  Vulkan or DX12 hardware; until then the cap is the baseline's.
   *Structures.* A model that does not deform owns one BLAS, one geometry
   per mesh, over the packed vertices' `f32` positions and the mesh indices
   where they lie in the ray source, whose buffer gains `BLAS_INPUT`
@@ -1503,13 +1530,18 @@ code; it does not redeclare a struct, binding or function another module owns.
   occluders under every side policy and the equal-distance tie, on a
   device with the feature; where the adapter lacks it the test reports
   itself unsupported, never passed. The candidate form runs the same test
-  wherever its hardware exists, which no Mac has (MoltenVK offers no ray
-  query), so it ships with less local validation than the baseline form, a
-  risk recorded here. Per-pass GPU timings of the world-space trace, the
+  wherever its hardware exists (a device whose backend lowers the loop,
+  whatever form the renderer takes there by default), which no Mac has
+  (MoltenVK offers no ray query), so it ships with less local validation
+  than the baseline form, a risk recorded here: locally, naga's SPIR-V and
+  HLSL writers write both forms' tracing programs as wgpu's Vulkan and
+  DX12 backends do (the layout tests), and the scene's structures and the
+  fallback are tested on Metal; DXC, the drivers and the candidate loop's
+  results are not. Per-pass GPU timings of the world-space trace, the
   dynamic GI trace and the ray-traced shadows against the portable path on
   the examples and the consumer's route are the measured record (RD-6).
-  The baseline form and its Mac validation land first; the candidate
-  specialisation is a later, separate change.
+  The baseline form and its Mac validation landed first (#188); the
+  candidate specialisation is a separate change after it.
 - **GPU draw lists and occlusion culling.** The camera's opaque and masked
   surfaces and each directional shadow cascade draw from lists the GPU
   builds, in the form of Bevy's meshlet hardware raster (9d12036

@@ -13,6 +13,24 @@ use crate::view::effective::{
 };
 use crate::view::pipelines::LayerConstants;
 
+/// `effective` for a frame whose rays trace in hardware where `hardware`
+/// and whose slots may hold `lights`: the ray-traced shadow stage runs
+/// where the setting asks for it, the rays trace in hardware and a slot
+/// holds a light, and the opaque stage then takes its two-pass form, the
+/// stage between its parts.
+pub(super) fn traced_shadows(
+    effective: Effective,
+    hardware: bool,
+    lights: &crate::stages::shadows::traced::slots::SlotLights,
+) -> Effective {
+    let ray_traced_shadows = effective.ray_traced_shadows && hardware && !lights.is_empty();
+    Effective {
+        ray_traced_shadows,
+        fused: effective.fused && !ray_traced_shadows,
+        ..effective
+    }
+}
+
 /// The size-affecting choices of `settings`.
 pub(super) fn sizing(settings: &Settings) -> Sizing {
     Sizing {
@@ -104,7 +122,7 @@ pub(super) struct Device {
     /// It has the fused pass's attachments.
     pub fused_supported: bool,
     /// It traces rays in hardware, in this form
-    /// (`scene::rays::acceleration::supported`).
+    /// (`scene::rays::acceleration::supported`, `DeviceRayForm::form`).
     pub ray_queries: Option<RayQueryForm>,
 }
 
@@ -211,7 +229,8 @@ pub(super) fn resolve(
         (true, Some(form)) => HardwareRayTracing::On(form),
     };
     // Ray-traced shadows trace through the hardware path alone (the
-    // architecture's Ray-traced shadows); elsewhere the maps shadow.
+    // architecture's Ray-traced shadows); elsewhere the maps shadow. The
+    // frame narrows it to whether the stage runs (`traced_shadows`).
     let ray_traced_shadows =
         settings.ray_traced_shadows && matches!(hardware_ray_tracing, HardwareRayTracing::On(_));
     Effective {
@@ -233,7 +252,7 @@ pub(super) fn resolve(
         ray_traced_shadows,
         receivers: content.receivers
             && (screen_space.is_some() || taa || fsr2 || motion_blur.is_some()),
-        fused: fused_supported && !disable.fused_opaque && !ray_traced_shadows,
+        fused: fused_supported && !disable.fused_opaque,
         local_lights: !disable.local_lights,
         atmosphere: atmosphere(settings, input),
         fog: fog(

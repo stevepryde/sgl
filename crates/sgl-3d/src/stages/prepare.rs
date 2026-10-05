@@ -103,6 +103,9 @@ pub(crate) struct Prepare {
     /// Why the hardware path did not trace the last frame that asked for
     /// it, a frame with `Settings::hardware_ray_tracing` on.
     ray_tracing_error: Option<&'static str>,
+    /// The last rendered frame asked for the hardware path on a device
+    /// that has it.
+    hardware_requested: bool,
 }
 
 impl Prepare {
@@ -187,6 +190,8 @@ impl Prepare {
         // BVHs then cover what the TLAS does not hold.
         self.ray_tracing = RayTracingStats::default();
         self.hardware_rays = false;
+        self.hardware_requested =
+            matches!(effective.hardware_ray_tracing, HardwareRayTracing::On(_));
         match effective.hardware_ray_tracing {
             HardwareRayTracing::Off | HardwareRayTracing::Unsupported => {
                 scene.free_acceleration_structures();
@@ -194,8 +199,9 @@ impl Prepare {
                     == HardwareRayTracing::Unsupported)
                     .then_some(NO_RAY_QUERIES);
             }
-            HardwareRayTracing::On(_) if traced => {
-                let prepared = scene.prepare_acceleration_structures(device, queue, camera.eye);
+            HardwareRayTracing::On(form) if traced => {
+                let prepared =
+                    scene.prepare_acceleration_structures(device, queue, camera.eye, form);
                 self.hardware_rays = prepared.is_some();
                 self.ray_tracing = prepared.unwrap_or_default();
                 self.ray_tracing_error = prepared.is_none().then_some(NO_MEMORY);
@@ -297,6 +303,12 @@ impl Prepare {
     /// Why the hardware path did not trace the last frame that asked for it.
     pub fn ray_tracing_error(&self) -> Option<&'static str> {
         self.ray_tracing_error
+    }
+
+    /// Whether the last rendered frame asked for the hardware path on a
+    /// device that has it.
+    pub fn hardware_requested(&self) -> bool {
+        self.hardware_requested
     }
 
     /// The views of a probe capture at `center` with `input`'s lights, the

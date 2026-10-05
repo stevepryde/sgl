@@ -35,6 +35,7 @@ macro_rules! context {
                 &$frame.effective,
                 $scene,
                 $renderer.prepare.hardware_rays(),
+                $renderer.ray_form.as_ref(),
             ),
         }
     };
@@ -43,6 +44,8 @@ macro_rules! context {
 /// A frame prepared by `Renderer::prepare_test_frame`.
 pub(crate) struct TestFrame {
     effective: Effective,
+    /// The lights its ray-traced shadow slots may hold.
+    slot_lights: crate::stages::shadows::traced::slots::SlotLights,
     values: FrameValues,
     input: FrameInput,
     history: HistoryFrame,
@@ -87,7 +90,7 @@ impl Renderer {
             super::effective::Device {
                 fsr2_running: false,
                 fused_supported: self.pipelines.fused_supported,
-                ray_queries: self.ray_queries,
+                ray_queries: self.ray_form.as_ref().map(|form| form.form()),
             },
         );
         self.pipelines.specialise(
@@ -126,6 +129,14 @@ impl Renderer {
         self.fog.prepare(device, effective.fog, self.sizes.render);
         self.dynamic_gi.prepare(device, scene, &effective);
         self.cull_test_views(device, queue, scene);
+        let slot_lights = crate::stages::shadows::traced::slots::SlotLights::of(
+            &input,
+            &values.frame,
+            scene,
+            self.shadows.local.ranking(),
+        );
+        let effective =
+            super::effective::traced_shadows(effective, self.prepare.hardware_rays(), &slot_lights);
         self.bindings.refresh(
             device,
             scene,
@@ -137,6 +148,7 @@ impl Renderer {
         );
         TestFrame {
             effective,
+            slot_lights,
             values,
             input,
             history,
@@ -221,7 +233,7 @@ impl Renderer {
         super::frame::encode_opaque(
             &mut self.opaque,
             &mut self.traced_shadows,
-            self.shadows.local.ranking(),
+            &frame.slot_lights,
             &mut ctx,
         );
     }

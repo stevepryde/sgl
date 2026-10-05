@@ -229,8 +229,9 @@ Environment and probe specular always apply. On top of them:
   static surfaces as they stand rather than as their probes recorded them
   and is meant for hardware ray tracing.
 - **Hardware ray tracing** (opt-in): on a device with ray queries and with
-  `Settings::hardware_ray_tracing` on, world-space reflections' rays and
-  the dynamic GI volume's trace the scene's acceleration structures, built
+  `Settings::hardware_ray_tracing` on, world-space reflections' rays, the
+  dynamic GI volume's and ray-traced shadows' trace the scene's
+  acceleration structures, built
   on the frames that trace rays; masked models and what the device cannot
   hold stay on the software BVHs. Skinned and morphed instances are seen by
   those rays only on this path, and not at all where the device cannot

@@ -3,7 +3,7 @@
 //! unsupported, never passed, where the adapter has no ray queries.
 use super::RayTracingStats;
 use crate::asset::{Asset, CpuMesh, Vertex};
-use crate::shading::{SCENE_RAYS_QUERY_OPAQUE, bind, compose};
+use crate::shading::{RayQueryForm, SCENE_RAYS_QUERY_OPAQUE, bind, compose};
 use crate::test_support;
 use crate::{InstanceState, Mobility, Scene};
 use glam::{Mat4, Vec3};
@@ -62,15 +62,21 @@ fn place(
 }
 
 /// Builds `scene`'s acceleration structures for a frame seen from `eye`,
-/// records them, submits and finishes the frame, as a renderer's frame
-/// does, and returns what the frame held.
-fn build(
+/// in the baseline form, records them, submits and finishes the frame, as
+/// a renderer's frame does, and returns what the frame held.
+fn build(gpu: (&wgpu::Device, &wgpu::Queue), scene: &mut Scene, eye: Vec3) -> RayTracingStats {
+    build_in(gpu, scene, eye, RayQueryForm::Baseline)
+}
+
+/// `build` in the query form `form`.
+fn build_in(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     scene: &mut Scene,
     eye: Vec3,
+    form: RayQueryForm,
 ) -> RayTracingStats {
     let stats = scene
-        .prepare_acceleration_structures(device, queue, eye)
+        .prepare_acceleration_structures(device, queue, eye, form)
         .expect("the device holds a TLAS");
     let mut encoder = device.create_command_encoder(&Default::default());
     scene.encode_acceleration_structures(&mut encoder);
@@ -312,6 +318,221 @@ fn what_the_device_cannot_hold_is_left_out_and_counted() {
         .set_material(&queue, small.materials[0], opaque)
         .unwrap();
     assert_eq!(build(gpu, &mut scene, eye), stats);
+    bind_tlas(gpu, &scene);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let error = pollster::block_on(validation.pop());
+    assert!(error.is_none(), "{error:?}");
+}
+
+/// `material`'s values in `scene` with its alpha mode `alpha`.
+fn realpha(
+    queue: &wgpu::Queue,
+    scene: &mut Scene,
+    material: crate::MaterialId,
+    alpha: crate::AlphaMode,
+) {
+    let values = scene.material(material).unwrap();
+    scene
+        .set_material(queue, material, crate::SurfaceMaterial { alpha, ..values })
+        .unwrap();
+}
+
+// The structures in the candidate form, and material edits that move a
+// mesh between masked and not. Plausible defects: a masked model given no
+// BLAS and left on the portable BVHs in the candidate form; after such an
+// edit, a model's BLAS kept with its old geometry flags (a mesh made masked
+// then cuts out only through re-traces of its committed hits, step by step
+// against the ray's budget) or rebuilt under the budget, behind fresh
+// models, a frame or more later; a deforming instance's BLAS kept with its
+// old flags; and, falling back to the baseline form, masked models kept in
+// the TLAS, or opaque models' BLASes built again for nothing. The oracles
+// are wgpu's validation and the architecture's rules over the test's
+// content, counted through `counters`: a build per BLAS made.
+#[test]
+fn the_candidate_form_holds_masked_models_and_rebuilds_them_when_edited() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut scene = Scene::new(&device, &queue);
+    let edited = scene
+        .add_asset(&device, &queue, asset(vec![triangles(Vec3::ZERO, 1)]))
+        .unwrap();
+    let masked = scene
+        .add_asset(
+            &device,
+            &queue,
+            test_support::masked(test_support::cube(), 0.5),
+        )
+        .unwrap()
+        .model;
+    // One skinned triangle, whole on its one joint.
+    let mut skinned = triangles(Vec3::ZERO, 1);
+    skinned.deformation.influences = vec![
+        crate::deformation::Influence {
+            joints: [0; 4],
+            weights: [1., 0., 0., 0.],
+        };
+        3
+    ];
+    let skinned = scene
+        .add_asset(&device, &queue, asset(vec![skinned]))
+        .unwrap();
+    let at = |x: f32, z: f32| Mat4::from_translation(Vec3::new(x, 0., z));
+    place(gpu, &mut scene, edited.model, at(0., -2.), Mobility::Static);
+    place(gpu, &mut scene, masked, at(3., 0.), Mobility::Static);
+    let deforming = place(
+        gpu,
+        &mut scene,
+        skinned.model,
+        at(-3., 0.),
+        Mobility::Moving,
+    );
+    scene
+        .set_instance_deformation(&queue, deforming, &[Mat4::IDENTITY], &[])
+        .unwrap();
+    let eye = Vec3::Z * 5.;
+    let build = |scene: &mut Scene, form| {
+        let before = crate::counters::snapshot();
+        let stats = build_in(gpu, scene, eye, form);
+        let counted = crate::counters::snapshot().since(&before);
+        (stats, [counted.blas_builds, counted.deformed_blas_builds])
+    };
+    let stats = |hardware, portable| RayTracingStats {
+        hardware,
+        portable,
+        left_out: 0,
+    };
+    // The masked model has a BLAS and its instance joins the TLAS.
+    assert_eq!(
+        build(&mut scene, RayQueryForm::Candidates),
+        (stats(3, 0), [2, 1])
+    );
+    assert_eq!(
+        build(&mut scene, RayQueryForm::Candidates),
+        (stats(3, 0), [0, 0])
+    );
+    // Masked now, the edited model's BLAS and the deforming instance's are
+    // built again at once, the model's outside the budget: a fresh model
+    // nearer the eye spends all of it, so a second fresh one waits.
+    let mut vertices = triangles(Vec3::ZERO, 1);
+    let corner = vertices.vertices[0];
+    vertices
+        .vertices
+        .resize(super::blas::MOST_VERTICES_PER_FRAME as usize, corner);
+    let large = scene
+        .add_asset(&device, &queue, asset(vec![vertices]))
+        .unwrap()
+        .model;
+    let small = scene
+        .add_asset(&device, &queue, asset(vec![triangles(Vec3::ZERO, 1)]))
+        .unwrap()
+        .model;
+    place(gpu, &mut scene, large, at(0., 1.), Mobility::Static);
+    place(gpu, &mut scene, small, at(0., -20.), Mobility::Static);
+    let mask = crate::AlphaMode::Mask { cutoff: 0.5 };
+    realpha(&queue, &mut scene, edited.materials[0], mask);
+    realpha(&queue, &mut scene, skinned.materials[0], mask);
+    assert_eq!(
+        build(&mut scene, RayQueryForm::Candidates),
+        (stats(4, 1), [2, 1])
+    );
+    assert_eq!(
+        build(&mut scene, RayQueryForm::Candidates),
+        (stats(5, 0), [1, 0])
+    );
+    // Opaque again, the edited model's BLAS is built again.
+    realpha(
+        &queue,
+        &mut scene,
+        edited.materials[0],
+        crate::AlphaMode::Opaque,
+    );
+    assert_eq!(
+        build(&mut scene, RayQueryForm::Candidates),
+        (stats(5, 0), [1, 0])
+    );
+    realpha(&queue, &mut scene, edited.materials[0], mask);
+    assert_eq!(
+        build(&mut scene, RayQueryForm::Candidates),
+        (stats(5, 0), [1, 0])
+    );
+    // Fallen back to the baseline form, the masked models leave the TLAS
+    // for the portable BVHs, the deforming instance's BLAS is made again
+    // with every geometry opaque, and the opaque models keep theirs.
+    assert_eq!(
+        build(&mut scene, RayQueryForm::Baseline),
+        (stats(3, 2), [0, 1])
+    );
+    assert_eq!(scene.diagnostic_resources().blases, 3);
+    bind_tlas(gpu, &scene);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let error = pollster::block_on(validation.pop());
+    assert!(error.is_none(), "{error:?}");
+}
+
+// A model re-pended for its opacity keeps its geometry, so its BLAS's
+// compaction entry from before must not stand for its new BLAS. Plausible
+// defect: the older entry left in Bevy's queue beside the new BLAS's,
+// never looked at because a frame's compaction budget ran out before it,
+// so both prepare the new BLAS's compaction, which wgpu refuses the second
+// time (`CompactionPreparingAlready`, a validation error), or the older
+// entry outlives the BLAS it was queued for. The oracles are wgpu's
+// validation and the architecture's rule that each built BLAS is compacted
+// once, counted through `counters`, with the device polled after each
+// frame so that a prepared compaction is ready by the next.
+#[test]
+fn a_re_pended_model_is_compacted_once() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut scene = Scene::new(&device, &queue);
+    // A model of the budget's vertices: its compaction spends a frame's
+    // compaction budget.
+    let mut vertices = triangles(Vec3::ZERO, 1);
+    let corner = vertices.vertices[0];
+    vertices
+        .vertices
+        .resize(super::blas::MOST_VERTICES_PER_FRAME as usize, corner);
+    let large = scene
+        .add_asset(&device, &queue, asset(vec![vertices]))
+        .unwrap()
+        .model;
+    place(gpu, &mut scene, large, Mat4::IDENTITY, Mobility::Static);
+    let eye = Vec3::Z * 5.;
+    let frame = |scene: &mut Scene| {
+        let before = crate::counters::snapshot();
+        build_in(gpu, scene, eye, RayQueryForm::Candidates);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let counted = crate::counters::snapshot().since(&before);
+        [counted.blas_builds, counted.blas_compactions]
+    };
+    assert_eq!(frame(&mut scene), [1, 0]);
+    // The large model's compaction is prepared, and the edited model's BLAS
+    // is built and queued behind it.
+    let edited = scene
+        .add_asset(&device, &queue, asset(vec![triangles(Vec3::ZERO, 1)]))
+        .unwrap();
+    let behind = Mat4::from_translation(Vec3::Z * -2.);
+    place(gpu, &mut scene, edited.model, behind, Mobility::Static);
+    assert_eq!(frame(&mut scene), [1, 0]);
+    // Masked now, the edited model is re-pended in a frame whose
+    // compaction budget the large model spends, so its first entry is never
+    // looked at.
+    let mask = crate::AlphaMode::Mask { cutoff: 0.5 };
+    realpha(&queue, &mut scene, edited.materials[0], mask);
+    assert_eq!(frame(&mut scene), [1, 1]);
+    // Its new BLAS is prepared and compacted once.
+    let mut compactions = 0;
+    for _ in 0..4 {
+        let [builds, compacted] = frame(&mut scene);
+        assert_eq!(builds, 0);
+        compactions += compacted;
+    }
+    assert_eq!(compactions, 1);
     bind_tlas(gpu, &scene);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let error = pollster::block_on(validation.pop());

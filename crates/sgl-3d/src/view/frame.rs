@@ -6,6 +6,7 @@ use super::effective::{Effective, HardwareRayTracing};
 use super::history::HistoryFrame;
 use super::pipelines::GeometryPipelines;
 use super::targets::{SharedTargets, Sizes, Surface};
+use super::trace_paths::DeviceRayForm;
 use crate::shading::RayQueryForm;
 use crate::shading::uniforms::FrameValues;
 use crate::timing::GpuTiming;
@@ -39,32 +40,48 @@ pub(crate) struct FrameContext<'a> {
 }
 
 /// The hardware path a frame's rays trace (the architecture's Hardware ray
-/// tracing): the form in effect, whose query module a tracing pipeline
+/// tracing): the device's form, whose query module a tracing pipeline
 /// composes (`shading::ray_trace_root`), and the scene's TLAS, which each
 /// tracing pass binds in its group 3 (`shading::bind::tlas_entry`), lent
 /// from the scene as the ray-hit group is.
 #[derive(Clone, Copy)]
 pub(crate) struct HardwareRays<'a> {
-    pub form: RayQueryForm,
     pub tlas: &'a wgpu::Tlas,
     /// Changes whenever the scene replaces its TLAS.
     pub tlas_generation: u64,
+    /// The form the device's tracing programs take, which falls back from
+    /// candidates to the baseline when a candidate program fails
+    /// (`TracePaths::pipeline`).
+    pub device_form: &'a DeviceRayForm,
 }
 
 impl<'a> HardwareRays<'a> {
-    /// The hardware path of a frame of `scene` under `effective`, whose
-    /// prepare built the scene's acceleration structures for it
-    /// (`prepared`); none where the portable path traces.
-    pub fn of(effective: &Effective, scene: &'a Scene, prepared: bool) -> Option<Self> {
-        let HardwareRayTracing::On(form) = effective.hardware_ray_tracing else {
+    /// The hardware path of a frame of `scene` under `effective` on a device
+    /// whose form is `device_form`, whose prepare built the scene's
+    /// acceleration structures for it (`prepared`); none where the portable
+    /// path traces.
+    pub fn of(
+        effective: &Effective,
+        scene: &'a Scene,
+        prepared: bool,
+        device_form: Option<&'a DeviceRayForm>,
+    ) -> Option<Self> {
+        let HardwareRayTracing::On(_) = effective.hardware_ray_tracing else {
             return None;
         };
         let (tlas, tlas_generation) = scene.acceleration_structures().filter(|_| prepared)?.tlas();
         Some(Self {
-            form,
             tlas,
             tlas_generation,
+            device_form: device_form?,
         })
+    }
+
+    /// The form a tracing pipeline composes the query module of: the
+    /// frame's prepare built the structures for it, or for the candidate
+    /// form it fell back from, which the baseline traces as well.
+    pub fn form(&self) -> RayQueryForm {
+        self.device_form.form()
     }
 }
 

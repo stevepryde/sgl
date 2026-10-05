@@ -23,11 +23,12 @@
 mod denoise;
 pub(crate) mod slots;
 
-use crate::content::identity::LightId;
+use crate::shading::RayQueryForm;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
 use crate::view::frame::{FrameContext, ShadowMask};
-use crate::view::trace_paths::TracePaths;
+use crate::view::trace_paths::{TracePath, TracePaths};
+use std::collections::HashMap;
 
 /// Wicked's `DOWNSAMPLE`: the trace runs at half the render size.
 const DOWNSAMPLE: u32 = 2;
@@ -193,7 +194,8 @@ impl Pass {
 pub(crate) struct TracedShadows {
     /// The trace's programs, with its group 3.
     paths: TracePaths,
-    trace: Option<wgpu::ComputePipeline>,
+    /// The trace's pipeline for each form a frame's rays took.
+    trace: HashMap<((), Option<RayQueryForm>), wgpu::ComputePipeline>,
     temporal: Pass,
     upsample: Pass,
     /// AMD's shadow denoiser over the first four slots.
@@ -267,7 +269,7 @@ impl TracedShadows {
         };
         Self {
             paths: TracePaths::new("ray-traced shadow rays", &TRACE, &entries, [lit, scene]),
-            trace: None,
+            trace: HashMap::new(),
             temporal: Pass::new(device, &TEMPORAL, "traced_shadow_temporal", &[]),
             upsample: Pass::new(device, &UPSAMPLE, "traced_shadow_upsample", &[]),
             denoiser: denoise::Denoiser::new(device),
@@ -294,13 +296,14 @@ impl TracedShadows {
 
     /// Traces, blends and upsamples the shadows of the frame's slots: slot
     /// 0 the directional light with the frame's cascades, the others the
-    /// local lights the atlas placed, `ranked` best first. Returns the mask
-    /// and slot table for the lighting pass; none where the stage does not
-    /// run, a frame whose rays do not trace in hardware.
+    /// local lights the atlas placed, best first (`lights`). Returns the
+    /// mask and slot table for the lighting pass; none where the stage does
+    /// not run (`Effective::ray_traced_shadows`), a frame whose rays do not
+    /// trace in hardware or whose slots hold no light.
     pub fn encode<'s>(
         &'s mut self,
         ctx: &mut FrameContext<'_>,
-        ranked: &[LightId],
+        lights: &slots::SlotLights,
     ) -> Option<ShadowMask<'s>> {
         self.ran = false;
         let hardware = ctx
@@ -322,8 +325,7 @@ impl TracedShadows {
             self.frame = 0;
         }
         self.previous_frame = Some(history.frames);
-        let directional = crate::view::directional_shadow(ctx.input).map(|(index, _)| index);
-        let table = self.slots.assign(directional, ranked);
+        let table = self.slots.assign(lights.directional, &lights.local);
         self.table = table;
         crate::counters::write_buffer(ctx.queue, &self.slot_table, 0, bytemuck::bytes_of(&table));
         let targets = self.targets.as_ref().unwrap();
@@ -364,18 +366,25 @@ impl TracedShadows {
         let previous = 1 - current;
         let shared = ctx.targets;
         let resource = wgpu::BindingResource::TextureView;
-        let trace = self.paths.path(ctx.device, Some(hardware.form));
-        let pipeline = self.trace.get_or_insert_with(|| {
-            ctx.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        // The trace's pipeline for the device's form, made through
+        // `TracePaths::pipeline`, so that a candidate program that fails
+        // falls the device back to the baseline before the group is made.
+        let device = ctx.device;
+        let form = self.paths.pipeline(
+            device,
+            Some(hardware),
+            (&mut self.trace, ()),
+            |TracePath { shader, layout, .. }| {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("ray-traced shadow rays"),
-                    layout: Some(&trace.layout),
-                    module: &trace.shader,
+                    layout: Some(layout),
+                    module: shader,
                     entry_point: Some("traced_shadow_rays"),
                     compilation_options: Default::default(),
                     cache: None,
                 })
-        });
+            },
+        );
         let trace_group = self.paths.group(
             ctx.device,
             Some(hardware),
@@ -399,7 +408,7 @@ impl TracedShadows {
                         .timing
                         .and_then(|t| t.compute_pass("ray-traced shadow rays")),
                 });
-            pass.set_pipeline(pipeline);
+            pass.set_pipeline(&self.trace[&((), form)]);
             pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
             pass.set_bind_group(1, &ctx.scene.scene_group, &[]);
             pass.set_bind_group(3, trace_group, &[]);

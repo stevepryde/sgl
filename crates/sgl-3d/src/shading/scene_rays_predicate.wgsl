@@ -14,7 +14,10 @@
 // caster's front faces from the light, so a ray from the receiver meets
 // that caster's back), as Wicked Engine 2ff1d9e's RT shadows cull them
 // (screenspaceshadowCS.hlsl 227, RAY_FLAG_CULL_FRONT_FACING_TRIANGLES; MIT,
-// src/LICENSE-wicked.txt), so the receiver's own lit face is rejected too.
+// src/LICENSE-wicked.txt). A ray leaving a lit face whose origin lies a
+// rounding behind it meets that face from behind, which this policy
+// accepts: the ray's start past the surface (Wicked's TMin) keeps it from
+// its own receiver, as in Wicked.
 // A double-sided material occludes from either side under every policy.
 const SCENE_SIDES_AS_RASTER:u32=0u;
 const SCENE_SIDES_BOTH:u32=1u;

@@ -25,12 +25,13 @@
 // Wicked samples depth linearly between four; the side policy and
 // cut-out texels are the shared predicate's, where Wicked's query culls
 // front faces and alpha-tests candidates; a pixel the G-buffer drew
-// nothing lit at casts nothing; the draw on the light is a hash of the
-// pixel and the frame (hash.wgsl), where Wicked reads blue noise, a
-// departure the owner judges (RD-5); the tile's bits gather through
-// workgroup atomics into a storage texture, where Wicked ORs them into a
-// buffer; and Wicked's half-resolution normals copy is not written, the
-// denoiser reading the G-buffer's.
+// nothing lit at (an unlit material) casts nothing and is the sky to the
+// passes after, which Wicked, without unlit pixels, traces; the draw on
+// the light is a hash of the pixel and the frame (hash.wgsl), where Wicked
+// reads blue noise, a departure the owner judges (RD-5); the tile's bits
+// gather through workgroup atomics into a storage texture, where Wicked
+// ORs them into a buffer; and Wicked's half-resolution normals copy is not
+// written, the denoiser reading the G-buffer's.
 @group(3) @binding(0) var traced_depth:texture_depth_2d;
 @group(3) @binding(1) var traced_normal:texture_2d<f32>;
 @group(3) @binding(2) var traced_f0:texture_2d<f32>;
@@ -102,7 +103,10 @@ fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  let pixel=traced_full_pixel(q);
  let z=textureLoad(traced_depth,pixel,0);
  var words=vec4(0u);
- if z<=0. {
+ // A pixel the G-buffer drew nothing lit at is no receiver: the lighting
+ // reads none of its slots, and it records the sky's depth, so the
+ // upsample and the denoiser weigh it as a sky texel.
+ if z<=0. || !gbuffer_lit(textureLoad(traced_f0,pixel,0)) {
   textureStore(traced_raw,q,words);
   textureStore(traced_half_depth,q,vec4(TRACED_SKY_DEPTH));
   return words;
@@ -110,18 +114,16 @@ fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  let uv=(vec2<f32>(pixel)+.5)*traced.full.zw;
  let position=traced_position(uv,z);
  textureStore(traced_half_depth,q,vec4(traced_linear_depth(position)));
- if gbuffer_lit(textureLoad(traced_f0,pixel,0)) {
-  let normals=textureLoad(traced_normal,pixel,0);
-  let normal=gbuffer_base_normal(normals);
-  let geometry_normal=gbuffer_coat_normal(normals);
-  // One draw on every light a pixel and frame, where Wicked reads its blue
-  // noise.
-  let random=hash33_unit(vec3(q,traced.seed)).xy;
-  for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
-   let key=shadow_mask_slot_key(slot);
-   if key!=SHADOW_MASK_EMPTY && traced_visible(key,position,normal,geometry_normal,random) {
-    words=traced_store(words,slot,1.);
-   }
+ let normals=textureLoad(traced_normal,pixel,0);
+ let normal=gbuffer_base_normal(normals);
+ let geometry_normal=gbuffer_coat_normal(normals);
+ // One draw on every light a pixel and frame, where Wicked reads its blue
+ // noise.
+ let random=hash33_unit(vec3(q,traced.seed)).xy;
+ for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
+  let key=shadow_mask_slot_key(slot);
+  if key!=SHADOW_MASK_EMPTY && traced_visible(key,position,normal,geometry_normal,random) {
+   words=traced_store(words,slot,1.);
   }
  }
  textureStore(traced_raw,q,words);
