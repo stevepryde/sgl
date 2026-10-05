@@ -5,10 +5,10 @@
 //! (the architecture's Dynamic diffuse GI): every frame within a spacing of
 //! the camera, every eighth at 128 spacings, with an eighth of the tier's
 //! most rays there.
-use super::{
-    ALLOCATE, Allocation, Convergence, DynamicGi, STRIDES, VolumeUniform, budget, dispatch,
-    frustum, rotation,
-};
+use super::DynamicGi;
+use super::buffers::{Allocation, Convergence, STRIDES, VolumeUniform, budget, dispatch};
+use super::frame::{frustum, rotation};
+use super::pipelines::ALLOCATE;
 use crate::renderer::Renderer;
 use crate::settings::{DynamicGiQuality, Settings};
 use crate::shading::dynamic_gi as layout;
@@ -135,11 +135,11 @@ fn allocate(
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_bind_group(0, &group, &[]);
-                pass.set_pipeline(&stage.rank);
+                pass.set_pipeline(&stage.pipelines.rank);
                 pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
-                pass.set_pipeline(&stage.threshold);
+                pass.set_pipeline(&stage.pipelines.threshold);
                 pass.dispatch_workgroups(1, 1, 1);
-                pass.set_pipeline(&stage.allocate);
+                pass.set_pipeline(&stage.pipelines.allocate);
                 let [x, y] = dispatch(count);
                 pass.dispatch_workgroups(x, y, 1);
             }

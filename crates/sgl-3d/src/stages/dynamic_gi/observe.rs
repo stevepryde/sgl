@@ -8,7 +8,8 @@
 //! scene, frame sequence and device. Each report carries its frame's number
 //! and how many observed frames were skipped before it, while readbacks
 //! were full.
-use super::{ALLOCATION_TRACED, Allocation, Convergence, DynamicGiChanges, volume};
+use super::buffers::{ALLOCATION_TRACED, Allocation, CONVERGENCE_BYTES, Convergence};
+use super::{DynamicGiChanges, volume};
 use crate::diagnostics::DynamicGiReport;
 use crate::shading::RayQueryForm;
 use crate::view::frame::FrameContext;
@@ -21,7 +22,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 pub(crate) static OBSERVE: crate::shading::Module = crate::shading::Module {
     name: "dynamic_gi_observe",
     source: include_str!("observe.wgsl"),
-    deps: &[&super::COMMON],
+    deps: &[&super::pipelines::COMMON],
 };
 
 /// The probes' bins of rays (`DDGI_OBSERVED_RAY_BINS`).
@@ -49,7 +50,6 @@ const OBSERVATION_BYTES: u64 = std::mem::size_of::<Observation>() as u64;
 /// The allocation's counts the report takes: up to and including the
 /// probes not yet blended.
 const ALLOCATION_COUNTS: u64 = std::mem::offset_of!(Allocation, bins) as u64;
-const CONVERGENCE_BYTES: u64 = std::mem::size_of::<Convergence>() as u64;
 const READBACK_BYTES: u64 = OBSERVATION_BYTES + ALLOCATION_COUNTS + CONVERGENCE_BYTES;
 
 /// Readbacks in flight at most; an observed frame past them is skipped,

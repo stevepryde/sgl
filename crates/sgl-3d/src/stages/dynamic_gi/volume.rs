@@ -1,6 +1,7 @@
 //! The resources of one dynamic GI volume's probes and the layouts of the
 //! groups that bind them.
-use super::{ALLOCATION_BYTES, CONVERGENCE_BYTES, Key};
+use super::Key;
+use super::buffers::{ALLOCATION_BYTES, CONVERGENCE_BYTES};
 use crate::scene::dynamic_gi::InstalledVolume;
 use crate::shading::dynamic_gi as layout;
 
@@ -288,7 +289,7 @@ impl Volume {
         let list = texture(
             device,
             "dynamic GI ray list",
-            layout::ray_texture_size(slots.min(u64::from(super::budget(max_rays)))),
+            layout::ray_texture_size(slots.min(u64::from(super::buffers::budget(max_rays)))),
             wgpu::TextureFormat::Rg32Uint,
         );
         let results = texture(

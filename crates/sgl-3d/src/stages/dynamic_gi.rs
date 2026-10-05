@@ -5,8 +5,9 @@
 //! from its irradiance estimator, traced with each hit shaded as the
 //! probe-hit receiver kind, then blended into its irradiance and depth
 //! maps, the probe moving away from surfaces it nears.
-//! The shaders are in `dynamic_gi/`; the probe texture's layout and the
-//! sample are `shading::dynamic_gi`'s.
+//! The shaders are in `dynamic_gi/`, with their pipelines in `pipelines`
+//! and the buffers they share in `buffers`; the probe texture's layout and
+//! the sample are `shading::dynamic_gi`'s.
 //!
 //! Placement: first after prepare, as Wicked updates DDGI in its scene
 //! update before any camera pass (wiRenderPath3D.cpp 905–940): its hits take
@@ -35,176 +36,34 @@
 //! frame is on the GPU; the key and the placement are committed at
 //! `finish_frame`, so an abandoned frame leaves both as they were.
 use crate::Scene;
-use crate::content::dynamic_gi::DynamicGiVolume;
 use crate::scene::dynamic_gi::{InstalledVolume, ProbePlacement};
-use crate::shading::RayQueryForm;
-use crate::shading::{self, dynamic_gi as layout};
+use crate::shading::dynamic_gi as layout;
 use crate::view::effective::Effective;
-use crate::view::frame::{FrameContext, HardwareRays};
+use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
-use crate::view::trace_paths::{TracePath, TracePaths};
-use glam::{I64Vec3, IVec3, Mat3, Mat4, Vec3, Vec4};
+use buffers::{
+    ALLOCATION_BLEND_GROUPS, ALLOCATION_RAYS, ALLOCATION_TRACED, BoundsUniform, CONVERGENCE_SUMS,
+    MOST_MOVING_BOUNDS, UNIFORM_RAYS, UNIFORM_TRACED, VolumeUniform, budget, dispatch,
+};
+use frame::{frustum, moving_bounds, rotation};
+use glam::{I64Vec3, IVec3};
 #[cfg(feature = "diagnostics")]
 pub use inputs::DynamicGiChanges;
 use inputs::Inputs;
-use std::collections::HashMap;
+use pipelines::Pipelines;
 use volume::{Layouts, Volume, texture};
 
+mod buffers;
+mod frame;
 mod inputs;
 #[cfg(feature = "diagnostics")]
 pub(crate) mod observe;
+pub(crate) mod pipelines;
 mod volume;
 
-/// What the stage's passes share.
-pub(crate) static COMMON: shading::Module = shading::Module {
-    name: "dynamic_gi_common",
-    source: include_str!("dynamic_gi/common.wgsl"),
-    deps: &[&shading::DYNAMIC_GI],
-};
-/// The ray allocation and the trace's indirect dispatch, at the stage's own
-/// group 0.
-pub(crate) static ALLOCATE: shading::Module = shading::Module {
-    name: "dynamic_gi_allocate",
-    source: include_str!("dynamic_gi/allocate.wgsl"),
-    deps: &[&COMMON],
-};
-/// The trace: the volume's lit group 0, the scene's group 1 and the stage's
-/// own group 3.
-pub(crate) static TRACE: shading::Module = shading::Module {
-    name: "dynamic_gi_trace",
-    source: include_str!("dynamic_gi/trace.wgsl"),
-    deps: &[
-        &shading::BIND_LIT,
-        &shading::SURFACE_RAY,
-        &shading::SHADOW_MASK_NONE,
-        &COMMON,
-    ],
-};
-/// The irradiance and depth blends, at the stage's own group 0.
-pub(crate) static UPDATE: shading::Module = shading::Module {
-    name: "dynamic_gi_update",
-    source: include_str!("dynamic_gi/update.wgsl"),
-    deps: &[&COMMON],
-};
-
-/// Workgroups to a row of a two-dimensional dispatch (`DDGI_GROUP_ROW`).
-const GROUP_ROW: u32 = 32768;
 /// The longest distance a ray's depth counts, in spacings along the
 /// volume's longest: Wicked's max_distance (wiScene.cpp 1037).
 const MAX_DISTANCE_SPACINGS: f32 = 1.5;
-
-/// `DdgiVolume` in common.wgsl.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct VolumeUniform {
-    origin: [f32; 3],
-    max_distance: f32,
-    spacing: [f32; 3],
-    max_rays: u32,
-    probes: [u32; 3],
-    probe_count: u32,
-    rotation: [[f32; 4]; 3],
-    frustum: [[f32; 4]; 6],
-    eye: [f32; 3],
-    frame: u32,
-    rays: u32,
-    budget: u32,
-    traced: u32,
-    padding: u32,
-    scroll: [u32; 3],
-    padding_scroll: u32,
-    scrolled: [i32; 3],
-    moving_count: u32,
-    changed: u32,
-    padding_changed: [u32; 3],
-}
-
-/// `DdgiBounds` in common.wgsl.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct BoundsUniform {
-    min: [f32; 3],
-    padding_min: f32,
-    max: [f32; 3],
-    padding_max: f32,
-}
-/// The most moving instances' bounds a frame takes, the nearest the camera
-/// (`DDGI_MOST_MOVING_BOUNDS`): the cap on the allocation's walk over them
-/// (AR-12), generously above the moving instances a volume's cells hold in
-/// a game's frame.
-const MOST_MOVING_BOUNDS: u32 = 256;
-
-/// The allocation's buffer (`DdgiAllocation` in allocate.wgsl): the
-/// trace's indirect dispatch and ray count, the blends' dispatch and the
-/// count of probes that trace, the starting probes' words and rays, whether
-/// the volume paused, the stride the frame's periods take, the rays
-/// reserved against the budget, the rays the shortened turns may take and
-/// have taken, the blended probes' requests under each stride, and the
-/// starting probes' bins. The trace and the blends read the counts in the
-/// volume's uniform.
-#[repr(C)]
-struct Allocation {
-    groups: [u32; 3],
-    rays: u32,
-    blend_groups: [u32; 3],
-    traced: u32,
-    ramp_bins: u32,
-    ramp_room: u32,
-    ramp_taken: u32,
-    unblended: u32,
-    unblended_rays: u32,
-    paused: u32,
-    stride: u32,
-    reserved: u32,
-    spare: u32,
-    spare_taken: u32,
-    demand: [u32; STRIDES as usize],
-    bins: [u32; RAMP_BINS as usize],
-}
-const ALLOCATION_RAYS: u64 = std::mem::offset_of!(Allocation, rays) as u64;
-const ALLOCATION_BLEND_GROUPS: u64 = std::mem::offset_of!(Allocation, blend_groups) as u64;
-const ALLOCATION_TRACED: u64 = std::mem::offset_of!(Allocation, traced) as u64;
-const ALLOCATION_BYTES: u64 = std::mem::size_of::<Allocation>() as u64;
-
-/// `DdgiConvergence` in common.wgsl: the frame's sums of the active probes'
-/// variability and their longest period, which the allocation and the
-/// blends find and each frame clears, and the windows the settle pass
-/// averages them over.
-#[repr(C)]
-struct Convergence {
-    variability: u32,
-    probes: u32,
-    longest: u32,
-    average: f32,
-    window_sum: f32,
-    window_updates: f32,
-    window_turns: f32,
-    previous: f32,
-    converged: u32,
-}
-const CONVERGENCE_SUMS: u64 = std::mem::offset_of!(Convergence, average) as u64;
-const CONVERGENCE_BYTES: u64 = std::mem::size_of::<Convergence>() as u64;
-/// The starting probes' bins of distance (`RAMP_BINS` in allocate.wgsl).
-const RAMP_BINS: u32 = 1024;
-/// The lengthenings of every period the allocation weighs (`DDGI_STRIDES`).
-const STRIDES: u32 = 7;
-/// The frame's most rays, fixed rays included, in probes at the tier's
-/// most: 32,768 at High, 16,384 at Low. Wicked's surfel GI traces at most
-/// 100,000 a frame (4323a33c `SURFEL_RAY_BUDGET`) on hardware ray tracing;
-/// on SGL3D's portable walk this many cost Hyperdrive's 3,179-probe course
-/// about 3.4 ms a frame in motion on an Apple M5 (#196). A restart starts
-/// as many probes as the budget holds at their starting rays, nearest
-/// first: 128 a frame within a spacing of the camera, at the tier's most
-/// rays, and more farther out, where a probe starts with fewer.
-const BUDGET_PROBES: u32 = 128;
-
-/// The frame's most rays, fixed rays included, at the tier's `max_rays`:
-/// the ray list holds them.
-fn budget(max_rays: u32) -> u32 {
-    max_rays * BUDGET_PROBES
-}
-const UNIFORM_RAYS: u64 = std::mem::offset_of!(VolumeUniform, rays) as u64;
-const UNIFORM_TRACED: u64 = std::mem::offset_of!(VolumeUniform, traced) as u64;
 
 /// What the probes' state is kept for: a scene and the lattice its volume
 /// lies on, which a scroll and a move of the render origin keep.
@@ -228,20 +87,7 @@ impl Key {
 /// state, and a stand-in lit group 0 binds while no volume runs.
 pub(crate) struct DynamicGi {
     layouts: Layouts,
-    rank: wgpu::ComputePipeline,
-    threshold: wgpu::ComputePipeline,
-    allocate: wgpu::ComputePipeline,
-    prepare_trace: wgpu::ComputePipeline,
-    update_irradiance: wgpu::ComputePipeline,
-    update_depth: wgpu::ComputePipeline,
-    settle: wgpu::ComputePipeline,
-    scroll: wgpu::ComputePipeline,
-    /// The trace's programs for each path its rays take.
-    paths: TracePaths,
-    /// The trace's pipelines for each set of lit constants and path, each
-    /// created when a frame first needs it, as the geometry pipelines
-    /// specialise on the scene's rectangle lights and decals.
-    trace: HashMap<(LitConstants, Option<RayQueryForm>), wgpu::ComputePipeline>,
+    pipelines: Pipelines,
     uniform: wgpu::Buffer,
     /// The moving instances' bounds the allocation takes.
     moving_bounds: wgpu::Buffer,
@@ -286,88 +132,8 @@ impl DynamicGi {
         scene: &wgpu::BindGroupLayout,
     ) -> Self {
         let layouts = Layouts::new(device);
-        let module = |label, root| {
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(label),
-                source: wgpu::ShaderSource::Wgsl(shading::compose(&[root]).into()),
-            })
-        };
-        let allocate_shader = module("dynamic GI allocation", &ALLOCATE);
-        let update_shader = module("dynamic GI blend", &UPDATE);
-        let pipeline = |label, layout: &wgpu::BindGroupLayout, shader, entry_point| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(label),
-                bind_group_layouts: &[Some(layout)],
-                immediate_size: 0,
-            });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                module: shader,
-                entry_point: Some(entry_point),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
-        let rank = pipeline(
-            "dynamic GI ramp rank",
-            &layouts.allocate,
-            &allocate_shader,
-            "rank",
-        );
-        let threshold = pipeline(
-            "dynamic GI ramp threshold",
-            &layouts.allocate,
-            &allocate_shader,
-            "threshold",
-        );
-        let allocate = pipeline(
-            "dynamic GI allocation",
-            &layouts.allocate,
-            &allocate_shader,
-            "allocate",
-        );
-        let prepare_trace = pipeline(
-            "dynamic GI dispatch",
-            &layouts.allocate,
-            &allocate_shader,
-            "prepare_trace",
-        );
-        let update_irradiance = pipeline(
-            "dynamic GI irradiance blend",
-            &layouts.update,
-            &update_shader,
-            "update_irradiance",
-        );
-        let update_depth = pipeline(
-            "dynamic GI depth blend",
-            &layouts.update,
-            &update_shader,
-            "update_depth",
-        );
-        let settle = pipeline(
-            "dynamic GI convergence",
-            &layouts.update,
-            &update_shader,
-            "settle",
-        );
-        let scroll = pipeline(
-            "dynamic GI scroll",
-            &layouts.update,
-            &update_shader,
-            "scroll",
-        );
         Self {
-            paths: TracePaths::new("dynamic GI rays", &TRACE, &layouts.trace, [lit, scene]),
-            trace: HashMap::new(),
-            rank,
-            threshold,
-            allocate,
-            prepare_trace,
-            update_irradiance,
-            update_depth,
-            settle,
-            scroll,
+            pipelines: Pipelines::new(device, &layouts, lit, scene),
             uniform: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -496,45 +262,19 @@ impl DynamicGi {
         }
     }
 
-    /// Makes the trace's pipeline compiled with `lit` for the path
-    /// `hardware` takes; returns the path it took (`TracePaths::pipeline`).
-    fn trace_pipeline(
-        &mut self,
-        device: &wgpu::Device,
-        lit: LitConstants,
-        hardware: Option<HardwareRays<'_>>,
-    ) -> Option<RayQueryForm> {
-        self.paths.pipeline(
-            device,
-            hardware,
-            (&mut self.trace, lit),
-            |TracePath { shader, layout, .. }| {
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("dynamic GI rays"),
-                    layout: Some(layout),
-                    module: shader,
-                    entry_point: Some("trace"),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &lit.constants(),
-                        ..Default::default()
-                    },
-                    cache: None,
-                })
-            },
-        )
-    }
-
     /// Allocates, traces and blends the frame's rays.
     pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
         let Some(max_rays) = ctx.effective.dynamic_gi else {
             return;
         };
         let lit = LitConstants::of(ctx.scene);
-        let form = self.trace_pipeline(ctx.device, lit, ctx.hardware_rays);
+        let form = self
+            .pipelines
+            .trace_pipeline(ctx.device, lit, ctx.hardware_rays);
         #[cfg(feature = "diagnostics")]
         let mut observer = observe::Observer::for_frame(
             &mut self.observer,
-            &mut self.paths,
+            &mut self.pipelines.paths,
             (&self.trace_groups, &self.layouts.trace),
             ctx,
             (lit, form),
@@ -588,7 +328,7 @@ impl DynamicGi {
         };
         let bounds = moving_bounds(ctx.scene, &placement, camera.eye);
         let inputs = Inputs::of(ctx, max_rays);
-        let trace_group = self.paths.group(
+        let trace_group = self.pipelines.paths.group(
             ctx.device,
             ctx.hardware_rays,
             &[
@@ -629,17 +369,17 @@ impl DynamicGi {
             });
             if scrolled != IVec3::ZERO {
                 pass.set_bind_group(0, &rays.update, &[]);
-                pass.set_pipeline(&self.scroll);
+                pass.set_pipeline(&self.pipelines.scroll);
                 pass.dispatch_workgroups(uniform.probe_count.div_ceil(64), 1, 1);
             }
             pass.set_bind_group(0, &rays.allocate, &[]);
-            pass.set_pipeline(&self.rank);
+            pass.set_pipeline(&self.pipelines.rank);
             pass.dispatch_workgroups(uniform.probe_count.div_ceil(64), 1, 1);
-            pass.set_pipeline(&self.threshold);
+            pass.set_pipeline(&self.pipelines.threshold);
             pass.dispatch_workgroups(1, 1, 1);
-            pass.set_pipeline(&self.allocate);
+            pass.set_pipeline(&self.pipelines.allocate);
             pass.dispatch_workgroups(probes[0], probes[1], 1);
-            pass.set_pipeline(&self.prepare_trace);
+            pass.set_pipeline(&self.pipelines.prepare_trace);
             pass.dispatch_workgroups(1, 1, 1);
         }
         encoder.copy_buffer_to_buffer(
@@ -661,7 +401,7 @@ impl DynamicGi {
                 label: Some("dynamic GI rays"),
                 timestamp_writes: timing.and_then(|t| t.compute_pass("dynamic GI rays")),
             });
-            pass.set_pipeline(&self.trace[&(lit, form)]);
+            pass.set_pipeline(&self.pipelines.trace[&(lit, form)]);
             #[cfg(feature = "diagnostics")]
             if let Some(observer) = observer.as_deref_mut() {
                 observer.bind_trace(ctx.device, &mut pass, lit, rays);
@@ -677,11 +417,11 @@ impl DynamicGi {
                 timestamp_writes: timing.and_then(|t| t.compute_pass("dynamic GI blend")),
             });
             pass.set_bind_group(0, &rays.update, &[]);
-            pass.set_pipeline(&self.update_irradiance);
+            pass.set_pipeline(&self.pipelines.update_irradiance);
             pass.dispatch_workgroups_indirect(&volume.allocation, ALLOCATION_BLEND_GROUPS);
-            pass.set_pipeline(&self.update_depth);
+            pass.set_pipeline(&self.pipelines.update_depth);
             pass.dispatch_workgroups_indirect(&volume.allocation, ALLOCATION_BLEND_GROUPS);
-            pass.set_pipeline(&self.settle);
+            pass.set_pipeline(&self.pipelines.settle);
             pass.dispatch_workgroups(1, 1, 1);
         }
         #[cfg(feature = "diagnostics")]
@@ -734,7 +474,7 @@ impl DynamicGi {
             _ => return false,
         };
         crate::test_support::read_words(device, queue, &volume.allocation)
-            [std::mem::offset_of!(Allocation, paused) / 4]
+            [std::mem::offset_of!(buffers::Allocation, paused) / 4]
             != 0
     }
 
@@ -765,163 +505,10 @@ impl DynamicGi {
     }
 }
 
-/// The world bounds of `scene`'s drawn moving instances that reach into the
-/// cells of `placement`'s probes, the nearest `eye` first, at most
-/// `MOST_MOVING_BOUNDS`: the probes about them trace as active ones do.
-fn moving_bounds(scene: &Scene, placement: &DynamicGiVolume, eye: Vec3) -> Vec<BoundsUniform> {
-    let extent = [
-        placement.origin - placement.spacing,
-        placement.end() + placement.spacing,
-    ];
-    let mut bounds: Vec<(f32, [Vec3; 2])> = scene
-        .instances
-        .slots
-        .iter()
-        .filter(|(_, instance)| {
-            instance.mobility == crate::Mobility::Moving && instance.state.visible
-        })
-        .map(|(_, instance)| {
-            let model = scene.drawn_model(instance.state.model);
-            crate::scene::static_edits::posed_bounds(instance.bounds(model), instance.state.pose)
-        })
-        .filter(|[min, max]| min.cmple(extent[1]).all() && max.cmpge(extent[0]).all())
-        .map(|[min, max]| ((min + max).distance_squared(eye * 2.), [min, max]))
-        .collect();
-    bounds.sort_by(|a, b| a.0.total_cmp(&b.0));
-    bounds
-        .into_iter()
-        .take(MOST_MOVING_BOUNDS as usize)
-        .map(|(_, [min, max])| BoundsUniform {
-            min: min.to_array(),
-            padding_min: 0.,
-            max: max.to_array(),
-            padding_max: 0.,
-        })
-        .collect()
-}
-
-/// A workgroup per probe of `count`, in rows of `GROUP_ROW`.
-fn dispatch(count: u32) -> [u32; 2] {
-    [count.min(GROUP_ROW), count.div_ceil(GROUP_ROW)]
-}
-
-/// Thomas Wang's hash, as Wicked's RNG seeds through it.
-fn hash(seed: u32) -> u32 {
-    let mut seed = (seed ^ 61) ^ (seed >> 16);
-    seed = seed.wrapping_mul(9);
-    seed ^= seed >> 4;
-    seed = seed.wrapping_mul(0x27d4_eb2d);
-    seed ^ (seed >> 15)
-}
-
-/// Frame `frame`'s rotation of every probe's rays: a random angle about a
-/// random axis, as `wiRenderer::DDGI` draws its `g_xTransform` each frame
-/// (df44c3d wiRenderer.cpp 12520–12528).
-fn rotation(frame: u32) -> Mat3 {
-    let random = |index: u32| hash(frame.wrapping_mul(4).wrapping_add(index)) as f32 / 4294967296.;
-    let angle = random(0) * std::f32::consts::TAU;
-    let axis = Vec3::new(random(1), random(2), random(3)) * 2. - 1.;
-    Mat3::from_axis_angle(axis.try_normalize().unwrap_or(Vec3::Y), angle)
-}
-
-/// The planes of `clip_from_world`'s clip volume, each normalised with the
-/// inside where `dot(xyz, p) + w >= 0`; a plane at infinity, such as
-/// `perspective`'s far plane, takes everything.
-fn frustum(clip_from_world: Mat4) -> [[f32; 4]; 6] {
-    let row = |index| clip_from_world.row(index);
-    [
-        row(3) + row(0),
-        row(3) - row(0),
-        row(3) + row(1),
-        row(3) - row(1),
-        row(2),
-        row(3) - row(2),
-    ]
-    .map(|plane: Vec4| {
-        let length = plane.truncate().length();
-        if length > 1e-12 && length.is_finite() {
-            (plane / length).to_array()
-        } else {
-            [0., 0., 0., 1.]
-        }
-    })
-}
-
 /// The layouts this stage mirrors.
 #[cfg(test)]
 pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
-    use crate::shading::layout_tests::mirror;
-    let mut mirrors = vec![
-        mirror!(
-            "dynamic_gi_trace",
-            "DdgiVolume",
-            VolumeUniform,
-            [
-                origin,
-                max_distance,
-                spacing,
-                max_rays,
-                probes,
-                probe_count,
-                rotation,
-                frustum,
-                eye,
-                frame,
-                rays,
-                budget,
-                traced,
-                scroll,
-                scrolled,
-                moving_count,
-                changed,
-            ]
-        ),
-        mirror!(
-            "dynamic_gi_allocate",
-            "DdgiConvergence",
-            Convergence,
-            [
-                variability,
-                probes,
-                longest,
-                average,
-                window_sum,
-                window_updates,
-                window_turns,
-                previous,
-                converged,
-            ]
-        ),
-        mirror!(
-            "dynamic_gi_allocate",
-            "DdgiBounds",
-            BoundsUniform,
-            [min, max]
-        ),
-        mirror!(
-            "dynamic_gi_allocate",
-            "DdgiAllocation",
-            Allocation,
-            [
-                groups,
-                rays,
-                blend_groups,
-                traced,
-                ramp_bins,
-                ramp_room,
-                ramp_taken,
-                unblended,
-                unblended_rays,
-                paused,
-                stride,
-                reserved,
-                spare,
-                spare_taken,
-                demand,
-                bins,
-            ]
-        ),
-    ];
+    let mut mirrors = buffers::mirrors();
     #[cfg(feature = "diagnostics")]
     mirrors.extend(observe::mirrors());
     mirrors
@@ -930,29 +517,7 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
 /// The constants this stage shares with its shaders.
 #[cfg(test)]
 pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
-    use crate::shading::layout_tests::Constant;
-    let mut constants = vec![
-        Constant::new(
-            "dynamic_gi_trace",
-            "DDGI_GROUP_ROW",
-            naga::Literal::U32(GROUP_ROW),
-        ),
-        Constant::new(
-            "dynamic_gi_allocate",
-            "RAMP_BINS",
-            naga::Literal::U32(RAMP_BINS),
-        ),
-        Constant::new(
-            "dynamic_gi_allocate",
-            "DDGI_STRIDES",
-            naga::Literal::U32(STRIDES),
-        ),
-        Constant::new(
-            "dynamic_gi_allocate",
-            "DDGI_MOST_MOVING_BOUNDS",
-            naga::Literal::U32(MOST_MOVING_BOUNDS),
-        ),
-    ];
+    let mut constants = buffers::constants();
     #[cfg(feature = "diagnostics")]
     constants.extend(observe::constants());
     constants
