@@ -58,7 +58,9 @@
 //!
 //! The context's pipelines are created with it; an error there (for example a
 //! pass the device cannot run) leaves FSR2 unavailable and the caller falls
-//! back to TAA.
+//! back to TAA. So does a dispatch whose job fails, which the backend
+//! reports through `take_job_error`, since `ffxFsr2ContextDispatch` ignores
+//! its jobs' result.
 use crate::settings::Fsr2Quality;
 use sp_fidelity::fsr2::{
     FFX_FSR2_ENABLE_DEPTH_INFINITE, FFX_FSR2_ENABLE_DEPTH_INVERTED,
@@ -283,7 +285,10 @@ impl Fsr2 {
     }
 
     /// Upscales `inputs.color` into `output`. An error leaves the output
-    /// undefined for this frame.
+    /// undefined for this frame. A job that fails, one whose bind group wgpu
+    /// rejects among them, records nothing invalid and stops the jobs after
+    /// it (sp-fidelity-wgpu's SDK-P28), so the frame's encoder stays valid
+    /// and the caller falls back to TAA; the error carries wgpu's message.
     pub fn dispatch(
         &mut self,
         device: &wgpu::Device,
@@ -373,12 +378,15 @@ impl Fsr2 {
         *encoder = backend
             .ffx_take_command_list_wgpu(description.command_list)
             .expect("the FSR2 command list");
+        // `ffxFsr2ContextDispatch` ignores its jobs' result, as AMD's does.
+        let job_error = backend.take_job_error();
         drop(backend);
         let error = validation_error(scope);
-        match (result, error) {
-            (Ok(()), None) => Ok(()),
-            (Err(code), _) => Err(format!("FSR2 dispatch failed ({code:#x})")),
-            (Ok(()), Some(error)) => Err(format!("FSR2 dispatch failed: {error}")),
+        match (result, job_error, error) {
+            (Ok(()), None, None) => Ok(()),
+            (Err(code), _, _) => Err(format!("FSR2 dispatch failed ({code:#x})")),
+            (Ok(()), Some(job), _) => Err(format!("FSR2 dispatch failed: {job}")),
+            (Ok(()), None, Some(error)) => Err(format!("FSR2 dispatch failed: {error}")),
         }
     }
 }

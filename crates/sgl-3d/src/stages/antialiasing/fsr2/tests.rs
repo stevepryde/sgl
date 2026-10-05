@@ -389,3 +389,99 @@ fn fsr2_sharpening_follows_its_settings() {
         "off {unsharpened}, 0.8 {default}, 1 {most}"
     );
 }
+
+// Defects: a failed FSR2 dispatch leaves the backend's work, recorded with a
+// bind group wgpu rejected, in the frame's encoder, so the game's `finish`
+// reports the encoder invalid (a panic under wgpu's default handler) and the
+// frame never runs; or the failure goes unnoticed, since FSR2's dispatch
+// ignores its jobs' result, and the frame presents FSR2's undefined output;
+// instead of completing without FSR2 and TAA taking over. The failure is
+// forced as a backend call fails: FSR2's output is destroyed before its
+// first dispatch, so the pass that writes it cannot view it. Expected, from
+// wgpu's validation and the textures: no validation error reaches the game,
+// the frame's output is no longer the zeroed start (the composite reached
+// it), FSR2 stops with wgpu's reason, which names the destroyed texture by
+// its label, and the next frame runs TAA at the scene size.
+#[test]
+fn a_failed_fsr2_dispatch_completes_the_frame_and_taa_takes_over() {
+    let Some((device, queue)) = test_support::fsr2_device() else {
+        return;
+    };
+    if !device
+        .features()
+        .contains(sp_fidelity_wgpu::required_features())
+    {
+        eprintln!("skipping: the device lacks FSR2's features");
+        return;
+    }
+    let (mut scene, environment) = scene(&device, &queue);
+    let settings = Settings {
+        scene_resolution: settings::SceneResolution::Full,
+        antialiasing: Antialiasing::Fsr2,
+        fsr2_quality: Fsr2Quality::Quality,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::new(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        SIZE,
+        1.,
+        &settings,
+    )
+    .unwrap();
+    assert_eq!(
+        renderer.antialiasing_in_effect(&settings),
+        Antialiasing::Fsr2,
+        "{:?}",
+        renderer.fsr2_error()
+    );
+    assert_ne!(renderer.render_size(), SIZE);
+    renderer.test_fsr2().unwrap().output().texture().destroy();
+    let output =
+        view::targets::target(&device, "FSR2 frame", SIZE, wgpu::TextureFormat::Rgba8Unorm);
+    let mut frame = |renderer: &mut Renderer, index: u32| {
+        let eye = glam::Vec3::new(2.4 + index as f32 * 0.05, 2., 3.3);
+        let mut input = FrameInput::new(Camera {
+            eye,
+            view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
+            projection: perspective(55f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1),
+        });
+        input.camera_cut = index == 0;
+        input.environment = Some(environment);
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        renderer.resize(&device, SIZE, 1., &settings);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        if let Some(error) = pollster::block_on(scope.pop()) {
+            panic!("frame {index}: {error}");
+        }
+    };
+    frame(&mut renderer, 0);
+    assert!(
+        test_support::read(&device, &queue, output.texture(), 4)
+            .chunks(4)
+            .any(|pixel| pixel[..3] != [0; 3]),
+        "the frame left its output black"
+    );
+    assert_eq!(
+        renderer.antialiasing_in_effect(&settings),
+        Antialiasing::Taa
+    );
+    let reason = renderer.fsr2_error().unwrap();
+    assert!(reason.contains("'FSR2 output'"), "{reason}");
+    frame(&mut renderer, 1);
+    assert_eq!(renderer.render_size(), SIZE);
+}

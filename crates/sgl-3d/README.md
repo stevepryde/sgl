@@ -806,7 +806,10 @@ its source. It antialiases like TAA while upscaling:
   which creates the FSR2 context. Where the device lacks the features or the
   context cannot be created, TAA runs at the scene size:
   `Renderer::antialiasing_in_effect(&settings)` reports it and `fsr2_error()`
-  says why. The saved choice is unchanged.
+  says why. A frame whose FSR2 dispatch fails is scaled to the scene size
+  without it, and TAA runs from the next `resize`, with `fsr2_error()`
+  saying why.
+  The saved choice is unchanged.
 - FSR2 needs `perspective`'s infinite reversed-Z projection; with any other
   camera the render-size frame is scaled to the scene size without FSR2.
 
