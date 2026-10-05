@@ -106,7 +106,7 @@ pub(super) struct Device {
     /// It binds the depth pyramid's storage textures.
     pub occlusion_supported: bool,
     /// It traces rays in hardware, in this form
-    /// (`scene::rays::acceleration::supported`).
+    /// (`scene::rays::acceleration::supported`, `DeviceRayForm::form`).
     pub ray_queries: Option<RayQueryForm>,
 }
 

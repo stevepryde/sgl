@@ -263,8 +263,9 @@ Remaining work, in the existing roadmap order:
    structures and world-space reflections' and the dynamic GI volume's rays
    trace them in the baseline form; elsewhere they traverse the software
    BVHs. World-space reflections reach static content too where the game
-   chooses `WorldSpaceReflections::All`. Ray-traced shadows and the
-   candidate form remain. The design is settled in the architecture
+   chooses `WorldSpaceReflections::All`. The candidate form exists for
+   Vulkan and DX12 but is not their default until it is measured on their
+   hardware, which it has not run on yet. Ray-traced shadows remain. The design is settled in the architecture
    ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
    [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
    acceleration structures beside the portable BVHs behind

@@ -54,7 +54,7 @@ pub(super) fn render(
         motion_blur,
         post,
         rendered,
-        ray_queries,
+        ray_form,
         #[cfg(feature = "diagnostics")]
         probe,
         ..
@@ -72,7 +72,7 @@ pub(super) fn render(
             fsr2_running: antialiasing.fsr2_running(),
             fused_supported: pipelines.fused_supported,
             occlusion_supported: cull.occlusion_supported(),
-            ray_queries: *ray_queries,
+            ray_queries: ray_form.as_ref().map(|form| form.form()),
         },
     );
     pipelines.specialise(device, effective.layers, scene);
@@ -180,7 +180,12 @@ pub(super) fn render(
         bindings,
         pipelines,
         history,
-        hardware_rays: HardwareRays::of(&effective, scene, prepare.hardware_rays()),
+        hardware_rays: HardwareRays::of(
+            &effective,
+            scene,
+            prepare.hardware_rays(),
+            ray_form.as_ref(),
+        ),
     };
     // Prepare's GPU steps, before any pass draws scene geometry or traces:
     // the deformations, then the acceleration structures over them, then
