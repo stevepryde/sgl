@@ -24,9 +24,6 @@ use glam::{DVec3, I64Vec3, Vec3};
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Bytes of one texel: four halves.
 const TEXEL_BYTES: u32 = 8;
-/// How far, in cells, a position may lie from the lattice and still name a
-/// place on it, beyond the rounding of its `f32` magnitude.
-const LATTICE_TOLERANCE: f64 = 1e-3;
 /// The cells a scroll moves at once along its axis: a voxel world's chunk.
 const STRIPE: u32 = 16;
 
@@ -211,16 +208,7 @@ impl Placement {
     /// render frame, or `None` where `at` lies off the lattice beyond its
     /// tolerance.
     fn cells_to(&self, at: DVec3, given: Vec3) -> Option<I64Vec3> {
-        let cell_size = self.cell_size.as_dvec3();
-        let cells = (at - self.origin) / cell_size;
-        let nearest = cells.round();
-        let rounding = f64::from(given.abs().max_element() * f32::EPSILON) / cell_size;
-        let tolerance = rounding + LATTICE_TOLERANCE;
-        (cells - nearest)
-            .abs()
-            .cmple(tolerance)
-            .all()
-            .then(|| nearest.as_i64vec3())
+        super::lattice::steps(self.origin, self.cell_size, at, given)
     }
 }
 

@@ -14,7 +14,10 @@
 //! settle, and each pass's median and 95th percentile over the second half
 //! of the frames, where the device has timestamp queries; `--still` parks
 //! the boxes, so the room's light settles and the probes' cost with it.
-//! Printed numbers are diagnostics, not image QA.
+//! `--scroll` walks the camera along the room with a volume half as long
+//! that follows it, installed each frame with its origin moved by whole
+//! spacings, so it scrolls: the probes that stay keep their light, and those
+//! that enter start afresh. Printed numbers are diagnostics, not image QA.
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, DynamicGiVolume, FrameInput, HemisphereLight,
@@ -34,6 +37,7 @@ struct Options {
     probes: [u32; 3],
     timing: bool,
     still: bool,
+    scroll: bool,
 }
 
 impl Options {
@@ -45,6 +49,7 @@ impl Options {
             probes: [8, 5, 8],
             timing: false,
             still: false,
+            scroll: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -72,9 +77,10 @@ impl Options {
                 }
                 "--timing" => options.timing = true,
                 "--still" => options.still = true,
+                "--scroll" => options.scroll = true,
                 "--help" | "-h" => {
                     println!(
-                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing] [--still]"
+                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing] [--still] [--scroll]"
                     );
                     std::process::exit(0);
                 }
@@ -301,12 +307,35 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let counts = Vec3::from_array(options.probes.map(|n| n as f32));
     let room = Vec3::new(2. * HALF, HEIGHT, 2. * HALF);
     let spacing = (room + WALL) / (counts - 1.);
-    let volume = DynamicGiVolume {
-        origin: Vec3::new(-HALF, 0., -HALF) - WALL * 0.5,
-        spacing,
-        probes: options.probes,
+    let lattice = Vec3::new(-HALF, 0., -HALF) - WALL * 0.5;
+    // With `--scroll`, half the probes along x, on the same lattice, centred
+    // on the camera by whole spacings: the game keeps its volume on one
+    // lattice as it moves it, and the scene scrolls it.
+    let mut probes = options.probes;
+    if options.scroll {
+        probes[0] = probes[0] / 2 + 1;
+    }
+    let volume_at = |eye: Vec3| {
+        let mut origin = lattice;
+        if options.scroll {
+            let first = (eye.x - lattice.x) / spacing.x - (probes[0] - 1) as f32 * 0.5;
+            origin.x += first.round() * spacing.x;
+        }
+        DynamicGiVolume {
+            origin,
+            spacing,
+            probes,
+        }
     };
-    scene.set_dynamic_gi_volume(&device, Some(volume))?;
+    let eye_at = |frame_index: u32| {
+        let walk = if options.scroll {
+            2.4 * (frame_index as f32 / 60. * 0.5).sin()
+        } else {
+            0.
+        };
+        Vec3::new(0.6 + walk, 1.7, 3.6)
+    };
+    scene.set_dynamic_gi_volume(&device, Some(volume_at(eye_at(0))))?;
     let environment = scene.add_environment(&device, &queue, &sky())?;
     let output = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("dynamic GI output"),
@@ -328,14 +357,13 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         ..Settings::default()
     };
     let mut renderer = Renderer::new(&device, &queue, output.format(), size, 1., &settings)?;
-    let eye = Vec3::new(0.6, 1.7, 3.6);
-    let view = camera::rh::view::look_at_mat4(eye, Vec3::new(-0.4, 1.3, -4.), Vec3::Y);
     let projection = sgl_3d::perspective(65f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1);
-    let mut frame = FrameInput::new(Camera {
-        view,
+    let camera_at = |eye: Vec3| Camera {
+        view: camera::rh::view::look_at_mat4(eye, eye + Vec3::new(-1., -0.4, -7.6), Vec3::Y),
         projection,
         eye,
-    });
+    };
+    let mut frame = FrameInput::new(camera_at(eye_at(0)));
     frame.environment = Some(environment);
     // The sun shines in through the window, onto the floor and the green
     // wall.
@@ -373,6 +401,11 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 -1. + 1.6 * angle.sin(),
             )) * Mat4::from_rotation_y(angle);
             scene.set_instance(&queue, *instance, *state)?;
+        }
+        if options.scroll {
+            let eye = eye_at(frame_index);
+            frame.camera = camera_at(eye);
+            scene.set_dynamic_gi_volume(&device, Some(volume_at(eye)))?;
         }
         frame.elapsed_seconds = f64::from(frame_index) / 60.;
         frame.camera_cut = frame_index == 0;
@@ -426,9 +459,9 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         size[0],
         size[1],
         options.quality,
-        options.probes[0],
-        options.probes[1],
-        options.probes[2],
+        probes[0],
+        probes[1],
+        probes[2],
         options.output.display()
     );
     Ok(())

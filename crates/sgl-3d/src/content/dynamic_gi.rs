@@ -19,7 +19,8 @@ use glam::Vec3;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DynamicGiVolume {
     /// The first probe's position: the lattice's corner at its least x, y
-    /// and z.
+    /// and z. Moved by whole spacings from the installed volume's, it
+    /// scrolls that volume (`Scene::set_dynamic_gi_volume`).
     pub origin: Vec3,
     /// The distance between neighbouring probes along each axis, positive.
     pub spacing: Vec3,

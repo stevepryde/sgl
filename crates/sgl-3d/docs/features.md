@@ -180,7 +180,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   by rays where the lights cast shadows, on static surfaces without a bake
   and on moving instances in place of their ambient cubes and the frame's
   ambient, fading out over one spacing past the volume. A new placement
-  starts its probes over a few frames, nearest the camera first.
+  starts its probes over a few frames, nearest the camera first; one moved
+  by whole spacings scrolls, keeping the probes that stay.
   `Settings::dynamic_gi` sets its rays.
   [Dynamic GI](../README.md#dynamic-diffuse-gi).
 - **Baked specular probes**: parallax-corrected reflection cubes with blended

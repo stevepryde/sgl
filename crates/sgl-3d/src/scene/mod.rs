@@ -13,6 +13,7 @@ pub(crate) mod error;
 pub(crate) mod geometry;
 pub(crate) mod instances;
 pub(crate) mod irradiance_volume;
+mod lattice;
 pub(crate) mod lights;
 pub(crate) mod lod;
 pub(crate) mod lookup_tables;

@@ -1,6 +1,7 @@
 //! The resources of one dynamic GI volume's probes and the layouts of the
 //! groups that bind them.
 use super::{ALLOCATION_BYTES, Key};
+use crate::scene::dynamic_gi::InstalledVolume;
 use crate::shading::dynamic_gi as layout;
 
 /// The bind group layouts of the stage's own groups.
@@ -104,6 +105,8 @@ impl Layouts {
 /// binds, the blends' history, and this frame's rays.
 pub(super) struct Volume {
     pub key: Key,
+    /// The placement the last frame that ran the probes gave them.
+    pub installed: InstalledVolume,
     /// The most rays a probe traces, which the rays' textures hold.
     pub max_rays: u32,
     pub probes: wgpu::TextureView,
@@ -196,16 +199,16 @@ impl Volume {
         device: &wgpu::Device,
         layouts: &Layouts,
         uniform: &wgpu::Buffer,
-        key: Key,
+        (key, installed): (Key, InstalledVolume),
         max_rays: u32,
     ) -> Self {
-        let count = probe_count(key.volume.probes);
+        let count = probe_count(installed.probes);
         let irradiance_texels = u64::from(layout::COLOR_RESOLUTION * layout::COLOR_RESOLUTION);
         let depth_texels = u64::from(layout::DEPTH_RESOLUTION * layout::DEPTH_RESOLUTION);
         let probes = texture(
             device,
             "dynamic GI probes",
-            layout::texture_size(key.volume.probes),
+            layout::texture_size(installed.probes),
             layout::FORMAT,
         );
         let variance = storage_buffer(
@@ -232,6 +235,7 @@ impl Volume {
         );
         let mut volume = Self {
             key,
+            installed,
             max_rays,
             probes,
             variance,
@@ -255,7 +259,7 @@ impl Volume {
         uniform: &wgpu::Buffer,
         max_rays: u32,
     ) -> Rays {
-        let size = layout::ray_texture_size(probe_count(self.key.volume.probes), max_rays);
+        let size = layout::ray_texture_size(probe_count(self.installed.probes), max_rays);
         let list = texture(
             device,
             "dynamic GI ray list",

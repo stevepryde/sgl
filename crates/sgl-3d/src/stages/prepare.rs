@@ -19,7 +19,7 @@
 //! filter), atmosphere, baked lighting, culling, world-space reflections and
 //! dynamic GI.
 //! Timing groups: none.
-use crate::content::dynamic_gi::DynamicGiVolume;
+use crate::scene::dynamic_gi::ProbePlacement;
 use crate::shading::uniforms::{FrameValues, ViewUniform};
 use crate::view::clusters::{BoxVolume, CAMERA_CLUSTERS, Clusters, ViewVolume};
 use crate::view::draw_list::{DrawInstances, DrawList};
@@ -127,7 +127,7 @@ impl Prepare {
             scene.origin(),
         );
         let volume = scene
-            .dynamic_gi_volume()
+            .dynamic_gi_placement()
             .filter(|_| effective.dynamic_gi.is_some());
         let frame = frame_uniform(
             input,
@@ -193,8 +193,8 @@ impl Prepare {
             // The probe rays' hits shade with the lights whose range reaches
             // the volume's extent and the decals that reach it.
             let extent = BoxVolume {
-                min: volume.origin,
-                max: volume.end(),
+                min: volume.volume.origin,
+                max: volume.volume.end(),
             };
             views.volume_lists.list(
                 device,
@@ -254,7 +254,7 @@ impl Prepare {
         local_lights: bool,
         center: Vec3,
         cascade_size: u32,
-        dynamic_gi: Option<&DynamicGiVolume>,
+        dynamic_gi: Option<&ProbePlacement>,
     ) -> CaptureViews {
         let shadow = FrameShadow::capture(input, center, cascade_size, scene.origin());
         let frame = frame_uniform(

@@ -114,7 +114,8 @@ pub(crate) struct FrameUniform {
     pub animation_phase: f32,
     pub lightmap_chart: [f32; 4],
     /// With `FRAME_DYNAMIC_GI`, the scene's dynamic GI volume: its first
-    /// probe's position, its probes' spacing and their count on each axis.
+    /// probe's position, its probes' spacing and their count on each axis,
+    /// and its scroll, where they are stored.
     pub dynamic_gi_origin: [f32; 3],
     /// WGSL aligns each `vec3` to 16 bytes.
     pub padding_origin: f32,
@@ -122,6 +123,8 @@ pub(crate) struct FrameUniform {
     pub padding_spacing: f32,
     pub dynamic_gi_probes: [u32; 3],
     pub padding_probes: u32,
+    pub dynamic_gi_scroll: [u32; 3],
+    pub padding_scroll: u32,
     /// With `FRAME_IRRADIANCE_VOLUME`, the scene's irradiance volume: its
     /// first cell's least corner, its cells' size and their count on each
     /// axis.
