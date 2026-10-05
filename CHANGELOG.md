@@ -35,6 +35,9 @@ full API details.
     0.52–0.53), its headroom scale 1.90–1.94 → 1.29–1.33 ms (before #190:
     1.33–1.36).
   - `Renderer::diagnostic_draws` counts two draws a set for each cascade.
+  - Each cascade's cluster list holds the sets' regions twice, once for
+    each kind of draw: 110 KB instead of 55 KB on the `streaming` walk,
+    1 MB instead of 514 KB at its headroom scale.
   - A positions slab is now also bound as storage, so it stays within the
     device's `max_storage_buffer_binding_size`. The scene source, which
     holds each vertex in 32 bytes, already refuses content past that size
