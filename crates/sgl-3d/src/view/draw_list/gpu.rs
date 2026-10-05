@@ -31,7 +31,7 @@ use crate::shading::culling::{
 use crate::shading::vertex::{DRAW_INSTANCE_SLOT, DrawInstance};
 use crate::view::View;
 use crate::view::culling::Frustum;
-use crate::view::pipelines::{GeometryPass, GeometryPipelines, Variant};
+use crate::view::pipelines::{Alpha, GeometryPass, GeometryPipelines, Variant};
 use crate::view::population::camera_variant;
 use glam::{DMat4, Mat4};
 use std::ops::Range;
@@ -110,7 +110,8 @@ fn grown(
     }
     // Rounded up to a power of two, but never past what the device creates
     // and, for a storage buffer, binds whole: the scene refuses content
-    // past those, so `size` itself fits.
+    // past those, a cascade's cluster list, which holds every region twice,
+    // counted (`Candidates::most_regions`), so `size` itself fits.
     let limits = device.limits();
     let mut most = limits.max_buffer_size;
     if usage.contains(wgpu::BufferUsages::STORAGE) {
@@ -374,10 +375,19 @@ impl GpuList {
     }
 
     /// The draws `draw` issues: one per set it draws and phase it culls,
-    /// and one more per set where it pairs.
+    /// and one more per opaque set where it pairs.
     #[cfg(any(test, feature = "diagnostics"))]
     pub fn draws(&self) -> usize {
-        self.drawn.len() * (self.phases().len() + usize::from(self.paired))
+        self.drawn.len() * self.phases().len() + if self.paired { self.paired_sets() } else { 0 }
+    }
+
+    /// The sets it draws whose paired sections it draws indexed: the
+    /// opaque ones (`SET_PAIRS`).
+    fn paired_sets(&self) -> usize {
+        self.drawn
+            .iter()
+            .filter(|set| set.variant.alpha == Alpha::Opaque)
+            .count()
     }
 
     /// Issues every phase's draws in `pass`, whose group 0 the caller
@@ -414,9 +424,10 @@ impl GpuList {
     /// commands, whose instances are the sections in the set's region of
     /// that phase's cluster list, with its pipeline and material and, in a
     /// pass whose casters pull from it, its positions slab's group 3; then,
-    /// where the view pairs and the early phase draws, one indexed indirect
-    /// draw of its paired command over `PAIRED_INDICES`, whose instances
-    /// are the sections in its paired region, with its paired pipeline.
+    /// where the view pairs and the early phase draws, an opaque set's one
+    /// indexed indirect draw of its paired command over `PAIRED_INDICES`,
+    /// whose instances are the sections in its paired region, with its
+    /// paired pipeline.
     fn issue(
         &self,
         scene: &Scene,
@@ -456,7 +467,7 @@ impl GpuList {
                 pass.set_vertex_buffer(DRAW_INSTANCE_SLOT, regions.slice(region(0)));
                 pass.draw_indirect(&self.draws, first + u64::from(index) * command);
             }
-            if paired {
+            if paired && set.variant.alpha == Alpha::Opaque {
                 pass.set_pipeline(pipelines.get(GeometryPass::PairedShadow, set.variant));
                 binder.forget_pipeline();
                 let index = 2 * self.commands + set.index;
@@ -467,87 +478,8 @@ impl GpuList {
                 pass.draw_indexed_indirect(&self.draws, first + u64::from(index) * command);
             }
         }
-        self.drawn.len() * (phases.len() + usize::from(paired))
+        self.drawn.len() * phases.len() + if paired { self.paired_sets() } else { 0 }
     }
-}
-
-/// What `list`'s cull appended for one kind of command, from its `draws`
-/// and a cluster list's words `regions`, read back: each set's command
-/// `first_command` on, and the instances in its region `at` draw instances
-/// on, in set order.
-#[cfg(all(test, not(target_arch = "wasm32")))]
-fn appended(
-    scene: &Scene,
-    (draws, regions): (&[u32], &[u32]),
-    first_command: u32,
-    at: u32,
-) -> Vec<DrawInstance> {
-    let mut appended = Vec::new();
-    for (index, _, region) in scene.candidates.sets.iter() {
-        let command =
-            (words::<CullStatistics>() + (first_command + index) * words::<DrawCommand>()) as usize;
-        let count: u32 = bytemuck::cast_slice::<u32, DrawCommand>(
-            &draws[command..command + words::<DrawCommand>() as usize],
-        )[0]
-        .instance_count;
-        assert!(
-            count as usize <= region.len(),
-            "a set's draw stays within its region"
-        );
-        let first = (at + region.start) as usize * words::<DrawInstance>() as usize;
-        let entries = &regions[first..first + count as usize * words::<DrawInstance>() as usize];
-        appended.extend_from_slice(bytemuck::cast_slice::<u32, DrawInstance>(entries));
-    }
-    appended
-}
-
-/// What each phase appended to `list`'s sets' regions, read back: the
-/// early phase's draw instances, then the late phase's, each set's in set
-/// order.
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn read_phases(
-    list: &GpuList,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene: &Scene,
-) -> [Vec<DrawInstance>; 2] {
-    let read = |buffer| crate::test_support::read_words(device, queue, buffer);
-    let draws = read(&list.draws);
-    [
-        appended(scene, (&draws, &read(&list.regions)), 0, 0),
-        appended(scene, (&draws, &read(&list.late_regions)), list.commands, 0),
-    ]
-}
-
-/// What the early phase appended to `list`'s sets' regions, read back: its
-/// pulled draw instances, then its paired ones, each set's in set order;
-/// and its statistics.
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn read_early(
-    list: &GpuList,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    scene: &Scene,
-) -> ([Vec<DrawInstance>; 2], CullStatistics) {
-    let read = |buffer| crate::test_support::read_words(device, queue, buffer);
-    let draws = read(&list.draws);
-    let regions = read(&list.regions);
-    let paired = if list.paired {
-        appended(
-            scene,
-            (&draws, &regions),
-            2 * list.commands,
-            list.paired_region,
-        )
-    } else {
-        Vec::new()
-    };
-    (
-        [appended(scene, (&draws, &regions), 0, 0), paired],
-        *bytemuck::from_bytes(bytemuck::cast_slice(
-            &draws[..words::<CullStatistics>() as usize],
-        )),
-    )
 }
 
 /// What the cull stage binds of a GPU-built view.
@@ -617,3 +549,8 @@ pub(crate) fn cascade_cull(view: &View, mask: u32) -> CullView {
         ..bytemuck::Zeroable::zeroed()
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod read;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use read::{read_early, read_phases};

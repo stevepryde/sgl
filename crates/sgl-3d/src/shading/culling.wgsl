@@ -19,8 +19,10 @@ const CULL_MAX_WORKGROUPS:u32=65535u;
 // without alternatives.
 const NO_SET:u32=4294967295u;
 const NO_CHAIN:u32=4294967295u;
-// DrawSet.flags: its material casts the directional shadow.
+// DrawSet.flags: its material casts the directional shadow; it is opaque,
+// so a cascade draws its paired sections indexed.
 const SET_CASTS_DIRECTIONAL_SHADOW:u32=1u;
+const SET_PAIRS:u32=2u;
 // CullView.flags: the camera's population (else a cascade's), the clip
 // volume test, its near plane, the level of detail, per-candidate
 // statistics, and paired sections appended to their sets' paired regions.

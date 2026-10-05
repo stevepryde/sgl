@@ -962,11 +962,13 @@ draw, whatever its instances and their mobility, so recording a view costs
 the same at a hundred instances as at a hundred thousand. A cascade's
 casters read each vertex's position from the 12-byte positions the scene
 keeps for shadow casters, not the 32-byte vertex records the camera pulls,
-and a cascade's set draws a second, indexed draw of its sections whose
-triangles pair as quads do (each even triangle and the next are (a, b, c)
-and (a, c, d), as Blender and quad meshers emit them), so the corners a
-pair shares are shaded once: a depth-only pass is bound by the bytes and
-vertices it fetches. The CPU walks no instance for these views: it builds
+and a cascade's opaque set draws a second, indexed draw of its sections
+whose triangles pair as quads do (each even triangle and the next are
+(a, b, c) and (a, c, d): quads split `[0, 1, 2, 0, 2, 3]` in index order,
+as the examples' meshers and Blender give them), so the corners a pair
+shares are shaded once: a depth-only pass is bound by the bytes and
+vertices it fetches. Other index orders, and masked materials, keep the
+pulled draw. The CPU walks no instance for these views: it builds
 the camera's blended list (culled per instance, sorted back to front), the
 local-light shadow faces and probe captures. Hardware culling preserves
 authored single/double-sided and mirrored materials. Each probe face uses
@@ -2149,7 +2151,7 @@ two with `Counters::since`, and compare versions by totals since lines move),
 draw candidates', sets', level chains' and each GPU-built view's cluster
 list's bytes), `Renderer::diagnostic_draws` (the last frame's camera, blended
 and cascade draws as encoded: a GPU-built view's one per set and phase,
-and a cascade's second per set, its paired sections' indexed draw) and
+and a cascade's second per opaque set, its paired sections' indexed draw) and
 `Renderer::diagnostic_view_times` (the CPU time the camera's and each
 cascade's draw list took to build, preparing and encoding its cull, and to
 record). The `streaming` and

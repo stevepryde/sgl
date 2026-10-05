@@ -108,12 +108,15 @@ impl GeometryBuffers {
     pub fn new(device: &wgpu::Device) -> Self {
         let limits = device.limits();
         let layout = crate::shading::bind::caster_positions(device);
-        let stand_in = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("no caster positions"),
-            size: Elements::Positions.size(),
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
+        let stand_in = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("no caster positions"),
+                size: Elements::Positions.size(),
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            },
+        );
         Self {
             slabs: Vec::new(),
             limit: limits.max_buffer_size,

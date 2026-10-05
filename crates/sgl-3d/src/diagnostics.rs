@@ -23,7 +23,7 @@ pub fn counters() -> Counters {
 /// (`Renderer::diagnostic_draws`): one per instanced draw call of the
 /// CPU-built blended list, and one per set and phase of the GPU-built
 /// lists, an indirect draw of the sections the GPU appended, with a
-/// cascade's second per set, the indexed draw of its sections whose
+/// cascade's second per opaque set, the indexed draw of its sections whose
 /// triangles pair. Local-light shadow faces, probe captures and full-screen
 /// passes are not counted; the local-light shadow atlas's draws are
 /// `LocalShadowStats::draws`.

@@ -122,10 +122,12 @@ pub(crate) struct Candidates {
     pub(crate) sets: Sets,
     chains: Chains,
     /// The most candidate slots and draw instances in regions a device
-    /// binds: a GPU-built view's lists and cluster lists hold them. The
-    /// camera's lists while it culls occlusion, an entry for each slot in
-    /// each of three lists and one for each draw instance in its queue, fit
-    /// within the same binding: at these caps they take at most 0.9 of it.
+    /// binds: a GPU-built view's lists and cluster lists hold them, a
+    /// cascade's cluster list each region twice, its pulled and its paired
+    /// draw instances. The camera's lists while it culls occlusion, an
+    /// entry for each slot in each of three lists and one for each draw
+    /// instance in its queue, fit within the same binding: at these caps
+    /// they take at most 0.9 of it.
     most_slots: u32,
     most_regions: u32,
     /// Each slot's instance's model, which a frame's statistics readback
@@ -156,7 +158,7 @@ impl Candidates {
             sets: Sets::new(),
             chains: Chains::new(),
             most_slots: most(candidate, 0).min(most(entry, std::mem::size_of::<CullListsHeader>())),
-            most_regions: most(std::mem::size_of::<DrawInstance>(), 0),
+            most_regions: most(2 * std::mem::size_of::<DrawInstance>(), 0),
             #[cfg(feature = "diagnostics")]
             models: Default::default(),
         }
@@ -418,6 +420,7 @@ pub(crate) fn look(material: &Material) -> SetLook {
     SetLook {
         group: material.values.visibility_group,
         casts: material.casts_directional_shadows(),
+        opaque: material.values.alpha == crate::AlphaMode::Opaque,
     }
 }
 

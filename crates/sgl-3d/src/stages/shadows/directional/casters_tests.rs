@@ -114,8 +114,9 @@ fn terrain(seed: u32) -> Asset {
 // vertices each, fill two: the first slab grows at the second and third
 // models, and the fourth model's large grid starts the second slab while
 // its smaller ones fit the first's last room. One instance mirrors, so its
-// sets differ. Sections whose triangles pair draw indexed, the rest
-// pulled; the large grid's last section is its lone triangle.
+// sets differ. The opaque sets' sections whose triangles pair draw
+// indexed, the rest pulled, the masked set's all; the large grid's last
+// section is its lone triangle.
 #[test]
 fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
     let Some((device, queue)) = test_support::device() else {

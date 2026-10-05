@@ -703,3 +703,66 @@ fn the_section_cap_holds_exactly_its_triangles() {
     assert!(crate::scene::prepared::fits_sections(65_536 * 128));
     assert!(!crate::scene::prepared::fits_sections(65_536 * 128 + 1));
 }
+
+// Plausible defect: the scene's limit on its sets' regions counting each
+// region once, where a cascade's cluster list holds each twice (pulled and
+// paired), so content the scene accepts makes a cascade's cluster list
+// larger than the device binds, and the frame's cull fails validation. The
+// oracle is the device: on one that binds 1 MiB, instances of a model of
+// eight one-section meshes are added until the scene refuses one, and the
+// camera's and a cascade's lists over all of them must then bind. Each
+// instance takes 480 bytes of a cascade's cluster list (eight sections,
+// half again as much room, twice) against 384 of draw candidates and 256
+// of object records, so the regions are what the scene runs out of.
+#[test]
+fn content_the_scene_accepts_fits_a_cascades_cluster_list() {
+    const BINDING: u64 = 1 << 20;
+    let Some(adapter) = test_support::adapter() else {
+        return;
+    };
+    let mut limits = crate::graphics_device::limits(&adapter);
+    limits.max_storage_buffer_binding_size = BINDING;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: crate::graphics_device::features(&adapter),
+        required_limits: limits,
+        ..Default::default()
+    }))
+    .unwrap();
+    let gpu = (&device, &queue);
+    let mut scene = Scene::new(&device, &queue);
+    let model = scene
+        .add_asset(&device, &queue, asset(vec![square(1.); 8]))
+        .unwrap()
+        .model;
+    let mut placed = 0;
+    loop {
+        let state = InstanceState {
+            model,
+            pose: Mat4::from_translation(Vec3::new(placed as f32 * 0.01, 0., -8.)),
+            visible: true,
+            capture_visible: true,
+        };
+        match scene.add_instance(&device, &queue, state, Mobility::Static) {
+            Ok(_) => placed += 1,
+            Err(crate::SceneError::DeviceLimit) => break,
+            Err(error) => panic!("{error}"),
+        }
+        assert!(placed < 100_000, "the scene refuses content");
+    }
+    assert!(placed > 1000, "{placed} instances");
+    let cascade = camera::rh::proj::directx::orthographic(-60., 60., -60., 60., 60., -60.);
+    let projection = crate::perspective(1., 1., 0.1);
+    let culled = cull(
+        gpu,
+        &mut scene,
+        (camera_view(Mat4::IDENTITY, projection, [0.; 2]), [256, 256]),
+        &[cascade],
+        u32::MAX,
+        true,
+    );
+    assert_eq!(
+        culled.views[1].len(),
+        8 * placed,
+        "the cascade holds every instance's sections"
+    );
+}

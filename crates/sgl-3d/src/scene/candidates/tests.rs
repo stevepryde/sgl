@@ -3,14 +3,14 @@ use super::*;
 use crate::shading::culling::NO_CHAIN;
 use wasm_bindgen_test::wasm_bindgen_test;
 
-/// The most draw instances each view's cluster list binds in these tests.
+/// The most draw instances the sets' regions take in these tests.
 const REGIONS: u32 = 1000;
 
 /// Candidates for a device whose storage bindings hold `REGIONS` draw
-/// instances.
+/// instances twice, as a cascade's cluster list holds the regions.
 fn candidates() -> Candidates {
     Candidates::new(&wgpu::Limits {
-        max_storage_buffer_binding_size: u64::from(REGIONS)
+        max_storage_buffer_binding_size: u64::from(2 * REGIONS)
             * std::mem::size_of::<DrawInstance>() as u64,
         max_buffer_size: u64::MAX,
         ..wgpu::Limits::default()

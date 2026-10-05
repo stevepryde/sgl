@@ -287,10 +287,10 @@ Remaining work, in the existing roadmap order:
    occlusion culling runs behind `Settings::occlusion_culling` (off by
    default), as the architecture designs it
    ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages)).
-   The cascades cost the GPU what the CPU-built indexed draws did
-   ([#192](https://github.com/stevepryde/sgl/issues/192)): their casters
-   read the slabs' 12-byte positions, and sections whose triangles pair
-   draw indexed. The cascades' occlusion culling, a design of its own
+   The cascades' casters read the slabs' 12-byte positions, and opaque
+   sections whose triangles pair as quads draw indexed, so on quad
+   content like the examples' they cost the GPU what the CPU-built
+   indexed draws did ([#192](https://github.com/stevepryde/sgl/issues/192)). The cascades' occlusion culling, a design of its own
    whose pyramids #192 found would cost more than they save on the
    examples' routes, and the consumer's adoption remain.
 

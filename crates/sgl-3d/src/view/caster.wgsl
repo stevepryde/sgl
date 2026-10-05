@@ -150,14 +150,6 @@ fn pulled_masked_caster(drawn:DrawInstance,vertex:u32)->MaskedCaster {
  out.position.z=min(out.position.z,1.0);
  return out;
 }
-@vertex fn shadow_paired_masked_vs(@builtin(vertex_index) slot:u32,drawn:DrawInstance)->MaskedCaster {
- return pulled_masked_caster(drawn,paired_corner(drawn,slot));
-}
-@vertex fn shadow_paired_masked_unclipped_vs(@builtin(vertex_index) slot:u32,drawn:DrawInstance)->MaskedCaster {
- var out=pulled_masked_caster(drawn,paired_corner(drawn,slot));
- out.position.z=min(out.position.z,1.0);
- return out;
-}
 @fragment fn shadow_masked_fs(in:MaskedCaster) {
  material_alpha_discard(material_base_color(in.uv,in.color).a);
 }

@@ -81,9 +81,9 @@ pub(crate) enum GeometryPass {
     /// A GPU-built directional cascade's casters, pulled as the camera's
     /// are, their positions from the positions slab their set binds.
     DirectionalShadow,
-    /// A GPU-built directional cascade's paired casters
-    /// (`shading::culling::CULL_PAIRED`): `DirectionalShadow`'s, drawn
-    /// indexed over `PAIRED_INDICES`, each slot pulling its corner.
+    /// A GPU-built directional cascade's paired casters of opaque materials
+    /// (`shading::culling::CULL_PAIRED`, `SET_PAIRS`): `DirectionalShadow`'s,
+    /// drawn indexed over `PAIRED_INDICES`, each slot pulling its corner.
     PairedShadow,
     /// A probe capture's directional cascades' casters, from a CPU-built
     /// list, indexed from the geometry slabs.
@@ -110,8 +110,12 @@ impl GeometryPass {
         )
     }
 
-    /// Whether this pass draws materials whose alpha mode requires `alpha`.
+    /// Whether this pass draws materials whose alpha mode requires `alpha`:
+    /// `PairedShadow` opaque ones alone.
     fn draws(self, alpha: Alpha) -> bool {
+        if self == Self::PairedShadow {
+            return alpha == Alpha::Opaque;
+        }
         matches!(self, Self::Blended { .. } | Self::Receivers) == (alpha == Alpha::Blend)
     }
 
@@ -121,7 +125,10 @@ impl GeometryPass {
     /// GPU-built cascade's, whose draw instances are sections, nonindexed
     /// or, paired, indexed over a fixed pattern of slots; the CPU-built
     /// lists' shadow casters draw indexed positions (`CasterVertex`).
-    /// Shadow casters take no derivatives, so they may draw indexed.
+    /// Opaque casters take no screen-space derivatives, so a GPU-built cascade draws
+    /// them indexed where their triangles pair; a masked material's casters
+    /// sample its base map with implicit derivatives
+    /// (`material_base_color`), so its GPU-built ones stay pulled.
     ///
     /// No camera or probe pass may draw indexed vertex buffers. On Apple
     /// GPUs (M5, Metal) an indexed geometry pass is not deterministic during
@@ -494,11 +501,6 @@ impl GeometryPipelines {
                 ("shadow_pulled_unclipped_vs", Some("shadow_unclipped_fs"))
             }
             DirectionalShadow => ("shadow_pulled_vs", None),
-            PairedShadow if masked && !self.unclipped_depth => (
-                "shadow_paired_masked_unclipped_vs",
-                Some("shadow_masked_unclipped_fs"),
-            ),
-            PairedShadow if masked => ("shadow_paired_masked_vs", Some("shadow_masked_fs")),
             PairedShadow if !self.unclipped_depth => {
                 ("shadow_paired_unclipped_vs", Some("shadow_unclipped_fs"))
             }

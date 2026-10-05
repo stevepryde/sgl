@@ -39,6 +39,12 @@ pub(crate) const NO_CHAIN: u32 = u32::MAX;
 
 /// `DrawSet::flags`: its material casts the directional shadow.
 pub(crate) const SET_CASTS_DIRECTIONAL_SHADOW: u32 = 1;
+/// `DrawSet::flags`: its material is opaque, so a cascade draws its paired
+/// sections indexed (`CULL_PAIRED`). A masked material's casters sample
+/// its base map with implicit derivatives, which an indexed draw makes
+/// nondeterministic on Apple GPUs (`GeometryPass::pulled`), so they stay
+/// pulled.
+pub(crate) const SET_PAIRS: u32 = 2;
 
 /// `CullView::flags`: the view is the camera, whose population is the
 /// `visible` instances and the materials whose group the mask enables;
@@ -329,6 +335,7 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         ("NO_SET", NO_SET),
         ("NO_CHAIN", NO_CHAIN),
         ("SET_CASTS_DIRECTIONAL_SHADOW", SET_CASTS_DIRECTIONAL_SHADOW),
+        ("SET_PAIRS", SET_PAIRS),
         ("CULL_CAMERA", CULL_CAMERA),
         ("CULL_FRUSTUM", CULL_FRUSTUM),
         ("CULL_NEAR", CULL_NEAR),

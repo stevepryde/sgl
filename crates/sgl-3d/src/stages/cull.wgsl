@@ -175,8 +175,9 @@ fn cull_source_v3(at:u32)->vec3<f32> {
 // on the set's command's instance count, written as a draw instance while
 // the slot is within the region; an append past it subtracts its add back,
 // so the count ends at the region's capacity. Where the view pairs
-// (CULL_PAIRED, a cascade), a section whose triangles pair goes to its set's
-// paired region and command instead, which the view draws indexed. Its
+// (CULL_PAIRED, a cascade), a section whose triangles pair of an opaque set
+// (SET_PAIRS) goes to its set's paired region and command instead, which
+// the view draws indexed. Its
 // first vertex is the candidate's in its positions slab where it draws the
 // candidate's own mesh (a cascade's always, at level 0), where a cascade's
 // caster pulls its positions; the camera's pulled passes read none. The
@@ -186,7 +187,7 @@ fn cull_append(index:u32,candidate:DrawCandidate,mesh:u32,at:u32,flags:u32,late:
  let draw_set=cull_sets[candidate.draw_set];
  let word=cull_source[at+SCENE_SECTION_TRIANGLES];
  let triangles=word&~SCENE_SECTION_PAIRED;
- let paired=(cull_view.flags&CULL_PAIRED)!=0u && (word&SCENE_SECTION_PAIRED)!=0u;
+ let paired=(cull_view.flags&CULL_PAIRED)!=0u && (draw_set.flags&SET_PAIRS)!=0u && (word&SCENE_SECTION_PAIRED)!=0u;
  var first_command=select(0u,cull_view.late_command,late);
  var region=draw_set.region;
  if paired {

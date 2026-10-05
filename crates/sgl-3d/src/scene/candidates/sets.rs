@@ -12,7 +12,7 @@
 use super::mirror::Mirror;
 use crate::content::identity::MaterialId;
 use crate::scene::ranges::Ranges;
-use crate::shading::culling::{DrawSet, SET_CASTS_DIRECTIONAL_SHADOW};
+use crate::shading::culling::{DrawSet, SET_CASTS_DIRECTIONAL_SHADOW, SET_PAIRS};
 use rustc_hash::FxHashMap;
 use std::ops::Range;
 
@@ -32,12 +32,14 @@ pub(crate) struct SetKey {
     pub positions: u32,
 }
 
-/// What a set's record takes of its material: its visibility group and
-/// whether it casts the directional shadow.
+/// What a set's record takes of its material: its visibility group,
+/// whether it casts the directional shadow, and whether it is opaque, so a
+/// cascade may draw its paired sections indexed (`SET_PAIRS`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SetLook {
     pub group: u32,
     pub casts: bool,
+    pub opaque: bool,
 }
 
 /// A live set.
@@ -213,6 +215,6 @@ fn record(set: &Set) -> DrawSet {
             SET_CASTS_DIRECTIONAL_SHADOW
         } else {
             0
-        },
+        } | if set.look.opaque { SET_PAIRS } else { 0 },
     }
 }
