@@ -2,7 +2,10 @@
 //! draw list, in one cache keyed by pass, by what the material and instance
 //! require (face culling, alpha mode and deformed vertices: `variant`), by
 //! the diagnostics layer constants and by whether the scene holds rectangle
-//! lights and decals (`LitConstants`).
+//! lights and decals (`LitConstants`). The lighting pass while ray-traced
+//! shadows run composes the shadow mask's provider (`shading::SHADOW_MASK`)
+//! and binds the mask at its group 3; every other pass composes the
+//! provider that holds no slot (`shading::SHADOW_MASK_NONE`).
 use crate::Scene;
 use crate::shading::{self, gbuffer};
 use crate::view::targets::mask_targets;
@@ -14,7 +17,8 @@ use key::PipelineKey;
 pub(crate) use key::{LayerConstants, LitConstants};
 pub(crate) use variant::{Alpha, Cull, Variant};
 
-/// Scene geometry's camera and probe-capture passes.
+/// Scene geometry's camera and probe-capture passes. A program composes it
+/// with one shadow-mask provider (`geometry_program`).
 pub(crate) static GEOMETRY: shading::Module = shading::Module {
     name: "geometry",
     source: include_str!("geometry.wgsl"),
@@ -31,6 +35,17 @@ pub(crate) static GEOMETRY: shading::Module = shading::Module {
         &shading::FRAME_FOG,
     ],
 };
+/// The geometry program: `GEOMETRY` with the shadow mask's provider where
+/// `shadow_mask`, else with the provider that holds no slot.
+pub(crate) fn geometry_program(shadow_mask: bool) -> String {
+    let provider = if shadow_mask {
+        &shading::SHADOW_MASK
+    } else {
+        &shading::SHADOW_MASK_NONE
+    };
+    shading::compose(&[&GEOMETRY, provider])
+}
+
 /// The directional and local-light shadow casters.
 pub(crate) static CASTER: shading::Module = shading::Module {
     name: "caster",
@@ -56,8 +71,10 @@ pub(crate) enum GeometryPass {
     /// budget leaves it out of `GBuffer`.
     GBufferAnisotropy,
     /// Lit colour, its ambient diffuse, motion and source identity over the
-    /// G-buffer's depth.
-    Lighting,
+    /// G-buffer's depth; with `shadow_mask`, the camera's surfaces take the
+    /// lights the ray-traced shadow mask holds from it, bound at group 3
+    /// (`shading::bind::shadow_mask`).
+    Lighting { shadow_mask: bool },
     /// `GBuffer` and `Lighting` in one pass.
     Fused,
     /// A GPU-built directional cascade's casters, pulled from the scene
@@ -153,7 +170,7 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
         | GeometryPass::LocalShadow
         | GeometryPass::Receivers => (true, Greater),
         GeometryPass::GBuffer | GeometryPass::Fused => (true, GreaterEqual),
-        GeometryPass::GBufferAnisotropy | GeometryPass::Lighting => (false, Equal),
+        GeometryPass::GBufferAnisotropy | GeometryPass::Lighting { .. } => (false, Equal),
         GeometryPass::Blended { .. } => (false, GreaterEqual),
     }
 }
@@ -163,9 +180,14 @@ pub(crate) struct GeometryPipelines {
     lit: wgpu::PipelineLayout,
     /// `lit`'s, then the blended group 3.
     blended: wgpu::PipelineLayout,
+    /// `lit`'s, then the shadow mask's group 3.
+    shadow_masked: wgpu::PipelineLayout,
     /// Group 0 shadow, then scene and material.
     shadow: wgpu::PipelineLayout,
     geometry: wgpu::ShaderModule,
+    /// The geometry program with the shadow mask's provider, made when the
+    /// ray-traced shadows first run.
+    geometry_shadow_masked: Option<wgpu::ShaderModule>,
     caster: wgpu::ShaderModule,
     cache: HashMap<PipelineKey, wgpu::RenderPipeline>,
     /// The diagnostics layers `get` returns pipelines for.
@@ -175,6 +197,9 @@ pub(crate) struct GeometryPipelines {
     /// The content `get` returns pipelines for beyond opaque, rigid
     /// geometry.
     content: Content,
+    /// Whether `get` returns the lighting pipelines that take the shadow
+    /// mask, prepared once ray-traced shadows run.
+    shadow_mask: bool,
     /// Whether `GBuffer` writes anisotropy itself; otherwise
     /// `GBufferAnisotropy` does.
     pub anisotropy_inline: bool,
@@ -204,7 +229,7 @@ fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::TextureForm
             targets
         }
         GBufferAnisotropy => vec![gbuffer::ANISOTROPY],
-        Lighting => vec![
+        Lighting { .. } => vec![
             gbuffer::COLOR,
             gbuffer::AMBIENT,
             gbuffer::MOTION,
@@ -243,10 +268,11 @@ fn attachments_fit(limits: &wgpu::Limits, formats: &[wgpu::TextureFormat]) -> bo
 
 impl GeometryPipelines {
     /// Creates every pipeline the frame and probe captures draw with for
-    /// `layers`.
+    /// `layers`, over group 0's `lit` and `shadow` layouts, the scene's and
+    /// a material's, and the blended and shadow-mask group 3 layouts.
     pub fn new(
         device: &wgpu::Device,
-        [lit, shadow, scene, material, blended]: [&wgpu::BindGroupLayout; 5],
+        [lit, shadow, scene, material, blended, shadow_mask]: [&wgpu::BindGroupLayout; 6],
         layers: LayerConstants,
     ) -> Self {
         let layout = |label, groups: &[&wgpu::BindGroupLayout]| {
@@ -260,11 +286,16 @@ impl GeometryPipelines {
         let mut pipelines = Self {
             lit: layout("lit scene geometry", &[lit, scene, material]),
             blended: layout("blended scene geometry", &[lit, scene, material, blended]),
+            shadow_masked: layout(
+                "shadow-masked scene lighting",
+                &[lit, scene, material, shadow_mask],
+            ),
             shadow: layout("shadow casters", &[shadow, scene, material]),
             geometry: device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("SGL material"),
-                source: wgpu::ShaderSource::Wgsl(shading::compose(&[&GEOMETRY]).into()),
+                source: wgpu::ShaderSource::Wgsl(geometry_program(false).into()),
             }),
+            geometry_shadow_masked: None,
             caster: device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("shadow casters"),
                 source: wgpu::ShaderSource::Wgsl(shading::compose(&[&CASTER]).into()),
@@ -273,6 +304,7 @@ impl GeometryPipelines {
             layers,
             lit_constants: LitConstants::default(),
             content: Content::default(),
+            shadow_mask: false,
             anisotropy_inline: attachments_fit(&limits, &targets(GeometryPass::GBuffer, true)),
             fused_supported: attachments_fit(&limits, &targets(GeometryPass::Fused, true)),
             unclipped_depth: device
@@ -286,15 +318,37 @@ impl GeometryPipelines {
     /// `get` returns pipelines compiled with `layers` for `scene` from now
     /// on: shading rectangle lights and applying decals while it holds one,
     /// and for the alpha modes its materials use and its deforming models,
-    /// created here on first use. Without diagnostics every frame uses
-    /// `ALL`.
-    pub fn specialise(&mut self, device: &wgpu::Device, layers: LayerConstants, scene: &Scene) {
+    /// created here on first use, with the lighting pipelines that take the
+    /// shadow mask once `shadow_mask` (ray-traced shadows run). Without
+    /// diagnostics every frame uses `ALL`.
+    pub fn specialise(
+        &mut self,
+        device: &wgpu::Device,
+        layers: LayerConstants,
+        scene: &Scene,
+        shadow_mask: bool,
+    ) {
         let lit_constants = LitConstants::of(scene);
         let content = Content::of(scene);
-        if (self.layers, self.lit_constants, self.content) != (layers, lit_constants, content) {
+        let shadow_mask = self.shadow_mask || shadow_mask;
+        if (
+            self.layers,
+            self.lit_constants,
+            self.content,
+            self.shadow_mask,
+        ) != (layers, lit_constants, content, shadow_mask)
+        {
             self.layers = layers;
             self.lit_constants = lit_constants;
             self.content = content;
+            self.shadow_mask = shadow_mask;
+            if shadow_mask && self.geometry_shadow_masked.is_none() {
+                self.geometry_shadow_masked =
+                    Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("SGL material with the shadow mask"),
+                        source: wgpu::ShaderSource::Wgsl(geometry_program(true).into()),
+                    }));
+            }
             self.prepare_layers(device);
         }
     }
@@ -308,7 +362,7 @@ impl GeometryPipelines {
         let mut passes = vec![
             GeometryPass::Forward,
             GeometryPass::GBuffer,
-            GeometryPass::Lighting,
+            GeometryPass::Lighting { shadow_mask: false },
             GeometryPass::DirectionalShadow,
             GeometryPass::CaptureShadow,
             GeometryPass::LocalShadow,
@@ -323,6 +377,9 @@ impl GeometryPipelines {
         }
         if self.content.receivers {
             passes.push(GeometryPass::Receivers);
+        }
+        if self.shadow_mask {
+            passes.push(GeometryPass::Lighting { shadow_mask: true });
         }
         let mut alphas = vec![Alpha::Opaque];
         if self.content.mask {
@@ -379,6 +436,13 @@ impl GeometryPipelines {
             }
             Blended { .. } => (&self.geometry, &self.blended, "blended scene geometry"),
             Receivers => (&self.geometry, &self.lit, "blended receivers"),
+            Lighting { shadow_mask: true } => (
+                self.geometry_shadow_masked
+                    .as_ref()
+                    .expect("the shadow-masked program is made with its pipelines"),
+                &self.shadow_masked,
+                "shadow-masked scene lighting",
+            ),
             _ => (&self.geometry, &self.lit, "lit scene geometry"),
         };
         // Casters are depth-only: their cull selects the side that casts. A
@@ -407,7 +471,7 @@ impl GeometryPipelines {
             GBuffer if self.anisotropy_inline => ("source_vs", Some("stable_fs")),
             GBuffer => ("source_vs", Some("stable_legacy_fs")),
             GBufferAnisotropy => ("source_vs", Some("anisotropy_fs")),
-            Lighting => ("source_vs", Some("source_fs")),
+            Lighting { .. } => ("source_vs", Some("source_fs")),
             Fused => ("source_vs", Some("fused_opaque_fs")),
             CaptureShadow if !self.unclipped_depth => {
                 ("shadow_unclipped_vs", Some("shadow_unclipped_fs"))

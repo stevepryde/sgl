@@ -26,6 +26,7 @@ pub(crate) mod packed_vertex;
 mod packed_vertex_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rect_light_tests;
+pub(crate) mod shadow_mask;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod shadow_normal_tests;
 pub(crate) mod srgb;
@@ -297,11 +298,53 @@ pub(crate) static SHADOW_SAMPLING: Module = Module {
     deps: &[&NOISE],
 };
 /// The directional shadow's cascades. Reads `view`, `frame`,
-/// `directional_shadow_map` and `shadow_sampler`.
+/// `directional_shadow_map` and `shadow_sampler`, and calls the program's
+/// mask provider (`camera_shadow_mask`).
 pub(crate) static DIRECTIONAL_SHADOW: Module = Module {
     name: "directional_shadow",
     source: include_str!("directional_shadow.wgsl"),
-    deps: &[&SHADOW_SAMPLING],
+    deps: &[&SHADOW_SAMPLING, &SHADOW_MASK_SLOTS],
+};
+/// The ray-traced shadow stage's slot table and its mask's layout
+/// (`shading::shadow_mask`).
+pub(crate) static SHADOW_MASK_SLOTS: Module = Module {
+    name: "shadow_mask_slots",
+    source: include_str!("shadow_mask_slots.wgsl"),
+    deps: &[],
+};
+/// The key a slot of the slot table holds. Reads `shadow_mask_slots`.
+pub(crate) static SHADOW_MASK_SLOT_KEY: Module = Module {
+    name: "shadow_mask_slot_key",
+    source: include_str!("shadow_mask_slot_key.wgsl"),
+    deps: &[&SHADOW_MASK_SLOTS],
+};
+/// The opaque stage's lighting pass's group 3 while ray-traced shadows run:
+/// the shadow mask and the slot table.
+pub(crate) static BIND_SHADOW_MASK: Module = Module {
+    name: "bind_shadow_mask",
+    source: include_str!("bind_shadow_mask.wgsl"),
+    deps: &[&SHADOW_MASK_SLOTS],
+};
+/// The mask provider of the opaque stage's lighting pass while ray-traced
+/// shadows run: `camera_shadow_mask` reads the mask. It depends on what
+/// calls it (`LIGHTS`, `DIRECTIONAL_SHADOW`), never they on it, and a
+/// program composes it or `SHADOW_MASK_NONE`, exactly one.
+pub(crate) static SHADOW_MASK: Module = Module {
+    name: "shadow_mask",
+    source: include_str!("shadow_mask.wgsl"),
+    deps: &[
+        &LIGHTS,
+        &DIRECTIONAL_SHADOW,
+        &BIND_SHADOW_MASK,
+        &SHADOW_MASK_SLOT_KEY,
+    ],
+};
+/// The mask provider of every other lit program: `camera_shadow_mask`
+/// holds no slot, so every light takes the maps.
+pub(crate) static SHADOW_MASK_NONE: Module = Module {
+    name: "shadow_mask_none",
+    source: include_str!("shadow_mask_none.wgsl"),
+    deps: &[&LIGHTS, &DIRECTIONAL_SHADOW],
 };
 /// A light as it reaches a receiver point: what each light builds and
 /// `surface_direct_light` shades.
@@ -350,12 +393,27 @@ pub(crate) static LOCAL_SHADOW: Module = Module {
     source: include_str!("local_shadow.wgsl"),
     deps: &[&LIGHT_RECORDS, &SHADOW_SAMPLING],
 };
+/// How a scene light reaches a receiver point: its range, distance and
+/// cone, and a rectangle's half-space.
+pub(crate) static LIGHT_REACH: Module = Module {
+    name: "light_reach",
+    source: include_str!("light_reach.wgsl"),
+    deps: &[&LIGHT_RECORDS],
+};
 /// The scene lights that reach a point, each as a `LightSample`. Reads
-/// `view`, `lights`, `clusters` and the local-light shadows.
+/// `view`, `lights`, `clusters` and the local-light shadows, and calls the
+/// program's mask provider (`camera_shadow_mask`).
 pub(crate) static LIGHTS: Module = Module {
     name: "lights",
     source: include_str!("lights.wgsl"),
-    deps: &[&LIGHT_RECORDS, &CLUSTERS, &LIGHT_SAMPLE, &LOCAL_SHADOW],
+    deps: &[
+        &LIGHT_RECORDS,
+        &LIGHT_REACH,
+        &CLUSTERS,
+        &LIGHT_SAMPLE,
+        &LOCAL_SHADOW,
+        &SHADOW_MASK_SLOTS,
+    ],
 };
 /// Reads `view` and the drawn instances' object records.
 pub(crate) static VERTEX: Module = Module {
@@ -580,7 +638,12 @@ pub(crate) static SURFACE_RAY: Module = Module {
 /// 3.
 #[cfg(test)]
 pub(crate) fn lit_compute_library() -> String {
-    compose(&[&BIND_LIT, &SURFACE_RAY, &SCENE_RAYS_PORTABLE])
+    compose(&[
+        &BIND_LIT,
+        &SURFACE_RAY,
+        &SHADOW_MASK_NONE,
+        &SCENE_RAYS_PORTABLE,
+    ])
 }
 
 #[cfg(test)]

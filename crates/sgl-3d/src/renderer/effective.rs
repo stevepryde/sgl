@@ -13,6 +13,24 @@ use crate::view::effective::{
 };
 use crate::view::pipelines::LayerConstants;
 
+/// `effective` for a frame whose rays trace in hardware where `hardware`
+/// and whose slots may hold `lights`: the ray-traced shadow stage runs
+/// where the setting asks for it, the rays trace in hardware and a slot
+/// holds a light, and the opaque stage then takes its two-pass form, the
+/// stage between its parts.
+pub(super) fn traced_shadows(
+    effective: Effective,
+    hardware: bool,
+    lights: &crate::stages::shadows::traced::slots::SlotLights,
+) -> Effective {
+    let ray_traced_shadows = effective.ray_traced_shadows && hardware && !lights.is_empty();
+    Effective {
+        ray_traced_shadows,
+        fused: effective.fused && !ray_traced_shadows,
+        ..effective
+    }
+}
+
 /// The size-affecting choices of `settings`.
 pub(super) fn sizing(settings: &Settings) -> Sizing {
     Sizing {
@@ -208,6 +226,16 @@ pub(super) fn resolve(
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
     let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
+    let hardware_ray_tracing = match (settings.hardware_ray_tracing, ray_queries) {
+        (false, _) => HardwareRayTracing::Off,
+        (true, None) => HardwareRayTracing::Unsupported,
+        (true, Some(form)) => HardwareRayTracing::On(form),
+    };
+    // Ray-traced shadows trace through the hardware path alone (the
+    // architecture's Ray-traced shadows); elsewhere the maps shadow. The
+    // frame narrows it to whether the stage runs (`traced_shadows`).
+    let ray_traced_shadows =
+        settings.ray_traced_shadows && matches!(hardware_ray_tracing, HardwareRayTracing::On(_));
     let occlusion_culling = settings.occlusion_culling && occlusion_supported && !disable.culling;
     Effective {
         antialiasing,
@@ -224,11 +252,8 @@ pub(super) fn resolve(
         } else {
             WorldSpaceReflections::Off
         },
-        hardware_ray_tracing: match (settings.hardware_ray_tracing, ray_queries) {
-            (false, _) => HardwareRayTracing::Off,
-            (true, None) => HardwareRayTracing::Unsupported,
-            (true, Some(form)) => HardwareRayTracing::On(form),
-        },
+        hardware_ray_tracing,
+        ray_traced_shadows,
         receivers: content.receivers
             && (screen_space.is_some() || taa || fsr2 || motion_blur.is_some()),
         // Occlusion culling's late phase falls between the G-buffer passes,

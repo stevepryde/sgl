@@ -148,7 +148,11 @@ override camera:bool=true;
  }}
 }}
 "#,
-                    shading::compose(&[&shading::BIND_LIT, &shading::LIGHTS])
+                    shading::compose(&[
+                        &shading::BIND_LIT,
+                        &shading::LIGHTS,
+                        &shading::SHADOW_MASK_NONE,
+                    ])
                 )
                 .into(),
             ),

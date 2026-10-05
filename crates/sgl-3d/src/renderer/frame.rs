@@ -3,6 +3,8 @@ use super::Renderer;
 use crate::settings::{ReflectionMethod, Settings};
 use crate::stages::cull::Cull;
 use crate::stages::opaque::Opaque;
+use crate::stages::shadows::traced::TracedShadows;
+use crate::stages::shadows::traced::slots::SlotLights;
 use crate::timing::GpuTiming;
 use crate::view::draw_list::gpu::Phase;
 use crate::view::frame::{Completed, FrameContext, HardwareRays};
@@ -14,10 +16,11 @@ use crate::{FrameInput, Scene};
 /// Encodes one frame of `scene` seen as `input` into `output`: prepare (with
 /// its deformation, acceleration structures and the cull stage's early
 /// phase), dynamic GI, shadows, volumetric fog, opaque (with the cull
-/// stage's late phase and pyramid while occlusion culling runs), the transparent
-/// stage's receivers, reflections with the transparent stage drawn into
-/// their input (while a screen-space method traces it) and onto their
-/// result, heat, exposure, antialiasing, motion blur, then post.
+/// stage's late phase and pyramid while occlusion culling runs, and the
+/// ray-traced shadows between its G-buffer and lighting while they run),
+/// the transparent stage's receivers, reflections with the transparent
+/// stage drawn into their input (while a screen-space method traces it) and
+/// onto their result, heat, exposure, antialiasing, motion blur, then post.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render(
     renderer: &mut Renderer,
@@ -45,6 +48,7 @@ pub(super) fn render(
         statistics,
         dynamic_gi,
         shadows,
+        traced_shadows,
         fog,
         opaque,
         reflections,
@@ -75,7 +79,12 @@ pub(super) fn render(
             ray_queries: ray_form.as_ref().map(|form| form.form()),
         },
     );
-    pipelines.specialise(device, effective.layers, scene);
+    pipelines.specialise(
+        device,
+        effective.layers,
+        scene,
+        effective.ray_traced_shadows,
+    );
     let pipelines: &GeometryPipelines = pipelines;
     scene.materials.set_anisotropy(device, effective.anisotropy);
     #[cfg(feature = "diagnostics")]
@@ -152,6 +161,12 @@ pub(super) fn render(
     views.instances.upload(device, queue);
     fog.prepare(device, effective.fog, sizes.render);
     dynamic_gi.prepare(device, scene, &effective);
+    // The ray-traced shadows run where the frame's rays trace in hardware
+    // and its slots hold a light: the directional light with cascades and
+    // the local lights the atlas placed.
+    let slot_lights = SlotLights::of(input, &values.frame, scene, shadows.local.ranking());
+    let effective =
+        super::effective::traced_shadows(effective, prepare.hardware_rays(), &slot_lights);
     // After prepare, the local shadows', the fog's and dynamic GI's, which
     // may replace a light cluster buffer, a shadow map, the shadow records,
     // the fog volume or the probes group 0 binds.
@@ -199,7 +214,7 @@ pub(super) fn render(
     shadows.encode_local(&mut ctx);
     shadows.encode_directional(&mut ctx);
     fog.encode(&mut ctx);
-    encode_opaque(opaque, cull, &mut ctx);
+    encode_opaque(opaque, cull, traced_shadows, &slot_lights, &mut ctx);
     // The camera's statistics, once both phases have appended to its sets.
     statistics.copy(
         device,
@@ -319,21 +334,30 @@ pub(super) fn render(
     }
 }
 
-/// The opaque stage in the stage order's named parts: the G-buffer, the
-/// lighting at its depth, then ambient occlusion over it. While occlusion
-/// culling runs, the G-buffer part runs per phase with the cull stage
-/// between them: the G-buffer over the early set, the cull stage's late
-/// phase (the pyramid from that depth, then the late cull), the G-buffer
-/// over the late set, then the cull stage's pyramid from the complete
-/// depth, for the next frame.
-pub(super) fn encode_opaque(opaque: &mut Opaque, cull: &mut Cull, ctx: &mut FrameContext<'_>) {
+/// The opaque stage in the stage order's named parts: the G-buffer, then,
+/// while they run, the ray-traced shadows of the frame's slots, which may
+/// hold `slot_lights`, the lighting at its depth, which takes their mask,
+/// then ambient occlusion over it. While occlusion culling runs, the
+/// G-buffer part runs per phase with the cull stage between them: the
+/// G-buffer over the early set, the cull stage's late phase (the pyramid
+/// from that depth, then the late cull), the G-buffer over the late set,
+/// then the cull stage's pyramid from the complete depth, for the next
+/// frame; the shadows trace that complete depth.
+pub(super) fn encode_opaque(
+    opaque: &mut Opaque,
+    cull: &mut Cull,
+    traced_shadows: &mut TracedShadows,
+    slot_lights: &SlotLights,
+    ctx: &mut FrameContext<'_>,
+) {
     opaque.encode_gbuffer(ctx, Phase::Early);
     if ctx.effective.occlusion_culling {
         cull.encode_late(ctx);
         opaque.encode_gbuffer(ctx, Phase::Late);
         cull.encode_pyramid(ctx);
     }
-    opaque.encode_lighting(ctx);
+    let shadow_mask = traced_shadows.encode(ctx, slot_lights);
+    opaque.encode_lighting(ctx, shadow_mask);
     opaque.encode_ambient_occlusion(ctx);
 }
 

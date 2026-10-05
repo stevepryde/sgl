@@ -3,7 +3,8 @@
 //! cascades, fit from the camera, baked lighting and fog, the
 //! jitter antialiasing chose), uploads them, ends the motion of moving
 //! instances not posed since the last submitted frame, sorts the mist,
-//! updates the scene's ray instances on frames that trace them and, while
+//! updates the scene's ray instances on frames that trace them (world-space
+//! reflections, dynamic GI and ray-traced shadows) and, while
 //! hardware ray tracing is in effect, chooses those frames'
 //! acceleration-structure builds, which it records after the deform pass
 //! (`encode_acceleration_structures`), clusters the
@@ -22,7 +23,7 @@
 //! candidates, ray instances, acceleration structures and mist order.
 //! Honours: the effective local lights, temporal antialiasing (the shadow
 //! filter), atmosphere, baked lighting, culling, world-space reflections,
-//! dynamic GI and hardware ray tracing.
+//! dynamic GI, hardware ray tracing and ray-traced shadows.
 //! Timing groups: none.
 use crate::scene::dynamic_gi::ProbePlacement;
 use crate::scene::rays::acceleration::RayTracingStats;
@@ -178,12 +179,12 @@ impl Prepare {
         crate::counters::write_buffer(queue, frame_buffer, 0, bytemuck::bytes_of(&frame));
         views.camera.set(queue, View::camera(view));
         scene.prepare_frame(device, queue, camera.eye);
-        // Only world-space rays and the dynamic GI volume's read the ray
-        // instances and visibility mask. The entries set and static edits
-        // made since the last traced frame wait for the next, so the frames
-        // that skip it leave it nothing stale.
+        // Only world-space rays, the dynamic GI volume's and ray-traced
+        // shadows read the ray instances and visibility mask. The entries
+        // set and static edits made since the last traced frame wait for
+        // the next, so the frames that skip it leave it nothing stale.
         let world_space = effective.world_space != WorldSpaceReflections::Off;
-        let traced = world_space || volume.is_some();
+        let traced = world_space || volume.is_some() || effective.ray_traced_shadows;
         // The acceleration structures are built on the frames that trace,
         // and freed by a frame with hardware ray tracing off. The portable
         // BVHs then cover what the TLAS does not hold.

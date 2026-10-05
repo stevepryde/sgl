@@ -73,6 +73,9 @@ pub(super) struct Plan {
     edit_lights: HashMap<LightId, ((Vec3, f32), Range<usize>)>,
     near_edits: Vec<usize>,
     pub stats: LocalShadowStats,
+    /// The last frame's shadowed lights, in the order it ranked and placed
+    /// them: largest screen coverage first.
+    ranking: Vec<LightId>,
 }
 
 impl Plan {
@@ -89,7 +92,14 @@ impl Plan {
             edit_lights: HashMap::new(),
             near_edits: Vec::new(),
             stats: LocalShadowStats::default(),
+            ranking: Vec::new(),
         }
+    }
+
+    /// The last frame's shadowed lights, in the order it ranked and placed
+    /// them: largest screen coverage first.
+    pub fn ranking(&self) -> &[LightId] {
+        &self.ranking
     }
 
     /// The faces this frame draws.
@@ -115,6 +125,7 @@ impl Plan {
     ) {
         self.begin(scene);
         self.stats = LocalShadowStats::default();
+        self.ranking.clear();
         let volume = ViewVolume::new(projection * view);
         let candidates = candidates(scene, enabled, |light, shadow| {
             volume
@@ -154,6 +165,7 @@ impl Plan {
                 continue;
             };
             self.stats.shadowed += 1;
+            self.ranking.push(id);
             let layered = self.place(drawn, scene, Some(&moving), (id, shadow, placement), mask);
             self.records[id.index()] = record(shadow, placement, layered);
         }

@@ -120,7 +120,11 @@ fn anisotropy_gpu_matches_independent_brdf_and_historical_zero() {
         // them; this entry point uses only its own two, at free group 0 slots.
         let source = format!(
             "{}\n{}\n{}",
-            crate::shading::compose(&[&crate::shading::BIND_LIT, &crate::shading::SURFACE]),
+            crate::shading::compose(&[
+                &crate::shading::BIND_LIT,
+                &crate::shading::SURFACE,
+                &crate::shading::SHADOW_MASK_NONE,
+            ]),
             HISTORICAL,
             r#"
 struct Case { n:vec4<f32>,v:vec4<f32>,l:vec4<f32>,t:vec4<f32> }
