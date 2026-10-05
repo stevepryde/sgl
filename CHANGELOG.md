@@ -29,7 +29,7 @@ full API details.
   (`Settings::hardware_ray_tracing`): on the portable BVHs every ray also
   walks the static geometry. On an Apple M5, over a glossy 1 km strip with
   posts, boxes and 60 moving boxes at 960×540 (full-resolution SSR), the
-  world-space ray pass took 1.06 ms under `All` against 0.38 ms under
+  world-space ray pass took 0.49 ms under `All` against 0.22 ms under
   `Moving` on the portable BVHs, and 0.11 ms against 0.09 ms with hardware
   ray tracing. No preset turns either on, and the default stays off.
 - **Migration:** replace the bool in code that sets the field:

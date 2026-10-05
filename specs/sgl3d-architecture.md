@@ -736,7 +736,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   tracing](#designs-that-span-stages)) and allowed on the portable one at
   the cost its BVH walk takes, every ray walking the static BVH where
   `Moving`'s walk it only to a moving hit (#23's world-ray workload: the
-  trace 2.8 times `Moving`'s on the portable path, 1.2 times on the
+  trace 2.2 times `Moving`'s on the portable path, 1.2 times on the
   hardware path). Both reaches write the same targets, shade a
   hit through the one function and compose by the one formula.
   Another method plugs in beside the existing ones.
