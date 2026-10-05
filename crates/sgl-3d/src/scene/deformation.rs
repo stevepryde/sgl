@@ -513,7 +513,12 @@ impl Scene {
         else {
             return Err(SceneError::DeformationMismatch);
         };
-        deformation.set(queue, &self.rays, model, joints, morph_weights)
+        let seen = instance.state.capture_visible;
+        deformation.set(queue, &self.rays, model, joints, morph_weights)?;
+        if seen {
+            self.deformation_edited();
+        }
+        Ok(())
     }
 }
 

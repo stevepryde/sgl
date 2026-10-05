@@ -35,8 +35,8 @@ replace every choice with a complete bundle.
 | Ambient occlusion | `Settings::ambient_occlusion` | `Off`, `Low`, `Medium`, `High`, `Ultra` | | 4, 8, 18 and 54 samples per pixel at scene resolution. Needs a `perspective` camera. |
 | Screen-space reflections | `Settings::screen_space_reflections` | `Off`, `Half`, `Full` | | The resolution rays are traced at. Needs a `perspective` camera. |
 | Reflection method | `Settings::reflection_method` | `Crystal`, `Velvet` | | Crystal is sharp and reflects only glossy surfaces (perceptual roughness below 0.2). Velvet blurs with roughness and reaches rougher surfaces (below 0.7), so it traces more of the screen. |
-| World-space reflections | `Settings::world_space_reflections` | `false`, `true` | | Shows moving objects that screen-space reflections cannot see, up to 1000 m from the reflecting surface, with rays through a software BVH at half resolution. Needs screen-space reflections. |
-| Hardware ray tracing | `Settings::hardware_ray_tracing` | `false`, `true` | | Opt-in: no preset turns it on. On a device requested with its feature (`graphics_device::ray_tracing_features`), frames that trace rays build acceleration structures over the scene, which cost memory and build time; rays do not trace them yet. Off frees them. `Renderer::ray_tracing_stats` reports what they held. |
+| World-space reflections | `Settings::world_space_reflections` | `false`, `true` | | Shows moving objects that screen-space reflections cannot see, up to 1000 m from the reflecting surface, with rays at half resolution through a software BVH, or the scene's acceleration structures with hardware ray tracing. Needs screen-space reflections. |
+| Hardware ray tracing | `Settings::hardware_ray_tracing` | `false`, `true` | | Opt-in: no preset turns it on. On a device requested with its feature (`graphics_device::ray_tracing_features`), frames that trace rays build acceleration structures over the scene, which cost memory and build time, and world-space reflections' and the dynamic GI volume's rays trace them; masked models stay on the software BVHs. Those rays then see skinned and morphed instances too. Off frees the structures and traces the software BVHs alone. `Renderer::ray_tracing_in_effect` and `ray_tracing_error` say whether it runs, `ray_tracing_stats` what it held. |
 | Atmosphere | `Settings::atmosphere` | `true`, `false` | | The volumetric fog and mist, while the game turns `FrameInput::atmosphere` on (off by default, as Godot's fog). |
 | Fog quality | `Settings::fog_quality` | `High`, `Low` | | The volumetric fog's froxels: 64 slices, and Low 64 across the frame's mean side (Godot's default), High 128. Higher resolves sharper shafts and shadow edges in the fog at more cost. Needs a `perspective` camera. |
 | Fog filter | `Settings::fog_filter` | `true`, `false` | | Blurs each slice of the fog's froxels across the frame before integration (Godot's `use_filter`, on by default): smoother fog with softer shafts and shadow edges in it, for two passes over the froxels. |
@@ -100,6 +100,10 @@ is done (its algorithm and internal parameters) is SGL3D's.
   light, `backdrop` is its panorama or a colour.
 - `reflection_environment`: turns and scales its specular light where no
   baked probe reflects.
+- A material's `emits_into_gi` (`asset::Material`, `SurfaceMaterial`;
+  `true` by default): `false` keeps the light it gives off itself (its
+  emission, an unlit material's whole colour) out of global illumination,
+  for a fixture a scene light stands for. Content, not a setting.
 
 With the `diagnostics` feature, `Settings::diagnostics` holds investigation
 switches (layers off, the frame probe, the tone-target capture, the

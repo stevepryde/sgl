@@ -147,7 +147,7 @@ pub(crate) fn observe_ray_hits(
         }],
     });
     renderer.prepare_test_frame(device, queue, scene, input, settings);
-    scene.update_rays(device, queue, input.visibility_mask);
+    scene.update_rays(device, queue, input.visibility_mask, false);
     let mut encoder = device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -353,6 +353,7 @@ pub(crate) fn cube() -> crate::asset::Asset {
             wrap: [gltf::texture::WrappingMode::Repeat; 2],
             double_sided: true,
             unlit: false,
+            emits_into_gi: true,
             alpha: crate::AlphaMode::Opaque,
         }],
         images: vec![],

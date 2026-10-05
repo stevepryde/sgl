@@ -231,7 +231,7 @@ fn ray_dispatch(
     count: usize,
     decodes: bool,
 ) -> Vec<[f32; 4]> {
-    scene.update_rays(device, queue, 0);
+    scene.update_rays(device, queue, 0, false);
     let scene = &*scene;
     dispatch(
         device,

@@ -106,7 +106,7 @@ fn observe(
         }],
     });
     renderer.prepare_test_frame(device, queue, scene, input, settings);
-    scene.update_rays(device, queue, input.visibility_mask);
+    scene.update_rays(device, queue, input.visibility_mask, false);
     let mut encoder = device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());

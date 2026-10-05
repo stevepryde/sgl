@@ -26,12 +26,11 @@ fn scene_source_vertex(object:u32,mesh:u32,index:u32)->PulledSceneVertex {
   pulled.normal=frame.normal;
   pulled.tangent=frame.tangent;
  } else {
-  let deformed=scene_source[mesh+SCENE_MESH_FIRST_VERTEX]+vertex_index;
-  pulled.position=scene_v3(objects[object].deformed_positions+deformed*DEFORMED_POSITION_WORDS);
-  pulled.previous_position=scene_v3(objects[object].previous_positions+deformed*DEFORMED_POSITION_WORDS);
-  let tangent_frame=objects[object].deformed_normals+deformed*DEFORMED_NORMAL_WORDS;
-  pulled.normal=scene_v3(tangent_frame);
-  pulled.tangent=scene_v4(tangent_frame+DEFORMED_TANGENT);
+  pulled.position=scene_deformed_position(objects[object].deformed_positions,mesh,vertex_index);
+  pulled.previous_position=scene_deformed_position(objects[object].previous_positions,mesh,vertex_index);
+  let frame=scene_deformed_frame(objects[object].deformed_normals,mesh,vertex_index);
+  pulled.normal=frame.normal;
+  pulled.tangent=frame.tangent;
  }
  return pulled;
 }

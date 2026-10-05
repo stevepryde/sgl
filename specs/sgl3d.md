@@ -250,18 +250,20 @@ Remaining work, in the existing roadmap order:
    [#21](https://github.com/stevepryde/sgl/issues/21)).** A volume of probes
    the game places lights surfaces with bounce light alongside game-authored
    lightmaps, irradiance atlases and ambient cubes
-   ([dynamic GI](../crates/sgl-3d/README.md#dynamic-diffuse-gi)); a volume
-   that scrolls with the player, and its adoption by the consumer, remain.
+   ([dynamic GI](../crates/sgl-3d/README.md#dynamic-diffuse-gi)), scrolled
+   with the player by whole spacings; its adoption by the consumer remains.
 2. **DLSS and MetalFX upscaling (12,
    [#22](https://github.com/stevepryde/sgl/issues/22)).** Current antialiasing
    choices are TAA, SMAA, and FSR2; FSR2 requires native device features and
    falls back to TAA in the browser.
 3. **Hardware ray-traced reflections and shadows (13,
-   [#23](https://github.com/stevepryde/sgl/issues/23)).** Current world-space
-   reflections traverse a software BVH; they do not use hardware ray tracing.
-   The scene builds its acceleration structures behind the opt-in
-   `Settings::hardware_ray_tracing` (off by default, [D-28](decisions.md))
-   on a device with ray queries; rays do not trace them yet. The design is settled in the architecture
+   [#23](https://github.com/stevepryde/sgl/issues/23)).** Behind the opt-in
+   `Settings::hardware_ray_tracing` (off by default, [D-28](decisions.md)),
+   on a device with ray queries, the scene builds its acceleration
+   structures and world-space reflections' and the dynamic GI volume's rays
+   trace them in the baseline form; elsewhere they traverse the software
+   BVHs. Ray-traced shadows, world-space reflections that reach static
+   content, and the candidate form remain. The design is settled in the architecture
    ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
    [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
    acceleration structures beside the portable BVHs behind

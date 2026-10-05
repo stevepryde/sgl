@@ -213,9 +213,7 @@ impl Instances {
                 .get(instance.state.model)
                 .expect("an instance's model lives");
             instance.pose_casters(model);
-            if instance.deformation.is_none() {
-                rays.set(id.index(), model.ray, instance.state.pose);
-            }
+            rays.set(id.index(), model.ray, instance.state.pose);
             if records.len() <= id.index() {
                 records.resize(id.index() + 1, bytemuck::Zeroable::zeroed());
             }
@@ -319,18 +317,16 @@ impl Scene {
         Ok(id)
     }
 
-    /// Writes instance `id`'s object record and, unless it deforms, which no
-    /// ray sees, its ray entry.
+    /// Writes instance `id`'s object record and its ray entry, which the
+    /// hardware path reads for a deforming instance too.
     fn write_instance(&mut self, queue: &wgpu::Queue, id: InstanceId) {
         self.instances.write(queue, id);
         let instance = self.instances.slots.get(id).expect("a live instance");
-        if instance.deformation.is_none() {
-            let (ray, pose) = (
-                self.drawn_model(instance.state.model).ray,
-                instance.state.pose,
-            );
-            self.ray_instances.set(id.index(), ray, pose);
-        }
+        let (ray, pose) = (
+            self.drawn_model(instance.state.model).ray,
+            instance.state.pose,
+        );
+        self.ray_instances.set(id.index(), ray, pose);
     }
 
     /// An instance's current state.
@@ -350,11 +346,16 @@ impl Scene {
     ) -> Result<(), SceneError> {
         let previous = self.instances.get(id)?.state.model;
         let deforms = self.models.get(state.model)?.deformation.is_some();
-        // A game may set every pose each frame: only a change rays see, of
-        // an instance that does not deform, is an edit.
+        // A game may set every pose each frame: only a change rays see is
+        // an edit, a deforming instance's only while the hardware path
+        // traces it.
         let old = self.instances.get(id)?.state;
-        if old != state && !deforms && (old.capture_visible || state.capture_visible) {
-            self.edited();
+        if old != state && (old.capture_visible || state.capture_visible) {
+            if deforms {
+                self.deformation_edited();
+            } else {
+                self.edited();
+            }
         }
         validate_pose(state.pose)?;
         if previous != state.model && (deforms || self.instances.get(id)?.deformation.is_some()) {
