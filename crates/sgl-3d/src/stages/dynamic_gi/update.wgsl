@@ -1,7 +1,7 @@
-// The dynamic GI stage's blends: each probe gathers the rays it traced this
-// frame into its irradiance map through each texel's estimator, and into
-// its depth map, moving the probe away from surfaces it nears. One
-// workgroup per probe.
+// The dynamic GI stage's blends: each probe that traced rays this frame
+// gathers them into its irradiance map through each texel's estimator, and
+// into its depth map, moving the probe away from surfaces it nears. One
+// workgroup per probe that traced; the others keep what they hold.
 //
 // Ports Wicked Engine df44c3db4c4927492bc9c791eac715d98d7ed091,
 // WickedEngine/shaders/ddgi_updateCS.hlsl (the ray cache loop 107–165, the
@@ -24,6 +24,16 @@
 @group(0) @binding(4) var<storage,read_write> depth_history:array<u32>;
 @group(0) @binding(5) var<storage,read_write> probe_states:array<vec2<u32>>;
 @group(0) @binding(6) var probes_out:texture_storage_2d<rgba16float,write>;
+@group(0) @binding(7) var<storage,read> traced_probes:array<u32>;
+// The probe a workgroup of the blends' dispatch over the probes that trace
+// blends, or none past them.
+fn traced_probe(group:vec3<u32>)->u32 {
+ let slot=ddgi_group_probe(group);
+ if slot>=volume.traced {
+  return volume.probe_count;
+ }
+ return traced_probes[slot];
+}
 const DDGI_COLOR_BORDER_OFFSETS=array<vec4<u32>,28>(
  vec4(6u,1u,1u,0u),
  vec4(5u,1u,2u,0u),
@@ -146,7 +156,7 @@ var<workgroup> irradiance_cache:array<DdgiRay,IRRADIANCE_CACHE>;
 var<workgroup> shared_texels:array<vec3<f32>,IRRADIANCE_CACHE>;
 @compute @workgroup_size(IRRADIANCE_THREADS,IRRADIANCE_THREADS)
 fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_id) thread:vec3<u32>,@builtin(local_invocation_index) group_index:u32) {
- let probe_index=ddgi_group_probe(group);
+ let probe_index=traced_probe(group);
  if probe_index>=volume.probe_count {
   return;
  }
@@ -154,6 +164,9 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
   irradiance_ray_count=min(ray_counts[probe_index],volume.max_rays);
  }
  let ray_count=workgroupUniformLoad(&irradiance_ray_count);
+ if ray_count==0u {
+  return;
+ }
  let probe_coord=ddgi_probe_coord(probe_index,volume.probes);
  let probe=ddgi_unpack_probe(probe_states[probe_index]);
  let texel_direction=ddgi_decode_oct(((vec2<f32>(thread.xy%DDGI_COLOR_RESOLUTION)+.5)/f32(DDGI_COLOR_RESOLUTION))*2.-1.);
@@ -209,7 +222,7 @@ var<workgroup> depth_cache:array<DdgiRay,DEPTH_CACHE>;
 var<workgroup> shared_depths:array<vec2<f32>,DEPTH_CACHE>;
 @compute @workgroup_size(DEPTH_THREADS,DEPTH_THREADS)
 fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_id) thread:vec3<u32>,@builtin(local_invocation_index) group_index:u32) {
- let probe_index=ddgi_group_probe(group);
+ let probe_index=traced_probe(group);
  if probe_index>=volume.probe_count {
   return;
  }
@@ -217,6 +230,9 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   depth_ray_count=min(ray_counts[probe_index],volume.max_rays);
  }
  let ray_count=workgroupUniformLoad(&depth_ray_count);
+ if ray_count==0u {
+  return;
+ }
  let probe_coord=ddgi_probe_coord(probe_index,volume.probes);
  let probe=ddgi_unpack_probe(probe_states[probe_index]);
  let max_distance=volume.max_distance;

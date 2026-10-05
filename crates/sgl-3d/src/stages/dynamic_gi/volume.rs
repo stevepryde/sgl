@@ -72,6 +72,7 @@ impl Layouts {
                     storage(3, false),
                     storage(4, false),
                     written(5, wgpu::TextureFormat::Rg32Uint),
+                    storage(6, false),
                 ],
             ),
             trace: layout(
@@ -92,6 +93,7 @@ impl Layouts {
                     storage(4, false),
                     storage(5, false),
                     written(6, layout::FORMAT),
+                    storage(7, true),
                 ],
             ),
         }
@@ -113,6 +115,8 @@ pub(super) struct Volume {
     pub probe_states: wgpu::Buffer,
     /// The rays each probe traces this frame.
     pub ray_counts: wgpu::Buffer,
+    /// The probes that trace this frame, which the blends gather.
+    pub traced_probes: wgpu::Buffer,
     /// The trace's indirect dispatch and the frame's ray count.
     pub allocation: wgpu::Buffer,
     /// Made with the volume, and again for another most rays.
@@ -210,6 +214,7 @@ impl Volume {
             storage_buffer(device, "dynamic GI depth moments", count * depth_texels * 4);
         let probe_states = storage_buffer(device, "dynamic GI probe states", count * 8);
         let ray_counts = storage_buffer(device, "dynamic GI ray counts", count * 4);
+        let traced_probes = storage_buffer(device, "dynamic GI traced probes", count * 4);
         let allocation = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("dynamic GI ray allocation"),
             size: ALLOCATION_BYTES,
@@ -227,6 +232,7 @@ impl Volume {
             depth_history,
             probe_states,
             ray_counts,
+            traced_probes,
             allocation,
             rays: None,
         };
@@ -276,6 +282,7 @@ impl Volume {
                     buffer(3, &self.ray_counts),
                     buffer(4, &self.allocation),
                     view(5, &list),
+                    buffer(6, &self.traced_probes),
                 ],
             ),
             trace: group(
@@ -294,6 +301,7 @@ impl Volume {
                     buffer(4, &self.depth_history),
                     buffer(5, &self.probe_states),
                     view(6, &self.probes),
+                    buffer(7, &self.traced_probes),
                 ],
             ),
         }

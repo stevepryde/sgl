@@ -762,9 +762,16 @@ code; it does not redeclare a struct, binding or function another module owns.
   Wicked serves every probe on the first frame after a restart, and a probe
   that enters by a scroll likewise; so a volume whose light has settled
   costs what its probes' remaining inconsistency asks and a changed one
-  ramps to the most and back. Each probe's estimator, depth and offset
-  start afresh when it is first blended, where Wicked starts them all on
-  the first frame. It traces them through
+  ramps to the most and back. One improvement on Wicked (RD-2): where Wicked
+  starts every probe of a restarted volume in one frame, a hitch on a large
+  volume, a frame starts no more probes not yet blended than a fixed budget
+  of rays holds at the tier's most (32768, 128 probes at High), the nearest
+  the camera first (a histogram of their distances in the least spacing);
+  a probe not yet started traces nothing and weighs nothing, so its
+  receivers keep their fallback, and the blends run over the probes that
+  traced, which Wicked's, whose probes always trace, need not. Each probe's
+  estimator, depth and offset start afresh when it is first blended, where
+  Wicked starts them all on the first frame. It traces them through
   `scene_trace_nearest` over both kinds and both sides of every triangle,
   which the hardware path (#23) replaces underneath as Wicked's
   `ddgi_raytraceCS_rtapi` replaces its software trace. A single-sided

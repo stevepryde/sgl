@@ -910,7 +910,8 @@ fn a_receiver_the_volume_lights_takes_it_in_place_of_the_frames_ambient() {
     assert!(without[0] < 1e-3, "{without:?}");
 }
 
-/// A volume of 16 by 4 by 16 probes two metres apart.
+/// A volume of 16 by 4 by 16 probes two metres apart: more than a frame
+/// starts.
 const LARGE: DynamicGiVolume = DynamicGiVolume {
     origin: Vec3::new(-15., -3., -15.),
     spacing: Vec3::splat(2.),
@@ -918,6 +919,9 @@ const LARGE: DynamicGiVolume = DynamicGiVolume {
 };
 /// The camera's position, within `LARGE`.
 const EYE: Vec3 = Vec3::new(0., 0., 14.);
+/// Near the camera, and at the volume's far corner.
+const NEAR: Vec3 = Vec3::new(0.3, 0.2, 12.9);
+const FAR: Vec3 = Vec3::new(-14.1, 0.2, -14.3);
 
 /// An open scene of uniform radiance holding `LARGE`, seen from `EYE`.
 fn large_scene(device: &wgpu::Device, queue: &wgpu::Queue) -> (Scene, FrameInput) {
@@ -929,28 +933,41 @@ fn large_scene(device: &wgpu::Device, queue: &wgpu::Queue) -> (Scene, FrameInput
     (scene, input)
 }
 
-/// Whether the last frame started the probes afresh: every probe of
-/// `LARGE` not yet blended traces the most rays, as Wicked's first frame
-/// does, where a probe that has been blended traces as its inconsistency
-/// asks, which an unchanging environment keeps below the most.
-fn restarted(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &Renderer) -> bool {
-    let most = crate::shading::dynamic_gi::MOST_RAYS;
-    let rays = renderer.test_dynamic_gi().test_traced_rays(device, queue);
-    assert!(rays <= 1024 * most, "{rays}");
-    rays == 1024 * most
+/// The volume's share at `NEAR` and at `FAR`, displaced by `offset`: 1
+/// where a probe about the point has been blended, 0 where none has.
+fn shares(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &Renderer,
+    offset: Vec3,
+) -> [f32; 2] {
+    let answers = irradiance(
+        device,
+        queue,
+        renderer,
+        &[(NEAR + offset, Vec3::Y), (FAR + offset, Vec3::Y)],
+    );
+    [answers[0][3], answers[1][3]]
 }
 
-// Once started, the probes continue through a camera cut and a resize,
-// which reset the renderer's history but not theirs, and through a frame
-// rendered for another placement and abandoned; another placement, another
-// scene and a frame that does not run them start them afresh.
+/// The frames that start every probe of `LARGE` at High, with a margin.
+fn ramp_frames() -> usize {
+    let started = (super::RAMP_RAYS / crate::shading::dynamic_gi::MOST_RAYS) as usize;
+    1024usize.div_ceil(started) + 2
+}
+
+// A restart starts no more probes in a frame than its budget of rays holds
+// at the most rays, the nearest the camera first, where Wicked starts every
+// probe in the first frame; a probe not yet started weighs nothing, so a
+// receiver among such probes keeps its fallback, until later frames start
+// them all.
 #[test]
-fn the_probes_restart_only_for_another_placement_or_scene_or_a_frame_without_them() {
+fn a_restart_starts_the_probes_nearest_the_camera_first() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
-    let settings = settings(DynamicGiQuality::High);
     let (mut scene, input) = large_scene(&device, &queue);
+    let settings = settings(DynamicGiQuality::High);
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
     render(
         &device,
@@ -961,7 +978,13 @@ fn the_probes_restart_only_for_another_placement_or_scene_or_a_frame_without_the
         &settings,
         1,
     );
-    assert!(restarted(&device, &queue, &renderer), "the first frame");
+    let most = crate::shading::dynamic_gi::MOST_RAYS;
+    assert_eq!(
+        renderer.test_dynamic_gi().test_traced_rays(&device, &queue),
+        super::RAMP_RAYS / most * most,
+        "the first frame's rays"
+    );
+    assert_eq!(shares(&device, &queue, &renderer, Vec3::ZERO), [1., 0.]);
     render(
         &device,
         &queue,
@@ -969,9 +992,38 @@ fn the_probes_restart_only_for_another_placement_or_scene_or_a_frame_without_the
         &mut scene,
         &input,
         &settings,
-        1,
+        ramp_frames(),
     );
-    assert!(!restarted(&device, &queue, &renderer), "the next frame");
+    assert_eq!(shares(&device, &queue, &renderer, Vec3::ZERO), [1., 1.]);
+}
+
+// Once started, the probes continue through a camera cut and a resize,
+// which reset the renderer's history but not theirs, and through a frame
+// rendered for another placement and abandoned; another placement, another
+// scene and a frame that does not run them start them afresh, the far
+// probes not in the first frame.
+#[test]
+fn the_probes_restart_only_for_another_placement_or_scene_or_a_frame_without_them() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let settings = settings(DynamicGiQuality::High);
+    let started = |renderer: &mut Renderer, scene: &mut Scene, input: &FrameInput| {
+        render(
+            &device,
+            &queue,
+            renderer,
+            scene,
+            input,
+            &settings,
+            ramp_frames(),
+        );
+        assert_eq!(shares(&device, &queue, renderer, Vec3::ZERO), [1., 1.]);
+    };
+    let restarted = |renderer: &Renderer| shares(&device, &queue, renderer, Vec3::ZERO)[1] == 0.;
+    let (mut scene, input) = large_scene(&device, &queue);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    started(&mut renderer, &mut scene, &input);
     // A camera cut and a resize.
     let mut cut = input;
     cut.camera_cut = true;
@@ -985,7 +1037,7 @@ fn the_probes_restart_only_for_another_placement_or_scene_or_a_frame_without_the
         &settings,
         1,
     );
-    assert!(!restarted(&device, &queue, &renderer), "a renderer reset");
+    assert!(!restarted(&renderer), "a renderer reset");
     // A frame for another placement, abandoned.
     let moved = DynamicGiVolume {
         origin: LARGE.origin + Vec3::splat(0.5),
@@ -1015,7 +1067,7 @@ fn the_probes_restart_only_for_another_placement_or_scene_or_a_frame_without_the
         &settings,
         1,
     );
-    assert!(!restarted(&device, &queue, &renderer), "an abandoned frame");
+    assert!(!restarted(&renderer), "an abandoned frame");
     // Another placement.
     scene.set_dynamic_gi_volume(&device, Some(moved)).unwrap();
     render(
@@ -1027,7 +1079,8 @@ fn the_probes_restart_only_for_another_placement_or_scene_or_a_frame_without_the
         &settings,
         1,
     );
-    assert!(restarted(&device, &queue, &renderer), "another placement");
+    assert!(restarted(&renderer), "another placement");
+    started(&mut renderer, &mut scene, &input);
     // A frame that does not run them.
     let off = self::settings(DynamicGiQuality::Off);
     render(&device, &queue, &mut renderer, &mut scene, &input, &off, 1);
@@ -1040,11 +1093,9 @@ fn the_probes_restart_only_for_another_placement_or_scene_or_a_frame_without_the
         &settings,
         1,
     );
-    assert!(
-        restarted(&device, &queue, &renderer),
-        "a frame without them"
-    );
+    assert!(restarted(&renderer), "a frame without them");
     // Another scene with the same placement.
+    started(&mut renderer, &mut scene, &input);
     let (mut other, input) = large_scene(&device, &queue);
     render(
         &device,
@@ -1055,7 +1106,7 @@ fn the_probes_restart_only_for_another_placement_or_scene_or_a_frame_without_the
         &settings,
         1,
     );
-    assert!(restarted(&device, &queue, &renderer), "another scene");
+    assert!(restarted(&renderer), "another scene");
 }
 
 // A placement is refused, keeping the installed one, unless it is a finite
@@ -1201,7 +1252,7 @@ fn a_render_origin_move_translates_the_volume_and_keeps_its_probes() {
         &mut scene,
         &input,
         &settings,
-        1,
+        ramp_frames(),
     );
     let to = Vec3::new(4096.25, -64., -8191.5);
     scene.move_origin(&device, &queue, to).unwrap();
@@ -1219,7 +1270,7 @@ fn a_render_origin_move_translates_the_volume_and_keeps_its_probes() {
         &settings,
         1,
     );
-    assert!(!restarted(&device, &queue, &renderer));
+    assert_eq!(shares(&device, &queue, &renderer, -to), [1., 1.]);
     // The probes light the points they lit, in the new frame.
     let answer = irradiance(
         &device,
