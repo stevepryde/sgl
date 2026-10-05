@@ -959,6 +959,25 @@ code; it does not redeclare a struct, binding or function another module owns.
 11. **AR-11 — Leave it cleaner.** RD-3 applies to structure. A change leaves no
     compatibility shim, parallel path or dead option behind. Work that finds a
     breach of these rules in the code it touches fixes it or files the issue.
+12. **AR-12 — Loops end.** Every GPU loop (`loop`, `while`, `for`) has an
+    explicit upper bound that no data can raise: a named compile-time
+    constant, or a product of such constants. A pipeline-overridable
+    constant set from a Rust constant counts as one. A count read from a
+    buffer is not a bound, nor is one only clamped to a buffer's length,
+    which can still mean millions of iterations. The bound counts every
+    iteration one invocation makes, nested loops included: walks nested in
+    one another share one budget, not caps per level whose product dodges
+    the rule. Data may end a loop earlier, never later. This covers BVH traversal, ray marching, light, decal and probe
+    list walks, particle updates, linked lists, work queues, culling passes
+    and anything else whose termination depends on data. Each cap has one
+    owner (AR-2), with a Rust twin tied by the layout test where it crosses
+    the boundary; it sits generously above the legitimate worst case, with
+    the reason beside it, citing engine practice where there is some (AMD's
+    FidelityFX SSSR caps a ray's `max_traversal_intersections`). A loop that
+    reaches its cap fails safe and defined: a ray reports a miss, a list
+    stops. A walk along links also makes strict progress, stopping at a link
+    that does not lead forward. Corrupt data then costs a wrong answer,
+    never a hung GPU, which freezes the machine's display with it.
 
 ## Open questions
 

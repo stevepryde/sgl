@@ -69,9 +69,10 @@ fn ComputeBilateralCleanupPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) 
     }
 
     let RoughnessTarget = saturate(f32(SSR_BILATERAL_ROUGHNESS_FACTOR) * Roughness);
-    let Radius = mix(0.0, select(0.0, 2.0, Variance > SSS_BILATERAL_VARIANCE_ESTIMATE_THRESHOLD), RoughnessTarget);
+    let Radius = mix(0.0, select(0.0, f32(SSR_BILATERAL_MAX_RADIUS), Variance > SSS_BILATERAL_VARIANCE_ESTIMATE_THRESHOLD), RoughnessTarget);
     let Sigma = g_SSRAttribs.BilateralCleanupSpatialSigmaFactor;
-    let EffectiveRadius = i32(min(2.0 * Sigma, Radius));
+    // DFX-30: at most SSR_BILATERAL_MAX_RADIUS, so the loops end whatever Sigma holds.
+    let EffectiveRadius = clamp(i32(min(2.0 * Sigma, Radius)), 0, SSR_BILATERAL_MAX_RADIUS);
     var RadianceResult = LoadRadiance(PixelCoord);
 
     if (Variance > SSR_BILATERAL_VARIANCE_EXIT_THRESHOLD && EffectiveRadius > 0)

@@ -32,8 +32,9 @@ fn DenoiserReach() -> i32
 #else
     let Rounding = 1;
 #endif
-    let Spatial = i32(ceil(g_SSRAttribs.SpatialReconstructionRadius)) + Rounding;
-    let Bilateral = min(i32(2.0 * g_SSRAttribs.BilateralCleanupSpatialSigmaFactor), 2);
+    // DFX-30: each at most its kernel's largest, so the dilation's loops end whatever the attributes hold.
+    let Spatial = clamp(i32(ceil(g_SSRAttribs.SpatialReconstructionRadius)), 0, SSR_SPATIAL_RECONSTRUCTION_MAX_RADIUS) + Rounding;
+    let Bilateral = clamp(i32(2.0 * g_SSRAttribs.BilateralCleanupSpatialSigmaFactor), 0, SSR_BILATERAL_MAX_RADIUS);
     return Spatial + 1 + Bilateral;
 }
 

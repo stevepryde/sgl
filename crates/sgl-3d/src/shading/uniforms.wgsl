@@ -49,12 +49,14 @@ struct ShadowCascade {
  // ends this far from its centre along each axis.
  far_bound:f32,
 }
+// The most shadow cascades a frame holds (view::cascades::MAX_SHADOW_CASCADES).
+const FRAME_SHADOW_CASCADES:u32=4u;
 // What every view of one frame shares.
 struct Frame {
  directional_lights:array<DirectionalLight,2>,
  // The shadowed light's cascades, nearest first: the first
  // shadow_cascade_count are in use.
- shadow_cascades:array<ShadowCascade,4>,
+ shadow_cascades:array<ShadowCascade,FRAME_SHADOW_CASCADES>,
  // Three.js's HemisphereLight: irradiance facing up and facing down.
  hemisphere_sky_color:vec3<f32>,
  hemisphere_intensity:f32,

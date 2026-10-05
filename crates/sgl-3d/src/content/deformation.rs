@@ -7,6 +7,11 @@ use glam::{Mat4, Quat, Vec3};
 
 /// The largest joint or morph weight index a mesh may name.
 pub(crate) const MAX_INDEX: u32 = u16::MAX as u32;
+/// The most morph targets a mesh may have: Bevy's `MAX_MORPH_WEIGHTS`
+/// (9d12036 `crates/bevy_mesh/src/morph.rs`), beyond which Bevy refuses a
+/// mesh too. The deform stage's loop over a vertex's targets stops there
+/// (`DEFORM_MOST_MORPH_TARGETS`, AR-12).
+pub(crate) const MAX_MORPH_TARGETS: usize = 256;
 
 /// One vertex's skin: four of its model's joints and their weights. Unused
 /// slots have weight zero. The scene normalizes the weights.
@@ -43,6 +48,7 @@ pub struct MorphTarget {
 pub struct MeshDeformation {
     /// One per vertex for a skinned mesh, in vertex order; empty otherwise.
     pub influences: Vec<Influence>,
+    /// At most 256, as Bevy allows.
     pub morph_targets: Vec<MorphTarget>,
 }
 

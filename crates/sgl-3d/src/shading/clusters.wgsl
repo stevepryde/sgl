@@ -30,6 +30,9 @@ struct Clusters {
  data:array<u32>,
 }
 const CLUSTER_HEADER_WORDS:u32=4u;
+// The most lights and decals a cluster lists (shading::clusters::
+// CLUSTER_MOST_ITEMS), which view::clusters packs no more than.
+const CLUSTER_MOST_ITEMS:u32=8192u;
 // What reaches one cluster: items `first` onwards in clusters.data, `live`
 // lights that every receiver takes, then `baked` lights that only receivers
 // without baked lighting take (takes_baked_lights in baked_lighting.wgsl),
@@ -64,10 +67,16 @@ fn cluster_index(position:vec3<f32>,pixel:vec2<f32>)->u32 {
  return min(index,grid.dimensions.x*grid.dimensions.y*grid.dimensions.z-1u);
 }
 // The lights and decals that reach a point at `position`, seen at the
-// view's `pixel`.
+// view's `pixel`: at most CLUSTER_MOST_ITEMS of them, all within
+// clusters.data, so a loop over them ends whatever the header says.
 fn cluster_range(position:vec3<f32>,pixel:vec2<f32>)->ClusterRange {
  let at=cluster_index(position,pixel)*CLUSTER_HEADER_WORDS;
- return ClusterRange(clusters.data[at],clusters.data[at+1u],clusters.data[at+2u],clusters.data[at+3u]);
+ let length=arrayLength(&clusters.data);
+ let first=min(clusters.data[at],length);
+ let room=min(length-first,CLUSTER_MOST_ITEMS);
+ let live=min(clusters.data[at+1u],room);
+ let baked=min(clusters.data[at+2u],room-live);
+ return ClusterRange(first,live,baked,min(clusters.data[at+3u],room-live-baked));
 }
 // The light or decal index at `at` in clusters.data.
 fn cluster_item(at:u32)->u32 {

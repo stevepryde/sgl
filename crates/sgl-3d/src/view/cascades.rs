@@ -35,7 +35,7 @@ use crate::content::lighting::DirectionalShadow;
 use glam::camera;
 use glam::{DVec3, Mat3, Mat4, Vec3, Vec4};
 
-/// The most cascades a shadow has.
+/// The most cascades a shadow has (`FRAME_SHADOW_CASCADES` in uniforms.wgsl).
 pub(crate) const MAX_SHADOW_CASCADES: usize = 4;
 /// Bevy's default `overlap_proportion`: each cascade starts this share of
 /// the previous cascade's far bound before that bound, and shading blends the

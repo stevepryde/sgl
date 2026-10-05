@@ -20,6 +20,61 @@ const SCENE_BVH_PRIMITIVE_MESH:u32=0u;
 const SCENE_BVH_PRIMITIVE_TRIANGLE:u32=1u;
 // An instance BVH leaf's: the index of the instance entry it names.
 const SCENE_BVH_INSTANCE_WORDS:u32=1u;
+// The most records a leaf names, in either kind of BVH
+// (`scene::rays::bvh::LEAF_PRIMITIVES`).
+const SCENE_BVH_LEAF_PRIMITIVES:u32=4u;
+// The most BVH nodes one ray visits across its instance walk and the model
+// walks it starts (AR-12), as AMD's FidelityFX SSSR caps a ray's hierarchy
+// lookups at `max_traversal_intersections` (FidelityFX SDK
+// samples/hybridreflections/shaders/ffx_sssr_intersect.h, revision
+// c6efa6bf7f2027b3ec94f28578bb5965eabb9e55). On the CPU, the most a ray
+// visited in this walk was 2,081 over a 2-million-triangle terrain at grazing
+// angles, 1,173 inside half a million foliage triangles and 19,238 across a
+// forest of 40,000 instances of a 5,000-triangle tree at 0 to 3 degrees
+// (#160); the cap is over three times the forest's. A ray that reaches it
+// reports a miss.
+const SCENE_BVH_MOST_VISITS:u32=65536u;
+// A walk of a BVH ends whatever the source holds, so corrupt words (a stale
+// range, a rebase error) cost a wrong answer, never an unbounded loop that
+// hangs the GPU: a ray visits at most SCENE_BVH_MOST_VISITS nodes; every node
+// a walk visits lies whole within the source, its end clamped there; each
+// step moves forward, as a node's subtree ends after the node, so a walk
+// stops at an escape that does not, and its ray reports a miss as at the
+// cap; and a leaf names at most a leaf's records, all within the source.
+// Counts one more node visit of a ray's `visits`, false once the ray has
+// made SCENE_BVH_MOST_VISITS, after which it stays exhausted.
+fn scene_bvh_visit(visits:ptr<function,u32>)->bool {
+ if *visits>=SCENE_BVH_MOST_VISITS {
+  *visits=SCENE_BVH_MOST_VISITS+1u;
+  return false;
+ }
+ *visits+=1u;
+ return true;
+}
+// Whether a ray's walks stopped at SCENE_BVH_MOST_VISITS or at a link that
+// does not lead forward: either way the ray reports a miss.
+fn scene_bvh_exhausted(visits:u32)->bool {
+ return visits>SCENE_BVH_MOST_VISITS;
+}
+// The word a walk of the BVH at `root` ends before.
+fn scene_bvh_end(root:u32)->u32 {
+ let length=arrayLength(&scene_source);
+ if length<SCENE_BVH_NODE_WORDS || root>length-SCENE_BVH_NODE_WORDS {
+  return root;
+ }
+ return min(scene_source[root+SCENE_BVH_NODE_ESCAPE],length-SCENE_BVH_NODE_WORDS+1u);
+}
+// Whether `escape` lies past node `node`, as every valid node's does.
+fn scene_bvh_forward(node:u32,escape:u32)->bool {
+ return escape>=node+SCENE_BVH_NODE_WORDS;
+}
+// Leaf `node`'s first record and how many it names of `words` each.
+fn scene_bvh_leaf(node:u32,words:u32)->vec2<u32> {
+ let first=scene_source[node+SCENE_BVH_NODE_FIRST];
+ let length=arrayLength(&scene_source);
+ let room=select(0u,(length-first)/words,first<length);
+ return vec2(first,min(min(scene_source[node+SCENE_BVH_NODE_COUNT],SCENE_BVH_LEAF_PRIMITIVES),room));
+}
 // Which sides of a triangle a ray accepts, beside the receiver it leaves:
 // a camera-origin ray rejects a single-sided material's back faces, as
 // raster culls them; a dynamic GI probe ray and its visibility ray accept
@@ -141,7 +196,7 @@ fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32
 // Instance `index`'s nearest accepted hit closer than `maximum`, or with
 // `any_hit` its first: its model's BVH walked with the ray in model space.
 // A leaf names only instances whose model has triangles.
-fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,maximum_before:f32)->RawSceneHit {
+fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,maximum_before:f32,visits:ptr<function,u32>)->RawSceneHit {
  var closest=RawSceneHit(vec4(0u),vec4(0.));
  let instance=scene_instances[index];
  // Do not normalize the transformed direction: retaining its magnitude
@@ -154,21 +209,27 @@ fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,side
  var maximum=maximum_before;
  let root=instance.bvh_root;
  var node=root;
- let end=scene_source[root+SCENE_BVH_NODE_ESCAPE];
+ let end=scene_bvh_end(root);
  while node<end {
+  if !scene_bvh_visit(visits) {
+   break;
+  }
   let escape=scene_source[node+SCENE_BVH_NODE_ESCAPE];
+  if !scene_bvh_forward(node,escape) {
+   *visits=SCENE_BVH_MOST_VISITS+1u;
+   break;
+  }
   if !scene_portable_bounds(node,origin,direction,ray.origin.w,maximum) {
    node=escape;
    continue;
   }
-  let count=scene_source[node+SCENE_BVH_NODE_COUNT];
-  if count==0u {
+  if scene_source[node+SCENE_BVH_NODE_COUNT]==0u {
    node+=SCENE_BVH_NODE_WORDS;
    continue;
   }
-  let first=scene_source[node+SCENE_BVH_NODE_FIRST];
-  for(var primitive=0u;primitive<count;primitive++) {
-   let leaf=first+primitive*SCENE_BVH_PRIMITIVE_WORDS;
+  let leaf_records=scene_bvh_leaf(node,SCENE_BVH_PRIMITIVE_WORDS);
+  for(var primitive=0u;primitive<leaf_records.y;primitive++) {
+   let leaf=leaf_records.x+primitive*SCENE_BVH_PRIMITIVE_WORDS;
    let mesh_id=scene_source[leaf+SCENE_BVH_PRIMITIVE_MESH];
    let primitive_id=scene_source[leaf+SCENE_BVH_PRIMITIVE_TRIANGLE];
    let hit=scene_intersect_primitive(ray,index,mesh_id,primitive_id,origin,direction,maximum,receiver,sides,open_end);
@@ -189,29 +250,35 @@ fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,side
 // The instance BVH at `root` (a header root, zero when it bounds nothing)
 // walked with the world-space ray after `nearest`: the nearest accepted hit
 // closer than it, or with `any_hit` the first; else `nearest`.
-fn scene_trace_instances(root:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,nearest:RawSceneHit)->RawSceneHit {
+fn scene_trace_instances(root:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,nearest:RawSceneHit,visits:ptr<function,u32>)->RawSceneHit {
  var closest=nearest;
  if root==0u {
   return closest;
  }
  var maximum=select(ray.direction.w,nearest.coords.x,nearest.intersection.x!=0u);
  var node=root;
- let end=scene_source[root+SCENE_BVH_NODE_ESCAPE];
+ let end=scene_bvh_end(root);
  while node<end {
+  if !scene_bvh_visit(visits) {
+   break;
+  }
   let escape=scene_source[node+SCENE_BVH_NODE_ESCAPE];
+  if !scene_bvh_forward(node,escape) {
+   *visits=SCENE_BVH_MOST_VISITS+1u;
+   break;
+  }
   if !scene_portable_bounds(node,ray.origin.xyz,ray.direction.xyz,ray.origin.w,maximum) {
    node=escape;
    continue;
   }
-  let count=scene_source[node+SCENE_BVH_NODE_COUNT];
-  if count==0u {
+  if scene_source[node+SCENE_BVH_NODE_COUNT]==0u {
    node+=SCENE_BVH_NODE_WORDS;
    continue;
   }
-  let first=scene_source[node+SCENE_BVH_NODE_FIRST];
-  for(var leaf=0u;leaf<count;leaf++) {
-   let index=scene_source[first+leaf*SCENE_BVH_INSTANCE_WORDS];
-   let hit=scene_trace_model(index,ray,any_hit,receiver,sides,open_end,maximum);
+  let leaf_records=scene_bvh_leaf(node,SCENE_BVH_INSTANCE_WORDS);
+  for(var leaf=0u;leaf<leaf_records.y;leaf++) {
+   let index=scene_source[leaf_records.x+leaf*SCENE_BVH_INSTANCE_WORDS];
+   let hit=scene_trace_model(index,ray,any_hit,receiver,sides,open_end,maximum,visits);
    if hit.intersection.x==0u {
     continue;
    }
@@ -240,11 +307,19 @@ fn scene_trace_portable(ray:SceneRay,any_hit:bool,sides:u32)->RawSceneHit {
  if !scene_ray_valid(ray) {
   return miss;
  }
- let statics=scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,any_hit,vec2(0u),sides,false,miss);
+ var visits=0u;
+ let statics=scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,any_hit,vec2(0u),sides,false,miss,&visits);
+ if scene_bvh_exhausted(visits) {
+  return miss;
+ }
  if any_hit && statics.intersection.x!=0u {
   return statics;
  }
- return scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,any_hit,vec2(0u),sides,false,statics);
+ let hit=scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,any_hit,vec2(0u),sides,false,statics,&visits);
+ if scene_bvh_exhausted(visits) {
+  return miss;
+ }
+ return hit;
 }
 
 fn scene_trace_moving_except_receiver(ray:SceneRay,receiver:vec2<u32>)->RawSceneHit {
@@ -252,7 +327,12 @@ fn scene_trace_moving_except_receiver(ray:SceneRay,receiver:vec2<u32>)->RawScene
  if !scene_ray_valid(ray) {
   return miss;
  }
- return scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,false,receiver,SCENE_SIDES_AS_RASTER,false,miss);
+ var visits=0u;
+ let hit=scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,false,receiver,SCENE_SIDES_AS_RASTER,false,miss,&visits);
+ if scene_bvh_exhausted(visits) {
+  return miss;
+ }
+ return hit;
 }
 
 // Visibility to a moving hit needs only a static any-hit in [t_min,t_hit).
@@ -263,7 +343,9 @@ fn scene_static_segment_visible_except_receiver(ray:SceneRay,receiver:vec2<u32>)
  if !scene_ray_valid(ray) {
   return true;
  }
- return scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,true,receiver,SCENE_SIDES_AS_RASTER,true,miss).intersection.x==0u;
+ var visits=0u;
+ let hit=scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,true,receiver,SCENE_SIDES_AS_RASTER,true,miss,&visits);
+ return hit.intersection.x==0u || scene_bvh_exhausted(visits);
 }
 
 // The nearest hit accepting `sides` (SCENE_SIDES_*).

@@ -606,3 +606,28 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
         .collect();
     judge(&device, &queue, &mut random, &camera, &lights, &decals);
 }
+
+// A cluster past CLUSTER_MOST_ITEMS keeps its first items, live lights
+// before baked lights before decals, as the shader's cluster_range reads
+// no more; the next cluster's list is unchanged.
+#[test]
+fn a_full_cluster_keeps_its_live_lights_then_its_baked_lights() {
+    let most = CLUSTER_MOST_ITEMS as u32;
+    let mut pairs: Vec<(u32, u32)> = (0..most - 2).map(|light| (0, light)).collect();
+    pairs.push((1, 7));
+    pairs.extend((0..3).map(|light| (0, (most + light) | BAKED)));
+    pairs.extend((0..2).map(|decal| (0, decal | DECAL)));
+    pairs.push((1, 9 | DECAL));
+    let (mut cursor, mut data) = (Vec::new(), Vec::new());
+    pack(2, &pairs, &mut cursor, &mut data);
+    let header = |cluster: usize| &data[cluster * CLUSTER_HEADER_WORDS..][..CLUSTER_HEADER_WORDS];
+    assert_eq!(header(0)[1..], [most - 2, 2, 0]);
+    assert_eq!(header(1)[1..], [1, 0, 1]);
+    let first = header(0)[0] as usize;
+    let live: Vec<u32> = (0..most - 2).collect();
+    assert_eq!(data[first..first + live.len()], live);
+    assert_eq!(data[first + live.len()..][..2], [most, most + 1]);
+    let next = header(1)[0] as usize;
+    assert_eq!(next, first + CLUSTER_MOST_ITEMS);
+    assert_eq!(data[next..], [7, 9]);
+}

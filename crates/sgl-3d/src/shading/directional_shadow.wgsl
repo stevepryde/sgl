@@ -31,13 +31,19 @@ const DIRECTIONAL_SHADOW_BOUNDS:vec4<f32>=vec4(0.,0.,1.,1.);
 // far bound that the next cascade overlaps and the shading blends across.
 const SHADOW_CASCADE_OVERLAP:f32=0.2;
 
+// The cascades in use, at most the frame's, so a loop over them ends
+// whatever the count says.
+fn directional_shadow_cascades()->u32 {
+ return min(frame.shadow_cascade_count,FRAME_SHADOW_CASCADES);
+}
+
 fn get_cascade_index(view_z:f32)->u32 {
- for(var i:u32=0u;i<frame.shadow_cascade_count;i=i+1u) {
+ for(var i:u32=0u;i<directional_shadow_cascades();i=i+1u) {
   if -view_z<frame.shadow_cascades[i].far_bound {
    return i;
   }
  }
- return frame.shadow_cascade_count;
+ return directional_shadow_cascades();
 }
 
 // Converts from world space to the uv position in the light's shadow map.
@@ -91,7 +97,7 @@ fn sample_directional_cascade(light_id:u32,cascade_index:u32,frag_position:vec3<
 fn fetch_directional_shadow(light_id:u32,frag_position:vec3<f32>,surface_normal:vec3<f32>,view_z:f32,frag_coord_xy:vec2<f32>,shadow_filtering:u32)->f32 {
  let cascade_index=get_cascade_index(view_z);
 
- if cascade_index>=frame.shadow_cascade_count {
+ if cascade_index>=directional_shadow_cascades() {
   return 1.0;
  }
 
@@ -99,7 +105,7 @@ fn fetch_directional_shadow(light_id:u32,frag_position:vec3<f32>,surface_normal:
 
  // Blend with the next cascade, if there is one.
  let next_cascade_index=cascade_index+1u;
- if next_cascade_index<frame.shadow_cascade_count {
+ if next_cascade_index<directional_shadow_cascades() {
   let this_far_bound=frame.shadow_cascades[cascade_index].far_bound;
   let next_near_bound=(1.0-SHADOW_CASCADE_OVERLAP)*this_far_bound;
   if -view_z>=next_near_bound {
@@ -113,7 +119,7 @@ fn fetch_directional_shadow(light_id:u32,frag_position:vec3<f32>,surface_normal:
 // Probe captures and ray hits, which have no camera depth: the first
 // cascade whose map holds the receiver, filtered with the fixed kernel.
 fn directional_shadow_at(light_id:u32,frag_position:vec3<f32>,surface_normal:vec3<f32>)->f32 {
- for(var cascade_index:u32=0u;cascade_index<frame.shadow_cascade_count;cascade_index=cascade_index+1u) {
+ for(var cascade_index:u32=0u;cascade_index<directional_shadow_cascades();cascade_index=cascade_index+1u) {
   let light_local=directional_cascade_local(light_id,cascade_index,frag_position,surface_normal);
   if light_local.w!=0.0 {
    let texel_size=frame.shadow_cascades[cascade_index].texel_size;
@@ -127,7 +133,7 @@ fn directional_shadow_at(light_id:u32,frag_position:vec3<f32>,surface_normal:vec
 // unoffset, and its fog tap.
 fn directional_shadow_medium(position:vec3<f32>,view_z:f32)->f32 {
  let cascade_index=get_cascade_index(view_z);
- if cascade_index>=frame.shadow_cascade_count {
+ if cascade_index>=directional_shadow_cascades() {
   return 1.0;
  }
  let light_local=world_to_directional_light_local(cascade_index,vec4(position,1.));

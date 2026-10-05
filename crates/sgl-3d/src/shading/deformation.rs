@@ -82,6 +82,10 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         ),
         ("JOINT_WORDS", naga::Literal::U32(JOINT_WORDS)),
         (
+            "DEFORM_MOST_MORPH_TARGETS",
+            naga::Literal::U32(crate::content::deformation::MAX_MORPH_TARGETS as u32),
+        ),
+        (
             "DEFORMED_POSITION_WORDS",
             naga::Literal::U32(DEFORMED_POSITION_WORDS),
         ),

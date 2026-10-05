@@ -16,7 +16,8 @@ pub(crate) const DATA_SLABS: u32 = DEPTH_TEXELS;
 /// compute on every device.
 pub(crate) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The most rays a probe traces a frame at any quality: Wicked Engine's
-/// default `DDGI_RAYCOUNT` (df44c3d wiRenderer.cpp 143), High's.
+/// default `DDGI_RAYCOUNT` (df44c3d wiRenderer.cpp 143), High's
+/// (`DDGI_MOST_RAYS`).
 pub(crate) const MOST_RAYS: u32 = 256;
 /// Texels to a row of the ray list and ray results (`DDGI_RAY_ROW`): a
 /// probe's rays, `max_rays` of them, follow one another from texel
@@ -76,6 +77,7 @@ pub(crate) fn constants() -> Vec<super::layout_tests::Constant> {
         ("DDGI_DEPTH_TEXELS", DEPTH_TEXELS),
         ("DDGI_DATA_SLABS", DATA_SLABS),
         ("DDGI_RAY_ROW", RAY_ROW),
+        ("DDGI_MOST_RAYS", MOST_RAYS),
     ]
     .into_iter()
     .map(|(name, value)| Constant::new("geometry", name, naga::Literal::U32(value)))

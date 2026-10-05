@@ -15,6 +15,11 @@
 // SGL3D also writes the post-projection depth of each receiver's reflected
 // point, the input of godot_reflections_temporal.wgsl's hit reprojection.
 
+// The most steps a trace takes, the top of Godot's `ssr_max_steps` range
+// (scene/resources/environment.cpp at the revision above), so a trace ends
+// whatever its parameters say.
+const MOST_STEPS: i32 = 512;
+
 @group(0) @binding(0) var source_last_frame: texture_2d<f32>;
 @group(0) @binding(1) var source_hiz: texture_2d<f32>;
 @group(0) @binding(2) var source_normal_roughness: texture_2d<f32>;
@@ -199,7 +204,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 		let cell_step = vec2<f32>(select(1.0, -1.0, screen_ray_dir.x < 0.0), select(1.0, -1.0, screen_ray_dir.y < 0.0));
 
 		var cur_level = 0;
-		var cur_iteration = params.num_steps;
+		var cur_iteration = min(params.num_steps, MOST_STEPS);
 
 		// Advance the start point to the closest next cell to prevent immediate self intersection.
 		var t: f32;

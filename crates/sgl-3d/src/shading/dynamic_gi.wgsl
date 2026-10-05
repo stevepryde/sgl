@@ -34,6 +34,9 @@ const DDGI_DEPTH_TEXELS:u32=18u;
 const DDGI_DATA_SLABS:u32=18u;
 // Texels to a row of the dynamic GI stage's ray list and ray results.
 const DDGI_RAY_ROW:u32=2048u;
+// The most rays a probe traces a frame at any quality, which bounds every
+// loop over a probe's rays whatever the volume says.
+const DDGI_MOST_RAYS:u32=256u;
 fn ddgi_sign_not_zero(v:vec2<f32>)->vec2<f32> {
  return select(vec2(-1.),vec2(1.),v>=vec2(0.));
 }

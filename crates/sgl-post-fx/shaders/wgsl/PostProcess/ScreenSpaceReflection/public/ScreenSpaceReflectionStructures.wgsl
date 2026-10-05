@@ -56,6 +56,14 @@
 // Parameter regulates from which level of roughness the maximum radius will be used at the stage of bilateral filtering
 #define SSR_BILATERAL_ROUGHNESS_FACTOR 8
 
+// PROVENANCE.md DFX-30: the most of each attribute a loop runs over, so every loop ends whatever the
+// attributes hold. The traversal's lookups and the spatial reconstruction's radius are capped at the
+// tops of DiligentFX's own ranges for them (ScreenSpaceReflection::UpdateUI); the bilateral kernel's
+// radius is its Radius at most.
+#define SSR_MAX_TRAVERSAL_INTERSECTIONS 256
+#define SSR_SPATIAL_RECONSTRUCTION_MAX_RADIUS 8
+#define SSR_BILATERAL_MAX_RADIUS 2
+
 // Defaults are those of the host structure (src/structures.rs).
 struct ScreenSpaceReflectionAttribs
 {

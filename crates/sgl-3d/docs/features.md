@@ -32,12 +32,13 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   stored blocks.
   [Compressed material images](../README.md#compressed-material-images).
 - **Skinned meshes and morph targets**: the loader imports skins (four
-  influences per vertex), morph targets, the node hierarchy and animation
-  clips as plain data (`deformation`, `Asset::rig`); the game samples and
-  blends clips and gives each instance its joint matrices and morph weights
-  every frame (`Scene::set_instance_deformation`, `Rig::joint_matrices`).
-  SGL3D morphs and skins each changed instance once per frame in compute, and
-  every pass draws the result: motion from the last submitted frame's pose,
+  influences per vertex), morph targets (up to 256 a mesh), the node
+  hierarchy and animation clips as plain data (`deformation`, `Asset::rig`);
+  the game samples and blends clips and gives each instance its joint
+  matrices and morph weights every frame
+  (`Scene::set_instance_deformation`, `Rig::joint_matrices`). SGL3D morphs
+  and skins each changed instance once per frame in compute, and every pass
+  draws the result: motion from the last submitted frame's pose,
   culling by skinned bounds, shadows in the cascades and the local-light
   atlas. A deforming instance moves and keeps its model; rays do not see it.
   Each `set_instance_deformation` call deforms it again and redraws its
@@ -121,8 +122,10 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   (`FrameInput::hemisphere_light`, `HemisphereLight`).
   [Frame lights and look](../README.md#frame-lights-and-look).
 - **Point, spot and rectangle lights**: scene content (`Scene::add_light`,
-  `Light`, `LightShape`), any number, clustered on the CPU each frame so each
-  pixel pays only for the lights that reach it. A `baked` light lights only
+  `Light`, `LightShape`), clustered on the CPU each frame so each pixel
+  pays only for the lights that reach it, up to 8,192 lights and decals a
+  cluster (a probe capture's cluster is the whole scene, a ray hit's the
+  view, a dynamic GI probe ray's the volume). A `baked` light lights only
   receivers without baked lighting (moving instances, and static ones with
   no lightmap or assigned atlas chart), leaving the rest to the game's bake; `specular` scales its
   highlights (0 for a fixture already reflected as an emitter), and
@@ -231,7 +234,7 @@ Environment and probe specular always apply. On top of them:
   frame's medium (density with height falloff, albedo, anisotropy, the
   share of ambient light it scatters, none by default as Godot's) and
   denser boxes of it (`Scene::update_fog_volumes`, `FogVolume`, by default
-  Godot's), lit by the
+  Godot's; the first 1,024 that reach the frame), lit by the
   directional lights through their cascades, the clustered point, spot and
   rectangle lights through their shadows, each scaled by its `fog_energy`,
   and that share of the ambient light, so light shafts form where openings

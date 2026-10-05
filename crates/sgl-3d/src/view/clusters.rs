@@ -17,7 +17,7 @@ use crate::content::identity::Identity;
 use crate::content::light::Light;
 use crate::scene::decals::Decals;
 use crate::scene::lights::Lights;
-use crate::shading::clusters::{CLUSTER_HEADER_WORDS, ClusterGrid};
+use crate::shading::clusters::{CLUSTER_HEADER_WORDS, CLUSTER_MOST_ITEMS, ClusterGrid};
 pub(crate) use assign::{BoxVolume, CAMERA_CLUSTERS, ClusterConfig, ViewVolume};
 use assign::{Clusterable, Scratch};
 use glam::{Mat4, UVec2};
@@ -63,18 +63,22 @@ fn clusterables(
 /// any baked light's (marked `BAKED`), and those before any decal's (marked
 /// `DECAL`): each cluster's header (its first item, then its live lights',
 /// baked lights' and decals' counts), then the clusters' items, live lights
-/// then baked lights then decals. A stable counting sort; `cursor` is its
-/// scratch.
+/// then baked lights then decals, at most `CLUSTER_MOST_ITEMS` a cluster:
+/// its first pairs. A stable counting sort; `cursor` is its scratch.
 fn pack(cluster_count: usize, pairs: &[(u32, u32)], cursor: &mut Vec<u32>, data: &mut Vec<u32>) {
     data.clear();
     data.resize(cluster_count * CLUSTER_HEADER_WORDS, 0);
     for &(cluster, item) in pairs {
+        let header = &mut data[cluster as usize * CLUSTER_HEADER_WORDS..][..CLUSTER_HEADER_WORDS];
+        if (header[1] + header[2] + header[3]) as usize == CLUSTER_MOST_ITEMS {
+            continue;
+        }
         let count = match item & KIND {
             0 => 1,
             BAKED => 2,
             _ => 3,
         };
-        data[cluster as usize * CLUSTER_HEADER_WORDS + count] += 1;
+        header[count] += 1;
     }
     cursor.clear();
     let mut offset = data.len() as u32;
@@ -85,7 +89,12 @@ fn pack(cluster_count: usize, pairs: &[(u32, u32)], cursor: &mut Vec<u32>, data:
     }
     data.resize(offset as usize, 0);
     for &(cluster, item) in pairs {
+        let header = &data[cluster as usize * CLUSTER_HEADER_WORDS..][..CLUSTER_HEADER_WORDS];
+        let end = header[0] + header[1] + header[2] + header[3];
         let at = &mut cursor[cluster as usize];
+        if *at == end {
+            continue;
+        }
         data[*at as usize] = item & !KIND;
         *at += 1;
     }

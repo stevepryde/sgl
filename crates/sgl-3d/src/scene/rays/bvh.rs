@@ -24,8 +24,9 @@ struct Node {
 
 /// A node record's words.
 const NODE_WORDS: usize = std::mem::size_of::<Node>() / 4;
-/// The most primitives a leaf holds.
-const LEAF_PRIMITIVES: usize = 4;
+/// The most primitives a leaf holds, which a walk on the GPU trusts no leaf
+/// beyond (`SCENE_BVH_LEAF_PRIMITIVES`).
+pub(super) const LEAF_PRIMITIVES: usize = 4;
 
 /// Where a node of `primitives` splits them, or None for a leaf. The split
 /// depends only on their count, so a tree's size does too.
