@@ -8,7 +8,7 @@
 //! about the camera. The render origin follows the camera, chunk-aligned.
 //!
 //! `cargo run --release -p sgl-3d --example streaming [-- RUN... [--split]
-//! [--hardware-ray-tracing] | --check [--hardware-ray-tracing]]`
+//! [--occlusion] [--hardware-ray-tracing] | --check [--hardware-ray-tracing]]`
 //!
 //! The game's side is modelled on a block game's: its mesher finishes up to
 //! 24 chunks a 33 ms tick, nearest the camera first, meshing and preparing
@@ -49,7 +49,8 @@
 //! Each run then prints what its views' draw lists cost on its route
 //! (`support/culling.rs`): the CPU time each GPU-built view's draw list
 //! takes to build and record, and each pass group's GPU time. `--split`
-//! renders the opaque stage's two-pass form instead of its fused pass.
+//! renders the opaque stage's two-pass form instead of its fused pass;
+//! `--occlusion` turns occlusion culling on, which renders it too.
 //!
 //! `--check` holds the camera still in the world while the render origin
 //! moves by a chunk and by 256 m, and fails unless static content shows no
@@ -1159,7 +1160,7 @@ fn render(
         }
         renderer.finish_frame(&mut scene);
         culling.frame(
-            &renderer,
+            (&renderer, &settings),
             index,
             step.is_some(),
             (rendered, recording - rendered),

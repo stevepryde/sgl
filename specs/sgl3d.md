@@ -279,9 +279,12 @@ Remaining work, in the existing roadmap order:
    opaque and masked surfaces and the directional cascades draw from lists
    the GPU builds (frustum, authored mesh LOD and mesh sections, one
    indirect draw per set); blended surfaces, local-light faces and probe
-   captures keep CPU-built, instanced lists. Two-phase occlusion culling
-   remains, as the architecture designs it
-   ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages)).
+   captures keep CPU-built, instanced lists. The camera's two-phase
+   occlusion culling runs behind `Settings::occlusion_culling` (off by
+   default), as the architecture designs it
+   ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages));
+   the cascades' occlusion culling, a design of its own, and the consumer's
+   adoption remain.
 
 These are planned capabilities, not APIs a game can depend on yet. Implement
 them under RD-1 and the architecture rules, retaining native and browser

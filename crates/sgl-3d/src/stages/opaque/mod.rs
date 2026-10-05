@@ -7,10 +7,14 @@
 //! occlude by this stage's visibility.
 //!
 //! The renderer encodes it in the stage order's named parts: the G-buffer
-//! (`encode_gbuffer`), which leaves the G-buffer complete; the lighting
-//! (`encode_lighting`), the sky and the lighting pass at its depth; then
-//! ambient occlusion (`encode_ambient_occlusion`). The fused form's pass is
-//! its G-buffer part, and its lighting part encodes nothing.
+//! (`encode_gbuffer`), per phase of the camera's draw list, which leaves
+//! the G-buffer complete; the lighting (`encode_lighting`), the sky and the
+//! lighting pass at its depth over every phase's sets; then ambient
+//! occlusion (`encode_ambient_occlusion`). The fused form's pass is its
+//! G-buffer part, and its lighting part encodes nothing. While occlusion
+//! culling runs, the stage takes its two-pass form, and the renderer encodes
+//! the cull stage's late phase between the early and late G-buffer passes,
+//! the late one loading the early one's targets.
 //!
 //! Reads: the camera view and its draw list, group 0's camera lit and unlit
 //! groups, the geometry pipelines; for a probe capture face (`encode_capture`),
@@ -21,11 +25,13 @@
 //! capability, diagnostics), the diagnostics layers compiled into the
 //! geometry pipelines.
 //! Timing groups: fused `sky`, `opaque geometry + lighting`; split
-//! `geometry`, `sky`, `opaque lighting`; then `ambient occlusion`.
+//! `geometry`, `geometry late` (occlusion culling), `sky`,
+//! `opaque lighting`; then `ambient occlusion`.
 pub(crate) mod ambient_occlusion;
 pub(crate) mod sky;
 
 use crate::counters::Moment;
+use crate::view::draw_list::gpu::Phase;
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::{GeometryPass, GeometryPipelines};
@@ -47,15 +53,18 @@ impl Opaque {
         }
     }
 
-    /// The G-buffer part: the sky and the fused pass, which lights the
-    /// surfaces as it writes the G-buffer, or the G-buffer pass and, where
-    /// the device cannot write anisotropy in it, the anisotropy fallback at
-    /// `Equal`.
-    pub fn encode_gbuffer(&mut self, ctx: &mut FrameContext<'_>) {
+    /// The G-buffer part of `phase`: the sky and the fused pass, which
+    /// lights the surfaces as it writes the G-buffer, or the G-buffer pass
+    /// over the phase's sets and, after the frame's last, where the device
+    /// cannot write anisotropy in it, the anisotropy fallback at `Equal`
+    /// over every phase's. The fused form has the early phase alone.
+    pub fn encode_gbuffer(&mut self, ctx: &mut FrameContext<'_>, phase: Phase) {
         if ctx.effective.fused {
-            self.encode_fused(ctx);
+            if phase == Phase::Early {
+                self.encode_fused(ctx);
+            }
         } else {
-            Self::encode_gbuffer_pass(ctx);
+            Self::encode_gbuffer_pass(ctx, phase);
         }
     }
 
@@ -163,12 +172,16 @@ impl Opaque {
         ctx.views.camera.recorded_since(started);
     }
 
-    /// The G-buffer pass over the camera's list, clearing depth, then, where
-    /// the device cannot write anisotropy in it, the anisotropy fallback at
-    /// `Equal`.
-    fn encode_gbuffer_pass(ctx: &mut FrameContext<'_>) {
+    /// The G-buffer pass over the camera's sets of `phase`: the early one
+    /// clearing the targets, the late one loading them. After the frame's
+    /// last (the late one, or the early one where the list culls no late
+    /// phase), where the device cannot write anisotropy in it, the
+    /// anisotropy fallback at `Equal` over every phase's sets.
+    fn encode_gbuffer_pass(ctx: &mut FrameContext<'_>, phase: Phase) {
         let targets = ctx.targets;
         let anisotropy_inline = ctx.pipelines.anisotropy_inline;
+        let late = phase == Phase::Late;
+        let last = late || !ctx.views.camera.list.late();
         // The G-buffer and depth.
         let started = Moment::now();
         {
@@ -179,15 +192,31 @@ impl Opaque {
                 &targets.f0,
                 &targets.anisotropy,
             ];
-            let attachments = colors.map(attachment);
+            // The late pass keeps what the early one wrote.
+            let attachments = colors.map(|view| {
+                let mut target = attachment(view);
+                if late {
+                    target.as_mut().unwrap().ops.load = wgpu::LoadOp::Load;
+                }
+                target
+            });
+            let (label, group) = if late {
+                ("stable scene geometry, late set", "geometry late")
+            } else {
+                ("stable scene geometry", "geometry")
+            };
             let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("stable scene geometry"),
-                timestamp_writes: ctx.timing.and_then(|t| t.render_pass("geometry")),
+                label: Some(label),
+                timestamp_writes: ctx.timing.and_then(|t| t.render_pass(group)),
                 color_attachments: &attachments[..if anisotropy_inline { 5 } else { 4 }],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &targets.depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
+                        load: if late {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(0.0)
+                        },
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -195,13 +224,16 @@ impl Opaque {
                 ..Default::default()
             });
             pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-            ctx.views
-                .camera
-                .list
-                .draw(ctx.scene, ctx.pipelines, &mut pass, GeometryPass::GBuffer);
+            ctx.views.camera.list.draw_phase(
+                ctx.scene,
+                ctx.pipelines,
+                &mut pass,
+                GeometryPass::GBuffer,
+                phase,
+            );
         }
         ctx.views.camera.recorded_since(started);
-        if !anisotropy_inline {
+        if !anisotropy_inline && last {
             let started = Moment::now();
             let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("stable anisotropy attachment fallback"),

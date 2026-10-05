@@ -81,7 +81,7 @@ pub(crate) fn set_cascades(
         slot.set(queue, view);
         let started = crate::counters::Moment::now();
         slot.list
-            .prepare(device, queue, scene, cascade_cull(&view, mask));
+            .prepare(device, queue, scene, cascade_cull(&view, mask), false);
         slot.built(started);
     }
 }
@@ -262,7 +262,13 @@ impl Prepare {
         let cull = effective.culling;
         let started = crate::counters::Moment::now();
         let camera_cull = camera_cull(&camera_view, render_size, mask, cull);
-        views.camera.list.prepare(device, queue, scene, camera_cull);
+        views.camera.list.prepare(
+            device,
+            queue,
+            scene,
+            camera_cull,
+            effective.occlusion_culling,
+        );
         views.camera.built(started);
         let lod = LodSelector::new(camera.view, camera.projection, render_size);
         views.blended.build(

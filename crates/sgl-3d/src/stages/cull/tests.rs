@@ -56,6 +56,7 @@ fn cull(
         queue,
         scene,
         camera_cull(&camera, size, mask, culling),
+        false,
     );
     crate::stages::prepare::set_cascades(
         (device, queue),
