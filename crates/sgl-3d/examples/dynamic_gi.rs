@@ -324,7 +324,9 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     // A lamp under the ceiling at the back, casting the boxes' shadows.
     let lamp = Light {
         position: Vec3::new(1.8, 3.4, -2.6),
-        shape: LightShape::Point,
+        shape: LightShape::Point {
+            radius: LightShape::DEFAULT_RADIUS,
+        },
         color: [1., 0.75, 0.45],
         intensity: 25.,
         range: 9.,

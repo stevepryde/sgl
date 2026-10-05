@@ -483,6 +483,148 @@ fn light_outside_a_closed_room_reaches_its_probes_only_without_a_shadow() {
     assert!(maxima[2] > 0.01, "{maxima:?}");
 }
 
+/// What the volume holds facing down over a grey floor `floor_half` metres
+/// to each side, its top at height 0, under a static black `occluder`, lit
+/// by `point` or `sun` alone: each query's red, irradiance / PI.
+fn floor_under(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    floor_half: f32,
+    occluder: Mat4,
+    point: Option<crate::Light>,
+    sun: Option<crate::DirectionalLight>,
+) -> Vec<f32> {
+    let mut scene = Scene::new(device, queue);
+    let mut floor = test_support::cube();
+    floor.materials[0].base = [0.5, 0.5, 0.5, 1.];
+    floor.materials[0].metallic = 0.;
+    add_static(
+        device,
+        queue,
+        &mut scene,
+        floor,
+        Mat4::from_translation(Vec3::new(0., -0.1, 0.))
+            * Mat4::from_scale(Vec3::new(2. * floor_half, 0.2, 2. * floor_half)),
+    );
+    let mut block = test_support::cube();
+    block.materials[0].base = [0., 0., 0., 1.];
+    block.materials[0].metallic = 0.;
+    add_static(device, queue, &mut scene, block, occluder);
+    if let Some(light) = point {
+        scene.add_light(device, queue, light).unwrap();
+    }
+    scene
+        .set_dynamic_gi_volume(
+            device,
+            Some(DynamicGiVolume {
+                origin: Vec3::new(-4., 1., -4.),
+                spacing: Vec3::splat(2.),
+                probes: [5, 2, 5],
+            }),
+        )
+        .unwrap();
+    let mut input = input(Vec3::new(0., 2., 6.));
+    input.directional_lights[0] = sun;
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    render(
+        device,
+        queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        3,
+    );
+    let queries = [
+        Vec3::new(0.3, 1.6, 0.1),
+        Vec3::new(-1.3, 2.2, 1.1),
+        Vec3::new(1.7, 1.4, -0.6),
+        Vec3::new(-0.9, 2.6, -1.8),
+    ]
+    .map(|point| (point, Vec3::NEG_Y));
+    irradiance(device, queue, &renderer, &queries)
+        .iter()
+        .map(|answer| answer[0])
+        .collect()
+}
+
+// A light's size reaches the volume's visibility rays as it reaches
+// ray-traced shadows (S3D-5): a ray toward a point light ends at a point of
+// its sphere, one toward the sun within its disc. A point light 5 cm above
+// a small block, and the sun straight above a plate as wide as the floor
+// below it, hide their centres from all of the floor, so at size 0 none of
+// their light reaches it and the probes facing it hold nothing. A metre's
+// radius, and an angular diameter of 60°, put most of each light past its
+// occluder: every floor point then sees 0.82 to 0.88 of the light, by a
+// CPU estimate of light_surface.wgsl's sampling against the occluder's
+// box, so the probes hold that share of what they hold when the light
+// casts no shadow. Plausible defects: a visibility ray toward the light's
+// centre or the sun's direction whatever its size, the size dropped from
+// the light's record or the frame's directional light, and a ray ending
+// short of the drawn point.
+#[test]
+fn a_lights_size_lets_its_visibility_rays_past_an_occluder() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let point = |radius: f32, casts_shadow: bool| crate::Light {
+        position: Vec3::new(0., 6., 0.),
+        shape: crate::LightShape::Point { radius },
+        intensity: 200.,
+        range: 30.,
+        casts_shadow,
+        ..Default::default()
+    };
+    let block = Mat4::from_translation(Vec3::new(0., 5.7, 0.)) * Mat4::from_scale(Vec3::splat(0.5));
+    let sun = |angular_diameter: f32, casts_shadow: bool| crate::DirectionalLight {
+        direction: Vec3::NEG_Y,
+        illuminance: 20.,
+        shadow: casts_shadow.then(crate::DirectionalShadow::default),
+        angular_diameter,
+        ..Default::default()
+    };
+    let plate =
+        Mat4::from_translation(Vec3::new(0., 40., 0.)) * Mat4::from_scale(Vec3::new(10., 0.2, 10.));
+    for (label, floor_half, occluder, [hard, soft, unshadowed]) in [
+        (
+            "point light",
+            10.,
+            block,
+            [
+                (Some(point(0., true)), None),
+                (Some(point(1., true)), None),
+                (Some(point(1., false)), None),
+            ],
+        ),
+        (
+            "sun",
+            5.,
+            plate,
+            [
+                (None, Some(sun(0., true))),
+                (None, Some(sun(60f32.to_radians(), true))),
+                (None, Some(sun(60f32.to_radians(), false))),
+            ],
+        ),
+    ] {
+        let [hard, soft, unshadowed] = [hard, soft, unshadowed]
+            .map(|(point, sun)| floor_under(&device, &queue, floor_half, occluder, point, sun));
+        assert!(
+            hard.iter().all(|&red| red == 0.),
+            "{label} of size 0 reached the floor: {hard:?}"
+        );
+        for (&red, &open) in soft.iter().zip(&unshadowed) {
+            assert!(open > 0.01, "{label} unshadowed: {unshadowed:?}");
+            let share = red / open;
+            assert!(
+                (0.7..=0.97).contains(&share),
+                "{label} with a size: {share} of its unshadowed light ({soft:?} of {unshadowed:?})"
+            );
+        }
+    }
+}
+
 /// `asset` turned inside out and single-sided: each triangle's winding and
 /// each normal reversed, so its faces are seen from within, as a room built
 /// to be seen from inside is.

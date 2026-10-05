@@ -33,7 +33,9 @@ fn quad(center: Vec3) -> CpuMesh {
 fn light(position: Vec3) -> Light {
     Light {
         position,
-        shape: LightShape::Point,
+        shape: LightShape::Point {
+            radius: LightShape::DEFAULT_RADIUS,
+        },
         color: [1.; 3],
         intensity: 2.,
         range: 3.,
@@ -261,6 +263,7 @@ fn scene_lights_light_what_they_own() {
                 direction: Vec3::ZERO,
                 inner_angle: 0.,
                 outer_angle: 0.5,
+                radius: LightShape::DEFAULT_RADIUS,
             },
             ..light(ahead)
         },
@@ -269,6 +272,7 @@ fn scene_lights_light_what_they_own() {
                 direction: Vec3::Z,
                 inner_angle: 0.6,
                 outer_angle: 0.5,
+                radius: LightShape::DEFAULT_RADIUS,
             },
             ..light(ahead)
         },

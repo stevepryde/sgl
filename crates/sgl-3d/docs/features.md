@@ -154,8 +154,9 @@ SGL3D needs compute.
   of the fog, which then skips its attenuation and shadow lookup), and
   `shadow_opacity` how dark its shadow is on surfaces and in the fog
   (Godot's; 1 by default). `Light::default()` and
-  `DirectionalLight::default()` are Godot's light defaults, so a game sets
-  only what differs (`..Default::default()`).
+  `DirectionalLight::default()` are Godot's light defaults, with Wicked
+  Engine's 2.5 cm light radius and the sun's angular diameter, so a game
+  sets only what differs (`..Default::default()`).
   `LightShape::Rect` is a one-sided panel or strip whose face is integrated
   by linearly transformed cosines: soft light and stretched highlights
   nearby, a spot of the same intensity far away. It costs more per pixel
@@ -244,12 +245,14 @@ Environment and probe specular always apply. On top of them:
   `ray_tracing_error` report it.
   [Hardware ray tracing](../README.md#hardware-ray-tracing).
 - **Ray-traced shadows** (opt-in, `Settings::ray_traced_shadows`, which
-  needs hardware ray tracing): the camera's opaque surfaces take hard,
-  temporally blended shadows of the directional light and of up to fifteen
-  casting local lights from rays instead of the maps, reaching beyond the
-  directional shadow's distance; the fog, blended surfaces and reflections
-  keep the maps. Soft shadows from lights with a size and a denoiser are
-  planned. `Renderer::ray_traced_shadows_in_effect` reports it.
+  needs hardware ray tracing): the camera's opaque surfaces take the
+  shadows of the directional light and of up to fifteen casting local
+  lights from rays instead of the maps, soft by the light's size (a point
+  or spot light's `radius`, the directional light's `angular_diameter`),
+  denoised by AMD's FidelityFX shadow denoiser for the first four and
+  temporally blended for the rest, reaching beyond the directional
+  shadow's distance; the fog, blended surfaces and reflections keep the
+  maps. `Renderer::ray_traced_shadows_in_effect` reports it.
   [Hardware ray tracing](../README.md#hardware-ray-tracing).
 
 ## Image quality and post-processing
@@ -329,9 +332,8 @@ Environment and probe specular always apply. On top of them:
 ## Not provided
 
 Animation playback (sampling and blending clips is the game's).
-DLSS/MetalFX and soft ray-traced shadows are
-[planned](../../../specs/sgl3d.md#planned). The directional cascades cull by
-frustum alone. Compressed images
+DLSS/MetalFX are [planned](../../../specs/sgl3d.md#planned). The
+directional cascades cull by frustum alone. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
 not provided.
 

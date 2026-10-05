@@ -388,7 +388,9 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
         &queue,
         Light {
             position: Vec3::new(0.5, 2.6, 1.5),
-            shape: LightShape::Point,
+            shape: LightShape::Point {
+                radius: LightShape::DEFAULT_RADIUS,
+            },
             color: [1., 0.85, 0.7],
             intensity: 12.,
             range: 8.,

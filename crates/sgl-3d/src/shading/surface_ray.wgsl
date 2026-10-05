@@ -123,8 +123,10 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
 // other receiver, as Godot's VoxelGI traces a light only where it has one
 // (b13043816a0f234985030ec035363a005bc86c32,
 // servers/rendering/renderer_rd/shaders/environment/voxel_gi.glsl 297,
-// `has_shadow` from gi.cpp 3036; MIT, src/LICENSE-godot.txt). A rectangle's
-// ray ends at the point of its face `random.yz` draws.
+// `has_shadow` from gi.cpp 3036; MIT, src/LICENSE-godot.txt). The ray ends
+// where `random.yz` draws it on the light, as ray-traced shadows' rays do
+// (light_surface.wgsl): a point of a point or spot light's sphere or of a
+// rectangle's face, or a direction within a directional light's disc.
 //
 // Ports Wicked Engine df44c3db4c4927492bc9c791eac715d98d7ed091's light
 // sampling at a hit (WickedEngine/shaders/ddgi_raytraceCS.hlsl 329–490: one
@@ -133,8 +135,8 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
 // for a directional light, culling no side), MIT (src/LICENSE-wicked.txt).
 // Changed: each light reaches the hit as every receiver's does
 // (scene_light_sample, a rectangle integrated over its face), its shadow
-// opacity applies, a light without a shadow casts no ray, and SGL3D's
-// lights are punctual, so Wicked's radius jitter has no counterpart. Not
+// opacity applies, a light without a shadow casts no ray, and the ray's
+// end is drawn on the light as SGL3D's ray-traced shadows draw it. Not
 // taken: NVIDIA RTXGI's shading of every light at a hit (practice only),
 // which removes the noise of the light's choice. The allocation measures a
 // texel's inconsistency against its own deviation, so less noise leaves it
@@ -161,6 +163,8 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
  let pick=min(u32(floor(random.x*f32(light_count))),light_count-1u);
  var sample:LightSample;
  var direction=vec3(0.);
+ // The visibility ray's direction: toward where it ends on the light.
+ var ray=vec3(0.);
  // A light at infinity: Wicked's FLT_MAX.
  var distance=3.402823466e+38;
  // The shadow opacity of a light that casts a shadow, else none.
@@ -173,8 +177,9 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
   }
   sample=LightSample(direction,light.color*light.illuminance,1.,0.,NO_RECT_LIGHT);
   // The light with the frame's cascades is the one directional light
-  // that casts a shadow.
+  // that casts a shadow. Its visibility ray leaves within its disc.
   opacity=select(0.,light.shadow_opacity,(light.flags&DIRECTIONAL_LIGHT_SHADOW)!=0u);
+  ray=directional_ray_direction(direction,light.disc_radius,random.yz);
  } else {
   let index=cluster_item(list.first+pick-directional_count);
   sample=scene_light_sample(index,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT);
@@ -182,18 +187,14 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
    return vec3(0.);
   }
   let light=lights[index];
-  var end=light.position;
-  if sample.rect!=NO_RECT_LIGHT {
-   end+=light.half_width*(random.y*2.-1.)+light_rect_half_height(light)*(random.z*2.-1.);
-  }
-  let to_light=end-s.position;
+  let to_light=light_ray_end(light,s.position,random.yz)-s.position;
   distance=length(to_light);
-  direction=to_light/max(distance,1e-20);
+  ray=to_light/max(distance,1e-20);
   opacity=select(0.,light.shadow_opacity,(light.flags&LIGHT_CASTS_SHADOW)!=0u);
  }
  sample.specular=0.;
  if opacity>SHADOW_OPACITY_CUTOFF {
-  let visible=scene_segment_visible(s.position,direction,.001,distance,SCENE_SIDES_BOTH);
+  let visible=scene_segment_visible(s.position,ray,.001,distance,SCENE_SIDES_BOTH);
   sample.visibility=shadow_opacity_visibility(select(0.,1.,visible),opacity);
  }
  // The surface's reflectance as shade_lit derives it, its DFG lookup at the

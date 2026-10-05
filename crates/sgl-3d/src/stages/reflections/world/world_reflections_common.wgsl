@@ -60,13 +60,3 @@ fn world_linear_depth(z:f32)->f32 {
 fn world_inverse_linear_depth(linear:f32)->f32 {
  return linear_depth(world.eye.w,linear);
 }
-// Wicked ssr_resolveCS.hlsl baseHash and hash33.
-fn world_base_hash(p0:vec3<u32>)->u32 {
- let p=1103515245u*((p0>>vec3(1u))^p0.yzx);
- let h32=1103515245u*((p.x^p.z)^(p.y>>3u));
- return h32^(h32>>16u);
-}
-fn world_hash33(x:vec3<u32>)->vec3<u32> {
- let n=world_base_hash(x);
- return vec3(n,n*16807u,n*48271u);
-}

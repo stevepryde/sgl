@@ -5,16 +5,24 @@ use glam::Vec3;
 /// Where a light shines.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LightShape {
-    /// Every direction alike.
-    Point,
+    /// Every direction alike. `radius` (metres, nonnegative) is the size
+    /// of the sphere it shines from, which only rays see: a ray-traced
+    /// shadow's rays, and the dynamic GI volume's visibility rays, end at
+    /// a point of it, so a larger light casts a softer shadow and 0 a hard
+    /// one, as Wicked Engine's `LightComponent::radius`
+    /// (`LightShape::DEFAULT_RADIUS`). Shading and the shadow maps treat
+    /// the light as a point.
+    Point { radius: f32 },
     /// A cone around `direction` (toward where it shines; any nonzero
     /// length): full intensity within `inner_angle` of it, none beyond
     /// `outer_angle`, and a smooth falloff between, as Filament's and Bevy's
-    /// spot lights. `0 <= inner_angle <= outer_angle < π/2`.
+    /// spot lights. `0 <= inner_angle <= outer_angle < π/2`. `radius` is as
+    /// a point light's.
     Spot {
         direction: Vec3,
         inner_angle: f32,
         outer_angle: f32,
+        radius: f32,
     },
     /// A one-sided rectangle centred on the light's position, facing
     /// `direction` (toward where it shines; any nonzero length), `width`
@@ -31,6 +39,12 @@ pub enum LightShape {
         width: f32,
         height: f32,
     },
+}
+
+impl LightShape {
+    /// Wicked Engine's default light radius, in metres
+    /// (`LightComponent::radius`).
+    pub const DEFAULT_RADIUS: f32 = 0.025;
 }
 
 /// A point, spot or rectangle light: scene content, added with
@@ -86,7 +100,8 @@ pub struct Light {
 }
 
 impl Default for Light {
-    /// Godot's `Light3D` defaults: a white point light at the origin, of
+    /// Godot's `Light3D` defaults, with Wicked Engine's radius: a white
+    /// point light of 2.5 cm (`LightShape::DEFAULT_RADIUS`) at the origin, of
     /// π candela (its light energy of 1, which its renderer scales by π),
     /// reaching 5 metres, live, physical specular (its `light_specular` of
     /// 0.5, which its renderer doubles), fog energy 1 and no shadow, at
@@ -95,7 +110,9 @@ impl Default for Light {
     fn default() -> Self {
         Self {
             position: Vec3::ZERO,
-            shape: LightShape::Point,
+            shape: LightShape::Point {
+                radius: LightShape::DEFAULT_RADIUS,
+            },
             color: [1.; 3],
             intensity: std::f32::consts::PI,
             range: 5.,

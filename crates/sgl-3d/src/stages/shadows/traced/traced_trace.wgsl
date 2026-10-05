@@ -8,11 +8,13 @@
 //
 // Ports Wicked Engine 2ff1d9e's rtshadowCS.hlsl, which is
 // screenspaceshadowCS.hlsl under RTSHADOW and RTAPI (9–14, 45–46, 76–84,
-// 97–210, 215–257, 298–301; MIT, src/LICENSE-wicked.txt): half resolution
-// (DOWNSAMPLE 2), a ray from the surface with TMin 0.01 to a point or spot
-// light's position and a directional light at infinity, cast where the
-// light reaches the surface, culling front faces, its first hit ending it,
-// 8 bits a light. Changed at the port boundary: a pixel's lights are the
+// 97–210, 215–257, 298–301, 309–319; MIT, src/LICENSE-wicked.txt): half
+// resolution (DOWNSAMPLE 2), a ray from the surface with TMin 0.01 toward a
+// point drawn on a point, spot or rectangle light or a direction within a
+// directional light's disc, to infinity for the latter (light_surface.wgsl),
+// cast where the light reaches the surface, culling front faces, its first
+// hit ending it, 8 bits a light, and the denoised lights' bits gathered by
+// 8×4 tile. Changed at the port boundary: a pixel's lights are the
 // slot table's (shadow_mask_slots.wgsl), not the first sixteen of a
 // sorted entity array; a light reaches the surface as the lit library's
 // light_reach says (range, cone, and the lit side of the shading normal; a
@@ -24,10 +26,12 @@
 // cut-out texels are the shared predicate's, where Wicked's query culls
 // front faces and alpha-tests candidates; a pixel the G-buffer drew
 // nothing lit at (an unlit material) casts nothing and is the sky to the
-// passes after, which Wicked, without unlit pixels, traces. The ray ends
-// at the light's centre: a hard
-// shadow. Its normals copy and tile mask feed the denoiser, which this
-// stage does not run yet, and are not written.
+// passes after, which Wicked, without unlit pixels, traces; the draw on
+// the light is a hash of the pixel and the frame (hash.wgsl), where Wicked
+// reads blue noise, a departure the owner judges (RD-5); the tile's bits
+// gather through workgroup atomics into a storage texture, where Wicked
+// ORs them into a buffer; and Wicked's half-resolution normals copy is not
+// written, the denoiser reading the G-buffer's.
 @group(3) @binding(0) var traced_depth:texture_depth_2d;
 @group(3) @binding(1) var traced_normal:texture_2d<f32>;
 @group(3) @binding(2) var traced_f0:texture_2d<f32>;
@@ -35,6 +39,13 @@
 @group(3) @binding(4) var<uniform> shadow_mask_slots:ShadowMaskSlots;
 @group(3) @binding(5) var traced_raw:texture_storage_2d<rgba32uint,write>;
 @group(3) @binding(6) var traced_half_depth:texture_storage_2d<r32float,write>;
+// Each 8×4 tile's mask of the pixels that see the light of each slot the
+// denoiser filters, one word a slot (tileclassification's
+// ReadRaytracedShadowMask).
+@group(3) @binding(7) var traced_tiles:texture_storage_2d<rgba32uint,write>;
+// Each tracing pixel's shading normal for the denoiser, Wicked's
+// half-resolution normals copy.
+@group(3) @binding(8) var traced_half_normal:texture_storage_2d<rgba16float,write>;
 // Wicked's ray.TMin: where a shadow ray starts along its direction, in
 // metres, past the surface it leaves.
 const TRACED_T_MIN:f32=.01;
@@ -53,20 +64,23 @@ fn traced_directional_light()->u32 {
  return 2u;
 }
 
-// Whether slot `key`'s light, which reaches it, is unoccluded from the
-// surface at `position` with shading normal `normal` and geometry normal
-// `geometry_normal`; false where it does not reach the surface.
-fn traced_visible(key:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>)->bool {
+// Whether slot `key`'s light is unoccluded from the surface at `position`
+// with shading normal `normal` and geometry normal `geometry_normal`, along
+// a ray toward the point of the light `random` draws (light_surface.wgsl);
+// false where the light does not reach the surface.
+fn traced_visible(key:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,random:vec2<f32>)->bool {
  if key==SHADOW_MASK_DIRECTIONAL {
   let index=traced_directional_light();
   if index>=2u {
    return false;
   }
-  let to_light=normalize(frame.directional_lights[index].direction_to_light);
+  let light=frame.directional_lights[index];
+  let to_light=normalize(light.direction_to_light);
   if dot(normal,to_light)<=0. && dot(geometry_normal,to_light)<=0. {
    return false;
   }
-  return scene_segment_visible(position,to_light,TRACED_T_MIN,TRACED_FAR,SCENE_SIDES_SHADOW);
+  let direction=directional_ray_direction(to_light,light.disc_radius,random);
+  return scene_segment_visible(position,direction,TRACED_T_MIN,TRACED_FAR,SCENE_SIDES_SHADOW);
  }
  if key>=arrayLength(&lights) {
   return false;
@@ -75,43 +89,73 @@ fn traced_visible(key:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:ve
  if light_reach(light,position,normal,false).attenuation<=0. {
   return false;
  }
- let to_light=light.position-position;
+ let to_light=light_ray_end(light,position,random)-position;
  let distance=length(to_light);
+ if distance<=0. {
+  return true;
+ }
  return scene_segment_visible(position,to_light/distance,TRACED_T_MIN,distance,SCENE_SIDES_SHADOW);
 }
 
-@compute @workgroup_size(8,4) fn traced_shadow_rays(@builtin(global_invocation_id) id:vec3<u32>) {
- let reduced=vec2<u32>(traced.reduced.xy);
- if any(id.xy>=reduced) {
-  return;
+// The visibility words of tracing pixel `q`, and its linear depth, which
+// it stores: none for a pixel beyond the tracing size.
+fn traced_pixel(q:vec2<u32>)->vec4<u32> {
+ if any(q>=vec2<u32>(traced.reduced.xy)) {
+  return vec4(0u);
  }
- let pixel=min(id.xy*2u,vec2<u32>(traced.full.xy)-1u);
+ let pixel=traced_full_pixel(q);
  let z=textureLoad(traced_depth,pixel,0);
- if z<=0. {
-  textureStore(traced_raw,id.xy,vec4(0u));
-  textureStore(traced_half_depth,id.xy,vec4(TRACED_SKY_DEPTH));
-  return;
- }
+ var words=vec4(0u);
  // A pixel the G-buffer drew nothing lit at is no receiver: the lighting
  // reads none of its slots, and it records the sky's depth, so the
- // upsample weighs it as little as a sky texel.
- if !gbuffer_lit(textureLoad(traced_f0,pixel,0)) {
-  textureStore(traced_raw,id.xy,vec4(0u));
-  textureStore(traced_half_depth,id.xy,vec4(TRACED_SKY_DEPTH));
-  return;
+ // upsample and the denoiser weigh it as a sky texel.
+ if z<=0. || !gbuffer_lit(textureLoad(traced_f0,pixel,0)) {
+  textureStore(traced_raw,q,words);
+  textureStore(traced_half_depth,q,vec4(TRACED_SKY_DEPTH));
+  textureStore(traced_half_normal,q,vec4(0.));
+  return words;
  }
  let uv=(vec2<f32>(pixel)+.5)*traced.full.zw;
  let position=traced_position(uv,z);
- textureStore(traced_half_depth,id.xy,vec4(traced_linear_depth(position)));
+ textureStore(traced_half_depth,q,vec4(traced_linear_depth(position)));
  let normals=textureLoad(traced_normal,pixel,0);
  let normal=gbuffer_base_normal(normals);
+ textureStore(traced_half_normal,q,vec4(normal,0.));
  let geometry_normal=gbuffer_coat_normal(normals);
- var words=vec4(0u);
+ // One draw on every light a pixel and frame, where Wicked reads its blue
+ // noise.
+ let random=hash33_unit(vec3(q,traced.seed)).xy;
  for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
   let key=shadow_mask_slot_key(slot);
-  if key!=SHADOW_MASK_EMPTY && traced_visible(key,position,normal,geometry_normal) {
+  if key!=SHADOW_MASK_EMPTY && traced_visible(key,position,normal,geometry_normal,random) {
    words=traced_store(words,slot,1.);
   }
  }
- textureStore(traced_raw,id.xy,words);
+ textureStore(traced_raw,q,words);
+ return words;
+}
+
+// The tile's bits of the pixels that see each denoised slot's light.
+var<workgroup> traced_tile:array<atomic<u32>,TRACED_DENOISED_SLOTS>;
+
+// A workgroup is one 8×4 tile of the denoiser: its pixels' bits are
+// gathered as Wicked's trace gathers them into its tile buffer (309–319),
+// lane (y % 4) · 8 + x % 8 (ffx_denoiser_shadows_util.h
+// FFX_DNSR_Shadows_GetBitMaskFromPixelPosition).
+@compute @workgroup_size(8,4) fn traced_shadow_rays(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup_id) tile:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
+ // The denoised slots are word 0.
+ let denoised=traced_unpack(traced_pixel(id.xy).x);
+ for (var slot=0u;slot<TRACED_DENOISED_SLOTS;slot++) {
+  if denoised[slot]>0. {
+   atomicOr(&traced_tile[slot],1u<<lane);
+  }
+ }
+ workgroupBarrier();
+ if lane==0u {
+  var masks=vec4(0u);
+  for (var slot=0u;slot<TRACED_DENOISED_SLOTS;slot++) {
+   masks[slot]=atomicLoad(&traced_tile[slot]);
+  }
+  textureStore(traced_tiles,tile.xy,masks);
+ }
 }

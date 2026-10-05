@@ -35,6 +35,10 @@ struct DirectionalLight {
  // Godot's shadow_opacity: how dark its shadow is, 0 to 1
  // (shadow_sampling.wgsl's shadow_opacity_visibility).
  shadow_opacity:f32,
+ // The tangent of half its angular diameter (DirectionalLight's
+ // angular_diameter): the radius of its disc at unit distance, which only
+ // rays see.
+ disc_radius:f32,
 }
 // DirectionalLight.flags: the light has the frame's shadow cascades.
 const DIRECTIONAL_LIGHT_SHADOW:u32=1u;

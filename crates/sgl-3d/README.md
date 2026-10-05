@@ -384,7 +384,12 @@ hemisphere fill are [frame input](#frame-lights-and-look).
 use sgl_3d::{Light, LightShape};
 let lamp = scene.add_light(&device, &queue, Light {
     position: Vec3::new(0., 6., -20.),
-    shape: LightShape::Spot { direction: Vec3::NEG_Y, inner_angle: 0.3, outer_angle: 0.9 },
+    shape: LightShape::Spot {
+        direction: Vec3::NEG_Y,
+        inner_angle: 0.3,
+        outer_angle: 0.9,
+        radius: LightShape::DEFAULT_RADIUS, // metres, which only rays see
+    },
     color: [1., 0.9, 0.8], // linear RGB
     intensity: 40.,        // candela
     range: 25.,            // metres
@@ -396,8 +401,16 @@ let lamp = scene.add_light(&device, &queue, Light {
 
 `Light::default()` is Godot's `Light3D`: a white point light at the origin
 of π candela (its light energy of 1, which it scales by π) reaching 5 m,
-live, physical specular, fog energy 1 and no shadow (opacity 1 when cast).
-Set what differs and take the rest with `..Default::default()`.
+live, physical specular, fog energy 1 and no shadow (opacity 1 when cast),
+with Wicked Engine's radius of 2.5 cm (`LightShape::DEFAULT_RADIUS`). Set
+what differs and take the rest with `..Default::default()`.
+
+A point or spot light's `radius` (metres) is the size of the sphere it
+shines from, which only rays see: ray-traced shadows' rays and the
+dynamic GI volume's visibility rays end on it, so a larger light casts a
+softer shadow. Shading and the shadow maps treat the light as a point. A
+directional light's `angular_diameter` (radians, the sun's 0.00925, 0.53°,
+by default) does the same for the directional light's rays.
 
 - Light falls off with the inverse square of distance and fades smoothly to
   nothing at `range`, Filament's punctual lights as Bevy shades them. A spot
@@ -1443,8 +1456,10 @@ stage (each stage's documentation lists its own), are:
   occlusion culling runs, `depth pyramid` (twice), `cull late` and
   `geometry late` between `geometry` and `sky`; then `ambient occlusion`;
 - ray-traced shadows, after the opaque stage's G-buffer passes and their
-  culling and before `sky` while they run: `ray-traced shadow rays`,
-  `ray-traced shadow temporal` and `ray-traced shadow upsample`;
+  culling and before `sky` while they run: `ray-traced shadow rays`, the
+  denoiser's `ray-traced shadow tile classification` and
+  `ray-traced shadow filter` (three passes), `ray-traced shadow temporal`
+  and `ray-traced shadow upsample`;
 - reflections: `probe culling`, `reflection source completion`, Crystal's
   `SSR` passes (named after DiligentFX's debug groups), Velvet's `Godot SSR`
   passes, `world reflection rays`, `world reflection denoise` and
@@ -1880,15 +1895,20 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   the local-light atlas places, in its ranking by screen coverage, each
   keeping its place while the atlas places it. At half the render size,
   each pixel casts one ray toward each of those lights that reaches it,
-  from 1 cm past the surface to the light's position, or toward the
-  directional light as far as the scene reaches, beyond the shadow's
-  distance; a single-sided surface occludes from its back, as a map draws
-  its front from the light, and a double-sided one from either side. The
-  visibilities are blended with the previous frames' (a light that takes
-  another's place, and a camera cut, start afresh) and upsampled to the
-  render size by depth, then the lighting pass takes them through the
-  light's shadow opacity. Shadows are hard: lights have no size yet, and
-  the denoiser Wicked runs on its first four lights is not run. The opaque
+  from 1 cm past the surface to a point drawn on the light, each frame
+  another: on a point or spot light's sphere (`LightShape`'s `radius`), a
+  rectangle's face, or, for the directional light, within its disc in the
+  sky (`DirectionalLight::angular_diameter`), as far as the scene reaches,
+  beyond the shadow's distance. A light with a size so casts a soft
+  shadow, sharp near its caster and widening away from it; a size of 0 a
+  hard one. A single-sided surface occludes from its back, as a map draws
+  its front from the light, and a double-sided one from either side. AMD's
+  FidelityFX shadow denoiser filters the directional light's and the three
+  longest-held local lights' visibilities, as Wicked Engine filters its
+  first four; the others are blended with the previous frames'. A light
+  that takes another's place, and a camera cut, start afresh. The
+  visibilities are upsampled to the render size by depth, then the
+  lighting pass takes them through the light's shadow opacity. The opaque
   stage takes its two-pass form while they run (a G-buffer pass, then a
   lighting pass), so the setting costs the second geometry pass besides
   the rays. The volumetric fog, blended surfaces, probe captures,
