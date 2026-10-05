@@ -7,7 +7,12 @@ candidates, one per instance and mesh, for the view's population and level
 of detail and against its clip volume, then each of the chosen mesh's
 sections, and appends those that pass to their set's draw. Every camera
 geometry pass (the G-buffer, its anisotropy pass, lighting, or the fused
-pass) draws the camera's one list, so they share the cull. The blended list
+pass) draws the camera's one list, so they share the cull. While
+`Settings::occlusion_culling` runs, the camera's cull has two phases: the
+early phase also sets aside what lies behind the last submitted frame's
+depth pyramid at its previous pose, and the late phase, between the
+G-buffer passes over the early and late sets, tests it again against this
+frame's early depth; lighting draws both sets. The blended list
 is built on the CPU, culled per instance by `Frustum` and walking each
 mesh's range hierarchy (`MeshRanges::visible`). Camera rejection does not
 remove geometry from scene-ray resources or shadow-caster populations.
@@ -67,8 +72,14 @@ crossings and verify removal of distant sections from one large mesh. The
 cull stage's GPU tests (`src/stages/cull/tests.rs`) read back what the cull
 appended: no triangle the same clip oracle keeps is dropped, at the origin
 and a million metres from it; no level of detail is coarser than the CPU's
-bound admits; and the views' populations match the CPU builder's. They do
-not establish GPU pixel identity or a game frame-time improvement.
+bound admits; and the views' populations match the CPU builder's. The
+occlusion tests (`src/stages/cull/occlusion_tests.rs`) render whole frames:
+a box behind a wall is culled and one in front kept, a first frame or a
+camera cut culls nothing by occlusion, an object the wall stops hiding is
+drawn (and shows) in that same frame, sections hidden inside a visible mesh
+are culled and drawn again when the wall moves, and every pyramid texel lies
+between the farthest depth under it and the farthest within reach of it.
+They do not establish GPU pixel identity or a game frame-time improvement.
 
 Run the existing mirrored-instance numerical GPU fixture and compare native
 captures with the diagnostic control for the rendering boundary. Whole-game

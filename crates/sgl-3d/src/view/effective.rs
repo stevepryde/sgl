@@ -103,8 +103,13 @@ pub(crate) struct Effective {
     /// motion blur reads the surface it draws.
     pub receivers: bool,
     /// The G-buffer and lighting are one pass: the device has the
-    /// attachments, unless the ray-traced shadow stage runs between them.
+    /// attachments, unless occlusion culling or the ray-traced shadow stage
+    /// runs between them.
     pub fused: bool,
+    /// The camera culls occlusion in two phases, its opaque stage in its
+    /// two-pass form: `Settings::occlusion_culling` on a device with the
+    /// pyramid's storage textures, while the camera culls against its view.
+    pub occlusion_culling: bool,
     /// The scene's point and spot lights render (a diagnostics layer).
     pub local_lights: bool,
     /// Mist draws (the frame's atmosphere).

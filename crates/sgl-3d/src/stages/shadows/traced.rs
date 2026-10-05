@@ -476,6 +476,7 @@ impl TracedShadows {
                 (2, resource(&shared.depth)),
                 (3, self.params.as_entire_binding()),
                 (4, resource(&targets.mask)),
+                (5, self.slot_table.as_entire_binding()),
             ],
         );
         {

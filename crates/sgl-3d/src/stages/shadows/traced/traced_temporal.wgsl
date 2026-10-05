@@ -22,7 +22,10 @@
 // history restarts (TracedParams.frame 0); the history is the stage's own
 // linear depth at the tracing resolution, where Wicked reads its
 // full-resolution depth history; the velocity in tracing pixels is the
-// motion at the texel's full-resolution pixel.
+// motion at the texel's full-resolution pixel; the neighbourhood is read
+// once and a word's four slots blended at once, where Wicked reads it
+// again for each slot, and a word whose slots hold no light is left as
+// traced.
 @group(0) @binding(0) var temporal_current:texture_2d<u32>;
 @group(0) @binding(1) var temporal_history:texture_2d<u32>;
 @group(0) @binding(2) var temporal_depth:texture_2d<f32>;
@@ -50,18 +53,20 @@ const TEMPORAL_VELOCITY_RESPONSE:f32=.2;
 // The neighbourhood's offsets: Wicked's 3×3 SampleOffset.
 const TEMPORAL_TAPS:u32=9u;
 
-// `current`'s visibilities with the denoised slots' the denoiser's, at
-// tracing texel `texel`.
+// The denoised slots, the first TRACED_DENOISED_SLOTS, are word 0: the
+// denoiser's result at tracing texel `texel`, a layer a slot, packed as
+// the trace packs.
+fn temporal_denoised_word(texel:vec2<u32>)->u32 {
+ return traced_pack(vec4(
+  textureLoad(temporal_denoised,texel,0,0).x,
+  textureLoad(temporal_denoised,texel,1,0).x,
+  textureLoad(temporal_denoised,texel,2,0).x,
+  textureLoad(temporal_denoised,texel,3,0).x,
+ ));
+}
+// `current` with its denoised word the denoiser's.
 fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
- var words=vec4(0u);
- for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
-  var value=traced_load(current,slot);
-  if slot<TRACED_DENOISED_SLOTS {
-   value=textureLoad(temporal_denoised,texel,slot,0).x;
-  }
-  words=traced_store(words,slot,value);
- }
- return words;
+ return vec4(temporal_denoised_word(texel),current.yzw);
 }
 
 @compute @workgroup_size(8,8) fn traced_shadow_temporal(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -91,41 +96,44 @@ fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
   return;
  }
  let history=textureLoad(temporal_history,previous_texel,0);
- var neighbours:array<vec4<u32>,9>;
+ // The neighbourhood's first and second moments, each word's four slots
+ // at once.
+ var m1=mat4x4<f32>();
+ var m2=mat4x4<f32>();
  for (var tap=0u;tap<TEMPORAL_TAPS;tap++) {
   let offset=vec2<i32>(i32(tap%3u)-1,i32(tap/3u)-1);
   let texel=clamp(vec2<i32>(id.xy)+offset,vec2(0),vec2<i32>(reduced)-1);
-  neighbours[tap]=textureLoad(temporal_current,texel,0);
+  let samples=traced_unpack_words(textureLoad(temporal_current,texel,0));
+  m1+=samples;
+  m2+=mat4x4(samples[0]*samples[0],samples[1]*samples[1],samples[2]*samples[2],samples[3]*samples[3]);
  }
  let velocity=length(motion*traced.reduced.xy);
  let refresh=saturate(velocity/TEMPORAL_VELOCITY_PIXELS);
- var words=vec4(0u);
- for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
-  let value=traced_load(current,slot);
-  if slot<TRACED_DENOISED_SLOTS {
-   words=traced_store(words,slot,textureLoad(temporal_denoised,id.xy,slot,0).x);
-   continue;
-  }
-  if (shadow_mask_slots.restart&(1u<<slot))!=0u {
-   words=traced_store(words,slot,value);
-   continue;
-  }
-  var m1=0.;
-  var m2=0.;
-  for (var tap=0u;tap<TEMPORAL_TAPS;tap++) {
-   let sample=traced_load(neighbours[tap],slot);
-   m1+=sample;
-   m2+=sample*sample;
-  }
-  let mean=m1/f32(TEMPORAL_TAPS);
-  let deviation=sqrt(max(m2/f32(TEMPORAL_TAPS)-mean*mean,0.));
-  let low=min(mean-TEMPORAL_SCALE*deviation,value);
-  let high=max(mean+TEMPORAL_SCALE*deviation,value);
-  let past=clamp(traced_load(history,slot),low,high);
-  let difference=abs(value-past)/max(value,max(past,.2));
-  let weight=(1.-difference)*(1.-difference);
-  let response=mix(mix(TEMPORAL_RESPONSE_MIN,TEMPORAL_RESPONSE_MAX,weight),TEMPORAL_VELOCITY_RESPONSE,refresh);
-  words=traced_store(words,slot,mix(value,past,response));
+ textureStore(temporal_output,id.xy,vec4(
+  temporal_denoised_word(id.xy),
+  temporal_blend(1u,current,history,m1,m2,refresh),
+  temporal_blend(2u,current,history,m1,m2,refresh),
+  temporal_blend(3u,current,history,m1,m2,refresh),
+ ));
+}
+
+// Word `word`'s four slots blended: traced as `current`, `history` the
+// reprojected history's words, `m1` and `m2` the neighbourhood's moments,
+// word w's in column w. A word whose slots hold no light keeps its traced
+// zeros.
+fn temporal_blend(word:u32,current:vec4<u32>,history:vec4<u32>,m1:mat4x4<f32>,m2:mat4x4<f32>,refresh:f32)->u32 {
+ if all(shadow_mask_slots.lights[word]==vec4(SHADOW_MASK_EMPTY)) {
+  return current[word];
  }
- textureStore(temporal_output,id.xy,words);
+ let value=traced_unpack(current[word]);
+ let mean=m1[word]/f32(TEMPORAL_TAPS);
+ let deviation=sqrt(max(m2[word]/f32(TEMPORAL_TAPS)-mean*mean,vec4(0.)));
+ let low=min(mean-TEMPORAL_SCALE*deviation,value);
+ let high=max(mean+TEMPORAL_SCALE*deviation,value);
+ let past=clamp(traced_unpack(history[word]),low,high);
+ let difference=abs(value-past)/max(value,max(past,vec4(.2)));
+ let weight=(1.-difference)*(1.-difference);
+ let response=mix(mix(vec4(TEMPORAL_RESPONSE_MIN),vec4(TEMPORAL_RESPONSE_MAX),weight),vec4(TEMPORAL_VELOCITY_RESPONSE),refresh);
+ let restart=((vec4(shadow_mask_slots.restart)>>(vec4(0u,1u,2u,3u)+4u*word))&vec4(1u))!=vec4(0u);
+ return traced_pack(select(mix(value,past,response),value,restart));
 }

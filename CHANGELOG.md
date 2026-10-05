@@ -59,16 +59,25 @@ full API details.
   from rays instead of the shadow maps, as Wicked Engine's ray-traced
   shadows do: traced at half the render size from 1 cm past each surface
   toward each light that reaches it, blended over frames, and upsampled by
-  depth. Shadows are hard (lights have no size yet) and reach as far as
-  the scene: the directional light's beyond its `DirectionalShadow`
+  depth. Shadows soften with the light's size (see the entry above) and
+  reach as far as the scene: the directional light's beyond its `DirectionalShadow`
   distance. The fog, blended surfaces, probe captures, reflections' ray
   hits and lights beyond those sixteen keep the maps, which are still
   drawn. While the setting runs, the opaque stage takes its two-pass form
   (a G-buffer pass, then a lighting pass) instead of the fused pass, and
-  frames build the acceleration structures. TIMINGS. Without hardware ray
-  tracing in effect (the browser, a device without ray queries, the
-  setting off), the setting does nothing and the maps shadow everything.
-  The streaming example takes it with `--ray-traced-shadows`.
+  frames build the acceleration structures. Without hardware ray tracing
+  in effect (the browser, a device without ray queries, the setting off),
+  the setting does nothing and the maps shadow everything. The streaming
+  example takes it with `--ray-traced-shadows`.
+- **Cost:** measured on an Apple M5 at 1920×1080, natively on Metal
+  (median GPU frame time, against the maps with hardware ray tracing off):
+  - the `streaming` example's walk (the sun and up to fifteen shadowed
+    torches): 7.9 ms against 6.5 ms;
+  - its fly: 7.1 ms against 6.2 ms;
+  - 1000 props under the sun and eight shadowed point and spot lights:
+    5.5 ms against 5.1 ms.
+  Of that, the trace took 0.4–0.6 ms, the temporal blend 0.1–0.3 ms, the
+  upsample 0.2–0.4 ms, and the opaque stage's two-pass form up to 0.4 ms.
 - **Migration:** no game-code changes unless code names every field of
   `Settings` without `..`: add `ray_traced_shadows: false`. A saved
   settings file without the field loads it off. A game that offers
@@ -78,6 +87,64 @@ full API details.
   past shadowed lights and moving casters: shadows should stay where the
   maps put them, sharper, and stretch beyond the directional shadow's
   distance; look for noise or lag at shadow edges in motion.
+
+### Two-phase occlusion culling of the camera's list (opt-in)
+
+- **Scope:** `sgl-3d` (#24, roadmap 22). New `Settings::occlusion_culling`
+  (`bool`, `false` by default and in every preset) and
+  `Renderer::occlusion_culling_in_effect`. While it runs, the camera's
+  opaque and masked surfaces are culled in two phases, as Bevy's GPU
+  culling runs them. The early phase also tests each instance and then
+  each section, at its last frame's pose, against the last submitted
+  frame's depth pyramid, and sets aside what lies behind it. The G-buffer
+  pass draws the rest. The late phase then builds the pyramid from that
+  depth and tests what was set aside again at this frame's pose, and a
+  second G-buffer pass draws what it passes. The pyramid is built once
+  more from the complete depth for the next frame, and lighting shades
+  both sets once. Something hidden last frame and visible now is drawn in
+  the same frame. The first frame, a camera cut, a resize and a frame
+  after one without occlusion culling cull by frustum alone. The pyramid
+  is AMD's single-pass downsampler as Bevy ports it, with AMD's (SDK
+  d7531ae) and Bevy's notices. The directional cascades still cull by
+  frustum alone.
+- **Behaviour:**
+  - While it runs, the opaque stage takes its two-pass form (a G-buffer
+    pass, then lighting at its depth) on every device, since the fused
+    pass cannot be split. The new timing groups are `cull late`,
+    `depth pyramid` (twice a frame) and `geometry late`.
+  - It needs six storage textures a shader stage, which
+    `graphics_device::limits` requests from the adapter. A device with
+    fewer culls by frustum alone, as does the `culling` diagnostics layer.
+    `occlusion_culling_in_effect` reports it.
+  - `Renderer::geometry_stats` counts both phases' sections.
+    `Renderer::diagnostic_draws` counts two draws a set for the camera
+    while it runs.
+  - The camera's lists while it culls occlusion (three entries a draw
+    candidate and one a section its sets can draw) always fit within the
+    limits the scene already refuses content past
+    (`SceneError::DeviceLimit`): no new refusal.
+  - Measured on an Apple M5 at 1920×1080 (median GPU frame time):
+    - Natively on Metal it cost:
+      - 0.2 ms on the `streaming` example's walk, where camera triangles
+        fell from 83,612 to 6,834;
+      - 0.5 ms at its headroom scale, where they fell from 308,158 to
+        170,516;
+      - 0.4 ms in the `irradiance_volume` cave.
+    - There the two-pass form and the two pyramids (0.2 ms together) cost
+      more than the culling saves, since the tile-based GPU already
+      discards hidden fragments cheaply.
+    - In Chrome it cost 0.26 ms in the walk-sized window. In the
+      headroom-sized window seen from a walker's eye it saved 0.9–1.4 ms:
+      the opaque stage's time halved.
+    - So it stays off by default.
+- **Migration:** no game-code changes. Code that builds `Settings` naming
+  every field adds `occlusion_culling: false`. A saved settings file loads
+  unchanged (`Settings` is `#[serde(default)]`). To opt in, set
+  `settings.occlusion_culling = true` where the game's views hide much of
+  what they submit, and offer it to players beside the other performance
+  settings. Afterwards, measure the GPU frame on the game's routes with it
+  on and off, and watch for anything drawn a frame late when the camera
+  turns or an occluder moves (nothing should be).
 
 ### Hardware ray tracing gains a candidate form for Vulkan and DX12, off by default
 

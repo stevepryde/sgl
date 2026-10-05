@@ -356,20 +356,25 @@ fn local_visibility(light: &Light, position: DVec3, blocks: &[Block]) -> Option<
     occluded(blocks, position, direction, (0.01, distance)).map(|occluded| Some(!occluded))
 }
 
-// The smallest scene first: one point light, one block, one frame.
-// Plausible defects: the trace reading another pixel's depth or normal than
-// the mask's, the visibility of one light written into another's slot or
-// another slot's layer or channel, rays toward the wrong end (a light's
-// direction reversed), the denoiser's tiles or filters scrambling a
-// denoised slot away from its shadows' edges, rays meeting the receiver's
-// own face, rays that
-// ignore static or moving instances, a light's slot naming another light,
-// rays toward a light that does not reach the receiver (beyond its range
-// or a spot's cone), and the upsample fetching other texels than the one
-// an even pixel holds. The oracle is the boxes' geometry in f64, the slab
-// test from each floor pixel's position (its depth reconstructed in f64)
-// toward each light, beside its reach: a light that does not reach the
-// floor leaves no visibility there.
+// Every slot held, over two frames: the sun, three decoys that outrank the
+// rest for the denoised slots, then a point light, a spot light and ten
+// spot lights in a ring about the first block, each casting its shadow its
+// own way, through a camera cut and then a still frame, whose temporal
+// blend of a history equal to its trace must leave the trace. Plausible
+// defects: the trace reading another pixel's depth or normal than the
+// mask's, the visibility of one light written into another's slot or
+// another slot's layer or channel, the temporal blend or the upsample
+// taking one word or layer from another's, the denoiser's tiles or filters
+// scrambling a denoised slot away from its shadows' edges, rays toward the
+// wrong end (a light's direction reversed), rays meeting the receiver's
+// own face, rays that ignore static or moving instances, a light's slot
+// naming another light, rays toward a light that does not reach the
+// receiver (beyond its range or a spot's cone), and the upsample fetching
+// other texels than the one an even pixel holds. The oracle is the boxes'
+// geometry in f64, the slab test from each floor pixel's position (its
+// depth reconstructed in f64) toward each light, beside its reach: a light
+// that does not reach the floor leaves no visibility there. The denoised
+// sun is the oracle's away from its edges, which the denoiser filters.
 #[test]
 fn the_mask_matches_a_cpu_oracle_of_occlusion() {
     let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
@@ -423,8 +428,32 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
         ..Light::default()
     };
     let eye = Vec3::new(0., 10., 8.);
-    let [first, second, third] = decoys(eye);
-    let (mut scene, ids) = scene(gpu, 8., &blocks, &[first, second, third, point, spot]);
+    let decoys = decoys(eye);
+    let ringed = RT_SHADOW_LIGHTS - 1 - decoys.len() - 2;
+    let ring = (0..ringed).map(|index| {
+        let angle = index as f32 / ringed as f32 * std::f32::consts::TAU;
+        let position = Vec3::new(3.2 * angle.cos(), 4.5, 3.2 * angle.sin());
+        Light {
+            position,
+            shape: LightShape::Spot {
+                direction: blocks[0].centre - position,
+                inner_angle: 0.5,
+                outer_angle: 0.7,
+                radius: 0.,
+            },
+            intensity: 20.,
+            range: 12.,
+            casts_shadow: true,
+            ..Light::default()
+        }
+    });
+    let lights: Vec<Light> = [point, spot].into_iter().chain(ring).collect();
+    let all: Vec<Light> = decoys
+        .iter()
+        .copied()
+        .chain(lights.iter().copied())
+        .collect();
+    let (mut scene, ids) = scene(gpu, 8., &blocks, &all);
     let sun = DirectionalLight {
         direction: Vec3::new(0.35, -1., 0.25),
         illuminance: 3.,
@@ -437,73 +466,73 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
     let settings = settings(true);
     let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, Some(sun));
-    input.camera_cut = true;
-    let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
-    assert!(renderer.ray_traced_shadows_in_effect(&settings));
-    let slots = [
-        observed.slot(SHADOW_MASK_DIRECTIONAL),
-        observed.slot(ids[3].index() as u32),
-        observed.slot(ids[4].index() as u32),
-    ];
-    assert_eq!(slots[0], 0, "the directional light holds slot 0");
-    assert!(
-        slots[1] >= 4 && slots[2] >= 4,
-        "the decoys outrank the point and spot lights: {slots:?}"
-    );
     let to_sun = -sun.direction.as_dvec3().normalize();
-    let texels = floor_texels(&observed, &camera);
-    let mut decided = [[0; 2]; 3];
-    // The denoised directional slot is the oracle's away from its edges,
-    // which the denoiser filters.
-    let mut sunlit = std::collections::HashMap::new();
-    for &(pixel, position) in &texels {
-        let expected = [
-            occluded(&blocks, position, to_sun, (0.01, f64::from(f32::MAX))).map(|o| Some(!o)),
-            local_visibility(&point, position, &blocks),
-            local_visibility(&spot, position, &blocks),
-        ];
-        for (light, (expected, slot)) in expected.into_iter().zip(slots).enumerate() {
-            let Some(visible) = expected else {
-                continue;
-            };
-            if light == 0 {
-                sunlit.insert(pixel, visible == Some(true));
-                continue;
+    for cut in [true, false] {
+        let frame = if cut { "cut" } else { "still" };
+        input.camera_cut = cut;
+        let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+        assert!(renderer.ray_traced_shadows_in_effect(&settings));
+        let mut held: Vec<usize> = std::iter::once(SHADOW_MASK_DIRECTIONAL)
+            .chain(ids.iter().map(|id| id.index() as u32))
+            .map(|key| observed.slot(key))
+            .collect();
+        held.sort_unstable();
+        assert_eq!(
+            held,
+            (0..RT_SHADOW_LIGHTS).collect::<Vec<_>>(),
+            "every slot holds one light"
+        );
+        let sun_slot = observed.slot(SHADOW_MASK_DIRECTIONAL);
+        assert_eq!(sun_slot, 0, "the directional light holds slot 0");
+        let slots: Vec<usize> = ids[decoys.len()..]
+            .iter()
+            .map(|id| observed.slot(id.index() as u32))
+            .collect();
+        assert!(
+            slots
+                .iter()
+                .all(|&slot| slot >= super::denoise::DENOISED_SLOTS as usize),
+            "the decoys outrank the checked lights: {slots:?}"
+        );
+        let texels = floor_texels(&observed, &camera);
+        let mut decided = vec![[0; 2]; 1 + slots.len()];
+        let mut sunlit = std::collections::HashMap::new();
+        for &(pixel, position) in &texels {
+            if let Some(visible) =
+                occluded(&blocks, position, to_sun, (0.01, f64::from(f32::MAX))).map(|o| !o)
+            {
+                sunlit.insert(pixel, visible);
             }
-            let byte = observed.mask(slot, pixel);
-            let expected = if visible == Some(true) { 255 } else { 0 };
+            for (light, (&slot, source)) in slots.iter().zip(&lights).enumerate() {
+                let Some(visible) = local_visibility(source, position, &blocks) else {
+                    continue;
+                };
+                let byte = observed.mask(slot, pixel);
+                let expected = if visible == Some(true) { 255 } else { 0 };
+                assert_eq!(
+                    byte, expected,
+                    "frame {frame}: light {light} in slot {slot} at {pixel:?} ({position:?}): the oracle says {visible:?}",
+                );
+                decided[1 + light][usize::from(visible == Some(true))] += 1;
+            }
+        }
+        for pixel in interior(&sunlit, DENOISER_REACH) {
+            let visible = sunlit[&pixel];
             assert_eq!(
-                byte, expected,
-                "light {light} in slot {slot} at {pixel:?} ({position:?}): the oracle says {visible:?}"
+                observed.mask(sun_slot, pixel),
+                if visible { 255 } else { 0 },
+                "frame {frame}: the sun in slot 0 at {pixel:?}: the oracle says {visible}"
             );
-            decided[light][usize::from(visible == Some(true))] += 1;
+            decided[0][usize::from(visible)] += 1;
+        }
+        for (light, [shadowed, lit]) in decided.into_iter().enumerate() {
+            assert!(
+                shadowed > 20 && lit > 20,
+                "frame {frame}: light {light}: only {shadowed} shadowed and {lit} lit floor texels decided of {}",
+                texels.len()
+            );
         }
     }
-    for pixel in interior(&sunlit, DENOISER_REACH) {
-        let visible = sunlit[&pixel];
-        assert_eq!(
-            observed.mask(slots[0], pixel),
-            if visible { 255 } else { 0 },
-            "the sun in slot 0 at {pixel:?}: the oracle says {visible}"
-        );
-        decided[0][usize::from(visible)] += 1;
-    }
-    for (light, [shadowed, lit]) in decided.into_iter().enumerate() {
-        assert!(
-            shadowed > 20 && lit > 20,
-            "light {light}: only {shadowed} shadowed and {lit} lit floor texels decided of {}",
-            texels.len()
-        );
-    }
-    // A slot no light holds stays empty in the table.
-    let (_, table) = observed.mask.as_ref().unwrap();
-    let held = table
-        .lights
-        .iter()
-        .flatten()
-        .filter(|&&key| key != crate::shading::shadow_mask::SHADOW_MASK_EMPTY)
-        .count();
-    assert_eq!(held, 6, "of {RT_SHADOW_LIGHTS} slots");
 }
 
 /// The lit colour's red over the floor pixels of tracing texels where the

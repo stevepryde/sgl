@@ -12,7 +12,7 @@
 //! walk in and out of the cave mouth through the field.
 //!
 //! `cargo run --release -p sgl-3d --example irradiance_volume [-- --night]
-//! [--frames N] [--split]`
+//! [--frames N] [--split] [--occlusion]`
 //!
 //! It renders the walk twice at 1920×1080 with TAA, screen-space and
 //! world-space reflections and shadows: with the volume, and with the
@@ -34,7 +34,7 @@
 //! the cliff (`support/culling.rs`): the CPU time each GPU-built view's draw
 //! list takes to build and record, and each pass group's GPU time.
 //! `--split` renders the opaque stage's two-pass form instead of its fused
-//! pass.
+//! pass; `--occlusion` turns occlusion culling on, which renders it too.
 //!
 //! The light field and its cells are the game's: each air cell's face
 //! toward a side takes the levels of the air cell on that side (or its own
@@ -1155,7 +1155,7 @@ fn walk(
         // Inside the cave: past the cliff, after the warm-up.
         let inside = frame >= WARM_UP as usize && Game::eye(seconds).z >= CLIFF as f32;
         culling.frame(
-            &renderer,
+            (&renderer, &settings),
             frame,
             with_volume && inside,
             (rendered, finished),
@@ -1251,7 +1251,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "--night" => night = true,
             "--frames" => frames = args.next().ok_or("--frames requires a count")?.parse()?,
             "--help" | "-h" => {
-                println!("irradiance_volume [--night] [--frames N] [--split]");
+                println!("irradiance_volume [--night] [--frames N] [--split] [--occlusion]");
                 return Ok(());
             }
             option if options.take(option) => {}

@@ -138,9 +138,10 @@ var<workgroup> traced_tile:array<atomic<u32>,TRACED_DENOISED_SLOTS>;
 // lane (y % 4) · 8 + x % 8 (ffx_denoiser_shadows_util.h
 // FFX_DNSR_Shadows_GetBitMaskFromPixelPosition).
 @compute @workgroup_size(8,4) fn traced_shadow_rays(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup_id) tile:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
- let words=traced_pixel(id.xy);
+ // The denoised slots are word 0.
+ let denoised=traced_unpack(traced_pixel(id.xy).x);
  for (var slot=0u;slot<TRACED_DENOISED_SLOTS;slot++) {
-  if traced_load(words,slot)>0. {
+  if denoised[slot]>0. {
    atomicOr(&traced_tile[slot],1u<<lane);
   }
  }
