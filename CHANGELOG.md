@@ -41,7 +41,7 @@ full API details.
   - Content and shadows are unchanged, bit for bit.
   - Measured at 1920×1080, median GPU time of the four cascades, two runs
     each, against `main` before this change and #190's parent:
-    - Apple M5, Metal: the `streaming` walk 0.76 → 0.56–0.57 ms (before
+    - Apple M5, Metal: the `streaming` walk 0.76–0.77 → 0.56–0.57 ms (before
       #190: 0.50–0.53); its headroom scale 1.88–1.94 → 1.31–1.32 ms
       (1.32–1.33); the `irradiance_volume` cave 0.32 → 0.26 ms.
     - Chrome (WebGPU on the same Mac): the walk window 0.79 → 0.59 ms; the

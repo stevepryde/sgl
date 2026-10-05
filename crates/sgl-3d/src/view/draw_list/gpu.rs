@@ -16,8 +16,8 @@
 //! draw-instance buffer, as Bevy 9d12036's meshlet hardware raster draws
 //! its visible clusters (crates/bevy_pbr/src/meshlet/
 //! visibility_buffer_raster_node.rs 592, visibility_buffer_hardware_raster.wesl),
-//! and for a cascade one `draw_indexed_indirect` of its paired sections
-//! over `PAIRED_INDICES`, so they keep the vertex reuse an indexed draw has.
+//! and for a cascade one `draw_indexed_indirect` per opaque set of its
+//! paired sections over `PAIRED_INDICES`, so they keep the vertex reuse an indexed draw has.
 //! Only the camera culls a late phase, while occlusion culling runs; only
 //! the cascades pair.
 use super::Binder;
