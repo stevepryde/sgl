@@ -20,10 +20,10 @@
 //! Bevy extracts a light to its render world only when what it shows changed
 //! (`extract_lights`'s `Changed` filters, crates/bevy_pbr/src/render/light.rs
 //! lines 333-436 at revision 9d120361303727a66b62f31f0d053793af62417a), the
-//! stage compares each record with the one its buffer holds. A queued write lands at the
-//! next submission whether or not the frame that queued it was submitted or
-//! finished, so what the buffer holds follows the writes queued, not the
-//! finished frames as the atlas's cache does.
+//! stage compares each record with the one its buffer holds. A queued write
+//! lands at the next submission whether or not the frame that queued it was
+//! submitted or finished, so what the buffer holds follows the writes
+//! queued, not the finished frames as the atlas's cache does.
 //!
 //! Reads: the scene's lights, instances, materials and static edits, the
 //! camera. Writes: its faces' draw instances into the frame's

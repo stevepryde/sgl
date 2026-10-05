@@ -1147,8 +1147,9 @@ fn a_render_origin_move_keeps_every_shadow_in_place_without_drawing() {
 // that changed it finishes, or kept as the last finished frame left it, so a
 // record a dropped frame wrote (its writes land with the next submission)
 // stays in the buffer when the next frame's record matches the finished
-// one; or a record not rewritten when its light loses or regains its shadow
-// or its static layers. The oracles are the light's visibility behind the
+// one; a record not rewritten when its light loses or regains its shadow
+// or its static layers; or a buffer grown for more lights whose copy is the
+// old buffer's, so the grown buffer's zeros leave placed lights unshadowed. The oracles are the light's visibility behind the
 // static blocker through the frame's atlas and through the static layers
 // ray hits sample, which need the record's placement and its `layers`.
 #[test]
@@ -1217,5 +1218,21 @@ fn shadow_records_follow_changes_and_dropped_frames() {
         &harness,
         true,
         "after an unfinished frame with the light moved",
+    );
+    // Lights added until the scene holds more than the records written so
+    // far: the records move to a larger buffer, which must hold the shadowed
+    // light's record too. The added lights cast no shadow, far away.
+    let device = harness.device.clone();
+    let capacity = scene.lights.capacity();
+    while scene.lights.capacity() <= capacity {
+        scene
+            .add_light(&device, &queue, lit(false, Vec3::new(0., 100., 0.)))
+            .unwrap();
+    }
+    harness.frame(&mut scene, &input);
+    expect(
+        &harness,
+        true,
+        "after the scene's lights outgrew the records",
     );
 }
