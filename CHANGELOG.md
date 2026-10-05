@@ -33,10 +33,19 @@ full API details.
   hits and lights beyond those sixteen keep the maps, which are still
   drawn. While the setting runs, the opaque stage takes its two-pass form
   (a G-buffer pass, then a lighting pass) instead of the fused pass, and
-  frames build the acceleration structures. TIMINGS. Without hardware ray
-  tracing in effect (the browser, a device without ray queries, the
-  setting off), the setting does nothing and the maps shadow everything.
-  The streaming example takes it with `--ray-traced-shadows`.
+  frames build the acceleration structures. Without hardware ray tracing
+  in effect (the browser, a device without ray queries, the setting off),
+  the setting does nothing and the maps shadow everything. The streaming
+  example takes it with `--ray-traced-shadows`.
+- **Cost:** measured on an Apple M5 at 1920×1080, natively on Metal
+  (median GPU frame time, against the maps with hardware ray tracing off):
+  - the `streaming` example's walk (the sun and up to fifteen shadowed
+    torches): 7.9 ms against 6.5 ms;
+  - its fly: 7.1 ms against 6.2 ms;
+  - 1000 props under the sun and eight shadowed point and spot lights:
+    5.5 ms against 5.1 ms.
+  Of that, the trace took 0.4–0.6 ms, the temporal blend 0.1–0.3 ms, the
+  upsample 0.2–0.4 ms, and the opaque stage's two-pass form up to 0.4 ms.
 - **Migration:** no game-code changes unless code names every field of
   `Settings` without `..`: add `ray_traced_shadows: false`. A saved
   settings file without the field loads it off. A game that offers
