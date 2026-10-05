@@ -34,6 +34,7 @@
 //! frame is on the GPU; the key and the placement are committed at
 //! `finish_frame`, so an abandoned frame leaves both as they were.
 use crate::Scene;
+use crate::content::dynamic_gi::DynamicGiVolume;
 use crate::scene::dynamic_gi::{InstalledVolume, ProbePlacement};
 use crate::shading::{self, dynamic_gi as layout};
 use crate::view::effective::Effective;
@@ -104,8 +105,23 @@ pub(crate) struct VolumeUniform {
     scroll: [u32; 3],
     padding_scroll: u32,
     scrolled: [i32; 3],
-    padding_scrolled: u32,
+    moving_count: u32,
 }
+
+/// `DdgiBounds` in common.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct BoundsUniform {
+    min: [f32; 3],
+    padding_min: f32,
+    max: [f32; 3],
+    padding_max: f32,
+}
+/// The most moving instances' bounds a frame takes, the nearest the camera
+/// (`DDGI_MOST_MOVING_BOUNDS`): the cap on the allocation's walk over them
+/// (AR-12), generously above the moving instances a volume's cells hold in
+/// a game's frame.
+const MOST_MOVING_BOUNDS: u32 = 256;
 
 /// The allocation's buffer (`DdgiAllocation` in allocate.wgsl): the
 /// trace's indirect dispatch and ray count, the blends' dispatch and the
@@ -172,6 +188,8 @@ pub(crate) struct DynamicGi {
     /// the scene's rectangle lights and decals.
     trace: HashMap<LitConstants, wgpu::ComputePipeline>,
     uniform: wgpu::Buffer,
+    /// The moving instances' bounds the allocation takes.
+    moving_bounds: wgpu::Buffer,
     stand_in: wgpu::TextureView,
     /// The probes of the last submitted frame that ran the stage, and the
     /// frames since they started before it.
@@ -290,6 +308,15 @@ impl DynamicGi {
                     mapped_at_creation: false,
                 },
             ),
+            moving_bounds: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("dynamic GI moving bounds"),
+                    size: MOST_MOVING_BOUNDS as u64 * std::mem::size_of::<BoundsUniform>() as u64,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             stand_in: texture(device, "no dynamic GI probes", [1, 1], layout::FORMAT),
             layouts,
             committed: None,
@@ -340,8 +367,12 @@ impl DynamicGi {
             Some((volume, _)) if volume.key == key => {
                 // The rays' textures hold nothing from frame to frame.
                 if volume.max_rays != max_rays {
-                    volume.rays =
-                        Some(volume.ray_groups(device, &self.layouts, &self.uniform, max_rays));
+                    volume.rays = Some(volume.ray_groups(
+                        device,
+                        &self.layouts,
+                        (&self.uniform, &self.moving_bounds),
+                        max_rays,
+                    ));
                     volume.max_rays = max_rays;
                 }
                 Rendered::Continue(installed)
@@ -349,7 +380,7 @@ impl DynamicGi {
             _ => Rendered::Fresh(Box::new(Volume::new(
                 device,
                 &self.layouts,
-                &self.uniform,
+                (&self.uniform, &self.moving_bounds),
                 (key, installed),
                 max_rays,
             ))),
@@ -440,8 +471,21 @@ impl DynamicGi {
             scroll,
             padding_scroll: 0,
             scrolled: scrolled.to_array(),
-            padding_scrolled: 0,
+            moving_count: 0,
         };
+        let bounds = moving_bounds(ctx.scene, &placement, camera.eye);
+        let uniform = VolumeUniform {
+            moving_count: bounds.len() as u32,
+            ..uniform
+        };
+        if !bounds.is_empty() {
+            crate::counters::write_buffer(
+                ctx.queue,
+                &self.moving_bounds,
+                0,
+                bytemuck::cast_slice(&bounds),
+            );
+        }
         crate::counters::write_buffer(ctx.queue, &self.uniform, 0, bytemuck::bytes_of(&uniform));
         let probes = dispatch(uniform.probe_count);
         let timing = ctx.timing;
@@ -532,6 +576,41 @@ impl DynamicGi {
     }
 }
 
+/// The world bounds of `scene`'s drawn moving instances that reach into the
+/// cells of `placement`'s probes, the nearest `eye` first, at most
+/// `MOST_MOVING_BOUNDS`: the probes about them trace as active ones do.
+fn moving_bounds(scene: &Scene, placement: &DynamicGiVolume, eye: Vec3) -> Vec<BoundsUniform> {
+    let extent = [
+        placement.origin - placement.spacing,
+        placement.end() + placement.spacing,
+    ];
+    let mut bounds: Vec<(f32, [Vec3; 2])> = scene
+        .instances
+        .slots
+        .iter()
+        .filter(|(_, instance)| {
+            instance.mobility == crate::Mobility::Moving && instance.state.visible
+        })
+        .map(|(_, instance)| {
+            let model = scene.drawn_model(instance.state.model);
+            crate::scene::static_edits::posed_bounds(instance.bounds(model), instance.state.pose)
+        })
+        .filter(|[min, max]| min.cmple(extent[1]).all() && max.cmpge(extent[0]).all())
+        .map(|[min, max]| ((min + max).distance_squared(eye * 2.), [min, max]))
+        .collect();
+    bounds.sort_by(|a, b| a.0.total_cmp(&b.0));
+    bounds
+        .into_iter()
+        .take(MOST_MOVING_BOUNDS as usize)
+        .map(|(_, [min, max])| BoundsUniform {
+            min: min.to_array(),
+            padding_min: 0.,
+            max: max.to_array(),
+            padding_max: 0.,
+        })
+        .collect()
+}
+
 /// A workgroup per probe of `count`, in rows of `GROUP_ROW`.
 fn dispatch(count: u32) -> [u32; 2] {
     [count.min(GROUP_ROW), count.div_ceil(GROUP_ROW)]
@@ -604,7 +683,14 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
                 traced,
                 scroll,
                 scrolled,
+                moving_count,
             ]
+        ),
+        mirror!(
+            "dynamic_gi_allocate",
+            "DdgiBounds",
+            BoundsUniform,
+            [min, max]
         ),
         mirror!(
             "dynamic_gi_allocate",
@@ -639,6 +725,11 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "dynamic_gi_allocate",
             "RAMP_BINS",
             naga::Literal::U32(RAMP_BINS),
+        ),
+        Constant::new(
+            "dynamic_gi_allocate",
+            "DDGI_MOST_MOVING_BOUNDS",
+            naga::Literal::U32(MOST_MOVING_BOUNDS),
         ),
     ]
 }

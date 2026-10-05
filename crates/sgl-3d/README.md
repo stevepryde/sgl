@@ -1584,11 +1584,14 @@ Placement:
   single-sided surface from behind takes nothing from beyond it, and the
   receivers on the surface's other side weigh it as occluded. A probe more
   than a quarter of whose view is such backs is inactive: it lights nothing
-  and traces few rays, so probes inside walls cost little. A probe
-  diagonally beyond the edge or corner of single-sided walls sees few of
-  their backs and stays active, so a surface within about a tenth of a
-  metre of two such walls can take light from beyond them; walls built as
-  closed solids keep it out. Keep probes
+  and traces few rays, so probes inside walls cost little. A probe with no
+  surface within a spacing of it lights moving instances alone and traces
+  few rays, unless a moving instance comes within that spacing: so a probe
+  beyond a room's corner lights none of its walls, and probes in open air
+  cost little yet light whatever moves among them. A static object so small
+  that no probe about it finds it (a probe classifies from 32 directions)
+  takes its other indirect light. A probe's class follows a change in what
+  it sees within 8 frames. Keep probes
   off the surfaces themselves, where a probe sees both sides at once:
   offset the lattice so walls fall between probes. Probes near a surface
   move off it, up to half a spacing, as they trace.

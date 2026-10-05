@@ -60,7 +60,18 @@ struct DdgiVolume {
  // it, at most its probes on each axis: the planes that enter, which the
  // scroll pass clears.
  scrolled:vec3<i32>,
+ // The moving instances' bounds in moving_bounds, at most
+ // DDGI_MOST_MOVING_BOUNDS.
+ moving_count:u32,
 }
+// A moving instance's world bounds, about which every probe traces as an
+// active one.
+struct DdgiBounds {
+ min:vec3<f32>,
+ max:vec3<f32>,
+}
+// The most moving instances' bounds a frame takes.
+const DDGI_MOST_MOVING_BOUNDS:u32=256u;
 // The probe a workgroup of a two-dimensional dispatch over probes serves.
 fn ddgi_group_probe(group:vec3<u32>)->u32 {
  return group.x+group.y*DDGI_GROUP_ROW;
@@ -125,19 +136,23 @@ struct DdgiProbe {
  offset:vec3<f32>,
  blended:bool,
  backfaces:f32,
+ // A front face lay within its cell (RTXGI's second phase).
+ surfaced:bool,
  fixed_backfaces:u32,
+ fixed_nearby:u32,
  fixed_frames:u32,
 }
 fn ddgi_pack_probe(probe:DdgiProbe)->vec4<u32> {
- return vec4(ddgi_pack_half2(probe.offset.x,probe.offset.y),ddgi_pack_half2(probe.offset.z,select(0.,1.,probe.blended)),bitcast<u32>(probe.backfaces),probe.fixed_backfaces|(probe.fixed_frames<<16u));
+ let counts=probe.fixed_backfaces|(probe.fixed_nearby<<8u)|(probe.fixed_frames<<16u)|(select(0u,1u,probe.surfaced)<<24u);
+ return vec4(ddgi_pack_half2(probe.offset.x,probe.offset.y),ddgi_pack_half2(probe.offset.z,select(0.,1.,probe.blended)),bitcast<u32>(probe.backfaces),counts);
 }
 fn ddgi_unpack_probe(words:vec4<u32>)->DdgiProbe {
  let offset=vec4(unpack2x16float(words.x),unpack2x16float(words.y));
- return DdgiProbe(offset.xyz,offset.w>0.,bitcast<f32>(words.z),words.w&0xffffu,words.w>>16u);
+ return DdgiProbe(offset.xyz,offset.w>0.,bitcast<f32>(words.z),(words.w>>24u)!=0u,words.w&0xffu,(words.w>>8u)&0xffu,(words.w>>16u)&0xffu);
 }
 // A probe not yet blended, at rest, as a restart or a scroll starts one.
 fn ddgi_fresh_probe()->DdgiProbe {
- return DdgiProbe(vec3(0.),false,0.,0u,0u);
+ return DdgiProbe(vec3(0.),false,0.,false,0u,0u,0u);
 }
 // RTXGI's RTXGI_DDGI_NUM_FIXED_RAYS: the fixed directions that classify a
 // probe, spread evenly over the sphere and never rotated, so a probe's class
@@ -150,8 +165,10 @@ const DDGI_FIXED_CYCLE:u32=DDGI_FIXED_RAYS/DDGI_FIXED_RAYS_PER_FRAME;
 // meet single-sided surfaces from behind is inside geometry or beyond a
 // wall, and inactive.
 const DDGI_BACKFACE_THRESHOLD:f32=.25;
-// Whether a probe lights receivers: RTXGI's probe classification. An
-// inactive probe weighs nothing in the sample and traces the fewest rays.
+// Whether a probe lights receivers: RTXGI's probe classification's first
+// phase. An inactive probe weighs nothing in the sample and traces the
+// fewest rays; an active one without a surface in its cell (its second
+// phase) is dormant, lighting moving receivers alone.
 fn ddgi_probe_active(probe:DdgiProbe)->bool {
  return probe.backfaces<=DDGI_BACKFACE_THRESHOLD;
 }

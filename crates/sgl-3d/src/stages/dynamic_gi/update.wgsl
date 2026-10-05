@@ -33,10 +33,17 @@
 // frame's rays' share until its first whole cycle. The share of each
 // frame's rotated rays, blended as the depths are, flickered: in a room
 // whose probes beyond the walls see a quarter of back faces, 66 changes of
-// class in 200 frames among 125 probes. Not taken: RTXGI's second phase,
-// which deactivates a probe with no front face within its cell to save its
-// rays: a probe in open space would weigh nothing, and a moving instance
-// there would lose the volume's light.
+// class in 200 frames among 125 probes. Its second phase (172-214) finds
+// whether a fixed ray met a front face within the probe's cell, the spacing
+// about it along each axis (ddgi_in_cell); RTXGI deactivates a probe where
+// none did. Improved: such a probe is dormant, not inactive: static
+// receivers skip it, so a probe diagonally beyond the edge or corner of a
+// room's single-sided walls, which sees few of their backs and so passes
+// the first phase, lights no wall; moving receivers keep it, so a moving
+// instance in open space is lit from its first frame where RTXGI's probes
+// about it wait for its fixed rays to find it (a box appearing in open air
+// took 7 frames); and it traces the fewest rays but for a moving instance
+// near it (allocate.wgsl).
 @group(0) @binding(0) var<uniform> volume:DdgiVolume;
 @group(0) @binding(1) var<storage,read> ray_counts:array<u32>;
 @group(0) @binding(2) var ray_results:texture_2d<u32>;
@@ -235,6 +242,13 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
  let tile=ddgi_probe_color_pixel(probe_coord,volume.probes)-vec2(1u);
  textureStore(probes_out,tile+thread.xy,vec4(shared_texels[group_index],1.));
 }
+// Whether `ray` met a front face within its probe's cell, the spacing
+// about it along each axis: RTXGI's second phase.
+fn ddgi_in_cell(ray:DdgiRay)->bool {
+ let reach_axes=volume.spacing/max(abs(ray.direction),vec3(.000001));
+ let reach=min(reach_axes.x,min(reach_axes.y,reach_axes.z));
+ return !ray.backface && ray.depth>0. && ray.depth<=reach;
+}
 const DEPTH_THREADS:u32=16u;
 const DEPTH_CACHE:u32=DEPTH_THREADS*DEPTH_THREADS;
 var<workgroup> depth_ray_count:u32;
@@ -263,6 +277,7 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
  var result=vec2(0.);
  var total_weight=0.;
  var backfaces=0u;
+ var nearby=0u;
  var remaining_rays=ray_count;
  var offset=0u;
  while remaining_rays>0u {
@@ -274,6 +289,7 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   for (var r=0u;r<num_rays;r++) {
    let ray=depth_cache[r];
    backfaces+=select(0u,1u,ray.backface);
+   nearby+=select(0u,1u,ddgi_in_cell(ray));
    var depth=max_distance;
    if ray.depth>0. {
     depth=clamp(ray.depth-.01,0.,max_distance);
@@ -327,21 +343,28 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
    blended=ddgi_fresh_probe();
    blended.offset=probe_offset;
    blended.backfaces=f32(backfaces)/f32(ray_count);
+   blended.surfaced=nearby>0u;
   }
   blended.blended=true;
   for (var ray=0u;ray<DDGI_FIXED_RAYS_PER_FRAME;ray++) {
-   blended.fixed_backfaces+=select(0u,1u,ddgi_load_ray(probe_index,ray_count+ray).backface);
+   let fixed=ddgi_load_ray(probe_index,ray_count+ray);
+   blended.fixed_backfaces+=select(0u,1u,fixed.backface);
+   blended.fixed_nearby+=select(0u,1u,ddgi_in_cell(fixed));
   }
   blended.fixed_frames+=1u;
   if volume.frame%DDGI_FIXED_CYCLE==DDGI_FIXED_CYCLE-1u {
    if blended.fixed_frames==DDGI_FIXED_CYCLE {
     blended.backfaces=f32(blended.fixed_backfaces)/f32(DDGI_FIXED_RAYS);
+    blended.surfaced=blended.fixed_nearby>0u;
    }
    blended.fixed_backfaces=0u;
+   blended.fixed_nearby=0u;
    blended.fixed_frames=0u;
   }
   probe_states[probe_index]=ddgi_pack_probe(blended);
-  textureStore(probes_out,ddgi_probe_data_pixel(probe_coord,volume.probes),vec4(probe_offset,select(0.,1.,ddgi_probe_active(blended))));
+  // 1 lights every receiver, 0.5 moving ones alone, 0 none.
+  let lights=select(0.,select(.5,1.,blended.surfaced),ddgi_probe_active(blended));
+  textureStore(probes_out,ddgi_probe_data_pixel(probe_coord,volume.probes),vec4(probe_offset,lights));
  }
 }
 // Whether the probe at lattice coordinate `coord` entered the volume with

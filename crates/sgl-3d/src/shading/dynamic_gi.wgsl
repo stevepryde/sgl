@@ -10,8 +10,10 @@
 //  in rgb, two slabs of the lattice's z to each band of eight rows: slab z's
 //  tile at column ((z % 2) nx ny + x + y nx) 8 and row 18 nz + (z / 2) 8;
 // data: one texel per probe, eighteen slabs to a row: its relocated offset
-//  in half spacings in rgb, and in a 1 once it has been blended while it is
-//  active (stages/dynamic_gi/common.wgsl's ddgi_probe_active), at column
+//  in half spacings in rgb, and in a 0 until it has been blended or while it
+//  is inactive, 1 while it is active and 0.5 while it is dormant, lighting
+//  moving receivers alone (stages/dynamic_gi/common.wgsl's
+//  ddgi_probe_active and DdgiProbe::surfaced), at column
 //  (z % 18) nx ny + x + y nx and row 18 nz + 8 ceil(nz / 2) + z / 18.
 //
 // A probe's place in each region, and its index in the stage's buffers, are

@@ -74,6 +74,7 @@ impl Layouts {
                     storage(4, false),
                     written(5, wgpu::TextureFormat::Rg32Uint),
                     storage(6, false),
+                    storage(7, true),
                 ],
             ),
             trace: layout(
@@ -199,7 +200,7 @@ impl Volume {
     pub fn new(
         device: &wgpu::Device,
         layouts: &Layouts,
-        uniform: &wgpu::Buffer,
+        uniform: (&wgpu::Buffer, &wgpu::Buffer),
         (key, installed): (Key, InstalledVolume),
         max_rays: u32,
     ) -> Self {
@@ -257,7 +258,7 @@ impl Volume {
         &self,
         device: &wgpu::Device,
         layouts: &Layouts,
-        uniform: &wgpu::Buffer,
+        (uniform, moving_bounds): (&wgpu::Buffer, &wgpu::Buffer),
         max_rays: u32,
     ) -> Rays {
         let size = layout::ray_texture_size(probe_count(self.installed.probes), max_rays);
@@ -294,6 +295,7 @@ impl Volume {
                     buffer(4, &self.allocation),
                     view(5, &list),
                     buffer(6, &self.traced_probes),
+                    buffer(7, moving_bounds),
                 ],
             ),
             trace: group(

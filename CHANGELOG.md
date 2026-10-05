@@ -379,12 +379,18 @@ full API details.
   single-sided surfaces from behind (inside geometry, beyond a wall) is
   inactive, as RTXGI classifies its probes: it lights nothing and traces the
   fewest rays, and every probe traces 4 fixed rays a frame beside its
-  others. The probes' own rays take the volume's light at what they hit,
-  never the environment's fallback, so a closed room starts dark rather
-  than holding the sky for seconds. Installing the volume again with its
-  origin moved by whole spacings scrolls it: the probes that stay keep their light, and
-  those that enter start afresh; an origin off the lattice, or another
-  spacing or count, is another placement. A restart (another placement or
+  others. A probe with no surface within a spacing of it is dormant: it
+  lights moving instances alone (static surfaces skip it, so none takes
+  light from beyond a room's corner) and traces the fewest rays unless a
+  moving instance's bounds come within that spacing; a static object so
+  small that no probe's fixed rays find it takes its other indirect light,
+  and a probe's class follows a change within 8 frames. The probes' own rays
+  take the volume's light at what they hit, never the environment's
+  fallback, so a closed room starts dark rather than holding the sky for
+  seconds. Installing the volume again with its origin moved by whole
+  spacings scrolls it: the probes that stay keep their light, and those that
+  enter start afresh; an origin off the lattice, or another spacing or
+  count, is another placement. A restart (another placement or
   scene, or a frame without the volume), or a scroll's entering planes,
   starts at most 128 probes a frame at High (256 at Low), nearest the camera
   first, where Wicked starts every probe in one frame; the surfaces about a

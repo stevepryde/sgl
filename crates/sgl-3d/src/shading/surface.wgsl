@@ -231,10 +231,11 @@ fn directional_light_sample(index:u32,position:vec3<f32>,geometry_normal:vec3<f3
 // (baked_diffuse_source), else the irradiance volume where it lights the
 // frame and reaches the receiver (irradiance_volume_light), else the dynamic
 // GI volume where it lights the frame, reaches the receiver and has a
-// blended, active probe about it (dynamic_gi_irradiance; for a probe ray's
-// hit, wherever it reaches the hit, its light zero where no probe about the
-// hit weighs), else a moving instance's ambient cube, else the frame's
-// ambient alone. Each volume takes its share
+// blended, active probe about it (dynamic_gi_irradiance; a moving receiver
+// also weighs dormant probes, those with no surface in their cell; for a
+// probe ray's hit, wherever it reaches the hit, its light zero where no
+// probe about the hit weighs), else a moving instance's ambient cube, else
+// the frame's ambient alone. Each volume takes its share
 // and leaves the rest to what follows it, so a receiver hands over at its
 // border without a seam. A chart takes all of it, as no volume lights a
 // charted receiver.
@@ -265,7 +266,7 @@ fn surface_indirect_diffuse(s:Surface,normal:vec3<f32>,probe_hit:bool)->Indirect
  let rest=1.-field.share;
  var dynamic_gi=vec4(0.);
  if rest>0. {
-  dynamic_gi=dynamic_gi_irradiance(s.position,normal,s.view,probe_hit);
+  dynamic_gi=dynamic_gi_irradiance(s.position,normal,s.view,probe_hit,s.moving);
   dynamic_gi.a*=rest;
  }
  let fallback=rest-dynamic_gi.a;
