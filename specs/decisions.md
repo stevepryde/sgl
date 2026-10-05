@@ -259,3 +259,12 @@ Use the [current specs](README.md) for implementation and the
   to what the browser forces.
   Rationale: the browser is a target to keep working, not a ceiling on
   native.
+
+- **D-28** Owner direction, 2026-10-05: hardware ray tracing is opt-in.
+  `Settings::hardware_ray_tracing` is off by default and no preset turns it
+  on; a game that wants it requests the device's feature
+  (`graphics_device::ray_tracing_features`, with wgpu's experimental token)
+  and turns the setting on. This supersedes the default of on in the design
+  of roadmap 13 (#174), and later changes keep it.
+  Rationale: wgpu 29 marks its ray queries experimental, so a game takes
+  them on deliberately.

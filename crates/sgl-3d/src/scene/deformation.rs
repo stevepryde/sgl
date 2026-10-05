@@ -306,17 +306,20 @@ impl ModelDeformation {
             .collect()
     }
 
-    /// An instance's words: its joint matrices, morph weights, two slots of
-    /// positions, and normals and tangents.
+    /// An instance's words: two slots of positions, normals and tangents,
+    /// its joint matrices and its morph weights.
     fn instance_words(&self) -> u32 {
-        self.joints * JOINT_WORDS
+        self.vertices * (2 * DEFORMED_POSITION_WORDS + DEFORMED_NORMAL_WORDS)
+            + self.joints * JOINT_WORDS
             + self.morph_weights
-            + self.vertices * (2 * DEFORMED_POSITION_WORDS + DEFORMED_NORMAL_WORDS)
     }
 }
 
 /// A deforming instance's pose of its joints and morph targets, its words
-/// in the scene source, and which of its position slots hold what.
+/// in the scene source, and which of its position slots hold what. Its
+/// words start with its position slots, at a multiple of
+/// `DEFORMED_POSITION_WORDS`, since its BLAS reads them in whole 12-byte
+/// strides (`BlasTriangleGeometry::first_vertex` counts strides).
 pub(crate) struct InstanceDeformation {
     joints: Vec<Mat4>,
     weights: Vec<f32>,
@@ -349,7 +352,12 @@ impl InstanceDeformation {
         rays: &mut SceneRays,
         model: &ModelDeformation,
     ) -> Result<Self, SceneError> {
-        let range = rays.allocate(device, queue, model.instance_words() as usize)?;
+        let range = rays.allocate_aligned(
+            device,
+            queue,
+            model.instance_words() as usize,
+            DEFORMED_POSITION_WORDS,
+        )?;
         let mut deformation = Self {
             joints: Vec::new(),
             weights: Vec::new(),
@@ -402,7 +410,7 @@ impl InstanceDeformation {
             words.extend_from_slice(bytemuck::cast_slice(&joint.to_cols_array()));
         }
         words.extend_from_slice(bytemuck::cast_slice(weights));
-        rays.write(queue, self.range.start, &words);
+        rays.write(queue, self.joints_word(model), &words);
         self.mesh_bounds = model.bounds(joints, weights);
         self.bounds = self.mesh_bounds.iter().fold(EMPTY, |b, m| union(b, *m));
         self.revision = super::next_generation();
@@ -410,15 +418,17 @@ impl InstanceDeformation {
         Ok(())
     }
 
-    fn weights_word(&self, model: &ModelDeformation) -> u32 {
-        self.range.start + model.joints * JOINT_WORDS
-    }
-
     /// The first word of position slot `slot`, or of the normals for slot 2.
     fn slot_word(&self, model: &ModelDeformation, slot: u32) -> u32 {
-        self.weights_word(model)
-            + model.morph_weights
-            + slot * model.vertices * DEFORMED_POSITION_WORDS
+        self.range.start + slot * model.vertices * DEFORMED_POSITION_WORDS
+    }
+
+    fn joints_word(&self, model: &ModelDeformation) -> u32 {
+        self.slot_word(model, 2) + model.vertices * DEFORMED_NORMAL_WORDS
+    }
+
+    fn weights_word(&self, model: &ModelDeformation) -> u32 {
+        self.joints_word(model) + model.joints * JOINT_WORDS
     }
 
     /// Begins a frame: shows the deformation as of the last submitted frame
@@ -447,7 +457,7 @@ impl InstanceDeformation {
                 influences: mesh.influences,
                 morph_targets: mesh.morph_targets,
                 morph_target_count: mesh.morph_target_count,
-                joints: self.range.start,
+                joints: self.joints_word(model),
                 weights: self.weights_word(model),
                 positions: positions + mesh.first_vertex * DEFORMED_POSITION_WORDS,
                 normals: normals + mesh.first_vertex * DEFORMED_NORMAL_WORDS,

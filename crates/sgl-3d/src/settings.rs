@@ -327,6 +327,14 @@ pub struct Settings {
     /// Traces what screen-space reflections miss on moving objects through
     /// the scene's ray buffers; only effective with screen-space reflections.
     pub world_space_reflections: bool,
+    /// Hardware ray tracing, off by default and in no preset: a game opts
+    /// in by turning it on and requesting the device's feature
+    /// (`graphics_device::ray_tracing_features`). Where the device has it, on
+    /// frames that trace rays (world-space reflections, the dynamic GI
+    /// volume), the scene builds acceleration structures over its geometry
+    /// and keeps them (`Renderer::ray_tracing_stats`); off frees them. Rays
+    /// still trace the scene's portable BVHs.
+    pub hardware_ray_tracing: bool,
     /// The volumetric fog and mist, while the frame turns its atmosphere on
     /// (`FrameInput::atmosphere`, off by default); this allows them, and is
     /// on by default.
@@ -351,10 +359,11 @@ pub struct Settings {
 }
 
 impl Default for Settings {
-    /// High, with atmosphere allowed and the fog filter on, heat distortion,
-    /// world-space reflections and motion blur off, FSR2 sharpening on at
-    /// AMD's FSR sample's 0.8 (`m_RCASSharpen`, `m_Sharpness`), and every
-    /// other choice at its default.
+    /// High, with atmosphere allowed and the fog filter on, heat
+    /// distortion, world-space reflections, hardware ray tracing and motion
+    /// blur off, FSR2 sharpening on at AMD's FSR sample's 0.8
+    /// (`m_RCASSharpen`, `m_Sharpness`), and every other choice at its
+    /// default.
     fn default() -> Self {
         Self {
             preset: RenderPreset::High,
@@ -371,6 +380,7 @@ impl Default for Settings {
             screen_space_reflections: ScreenSpaceReflections::default(),
             reflection_method: ReflectionMethod::default(),
             world_space_reflections: false,
+            hardware_ray_tracing: false,
             atmosphere: true,
             fog_quality: FogQuality::default(),
             dynamic_gi: DynamicGiQuality::default(),

@@ -259,7 +259,9 @@ Remaining work, in the existing roadmap order:
 3. **Hardware ray-traced reflections and shadows (13,
    [#23](https://github.com/stevepryde/sgl/issues/23)).** Current world-space
    reflections traverse a software BVH; they do not use hardware ray tracing.
-   The design is settled in the architecture
+   The scene builds its acceleration structures behind the opt-in
+   `Settings::hardware_ray_tracing` (off by default, [D-28](decisions.md))
+   on a device with ray queries; rays do not trace them yet. The design is settled in the architecture
    ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
    [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
    acceleration structures beside the portable BVHs behind

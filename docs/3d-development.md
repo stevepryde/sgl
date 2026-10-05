@@ -16,7 +16,10 @@ environment maps, and settings. SGL3D retains GPU resources and encodes renderin
 into the game's command encoder. It neither creates a window nor handles input;
 use game-owned winit or another compatible window integration, or in the
 browser a canvas surface on the page's WebGPU device. Request the device with
-`graphics_device::limits` and `graphics_device::features` on either.
+`graphics_device::limits` and `graphics_device::features` on either. A
+native game that opts in to hardware ray tracing also requests
+`graphics_device::ray_tracing_features` with wgpu's experimental token and
+turns `Settings::hardware_ray_tracing` on.
 In the browser, fetch asset bytes and load them with `asset::load_slice` or
 `asset::load_slice_with_options`, pass the measured frame time in
 `FrameInput::frame_time_ms`, and capture specular probes natively:

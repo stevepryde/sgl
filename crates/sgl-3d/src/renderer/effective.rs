@@ -77,13 +77,8 @@ fn fsr2_sharpness(settings: &Settings, fsr2: bool) -> Option<f32> {
 /// The effective configuration of a first frame from a `perspective` camera
 /// with `FrameInput::new`'s values and a scene with no fog volumes or
 /// receivers: what `Renderer::new` builds stages for, so that such a frame
-/// finds their pipelines built. `fsr2_running` and `fused_supported` are as
-/// for `resolve`.
-pub(super) fn first_frame(
-    settings: &Settings,
-    fsr2_running: bool,
-    fused_supported: bool,
-) -> Effective {
+/// finds their pipelines built. `device` is as for `resolve`.
+pub(super) fn first_frame(settings: &Settings, device: Device) -> Effective {
     let camera = crate::Camera {
         view: glam::Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),
@@ -93,9 +88,20 @@ pub(super) fn first_frame(
         settings,
         &FrameInput::new(camera),
         SceneContent::default(),
-        fsr2_running,
-        fused_supported,
+        device,
     )
+}
+
+/// What the renderer's device runs that the effective configuration
+/// follows.
+#[derive(Clone, Copy)]
+pub(super) struct Device {
+    /// FSR2's context runs on it.
+    pub fsr2_running: bool,
+    /// It has the fused pass's attachments.
+    pub fused_supported: bool,
+    /// It traces rays in hardware (`scene::rays::acceleration::supported`).
+    pub ray_queries: bool,
 }
 
 /// What a frame's scene holds that its effective configuration follows.
@@ -132,16 +138,19 @@ fn trace_cutoff(method: ReflectionMethod) -> (f32, f32) {
     }
 }
 
-/// The effective configuration of a frame of a scene holding `content`.
-/// `fsr2_running` is whether FSR2's context runs on this device and
-/// `fused_supported` whether the device has the fused pass's attachments.
+/// The effective configuration of a frame of a scene holding `content` on
+/// a device that runs what `device` says.
 pub(super) fn resolve(
     settings: &Settings,
     input: &FrameInput,
     content: SceneContent,
-    fsr2_running: bool,
-    fused_supported: bool,
+    device: Device,
 ) -> Effective {
+    let Device {
+        fsr2_running,
+        fused_supported,
+        ray_queries,
+    } = device;
     let low = settings.low();
     let diagnostics = settings.diagnostics_in_effect();
     let disable = diagnostics.disable;
@@ -203,6 +212,7 @@ pub(super) fn resolve(
         ambient_occlusion,
         screen_space,
         world_space: settings.world_space_reflections && screen_space.is_some(),
+        hardware_ray_tracing: ray_queries && settings.hardware_ray_tracing,
         receivers: content.receivers
             && (screen_space.is_some() || taa || fsr2 || motion_blur.is_some()),
         fused: fused_supported && !disable.fused_opaque,

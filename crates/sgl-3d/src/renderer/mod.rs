@@ -19,6 +19,7 @@ mod floor_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod size_tests;
 
+use crate::scene::rays::acceleration::RayTracingStats;
 use crate::settings::{Antialiasing, RenderPreset, SceneResolution, Settings};
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
@@ -62,6 +63,8 @@ pub struct Renderer {
     motion_blur: MotionBlur,
     post: Post,
     history: CameraHistory,
+    /// The device traces rays in hardware.
+    ray_queries: bool,
     /// Targets changed since the last finished frame: history restarts.
     pending_reset: bool,
     /// The scene of the last finished frame.
@@ -184,10 +187,14 @@ impl Renderer {
             layers,
         );
         let targets = SharedTargets::new(device, render, false);
+        let ray_queries = crate::scene::rays::acceleration::supported(device);
         let first_frame = effective::first_frame(
             settings,
-            antialiasing.fsr2_running(),
-            pipelines.fused_supported,
+            effective::Device {
+                fsr2_running: antialiasing.fsr2_running(),
+                fused_supported: pipelines.fused_supported,
+                ray_queries,
+            },
         );
         Ok(Self {
             opaque: Opaque::new(device, &bindings.unlit),
@@ -205,7 +212,7 @@ impl Renderer {
                 settings.smaa_quality,
             )
             .map_err(RendererError::LookupTextures)?,
-            prepare: Prepare,
+            prepare: Prepare::default(),
             deform: Deform::new(device),
             dynamic_gi,
             sizes,
@@ -218,6 +225,7 @@ impl Renderer {
             shadows,
             fog,
             history: CameraHistory::default(),
+            ray_queries,
             pending_reset: false,
             last_scene: None,
             rendered: None,
@@ -362,6 +370,17 @@ impl Renderer {
     /// room for, and what the frame drew.
     pub fn local_shadow_stats(&self) -> LocalShadowStats {
         self.shadows.local.stats()
+    }
+
+    /// What the last rendered frame's hardware ray tracing held: how many
+    /// capture-visible instances the scene's TLAS held, how many that do not
+    /// deform it did not hold, which the portable BVHs cover, and how many
+    /// the device's limits or memory left out. Zero for a frame that built
+    /// no acceleration structures: one without ray tracing hardware
+    /// (`graphics_device::ray_tracing_features`), with
+    /// `Settings::hardware_ray_tracing` off, or tracing no rays.
+    pub fn ray_tracing_stats(&self) -> RayTracingStats {
+        self.prepare.ray_tracing_stats()
     }
 
     /// The last rendered camera's submitted draws of `scene`'s instances of

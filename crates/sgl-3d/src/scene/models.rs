@@ -8,7 +8,8 @@ use super::geometry::{Elements, GeometryBuffers, GeometryRange};
 use super::materials::Materials;
 use super::mesh_ranges::MeshRanges;
 use super::prepared::{PreparedMesh, PreparedModel};
-use super::rays::{RayModel, SceneRays};
+use super::ray_class::RayClass;
+use super::rays::{RayMeshWords, RayModel, SceneRays};
 use super::shadow_clusters::{MeshClusters, PosedClusters};
 use super::slots::Slots;
 use super::static_edits::posed_bounds;
@@ -42,6 +43,11 @@ pub(crate) struct Model {
     pub geometry: u64,
     pub ray: RayModel,
     ray_range: Range<u32>,
+    /// Where each mesh's vertices and indices lie in the ray source.
+    pub ray_meshes: Vec<RayMeshWords>,
+    /// What rays see of it, from its meshes' alpha modes, kept through its
+    /// materials' use lists (`Models::classify`).
+    pub ray_class: RayClass,
     /// What deforms it; none when it is rigid.
     pub deformation: Option<ModelDeformation>,
     /// Instances showing it.
@@ -187,12 +193,19 @@ impl Models {
 
     /// Ends `model`'s uses of other content: its levels of detail's models
     /// and its meshes' materials.
-    fn release(&mut self, materials: &mut Materials, meshes: &[Mesh]) {
+    fn release(&mut self, materials: &mut Materials, model: ModelId, meshes: &[Mesh]) {
         for mesh in meshes {
             let material = materials
                 .get_mut(mesh.material)
                 .expect("a used material lives");
-            material.users -= 1;
+            let uses = material
+                .users
+                .get_mut(&model)
+                .expect("a user of its material");
+            *uses -= 1;
+            if *uses == 0 {
+                material.users.remove(&model);
+            }
             material.untangented -= u32::from(!mesh.tangents);
         }
         for mesh in meshes {
@@ -249,16 +262,18 @@ impl Models {
                 return Err(SceneError::DeviceLimit);
             }
             let words = rays.place_model(device, queue, &mut model.rays, &material_words)?;
-            let deformation = match model.deformation.take().map(|prepared| {
-                ModelDeformation::place(device, queue, rays, prepared, &words.vertices)
-            }) {
-                Some(Ok(placed)) => Some(placed),
-                Some(Err(error)) => {
-                    rays.free(words.range);
-                    return Err(error);
-                }
-                None => None,
-            };
+            let vertices: Vec<u32> = words.meshes.iter().map(|mesh| mesh.vertices).collect();
+            let deformation =
+                match model.deformation.take().map(|prepared| {
+                    ModelDeformation::place(device, queue, rays, prepared, &vertices)
+                }) {
+                    Some(Ok(placed)) => Some(placed),
+                    Some(Err(error)) => {
+                        rays.free(words.range);
+                        return Err(error);
+                    }
+                    None => None,
+                };
             let mut placed = Vec::with_capacity(model.meshes.len());
             for mesh in &model.meshes {
                 match PlacedMesh::place(device, queue, geometry, mesh) {
@@ -308,16 +323,20 @@ impl Models {
                     }),
             })
             .collect();
-        Ok(Model {
+        let mut built = Model {
             bounds: model.bounds,
             meshes,
             geometry: super::next_generation(),
             ray: words.ray,
             ray_range: words.range,
+            ray_meshes: words.meshes,
+            ray_class: RayClass::None,
             deformation: deformation.map(|(deformation, _)| deformation),
             instances: 0,
             lod_uses: 0,
-        })
+        };
+        built.ray_class = RayClass::of_model(&built, materials);
+        Ok(built)
     }
 
     /// Frees a model's words in the ray source and its meshes' ranges of the
@@ -336,13 +355,13 @@ impl Models {
         }
     }
 
-    /// `meshes` now use their materials.
-    fn take_materials(materials: &mut Materials, meshes: &[Mesh]) {
+    /// `model`'s `meshes` now use their materials.
+    fn take_materials(materials: &mut Materials, model: ModelId, meshes: &[Mesh]) {
         for mesh in meshes {
             let material = materials
                 .get_mut(mesh.material)
                 .expect("a validated material");
-            material.users += 1;
+            *material.users.entry(model).or_default() += 1;
             material.untangented += u32::from(!mesh.tangents);
         }
     }
@@ -367,9 +386,15 @@ impl Scene {
             model,
         );
         self.refresh_scene_group(device);
-        let model = model?;
-        Models::take_materials(&mut self.materials, &model.meshes);
-        Ok(self.models.slots.insert(model))
+        let id = self.models.slots.insert(model?);
+        let meshes = &self
+            .models
+            .slots
+            .get(id)
+            .expect("a model just added")
+            .meshes;
+        Models::take_materials(&mut self.materials, id, meshes);
+        Ok(id)
     }
 
     /// Replaces a model's whole geometry with a prepared model's, with any
@@ -438,7 +463,7 @@ impl Scene {
         for (instance, deformation) in posed {
             self.instances.slots.get_mut(instance).unwrap().deformation = Some(deformation);
         }
-        Models::take_materials(&mut self.materials, &built.meshes);
+        Models::take_materials(&mut self.materials, id, &built.meshes);
         let model = self.models.get_mut(id).unwrap();
         // Replacing the geometry a static instance shows is a static edit.
         for pose in self.instances.static_poses(id) {
@@ -449,9 +474,11 @@ impl Scene {
         model.bounds = built.bounds;
         model.geometry = built.geometry;
         model.ray = built.ray;
+        model.ray_meshes = built.ray_meshes;
+        model.ray_class = built.ray_class;
         let previous_range = std::mem::replace(&mut model.ray_range, built.ray_range);
         let previous_deformation = std::mem::replace(&mut model.deformation, built.deformation);
-        self.models.release(&mut self.materials, &previous);
+        self.models.release(&mut self.materials, id, &previous);
         Models::free(
             &mut self.rays,
             &mut self.geometry,
@@ -476,7 +503,7 @@ impl Scene {
             return Err(SceneError::ModelInUse);
         }
         let model = self.models.slots.remove(id).unwrap();
-        self.models.release(&mut self.materials, &model.meshes);
+        self.models.release(&mut self.materials, id, &model.meshes);
         Models::free(
             &mut self.rays,
             &mut self.geometry,

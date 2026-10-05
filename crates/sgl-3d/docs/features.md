@@ -9,7 +9,9 @@ Native (Metal, Vulkan, DX12) and the browser (WASM + WebGPU) run the same
 features, with two exceptions: FSR2 needs native-only device features, so the
 browser runs TAA in its place and `Renderer::fsr2_error` says why, and
 `Renderer::capture_specular_probe`, an authoring tool that blocks for its
-readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
+readback, runs natively only. Hardware ray tracing's acceleration structures
+are native too, where the device has ray queries. WebGL2 is not a target:
+SGL3D needs compute.
 [Browser](../README.md#browser-wasm--webgpu).
 
 ## Content
@@ -210,6 +212,11 @@ Environment and probe specular always apply. On top of them:
   [Reflections](../README.md#reflections) credits each source.
 - **World-space reflections**: rays through a software BVH for moving objects
   up to 1000 m from the reflecting surface that screen-space reflections miss.
+- **Hardware ray tracing** (first part, opt-in): on a device with ray
+  queries and with `Settings::hardware_ray_tracing` on, the scene's
+  acceleration structures, built on frames that trace rays; rays do not
+  trace them yet.
+  [Hardware ray tracing](../README.md#hardware-ray-tracing).
 
 ## Image quality and post-processing
 
@@ -286,7 +293,7 @@ Environment and probe specular always apply. On top of them:
 
 Animation playback (sampling and blending clips is the game's). A dynamic
 GI volume that scrolls with the player (installing a moved volume starts its
-probes afresh), DLSS/MetalFX, hardware ray tracing, and GPU-driven/occlusion
+probes afresh), DLSS/MetalFX, rays traced in hardware, and GPU-driven/occlusion
 culling are [planned](../../../specs/sgl3d.md#planned). Current world-space reflections
 use software rays; current culling runs on the CPU. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is

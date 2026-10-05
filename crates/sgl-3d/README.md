@@ -1163,9 +1163,11 @@ authored look and per-frame state in a `FrameInput`.
 1. Select an adapter and request the renderer's device requirements:
    `graphics_device::limits` gives its adapter-sized limits,
    `graphics_device::features` the optional features SGL3D uses where the
-   adapter has them, and `graphics_device::fsr2_features` the features FSR2
-   needs. The game owns surface acquisition, device failure, and window
-   handling.
+   adapter has them, `graphics_device::fsr2_features` the features FSR2
+   needs, and `graphics_device::ray_tracing_features` hardware ray
+   tracing's, which a game that opts in requests with wgpu's experimental
+   token ([Hardware ray tracing](#hardware-ray-tracing)). The game owns
+   surface acquisition, device failure, and window handling.
 2. Load assets through `asset::load` (files) or `asset::load_slice`
    (embedded glTF/GLB bytes, as a browser fetches them), each with a
    `_with_options` form, or build an `asset::Asset` from
@@ -1667,6 +1669,58 @@ along the room with a shorter volume that scrolls to follow it:
 cargo run --release -p sgl-3d --example dynamic_gi -- target/dynamic_gi.png --timing
 ```
 
+## Hardware ray tracing
+
+A native device with wgpu's ray queries traces the scene's rays in hardware
+once roadmap 13 ([#23](https://github.com/stevepryde/sgl/issues/23))
+lands; this version builds the scene's acceleration structures, and every
+ray still traverses the portable BVHs. It is opt-in: off by default and in
+every preset, a game takes it by requesting the feature and turning
+`Settings::hardware_ray_tracing` on.
+
+- **Device.** Request `graphics_device::ray_tracing_features(&adapter)`
+  with `graphics_device::limits(&adapter)`, which requests the adapter's
+  acceleration-structure limits. wgpu 29 marks the feature experimental, so
+  the descriptor's `experimental_features` must be
+  `unsafe { wgpu::ExperimentalFeatures::enabled() }`, the game's
+  acceptance of it. Metal has it from macOS 15 on Apple silicon (in
+  hardware from M3), Vulkan with ray queries, and DX12 at ray-tracing
+  tier 1.1, which needs DXC: enable wgpu's `static-dxc` in the game or
+  ship `dxcompiler.dll` beside its executable (wgpu's default
+  `Dx12Compiler::Auto` takes either, never FXC). No browser has it, nor
+  Vulkan on a Mac. `sgl-3d` enables no `static-dxc` itself.
+- **Structures.** While `Settings::hardware_ray_tracing` is on, frames
+  that trace rays (world-space reflections, the dynamic
+  GI volume) build, in the frame's encoder after the deform pass: a BLAS
+  for each model that does not deform, has no masked mesh and has an
+  opaque one, over all its meshes' positions in the scene's ray source,
+  pending until such a frame and then built nearest the camera first under
+  Bevy's budget of 400 000 vertices a frame (the first pending always, a
+  replaced model at once), then compacted; a BLAS for each deforming
+  instance over its deformed positions, rebuilt in each frame its
+  deformation changed; and a TLAS over the capture-visible instances,
+  rebuilt every such frame, each instance named by its entry's index with
+  its kind (static or moving) as its mask. An instance of a model with a
+  masked mesh, of one whose BLAS is pending, or that the device cannot hold
+  (a model past `max_blas_primitive_count` or `max_blas_geometry_count`,
+  instances past `max_tlas_instance_count`, the farthest left out, or a
+  structure its memory cannot hold) stays on the portable BVHs. Turning
+  the setting off frees the structures; a scene on a device without the
+  feature holds none. A mesh's indices past its last whole triangle are
+  left out of its BLAS, as of its BVH. The one allocation no error scope
+  reaches is the builds' scratch buffer, which wgpu allocates when the
+  game finishes the frame's encoder: its out-of-memory error reaches the
+  game's error handler, as any failure of its encoder does.
+- **Reporting.** `Renderer::ray_tracing_stats()` returns the last rendered
+  frame's `RayTracingStats`: the instances the TLAS held, those that do not
+  deform it did not hold (on the portable BVHs), and those the device left
+  out. With the `diagnostics` feature, `diagnostics::counters` counts the
+  BLAS and TLAS builds and compactions, and `Scene::diagnostic_resources`
+  the BLASes held and their triangles.
+
+The [streaming example](examples/streaming.rs) opts in with
+`--hardware-ray-tracing` and reports the builds.
+
 ## Settings and capability fallback
 
 `settings::Settings` holds every rendering setting a game chooses in one serde
@@ -1923,9 +1977,10 @@ instance's pixels, `diagnostics::crystal_roughness_threshold`, where
 Crystal stops tracing, `diagnostics::counters` (what `sgl-3d` itself counted on
 the thread: uploads by file and line, buffers created, the steps of
 preparing and placing models and of building instance BVHs, ray-source and
-geometry-slab growths and static-edit boxes; subtract
+geometry-slab growths, static-edit boxes and the hardware path's
+acceleration-structure builds and compactions; subtract
 two with `Counters::since`, and compare versions by totals since lines move),
-`Scene::diagnostic_resources` (the scene's buffer sizes),
+`Scene::diagnostic_resources` (the scene's buffer sizes and BLASes),
 `Renderer::diagnostic_draws` (the last frame's camera, blended and cascade
 draws) and `Renderer::diagnostic_view_times` (the CPU time the camera's and
 each cascade's draw list took to build and to record). The `streaming` and

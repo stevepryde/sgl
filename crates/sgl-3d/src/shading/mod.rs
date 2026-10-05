@@ -38,7 +38,8 @@ pub(crate) struct Module {
 }
 
 /// The dependency-first concatenation of `roots` and everything they use,
-/// each module once.
+/// each module once, with every `enable` directive a module declares
+/// hoisted to the program's head, once, where naga alone accepts it.
 pub(crate) fn compose(roots: &[&'static Module]) -> String {
     fn visit(module: &'static Module, ordered: &mut Vec<&'static Module>) {
         if let Some(seen) = ordered.iter().find(|seen| seen.name == module.name) {
@@ -58,12 +59,24 @@ pub(crate) fn compose(roots: &[&'static Module]) -> String {
     for root in roots {
         visit(root, &mut ordered);
     }
+    let is_directive = |line: &&str| line.trim_start().starts_with("enable ");
     let mut program = String::new();
+    for module in &ordered {
+        for directive in module.source.lines().filter(is_directive) {
+            if !program.lines().any(|line| line == directive) {
+                program.push_str(directive);
+                program.push('\n');
+            }
+        }
+    }
     for module in ordered {
         program.push_str("\n// ---- module ");
         program.push_str(module.name);
         program.push('\n');
-        program.push_str(module.source);
+        for line in module.source.lines().filter(|line| !is_directive(line)) {
+            program.push_str(line);
+            program.push('\n');
+        }
     }
     program
 }
@@ -381,6 +394,15 @@ pub(crate) static VERTEX_PULL: Module = Module {
     name: "vertex_pull",
     source: include_str!("vertex_pull.wgsl"),
     deps: &[&BIND_SCENE, &SCENE_RAYS, &DEFORMATION],
+};
+/// The hardware path's shared module: the scene's TLAS binding. Its first
+/// tracing pass composes it with the hardware trace; until then only the
+/// acceleration structures' build-and-bind test does.
+#[cfg(test)]
+pub(crate) static SCENE_RAYS_HARDWARE: Module = Module {
+    name: "scene_rays_hardware",
+    source: include_str!("scene_rays_hardware.wgsl"),
+    deps: &[],
 };
 pub(crate) static SCENE_RAYS_PORTABLE: Module = Module {
     name: "scene_rays_portable",

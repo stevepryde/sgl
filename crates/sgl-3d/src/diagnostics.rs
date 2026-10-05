@@ -1,8 +1,8 @@
 //! Raw GPU observations for renderer integration tests and diagnostics
 //! (feature `diagnostics`): the frame's intermediate targets and readback,
 //! and what the library counted on this thread (`counters`): its uploads by
-//! call site, buffers created, build steps' times, ray-source growths and
-//! static-edit boxes.
+//! call site, buffers created, build steps' times, ray-source growths,
+//! static-edit boxes and acceleration-structure builds.
 use crate::InstanceId;
 use crate::content::identity::Identity;
 pub use crate::counters::{BuildStep, Counters, StepTime, UploadSite};
