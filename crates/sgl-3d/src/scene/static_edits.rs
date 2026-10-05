@@ -89,7 +89,11 @@ fn halve(boxes: &mut Vec<[Vec3; 2]>) -> usize {
     let kept = boxes.len().div_ceil(2);
     for at in 0..kept {
         let pair = &boxes[2 * at..(2 * at + 2).min(boxes.len())];
-        boxes[at] = pair.iter().copied().reduce(union).expect("pairs are never empty");
+        boxes[at] = pair
+            .iter()
+            .copied()
+            .reduce(union)
+            .expect("pairs are never empty");
     }
     boxes.truncate(kept);
     pairs
@@ -162,14 +166,15 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     // Plausible defects: boxes lost or shrunk where the list overflows and
-    // halves (an odd box dropped, a union taken wrongly), so an edit's
-    // bounds stop reaching the caches that show it. The oracle is the
+    // halves (a pair's second box dropped, a union taken wrongly), so an
+    // edit's bounds stop reaching the caches that show it. The oracle is the
     // contract: every edit's bounds lie within a pending box, and the list
     // stays within its cap.
     #[wasm_bindgen_test(unsupported = test)]
     fn overflowing_edits_stay_within_the_boxes_kept() {
         let mut edits = StaticEdits::default();
-        // An odd count, scattered over a kilometre, past three overflows.
+        // Scattered over a kilometre: the list halves at the 1025th record
+        // and every 512 after, five times in all.
         let recorded: Vec<[Vec3; 2]> = (0..MAX_BOXES * 3 + 7)
             .map(|i| {
                 let t = i as f32;

@@ -191,17 +191,18 @@ A static edit (adding, removing or changing a static instance, or replacing
 the geometry of a model one uses) also records the world bounds it touched.
 The scene keeps each edit's bounds pending until `finish_frame`, merging
 them conservatively (spatial neighbours in pairs) only past a cap far above
-a streaming frame's edits. A cache of static content marks what each of them
-reaches as stale, never what their union would, in any frame that shows
-them to it, whether or not it redraws then, as Godot pairs an instance with
-the lights its bounds meet and dirties only the paired lights' shadows when
-it changes (b130438 `renderer_scene_cull.cpp`, `_instance_pair` and
-`_update_instance`); a cache that was not kept up in a frame starts over.
-The static instance BVH, rebuilt whole, counts the edits instead. Static-edit bounds are the
-scene's part; what else makes a cache stale (its light, the visibility mask,
-a material's caster values, another `Scene`) is its owner's. An abandoned
-frame commits nothing: the next frame measures motion from the last submitted
-frame and sees the same pending bounds.
+a streaming frame's edits. A cache of static content marks what each kept
+box reaches as stale, never what a union of them would, in any frame that
+shows them to it, whether or not it redraws then, as Godot pairs an
+instance with the lights its bounds meet and dirties only the paired
+lights' shadows when it changes (b130438 `renderer_scene_cull.cpp`,
+`_instance_pair` and `_update_instance`); a cache that was not kept up in a
+frame starts over. The static instance BVH, rebuilt whole, counts the edits
+instead. Static-edit bounds are the scene's part; what else makes a cache
+stale (its light, the visibility mask, a material's caster values, another
+`Scene`) is its owner's. An abandoned frame commits nothing: the next frame
+measures motion from the last submitted frame and sees the same pending
+bounds.
 
 **Render origin.** Every position at the boundary is `f32` in the scene's
 render frame. A game whose world is larger than `f32` renders precisely keeps

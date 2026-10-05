@@ -27,8 +27,11 @@ full API details.
   the bounds merge in pairs of spatial neighbours. Shadows look as before.
 - **Migration:** no game-code changes. Afterwards, compare the local-light
   shadow faces and layers drawn per frame (`Renderer::local_shadow_stats`)
-  and the `local shadows` timing group while streaming or editing static
-  content near shadowed lights.
+  and the `local shadows` and `local shadow layers` timing groups while
+  streaming or editing static content near shadowed lights. With the
+  `diagnostics` feature, `Counters::static_edit_boxes_merged` now counts
+  the pairs merged when the pending list halves past 1024 (before, the
+  boxes merged past 16).
 
 ### Shadows offset their receivers along the geometry normal
 
