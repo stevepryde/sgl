@@ -1,8 +1,9 @@
 // The portable implementation of the scene ray function set (the
 // architecture's Ray source): every ray through the portable walk
 // (scene_rays_walk.wgsl), the composition root of a tracing pipeline where
-// the hardware path is not in effect. The hardware path's root
-// (scene_rays_query_opaque.wgsl) defines the same functions.
+// the hardware path is not in effect. The hardware path's shared module
+// (scene_rays_hardware.wgsl), under either form's query module, defines
+// the same functions.
 // A valid ray's walk over the instances of `kinds` (SCENE_KIND_*), as
 // `scene_walk` takes it; a miss for an invalid one.
 fn scene_trace_portable(ray:SceneRay,kinds:u32,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool)->RawSceneHit {

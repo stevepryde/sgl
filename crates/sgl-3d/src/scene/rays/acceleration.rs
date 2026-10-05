@@ -1,7 +1,8 @@
 //! The hardware path's acceleration structures (the architecture's Hardware
 //! ray tracing): beside the portable BVHs, where the device has ray queries
 //! (`supported`), a BLAS for each model that does not deform and whose
-//! hits a committed hit can judge (`RayClass::Opaque`), one for each
+//! class the form in effect traces (`RayClass::traced`: an opaque model's
+//! under either, a masked model's under the candidate form), one for each
 //! deforming instance over its deformed positions, and a TLAS over the
 //! instance entries. A frame's builds are one `build_acceleration_structures`
 //! call in its encoder, after the deform pass (`encode`); the scene commits
@@ -20,6 +21,7 @@ use crate::scene::instances::Instances;
 use crate::scene::models::Models;
 use crate::scene::ray_class::RayClass;
 use crate::scene::static_edits::posed_bounds;
+use crate::shading::RayQueryForm;
 use glam::{Mat4, Vec3};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -61,8 +63,9 @@ pub struct RayTracingStats {
     /// Instances the scene's TLAS held.
     pub hardware: u32,
     /// Instances that do not deform and that the TLAS did not hold, which
-    /// the portable BVHs cover: those whose model has a masked mesh, whose
-    /// model's BLAS is pending, or that were left out.
+    /// the portable BVHs cover: those whose model has a masked mesh (in the
+    /// baseline form every device runs by default), whose model's BLAS is
+    /// pending, or that were left out.
     pub portable: u32,
     /// Instances left out of the TLAS because the device could not hold
     /// them: a model or instance beyond its acceleration-structure limits,
@@ -186,28 +189,27 @@ impl AccelerationStructures {
         })
     }
 
-    /// Before a frame that builds the structures, seen from `eye`: commits
-    /// ready compactions, chooses the BLASes the frame builds (pending
-    /// models under the budget, replaced ones and deforming instances
-    /// outside it) and sets the TLAS's instances, as many as the device
-    /// holds, its capacity grown with the instance entries (`entries`). A
-    /// frame rendered before it and never finished is abandoned: its work
-    /// is chosen again.
+    /// Before a frame that builds the structures for `form`, seen from
+    /// `eye`: commits ready compactions, chooses the BLASes the frame
+    /// builds (pending models under the budget, replaced and re-pended ones
+    /// and deforming instances outside it) and sets the TLAS's instances,
+    /// as many as the device holds, its capacity grown with the instance
+    /// entries (`entries`). A frame rendered before it and never finished
+    /// is abandoned: its work is chosen again.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (models, instances): (&Models, &Instances),
-        entries: usize,
-        eye: Vec3,
+        (entries, eye, form): (usize, Vec3, RayQueryForm),
     ) -> RayTracingStats {
         let limits = device.limits();
         self.frame = None;
-        self.blases.forget_removed(models, instances);
+        self.blases.forget_removed(models, instances, form);
         self.blases.compact(device, queue);
         let mut stats = RayTracingStats::default();
         // The capture-visible instances rays stop at, by what holds them.
-        let mut opaque = Vec::new();
+        let mut traced = Vec::new();
         let mut deforming = Vec::new();
         for (id, instance) in instances.slots.iter() {
             let model = models
@@ -219,21 +221,21 @@ impl AccelerationStructures {
             }
             if instance.deformation.is_some() {
                 deforming.push(id);
-            } else if model.ray_class == RayClass::Masked {
+            } else if model.ray_class.traced(form) {
+                traced.push(id);
+            } else {
                 // A predicate instance (the baseline form).
                 stats.portable += 1;
-            } else {
-                opaque.push(id);
             }
         }
-        let mut builds = self
-            .blases
-            .choose_models(device, &limits, models, instances, &opaque, eye);
-        let mut held = Vec::with_capacity(opaque.len() + deforming.len());
-        for &id in &opaque {
+        let mut builds =
+            self.blases
+                .choose_models(device, &limits, models, instances, &traced, (eye, form));
+        let mut held = Vec::with_capacity(traced.len() + deforming.len());
+        for &id in &traced {
             let instance = instances.slots.get(id).expect("a live instance");
             let model = instance.state.model;
-            let Some(blas) = self.blases.model(models, model) else {
+            let Some(blas) = self.blases.model(models, model, form) else {
                 stats.portable += 1;
                 stats.left_out += u32::from(self.blases.left_out(models, model));
                 continue;
@@ -253,7 +255,7 @@ impl AccelerationStructures {
             let instance = instances.slots.get(id).expect("a live instance");
             let Some(blas) =
                 self.blases
-                    .deformed(device, &limits, models, (id, instance), &mut builds)
+                    .deformed(device, &limits, models, (id, instance), (&mut builds, form))
             else {
                 stats.left_out += 1;
                 continue;

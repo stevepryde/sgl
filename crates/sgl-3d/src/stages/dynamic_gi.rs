@@ -39,7 +39,7 @@ use crate::scene::dynamic_gi::{InstalledVolume, ProbePlacement};
 use crate::shading::RayQueryForm;
 use crate::shading::{self, dynamic_gi as layout};
 use crate::view::effective::Effective;
-use crate::view::frame::FrameContext;
+use crate::view::frame::{FrameContext, HardwareRays};
 use crate::view::pipelines::LitConstants;
 use crate::view::trace_paths::{TracePath, TracePaths};
 use glam::{I64Vec3, IVec3, Mat3, Mat4, Vec3, Vec4};
@@ -490,26 +490,32 @@ impl DynamicGi {
         }
     }
 
+    /// Makes the trace's pipeline compiled with `lit` for the path
+    /// `hardware` takes; returns the path it took (`TracePaths::pipeline`).
     fn trace_pipeline(
         &mut self,
         device: &wgpu::Device,
         lit: LitConstants,
-        form: Option<RayQueryForm>,
-    ) {
-        let TracePath { shader, layout, .. } = self.paths.path(device, form);
-        self.trace.entry((lit, form)).or_insert_with(|| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("dynamic GI rays"),
-                layout: Some(layout),
-                module: shader,
-                entry_point: Some("trace"),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &lit.constants(),
-                    ..Default::default()
-                },
-                cache: None,
-            })
-        });
+        hardware: Option<HardwareRays<'_>>,
+    ) -> Option<RayQueryForm> {
+        self.paths.pipeline(
+            device,
+            hardware,
+            (&mut self.trace, lit),
+            |TracePath { shader, layout, .. }| {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("dynamic GI rays"),
+                    layout: Some(layout),
+                    module: shader,
+                    entry_point: Some("trace"),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &lit.constants(),
+                        ..Default::default()
+                    },
+                    cache: None,
+                })
+            },
+        )
     }
 
     /// Allocates, traces and blends the frame's rays.
@@ -518,8 +524,7 @@ impl DynamicGi {
             return;
         };
         let lit = LitConstants::of(ctx.scene);
-        let form = ctx.hardware_rays.map(|rays| rays.form);
-        self.trace_pipeline(ctx.device, lit, form);
+        let form = self.trace_pipeline(ctx.device, lit, ctx.hardware_rays);
         #[cfg(feature = "diagnostics")]
         let mut observer = observe::Observer::for_frame(
             &mut self.observer,

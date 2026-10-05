@@ -48,6 +48,8 @@ pub(crate) struct Model {
     /// What rays see of it, from its meshes' alpha modes, kept through its
     /// materials' use lists (`Models::classify_users`).
     pub ray_class: RayClass,
+    /// Which of its meshes are masked, kept with `ray_class`.
+    pub ray_masked: Vec<bool>,
     /// What deforms it; none when it is rigid.
     pub deformation: Option<ModelDeformation>,
     /// Instances showing it.
@@ -331,11 +333,12 @@ impl Models {
             ray_range: words.range,
             ray_meshes: words.meshes,
             ray_class: RayClass::None,
+            ray_masked: Vec::new(),
             deformation: deformation.map(|(deformation, _)| deformation),
             instances: 0,
             lod_uses: 0,
         };
-        built.ray_class = RayClass::of_model(&built, materials);
+        super::ray_class::classify(&mut built, materials);
         Ok(built)
     }
 
@@ -486,6 +489,7 @@ impl Scene {
         model.ray = built.ray;
         model.ray_meshes = built.ray_meshes;
         model.ray_class = built.ray_class;
+        model.ray_masked = built.ray_masked;
         let previous_range = std::mem::replace(&mut model.ray_range, built.ray_range);
         let previous_deformation = std::mem::replace(&mut model.deformation, built.deformation);
         self.models.release(&mut self.materials, id, &previous);

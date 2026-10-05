@@ -4,8 +4,12 @@
 //! BVH, no TLAS, no Moller-Trumbore solve and none of the shaders' code.
 //! The scene is built, deformed and its structures built as a renderer's
 //! prepare builds them, then rays go through the scene ray function set the
-//! hardware form's query module composes. Each test reports itself
-//! unsupported, never passed, where the adapter has no ray queries.
+//! hardware form's query module composes, under each form the device's
+//! backend runs (`forms`): the baseline on every one, the candidate form
+//! where the backend lowers its loop (Vulkan, DX12), whichever the
+//! renderer takes by default. Each test reports itself unsupported, never
+//! passed, where the adapter has no ray queries; the candidate form has run
+//! on no device yet (#23).
 use super::{Function, Query};
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
 use crate::content::identity::Identity;
@@ -387,6 +391,17 @@ struct Batch<'a> {
     rays: &'a [[f32; 8]],
 }
 
+/// The hardware forms `device`'s backend runs: the baseline on every one,
+/// and the candidate form where its shader backend lowers a candidate loop
+/// (`RayQueryForm::lowered`).
+fn forms(device: &wgpu::Device) -> Vec<RayQueryForm> {
+    let mut forms = vec![RayQueryForm::Baseline];
+    if RayQueryForm::lowered(device.adapter_info().backend) {
+        forms.push(RayQueryForm::Candidates);
+    }
+    forms
+}
+
 /// Waits for the queue's work, failing rather than waiting forever.
 fn wait(device: &wgpu::Device) {
     device
@@ -399,19 +414,19 @@ fn wait(device: &wgpu::Device) {
 
 /// One frame of `scene` seen from `eye` with the groups `mask` shows, as a
 /// renderer's prepare and deform pass run it while hardware ray tracing is
-/// in effect, then each of `batches` traced through `query`: each batch's
-/// hits.
+/// in effect in `form`, then each of `batches` traced through `query`, the
+/// dispatch over that form: each batch's hits.
 fn frame(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     scene: &mut Scene,
-    (query, deform): (&Query, &mut Deform),
+    (query, deform, form): (&Query, &mut Deform, RayQueryForm),
     mask: u32,
     batches: &[Batch<'_>],
 ) -> Vec<Vec<[u32; 8]>> {
     let eye = Vec3::new(0., 0., 10.);
     scene.prepare_frame(device, queue, eye);
     scene
-        .prepare_acceleration_structures(device, queue, eye)
+        .prepare_acceleration_structures(device, queue, eye, form)
         .expect("the device holds a TLAS");
     scene.update_rays(device, queue, mask, true);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -523,52 +538,55 @@ fn assert_visible(visible: bool, met: &[Met], label: &str) {
     }
 }
 
-// The smallest hardware trace, first: one triangle, one ray. Plausible
-// defects: the query reading another instance, mesh or triangle than the
-// hardware committed (custom index, geometry or primitive), barycentrics in
-// another vertex order than the portable solve's, or a committed hit
-// mistaken for a miss. The oracle is the triangle's plane and edges in f64.
+// The smallest hardware trace, first: one triangle, one ray, under each
+// form. Plausible defects: the query reading another instance, mesh or
+// triangle than the hardware committed (custom index, geometry or
+// primitive), barycentrics in another vertex order than the portable
+// solve's, or a committed hit mistaken for a miss. The oracle is the
+// triangle's plane and edges in f64.
 #[test]
 fn one_ray_meets_one_triangle() {
     let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
         return;
     };
     let gpu = (&device, &queue);
-    let mut scene = Scene::new(&device, &queue);
-    let mut mesh = solid(Vec3::new(0.2, 0.1, -2.), 2., Vec3::Z, 0);
-    mesh.indices.truncate(3);
-    let placed = [place(
-        gpu,
-        &mut scene,
-        asset(vec![mesh], vec![opaque()]),
-        Mat4::IDENTITY,
-        Mobility::Static,
-        None,
-    )];
-    let query = Query::with_path(&device, Some(RayQueryForm::Baseline));
-    let mut deform = Deform::new(&device);
-    let ray = [0.3, -0.2, 3., 0., 0.01, 0.02, -1., 100.];
-    let hits = frame(
-        gpu,
-        &mut scene,
-        (&query, &mut deform),
-        0,
-        &[Batch {
-            function: Function::Nearest,
-            sides: AS_RASTER,
-            receiver: [0; 2],
-            rays: &[ray],
-        }],
-    );
-    let met = meet(
-        &triangles(&placed, 0),
-        ray,
-        (AS_RASTER, Kinds::All, false),
-        None,
-    )
-    .unwrap();
-    assert_eq!(met.len(), 1, "the ray meets the triangle");
-    assert_nearest(&hits[0][0], &met, "one ray");
+    for form in forms(&device) {
+        let mut scene = Scene::new(&device, &queue);
+        let mut mesh = solid(Vec3::new(0.2, 0.1, -2.), 2., Vec3::Z, 0);
+        mesh.indices.truncate(3);
+        let placed = [place(
+            gpu,
+            &mut scene,
+            asset(vec![mesh], vec![opaque()]),
+            Mat4::IDENTITY,
+            Mobility::Static,
+            None,
+        )];
+        let query = Query::with_path(&device, Some(form));
+        let mut deform = Deform::new(&device);
+        let ray = [0.3, -0.2, 3., 0., 0.01, 0.02, -1., 100.];
+        let hits = frame(
+            gpu,
+            &mut scene,
+            (&query, &mut deform, form),
+            0,
+            &[Batch {
+                function: Function::Nearest,
+                sides: AS_RASTER,
+                receiver: [0; 2],
+                rays: &[ray],
+            }],
+        );
+        let met = meet(
+            &triangles(&placed, 0),
+            ray,
+            (AS_RASTER, Kinds::All, false),
+            None,
+        )
+        .unwrap();
+        assert_eq!(met.len(), 1, "the ray meets the triangle");
+        assert_nearest(&hits[0][0], &met, &format!("{form:?}: one ray"));
+    }
 }
 
 /// Six squares of half-size `half` about `centre`, each facing out: a
@@ -590,7 +608,8 @@ fn closed_box(centre: Vec3, half: f32) -> Vec<CpuMesh> {
 /// square seen from its back and a double-sided one seen from its back; a
 /// model whose blended square hides an opaque
 /// one; an all-blended square; a hidden group's square before an opaque
-/// one; a masked square (a predicate instance); a mirrored moving square; a
+/// one; a masked square (a predicate instance under the baseline form, in
+/// the TLAS under the candidate form); a mirrored moving square; a
 /// moving square; two instances of one square at one pose (a tie both
 /// accept); one model's two coplanar squares wound opposite ways (a tie a
 /// single-sided rule splits); two nested closed boxes; and a deforming
@@ -810,11 +829,11 @@ fn assert_decoded(hit: &[u32; 8], met: &Met, triangles: &[Triangle], ray: [f32; 
     );
 }
 
-/// What the hardware's answers for `rays` through `function`, accepting
-/// `sides` and leaving `receiver`, must be by the oracle over `triangles`;
-/// the rays it decided.
+/// What the hardware's answers under `form` for `rays` through `function`,
+/// accepting `sides` and leaving `receiver`, must be by the oracle over
+/// `triangles`; the rays it decided.
 fn check(
-    triangles: &[Triangle],
+    (triangles, form): (&[Triangle], RayQueryForm),
     (function, sides, receiver): (Function, u32, Option<(u32, u32, u32)>),
     rays: &[[f32; 8]],
     hits: &[[u32; 8]],
@@ -836,7 +855,7 @@ fn check(
             continue;
         };
         decided += 1;
-        let label = format!("{function:?} sides {sides} ray {i} {ray:?}");
+        let label = format!("{form:?} {function:?} sides {sides} ray {i} {ray:?}");
         match function {
             Function::Visible | Function::StaticVisible => {
                 assert_visible(hit[0] == 1, &met, &label)
@@ -872,14 +891,26 @@ fn check(
 // ray leaving one that takes one kind only (world-space reflections' `All`
 // reach); a hit's
 // distance or normals decoded from the rest pose or the wrong triangle.
-// Run twice: at the device's limits,
-// where the TLAS holds every opaque and deforming instance, and with the
-// TLAS held to the four nearest, where the walk covers the rest. An exactly
+// Under the candidate form, besides: a masked mesh's candidate confirmed
+// on a cut-out texel or never confirmed, a candidate judged without the
+// predicate's other rules, a confirmed hit judged again as another
+// triangle, or a masked model left on the walk.
+// Run under each form the device's backend runs, twice: at the device's
+// limits, where the TLAS holds every opaque and deforming instance (and,
+// under the candidate form, the masked one), and with the TLAS held to the
+// four nearest, where the walk covers the rest. An exactly
 // tied pair is accepted either way; one the single-sided rule splits may
 // skip to the hit behind it, the limitation the architecture states.
 #[test]
 fn hardware_rays_match_the_oracle() {
-    for capacity in [None, Some(4)] {
+    let probe = test_support::ray_tracing_device(|limits| limits);
+    let Some(forms) = probe.map(|(device, _)| forms(&device)) else {
+        return;
+    };
+    for (form, capacity) in forms
+        .into_iter()
+        .flat_map(|form| [(form, None), (form, Some(4))])
+    {
         let Some((device, queue)) = test_support::ray_tracing_device(|limits| wgpu::Limits {
             max_tlas_instance_count: capacity.unwrap_or(limits.max_tlas_instance_count),
             ..limits
@@ -890,7 +921,15 @@ fn hardware_rays_match_the_oracle() {
         let mut scene = Scene::new(&device, &queue);
         let placed = oracle_scene(gpu, &mut scene);
         let deforming = placed.last().expect("the deforming instance").index;
-        let query = Query::with_path(&device, Some(RayQueryForm::Baseline));
+        let masked = placed
+            .iter()
+            .find(|placed| {
+                placed.joint.is_none()
+                    && matches!(placed.asset.materials[0].alpha, AlphaMode::Mask { .. })
+            })
+            .expect("the masked square")
+            .index;
+        let query = Query::with_path(&device, Some(form));
         let mut deform = Deform::new(&device);
         let nearest = oracle_rays(|_| (0., 100.));
         let segments = oracle_rays(|i| {
@@ -945,7 +984,7 @@ fn hardware_rays_match_the_oracle() {
         let hits = frame(
             gpu,
             &mut scene,
-            (&query, &mut deform),
+            (&query, &mut deform, form),
             0,
             &batches.map(|(function, sides, (receiver, _), rays)| Batch {
                 function,
@@ -959,12 +998,21 @@ fn hardware_rays_match_the_oracle() {
             acceleration.holds(deforming as usize),
             "the deforming instance, nearest the eye, is held"
         );
+        if capacity.is_none() {
+            // Only the candidate form's loop judges a masked model's
+            // triangles in the TLAS; the baseline walks it.
+            assert_eq!(
+                acceleration.holds(masked as usize),
+                form == RayQueryForm::Candidates,
+                "{form:?}: the masked square's instance in the TLAS"
+            );
+        }
         let triangles = triangles(&placed, 0);
         for (&(function, sides, (_, receiver), rays), hits) in batches.iter().zip(&hits) {
-            let decided = check(&triangles, (function, sides, receiver), rays, hits);
+            let decided = check((&triangles, form), (function, sides, receiver), rays, hits);
             assert!(
                 decided * 10 > rays.len() * 9,
-                "{function:?}: the oracle decided only {decided} of {} rays",
+                "{form:?} {function:?}: the oracle decided only {decided} of {} rays",
                 rays.len()
             );
         }

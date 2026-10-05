@@ -1812,13 +1812,20 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   hidden group) may be skipped, since one opaque query cannot list ties.
   While hardware ray tracing traces the dynamic GI volume's rays, a
   capture-visible deforming instance's pose or deformation is an edit that
-  wakes a converged volume, since its rays see it.
+  wakes a converged volume, since its rays see it. Vulkan and DX12, whose
+  shader compilers can run the hardware's candidate loop, also have a
+  candidate form, in which masked models join the acceleration structures
+  and the loop cuts out their texels; it is not their default until it is
+  measured on their hardware, and it has not run on such hardware yet. A
+  device whose candidate programs fail to compile falls back to the
+  baseline for good.
 - **Reporting.** `Renderer::ray_tracing_in_effect(&settings)` says whether
   the hardware path traces the scene's rays, as
   `antialiasing_in_effect` does for antialiasing, and
   `Renderer::ray_tracing_error()` why it did not trace the last frame that
   asked for it (the device has no ray queries, or its memory could not
-  hold the TLAS); the portable BVHs traced it instead.
+  hold the TLAS), the portable BVHs tracing it instead, or why the device
+  fell back from the candidate form to the baseline, which traced it.
   `Renderer::ray_tracing_stats()` returns the last rendered frame's
   `RayTracingStats`: the instances the TLAS held, those that do not deform
   it did not hold (on the portable BVHs), and those the device left out.
