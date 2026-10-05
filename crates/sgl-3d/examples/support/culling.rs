@@ -3,8 +3,9 @@
 //! the CPU time each GPU-built view's draw list takes to build (preparing
 //! its cull and encoding it) and record, and the GPU time of each pass
 //! group, the cull stage's among them. `--split` runs the opaque stage's
-//! two-pass form instead of the fused pass. The examples include this file
-//! by path.
+//! two-pass form instead of the fused pass; `--occlusion` turns
+//! `Settings::occlusion_culling` on, which runs the two-pass form. The
+//! examples include this file by path.
 use sgl_3d::Renderer;
 use sgl_3d::diagnostics::ViewTimes;
 use sgl_3d::settings::Settings;
@@ -18,6 +19,9 @@ pub struct Options {
     /// The opaque stage's two-pass form: a G-buffer pass, then lighting at
     /// its depth (`DisabledLayers::fused_opaque`).
     pub split: bool,
+    /// Two-phase occlusion culling of the camera's list
+    /// (`Settings::occlusion_culling`).
+    pub occlusion: bool,
 }
 
 impl Options {
@@ -25,6 +29,7 @@ impl Options {
     pub fn take(&mut self, arg: &str) -> bool {
         match arg {
             "--split" => self.split = true,
+            "--occlusion" => self.occlusion = true,
             _ => return false,
         }
         true
@@ -33,24 +38,37 @@ impl Options {
     /// Sets `settings` for the run.
     pub fn apply(self, settings: &mut Settings) {
         settings.diagnostics.disable.fused_opaque = self.split;
+        settings.occlusion_culling = self.occlusion;
     }
 
     /// What the run renders, for its report.
     pub fn describe(self) -> String {
-        format!("opaque {}", if self.split { "two-pass" } else { "fused" })
+        let form = if self.split || self.occlusion {
+            "two-pass"
+        } else {
+            "fused"
+        };
+        let occlusion = if self.occlusion {
+            ", occlusion culling"
+        } else {
+            ""
+        };
+        format!("opaque {form}{occlusion}")
     }
 }
 
 /// The opaque stage's timing groups before ambient occlusion, fused and
-/// two-pass.
-const OPAQUE: [&str; 4] = [
+/// two-pass, the late G-buffer pass's among them.
+const OPAQUE: [&str; 5] = [
     "sky",
     "opaque geometry + lighting",
     "geometry",
+    "geometry late",
     "opaque lighting",
 ];
-/// The cull stage's timing group.
-const CULL: &str = "cull";
+/// The cull stage's timing groups: its early phase, its late phase and its
+/// pyramids.
+const CULL: [&str; 3] = ["cull", "cull late", "depth pyramid"];
 
 /// One frame's GPU time: its total and each pass group's.
 type GpuFrame = (f64, BTreeMap<&'static str, f64>);
@@ -207,7 +225,7 @@ impl Culling {
         });
         row("cull + opaque stage + cascades", &|(_, groups)| {
             sum(groups, &|name| {
-                name == CULL
+                CULL.contains(&name)
                     || OPAQUE.contains(&name)
                     || name.starts_with("directional shadow cascade")
             })

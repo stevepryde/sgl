@@ -970,6 +970,24 @@ game creates its instance without `InstanceFlags::VALIDATION_INDIRECT_CALL`
 (set by default); the lists' few draws need no validation, so a game may
 clear the flag, and keeping it costs that small pass.
 
+`Settings::occlusion_culling` (off by default) adds two-phase occlusion
+culling to the camera's list, as Bevy's GPU culling runs it: the early phase
+also tests each instance and section at its last frame's pose against the
+last submitted frame's depth pyramid (each texel the farthest depth it
+covers), and sets aside what lies behind it; the opaque stage draws the
+rest into the G-buffer; the late phase builds the pyramid from that depth
+and tests what was set aside again, at this frame's pose; the G-buffer pass
+draws what it passes, and the pyramid is built once more from the complete
+depth for the next frame. Lighting then shades both sets once. Something
+hidden last frame and visible now is drawn in the same frame, so nothing
+appears late; a camera cut or a resize tests nothing early. The opaque stage
+runs as two passes while it is on (the fused pass cannot be split), so it
+pays only where a frame submits much hidden geometry.
+It needs six storage textures a shader stage, which `graphics_device::limits`
+requests from the adapter; a device with fewer culls by frustum alone, and
+`Renderer::occlusion_culling_in_effect` reports it. The directional cascades
+cull by frustum alone.
+
 The CPU-built lists draw instanced: the instances that draw the same mesh
 of a model with the same material, face culling and mobility, after their
 own culling and level-of-detail choice, share one draw per index range, as
@@ -1396,7 +1414,7 @@ between timed passes is charged to the next timed pass. SGL3D's groups, by
 stage (each stage's documentation lists its own), are:
 
 - prepare: `deform` (the frame's skinning and morphing, while an instance's
-  deformation changed);
+  deformation changed) and `cull` (the GPU-built lists' early phase);
 - dynamic GI: `dynamic GI allocation`, `dynamic GI rays` and `dynamic GI
   blend`, while the scene holds a volume and `Settings::dynamic_gi` runs it;
 - shadows: `directional shadow cascade 0` to `directional shadow cascade 3`
@@ -1405,7 +1423,9 @@ stage (each stage's documentation lists its own), are:
 - volumetric fog: `fog injection`, `fog filter` and `fog integration`;
 - opaque: `sky` and `opaque geometry + lighting`, or `geometry`, `sky` and
   `opaque lighting` where the device lacks the fused pass's colour
-  attachments; then `ambient occlusion`;
+  attachments or occlusion culling runs; while it runs, `depth pyramid`
+  (twice), `cull late` and `geometry late` between `geometry` and `sky`;
+  then `ambient occlusion`;
 - reflections: `probe culling`, `reflection source completion`, Crystal's
   `SSR` passes (named after DiligentFX's debug groups), Velvet's `Godot SSR`
   passes, `world reflection rays`, `world reflection denoise` and

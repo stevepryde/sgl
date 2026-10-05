@@ -10,9 +10,10 @@
   const frames = Number(query.get("frames") ?? 600);
   const across = Number(query.get("across") ?? 4);
   const up = Number(query.get("up") ?? 2);
+  const occlusion = query.get("occlusion") === "1";
   try {
     await init();
-    const report = await measure(frames, across, up);
+    const report = await measure(frames, across, up, occlusion);
     out.textContent = report;
     window.__sglReport = report;
   } catch (error) {

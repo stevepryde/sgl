@@ -24,7 +24,7 @@ use super::models::{Model, Models};
 use super::ranges::Ranges;
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::lod::MeshLod;
-use crate::shading::culling::{ChainLevel, CullListsHeader, DrawCandidate};
+use crate::shading::culling::{ChainLevel, CullListsHeader, DrawCandidate, late_entries};
 use crate::shading::vertex::DrawInstance;
 use chains::Chains;
 use glam::Vec3;
@@ -116,10 +116,13 @@ pub(crate) struct Candidates {
     blended: BTreeSet<u32>,
     pub(crate) sets: Sets,
     chains: Chains,
-    /// The most candidate slots and draw instances in regions a device
-    /// binds: a GPU-built view's lists and cluster list hold them.
+    /// The most candidate slots, draw instances in regions and list entries
+    /// a device binds: a GPU-built view's lists and cluster lists hold them,
+    /// the camera's lists, while it culls occlusion, an entry for each slot
+    /// in each of three lists and one for each draw instance in its queue.
     most_slots: u32,
     most_regions: u32,
+    most_entries: u64,
     /// Each slot's instance's model, which a frame's statistics readback
     /// keeps to attribute its candidates' sections
     /// (`Renderer::geometry_stats_for_model`); copied on write while a
@@ -149,6 +152,8 @@ impl Candidates {
             chains: Chains::new(),
             most_slots: most(candidate, 0).min(most(entry, std::mem::size_of::<CullListsHeader>())),
             most_regions: most(std::mem::size_of::<DrawInstance>(), 0),
+            most_entries: binding.saturating_sub(std::mem::size_of::<CullListsHeader>() as u64)
+                / entry as u64,
             #[cfg(feature = "diagnostics")]
             models: Default::default(),
         }
@@ -170,7 +175,9 @@ impl Candidates {
 
     /// Whether the slots and sets fit what the device binds.
     fn fits(&self, sets: &Sets, placed: &Ranges) -> bool {
-        placed.end() <= self.most_slots && sets.fit(self.most_regions)
+        placed.end() <= self.most_slots
+            && sets.fit(self.most_regions)
+            && late_entries(placed.end(), sets.region_end()) <= self.most_entries
     }
 
     /// Whether placing each listed instance's candidates in turn, as

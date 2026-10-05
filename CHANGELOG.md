@@ -15,6 +15,51 @@ full API details.
 
 ## Unreleased
 
+### Two-phase occlusion culling of the camera's list (opt-in)
+
+- **Scope:** `sgl-3d` (#24, roadmap 22). New `Settings::occlusion_culling`
+  (`bool`, `false` by default and in every preset) and
+  `Renderer::occlusion_culling_in_effect`. While it runs, the camera's
+  opaque and masked surfaces are culled in two phases, as Bevy's GPU
+  culling runs them. The early phase also tests each instance and then
+  each section, at its last frame's pose, against the last submitted
+  frame's depth pyramid, and sets aside what lies behind it. The G-buffer
+  pass draws the rest. The late phase then builds the pyramid from that
+  depth and tests what was set aside again at this frame's pose, and a
+  second G-buffer pass draws what it passes. The pyramid is built once
+  more from the complete depth for the next frame, and lighting shades
+  both sets once. Something hidden last frame and visible now is drawn in
+  the same frame. The first frame, a camera cut, a resize and a frame
+  after one without occlusion culling cull by frustum alone. The pyramid
+  is AMD's single-pass downsampler as Bevy ports it, with AMD's (SDK
+  d7531ae) and Bevy's notices. The directional cascades still cull by
+  frustum alone.
+- **Behaviour:**
+  - While it runs, the opaque stage takes its two-pass form (a G-buffer
+    pass, then lighting at its depth) on every device, since the fused
+    pass cannot be split. The new timing groups are `cull late`,
+    `depth pyramid` (twice a frame) and `geometry late`.
+  - It needs six storage textures a shader stage, which
+    `graphics_device::limits` requests from the adapter. A device with
+    fewer culls by frustum alone, as does the `culling` diagnostics layer.
+    `occlusion_culling_in_effect` reports it.
+  - `Renderer::geometry_stats` counts both phases' sections.
+    `Renderer::diagnostic_draws` counts two draws a set for the camera
+    while it runs.
+  - Content past what the device binds for the camera's lists while it
+    culls occlusion is refused with `SceneError::DeviceLimit`, whether or
+    not the setting is on. Those lists hold three entries a draw candidate
+    and one a section the sets can draw. On a device binding 128 MiB this
+    is reached only past about a million candidates.
+- **Migration:** no game-code changes. Code that builds `Settings` naming
+  every field adds `occlusion_culling: false`. A saved settings file loads
+  unchanged (`Settings` is `#[serde(default)]`). To opt in, set
+  `settings.occlusion_culling = true` where the game's views hide much of
+  what they submit, and offer it to players beside the other performance
+  settings. Afterwards, measure the GPU frame on the game's routes with it
+  on and off, and watch for anything drawn a frame late when the camera
+  turns or an occluder moves (nothing should be).
+
 ### Dynamic GI traces within a per-frame ray budget
 
 - **Scope:** `sgl-3d` dynamic GI (#185). A volume now traces at most a

@@ -1575,7 +1575,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   pose, and whether the instance deforms, since pulled passes reach deformed
   vertices through the object record) and holds, per phase it draws, a
   region of each GPU-built view's cluster list of the capacity its
-  candidates' sections sum to, each candidate counting the most sections
+  candidates' sections sum to (a view culling a late phase keeps a cluster
+  list for each phase, the set's region placed alike in both), each candidate counting the most sections
   among its chain's levels, and one indirect command; regions and commands
   are placed by `scene::ranges` and
   re-placed only when a set outgrows its region, so a streaming frame's
@@ -1634,7 +1635,12 @@ code; it does not redeclare a struct, binding or function another module owns.
   its rounding, so the test stays conservative and a cascade's omits its
   near plane; and, the camera's while occlusion culling runs, Bevy's
   occlusion test, the bounds' screen rectangle and nearest depth against
-  the pyramid, in the early phase at the object record's previous pose
+  the farthest under the rectangle in the pyramid (`cull_shared.wesl`'s
+  4×4 texels of the finest level that holds the rectangle; hidden only
+  strictly behind it, as Bevy's mesh preprocessing compares, so a surface
+  square to the camera is not hidden by its own depth; a box that reaches
+  the near plane, or that needs a level the pyramid did not build, kept),
+  in the early phase at the object record's previous pose
   through the camera history's previous view-projection with that frame's
   jitter, in the late phase at its pose through the frame's jittered one,
   as Bevy projects with the jittered matrices and re-applies the previous
@@ -1660,7 +1666,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   raster list, adding the section and its triangles to the view's
   statistics by mobility once it is appended within capacity; one the early
   phase finds occluded joins the
-  view's late section queue as (candidate, mesh word, section), as Bevy's
+  view's late section queue as (its early visible entry, which holds the
+  candidate and mesh word, and the section), as Bevy's
   first pass pushes an occluded cluster to
   its second-pass queue (`cull_clusters.wesl` 50-58). A deforming
   candidate's sections are all appended untested, since its leaves' bounds
@@ -1750,7 +1757,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   another way. Occlusion culling needs the pyramid's six storage textures
   per stage, which `graphics_device::limits` requests from the adapter
   (WebGPU's default is four); a device with fewer culls by frustum alone,
-  and the effective configuration reports it. The cull pipelines bind at
+  and the effective configuration reports it
+  (`Renderer::occlusion_culling_in_effect`). The cull pipelines bind at
   most seven storage buffers to a compute stage, within S3D-1's floor of
   eight (the instance cull: candidates, chains, the object records, the
   sets, the lists, the statistics; the section cull: the lists, candidates,

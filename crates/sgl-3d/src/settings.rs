@@ -352,6 +352,15 @@ pub struct Settings {
     /// and keeps them (`Renderer::ray_tracing_stats`), and the rays trace
     /// them; off frees them.
     pub hardware_ray_tracing: bool,
+    /// Two-phase occlusion culling of the camera's opaque and masked
+    /// surfaces, off by default and in every preset: what was hidden last
+    /// frame is tested again this frame against what the frame draws first,
+    /// so nothing visible is lost, and what stays hidden is not drawn. It
+    /// runs the opaque stage's G-buffer and lighting as two passes and
+    /// builds two depth pyramids a frame, which pays only where a frame
+    /// submits much hidden geometry; a device without six storage textures
+    /// a stage culls by frustum alone (`Renderer::occlusion_culling_in_effect`).
+    pub occlusion_culling: bool,
     /// The volumetric fog and mist, while the frame turns its atmosphere on
     /// (`FrameInput::atmosphere`, off by default); this allows them, and is
     /// on by default.
@@ -377,8 +386,8 @@ pub struct Settings {
 
 impl Default for Settings {
     /// High, with atmosphere allowed and the fog filter on, heat
-    /// distortion, world-space reflections, hardware ray tracing and motion
-    /// blur off, FSR2 sharpening on at AMD's FSR sample's 0.8
+    /// distortion, world-space reflections, hardware ray tracing, occlusion
+    /// culling and motion blur off, FSR2 sharpening on at AMD's FSR sample's 0.8
     /// (`m_RCASSharpen`, `m_Sharpness`), and every other choice at its
     /// default.
     fn default() -> Self {
@@ -398,6 +407,7 @@ impl Default for Settings {
             reflection_method: ReflectionMethod::default(),
             world_space_reflections: WorldSpaceReflections::Off,
             hardware_ray_tracing: false,
+            occlusion_culling: false,
             atmosphere: true,
             fog_quality: FogQuality::default(),
             dynamic_gi: DynamicGiQuality::default(),

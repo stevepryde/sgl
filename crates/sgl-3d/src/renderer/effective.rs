@@ -103,6 +103,8 @@ pub(super) struct Device {
     pub fsr2_running: bool,
     /// It has the fused pass's attachments.
     pub fused_supported: bool,
+    /// It binds the depth pyramid's storage textures.
+    pub occlusion_supported: bool,
     /// It traces rays in hardware, in this form
     /// (`scene::rays::acceleration::supported`).
     pub ray_queries: Option<RayQueryForm>,
@@ -153,6 +155,7 @@ pub(super) fn resolve(
     let Device {
         fsr2_running,
         fused_supported,
+        occlusion_supported,
         ray_queries,
     } = device;
     let low = settings.low();
@@ -205,6 +208,7 @@ pub(super) fn resolve(
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
     let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
+    let occlusion_culling = settings.occlusion_culling && occlusion_supported && !disable.culling;
     Effective {
         antialiasing,
         taa,
@@ -227,7 +231,10 @@ pub(super) fn resolve(
         },
         receivers: content.receivers
             && (screen_space.is_some() || taa || fsr2 || motion_blur.is_some()),
-        fused: fused_supported && !disable.fused_opaque,
+        // Occlusion culling's late phase falls between the G-buffer passes,
+        // so the opaque stage takes its two-pass form.
+        fused: fused_supported && !disable.fused_opaque && !occlusion_culling,
+        occlusion_culling,
         local_lights: !disable.local_lights,
         atmosphere: atmosphere(settings, input),
         fog: fog(

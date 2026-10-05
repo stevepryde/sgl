@@ -42,16 +42,21 @@ const DT: f64 = 1. / 60.;
 
 /// Renders `frames` measured frames after the warm-up of a window of the
 /// chunks within `across` of the camera's along x and z and `up` along y,
-/// and returns the report, or the line that failed.
+/// with occlusion culling where `occlusion`, and returns the report, or the
+/// line that failed.
 #[wasm_bindgen]
-pub async fn measure(frames: u32, across: i32, up: i32) -> String {
+pub async fn measure(frames: u32, across: i32, up: i32, occlusion: bool) -> String {
     console_error_panic_hook::set_once();
-    measured(frames as usize, [across, up])
+    measured(frames as usize, [across, up], occlusion)
         .await
         .unwrap_or_else(|error| format!("FAIL {error}\n"))
 }
 
-async fn measured(frames: usize, [across, up]: [i32; 2]) -> Result<String, String> {
+async fn measured(
+    frames: usize,
+    [across, up]: [i32; 2],
+    occlusion: bool,
+) -> Result<String, String> {
     let adapter = wgpu::Instance::default()
         .request_adapter(&Default::default())
         .await
@@ -156,7 +161,10 @@ async fn measured(frames: usize, [across, up]: [i32; 2]) -> Result<String, Strin
         );
     }
     let mut settings = voxel_world::settings();
-    let options = culling::Options::default();
+    let options = culling::Options {
+        occlusion,
+        ..culling::Options::default()
+    };
     let mut culling = culling::Culling::new(options);
     let output = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("browser streaming output"),

@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--frames <count>] [--radius <across>,<up>]";
+  "measure-browser [--frames <count>] [--radius <across>,<up>] [--occlusion]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
@@ -202,10 +202,14 @@ const MEASURE_PORT = 8125;
 async function measureBrowser(args: string[]): Promise<void> {
   let frames = 600;
   let radius = [4, 2];
+  let occlusion = false;
   for (let at = 0; at < args.length; at += 2) {
     if (args[at] === "--frames") frames = Number(args[at + 1]);
     else if (args[at] === "--radius") radius = args[at + 1].split(",").map(Number);
-    else throw new Error(USAGE);
+    else if (args[at] === "--occlusion") {
+      occlusion = true;
+      at -= 1;
+    } else throw new Error(USAGE);
   }
   if (!Number.isInteger(frames) || frames < 60) throw new Error("--frames must be at least 60");
   if (radius.length !== 2 || !radius.every((r) => Number.isInteger(r) && r >= 0)) {
@@ -259,7 +263,8 @@ async function measureBrowser(args: string[]): Promise<void> {
         console.log(`console ${message.type()}: ${message.text()}`);
       }
     });
-    const query = `frames=${frames}&across=${radius[0]}&up=${radius[1]}`;
+    const query =
+      `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}`;
     await page.goto(`http://127.0.0.1:${MEASURE_PORT}/?${query}`);
     const deadline = Date.now() + 15 * 60_000;
     let report: string | null = null;
