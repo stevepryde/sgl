@@ -83,6 +83,7 @@ fn plane_asset(has_normal_map: bool) -> Asset {
             emissive_texture: None,
             normal_texture: has_normal_map.then_some(0),
             normal_scale: 1.,
+            normal_layers: None,
             bump_texture: Some(1),
             bump_scale: 1.,
             wrap: [gltf::texture::WrappingMode::Repeat; 2],
@@ -182,6 +183,7 @@ fn material_normal_oracle(
                     clearcoat: 0.,
                     coat_roughness: 0.,
                     normal_scale: 1.,
+                    normal_layers: None,
                     bump_scale: 1.,
                     anisotropy_strength: if authored { 0.6 } else { 0. },
                     anisotropy_rotation: std::f32::consts::FRAC_PI_4,
@@ -278,19 +280,55 @@ override fixture_axis:bool=false;
             multiview_mask: None,
             cache: None,
         });
-        // Material sampling reads the view's texture mip bias (zero here).
-        let frame = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        // Material sampling reads the view's texture mip bias (zero here),
+        // and normal layers the frame's animation phase (none here).
+        let view = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("zero view"),
             contents: bytemuck::bytes_of(
                 &<shading::uniforms::ViewUniform as bytemuck::Zeroable>::zeroed(),
             ),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let frame = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("zero frame"),
+            contents: bytemuck::bytes_of(
+                &<shading::uniforms::FrameUniform as bytemuck::Zeroable>::zeroed(),
+            ),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("zero view and frame"),
             layout: &raster.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: view.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: frame.as_entire_binding(),
+                },
+            ],
+        });
+        // Ray hits read the frame alone.
+        let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("zero frame"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let ray_frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("zero frame"),
+            layout: &frame_layout,
             entries: &[wgpu::BindGroupEntry {
-                binding: 0,
+                binding: 1,
                 resource: frame.as_entire_binding(),
             }],
         });
@@ -422,7 +460,7 @@ override fixture_axis:bool=false;
                 &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: None,
                     bind_group_layouts: &[
-                        None,
+                        Some(&frame_layout),
                         Some(&shading::bind::scene(&device)),
                         None,
                         Some(&io_layout),
@@ -465,6 +503,7 @@ override fixture_axis:bool=false;
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&compute);
+            pass.set_bind_group(0, &ray_frame_group, &[]);
             pass.set_bind_group(1, &scene_group, &[]);
             pass.set_bind_group(3, &io, &[]);
             pass.dispatch_workgroups(1, 1, 1);

@@ -1,25 +1,28 @@
-//! Blended receivers of screen-space reflections: a lake whose surface, a
-//! caller-generated grid whose normals the example animates each frame (a
-//! sum of sines, replaced with `Scene::set_model`), receives reflections
-//! over submerged rocks and a sunken block, between an opaque shoreline
-//! rising out of the water and posts standing in it, under a bright panel
-//! above the far shore. A second receiver sheet lies partly over the lake
-//! and a glass pane that does not receive stands in front.
+//! Blended receivers of screen-space reflections: a lake whose surface, one
+//! static quad whose material scrolls two layers of a wave normal map with
+//! the frame's time (`asset::Material::normal_layers`), receives
+//! reflections over submerged rocks and a sunken block, between an opaque
+//! shoreline rising out of the water and posts standing in it, under a
+//! bright panel above the far shore. A second receiver sheet lies partly
+//! over the lake and a glass pane that does not receive stands in front.
 //!
 //! `cargo run --release -p sgl-3d --example water [-- --frames N]`
 //!
 //! Renders each run below at 1920×1080 through the public `Scene` and
 //! `Renderer` API and prints, per run, the median and 95th percentile GPU
 //! time of the frame and of the pass groups receivers touch, over the frames
-//! after a warm-up, with up to two frames in flight. `before` and `after`
-//! are the same frames with the lake and the sheet unmarked and marked.
-//! Every 30th frame and the last of each run are written to
-//! `target/water-example/<run>/` for the owner to judge.
+//! after a warm-up, with up to two frames in flight, and what the frames
+//! replace in the scene. `before` and `after` are the same frames with the
+//! lake and the sheet unmarked and marked; `set-model` is `after` with the
+//! waves animated as before material layers existed: a 128×128 grid whose
+//! normals follow a sum of sines, replaced every frame with
+//! `Scene::set_model`. Every 30th frame and the last of each run are written
+//! to `target/water-example/<run>/` for the owner to judge.
 use sgl_3d::glam::{Quat, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameInput, InstanceState,
-    MaterialId, Mobility, ModelId, ModelMesh, MotionBlurParameters, Renderer, Scene,
-    asset::{Asset, CpuMesh, Material, Vertex},
+    MaterialId, Mobility, ModelId, ModelMesh, MotionBlurParameters, NormalLayer, Renderer, Scene,
+    asset::{Asset, CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{
         Antialiasing, Fsr2Quality, MotionBlur, ReflectionMethod, ScreenSpaceReflections, Settings,
@@ -29,15 +32,32 @@ use sgl_3d::{
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::Path;
+use std::time::Instant;
 
 const SIZE: [u32; 2] = [1920, 1080];
 /// The size the `resize` run switches to a third of the way through.
 const RESIZED: [u32; 2] = [1280, 720];
 const WARM_UP: usize = 10;
-/// Grid cells along each side of the lake's surface.
+/// Grid cells along each side of the `set-model` lake's surface.
 const CELLS: usize = 128;
 /// The lake's surface spans x in ±40 m and z from 2.5 m to -52 m, at y = 0.
 const LAKE: [[f32; 2]; 2] = [[-40., 2.5], [40., -52.]];
+/// Metres of lake one repeat of the wave normal map covers, at a layer's
+/// scale 1: the lake's UVs are its x and -z over this.
+const TILE: f32 = 16.;
+/// Texels on each side of the wave normal map.
+const MAP: u32 = 256;
+
+/// How the lake's waves move.
+#[derive(Clone, Copy, PartialEq)]
+enum Waves {
+    /// Its material's normal layers, with the frame's time.
+    Material,
+    /// Its material's normal layers, with the time held at zero.
+    Still,
+    /// Its grid's normals, replaced every frame with `Scene::set_model`.
+    Mesh,
+}
 
 /// One run: the settings it renders with and what it exercises.
 struct Run {
@@ -47,8 +67,7 @@ struct Run {
     marked: bool,
     /// The camera orbits; otherwise it stands still.
     orbit: bool,
-    /// The lake's normals move.
-    waves: bool,
+    waves: Waves,
     /// A resize a third of the way through and a camera cut at two thirds.
     resize_and_cut: bool,
 }
@@ -67,7 +86,7 @@ fn runs() -> Vec<Run> {
         settings,
         marked: true,
         orbit: true,
-        waves: true,
+        waves: Waves::Material,
         resize_and_cut: false,
     };
     let with = |change: fn(&mut Settings)| {
@@ -83,11 +102,15 @@ fn runs() -> Vec<Run> {
         },
         run("after", blurred),
         Run {
+            waves: Waves::Mesh,
+            ..run("set-model", blurred)
+        },
+        Run {
             orbit: false,
             ..run("stationary", base)
         },
         Run {
-            waves: false,
+            waves: Waves::Still,
             ..run("still-waves", base)
         },
         run(
@@ -322,8 +345,85 @@ fn world(marked: bool) -> Asset {
     }
 }
 
-/// The lake's surface at `seconds`: a flat grid whose normals follow a sum
-/// of sines, and its indices.
+/// A tileable wave normal map: the normals of a height field summing
+/// sines of whole cycles across the tile in a dozen directions, each as
+/// steep as the next, encoded as glTF's tangent-space normal textures are,
+/// +X along U and +Y along V.
+fn wave_map() -> Image {
+    // Cycles across the tile along U and V, and phase.
+    const WAVES: [([f32; 2], f32); 12] = [
+        ([1., 0.], 0.3),
+        ([0., 1.], 2.1),
+        ([1., 1.], 4.0),
+        ([2., -1.], 1.2),
+        ([1., -2.], 5.5),
+        ([3., 1.], 0.8),
+        ([-2., 3.], 3.3),
+        ([3., -2.], 2.7),
+        ([4., 1.], 5.9),
+        ([1., 4.], 1.7),
+        ([5., -3.], 4.4),
+        ([-4., 5.], 0.1),
+    ];
+    // Each wave's steepest slope.
+    const SLOPE: f32 = 0.035;
+    Image::Rgba8(image::RgbaImage::from_fn(MAP, MAP, |x, y| {
+        let uv = [x, y].map(|t| (t as f32 + 0.5) / MAP as f32);
+        let mut gradient = [0f32; 2];
+        for (cycles, phase) in WAVES {
+            let length = (cycles[0] * cycles[0] + cycles[1] * cycles[1]).sqrt();
+            let angle = std::f32::consts::TAU * (cycles[0] * uv[0] + cycles[1] * uv[1]) + phase;
+            for axis in 0..2 {
+                gradient[axis] += SLOPE * cycles[axis] / length * angle.cos();
+            }
+        }
+        let normal = Vec3::new(-gradient[0], -gradient[1], 1.).normalize();
+        let byte = |v: f32| ((v * 0.5 + 0.5) * 255.).round() as u8;
+        image::Rgba([byte(normal.x), byte(normal.y), byte(normal.z), 255])
+    }))
+}
+
+/// The water's two normal layers: the map's swell at the tile's size, and
+/// its chop at 2.7 times smaller, crossing it.
+fn water_layers() -> [NormalLayer; 2] {
+    [
+        NormalLayer {
+            velocity: [0.06, 0.025],
+            scale: 1.,
+            strength: 1.,
+        },
+        NormalLayer {
+            velocity: [-0.04, 0.07],
+            scale: 2.7,
+            strength: 0.6,
+        },
+    ]
+}
+
+/// The lake's surface as one quad, its UVs its x and -z over `TILE`.
+fn lake_quad(material: MaterialId) -> ModelMesh {
+    let [[x0, z0], [x1, z1]] = LAKE;
+    ModelMesh {
+        vertices: [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]
+            .map(|[x, z]| Vertex {
+                tangent: [0.; 4],
+                lightmap_bounds: [0., 0., 1., 1.],
+                lightmap_uv: [0.; 2],
+                position: [x, 0., z],
+                normal: [0., 1., 0.],
+                uv: [x / TILE, -z / TILE],
+                color: [1.; 4],
+            })
+            .to_vec(),
+        // Facing +Y.
+        indices: vec![0, 1, 2, 0, 2, 3],
+        material,
+        deformation: Default::default(),
+    }
+}
+
+/// The `set-model` lake's surface at `seconds`: a flat grid whose normals
+/// follow a sum of sines, and its indices.
 fn lake(seconds: f32, material: MaterialId) -> ModelMesh {
     // Direction (x, z), wavelength (m), amplitude (m), speed (m/s).
     const WAVES: [([f32; 2], f32, f32, f32); 4] = [
@@ -468,11 +568,16 @@ fn camera(index: usize, orbit: bool, size: [u32; 2]) -> Camera {
     }
 }
 
-/// Each pass group's time in each measured frame.
+/// Each pass group's time in each measured frame, and the geometry the
+/// frames replaced in the scene.
 #[derive(Default)]
 struct Times {
     groups: BTreeMap<&'static str, Vec<f64>>,
     totals: Vec<f64>,
+    /// Bytes of vertices and indices a frame gave `Scene::set_model`.
+    edited_bytes: usize,
+    /// Each measured frame's `Scene::set_model` call, in CPU milliseconds.
+    edits: Vec<f64>,
 }
 
 impl Times {
@@ -494,23 +599,39 @@ impl Times {
         }
     }
 
+    fn edit(&mut self, bytes: usize, ms: f64) {
+        self.edited_bytes = bytes;
+        self.edits.push(ms);
+    }
+
     fn report(&self, name: &str) {
-        let quantiles = |times: &[f64]| {
+        // The median and 95th percentile of `times`, a frame without one
+        // counting zero.
+        let quantiles = |times: &[f64], frames: usize| {
             let mut sorted = times.to_vec();
-            sorted.resize(self.totals.len(), 0.);
+            sorted.resize(frames, 0.);
             sorted.sort_by(f64::total_cmp);
             let at = |q: f64| sorted[((sorted.len() as f64 * q).ceil() as usize).saturating_sub(1)];
             (at(0.5), at(0.95))
         };
         if self.totals.is_empty() {
             println!("{name:<16} no GPU timestamps");
-            return;
+        } else {
+            let (median, p95) = quantiles(&self.totals, self.totals.len());
+            println!(
+                "{name:<16} frame {median:7.3} / {p95:7.3} ms ({} frames)",
+                self.totals.len()
+            );
         }
-        let (median, p95) = quantiles(&self.totals);
-        println!(
-            "{name:<16} frame {median:7.3} / {p95:7.3} ms ({} frames)",
-            self.totals.len()
-        );
+        if self.edits.is_empty() {
+            println!("  scene edits per frame: none");
+        } else {
+            let (median, p95) = quantiles(&self.edits, self.edits.len());
+            println!(
+                "  set_model per frame: {} bytes of vertices and indices, {median:.3} / {p95:.3} ms CPU",
+                self.edited_bytes
+            );
+        }
         for group in [
             "receivers",
             "DiligentFX",
@@ -524,7 +645,7 @@ impl Times {
             "motion blur",
         ] {
             if let Some(times) = self.groups.get(group) {
-                let (median, p95) = quantiles(times);
+                let (median, p95) = quantiles(times, self.totals.len());
                 println!("  {group:<26} {median:7.3} / {p95:7.3} ms");
             }
         }
@@ -547,26 +668,34 @@ fn render(
         InstanceState::new(world.model),
         Mobility::Static,
     )?;
-    let water = scene.add_materials(
-        device,
-        queue,
-        &[Material {
-            alpha: AlphaMode::Blend {
-                receives_screen_space_reflections: run.marked,
-            },
-            casts_directional_shadow: false,
-            ..material("water", [0.02, 0.05, 0.06, 0.6], 0.04)
-        }],
-        &[],
-    )?[0];
-    let lake_model: ModelId = scene.add_model(device, queue, vec![lake(0., water)])?;
-    // Moving: replacing its geometry each frame is no static edit.
-    scene.add_instance(
-        device,
-        queue,
-        InstanceState::new(lake_model),
-        Mobility::Moving,
-    )?;
+    let mesh = run.waves == Waves::Mesh;
+    let water = Material {
+        alpha: AlphaMode::Blend {
+            receives_screen_space_reflections: run.marked,
+        },
+        casts_directional_shadow: false,
+        ..material("water", [0.02, 0.05, 0.06, 0.6], 0.04)
+    };
+    let (water, images) = if mesh {
+        (water, Vec::new())
+    } else {
+        let layered = Material {
+            normal_texture: Some(0),
+            normal_layers: Some(water_layers()),
+            ..water
+        };
+        (layered, vec![wave_map()])
+    };
+    let water = scene.add_materials(device, queue, &[water], &images)?[0];
+    let (lake_model, mobility): (ModelId, _) = if mesh {
+        // Moving: replacing its geometry each frame is no static edit.
+        let model = scene.add_model(device, queue, vec![lake(0., water)])?;
+        (model, Mobility::Moving)
+    } else {
+        let model = scene.add_model(device, queue, vec![lake_quad(water)])?;
+        (model, Mobility::Static)
+    };
+    scene.add_instance(device, queue, InstanceState::new(lake_model), mobility)?;
     let environment = scene.add_environment(device, queue, &sky())?;
     let mut size = SIZE;
     let mut texture = output(device, size);
@@ -580,9 +709,19 @@ fn render(
             texture = output(device, size);
         }
         renderer.resize(device, size, 1., &run.settings);
-        let seconds = if run.waves { index as f32 / 60. } else { 0. };
-        if run.waves {
-            scene.set_model(device, queue, lake_model, vec![lake(seconds, water)])?;
+        let seconds = match run.waves {
+            Waves::Still => 0.,
+            _ => index as f64 / 60.,
+        };
+        if mesh {
+            let surface = lake(seconds as f32, water);
+            let bytes = surface.vertices.len() * size_of::<Vertex>()
+                + surface.indices.len() * size_of::<u32>();
+            let start = Instant::now();
+            scene.set_model(device, queue, lake_model, vec![surface])?;
+            if index >= WARM_UP {
+                times.edit(bytes, start.elapsed().as_secs_f64() * 1000.);
+            }
         }
         let mut input = FrameInput::new(camera(index, run.orbit, size));
         input.camera_cut = index == 0 || (run.resize_and_cut && index == 2 * frames / 3);

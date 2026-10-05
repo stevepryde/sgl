@@ -70,9 +70,16 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   true }`): water or glass, with the normals the game animates, that
   receives the frame's screen-space reflections where it is the nearest
   receiver, and that TAA, FSR2 and motion blur reproject by its own motion.
-  No refraction; one reflecting layer per pixel. A mesh replaced every frame
-  with `Scene::set_model` rebuilds its ray BVH every frame.
-  [Blended receivers](../README.md#blended-receivers).
+  No refraction; one reflecting layer per pixel. Animate water with scrolling
+  normal layers; a mesh replaced every frame with `Scene::set_model` rebuilds
+  its ray BVH every frame. [Blended receivers](../README.md#blended-receivers).
+- **Scrolling normal layers** (`asset::Material::normal_layers`,
+  `SurfaceMaterial::normal_layers`, `NormalLayer`): a material's repeating
+  normal map drawn as two layers, each with its velocity, scale and
+  strength, moving with `FrameInput::elapsed_seconds` (an `f64`) in every
+  view and ray: water's waves with no per-frame upload, on static instances
+  too. Precise however long a session runs.
+  [Scrolling normal layers](../README.md#scrolling-normal-layers).
 - **Decals**: boxes that project the game's images onto the lit surfaces
   inside them, changing base colour and, with their maps, normal, roughness
   and metallic before lighting, so reflections and SSR see them

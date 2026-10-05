@@ -124,6 +124,7 @@ pub(super) fn read_material(
         emissive_texture: material.emissive_texture().map(texture_index).transpose()?,
         normal_texture,
         normal_scale: material.normal_texture().map_or(1.0, |t| t.scale()),
+        normal_layers: None,
         bump_texture: bump_texture.map(|t| t.source().index()),
         bump_scale: bump
             .map(|b| scalar(b, "bumpFactor"))

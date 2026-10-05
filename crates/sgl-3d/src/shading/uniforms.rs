@@ -108,7 +108,8 @@ pub(crate) struct FrameUniform {
     pub shadow_cascade_count: u32,
     /// Frames since history restarted.
     pub frame_count: u32,
-    pub padding: u32,
+    /// `shading::material::animation_phase` of the frame's time.
+    pub animation_phase: f32,
     pub lightmap_chart: [f32; 4],
     /// With `FRAME_DYNAMIC_GI`, the scene's dynamic GI volume: its first
     /// probe's position, its probes' spacing and their count on each axis.

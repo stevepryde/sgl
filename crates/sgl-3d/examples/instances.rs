@@ -300,7 +300,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             state.pose = prop_pose(index, options.count, phase);
             scene.set_instance(&queue, id, state)?;
         }
-        frame.elapsed_seconds = frame_index as f32 / 60.;
+        frame.elapsed_seconds = frame_index as f64 / 60.;
         frame.camera_cut = frame_index == 0;
         renderer.resize(&device, size, 1., &settings);
         let mut encoder = device.create_command_encoder(&Default::default());

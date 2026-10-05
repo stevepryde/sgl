@@ -36,11 +36,17 @@ fn scene_v3(at:u32)->vec3<f32> {
 fn scene_v4(at:u32)->vec4<f32> {
  return vec4(scene_v3(at),scene_f32(at+3u));
 }
+// The normal layer whose record starts at word `at`.
+fn scene_normal_layer(at:u32)->NormalLayer {
+ return NormalLayer(scene_v2(at+SCENE_NORMAL_LAYER_CYCLES),scene_f32(at+SCENE_NORMAL_LAYER_SCALE),scene_f32(at+SCENE_NORMAL_LAYER_STRENGTH));
+}
 fn scene_material_values(at:u32)->Material {
+ let layers=at+SCENE_MATERIAL_NORMAL_LAYERS;
  return Material(scene_v4(at+SCENE_MATERIAL_BASE),scene_v3(at+SCENE_MATERIAL_EMISSION),scene_f32(at+SCENE_MATERIAL_ENVIRONMENT_SCALE),
  scene_f32(at+SCENE_MATERIAL_METALLIC),scene_f32(at+SCENE_MATERIAL_ROUGHNESS),scene_f32(at+SCENE_MATERIAL_COAT),scene_f32(at+SCENE_MATERIAL_COAT_ROUGHNESS),
  scene_f32(at+SCENE_MATERIAL_NORMAL_SCALE),scene_f32(at+SCENE_MATERIAL_BUMP_SCALE),scene_f32(at+SCENE_MATERIAL_ANISOTROPY_STRENGTH),scene_f32(at+SCENE_MATERIAL_ANISOTROPY_ROTATION),
- scene_f32(at+SCENE_MATERIAL_ALPHA_CUTOFF),scene_source[at+SCENE_MATERIAL_VISIBILITY_GROUP],scene_source[at+SCENE_MATERIAL_FLAGS]);
+ scene_f32(at+SCENE_MATERIAL_ALPHA_CUTOFF),scene_source[at+SCENE_MATERIAL_VISIBILITY_GROUP],scene_source[at+SCENE_MATERIAL_FLAGS],
+ array<NormalLayer,2>(scene_normal_layer(layers),scene_normal_layer(layers+SCENE_NORMAL_LAYER_WORDS)));
 }
 fn scene_material(at:u32)->SceneMaterial {
  let textures=at+SCENE_MATERIAL_TEXTURES;

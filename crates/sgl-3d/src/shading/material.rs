@@ -1,7 +1,29 @@
 //! Rust mirror of material.wgsl's `Material`: group 2's material values,
 //! which the scene's ray source also holds, packed from the typed
-//! [`SurfaceMaterial`] and the maps the material was added with.
-use crate::content::material::{AlphaMode, SurfaceMaterial};
+//! [`SurfaceMaterial`] and the maps the material was added with; and the
+//! period of material animation, by which the frame's time is reduced.
+use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
+
+/// The seconds after which material animation repeats exactly: an hour, the
+/// period at which Godot b130438 rolls its shader `TIME` over
+/// (`rendering/limits/time/time_rollover_secs`, `RendererCompositorRD::
+/// begin_frame`) and Bevy 9d12036 wraps `globals.time`
+/// (`Time::DEFAULT_WRAP_PERIOD`). Both jump at the wrap; SGL3D instead
+/// rounds each normal layer's speed to whole repeats per period
+/// (`NormalLayerUniform::cycles`), so the wrap moves nothing, and reduces
+/// the frame's double-precision time modulo the period on the CPU
+/// (`animation_phase`), so the GPU's `f32` keeps its precision however long
+/// a session runs.
+const ANIMATION_PERIOD_SECONDS: f64 = 3600.;
+
+/// Where `seconds` (`FrameInput::elapsed_seconds`) falls within the
+/// animation period, as a fraction of it in `0..=1`: `Frame::animation_phase`.
+pub(crate) fn animation_phase(seconds: f64) -> f32 {
+    if !seconds.is_finite() {
+        return 0.;
+    }
+    (seconds.rem_euclid(ANIMATION_PERIOD_SECONDS) / ANIMATION_PERIOD_SECONDS) as f32
+}
 
 pub(crate) const MATERIAL_UNLIT: u32 = 1;
 pub(crate) const MATERIAL_DOUBLE_SIDED: u32 = 2;
@@ -11,6 +33,7 @@ pub(crate) const MATERIAL_ANISOTROPY_MAP: u32 = 16;
 pub(crate) const MATERIAL_ALPHA_MASK: u32 = 32;
 pub(crate) const MATERIAL_ALPHA_BLEND: u32 = 64;
 pub(crate) const MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS: u32 = 128;
+pub(crate) const MATERIAL_NORMAL_LAYERS: u32 = 256;
 
 /// Which maps a material was added with, as `MATERIAL_*_MAP` bits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -24,6 +47,43 @@ impl MaterialMaps {
                 | bit(bump, MATERIAL_BUMP_MAP)
                 | bit(anisotropy, MATERIAL_ANISOTROPY_MAP),
         )
+    }
+}
+
+/// One normal layer as the shaders read it (`NormalLayer` in
+/// material.wgsl).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct NormalLayerUniform {
+    /// The whole repeats of the map the layer moves along U and V each
+    /// animation period: its velocity times its scale, in repeats per
+    /// second, times the period, rounded.
+    pub cycles: [f32; 2],
+    pub scale: f32,
+    pub strength: f32,
+}
+
+/// The most whole repeats per period a layer may move along an axis: `f32`,
+/// in which the record holds them, holds every whole number up to it, so
+/// the period's end lands where it began.
+pub(crate) const MAX_LAYER_CYCLES: f64 = 16_777_216.;
+
+/// The whole repeats of its map `layer` moves along U and V each animation
+/// period (`NormalLayerUniform::cycles`), before they are checked against
+/// `MAX_LAYER_CYCLES`.
+pub(crate) fn layer_cycles(layer: &NormalLayer) -> [f64; 2] {
+    layer.velocity.map(|velocity| {
+        (f64::from(velocity) * f64::from(layer.scale) * ANIMATION_PERIOD_SECONDS).round()
+    })
+}
+
+impl NormalLayerUniform {
+    fn new(layer: &NormalLayer) -> Self {
+        Self {
+            cycles: layer_cycles(layer).map(|cycles| cycles as f32),
+            scale: layer.scale,
+            strength: layer.strength,
+        }
     }
 }
 
@@ -46,6 +106,8 @@ pub(crate) struct MaterialUniform {
     pub visibility_group: u32,
     pub flags: u32,
     pub padding: u32,
+    /// With `MATERIAL_NORMAL_LAYERS`; zero otherwise.
+    pub normal_layers: [NormalLayerUniform; 2],
 }
 
 impl MaterialUniform {
@@ -82,9 +144,15 @@ impl MaterialUniform {
             visibility_group: values.visibility_group,
             flags: bit(values.unlit, MATERIAL_UNLIT)
                 | bit(values.double_sided, MATERIAL_DOUBLE_SIDED)
+                | bit(values.normal_layers.is_some(), MATERIAL_NORMAL_LAYERS)
                 | maps.0
                 | alpha,
             padding: 0,
+            normal_layers: values
+                .normal_layers
+                .map_or([bytemuck::Zeroable::zeroed(); 2], |layers| {
+                    layers.each_ref().map(NormalLayerUniform::new)
+                }),
         }
     }
 }

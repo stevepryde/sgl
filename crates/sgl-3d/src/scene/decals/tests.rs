@@ -34,21 +34,6 @@ fn flat(texel: [u8; 4]) -> Image {
     Image::Rgba8(image::RgbaImage::from_pixel(32, 32, image::Rgba(texel)))
 }
 
-/// A unit vector's octahedral coordinates (Cigolle et al. 2014, "A Survey of
-/// Efficient Representations for Independent Unit Vectors", section 3.1),
-/// signed, as the G-buffer stores normals.
-fn octahedral(v: Vec3) -> [f32; 2] {
-    let n = v / v.abs().element_sum();
-    if n.z >= 0. {
-        [n.x, n.y]
-    } else {
-        [
-            (1. - n.y.abs()) * n.x.signum(),
-            (1. - n.x.abs()) * n.y.signum(),
-        ]
-    }
-}
-
 /// What the decal or the material makes of one surface point.
 #[derive(Clone, Copy, Debug)]
 struct Expected {
@@ -223,7 +208,7 @@ fn decals_change_base_colour_normal_and_roughness_inside_their_box_alone() {
                 .map(|&v| f32::from(v) / 255.)
                 .collect();
             let expected_f0 = Vec3::splat(0.04).lerp(expected.base, expected.metallic);
-            let expected_normal = octahedral(expected.normal.normalize());
+            let expected_normal = test_support::octahedral(expected.normal.normalize());
             let label = format!("fused {fused}, {point} at pixel ({x}, {y})");
             for c in 0..2 {
                 assert!(
@@ -267,7 +252,7 @@ fn decals_change_base_colour_normal_and_roughness_inside_their_box_alone() {
             .collect::<Vec<_>>()
             .join(","),
     );
-    let observed = observe_ray_hits(
+    let observed = test_support::observe_ray_hits(
         &device,
         &queue,
         &mut renderer,
@@ -402,89 +387,6 @@ fn a_decal_out_of_view_leaves_the_frame_as_without_decals() {
         frame(&mut scene) == without,
         "removing the decal changed the frame"
     );
-}
-
-/// Runs `observation` in compute under the frame's ray-hit lit group 0 and
-/// the scene's group 1, and reads back its `words` vec4 outputs.
-#[allow(clippy::too_many_arguments)]
-fn observe_ray_hits(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    renderer: &mut Renderer,
-    scene: &mut Scene,
-    input: &FrameInput,
-    settings: &Settings,
-    observation: &str,
-    outputs: usize,
-) -> Vec<[f32; 4]> {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("decal ray hits"),
-        source: wgpu::ShaderSource::Wgsl(
-            format!("{}\n{}", crate::shading::lit_compute_library(), observation).into(),
-        ),
-    });
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: None,
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: false },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None,
-        layout: Some(
-            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[
-                    Some(renderer.test_lit_layout()),
-                    Some(scene.scene_layout()),
-                    None,
-                    Some(&layout),
-                ],
-                immediate_size: 0,
-            }),
-        ),
-        module: &shader,
-        entry_point: Some("observe"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let bytes = (outputs * 16) as u64;
-    let output = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: bytes,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: output.as_entire_binding(),
-        }],
-    });
-    renderer.prepare_test_frame(device, queue, scene, input, settings);
-    scene.update_rays(device, queue, input.visibility_mask);
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, renderer.test_ray_hit_lit(), &[]);
-        pass.set_bind_group(1, &scene.scene_group, &[]);
-        pass.set_bind_group(3, &group, &[]);
-        pass.dispatch_workgroups(1, 1, 1);
-    }
-    queue.submit([encoder.finish()]);
-    scene.finish_frame();
-    let words = test_support::read_words(device, queue, &output);
-    bytemuck::cast_slice::<u32, [f32; 4]>(&words).to_vec()
 }
 
 // Plausible defects: an image a decal uses removed from under it, or one no

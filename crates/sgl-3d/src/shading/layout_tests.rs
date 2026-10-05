@@ -175,6 +175,7 @@ fn rust_mirrors_match_wgsl_layouts() {
                 flags,
                 shadow_cascade_count,
                 frame_count,
+                animation_phase,
                 lightmap_chart,
                 dynamic_gi_origin,
                 dynamic_gi_spacing,
@@ -233,7 +234,14 @@ fn rust_mirrors_match_wgsl_layouts() {
                 alpha_cutoff,
                 visibility_group,
                 flags,
+                normal_layers,
             ]
+        ),
+        mirror!(
+            "geometry",
+            "NormalLayer",
+            super::material::NormalLayerUniform,
+            [cycles, scale, strength]
         ),
     ]
     .into_iter()
@@ -341,6 +349,10 @@ fn rust_mirrors_match_wgsl_layouts() {
         (
             "MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS",
             super::material::MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS,
+        ),
+        (
+            "MATERIAL_NORMAL_LAYERS",
+            super::material::MATERIAL_NORMAL_LAYERS,
         ),
     ] {
         assert_eq!(

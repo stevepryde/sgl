@@ -47,7 +47,9 @@ its rendering `settings::Settings`.
    joint matrices and morph weights), `set_light` per changed light and
    `set_decal` per moved decal; `Renderer::resize` (nothing happens unless the size, the scale or a
    setting that [applies at resize](settings.md#when-changes-apply) changed);
-   a `FrameInput` with the camera and the authored look; `Renderer::render`
+   a `FrameInput` with the camera, the authored look and the presentation
+   time in seconds (`elapsed_seconds`, an `f64`, which moves materials'
+   normal layers and the mist); `Renderer::render`
    into the output view. Draw the game's UI (`sgl-2d` can, on the same
    device), submit, and call `Renderer::finish_frame`.
 4. Set `FrameInput::camera_cut` on a camera cut. History restarts itself then,
