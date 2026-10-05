@@ -45,7 +45,7 @@ fn packed_vertex_frame(axis:u32,angle_chart:u32)->PackedFrame {
  let normal=complement.z*rotation_axis+vec3(-sine_axis.y,sine_axis.x,c);
  return PackedFrame(normal,vec4(tangent,handedness));
 }
-// The lightmap chart's index in its model's table.
+// The lightmap chart's index in its mesh's table.
 fn packed_vertex_chart(angle_chart:u32)->u32 {
  return angle_chart>>16u;
 }

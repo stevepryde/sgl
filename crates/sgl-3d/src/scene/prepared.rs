@@ -144,13 +144,23 @@ mod tests {
 
     /// One mesh of triangles at `vertices`, three to a triangle.
     fn model(vertices: Vec<Vertex>) -> Result<PreparedModel, SceneError> {
-        let indices = (0..vertices.len() as u32).collect();
-        PreparedModel::new(vec![ModelMesh {
-            material: MaterialId::issue(0, 0),
-            vertices,
-            indices,
-            deformation: Default::default(),
-        }])
+        meshes(vec![vertices])
+    }
+
+    /// A mesh of triangles at each of `meshes`' vertices, three to a
+    /// triangle.
+    fn meshes(meshes: Vec<Vec<Vertex>>) -> Result<PreparedModel, SceneError> {
+        PreparedModel::new(
+            meshes
+                .into_iter()
+                .map(|vertices| ModelMesh {
+                    material: MaterialId::issue(0, 0),
+                    indices: (0..vertices.len() as u32).collect(),
+                    vertices,
+                    deformation: Default::default(),
+                })
+                .collect(),
+        )
     }
 
     fn vertex(normal: [f32; 3], lightmap_bounds: [f32; 4]) -> Vertex {
@@ -163,12 +173,14 @@ mod tests {
     }
 
     // Plausible defects: a vertex whose normal has no frame reaching the
-    // encoder, which cannot pack it; or a model past what a packed vertex's
+    // encoder, which cannot pack it; a mesh past what a packed vertex's
     // 16-bit chart index can name accepted, aliasing charts, or one at the
-    // limit refused (an off-by-one). The oracle is the Vertex encoding's
-    // contract: a zero or non-finite normal refuses the mesh as a
-    // non-finite position does, and a model may name up to 65,536 distinct
-    // chart bounds. CPU only.
+    // limit refused (an off-by-one); the limit counted across a model's
+    // meshes rather than within each, which refused Hyperdrive's courses
+    // (#182); or the refusal naming another mesh. The oracle is the Vertex
+    // encoding's contract: a zero or non-finite normal refuses the mesh as a
+    // non-finite position does, and each mesh may name up to 65,536
+    // distinct chart bounds, a refusal naming the mesh's index. CPU only.
     #[wasm_bindgen_test(unsupported = test)]
     fn unpackable_vertices_are_refused() {
         let unit = [0., 0., 1.];
@@ -183,15 +195,25 @@ mod tests {
                 Err(SceneError::NonFiniteGeometry)
             ));
         }
-        let charts = |count: usize| {
+        // `count` distinct chart bounds, offset by `first` so that no two
+        // meshes name the same one.
+        let charts = |first: usize, count: usize| {
             (0..count.div_ceil(3) * 3)
-                .map(|index| vertex(unit, [(index.min(count - 1)) as f32, 0., 1., 1.]))
+                .map(|index| {
+                    let chart = first + index.min(count - 1);
+                    vertex(unit, [chart as f32, 0., 1., 1.])
+                })
                 .collect::<Vec<_>>()
         };
-        assert!(model(charts(1 << 16)).is_ok());
+        assert!(model(charts(0, 1 << 16)).is_ok());
         assert!(matches!(
-            model(charts((1 << 16) + 1)),
-            Err(SceneError::TooManyLightmapCharts)
+            model(charts(0, (1 << 16) + 1)),
+            Err(SceneError::TooManyLightmapCharts { mesh: 0 })
+        ));
+        assert!(meshes(vec![charts(0, 40_000), charts(40_000, 40_000)]).is_ok());
+        assert!(matches!(
+            meshes(vec![charts(0, 3), charts(3, (1 << 16) + 1)]),
+            Err(SceneError::TooManyLightmapCharts { mesh: 1 })
         ));
     }
 }

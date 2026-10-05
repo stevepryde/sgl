@@ -26,7 +26,7 @@ pub(crate) struct PackedVertex {
     /// The axis of the frame's rotation, octahedral, as two unorm16s.
     pub axis: u32,
     /// The rotation's angle as a unorm16 whose half holds the bitangent's
-    /// handedness (low half), and the lightmap chart's index in its model's
+    /// handedness (low half), and the lightmap chart's index in its mesh's
     /// table (high half).
     pub angle_chart: u32,
     /// The UV across its mesh's rectangle (`UvRect`), as two unorm16s.
@@ -130,7 +130,7 @@ fn frame(vertex: &Vertex) -> (u32, u32) {
 }
 
 /// `vertex`, whose normal is finite and not zero, packed with its UV across
-/// `uv` and its lightmap chart `chart` in its model's table.
+/// `uv` and its lightmap chart `chart` in its mesh's table.
 pub(crate) fn pack(vertex: &Vertex, uv: &UvRect, chart: u16) -> PackedVertex {
     let (axis, angle) = frame(vertex);
     let fraction = |value: f32, min: f32, extent: f32| {

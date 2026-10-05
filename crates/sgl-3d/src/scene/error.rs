@@ -45,9 +45,10 @@ pub enum SceneError {
     /// A vertex position is not finite, or a vertex normal is zero or not
     /// finite.
     NonFiniteGeometry,
-    /// A model's vertices name more than 65,536 distinct lightmap chart
-    /// bounds (`Vertex::lightmap_bounds`).
-    TooManyLightmapCharts,
+    /// A mesh's vertices name more than 65,536 distinct lightmap chart
+    /// bounds (`Vertex::lightmap_bounds`). `mesh` is its index among the
+    /// model's meshes, an asset's mesh index through `Scene::add_asset`.
+    TooManyLightmapCharts { mesh: usize },
     /// A pose is not finite or not invertible.
     InvalidPose,
     /// Anisotropy strength is outside 0..=1 or its rotation is not finite.
@@ -163,8 +164,11 @@ impl std::fmt::Display for SceneError {
             Self::NonFiniteGeometry => {
                 "vertex positions must be finite and normals finite and not zero"
             }
-            Self::TooManyLightmapCharts => {
-                "a model's vertices may name at most 65536 distinct lightmap chart bounds"
+            Self::TooManyLightmapCharts { mesh } => {
+                return write!(
+                    f,
+                    "mesh {mesh}'s vertices may name at most 65536 distinct lightmap chart bounds"
+                );
             }
             Self::InvalidPose => "a pose must be finite and invertible",
             Self::InvalidAnisotropy => {

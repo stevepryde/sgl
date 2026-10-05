@@ -20,10 +20,11 @@ use crate::asset::{CompressedFormat, Image, Vertex};
 use crate::counters::{BuildStep, step};
 use crate::shading::material::MaterialUniform;
 use crate::shading::packed_vertex::{self, PackedVertex, UvRect};
-use std::collections::HashMap;
+use charts::{CHART_WORDS, ChartTables, chart_tables};
 
 pub(crate) mod acceleration;
 mod bvh;
+mod charts;
 pub(crate) mod instances;
 #[cfg(test)]
 mod layout;
@@ -97,46 +98,23 @@ pub(crate) struct PreparedRayModel {
     mesh_words: Vec<RayMeshWords>,
 }
 
-/// A model's table of the distinct lightmap chart bounds its vertices name,
-/// in the order they first appear, and each vertex's index into it, mesh by
-/// mesh; none past 65,536 bounds, as a packed vertex holds its chart's index
-/// in 16 bits.
-fn chart_table(meshes: &[RayMesh<'_>]) -> Option<(Vec<Chart>, Vec<Vec<u16>>)> {
-    let mut table = Vec::new();
-    let mut index: HashMap<[u32; 4], u16> = HashMap::new();
-    let mut charts = Vec::with_capacity(meshes.len());
-    for mesh in meshes {
-        let mut mesh_charts = Vec::with_capacity(mesh.vertices.len());
-        for vertex in mesh.vertices {
-            let key = vertex.lightmap_bounds.map(f32::to_bits);
-            let chart = match index.get(&key) {
-                Some(&chart) => chart,
-                None => {
-                    let chart = u16::try_from(table.len()).ok()?;
-                    table.push(vertex.lightmap_bounds);
-                    index.insert(key, chart);
-                    chart
-                }
-            };
-            mesh_charts.push(chart);
-        }
-        charts.push(mesh_charts);
-    }
-    Some((table, charts))
-}
-
 /// `meshes`' words, addressed from zero, which `SceneRays::place_model`
-/// places: its mesh records, its chart table, each mesh's packed vertices
-/// (`shading::packed_vertex`), from a multiple of `VERTEX_WORDS`, and
-/// indices, and its BVH. The geometry is validated: indices name vertices,
-/// positions are finite and normals are finite and not zero. Refuses a model
-/// whose vertices name more than 65,536 distinct lightmap chart bounds.
+/// places: its mesh records, each mesh's chart table, each mesh's packed
+/// vertices (`shading::packed_vertex`), from a multiple of `VERTEX_WORDS`,
+/// and indices, and its BVH. The geometry is validated: indices name
+/// vertices, positions are finite and normals are finite and not zero.
+/// Refuses a mesh whose vertices name more than 65,536 distinct lightmap
+/// chart bounds.
 pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, SceneError> {
     let triangles: usize = meshes.iter().map(|mesh| mesh.indices.len() / 3).sum();
     let table_word = meshes.len() * MESH_WORDS;
     let vertex_block = |word: usize| word.next_multiple_of(VERTEX_WORDS as usize);
     let (mut words, mesh_words, len) = step(BuildStep::Pack, || {
-        let (table, charts) = chart_table(meshes).ok_or(SceneError::TooManyLightmapCharts)?;
+        let ChartTables {
+            entries: table,
+            starts,
+            indices: charts,
+        } = chart_tables(meshes)?;
         let len = meshes
             .iter()
             .fold(table_word + table.len() * CHART_WORDS, |len, mesh| {
@@ -173,7 +151,7 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
                 indices,
                 material_word: 0,
                 first_vertex,
-                charts: table_word as u32,
+                charts: (table_word + starts[index] * CHART_WORDS) as u32,
                 uv_rect: uv.words(),
             }]));
             first_vertex += mesh.vertices.len() as u32;
@@ -194,7 +172,7 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
 
 /// Names each mesh's material record in the mesh records `records` holds,
 /// one material word per record, and adds `base` to the words where each
-/// record's vertices, indices and its model's chart table start.
+/// record's vertices, indices and chart table start.
 fn rebase_records(records: &mut [u32], base: u32, materials: &[u32]) {
     let records: &mut [MeshRecord] = bytemuck::cast_slice_mut(records);
     assert_eq!(
@@ -251,7 +229,7 @@ const IMAGE_BC7: u32 = 1;
 
 /// A mesh's record in the source: where its packed vertices and indices
 /// start, its material's record, its first vertex among its model's, where
-/// its model's chart table starts, and the rectangle its packed UVs span
+/// its own chart table starts, and the rectangle its packed UVs span
 /// (`UvRect::words`).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -263,13 +241,6 @@ struct MeshRecord {
     charts: u32,
     uv_rect: [f32; 4],
 }
-
-/// A chart table's entry: a lightmap chart's normalized atlas bounds, min
-/// then max, as `asset::Vertex::lightmap_bounds`.
-type Chart = [f32; 4];
-
-/// A chart table entry's words.
-const CHART_WORDS: usize = std::mem::size_of::<Chart>() / 4;
 
 /// A mesh record's words; a model's records are consecutive.
 const MESH_WORDS: usize = std::mem::size_of::<MeshRecord>() / 4;
@@ -582,26 +553,32 @@ mod record_tests {
     // Plausible defects: a rebased mesh record that names another mesh's
     // vertices, indices or chart table, or the block's first words, so a
     // ray or pulled pass reads the wrong geometry (as when the base is added
-    // to the wrong field, or a record is skipped); or a material word given
-    // to the wrong mesh. The oracle is the test's own meshes: each rebased
+    // to the wrong field, or a record is skipped); a chart that several
+    // meshes name indexed in only the first one's table; or a material word
+    // given to the wrong mesh. The oracle is the test's own meshes: each rebased
     // record, less the base, must start at its mesh's own vertices (their
     // positions, which pack as given) and indices in the prepared words,
     // name through its vertices' chart indices its mesh's own lightmap
-    // bounds in the table, and carry its mesh's material word. A BLAS reads
-    // a mesh's positions from the same words in whole packed-vertex strides
-    // (the architecture's Hardware ray tracing), so each mesh's vertex block
-    // must start at a multiple of the stride, and the words the scene gives
-    // a BLAS must be the record's. CPU only.
+    // bounds in its chart table, and carry its mesh's material word. A BLAS
+    // reads a mesh's positions from the same words in whole packed-vertex
+    // strides (the architecture's Hardware ray tracing), so each mesh's
+    // vertex block must start at a multiple of the stride, and the words the
+    // scene gives a BLAS must be the record's. CPU only.
     #[wasm_bindgen_test(unsupported = test)]
     fn rebased_records_address_their_own_geometry() {
         // Each mesh's vertices, indices and chart bounds differ from every
-        // other's from their first word.
+        // other's from their first word; its odd vertices name a chart every
+        // mesh names.
         let mesh = |count: u32, salt: f32| -> (Vec<Vertex>, Vec<u32>) {
             let vertices = (0..count)
                 .map(|index| Vertex {
                     position: [salt, index as f32, -salt],
                     normal: [0., 0., 1.],
-                    lightmap_bounds: [salt, 0., salt + 0.5, 1.],
+                    lightmap_bounds: if index % 2 == 1 {
+                        [0., 0., 1., 1.]
+                    } else {
+                        [salt, 0., salt + 0.5, 1.]
+                    },
                     ..bytemuck::Zeroable::zeroed()
                 })
                 .collect();

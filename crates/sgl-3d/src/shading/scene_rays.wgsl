@@ -128,8 +128,8 @@ fn scene_vertex_color(at:u32)->vec4<f32> {
 fn scene_vertex_lightmap_uv(at:u32)->vec2<f32> {
  return packed_vertex_lightmap_uv(scene_source[at+PACKED_VERTEX_LIGHTMAP_UV]);
 }
-// Its lightmap chart's bounds, from the chart table of the model of the
-// mesh whose record is at `mesh`.
+// Its lightmap chart's bounds, from the chart table of the mesh whose record
+// is at `mesh`.
 fn scene_vertex_lightmap_bounds(mesh:u32,at:u32)->vec4<f32> {
  let chart=packed_vertex_chart(scene_source[at+PACKED_VERTEX_ANGLE_CHART]);
  return scene_v4(scene_source[mesh+SCENE_MESH_CHARTS]+chart*SCENE_CHART_WORDS);
