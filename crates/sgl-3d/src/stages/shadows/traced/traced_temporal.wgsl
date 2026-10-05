@@ -67,7 +67,8 @@ const TEMPORAL_TAPS:u32=9u;
   textureStore(temporal_output,id.xy,current);
   return;
  }
- let previous_texel=min(vec2<u32>(previous*.5),reduced-1u);
+ // The nearest tracing texel, whose centre is full-resolution pixel 2q's.
+ let previous_texel=min(vec2<u32>(floor(previous*.5+.25)),reduced-1u);
  if abs(depth-textureLoad(temporal_previous_depth,previous_texel,0).x)>TEMPORAL_DISOCCLUSION {
   textureStore(temporal_output,id.xy,current);
   return;

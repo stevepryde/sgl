@@ -12,11 +12,10 @@
 // scene light's index) at the camera's `pixel`, or SHADOW_MASK_NO_SLOT
 // where no slot holds it.
 fn camera_shadow_mask(key:u32,pixel:vec2<f32>)->f32 {
- for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
-  if shadow_mask_slot_key(slot)==key {
-   let texel=textureLoad(shadow_mask,vec2<i32>(pixel),i32(shadow_mask_layer(slot)),0);
-   return texel[shadow_mask_channel(slot)];
-  }
+ let slot=shadow_mask_slot_of(key);
+ if slot>=RT_SHADOW_LIGHTS {
+  return SHADOW_MASK_NO_SLOT;
  }
- return SHADOW_MASK_NO_SLOT;
+ let texel=textureLoad(shadow_mask,vec2<i32>(pixel),i32(shadow_mask_layer(slot)),0);
+ return texel[shadow_mask_channel(slot)];
 }

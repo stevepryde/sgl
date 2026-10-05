@@ -1408,7 +1408,10 @@ stage (each stage's documentation lists its own), are:
 - volumetric fog: `fog injection`, `fog filter` and `fog integration`;
 - opaque: `sky` and `opaque geometry + lighting`, or `geometry`, `sky` and
   `opaque lighting` where the device lacks the fused pass's colour
-  attachments; then `ambient occlusion`;
+  attachments or ray-traced shadows run; then `ambient occlusion`;
+- ray-traced shadows, between the opaque stage's `geometry` and `sky`
+  while they run: `ray-traced shadow rays`, `ray-traced shadow temporal`
+  and `ray-traced shadow upsample`;
 - reflections: `probe culling`, `reflection source completion`, Crystal's
   `SSR` passes (named after DiligentFX's debug groups), Velvet's `Godot SSR`
   passes, `world reflection rays`, `world reflection denoise` and

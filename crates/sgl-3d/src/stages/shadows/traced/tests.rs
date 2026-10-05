@@ -612,8 +612,9 @@ fn blended(observed: &Observed, camera: &Camera, key: u32) -> [usize; 3] {
 }
 
 // Plausible defects: a slot whose light changed keeping its history (the
-// restart bit ignored or never set), a camera cut leaving the stage's
-// history in place, or history reprojected from another texel. The oracle
+// restart bit ignored or never set), a camera cut, a frame without the
+// stage or a resize leaving the stage's history in place, or history
+// reprojected from another texel. The oracle
 // is the restart itself: a light striped through a grate, whose stripes
 // are about three tracing texels wide, so that every texel's 3×3
 // neighbourhood holds both values and the variance clamp keeps any
@@ -642,18 +643,18 @@ fn a_slot_whose_light_changed_and_a_camera_cut_restart_its_history() {
     let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, None);
     input.camera_cut = true;
-    let mut frame = |scene: &mut Scene, cut: bool| {
+    let mut frame = |scene: &mut Scene, cut: bool, settings: &Settings| {
         input.camera_cut = cut;
-        render(gpu, &mut renderer, scene, &input, &settings)
+        render(gpu, &mut renderer, scene, &input, settings)
     };
-    frame(&mut scene, true);
-    let settled = frame(&mut scene, false);
+    frame(&mut scene, true, &settings);
+    let settled = frame(&mut scene, false, &settings);
     let [_, between, _] = blended(&settled, &camera, first.index() as u32);
     assert_eq!(between, 0, "a still light's history matches its trace");
     // The control: the light moves half a stripe without a restart, and
     // its history shows.
     scene.set_light(&queue, first, at(0.3, true)).unwrap();
-    let control = frame(&mut scene, false);
+    let control = frame(&mut scene, false, &settings);
     let [_, between, _] = blended(&control, &camera, first.index() as u32);
     assert!(
         between > 100,
@@ -662,7 +663,7 @@ fn a_slot_whose_light_changed_and_a_camera_cut_restart_its_history() {
     // The other light takes the first's slot: its history restarts.
     scene.set_light(&queue, first, at(0.3, false)).unwrap();
     scene.set_light(&queue, second, at(-0.3, true)).unwrap();
-    let changed = frame(&mut scene, false);
+    let changed = frame(&mut scene, false, &settings);
     assert_eq!(
         changed.slot(second.index() as u32),
         settled.slot(first.index() as u32),
@@ -675,10 +676,130 @@ fn a_slot_whose_light_changed_and_a_camera_cut_restart_its_history() {
     );
     // A camera cut restarts every slot.
     scene.set_light(&queue, second, at(0.3, true)).unwrap();
-    let cut = frame(&mut scene, true);
+    let cut = frame(&mut scene, true, &settings);
     let [shadowed, between, lit] = blended(&cut, &camera, second.index() as u32);
     assert!(
         between == 0 && shadowed > 100 && lit > 100,
         "after a camera cut the slot holds {shadowed} shadowed, {between} blended, {lit} lit"
+    );
+    // A frame without the stage restarts it: the maps shadow that frame,
+    // and the next, with the light moved back, holds its trace alone.
+    let maps = Settings {
+        ray_traced_shadows: false,
+        ..settings
+    };
+    assert!(frame(&mut scene, false, &maps).mask.is_none());
+    scene.set_light(&queue, second, at(-0.3, true)).unwrap();
+    let resumed = frame(&mut scene, false, &settings);
+    let [shadowed, between, lit] = blended(&resumed, &camera, second.index() as u32);
+    assert!(
+        between == 0 && shadowed > 100 && lit > 100,
+        "after a frame without the stage the slot holds {shadowed} shadowed, {between} blended, {lit} lit"
+    );
+    // So does a resize, which reallocates its targets.
+    scene.set_light(&queue, second, at(0.3, true)).unwrap();
+    renderer.resize(&device, [120, 120], 1., &settings);
+    let mut input = self::input(camera, None);
+    input.camera_cut = false;
+    let resized = render(gpu, &mut renderer, &mut scene, &input, &settings);
+    let [shadowed, between, lit] = blended(&resized, &camera, second.index() as u32);
+    assert!(
+        between == 0 && shadowed > 100 && lit > 100,
+        "after a resize the slot holds {shadowed} shadowed, {between} blended, {lit} lit"
+    );
+}
+
+// Plausible defects: history reprojected along the motion the wrong way,
+// by a scaled or flipped motion, or from the texel beside the nearest; and
+// the upsample fetching other texels for an odd pixel than the two or four
+// about it, or weighing them otherwise than evenly at a pixel halfway
+// between them. The oracle is a camera looking straight down on the grate's
+// stripes, whose floor lies at one depth, moved along the floor so that
+// the floor's image shifts by exactly two tracing texels: history
+// reprojected right holds the same stripes as the trace, so every floor
+// texel keeps its 0 or 1, where history from anywhere else lies across a
+// stripe's edge and blends; and each odd pixel of the floor is the mean of
+// the tracing texels about it, which the even pixels show.
+#[test]
+fn history_follows_the_camera_and_odd_pixels_take_the_texels_about_them() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = [128, 128];
+    let light = Light {
+        position: Vec3::new(0., 6., -0.3),
+        intensity: 60.,
+        range: 20.,
+        casts_shadow: true,
+        ..Light::default()
+    };
+    let (mut scene, ids) = scene(gpu, 6., &grate(), &[light]);
+    let key = ids[0].index() as u32;
+    let height = 9.;
+    let fov = 0.9_f32;
+    let looking_down = |x: f32| Camera {
+        view: glam::camera::rh::view::look_at_mat4(
+            Vec3::new(x, height, 0.),
+            Vec3::new(x, 0., 0.),
+            Vec3::NEG_Z,
+        ),
+        projection: crate::perspective(fov, 1., 0.1),
+        eye: Vec3::new(x, height, 0.),
+    };
+    let settings = settings(true);
+    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut input = input(looking_down(0.), None);
+    input.camera_cut = true;
+    let still = render(gpu, &mut renderer, &mut scene, &input, &settings);
+    // The upsample: on the floor, every odd pixel is the mean of the even
+    // pixels about it, which hold the tracing texels.
+    let slot = still.slot(key);
+    let floor = |observed: &Observed, camera: &Camera, [x, y]: [u32; 2]| {
+        observed
+            .position(camera, [x, y])
+            .is_some_and(|position| position.y.abs() < 1e-3)
+    };
+    let mut odd = 0;
+    for y in 1..size[1] - 2 {
+        for x in 1..size[0] - 2 {
+            if x % 2 == 0 && y % 2 == 0 {
+                continue;
+            }
+            let about: Vec<[u32; 2]> = [x - x % 2, x + x % 2]
+                .into_iter()
+                .flat_map(|ex| [y - y % 2, y + y % 2].map(move |ey| [ex, ey]))
+                .collect();
+            if !about
+                .iter()
+                .chain([&[x, y]])
+                .all(|&pixel| floor(&still, &input.camera, pixel))
+            {
+                continue;
+            }
+            let mean = about
+                .iter()
+                .map(|&pixel| f32::from(still.mask(slot, pixel)))
+                .sum::<f32>()
+                / about.len() as f32;
+            let value = f32::from(still.mask(slot, [x, y]));
+            assert!(
+                (value - mean).abs() <= 1.,
+                "odd pixel {x}, {y} holds {value}, its texels' mean {mean}"
+            );
+            odd += 1;
+        }
+    }
+    assert!(odd > 1000, "only {odd} odd floor pixels checked");
+    // The camera moves 2 tracing texels (4 pixels) along the floor's image.
+    let pixels_per_metre = size[1] as f32 / (2. * height * (fov / 2.).tan());
+    let moved = looking_down(4. / pixels_per_metre);
+    let mut input = self::input(moved, None);
+    input.camera_cut = false;
+    let followed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+    let [shadowed, between, lit] = blended(&followed, &moved, key);
+    assert!(
+        between == 0 && shadowed > 100 && lit > 100,
+        "after the camera moved the slot holds {shadowed} shadowed, {between} blended, {lit} lit"
     );
 }

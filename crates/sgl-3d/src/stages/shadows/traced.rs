@@ -22,7 +22,6 @@
 //! `ray-traced shadow upsample`.
 pub(crate) mod slots;
 
-use crate::content::identity::LightId;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
 use crate::view::frame::{FrameContext, ShadowMask};
@@ -273,13 +272,14 @@ impl TracedShadows {
 
     /// Traces, blends and upsamples the shadows of the frame's slots: slot
     /// 0 the directional light with the frame's cascades, the others the
-    /// local lights the atlas placed, `ranked` best first. Returns the mask
-    /// and slot table for the lighting pass; none where the stage does not
-    /// run, a frame whose rays do not trace in hardware.
+    /// local lights the atlas placed, best first (`lights`). Returns the
+    /// mask and slot table for the lighting pass; none where the stage does
+    /// not run (`Effective::ray_traced_shadows`), a frame whose rays do not
+    /// trace in hardware or whose slots hold no light.
     pub fn encode<'s>(
         &'s mut self,
         ctx: &mut FrameContext<'_>,
-        ranked: &[LightId],
+        lights: &slots::SlotLights,
     ) -> Option<ShadowMask<'s>> {
         self.ran = false;
         let hardware = ctx
@@ -301,8 +301,7 @@ impl TracedShadows {
             self.frame = 0;
         }
         self.previous_frame = Some(history.frames);
-        let directional = crate::view::directional_shadow(ctx.input).map(|(index, _)| index);
-        let table = self.slots.assign(directional, ranked);
+        let table = self.slots.assign(lights.directional, &lights.local);
         self.table = table;
         crate::counters::write_buffer(ctx.queue, &self.slot_table, 0, bytemuck::bytes_of(&table));
         let targets = self.targets.as_ref().unwrap();

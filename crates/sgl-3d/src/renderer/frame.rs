@@ -1,9 +1,9 @@
 //! One frame: the one ordered render body.
 use super::Renderer;
-use crate::content::identity::LightId;
 use crate::settings::{ReflectionMethod, Settings};
 use crate::stages::opaque::Opaque;
 use crate::stages::shadows::traced::TracedShadows;
+use crate::stages::shadows::traced::slots::SlotLights;
 use crate::timing::GpuTiming;
 use crate::view::frame::{Completed, FrameContext, HardwareRays};
 use crate::view::pipelines::GeometryPipelines;
@@ -157,6 +157,12 @@ pub(super) fn render(
     views.instances.upload(device, queue);
     fog.prepare(device, effective.fog, sizes.render);
     dynamic_gi.prepare(device, scene, &effective);
+    // The ray-traced shadows run where the frame's rays trace in hardware
+    // and its slots hold a light: the directional light with cascades and
+    // the local lights the atlas placed.
+    let slot_lights = SlotLights::of(input, &values.frame, scene, shadows.local.ranking());
+    let effective =
+        super::effective::traced_shadows(effective, prepare.hardware_rays(), &slot_lights);
     // After prepare, the local shadows', the fog's and dynamic GI's, which
     // may replace a light cluster buffer, a shadow map, the shadow records,
     // the fog volume or the probes group 0 binds.
@@ -210,7 +216,7 @@ pub(super) fn render(
     shadows.encode_local(&mut ctx);
     shadows.encode_directional(&mut ctx);
     fog.encode(&mut ctx);
-    encode_opaque(opaque, traced_shadows, shadows.local.ranking(), &mut ctx);
+    encode_opaque(opaque, traced_shadows, &slot_lights, &mut ctx);
     #[cfg(feature = "diagnostics")]
     if let Some(probe) = probe.as_deref() {
         probe.observe(
@@ -319,18 +325,17 @@ pub(super) fn render(
 }
 
 /// The opaque stage in the stage order's named parts: the G-buffer, then,
-/// while they run, the ray-traced shadows of the frame's slots (the
-/// directional light with the cascades and the local lights the atlas
-/// placed, `ranked` best first), the lighting at its depth, which takes
-/// their mask, then ambient occlusion over it.
+/// while they run, the ray-traced shadows of the frame's slots, which may
+/// hold `slot_lights`, the lighting at its depth, which takes their mask,
+/// then ambient occlusion over it.
 pub(super) fn encode_opaque(
     opaque: &mut Opaque,
     traced_shadows: &mut TracedShadows,
-    ranked: &[LightId],
+    slot_lights: &SlotLights,
     ctx: &mut FrameContext<'_>,
 ) {
     opaque.encode_gbuffer(ctx);
-    let shadow_mask = traced_shadows.encode(ctx, ranked);
+    let shadow_mask = traced_shadows.encode(ctx, slot_lights);
     opaque.encode_lighting(ctx, shadow_mask);
     opaque.encode_ambient_occlusion(ctx);
 }

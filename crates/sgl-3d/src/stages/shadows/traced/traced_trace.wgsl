@@ -23,7 +23,9 @@
 // Wicked samples depth linearly between four; the side policy and
 // cut-out texels are the shared predicate's, where Wicked's query culls
 // front faces and alpha-tests candidates; a pixel the G-buffer drew
-// nothing lit at casts nothing. The ray ends at the light's centre: a hard
+// nothing lit at (an unlit material) casts nothing and is the sky to the
+// passes after, which Wicked, without unlit pixels, traces. The ray ends
+// at the light's centre: a hard
 // shadow. Its normals copy and tile mask feed the denoiser, which this
 // stage does not run yet, and are not written.
 @group(3) @binding(0) var traced_depth:texture_depth_2d;
@@ -90,13 +92,17 @@ fn traced_visible(key:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:ve
   textureStore(traced_half_depth,id.xy,vec4(TRACED_SKY_DEPTH));
   return;
  }
+ // A pixel the G-buffer drew nothing lit at is no receiver: the lighting
+ // reads none of its slots, and it records the sky's depth, so the
+ // upsample weighs it as little as a sky texel.
+ if !gbuffer_lit(textureLoad(traced_f0,pixel,0)) {
+  textureStore(traced_raw,id.xy,vec4(0u));
+  textureStore(traced_half_depth,id.xy,vec4(TRACED_SKY_DEPTH));
+  return;
+ }
  let uv=(vec2<f32>(pixel)+.5)*traced.full.zw;
  let position=traced_position(uv,z);
  textureStore(traced_half_depth,id.xy,vec4(traced_linear_depth(position)));
- if !gbuffer_lit(textureLoad(traced_f0,pixel,0)) {
-  textureStore(traced_raw,id.xy,vec4(0u));
-  return;
- }
  let normals=textureLoad(traced_normal,pixel,0);
  let normal=gbuffer_base_normal(normals);
  let geometry_normal=gbuffer_coat_normal(normals);

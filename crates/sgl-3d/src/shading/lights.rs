@@ -43,6 +43,9 @@ pub(crate) const LIGHT_PUNCTUAL: u32 = 0;
 pub(crate) const LIGHT_RECT: u32 = 1;
 /// `LightRecord::flags`: the light casts a shadow (`Light::casts_shadow`).
 pub(crate) const LIGHT_CASTS_SHADOW: u32 = 1;
+/// The shadow opacity at or below which a light's shadow is not looked up
+/// (`SHADOW_OPACITY_CUTOFF` in shadow_sampling.wgsl, Godot's).
+pub(crate) const SHADOW_OPACITY_CUTOFF: f32 = 0.001;
 
 impl LightRecord {
     /// `light`'s record, valid as `Scene::add_light` accepts it. A spot's
@@ -160,13 +163,18 @@ impl LocalShadowRecord {
 }
 
 #[cfg(test)]
-pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 6] {
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 7] {
     use crate::shading::layout_tests::Constant;
     use naga::Literal::U32;
     [
         Constant::new("geometry", "LIGHT_PUNCTUAL", U32(LIGHT_PUNCTUAL)),
         Constant::new("geometry", "LIGHT_RECT", U32(LIGHT_RECT)),
         Constant::new("geometry", "LIGHT_CASTS_SHADOW", U32(LIGHT_CASTS_SHADOW)),
+        Constant::new(
+            "geometry",
+            "SHADOW_OPACITY_CUTOFF",
+            naga::Literal::F32(SHADOW_OPACITY_CUTOFF),
+        ),
         Constant::new("geometry", "LOCAL_SHADOW_NONE", U32(LOCAL_SHADOW_NONE)),
         Constant::new("geometry", "LOCAL_SHADOW_CUBE", U32(LOCAL_SHADOW_CUBE)),
         Constant::new("geometry", "LOCAL_SHADOW_SPOT", U32(LOCAL_SHADOW_SPOT)),

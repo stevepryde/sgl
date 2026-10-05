@@ -9,9 +9,53 @@
 //! entity array (2ff1d9e `screenspaceshadowCS.hlsl` 76–84); SGL3D's lights
 //! have no such order.
 use crate::content::identity::{Identity, LightId};
+use crate::shading::lights::SHADOW_OPACITY_CUTOFF;
 use crate::shading::shadow_mask::{
     RT_SHADOW_LIGHTS, SHADOW_MASK_DIRECTIONAL, SHADOW_MASK_EMPTY, ShadowMaskSlots,
 };
+use crate::shading::uniforms::FrameUniform;
+
+/// The lights a frame's slots may hold: the directional light with the
+/// frame's cascades, by its index in `FrameInput::directional_lights`, and
+/// the casting local lights the atlas placed, best first; each only with a
+/// shadow above the opacity cutoff, which lighting looks up.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SlotLights {
+    pub directional: Option<usize>,
+    pub local: Vec<LightId>,
+}
+
+impl SlotLights {
+    /// The lights of a frame of `scene` seen as `input`, whose frame data
+    /// is `frame`, with the local lights the atlas placed `ranked`.
+    pub fn of(
+        input: &crate::FrameInput,
+        frame: &FrameUniform,
+        scene: &crate::Scene,
+        ranked: &[LightId],
+    ) -> Self {
+        let directional = crate::view::directional_shadow(input)
+            .map(|(index, _)| index)
+            .filter(|&index| {
+                frame.directional_lights[index].shadow_opacity > SHADOW_OPACITY_CUTOFF
+            });
+        let local = ranked
+            .iter()
+            .copied()
+            .filter(|&light| {
+                scene
+                    .light(light)
+                    .is_ok_and(|light| light.shadow_opacity > SHADOW_OPACITY_CUTOFF)
+            })
+            .collect();
+        Self { directional, local }
+    }
+
+    /// Whether no slot holds a light.
+    pub fn is_empty(&self) -> bool {
+        self.directional.is_none() && self.local.is_empty()
+    }
+}
 
 /// The slots' lights, kept from frame to frame.
 #[derive(Clone, Debug, Default)]
