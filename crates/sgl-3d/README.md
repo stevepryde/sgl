@@ -1704,8 +1704,8 @@ Placement:
   that no probe about it finds it (a probe classifies from 32 fixed
   directions, all of them on its second turn and over each 8 of its turns
   after) takes its other indirect light. A probe's class follows a change
-  in what it sees within 8 of its turns: 8 frames within a spacing of the
-  camera, up to 64 at 128 spacings while the budget holds. Keep probes
+  in what it sees within 8 to 16 of its turns: 8 to 16 frames within a
+  spacing of the camera, up to 128 at 128 spacings while the budget holds. Keep probes
   off the surfaces themselves, where a probe sees both sides at once:
   offset the lattice so walls fall between probes. Probes near a surface
   move off it, up to half a spacing, as they trace.
@@ -1730,8 +1730,8 @@ Placement:
   placement in the new frame to scroll from.
 - A restart, or a scroll's entering planes, starts as many probes a frame
   as the frame's ray budget holds beside the probes already started (at
-  least half of it), nearest the camera first: about 126 near the camera
-  at High and 124 at Low, more farther out, where a probe starts with
+  least half of it), nearest the camera first: 128 a frame at the tier's
+  most rays near the camera, more farther out, where a probe starts with
   fewer rays. Until a probe has started it lights nothing, and the
   surfaces about it keep their other indirect light. Wicked starts every
   probe in one frame, a hitch on a large volume.

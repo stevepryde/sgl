@@ -72,7 +72,8 @@
 // its next DDGI_FIXED_CYCLE - 1 none, so its first cycles cost what any
 // other's do (ddgi_turn_fixed_rays). Its first turn tracing them all, as
 // RTXGI's every update does, tripled the probes waiting to start in motion
-// on Hyperdrive's course (#196), as the budget leaves starting probes their
+// at High and multiplied them about 6.7 times at Low on Hyperdrive's course
+// (#196), as the budget leaves starting probes their
 // share. Changed: an inactive probe (ddgi_probe_active) traces the fewest
 // others, a bucket, beside its fixed rays, and still blends them, where
 // RTXGI's inactive probes trace their fixed rays alone and blend nothing:

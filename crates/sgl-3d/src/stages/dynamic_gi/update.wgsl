@@ -39,7 +39,8 @@
 // whose class it kept for its whole first cycle where now for one turn.
 // Its second phase (172-214) finds whether a fixed ray met a front face
 // within the probe's cell, the spacing about it along each axis
-// (ddgi_in_cell); RTXGI deactivates a probe where none did. Improved: such a probe is dormant, not inactive: static
+// (ddgi_in_cell); RTXGI deactivates a probe where none did. Improved: such
+// a probe is dormant, not inactive: static
 // receivers skip it, so a probe diagonally beyond the edge or corner of a
 // room's single-sided walls, which sees few of their backs and so passes
 // the first phase, lights no wall; moving receivers keep it, so a moving

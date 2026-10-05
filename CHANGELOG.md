@@ -201,12 +201,13 @@ full API details.
   fixed rays and its next 7 turns none, so the class its first turn's
   rotated rays give it lasts one turn rather than its first whole cycle of
   8, for no more rays over those turns (all 32 on its first turn, as RTXGI
-  traces them, tripled the probes waiting to start in motion). A volume's convergence window now spans 16 turns of every
-  active probe (16 times the longest period among them), so it can pause
+  traces them, tripled the probes waiting to start in motion at High and
+  multiplied them about 6.7 times at Low). A volume's convergence window
+  now spans 16 turns of every active probe (16 times the longest period among them), so it can pause
   later than before while far probes catch up. A restart or a scroll's
   entering planes start as many probes a frame as the budget holds beside
-  the blended probes (at least half of it): about 126 near the camera at
-  High and 124 at Low, more farther out. Measured on Hyperdrive's course
+  the blended probes (at least half of it): 128 a frame at the tier's
+  most rays near the camera, more farther out. Measured on Hyperdrive's course
   (3,179 probes; Apple M5, release, 1920x1080, 600 frames), the `dynamic GI
   rays` pass, median/p95 ms, against #185 as merged:
 
@@ -221,8 +222,8 @@ full API details.
   the rays pass costs more because it now uses the budget those strides
   left idle. #185's lower Low cost with the camera still came from probes
   that missed every turn while the stride alternated (2.2k rays a frame,
-  where their turns take 8.5k to 9.8k). The probes waiting to start in motion are as
-  before (median 187). The `dynamic GI blend` pass takes 0.30 / 0.39 ms
+  where their turns take 8.5k to 9.8k). The probes waiting to start in
+  motion are as before (median 187). The `dynamic GI blend` pass takes 0.30 / 0.39 ms
   moving at High. In the `dynamic_gi` example a lamp moved at frame 150
   is 90% answered within about 100 frames at High, as with #185 merged
   (about 160 without the shorter turns, 50 tracing every probe every
@@ -1051,7 +1052,8 @@ full API details.
   light from beyond a room's corner) and traces the fewest rays unless a
   moving instance's bounds come within that spacing; a static object so
   small that no probe's fixed rays find it takes its other indirect light,
-  and a probe's class follows a change within 8 of its turns. The probes' own rays
+  and a probe's class follows a change within 8 to 16 of its turns. The
+  probes' own rays
   take the volume's light at what they hit, never the environment's
   fallback, so a closed room starts dark rather than holding the sky for
   seconds. Once its light has converged (RTXGI's probe variability stops
@@ -1064,8 +1066,8 @@ full API details.
   enter start afresh; an origin off the lattice, or another spacing or
   count, is another placement. A restart (another placement or
   scene, or a frame without the volume), or a scroll's entering planes,
-  starts as many probes a frame as the ray budget holds (about 126 near
-  the camera at High, 124 at Low, more farther out), nearest the camera
+  starts as many probes a frame as the ray budget holds (128 at the
+  tier's most rays near the camera, more farther out), nearest the camera
   first, where Wicked starts every probe in one frame; the surfaces about a
   probe not yet started keep their other indirect light. The `dynamic_gi`
   example lights a room, scrolls a volume after its camera (`--scroll`) and

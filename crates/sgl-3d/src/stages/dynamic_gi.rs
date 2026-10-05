@@ -194,8 +194,8 @@ const STRIDES: u32 = 7;
 /// on SGL3D's portable walk this many cost Hyperdrive's 3,179-probe course
 /// about 3.4 ms a frame in motion on an Apple M5 (#196). A restart starts
 /// as many probes as the budget holds at their starting rays, nearest
-/// first: about 126 a frame within a spacing of the camera at High and 124
-/// at Low, and more farther out, where a probe starts with fewer.
+/// first: 128 a frame within a spacing of the camera, at the tier's most
+/// rays, and more farther out, where a probe starts with fewer.
 const BUDGET_PROBES: u32 = 128;
 
 /// The frame's most rays, fixed rays included, at the tier's `max_rays`:

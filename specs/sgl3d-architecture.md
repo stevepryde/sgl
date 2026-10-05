@@ -1155,7 +1155,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   of its rays that met back faces, its second traces all of them, which
   classify it, and its next seven none, so its first turns cost no more
   rays than any (all of them on its first turn tripled the probes a moving
-  camera leaves waiting to start, the budget leaving starting probes their
+  camera leaves waiting to start at High, about 6.7 times at Low, the budget leaving starting probes their
   share), then it traces four each turn after its others and is
   classified again from all of them once a cycle of eight turns (the share
   of each frame's rotated rays, even blended over frames, wandered across
