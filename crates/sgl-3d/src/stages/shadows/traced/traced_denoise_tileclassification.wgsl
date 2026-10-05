@@ -9,17 +9,20 @@
 // targets, under INVERTED_DEPTH_RANGE. Changed at the port boundary: one
 // dispatch for the four slots, the slot the group's z, where Wicked
 // dispatches each with its index pushed (rtshadow_denoise_lightindex);
-// depth and normals are the G-buffer's at the full-resolution pixel of
-// each tracing pixel (Wicked's depth reads at did * 2, its normals from its
-// half-resolution copy); the previous depth is the stage's own, linear;
-// a pixel the trace found nothing lit at reads as the sky, as the trace
-// records it; a slot's first frame is the stage's history restarting or the slot's
+// depth is the G-buffer's at the full-resolution pixel of each tracing
+// pixel (Wicked's reads at did * 2), its normals the trace's
+// half-resolution copy, as Wicked's (traced_denoise_common.wgsl); the
+// previous depth is the stage's own, linear; a pixel the trace found
+// nothing lit at reads as the sky, as the trace records it; AMD's kernel
+// weights are constants (ffx_denoiser_shadows_tileclassification.wgsl);
+// a slot's first frame is the stage's history restarting or the slot's
 // light changing (ShadowMaskSlots.restart), whose previous moments read as
 // zero, as Wicked clears its resources on its first frame; the history is
 // sampled bilinearly from two packed halves (pack2x16float), where Wicked
 // keeps it in R16G16 and samples it through a linear sampler; and the
 // moments are kept in RGBA16F, where Wicked keeps R11G11B10.
 @group(0) @binding(0) var denoise_depth:texture_depth_2d;
+// The tracing pixels' shading normals the trace writes.
 @group(0) @binding(1) var denoise_normal:texture_2d<f32>;
 @group(0) @binding(2) var denoise_tiles:texture_2d<u32>;
 @group(0) @binding(3) var denoise_moments_previous:texture_2d_array<f32>;
@@ -66,11 +69,17 @@ fn FFX_DNSR_Shadows_ReadPreviousLinearDepth(idx:vec2<i32>)->f32 {
  return textureLoad(denoise_previous_depth,clamp(idx,vec2(0),last),0).x;
 }
 
+// The G-buffer's depth at the tracing pixel's full-resolution pixel, the
+// sky's (0) where the trace found nothing lit, so that an unlit pixel is
+// no receiver: the reprojection reconstructs its position from it.
 fn FFX_DNSR_Shadows_ReadDepth(did:vec2<u32>)->f32 {
- return traced_denoise_depth(did);
+ if !traced_denoise_receiver(did) {
+  return 0.;
+ }
+ return textureLoad(denoise_depth,traced_full_pixel(did),0);
 }
 fn FFX_DNSR_Shadows_ReadNormals(did:vec2<u32>)->vec3<f32> {
- return gbuffer_base_normal(textureLoad(denoise_normal,traced_full_pixel(did),0));
+ return traced_denoise_normal(did);
 }
 fn FFX_DNSR_Shadows_ReadRaytracedShadowMask(linear_tile_index:u32)->u32 {
  let tiles=FFX_DNSR_Shadows_RoundedDivide(FFX_DNSR_Shadows_GetBufferDimensions().x,8u);

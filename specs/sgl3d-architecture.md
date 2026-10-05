@@ -594,12 +594,19 @@ code; it does not redeclare a struct, binding or function another module owns.
   velocity); and the upsample weights the four half-resolution texels by
   linear depth against the full-resolution pixel's (`_upsampleCS.hlsl`
   35–55) into the mask's layers. Changed at the port boundary: the trace
-  and the denoiser read normals and depth from the G-buffer at the
-  full-resolution pixel of each half-resolution one, as Wicked's denoiser
-  reads its depth (`texture_depth[did * 2]`) where its trace samples depth
-  between four pixels, so Wicked's half-resolution normals copy is not
-  kept, and the upsample's bilinear fractions are those of that grid,
-  where Wicked's taps and fractions disagree; the temporal blend clamps
+  reads normals and depth from the G-buffer at the full-resolution pixel
+  of each half-resolution one, as Wicked's denoiser reads its depth
+  (`texture_depth[did * 2]`) where its trace samples depth between four
+  pixels, and writes that pixel's linear depth and shading normal, the
+  half-resolution copies the denoiser reads as Wicked's reads its own
+  (its tile classification still reprojects from the G-buffer's depth);
+  the filter takes that linear depth as it is, where AMD's linearises a
+  projected depth through the inverse projection at every tap; AMD's
+  kernel weights are constants, which its compiler folds; the denoised
+  slots' result is one word a tracing pixel, each slot's group ORing its
+  byte, which the temporal blend takes as its first word; and the
+  upsample's bilinear fractions are those of the trace's grid, where
+  Wicked's taps and fractions disagree; the temporal blend clamps
   its history to the 3×3 box, which Wicked computes and leaves unused;
   the temporal blend and the upsample read each texel once and work on a
   word's four slots together, skipping the words and layers whose slots

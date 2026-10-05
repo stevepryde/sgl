@@ -43,6 +43,9 @@
 // denoiser filters, one word a slot (tileclassification's
 // ReadRaytracedShadowMask).
 @group(3) @binding(7) var traced_tiles:texture_storage_2d<rgba32uint,write>;
+// Each tracing pixel's shading normal for the denoiser, Wicked's
+// half-resolution normals copy.
+@group(3) @binding(8) var traced_half_normal:texture_storage_2d<rgba16float,write>;
 // Wicked's ray.TMin: where a shadow ray starts along its direction, in
 // metres, past the surface it leaves.
 const TRACED_T_MIN:f32=.01;
@@ -109,6 +112,7 @@ fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  if z<=0. || !gbuffer_lit(textureLoad(traced_f0,pixel,0)) {
   textureStore(traced_raw,q,words);
   textureStore(traced_half_depth,q,vec4(TRACED_SKY_DEPTH));
+  textureStore(traced_half_normal,q,vec4(0.));
   return words;
  }
  let uv=(vec2<f32>(pixel)+.5)*traced.full.zw;
@@ -116,6 +120,7 @@ fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  textureStore(traced_half_depth,q,vec4(traced_linear_depth(position)));
  let normals=textureLoad(traced_normal,pixel,0);
  let normal=gbuffer_base_normal(normals);
+ textureStore(traced_half_normal,q,vec4(normal,0.));
  let geometry_normal=gbuffer_coat_normal(normals);
  // One draw on every light a pixel and frame, where Wicked reads its blue
  // noise.

@@ -179,20 +179,34 @@ const FFX_DNSR_SHADOWS_REGION_ROWS_ABOVE:i32=2;
 const FFX_DNSR_SHADOWS_REGION_ROWS_BELOW:i32=3;
 const FFX_DNSR_SHADOWS_REGION_COLUMNS:i32=1;
 const FFX_DNSR_SHADOWS_TILE_ROW:i32=8;
-fn FFX_DNSR_Shadows_KERNEL_WEIGHT(i:f32)->f32 {
- return exp(-3.*i*i/((f32(KERNEL_RADIUS)+1.)*(f32(KERNEL_RADIUS)+1.)));
-}
+// Upstream's kernel weight exp(-3 i² / (KERNEL_RADIUS + 1)²), normalised
+// by the sum over the kernel, which upstream's compiler folds once
+// ("Statically initialize kernel_weights_sum"): constants here, which
+// WGSL evaluates, where a loop in the function would run on every call.
+const FFX_DNSR_SHADOWS_KERNEL_EXPONENT:f32=-3./f32((KERNEL_RADIUS+1)*(KERNEL_RADIUS+1));
+const FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM:f32=1.+2.*(
+ exp(1.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)+
+ exp(4.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)+
+ exp(9.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)+
+ exp(16.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)+
+ exp(25.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)+
+ exp(36.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)+
+ exp(49.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)+
+ exp(64.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)
+);
+const FFX_DNSR_SHADOWS_KERNEL_WEIGHTS=array<f32,KERNEL_RADIUS+1>(
+ 1./FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM,
+ exp(1.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)/FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM,
+ exp(4.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)/FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM,
+ exp(9.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)/FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM,
+ exp(16.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)/FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM,
+ exp(25.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)/FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM,
+ exp(36.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)/FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM,
+ exp(49.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)/FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM,
+ exp(64.*FFX_DNSR_SHADOWS_KERNEL_EXPONENT)/FFX_DNSR_SHADOWS_KERNEL_WEIGHTS_SUM,
+);
 fn FFX_DNSR_Shadows_KernelWeight(i:f32)->f32 {
- // Statically initialize kernel_weights_sum
- var kernel_weights_sum=0.;
- kernel_weights_sum+=FFX_DNSR_Shadows_KERNEL_WEIGHT(0.);
- for (var c=1;c<=KERNEL_RADIUS;c++) {
-  kernel_weights_sum+=2.*FFX_DNSR_Shadows_KERNEL_WEIGHT(f32(c)); // Add other half of the kernel to the sum
- }
- let inv_kernel_weights_sum=1./kernel_weights_sum;
-
- // The only runtime code in this function
- return FFX_DNSR_Shadows_KERNEL_WEIGHT(i)*inv_kernel_weights_sum;
+ return FFX_DNSR_SHADOWS_KERNEL_WEIGHTS[u32(i)];
 }
 
 fn FFX_DNSR_Shadows_AccumulateMoments(value:f32,weight:f32,moments:ptr<function,f32>) {

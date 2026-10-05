@@ -34,7 +34,8 @@ static FFX_FILTER: shading::Module = shading::Module {
     source: include_str!("ffx_denoiser_shadows_filter.wgsl"),
     deps: &[&UTIL],
 };
-/// The passes' reading of the G-buffer's depth for AMD's callbacks.
+/// The passes' reading of the trace's half-resolution depth and normals for
+/// AMD's callbacks.
 static COMMON: shading::Module = shading::Module {
     name: "traced_denoise_common",
     source: include_str!("traced_denoise_common.wgsl"),
@@ -45,7 +46,6 @@ pub(crate) static TILE_CLASSIFICATION: shading::Module = shading::Module {
     source: include_str!("traced_denoise_tileclassification.wgsl"),
     deps: &[
         &FFX_TILE_CLASSIFICATION,
-        &shading::GBUFFER,
         &shading::SHADOW_MASK_SLOTS,
         &COMMON,
     ],
@@ -53,20 +53,27 @@ pub(crate) static TILE_CLASSIFICATION: shading::Module = shading::Module {
 pub(crate) static FILTER: shading::Module = shading::Module {
     name: "traced_denoise_filter",
     source: include_str!("traced_denoise_filter.wgsl"),
-    deps: &[&FFX_FILTER, &shading::GBUFFER, &COMMON],
+    deps: &[&FFX_FILTER, &COMMON],
 };
 
-/// The denoiser's targets at one tracing size: each 8×4 tile's hit masks,
-/// which the trace writes; each 8×8 group's metadata; the reprojected and
-/// filtered visibility and variance, packed as two halves (A, then B,
-/// which keeps the first filter pass's result for the next frame); the
-/// moments' pair; and the denoised visibility. A layer a denoised slot.
+/// The format of the tracing pixels' shading normals the trace writes for
+/// the denoiser.
+pub(super) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The denoiser's targets at one tracing size: each 8×4 tile's hit masks
+/// and each tracing pixel's shading normal, which the trace writes; each
+/// 8×8 group's metadata; the reprojected and filtered visibility and
+/// variance, packed as two halves (A, then B, which keeps the first filter
+/// pass's result for the next frame); the moments' pair, a layer a denoised
+/// slot; and the denoised visibility, a word a tracing pixel, packed as the
+/// trace packs its first word.
 pub(super) struct Targets {
     pub tiles: wgpu::TextureView,
+    pub normal: wgpu::TextureView,
     metadata: wgpu::TextureView,
     scratch: [wgpu::TextureView; 2],
     moments: [wgpu::TextureView; 2],
-    pub denoised: wgpu::TextureView,
+    pub denoised: wgpu::Buffer,
 }
 
 impl Targets {
@@ -100,15 +107,30 @@ impl Targets {
                     wgpu::TextureFormat::Rgba16Float,
                 )
             }),
-            denoised: layers("ray-traced shadow denoised", wgpu::TextureFormat::R32Float),
+            normal: texture(
+                device,
+                "ray-traced shadow normals",
+                reduced,
+                1,
+                NORMAL_FORMAT,
+            ),
+            denoised: crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("ray-traced shadow denoised"),
+                    size: u64::from(width) * u64::from(height) * 4,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
         }
     }
 }
 
 /// What the denoiser reads beyond its own targets.
 pub(super) struct Inputs<'a> {
+    /// The G-buffer's depth, which the tile classification reprojects.
     pub depth: &'a wgpu::TextureView,
-    pub normal: &'a wgpu::TextureView,
     pub motion: &'a wgpu::TextureView,
     /// The tracing resolution's linear depth this frame and last.
     pub half_depth: &'a wgpu::TextureView,
@@ -141,7 +163,7 @@ impl Denoiser {
     }
 
     /// Denoises the slots' traced visibility, whose tiles `targets` holds,
-    /// into its denoised layers.
+    /// into its denoised words.
     pub fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -172,7 +194,7 @@ impl Denoiser {
             "ray-traced shadow tile classification",
             &[
                 (0, resource(inputs.depth)),
-                (1, resource(inputs.normal)),
+                (1, resource(&targets.normal)),
                 (2, resource(&targets.tiles)),
                 (3, resource(&targets.moments[previous])),
                 (4, resource(scratch_b)),
@@ -194,7 +216,9 @@ impl Denoiser {
         );
         // Pass 0 filters A into B, which the next frame's classification
         // reads as its history; pass 1 B into A; pass 2 A into the denoised
-        // layers, binding B, which it does not write.
+        // words, which each slot's group ORs its byte into, binding B,
+        // which it does not write.
+        encoder.clear_buffer(&targets.denoised, 0, None);
         for (pass, (input, history)) in self.filters.iter_mut().zip([
             (scratch_a, scratch_b),
             (scratch_b, scratch_a),
@@ -204,42 +228,41 @@ impl Denoiser {
                 &mut pass.groups[current],
                 device,
                 [
-                    inputs.depth,
-                    inputs.normal,
+                    &targets.normal,
                     &targets.metadata,
                     input,
                     inputs.half_depth,
+                    history,
                 ],
                 inputs.params,
-                [history, &targets.denoised],
+                &targets.denoised,
             );
             dispatch(encoder, &pass.pipeline, group, "ray-traced shadow filter");
         }
     }
 }
 
-/// A filter pass's group 0: the G-buffer's depth and normals, the tiles'
+/// A filter pass's group 0: the tracing pixels' normals, the tiles'
 /// metadata, the pass's input and the tracing resolution's linear depth,
 /// the parameters, and its history and denoised outputs.
 fn filter_group<'a>(
     group: &'a mut CachedGroup,
     device: &wgpu::Device,
-    [depth, normal, metadata, input, half_depth]: [&wgpu::TextureView; 5],
+    [normal, metadata, input, half_depth, history]: [&wgpu::TextureView; 5],
     params: &wgpu::Buffer,
-    [history, denoised]: [&wgpu::TextureView; 2],
+    denoised: &wgpu::Buffer,
 ) -> &'a wgpu::BindGroup {
     let resource = wgpu::BindingResource::TextureView;
     group.get(
         device,
         "ray-traced shadow filter",
         &[
-            (0, resource(depth)),
             (1, resource(normal)),
             (2, resource(metadata)),
             (3, resource(input)),
             (4, params.as_entire_binding()),
             (5, resource(history)),
-            (6, resource(denoised)),
+            (6, denoised.as_entire_binding()),
             (7, resource(half_depth)),
         ],
     )

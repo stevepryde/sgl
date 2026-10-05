@@ -260,6 +260,7 @@ impl TracedShadows {
             entry(5, storage(wgpu::TextureFormat::Rgba32Uint)),
             entry(6, storage(wgpu::TextureFormat::R32Float)),
             entry(7, storage(wgpu::TextureFormat::Rgba32Uint)),
+            entry(8, storage(denoise::NORMAL_FORMAT)),
         ];
         let uniform_buffer = |label, size| {
             crate::counters::buffer(
@@ -402,6 +403,7 @@ impl TracedShadows {
                 (5, resource(&targets.raw)),
                 (6, resource(&targets.depth[current])),
                 (7, resource(&targets.denoise.tiles)),
+                (8, resource(&targets.denoise.normal)),
             ],
         );
         {
@@ -430,7 +432,6 @@ impl TracedShadows {
             &targets.denoise,
             denoise::Inputs {
                 depth: &shared.depth,
-                normal: &shared.normal,
                 motion: &shared.motion,
                 half_depth: &targets.depth[current],
                 previous_depth: &targets.depth[previous],
@@ -452,7 +453,7 @@ impl TracedShadows {
                 (5, self.params.as_entire_binding()),
                 (6, self.slot_table.as_entire_binding()),
                 (7, resource(&targets.temporal[current])),
-                (8, resource(&targets.denoise.denoised)),
+                (8, targets.denoise.denoised.as_entire_binding()),
             ],
         );
         {

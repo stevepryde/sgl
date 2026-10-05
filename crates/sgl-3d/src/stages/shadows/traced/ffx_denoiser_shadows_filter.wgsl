@@ -27,10 +27,10 @@ THE SOFTWARE.
 // the group's memory as upstream's PackFloat16 and UnpackFloat16 do. The
 // tile's metadata reaches every thread of the group through
 // workgroupUniformLoad, which WGSL needs before the branch whose barrier
-// follows. A sky neighbour, and the centre, are skipped before the depth's
-// linearisation, where upstream weighs them by zero after it, which at the
-// sky's depth of 0 divides by zero. The loops' literal bounds are named
-// (AR-12). The caller supplies the FFX_DNSR_Shadows_* callbacks upstream's
+// follows. The caller reads linear depth, 0 for the sky, so the depth is
+// not linearised through the inverse projection, and a sky neighbour, and
+// the centre, are skipped, where upstream weighs them by zero. The loops'
+// literal bounds are named (AR-12). The caller supplies the FFX_DNSR_Shadows_* callbacks upstream's
 // host shader does.
 
 var<workgroup> g_FFX_DNSR_Shadows_shared_input:array<array<u32,16>,16>;
@@ -121,12 +121,10 @@ fn FFX_DNSR_Shadows_GetNormalSimilarity(x1:vec3<f32>,x2:vec3<f32>)->f32 {
  return pow(saturate(dot(x1,x2)),32.);
 }
 
+// The caller's depth is linear already (see the header), where upstream
+// linearises a projected depth through the inverse projection.
 fn FFX_DNSR_Shadows_GetLinearDepth(did:vec2<u32>,depth:f32)->f32 {
- let uv=(vec2<f32>(did)+.5)*FFX_DNSR_Shadows_GetInvBufferDimensions();
- let ndc=2.*vec2(uv.x,1.-uv.y)-1.;
-
- let projected=FFX_DNSR_Shadows_GetProjectionInverse()*vec4(ndc,depth,1.);
- return abs(projected.z/projected.w);
+ return depth;
 }
 
 // The filters' radius in steps, upstream's literal k (AR-12).
@@ -180,9 +178,9 @@ fn FFX_DNSR_Shadows_DenoiseFromGroupSharedMemory(did:vec2<u32>,gtid:vec2<u32>,de
    let normal_neigh=FFX_DNSR_Shadows_LoadNormalsFromGroupSharedMemory(gtid_idx);
    let shadow_neigh=FFX_DNSR_Shadows_LoadInputFromGroupSharedMemory(gtid_idx);
 
-   // Zero weight for sky pixels, and the centre, already summed: skipped
-   // before the depth's linearisation, which divides by zero at the sky's.
-   if (x==0 && y==0) || depth_neigh>=1. || depth_neigh<=0. {
+   // Zero weight for sky pixels, whose linear depth reads as 0, and the
+   // centre, already summed.
+   if (x==0 && y==0) || depth_neigh<=0. {
     continue;
    }
 

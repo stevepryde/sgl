@@ -34,8 +34,9 @@
 @group(0) @binding(5) var<uniform> traced:TracedParams;
 @group(0) @binding(6) var<uniform> shadow_mask_slots:ShadowMaskSlots;
 @group(0) @binding(7) var temporal_output:texture_storage_2d<rgba32uint,write>;
-// The denoiser's result for each denoised slot, a layer a slot.
-@group(0) @binding(8) var temporal_denoised:texture_2d_array<f32>;
+// The denoiser's result for the denoised slots, a word a tracing pixel,
+// packed as the trace packs its first word.
+@group(0) @binding(8) var<storage,read> temporal_denoised:array<u32>;
 
 // Wicked's temporalResponseMin and temporalResponseMax: the history's
 // least and greatest share.
@@ -54,15 +55,9 @@ const TEMPORAL_VELOCITY_RESPONSE:f32=.2;
 const TEMPORAL_TAPS:u32=9u;
 
 // The denoised slots, the first TRACED_DENOISED_SLOTS, are word 0: the
-// denoiser's result at tracing texel `texel`, a layer a slot, packed as
-// the trace packs.
+// denoiser's word at tracing texel `texel`.
 fn temporal_denoised_word(texel:vec2<u32>)->u32 {
- return traced_pack(vec4(
-  textureLoad(temporal_denoised,texel,0,0).x,
-  textureLoad(temporal_denoised,texel,1,0).x,
-  textureLoad(temporal_denoised,texel,2,0).x,
-  textureLoad(temporal_denoised,texel,3,0).x,
- ));
+ return temporal_denoised[texel.y*u32(traced.reduced.x)+texel.x];
 }
 // `current` with its denoised word the denoiser's.
 fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {

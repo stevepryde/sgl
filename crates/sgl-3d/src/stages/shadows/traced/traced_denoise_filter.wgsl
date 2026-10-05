@@ -13,19 +13,22 @@
 // and the last pass's contrast recovery (79–82). Changed at the port
 // boundary: one dispatch for the four slots, the slot the group's z; the
 // pass a pipeline constant, where Wicked pushes it; depth and normals the
-// G-buffer's at the full-resolution pixel of each tracing pixel, a pixel
-// the trace found nothing lit at reading as the sky; the tile's
+// trace's half-resolution copies, as Wicked's half-resolution depth and
+// normals (traced_denoise_common.wgsl): the depth linear already, so AMD's
+// linearisation through the inverse projection is not applied, and a
+// pixel the trace found nothing lit at reading as the sky, 0; the tile's
 // metadata read once by the group through workgroupUniformLoad; and the
-// denoised visibility written to a layer a slot, where Wicked writes a
-// channel a light.
+// denoised visibility ORed into a word a tracing pixel, slot s in its
+// byte s, as the trace packs its first word, where Wicked writes a channel
+// a light.
 override filter_pass:u32;
-@group(0) @binding(0) var denoise_depth:texture_depth_2d;
+// The tracing pixels' shading normals the trace writes.
 @group(0) @binding(1) var denoise_normal:texture_2d<f32>;
 @group(0) @binding(2) var denoise_metadata:texture_2d_array<u32>;
 @group(0) @binding(3) var denoise_input:texture_2d_array<u32>;
 @group(0) @binding(4) var<uniform> traced:TracedParams;
 @group(0) @binding(5) var denoise_history:texture_storage_2d_array<r32uint,write>;
-@group(0) @binding(6) var denoise_output:texture_storage_2d_array<r32float,write>;
+@group(0) @binding(6) var<storage,read_write> denoise_output:array<atomic<u32>>;
 // The tracing resolution's linear depth this frame, the sky's where the
 // G-buffer drew nothing lit.
 @group(0) @binding(7) var denoise_half_depth:texture_2d<f32>;
@@ -41,19 +44,16 @@ fn FFX_DNSR_Shadows_GetBufferDimensions()->vec2<u32> {
 fn FFX_DNSR_Shadows_GetInvBufferDimensions()->vec2<f32> {
  return traced.reduced.zw;
 }
-fn FFX_DNSR_Shadows_GetProjectionInverse()->mat4x4<f32> {
- return traced.inverse_projection;
-}
-
 fn FFX_DNSR_Shadows_GetDepthSimilaritySigma()->f32 {
  return 1.;
 }
 
+// Linear, 0 for the sky and unlit pixels.
 fn FFX_DNSR_Shadows_ReadDepth(p:vec2<i32>)->f32 {
- return traced_denoise_depth(vec2<u32>(p));
+ return traced_denoise_linear_depth(vec2<u32>(p));
 }
 fn FFX_DNSR_Shadows_ReadNormals(p:vec2<i32>)->vec3<f32> {
- return gbuffer_base_normal(textureLoad(denoise_normal,traced_full_pixel(vec2<u32>(p)),0));
+ return traced_denoise_normal(vec2<u32>(p));
 }
 
 fn FFX_DNSR_Shadows_IsShadowReciever(did:vec2<u32>)->bool {
@@ -85,6 +85,10 @@ fn FFX_DNSR_Shadows_ReadTileMetaData(p:u32)->u32 {
   // Recover some of the contrast lost during denoising
   let shadow_remap=max(1.2-filtered.results.y,1.);
   let mean=saturate(pow(abs(filtered.results.x),shadow_remap));
-  textureStore(denoise_output,did.xy,rtshadow_denoise_lightindex,vec4(mean));
+  let size=vec2<u32>(traced.reduced.xy);
+  if all(did.xy<size) {
+   let lane=shadow_mask_layer_slots(0u)==vec4(rtshadow_denoise_lightindex);
+   atomicOr(&denoise_output[did.y*size.x+did.x],traced_pack(select(vec4(0.),vec4(mean),lane)));
+  }
  }
 }
