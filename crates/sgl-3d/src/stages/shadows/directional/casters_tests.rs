@@ -1,8 +1,9 @@
 //! What a GPU-built cascade's casters draw, against the CPU-built casters
 //! probe captures keep.
 use crate::asset::{Asset, CpuMesh, Vertex};
-use crate::shading::uniforms::FrameUniform;
+use crate::shading::uniforms::{FrameUniform, ViewUniform};
 use crate::stages::cull::Cull;
+use crate::view::draw_list::gpu::camera_cull;
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::pipelines::{GeometryPass, GeometryPipelines, LayerConstants};
 use crate::view::population::Population;
@@ -154,6 +155,20 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
     let cascade = camera::rh::proj::directx::orthographic(-20., 20., -6., 6., 20., 0.) * light;
     let mask = u32::MAX;
     let mut views = FrameViews::new(&device);
+    // The cull stage encodes the camera's list with the cascades': a camera
+    // over the same ground, whose list nothing here draws.
+    let camera = View::camera(ViewUniform {
+        view: light.to_cols_array_2d(),
+        projection: crate::perspective(1., 1., 0.1).to_cols_array_2d(),
+        ..ViewUniform::zeroed()
+    });
+    views.camera.list.prepare(
+        &device,
+        &queue,
+        &scene,
+        camera_cull(&camera, [TEXELS; 2], mask, true),
+        false,
+    );
     crate::stages::prepare::set_cascades(
         (&device, &queue),
         &scene,
@@ -229,12 +244,6 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
         queue.submit([encoder.finish()]);
         bytemuck::cast_slice(&test_support::read(&device, &queue, &texture, 4)).to_vec()
     };
-    let ([pulled, paired], _) =
-        crate::view::draw_list::gpu::read_early(&views.cascades[0].list, &device, &queue, &scene);
-    assert!(
-        !pulled.is_empty() && !paired.is_empty(),
-        "the cascade draws sections of both kinds"
-    );
     let gpu_built = depth(&|pass| {
         views.cascades[0]
             .list
@@ -272,5 +281,11 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
     assert_eq!(
         differing, 0,
         "texels where the GPU-built cascade's depth differs from the CPU-built casters'"
+    );
+    let ([pulled, paired], _) =
+        crate::view::draw_list::gpu::read_early(&views.cascades[0].list, &device, &queue, &scene);
+    assert!(
+        !pulled.is_empty() && !paired.is_empty(),
+        "the cascade drew sections of both kinds"
     );
 }
