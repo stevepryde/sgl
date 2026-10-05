@@ -73,13 +73,13 @@ pub(crate) struct StaticBuild<'a> {
 /// rounding.
 pub(crate) fn bounded(index: usize, bounds: [Vec3; 2], pose: Mat4) -> Bounded {
     let [min, max] = posed_bounds(bounds, pose);
-    Primitive {
+    Primitive::new(
         min,
         max,
-        leaf: InstanceLeaf {
+        InstanceLeaf {
             index: index as u32,
         },
-    }
+    )
 }
 
 /// One instance BVH: its range of the source and its root, zero when it
@@ -122,7 +122,8 @@ impl InstanceBvh {
         words: &mut Vec<u32>,
     ) {
         words.clear();
-        self.root = bvh::append_primitives(instances, words, self.range.start);
+        self.root =
+            bvh::append_primitives(instances, bvh::Split::EqualCounts, words, self.range.start);
         debug_assert!(words.len() <= self.range.len(), "a BVH fits its range");
         rays.write(queue, self.range.start, words);
     }
