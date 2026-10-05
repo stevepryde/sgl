@@ -210,9 +210,14 @@ full API details.
   fill, and moving instances in place of their ambient cube; ambient
   occlusion occludes it as it did those. Lightmapped and charted surfaces
   keep their bake. `SurfaceMaterial::environment_scale` does not scale it.
-  A restart (another placement or scene, or a frame without the volume)
-  starts at most 128 probes a frame at High (256 at Low), nearest the
-  camera first, where Wicked starts every probe in one frame; the surfaces
+  A receiver weighs the probes about it with RTXGI's wrap-shading weight
+  and tests their visibility from a point offset toward the viewer
+  (Majercik et al. 2021's self-shadow bias, about a quarter of the least
+  spacing), where Wicked lets a surface facing a nearby wall take the
+  light beyond it. A restart (another placement or scene, or a frame
+  without the volume) starts at most 128 probes a frame at High (256 at
+  Low), nearest the camera first, where Wicked starts every probe in one
+  frame; the surfaces
   about a probe not yet started keep their other indirect light. The
   `dynamic_gi` example lights a room and prints the stage's cost. Timing groups `dynamic GI allocation`,
   `dynamic GI rays` and `dynamic GI blend` report its cost, and frames that

@@ -1542,6 +1542,11 @@ Placement:
   off the surfaces themselves, where a probe sees both sides at once:
   offset the lattice so walls fall between probes. Probes near a surface
   move off it, up to half a spacing, as they trace.
+- A receiver tests which probes it sees from a point offset toward the
+  viewer by about a quarter of the least spacing, so a surface does not
+  shadow itself. A surface nearer a wall than that, facing it and seen
+  head-on, can take light from beyond the wall; a closer spacing where
+  surfaces face walls closely keeps it inside.
 - A light that casts no shadow (`Light::casts_shadow` false, or a
   directional light without the frame's cascades) lights the probes as it
   lights surfaces, unoccluded, through walls too: give a light that should

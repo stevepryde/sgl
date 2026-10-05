@@ -15,13 +15,36 @@
 // nothing over the one spacing past its extent, as RTXGI's volume blend
 // weight fades (volume_share.wgsl); f32 in place of half; the sampler is
 // `baked_sampler`.
-// Wicked's DDGI::smooth_backface (wiScene.h).
-const DDGI_SMOOTH_BACKFACE:f32=.01;
-// The volume's irradiance / PI at `position` along `normal` in rgb, and in
-// a its share of the receiver's indirect diffuse: 1 within the volume's
-// extent, fading to 0 over the one spacing past it; 0 where the volume does
-// not light the frame or no probe about the receiver has been blended.
-fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>)->vec4<f32> {
+// Changed, the weights, to those NVIDIA RTXGI's DDGIGetVolumeIrradiance
+// takes (practice only; its code is not copied): the whole wrap-shading weight
+// (wrap^2 + 0.2) in place of Wicked's blend of a hard saturate(dot) test with
+// it at smooth_backface 0.01, and a floor of 1e-6 in place of 0.01. Wicked's
+// pair ties every probe of a receiver near a wall and facing it at the floor,
+// those behind the receiver by the hard test and those beyond the wall by
+// visibility, so it takes the light beyond the wall: at 0.3 m from a wall of
+// an inward-facing room under a sky of radiance 1, 0.35 of it, where the wrap
+// weight leaves 1e-4 and the floor 1e-8. RTXGI's further floor of 0.05 on the
+// Chebyshev weight is not taken: it raises what an occluded probe gives.
+// Changed, the visibility point: offset by Majercik et al. 2021's
+// self-shadow bias (JCGT 10(2), equation 2: (n 0.2 + v 0.8) 0.75 times the
+// least spacing times 0.3, v toward the viewer) in place of Wicked's 1 mm
+// along the normal. The wrap weight lets the probes behind a surface weigh,
+// and without the bias the surface shadows itself against the probes in
+// front: a black floor under that sky took 0.96-0.99 of it, and takes
+// 0.998 with the bias. A receiver nearer a wall than the bias, facing it and
+// seen head-on, tests visibility from beyond the wall (0.3 m from that wall
+// with probes 2 m apart: up to 0.11 of the sky; 1e-5 seen 60 degrees off its
+// normal). The probes behind a small object's faces also return to it light
+// it reflected, so a change in the bounce about it fades over tens of frames
+// where Wicked's faded within a few.
+// Majercik et al. 2021's TunableShadowBias, at its default.
+const DDGI_SELF_SHADOW_BIAS:f32=.3;
+// The volume's irradiance / PI at `position` along `normal`, seen from
+// `view` (toward the viewer), in rgb, and in a its share of the receiver's
+// indirect diffuse: 1 within the volume's extent, fading to 0 over the one
+// spacing past it; 0 where the volume does not light the frame or no probe
+// about the receiver has been blended.
+fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>)->vec4<f32> {
  if (frame.flags&FRAME_DYNAMIC_GI)==0u {
   return vec4(0.);
  }
@@ -39,6 +62,8 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>)->vec4<f32> {
  // Taking the rest pose, as Wicked does.
  let reference_probe_pos=ddgi_probe_position_rest(base_grid_coord,origin,spacing);
  let alpha=saturate((position-reference_probe_pos)/spacing);
+ // The self-shadow bias, from the receiver toward its viewer and normal.
+ let bias=(normal*.2+view*.8)*(.75*min(spacing.x,min(spacing.y,spacing.z)))*DDGI_SELF_SHADOW_BIAS;
  var sum_irradiance=vec3(0.);
  var sum_weight=0.;
  for (var i=0u;i<8u;i++) {
@@ -49,14 +74,14 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>)->vec4<f32> {
    continue;
   }
   let probe_pos=ddgi_probe_position(probe_grid_coord,origin,spacing,data.rgb);
-  let probe_to_point=position-probe_pos+normal*.001;
+  let probe_to_point=position-probe_pos+bias;
   let dir=normalize(-probe_to_point);
   let trilinear=mix(1.-alpha,alpha,vec3<f32>(offset));
   var weight=1.;
   // Smooth backface test.
   let true_direction_to_probe=normalize(probe_pos-position);
   let wrap=max(.0001,(dot(true_direction_to_probe,normal)+1.)*.5);
-  weight*=mix(saturate(dot(dir,normal)),wrap*wrap+.2,DDGI_SMOOTH_BACKFACE);
+  weight*=wrap*wrap+.2;
   // Moment visibility test.
   let depth_uv=ddgi_probe_uv(ddgi_probe_depth_pixel(probe_grid_coord,probes),DDGI_DEPTH_RESOLUTION,-dir,size);
   let dist_to_probe=length(probe_to_point);
@@ -68,7 +93,7 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>)->vec4<f32> {
   chebyshev_weight=max(chebyshev_weight*chebyshev_weight*chebyshev_weight,0.);
   weight*=select(chebyshev_weight,1.,dist_to_probe<=mean);
   // Avoid zero weight.
-  weight=max(.01,weight);
+  weight=max(.000001,weight);
   let color_uv=ddgi_probe_uv(ddgi_probe_color_pixel(probe_grid_coord,probes),DDGI_COLOR_RESOLUTION,normal,size);
   let probe_irradiance=textureSampleLevel(dynamic_gi_probes,baked_sampler,color_uv,0.).rgb;
   // Crush tiny weights but keep the curve continuous, before the

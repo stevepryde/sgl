@@ -816,7 +816,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   `ddgi_raytraceCS_rtapi` replaces its software trace. A single-sided
   material met from behind (the inside of closed geometry, or the outside
   of a shell built to be seen from within) brings no light and shortens
-  the ray's depth to a fifth, as Majercik et al. 2019 and RTXGI's probe
+  the ray's depth to a fifth, as Majercik et al. 2021 and RTXGI's probe
   trace (practice only) treat back faces, so the probe takes nothing from
   behind the surface and receivers beyond it weigh the probe as occluded;
   a double-sided material's back face is a surface, shaded, its depth
@@ -860,9 +860,19 @@ code; it does not redeclare a struct, binding or function another module owns.
   surfaces, blended surfaces, probe captures, world-space ray hits and the
   probes' own hits sample one volume, as Wicked's world-space DDGI applies
   in every camera. The sample is Wicked's `ddgi_sample_irradiance`: the
-  eight probes about the point, weighted trilinearly, by its smooth
-  backface test and by Chebyshev visibility from the probe's depth moments,
-  reading irradiance by the surface normal; a probe not yet blended weighs
+  eight probes about the point, weighted trilinearly, by a backface test
+  and by Chebyshev visibility from the probe's depth moments, reading
+  irradiance by the surface normal. Improved on Wicked (RD-2), with the
+  weights RTXGI takes (practice only): the backface test is the whole
+  wrap-shading weight and the weight's floor RTXGI's, where Wicked's hard backface test and higher floor tie every
+  probe of a receiver facing a nearby wall at the floor, so it takes the
+  light beyond the wall; and visibility is tested from the point offset by
+  Majercik et al. 2021's self-shadow bias toward the viewer and the normal,
+  scaled by the least spacing, where Wicked offsets it a millimetre along
+  the normal, so a surface does not shadow itself against the probes the
+  wrap weight lets weigh. A receiver nearer a wall than that bias, facing
+  it and seen head-on, tests visibility from beyond the wall. A probe not
+  yet blended weighs
   nothing, and a receiver whose eight probes all weigh nothing keeps its
   fallback. A receiver the volume lights takes its irradiance in place of
   the environment's diffuse light and the hemisphere fill, recorded apart
