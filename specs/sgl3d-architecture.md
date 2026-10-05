@@ -600,8 +600,12 @@ code; it does not redeclare a struct, binding or function another module owns.
   between four pixels, so Wicked's half-resolution normals copy is not
   kept, and the upsample's bilinear fractions are those of that grid,
   where Wicked's taps and fractions disagree; the temporal blend clamps
-  its history to the 3×3 box, which Wicked computes and leaves unused; a
-  light reaches a pixel as the lit library's `light_reach` decides, a
+  its history to the 3×3 box, which Wicked computes and leaves unused;
+  the temporal blend and the upsample read each texel once and work on a
+  word's four slots together, skipping the words and layers whose slots
+  hold no light, where Wicked's temporal blend reads the 3×3 neighbourhood
+  again for each slot and its upsample writes the lights of the pixel's
+  tile; a light reaches a pixel as the lit library's `light_reach` decides, a
   directional light where the shading or the geometry normal faces it,
   since the coat takes it along the geometry normal, so the trace casts a
   ray wherever lighting shades the light; the denoiser's wave reduction

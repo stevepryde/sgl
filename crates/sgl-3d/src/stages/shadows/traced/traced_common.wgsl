@@ -31,16 +31,20 @@ fn traced_position(uv:vec2<f32>,z:f32)->vec3<f32> {
 fn traced_linear_depth(position:vec3<f32>)->f32 {
  return -(traced.view*vec4(position,1.)).z;
 }
-// Slot `slot`'s visibility in `words`.
-fn traced_load(words:vec4<u32>,slot:u32)->f32 {
- let shift=(slot%4u)*8u;
- return f32((words[slot/4u]>>shift)&0xffu)/255.;
+// A word's four slots' visibility, slot 4w + i in bits 8i to 8i + 7 of
+// word w: the passes read and write a word's four slots together, as the
+// mask's layer w holds them in its channels.
+fn traced_unpack(word:u32)->vec4<f32> {
+ return vec4<f32>((vec4(word)>>vec4(0u,8u,16u,24u))&vec4(0xffu))/255.;
+}
+fn traced_pack(visibility:vec4<f32>)->u32 {
+ let bytes=vec4<u32>(round(saturate(visibility)*255.))<<vec4(0u,8u,16u,24u);
+ return bytes.x|bytes.y|bytes.z|bytes.w;
 }
 // `words` with slot `slot`'s visibility, which they held as zero, set to
 // `visibility`.
 fn traced_store(words:vec4<u32>,slot:u32,visibility:f32)->vec4<u32> {
  var stored=words;
- let shift=(slot%4u)*8u;
- stored[slot/4u]|=u32(round(saturate(visibility)*255.))<<shift;
+ stored[slot/4u]|=traced_pack(select(vec4(0.),vec4(visibility),vec4(slot%4u)==vec4(0u,1u,2u,3u)));
  return stored;
 }
