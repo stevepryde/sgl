@@ -197,9 +197,11 @@ frame.color_grading = ColorGrading {
   `correction_min..=correction_max`. A camera cut, a target-changing resize,
   another scene or a switch from a fixed exposure sets it to its target.
   Timing group `exposure`.
-- Bloom is Bevy's energy-conserving bloom: a mip chain 512 texels high,
-  13-tap downsamples (the first with a Karis average against fireflies), 3×3
-  tent upsamples blended level by level, and the result mixed into the scene.
+- Bloom is Bevy's energy-conserving bloom: a mip chain 512 texels high (a
+  scene too wide for that, such as a window one pixel tall, takes the
+  device's widest texture instead), 13-tap downsamples (the first with a
+  Karis average against fireflies), 3×3 tent upsamples blended level by
+  level, and the result mixed into the scene.
   `intensity` is how much light scatters, 0 none; SGL3D shapes the halo with
   Bevy's `Bloom::NATURAL` low-frequency boost and high-pass. Light only
   moves, so emitters bloom by being bright, with no threshold. The chain is

@@ -1,7 +1,8 @@
 //! Bloom: Bevy 9d12036's energy-conserving bloom (`bloom.wgsl`; the
 //! orchestration of `crates/bevy_post_process/src/bloom/mod.rs`). The
 //! completed scene is downsampled into a mip chain whose first level is 512
-//! texels high (Bevy's `max_mip_dimension`), each level by a 13-tap filter,
+//! texels high (Bevy's `max_mip_dimension`; `chain_size` narrows it where
+//! that would be wider than the device allows), each level by a 13-tap filter,
 //! the first with a Karis average; the chain is upsampled back by a 3×3
 //! tent, each level blended into the next finer one by Bevy's blend factor
 //! for it; and the last upsample is mixed into the completed scene at the
@@ -86,6 +87,22 @@ fn blend_factor(bloom: &BloomParameters, mip: u32, max_mip: u32) -> f32 {
     }
 }
 
+/// Mip 0's size for a `scene_size` scene on a device whose largest 2D
+/// texture side is `largest`: the scene scaled to `MAX_MIP_DIMENSION` texels
+/// high (Bevy's `prepare_bloom_textures`), or, where that is wider than the
+/// device allows, scaled to the device's largest width instead. Bevy's
+/// sizing alone fails for a scene more than `largest / MAX_MIP_DIMENSION`
+/// times as wide as it is high (32 at 16384; Bevy's issue 16182); the
+/// fallback, which Filament c0d63e8 also takes (`PostProcessManager::bloom`,
+/// its #9784), keeps the scene's aspect and every size Bevy's sizing fits.
+/// Either way the longer side is at least 512 texels (WebGPU guarantees
+/// 8192), so `MIP_COUNT` levels fit.
+fn chain_size(scene_size: [u32; 2], largest: u32) -> [u32; 2] {
+    let [width, height] = scene_size.map(|x| x.max(1) as f32);
+    let ratio = (MAX_MIP_DIMENSION as f32 / height).min(largest as f32 / width);
+    scene_size.map(|x| ((x as f32 * ratio).round() as u32).clamp(1, largest))
+}
+
 /// Bloom's targets, or 1×1 stand-ins while it does not run.
 struct Targets {
     /// One view per mip of the chain.
@@ -104,10 +121,8 @@ impl Targets {
         enabled: bool,
     ) -> Self {
         let (size, mip_count, combined) = if enabled {
-            // Bevy's `prepare_bloom_textures`.
-            let ratio = MAX_MIP_DIMENSION as f32 / scene_size[1].max(1) as f32;
-            let size = scene_size.map(|x| ((x as f32 * ratio).round() as u32).max(1));
-            (size, MIP_COUNT, scene_size)
+            let largest = device.limits().max_texture_dimension_2d;
+            (chain_size(scene_size, largest), MIP_COUNT, scene_size)
         } else {
             ([1, 1], 1, [1, 1])
         };
@@ -304,5 +319,7 @@ impl Bloom {
     }
 }
 
+#[cfg(test)]
+mod sizing_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
