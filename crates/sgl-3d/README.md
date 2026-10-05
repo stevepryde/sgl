@@ -741,6 +741,10 @@ of either kind, leaving the reflecting surface's own triangle, so an off-screen
 static wall reflects as it stands rather than as its probe recorded it; every
 ray then walks the static geometry, which is what `All` costs over `Moving` on
 the portable BVHs, so it is meant for [hardware ray tracing](#hardware-ray-tracing).
+On an Apple M5, over a glossy 1 km strip with posts, boxes and 60 moving boxes
+at 960×540 with full-resolution SSR, the `world reflection rays` pass took
+1.06 ms under `All` against 0.38 ms under `Moving` on the portable BVHs, and
+0.11 ms against 0.09 ms in hardware.
 Neither is on by default or in a preset. Wicked Engine's RT reflection
 resolve, temporal and bilateral upsample passes denoise the rays. The result is
 premultiplied radiance with the share of rays that hit in alpha, and it composites as
