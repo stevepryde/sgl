@@ -32,9 +32,11 @@ full API details.
   `diagnostics::ViewTimes`: the CPU time the last frame's camera and each
   cascade's draw list took to build and to record. In the browser, build
   steps' times (`diagnostics::Counters::steps`) now come from
-  `performance.now()`, where they were zero. The `streaming` and
-  `irradiance_volume` examples print these with `--split` and
-  `--visibility`, and `bun scripts/tasks.ts measure-browser` runs the
+  `performance.now()`, where they were zero. A frame probed
+  (`Diagnostics::frame_probe`) and abandoned before `finish_frame` no
+  longer yields a report when the next submitted frame probes nothing. The
+  `streaming` and `irradiance_volume` examples print these with `--split`
+  and `--visibility`, and `bun scripts/tasks.ts measure-browser` runs the
   streaming world in headless Chromium.
 - **Migration:** code that builds `Diagnostics` naming every field adds
   `instance_visibility: InstanceVisibility::Off`, or takes the rest from

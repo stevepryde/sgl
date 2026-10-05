@@ -58,12 +58,18 @@ pub(crate) struct VisibleInstances {
 }
 
 impl VisibleInstances {
-    /// The observer in `slot` when `used`, created on first use.
+    /// The observer in `slot` when `used`, created on first use. Every
+    /// frame starts with nothing observed: an observed frame abandoned
+    /// before `finish_frame` leaves a readback whose copy never ran, which no
+    /// later frame may map.
     pub fn for_frame<'a>(
         slot: &'a mut Option<Self>,
         device: &wgpu::Device,
         used: bool,
     ) -> Option<&'a mut Self> {
+        if let Some(observer) = slot.as_mut() {
+            observer.next = None;
+        }
         if !used {
             return None;
         }
@@ -227,11 +233,11 @@ impl VisibleInstances {
                 let marks: &[u32] = bytemuck::cast_slice(&mapped);
                 for &(id, triangles) in &pending.drawn {
                     let index = id.index();
-                    report.drawn.0 += 1;
-                    report.drawn.1 += triangles;
+                    report.drawn_instances += 1;
+                    report.drawn_triangles += triangles;
                     if marks[index / 32] & (1 << (index % 32)) == 0 {
-                        report.hidden.0 += 1;
-                        report.hidden.1 += triangles;
+                        report.hidden_instances += 1;
+                        report.hidden_triangles += triangles;
                         hidden.insert(id);
                     }
                 }

@@ -58,10 +58,11 @@ pub struct ViewTime {
 /// and those of them with no pixel in its source identity target.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InstanceVisibilityReport {
-    /// Instances drawn, and their triangles.
-    pub drawn: (usize, u64),
-    /// Instances drawn without a pixel, and their triangles.
-    pub hidden: (usize, u64),
+    pub drawn_instances: usize,
+    pub drawn_triangles: u64,
+    /// The drawn instances without a pixel, and their triangles.
+    pub hidden_instances: usize,
+    pub hidden_triangles: u64,
 }
 
 /// The value `DiagnosticTarget::SourceId`'s R channel holds for `instance`'s

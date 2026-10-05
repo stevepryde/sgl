@@ -71,11 +71,17 @@ pub(crate) struct FrameProbe {
 }
 impl FrameProbe {
     /// The probe in `slot` when `observe` is set, created on first use.
+    /// Every frame starts with nothing observed: a probed frame abandoned
+    /// before `finish_frame` leaves a readback whose copy never ran, which no
+    /// later frame may map.
     pub fn for_frame<'a>(
         slot: &'a mut Option<Self>,
         device: &wgpu::Device,
         observe: bool,
     ) -> Option<&'a mut Self> {
+        if let Some(probe) = slot.as_mut() {
+            probe.next = None;
+        }
         if !observe {
             return None;
         }

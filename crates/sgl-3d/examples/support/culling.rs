@@ -190,22 +190,28 @@ impl Culling {
             let reports = &self.reports;
             line(
                 "opaque instances drawn",
-                &reports.iter().map(|r| r.drawn.0 as f64).collect::<Vec<_>>(),
+                &reports
+                    .iter()
+                    .map(|r| r.drawn_instances as f64)
+                    .collect::<Vec<_>>(),
                 "",
             );
             line(
                 "of them hidden",
-                &share(|r| (r.hidden.0 as f64, r.drawn.0 as f64)),
+                &share(|r| (r.hidden_instances as f64, r.drawn_instances as f64)),
                 "%",
             );
             line(
                 "opaque triangles drawn",
-                &reports.iter().map(|r| r.drawn.1 as f64).collect::<Vec<_>>(),
+                &reports
+                    .iter()
+                    .map(|r| r.drawn_triangles as f64)
+                    .collect::<Vec<_>>(),
                 "",
             );
             line(
                 "of them hidden",
-                &share(|r| (r.hidden.1 as f64, r.drawn.1 as f64)),
+                &share(|r| (r.hidden_triangles as f64, r.drawn_triangles as f64)),
                 "%",
             );
         }
