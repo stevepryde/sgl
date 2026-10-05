@@ -126,9 +126,10 @@ struct DdgiBounds {
 // The most moving instances' bounds a frame takes.
 const DDGI_MOST_MOVING_BOUNDS:u32=256u;
 // A ray of the frame's ray list: its probe, its index among the probe's
-// rays (past `rays`, its fixed rays), the rays the probe traces beside its
+// rays (past `rays`, its fixed rays), the rays the probe traces before its
 // fixed rays, and which of its cycle's fixed rays it traces (the probe's
-// turns in its cycle so far, DdgiProbe::fixed_frames).
+// turns in its cycle so far, DdgiProbe::fixed_frames), or DDGI_FIXED_CYCLE
+// on its first turn, which traces all of them.
 struct DdgiRayEntry {
  probe:u32,
  ray:u32,

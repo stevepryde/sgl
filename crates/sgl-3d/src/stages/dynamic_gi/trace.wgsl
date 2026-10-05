@@ -95,12 +95,15 @@ fn ddgi_trace_ray(id:u32)->DdgiTraced {
  let lattice=ddgi_probe_lattice(stored,volume.probes,volume.scroll);
  let probe_pos=ddgi_probe_position(lattice,volume.origin,volume.spacing,probe_data.rgb);
  var rng=ddgi_rng_init(vec2(id,id),volume.frame);
- // Past its rays, its fixed rays: this turn's of its cycle, unrotated,
- // which classify it and bring no light.
+ // Past its rays, its fixed rays, unrotated, which classify it: this
+ // turn's of its cycle, which bring no light, or on its first turn
+ // (DDGI_FIXED_CYCLE) all of them, shaded and blended with its others.
  let fixed=ray_index>=ray_count;
+ let first=entry.cycle>=DDGI_FIXED_CYCLE;
+ let shaded=!fixed || first;
  var direction=normalize(volume.rotation*ddgi_spherical_fibonacci(f32(ray_index),f32(ray_count)));
  if fixed {
-  let ray=entry.cycle*DDGI_FIXED_RAYS_PER_FRAME+ray_index-ray_count;
+  let ray=select(entry.cycle*DDGI_FIXED_RAYS_PER_FRAME,0u,first)+ray_index-ray_count;
   direction=ddgi_spherical_fibonacci(f32(ray),f32(DDGI_FIXED_RAYS));
  }
  var ray=DdgiRay(direction,-1.,vec3(0.),false);
@@ -108,7 +111,7 @@ fn ddgi_trace_ray(id:u32)->DdgiTraced {
  let raw=scene_trace_nearest(SceneRay(vec4(probe_pos,0.),vec4(direction,3.402823466e+38)),SCENE_SIDES_BOTH);
  let nearest=scene_ray_walks;
  if raw.intersection.x==0u {
-  if !fixed {
+  if shaded {
    ray.radiance=sample_environment(direction,0.)+pbr_hemisphere_radiance(direction,frame.hemisphere_sky_color,frame.hemisphere_ground_color,frame.hemisphere_intensity);
   }
  } else {
@@ -123,7 +126,7 @@ fn ddgi_trace_ray(id:u32)->DdgiTraced {
     // Pushed inwards, which helps keep light inside from leaking out.
     ray.depth*=DDGI_DOUBLE_SIDED_BACKFACE_DEPTH;
    }
-   if !fixed {
+   if shaded {
     let random=vec3(ddgi_rng_next_float(&rng),ddgi_rng_next_float(&rng),ddgi_rng_next_float(&rng));
     ray.radiance=shade_ray_hit(hit,-direction,SHADOW_RECEIVER_PROBE_HIT,random);
    }

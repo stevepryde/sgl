@@ -732,8 +732,9 @@ impl DynamicGi {
             != 0
     }
 
-    /// The rays each probe traced beside its fixed rays in the last frame
-    /// that ran the stage, by its stored index: none off its turn.
+    /// The rays each probe blended in the last frame that ran the stage,
+    /// by its stored index: those beside its fixed rays, or on its first
+    /// turn its fixed rays too; none off its turn.
     pub fn test_probe_rays(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u32> {
         let volume = match (&self.rendered, &self.committed) {
             (Some(Rendered::Fresh(volume)), _) => volume,

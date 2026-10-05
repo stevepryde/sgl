@@ -1111,11 +1111,11 @@ code; it does not redeclare a struct, binding or function another module owns.
   traces the fewest rays. Its fixed rays are RTXGI's 32 directions spread
   evenly and never rotated, unshaded and not blended, so its class holds
   still while what it sees does; where RTXGI traces all of them every
-  update, a probe traces four each turn after its others and is
-  classified from all of them once a cycle of eight turns, a probe's first frame's
-  rays classifying it until its first whole cycle (the share of each
+  update, a probe traces all of them on its first turn, which classifies
+  it at once, then four each turn after its others, and is classified
+  again from all of them once a cycle of eight turns (the share of each
   frame's rotated rays, even blended over frames, wandered across the
-  threshold). Its second phase finds whether a fixed ray met a front face
+  threshold, and a far probe's first turn traces as few as 32). Its second phase finds whether a fixed ray met a front face
   within the probe's cell, the spacing about it on each axis. Improved on
   RTXGI (RD-2), which deactivates a probe without one for every receiver,
   such a probe is dormant: static receivers skip it, so a probe diagonally
@@ -1152,10 +1152,12 @@ code; it does not redeclare a struct, binding or function another module owns.
   the scene's lights (a diagnostic setting) and the placement. Improved on
   RTXGI (RD-2), whose sample pauses below a threshold each scene sets,
   which SGL3D has no scene to ask for: the volume has converged once the
-  mean of its variability over a window of 16 updates of the volume, a
-  frame that blends some probes on their turns counting that share of one,
-  falls by less than a tenth from the last window's, the plateau RTXGI describes, and never
-  while a probe has yet to start. The allocation decides it on the GPU from
+  mean of its variability over a window of 16 turns of every active probe
+  (16 times the longest period among them, the stride included, so the
+  slowest has taken 16 turns as RTXGI's every probe has in 16 frames;
+  each frame's variability weighed by the share of the probes that
+  blended) falls by less than a tenth from the last window's, the plateau
+  RTXGI describes, and never while a probe has yet to start. The allocation decides it on the GPU from
   the blends' last windows, so nothing is read back, and a paused frame
   costs the allocation alone. A receiver the volume lights takes its
   irradiance in place of the environment's diffuse light and the hemisphere
