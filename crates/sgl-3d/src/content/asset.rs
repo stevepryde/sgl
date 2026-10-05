@@ -123,12 +123,6 @@ pub struct Material {
     pub double_sided: bool,
     /// Whether the material bypasses lighting (`KHR_materials_unlit`).
     pub unlit: bool,
-    /// Whether global illumination gathers the light the material gives off
-    /// itself
-    /// ([`SurfaceMaterial::emits_into_gi`](crate::SurfaceMaterial::emits_into_gi)).
-    /// Imported materials do; set it false on a fixture that a scene light
-    /// stands for.
-    pub emits_into_gi: bool,
     /// How the base alpha is used: opaque, masked or blended.
     pub alpha: AlphaMode,
 }
@@ -138,9 +132,8 @@ impl Default for Material {
     /// without one: unnamed, a white base, metallic and roughness 1, no
     /// emission, clearcoat, anisotropy, bump or textures, normal scale 1, no
     /// normal layers, repeating, single-sided, lit and opaque, in visibility
-    /// group 0, casting directional shadows and emitting into global
-    /// illumination. Set what differs and take the rest with
-    /// `..Default::default()`.
+    /// group 0 and casting directional shadows. Set what differs and take the
+    /// rest with `..Default::default()`.
     fn default() -> Self {
         Self {
             name: String::new(),
@@ -166,7 +159,6 @@ impl Default for Material {
             wrap: [WrappingMode::Repeat; 2],
             double_sided: false,
             unlit: false,
-            emits_into_gi: true,
             alpha: AlphaMode::Opaque,
         }
     }

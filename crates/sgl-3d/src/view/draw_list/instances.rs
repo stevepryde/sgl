@@ -51,6 +51,12 @@ impl DrawInstances {
         crate::counters::write_buffer(queue, self.buffer.as_ref().unwrap(), 0, bytes);
     }
 
+    /// Every list's instances, in the order appended.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn entries(&self) -> &[DrawInstance] {
+        &self.entries
+    }
+
     /// The buffer the draws step through.
     pub(super) fn buffer(&self) -> &wgpu::Buffer {
         self.buffer

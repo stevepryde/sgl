@@ -15,31 +15,97 @@ full API details.
 
 ## Unreleased
 
-### A material can keep its own light out of dynamic GI
+### The camera and the directional cascades draw from GPU-built lists
 
-- **Scope:** `sgl-3d`: `asset::Material::emits_into_gi` and
-  `SurfaceMaterial::emits_into_gi` (new, `true` by default). A glowing
-  fixture that is also a scene light reached the dynamic GI volume twice:
-  its probes' rays met the fixture and took its light, and the light lit
-  the same surfaces. With the field `false`, a probe ray's hit on the
-  material takes none of the light it gives off itself (its emission, and
-  an unlit material's whole colour); the surface still blocks the ray and,
-  when lit, reflects the light that reaches it. World-space reflections
-  and probe captures still show it glowing.
-- **Migration:** no game-code changes for code that builds these structs
-  with `..Default::default()` or from `Scene::material`, and nothing renders
-  differently until a game sets the field `false`. Code that names every
-  field of `asset::Material` or `SurfaceMaterial` adds `emits_into_gi:
-  true`. To stop a fixture's light counting twice, set it `false` on the
-  materials of glowing geometry that a scene light stands for:
+- **Scope:** `sgl-3d` (#24, roadmap 22). The camera's opaque and masked
+  surfaces and each directional shadow cascade now draw from lists the GPU
+  builds every frame, on native and in the browser alike, in the form of
+  Bevy's meshlet raster: after the deform pass, a cull stage tests each
+  instance's meshes (draw candidates the scene keeps up as it is edited)
+  for the view's population, the camera's level of detail and the view's
+  frustum, then each chosen mesh's 128-triangle sections, and appends
+  those that pass to their set's draw, one `draw_indirect` per set (a
+  material, whether the pose mirrors and whether the instance deforms),
+  whatever the instance count. The CPU no longer walks the instances for
+  those views; blended surfaces, local-light shadow faces and probe
+  captures keep CPU-built, instanced lists, the blended walk now over only
+  the instances whose models hold a blended mesh. Each GPU-built view keeps
+  a cluster list of 20 bytes per section the scene's sets can draw (about
+  2.8 MB a view at #19's scale; `SceneResources::cluster_list`). Changed
+  symbols: `Renderer::geometry_stats`, `Renderer::geometry_stats_for_model`,
+  `Renderer::diagnostic_draws`, `Renderer::diagnostic_view_times`,
+  `GeometryStats`, `Scene::set_mesh_lods`, `PreparedModel::new`,
+  `SceneError` (`TooManyLods` and `TooManySections`, new), `lod` (now a
+  module of `MeshLod` and `MAX_MESH_LODS`, new), `diagnostics::SceneResources`
+  (`draw_candidates`, `draw_sets`, `level_chains` and `cluster_list`, new).
+  Removed with the CPU camera walk: `settings::Diagnostics::instance_visibility`,
+  `settings::InstanceVisibility`, `Renderer::take_instance_visibility` and
+  `diagnostics::InstanceVisibilityReport` (added earlier in this release
+  cycle by #180's measurement, which they served), and the examples'
+  `--visibility`.
+- **Behaviour:**
+  - Equal depth: a GPU-built list draws its sets in their order and each
+    set's sections in the order the cull appended them, so two coplanar
+    surfaces of different draws in the camera or a cascade no longer have
+    a defined winner (the CPU builder drew each instance's meshes in their
+    model's order). The blended list keeps its order.
+  - `Renderer::geometry_stats` takes the device and returns
+    `Option<GeometryStats>`: the most recent completed frame's counts, read
+    back without blocking, a few frames late, and `None` until a frame's
+    readback arrives. The camera's opaque and masked draws count one per
+    section (at most 128 triangles) appended, with their triangles; its
+    blended draws count as before.
+  - `Renderer::geometry_stats_for_model` needs the `diagnostics` feature,
+    takes the device, and returns `Result<Option<(usize, u64)>, _>` of the
+    same frame: its instances' sections and triangles with the blended draws
+    that hold one.
+  - `Renderer::diagnostic_draws` counts a GPU-built view's indirect draws,
+    one per set it draws; `diagnostic_view_times`' build time is preparing
+    the view's cull and encoding it.
+  - Levels of detail: the camera's opaque and masked surfaces choose on the
+    GPU, by the same bound under margins for its `f32` rounding: never
+    coarser than before, and possibly finer at the margin. Blended
+    surfaces still choose on the CPU.
+  - Limits: `Scene::set_mesh_lods` refuses more than `lod::MAX_MESH_LODS`
+    (8) alternatives a mesh with `SceneError::TooManyLods`, and
+    `PreparedModel::new` refuses a mesh past 65,536 sections of 128
+    triangles (8,388,608 triangles) with `SceneError::TooManySections`;
+    both were accepted before. Content past what the device binds for the
+    lists is refused with `SceneError::DeviceLimit`.
+  - The `culling` diagnostics layer makes the camera's GPU cull accept
+    every candidate and section, as it made the CPU walk submit every
+    range.
+- **Migration:**
+  - Read the statistics a few frames late and handle `None`:
 
-  ```rust
-  // After, before Scene::add_asset
-  material.emits_into_gi = false; // a lamp panel with its own rectangle light
-  ```
+    ```rust
+    // Before
+    let stats = renderer.geometry_stats();
+    hud.triangles = stats.total().1;
+    // After
+    if let Some(stats) = renderer.geometry_stats(&device) {
+        hud.triangles = stats.total().1;
+    }
+    ```
 
-  Afterwards, with dynamic GI on, look at surfaces near those fixtures,
-  which take the fixtures' light once.
+    A test that read the frame it just rendered submits it, calls
+    `finish_frame`, waits with `device.poll(wgpu::PollType::wait_indefinitely())`,
+    then calls `geometry_stats(&device)`. Compare the camera's opaque draw
+    counts with sections, not instanced draws.
+  - `geometry_stats_for_model(&scene, model)` becomes
+    `geometry_stats_for_model(&device, &scene, model)` under the
+    `diagnostics` feature, returning an `Option` inside the `Result`.
+  - Give a coplanar overlay drawn as a separate opaque or masked mesh (a
+    decal-like strip, a painted line on a road) a depth offset in its
+    geometry, or make it a `Decal`, where it relied on drawing after the
+    surface beneath it.
+  - Split a mesh past 8,388,608 triangles, and register at most 8
+    alternatives a mesh.
+  - Code using `InstanceVisibility` or `take_instance_visibility` deletes
+    it; `Diagnostics` built field by field drops `instance_visibility`.
+  - Exercise afterwards: the game's camera views and shadows over its
+    routes (geometry, levels of detail and cascades as before), its HUD or
+    tests that read geometry statistics, and coplanar overlays.
 
 ### A model may name any number of lightmap charts across its meshes
 
@@ -134,33 +200,21 @@ full API details.
   reflections or dynamic GI on a ray-tracing device afterwards and checks
   `Renderer::ray_tracing_stats`.
 
-### Diagnostics measure the camera's hidden instances and each view's CPU time
+### Diagnostics measure each view's CPU time
 
 - **Scope:** `sgl-3d` with the `diagnostics` feature (#24's measurement).
-  `settings::Diagnostics` gains `instance_visibility`
-  (`settings::InstanceVisibility`: `Off` by default, `Observe`,
-  `SkipHidden`). An `Observe` frame marks, after the opaque stage, the
-  instances with a pixel in the source identity target and reads them back
-  without blocking; `Renderer::take_instance_visibility` returns a
-  `diagnostics::InstanceVisibilityReport` per observed frame: the camera's
-  opaque and masked instances and triangles drawn, and those drawn without
-  a pixel. A `SkipHidden` frame's camera list leaves out the newest
-  observed frame's hidden instances: an oracle of what culling them would
-  save, whose image is incorrect by design; a game alternates it with
-  `Observe`. `Renderer::diagnostic_view_times` returns
-  `diagnostics::ViewTimes`: the CPU time the last frame's camera and each
-  cascade's draw list took to build and to record. In the browser, build
-  steps' times (`diagnostics::Counters::steps`) now come from
-  `performance.now()`, where they were zero. A frame probed
-  (`Diagnostics::frame_probe`) and abandoned before `finish_frame` no
-  longer yields a report when the next submitted frame probes nothing. The
-  `streaming` and `irradiance_volume` examples print these with `--split`
-  and `--visibility`, and `bun scripts/tasks.ts measure-browser` runs the
-  streaming world in headless Chromium.
-- **Migration:** code that builds `Diagnostics` naming every field adds
-  `instance_visibility: InstanceVisibility::Off`, or takes the rest from
-  `..Default::default()`. Nothing changes without the feature, or with it
-  and the switch off.
+  `Renderer::diagnostic_view_times` returns `diagnostics::ViewTimes`: the
+  CPU time the last frame's camera and each cascade's draw list took to
+  build and to record. In the browser, build steps' times
+  (`diagnostics::Counters::steps`) now come from `performance.now()`, where
+  they were zero. A frame probed (`Diagnostics::frame_probe`) and abandoned
+  before `finish_frame` no longer yields a report when the next submitted
+  frame probes nothing. The `streaming` and `irradiance_volume` examples
+  print these, with `--split` for the opaque stage's two-pass form, and
+  `bun scripts/tasks.ts measure-browser` runs the streaming world in
+  headless Chromium. (The instance-visibility oracle this measurement
+  added is removed again by the GPU-built lists above.)
+- **Migration:** none. Nothing changes without the feature.
 
 ### A failed FSR2 dispatch falls back to TAA instead of panicking
 

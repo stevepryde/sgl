@@ -1,71 +1,37 @@
-//! Draw lists: the one builder that turns the scene and a view into
-//! instanced draws for a population (`view::population`), and the one
-//! executor that issues scene geometry draws.
+//! Draw lists: the two builders that turn the scene and a view into draws,
+//! and the one executor that issues scene geometry draws (the
+//! architecture's "Draw lists").
 //!
-//! The builder finds each shown instance's draws (culled and LOD-selected
-//! per instance), then merges the draws of equal geometry, material,
-//! pipeline variant and mobility that draw the same index ranges into one
-//! instanced draw, as Bevy 9d12036 batches its render phases
+//! The GPU builder (`gpu`) builds the camera's opaque and masked list and
+//! each directional cascade's from the scene's draw candidates, culled on
+//! the GPU (`stages::cull`). The CPU builder here walks the instances for
+//! the rest (`view::population`): the camera's blended surfaces, the
+//! local-light shadow faces and a probe capture's faces and cascades. It
+//! finds each shown instance's draws (culled and LOD-selected per
+//! instance), then merges the draws of equal geometry, material, pipeline
+//! variant and mobility that draw the same index ranges into one instanced
+//! draw, as Bevy 9d12036 batches its render phases
 //! (crates/bevy_render/src/batching/no_gpu_preprocessing.rs, MIT OR
-//! Apache-2.0): opaque, masked, capture and caster populations into bins,
-//! as its binned phases do, and blended ones only where they are adjacent
-//! in their back-to-front order, as its sorted phases do. A batch's
-//! instances each name their object record in the frame's draw instances
+//! Apache-2.0): capture and caster populations into bins, as its binned
+//! phases do, and blended ones only where they are adjacent in their
+//! back-to-front order, as its sorted phases do. A batch's instances each
+//! name their object record in the frame's draw instances
 //! (`DrawInstances`), which the vertex stage steps through; no instance is
 //! renumbered, so source identities and motion are those of the instance.
 use super::View;
 use super::culling::clip_intersects;
-use super::pipelines::{GeometryPass, GeometryPipelines, Variant};
 use super::population::{LightReach, Population, moving_caster_reaches, within};
 use crate::content::identity::{Identity, ModelId};
-use crate::scene::geometry::GeometryRange;
 use crate::scene::instances::Instance;
 use crate::scene::models::{Mesh, Model};
-use crate::shading::vertex::{CASTER_SLOT, DRAW_INSTANCE_SLOT, DrawInstance};
+use crate::shading::vertex::DrawInstance;
 use crate::{Mobility, Scene};
 use batching::{BatchKey, Batcher, InstanceDraw};
+pub(crate) use binder::Binder;
 use glam::{Mat4, Vec3};
 pub(crate) use instances::DrawInstances;
+pub use stats::GeometryStats;
 use std::ops::Range;
-
-/// A camera draw list's (draw calls, submitted triangles) by instance
-/// mobility, after visibility, culling and LOD selection and before GPU
-/// backface culling. An instanced draw holds instances of one mobility and
-/// submits its triangles once per instance.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct GeometryStats {
-    pub static_instances: (usize, u64),
-    pub moving_instances: (usize, u64),
-}
-
-impl GeometryStats {
-    /// These draws and `other`'s.
-    pub(crate) fn with(self, other: &Self) -> Self {
-        let sum = |a: (usize, u64), b: (usize, u64)| (a.0 + b.0, a.1 + b.1);
-        Self {
-            static_instances: sum(self.static_instances, other.static_instances),
-            moving_instances: sum(self.moving_instances, other.moving_instances),
-        }
-    }
-
-    /// Draw calls and triangles of all content.
-    pub fn total(&self) -> (usize, u64) {
-        (
-            self.static_instances.0 + self.moving_instances.0,
-            self.static_instances.1 + self.moving_instances.1,
-        )
-    }
-
-    /// A draw of `range` for `instances` instances of `mobility`.
-    fn add(&mut self, mobility: Mobility, range: &Range<u32>, instances: u64) {
-        let total = match mobility {
-            Mobility::Static => &mut self.static_instances,
-            Mobility::Moving => &mut self.moving_instances,
-        };
-        total.0 += 1;
-        total.1 += u64::from((range.end - range.start) / 3) * instances;
-    }
-}
 
 /// The vertices and indices a batch draws: mesh `mesh` of `model`, by its
 /// own indices or its caster clusters', or as deforming instance
@@ -121,7 +87,7 @@ pub(crate) struct DrawList {
     instances: Vec<DrawInstance>,
     /// Where `instances` start in the draw instances it was built into.
     first: u32,
-    /// The camera population's submitted draws.
+    /// The blended population's submitted draws.
     pub stats: GeometryStats,
     /// Merges the walk's draws, kept between builds for its capacity.
     batcher: Batcher,
@@ -144,13 +110,28 @@ impl DrawList {
         self.instances.clear();
         self.batcher.clear();
         self.stats = GeometryStats::default();
-        for (id, instance) in scene.instances.slots.iter() {
-            if !population.shows(id, instance) {
+        // The blended population walks the instances the scene indexes as
+        // holding a blended mesh; the others walk every instance.
+        let walked: Box<dyn Iterator<Item = (usize, &Instance)>> = match population {
+            Population::Blended { .. } => Box::new(scene.candidates.blended().map(|index| {
+                let instance = scene.instances.slots.at(index);
+                (index, instance.expect("an indexed instance lives"))
+            })),
+            _ => Box::new(
+                scene
+                    .instances
+                    .slots
+                    .iter()
+                    .map(|(id, instance)| (id.index(), instance)),
+            ),
+        };
+        for (index, instance) in walked {
+            if !population.shows(instance) {
                 continue;
             }
             let rank = self.batcher.rank(instance.state.model);
             let model = scene.drawn_model(instance.state.model);
-            let shown = (id.index(), instance, model, rank);
+            let shown = (index, instance, model, rank);
             match population {
                 Population::LocalShadow {
                     position,
@@ -186,10 +167,7 @@ impl DrawList {
         } else {
             self.batcher.bin(merged);
         }
-        if matches!(
-            population,
-            Population::Camera { .. } | Population::Blended { .. }
-        ) {
+        if matches!(population, Population::Blended { .. }) {
             for batch in &self.batches {
                 let instances = u64::from(batch.instances.end - batch.instances.start);
                 for range in &self.ranges[batch.ranges.clone()] {
@@ -200,8 +178,8 @@ impl DrawList {
         self.first = drawn.append(&self.instances);
     }
 
-    /// The camera's, directional cascades' and probe views' draws of one
-    /// instance.
+    /// The camera's blended draws of one instance, and a probe capture's
+    /// faces' and cascades'.
     fn object(
         &mut self,
         scene: &Scene,
@@ -211,17 +189,9 @@ impl DrawList {
         (index, instance, model, rank): (usize, &Instance, &Model, u32),
     ) {
         let pose = instance.state.pose;
-        let camera = matches!(
-            population,
-            Population::Camera { .. } | Population::Blended { .. }
-        );
-        let caster = matches!(population, Population::DirectionalShadow { .. });
-        let (lod, culled) = match population {
-            Population::Camera { lod, cull, .. } | Population::Blended { lod, cull } => {
-                (lod.as_ref(), *cull)
-            }
-            Population::DirectionalShadow { cull, .. } => (None, *cull),
-            _ => (None, false),
+        let (camera, lod, culled) = match population {
+            Population::Blended { lod, cull } => (true, lod.as_ref(), *cull),
+            _ => (false, None, false),
         };
         // The clip volume, built at the instance's first drawn mesh: a
         // population draws few of most instances' meshes, or none.
@@ -244,17 +214,8 @@ impl DrawList {
             let drawn_owner = scene.drawn_model(drawn_model);
             let drawn = &drawn_owner.meshes[drawn_index];
             let start = self.ranges.len();
-            if camera || culled {
-                let frustum = culled.then(|| {
-                    &*frustum.get_or_insert_with(|| {
-                        let frustum = view.frustum(pose);
-                        if caster {
-                            frustum.without_near()
-                        } else {
-                            frustum
-                        }
-                    })
-                });
+            if camera {
+                let frustum = culled.then(|| &*frustum.get_or_insert_with(|| view.frustum(pose)));
                 let push = |range: Range<u32>| self.ranges.push(range);
                 match &instance.deformation {
                     // Its triangles' bounds at bind do not hold it: it is
@@ -281,11 +242,12 @@ impl DrawList {
                     mobility: instance.mobility,
                 },
                 ranges: start..self.ranges.len(),
-                instance: DrawInstance {
-                    object: index as u32,
-                    mesh: drawn_owner.ray.mesh_word(drawn_index),
-                    first_vertex: base_vertex(instance, drawn),
-                },
+                instance: draw_instance(
+                    index,
+                    drawn_owner.ray.mesh_word(drawn_index),
+                    instance,
+                    drawn,
+                ),
                 order: (rank, mesh_index as u32),
             });
         }
@@ -357,11 +319,7 @@ impl DrawList {
                     mobility: instance.mobility,
                 },
                 ranges: start..self.ranges.len(),
-                instance: DrawInstance {
-                    object: index as u32,
-                    mesh: model.ray.mesh_word(mesh_index),
-                    first_vertex: base_vertex(instance, mesh),
-                },
+                instance: draw_instance(index, model.ray.mesh_word(mesh_index), instance, mesh),
                 order: (rank, mesh_index as u32),
             });
         }
@@ -406,11 +364,7 @@ impl DrawList {
                     mobility: instance.mobility,
                 },
                 ranges: start..self.ranges.len(),
-                instance: DrawInstance {
-                    object: index as u32,
-                    mesh: model.ray.mesh_word(mesh_index),
-                    first_vertex: base_vertex(instance, mesh),
-                },
+                instance: draw_instance(index, model.ray.mesh_word(mesh_index), instance, mesh),
                 order: (rank, mesh_index as u32),
             });
         }
@@ -424,10 +378,13 @@ impl DrawList {
     /// Whether it draws a blended receiver of screen-space reflections,
     /// which the `Receivers` pass draws.
     pub fn holds_receivers(&self, scene: &Scene) -> bool {
-        self.batches.iter().any(|batch| receives(scene, batch))
+        self.batches
+            .iter()
+            .any(|batch| execute::receives(scene, batch))
     }
 
     /// The instances `batch` draws, in draw order.
+    #[cfg(any(test, feature = "diagnostics"))]
     fn instances_of(&self, batch: &DrawBatch) -> &[DrawInstance] {
         &self.instances[batch.instances.start as usize..batch.instances.end as usize]
     }
@@ -448,201 +405,47 @@ impl DrawList {
         self.calls().count()
     }
 
-    /// The triangles it submits for each object record it draws, by its
-    /// index, in no particular order.
-    #[cfg(feature = "diagnostics")]
-    pub fn triangles_by_object(&self) -> Vec<(u32, u64)> {
-        let mut by_object = rustc_hash::FxHashMap::default();
-        for batch in &self.batches {
-            let triangles: u64 = self.ranges[batch.ranges.clone()]
-                .iter()
-                .map(|range| u64::from((range.end - range.start) / 3))
-                .sum();
-            for drawn in self.instances_of(batch) {
-                *by_object.entry(drawn.object).or_insert(0) += triangles;
-            }
-        }
-        by_object.into_iter().collect()
-    }
-
-    /// Submitted draws of the instances of `model` in this camera list: the
+    /// Its submitted draws of the instances of each model it draws: the
     /// draws that hold one, and the triangles they submit for them.
-    pub fn stats_for_model(&self, scene: &Scene, model: ModelId) -> (usize, u64) {
-        let mut total = (0, 0);
+    #[cfg(feature = "diagnostics")]
+    pub fn stats_by_model(&self, scene: &Scene) -> rustc_hash::FxHashMap<ModelId, (usize, u64)> {
+        let mut by_model = rustc_hash::FxHashMap::default();
+        let mut held = rustc_hash::FxHashMap::default();
         for batch in &self.batches {
-            let instances = self
-                .instances_of(batch)
-                .iter()
-                .filter(|drawn| {
-                    let owner = scene.instances.slots.at(drawn.object as usize);
-                    owner.is_some_and(|instance| instance.state.model == model)
-                })
-                .count() as u64;
-            if instances == 0 {
-                continue;
+            held.clear();
+            for drawn in self.instances_of(batch) {
+                let owner = scene.instances.slots.at(drawn.object as usize);
+                let model = owner.expect("a drawn instance lives").state.model;
+                *held.entry(model).or_insert(0u64) += 1;
             }
-            for range in &self.ranges[batch.ranges.clone()] {
-                total.0 += 1;
-                total.1 += u64::from((range.end - range.start) / 3) * instances;
-            }
-        }
-        total
-    }
-
-    /// Issues this list's draws in `pass`, whose group 0 the caller bound,
-    /// with the uploaded draw instances it was built into, and returns how
-    /// many it issued: of a blended list, only its receivers' for the
-    /// `Receivers` pass. The only place scene geometry is drawn: it binds
-    /// the scene's group 1 and the draw instances once, and each batch's
-    /// pipeline, material and, for an indexed pass, the geometry buffers
-    /// when they change. An indexed draw draws its mesh's own index range
-    /// at the mesh's first index in its slab, with the mesh's first vertex
-    /// as the base vertex (`scene::geometry`).
-    pub fn draw(
-        &self,
-        scene: &Scene,
-        pipelines: &GeometryPipelines,
-        drawn: &DrawInstances,
-        pass: &mut wgpu::RenderPass<'_>,
-        kind: GeometryPass,
-    ) -> usize {
-        if self.batches.is_empty() {
-            return 0;
-        }
-        let pulled = kind.pulled();
-        pass.set_bind_group(1, &scene.scene_group, &[]);
-        pass.set_vertex_buffer(DRAW_INSTANCE_SLOT, drawn.buffer().slice(..));
-        let mut draws = 0;
-        // This pass's pipeline for each variant, looked up once.
-        let mut by_variant = [None; Variant::COUNT];
-        let mut variant = None;
-        let mut material = None;
-        let mut geometry = None;
-        // The bound positions (a slab, or a deformed instance's in the ray
-        // source) and index slab, and where the batch's geometry starts.
-        let mut positions = None;
-        let mut index_slab = None;
-        let mut first_index = 0;
-        let receivers = kind == GeometryPass::Receivers;
-        for (batch, range) in self.calls() {
-            if receivers && !receives(scene, batch) {
-                continue;
-            }
-            let key = batch.key;
-            if variant != Some(key.variant) {
-                let pipeline = by_variant[key.variant.index()]
-                    .get_or_insert_with(|| pipelines.get(kind, key.variant));
-                pass.set_pipeline(pipeline);
-                variant = Some(key.variant);
-            }
-            if material != Some(key.material) {
-                pass.set_bind_group(2, &scene.drawn_material(key.material).group, &[]);
-                material = Some(key.material);
-            }
-            if !pulled && geometry != Some(key.geometry) {
-                let (vertices, indices) = match key.geometry {
-                    Geometry::Mesh { model, mesh } => {
-                        let mesh = &scene.drawn_model(model).meshes[mesh];
-                        (Positions::Slab(mesh.positions), mesh.indices)
-                    }
-                    Geometry::Clusters { model, mesh } => {
-                        let mesh = &scene.drawn_model(model).meshes[mesh];
-                        let clustered = mesh
-                            .clusters
-                            .as_ref()
-                            .expect("a cluster batch's mesh has clusters");
-                        (Positions::Slab(mesh.positions), clustered.indices)
-                    }
-                    Geometry::Deformed {
-                        instance,
-                        model,
-                        mesh,
-                    } => {
-                        let owner = scene.drawn_model(model);
-                        let word = scene
-                            .instances
-                            .slots
-                            .at(instance)
-                            .and_then(|instance| instance.deformation.as_ref())
-                            .expect("a deformed batch's instance deforms")
-                            .positions(
-                                owner.deformation.as_ref().expect("its model deforms"),
-                                mesh,
-                            );
-                        (Positions::Deformed(word), owner.meshes[mesh].indices)
-                    }
-                };
-                if positions != Some(vertices.binding()) {
-                    let buffer = match vertices {
-                        Positions::Slab(range) => scene.geometry.buffer(range.slab).slice(..),
-                        Positions::Deformed(word) => {
-                            scene.rays.source().slice(u64::from(word) * 4..)
-                        }
-                    };
-                    pass.set_vertex_buffer(CASTER_SLOT, buffer);
-                    positions = Some(vertices.binding());
+            for (&model, &instances) in &held {
+                let total: &mut (usize, u64) = by_model.entry(model).or_default();
+                for range in &self.ranges[batch.ranges.clone()] {
+                    total.0 += 1;
+                    total.1 += u64::from((range.end - range.start) / 3) * instances;
                 }
-                if index_slab != Some(indices.slab) {
-                    let buffer = scene.geometry.buffer(indices.slab);
-                    pass.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    index_slab = Some(indices.slab);
-                }
-                first_index = indices.first;
-                geometry = Some(key.geometry);
             }
-            let instances = self.first + batch.instances.start..self.first + batch.instances.end;
-            if pulled {
-                pass.draw(range.clone(), instances);
-            } else {
-                let indices = first_index + range.start..first_index + range.end;
-                // Every instance of a batch draws its geometry, so the first's
-                // base vertex is all of theirs.
-                let base_vertex = self.instances[batch.instances.start as usize].first_vertex;
-                let base_vertex =
-                    i32::try_from(base_vertex).expect("a slab's vertices fit a base vertex");
-                pass.draw_indexed(indices, base_vertex, instances);
-            }
-            draws += 1;
         }
-        draws
+        by_model
     }
 }
 
-/// The base vertex an indexed draw of `mesh` as `instance` shows it adds to
-/// the mesh's indices: its first vertex in its positions slab, or zero for a
+/// The draw instance of mesh `mesh`, whose record is at word `word`, as
+/// `instance` (at `index`) shows it: every index range of the mesh from
+/// first index zero, with the base vertex an indexed draw of it adds to the
+/// mesh's indices, its first vertex in its positions slab, or zero for a
 /// deforming instance, whose own positions the draw binds.
-fn base_vertex(instance: &Instance, mesh: &Mesh) -> u32 {
-    match instance.deformation {
-        Some(_) => 0,
-        None => mesh.positions.first,
+fn draw_instance(index: usize, word: u32, instance: &Instance, mesh: &Mesh) -> DrawInstance {
+    DrawInstance {
+        object: index as u32,
+        mesh: word,
+        first_index: 0,
+        triangles: mesh.count / 3,
+        first_vertex: match instance.deformation {
+            Some(_) => 0,
+            None => mesh.positions.first,
+        },
     }
-}
-
-/// Where an indexed draw's positions come from: a mesh's range of a
-/// positions slab, or a deforming instance's deformed positions at a word
-/// of the ray source.
-#[derive(Clone, Copy)]
-enum Positions {
-    Slab(GeometryRange),
-    Deformed(u32),
-}
-
-impl Positions {
-    /// What binding them sets: a slab, or a word of the ray source.
-    fn binding(self) -> (bool, u32) {
-        match self {
-            Self::Slab(range) => (true, range.slab),
-            Self::Deformed(word) => (false, word),
-        }
-    }
-}
-
-/// Whether `batch` draws a blended receiver of screen-space reflections.
-fn receives(scene: &Scene, batch: &DrawBatch) -> bool {
-    scene
-        .drawn_material(batch.key.material)
-        .values
-        .receives_screen_space_reflections()
 }
 
 /// The view depth of the bounds centre of the mesh a blended draw draws,
@@ -675,10 +478,15 @@ fn depth_in<'a>(scene: &'a Scene, view: &View) -> impl Fn(&InstanceDraw) -> f32 
 mod batching;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod batching_tests;
+mod binder;
+mod execute;
+pub(crate) mod gpu;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod instance_transform_tests;
 mod instances;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod instancing_tests;
+pub(crate) mod readback;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod sort_tests;
+mod stats;

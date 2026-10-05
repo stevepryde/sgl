@@ -5,13 +5,14 @@
 //! them (`models`).
 use super::SceneError;
 use super::deformation::{self, PreparedDeformation};
-use super::mesh_ranges::MeshRanges;
+use super::mesh_ranges::{INDICES_PER_LEAF, MeshRanges};
 use super::rays::{self, PreparedRayModel, RayMesh};
 use super::shadow_clusters::ClusteredIndices;
 use crate::asset::{self, Vertex};
 use crate::content::identity::MaterialId;
 use crate::content::model::ModelMesh;
 use crate::counters::{BuildStep, step};
+use crate::shading::culling::MAX_MESH_SECTIONS;
 use crate::shading::vertex::CasterVertex;
 use glam::Vec3;
 
@@ -63,16 +64,30 @@ pub(super) fn validate_geometry(vertices: &[Vertex], indices: &[u32]) -> Result<
     Ok(asset::tangent_frames(vertices))
 }
 
+/// Whether a mesh of `triangles` holds at most `MAX_MESH_SECTIONS`
+/// sections, the most a GPU-built list's section cull strides over.
+pub(crate) fn fits_sections(triangles: usize) -> bool {
+    triangles.div_ceil(INDICES_PER_LEAF / 3) <= MAX_MESH_SECTIONS as usize
+}
+
 impl PreparedModel {
     /// `meshes`, an ordered list each drawn with a material of the scene
     /// that will take them, prepared: validated (indices name vertices,
-    /// positions are finite, a deformation fits its vertices), with each
-    /// mesh's culling hierarchy and shadow-caster clusters, the model's BVH,
-    /// and its ray-source words and shadow-caster geometry packed. What
+    /// positions are finite, a deformation fits its vertices, a mesh holds
+    /// at most 65,536 sections of 128 triangles), with each mesh's culling
+    /// hierarchy, whose leaves are its sections, and shadow-caster clusters,
+    /// the model's BVH, and its ray-source words (its section tables among
+    /// them) and shadow-caster geometry packed. What
     /// needs the scene or the device (its materials, the device's limits)
     /// is checked when it is added.
     pub fn new(meshes: Vec<ModelMesh>) -> Result<Self, SceneError> {
         let tangents = step(BuildStep::Validate, || {
+            if !meshes
+                .iter()
+                .all(|mesh| fits_sections(mesh.indices.len() / 3))
+            {
+                return Err(SceneError::TooManySections);
+            }
             let tangents = meshes
                 .iter()
                 .map(|mesh| validate_geometry(&mesh.vertices, &mesh.indices))
@@ -80,11 +95,19 @@ impl PreparedModel {
             deformation::validate(&meshes)?;
             Ok::<_, SceneError>(tangents)
         })?;
+        let ranges: Vec<_> = step(BuildStep::Ranges, || {
+            meshes
+                .iter()
+                .map(|mesh| MeshRanges::new(&mesh.vertices, &mesh.indices))
+                .collect()
+        });
         let ray_meshes: Vec<_> = meshes
             .iter()
-            .map(|mesh| RayMesh {
+            .zip(&ranges)
+            .map(|(mesh, ranges)| RayMesh {
                 vertices: &mesh.vertices,
                 indices: &mesh.indices,
+                ranges,
             })
             .collect();
         let rays = rays::prepare_model(&ray_meshes)?;
@@ -100,7 +123,8 @@ impl PreparedModel {
         let meshes = meshes
             .into_iter()
             .zip(tangents)
-            .map(|(mesh, tangents)| {
+            .zip(ranges)
+            .map(|((mesh, tangents), ranges)| {
                 let positions = step(BuildStep::Pack, || {
                     if deforms {
                         Vec::new()
@@ -117,9 +141,7 @@ impl PreparedModel {
                     material: mesh.material,
                     tangents,
                     positions,
-                    ranges: step(BuildStep::Ranges, || {
-                        MeshRanges::new(&mesh.vertices, &mesh.indices)
-                    }),
+                    ranges,
                     clusters: step(BuildStep::Clusters, || {
                         ClusteredIndices::new(&mesh.vertices, &mesh.indices)
                     }),

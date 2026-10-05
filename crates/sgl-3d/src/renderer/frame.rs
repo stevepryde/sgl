@@ -9,7 +9,8 @@ use crate::view::targets::SharedTargets;
 use crate::{FrameInput, Scene};
 
 /// Encodes one frame of `scene` seen as `input` into `output`: prepare (with
-/// its deformation), dynamic GI, shadows, volumetric fog, opaque, the transparent
+/// its deformation, acceleration structures and the cull stage's early
+/// phase), dynamic GI, shadows, volumetric fog, opaque, the transparent
 /// stage's receivers, reflections with the transparent stage drawn into
 /// their input (while a screen-space method traces it) and onto their
 /// result, heat, exposure, antialiasing, motion blur, then post.
@@ -36,6 +37,8 @@ pub(super) fn render(
         post_fx,
         prepare,
         deform,
+        cull,
+        statistics,
         dynamic_gi,
         shadows,
         fog,
@@ -50,8 +53,6 @@ pub(super) fn render(
         ray_queries,
         #[cfg(feature = "diagnostics")]
         probe,
-        #[cfg(feature = "diagnostics")]
-        visible_instances,
         ..
     } = renderer;
     // The surface's own targets, from a scene's first receiver on.
@@ -116,30 +117,10 @@ pub(super) fn render(
     // The camera history commits the jitter this frame applies.
     history.camera.jitter = jitter.map_or([0.; 2], |jitter| jitter.ndc);
     *rendered = Some((history, scene.id));
-    #[cfg(feature = "diagnostics")]
-    let mut visible_instances = {
-        use crate::settings::InstanceVisibility;
-        let used = effective.instance_visibility != InstanceVisibility::Off;
-        crate::stages::visible_instances::VisibleInstances::for_frame(
-            visible_instances,
-            device,
-            used,
-        )
-    };
-    // The diagnostics oracle's skipped instances: the newest observed
-    // frame's hidden ones.
-    #[cfg(feature = "diagnostics")]
-    let hidden = match (
-        effective.instance_visibility,
-        visible_instances.as_deref_mut(),
-    ) {
-        (crate::settings::InstanceVisibility::SkipHidden, Some(visible)) => {
-            Some(visible.hidden(device))
-        }
-        _ => None,
-    };
-    #[cfg(not(feature = "diagnostics"))]
-    let hidden = None;
+    // The camera's statistics: those completed so far, and none copied yet
+    // this frame.
+    statistics.poll(device);
+    statistics.begin();
     let values = prepare.run(
         device,
         queue,
@@ -151,7 +132,6 @@ pub(super) fn render(
         sizes.render,
         views,
         &bindings.frame,
-        hidden,
     );
     shadows.resize(device, effective.shadow_quality);
     shadows.local.prepare(
@@ -197,9 +177,22 @@ pub(super) fn render(
         history,
     };
     // Prepare's GPU steps, before any pass draws scene geometry or traces:
-    // the deformations, then the acceleration structures over them.
+    // the deformations, then the acceleration structures over them, then
+    // the cull stage's early phase for every GPU-built view.
     deform.encode(&mut ctx);
     prepare.encode_acceleration_structures(&mut ctx);
+    cull.encode_early(&mut ctx);
+    statistics.copy(
+        device,
+        ctx.encoder,
+        &ctx.views.camera.list,
+        ctx.views.blended.stats,
+        #[cfg(feature = "diagnostics")]
+        crate::view::draw_list::readback::ModelStatistics {
+            slots: ctx.scene.candidates.models(),
+            blended: ctx.views.blended.stats_by_model(ctx.scene),
+        },
+    );
     // First after prepare: every pass that shades reads the probes.
     dynamic_gi.encode(&mut ctx);
     // The stage order's: the local-light atlas, then the directional cascades.
@@ -207,18 +200,6 @@ pub(super) fn render(
     shadows.encode_directional(&mut ctx);
     fog.encode(&mut ctx);
     opaque.encode(&mut ctx);
-    #[cfg(feature = "diagnostics")]
-    if effective.instance_visibility == crate::settings::InstanceVisibility::Observe
-        && let Some(visible) = visible_instances
-    {
-        visible.observe(
-            device,
-            ctx.encoder,
-            timing,
-            &targets.source_id,
-            (ctx.scene, &ctx.views.camera.list),
-        );
-    }
     #[cfg(feature = "diagnostics")]
     if let Some(probe) = probe.as_deref() {
         probe.observe(

@@ -120,10 +120,6 @@ pub(crate) struct Effective {
     /// The numerical frame probe observes this frame.
     #[cfg(feature = "diagnostics")]
     pub frame_probe: bool,
-    /// The camera's instance visibility: observed, or the hidden instances
-    /// skipped.
-    #[cfg(feature = "diagnostics")]
-    pub instance_visibility: crate::settings::InstanceVisibility,
     /// Tone mapping writes a target before presentation, for diagnostics.
     pub capture_tone_target: bool,
 }

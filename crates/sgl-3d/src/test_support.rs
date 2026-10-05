@@ -353,7 +353,6 @@ pub(crate) fn cube() -> crate::asset::Asset {
             wrap: [gltf::texture::WrappingMode::Repeat; 2],
             double_sided: true,
             unlit: false,
-            emits_into_gi: true,
             alpha: crate::AlphaMode::Opaque,
         }],
         images: vec![],

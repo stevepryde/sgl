@@ -35,7 +35,7 @@ pub use content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 pub use content::model::{AssetIds, ModelMesh};
 pub use content::transient::FogVolume;
 pub use content::{
-    asset, baked_specular_probe, deformation, environment, geometry, lod, static_lighting,
+    asset, baked_specular_probe, deformation, environment, geometry, static_lighting,
 };
 pub use frame_input::{
     AgxLook, AutoExposure, BloomParameters, Camera, ColorGrading, ColorGradingGlobal,
@@ -50,6 +50,12 @@ pub use scene::{PreparedModel, Scene, SceneError};
 pub use stages::shadows::local::LocalShadowStats;
 pub use view::draw_list::GeometryStats;
 
+/// Caller-authored spatial mesh alternatives, bounded in primary-camera
+/// pixels (`Scene::set_mesh_lods`).
+pub mod lod {
+    pub use crate::content::lod::MeshLod;
+    pub use crate::shading::culling::MAX_MESH_LODS;
+}
 /// Caller-authored additive geometry.
 pub mod effects {
     pub use crate::content::transient::{Glow, GlowKind, GlowProfile};

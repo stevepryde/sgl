@@ -9,6 +9,7 @@
 mod anisotropy_tests;
 pub(crate) mod bind;
 pub(crate) mod clusters;
+pub(crate) mod culling;
 pub(crate) mod decals;
 pub(crate) mod deformation;
 pub(crate) mod dynamic_gi;
@@ -17,6 +18,7 @@ pub(crate) mod gbuffer;
 #[cfg(test)]
 pub(crate) mod layout_tests;
 pub(crate) mod lights;
+pub(crate) mod lod;
 pub(crate) mod material;
 // Wired into the ray source and its readers with #135's prepared models.
 pub(crate) mod packed_vertex;
@@ -110,7 +112,27 @@ pub(crate) static BIND_SHADOW: Module = Module {
 pub(crate) static BIND_SCENE: Module = Module {
     name: "bind_scene",
     source: include_str!("bind_scene.wgsl"),
-    deps: &[&UNIFORMS],
+    deps: &[&UNIFORMS, &DRAW_INSTANCE],
+};
+/// One instance of a scene geometry draw, which geometry passes step
+/// through and the cull stage writes.
+pub(crate) static DRAW_INSTANCE: Module = Module {
+    name: "draw_instance",
+    source: include_str!("draw_instance.wgsl"),
+    deps: &[],
+};
+/// The projected error bound of a mesh's alternative.
+pub(crate) static LOD: Module = Module {
+    name: "lod",
+    source: include_str!("lod.wgsl"),
+    deps: &[],
+};
+/// The GPU draw lists' layouts, caps and clip volume test. Reads
+/// `cull_view`.
+pub(crate) static CULLING: Module = Module {
+    name: "culling",
+    source: include_str!("culling.wgsl"),
+    deps: &[&LOD],
 };
 pub(crate) static BIND_MATERIAL: Module = Module {
     name: "bind_material",

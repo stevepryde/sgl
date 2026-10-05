@@ -1,11 +1,12 @@
-//! Populations: what a view draws of the scene, a filter over its
+//! Populations: what a CPU-built view draws of the scene, a filter over its
 //! instances and materials, and the static casters a local light's range
-//! reaches.
+//! reaches. The camera's opaque and masked surfaces and the frame's
+//! directional cascades are GPU-built (`draw_list::gpu`), and filter the
+//! same way on the GPU (`stages::cull`).
 use super::culling::clip_intersects;
-use super::hidden::HiddenInstances;
 use super::lod::LodSelector;
 use super::pipelines::{Alpha, Cull, Variant};
-use crate::content::identity::{Identity, InstanceId};
+use crate::content::identity::Identity;
 use crate::content::material::SurfaceMaterial;
 use crate::scene::instances::Instance;
 use crate::scene::materials::Material;
@@ -17,20 +18,13 @@ use glam::{Mat4, Vec3};
 /// walked in index order, and over materials by the visibility mask and
 /// alpha mode. Blended materials are the `Blended` population's alone.
 pub(crate) enum Population<'a> {
-    /// The main camera's opaque and masked surfaces: `visible` instances,
-    /// each mesh whose material's groups the mask enables, culled against
-    /// the view per instance unless `cull` is false, raster-culled by
-    /// material side and pose, with the selected LOD; without the instances
-    /// in `hidden`, the diagnostics oracle's (`InstanceVisibility`).
-    Camera {
-        lod: Option<LodSelector>,
-        cull: bool,
-        hidden: Option<&'a HiddenInstances>,
-    },
-    /// The main camera's blended surfaces, as `Camera` selects them, sorted
-    /// back to front by the view depth of each mesh's bounds centre, as
-    /// Bevy 9d12036's `Transparent3d` phase sorts
-    /// (crates/bevy_core_pipeline/src/core_3d/mod.rs).
+    /// The main camera's blended surfaces: `visible` instances among those
+    /// the scene indexes as holding a blended mesh, each blended mesh whose
+    /// material's groups the mask enables, culled against the view per
+    /// instance unless `cull` is false, raster-culled by material side and
+    /// pose, with the selected LOD, sorted back to front by the view depth
+    /// of each mesh's bounds centre, as Bevy 9d12036's `Transparent3d` phase
+    /// sorts (crates/bevy_core_pipeline/src/core_3d/mod.rs).
     Blended {
         lod: Option<LodSelector>,
         cull: bool,
@@ -39,12 +33,10 @@ pub(crate) enum Population<'a> {
     /// meshes whose material's groups the mask enables, whole and
     /// double-sided.
     ProbeFace,
-    /// A directional shadow cascade: `capture_visible` instances, static
-    /// ones and, with `moving`, moving ones, each mesh whose material casts
-    /// directional shadows in the mask's groups, culled per instance against
-    /// the view without its near plane with `cull`, since a caster between
-    /// the light and the cascade casts into it.
-    DirectionalShadow { cull: bool, moving: bool },
+    /// A probe capture's directional shadow cascades: static
+    /// `capture_visible` instances, unculled, each mesh whose material casts
+    /// directional shadows in the mask's groups.
+    CaptureShadow,
     /// A local-light shadow face: `capture_visible` instances of
     /// `casters`, each mesh whose material's groups the mask enables. A
     /// static instance draws its meshes' caster clusters within `range` of
@@ -143,17 +135,13 @@ pub(crate) fn moving_caster_reaches(
 }
 
 impl Population<'_> {
-    /// Whether this population shows `instance`, identified as `id`.
-    pub(super) fn shows(&self, id: InstanceId, instance: &Instance) -> bool {
+    /// Whether this population shows `instance`.
+    pub(super) fn shows(&self, instance: &Instance) -> bool {
         let state = &instance.state;
         match self {
-            Self::Camera { hidden, .. } => {
-                state.visible && !hidden.is_some_and(|hidden| hidden.holds(id))
-            }
             Self::Blended { .. } => state.visible,
-            Self::ProbeFace => state.capture_visible && instance.mobility == Mobility::Static,
-            Self::DirectionalShadow { moving, .. } => {
-                state.capture_visible && (*moving || instance.mobility == Mobility::Static)
+            Self::ProbeFace | Self::CaptureShadow => {
+                state.capture_visible && instance.mobility == Mobility::Static
             }
             Self::LocalShadow { casters, .. } => {
                 state.capture_visible && casters.holds(instance.mobility)
@@ -162,30 +150,20 @@ impl Population<'_> {
     }
 
     /// The faces this population's raster culls of a mesh with `material`,
-    /// `mirrored` when its pose reverses winding: none of a double-sided
-    /// material; of a single-sided one, the side the population never
-    /// draws, swapped under a mirroring pose. Pipelines keep CCW front faces
-    /// because object_front_face and normal mapping account for mirroring.
+    /// `mirrored` when its pose reverses winding (`Cull::of`): of a
+    /// single-sided material, the side the population never draws.
     fn cull(&self, material: &SurfaceMaterial, mirrored: bool) -> Cull {
         let single_sided = match self {
             // Lit shaders do not discard back faces, so camera raster keeps
             // hidden-surface removal. Every shadow kind culls as the camera
             // does, so a single-sided material casts from its front faces:
             // Bevy's shadow pipelines specialize the material's own cull
-            // mode, and its shadow bias assumes those casters.
-            Self::Camera { .. }
-            | Self::Blended { .. }
-            | Self::DirectionalShadow { .. }
-            | Self::LocalShadow { .. } => Cull::Back,
+            // mode, and its shadow bias assumes those casters. The GPU-built
+            // camera and cascades cull so too (`draw_list::gpu`).
+            Self::Blended { .. } | Self::CaptureShadow | Self::LocalShadow { .. } => Cull::Back,
             Self::ProbeFace => Cull::None,
         };
-        if material.double_sided {
-            Cull::None
-        } else if mirrored {
-            single_sided.mirrored()
-        } else {
-            single_sided
-        }
+        Cull::of(single_sided, material.double_sided, mirrored)
     }
 
     /// The pipeline variant of a mesh with `material` at a pose that is
@@ -211,7 +189,7 @@ impl Population<'_> {
             return false;
         }
         match self {
-            Self::DirectionalShadow { .. } => material.casts_directional_shadow(mask.unwrap_or(0)),
+            Self::CaptureShadow => material.casts_directional_shadow(mask.unwrap_or(0)),
             _ => material.enabled(mask),
         }
     }

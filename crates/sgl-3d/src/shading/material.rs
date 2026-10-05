@@ -34,7 +34,6 @@ pub(crate) const MATERIAL_ALPHA_MASK: u32 = 32;
 pub(crate) const MATERIAL_ALPHA_BLEND: u32 = 64;
 pub(crate) const MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS: u32 = 128;
 pub(crate) const MATERIAL_NORMAL_LAYERS: u32 = 256;
-pub(crate) const MATERIAL_EMITS_INTO_GI: u32 = 512;
 
 /// Which maps a material was added with, as `MATERIAL_*_MAP` bits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -146,7 +145,6 @@ impl MaterialUniform {
             flags: bit(values.unlit, MATERIAL_UNLIT)
                 | bit(values.double_sided, MATERIAL_DOUBLE_SIDED)
                 | bit(values.normal_layers.is_some(), MATERIAL_NORMAL_LAYERS)
-                | bit(values.emits_into_gi, MATERIAL_EMITS_INTO_GI)
                 | maps.0
                 | alpha,
             padding: 0,

@@ -34,13 +34,11 @@ fn floor() -> crate::asset::Asset {
     asset
 }
 
-/// An unlit white unit cube that does not emit into global illumination,
-/// which reflections still show glowing.
+/// An unlit white unit cube.
 fn wall() -> crate::asset::Asset {
     let mut asset = test_support::cube();
     asset.materials[0].unlit = true;
     asset.materials[0].base = [1.; 4];
-    asset.materials[0].emits_into_gi = false;
     asset
 }
 
@@ -60,9 +58,7 @@ fn composite(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &Renderer) ->
 // away, so the floor reflects it through world-space rays. Moved 1.1 km
 // away it still spans some of those directions, but every ray to it is longer
 // than 1100 m, so a range of 1000 m reflects nothing there and the floor shows
-// only the black backdrop; an unlimited trace would still reflect it. The
-// wall does not emit into GI, which keeps its light out of the dynamic GI
-// probes alone: a reflection ray's hit that dropped it would show it black.
+// only the black backdrop; an unlimited trace would still reflect it.
 #[test]
 fn world_space_rays_reflect_a_moving_wall_300_metres_away() {
     let Some((device, queue)) = test_support::device() else {

@@ -97,16 +97,6 @@ pub struct SurfaceMaterial {
     pub visibility_group: u32,
     /// Whether the material bypasses lighting.
     pub unlit: bool,
-    /// Whether global illumination gathers the light the material gives off
-    /// itself (its emission, and an unlit material's whole colour): today
-    /// the dynamic GI volume's probe rays. Set it false on a fixture that a
-    /// scene light stands for, such as a lamp's glowing panel beside its
-    /// rectangle light, so its light reaches other surfaces once, through
-    /// the light, as Unity's emission "Global Illumination: None" keeps a
-    /// glowing material's light out of its GI. The surface still glows,
-    /// shows in reflections, blocks the probes' rays and, when lit, bounces
-    /// the light that reaches it.
-    pub emits_into_gi: bool,
     /// Whether both sides of each triangle are drawn.
     pub double_sided: bool,
     pub alpha: AlphaMode,
@@ -142,7 +132,6 @@ impl SurfaceMaterial {
             environment_scale: 1.,
             visibility_group: m.visibility_group,
             unlit: m.unlit,
-            emits_into_gi: m.emits_into_gi,
             double_sided: m.double_sided,
             alpha: m.alpha,
         }

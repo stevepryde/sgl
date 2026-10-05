@@ -425,6 +425,19 @@ impl Scene {
         // The moving instances showing it deform as the new geometry does,
         // from its bind pose.
         let posed = built.and_then(|built| {
+            let sections: Vec<u32> = built
+                .meshes
+                .iter()
+                .map(|mesh| mesh.ranges.section_count())
+                .collect();
+            if !self.candidates_fit(id, &sections) {
+                Models::free(
+                    &mut self.rays,
+                    &mut self.geometry,
+                    (built.ray_range, built.deformation, &built.meshes),
+                );
+                return Err(SceneError::DeviceLimit);
+            }
             let mut posed = Vec::new();
             if let Some(deformation) = &built.deformation {
                 for (instance, _) in self
@@ -484,6 +497,11 @@ impl Scene {
             &mut self.geometry,
             (previous_range, previous_deformation, &previous),
         );
+        // Its candidates name its new meshes; its alternatives are cleared.
+        // Its instances' records say whether they deform now.
+        self.candidates.remove_chains(id);
+        self.place_candidates_of(id);
+        self.instances.write_of_model(queue, id);
         let model = self.models.get(id).unwrap();
         self.instances.pose_casters(model, id);
         // Rays see its instances' new geometry from their entries.
@@ -503,6 +521,7 @@ impl Scene {
             return Err(SceneError::ModelInUse);
         }
         let model = self.models.slots.remove(id).unwrap();
+        self.candidates.remove_chains(id);
         self.models.release(&mut self.materials, id, &model.meshes);
         Models::free(
             &mut self.rays,

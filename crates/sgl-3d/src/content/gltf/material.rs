@@ -133,9 +133,6 @@ pub(super) fn read_material(
         wrap: wrap.unwrap_or([WrappingMode::Repeat; 2]),
         double_sided: material.double_sided(),
         unlit: material.unlit(),
-        // glTF has no such property: whether a light stands for a surface
-        // is the game's.
-        emits_into_gi: true,
         alpha,
     })
 }

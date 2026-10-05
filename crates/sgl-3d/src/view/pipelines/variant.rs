@@ -22,6 +22,22 @@ impl Cull {
         }
     }
 
+    /// The faces a view culls of a mesh whose material is `double_sided`
+    /// at a pose that is `mirrored`, where it culls `single_sided` of a
+    /// single-sided material: none of a double-sided one, and the other
+    /// side under a mirroring pose, which reverses winding. Pipelines keep
+    /// CCW front faces because object_front_face and normal mapping
+    /// account for mirroring.
+    pub fn of(single_sided: Self, double_sided: bool, mirrored: bool) -> Self {
+        if double_sided {
+            Self::None
+        } else if mirrored {
+            single_sided.mirrored()
+        } else {
+            single_sided
+        }
+    }
+
     pub(super) fn face(self) -> Option<wgpu::Face> {
         match self {
             Self::None => None,

@@ -204,6 +204,7 @@ pub(super) fn layout() -> [(&'static str, usize); 9] {
 mod tests {
     use super::{RayMesh, append, rebase};
     use crate::asset::Vertex;
+    use crate::scene::mesh_ranges::MeshRanges;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     // Plausible defects: a rebase that misses a node's escape or a leaf's
@@ -232,9 +233,18 @@ mod tests {
                 (vertices, (0..triangles as u32 * 3).collect())
             })
             .collect();
+        let ranges: Vec<_> = meshes
+            .iter()
+            .map(|(vertices, indices)| MeshRanges::new(vertices, indices))
+            .collect();
         let rays: Vec<_> = meshes
             .iter()
-            .map(|(vertices, indices)| RayMesh { vertices, indices })
+            .zip(&ranges)
+            .map(|((vertices, indices), ranges)| RayMesh {
+                vertices,
+                indices,
+                ranges,
+            })
             .collect();
         for base in [1, 4096, 0x00ab_cdef] {
             let mut in_place = Vec::new();

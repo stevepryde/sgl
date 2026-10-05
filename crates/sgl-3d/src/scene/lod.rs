@@ -3,10 +3,12 @@
 use super::{Scene, SceneError};
 use crate::content::identity::ModelId;
 use crate::lod::MeshLod;
+use crate::shading::culling::MAX_MESH_LODS;
 
 impl Scene {
-    /// Register alternatives ordered from detailed to coarse. Selection chooses
-    /// the last admissible entry, conservatively bounded to half a primary pixel.
+    /// Register at most `lod::MAX_MESH_LODS` alternatives, ordered from
+    /// detailed to coarse. Selection chooses the last admissible entry,
+    /// conservatively bounded to half a primary pixel.
     /// Empty lists restore full detail. No geometry is generated or modified.
     /// Alternatives use the base mesh's transform and material binding, so
     /// lightmapped materials stay lightmapped. Their vertices must share its space.
@@ -30,6 +32,9 @@ impl Scene {
         // A deforming instance's vertices are its model's, deformed.
         if owner.deformation.is_some() {
             return Err(SceneError::DeformingModel);
+        }
+        if alternatives.len() > MAX_MESH_LODS {
+            return Err(SceneError::TooManyLods);
         }
         let material = base.material;
         let previous_untangented = base
@@ -60,6 +65,19 @@ impl Scene {
                 return Err(SceneError::MissingAnisotropyTangents);
             }
         }
+        let sections = |lods: &[MeshLod]| -> Result<u32, SceneError> {
+            let mut most = 0;
+            for lod in lods {
+                let alternative = &self.models.get(lod.model)?.meshes[lod.mesh];
+                most = u32::max(most, alternative.ranges.section_count());
+            }
+            Ok(most)
+        };
+        let base_sections = self.models.get(model)?.meshes[mesh].ranges.section_count();
+        let extra = sections(&alternatives)?.saturating_sub(base_sections);
+        if !self.candidates_fit(model, &[extra]) {
+            return Err(SceneError::DeviceLimit);
+        }
         let previous = std::mem::take(&mut self.models.get_mut(model)?.meshes[mesh].lods);
         self.models
             .clear_lods(&mut self.materials, material, &previous);
@@ -69,6 +87,10 @@ impl Scene {
             self.materials.get_mut(material)?.untangented += u32::from(untangented);
         }
         self.models.get_mut(model)?.meshes[mesh].lods = alternatives;
+        // Its instances' candidates of the mesh name its chain and count
+        // its levels' sections.
+        self.candidates.set_lods(model, mesh, &self.models);
+        self.place_candidates_of(model);
         Ok(())
     }
 }

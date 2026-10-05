@@ -43,9 +43,6 @@ const MATERIAL_ALPHA_BLEND:u32=64u;
 const MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS:u32=128u;
 // It draws its normal map as two scrolling layers (normal_layers).
 const MATERIAL_NORMAL_LAYERS:u32=256u;
-// Global illumination gathers the light it gives off itself, its emission
-// and an unlit material's whole colour (SurfaceMaterial::emits_into_gi).
-const MATERIAL_EMITS_INTO_GI:u32=512u;
 // The tangent-space normal of material `m`'s normal map texel `texel`: its X
 // and Y scaled by normal_scale, as glTF's normalTexture.scale scales them.
 fn material_mapped_normal(m:Material,texel:vec4<f32>)->vec3<f32> {

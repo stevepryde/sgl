@@ -75,12 +75,21 @@ impl Fixture {
                     .start
                 })
                 .collect();
+            let ranges: Vec<_> = asset
+                .meshes
+                .iter()
+                .map(|mesh| {
+                    crate::scene::mesh_ranges::MeshRanges::new(&mesh.vertices, &mesh.indices)
+                })
+                .collect();
             let meshes: Vec<_> = asset
                 .meshes
                 .iter()
-                .map(|mesh| RayMesh {
+                .zip(&ranges)
+                .map(|(mesh, ranges)| RayMesh {
                     vertices: &mesh.vertices,
                     indices: &mesh.indices,
+                    ranges,
                 })
                 .collect();
             let material_words: Vec<_> = asset
@@ -212,7 +221,6 @@ fn material(double_sided: bool) -> Material {
         wrap: [gltf::texture::WrappingMode::Repeat; 2],
         double_sided,
         unlit: false,
-        emits_into_gi: true,
         alpha: crate::AlphaMode::Opaque,
     }
 }

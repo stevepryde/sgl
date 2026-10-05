@@ -1,12 +1,16 @@
 //! Each mesh's retained hierarchy of triangle ranges: consecutive groups of
 //! at most 128 triangles, in the mesh's own primitive order, with their
-//! bounds. Camera culling (`view::culling`) walks it against a view.
+//! bounds. Its leaves are the mesh's sections, which the GPU draw lists
+//! cull from its section table in the ray source (`rays::model`); the
+//! CPU builder's blended population walks the hierarchy against a view
+//! (`view::culling`).
 use crate::asset::Vertex;
+use crate::shading::culling::SECTION_VERTICES;
 use glam::Vec3;
 use std::ops::Range;
 
-/// The indices of a leaf's triangles.
-pub(crate) const INDICES_PER_LEAF: usize = 128 * 3;
+/// The indices of a leaf's triangles: a section's.
+pub(crate) const INDICES_PER_LEAF: usize = SECTION_VERTICES as usize;
 
 pub(crate) struct Node {
     pub bounds: [Vec3; 2],
@@ -22,6 +26,21 @@ pub(crate) struct MeshRanges {
 impl MeshRanges {
     pub fn bounds(&self) -> Option<[Vec3; 2]> {
         self.nodes.first().map(|node| node.bounds)
+    }
+
+    /// Its leaves, the mesh's sections, in its order: each one's bounds and
+    /// indices.
+    pub fn sections(&self) -> impl Iterator<Item = ([Vec3; 2], Range<u32>)> + '_ {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter(|(at, node)| node.end == at + 1)
+            .map(|(_, node)| (node.bounds, node.indices.clone()))
+    }
+
+    /// How many sections it has.
+    pub fn section_count(&self) -> u32 {
+        self.nodes.len().div_ceil(2) as u32
     }
     pub fn new(vertices: &[Vertex], indices: &[u32]) -> Self {
         let mut result = Self { nodes: Vec::new() };
