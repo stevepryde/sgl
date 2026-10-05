@@ -100,6 +100,10 @@ is done (its algorithm and internal parameters) is SGL3D's.
   light, `backdrop` is its panorama or a colour.
 - `reflection_environment`: turns and scales its specular light where no
   baked probe reflects.
+- A material's `emits_into_gi` (`asset::Material`, `SurfaceMaterial`;
+  `true` by default): `false` keeps the light it gives off itself (its
+  emission, an unlit material's whole colour) out of global illumination,
+  for a fixture a scene light stands for. Content, not a setting.
 
 With the `diagnostics` feature, `Settings::diagnostics` holds investigation
 switches (layers off, the frame probe, the tone-target capture, the

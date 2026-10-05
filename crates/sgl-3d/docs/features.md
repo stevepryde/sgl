@@ -193,7 +193,11 @@ SGL3D needs compute.
   by whole spacings scrolls, keeping the probes that stay. Probes inside
   geometry or behind walls light nothing and cost little; those with no
   surface near them light moving instances alone. A converged volume pauses
-  until something it sees changes.
+  until something it sees changes. A glowing fixture that a scene light
+  stands for keeps its own light out of the probes
+  (`asset::Material::emits_into_gi`, `SurfaceMaterial::emits_into_gi`
+  false), so it lights surfaces once, through the light; it still blocks
+  the probes' rays and shows in reflections.
   `Settings::dynamic_gi` sets its rays.
   [Dynamic GI](../README.md#dynamic-diffuse-gi).
 - **Baked specular probes**: parallax-corrected reflection cubes with blended
@@ -291,10 +295,9 @@ Environment and probe specular always apply. On top of them:
 
 ## Not provided
 
-Animation playback (sampling and blending clips is the game's). A dynamic
-GI volume that scrolls with the player (installing a moved volume starts its
-probes afresh), DLSS/MetalFX, rays traced in hardware, and GPU-driven/occlusion
-culling are [planned](../../../specs/sgl3d.md#planned). Current world-space reflections
+Animation playback (sampling and blending clips is the game's).
+DLSS/MetalFX, rays traced in hardware, and GPU-driven/occlusion culling are
+[planned](../../../specs/sgl3d.md#planned). Current world-space reflections
 use software rays; current culling runs on the CPU. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
 not provided.

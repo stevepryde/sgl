@@ -64,6 +64,7 @@ fn material(base: [f32; 4], metallic: f32, roughness: f32) -> Material {
         wrap: [gltf::texture::WrappingMode::Repeat; 2],
         double_sided: true,
         unlit: false,
+        emits_into_gi: true,
         alpha: sgl_3d::AlphaMode::Opaque,
     }
 }

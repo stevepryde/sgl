@@ -15,6 +15,32 @@ full API details.
 
 ## Unreleased
 
+### A material can keep its own light out of dynamic GI
+
+- **Scope:** `sgl-3d`: `asset::Material::emits_into_gi` and
+  `SurfaceMaterial::emits_into_gi` (new, `true` by default). A glowing
+  fixture that is also a scene light reached the dynamic GI volume twice:
+  its probes' rays met the fixture and took its light, and the light lit
+  the same surfaces. With the field `false`, a probe ray's hit on the
+  material takes none of the light it gives off itself (its emission, and
+  an unlit material's whole colour); the surface still blocks the ray and,
+  when lit, reflects the light that reaches it. World-space reflections
+  and probe captures still show it glowing.
+- **Migration:** no game-code changes for code that builds these structs
+  with `..Default::default()` or from `Scene::material`, and nothing renders
+  differently until a game sets the field `false`. Code that names every
+  field of `asset::Material` or `SurfaceMaterial` adds `emits_into_gi:
+  true`. To stop a fixture's light counting twice, set it `false` on the
+  materials of glowing geometry that a scene light stands for:
+
+  ```rust
+  // After, before Scene::add_asset
+  material.emits_into_gi = false; // a lamp panel with its own rectangle light
+  ```
+
+  Afterwards, with dynamic GI on, look at surfaces near those fixtures,
+  which take the fixtures' light once.
+
 ### A model may name any number of lightmap charts across its meshes
 
 - **Scope:** `sgl-3d`. Since scene vertices were packed (below),
