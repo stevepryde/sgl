@@ -45,7 +45,7 @@ pub use frame_input::{
 pub use glam;
 pub use renderer::{Renderer, RendererError};
 pub use scene::irradiance_volume::PreparedIrradianceRegion;
-pub use scene::{Scene, SceneError};
+pub use scene::{PreparedModel, Scene, SceneError};
 pub use stages::shadows::local::LocalShadowStats;
 pub use view::draw_list::GeometryStats;
 

@@ -10,8 +10,11 @@
 //! `cargo run --release -p sgl-3d --example streaming [-- RUN... | --check]`
 //!
 //! The game's side is modelled on a block game's: its mesher finishes up to
-//! 24 chunks a 33 ms tick, nearest the camera first, and the game gives them
-//! to the scene under a budget of 16 chunks and 8 MiB of mesh a frame. Up to
+//! 24 chunks a 33 ms tick, nearest the camera first, meshing and preparing
+//! them (`PreparedModel::new`) on four worker threads, and the game gives
+//! them to the scene under a budget of 16 chunks and 8 MiB of mesh a frame.
+//! Remeshes are meshed and prepared on the workers too, then placed in the
+//! same frame. Up to
 //! 30 block edits a second raise or lower a column's top, each remeshing the
 //! chunk that holds the block it changed and that block's solid neighbours'
 //! chunks across a border; waves remesh 5 to 20 chunks every 16 frames; and
@@ -20,9 +23,11 @@
 //! world-space reflections and shadows. It streams its first window in with
 //! the camera still, then measures `--frames` frames (600) and prints, as
 //! median / p95: the CPU time of each scene operation by kind and size; the
-//! CPU time a frame spends in scene calls, apart from the game's meshing,
-//! and recording; what the library counted (`diagnostics::counters`): bytes
-//! uploaded by call site, buffers created, each step of building a model,
+//! CPU time a frame spends in scene calls, apart from the game's meshing and
+//! preparing, and recording; what the library counted
+//! (`diagnostics::counters`, each thread's own): the workers' steps of
+//! preparing models and, on the thread that edits the scene, bytes uploaded
+//! by call site, buffers created, the steps of placing and writing models,
 //! static-edit boxes and ray-source growths; the scene's buffer sizes
 //! (`Scene::diagnostic_resources`); draws per view
 //! (`Renderer::diagnostic_draws`); the local-light shadow faces and layers
@@ -43,7 +48,7 @@ use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, EnvironmentId, Exposure, FrameInput,
     InstanceId, InstanceState, Light, LightId, LightShape, MaterialId, Mobility, ModelId,
-    ModelMesh, Renderer, Scene,
+    ModelMesh, PreparedModel, Renderer, Scene, SceneError,
     asset::{CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{Antialiasing, ReflectionMethod, ScreenSpaceReflections, Settings},
@@ -377,11 +382,6 @@ fn mesh_chunk(world: &World, chunk: IVec3, seconds: f32) -> (Vec<CpuMesh>, CpuMe
     (blocks, water)
 }
 
-/// The bytes the game gives the scene for `mesh`.
-fn bytes(mesh: &CpuMesh) -> usize {
-    mesh.vertices.len() * std::mem::size_of::<Vertex>() + mesh.indices.len() * 4
-}
-
 /// Each block's colour: grass, dirt, stone and sand.
 const COLOURS: [[u8; 3]; 4] = [
     [96, 160, 64],
@@ -463,12 +463,124 @@ struct Resident {
     quads: usize,
 }
 
-/// A chunk the mesher finished, waiting to be given to the scene: its
-/// terrain's meshes, as the run gives them, and its water's.
+/// A chunk the game's mesher finished, waiting to be given to the scene.
 struct Meshed {
     chunk: IVec3,
-    terrain: Vec<CpuMesh>,
-    water: CpuMesh,
+    prepared: Prepared,
+}
+
+/// What the game's mesher prepares for a chunk: its terrain's model, as the
+/// run gives it, and its water's, each with its triangles (none for an
+/// empty one), or None when it was not asked for; its terrain's quads; and
+/// the bytes of vertices and indices it gives the scene.
+struct Prepared {
+    terrain: Option<(PreparedModel, usize)>,
+    water: Option<(PreparedModel, usize)>,
+    quads: usize,
+    bytes: usize,
+}
+
+/// What the game's mesher reads: the world as it stands, and the run's
+/// materials. Worker threads share it.
+struct Mesher<'a> {
+    world: &'a World,
+    seconds: f32,
+    per_block: bool,
+    terrain: &'a [MaterialId],
+    water: MaterialId,
+}
+
+/// The game's worker threads, which mesh and prepare chunks off the thread
+/// that edits the scene (S3D-1: the game schedules them).
+const WORKERS: usize = 4;
+
+impl Mesher<'_> {
+    /// Meshes chunk `chunk` and prepares the parts `[terrain, water]` asks
+    /// for.
+    fn prepare(&self, chunk: IVec3, [terrain, water]: [bool; 2]) -> Result<Prepared, SceneError> {
+        let (blocks, waves) = mesh_chunk(self.world, chunk, self.seconds);
+        let terrain_meshes = if self.per_block {
+            blocks
+        } else {
+            vec![atlas_mesh(blocks)]
+        };
+        let mut prepared = Prepared {
+            terrain: None,
+            water: None,
+            quads: quads(&terrain_meshes),
+            bytes: 0,
+        };
+        for (meshes, wanted, water) in
+            [(terrain_meshes, terrain, false), (vec![waves], water, true)]
+        {
+            if !wanted {
+                continue;
+            }
+            let meshes: Vec<ModelMesh> = meshes
+                .into_iter()
+                .filter(|mesh| !mesh.indices.is_empty())
+                .map(|mesh| ModelMesh {
+                    material: if water {
+                        self.water
+                    } else {
+                        self.terrain[mesh.material]
+                    },
+                    vertices: mesh.vertices,
+                    indices: mesh.indices,
+                    deformation: Default::default(),
+                })
+                .collect();
+            prepared.bytes += meshes
+                .iter()
+                .map(|mesh| mesh.vertices.len() * size_of::<Vertex>() + mesh.indices.len() * 4)
+                .sum::<usize>();
+            let triangles = meshes.iter().map(|mesh| mesh.indices.len() / 3).sum();
+            let model = Some((PreparedModel::new(meshes)?, triangles));
+            if water {
+                prepared.water = model;
+            } else {
+                prepared.terrain = model;
+            }
+        }
+        Ok(prepared)
+    }
+
+    /// Prepares `jobs` on the game's worker threads and returns them in
+    /// order, with what the library counted on the workers: counters are
+    /// each thread's own. A game keeps a worker pool and takes what it
+    /// prepared on a later frame; the example waits within the frame so
+    /// each frame's figures hold its own preparation.
+    fn prepare_all(
+        &self,
+        jobs: &[(IVec3, [bool; 2])],
+    ) -> Result<(Vec<Prepared>, Vec<Counters>), SceneError> {
+        if jobs.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = jobs
+                .chunks(jobs.len().div_ceil(WORKERS))
+                .map(|part| {
+                    scope.spawn(move || {
+                        let before = sgl_3d::diagnostics::counters();
+                        let prepared: Result<Vec<_>, _> = part
+                            .iter()
+                            .map(|&(chunk, which)| self.prepare(chunk, which))
+                            .collect();
+                        (prepared, sgl_3d::diagnostics::counters().since(&before))
+                    })
+                })
+                .collect();
+            let mut prepared = Vec::with_capacity(jobs.len());
+            let mut counted = Vec::with_capacity(workers.len());
+            for worker in workers {
+                let (part, steps) = worker.join().expect("a worker finishes");
+                prepared.extend(part?);
+                counted.push(steps);
+            }
+            Ok((prepared, counted))
+        })
+    }
 }
 
 /// CPU times of scene operations of one kind, in microseconds, by size, and
@@ -508,7 +620,10 @@ struct Measured {
     gpu_totals: Vec<f64>,
     recording: Vec<f64>,
     scene_calls: Vec<f64>,
-    meshing: Vec<f64>,
+    preparing: Vec<f64>,
+    /// The build steps the workers counted preparing models: calls and
+    /// nanoseconds by step.
+    prepared_steps: BTreeMap<String, (u64, u64)>,
     draws: Vec<sgl_3d::diagnostics::ViewDraws>,
     triangles: Vec<f64>,
     faces: Vec<f64>,
@@ -578,7 +693,7 @@ impl Measured {
         line("resident terrain quads", &self.quads, "");
         line("CPU recording a frame", &self.recording, "ms");
         line("CPU in scene calls a frame", &self.scene_calls, "ms");
-        line("CPU meshing (the game's) a frame", &self.meshing, "ms");
+        line("CPU meshing and preparing a frame", &self.preparing, "ms");
         line("mesh bytes given a frame", &self.given_bytes, "B");
         line("bytes uploaded a frame", &self.uploaded_bytes, "B");
         line("buffers created a frame", &self.buffers_created, "");
@@ -608,6 +723,14 @@ impl Measured {
             counted.ray_source_growths,
             counted.geometry_growths
         );
+        println!("  on the {WORKERS} worker threads that mesh and prepare:");
+        for (step, (calls, nanoseconds)) in &self.prepared_steps {
+            println!(
+                "  {step:<34} {:12.1} us a call ({calls} calls)",
+                *nanoseconds as f64 / *calls as f64 / 1e3,
+            );
+        }
+        println!("  on the thread that edits the scene:");
         for time in &counted.steps {
             println!(
                 "  {:<34} {:12.1} us a call ({} calls)",
@@ -714,8 +837,11 @@ struct Game {
     eye: DVec3,
     seconds: f64,
     edits_owed: f64,
-    /// The frame's time in the game's mesher so far, in milliseconds.
-    meshing_ms: f64,
+    /// The frame's wall time meshing and preparing so far, in milliseconds.
+    preparing_ms: f64,
+    /// The frame's remeshes: each resident chunk and whether its terrain,
+    /// its water or both change.
+    remeshes: Vec<(IVec3, [bool; 2])>,
     measured: Measured,
 }
 
@@ -771,12 +897,12 @@ impl Game {
         let creature = scene.add_model(
             device,
             queue,
-            vec![ModelMesh {
+            PreparedModel::new(vec![ModelMesh {
                 vertices: creature.vertices,
                 indices: creature.indices,
                 material: materials[1],
                 deformation: Default::default(),
-            }],
+            }])?,
         )?;
         let sky = scene.add_environment(device, queue, &sky())?;
         let mut game = Self {
@@ -795,7 +921,8 @@ impl Game {
             eye: DVec3::ZERO,
             seconds: 0.,
             edits_owed: 0.,
-            meshing_ms: 0.,
+            preparing_ms: 0.,
+            remeshes: Vec::new(),
             measured: Measured::default(),
         };
         game.walk(0.5, 0.);
@@ -867,14 +994,29 @@ impl Game {
         chunks
     }
 
-    /// The game's mesher: chunk `chunk`'s terrain meshes, as the run gives
-    /// them, and its water's, timed apart from the scene's calls.
-    fn mesh(&mut self, chunk: IVec3) -> (Vec<CpuMesh>, CpuMesh) {
+    /// Meshes and prepares `jobs` on the game's workers, timed apart from
+    /// the scene's calls.
+    fn prepare(&mut self, jobs: &[(IVec3, [bool; 2])]) -> Result<Vec<Prepared>, SceneError> {
         let started = Instant::now();
-        let (blocks, water) = mesh_chunk(&self.world, chunk, self.seconds as f32);
-        let terrain = self.terrain_meshes(blocks);
-        self.meshing_ms += started.elapsed().as_secs_f64() * 1e3;
-        (terrain, water)
+        let mesher = Mesher {
+            world: &self.world,
+            seconds: self.seconds as f32,
+            per_block: self.run.per_block,
+            terrain: &self.terrain,
+            water: self.water,
+        };
+        let (prepared, counted) = mesher.prepare_all(jobs)?;
+        self.preparing_ms += started.elapsed().as_secs_f64() * 1e3;
+        for steps in counted.iter().flat_map(|counted| &counted.steps) {
+            let total = self
+                .measured
+                .prepared_steps
+                .entry(format!("{:?}", steps.step))
+                .or_default();
+            total.0 += steps.calls;
+            total.1 += steps.nanoseconds;
+        }
+        Ok(prepared)
     }
 
     /// Removes the chunks that left the window, with their lights, and
@@ -910,19 +1052,19 @@ impl Game {
             .collect();
         // The mesher finishes up to 24 chunks a tick.
         self.tick += DT;
+        let mut jobs = Vec::new();
         while self.tick >= TICK {
             self.tick -= TICK;
             for _ in 0..MESHED_PER_TICK {
                 let Some(chunk) = self.requested.pop_front() else {
                     break;
                 };
-                let (terrain, water) = self.mesh(chunk);
-                self.meshed.push_back(Meshed {
-                    chunk,
-                    terrain,
-                    water,
-                });
+                jobs.push((chunk, [true, true]));
             }
+        }
+        let prepared = self.prepare(&jobs)?;
+        for (&(chunk, _), prepared) in jobs.iter().zip(prepared) {
+            self.meshed.push_back(Meshed { chunk, prepared });
         }
         Ok(())
     }
@@ -939,32 +1081,27 @@ impl Game {
             let Some(next) = self.meshed.front() else {
                 break;
             };
-            let size = next.terrain.iter().map(bytes).sum::<usize>() + bytes(&next.water);
+            let size = next.prepared.bytes;
             if given > 0 && given + size > BYTES_PER_FRAME {
                 break;
             }
-            let Meshed {
-                chunk,
-                terrain,
-                water,
-            } = self.meshed.pop_front().unwrap();
+            let Meshed { chunk, prepared } = self.meshed.pop_front().unwrap();
             given += size;
             let mut resident = Resident {
-                quads: quads(&terrain),
+                quads: prepared.quads,
                 ..Resident::default()
             };
             let pose = Mat4::from_translation(self.render((chunk * CHUNK).as_dvec3()));
-            for (meshes, mobility) in [
-                (self.model_meshes(terrain, false), Mobility::Static),
-                (self.model_meshes(vec![water], true), Mobility::Moving),
+            for (model, mobility) in [
+                (prepared.terrain, Mobility::Static),
+                (prepared.water, Mobility::Moving),
             ] {
-                if meshes.is_empty() {
+                let Some((model, triangles)) = model.filter(|(_, triangles)| *triangles > 0) else {
                     continue;
-                }
-                let triangles = meshes.iter().map(|m| m.indices.len() / 3).sum();
+                };
                 let ops = &mut self.measured.operations;
                 let model = ops.time("add_model", bucket(triangles), || {
-                    scene.add_model(device, queue, meshes)
+                    scene.add_model(device, queue, model)
                 })?;
                 let state = InstanceState {
                     pose,
@@ -1039,41 +1176,57 @@ impl Game {
         Ok((lights, any_shadowed))
     }
 
-    /// Meshes resident chunk `chunk` anew and replaces its `terrain`'s and
-    /// its `water`'s geometry; a chunk that had none gains it.
-    fn remesh(
-        &mut self,
-        scene: &mut Scene,
-        chunk: IVec3,
-        [terrain, water]: [bool; 2],
-        gpu: (&wgpu::Device, &wgpu::Queue),
-    ) -> Result<(), Box<dyn Error>> {
+    /// Asks for resident chunk `chunk`'s `[terrain, water]` to be meshed
+    /// anew this frame (`remesh_all`).
+    fn remesh(&mut self, chunk: IVec3, [terrain, water]: [bool; 2]) {
         if !self.resident.contains_key(&chunk) {
-            return Ok(());
+            return;
         }
-        if terrain {
+        // A chunk asked for twice in a frame is meshed and prepared once.
+        let at = match self.remeshes.iter().position(|(asked, _)| *asked == chunk) {
+            Some(at) => at,
+            None => {
+                self.remeshes.push((chunk, [false; 2]));
+                self.remeshes.len() - 1
+            }
+        };
+        let parts = &mut self.remeshes[at].1;
+        if terrain && !parts[0] {
             *self.world.revisions.entry(chunk).or_default() += 1;
         }
-        let (blocks, waves) = self.mesh(chunk);
-        if terrain {
-            self.resident.get_mut(&chunk).unwrap().quads = quads(&blocks);
-            let meshes = self.model_meshes(blocks, false);
-            self.replace(scene, chunk, meshes, Mobility::Static, gpu)?;
-        }
-        if water {
-            let meshes = self.model_meshes(vec![waves], true);
-            self.replace(scene, chunk, meshes, Mobility::Moving, gpu)?;
+        parts[0] |= terrain;
+        parts[1] |= water;
+    }
+
+    /// Meshes and prepares the frame's remeshes on the workers, then gives
+    /// the scene their geometry.
+    fn remesh_all(
+        &mut self,
+        scene: &mut Scene,
+        gpu: (&wgpu::Device, &wgpu::Queue),
+    ) -> Result<(), Box<dyn Error>> {
+        let jobs = std::mem::take(&mut self.remeshes);
+        let prepared = self.prepare(&jobs)?;
+        for (&(chunk, _), prepared) in jobs.iter().zip(prepared) {
+            if let Some(model) = prepared.terrain {
+                self.resident.get_mut(&chunk).unwrap().quads = prepared.quads;
+                self.replace(scene, chunk, model, Mobility::Static, gpu)?;
+            }
+            if let Some(model) = prepared.water {
+                self.replace(scene, chunk, model, Mobility::Moving, gpu)?;
+            }
         }
         Ok(())
     }
 
     /// Gives resident chunk `chunk`'s terrain (static) or water (moving)
-    /// model `meshes`, adding the model and its instance if it had none.
+    /// prepared `model` and its triangles, adding the model and its
+    /// instance if it had none and `model` has triangles.
     fn replace(
         &mut self,
         scene: &mut Scene,
         chunk: IVec3,
-        meshes: Vec<ModelMesh>,
+        (prepared, triangles): (PreparedModel, usize),
         mobility: Mobility,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
     ) -> Result<(), Box<dyn Error>> {
@@ -1084,18 +1237,17 @@ impl Game {
             Mobility::Moving => &mut resident.water,
         };
         let ops = &mut self.measured.operations;
-        let triangles: usize = meshes.iter().map(|m| m.indices.len() / 3).sum();
         match held {
             Some((model, _)) => {
                 let model = *model;
                 ops.time("set_model", bucket(triangles), || {
-                    scene.set_model(device, queue, model, meshes)
+                    scene.set_model(device, queue, model, prepared)
                 })?;
                 self.measured.replaced += 1;
             }
             None if triangles > 0 => {
                 let model = ops.time("add_model", bucket(triangles), || {
-                    scene.add_model(device, queue, meshes)
+                    scene.add_model(device, queue, prepared)
                 })?;
                 let state = InstanceState {
                     pose,
@@ -1118,13 +1270,7 @@ impl Game {
     /// neighbours across a chunk border: the block below, and the columns
     /// beside it that reach as high. The block above is air. The water over
     /// the column changes when the top came out of or went under the sea.
-    fn edit_column(
-        &mut self,
-        scene: &mut Scene,
-        (x, z): (i32, i32),
-        change: i32,
-        gpu: (&wgpu::Device, &wgpu::Queue),
-    ) -> Result<(), Box<dyn Error>> {
+    fn edit_column(&mut self, (x, z): (i32, i32), change: i32) {
         let before = self.world.height(x, z);
         *self.world.edits.entry((x, z)).or_default() += change;
         let after = before + change;
@@ -1139,13 +1285,12 @@ impl Game {
             }
         }
         for chunk in chunks {
-            self.remesh(scene, chunk, [true, false], gpu)?;
+            self.remesh(chunk, [true, false]);
         }
         if (before < SEA) != (after < SEA) {
             let sea = IVec3::new(chunk.x, (SEA - 1).div_euclid(CHUNK), chunk.z);
-            self.remesh(scene, sea, [false, true], gpu)?;
+            self.remesh(sea, [false, true]);
         }
-        Ok(())
     }
 
     /// Measured frame `frame`'s edits: block edits, a wave of remeshes
@@ -1177,13 +1322,13 @@ impl Game {
                     base.z + ((roll >> 28) % CHUNK as u64) as i32,
                 );
                 let change = if roll >> 40 & 1 == 0 { 1 } else { -1 };
-                self.edit_column(scene, column, change, gpu)?;
+                self.edit_column(column, change);
             }
             if frame.is_multiple_of(WAVE_FRAMES) {
                 let count = 5 + hash(frame as u64) as usize % 16;
                 for index in 0..count.min(near.len()) {
                     let chunk = near[(hash(frame as u64 + index as u64) as usize) % near.len()];
-                    self.remesh(scene, chunk, [true, false], gpu)?;
+                    self.remesh(chunk, [true, false]);
                 }
             }
             if frame == self.run.frames / 2 {
@@ -1203,7 +1348,7 @@ impl Game {
                     for dz in -1..=1 {
                         for dx in -1..=1 {
                             let about = chunk + IVec3::new(dx, dy, dz);
-                            self.remesh(scene, about, [true, false], gpu)?;
+                            self.remesh(about, [true, false]);
                         }
                     }
                 }
@@ -1217,10 +1362,10 @@ impl Game {
                 .map(|(chunk, _)| *chunk)
                 .collect();
             for chunk in water {
-                self.remesh(scene, chunk, [false, true], gpu)?;
+                self.remesh(chunk, [false, true]);
             }
         }
-        Ok(())
+        self.remesh_all(scene, gpu)
     }
 
     /// Moves the render origin with the eye.
@@ -1304,37 +1449,6 @@ impl Game {
 /// The quads of `meshes`.
 fn quads(meshes: &[CpuMesh]) -> usize {
     meshes.iter().map(|mesh| mesh.indices.len() / 6).sum()
-}
-
-impl Game {
-    /// The terrain meshes the run gives the scene for a chunk's `blocks`:
-    /// one atlas mesh, or each block's own.
-    fn terrain_meshes(&self, blocks: Vec<CpuMesh>) -> Vec<CpuMesh> {
-        if self.run.per_block {
-            blocks
-        } else {
-            vec![atlas_mesh(blocks)]
-        }
-    }
-
-    /// `meshes` with their materials, the water's or the terrain's by
-    /// index, without the empty ones.
-    fn model_meshes(&self, meshes: Vec<CpuMesh>, water: bool) -> Vec<ModelMesh> {
-        meshes
-            .into_iter()
-            .filter(|mesh| !mesh.indices.is_empty())
-            .map(|mesh| ModelMesh {
-                material: if water {
-                    self.water
-                } else {
-                    self.terrain[mesh.material]
-                },
-                vertices: mesh.vertices,
-                indices: mesh.indices,
-                deformation: Default::default(),
-            })
-            .collect()
-    }
 }
 
 fn settings() -> Settings {
@@ -1433,7 +1547,7 @@ fn render(
         }
         game.creatures(&mut scene, queue)?;
         let scene_calls = game.measured.operations.take_frame();
-        let meshing = std::mem::take(&mut game.meshing_ms);
+        let preparing = std::mem::take(&mut game.preparing_ms);
         let mut input = game.input();
         input.camera_cut = index == 0;
         if let Some(timing) = &mut timing {
@@ -1471,7 +1585,7 @@ fn render(
             let m = &mut game.measured;
             m.recording.push(recording);
             m.scene_calls.push(scene_calls);
-            m.meshing.push(meshing);
+            m.preparing.push(preparing);
             m.given_bytes.push(given as f64);
             m.uploaded_bytes.push(frame.uploaded_bytes() as f64);
             m.buffers_created.push(frame.buffers_created as f64);
@@ -1628,8 +1742,9 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue)) -> Result<(), Box<dyn Error>> {
         .map(|(chunk, _)| *chunk)
         .collect();
     for chunk in shadowed {
-        game.remesh(&mut scene, chunk, [true, false], gpu)?;
+        game.remesh(chunk, [true, false]);
     }
+    game.remesh_all(&mut scene, gpu)?;
     frame(&mut renderer, &mut scene, &game, false);
     frame(&mut renderer, &mut scene, &game, true);
     let edited = renderer.local_shadow_stats();

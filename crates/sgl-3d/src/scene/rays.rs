@@ -55,11 +55,93 @@ impl RayModel {
     }
 }
 
-/// One mesh of a model being added: its geometry and its material's record.
+/// One mesh of a model being prepared: its geometry.
 pub(crate) struct RayMesh<'a> {
     pub vertices: &'a [Vertex],
     pub indices: &'a [u32],
-    pub material_word: u32,
+}
+
+/// A model's words prepared without the source (`prepare_model`): its mesh
+/// records, vertices, indices and BVH, addressed from zero, with its mesh
+/// records' material words still to name.
+pub(crate) struct PreparedRayModel {
+    words: Vec<u32>,
+    meshes: usize,
+    /// Where its BVH starts in `words`, and its root, zero when it has no
+    /// triangles.
+    bvh: usize,
+    root: u32,
+    /// Each mesh's first vertex record.
+    vertices: Vec<u32>,
+}
+
+/// `meshes`' words, addressed from zero, which `SceneRays::place_model`
+/// places. The geometry is validated: indices name vertices and positions
+/// are finite.
+pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> PreparedRayModel {
+    let triangles: usize = meshes.iter().map(|mesh| mesh.indices.len() / 3).sum();
+    let len = meshes.len() * MESH_WORDS
+        + meshes
+            .iter()
+            .map(|mesh| mesh.vertices.len() * words::<Vertex>() + mesh.indices.len())
+            .sum::<usize>()
+        + bvh::model_words(triangles);
+    let mut words = vec![0u32; meshes.len() * MESH_WORDS];
+    words.reserve(len - words.len());
+    let mut first_vertex = 0;
+    let mut vertex_words = Vec::with_capacity(meshes.len());
+    step(BuildStep::Pack, || {
+        for (index, mesh) in meshes.iter().enumerate() {
+            let vertices = words.len() as u32;
+            vertex_words.push(vertices);
+            words.extend_from_slice(bytemuck::cast_slice(mesh.vertices));
+            let indices = words.len() as u32;
+            words.extend_from_slice(mesh.indices);
+            let at = index * MESH_WORDS;
+            words[at..at + MESH_WORDS].copy_from_slice(bytemuck::cast_slice(&[MeshRecord {
+                vertices,
+                indices,
+                material_word: 0,
+                first_vertex,
+            }]));
+            first_vertex += mesh.vertices.len() as u32;
+        }
+    });
+    let bvh = words.len();
+    let root = step(BuildStep::RayBvh, || bvh::append(meshes, &mut words, 0));
+    debug_assert_eq!(words.len(), len, "a model fills its words");
+    PreparedRayModel {
+        words,
+        meshes: meshes.len(),
+        bvh,
+        root,
+        vertices: vertex_words,
+    }
+}
+
+/// Names each mesh's material record in the mesh records `records` holds,
+/// one material word per record, and adds `base` to the words where each
+/// record's vertices and indices start.
+fn rebase_records(records: &mut [u32], base: u32, materials: &[u32]) {
+    let records: &mut [MeshRecord] = bytemuck::cast_slice_mut(records);
+    assert_eq!(
+        records.len(),
+        materials.len(),
+        "a material word for each mesh"
+    );
+    for (record, &material_word) in records.iter_mut().zip(materials) {
+        record.vertices += base;
+        record.indices += base;
+        record.material_word = material_word;
+    }
+}
+
+impl PreparedRayModel {
+    /// Its words, which the scene writes where `SceneRays::place_model`
+    /// placed them.
+    pub fn words(&self) -> &[u32] {
+        &self.words
+    }
 }
 
 /// The source's first words. Word 0 starts no record, so a zero image or BVH
@@ -288,52 +370,40 @@ impl SceneRays {
         self.write(queue, word + field as u32, &[u32::from(baked)]);
     }
 
-    /// A model's mesh records, vertices, indices and BVH, in one range. The
-    /// BVH's words are absolute, so it is built where it is stored.
-    pub fn add_model(
+    /// Places prepared `model`: allocates its range, names each mesh's
+    /// material record (`materials`, in mesh order) and adds the range's
+    /// start to every word that addresses the source, so its words are
+    /// ready to write at the range's start.
+    pub fn place_model(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        meshes: &[RayMesh<'_>],
+        model: &mut PreparedRayModel,
+        materials: &[u32],
     ) -> Result<RayModelWords, SceneError> {
-        let triangles: usize = meshes.iter().map(|mesh| mesh.indices.len() / 3).sum();
-        let len = meshes.len() * MESH_WORDS
-            + meshes
-                .iter()
-                .map(|mesh| mesh.vertices.len() * words::<Vertex>() + mesh.indices.len())
-                .sum::<usize>()
-            + bvh::model_words(triangles);
-        let range = self.allocate(device, queue, len)?;
+        let range = self.allocate(device, queue, model.words.len())?;
         let base = range.start;
-        let mut block = vec![0u32; meshes.len() * MESH_WORDS];
-        block.reserve(len - block.len());
-        let mut first_vertex = 0;
-        let mut vertex_words = Vec::with_capacity(meshes.len());
-        for (index, mesh) in meshes.iter().enumerate() {
-            let vertices = base + block.len() as u32;
-            vertex_words.push(vertices);
-            block.extend_from_slice(bytemuck::cast_slice(mesh.vertices));
-            let indices = base + block.len() as u32;
-            block.extend_from_slice(mesh.indices);
-            let at = index * MESH_WORDS;
-            block[at..at + MESH_WORDS].copy_from_slice(bytemuck::cast_slice(&[MeshRecord {
-                vertices,
-                indices,
-                material_word: mesh.material_word,
-                first_vertex,
-            }]));
-            first_vertex += mesh.vertices.len() as u32;
-        }
-        let bvh_root = step(BuildStep::RayBvh, || bvh::append(meshes, &mut block, base));
-        debug_assert_eq!(block.len(), len, "a model fills its range");
-        step(BuildStep::RayWrite, || self.write(queue, base, &block));
+        rebase_records(
+            &mut model.words[..model.meshes * MESH_WORDS],
+            base,
+            materials,
+        );
+        bvh::rebase(&mut model.words[model.bvh..], base);
         Ok(RayModelWords {
             ray: RayModel {
                 mesh_word: base,
-                bvh_root,
+                bvh_root: if model.root == 0 {
+                    0
+                } else {
+                    model.root + base
+                },
             },
             range,
-            vertices: vertex_words,
+            vertices: model
+                .vertices
+                .iter()
+                .map(|&vertices| vertices + base)
+                .collect(),
         })
     }
 
@@ -387,3 +457,58 @@ mod secondary_normal_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod instance_tests;
+
+#[cfg(test)]
+mod record_tests {
+    use super::{MESH_WORDS, MeshRecord, RayMesh, prepare_model, rebase_records};
+    use crate::asset::Vertex;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Plausible defects: a rebased mesh record that names another mesh's
+    // vertices or indices, or the block's first words, so a ray or pulled
+    // pass reads the wrong geometry (as when the base is added to the
+    // wrong field, or a record is skipped); or a material word given to
+    // the wrong mesh. The oracle is the test's own meshes: each rebased
+    // record, less the base, must start at its mesh's own vertices and
+    // indices in the prepared words, and carry its mesh's material word.
+    // CPU only.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn rebased_records_address_their_own_geometry() {
+        // Each mesh's vertices and indices differ from every other's from
+        // their first word.
+        let mesh = |count: u32, salt: f32| -> (Vec<Vertex>, Vec<u32>) {
+            let vertices = (0..count)
+                .map(|index| Vertex {
+                    position: [salt, index as f32, -salt],
+                    ..bytemuck::Zeroable::zeroed()
+                })
+                .collect();
+            let indices = (0..3 * salt as u32)
+                .map(|index| count - 1 - index % count)
+                .collect();
+            (vertices, indices)
+        };
+        let meshes = [mesh(3, 1.), mesh(5, 2.), mesh(4, 3.)];
+        let rays: Vec<_> = meshes
+            .iter()
+            .map(|(vertices, indices)| RayMesh { vertices, indices })
+            .collect();
+        let mut prepared = prepare_model(&rays);
+        let (base, materials) = (70_000, [11, 22, 33]);
+        rebase_records(
+            &mut prepared.words[..meshes.len() * MESH_WORDS],
+            base,
+            &materials,
+        );
+        let records: &[MeshRecord] =
+            bytemuck::cast_slice(&prepared.words[..meshes.len() * MESH_WORDS]);
+        for (((vertices, indices), record), material) in meshes.iter().zip(records).zip(materials) {
+            let at = (record.vertices - base) as usize;
+            let own: &[u32] = bytemuck::cast_slice(vertices);
+            assert_eq!(&prepared.words[at..at + own.len()], own);
+            let at = (record.indices - base) as usize;
+            assert_eq!(&prepared.words[at..at + indices.len()], &indices[..]);
+            assert_eq!(record.material_word, material);
+        }
+    }
+}

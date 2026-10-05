@@ -1062,8 +1062,9 @@ with its material's [scrolling normal layers](#scrolling-normal-layers):
 they move with the frame's time and upload nothing, so the receiver can be a
 static instance, and many water chunks cost nothing per frame beyond their
 pixels. A mesh replaced every frame belongs on a moving instance, so that
-the replacement is no static edit; `Scene::set_model` rebuilds that model's
-buffers, ray source and BVH each call. A deforming model animated with
+the replacement is no static edit; each replacement prepares the model
+again (`PreparedModel::new`, its BVH included) and `Scene::set_model`
+places and copies it. A deforming model animated with
 `set_instance_deformation` is not seen by rays. The renderer allocates the
 surface's targets (a depth and an RGBA16F layer, 12 bytes per render pixel)
 in the first frame whose scene holds a receiver and keeps them from then
@@ -1071,7 +1072,8 @@ on; a renderer that has never rendered a receiver pays nothing. The [water examp
 receives reflections, its waves from its material's normal layers; it prints
 the GPU time of the passes receivers touch before and after its lake is
 marked, and with its waves instead replaced every frame by `set_model`
-(`set-model`), with what that uploads:
+(`set-model`), with what that uploads and the CPU time preparing and
+replacing it take:
 
 ```sh
 cargo run --release -p sgl-3d --example water
@@ -1097,10 +1099,10 @@ stay in the game (S3D-1).
   node's transform is baked into its vertices and morph displacements, as
   before. Primitives batch by material, skin and morphed node.
 - **Procedural.** `ModelMesh::deformation` takes the same data; a model with
-  any deforming mesh deforms. `add_model` refuses influences or targets that
-  do not match their vertices, negative or non-finite weights, weights
-  summing to zero, indices above 65535 and more than 256 morph targets on a
-  mesh, as Bevy refuses (`SceneError::InvalidDeformation`).
+  any deforming mesh deforms. `PreparedModel::new` refuses influences or
+  targets that do not match their vertices, negative or non-finite weights,
+  weights summing to zero, indices above 65535 and more than 256 morph
+  targets on a mesh, as Bevy refuses (`SceneError::InvalidDeformation`).
   Weights are normalized.
 - **Posing.** A deforming model's instances are `Mobility::Moving`. Each
   frame, `Scene::set_instance_deformation(&queue, instance, &joints,
@@ -1175,8 +1177,24 @@ authored look and per-frame state in a `FrameInput`.
    - `add_asset` adds a loaded asset whole and returns its materials' and
      model's identities (`AssetIds`); its own indices do not outlive the call.
      `add_materials` (texture indices index the images passed with them) and
-     `add_model` (`ModelMesh`es naming materials already added) add procedural
-     content.
+     `add_model` add procedural content. A model's meshes (`ModelMesh`es
+     naming materials already added) reach `add_model` and `set_model`
+     prepared: `PreparedModel::new(meshes)` validates them, builds their
+     culling hierarchies, shadow-caster clusters and ray-query BVH and packs
+     their GPU data without a device or the scene, and the value is `Send`,
+     so a game prepares on its own worker threads (SGL3D starts none) and the
+     thread that edits the scene only places and copies it. `add_model` and
+     `set_model` check what needs the scene (materials, an anisotropic
+     material's tangents, a deforming model's static instances) and the
+     device's limits; a failed operation places nothing, and the game
+     prepares again for another try:
+
+     ```rust
+     // On a worker thread.
+     let prepared = PreparedModel::new(vec![ModelMesh { vertices, indices, material, deformation: Default::default() }])?;
+     // On the thread that edits the scene.
+     let model = scene.add_model(&device, &queue, prepared)?;
+     ```
    - `add_instance(&device, &queue, InstanceState { model, pose, visible,
      capture_visible }, mobility)` places a model; `InstanceState::new(model)`
      is at the origin and shown in every view. `Mobility::Static`
@@ -1282,8 +1300,10 @@ every chunk or every 256 m. A block edit remeshes the chunk holding the
 block it changed and the chunks of that block's solid neighbours across a
 border, since a solid block owns its faces toward air. Once the first window
 has streamed in, it prints each scene operation's CPU time by size, a frame's
-time in scene calls apart from the game's meshing, its recording time,
-uploads by call site, buffers created, model build steps, the scene's buffer
+time in scene calls apart from the game's meshing and preparing (on four
+worker threads, whose build steps it prints apart from the placing and
+writing on the thread that edits the scene), its recording time,
+uploads by call site, buffers created, the scene's buffer
 sizes, draws per view, the local-light shadow faces each frame redraws and
 GPU time per pass, and writes each run's last frame to
 `target/streaming-example/`. `--check` moves the origin under a still camera
@@ -1853,8 +1873,9 @@ the tone-target capture), `Renderer::diagnostic_target`,
 `diagnostics::source_id`, the value the source-identity target holds for an
 instance's pixels, `diagnostics::crystal_roughness_threshold`, where
 Crystal stops tracing, `diagnostics::counters` (what `sgl-3d` itself counted on
-the thread: uploads by file and line, buffers created, model and
-instance BVH build steps, ray-source and geometry-slab growths and static-edit boxes; subtract
+the thread: uploads by file and line, buffers created, the steps of
+preparing and placing models and of building instance BVHs, ray-source and
+geometry-slab growths and static-edit boxes; subtract
 two with `Counters::since`, and compare versions by totals since lines move),
 `Scene::diagnostic_resources` (the scene's buffer sizes) and
 `Renderer::diagnostic_draws` (the last frame's camera, blended and cascade

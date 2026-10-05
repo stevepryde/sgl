@@ -40,7 +40,7 @@ use sgl_3d::glam::{IVec3, Mat4, Vec3, camera};
 use sgl_3d::{
     Backdrop, Camera, DirectionalLight, DirectionalShadow, EnvironmentId, Exposure, FrameInput,
     HemisphereLight, InstanceId, InstanceState, IrradianceCell, IrradianceVolume, MaterialId,
-    Mobility, ModelId, ModelMesh, PreparedIrradianceRegion, Renderer, Scene,
+    Mobility, ModelId, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene,
     asset::{CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{Antialiasing, ReflectionMethod, SceneResolution, ScreenSpaceReflections, Settings},
@@ -686,7 +686,7 @@ impl Game {
                     if meshes.is_empty() {
                         continue;
                     }
-                    let id = scene.add_model(device, queue, meshes)?;
+                    let id = scene.add_model(device, queue, PreparedModel::new(meshes)?)?;
                     scene.add_instance(
                         device,
                         queue,
@@ -702,10 +702,10 @@ impl Game {
         let creature = scene.add_model(
             device,
             queue,
-            vec![model(
+            PreparedModel::new(vec![model(
                 cuboid(Vec3::Y * 0.75, Vec3::new(0.6, 1.5, 0.6)),
                 materials[0],
-            )],
+            )])?,
         )?;
         let creatures = (0..CREATURES)
             .map(|_| {
@@ -721,10 +721,10 @@ impl Game {
         let torch_model = scene.add_model(
             device,
             queue,
-            vec![model(
+            PreparedModel::new(vec![model(
                 cuboid(Vec3::new(0.85, 0.5, 0.5), Vec3::new(0.16, 0.6, 0.16)),
                 materials[1],
-            )],
+            )])?,
         )?;
         let sky = scene.add_environment(device, queue, &sky())?;
         Ok(Self {

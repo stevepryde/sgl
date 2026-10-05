@@ -1,6 +1,8 @@
 //! PBRT 4e EqualCounts primitive subdivision, flattened depth first with escape
 //! links instead of a traversal stack. Each primitive occurs in exactly one
-//! leaf. Node and leaf words are absolute addresses in the source. One builder
+//! leaf. Node and leaf words are absolute addresses in the source: a model's
+//! BVH is built from zero when it is prepared and rebased where it is
+//! placed (`rebase`). One builder
 //! and node record serve both levels of the source: a model's BVH, whose leaf
 //! records name its triangles, and the instance BVHs (`instances`), whose leaf
 //! records name instance entries.
@@ -47,6 +49,26 @@ pub(super) fn words<T>(primitives: usize) -> usize {
         return 0;
     }
     nodes(primitives) * NODE_WORDS + primitives * std::mem::size_of::<T>() / 4
+}
+
+/// Adds `by` to every word of the BVH `words` holds, as `append` laid it
+/// out from its first word, that addresses the source: each node's escape
+/// and a leaf's first primitive. Nodes follow each other depth first, a
+/// leaf's primitive records after it, so one pass over the words visits
+/// every node once.
+pub(super) fn rebase(words: &mut [u32], by: u32) {
+    let leaf_words = std::mem::size_of::<LeafPrimitive>() / 4;
+    let mut at = 0;
+    while at < words.len() {
+        let node: &mut Node =
+            bytemuck::from_bytes_mut(bytemuck::cast_slice_mut(&mut words[at..at + NODE_WORDS]));
+        node.escape += by;
+        let count = node.count as usize;
+        if count > 0 {
+            node.first += by;
+        }
+        at += NODE_WORDS + count * leaf_words;
+    }
 }
 
 /// The words `append` writes for a model of `triangles`.
@@ -176,4 +198,52 @@ pub(super) fn layout() -> [(&'static str, usize); 9] {
             offset_of!(LeafPrimitive, triangle),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RayMesh, append, rebase};
+    use crate::asset::Vertex;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Plausible defects: a rebase that misses a node's escape or a leaf's
+    // first primitive, adds to an interior node's unused first word, or
+    // steps over a leaf's records by the wrong stride and so rebases
+    // primitive records as nodes. The oracle is the builder itself, given
+    // the final base where the scene used to build models: the words built
+    // from zero and rebased must be the words built at the base. CPU only:
+    // no rebased words reach a GPU traversal here.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn rebased_words_match_words_built_in_place() {
+        let mut seed = 0x1357_9bdf_u32;
+        let mut random = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / (1 << 24) as f32
+        };
+        let meshes: Vec<(Vec<Vertex>, Vec<u32>)> = [1usize, 3, 7, 61, 200]
+            .into_iter()
+            .map(|triangles| {
+                let vertices = (0..triangles * 3)
+                    .map(|_| Vertex {
+                        position: [random() * 16., random() * 16., random() * 16.],
+                        ..bytemuck::Zeroable::zeroed()
+                    })
+                    .collect();
+                (vertices, (0..triangles as u32 * 3).collect())
+            })
+            .collect();
+        let rays: Vec<_> = meshes
+            .iter()
+            .map(|(vertices, indices)| RayMesh { vertices, indices })
+            .collect();
+        for base in [1, 4096, 0x00ab_cdef] {
+            let mut in_place = Vec::new();
+            let root = append(&rays, &mut in_place, base);
+            let mut rebased = Vec::new();
+            let from_zero = append(&rays, &mut rebased, 0);
+            rebase(&mut rebased, base);
+            assert_eq!(from_zero + base, root);
+            assert_eq!(rebased, in_place, "base {base}");
+        }
+    }
 }

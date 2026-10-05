@@ -4,11 +4,11 @@
 //! geometry and frames that trace nothing or are abandoned.
 use super::portable_tests::oracle_except;
 use super::tests::{Pose, asset, triangle};
-use crate::Scene;
 use crate::asset::Asset;
 use crate::content::identity::{Identity, InstanceId, ModelId};
 use crate::content::instance::{InstanceState, Mobility};
 use crate::content::model::ModelMesh;
+use crate::{PreparedModel, Scene};
 use glam::{Mat4, Quat, Vec3};
 use wgpu::util::DeviceExt;
 
@@ -507,7 +507,12 @@ fn two_level_traversal_matches_brute_force_over_edited_instances() {
         })
         .collect();
     scene
-        .set_model(&device, &queue, models[1].model, meshes)
+        .set_model(
+            &device,
+            &queue,
+            models[1].model,
+            PreparedModel::new(meshes).unwrap(),
+        )
         .unwrap();
     assets[1] = assets[3].clone();
     let mut kept = Vec::new();
@@ -600,12 +605,13 @@ fn reused_identities_never_hit_earlier_geometry() {
             &device,
             &queue,
             far.model,
-            vec![ModelMesh {
+            PreparedModel::new(vec![ModelMesh {
                 vertices: replaced.vertices,
                 indices: replaced.indices,
                 material: materials[0],
                 deformation: Default::default(),
-            }],
+            }])
+            .unwrap(),
         )
         .unwrap();
     let other = model(&mut scene, 0., -3.);

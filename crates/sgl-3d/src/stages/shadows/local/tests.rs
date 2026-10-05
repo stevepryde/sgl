@@ -10,7 +10,7 @@ use crate::settings::{Antialiasing, Settings, ShadowQuality};
 use crate::shading;
 use crate::{
     AssetIds, Camera, FrameInput, InstanceId, InstanceState, Light, LightId, LightShape,
-    LocalShadowStats, Mobility, ModelMesh, Scene, test_support,
+    LocalShadowStats, Mobility, ModelMesh, PreparedModel, Scene, test_support,
 };
 use glam::{Mat4, Vec3};
 
@@ -486,12 +486,13 @@ fn point_light_shadows_follow_current_opaque_blockers() {
             &device,
             &queue,
             moving.model,
-            vec![ModelMesh {
+            PreparedModel::new(vec![ModelMesh {
                 vertices: shifted.vertices,
                 indices: shifted.indices,
                 material: moving.materials[0],
                 deformation: Default::default(),
-            }],
+            }])
+            .unwrap(),
         )
         .unwrap();
     harness.frame(&mut scene, &input);

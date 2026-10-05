@@ -22,6 +22,7 @@ pub(crate) mod mesh_ranges;
 pub(crate) mod models;
 pub(crate) mod objects;
 pub(crate) mod origin;
+pub(crate) mod prepared;
 pub(crate) mod probe_grid;
 pub(crate) mod probes;
 mod ranges;
@@ -34,6 +35,7 @@ mod textures;
 pub(crate) mod transient;
 
 pub use error::SceneError;
+pub use prepared::PreparedModel;
 
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::content::instance::Mobility;

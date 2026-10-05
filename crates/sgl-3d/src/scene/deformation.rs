@@ -35,6 +35,8 @@ struct DeformedMesh {
     /// influences when unskinned.
     vertices: u32,
     influences: u32,
+    /// Whether it is skinned, so its influence word names its influences.
+    skinned: bool,
     morph_targets: u32,
     morph_target_count: u32,
     /// Its bounds at bind, unmorphed.
@@ -69,6 +71,7 @@ impl DeformedMesh {
             vertex_count: vertices.len() as u32,
             vertices: 0,
             influences: 0,
+            skinned: !deformation.influences.is_empty(),
             morph_targets: 0,
             morph_target_count: deformation.morph_targets.len() as u32,
             bounds: positions().fold(EMPTY, |b, p| union(b, [p, p])),
@@ -134,11 +137,8 @@ pub(crate) struct ModelDeformation {
 /// Whether `meshes`' deformations fit their vertices: as many influences as
 /// vertices or none, each with finite nonnegative weights of positive sum,
 /// and each morph target a finite displacement of every vertex, with
-/// indices of at most `MAX_INDEX` and at most `MAX_MORPH_TARGETS` of them;
-/// and whether the deform stage can dispatch
-/// each deforming mesh's vertices on `device`.
-pub(crate) fn validate(device: &wgpu::Device, meshes: &[ModelMesh]) -> Result<(), SceneError> {
-    let dispatchable = u64::from(device.limits().max_compute_workgroups_per_dimension) * 64;
+/// indices of at most `MAX_INDEX` and at most `MAX_MORPH_TARGETS` of them.
+pub(crate) fn validate(meshes: &[ModelMesh]) -> Result<(), SceneError> {
     for mesh in meshes {
         let deformation = &mesh.deformation;
         let count = mesh.vertices.len();
@@ -166,26 +166,27 @@ pub(crate) fn validate(device: &wgpu::Device, meshes: &[ModelMesh]) -> Result<()
         {
             return Err(SceneError::InvalidDeformation);
         }
-        if !deformation.is_rigid() && count as u64 > dispatchable {
-            return Err(SceneError::DeviceLimit);
-        }
     }
     Ok(())
 }
 
-impl ModelDeformation {
-    /// The deformation of validated `meshes`, whose vertex records start at
-    /// `vertices`, with its influences and morph targets written to the
-    /// scene source; none when every mesh is rigid.
-    pub fn add(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        rays: &mut SceneRays,
-        meshes: &[ModelMesh],
-        vertices: &[u32],
-    ) -> Result<Option<Self>, SceneError> {
+/// A deforming model's influences and morph targets prepared without the
+/// source (`PreparedDeformation::new`): its words, and each mesh's record
+/// with the words where its influences and morph targets start counted from
+/// zero.
+pub(crate) struct PreparedDeformation {
+    joints: u32,
+    morph_weights: u32,
+    vertices: u32,
+    meshes: Vec<DeformedMesh>,
+    words: Vec<u32>,
+}
+
+impl PreparedDeformation {
+    /// The deformation of validated `meshes`; none when every mesh is rigid.
+    pub fn new(meshes: &[ModelMesh]) -> Option<Self> {
         if meshes.iter().all(|mesh| mesh.deformation.is_rigid()) {
-            return Ok(None);
+            return None;
         }
         let influence_words = words::<InfluenceRecord>() as usize;
         let delta_words = words::<MorphDeltaRecord>() as usize;
@@ -199,17 +200,15 @@ impl ModelDeformation {
                     + targets * count * delta_words
             })
             .sum();
-        let range = rays.allocate(device, queue, len)?;
         let mut block: Vec<u32> = Vec::with_capacity(len);
         let mut deformed = Vec::with_capacity(meshes.len());
         let (mut joints, mut morph_weights, mut first_vertex) = (0, 0, 0);
-        for (mesh, &vertex_word) in meshes.iter().zip(vertices) {
+        for mesh in meshes {
             let deformation = &mesh.deformation;
             let mut packed = DeformedMesh::new(&mesh.vertices, deformation);
             packed.first_vertex = first_vertex;
-            packed.vertices = vertex_word;
             if !deformation.influences.is_empty() {
-                packed.influences = range.start + block.len() as u32;
+                packed.influences = block.len() as u32;
                 for influence in &deformation.influences {
                     let sum: f32 = influence.weights.iter().sum();
                     let record = InfluenceRecord {
@@ -220,7 +219,7 @@ impl ModelDeformation {
                     joints = influence.joints.iter().fold(joints, |n, &j| n.max(j + 1));
                 }
             }
-            packed.morph_targets = range.start + block.len() as u32;
+            packed.morph_targets = block.len() as u32;
             block.extend(deformation.morph_targets.iter().map(|target| target.weight));
             for target in &deformation.morph_targets {
                 morph_weights = morph_weights.max(target.weight + 1);
@@ -236,15 +235,62 @@ impl ModelDeformation {
             first_vertex += packed.vertex_count;
             deformed.push(packed);
         }
-        debug_assert_eq!(block.len(), len, "a deformation fills its range");
-        rays.write(queue, range.start, &block);
-        Ok(Some(Self {
+        debug_assert_eq!(block.len(), len, "a deformation fills its words");
+        Some(Self {
             joints,
             morph_weights,
             vertices: first_vertex,
             meshes: deformed,
-            range,
-        }))
+            words: block,
+        })
+    }
+
+    /// Whether the deform stage can dispatch each deforming mesh's vertices
+    /// on `device`.
+    pub fn dispatchable(&self, device: &wgpu::Device) -> bool {
+        let limit = u64::from(device.limits().max_compute_workgroups_per_dimension) * 64;
+        self.meshes
+            .iter()
+            .all(|mesh| u64::from(mesh.vertex_count) <= limit)
+    }
+}
+
+impl ModelDeformation {
+    /// Places `prepared`, whose meshes' vertex records start at `vertices`:
+    /// allocates its range and adds its start to the words where each
+    /// mesh's influences and morph targets start. Returns it and the words
+    /// to write at its range's start.
+    pub fn place(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        rays: &mut SceneRays,
+        prepared: PreparedDeformation,
+        vertices: &[u32],
+    ) -> Result<(Self, Vec<u32>), SceneError> {
+        let range = rays.allocate(device, queue, prepared.words.len())?;
+        let mut meshes = prepared.meshes;
+        for (mesh, &vertex_word) in meshes.iter_mut().zip(vertices) {
+            mesh.vertices = vertex_word;
+            if mesh.skinned {
+                mesh.influences += range.start;
+            }
+            mesh.morph_targets += range.start;
+        }
+        Ok((
+            Self {
+                joints: prepared.joints,
+                morph_weights: prepared.morph_weights,
+                vertices: prepared.vertices,
+                meshes,
+                range,
+            },
+            prepared.words,
+        ))
+    }
+
+    /// Where its words start.
+    pub fn word(&self) -> u32 {
+        self.range.start
     }
 
     /// Frees its words.
