@@ -194,7 +194,7 @@ fn trace(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene, origin: 
 "#,
         origin.x, origin.y, origin.z
     );
-    ray_dispatch(device, queue, scene, &body, true)
+    ray_dispatch(device, queue, scene, &body, 1, true)[0]
 }
 
 /// Whether the segment from `origin` down -Z to `length` metres meets none
@@ -217,27 +217,31 @@ fn segment_visible(
 "#,
         origin.x, origin.y, origin.z
     );
-    ray_dispatch(device, queue, scene, &body, false)[0] == 1.
+    ray_dispatch(device, queue, scene, &body, 1, false)[0][0] == 1.
 }
 
-/// `body`'s first result, run over the scene's ray buffers after updating
+/// `body`'s `count` results, run over the scene's ray buffers after updating
 /// them for a traced frame, and over its object records when it `decodes`
-/// a hit.
+/// a hit or pulls a vertex as the raster passes do (`scene_source_vertex`).
 fn ray_dispatch(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene: &mut Scene,
     body: &str,
+    count: usize,
     decodes: bool,
-) -> [f32; 4] {
+) -> Vec<[f32; 4]> {
     scene.update_rays(device, queue, 0);
     let scene = &*scene;
     dispatch(
         device,
         queue,
-        crate::shading::compose(&[&crate::shading::SCENE_RAYS_PORTABLE]),
+        crate::shading::compose(&[
+            &crate::shading::SCENE_RAYS_PORTABLE,
+            &crate::shading::VERTEX_PULL,
+        ]),
         body,
-        1,
+        count,
         |pipeline| {
             // Group 1 as the scene binds it, with an auto layout, which
             // holds the object records only where the body reads them.
@@ -265,7 +269,7 @@ fn ray_dispatch(
                 entries: &entries,
             }))
         },
-    )[0]
+    )
 }
 
 // Plausible defects: rays hit a masked material's cut-out texels (no
@@ -319,6 +323,125 @@ fn rays_pass_through_cut_out_texels_and_blended_surfaces() {
             distance > 3.,
             "the any-hit visibility of 3 m from x = {x}"
         );
+    }
+}
+
+// Plausible defects: a model whose meshes together name more than 65,536
+// lightmap charts refused, as when a model kept one chart table (#182); or
+// a mesh's lookups reading another mesh's table or charts past the 16-bit
+// index aliased, as when its record names the wrong table, or a table
+// start the model's placement did not rebase, so the raster passes'
+// pulled vertices or a ray hit take another surface's chart. The oracle is
+// the content given: each triangle of each mesh names its own chart bounds,
+// which every corner pulled at the mesh word the draw lists name, and a
+// ray's hit on the triangle, must decode exactly, since bounds are stored
+// as given. Hyperdrive's courses name over 100,000 charts across meshes,
+// one a triangle.
+#[test]
+fn a_model_names_more_lightmap_charts_across_its_meshes_than_one_mesh_may() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    // Two meshes of a chart a triangle: 66,000 charts, the second mesh's
+    // from its triangle 32,536 past the 65,536 one table can index.
+    const TRIANGLES: u32 = 33_000;
+    let cell = |mesh: u32, triangle: u32| {
+        let at = mesh * TRIANGLES + triangle;
+        Vec3::new((at % 512) as f32, (at / 512) as f32, 0.)
+    };
+    let bounds = |mesh: u32, triangle: u32| {
+        let at = (mesh * TRIANGLES + triangle) as f32;
+        [at / 131_072., 0.25, (at + 1.) / 131_072., 0.75]
+    };
+    let mut asset = test_support::cube();
+    asset.meshes = (0..2)
+        .map(|mesh| asset::CpuMesh {
+            vertices: (0..TRIANGLES)
+                .flat_map(|triangle| {
+                    [[0.1, 0.1], [0.9, 0.1], [0.5, 0.9]].map(|[x, y]| asset::Vertex {
+                        position: (cell(mesh, triangle) + Vec3::new(x, y, 0.)).to_array(),
+                        normal: [0., 0., 1.],
+                        lightmap_bounds: bounds(mesh, triangle),
+                        ..bytemuck::Zeroable::zeroed()
+                    })
+                })
+                .collect(),
+            indices: (0..3 * TRIANGLES).collect(),
+            material: 0,
+            deformation: Default::default(),
+        })
+        .collect();
+    let mut scene = Scene::new(&device, &queue);
+    let (ids, instance) = test_support::add_static(&device, &queue, &mut scene, asset);
+    let model = scene.drawn_model(ids.model).ray;
+    // Each mesh's first, middle and last triangles, and the second mesh's
+    // whose charts are the model's 65,536th and 65,537th (and the first
+    // mesh's alike).
+    let samples: Vec<(u32, u32)> = (0..2)
+        .flat_map(|mesh| {
+            [
+                0,
+                1,
+                TRIANGLES / 2,
+                65_535 - TRIANGLES,
+                65_536 - TRIANGLES,
+                TRIANGLES - 1,
+            ]
+            .map(|triangle| (mesh, triangle))
+        })
+        .collect();
+    let calls: String = samples
+        .iter()
+        .enumerate()
+        .map(|(index, &(mesh, triangle))| {
+            let origin = cell(mesh, triangle) + Vec3::new(0.5, 0.4, 1.);
+            format!(
+                " sample({}u,{}u,{triangle}u,vec3<f32>({},{},{}));\n",
+                index * 5,
+                model.mesh_word(mesh as usize),
+                origin.x,
+                origin.y,
+                origin.z
+            )
+        })
+        .collect();
+    // Per sample: the hit's chart bounds; whether it hit, its mesh and its
+    // triangle; and each corner's chart bounds as raster pulls it.
+    let body = format!(
+        r#"
+@group(0) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+fn sample(at:u32,mesh:u32,triangle:u32,origin:vec3<f32>) {{
+ let direction=vec3(0.,0.,-1.);
+ let hit=scene_decode_hit(scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,2.)),SCENE_SIDES_AS_RASTER),origin,direction);
+ result[at]=hit.lightmap_bounds;
+ result[at+1u]=vec4(select(0.,1.,hit.hit),f32(hit.mesh_id),f32(hit.primitive_id),0.);
+ for(var corner=0u;corner<3u;corner++) {{
+  result[at+2u+corner]=scene_source_vertex({object}u,mesh,triangle*3u+corner).lightmap_bounds;
+ }}
+}}
+@compute @workgroup_size(1) fn observe() {{
+{calls}}}
+"#,
+        object = instance.index()
+    );
+    let results = ray_dispatch(&device, &queue, &mut scene, &body, samples.len() * 5, true);
+    for (&(mesh, triangle), result) in samples.iter().zip(results.chunks_exact(5)) {
+        let expected = bounds(mesh, triangle);
+        assert_eq!(
+            result[1],
+            [1., mesh as f32, triangle as f32, 0.],
+            "the ray at mesh {mesh}'s triangle {triangle} hit elsewhere"
+        );
+        assert_eq!(
+            result[0], expected,
+            "a ray hit's chart on mesh {mesh}'s triangle {triangle}"
+        );
+        for (corner, pulled) in result[2..].iter().enumerate() {
+            assert_eq!(
+                *pulled, expected,
+                "raster's chart at corner {corner} of mesh {mesh}'s triangle {triangle}"
+            );
+        }
     }
 }
 

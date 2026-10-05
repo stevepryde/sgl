@@ -15,6 +15,24 @@ full API details.
 
 ## Unreleased
 
+### A model may name any number of lightmap charts across its meshes
+
+- **Scope:** `sgl-3d`. Since scene vertices were packed (below),
+  `PreparedModel::new`, and `Scene::add_asset` through it, refused a model
+  whose vertices together named more than 65,536 distinct
+  `Vertex::lightmap_bounds` with `SceneError::TooManyLightmapCharts`, which
+  0.1.0 accepted: a packed vertex's 16-bit chart index counted across its
+  model. Each mesh now keeps its own chart table and the index counts within
+  it, so only a mesh naming more than 65,536 is refused, and the error,
+  now `TooManyLightmapCharts { mesh }`, names that mesh's index among the
+  model's meshes (an asset's mesh index). A chart that several meshes name
+  is stored once in each. Vertices stay 32 bytes; lighting is unchanged.
+- **Migration:** no game-code changes, except that a `match` arm naming the
+  variant becomes `SceneError::TooManyLightmapCharts { .. }`. Content the
+  error refused loads again, so a model split to stay under the limit can
+  be added whole. Afterwards, exercise the lightmapped and atlas-lit
+  surfaces of the game's largest models.
+
 ### Scene acceleration structures for hardware ray tracing
 
 - **Scope:** `sgl-3d`: `graphics_device::ray_tracing_features` (new),
@@ -240,7 +258,7 @@ full API details.
   0..1 as glTF's `COLOR_0` is (a colour above 1 or below 0 was used as
   given). Lightmap UVs are 16-bit (within 1/131,070); a negative one is
   unassigned, as before. Lightmap chart bounds are stored once per distinct
-  chart in a table per model. On the streaming example's walk, the ray
+  chart in a table per mesh. On the streaming example's walk, the ray
   source holds 235 bytes a resident quad instead of 464 (25.8 MB instead of
   50.8 MB of content, a 41 MB buffer instead of 82 MB), and the scene thread
   uploads 232 KB of model words a frame instead of 449 KB. Preparing a model
@@ -248,10 +266,12 @@ full API details.
 - **Refusals:** `PreparedModel::new` (and `add_asset` through it) refuses a
   vertex normal that is zero or not finite with
   `SceneError::NonFiniteGeometry`, as a non-finite position is refused, and
-  a model whose vertices name more than 65,536 distinct `lightmap_bounds`
-  with the new `SceneError::TooManyLightmapCharts`.
+  a mesh whose vertices name more than 65,536 distinct `lightmap_bounds`
+  with the new `SceneError::TooManyLightmapCharts { mesh }`, which names the
+  mesh's index; a model's meshes together may name any number.
 - **Migration:** no game-code changes for content within those limits; a
-  `match` over every `SceneError` needs an arm for `TooManyLightmapCharts`.
+  `match` over every `SceneError` needs an arm for
+  `TooManyLightmapCharts { .. }`.
   Give every vertex a nonzero normal. Scale colour through the material's
   base colour rather than vertex colours outside 0..1, and split a mesh whose
   UVs span so many repeats that 1/131,070 of their extent is visible (a mesh

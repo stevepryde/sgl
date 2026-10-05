@@ -47,7 +47,7 @@ pub struct Vertex {
     pub lightmap_uv: [f32; 2],
     /// Normalized atlas min/max for a conservatively cropped triangle chart.
     /// Supply the same bounds on all triangle vertices; outside is black.
-    /// A model's vertices may name at most 65,536 distinct bounds.
+    /// A mesh's vertices may name at most 65,536 distinct bounds.
     pub lightmap_bounds: [f32; 4],
     /// Unit tangent XYZ and bitangent handedness W after node transforms.
     /// Zero means absent for legacy isotropic geometry; anisotropy requires a valid frame.

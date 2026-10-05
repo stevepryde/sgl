@@ -1,7 +1,7 @@
 // The scene source's layout: a header, then the ranges content owns
 // (scene::rays): each image's level 0, each material's record, each model's
-// consecutive mesh records, its chart table, each mesh's packed vertices
-// (packed_vertex.wgsl) and indices, and its BVH (`scene_rays_portable.wgsl`), a deforming model's influences and morph
+// consecutive mesh records, each mesh's chart table, each mesh's packed
+// vertices (packed_vertex.wgsl) and indices, and its BVH (`scene_rays_portable.wgsl`), a deforming model's influences and morph
 // targets, a deforming instance's joint matrices, morph weights and
 // deformed vertices (deformation.wgsl), and the static and moving instance
 // BVHs (scene::rays::instances). Every address is a word of the source.
@@ -22,7 +22,7 @@ const SCENE_IMAGE_RGBA8:u32=0u;
 const SCENE_IMAGE_BC7:u32=1u;
 // A mesh record's: its packed vertices', indices' and material record's
 // words; its first vertex among its model's, where a deforming instance's
-// vertices of it start (deformation.wgsl); the word where its model's chart
+// vertices of it start (deformation.wgsl); the word where its own chart
 // table starts; and the rectangle its packed UVs span (min in xy, extent in
 // zw).
 const SCENE_MESH_WORDS:u32=9u;
