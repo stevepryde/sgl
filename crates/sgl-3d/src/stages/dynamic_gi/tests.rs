@@ -14,6 +14,7 @@
 //! last submitted frame left them, and restart for another placement or
 //! scene or after a frame that did not run them; and the scene refuses a
 //! placement that is not a lattice or does not fit the device.
+use super::buffers::BUDGET_PROBES;
 use crate::renderer::Renderer;
 use crate::settings::{self, DynamicGiQuality, Settings};
 use crate::shading::gbuffer;
@@ -1986,7 +1987,7 @@ fn shares(
 /// The probes that start a frame at High at least: half the frame's
 /// budget's worth at the most rays.
 fn least_started() -> usize {
-    (super::BUDGET_PROBES * MOST_RAYS / 2 / STARTING_RAYS) as usize
+    (BUDGET_PROBES * MOST_RAYS / 2 / STARTING_RAYS) as usize
 }
 
 /// The frames that start every probe of `LARGE` at High, with a margin.
@@ -2021,7 +2022,7 @@ fn a_restart_starts_the_probes_nearest_the_camera_first() {
     // never more than all of it, and none farther than one that waits.
     let rays = renderer.test_dynamic_gi().test_probe_rays(&device, &queue);
     let traced = renderer.test_dynamic_gi().test_traced_rays(&device, &queue);
-    assert!(traced <= super::BUDGET_PROBES * MOST_RAYS, "{traced} rays");
+    assert!(traced <= BUDGET_PROBES * MOST_RAYS, "{traced} rays");
     let distance = |index: usize| {
         let [x, y] = [LARGE.probes[0] as usize, LARGE.probes[1] as usize];
         let lattice = Vec3::new(
