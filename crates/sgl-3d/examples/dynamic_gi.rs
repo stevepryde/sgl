@@ -15,9 +15,11 @@
 //! of the frames, where the device has timestamp queries; `--still` parks
 //! the boxes, so the room's light settles and the volume pauses once it has,
 //! and `--edit N` moves the lamp at frame N, which starts it again.
-//! `--counters` observes the stage (`Diagnostics::dynamic_gi`) and prints
-//! each frame's probes, rays and BVH node visits, which are deterministic;
-//! time it in a separate run, as observing adds work to the frame.
+//! `--counters` observes the stage (`Diagnostics::dynamic_gi`), waiting for
+//! each frame so none is skipped, and prints each frame's probes, the
+//! stride its periods took, its rays and BVH node visits, which are
+//! deterministic; time it in a separate run, as observing adds work to the
+//! frame.
 //! `--scroll` walks the camera along the room with a volume half as long
 //! that follows it, installed each frame with its origin moved by whole
 //! spacings, so it scrolls: the probes that stay keep their light, and those
@@ -468,7 +470,10 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         renderer.finish_frame(&mut scene);
         if let Some(timing) = &mut timing {
             timing.submitted(&queue);
-            // Each frame's timings in turn, for the ramp's first frames.
+        }
+        // Each frame's timings in turn, for the ramp's first frames, and
+        // each frame's counts, none skipped.
+        if timing.is_some() || options.counters {
             device.poll(wgpu::PollType::wait_indefinitely())?;
         }
         counts.extend(renderer.take_dynamic_gi_reports(&device));
@@ -554,12 +559,17 @@ fn report(times: &[FrameTime]) {
 }
 
 /// Prints each observed frame's probes, rays and BVH node visits, then
-/// their medians over the second half of the frames.
+/// their medians over the second half of the frames and how many of those
+/// frames took each stride.
 fn report_counts(reports: &[sgl_3d::diagnostics::DynamicGiReport]) {
     let per_ray = |visits: u64, rays: u32| visits as f64 / f64::from(rays.max(1));
-    for (frame, r) in reports.iter().enumerate() {
+    for r in reports {
+        if r.skipped > 0 {
+            println!("{} observed frames skipped", r.skipped);
+        }
         println!(
-            "frame {frame}: probes {}/{} traced ({} unblended), blended asked {} rays, stride {}, by rays {:?}; rays {} + {} fixed, {} hits; visits/ray {:.1} (most {}); visibility rays {}, visits/ray {:.1} (most {}); exhausted {}; paused {}, converged {}, changes {:?}",
+            "frame {}: probes {}/{} traced ({} unblended), blended asked {} rays, stride {}, by rays {:?}; rays {} + {} fixed, {} hits; visits/ray {:.1} (most {}); visibility rays {}, visits/ray {:.1} (most {}); exhausted {}; paused {}, converged {}, changes {:?}",
+            r.frame,
             r.traced_probes,
             r.probes,
             r.unblended_probes,
@@ -598,6 +608,11 @@ fn report_counts(reports: &[sgl_3d::diagnostics::DynamicGiReport]) {
         median(&|r| per_ray(r.visibility_visits, r.visibility_rays)),
         median(&|r| (r.ray_visits + r.visibility_visits) as f64),
     );
+    let mut strides = std::collections::BTreeMap::new();
+    for r in rest {
+        *strides.entry(r.stride).or_insert(0) += 1;
+    }
+    println!("second half strides (stride: frames): {strides:?}");
 }
 
 fn read_pixels(

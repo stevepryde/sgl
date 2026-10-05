@@ -191,8 +191,9 @@ SGL3D needs compute.
   share of their environment specular too.
   [Irradiance volume](../README.md#irradiance-volume).
 - **Dynamic diffuse GI**: a volume of probes the game places
-  (`Scene::set_dynamic_gi_volume`, `DynamicGiVolume`), kept up every frame
-  by rays through the scene (Wicked Engine's DDGI): coloured bounce light
+  (`Scene::set_dynamic_gi_volume`, `DynamicGiVolume`), kept up by rays
+  through the scene (Wicked Engine's DDGI), near probes every frame and far
+  ones in turn, within a per-frame budget of rays: coloured bounce light
   from the frame's and the scene's lights, emitters and the sky, shadowed
   by rays where the lights cast shadows, on static surfaces without a bake
   and on moving instances in place of their ambient cubes and the frame's
@@ -206,7 +207,7 @@ SGL3D needs compute.
   (`asset::Material::emits_into_gi`, `SurfaceMaterial::emits_into_gi`
   false), so it lights surfaces once, through the light; it still blocks
   the probes' rays and shows in reflections.
-  `Settings::dynamic_gi` sets its rays.
+  `Settings::dynamic_gi` sets its rays and budget.
   [Dynamic GI](../README.md#dynamic-diffuse-gi).
 - **Baked specular probes**: parallax-corrected reflection cubes with blended
   influence boxes (`Scene::set_baked_specular_probes`), captured offline with
@@ -306,7 +307,10 @@ Environment and probe specular always apply. On top of them:
 - **Diagnostics** feature: `Settings::diagnostics` turns layers off (culling
   among them), runs the frame probe and captures the tone-mapped target;
   `Renderer::diagnostic_target`, `take_frame_probe_reports`,
-  `diagnostic_draws` and `diagnostic_view_times` return what they observed. Configuration only:
+  `diagnostic_draws`, `diagnostic_view_times` and
+  `take_dynamic_gi_reports` (`Diagnostics::dynamic_gi`: the dynamic GI
+  volume's probes, rays, BVH visits and budget stride, by frame) return what
+  they observed. Configuration only:
   no environment variables or files. Shipping builds leave it off.
 
 ## Not provided

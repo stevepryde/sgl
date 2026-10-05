@@ -274,7 +274,8 @@ impl Volume {
     }
 
     /// The rays' textures for at most `max_rays` a probe, and the groups
-    /// that bind them with the volume's buffers.
+    /// that bind them with the volume's buffers: the results hold each
+    /// probe's slots, and the list a frame's rays, at most its budget.
     pub fn ray_groups(
         &self,
         device: &wgpu::Device,
@@ -282,17 +283,17 @@ impl Volume {
         (uniform, moving_bounds): (&wgpu::Buffer, &wgpu::Buffer),
         max_rays: u32,
     ) -> Rays {
-        let size = layout::ray_texture_size(probe_count(self.installed.probes), max_rays);
+        let slots = probe_count(self.installed.probes) * u64::from(layout::ray_stride(max_rays));
         let list = texture(
             device,
             "dynamic GI ray list",
-            size,
+            layout::ray_texture_size(slots.min(u64::from(super::budget(max_rays)))),
             wgpu::TextureFormat::Rg32Uint,
         );
         let results = texture(
             device,
             "dynamic GI ray results",
-            size,
+            layout::ray_texture_size(slots),
             wgpu::TextureFormat::Rgba32Uint,
         );
         let buffer = buffer_entry;

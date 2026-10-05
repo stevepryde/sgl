@@ -89,24 +89,30 @@ struct DdgiConvergence {
  // DDGI_VARIABILITY_UNITs, and how many; cleared each frame.
  variability:atomic<u32>,
  probes:atomic<u32>,
+ // The longest period at which an active probe takes its turns this frame,
+ // the stride included; cleared each frame.
+ longest:atomic<u32>,
  // The last average, of the frames whose blends ran.
  average:f32,
  // The window's sum of averages, each weighed by the share of the volume's
- // probes that blended, and the volume's updates it holds: those shares'
- // sum.
+ // probes that blended, and the sum of those shares.
  window_sum:f32,
  window_updates:f32,
+ // The turns the window holds of the active probe that takes them least
+ // often: each frame whose blends ran adds one over its period.
+ window_turns:f32,
  // The last whole window's mean, or -1 before one since the last change.
  previous:f32,
  // 1 once a window's mean has stopped falling, until a change.
  converged:u32,
 }
-// The updates of the volume a convergence window holds: RTXGI's sample's
-// least frames of variability before it pauses a volume, each of which
-// updates every probe (RTXGI-DDGI f33e496,
+// The turns of every active probe a convergence window holds: RTXGI's
+// sample's least frames of variability before it pauses a volume, each of
+// which updates every probe (RTXGI-DDGI f33e496,
 // samples/test-harness/src/graphics/DDGI_VK.cpp 1629-1637 and
-// DDGI_D3D12.cpp 1239-1246). A frame that blends some of the probes, on
-// their turns, is that share of an update.
+// DDGI_D3D12.cpp 1239-1246). Here a probe takes a turn once in its period,
+// so a window closes after this many turns of the active probe whose period
+// is longest.
 const DDGI_CONVERGENCE_WINDOW:f32=16.;
 // The fall from one window's mean variability to the next below which the
 // volume has converged.
@@ -192,9 +198,10 @@ fn ddgi_unpack_variance(words:array<u32,6>)->DdgiVariance {
 }
 // A probe's state in the stage's probe buffer: its relocated offset in half
 // spacings, whether it has been blended since the volume restarted, the
-// share of its rays that meet single-sided surfaces from behind, which
-// classifies it, and the back faces its fixed rays have met over the turns
-// of the cycle it has traced so far (fixed_frames).
+// share of its fixed rays that met single-sided surfaces from behind over
+// its last whole cycle, which classifies it, and the back faces its fixed
+// rays have met over the turns of the cycle it has traced so far
+// (fixed_frames).
 struct DdgiProbe {
  offset:vec3<f32>,
  blended:bool,
@@ -219,9 +226,10 @@ fn ddgi_fresh_probe()->DdgiProbe {
 }
 // RTXGI's RTXGI_DDGI_NUM_FIXED_RAYS: the fixed directions that classify a
 // probe, spread evenly over the sphere and never rotated, so a probe's class
-// holds still while what it sees does. A probe traces
-// DDGI_FIXED_RAYS_PER_FRAME of them each turn it traces, all of them over a
-// cycle of DDGI_FIXED_CYCLE turns.
+// holds still while what it sees does. A probe traces all of them on its
+// first turn, as RTXGI traces them every update, then
+// DDGI_FIXED_RAYS_PER_FRAME of them each turn, all of them over a cycle of
+// DDGI_FIXED_CYCLE turns.
 const DDGI_FIXED_RAYS:u32=32u;
 const DDGI_FIXED_CYCLE:u32=DDGI_FIXED_RAYS/DDGI_FIXED_RAYS_PER_FRAME;
 // RTXGI's probeBackfaceThreshold: a probe more than this share of whose rays

@@ -151,8 +151,9 @@ fn ddgi_pack_ray_cost(walks:SceneRayWalks,fixed:bool,hit:bool)->u32 {
  return word;
 }
 // The trace observed (feature diagnostics), its pipeline with
-// ray_observation_enabled: each ray's slot in ray_costs also takes what its
-// walks cost (ddgi_pack_ray_cost), which observe.wgsl sums.
+// ray_observation_enabled: each ray's texel of the ray list's size in
+// ray_costs also takes what its walks cost (ddgi_pack_ray_cost), which
+// observe.wgsl sums.
 @group(2) @binding(0) var ray_costs:texture_storage_2d<rg32uint,write>;
 @compute @workgroup_size(DDGI_TRACE_THREADS)
 fn trace_observed(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
@@ -163,5 +164,5 @@ fn trace_observed(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocati
  let traced=ddgi_trace_ray(id);
  textureStore(ray_results,traced.texel,ddgi_pack_ray(traced.ray));
  let hit=traced.ray.depth>=0.;
- textureStore(ray_costs,traced.texel,vec4(ddgi_pack_ray_cost(traced.nearest,traced.fixed,hit),ddgi_pack_ray_cost(traced.visibility,false,false),0u,0u));
+ textureStore(ray_costs,ddgi_ray_texel(id),vec4(ddgi_pack_ray_cost(traced.nearest,traced.fixed,hit),ddgi_pack_ray_cost(traced.visibility,false,false),0u,0u));
 }

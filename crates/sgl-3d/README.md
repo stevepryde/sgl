@@ -1587,8 +1587,8 @@ scene.write_irradiance_cells(&queue, &region)?;
 
 A dynamic GI volume gives static and moving surfaces coloured bounce light
 from the frame's lights, the scene's lights, emitters and the sky, kept up
-every frame without a bake: a port of Wicked Engine's DDGI (Majercik et al.
-2019). The game places a lattice of probes over the part of its world it
+by rays each frame without a bake: a port of Wicked Engine's DDGI (Majercik
+et al. 2019). The game places a lattice of probes over the part of its world it
 wants lit by bounced light:
 
 ```rust
@@ -1662,11 +1662,11 @@ Placement:
   few rays, unless a moving instance comes within that spacing: so a probe
   beyond a room's corner lights none of its walls, and probes in open air
   cost little yet light whatever moves among them. A static object so small
-  that no probe about it finds it (a probe classifies from 32 directions)
-  takes its other indirect light, once its probes' first cycle of those
-  directions has classified them; until then, their first frame's rays
-  classify them and may light it. A probe's class follows a change in what
-  it sees within 8 frames. Keep probes
+  that no probe about it finds it (a probe classifies from 32 fixed
+  directions, all of them on its first turn and over each 8 of its turns
+  after) takes its other indirect light. A probe's class follows a change
+  in what it sees within 8 of its turns: 8 frames within a spacing of the
+  camera, up to 64 at 128 spacings while the budget holds. Keep probes
   off the surfaces themselves, where a probe sees both sides at once:
   offset the lattice so walls fall between probes. Probes near a surface
   move off it, up to half a spacing, as they trace.
@@ -1689,23 +1689,35 @@ Placement:
   placement changes nothing; camera cuts, resizes and `Scene::move_origin`
   keep the probes, and after a move `Scene::dynamic_gi_volume` gives the
   placement in the new frame to scroll from.
-- A restart, or a scroll's entering planes, starts at most 128 probes a
-  frame at High (256 at Low), nearest the camera first; until a probe has
-  started it lights nothing, and the surfaces about it keep their other
-  indirect light. Wicked starts every probe in one frame, a hitch on a
-  large volume.
-- Memory is about 11 KB a probe at High (8 KB at Low): its irradiance and
-  depth maps, its share of the frame's ray list and results, and the blends'
-  history. A volume is refused with `SceneError::DeviceLimit` where its
+- A restart, or a scroll's entering planes, starts as many probes a frame
+  as the frame's ray budget holds beside the probes already started (at
+  least half of it), nearest the camera first: about 126 near the camera
+  at High and 124 at Low, more farther out, where a probe starts with
+  fewer rays. Until a probe has started it lights nothing, and the
+  surfaces about it keep their other indirect light. Wicked starts every
+  probe in one frame, a hitch on a large volume.
+- Memory is about 9 KB a probe at High (7 KB at Low): its irradiance and
+  depth maps, its share of the frame's ray results and the blends'
+  history; and a ray list of the frame's budget, 256 KB at High (128 KB at
+  Low). A volume is refused with `SceneError::DeviceLimit` where its
   probe texture (18 texels a probe along x times y) or its rays exceed the
   device's largest 2D texture, and with `SceneError::InvalidDynamicGiVolume`
   for a spacing that is not positive or fewer than two probes on an axis.
 
 `Settings::dynamic_gi` (`DynamicGiQuality`: `Off`, `Low`, `High`; `High` by
-default) sets the most rays a probe traces a frame: 128 or 256. Each probe
-traces rays by how consistent its irradiance is, a tenth of that outside the
+default) sets the most rays a probe traces on a turn, 256 or 128, and the
+frame's budget of rays, fixed rays included, 32,768 or 16,384 (Wicked's
+surfel GI budget). A probe traces on its turns: every frame within a
+spacing of the camera, every eighth frame at 128 spacings and less often
+beyond, with an eighth of the most rays out there. On a turn it traces
+rays by how consistent its irradiance is, a tenth of that outside the
 camera's view, at least four: a probe whose light settles traces few, and
-one whose light changes traces up to the most, so cost follows change.
+one whose light changes traces up to its most, and takes extra turns from
+the rays the frame's turns leave, so cost follows change and a moved light
+is answered sooner. Where the turns ask for more than the budget, every
+probe's turns are spaced out by the same power of two, so none starves and
+near probes keep up the most. On Hyperdrive's 3,179-probe course at High
+the rays pass costs about 2 ms a frame in motion on an Apple M5.
 Once its light has converged, the volume pauses: it traces nothing and its
 probes hold their light, until something its light follows changes. That
 is any edit to the scene that changes what rays see or light (an instance
@@ -1722,10 +1734,12 @@ lit by the volume, and block its rays only with hardware ray tracing. Per-pass c
 the `dynamic GI *` timing groups. The [dynamic GI example](examples/dynamic_gi.rs)
 lights a room through a window and with a lamp, two boxes moving through
 it; `--timing` prints the stage's GPU time in each frame as its probes
-start and settle, `--still` parks the boxes so the volume pauses and
-`--edit N` moves the lamp at frame N, which starts it again, `--quality
-off` renders the room without the volume, and `--scroll` walks the camera
-along the room with a shorter volume that scrolls to follow it:
+start and settle, `--counters` each frame's probes, rays, stride and BVH
+node visits (`Diagnostics::dynamic_gi`), `--still` parks the boxes so the
+volume pauses and `--edit N` moves the lamp at frame N, which starts it
+again, `--quality off` renders the room without the volume, and
+`--scroll` walks the camera along the room with a shorter volume that
+scrolls to follow it:
 
 ```sh
 cargo run --release -p sgl-3d --example dynamic_gi -- target/dynamic_gi.png --timing
@@ -2078,11 +2092,17 @@ two with `Counters::since`, and compare versions by totals since lines move),
 `Scene::diagnostic_resources` (the scene's buffer sizes and BLASes, and the
 draw candidates', sets', level chains' and each GPU-built view's cluster
 list's bytes), `Renderer::diagnostic_draws` (the last frame's camera, blended
-and cascade draws as encoded: a GPU-built view's one per set) and
+and cascade draws as encoded: a GPU-built view's one per set),
 `Renderer::diagnostic_view_times` (the CPU time the camera's and each
 cascade's draw list took to build, preparing and encoding its cull, and to
-record). The `streaming` and
-`irradiance_volume` examples print these for their routes, and
+record), and `Diagnostics::dynamic_gi` with
+`Renderer::take_dynamic_gi_reports` (`diagnostics::DynamicGiReport`: each
+observed frame's number, its dynamic GI probes, rays, BVH node visits and
+budget stride and what kept the volume awake, read back without blocking;
+take them each frame once its work completes, or a report counts the
+frames skipped while 8 readbacks waited). The `streaming` and
+`irradiance_volume` examples print these for their routes, the
+`dynamic_gi` example's `--counters` its volume's reports, and
 `bun scripts/tasks.ts measure-browser` the view times of the streaming world
 in headless Chromium.
 Diagnostics are
