@@ -19,18 +19,22 @@ enable wgpu_ray_query;
 // predicate rejects. A ray re-traces past every rejected triangle in front
 // of the one it stops at: a back face of a single-sided closed mesh the
 // ray starts inside, a blended mesh of a mixed model, a hidden group's
-// triangle, its receiver's own triangle, the interval's open end; a
-// visibility ray whose first, any-hit look is rejected takes one more.
-// Counted on the GPU by an instrumented build (#23), every one of the
-// dynamic GI example's 6.79 million probe and visibility rays took one
-// query, and of 6.9 million world-space reflection rays over a glossy
-// floor among moving boxes the most took three (702 static visibility
-// rays whose any-hit look was rejected, then two nearest queries); the
-// cap sits far above that, so that only content of many stacked rejected
-// surfaces, or corrupt data, reaches it. A ray that reaches it
-// reports a miss, or a visibility ray unoccluded, as the portable walk
-// does at SCENE_BVH_MOST_VISITS.
-const SCENE_MOST_HARDWARE_STEPS:u32=64u;
+// triangle, its receiver's own triangle, the interval's open end and,
+// under the baseline form, a cut-out texel of a masked deforming instance
+// (masked models that do not deform are on the portable walk, with its own
+// cap); a visibility ray whose first, any-hit look is rejected takes one
+// more. Counted on the GPU by an instrumented build (#23): every one of
+// the dynamic GI example's 6.79 million probe and visibility rays took one
+// query; of 6.9 million world-space reflection rays over a glossy floor
+// among moving boxes the most took three; and among skinned characters
+// each crowned with a swaying bundle of 24 masked, double-sided hair cards
+// three quarters cut out, under a dynamic GI volume with world-space
+// reflections, the most of 7.8 million rays took 29, each cut-out card it
+// crossed a re-trace. The cap is about four times that, for denser hair,
+// and still bounds every ray: a ray that reaches it reports a miss, or a
+// visibility ray unoccluded, as the portable walk does at
+// SCENE_BVH_MOST_VISITS.
+const SCENE_MOST_HARDWARE_STEPS:u32=256u;
 // Counts one more hardware step of a ray's `steps`, false once the ray has
 // taken SCENE_MOST_HARDWARE_STEPS, after which it stays exhausted.
 fn scene_hardware_step(steps:ptr<function,u32>)->bool {

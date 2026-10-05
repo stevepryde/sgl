@@ -1748,8 +1748,11 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   camera-origin ray rejects a single-sided material's, judged from the
   triangle's own winding, so mirrored instances keep their sides), a
   blended mesh of a model that also has opaque ones, a hidden visibility
-  group, the reflecting surface's own triangle. A rejected hit is traced
-  past, up to a fixed number of queries a ray. The portable BVHs trace the
+  group, the reflecting surface's own triangle, a cut-out texel of a
+  masked deforming instance. A rejected hit is traced past, up to 256
+  queries a ray, after which the ray reports a miss: a ray through
+  hair cards spends one for each cut-out card it crosses, at most 29 in
+  a crowd of 24-card bundles. The portable BVHs trace the
   instances the TLAS does not hold, cut-out texels included, and the
   nearer hit wins. A deforming instance's hits take its deformed
   positions, normals and tangents, and a masked mesh on it cuts out at the
