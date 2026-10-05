@@ -261,9 +261,11 @@ Remaining work, in the existing roadmap order:
    ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
    [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
    acceleration structures beside the portable BVHs behind
-   `Settings::hardware_ray_tracing`, one predicate and one hit for both
-   paths, ray-traced shadows between the opaque stage's two passes, and
-   world-space reflections that may reach everything.
+   `Settings::hardware_ray_tracing`, a baseline form on every native
+   backend and a candidate specialisation where the shader backend lowers
+   it, one predicate and one hit for every form, ray-traced shadows between
+   the opaque stage's two passes, and world-space reflections that may
+   reach everything.
 4. **GPU-driven culling and occlusion culling (22,
    [#24](https://github.com/stevepryde/sgl/issues/24)).** Current visibility
    uses CPU frustum/mesh-section culling, authored mesh LOD, and instanced
