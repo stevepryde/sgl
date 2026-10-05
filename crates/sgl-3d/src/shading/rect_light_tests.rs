@@ -144,7 +144,11 @@ fn observe(lights: &[Light], receivers: &[Receiver]) -> Option<Vec<f64>> {
         .collect();
     let source = format!(
         "{}\n{}",
-        crate::shading::compose(&[&crate::shading::BIND_LIT, &crate::shading::SURFACE]),
+        crate::shading::compose(&[
+            &crate::shading::BIND_LIT,
+            &crate::shading::SURFACE,
+            &crate::shading::SHADOW_MASK_NONE,
+        ]),
         r#"
 struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
 @group(0) @binding(3) var<storage,read> cases:array<Case>;

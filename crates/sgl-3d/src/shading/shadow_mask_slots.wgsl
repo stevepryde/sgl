@@ -10,6 +10,8 @@
 // four layers, slot s in channel s % 4 of layer s / 4, where Wicked's
 // R8_UNORM array, not a wgpu storage format, holds one slot a layer.
 const RT_SHADOW_LIGHTS:u32=16u;
+// The mask's layers, four slots a layer.
+const SHADOW_MASK_LAYERS:u32=RT_SHADOW_LIGHTS/4u;
 // A slot no light holds.
 const SHADOW_MASK_EMPTY:u32=0xffffffffu;
 // Slot 0's key while the frame's shadowed directional light (the one with

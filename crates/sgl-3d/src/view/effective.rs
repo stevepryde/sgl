@@ -92,11 +92,17 @@ pub(crate) struct Effective {
     /// structures, built on the frames that trace rays, whose rays then
     /// trace through them.
     pub hardware_ray_tracing: HardwareRayTracing,
+    /// The ray-traced shadow stage runs, on the frames whose rays trace in
+    /// hardware: the setting is on and hardware ray tracing is in effect.
+    /// The opaque stage then takes its two-pass form.
+    pub ray_traced_shadows: bool,
     /// The receiver pass runs: the scene holds a blended receiver of
     /// screen-space reflections, and a screen-space method, TAA, FSR2 or
     /// motion blur reads the surface it draws.
     pub receivers: bool,
-    /// The G-buffer and lighting are one pass.
+    /// The G-buffer and lighting are one pass: the device has the
+    /// attachments, and ray-traced shadows, whose stage runs between them,
+    /// do not run.
     pub fused: bool,
     /// The scene's point and spot lights render (a diagnostics layer).
     pub local_lights: bool,

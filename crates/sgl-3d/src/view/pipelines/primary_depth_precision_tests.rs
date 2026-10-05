@@ -89,7 +89,7 @@ struct V { @invariant @builtin(position) position:vec4<f32>, @location(0) @inter
         let pipelines = [
             pipeline(wgpu::CompareFunction::Greater),
             pipeline(depth(GeometryPass::GBuffer).1),
-            pipeline(depth(GeometryPass::Lighting).1),
+            pipeline(depth(GeometryPass::Lighting { shadow_mask: false }).1),
         ];
         let target = |format| {
             device.create_texture(&wgpu::TextureDescriptor {

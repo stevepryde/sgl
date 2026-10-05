@@ -10,11 +10,16 @@
 //! (`encode_gbuffer`), which leaves the G-buffer complete; the lighting
 //! (`encode_lighting`), the sky and the lighting pass at its depth; then
 //! ambient occlusion (`encode_ambient_occlusion`). The fused form's pass is
-//! its G-buffer part, and its lighting part encodes nothing.
+//! its G-buffer part, and its lighting part encodes nothing. While
+//! ray-traced shadows run, the stage takes its two-pass form, the renderer
+//! encodes the ray-traced shadow stage between its G-buffer and lighting
+//! parts, and the lighting pass takes the lights the stage's mask holds
+//! from it, bound at its group 3.
 //!
 //! Reads: the camera view and its draw list, group 0's camera lit and unlit
-//! groups, the geometry pipelines; for a probe capture face (`encode_capture`),
-//! the capture's draw list and the face's groups.
+//! groups, the geometry pipelines, the ray-traced shadow mask and slot table
+//! while they run; for a probe capture face (`encode_capture`), the
+//! capture's draw list and the face's groups.
 //! Writes: the shared G-buffer, colour, ambient diffuse, source identity and
 //! depth; its own ambient occlusion targets.
 //! Honours: ambient occlusion (quality and radius), the fused form (device
@@ -26,8 +31,9 @@ pub(crate) mod ambient_occlusion;
 pub(crate) mod sky;
 
 use crate::counters::Moment;
+use crate::view::cached_group::CachedGroup;
 use crate::view::draw_list::{DrawInstances, DrawList};
-use crate::view::frame::FrameContext;
+use crate::view::frame::{FrameContext, ShadowMask};
 use crate::view::pipelines::{GeometryPass, GeometryPipelines};
 use crate::view::targets::{CaptureFace, attachment};
 
@@ -36,14 +42,24 @@ pub(crate) struct Opaque {
     ambient_occlusion: Option<ambient_occlusion::AmbientOcclusion>,
     /// Whether ambient occlusion ran this frame.
     ambient_occlusion_ran: bool,
+    /// The lighting pass's group 3 while ray-traced shadows run
+    /// (`shading::bind::shadow_mask`).
+    shadow_mask: CachedGroup,
 }
 
 impl Opaque {
-    pub fn new(device: &wgpu::Device, unlit: &wgpu::BindGroupLayout) -> Self {
+    /// The stage over `unlit` group 0 for its sky and the `shadow_mask`
+    /// group 3 layout of its lighting pass while ray-traced shadows run.
+    pub fn new(
+        device: &wgpu::Device,
+        unlit: &wgpu::BindGroupLayout,
+        shadow_mask: &wgpu::BindGroupLayout,
+    ) -> Self {
         Self {
             sky: sky::Sky::new(device, unlit),
             ambient_occlusion: None,
             ambient_occlusion_ran: false,
+            shadow_mask: CachedGroup::new(shadow_mask.clone()),
         }
     }
 
@@ -60,11 +76,17 @@ impl Opaque {
     }
 
     /// The lighting part: in the two-pass form, the sky and the lighting
-    /// pass at the G-buffer's depth; nothing in the fused form, whose
-    /// G-buffer part lit the surfaces.
-    pub fn encode_lighting(&mut self, ctx: &mut FrameContext<'_>) {
+    /// pass at the G-buffer's depth, taking the lights the ray-traced
+    /// shadow mask holds from `shadow_mask` where the ray-traced shadow
+    /// stage ran; nothing in the fused form, whose G-buffer part lit the
+    /// surfaces.
+    pub fn encode_lighting(
+        &mut self,
+        ctx: &mut FrameContext<'_>,
+        shadow_mask: Option<ShadowMask<'_>>,
+    ) {
         if !ctx.effective.fused {
-            self.encode_lighting_pass(ctx);
+            self.encode_lighting_pass(ctx, shadow_mask);
         }
     }
 
@@ -229,8 +251,13 @@ impl Opaque {
         }
     }
 
-    /// The sky, then the lighting pass at the G-buffer's depth.
-    fn encode_lighting_pass(&mut self, ctx: &mut FrameContext<'_>) {
+    /// The sky, then the lighting pass at the G-buffer's depth, with
+    /// `shadow_mask` at its group 3 where ray-traced shadows ran.
+    fn encode_lighting_pass(
+        &mut self,
+        ctx: &mut FrameContext<'_>,
+        shadow_mask: Option<ShadowMask<'_>>,
+    ) {
         let targets = ctx.targets;
         // The sky writes color and motion; opaque geometry then writes color,
         // ambient diffuse and identity together once, and its motion over the
@@ -284,10 +311,31 @@ impl Opaque {
             ..Default::default()
         });
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-        ctx.views
-            .camera
-            .list
-            .draw(ctx.scene, ctx.pipelines, &mut pass, GeometryPass::Lighting);
+        if let Some(shadow_mask) = shadow_mask {
+            let group = self.shadow_mask.get(
+                ctx.device,
+                "ray-traced shadow mask",
+                &[
+                    (
+                        crate::shading::bind::shadow_mask::MASK,
+                        wgpu::BindingResource::TextureView(shadow_mask.mask),
+                    ),
+                    (
+                        crate::shading::bind::shadow_mask::SLOTS,
+                        shadow_mask.slots.as_entire_binding(),
+                    ),
+                ],
+            );
+            pass.set_bind_group(3, group, &[]);
+        }
+        ctx.views.camera.list.draw(
+            ctx.scene,
+            ctx.pipelines,
+            &mut pass,
+            GeometryPass::Lighting {
+                shadow_mask: shadow_mask.is_some(),
+            },
+        );
         drop(pass);
         ctx.views.camera.recorded_since(started);
     }

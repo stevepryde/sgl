@@ -39,8 +39,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 23] = [
-        &crate::view::pipelines::GEOMETRY,
+    let roots: [&'static super::Module; 24] = [
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
@@ -63,12 +62,23 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::dynamic_gi::ALLOCATE,
         &crate::stages::dynamic_gi::UPDATE,
         &crate::stages::motion_blur::MOTION_BLUR,
+        &crate::stages::shadows::traced::TEMPORAL,
+        &crate::stages::shadows::traced::UPSAMPLE,
     ];
     let mut programs: Vec<_> = roots
         .into_iter()
         .chain(crate::stages::reflections::velvet::PROGRAMS)
         .map(|root| (root.name, compose(&[root])))
         .collect();
+    // The geometry program with each shadow-mask provider: exactly one,
+    // the mask's for the lighting pass while ray-traced shadows run.
+    programs.extend([
+        ("geometry", crate::view::pipelines::geometry_program(false)),
+        (
+            "geometry_shadow_mask",
+            crate::view::pipelines::geometry_program(true),
+        ),
+    ]);
     // The tracing stages' programs on each path their rays take, with the
     // portable function set or the hardware form's query module as root
     // (`ray_trace_root`); the hardware module's `enable` directive must
@@ -76,7 +86,12 @@ fn programs() -> Vec<(&'static str, String)> {
     let hardware = Some(super::RayQueryForm::Baseline);
     let world = &crate::stages::reflections::world::TRACE;
     let gi = &crate::stages::dynamic_gi::TRACE;
+    let traced_shadows = &crate::stages::shadows::traced::TRACE;
     programs.extend([
+        (
+            traced_shadows.name,
+            compose(&[traced_shadows, super::ray_trace_root(hardware)]),
+        ),
         (world.name, compose(&[world, super::ray_trace_root(None)])),
         (
             "world_reflections_hardware",
@@ -293,7 +308,9 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::fog::volume_froxels::mirrors())
     .chain(super::fog::mirrors())
     .chain(crate::stages::post::bloom::mirrors())
-    .chain(crate::stages::post::tone_map::mirrors());
+    .chain(crate::stages::post::tone_map::mirrors())
+    .chain(super::shadow_mask::mirrors())
+    .chain(crate::stages::shadows::traced::mirrors());
     let programs = programs();
     let module = |label: &str| {
         let (_, source) = programs
@@ -558,7 +575,7 @@ fn declared_bindings(label: &str, source: &str, group: u32) -> Vec<(String, u32)
 // numbers come from naga's parse of the WGSL.
 #[wasm_bindgen_test(unsupported = test)]
 fn rust_binding_names_match_wgsl_bindings() {
-    use super::bind::{self, blended, group0, group1, group2, hardware};
+    use super::bind::{self, blended, group0, group1, group2, hardware, shadow_mask};
     let named = [
         (0, "view", group0::VIEW),
         (0, "frame", group0::FRAME),
@@ -610,6 +627,8 @@ fn rust_binding_names_match_wgsl_bindings() {
         (3, "blended_surface_depth", blended::SURFACE_DEPTH),
         (3, "blended_trace", blended::TRACE),
         (3, "scene_tlas", hardware::SCENE_TLAS),
+        (3, "shadow_mask", shadow_mask::MASK),
+        (3, "shadow_mask_slots", shadow_mask::SLOTS),
     ];
     let numbers = |entries: &[wgpu::BindGroupLayoutEntry]| -> Vec<u32> {
         entries.iter().map(|entry| entry.binding).collect()
@@ -656,6 +675,12 @@ fn rust_binding_names_match_wgsl_bindings() {
             &[&super::SCENE_RAYS_QUERY_OPAQUE],
             3,
             numbers(&[bind::tlas_entry()]),
+        ),
+        (
+            "bind_shadow_mask",
+            &[&super::BIND_SHADOW_MASK],
+            3,
+            numbers(&bind::shadow_mask_entries()),
         ),
     ];
     let mut used = vec![false; named.len()];
@@ -773,7 +798,8 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::stages::reflections::velvet::constants())
     .chain(crate::stages::exposure::constants())
     .chain(crate::stages::opaque::ambient_occlusion::constants())
-    .chain(crate::stages::fog::constants());
+    .chain(crate::stages::fog::constants())
+    .chain(super::shadow_mask::constants());
     let programs = programs();
     for constant in constants {
         let (label, source) = programs

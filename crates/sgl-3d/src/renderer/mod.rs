@@ -25,7 +25,8 @@ use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
     antialiasing, cull::Cull, deform::Deform, dynamic_gi::DynamicGi, exposure::Exposure,
     fog::VolumetricFog, motion_blur::MotionBlur, opaque::Opaque, post::Post, prepare::Prepare,
-    reflections::Reflections, shadows::Shadows, transparent::Transparent,
+    reflections::Reflections, shadows::Shadows, shadows::traced::TracedShadows,
+    transparent::Transparent,
 };
 use crate::view::FrameViews;
 use crate::view::bindings::FrameBindings;
@@ -60,6 +61,7 @@ pub struct Renderer {
     statistics: StatisticsReadback,
     dynamic_gi: DynamicGi,
     shadows: Shadows,
+    traced_shadows: TracedShadows,
     fog: VolumetricFog,
     opaque: Opaque,
     reflections: Reflections,
@@ -186,6 +188,7 @@ impl Renderer {
                 &bindings.scene,
                 &bindings.material,
                 &bindings.blended,
+                &bindings.shadow_mask,
             ],
             layers,
         );
@@ -203,7 +206,8 @@ impl Renderer {
             },
         );
         Ok(Self {
-            opaque: Opaque::new(device, &bindings.unlit),
+            opaque: Opaque::new(device, &bindings.unlit, &bindings.shadow_mask),
+            traced_shadows: TracedShadows::new(device, &bindings.lit, &bindings.scene),
             reflections: Reflections::new(device, queue, render, &first_frame),
             transparent: Transparent::new(device, &bindings.unlit, &bindings.blended, &targets),
             exposure: Exposure::new(device),
@@ -400,6 +404,14 @@ impl Renderer {
         settings.hardware_ray_tracing
             && self.ray_queries.is_some()
             && self.prepare.ray_tracing_error().is_none()
+    }
+
+    /// Whether the camera's opaque surfaces take ray-traced shadows for
+    /// `settings`: `Settings::ray_traced_shadows` is on and hardware ray
+    /// tracing is in effect (`ray_tracing_in_effect`). Otherwise the shadow
+    /// maps shadow them. The saved choice is unchanged.
+    pub fn ray_traced_shadows_in_effect(&self, settings: &Settings) -> bool {
+        settings.ray_traced_shadows && self.ray_tracing_in_effect(settings)
     }
 
     /// Why the hardware path did not trace the last rendered frame's rays

@@ -205,6 +205,15 @@ pub(super) fn resolve(
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
     let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
+    let hardware_ray_tracing = match (settings.hardware_ray_tracing, ray_queries) {
+        (false, _) => HardwareRayTracing::Off,
+        (true, None) => HardwareRayTracing::Unsupported,
+        (true, Some(form)) => HardwareRayTracing::On(form),
+    };
+    // Ray-traced shadows trace through the hardware path alone (the
+    // architecture's Ray-traced shadows); elsewhere the maps shadow.
+    let ray_traced_shadows = settings.ray_traced_shadows
+        && matches!(hardware_ray_tracing, HardwareRayTracing::On(_));
     Effective {
         antialiasing,
         taa,
@@ -220,14 +229,11 @@ pub(super) fn resolve(
         } else {
             WorldSpaceReflections::Off
         },
-        hardware_ray_tracing: match (settings.hardware_ray_tracing, ray_queries) {
-            (false, _) => HardwareRayTracing::Off,
-            (true, None) => HardwareRayTracing::Unsupported,
-            (true, Some(form)) => HardwareRayTracing::On(form),
-        },
+        hardware_ray_tracing,
+        ray_traced_shadows,
         receivers: content.receivers
             && (screen_space.is_some() || taa || fsr2 || motion_blur.is_some()),
-        fused: fused_supported && !disable.fused_opaque,
+        fused: fused_supported && !disable.fused_opaque && !ray_traced_shadows,
         local_lights: !disable.local_lights,
         atmosphere: atmosphere(settings, input),
         fog: fog(

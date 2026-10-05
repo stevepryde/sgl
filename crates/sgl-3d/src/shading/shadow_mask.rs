@@ -55,13 +55,18 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
 }
 
 #[cfg(test)]
-pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 3] {
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 4] {
     use crate::shading::layout_tests::Constant;
     [
         Constant::new(
             "geometry_shadow_mask",
             "RT_SHADOW_LIGHTS",
             naga::Literal::U32(RT_SHADOW_LIGHTS as u32),
+        ),
+        Constant::new(
+            "geometry_shadow_mask",
+            "SHADOW_MASK_LAYERS",
+            naga::Literal::U32(LAYERS),
         ),
         Constant::new(
             "geometry_shadow_mask",

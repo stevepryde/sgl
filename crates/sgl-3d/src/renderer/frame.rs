@@ -1,7 +1,9 @@
 //! One frame: the one ordered render body.
 use super::Renderer;
 use crate::settings::{ReflectionMethod, Settings};
+use crate::content::identity::LightId;
 use crate::stages::opaque::Opaque;
+use crate::stages::shadows::traced::TracedShadows;
 use crate::timing::GpuTiming;
 use crate::view::frame::{Completed, FrameContext, HardwareRays};
 use crate::view::pipelines::GeometryPipelines;
@@ -11,7 +13,8 @@ use crate::{FrameInput, Scene};
 
 /// Encodes one frame of `scene` seen as `input` into `output`: prepare (with
 /// its deformation, acceleration structures and the cull stage's early
-/// phase), dynamic GI, shadows, volumetric fog, opaque, the transparent
+/// phase), dynamic GI, shadows, volumetric fog, opaque (with the ray-traced
+/// shadows between its G-buffer and lighting while they run), the transparent
 /// stage's receivers, reflections with the transparent stage drawn into
 /// their input (while a screen-space method traces it) and onto their
 /// result, heat, exposure, antialiasing, motion blur, then post.
@@ -42,6 +45,7 @@ pub(super) fn render(
         statistics,
         dynamic_gi,
         shadows,
+        traced_shadows,
         fog,
         opaque,
         reflections,
@@ -71,7 +75,12 @@ pub(super) fn render(
             ray_queries: *ray_queries,
         },
     );
-    pipelines.specialise(device, effective.layers, scene);
+    pipelines.specialise(
+        device,
+        effective.layers,
+        scene,
+        effective.ray_traced_shadows,
+    );
     let pipelines: &GeometryPipelines = pipelines;
     scene.materials.set_anisotropy(device, effective.anisotropy);
     #[cfg(feature = "diagnostics")]
@@ -201,7 +210,7 @@ pub(super) fn render(
     shadows.encode_local(&mut ctx);
     shadows.encode_directional(&mut ctx);
     fog.encode(&mut ctx);
-    encode_opaque(opaque, &mut ctx);
+    encode_opaque(opaque, traced_shadows, shadows.local.ranking(), &mut ctx);
     #[cfg(feature = "diagnostics")]
     if let Some(probe) = probe.as_deref() {
         probe.observe(
@@ -309,11 +318,20 @@ pub(super) fn render(
     }
 }
 
-/// The opaque stage in the stage order's named parts: the G-buffer, the
-/// lighting at its depth, then ambient occlusion over it.
-pub(super) fn encode_opaque(opaque: &mut Opaque, ctx: &mut FrameContext<'_>) {
+/// The opaque stage in the stage order's named parts: the G-buffer, then,
+/// while they run, the ray-traced shadows of the frame's slots (the
+/// directional light with the cascades and the local lights the atlas
+/// placed, `ranked` best first), the lighting at its depth, which takes
+/// their mask, then ambient occlusion over it.
+pub(super) fn encode_opaque(
+    opaque: &mut Opaque,
+    traced_shadows: &mut TracedShadows,
+    ranked: &[LightId],
+    ctx: &mut FrameContext<'_>,
+) {
     opaque.encode_gbuffer(ctx);
-    opaque.encode_lighting(ctx);
+    let shadow_mask = traced_shadows.encode(ctx, ranked);
+    opaque.encode_lighting(ctx, shadow_mask);
     opaque.encode_ambient_occlusion(ctx);
 }
 

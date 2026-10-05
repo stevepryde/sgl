@@ -90,7 +90,12 @@ impl Renderer {
                 ray_queries: self.ray_queries,
             },
         );
-        self.pipelines.specialise(device, effective.layers, scene);
+        self.pipelines.specialise(
+            device,
+            effective.layers,
+            scene,
+            effective.ray_traced_shadows,
+        );
         let history = self.begin_history(scene, &input);
         let values = self.prepare.run(
             device,
@@ -213,7 +218,12 @@ impl Renderer {
     ) {
         frame.effective.fused = fused;
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
-        super::frame::encode_opaque(&mut self.opaque, &mut ctx);
+        super::frame::encode_opaque(
+            &mut self.opaque,
+            &mut self.traced_shadows,
+            self.shadows.local.ranking(),
+            &mut ctx,
+        );
     }
 
     /// The transparent stage's glow and mist into `beauty`, over the
