@@ -150,9 +150,9 @@ full API details.
   the estimator's noise, 0.2) also takes turns more often, from the rays
   the frame's turns and starting probes leave, never lengthening another
   probe's turns. A probe's first turn traces all 32 of its classifying
-  fixed rays, in place of as many of its others while it keeps at least 32
-  of those, so it is classified at once rather than from its first rotated
-  rays until its first whole cycle of 8 turns. A volume's convergence window now spans 16 turns of every
+  fixed rays and its next 7 turns none, so it is classified at once rather
+  than from its first rotated rays until its first whole cycle of 8 turns,
+  for no more rays over that cycle. A volume's convergence window now spans 16 turns of every
   active probe (16 times the longest period among them), so it can pause
   later than before while far probes catch up. A restart or a scroll's
   entering planes start as many probes a frame as the budget holds beside

@@ -200,9 +200,10 @@ fn ddgi_unpack_variance(words:array<u32,6>)->DdgiVariance {
 // A probe's state in the stage's probe buffer: its relocated offset in half
 // spacings, whether it has been blended since the volume restarted, the
 // share of its fixed rays that met single-sided surfaces from behind over
-// its last whole cycle, which classifies it, and the back faces its fixed
-// rays have met over the turns of the cycle it has traced so far
-// (fixed_frames).
+// its last whole cycle, which classifies it, the back faces its fixed rays
+// have met over the turns of the cycle it has traced so far
+// (fixed_frames), and the turns after its first that trace no fixed rays
+// (fixed_rest), its first having traced the cycle's.
 struct DdgiProbe {
  offset:vec3<f32>,
  blended:bool,
@@ -212,25 +213,32 @@ struct DdgiProbe {
  fixed_backfaces:u32,
  fixed_nearby:u32,
  fixed_frames:u32,
+ fixed_rest:u32,
 }
 fn ddgi_pack_probe(probe:DdgiProbe)->vec4<u32> {
- let counts=probe.fixed_backfaces|(probe.fixed_nearby<<8u)|(probe.fixed_frames<<16u)|(select(0u,1u,probe.surfaced)<<24u);
+ let counts=probe.fixed_backfaces|(probe.fixed_nearby<<8u)|(probe.fixed_frames<<16u)|(select(0u,1u,probe.surfaced)<<24u)|(probe.fixed_rest<<25u);
  return vec4(ddgi_pack_half2(probe.offset.x,probe.offset.y),ddgi_pack_half2(probe.offset.z,select(0.,1.,probe.blended)),bitcast<u32>(probe.backfaces),counts);
 }
 fn ddgi_unpack_probe(words:vec4<u32>)->DdgiProbe {
  let offset=vec4(unpack2x16float(words.x),unpack2x16float(words.y));
- return DdgiProbe(offset.xyz,offset.w>0.,bitcast<f32>(words.z),(words.w>>24u)!=0u,words.w&0xffu,(words.w>>8u)&0xffu,(words.w>>16u)&0xffu);
+ return DdgiProbe(offset.xyz,offset.w>0.,bitcast<f32>(words.z),((words.w>>24u)&1u)!=0u,words.w&0xffu,(words.w>>8u)&0xffu,(words.w>>16u)&0xffu,(words.w>>25u)&0xfu);
 }
 // A probe not yet blended, at rest, as a restart or a scroll starts one.
 fn ddgi_fresh_probe()->DdgiProbe {
- return DdgiProbe(vec3(0.),false,0.,false,0u,0u,0u);
+ return DdgiProbe(vec3(0.),false,0.,false,0u,0u,0u,0u);
+}
+// The fixed rays a blended probe traces on its turn after its others: the
+// next DDGI_FIXED_RAYS_PER_FRAME of its cycle, or none on the turns after
+// its first, which traced their cycle's.
+fn ddgi_turn_fixed_rays(probe:DdgiProbe)->u32 {
+ return select(DDGI_FIXED_RAYS_PER_FRAME,0u,probe.fixed_rest>0u);
 }
 // RTXGI's RTXGI_DDGI_NUM_FIXED_RAYS: the fixed directions that classify a
 // probe, spread evenly over the sphere and never rotated, so a probe's class
 // holds still while what it sees does. A probe traces all of them on its
-// first turn, as RTXGI traces them every update, then
-// DDGI_FIXED_RAYS_PER_FRAME of them each turn, all of them over a cycle of
-// DDGI_FIXED_CYCLE turns.
+// first turn, as RTXGI traces them every update, and none on its next
+// DDGI_FIXED_CYCLE - 1 turns, then DDGI_FIXED_RAYS_PER_FRAME of them each
+// turn, all of them over a cycle of DDGI_FIXED_CYCLE turns.
 const DDGI_FIXED_RAYS:u32=32u;
 const DDGI_FIXED_CYCLE:u32=DDGI_FIXED_RAYS/DDGI_FIXED_RAYS_PER_FRAME;
 // RTXGI's probeBackfaceThreshold: a probe more than this share of whose rays

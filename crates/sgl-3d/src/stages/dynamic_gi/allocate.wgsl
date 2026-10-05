@@ -67,9 +67,9 @@
 // update (RTXGI-DDGI f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6,
 // docs/DDGIVolume.md 736-767; practice only), and as RTXGI's they are not
 // blended; on its first turn all DDGI_FIXED_RAYS of them, so it is
-// classified at once, in place of as many of its others while it keeps at
-// least DDGI_FIXED_RAYS others, so a first turn costs no more rays than
-// another but for the farthest probes'. Changed: an inactive probe (ddgi_probe_active)
+// classified at once, and none on its next DDGI_FIXED_CYCLE - 1 turns, so
+// its first cycle costs what any other does and the starts a frame holds
+// keep up as before. Changed: an inactive probe (ddgi_probe_active)
 // traces the fewest others, a bucket, beside its fixed rays, and still
 // blends them, where RTXGI's inactive probes trace their fixed rays alone
 // and blend nothing: its depth and irradiance stay warm, so it lights
@@ -221,13 +221,11 @@ fn ddgi_most_rays(spacings:f32)->u32 {
  return clamp(buckets*DDGI_RAY_BUCKET_COUNT,DDGI_RAY_BUCKET_COUNT,u32(most));
 }
 // The rays a probe that far away traces beside its fixed rays on its first
-// turn, which traces all DDGI_FIXED_RAYS of them: its most rays less the
-// fixed rays a turn does not trace, but at least DDGI_FIXED_RAYS of them,
-// or its most where it has fewer.
+// turn, which traces all DDGI_FIXED_RAYS of them: its most rays, within the
+// slots each probe's rays take (ddgi_ray_slot).
 fn ddgi_starting_rays(spacings:f32)->u32 {
- let most=ddgi_most_rays(spacings);
- let extra=DDGI_FIXED_RAYS-DDGI_FIXED_RAYS_PER_FRAME;
- return max(max(most,extra)-extra,min(most,DDGI_FIXED_RAYS));
+ let slots=min(volume.max_rays,DDGI_MOST_RAYS)+DDGI_FIXED_RAYS_PER_FRAME;
+ return min(ddgi_most_rays(spacings),max(slots,DDGI_FIXED_RAYS+DDGI_RAY_BUCKET_COUNT)-DDGI_FIXED_RAYS);
 }
 // A blended probe's most inconsistent irradiance texel's inconsistency.
 fn ddgi_inconsistency(probe_index:u32)->f32 {
@@ -298,9 +296,10 @@ fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) gro
  let period=ddgi_period(spacings);
  let shortened=ddgi_shortened_period(period,inconsistency,request);
  ray_counts[probe_index]=request|(period<<16u)|(shortened<<24u);
+ let fixed_rays=ddgi_turn_fixed_rays(probe);
  for (var stride=0u;stride<DDGI_STRIDES;stride++) {
   if ddgi_turn(probe_index,period,stride,volume.frame) {
-   atomicAdd(&allocation.demand[stride],request+DDGI_FIXED_RAYS_PER_FRAME);
+   atomicAdd(&allocation.demand[stride],request+fixed_rays);
   }
  }
  // The probes whose variability the convergence follows (update.wgsl).
@@ -398,9 +397,10 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
    let rays=min(requested&0xffffu,min(volume.max_rays,DDGI_MOST_RAYS));
    let period=(requested>>16u)&0xffu;
    let shortened=requested>>24u;
-   if ddgi_turn(probe_index,period,allocation.stride,volume.frame) || ddgi_shortened_turn(probe_index,period,shortened,rays+DDGI_FIXED_RAYS_PER_FRAME) {
+   let fixed_rays=ddgi_turn_fixed_rays(probe);
+   if ddgi_turn(probe_index,period,allocation.stride,volume.frame) || ddgi_shortened_turn(probe_index,period,shortened,rays+fixed_rays) {
     // Its fixed rays after its others.
-    traced=rays+DDGI_FIXED_RAYS_PER_FRAME;
+    traced=rays+fixed_rays;
     blended=rays;
     entry_rays=rays;
    }

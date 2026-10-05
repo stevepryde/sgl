@@ -2734,10 +2734,10 @@ fn a_material_that_does_not_emit_into_gi_gives_the_probes_none_of_its_light() {
 
 // An observed frame's report (`Diagnostics::dynamic_gi`) carries its frame's
 // number and what the allocation traced: the rays and fixed rays the
-// observation summed over the ray list, which the allocation counted, and
-// a probe's first turn with all 32 fixed rays. Readbacks not taken fill
-// after 8 frames; the frames past them are skipped and counted in the next
-// report.
+// observation summed over the ray list, which the allocation counted; a
+// probe's first turn with all 32 fixed rays, its next 7 with none and those
+// after with 4. Readbacks not taken fill after 8 frames; the frames past
+// them are skipped and counted in the next report.
 #[cfg(feature = "diagnostics")]
 #[test]
 fn reports_number_their_frames_and_count_those_skipped() {
@@ -2752,15 +2752,19 @@ fn reports_number_their_frames_and_count_those_skipped() {
     let mut settings = settings(DynamicGiQuality::High);
     settings.diagnostics.dynamic_gi = true;
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
-    render(
-        &device,
-        &queue,
-        &mut renderer,
-        &mut scene,
-        &input,
-        &settings,
-        12,
-    );
+    // Each probe's turns so far.
+    let mut turns = vec![0u32; 64];
+    let mut frame = |renderer: &mut Renderer, turns: &mut Vec<u32>| {
+        render(&device, &queue, renderer, &mut scene, &input, &settings, 1);
+        let rays = renderer.test_dynamic_gi().test_probe_rays(&device, &queue);
+        for (turns, &rays) in turns.iter_mut().zip(&rays) {
+            *turns += u32::from(rays > 0);
+        }
+        rays
+    };
+    for _ in 0..12 {
+        frame(&mut renderer, &mut turns);
+    }
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let reports = renderer.take_dynamic_gi_reports(&device);
     let numbers: Vec<_> = reports.iter().map(|r| (r.frame, r.skipped)).collect();
@@ -2772,23 +2776,18 @@ fn reports_number_their_frames_and_count_those_skipped() {
         "{:?}",
         reports[0]
     );
-    render(
-        &device,
-        &queue,
-        &mut renderer,
-        &mut scene,
-        &input,
-        &settings,
-        1,
-    );
+    let rays = frame(&mut renderer, &mut turns);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let reports = renderer.take_dynamic_gi_reports(&device);
     let [report] = reports[..] else {
         panic!("{reports:?}");
     };
     assert_eq!((report.frame, report.skipped), (12, 4));
-    let rays = renderer.test_dynamic_gi().test_probe_rays(&device, &queue);
     let tracing = rays.iter().filter(|&&rays| rays > 0).count() as u32;
+    let fixed: u32 = (0..64)
+        .filter(|&probe| rays[probe] > 0 && turns[probe] > 8)
+        .map(|_| FIXED_RAYS)
+        .sum();
     assert!(tracing > 0);
     assert_eq!(
         (
@@ -2798,7 +2797,7 @@ fn reports_number_their_frames_and_count_those_skipped() {
         (tracing, tracing)
     );
     assert_eq!(report.rays, rays.iter().sum::<u32>());
-    assert_eq!(report.fixed_rays, tracing * FIXED_RAYS);
+    assert_eq!(report.fixed_rays, fixed);
     assert_eq!(
         report.rays + report.fixed_rays,
         renderer.test_dynamic_gi().test_traced_rays(&device, &queue)
