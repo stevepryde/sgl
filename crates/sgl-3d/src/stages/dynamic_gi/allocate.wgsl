@@ -32,8 +32,9 @@
 // traces as an active probe does, so the light about the instance keeps up
 // with it. A volume that has converged while what its light follows held
 // still traces nothing (ddgi_paused; update.wgsl's settle), as RTXGI's
-// sample pauses a volume whose variability has settled (DDGI.cpp
-// 1628-1640).
+// sample pauses a volume whose variability has settled
+// (samples/test-harness/src/graphics/DDGI_VK.cpp 1629-1637 and
+// DDGI_D3D12.cpp 1239-1246).
 @group(0) @binding(0) var<uniform> volume:DdgiVolume;
 @group(0) @binding(1) var<storage,read> variance:array<u32>;
 @group(0) @binding(2) var<storage,read> probe_states:array<vec4<u32>>;

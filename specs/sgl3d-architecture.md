@@ -920,28 +920,31 @@ code; it does not redeclare a struct, binding or function another module owns.
   and never from the sky's fallback, which would carry the sky about a
   closed room for seconds. A volume whose light has converged pauses, as
   RTXGI's sample pauses one whose probe variability (the mean coefficient of
-  variation of the active probes' irradiance texels) has settled: it traces
+  variation of the active probes' irradiance texels) has settled
+  (RTXGI-DDGI f33e496, samples/test-harness/src/graphics/DDGI_VK.cpp
+  1629-1637 and DDGI_D3D12.cpp 1239-1246, practice only): it traces
   nothing and its probes hold their light while what that light follows
   holds still. That is the scene's edits that change what the rays see or
   light (the scene counts them; a deforming instance's pose and
   deformation, which no ray sees, the transient effects and a value set to
   what it was are none), the frame's data but for the camera's cascades and
   the clock (whose animation phase counts while a material scrolls), the
-  environment bound, the quality and the placement. Improved on RTXGI
-  (RD-2), whose sample pauses below a threshold each scene sets, which
-  SGL3D has no scene to ask for: the volume has converged once the mean of
-  its variability over a window of 16 frames falls by less than a tenth
-  from the last window's, the plateau RTXGI describes, and never while a
-  probe has yet to start. The allocation decides it on the GPU from the
-  blends' last windows, so nothing is read back, and a paused frame costs
-  the allocation alone. A receiver the volume lights takes its irradiance
-  in place of the environment's diffuse light and the hemisphere fill,
-  recorded apart as the ambient that ambient occlusion weights; beyond the
-  volume's extent a receiver keeps its fallback, the volume's share fading
-  to nothing over the one probe spacing past its edge, as RTXGI's volume
-  blend weight fades, so no seam shows there. Lightmapped and atlas-charted
-  static receivers keep their bake and the ambient as before, and a
-  receiver the irradiance volume lights keeps it ([Irradiance
+  environment bound, the quality, whether the probe hits' light list takes
+  the scene's lights (a diagnostic setting) and the placement. Improved on
+  RTXGI (RD-2), whose sample pauses below a threshold each scene sets,
+  which SGL3D has no scene to ask for: the volume has converged once the
+  mean of its variability over a window of 16 frames falls by less than a
+  tenth from the last window's, the plateau RTXGI describes, and never
+  while a probe has yet to start. The allocation decides it on the GPU from
+  the blends' last windows, so nothing is read back, and a paused frame
+  costs the allocation alone. A receiver the volume lights takes its
+  irradiance in place of the environment's diffuse light and the hemisphere
+  fill, recorded apart as the ambient that ambient occlusion weights; beyond
+  the volume's extent a receiver keeps its fallback, the volume's share
+  fading to nothing over the one probe spacing past its edge, as RTXGI's
+  volume blend weight fades, so no seam shows there. Lightmapped and
+  atlas-charted static receivers keep their bake and the ambient as before,
+  and a receiver the irradiance volume lights keeps it ([Irradiance
   volume](#designs-that-span-stages));
   moving instances and other unbaked receivers take the volume where it
   lights them. Ambient cubes stay as

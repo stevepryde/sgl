@@ -47,7 +47,9 @@
 // coefficient of variation of the active probes' irradiance texels
 // (ProbeBlendingCS.hlsl 552-562, averaged as ReductionCS.hlsl averages it),
 // which `settle` takes over windows of 16 frames, as RTXGI's sample waits
-// 16 frames of it before pausing a volume (DDGI.cpp 1628-1640). Changed:
+// 16 frames of it before pausing a volume
+// (samples/test-harness/src/graphics/DDGI_VK.cpp 1629-1637 and
+// DDGI_D3D12.cpp 1239-1246). Changed:
 // RTXGI's sample pauses below a threshold each scene sets (0.03 to 0.4 in
 // its configurations), where the variability settles; SGL3D has no scene to
 // ask, so the volume has converged once a window's mean falls by less than

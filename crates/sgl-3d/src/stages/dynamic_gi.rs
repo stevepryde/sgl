@@ -112,14 +112,17 @@ pub(crate) struct VolumeUniform {
 
 /// What the probes' light follows: the scene's content edits, the frame's
 /// lights and environment as the frame's data carries them (but for what
-/// the camera and the clock change), the environment it binds and the rays
-/// a probe may trace. While they hold still, a converged volume pauses.
+/// the camera and the clock change), the environment it binds, the rays a
+/// probe may trace, and whether the probe hits' light list takes the
+/// scene's lights, as prepare builds it. While they hold still, a
+/// converged volume pauses.
 #[derive(Clone, Copy)]
 struct Inputs {
     edits: u64,
     frame: crate::shading::uniforms::FrameUniform,
     environment: Option<crate::EnvironmentId>,
     max_rays: u32,
+    local_lights: bool,
 }
 
 impl Inputs {
@@ -138,6 +141,7 @@ impl Inputs {
             frame,
             environment: ctx.input.environment,
             max_rays,
+            local_lights: ctx.effective.local_lights,
         }
     }
 
@@ -146,6 +150,7 @@ impl Inputs {
             && bytemuck::bytes_of(&self.frame) == bytemuck::bytes_of(&other.frame)
             && self.environment == other.environment
             && self.max_rays == other.max_rays
+            && self.local_lights == other.local_lights
     }
 }
 

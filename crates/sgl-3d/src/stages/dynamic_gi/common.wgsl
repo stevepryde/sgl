@@ -87,7 +87,9 @@ struct DdgiConvergence {
  converged:u32,
 }
 // The frames of a convergence window: RTXGI's sample's least frames of
-// variability before it pauses a volume (DDGI.cpp 1631-1637).
+// variability before it pauses a volume (RTXGI-DDGI f33e496,
+// samples/test-harness/src/graphics/DDGI_VK.cpp 1629-1637 and
+// DDGI_D3D12.cpp 1239-1246).
 const DDGI_CONVERGENCE_WINDOW:u32=16u;
 // The fall from one window's mean variability to the next below which the
 // volume has converged.

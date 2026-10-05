@@ -1281,6 +1281,26 @@ fn a_converged_volume_traces_nothing_until_what_its_light_follows_changes() {
         let again = render_until_paused(gpu, &mut renderer, &mut scene, &input, &settings, 400);
         assert!(again.is_some(), "{edit}: never paused again");
     }
+    // The probe hits' light list without the scene's lights, a diagnostic
+    // setting.
+    #[cfg(feature = "diagnostics")]
+    {
+        let mut without = settings;
+        without.diagnostics.disable.local_lights = true;
+        render(
+            &device,
+            &queue,
+            &mut renderer,
+            &mut scene,
+            &input,
+            &without,
+            1,
+        );
+        assert!(
+            renderer.test_dynamic_gi().test_traced_rays(&device, &queue) > 0,
+            "the scene's lights left out"
+        );
+    }
 }
 
 // Under an open sky, with nothing about its probes, a volume's variability
