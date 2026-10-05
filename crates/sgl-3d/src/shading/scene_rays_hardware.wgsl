@@ -25,10 +25,13 @@ const SCENE_TLAS_ALL:u32=3u;
 // ray starts inside, a blended mesh of a mixed model, a hidden group's
 // triangle, its receiver's own triangle, the interval's open end; a
 // visibility ray whose first, any-hit look is rejected takes one more.
-// Counted on the GPU by an instrumented build, every one of the dynamic GI
-// example's 6.79 million probe and visibility rays took one query (#23);
-// the cap sits far above that, so that only content of many stacked
-// rejected surfaces, or corrupt data, reaches it. A ray that reaches it
+// Counted on the GPU by an instrumented build (#23), every one of the
+// dynamic GI example's 6.79 million probe and visibility rays took one
+// query, and of 6.9 million world-space reflection rays over a glossy
+// floor among moving boxes the most took three (702 static visibility
+// rays whose any-hit look was rejected, then two nearest queries); the
+// cap sits far above that, so that only content of many stacked rejected
+// surfaces, or corrupt data, reaches it. A ray that reaches it
 // reports a miss, or a visibility ray unoccluded, as the portable walk
 // does at SCENE_BVH_MOST_VISITS.
 const SCENE_MOST_HARDWARE_STEPS:u32=64u;
