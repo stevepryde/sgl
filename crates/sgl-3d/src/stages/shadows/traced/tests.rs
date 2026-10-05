@@ -620,7 +620,7 @@ fn the_lighting_pass_takes_the_shadows_the_maps_lack_from_the_mask() {
         return;
     };
     let gpu = (&device, &queue);
-    let size = [256, 192];
+    let size = [384, 288];
     let camera = camera(Vec3::new(0., 7., 7.), Vec3::ZERO, size);
     // The directional light beyond its cascades: a broad plate whose
     // shadow falls toward the camera, in full view.
