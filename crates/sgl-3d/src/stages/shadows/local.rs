@@ -281,6 +281,13 @@ impl Local {
         self.plan.stats
     }
 
+    /// The last frame's shadowed lights in the atlas's ranking, largest
+    /// screen coverage first: the lights the ray-traced shadow stage gives
+    /// its slots to.
+    pub fn ranking(&self) -> &[crate::content::identity::LightId] {
+        self.plan.ranking()
+    }
+
     /// Places the shadows of `scene`'s casting lights that reach the view of
     /// a camera with `view` and `projection`, when `enabled`, plans the faces
     /// whose content changed for the frame's visibility `mask`, with their

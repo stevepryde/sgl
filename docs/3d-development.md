@@ -19,7 +19,8 @@ browser a canvas surface on the page's WebGPU device. Request the device with
 `graphics_device::limits` and `graphics_device::features` on either. A
 native game that opts in to hardware ray tracing also requests
 `graphics_device::ray_tracing_features` with wgpu's experimental token and
-turns `Settings::hardware_ray_tracing` on.
+turns `Settings::hardware_ray_tracing` on, and `Settings::ray_traced_shadows`
+for ray-traced shadows.
 In the browser, fetch asset bytes and load them with `asset::load_slice` or
 `asset::load_slice_with_options`, pass the measured frame time in
 `FrameInput::frame_time_ms`, and capture specular probes natively:

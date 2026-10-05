@@ -231,13 +231,22 @@ Environment and probe specular always apply. On top of them:
   static surfaces as they stand rather than as their probes recorded them
   and is meant for hardware ray tracing.
 - **Hardware ray tracing** (opt-in): on a device with ray queries and with
-  `Settings::hardware_ray_tracing` on, world-space reflections' rays and
-  the dynamic GI volume's trace the scene's acceleration structures, built
+  `Settings::hardware_ray_tracing` on, world-space reflections' rays, the
+  dynamic GI volume's and ray-traced shadows' trace the scene's
+  acceleration structures, built
   on the frames that trace rays; masked models and what the device cannot
   hold stay on the software BVHs. Skinned and morphed instances are seen by
   those rays only on this path, and not at all where the device cannot
   hold them. `Renderer::ray_tracing_in_effect` and
   `ray_tracing_error` report it.
+  [Hardware ray tracing](../README.md#hardware-ray-tracing).
+- **Ray-traced shadows** (opt-in, `Settings::ray_traced_shadows`, which
+  needs hardware ray tracing): the camera's opaque surfaces take hard,
+  temporally blended shadows of the directional light and of up to fifteen
+  casting local lights from rays instead of the maps, reaching beyond the
+  directional shadow's distance; the fog, blended surfaces and reflections
+  keep the maps. Soft shadows from lights with a size and a denoiser are
+  planned. `Renderer::ray_traced_shadows_in_effect` reports it.
   [Hardware ray tracing](../README.md#hardware-ray-tracing).
 
 ## Image quality and post-processing
@@ -314,7 +323,7 @@ Environment and probe specular always apply. On top of them:
 ## Not provided
 
 Animation playback (sampling and blending clips is the game's).
-DLSS/MetalFX and ray-traced shadows are
+DLSS/MetalFX and soft ray-traced shadows are
 [planned](../../../specs/sgl3d.md#planned). The directional cascades cull by
 frustum alone. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is

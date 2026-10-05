@@ -85,6 +85,9 @@ pub(crate) struct FrameBindings {
     /// The blended pipelines' group 3 (`shading::bind::blended`), which the
     /// transparent stage binds.
     pub blended: wgpu::BindGroupLayout,
+    /// The lighting pass's group 3 while ray-traced shadows run
+    /// (`shading::bind::shadow_mask`), which the opaque stage binds.
+    pub shadow_mask: wgpu::BindGroupLayout,
     /// The GPU-built cascades' casters' group 3
     /// (`shading::bind::caster_positions`), which the scene's positions
     /// slabs bind (`scene::geometry`).
@@ -142,6 +145,7 @@ impl FrameBindings {
             scene: shading::bind::scene(device),
             material: shading::bind::material(device),
             blended: shading::bind::blended(device),
+            shadow_mask: shading::bind::shadow_mask(device),
             caster_positions: shading::bind::caster_positions(device),
             frame,
             empty_probes: UploadedProbes::empty(device),

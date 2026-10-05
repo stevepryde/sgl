@@ -8,9 +8,20 @@
 // Which sides of a triangle a ray accepts, beside the receiver it leaves:
 // a camera-origin ray rejects a single-sided material's back faces, as
 // raster culls them; a dynamic GI probe ray and its visibility ray accept
-// both sides of every triangle, as Wicked Engine's DDGI trace culls none.
+// both sides of every triangle, as Wicked Engine's DDGI trace culls none;
+// a ray-traced shadow ray rejects a single-sided material's front faces,
+// the shadow maps' rule in a ray's terms (a map draws a single-sided
+// caster's front faces from the light, so a ray from the receiver meets
+// that caster's back), as Wicked Engine 2ff1d9e's RT shadows cull them
+// (screenspaceshadowCS.hlsl 227, RAY_FLAG_CULL_FRONT_FACING_TRIANGLES; MIT,
+// src/LICENSE-wicked.txt). A ray leaving a lit face whose origin lies a
+// rounding behind it meets that face from behind, which this policy
+// accepts: the ray's start past the surface (Wicked's TMin) keeps it from
+// its own receiver, as in Wicked.
+// A double-sided material occludes from either side under every policy.
 const SCENE_SIDES_AS_RASTER:u32=0u;
 const SCENE_SIDES_BOTH:u32=1u;
+const SCENE_SIDES_SHADOW:u32=2u;
 fn scene_finite(v:f32)->bool {
  return abs(v)<=3.402823466e+38;
 }
@@ -83,8 +94,14 @@ fn scene_accepts_solved(ray:SceneRay,candidate:SceneCandidate,mesh:u32,maximum:f
  let material_word=scene_source[mesh+SCENE_MESH_MATERIAL_WORD];
  let flags=scene_source[material_word+SCENE_MATERIAL_FLAGS];
  // Object-space winding preserves authored sides even under mirrored poses.
- if candidate.winding<=0. && sides==SCENE_SIDES_AS_RASTER && (flags&MATERIAL_DOUBLE_SIDED)==0u {
-  return false;
+ // A triangle met edge-on (zero winding) has neither side.
+ if (flags&MATERIAL_DOUBLE_SIDED)==0u {
+  if candidate.winding<=0. && sides==SCENE_SIDES_AS_RASTER {
+   return false;
+  }
+  if candidate.winding>=0. && sides==SCENE_SIDES_SHADOW {
+   return false;
+  }
  }
  // A masked material's cut-out texels are no surface to any traversal,
  // nearest, any-hit or visibility, as raster discards them; the test

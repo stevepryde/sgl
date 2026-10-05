@@ -8,7 +8,8 @@
 //! about the camera. The render origin follows the camera, chunk-aligned.
 //!
 //! `cargo run --release -p sgl-3d --example streaming [-- RUN... [--split]
-//! [--occlusion] [--hardware-ray-tracing] | --check [--hardware-ray-tracing]]`
+//! [--occlusion] [--hardware-ray-tracing] [--ray-traced-shadows] | --check
+//! [--hardware-ray-tracing] [--ray-traced-shadows]]`
 //!
 //! The game's side is modelled on a block game's: its mesher finishes up to
 //! 24 chunks a 33 ms tick, nearest the camera first, meshing and preparing
@@ -44,7 +45,10 @@
 //! token) and `Settings::hardware_ray_tracing` is on, so a device that has
 //! it builds the scene's acceleration structures and traces the world-space
 //! reflections' rays through them; without the flag the runs are as before
-//! it existed, comparable with earlier measurements.
+//! it existed, comparable with earlier measurements. `--ray-traced-shadows`
+//! implies it and turns `Settings::ray_traced_shadows` on, so the camera's
+//! opaque surfaces take the sun's and the shadowed torches' shadows from
+//! rays.
 //!
 //! Each run then prints what its views' draw lists cost on its route
 //! (`support/culling.rs`): the CPU time each GPU-built view's draw list
@@ -57,7 +61,8 @@
 //! motion and no shadow is redrawn; then it remeshes the chunks holding
 //! shadowed torches and fails unless the next submitted frame redraws their
 //! static shadow layers and the one after redraws none. An abandoned frame
-//! precedes each submitted one. `--hardware-ray-tracing` applies to it too.
+//! precedes each submitted one. `--hardware-ray-tracing` and
+//! `--ray-traced-shadows` apply to it too.
 use sgl_3d::diagnostics::{Counters, DiagnosticTarget, SceneResources};
 use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3};
 use sgl_3d::{
@@ -1068,11 +1073,12 @@ fn render(
     gpu: (&wgpu::Device, &wgpu::Queue),
     directory: &Path,
     options: culling::Options,
-    hardware: bool,
+    tracing: Tracing,
 ) -> Result<(Game, culling::Culling), Box<dyn Error>> {
     let (device, queue) = gpu;
     let mut settings = settings();
-    settings.hardware_ray_tracing = hardware;
+    settings.hardware_ray_tracing = tracing.hardware;
+    settings.ray_traced_shadows = tracing.shadows;
     let mut culling = culling::Culling::new(options);
     let mut scene = Scene::new(device, queue);
     let mut game = Game::new(run, &mut scene, gpu)?;
@@ -1235,7 +1241,7 @@ fn largest_motion(
 /// `--check`: a still camera across render origin moves of one chunk and
 /// of 256 m, then a remesh of the chunks holding shadowed torches, each
 /// followed by an abandoned frame and then a submitted one.
-fn check(gpu: (&wgpu::Device, &wgpu::Queue), hardware: bool) -> Result<(), Box<dyn Error>> {
+fn check(gpu: (&wgpu::Device, &wgpu::Queue), tracing: Tracing) -> Result<(), Box<dyn Error>> {
     let (device, queue) = gpu;
     let run = Run {
         name: "check",
@@ -1250,7 +1256,8 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue), hardware: bool) -> Result<(), Box<d
         frames: 0,
     };
     let settings = sgl_3d::settings::Settings {
-        hardware_ray_tracing: hardware,
+        hardware_ray_tracing: tracing.hardware,
+        ray_traced_shadows: tracing.shadows,
         ..settings()
     };
     let mut scene = Scene::new(device, queue);
@@ -1357,18 +1364,32 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue), hardware: bool) -> Result<(), Box<d
     Ok(())
 }
 
+/// What the runs trace in hardware: their rays (`--hardware-ray-tracing`),
+/// and the camera's shadows too (`--ray-traced-shadows`).
+#[derive(Clone, Copy, Default)]
+struct Tracing {
+    hardware: bool,
+    shadows: bool,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let mut frames = 600;
     let mut names = Vec::new();
     let mut check_only = false;
     let mut options = culling::Options::default();
-    let mut hardware = false;
+    let mut tracing = Tracing::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--frames" => frames = args.next().ok_or("--frames requires a count")?.parse()?,
             "--check" => check_only = true,
-            "--hardware-ray-tracing" => hardware = true,
+            "--hardware-ray-tracing" => tracing.hardware = true,
+            "--ray-traced-shadows" => {
+                tracing = Tracing {
+                    hardware: true,
+                    shadows: true,
+                }
+            }
             option if options.take(option) => {}
             name => names.push(name.to_owned()),
         }
@@ -1378,7 +1399,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let adapter =
         pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default()))?;
-    let ray_tracing = if hardware {
+    let ray_tracing = if tracing.hardware {
         sgl_3d::graphics_device::ray_tracing_features(&adapter)
     } else {
         wgpu::Features::empty()
@@ -1388,7 +1409,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             | sgl_3d::graphics_device::features(&adapter)
             | ray_tracing,
         required_limits: sgl_3d::graphics_device::limits(&adapter),
-        experimental_features: if hardware {
+        experimental_features: if tracing.hardware {
             // SAFETY: with `--hardware-ray-tracing` the example accepts
             // wgpu's experimental ray queries.
             unsafe { wgpu::ExperimentalFeatures::enabled() }
@@ -1399,7 +1420,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }))?;
     let gpu = (&device, &queue);
     if check_only {
-        return check(gpu, hardware);
+        return check(gpu, tracing);
     }
     let all = runs(frames);
     let chosen: Vec<&Run> = if names.is_empty() {
@@ -1424,7 +1445,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         directory.display()
     );
     for run in chosen {
-        let (game, culling) = render(run, gpu, &directory, options, hardware)?;
+        let (game, culling) = render(run, gpu, &directory, options, tracing)?;
         game.measured.report(run);
         print!("{}", culling.report());
     }

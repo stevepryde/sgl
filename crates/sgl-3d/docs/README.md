@@ -34,7 +34,8 @@ its rendering `settings::Settings`.
    that the scene's rays trace its acceleration structures, also requests
    `graphics_device::ray_tracing_features(&adapter)` with
    `experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() }`
-   and turns `Settings::hardware_ray_tracing` on
+   and turns `Settings::hardware_ray_tracing` on, and
+   `Settings::ray_traced_shadows` too for ray-traced shadows
    ([hardware ray tracing](../README.md#hardware-ray-tracing)).
    In the browser the device is the page's WebGPU one, requested the same way;
    it needs 21 sampled textures per stage (Chromium 149 and later).
