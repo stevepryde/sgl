@@ -12,8 +12,9 @@
 //! spreading that many probes over the room, and `--timing`, which prints
 //! the dynamic GI stage's GPU time in each frame, as its probes start and
 //! settle, and each pass's median and 95th percentile over the second half
-//! of the frames, where the device has timestamp queries. Printed numbers
-//! are diagnostics, not image QA.
+//! of the frames, where the device has timestamp queries; `--still` parks
+//! the boxes, so the room's light settles and the probes' cost with it.
+//! Printed numbers are diagnostics, not image QA.
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, DynamicGiVolume, FrameInput, HemisphereLight,
@@ -32,6 +33,7 @@ struct Options {
     quality: DynamicGiQuality,
     probes: [u32; 3],
     timing: bool,
+    still: bool,
 }
 
 impl Options {
@@ -42,6 +44,7 @@ impl Options {
             quality: DynamicGiQuality::High,
             probes: [8, 5, 8],
             timing: false,
+            still: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -68,9 +71,10 @@ impl Options {
                         .map_err(|_| "--probes requires three counts")?;
                 }
                 "--timing" => options.timing = true,
+                "--still" => options.still = true,
                 "--help" | "-h" => {
                     println!(
-                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing]"
+                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing] [--still]"
                     );
                     std::process::exit(0);
                 }
@@ -356,7 +360,11 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .flatten();
     let mut times = Vec::new();
     for frame_index in 0..options.frames {
-        let phase = frame_index as f32 / 60. * 0.8;
+        let phase = if options.still {
+            0.
+        } else {
+            frame_index as f32 / 60. * 0.8
+        };
         for (index, (state, instance)) in boxes.iter_mut().enumerate() {
             let angle = phase + index as f32 * std::f32::consts::PI;
             state.pose = Mat4::from_translation(Vec3::new(
