@@ -296,12 +296,16 @@ full API details.
   al. 2021's self-shadow bias, about a quarter of the least spacing), where
   Wicked lets a surface facing a nearby wall take the light beyond it; a
   change in the bounce about a small object now settles over tens of frames
-  rather than a few. A restart (another placement or scene, or a frame
-  without the volume) starts at most 128 probes a frame at High (256 at
-  Low), nearest the camera first, where Wicked starts every probe in one
-  frame; the surfaces about a probe not yet started keep their other
-  indirect light. The `dynamic_gi` example lights a room and prints the
-  stage's cost. Timing groups `dynamic GI allocation`,
+  rather than a few. Installing the volume again with its origin moved by
+  whole spacings scrolls it: the probes that stay keep their light, and
+  those that enter start afresh; an origin off the lattice, or another
+  spacing or count, is another placement. A restart (another placement or
+  scene, or a frame without the volume), or a scroll's entering planes,
+  starts at most 128 probes a frame at High (256 at Low), nearest the camera
+  first, where Wicked starts every probe in one frame; the surfaces about a
+  probe not yet started keep their other indirect light. The `dynamic_gi`
+  example lights a room, scrolls a volume after its camera (`--scroll`) and
+  prints the stage's cost. Timing groups `dynamic GI allocation`,
   `dynamic GI rays` and `dynamic GI blend` report its cost, and frames that
   run it rebuild the ray source's instance BVHs, as world-space reflections
   do. A volume costs about 11 KB of GPU memory a probe at High (8 KB at

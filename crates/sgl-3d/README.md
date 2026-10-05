@@ -1575,14 +1575,21 @@ Placement:
   directional light without the frame's cascades) lights the probes as it
   lights surfaces, unoccluded, through walls too: give a light that should
   stay in its room a shadow.
-- Installing another placement starts the probes afresh, as does a frame
-  that does not run them (another scene, the setting `Off`). Installing the
-  same placement changes nothing; camera cuts, resizes and
-  `Scene::move_origin` keep the probes.
-- A restart starts at most 128 probes a frame at High (256 at Low), nearest
-  the camera first; until a probe has started it lights nothing, and the
-  surfaces about it keep their other indirect light. Wicked starts every
-  probe in one frame, a hitch on a large volume.
+- To keep a volume about a moving camera, install it again each frame with
+  its origin moved by whole spacings (round the camera's position on the
+  lattice): the scene scrolls it, the probes that stay keeping their light
+  and those that enter starting afresh. An origin off the lattice by more
+  than a small tolerance of the spacing, or another spacing or count, is
+  another placement, which starts every probe afresh, as does a frame that
+  does not run them (another scene, the setting `Off`). Installing the same
+  placement changes nothing; camera cuts, resizes and `Scene::move_origin`
+  keep the probes, and after a move `Scene::dynamic_gi_volume` gives the
+  placement in the new frame to scroll from.
+- A restart, or a scroll's entering planes, starts at most 128 probes a
+  frame at High (256 at Low), nearest the camera first; until a probe has
+  started it lights nothing, and the surfaces about it keep their other
+  indirect light. Wicked starts every probe in one frame, a hitch on a
+  large volume.
 - Memory is about 11 KB a probe at High (8 KB at Low): its irradiance and
   depth maps, its share of the frame's ray list and results, and the blends'
   history. A volume is refused with `SceneError::DeviceLimit` where its
@@ -1601,7 +1608,9 @@ lit by the volume but do not block its rays. Per-pass cost is reported in
 the `dynamic GI *` timing groups. The [dynamic GI example](examples/dynamic_gi.rs)
 lights a room through a window and with a lamp, two boxes moving through
 it; `--timing` prints the stage's GPU time in each frame as its probes
-start and settle, and `--quality off` renders the room without the volume:
+start and settle, `--quality off` renders the room without the volume, and
+`--scroll` walks the camera along the room with a shorter volume that
+scrolls to follow it:
 
 ```sh
 cargo run --release -p sgl-3d --example dynamic_gi -- target/dynamic_gi.png --timing

@@ -16,7 +16,12 @@
 // blend writes. Changed: a probe not yet blended starts its estimator,
 // depth and offset afresh, where Wicked starts every probe on its first
 // frame; each map's history is the stage's buffers, which the blend writes
-// on into the probe texture.
+// on into the probe texture. Added: the scroll pass, which clears the planes
+// of probes that enter a scrolled volume, as NVIDIA RTXGI's probe blending
+// clears the planes its scroll offsets bring in (DDGIClearScrolledPlane;
+// practice only, its code not copied): each starts again as a probe not yet
+// blended, which the sample skips and the allocation starts through its
+// ramp.
 @group(0) @binding(0) var<uniform> volume:DdgiVolume;
 @group(0) @binding(1) var<storage,read> ray_counts:array<u32>;
 @group(0) @binding(2) var ray_results:texture_2d<u32>;
@@ -299,4 +304,27 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   probe_states[probe_index]=ddgi_pack_probe(DdgiProbe(probe_offset,true));
   textureStore(probes_out,ddgi_probe_data_pixel(probe_coord,volume.probes),vec4(probe_offset,1.));
  }
+}
+// Whether the probe at lattice coordinate `coord` entered the volume with
+// its move of `scrolled` whole spacings: on an axis it moved forward, the
+// last planes, and on one it moved back, the first.
+fn ddgi_entered(coord:vec3<u32>,scrolled:vec3<i32>)->bool {
+ let at=vec3<i32>(coord);
+ let count=vec3<i32>(volume.probes);
+ return any((scrolled>vec3(0) & at>=count-scrolled) | (scrolled<vec3(0) & at< -scrolled));
+}
+// Clears the probes that entered with the frame's scroll: not blended, at
+// rest, and so lighting nothing until they trace.
+@compute @workgroup_size(64)
+fn scroll(@builtin(global_invocation_id) id:vec3<u32>) {
+ let probe_index=id.x;
+ if probe_index>=volume.probe_count {
+  return;
+ }
+ let stored=ddgi_probe_coord(probe_index,volume.probes);
+ if !ddgi_entered(ddgi_probe_lattice(stored,volume.probes,volume.scroll),volume.scrolled) {
+  return;
+ }
+ probe_states[probe_index]=ddgi_pack_probe(DdgiProbe(vec3(0.),false));
+ textureStore(probes_out,ddgi_probe_data_pixel(stored,volume.probes),vec4(0.));
 }

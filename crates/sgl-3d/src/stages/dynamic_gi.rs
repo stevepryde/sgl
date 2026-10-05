@@ -24,18 +24,22 @@
 //! blend`.
 //! History: the probes' state, world-space about each probe's centre. It
 //! takes no renderer reset: it is keyed on the scene's identity and the
-//! volume's placement, and starts afresh when either differs or after a
-//! submitted frame that did not run it. State that must agree with a
-//! submitted frame is on the GPU; the key is committed at `finish_frame`,
-//! so an abandoned frame leaves both as they were.
+//! lattice its volume lies on, and starts afresh when either differs or
+//! after a submitted frame that did not run it. A scroll keeps it: probes
+//! are stored at their lattice coordinate plus the volume's scroll,
+//! wrapping, as RTXGI's infinite scrolling volume stores its probes (its
+//! probe scroll offsets; practice only), so the probes that stay keep their
+//! texels, and a frame that scrolls clears the planes that enter, which
+//! start as probes not yet blended. State that must agree with a submitted
+//! frame is on the GPU; the key and the placement are committed at
+//! `finish_frame`, so an abandoned frame leaves both as they were.
 use crate::Scene;
-use crate::content::dynamic_gi::DynamicGiVolume;
-use crate::scene::dynamic_gi::InstalledVolume;
+use crate::scene::dynamic_gi::{InstalledVolume, ProbePlacement};
 use crate::shading::{self, dynamic_gi as layout};
 use crate::view::effective::Effective;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
-use glam::{Mat3, Mat4, Vec3, Vec4};
+use glam::{I64Vec3, IVec3, Mat3, Mat4, Vec3, Vec4};
 use std::collections::HashMap;
 use volume::{Layouts, Volume, texture};
 
@@ -97,6 +101,10 @@ pub(crate) struct VolumeUniform {
     ramp_probes: u32,
     traced: u32,
     padding: u32,
+    scroll: [u32; 3],
+    padding_scroll: u32,
+    scrolled: [i32; 3],
+    padding_scrolled: u32,
 }
 
 /// The allocation's buffer (`DdgiAllocation` in allocate.wgsl): the
@@ -128,13 +136,12 @@ const RAMP_RAYS: u32 = 32768;
 const UNIFORM_RAYS: u64 = std::mem::offset_of!(VolumeUniform, rays) as u64;
 const UNIFORM_TRACED: u64 = std::mem::offset_of!(VolumeUniform, traced) as u64;
 
-/// What the probes' state is kept for: a scene and its volume's placement,
-/// in the frame the scene was created in, so a move of the render origin
-/// keeps it.
+/// What the probes' state is kept for: a scene and the lattice its volume
+/// lies on, which a scroll and a move of the render origin keep.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Key {
     scene: u64,
-    volume: InstalledVolume,
+    lattice: u64,
 }
 
 impl Key {
@@ -142,7 +149,7 @@ impl Key {
     fn of(scene: &Scene) -> Option<Self> {
         Some(Self {
             scene: scene.id,
-            volume: scene.dynamic_gi?,
+            lattice: scene.dynamic_gi?.lattice,
         })
     }
 }
@@ -157,6 +164,7 @@ pub(crate) struct DynamicGi {
     prepare_trace: wgpu::ComputePipeline,
     update_irradiance: wgpu::ComputePipeline,
     update_depth: wgpu::ComputePipeline,
+    scroll: wgpu::ComputePipeline,
     trace_shader: wgpu::ShaderModule,
     trace_layout: wgpu::PipelineLayout,
     /// The trace's pipelines for each set of lit constants, each created
@@ -177,8 +185,8 @@ pub(crate) struct DynamicGi {
 enum Rendered {
     /// It does not run the stage.
     Off,
-    /// It continues the committed probes.
-    Continue,
+    /// It continues the committed probes, scrolled to this placement.
+    Continue(InstalledVolume),
     /// It starts these fresh ones, leaving the committed probes as they were
     /// until it is submitted.
     Fresh(Box<Volume>),
@@ -251,6 +259,12 @@ impl DynamicGi {
             &update_shader,
             "update_depth",
         );
+        let scroll = pipeline(
+            "dynamic GI scroll",
+            &layouts.update,
+            &update_shader,
+            "scroll",
+        );
         let trace_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("dynamic GI rays"),
             bind_group_layouts: &[Some(lit), Some(scene), None, Some(&layouts.trace)],
@@ -266,6 +280,7 @@ impl DynamicGi {
             prepare_trace,
             update_irradiance,
             update_depth,
+            scroll,
             uniform: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -288,7 +303,7 @@ impl DynamicGi {
         match &self.rendered {
             Some(Rendered::Fresh(volume)) => &volume.probes,
             Some(Rendered::Off) => &self.stand_in,
-            Some(Rendered::Continue) | None => self
+            Some(Rendered::Continue(_)) | None => self
                 .committed
                 .as_ref()
                 .map_or(&self.stand_in, |(volume, _)| &volume.probes),
@@ -296,13 +311,14 @@ impl DynamicGi {
     }
 
     /// The committed probes, those of the last submitted frame that ran
-    /// the stage, with their placement, while they are `scene`'s installed
-    /// volume's: what a probe capture between frames is lit by. A frame
-    /// rendered since and abandoned does not change them.
-    pub fn lights(&self, scene: &Scene) -> Option<(DynamicGiVolume, &wgpu::TextureView)> {
+    /// the stage, with the placement that frame gave them, while they are
+    /// for `scene`'s installed volume's lattice: what a probe capture
+    /// between frames is lit by. A frame rendered since and abandoned, and a
+    /// scroll no frame has run, do not change them.
+    pub fn lights(&self, scene: &Scene) -> Option<(ProbePlacement, &wgpu::TextureView)> {
         let (volume, _) = self.committed.as_ref()?;
-        let placement = scene.dynamic_gi_volume()?;
-        (Some(volume.key) == Key::of(scene)).then_some((placement, &volume.probes))
+        (Some(volume.key) == Key::of(scene))
+            .then(|| (volume.installed.placement(scene.origin()), &volume.probes))
     }
 
     /// What lit group 0 binds where no probes light the view.
@@ -314,7 +330,9 @@ impl DynamicGi {
     /// the scene and its placement, else fresh ones, and none while the
     /// stage does not run.
     pub fn prepare(&mut self, device: &wgpu::Device, scene: &Scene, effective: &Effective) {
-        let (Some(max_rays), Some(key)) = (effective.dynamic_gi, Key::of(scene)) else {
+        let (Some(max_rays), Some(key), Some(installed)) =
+            (effective.dynamic_gi, Key::of(scene), scene.dynamic_gi)
+        else {
             self.rendered = Some(Rendered::Off);
             return;
         };
@@ -326,13 +344,13 @@ impl DynamicGi {
                         Some(volume.ray_groups(device, &self.layouts, &self.uniform, max_rays));
                     volume.max_rays = max_rays;
                 }
-                Rendered::Continue
+                Rendered::Continue(installed)
             }
             _ => Rendered::Fresh(Box::new(Volume::new(
                 device,
                 &self.layouts,
                 &self.uniform,
-                key,
+                (key, installed),
                 max_rays,
             ))),
         };
@@ -345,8 +363,9 @@ impl DynamicGi {
         match self.rendered.take() {
             None => {}
             Some(Rendered::Off) => self.committed = None,
-            Some(Rendered::Continue) => {
-                if let Some((_, frames)) = &mut self.committed {
+            Some(Rendered::Continue(installed)) => {
+                if let Some((volume, frames)) = &mut self.committed {
+                    volume.installed = installed;
                     *frames = frames.wrapping_add(1);
                 }
             }
@@ -378,18 +397,27 @@ impl DynamicGi {
         };
         let lit = LitConstants::of(ctx.scene);
         self.trace_pipeline(ctx.device, lit);
-        let (volume, frame) = match (&self.rendered, &self.committed) {
-            (Some(Rendered::Fresh(volume)), _) => (&**volume, 0),
-            (Some(Rendered::Continue), Some((volume, frames))) => (volume, frames.wrapping_add(1)),
+        // The whole spacings the volume has moved since the committed frame.
+        let (volume, frame, installed, scrolled) = match (&self.rendered, &self.committed) {
+            (Some(Rendered::Fresh(volume)), _) => (&**volume, 0, volume.installed, I64Vec3::ZERO),
+            (Some(Rendered::Continue(installed)), Some((volume, frames))) => (
+                volume,
+                frames.wrapping_add(1),
+                *installed,
+                installed.scroll - volume.installed.scroll,
+            ),
             _ => return,
         };
         let Some(rays) = volume.rays.as_ref() else {
             return;
         };
-        // In the render frame of the scene the key matched.
-        let Some(placement) = ctx.scene.dynamic_gi_volume() else {
-            return;
-        };
+        let ProbePlacement {
+            volume: placement,
+            scroll,
+        } = installed.placement(ctx.scene.origin());
+        // A move of a whole lattice or more clears every probe.
+        let probes = I64Vec3::from_array(placement.probes.map(i64::from));
+        let scrolled = scrolled.clamp(-probes, probes).as_ivec3();
         let camera = ctx.input.camera;
         let uniform = VolumeUniform {
             origin: placement.origin.to_array(),
@@ -409,6 +437,10 @@ impl DynamicGi {
             ramp_probes: (RAMP_RAYS / max_rays).max(1),
             traced: 0,
             padding: 0,
+            scroll,
+            padding_scroll: 0,
+            scrolled: scrolled.to_array(),
+            padding_scrolled: 0,
         };
         crate::counters::write_buffer(ctx.queue, &self.uniform, 0, bytemuck::bytes_of(&uniform));
         let probes = dispatch(uniform.probe_count);
@@ -420,6 +452,11 @@ impl DynamicGi {
                 label: Some("dynamic GI allocation"),
                 timestamp_writes: timing.and_then(|t| t.compute_pass("dynamic GI allocation")),
             });
+            if scrolled != IVec3::ZERO {
+                pass.set_bind_group(0, &rays.update, &[]);
+                pass.set_pipeline(&self.scroll);
+                pass.dispatch_workgroups(uniform.probe_count.div_ceil(64), 1, 1);
+            }
             pass.set_bind_group(0, &rays.allocate, &[]);
             pass.set_pipeline(&self.rank);
             pass.dispatch_workgroups(uniform.probe_count.div_ceil(64), 1, 1);
@@ -551,6 +588,8 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
                 rays,
                 ramp_probes,
                 traced,
+                scroll,
+                scrolled,
             ]
         ),
         mirror!(

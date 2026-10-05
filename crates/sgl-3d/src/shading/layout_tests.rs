@@ -180,6 +180,7 @@ fn rust_mirrors_match_wgsl_layouts() {
                 dynamic_gi_origin,
                 dynamic_gi_spacing,
                 dynamic_gi_probes,
+                dynamic_gi_scroll,
                 irradiance_volume_origin,
                 irradiance_volume_cell_size,
                 irradiance_volume_cells,

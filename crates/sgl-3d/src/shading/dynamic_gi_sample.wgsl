@@ -14,7 +14,8 @@
 // probes all weigh nothing keeps its fallback; the volume's share fades to
 // nothing over the one spacing past its extent, as RTXGI's volume blend
 // weight fades (volume_share.wgsl); f32 in place of half; the sampler is
-// `baked_sampler`.
+// `baked_sampler`; a probe's texels are where the volume's scroll stores
+// them (ddgi_probe_stored).
 // Changed, the weights, to those NVIDIA RTXGI's DDGIGetVolumeIrradiance
 // takes (practice only; its code is not copied): the whole wrap-shading weight
 // (wrap^2 + 0.2) in place of Wicked's blend of a hard saturate(dot) test with
@@ -80,7 +81,9 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>)->ve
  for (var i=0u;i<8u;i++) {
   let offset=vec3(i,i>>1u,i>>2u)&vec3(1u);
   let probe_grid_coord=min(base_grid_coord+offset,probes-vec3(1u));
-  let data=textureLoad(dynamic_gi_probes,ddgi_probe_data_pixel(probe_grid_coord,probes),0);
+  // Its texels, where the volume's scroll stores them.
+  let stored=ddgi_probe_stored(probe_grid_coord,probes,frame.dynamic_gi_scroll);
+  let data=textureLoad(dynamic_gi_probes,ddgi_probe_data_pixel(stored,probes),0);
   if data.a<=0. {
    continue;
   }
@@ -94,7 +97,7 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>)->ve
   let wrap=max(.0001,(dot(true_direction_to_probe,normal)+1.)*.5);
   weight*=wrap*wrap+.2;
   // Moment visibility test.
-  let depth_uv=ddgi_probe_uv(ddgi_probe_depth_pixel(probe_grid_coord,probes),DDGI_DEPTH_RESOLUTION,-dir,size);
+  let depth_uv=ddgi_probe_uv(ddgi_probe_depth_pixel(stored,probes),DDGI_DEPTH_RESOLUTION,-dir,size);
   let dist_to_probe=length(probe_to_point);
   let moments=textureSampleLevel(dynamic_gi_probes,baked_sampler,depth_uv,0.).xy;
   let mean=moments.x;
@@ -105,7 +108,7 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>)->ve
   weight*=select(chebyshev_weight,1.,dist_to_probe<=mean);
   // Avoid zero weight.
   weight=max(.000001,weight);
-  let color_uv=ddgi_probe_uv(ddgi_probe_color_pixel(probe_grid_coord,probes),DDGI_COLOR_RESOLUTION,normal,size);
+  let color_uv=ddgi_probe_uv(ddgi_probe_color_pixel(stored,probes),DDGI_COLOR_RESOLUTION,normal,size);
   let probe_irradiance=textureSampleLevel(dynamic_gi_probes,baked_sampler,color_uv,0.).rgb;
   // Crush tiny weights but keep the curve continuous, before the
   // trilinear weights.

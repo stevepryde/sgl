@@ -76,7 +76,8 @@ fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) gro
  if probe.blended {
   return;
  }
- let position=ddgi_probe_position_rest(ddgi_probe_coord(probe_index,volume.probes),volume.origin,volume.spacing);
+ let lattice=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
+ let position=ddgi_probe_position_rest(lattice,volume.origin,volume.spacing);
  atomicAdd(&allocation.bins[ramp_bin(position)],1u);
  atomicAdd(&allocation.unblended,1u);
 }
@@ -118,7 +119,8 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
  if probe_index>=volume.probe_count {
   return;
  }
- let probe_coord=ddgi_probe_coord(probe_index,volume.probes);
+ // Its place on the lattice, from where its scroll stores it.
+ let probe_coord=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
  let probe=ddgi_unpack_probe(probe_states[probe_index]);
  let probe_pos=ddgi_probe_position(probe_coord,volume.origin,volume.spacing,probe.offset);
  var inconsistency=0.;

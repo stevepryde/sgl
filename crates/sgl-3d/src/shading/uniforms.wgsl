@@ -101,11 +101,13 @@ struct Frame {
  // The lightmap's chart transform: chart UV = material UV * xy + zw.
  lightmap_chart:vec4<f32>,
  // With FRAME_DYNAMIC_GI, the scene's dynamic GI volume (dynamic_gi.wgsl):
- // its first probe's position, the spacing of its probes and their count
- // along each axis.
+ // its first probe's position, the spacing of its probes, their count
+ // along each axis, and its scroll, where they are stored
+ // (ddgi_probe_stored).
  dynamic_gi_origin:vec3<f32>,
  dynamic_gi_spacing:vec3<f32>,
  dynamic_gi_probes:vec3<u32>,
+ dynamic_gi_scroll:vec3<u32>,
  // With FRAME_IRRADIANCE_VOLUME, the scene's irradiance volume
  // (irradiance_volume.wgsl): its first cell's least corner, the size of its
  // cells and their count along each axis.

@@ -84,9 +84,10 @@ fn trace(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index)
  let probe_index=ray_alloc.x;
  let ray_index=ray_alloc.y&0xffffu;
  let ray_count=ray_alloc.y>>16u;
- let probe_coord=ddgi_probe_coord(probe_index,volume.probes);
- let probe_data=textureLoad(dynamic_gi_probes,ddgi_probe_data_pixel(probe_coord,volume.probes),0);
- let probe_pos=ddgi_probe_position(probe_coord,volume.origin,volume.spacing,probe_data.rgb);
+ let stored=ddgi_probe_coord(probe_index,volume.probes);
+ let probe_data=textureLoad(dynamic_gi_probes,ddgi_probe_data_pixel(stored,volume.probes),0);
+ let lattice=ddgi_probe_lattice(stored,volume.probes,volume.scroll);
+ let probe_pos=ddgi_probe_position(lattice,volume.origin,volume.spacing,probe_data.rgb);
  var rng=ddgi_rng_init(vec2(id,id),volume.frame);
  let direction=normalize(volume.rotation*ddgi_spherical_fibonacci(f32(ray_index),f32(ray_count)));
  var ray=DdgiRay(direction,-1.,vec3(0.));

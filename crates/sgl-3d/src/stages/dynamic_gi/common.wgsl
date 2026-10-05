@@ -52,6 +52,12 @@ struct DdgiVolume {
  // The probes that trace rays this frame, which a copy brings here before
  // the blends.
  traced:u32,
+ // Where the probes are stored (ddgi_probe_stored).
+ scroll:vec3<u32>,
+ // The whole spacings the volume has moved since the last frame that ran
+ // it, at most its probes on each axis: the planes that enter, which the
+ // scroll pass clears.
+ scrolled:vec3<i32>,
 }
 // The probe a workgroup of a two-dimensional dispatch over probes serves.
 fn ddgi_group_probe(group:vec3<u32>)->u32 {

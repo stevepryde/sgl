@@ -13,6 +13,10 @@
 //  in half spacings in rgb, and in a 1 once it has been blended, at column
 //  (z % 18) nx ny + x + y nx and row 18 nz + 8 ceil(nz / 2) + z / 18.
 //
+// A probe's place in each region, and its index in the stage's buffers, are
+// those of its stored coordinate: its lattice coordinate plus the volume's
+// scroll, wrapping, so a scroll moves no probe (ddgi_probe_stored).
+//
 // Ports Wicked Engine df44c3db4c4927492bc9c791eac715d98d7ed091,
 // WickedEngine/shaders/ShaderInterop_DDGI.h (DDGI_DEPTH_RESOLUTION,
 // DDGI_DEPTH_TEXELS, ddgi_probe_coord, ddgi_probe_index,
@@ -24,7 +28,10 @@
 // (src/LICENSE-wicked.txt). Changed: one texture holds the colour and depth
 // maps and the probe data Wicked keeps in its probe buffer, its colour
 // slabs paired to fill the depth region's width; the lattice is an
-// argument; f32 in place of half.
+// argument; f32 in place of half. Added: probes stored by their lattice
+// coordinate plus the volume's scroll, wrapping, as NVIDIA RTXGI's infinite
+// scrolling volume stores its probes (DDGIGetScrollingProbeIndex and its
+// probe scroll offsets; practice only, its code not copied).
 const DDGI_COLOR_RESOLUTION:u32=6u;
 const DDGI_COLOR_TEXELS:u32=8u;
 const DDGI_DEPTH_RESOLUTION:u32=16u;
@@ -57,6 +64,15 @@ fn ddgi_probe_coord(index:u32,probes:vec3<u32>)->vec3<u32> {
  let z=index/slab;
  let rest=index-z*slab;
  return vec3(rest%probes.x,rest/probes.x,z);
+}
+// Where the probe at lattice coordinate `coord` is stored, with the volume
+// scrolled by `scroll` (in [0, probes) on each axis).
+fn ddgi_probe_stored(coord:vec3<u32>,probes:vec3<u32>,scroll:vec3<u32>)->vec3<u32> {
+ return (coord+scroll)%probes;
+}
+// The lattice coordinate of the probe stored at `stored`.
+fn ddgi_probe_lattice(stored:vec3<u32>,probes:vec3<u32>,scroll:vec3<u32>)->vec3<u32> {
+ return (stored+probes-scroll)%probes;
 }
 fn ddgi_probe_index(coord:vec3<u32>,probes:vec3<u32>)->u32 {
  return coord.z*probes.x*probes.y+coord.y*probes.x+coord.x;
