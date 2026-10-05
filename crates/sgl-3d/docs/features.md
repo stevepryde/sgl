@@ -190,7 +190,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   starts its probes over a few frames, nearest the camera first; one moved
   by whole spacings scrolls, keeping the probes that stay. Probes inside
   geometry or behind walls light nothing and cost little; those with no
-  surface near them light moving instances alone.
+  surface near them light moving instances alone. A converged volume pauses
+  until something it sees changes.
   `Settings::dynamic_gi` sets its rays.
   [Dynamic GI](../README.md#dynamic-diffuse-gi).
 - **Baked specular probes**: parallax-corrected reflection cubes with blended

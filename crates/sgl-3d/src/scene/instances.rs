@@ -282,6 +282,7 @@ impl Scene {
         state: InstanceState,
         mobility: Mobility,
     ) -> Result<InstanceId, SceneError> {
+        self.edited();
         let deforms = self.models.get(state.model)?.deformation.is_some();
         validate_pose(state.pose)?;
         if deforms && mobility == Mobility::Static {
@@ -349,6 +350,12 @@ impl Scene {
     ) -> Result<(), SceneError> {
         let previous = self.instances.get(id)?.state.model;
         let deforms = self.models.get(state.model)?.deformation.is_some();
+        // A game may set every pose each frame: only a change rays see, of
+        // an instance that does not deform, is an edit.
+        let old = self.instances.get(id)?.state;
+        if old != state && !deforms && (old.capture_visible || state.capture_visible) {
+            self.edited();
+        }
         validate_pose(state.pose)?;
         if previous != state.model && (deforms || self.instances.get(id)?.deformation.is_some()) {
             return Err(SceneError::DeformingModel);
@@ -380,6 +387,7 @@ impl Scene {
 
     /// Removes an instance. Its index is reused under a new identity.
     pub fn remove_instance(&mut self, id: InstanceId) -> Result<(), SceneError> {
+        self.edited();
         let mut instance = self
             .instances
             .slots
@@ -411,6 +419,7 @@ impl Scene {
         id: InstanceId,
         cube: AmbientCube,
     ) -> Result<(), SceneError> {
+        self.edited();
         let instance = self
             .instances
             .slots

@@ -555,6 +555,7 @@ impl Scene {
         materials: &[AuthoredMaterial],
         images: &[Image],
     ) -> Result<Vec<MaterialId>, SceneError> {
+        self.edited();
         let ids = self
             .materials
             .add(device, queue, &mut self.rays, materials, images);
@@ -577,11 +578,15 @@ impl Scene {
         id: MaterialId,
         values: SurfaceMaterial,
     ) -> Result<(), SceneError> {
+        if self.materials.get(id)?.values != values {
+            self.edited();
+        }
         self.materials.set(queue, &self.rays, id, values)
     }
 
     /// Removes a material no model's mesh uses.
     pub fn remove_material(&mut self, id: MaterialId) -> Result<(), SceneError> {
+        self.edited();
         self.materials.remove(&mut self.rays, id)
     }
 }

@@ -79,6 +79,12 @@ pub struct Scene {
     /// (lights, decals, the decal atlas, lightmap, irradiance atlas,
     /// specular probes, the irradiance volume's texture).
     pub(crate) resources: u64,
+    /// Changes with every edit to the content the dynamic GI volume's rays
+    /// see and light (`Scene::edited`): each public edit that changes
+    /// something, but the transient effects' and a deforming instance's
+    /// pose and deformation, which no ray sees. A converged volume pauses
+    /// while it holds still.
+    pub(crate) edits: u64,
     /// Caller-authored glow, heat and mist geometry.
     pub(crate) transient: transient::Transient,
     /// The world bounds static edits touched since the last submitted frame.
@@ -146,11 +152,26 @@ impl Scene {
             dynamic_gi: None,
             id: next_generation(),
             resources: next_generation(),
+            edits: 0,
             transient: transient::Transient::new(device),
             static_edits: static_edits::StaticEdits::default(),
             deformations: Vec::new(),
             origin: glam::DVec3::ZERO,
         }
+    }
+
+    /// Records an edit to content the dynamic GI volume sees (`edits`).
+    pub(crate) fn edited(&mut self) {
+        self.edits = self.edits.wrapping_add(1);
+    }
+
+    /// Whether a material scrolls its normal map with the frame's time, so
+    /// the surfaces rays meet change from frame to frame.
+    pub(crate) fn scrolls_materials(&self) -> bool {
+        self.materials
+            .slots
+            .iter()
+            .any(|(_, material)| material.values.normal_layers.is_some())
     }
 
     fn buffers(

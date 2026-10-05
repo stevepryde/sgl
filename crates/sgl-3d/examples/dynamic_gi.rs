@@ -13,7 +13,8 @@
 //! the dynamic GI stage's GPU time in each frame, as its probes start and
 //! settle, and each pass's median and 95th percentile over the second half
 //! of the frames, where the device has timestamp queries; `--still` parks
-//! the boxes, so the room's light settles and the probes' cost with it.
+//! the boxes, so the room's light settles and the volume pauses once it has,
+//! and `--edit N` moves the lamp at frame N, which starts it again.
 //! `--scroll` walks the camera along the room with a volume half as long
 //! that follows it, installed each frame with its origin moved by whole
 //! spacings, so it scrolls: the probes that stay keep their light, and those
@@ -38,6 +39,7 @@ struct Options {
     timing: bool,
     still: bool,
     scroll: bool,
+    edit: Option<u32>,
 }
 
 impl Options {
@@ -50,6 +52,7 @@ impl Options {
             timing: false,
             still: false,
             scroll: false,
+            edit: None,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -78,9 +81,12 @@ impl Options {
                 "--timing" => options.timing = true,
                 "--still" => options.still = true,
                 "--scroll" => options.scroll = true,
+                "--edit" => {
+                    options.edit = Some(args.next().ok_or("--edit requires a frame")?.parse()?)
+                }
                 "--help" | "-h" => {
                     println!(
-                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing] [--still] [--scroll]"
+                        "dynamic_gi [output.png] [--frames N] [--quality off|low|high] [--probes X,Y,Z] [--timing] [--still] [--scroll] [--edit N]"
                     );
                     std::process::exit(0);
                 }
@@ -286,19 +292,16 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     });
     let mut boxes = boxes.into_iter().collect::<Result<Vec<_>, _>>()?;
     // A lamp under the ceiling at the back, casting the boxes' shadows.
-    scene.add_light(
-        &device,
-        &queue,
-        Light {
-            position: Vec3::new(1.8, 3.4, -2.6),
-            shape: LightShape::Point,
-            color: [1., 0.75, 0.45],
-            intensity: 25.,
-            range: 9.,
-            casts_shadow: true,
-            ..Default::default()
-        },
-    )?;
+    let lamp = Light {
+        position: Vec3::new(1.8, 3.4, -2.6),
+        shape: LightShape::Point,
+        color: [1., 0.75, 0.45],
+        intensity: 25.,
+        range: 9.,
+        casts_shadow: true,
+        ..Default::default()
+    };
+    let lamp_id = scene.add_light(&device, &queue, lamp)?;
     // The outer layer of probes lies inside the walls, floor and ceiling,
     // halfway through each slab, so the volume covers every surface in the
     // room with no probe on one (a probe on a surface sees both its sides
@@ -406,6 +409,13 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let eye = eye_at(frame_index);
             frame.camera = camera_at(eye);
             scene.set_dynamic_gi_volume(&device, Some(volume_at(eye)))?;
+        }
+        if options.edit == Some(frame_index) {
+            let moved = Light {
+                position: Vec3::new(-1.6, 3.4, -2.6),
+                ..lamp
+            };
+            scene.set_light(&queue, lamp_id, moved)?;
         }
         frame.elapsed_seconds = f64::from(frame_index) / 60.;
         frame.camera_cut = frame_index == 0;

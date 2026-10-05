@@ -349,6 +349,7 @@ impl Scene {
         queue: &wgpu::Queue,
         probes: &[BakedSpecularProbe],
     ) -> Result<(), super::SceneError> {
+        self.edited();
         self.baked_specular_probes = if probes.is_empty() {
             None
         } else {

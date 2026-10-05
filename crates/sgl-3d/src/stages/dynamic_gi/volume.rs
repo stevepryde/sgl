@@ -1,6 +1,6 @@
 //! The resources of one dynamic GI volume's probes and the layouts of the
 //! groups that bind them.
-use super::{ALLOCATION_BYTES, Key};
+use super::{ALLOCATION_BYTES, CONVERGENCE_BYTES, Key};
 use crate::scene::dynamic_gi::InstalledVolume;
 use crate::shading::dynamic_gi as layout;
 
@@ -75,6 +75,7 @@ impl Layouts {
                     written(5, wgpu::TextureFormat::Rg32Uint),
                     storage(6, false),
                     storage(7, true),
+                    storage(8, false),
                 ],
             ),
             trace: layout(
@@ -96,6 +97,7 @@ impl Layouts {
                     storage(5, false),
                     written(6, layout::FORMAT),
                     storage(7, true),
+                    storage(8, false),
                 ],
             ),
         }
@@ -108,6 +110,8 @@ pub(super) struct Volume {
     pub key: Key,
     /// The placement the last frame that ran the probes gave them.
     pub installed: InstalledVolume,
+    /// What that frame's probes followed (`Inputs`).
+    pub inputs: Option<super::Inputs>,
     /// The most rays a probe traces, which the rays' textures hold.
     pub max_rays: u32,
     pub probes: wgpu::TextureView,
@@ -122,6 +126,8 @@ pub(super) struct Volume {
     pub ray_counts: wgpu::Buffer,
     /// The probes that trace this frame, which the blends gather.
     pub traced_probes: wgpu::Buffer,
+    /// The volume's variability (`DdgiConvergence` in update.wgsl).
+    pub convergence: wgpu::Buffer,
     /// The trace's indirect dispatch and the frame's ray count.
     pub allocation: wgpu::Buffer,
     /// Made with the volume, and again for another most rays.
@@ -223,6 +229,17 @@ impl Volume {
         let probe_states = storage_buffer(device, "dynamic GI probe states", count * 16);
         let ray_counts = storage_buffer(device, "dynamic GI ray counts", count * 4);
         let traced_probes = storage_buffer(device, "dynamic GI traced probes", count * 4);
+        let convergence = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("dynamic GI convergence"),
+                size: CONVERGENCE_BYTES,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            },
+        );
         let allocation = crate::counters::buffer(
             device,
             &wgpu::BufferDescriptor {
@@ -238,6 +255,7 @@ impl Volume {
         let mut volume = Self {
             key,
             installed,
+            inputs: None,
             max_rays,
             probes,
             variance,
@@ -245,6 +263,7 @@ impl Volume {
             probe_states,
             ray_counts,
             traced_probes,
+            convergence,
             allocation,
             rays: None,
         };
@@ -296,6 +315,7 @@ impl Volume {
                     view(5, &list),
                     buffer(6, &self.traced_probes),
                     buffer(7, moving_bounds),
+                    buffer(8, &self.convergence),
                 ],
             ),
             trace: group(
@@ -315,6 +335,7 @@ impl Volume {
                     buffer(5, &self.probe_states),
                     view(6, &self.probes),
                     buffer(7, &self.traced_probes),
+                    buffer(8, &self.convergence),
                 ],
             ),
         }
