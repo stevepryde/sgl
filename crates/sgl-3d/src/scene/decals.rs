@@ -129,7 +129,8 @@ impl Decals {
     /// upload.
     fn write(&self, queue: &wgpu::Queue, index: usize, decal: &Decal) {
         if !self.stale {
-            queue.write_buffer(
+            crate::counters::write_buffer(
+                queue,
                 &self.buffer,
                 index as u64 * RECORD,
                 bytemuck::bytes_of(&self.record(decal)),

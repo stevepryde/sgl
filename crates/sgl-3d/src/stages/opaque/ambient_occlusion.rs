@@ -141,7 +141,7 @@ impl AmbientOcclusion {
                 mip: mip as u32,
                 padding: [0; 2],
             };
-            queue.write_buffer(&self.params[mip], 0, bytemuck::bytes_of(&params));
+            crate::counters::write_buffer(queue, &self.params[mip], 0, bytemuck::bytes_of(&params));
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("XeGTAO depth mip"),
                 layout: &self.prefilter.get_bind_group_layout(0),

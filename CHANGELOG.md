@@ -140,6 +140,32 @@ full API details.
   moving the volume; compare the `dynamic GI *` timing groups on the
   game's route at High and Low.
 
+### A streamed block world example, upload and resource counters, and a cheaper origin move with many lights
+
+- **Scope:** `sgl-3d` adds the `streaming` example
+  (`cargo run --release -p sgl-3d --example streaming`), a block world
+  streamed in 16 m chunks about a moving camera at a block game's scale,
+  edited, remeshed and moved with `Scene::move_origin`. It prints the CPU
+  time of each scene operation and of a frame's scene calls (apart from the
+  game's meshing), what the library uploaded and built, the scene's buffer
+  sizes and each view's draws, and writes each run's last frame to
+  `target/streaming-example/`; `--check` verifies that a moved origin shows
+  no motion and redraws no shadow, and that remeshed chunks redraw their
+  torches' static shadow layers once, across an abandoned frame. The
+  `diagnostics` feature adds `diagnostics::counters()`, the thread's
+  `Counters` (uploads by call site as `UploadSite`s, buffers created with
+  contents, `StepTime`s of each `BuildStep` of building a model and the
+  instance BVHs, ray-source growths, static-edit boxes recorded and merged),
+  with `Counters::since` for what happened between two of them;
+  `Scene::diagnostic_resources()`, its buffer sizes as `SceneResources`; and
+  `Renderer::diagnostic_draws()`, the last frame's draws per view as
+  `ViewDraws`. Without the feature nothing is counted. `Scene::move_origin`
+  now rewrites the scene's light records in one write rather than one a
+  light, which with about a thousand lights took the lights' share of a move
+  from milliseconds to tens of microseconds; the whole move then took
+  0.09-0.24 ms with up to 512 instances in the example.
+- **Migration:** no game-code changes.
+
 ### The scene's render origin moves without a cut
 
 - **Scope:** `sgl-3d` adds `Scene::move_origin(&device, &queue, to: Vec3)`

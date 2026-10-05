@@ -197,9 +197,14 @@ impl Clusters {
         }
         let room = ((self.buffer.size() - GRID_BYTES) / 4) as usize;
         self.data.truncate(room);
-        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&grid));
+        crate::counters::write_buffer(queue, &self.buffer, 0, bytemuck::bytes_of(&grid));
         if !self.data.is_empty() {
-            queue.write_buffer(&self.buffer, GRID_BYTES, bytemuck::cast_slice(&self.data));
+            crate::counters::write_buffer(
+                queue,
+                &self.buffer,
+                GRID_BYTES,
+                bytemuck::cast_slice(&self.data),
+            );
         }
     }
 }

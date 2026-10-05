@@ -248,8 +248,12 @@ impl Transparent {
             padding: [0.; 2],
         });
         if blended.written != Some(values) {
-            ctx.queue
-                .write_buffer(&blended.trace, 0, bytemuck::bytes_of(&values));
+            crate::counters::write_buffer(
+                ctx.queue,
+                &blended.trace,
+                0,
+                bytemuck::bytes_of(&values),
+            );
             blended.written = Some(values);
         }
         let reflections = traced.map_or(no_reflections, |(_, view)| view);

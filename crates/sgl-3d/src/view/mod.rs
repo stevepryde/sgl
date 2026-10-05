@@ -403,7 +403,7 @@ impl ViewSlot {
     /// Sets this slot's view and uploads its uniform.
     pub fn set(&mut self, queue: &wgpu::Queue, view: View) {
         self.view = view;
-        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&view.uniform));
+        crate::counters::write_buffer(queue, &self.buffer, 0, bytemuck::bytes_of(&view.uniform));
     }
 }
 

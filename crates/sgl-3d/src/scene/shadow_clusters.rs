@@ -10,7 +10,6 @@ use super::static_edits::posed_bounds;
 use crate::asset::Vertex;
 use glam::{Mat4, Vec3};
 use std::{collections::BTreeMap, ops::Range};
-use wgpu::util::DeviceExt;
 
 /// A cell's side in metres.
 const CELL: f32 = 16.;
@@ -99,11 +98,14 @@ impl MeshClusters {
             groups.last_mut().expect("a group per cluster").end = clusters.len();
         }
         (!clustered.is_empty()).then(|| Self {
-            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("local light shadow caster indices"),
-                contents: bytemuck::cast_slice(&clustered),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
+            indices: crate::counters::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("local light shadow caster indices"),
+                    contents: bytemuck::cast_slice(&clustered),
+                    usage: wgpu::BufferUsages::INDEX,
+                },
+            ),
             clusters,
             groups,
         })

@@ -4,6 +4,7 @@ use super::*;
 use crate::view::bindings::FogVolume;
 use glam::camera;
 use glam::{Mat4, Vec3, Vec4};
+use wgpu::util::DeviceExt;
 
 /// Environment and probe specular, without incident radiance or ambient
 /// occlusion.

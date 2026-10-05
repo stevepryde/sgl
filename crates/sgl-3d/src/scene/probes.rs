@@ -257,7 +257,8 @@ impl UploadedProbes {
                 let size = face_size >> level;
                 let (row, rows) = level_rows(format, size);
                 let count = row as usize * rows as usize * 6;
-                queue.write_texture(
+                crate::counters::write_texture(
+                    queue,
                     wgpu::TexelCopyTextureInfo {
                         mip_level: level,
                         origin: wgpu::Origin3d {

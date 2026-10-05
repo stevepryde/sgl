@@ -227,8 +227,7 @@ impl MotionBlur {
             near: ctx.input.camera.projection.w_axis.z,
             frame: ctx.history.frames,
         };
-        ctx.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
+        crate::counters::write_buffer(ctx.queue, &self.uniform, 0, bytemuck::bytes_of(&uniform));
         self.dispatch(
             ctx.device,
             ctx.encoder,

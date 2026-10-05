@@ -78,34 +78,33 @@ impl Reflections {
         size: [u32; 2],
         first_frame: &Effective,
     ) -> Self {
-        use wgpu::util::DeviceExt;
         let variant = source_variant(first_frame, first_frame.ambient_occlusion.is_some());
         Self {
             source: source::ReflectionSource::new(device, size, variant),
             environment_parameters: source::environment_uniform(device, 0., 1.),
             velvet: None,
             world: None,
-            full_visibility: device
-                .create_texture_with_data(
-                    queue,
-                    &wgpu::TextureDescriptor {
-                        label: Some("full ambient visibility"),
-                        size: wgpu::Extent3d {
-                            width: 1,
-                            height: 1,
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::R32Uint,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
+            full_visibility: crate::counters::texture_init(
+                device,
+                queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("full ambient visibility"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
                     },
-                    wgpu::util::TextureDataOrder::LayerMajor,
-                    bytemuck::bytes_of(&255u32),
-                )
-                .create_view(&Default::default()),
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::R32Uint,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                bytemuck::bytes_of(&255u32),
+            )
+            .create_view(&Default::default()),
         }
     }
 
@@ -136,7 +135,8 @@ impl Reflections {
         // the width of the fade below it.
         let (traced, fade) = traced(ctx);
         let frame = &ctx.values.frame;
-        ctx.queue.write_buffer(
+        crate::counters::write_buffer(
+            ctx.queue,
             &self.environment_parameters,
             0,
             bytemuck::bytes_of(&source::ReflectionEnvironment {

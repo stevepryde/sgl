@@ -4,7 +4,6 @@
 //! licenses for shader/atlas provenance.
 use crate::settings::SmaaQuality;
 use std::cell::RefCell;
-use wgpu::util::DeviceExt;
 
 pub(crate) static SMAA: crate::shading::Module = crate::shading::Module {
     name: "smaa",
@@ -104,7 +103,8 @@ fn lookup(
         usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    queue.write_texture(
+    crate::counters::write_texture(
+        queue,
         texture.as_image_copy(),
         pixels.as_raw(),
         wgpu::TexelCopyBufferLayout {
@@ -163,11 +163,14 @@ fn inverse_size(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Buffer {
         (1.0 / f64::from(size[0])) as f32,
         (1.0 / f64::from(size[1])) as f32,
     ];
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("SMAA inverse dimensions"),
-        contents: bytemuck::cast_slice(&values),
-        usage: wgpu::BufferUsages::UNIFORM,
-    })
+    crate::counters::buffer_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("SMAA inverse dimensions"),
+            contents: bytemuck::cast_slice(&values),
+            usage: wgpu::BufferUsages::UNIFORM,
+        },
+    )
 }
 
 fn texture(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {

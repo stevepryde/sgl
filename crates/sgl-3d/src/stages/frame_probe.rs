@@ -17,7 +17,6 @@ use std::{
         atomic::{AtomicU8, Ordering},
     },
 };
-use wgpu::util::DeviceExt;
 /// The counters both probe programs write.
 static STATS: crate::shading::Module = crate::shading::Module {
     name: "frame_probe_stats",
@@ -164,11 +163,14 @@ impl FrameProbe {
         if self.next.is_none() {
             return;
         }
-        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("frame probe stage"),
-            contents: bytemuck::cast_slice(&[stage, u32::from(compare), 0, 0]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let params = crate::counters::buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("frame probe stage"),
+                contents: bytemuck::cast_slice(&[stage, u32::from(compare), 0, 0]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame probe textures"),
             layout: &self.pipeline.get_bind_group_layout(0),

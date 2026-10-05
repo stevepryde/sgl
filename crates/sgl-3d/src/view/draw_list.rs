@@ -435,6 +435,12 @@ impl DrawList {
         })
     }
 
+    /// The draw calls `draw` issues.
+    #[cfg(any(test, feature = "diagnostics"))]
+    pub fn draws(&self) -> usize {
+        self.calls().count()
+    }
+
     /// Submitted draws of the instances of `model` in this camera list: the
     /// draws that hold one, and the triangles they submit for them.
     pub fn stats_for_model(&self, scene: &Scene, model: ModelId) -> (usize, u64) {

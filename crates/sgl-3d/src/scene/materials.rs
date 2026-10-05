@@ -508,7 +508,7 @@ impl Materials {
             let old = material.values.alpha;
             material.values = values;
             let uniform = material.uniform();
-            queue.write_buffer(&material.buffer, 0, bytemuck::bytes_of(&uniform));
+            crate::counters::write_buffer(queue, &material.buffer, 0, bytemuck::bytes_of(&uniform));
             rays.write_material(queue, material.word(), &uniform);
             self.count(old, -1);
             self.count(values.alpha, 1);
@@ -519,7 +519,8 @@ impl Materials {
     /// Whether lightmap charts light the material.
     pub fn set_baked(&self, queue: &wgpu::Queue, rays: &SceneRays, id: MaterialId, baked: bool) {
         let material = self.slots.get(id).expect("a live material");
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &material.baked,
             0,
             bytemuck::cast_slice(&[u32::from(baked), 0, 0, 0]),

@@ -153,7 +153,7 @@ impl Prepare {
             views.reflection_camera = reflection_camera::Camera::new(camera.view, projection);
         }
         let values = FrameValues { view, frame };
-        queue.write_buffer(frame_buffer, 0, bytemuck::bytes_of(&frame));
+        crate::counters::write_buffer(queue, frame_buffer, 0, bytemuck::bytes_of(&frame));
         views.camera.set(queue, View::camera(view));
         scene.prepare_frame(device, queue, camera.eye);
         // Only world-space rays and the dynamic GI volume's read the ray

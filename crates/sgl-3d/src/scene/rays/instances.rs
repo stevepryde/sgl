@@ -25,6 +25,7 @@
 use super::bvh::{self, Primitive};
 use super::{RayModel, SceneRays};
 use crate::content::instance::Mobility;
+use crate::counters::{BuildStep, step};
 use crate::scene::SceneError;
 use crate::scene::static_edits::posed_bounds;
 use glam::{Mat4, Vec3};
@@ -259,10 +260,14 @@ impl RayInstances {
     ) {
         self.upload_entries(device, queue);
         if let Some((statics, edits)) = statics {
-            self.statics.build(queue, rays, statics, &mut self.words);
+            step(BuildStep::StaticInstanceBvh, || {
+                self.statics.build(queue, rays, statics, &mut self.words)
+            });
             self.statics_built = Some(edits);
         }
-        self.moving.build(queue, rays, moving, &mut self.words);
+        step(BuildStep::MovingInstanceBvh, || {
+            self.moving.build(queue, rays, moving, &mut self.words)
+        });
         let roots = [self.statics.root, self.moving.root];
         if roots != self.roots {
             rays.set_instance_roots(queue, roots);
@@ -289,7 +294,7 @@ impl RayInstances {
         if self.packed.len() as u64 > capacity {
             self.staging = staging_buffer(device, (self.packed.len() as u64).max(capacity * 2));
         }
-        queue.write_buffer(&self.staging, 0, bytemuck::cast_slice(&self.packed));
+        crate::counters::write_buffer(queue, &self.staging, 0, bytemuck::cast_slice(&self.packed));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scene ray instance entries"),
         });

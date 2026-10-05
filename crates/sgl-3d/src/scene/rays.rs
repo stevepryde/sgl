@@ -15,6 +15,7 @@ use std::ops::Range;
 use super::SceneError;
 use super::ranges::Ranges;
 use crate::asset::{CompressedFormat, Image, Vertex};
+use crate::counters::{BuildStep, step};
 use crate::shading::material::MaterialUniform;
 
 mod bvh;
@@ -180,6 +181,7 @@ impl SceneRays {
         }
         let capacity = self.source.size() / 4;
         if needed > capacity {
+            crate::counters::ray_source_growth();
             let grown = source_buffer(device, needed.max(capacity * 2).min(self.word_limit));
             // Through the queue, never a frame's encoder: an abandoned frame
             // loses no content.
@@ -193,6 +195,14 @@ impl SceneRays {
         Ok(range)
     }
 
+    /// The words up to the last one content holds, and the words content
+    /// holds.
+    #[cfg(any(test, feature = "diagnostics"))]
+    pub fn words_in_use(&self) -> (u64, u64) {
+        let end = u64::from(self.words.end());
+        (end, end - self.words.free_units())
+    }
+
     /// Frees words for reuse.
     pub fn free(&mut self, range: Range<u32>) {
         self.words.free(range);
@@ -201,7 +211,8 @@ impl SceneRays {
     /// Writes `values` at `word`.
     pub fn write(&self, queue: &wgpu::Queue, word: u32, values: &[u32]) {
         if !values.is_empty() {
-            queue.write_buffer(
+            crate::counters::write_buffer(
+                queue,
                 &self.source,
                 u64::from(word) * 4,
                 bytemuck::cast_slice(values),
@@ -313,9 +324,9 @@ impl SceneRays {
             }]));
             first_vertex += mesh.vertices.len() as u32;
         }
-        let bvh_root = bvh::append(meshes, &mut block, base);
+        let bvh_root = step(BuildStep::RayBvh, || bvh::append(meshes, &mut block, base));
         debug_assert_eq!(block.len(), len, "a model fills its range");
-        self.write(queue, base, &block);
+        step(BuildStep::RayWrite, || self.write(queue, base, &block));
         Ok(RayModelWords {
             ray: RayModel {
                 mesh_word: base,
@@ -328,7 +339,8 @@ impl SceneRays {
 
     /// Names the static and moving instance BVHs' roots in the header.
     pub fn set_instance_roots(&self, queue: &wgpu::Queue, roots: [u32; 2]) {
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &self.source,
             std::mem::offset_of!(SourceHeader, static_root) as u64,
             bytemuck::cast_slice(&roots),
@@ -338,7 +350,8 @@ impl SceneRays {
     /// Set the enabled material visibility groups before tracing this frame.
     pub fn set_visibility_mask(&mut self, queue: &wgpu::Queue, mask: u32) {
         if self.visibility_mask != mask {
-            queue.write_buffer(
+            crate::counters::write_buffer(
+                queue,
                 &self.source,
                 std::mem::offset_of!(SourceHeader, visibility_mask) as u64,
                 bytemuck::bytes_of(&mask),

@@ -19,6 +19,12 @@ impl Ranges {
         }
     }
 
+    /// The free units below the end.
+    #[cfg(any(test, feature = "diagnostics"))]
+    pub fn free_units(&self) -> u64 {
+        self.free.iter().map(|range| range.len() as u64).sum()
+    }
+
     /// One past the last allocated unit.
     pub fn end(&self) -> u32 {
         self.end

@@ -43,7 +43,8 @@ fn layers(
         view_formats: &[],
     });
     let (block_width, block_height) = format.block_dimensions();
-    queue.write_texture(
+    crate::counters::write_texture(
+        queue,
         texture.as_image_copy(),
         bytes,
         wgpu::TexelCopyBufferLayout {

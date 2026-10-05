@@ -288,7 +288,8 @@ fn upload(
             .iter()
             .flat_map(|&value| irradiance_half(value).to_le_bytes())
             .collect();
-        queue.write_texture(
+        crate::counters::write_texture(
+            queue,
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: mip as u32,

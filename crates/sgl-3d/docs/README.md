@@ -65,8 +65,11 @@ fog);
 [`examples/skinned.rs`](../examples/skinned.rs) adds a skinned, morphed glTF
 and the game's side of animating it,
 [`examples/instances.rs`](../examples/instances.rs) many instances of a few
-models, and [`examples/water.rs`](../examples/water.rs) a lake whose
-animated surface receives screen-space reflections. [`examples/browser_smoke.rs`](../examples/browser_smoke.rs) is the
+models, [`examples/water.rs`](../examples/water.rs) a lake whose
+animated surface receives screen-space reflections, and
+[`examples/streaming.rs`](../examples/streaming.rs) a block world streamed
+in 16 m chunks about a moving camera, edited and remeshed, with the render
+origin following it, and what each scene operation costs. [`examples/browser_smoke.rs`](../examples/browser_smoke.rs) is the
 browser's version: a WebGPU device, procedural content with block-compressed
 bakes (a specular probe and an irradiance atlas), frames under several settings
 and an asynchronous readback.

@@ -360,7 +360,8 @@ impl WorldReflections {
         let [rw, rh] = t.reduced.map(|v| v as f32);
         let eye = input.camera.camera_position;
         let near = input.camera.proj[3][2];
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &self.params,
             0,
             bytemuck::bytes_of(&Params {

@@ -81,7 +81,9 @@ impl StaticEdits {
         if !bounds[0].is_finite() || !bounds[1].is_finite() {
             return;
         }
-        if self.pending.len() < MAX_BOXES {
+        let merged = self.pending.len() == MAX_BOXES;
+        crate::counters::static_edit(merged);
+        if !merged {
             self.pending.push(bounds);
             return;
         }

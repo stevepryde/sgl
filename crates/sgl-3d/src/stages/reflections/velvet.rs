@@ -306,7 +306,8 @@ impl Velvet {
         self.frame = self.frame.wrapping_add(1).max(1);
         let t = self.targets.as_ref().unwrap();
         let [width, height] = t.size.map(|v| v as f32);
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &self.temporal_params,
             0,
             bytemuck::bytes_of(&TemporalParams {
@@ -323,8 +324,14 @@ impl Velvet {
         // SGL3D's is already reversed-Z in [0, 1] with y up.
         let flip = Mat4::from_diagonal(Vec4::new(1., -1., 1., 1.));
         let projection = flip * Mat4::from_cols_array_2d(&input.camera.proj);
-        queue.write_buffer(&self.view, 0, bytemuck::cast_slice(&input.camera.view));
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
+            &self.view,
+            0,
+            bytemuck::cast_slice(&input.camera.view),
+        );
+        crate::counters::write_buffer(
+            queue,
             &self.scene_data,
             0,
             bytemuck::bytes_of(&SceneData {
@@ -335,7 +342,8 @@ impl Velvet {
                 eye_offset: [0.; 4],
             }),
         );
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &self.trace_params,
             0,
             bytemuck::bytes_of(&TraceParams {

@@ -4,7 +4,6 @@
 //! full-screen pipeline and pass the post passes share.
 use crate::view::targets::attachment;
 use std::cell::RefCell;
-use wgpu::util::DeviceExt;
 
 /// Group 0 of every post pass and its full-screen vertex.
 pub(crate) static INPUTS: crate::shading::Module = crate::shading::Module {
@@ -44,11 +43,14 @@ impl Inputs {
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             }),
-            settings: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("bloom settings"),
-                contents: bytemuck::bytes_of(&super::bloom::BloomSettings::default()),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }),
+            settings: crate::counters::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("bloom settings"),
+                    contents: bytemuck::bytes_of(&super::bloom::BloomSettings::default()),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
             groups: RefCell::new(Vec::new()),
         }
     }
