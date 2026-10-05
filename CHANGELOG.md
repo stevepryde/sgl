@@ -15,6 +15,24 @@ full API details.
 
 ## Unreleased
 
+### FSR2 is told where opaque surfaces' normal layers move
+
+- **Scope:** `sgl-3d` (#146). No API change. While FSR2 runs, opaque and
+  masked surfaces whose material's normal layers move (a lit material with
+  a layer moving at least one repeat of its map an hour) now mark FSR2's
+  transparency-and-composition mask, as AMD's FSR documentation names
+  animated textures for that mask and AMD's FSR sample marks them. Before,
+  only blended surfaces wrote FSR2's masks, so an opaque water surface's
+  moving waves could trail under FSR2. Blended surfaces' masks are
+  unchanged, as are TAA, SMAA and frames without FSR2.
+- **Cost:** while FSR2 runs and the scene holds such a material, the camera
+  draws those materials' surfaces once more at their depth, writing one
+  8-bit mask (timing group `FSR2 composition`); nothing otherwise.
+  Measured on the water example's `fsr2-opaque` run (below).
+- **Migration:** none. Afterwards, under FSR2, look at opaque water or any
+  opaque surface with moving normal layers in motion; the `water` example's
+  `fsr2-opaque` run renders an opaque lake under FSR2.
+
 ### Ray-traced shadows are soft and denoised; lights gain a size
 
 - **Scope:** `sgl-3d` (#23). `LightShape::Point` becomes

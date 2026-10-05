@@ -8,7 +8,7 @@
 //! provider that holds no slot (`shading::SHADOW_MASK_NONE`).
 use crate::Scene;
 use crate::shading::{self, gbuffer};
-use crate::view::targets::mask_targets;
+use crate::view::targets::{composition_targets, mask_targets};
 use std::collections::HashMap;
 
 mod key;
@@ -100,6 +100,11 @@ pub(crate) enum GeometryPass {
     /// G-buffer's, over the surface depth, tested strictly nearer and
     /// written. Draws only the receiver batches of the blended list.
     Receivers,
+    /// FSR2's transparency and composition mask, 1 over the opaque
+    /// surfaces whose shading moves where their geometry stands still
+    /// (`Material::surface_moves`), at the G-buffer's depth, with the
+    /// reactive mask kept (`composition_targets`).
+    Fsr2Composition,
 }
 
 impl GeometryPass {
@@ -153,14 +158,16 @@ impl GeometryPass {
 }
 
 /// Which alpha modes the scene's materials use beyond opaque, whether one
-/// is a receiver of screen-space reflections, and whether it holds a
-/// deforming model: the masked, blended, receiver and deformed pipelines are
-/// prepared once it holds such content.
+/// is a receiver of screen-space reflections, whether an opaque or masked
+/// one's surface moves, and whether it holds a deforming model: the masked,
+/// blended, receiver, FSR2 composition and deformed pipelines are prepared
+/// once it holds such content.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Content {
     mask: bool,
     blend: bool,
     receivers: bool,
+    moving: bool,
     deformed: bool,
 }
 
@@ -171,6 +178,7 @@ impl Content {
             mask: scene.materials.holds_masked(),
             blend: scene.materials.holds_blended(),
             receivers: scene.materials.holds_receivers(),
+            moving: scene.materials.holds_moving_surfaces(),
             deformed: scene.models.holds_deforming(),
         }
     }
@@ -191,7 +199,9 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
         | GeometryPass::LocalShadow
         | GeometryPass::Receivers => (true, Greater),
         GeometryPass::GBuffer | GeometryPass::Fused => (true, GreaterEqual),
-        GeometryPass::GBufferAnisotropy | GeometryPass::Lighting { .. } => (false, Equal),
+        GeometryPass::GBufferAnisotropy
+        | GeometryPass::Lighting { .. }
+        | GeometryPass::Fsr2Composition => (false, Equal),
         GeometryPass::Blended { .. } => (false, GreaterEqual),
     }
 }
@@ -272,6 +282,7 @@ fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::TextureForm
         DirectionalShadow | PairedShadow | CaptureShadow | LocalShadow => Vec::new(),
         Blended { .. } => vec![gbuffer::COLOR],
         Receivers => vec![gbuffer::RECEIVER, gbuffer::MOTION],
+        Fsr2Composition => Vec::new(),
     }
 }
 
@@ -416,6 +427,9 @@ impl GeometryPipelines {
         if self.content.receivers {
             passes.push(GeometryPass::Receivers);
         }
+        if self.content.moving {
+            passes.push(GeometryPass::Fsr2Composition);
+        }
         if self.shadow_mask {
             passes.push(GeometryPass::Lighting { shadow_mask: true });
         }
@@ -475,6 +489,11 @@ impl GeometryPipelines {
             CaptureShadow | LocalShadow => (&self.caster, &self.shadow, "shadow caster"),
             Blended { .. } => (&self.geometry, &self.blended, "blended scene geometry"),
             Receivers => (&self.geometry, &self.lit, "blended receivers"),
+            Fsr2Composition => (
+                &self.geometry,
+                &self.lit,
+                "FSR2 composition of moving surfaces",
+            ),
             Lighting { shadow_mask: true } => (
                 self.geometry_shadow_masked
                     .as_ref()
@@ -523,6 +542,7 @@ impl GeometryPipelines {
             Blended { fsr2_masks: false } => ("source_vs", Some("blended_fs")),
             Blended { fsr2_masks: true } => ("source_vs", Some("blended_fsr2_masked_fs")),
             Receivers => ("source_vs", Some("receiver_fs")),
+            Fsr2Composition => ("source_vs", Some("fsr2_composition_fs")),
         };
         let unclipped_depth = matches!(key.pass, DirectionalShadow | PairedShadow | CaptureShadow)
             && self.unclipped_depth;
@@ -541,6 +561,9 @@ impl GeometryPipelines {
             .collect();
         if key.pass == (Blended { fsr2_masks: true }) {
             targets.extend(mask_targets());
+        }
+        if key.pass == Fsr2Composition {
+            targets.extend(composition_targets());
         }
         let constants = key.constants();
         let (depth_write, depth_compare) = depth(key.pass);

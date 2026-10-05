@@ -89,7 +89,8 @@ SGL3D needs compute.
   normal map drawn as two layers, each with its velocity, scale and
   strength, moving with `FrameInput::elapsed_seconds` (an `f64`) in every
   view and ray: water's waves with no per-frame upload, on static instances
-  too. Precise however long a session runs.
+  too. Precise however long a session runs. FSR2 is told where they move,
+  opaque surfaces included, as AMD asks for animated textures.
   [Scrolling normal layers](../README.md#scrolling-normal-layers).
 - **Decals**: boxes that project the game's images onto the lit surfaces
   inside them, changing base colour and, with their maps, normal, roughness
