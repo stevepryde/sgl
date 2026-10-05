@@ -881,8 +881,9 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
 // defects: a term beneath the coat left whole, as baked diffuse was, or
 // dimmed at another cosine or weight, in raster or in a ray hit. The oracle
 // is that formula at the cosine each view's geometry gives. SGL3D's Fresnel
-// (Three.js 0.185.1's fit to Schlick's) is within 0.0036 of it and binary16
-// colour puts each ratio within 0.001; a term left whole is 0.04 off or more.
+// (Three.js 0.185.1's fit to Schlick's) is within 0.0025 of it at the cosines
+// tested (0.0036 at worst, near grazing) and binary16 colour puts each ratio
+// within 0.001; a term left whole is 0.04 off or more.
 #[test]
 fn a_coat_dims_baked_diffuse_and_emission_by_its_fresnel() {
     let Some((device, queue)) = test_support::device() else {

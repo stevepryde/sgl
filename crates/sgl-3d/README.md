@@ -1393,7 +1393,7 @@ radiance, UV chart, or caster visibility changes.
 
 This opt-in application extension supplies Lambertian diffuse with constant
 `1-F0` surface transmission. On a coated material the coat's Fresnel toward
-the camera dims it, and the irradiance atlas's and a moving instance's
+the view dims it, and the irradiance atlas's and a moving instance's
 ambient cube's light, as it dims the material's live light and emission
 (KHR_materials_clearcoat layers the coat over the whole base).
 
