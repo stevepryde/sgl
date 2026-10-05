@@ -134,15 +134,18 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   for (var i=0u;i<ALLOCATION_THREADS;i++) {
    max_inconsistency=max(max_inconsistency,shared_inconsistency[i]);
   }
-  var ray_count=u32(saturate(max_inconsistency)*f32(volume.max_rays));
+  // At most DDGI_MOST_RAYS, so the loops over a probe's rays end whatever
+  // the volume says.
+  let most_rays=min(volume.max_rays,DDGI_MOST_RAYS);
+  var ray_count=u32(saturate(max_inconsistency)*f32(most_rays));
   let spacing=volume.spacing;
   if !camera_frustum_intersects(probe_pos,max(spacing.x,max(spacing.y,spacing.z))*2.) {
    ray_count=u32(f32(ray_count)*.1);
   }
   ray_count=(ray_count+DDGI_RAY_BUCKET_COUNT-1u)/DDGI_RAY_BUCKET_COUNT*DDGI_RAY_BUCKET_COUNT;
-  ray_count=clamp(ray_count,DDGI_RAY_BUCKET_COUNT,volume.max_rays);
+  ray_count=clamp(ray_count,DDGI_RAY_BUCKET_COUNT,most_rays);
   if !probe.blended {
-   ray_count=select(0u,volume.max_rays,ramp_starts(ddgi_probe_position_rest(probe_coord,volume.origin,volume.spacing)));
+   ray_count=select(0u,most_rays,ramp_starts(ddgi_probe_position_rest(probe_coord,volume.origin,volume.spacing)));
   }
   ray_counts[probe_index]=ray_count;
   shared_ray_count=ray_count;

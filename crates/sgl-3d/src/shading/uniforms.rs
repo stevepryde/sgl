@@ -83,7 +83,7 @@ pub(crate) struct ShadowCascadeUniform {
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct FrameUniform {
     pub directional_lights: [DirectionalLightUniform; 2],
-    pub shadow_cascades: [ShadowCascadeUniform; 4],
+    pub shadow_cascades: [ShadowCascadeUniform; crate::view::cascades::MAX_SHADOW_CASCADES],
     pub hemisphere_sky_color: [f32; 3],
     pub hemisphere_intensity: f32,
     pub hemisphere_ground_color: [f32; 3],

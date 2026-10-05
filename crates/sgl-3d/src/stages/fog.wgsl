@@ -274,7 +274,9 @@ var<workgroup> fog_ambient_light:vec3<f32>;
  // The scattering: each medium's albedo weighted by its density, as Godot
  // weights its environment medium's.
  var albedo=froxels.albedo*density;
- for(var index=0u;index<froxels.volume_count;index++) {
+ // At most the bound list, so the loop ends whatever the count says.
+ let volume_count=min(froxels.volume_count,arrayLength(&fog_volume_froxels));
+ for(var index=0u;index<volume_count;index++) {
   let reached=fog_volume_froxels[index];
   if any(id<reached.first) || any(id>reached.last) {
    continue;
@@ -393,7 +395,9 @@ fn filter_gauss(t0:vec4<f32>,t1:vec4<f32>,t2:vec4<f32>,t3:vec4<f32>,t4:vec4<f32>
  let ray_scale=length(froxel_view_position(froxel_ndc(unit),1.));
  var accumulated=vec4(0.,0.,0.,1.);
  var previous_depth=0.;
- for(var z=0u;z<froxels.size.z;z++) {
+ // At most the volume's slices, so the loop ends whatever the size says.
+ let slices=min(froxels.size.z,textureDimensions(integrate_scattering).z);
+ for(var z=0u;z<slices;z++) {
   let position=vec3(id.xy,z);
   let froxel=textureLoad(integrate_scattering,position,0);
   let depth=fog_slice_depth((f32(z)+.5)/f32(froxels.size.z),froxels.length,froxels.detail_spread);

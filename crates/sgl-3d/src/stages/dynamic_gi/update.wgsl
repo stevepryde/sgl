@@ -161,7 +161,7 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
   return;
  }
  if group_index==0u {
-  irradiance_ray_count=min(ray_counts[probe_index],volume.max_rays);
+  irradiance_ray_count=min(ray_counts[probe_index],min(volume.max_rays,DDGI_MOST_RAYS));
  }
  let ray_count=workgroupUniformLoad(&irradiance_ray_count);
  if ray_count==0u {
@@ -227,7 +227,7 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   return;
  }
  if group_index==0u {
-  depth_ray_count=min(ray_counts[probe_index],volume.max_rays);
+  depth_ray_count=min(ray_counts[probe_index],min(volume.max_rays,DDGI_MOST_RAYS));
  }
  let ray_count=workgroupUniformLoad(&depth_ray_count);
  if ray_count==0u {

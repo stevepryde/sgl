@@ -13,6 +13,10 @@ struct Params {
     mip: u32,
     padding: vec2<u32>,
 }
+// The most slices and steps a pixel takes, XeGTAO's Ultra preset, so its
+// loops end whatever the parameters say.
+const MOST_SLICES: u32 = 9u;
+const MOST_STEPS: u32 = 3u;
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var raw_depth: texture_depth_2d;
 @group(0) @binding(2) var input_depth: texture_2d<f32>;
@@ -109,8 +113,10 @@ fn main_pass(@builtin(global_invocation_id) id:vec3<u32>) {
     var visibility=sat((10.0-screen_radius)/100.0)*0.5;
     let local_noise=noise(id.xy);
     let min_s=1.3/screen_radius;
-    for(var slice=0u;slice<p.slices;slice++) {
-        let phi=(f32(slice)+local_noise.x)/f32(p.slices)*3.1415926535897932384626433832795;
+    let slices=min(p.slices,MOST_SLICES);
+    let steps=min(p.steps,MOST_STEPS);
+    for(var slice=0u;slice<slices;slice++) {
+        let phi=(f32(slice)+local_noise.x)/f32(slices)*3.1415926535897932384626433832795;
         let direction=vec3(cos(phi),sin(phi),0.0);
         let omega=vec2(direction.x,-direction.y)*screen_radius;
         let ortho=direction-dot(direction,view_vec)*view_vec;
@@ -122,9 +128,9 @@ fn main_pass(@builtin(global_invocation_id) id:vec3<u32>) {
         let n=sign_norm*fast_acos(cos_norm);
         let low=vec2(cos(n+1.57079632679489661923),cos(n-1.57079632679489661923));
         var horizon=low;
-        for(var step=0u;step<p.steps;step++) {
-            let step_noise=fract(local_noise.y+f32(slice+step*p.steps)*0.6180339887498948482);
-            let sample_s=pow((f32(step)+step_noise)/f32(p.steps),2.0)+min_s;
+        for(var step=0u;step<steps;step++) {
+            let step_noise=fract(local_noise.y+f32(slice+step*steps)*0.6180339887498948482);
+            let sample_s=pow((f32(step)+step_noise)/f32(steps),2.0)+min_s;
             var offset=sample_s*omega;
             let mip=clamp(log2(length(offset))-3.30,0.0,5.0);
             offset=round(offset)*p.pixel_size;
@@ -145,7 +151,7 @@ fn main_pass(@builtin(global_invocation_id) id:vec3<u32>) {
         let arc1=(cos_norm+2.0*h1*sin(n)-cos(2.0*h1-n))/4.0;
         visibility+=projected_length*(arc0+arc1);
     }
-    visibility=max(0.03,pow(visibility/f32(p.slices),2.2));
+    visibility=max(0.03,pow(visibility/f32(slices),2.2));
     textureStore(output_ao,q,vec4(u32(sat(visibility/1.5)*255.0+0.5),0u,0u,0u));
 }
 fn edge_at(q:vec2<i32>)->vec4<f32> {

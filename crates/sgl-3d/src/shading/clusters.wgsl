@@ -64,10 +64,15 @@ fn cluster_index(position:vec3<f32>,pixel:vec2<f32>)->u32 {
  return min(index,grid.dimensions.x*grid.dimensions.y*grid.dimensions.z-1u);
 }
 // The lights and decals that reach a point at `position`, seen at the
-// view's `pixel`.
+// view's `pixel`. The range lies within clusters.data, so a loop over it
+// ends whatever the header says.
 fn cluster_range(position:vec3<f32>,pixel:vec2<f32>)->ClusterRange {
  let at=cluster_index(position,pixel)*CLUSTER_HEADER_WORDS;
- return ClusterRange(clusters.data[at],clusters.data[at+1u],clusters.data[at+2u],clusters.data[at+3u]);
+ let length=arrayLength(&clusters.data);
+ let first=min(clusters.data[at],length);
+ let live=min(clusters.data[at+1u],length-first);
+ let baked=min(clusters.data[at+2u],length-first-live);
+ return ClusterRange(first,live,baked,min(clusters.data[at+3u],length-first-live-baked));
 }
 // The light or decal index at `at` in clusters.data.
 fn cluster_item(at:u32)->u32 {

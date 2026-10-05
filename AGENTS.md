@@ -115,6 +115,10 @@ compatibility shims solely to avoid updating consumers.
   plugs in; if it does not fit, amend that spec first in the same change, and
   obtain and resolve an independent agent review against it. Do not add a
   parallel path, a compatibility shim or a second copy to get a feature in.
+- Every shader loop (`loop`, `while`, `for`) in SGL's WGSL whose iteration
+  count can come from data has a fixed upper bound, a compile-time constant
+  or a count clamped to the buffer or array it reads, so it terminates
+  whatever the data holds (AR-12).
 - SGL3D rendering follows `specs/sgl3d.md` (RD-1–RD-7 and its roadmap): build
   foundations in roadmap order, follow what other game engines do (port their
   compatible-licensed implementation instead of inventing our own when the

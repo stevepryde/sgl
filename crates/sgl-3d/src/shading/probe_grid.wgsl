@@ -28,7 +28,10 @@ fn collection_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32,scale:f3
  if cell>=0 {
   let record=u32(cell);
   let first=collection.grid[record+PROBE_GRID_CELL_FIRST];
-  let count=collection.grid[record+PROBE_GRID_CELL_COUNT];
+  // The cell's probes lie within the grid, so the loop ends whatever the
+  // cell says.
+  let length=arrayLength(&collection.grid);
+  let count=min(collection.grid[record+PROBE_GRID_CELL_COUNT],select(0u,length-first,first<length));
   for(var i=0u;i<count;i++) {
    sum=collection_add(sum,collection.grid[first+i],world,direction,rough,filter_sampler);
   }

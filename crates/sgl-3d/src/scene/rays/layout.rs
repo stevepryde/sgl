@@ -168,14 +168,19 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         })
         .chain(
             [
-                ("SCENE_IMAGE_RGBA8", IMAGE_RGBA8),
-                ("SCENE_IMAGE_BC7", IMAGE_BC7),
+                ("geometry", "SCENE_IMAGE_RGBA8", IMAGE_RGBA8),
+                ("geometry", "SCENE_IMAGE_BC7", IMAGE_BC7),
+                (
+                    "world_reflections",
+                    "SCENE_BVH_LEAF_PRIMITIVES",
+                    bvh::LEAF_PRIMITIVES as u32,
+                ),
             ]
-            .map(|(name, format)| {
+            .map(|(program, name, value)| {
                 crate::shading::layout_tests::Constant::new(
-                    "geometry",
+                    program,
                     name,
-                    naga::Literal::U32(format),
+                    naga::Literal::U32(value),
                 )
             }),
         )

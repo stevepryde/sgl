@@ -699,7 +699,9 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::scene::probe_grid::constants())
     .chain(crate::stages::dynamic_gi::constants())
     .chain(crate::stages::reflections::source::constants())
-    .chain(crate::stages::reflections::velvet::constants());
+    .chain(crate::stages::reflections::velvet::constants())
+    .chain(crate::stages::exposure::constants())
+    .chain(crate::stages::opaque::ambient_occlusion::constants());
     let programs = programs();
     for constant in constants {
         let (label, source) = programs

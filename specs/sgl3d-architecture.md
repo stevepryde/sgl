@@ -944,6 +944,13 @@ code; it does not redeclare a struct, binding or function another module owns.
 11. **AR-11 — Leave it cleaner.** RD-3 applies to structure. A change leaves no
     compatibility shim, parallel path or dead option behind. Work that finds a
     breach of these rules in the code it touches fixes it or files the issue.
+12. **AR-12 — Loops end.** Every shader loop (`loop`, `while`, `for`) whose
+    iteration count can come from data has a fixed upper bound: a
+    compile-time constant, or a count clamped to the buffer, array or texture
+    it reads, so it terminates whatever the data holds. A walk along links
+    stops at one that does not move it forward. The bound has one owner
+    (AR-2). Corrupt data then costs a wrong answer, never a hung GPU, which
+    freezes the machine's display with it.
 
 ## Open questions
 

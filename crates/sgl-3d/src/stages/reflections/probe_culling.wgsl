@@ -170,7 +170,10 @@ fn main(@builtin(workgroup_id) gid:vec3<u32>,@builtin(global_invocation_id) dtid
  let occupied=atomicLoad(&depth_mask);
 
  if geometry {
-  for(var i=group_index;i<collection.counts.x;i+=THREADSIZE*THREADSIZE) {
+  // At most the collection's probes, so the loop ends whatever the count
+  // says.
+  let probes=min(collection.counts.x,MAX_PROBES);
+  for(var i=group_index;i<probes;i+=THREADSIZE*THREADSIZE) {
    let probe=collection.probes[i];
    let center=(camera.view*vec4(probe.sphere.xyz,1.)).xyz;
    let radius=probe.sphere.w;

@@ -9,6 +9,8 @@
 // authored points instead of a 256-texel lookup; a history reset sets the
 // correction to its target; the result is also written as the frame's
 // exposure multiplier, which the tone map and FSR2 read.
+// The most points a compensation curve has (CompensationCurve::MAX_POINTS).
+const EXPOSURE_COMPENSATION_POINTS:u32=8u;
 struct AutoExposure {
  min_log_lum:f32,
  inv_log_lum_range:f32,
@@ -28,7 +30,7 @@ struct AutoExposure {
  reset:u32,
  compensation_points:u32,
  // The compensation curve's points, two per vector: log2 luminance, stops.
- compensation:array<vec4<f32>,4>,
+ compensation:array<vec4<f32>,EXPOSURE_COMPENSATION_POINTS/2u>,
 }
 @group(0) @binding(0) var<uniform> settings:AutoExposure;
 @group(0) @binding(1) var tex_color:texture_2d<f32>;
@@ -93,7 +95,9 @@ fn compensation(log_lum:f32)->f32 {
  if log_lum<=previous.x {
   return previous.y;
  }
- for(var index=1u;index<settings.compensation_points;index++) {
+ // At most the curve's points, so the loop ends whatever the count says.
+ let points=min(settings.compensation_points,EXPOSURE_COMPENSATION_POINTS);
+ for(var index=1u;index<points;index++) {
   let point=compensation_point(index);
   if log_lum<=point.x {
    return mix(previous.y,point.y,(log_lum-previous.x)/(point.x-previous.x));

@@ -16,6 +16,10 @@ const MIN_RADIUS: f32 = 0.01;
 /// The greatest search radius in metres, to which XeGTAO's
 /// `GTAOImGuiSettings` clamps it.
 const MAX_RADIUS: f32 = 10000.;
+/// The most slices and steps a pixel takes: XeGTAO's Ultra preset
+/// (`MOST_SLICES` and `MOST_STEPS` in ambient_occlusion.wgsl).
+const MOST_SLICES: u32 = 9;
+const MOST_STEPS: u32 = 3;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -116,7 +120,7 @@ impl AmbientOcclusion {
             AmbientOcclusionQuality::Off | AmbientOcclusionQuality::Low => (1, 2),
             AmbientOcclusionQuality::Medium => (2, 2),
             AmbientOcclusionQuality::High => (3, 3),
-            AmbientOcclusionQuality::Ultra => (9, 3),
+            AmbientOcclusionQuality::Ultra => (MOST_SLICES, MOST_STEPS),
         };
         let projection = view.projection;
         let mul = -projection[3][2];
@@ -274,6 +278,18 @@ impl Targets {
                 .create_view(&Default::default()),
         }
     }
+}
+
+/// The constants with WGSL twins.
+#[cfg(test)]
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 2] {
+    [("MOST_SLICES", MOST_SLICES), ("MOST_STEPS", MOST_STEPS)].map(|(name, value)| {
+        crate::shading::layout_tests::Constant::new(
+            "ambient_occlusion",
+            name,
+            naga::Literal::U32(value),
+        )
+    })
 }
 
 #[cfg(test)]

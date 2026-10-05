@@ -203,7 +203,8 @@ const UPSAMPLE_BILATERAL_SIGMA:f32=.9;
  // Roughness 0.125 is the destination.
  let radius=mix(0.,select(0.,UPSAMPLE_RADIUS_MAX,variance>UPSAMPLE_VARIANCE_ESTIMATE_THRESHOLD),clamp(receiver.roughness*8.,0.,1.));
  let sigma=radius*UPSAMPLE_BILATERAL_SIGMA;
- let effective=i32(min(sigma*2.,radius));
+ // At most the largest radius, so the loop ends whatever the inputs hold.
+ let effective=clamp(i32(min(sigma*2.,radius)),0,i32(UPSAMPLE_RADIUS_MAX));
  if variance>UPSAMPLE_VARIANCE_EXIT_THRESHOLD && effective>0 {
   let position=world_position(uv,receiver.depth);
   var result=vec4(0.);

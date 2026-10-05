@@ -118,13 +118,15 @@ pub struct ScreenSpaceReflectionAttribs {
     /// The channel to read the roughness from the materialParameters texture
     pub roughness_channel: u32,
 
-    /// Caps the maximum number of lookups that are performed from the depth buffer hierarchy. Most rays should terminate after approximately 20 lookups
+    /// Caps the maximum number of lookups that are performed from the depth buffer hierarchy. Most rays should terminate after approximately 20 lookups.
+    /// At most 256, the top of DiligentFX's range (`SSR_MAX_TRAVERSAL_INTERSECTIONS`, PROVENANCE.md DFX-30); more count as 256
     pub max_traversal_intersections: u32,
 
     /// This parameter is aimed at reducing noise by modify sampling in the ray tracing stage. Increasing the value increases the deviation from the ground truth but reduces the noise
     pub ggx_importance_sample_bias: f32,
 
-    /// The value controls the kernel size in the spatial reconstruction step. Increasing the value increases the deviation from the ground truth but reduces the noise
+    /// The value controls the kernel size in the spatial reconstruction step. Increasing the value increases the deviation from the ground truth but reduces the noise.
+    /// At most 8, the top of DiligentFX's range (`SSR_SPATIAL_RECONSTRUCTION_MAX_RADIUS`, PROVENANCE.md DFX-30); more counts as 8
     pub spatial_reconstruction_radius: f32,
 
     /// A factor to control the accmulation of history values of radiance buffer. Higher values reduce noise, but are more likely to exhibit ghosting artefacts

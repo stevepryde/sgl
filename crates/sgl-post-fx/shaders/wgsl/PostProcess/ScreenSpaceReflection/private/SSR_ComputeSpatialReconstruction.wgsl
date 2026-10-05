@@ -158,7 +158,7 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 
     let Roughness = LoadRoughness(PixelCoord);
     let RoughnessFactor = saturate(f32(SSR_SPATIAL_RECONSTRUCTION_ROUGHNESS_FACTOR) * Roughness);
-    let Radius = mix(0.0, g_SSRAttribs.SpatialReconstructionRadius, RoughnessFactor);
+    let Radius = mix(0.0, min(g_SSRAttribs.SpatialReconstructionRadius, f32(SSR_SPATIAL_RECONSTRUCTION_MAX_RADIUS)), RoughnessFactor);
     let Rotator = ComputeBlurKernelRotation(vec2<u32>(PixelCoord), g_Camera.uiFrameIndex);
 
     var PixelAreaStat: PixelAreaStatistic;

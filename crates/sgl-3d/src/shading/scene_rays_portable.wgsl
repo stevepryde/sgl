@@ -20,6 +20,34 @@ const SCENE_BVH_PRIMITIVE_MESH:u32=0u;
 const SCENE_BVH_PRIMITIVE_TRIANGLE:u32=1u;
 // An instance BVH leaf's: the index of the instance entry it names.
 const SCENE_BVH_INSTANCE_WORDS:u32=1u;
+// The most records a leaf names, in either kind of BVH
+// (`scene::rays::bvh::LEAF_PRIMITIVES`).
+const SCENE_BVH_LEAF_PRIMITIVES:u32=4u;
+// A walk of a BVH ends whatever the source holds, so corrupt words (a stale
+// range, a rebase error) cost a wrong answer, never an unbounded loop that
+// hangs the GPU: every node a walk visits lies whole within the source, its
+// end clamped there; each step moves forward, as a node's subtree ends after
+// the node, so a walk stops at an escape that does not; and a leaf names at
+// most a leaf's records, all within the source.
+// The word a walk of the BVH at `root` ends before.
+fn scene_bvh_end(root:u32)->u32 {
+ let length=arrayLength(&scene_source);
+ if length<SCENE_BVH_NODE_WORDS || root>length-SCENE_BVH_NODE_WORDS {
+  return root;
+ }
+ return min(scene_source[root+SCENE_BVH_NODE_ESCAPE],length-SCENE_BVH_NODE_WORDS+1u);
+}
+// Whether `escape` lies past node `node`, as every valid node's does.
+fn scene_bvh_forward(node:u32,escape:u32)->bool {
+ return escape>=node+SCENE_BVH_NODE_WORDS;
+}
+// Leaf `node`'s first record and how many it names of `words` each.
+fn scene_bvh_leaf(node:u32,words:u32)->vec2<u32> {
+ let first=scene_source[node+SCENE_BVH_NODE_FIRST];
+ let length=arrayLength(&scene_source);
+ let room=select(0u,(length-first)/words,first<length);
+ return vec2(first,min(min(scene_source[node+SCENE_BVH_NODE_COUNT],SCENE_BVH_LEAF_PRIMITIVES),room));
+}
 // Which sides of a triangle a ray accepts, beside the receiver it leaves:
 // a camera-origin ray rejects a single-sided material's back faces, as
 // raster culls them; a dynamic GI probe ray and its visibility ray accept
@@ -154,21 +182,23 @@ fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,side
  var maximum=maximum_before;
  let root=instance.bvh_root;
  var node=root;
- let end=scene_source[root+SCENE_BVH_NODE_ESCAPE];
+ let end=scene_bvh_end(root);
  while node<end {
   let escape=scene_source[node+SCENE_BVH_NODE_ESCAPE];
+  if !scene_bvh_forward(node,escape) {
+   break;
+  }
   if !scene_portable_bounds(node,origin,direction,ray.origin.w,maximum) {
    node=escape;
    continue;
   }
-  let count=scene_source[node+SCENE_BVH_NODE_COUNT];
-  if count==0u {
+  if scene_source[node+SCENE_BVH_NODE_COUNT]==0u {
    node+=SCENE_BVH_NODE_WORDS;
    continue;
   }
-  let first=scene_source[node+SCENE_BVH_NODE_FIRST];
-  for(var primitive=0u;primitive<count;primitive++) {
-   let leaf=first+primitive*SCENE_BVH_PRIMITIVE_WORDS;
+  let leaf_records=scene_bvh_leaf(node,SCENE_BVH_PRIMITIVE_WORDS);
+  for(var primitive=0u;primitive<leaf_records.y;primitive++) {
+   let leaf=leaf_records.x+primitive*SCENE_BVH_PRIMITIVE_WORDS;
    let mesh_id=scene_source[leaf+SCENE_BVH_PRIMITIVE_MESH];
    let primitive_id=scene_source[leaf+SCENE_BVH_PRIMITIVE_TRIANGLE];
    let hit=scene_intersect_primitive(ray,index,mesh_id,primitive_id,origin,direction,maximum,receiver,sides,open_end);
@@ -196,21 +226,23 @@ fn scene_trace_instances(root:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,s
  }
  var maximum=select(ray.direction.w,nearest.coords.x,nearest.intersection.x!=0u);
  var node=root;
- let end=scene_source[root+SCENE_BVH_NODE_ESCAPE];
+ let end=scene_bvh_end(root);
  while node<end {
   let escape=scene_source[node+SCENE_BVH_NODE_ESCAPE];
+  if !scene_bvh_forward(node,escape) {
+   break;
+  }
   if !scene_portable_bounds(node,ray.origin.xyz,ray.direction.xyz,ray.origin.w,maximum) {
    node=escape;
    continue;
   }
-  let count=scene_source[node+SCENE_BVH_NODE_COUNT];
-  if count==0u {
+  if scene_source[node+SCENE_BVH_NODE_COUNT]==0u {
    node+=SCENE_BVH_NODE_WORDS;
    continue;
   }
-  let first=scene_source[node+SCENE_BVH_NODE_FIRST];
-  for(var leaf=0u;leaf<count;leaf++) {
-   let index=scene_source[first+leaf*SCENE_BVH_INSTANCE_WORDS];
+  let leaf_records=scene_bvh_leaf(node,SCENE_BVH_INSTANCE_WORDS);
+  for(var leaf=0u;leaf<leaf_records.y;leaf++) {
+   let index=scene_source[leaf_records.x+leaf*SCENE_BVH_INSTANCE_WORDS];
    let hit=scene_trace_model(index,ray,any_hit,receiver,sides,open_end,maximum);
    if hit.intersection.x==0u {
     continue;

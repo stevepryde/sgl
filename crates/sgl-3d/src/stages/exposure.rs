@@ -18,7 +18,9 @@
 //! Timing group: `exposure`.
 //! History: the adapted correction, which takes its target when history
 //! restarts or automatic exposure starts.
-use crate::frame_input::{AutoExposure, Exposure as AuthoredExposure, MeteringMask};
+use crate::frame_input::{
+    AutoExposure, CompensationCurve, Exposure as AuthoredExposure, MeteringMask,
+};
 use crate::view::frame::FrameContext;
 
 /// The histogram and adaptation.
@@ -65,7 +67,7 @@ pub(crate) struct AutoExposureUniform {
     reset: u32,
     compensation_points: u32,
     _padding: [u32; 2],
-    compensation: [[f32; 4]; 4],
+    compensation: [[f32; 4]; CompensationCurve::MAX_POINTS / 2],
 }
 
 impl AutoExposureUniform {
@@ -83,7 +85,7 @@ impl AutoExposureUniform {
             (f32::MIN, f32::MAX)
         };
         let points = automatic.compensation.points();
-        let mut compensation = [[0.; 4]; 4];
+        let mut compensation = [[0.; 4]; CompensationCurve::MAX_POINTS / 2];
         for (index, point) in points.iter().enumerate() {
             compensation[index / 2][index % 2 * 2..index % 2 * 2 + 2].copy_from_slice(point);
         }
@@ -133,6 +135,16 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
             compensation_points,
             compensation,
         ]
+    )]
+}
+
+/// The constant this stage shares with its shader.
+#[cfg(test)]
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 1] {
+    [crate::shading::layout_tests::Constant::new(
+        "exposure",
+        "EXPOSURE_COMPENSATION_POINTS",
+        naga::Literal::U32(CompensationCurve::MAX_POINTS as u32),
     )]
 }
 

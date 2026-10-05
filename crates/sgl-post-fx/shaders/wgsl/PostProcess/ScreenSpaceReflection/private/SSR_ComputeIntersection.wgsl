@@ -197,8 +197,10 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
     var Position: vec3<f32>;
     InitialAdvanceRay(Origin, Direction, InvDirection, CurrentMipResolution, InvCurrentMipResolution, FloorOffset, UVOffset, &Position, &CurrentT);
 
+    // DFX-30: at most SSR_MAX_TRAVERSAL_INTERSECTIONS lookups.
+    let MostIntersections = min(MaxTraversalIntersections, u32(SSR_MAX_TRAVERSAL_INTERSECTIONS));
     var Idx = 0u;
-    while (Idx < MaxTraversalIntersections && CurrentMip >= MostDetailedMip)
+    while (Idx < MostIntersections && CurrentMip >= MostDetailedMip)
     {
         // DFX-22: stop at the viewport boundary before loading another tile.
         if (any(Position.xy < vec2<f32>(0.0)) || any(Position.xy >= vec2<f32>(1.0))) {
@@ -246,7 +248,7 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
     }
 
     // As upstream, pass unfinished endpoints to ValidateHit's proximity confidence.
-    *ValidHit = Idx <= MaxTraversalIntersections;
+    *ValidHit = Idx <= MostIntersections;
 
     return Position;
 }
