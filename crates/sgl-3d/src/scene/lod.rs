@@ -1,5 +1,6 @@
 //! Registration of a mesh's alternatives (`lod::MeshLod`); the camera's
 //! choice among them is `view::lod`.
+use super::candidates::mesh_need;
 use super::{Scene, SceneError};
 use crate::content::identity::ModelId;
 use crate::lod::MeshLod;
@@ -69,12 +70,7 @@ impl Scene {
         // sections among its new levels; nothing changes unless they fit.
         let mut meshes = self.candidate_meshes(model, self.models.get(model)?);
         let base = self.models.get(model)?.meshes[mesh].ranges.section_count();
-        if base > 0 {
-            meshes[mesh].need = alternatives.iter().fold(base, |need, lod| {
-                let alternative = &self.drawn_model(lod.model).meshes[lod.mesh];
-                need.max(alternative.ranges.section_count())
-            });
-        }
+        meshes[mesh].need = mesh_need(base, &alternatives, &self.models);
         if !self.candidates_fit(&[(model, &meshes, None)]) {
             return Err(SceneError::DeviceLimit);
         }
@@ -90,7 +86,7 @@ impl Scene {
         // Its instances' candidates of the mesh name its chain and count
         // its levels' sections.
         self.candidates.set_lods(model, mesh, &self.models);
-        self.place_candidates_of(model);
+        self.place_candidates_of(&[model]);
         Ok(())
     }
 }

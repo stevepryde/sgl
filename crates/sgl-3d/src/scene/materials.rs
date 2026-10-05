@@ -569,9 +569,7 @@ impl Scene {
             self.models.classify_users(id, &self.materials);
         }
         if blending {
-            for model in users {
-                self.place_candidates_of(model);
-            }
+            self.place_candidates_of(&users);
         }
         self.candidates
             .material_changed(id, super::candidates::look(self.materials.get(id)?));

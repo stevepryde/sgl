@@ -9,8 +9,11 @@ use bytemuck::Pod;
 pub(super) struct Mirror<T: Pod> {
     label: &'static str,
     records: Vec<T>,
-    /// The records changed since the last upload, in no order.
+    /// The records changed since the last upload, each once, in no order,
+    /// and whether each record is among them, so many edits of one record
+    /// keep one entry and a copy of the mirror costs its records.
     changed: Vec<u32>,
+    marked: Vec<bool>,
     /// None until the first upload.
     buffer: Option<wgpu::Buffer>,
 }
@@ -21,6 +24,7 @@ impl<T: Pod> Mirror<T> {
             label,
             records: Vec::new(),
             changed: Vec::new(),
+            marked: Vec::new(),
             buffer: None,
         }
     }
@@ -39,9 +43,27 @@ impl<T: Pod> Mirror<T> {
         let at = index as usize;
         if self.records.len() <= at {
             self.records.resize(at + 1, fill);
+            self.marked.resize(at + 1, false);
         }
         self.records[at] = record;
-        self.changed.push(index);
+        if !self.marked[at] {
+            self.marked[at] = true;
+            self.changed.push(index);
+        }
+    }
+
+    /// The records changed since the last upload.
+    #[cfg(test)]
+    pub fn changed(&self) -> usize {
+        self.changed.len()
+    }
+
+    /// Forgets which records changed: the upload took them.
+    fn uploaded(&mut self) {
+        for &index in &self.changed {
+            self.marked[index as usize] = false;
+        }
+        self.changed.clear();
     }
 
     /// Uploads the records changed since the last upload: into a new buffer
@@ -69,7 +91,7 @@ impl<T: Pod> Mirror<T> {
                     mapped_at_creation: false,
                 },
             ));
-            self.changed.clear();
+            self.uploaded();
             if !self.records.is_empty() {
                 let buffer = self.buffer.as_ref().unwrap();
                 crate::counters::write_buffer(
@@ -83,7 +105,6 @@ impl<T: Pod> Mirror<T> {
         }
         let buffer = self.buffer.as_ref().unwrap();
         self.changed.sort_unstable();
-        self.changed.dedup();
         let mut at = 0;
         while at < self.changed.len() {
             let start = self.changed[at];
@@ -101,7 +122,7 @@ impl<T: Pod> Mirror<T> {
                 bytemuck::cast_slice(records),
             );
         }
-        self.changed.clear();
+        self.uploaded();
     }
 
     /// The buffer, once uploaded.

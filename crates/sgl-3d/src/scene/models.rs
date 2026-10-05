@@ -497,7 +497,7 @@ impl Scene {
         // Its candidates name its new meshes; its alternatives are cleared.
         // Its instances' records say whether they deform now.
         self.candidates.remove_chains(id);
-        self.place_candidates_of(id);
+        self.place_candidates_of(&[id]);
         self.instances.write_of_model(queue, id);
         let model = self.models.get(id).unwrap();
         self.instances.pose_casters(model, id);

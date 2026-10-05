@@ -185,6 +185,12 @@ impl Sets {
         self.records.upload(device, queue);
     }
 
+    /// The set records changed since the last upload.
+    #[cfg(test)]
+    pub fn changed(&self) -> usize {
+        self.records.changed()
+    }
+
     #[cfg(any(test, feature = "diagnostics"))]
     pub fn bytes(&self) -> u64 {
         self.records.bytes()

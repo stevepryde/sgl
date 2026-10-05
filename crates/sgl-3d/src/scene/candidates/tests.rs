@@ -17,6 +17,15 @@ fn candidates() -> Candidates {
     })
 }
 
+/// Candidates for a device that binds a gibibyte.
+fn roomy() -> Candidates {
+    Candidates::new(&wgpu::Limits {
+        max_storage_buffer_binding_size: 1 << 30,
+        max_buffer_size: u64::MAX,
+        ..wgpu::Limits::default()
+    })
+}
+
 /// A mesh drawn with material `material` of at most `need` sections.
 fn mesh(material: usize, need: u32) -> CandidateMesh {
     CandidateMesh {
@@ -156,5 +165,25 @@ fn a_dry_run_fits_exactly_when_the_placements_do() {
     assert!(
         agreed.iter().all(|&count| count > 20),
         "plans both fit and not: {agreed:?}"
+    );
+}
+
+// Plausible defect: the sets' change list taking an entry for every edit of
+// a set rather than one for each set changed, so the copy each placement
+// takes of the sets grows with the placements since the last upload, and a
+// game adding many instances before a frame pays their square. The oracle
+// is the sets: however many candidates join them, the records changed are
+// at most the sets there are.
+#[wasm_bindgen_test(unsupported = test)]
+fn many_placements_change_each_set_once() {
+    let mut candidates = roomy();
+    for index in 0..10_000 {
+        assert!(place(&mut candidates, index, &[mesh(index % 2, 1)]));
+    }
+    assert_eq!(candidates.sets.end(), 2);
+    assert!(
+        candidates.sets.changed() <= 2,
+        "{} set records marked changed",
+        candidates.sets.changed()
     );
 }

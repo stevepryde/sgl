@@ -20,9 +20,10 @@ pub(crate) use sets::{SetKey, SetLook};
 use super::SceneError;
 use super::deformation::InstanceDeformation;
 use super::materials::Material;
-use super::models::{Mesh, Model, Models};
+use super::models::{Model, Models};
 use super::ranges::Ranges;
 use crate::content::identity::{Identity, MaterialId, ModelId};
+use crate::lod::MeshLod;
 use crate::shading::culling::{ChainLevel, CullListsHeader, DrawCandidate};
 use crate::shading::vertex::DrawInstance;
 use chains::Chains;
@@ -411,14 +412,15 @@ pub(crate) fn look(material: &Material) -> SetLook {
     }
 }
 
-/// The most sections among `mesh`'s levels of `models`, none where the mesh
-/// itself has none.
-pub(crate) fn mesh_need(mesh: &Mesh, models: &Models) -> u32 {
-    let base = mesh.ranges.section_count();
+/// The most sections among the levels of a mesh of `base` sections whose
+/// alternatives of `models` are `lods`, none where the mesh itself has none:
+/// its candidates' share of their set's region, which a placement and an
+/// edit's dry run both count by.
+pub(crate) fn mesh_need(base: u32, lods: &[MeshLod], models: &Models) -> u32 {
     if base == 0 {
         return 0;
     }
-    mesh.lods.iter().fold(base, |need, lod| {
+    lods.iter().fold(base, |need, lod| {
         let alternative = &models
             .get(lod.model)
             .expect("a level of detail's model lives")
@@ -441,7 +443,7 @@ impl super::Scene {
                     material: mesh.material,
                     look: look(material),
                     blended: material.values.blended(),
-                    need: mesh_need(mesh, &self.models),
+                    need: mesh_need(mesh.ranges.section_count(), &mesh.lods, &self.models),
                     bounds: mesh.ranges.bounds().unwrap_or([Vec3::ZERO; 2]),
                     word: model.ray.mesh_word(index),
                     chain: self.candidates.chains.of(id, index),
@@ -450,58 +452,69 @@ impl super::Scene {
             .collect()
     }
 
-    /// Places the candidates of the instance `id` as it is now.
-    pub(crate) fn place_candidates(&mut self, id: crate::InstanceId) -> Result<(), SceneError> {
-        let instance = self.instances.get(id)?;
-        let model = instance.state.model;
-        let meshes = self.candidate_meshes(model, self.drawn_model(model));
-        let mirrored = instance.state.pose.determinant() < 0.;
-        let deformed = instance
-            .deformation
-            .as_ref()
-            .map(|deformation| deformation.mesh_bounds.as_slice());
-        self.candidates
-            .place(id.index(), (model, &meshes), mirrored, deformed)
+    /// Each of `models`' instances, model by model, in index order: one
+    /// walk of the instances for an edit's placements and their dry run.
+    fn instances_of(&self, models: &[ModelId]) -> Vec<Vec<crate::InstanceId>> {
+        let at: rustc_hash::FxHashMap<ModelId, usize> = models
+            .iter()
+            .enumerate()
+            .map(|(at, &model)| (model, at))
+            .collect();
+        let mut groups = vec![Vec::new(); models.len()];
+        for (id, instance) in self.instances.slots.iter() {
+            if let Some(&at) = at.get(&instance.state.model) {
+                groups[at].push(id);
+            }
+        }
+        groups
     }
 
     /// Whether the candidates of each listed model's instances fit the
     /// device when, model by model, each takes the model's listed meshes,
     /// deforming where the listed flag says or, for none, where it deforms
-    /// now: the dry run of the `place_candidates_of` calls an edit makes in
-    /// that order, which it takes before it changes anything.
+    /// now: the dry run of the `place_candidates_of` an edit makes with
+    /// those models in that order, which it takes before it changes
+    /// anything. Each model is listed once.
     pub(crate) fn candidates_fit(
         &self,
         plan: &[(ModelId, &[CandidateMesh], Option<bool>)],
     ) -> bool {
-        let instances = plan.iter().flat_map(|&(model, meshes, deforms)| {
-            self.instances
-                .slots
-                .iter()
-                .filter(move |(_, instance)| instance.state.model == model)
-                .map(move |(id, instance)| {
+        let models: Vec<ModelId> = plan.iter().map(|&(model, ..)| model).collect();
+        let groups = self.instances_of(&models);
+        let instances = plan
+            .iter()
+            .zip(&groups)
+            .flat_map(|(&(_, meshes, deforms), ids)| {
+                ids.iter().map(move |&id| {
+                    let instance = self.instances.get(id).expect("a grouped instance lives");
                     let mirrored = instance.state.pose.determinant() < 0.;
                     let deforms = deforms.unwrap_or(instance.deformation.is_some());
                     (id.index(), Candidates::keys(meshes, mirrored, deforms))
                 })
-        });
+            });
         self.candidates.fit(instances)
     }
 
-    /// Places again the candidates of `model`'s instances, in index order,
-    /// after an edit changed what they name: its geometry or alternatives,
-    /// or a material of its meshes' alpha mode. The edit took the same
-    /// placement's dry run first (`candidates_fit`), so it fits.
-    pub(crate) fn place_candidates_of(&mut self, model: ModelId) {
-        let ids: Vec<_> = self
-            .instances
-            .slots
-            .iter()
-            .filter(|(_, instance)| instance.state.model == model)
-            .map(|(id, _)| id)
-            .collect();
-        for id in ids {
-            self.place_candidates(id)
-                .expect("an edit's dry run found its candidates fit");
+    /// Places again the candidates of `models`' instances, model by model
+    /// in index order, after an edit changed what they name: a model's
+    /// geometry or alternatives, or a material of its meshes' alpha mode.
+    /// The edit took the same placements' dry run first
+    /// (`candidates_fit`), so they fit.
+    pub(crate) fn place_candidates_of(&mut self, models: &[ModelId]) {
+        let groups = self.instances_of(models);
+        for (&model, ids) in models.iter().zip(groups) {
+            let meshes = self.candidate_meshes(model, self.drawn_model(model));
+            for id in ids {
+                let instance = self.instances.get(id).expect("a grouped instance lives");
+                let mirrored = instance.state.pose.determinant() < 0.;
+                let deformed = instance
+                    .deformation
+                    .as_ref()
+                    .map(|deformation| deformation.mesh_bounds.as_slice());
+                self.candidates
+                    .place(id.index(), (model, &meshes), mirrored, deformed)
+                    .expect("an edit's dry run found its candidates fit");
+            }
         }
     }
 }
