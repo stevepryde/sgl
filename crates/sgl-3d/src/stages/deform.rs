@@ -18,6 +18,8 @@ pub(crate) static DEFORM: crate::shading::Module = crate::shading::Module {
         &crate::shading::DEFORMATION,
     ],
 };
+/// The entry point the deform stage's pipeline is created with.
+pub(crate) const DEFORM_ENTRY: &str = "deform";
 
 /// The bytes between dispatch records: the device's uniform offset
 /// alignment.
@@ -71,7 +73,7 @@ impl Deform {
                 label: Some("deform"),
                 layout: Some(&pipeline_layout),
                 module: &module,
-                entry_point: Some("deform"),
+                entry_point: Some(DEFORM_ENTRY),
                 compilation_options: Default::default(),
                 cache: None,
             }),

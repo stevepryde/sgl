@@ -49,6 +49,10 @@ pub(crate) static VOLUMETRIC_FOG: crate::shading::Module = crate::shading::Modul
         &crate::shading::FOG,
     ],
 };
+/// The entry points the fog's pipelines are created with.
+pub(crate) const INJECT_ENTRY: &str = "inject";
+pub(crate) const FILTER_FROXELS_ENTRY: &str = "filter_froxels";
+pub(crate) const INTEGRATE_ENTRY: &str = "integrate";
 
 /// What a froxel and its integration store: RGBA16F, which filters and
 /// stores in compute everywhere.
@@ -283,21 +287,21 @@ impl VolumetricFog {
         let inject = pipeline(
             "volumetric fog injection",
             &[Some(lit), Some(&inject_layout)],
-            "inject",
+            INJECT_ENTRY,
             &[],
         );
         let filter = [0., 1.].map(|axis| {
             pipeline(
                 "volumetric fog filter",
                 &[None, Some(&filter_layout)],
-                "filter_froxels",
+                FILTER_FROXELS_ENTRY,
                 &[("filter_axis", axis)],
             )
         });
         let integrate = pipeline(
             "volumetric fog integration",
             &[None, Some(&integrate_layout)],
-            "integrate",
+            INTEGRATE_ENTRY,
             &[],
         );
         let uniform = crate::counters::buffer(

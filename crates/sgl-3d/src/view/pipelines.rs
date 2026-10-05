@@ -35,6 +35,18 @@ pub(crate) static GEOMETRY: shading::Module = shading::Module {
         &shading::FRAME_FOG,
     ],
 };
+/// The entry points the geometry passes' pipelines are created with, from
+/// either geometry program: the vertex all share and each pass's fragment.
+pub(crate) const SOURCE_VS_ENTRY: &str = "source_vs";
+pub(crate) const FS_ENTRY: &str = "fs";
+pub(crate) const STABLE_FS_ENTRY: &str = "stable_fs";
+pub(crate) const STABLE_LEGACY_FS_ENTRY: &str = "stable_legacy_fs";
+pub(crate) const ANISOTROPY_FS_ENTRY: &str = "anisotropy_fs";
+pub(crate) const SOURCE_FS_ENTRY: &str = "source_fs";
+pub(crate) const FUSED_OPAQUE_FS_ENTRY: &str = "fused_opaque_fs";
+pub(crate) const BLENDED_FS_ENTRY: &str = "blended_fs";
+pub(crate) const BLENDED_FSR2_MASKED_FS_ENTRY: &str = "blended_fsr2_masked_fs";
+pub(crate) const RECEIVER_FS_ENTRY: &str = "receiver_fs";
 /// The geometry program: `GEOMETRY` with the shadow mask's provider where
 /// `shadow_mask`, else with the provider that holds no slot.
 pub(crate) fn geometry_program(shadow_mask: bool) -> String {
@@ -59,6 +71,23 @@ pub(crate) static CASTER: shading::Module = shading::Module {
         &shading::BIND_CASTER_POSITIONS,
     ],
 };
+/// The entry points the casters' pipelines are created with: a vertex for
+/// each way a caster's vertices arrive and its depth is clipped, and the
+/// fragments that clamp depth or cut out masked texels.
+pub(crate) const SHADOW_VS_ENTRY: &str = "shadow_vs";
+pub(crate) const SHADOW_UNCLIPPED_VS_ENTRY: &str = "shadow_unclipped_vs";
+pub(crate) const SHADOW_MASKED_VS_ENTRY: &str = "shadow_masked_vs";
+pub(crate) const SHADOW_MASKED_UNCLIPPED_VS_ENTRY: &str = "shadow_masked_unclipped_vs";
+pub(crate) const SHADOW_PULLED_VS_ENTRY: &str = "shadow_pulled_vs";
+pub(crate) const SHADOW_PULLED_UNCLIPPED_VS_ENTRY: &str = "shadow_pulled_unclipped_vs";
+pub(crate) const SHADOW_PULLED_MASKED_VS_ENTRY: &str = "shadow_pulled_masked_vs";
+pub(crate) const SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY: &str =
+    "shadow_pulled_masked_unclipped_vs";
+pub(crate) const SHADOW_PAIRED_VS_ENTRY: &str = "shadow_paired_vs";
+pub(crate) const SHADOW_PAIRED_UNCLIPPED_VS_ENTRY: &str = "shadow_paired_unclipped_vs";
+pub(crate) const SHADOW_UNCLIPPED_FS_ENTRY: &str = "shadow_unclipped_fs";
+pub(crate) const SHADOW_MASKED_FS_ENTRY: &str = "shadow_masked_fs";
+pub(crate) const SHADOW_MASKED_UNCLIPPED_FS_ENTRY: &str = "shadow_masked_unclipped_fs";
 
 /// What a geometry pass writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -493,36 +522,42 @@ impl GeometryPipelines {
         // casters discard what it cuts out, as Bevy's do (MAY_DISCARD).
         let (vertex, fragment) = match key.pass {
             DirectionalShadow if masked && !self.unclipped_depth => (
-                "shadow_pulled_masked_unclipped_vs",
-                Some("shadow_masked_unclipped_fs"),
+                SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY,
+                Some(SHADOW_MASKED_UNCLIPPED_FS_ENTRY),
             ),
-            DirectionalShadow if masked => ("shadow_pulled_masked_vs", Some("shadow_masked_fs")),
-            DirectionalShadow if !self.unclipped_depth => {
-                ("shadow_pulled_unclipped_vs", Some("shadow_unclipped_fs"))
+            DirectionalShadow if masked => {
+                (SHADOW_PULLED_MASKED_VS_ENTRY, Some(SHADOW_MASKED_FS_ENTRY))
             }
-            DirectionalShadow => ("shadow_pulled_vs", None),
-            PairedShadow if !self.unclipped_depth => {
-                ("shadow_paired_unclipped_vs", Some("shadow_unclipped_fs"))
-            }
-            PairedShadow => ("shadow_paired_vs", None),
+            DirectionalShadow if !self.unclipped_depth => (
+                SHADOW_PULLED_UNCLIPPED_VS_ENTRY,
+                Some(SHADOW_UNCLIPPED_FS_ENTRY),
+            ),
+            DirectionalShadow => (SHADOW_PULLED_VS_ENTRY, None),
+            PairedShadow if !self.unclipped_depth => (
+                SHADOW_PAIRED_UNCLIPPED_VS_ENTRY,
+                Some(SHADOW_UNCLIPPED_FS_ENTRY),
+            ),
+            PairedShadow => (SHADOW_PAIRED_VS_ENTRY, None),
             CaptureShadow if masked && !self.unclipped_depth => (
-                "shadow_masked_unclipped_vs",
-                Some("shadow_masked_unclipped_fs"),
+                SHADOW_MASKED_UNCLIPPED_VS_ENTRY,
+                Some(SHADOW_MASKED_UNCLIPPED_FS_ENTRY),
             ),
-            CaptureShadow | LocalShadow if masked => ("shadow_masked_vs", Some("shadow_masked_fs")),
-            Forward => ("source_vs", Some("fs")),
-            GBuffer if self.anisotropy_inline => ("source_vs", Some("stable_fs")),
-            GBuffer => ("source_vs", Some("stable_legacy_fs")),
-            GBufferAnisotropy => ("source_vs", Some("anisotropy_fs")),
-            Lighting { .. } => ("source_vs", Some("source_fs")),
-            Fused => ("source_vs", Some("fused_opaque_fs")),
-            CaptureShadow if !self.unclipped_depth => {
-                ("shadow_unclipped_vs", Some("shadow_unclipped_fs"))
+            CaptureShadow | LocalShadow if masked => {
+                (SHADOW_MASKED_VS_ENTRY, Some(SHADOW_MASKED_FS_ENTRY))
             }
-            CaptureShadow | LocalShadow => ("shadow_vs", None),
-            Blended { fsr2_masks: false } => ("source_vs", Some("blended_fs")),
-            Blended { fsr2_masks: true } => ("source_vs", Some("blended_fsr2_masked_fs")),
-            Receivers => ("source_vs", Some("receiver_fs")),
+            Forward => (SOURCE_VS_ENTRY, Some(FS_ENTRY)),
+            GBuffer if self.anisotropy_inline => (SOURCE_VS_ENTRY, Some(STABLE_FS_ENTRY)),
+            GBuffer => (SOURCE_VS_ENTRY, Some(STABLE_LEGACY_FS_ENTRY)),
+            GBufferAnisotropy => (SOURCE_VS_ENTRY, Some(ANISOTROPY_FS_ENTRY)),
+            Lighting { .. } => (SOURCE_VS_ENTRY, Some(SOURCE_FS_ENTRY)),
+            Fused => (SOURCE_VS_ENTRY, Some(FUSED_OPAQUE_FS_ENTRY)),
+            CaptureShadow if !self.unclipped_depth => {
+                (SHADOW_UNCLIPPED_VS_ENTRY, Some(SHADOW_UNCLIPPED_FS_ENTRY))
+            }
+            CaptureShadow | LocalShadow => (SHADOW_VS_ENTRY, None),
+            Blended { fsr2_masks: false } => (SOURCE_VS_ENTRY, Some(BLENDED_FS_ENTRY)),
+            Blended { fsr2_masks: true } => (SOURCE_VS_ENTRY, Some(BLENDED_FSR2_MASKED_FS_ENTRY)),
+            Receivers => (SOURCE_VS_ENTRY, Some(RECEIVER_FS_ENTRY)),
         };
         let unclipped_depth = matches!(key.pass, DirectionalShadow | PairedShadow | CaptureShadow)
             && self.unclipped_depth;

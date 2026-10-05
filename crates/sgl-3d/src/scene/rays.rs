@@ -35,10 +35,10 @@ pub(crate) use layout::{constants, mirrors};
 pub(crate) use model::{PreparedRayModel, RayMesh, prepare_model};
 #[cfg(test)]
 mod query;
-#[cfg(test)]
-pub(crate) use query::QUERY;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use query::{Function, Query};
+#[cfg(test)]
+pub(crate) use query::{QUERY, SCENE_INTERSECT_ENTRY};
 
 /// What a ray instance reads of its model.
 #[derive(Clone, Copy)]

@@ -7,6 +7,10 @@ pub(crate) static XE_GTAO: crate::shading::Module = crate::shading::Module {
     source: include_str!("ambient_occlusion.wgsl"),
     deps: &[&crate::shading::GBUFFER],
 };
+/// The entry points XeGTAO's pipelines are created with.
+pub(crate) const PREFILTER_ENTRY: &str = "prefilter";
+pub(crate) const MAIN_PASS_ENTRY: &str = "main_pass";
+pub(crate) const DENOISE_ENTRY: &str = "denoise";
 
 /// The least search radius in metres: the low end of XeGTAO's expected
 /// range (`XeGTAO.h` `GTAOImGuiSettings`) and of Godot's
@@ -77,9 +81,9 @@ impl AmbientOcclusion {
             })
         };
         Self {
-            prefilter: pipeline("prefilter"),
-            main: pipeline("main_pass"),
-            denoise: pipeline("denoise"),
+            prefilter: pipeline(PREFILTER_ENTRY),
+            main: pipeline(MAIN_PASS_ENTRY),
+            denoise: pipeline(DENOISE_ENTRY),
             params: std::array::from_fn(|_| {
                 crate::counters::buffer(
                     device,

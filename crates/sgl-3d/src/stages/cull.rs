@@ -47,6 +47,14 @@ pub(crate) static CULL: Module = Module {
         &crate::shading::DRAW_INSTANCE,
     ],
 };
+/// The entry points the cull's pipelines are created with: each phase's
+/// instance test, finalisation and section test.
+pub(crate) const CULL_INSTANCES_ENTRY: &str = "cull_instances";
+pub(crate) const CULL_FINALIZE_ENTRY: &str = "cull_finalize";
+pub(crate) const CULL_SECTIONS_ENTRY: &str = "cull_sections";
+pub(crate) const CULL_INSTANCES_LATE_ENTRY: &str = "cull_instances_late";
+pub(crate) const CULL_FINALIZE_LATE_ENTRY: &str = "cull_finalize_late";
+pub(crate) const CULL_SECTIONS_LATE_ENTRY: &str = "cull_sections_late";
 
 /// The bindings cull.wgsl declares.
 mod binding {
@@ -237,12 +245,12 @@ impl Cull {
             device.limits().max_storage_textures_per_shader_stage >= SUPPORTED_STORAGE_TEXTURES;
         Self {
             pipelines: [
-                pipeline(&layouts[0], "cull_instances"),
-                pipeline(&layouts[1], "cull_finalize"),
-                pipeline(&layouts[2], "cull_sections"),
-                pipeline(&layouts[0], "cull_instances_late"),
-                pipeline(&layouts[1], "cull_finalize_late"),
-                pipeline(&layouts[2], "cull_sections_late"),
+                pipeline(&layouts[0], CULL_INSTANCES_ENTRY),
+                pipeline(&layouts[1], CULL_FINALIZE_ENTRY),
+                pipeline(&layouts[2], CULL_SECTIONS_ENTRY),
+                pipeline(&layouts[0], CULL_INSTANCES_LATE_ENTRY),
+                pipeline(&layouts[1], CULL_FINALIZE_LATE_ENTRY),
+                pipeline(&layouts[2], CULL_SECTIONS_LATE_ENTRY),
             ],
             layouts,
             groups: Vec::new(),

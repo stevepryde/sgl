@@ -30,6 +30,13 @@ pub(crate) static MOTION_BLUR: crate::shading::Module = crate::shading::Module {
     source: include_str!("motion_blur.wgsl"),
     deps: &[&crate::shading::DEPTH, &crate::shading::NOISE],
 };
+/// The entry points the pipelines are created with, in the order they run.
+pub(crate) const ENTRY_POINTS: [&str; 4] = [
+    "motionblur_tileMaxVelocity_horizontal",
+    "motionblur_tileMaxVelocity_vertical",
+    "motionblur_neighborhoodMaxVelocity",
+    "motionblur",
+];
 
 /// Wicked's `MOTIONBLUR_TILESIZE`: frame pixels per tile side, which the
 /// shader takes as its override.
@@ -58,14 +65,6 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
         [velocity_scale, render_scale, near, frame]
     )]
 }
-
-/// The entry points, in the order they run.
-const ENTRY_POINTS: [&str; 4] = [
-    "motionblur_tileMaxVelocity_horizontal",
-    "motionblur_tileMaxVelocity_vertical",
-    "motionblur_neighborhoodMaxVelocity",
-    "motionblur",
-];
 
 /// The targets for one frame size.
 struct Targets {

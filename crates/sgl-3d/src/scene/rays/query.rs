@@ -12,6 +12,8 @@ pub(crate) static QUERY: crate::shading::Module = crate::shading::Module {
     source: include_str!("query.wgsl"),
     deps: &[&crate::shading::SCENE_RAYS_PREDICATE],
 };
+/// The entry point the dispatch's pipeline is created with.
+pub(crate) const SCENE_INTERSECT_ENTRY: &str = "scene_intersect";
 
 /// The function a dispatch's rays take, as query.wgsl numbers them.
 #[cfg(not(target_arch = "wasm32"))]
@@ -106,7 +108,7 @@ impl Query {
                 }),
             ),
             module: &shader,
-            entry_point: Some("scene_intersect"),
+            entry_point: Some(SCENE_INTERSECT_ENTRY),
             compilation_options: Default::default(),
             cache: None,
         });

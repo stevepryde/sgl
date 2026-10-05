@@ -18,6 +18,12 @@ pub(crate) static BLOOM: crate::shading::Module = crate::shading::Module {
     source: include_str!("bloom.wgsl"),
     deps: &[&super::inputs::INPUTS, &crate::shading::LUMINANCE],
 };
+/// The entry points bloom's pipelines are created with, beside
+/// `inputs::VS_ENTRY`.
+pub(crate) const DOWNSAMPLE_FIRST_ENTRY: &str = "downsample_first";
+pub(crate) const DOWNSAMPLE_ENTRY: &str = "downsample";
+pub(crate) const UPSAMPLE_ENTRY: &str = "upsample";
+pub(crate) const COMPOSITE_ENTRY: &str = "composite";
 
 /// Bevy's default `max_mip_dimension`: mip 0's height.
 const MAX_MIP_DIMENSION: u32 = 512;
@@ -209,13 +215,20 @@ impl Bloom {
                 device,
                 &input,
                 &shader,
-                "downsample_first",
+                DOWNSAMPLE_FIRST_ENTRY,
                 &[format],
                 None,
             ),
-            downsample: pipeline(device, &input, &shader, "downsample", &[format], None),
-            upsample: pipeline(device, &input, &shader, "upsample", &[format], Some(blend)),
-            composite: pipeline(device, &input, &shader, "composite", &[HDR], None),
+            downsample: pipeline(device, &input, &shader, DOWNSAMPLE_ENTRY, &[format], None),
+            upsample: pipeline(
+                device,
+                &input,
+                &shader,
+                UPSAMPLE_ENTRY,
+                &[format],
+                Some(blend),
+            ),
+            composite: pipeline(device, &input, &shader, COMPOSITE_ENTRY, &[HDR], None),
             format,
             targets: Targets::new(device, format, scene_size, enabled),
             scene_size,

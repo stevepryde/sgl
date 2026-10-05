@@ -12,6 +12,9 @@ pub(crate) static PYRAMID: crate::shading::Module = crate::shading::Module {
     source: include_str!("pyramid.wgsl"),
     deps: &[],
 };
+/// The entry points the pyramid's pipelines are created with.
+pub(crate) const DOWNSAMPLE_DEPTH_FIRST_ENTRY: &str = "downsample_depth_first";
+pub(crate) const DOWNSAMPLE_DEPTH_SECOND_ENTRY: &str = "downsample_depth_second";
 
 /// The storage textures a stage binds to build the pyramid: a device with
 /// fewer culls by frustum alone.
@@ -170,8 +173,8 @@ impl Builder {
             })
         };
         let pipelines = [
-            pipeline(&layouts[0], "downsample_depth_first"),
-            pipeline(&layouts[1], "downsample_depth_second"),
+            pipeline(&layouts[0], DOWNSAMPLE_DEPTH_FIRST_ENTRY),
+            pipeline(&layouts[1], DOWNSAMPLE_DEPTH_SECOND_ENTRY),
         ];
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("depth pyramid source"),
