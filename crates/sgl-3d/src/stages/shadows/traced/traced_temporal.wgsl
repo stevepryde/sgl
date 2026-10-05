@@ -105,7 +105,9 @@ fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
   let texel=clamp(vec2<i32>(id.xy)+offset,vec2(0),vec2<i32>(reduced)-1);
   let samples=traced_unpack_words(textureLoad(temporal_current,texel,0));
   m1+=samples;
-  m2+=mat4x4(samples[0]*samples[0],samples[1]*samples[1],samples[2]*samples[2],samples[3]*samples[3]);
+  for (var word=0u;word<SHADOW_MASK_LAYERS;word++) {
+   m2[word]+=samples[word]*samples[word];
+  }
  }
  let velocity=length(motion*traced.reduced.xy);
  let refresh=saturate(velocity/TEMPORAL_VELOCITY_PIXELS);
@@ -134,6 +136,6 @@ fn temporal_blend(word:u32,current:vec4<u32>,history:vec4<u32>,m1:mat4x4<f32>,m2
  let difference=abs(value-past)/max(value,max(past,vec4(.2)));
  let weight=(1.-difference)*(1.-difference);
  let response=mix(mix(vec4(TEMPORAL_RESPONSE_MIN),vec4(TEMPORAL_RESPONSE_MAX),weight),vec4(TEMPORAL_VELOCITY_RESPONSE),refresh);
- let restart=((vec4(shadow_mask_slots.restart)>>(vec4(0u,1u,2u,3u)+4u*word))&vec4(1u))!=vec4(0u);
+ let restart=((vec4(shadow_mask_slots.restart)>>shadow_mask_layer_slots(word))&vec4(1u))!=vec4(0u);
  return traced_pack(select(mix(value,past,response),value,restart));
 }

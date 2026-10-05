@@ -414,10 +414,11 @@ impl Renderer {
             && self.prepare.ray_tracing_error().is_none()
     }
 
-    /// Whether the camera's opaque surfaces take ray-traced shadows for
-    /// `settings`: `Settings::ray_traced_shadows` is on and hardware ray
-    /// tracing is in effect (`ray_tracing_in_effect`). Otherwise the shadow
-    /// maps shadow them. The saved choice is unchanged.
+    /// Whether ray-traced shadows are in effect for `settings`:
+    /// `Settings::ray_traced_shadows` is on and hardware ray tracing is in
+    /// effect (`ray_tracing_in_effect`). The camera's opaque surfaces then
+    /// take them on the frames where a light holds a slot; otherwise the
+    /// shadow maps shadow them. The saved choice is unchanged.
     pub fn ray_traced_shadows_in_effect(&self, settings: &Settings) -> bool {
         settings.ray_traced_shadows && self.ray_tracing_in_effect(settings)
     }

@@ -1889,7 +1889,8 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   the rays. The volumetric fog, blended surfaces, probe captures,
   reflections' ray hits and the lights beyond those sixteen keep the maps,
   which are still drawn. `Renderer::ray_traced_shadows_in_effect(&settings)`
-  says whether they run; without hardware ray tracing in effect the maps
+  says whether the setting is in effect; they then run on the frames where
+  a light holds a slot. Without hardware ray tracing in effect the maps
   shadow everything.
 
 The [streaming example](examples/streaming.rs) and the

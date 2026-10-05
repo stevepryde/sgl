@@ -627,7 +627,16 @@ code; it does not redeclare a struct, binding or function another module owns.
   ([History](#shared-contracts)), restarting after a frame in which the
   stage did not run. The browser has no ray queries and never runs it; a
   device without them, or the setting off, keeps the maps and reports it
-  (`Renderer::ray_traced_shadows_in_effect`). `Settings::ray_traced_shadows`
+  (`Renderer::ray_traced_shadows_in_effect`, which reports the setting in
+  effect: on, with hardware ray tracing in effect). The effective
+  configuration's `Effective::ray_traced_shadows` is resolved in two
+  steps. Before prepare it means the frame traces for the shadows (the
+  setting on and hardware ray tracing in effect), so prepare builds the
+  acceleration structures. After prepare the renderer narrows it
+  (`renderer::effective::traced_shadows`) to whether the stage runs: the
+  frame's rays trace in hardware and a slot holds a light. Only then does
+  the opaque stage drop its fused form; a frame whose slots hold no light
+  keeps the fused pass and the maps. `Settings::ray_traced_shadows`
   is a `bool`, off by default and in every preset: a game opts in, as it
   opts in to the hardware ray tracing the setting needs, whose ray queries
   wgpu marks experimental ([D-28](decisions.md)).

@@ -28,10 +28,15 @@ struct ShadowMaskSlots {
  // Bit s: slot s's history restarts.
  restart:u32,
 }
-// The mask's layer that holds slot `slot`, and its channel there.
+// The mask's layer that holds slot `slot`, and its channel there; and the
+// slots layer `layer` holds, by channel. The slot table's vectors and the
+// stage's packed words hold the slots as the layers do.
 fn shadow_mask_layer(slot:u32)->u32 {
  return slot/4u;
 }
 fn shadow_mask_channel(slot:u32)->u32 {
  return slot%4u;
+}
+fn shadow_mask_layer_slots(layer:u32)->vec4<u32> {
+ return vec4(layer*4u)+vec4(0u,1u,2u,3u);
 }
