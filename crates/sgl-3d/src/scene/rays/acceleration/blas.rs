@@ -1,16 +1,23 @@
 //! BLASes (the architecture's Hardware ray tracing, *Structures*): one for
-//! each model of `RayClass::Opaque` that does not deform, one geometry per
-//! mesh over the packed vertices' positions and the mesh's indices where
-//! they lie in the ray source, as Bevy b56fc29 builds one per mesh from its
-//! mesh allocator's slices (`crates/bevy_solari/src/scene/blas.rs` 55–102,
-//! 144–171) and Wicked Engine one per mesh LOD
-//! (`wiScene_Components.cpp`, `CreateRaytracingRenderData`); and one for each
-//! deforming instance over its deformed positions, built whole again after
-//! each deform. A model's BLAS is pending until a frame that builds the
-//! structures, which builds the pending ones nearest the camera first under
-//! Bevy's budget of vertices (`MOST_VERTICES_PER_FRAME`), the first always,
-//! and a replaced model's outside it; a built one is then compacted through
-//! Bevy's queue under the same budget (`blas.rs` 104–142).
+//! each model that does not deform and whose class the form traces
+//! (`RayClass::traced`), one geometry per mesh over the packed vertices'
+//! positions and the mesh's indices where they lie in the ray source,
+//! every geometry opaque but, under the candidate form, a masked mesh's, as
+//! Bevy b56fc29 builds one per mesh from its mesh allocator's slices
+//! (`crates/bevy_solari/src/scene/blas.rs` 55–102, 144–171) and Wicked
+//! Engine one per mesh LOD (`wiScene_Components.cpp`,
+//! `CreateRaytracingRenderData`); and one for each deforming instance over
+//! its deformed positions, built whole again after each deform. A model's
+//! BLAS is pending until a frame that builds the structures, which builds
+//! the pending ones nearest the camera first under Bevy's budget of
+//! vertices (`MOST_VERTICES_PER_FRAME`), the first always, and a replaced
+//! or re-pended model's outside it; a built one is then compacted through
+//! Bevy's queue under the same budget (`blas.rs` 104–142). A BLAS is built
+//! for its geometry and its geometries' opacity under the form in effect,
+//! so a material edit that moves a mesh between masked and not re-pends a
+//! model's under the candidate form, and a deforming instance's is made
+//! again for the opacity of the form in effect, as Wicked Engine rebuilds a
+//! BLAS whose materials' opacity changed (`wiScene.cpp` 4232–4247).
 use super::{allocated, distance};
 use crate::content::identity::{Identity, InstanceId, ModelId};
 use crate::scene::instances::{Instance, Instances};
@@ -18,6 +25,7 @@ use crate::scene::models::{Model, Models};
 use crate::scene::ray_class::RayClass;
 use crate::scene::rays::{RayMeshWords, VERTEX_WORDS};
 use crate::scene::static_edits::posed_bounds;
+use crate::shading::RayQueryForm;
 use crate::shading::deformation::DEFORMED_POSITION_WORDS;
 use glam::Vec3;
 use std::collections::{HashMap, VecDeque};
@@ -31,11 +39,25 @@ use std::collections::{HashMap, VecDeque};
 /// it arrives.
 pub(super) const MOST_VERTICES_PER_FRAME: u32 = 400_000;
 
+/// Whether each of `model`'s geometries is built without `OPAQUE` under
+/// `form`: a masked mesh's under the candidate form, whose query's loop
+/// judges its candidates; none under the baseline, whose query forces
+/// opacity.
+fn non_opaque(model: &Model, form: RayQueryForm) -> impl Iterator<Item = bool> + '_ {
+    let candidates = form == RayQueryForm::Candidates;
+    model
+        .ray_masked
+        .iter()
+        .map(move |&masked| masked && candidates)
+}
+
 /// A model's BLAS, for its geometry `geometry` (`Model::geometry`).
 enum ModelBlas {
+    /// Built with the geometries `non_opaque` names not opaque.
     Built {
         blas: wgpu::Blas,
         geometry: u64,
+        non_opaque: Vec<bool>,
         #[cfg(any(test, feature = "diagnostics"))]
         triangles: u64,
     },
@@ -44,20 +66,30 @@ enum ModelBlas {
 }
 
 impl ModelBlas {
-    fn geometry(&self) -> u64 {
+    /// Whether it is `model`'s as `form` builds it: of its geometry and,
+    /// built, its geometries' opacity. The device's limits do not depend on
+    /// the opacity.
+    fn current(&self, model: &Model, form: RayQueryForm) -> bool {
         match self {
-            Self::Built { geometry, .. } | Self::LeftOut { geometry } => *geometry,
+            Self::Built {
+                geometry,
+                non_opaque: built,
+                ..
+            } => *geometry == model.geometry && built.iter().copied().eq(non_opaque(model, form)),
+            Self::LeftOut { geometry } => *geometry == model.geometry,
         }
     }
 }
 
 /// A deforming instance's BLAS, for its model's geometry `geometry`, as of
-/// its deformation `revision` (`InstanceDeformation::revision`).
+/// its deformation `revision` (`InstanceDeformation::revision`), built with
+/// the geometries `non_opaque` names not opaque.
 enum DeformedBlas {
     Built {
         blas: wgpu::Blas,
         geometry: u64,
         revision: u64,
+        non_opaque: Vec<bool>,
         #[cfg(any(test, feature = "diagnostics"))]
         triangles: u64,
     },
@@ -193,19 +225,43 @@ fn fits(meshes: &[RayMeshWords], limits: &wgpu::Limits) -> bool {
 }
 
 /// Each geometry's sizes over `meshes`: `Float32x3` positions, which need no
-/// extended vertex format, and `Uint32` indices, every geometry `OPAQUE`
-/// (the baseline form). A mesh's indices count its whole triangles only, as
-/// its BVH and culling ranges do: wgpu refuses a count that is not a
-/// multiple of three (`wgpu-core` `command/ray_tracing.rs` 755–760).
-fn sizes(meshes: &[RayMeshWords]) -> Vec<wgpu::BlasTriangleGeometrySizeDescriptor> {
+/// extended vertex format, and `Uint32` indices, each geometry `OPAQUE` but
+/// those `non_opaque` names, as Wicked Engine clears `FLAG_OPAQUE` from an
+/// alpha-tested material's geometry (`wiScene.cpp` 4232–4244). A mesh's indices
+/// count its whole triangles only, as its BVH and culling ranges do: wgpu
+/// refuses a count that is not a multiple of three (`wgpu-core`
+/// `command/ray_tracing.rs` 755–760).
+fn sizes(
+    meshes: &[RayMeshWords],
+    non_opaque: impl Iterator<Item = bool>,
+) -> Vec<wgpu::BlasTriangleGeometrySizeDescriptor> {
     meshes
         .iter()
-        .map(|mesh| wgpu::BlasTriangleGeometrySizeDescriptor {
-            vertex_format: wgpu::VertexFormat::Float32x3,
-            vertex_count: mesh.vertex_count,
-            index_format: Some(wgpu::IndexFormat::Uint32),
-            index_count: Some(mesh.index_count / 3 * 3),
-            flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+        .zip(non_opaque)
+        .map(
+            |(mesh, non_opaque)| wgpu::BlasTriangleGeometrySizeDescriptor {
+                vertex_format: wgpu::VertexFormat::Float32x3,
+                vertex_count: mesh.vertex_count,
+                index_format: Some(wgpu::IndexFormat::Uint32),
+                index_count: Some(mesh.index_count / 3 * 3),
+                flags: if non_opaque {
+                    wgpu::AccelerationStructureGeometryFlags::empty()
+                } else {
+                    wgpu::AccelerationStructureGeometryFlags::OPAQUE
+                },
+            },
+        )
+        .collect()
+}
+
+/// The geometries `sizes` builds without `OPAQUE`.
+fn built_non_opaque(sizes: &[wgpu::BlasTriangleGeometrySizeDescriptor]) -> Vec<bool> {
+    sizes
+        .iter()
+        .map(|size| {
+            !size
+                .flags
+                .contains(wgpu::AccelerationStructureGeometryFlags::OPAQUE)
         })
         .collect()
 }
@@ -232,11 +288,16 @@ fn create(
     })
 }
 
-/// The build of `model`'s BLAS (`id`), unless the device cannot hold it.
-/// Bevy's flags (`blas.rs` 158–164): a game changes a rigid model's
-/// geometry by replacing it, never by refitting it.
-fn model_build(device: &wgpu::Device, id: ModelId, model: &Model) -> Option<BlasBuild> {
-    let sizes = sizes(&model.ray_meshes);
+/// The build of `model`'s BLAS (`id`) under `form`, unless the device
+/// cannot hold it. Bevy's flags (`blas.rs` 158–164): a game changes a rigid
+/// model's geometry by replacing it, never by refitting it.
+fn model_build(
+    device: &wgpu::Device,
+    id: ModelId,
+    model: &Model,
+    form: RayQueryForm,
+) -> Option<BlasBuild> {
+    let sizes = sizes(&model.ray_meshes, non_opaque(model, form));
     let blas = create(
         device,
         "scene model BLAS",
@@ -279,14 +340,15 @@ pub(super) struct Blases {
 }
 
 impl Blases {
-    /// Drops the BLASes of removed models and instances, of models no
-    /// longer `RayClass::Opaque` and of instances whose model rays pass
-    /// through.
-    pub fn forget_removed(&mut self, models: &Models, instances: &Instances) {
+    /// Drops the BLASes of removed models and instances, of models whose
+    /// class `form` no longer traces (`RayClass::traced`) and of instances
+    /// whose model rays pass through.
+    pub fn forget_removed(&mut self, models: &Models, instances: &Instances, form: RayQueryForm) {
         self.models.retain(|&id, _| {
-            models.slots.get(id).is_some_and(|model| {
-                model.ray_class == RayClass::Opaque && model.deformation.is_none()
-            })
+            models
+                .slots
+                .get(id)
+                .is_some_and(|model| model.ray_class.traced(form) && model.deformation.is_none())
         });
         self.deformed.retain(|&id, _| {
             instances.slots.get(id).is_some_and(|instance| {
@@ -336,20 +398,21 @@ impl Blases {
         }
     }
 
-    /// The model BLASes the frame builds, of the models of the instances
-    /// `opaque` whose BLAS is pending (`admit`). A model the device cannot
-    /// hold is left out.
+    /// The model BLASes the frame builds under `form`, of the models of the
+    /// instances `traced` whose BLAS is pending (`admit`): never built, or
+    /// built for another geometry or opacity, which re-pends it. A model
+    /// the device cannot hold is left out.
     pub fn choose_models(
         &mut self,
         device: &wgpu::Device,
         limits: &wgpu::Limits,
         models: &Models,
         instances: &Instances,
-        opaque: &[InstanceId],
-        eye: Vec3,
+        traced: &[InstanceId],
+        (eye, form): (Vec3, RayQueryForm),
     ) -> Vec<BlasBuild> {
         let mut pending: HashMap<ModelId, Pending> = HashMap::new();
-        for &id in opaque {
+        for &id in traced {
             let instance = instances.slots.get(id).expect("a live instance");
             let model_id = instance.state.model;
             let model = models
@@ -357,7 +420,7 @@ impl Blases {
                 .get(model_id)
                 .expect("an instance's model lives");
             let built = self.models.get(&model_id);
-            if built.is_some_and(|blas| blas.geometry() == model.geometry) {
+            if built.is_some_and(|blas| blas.current(model, form)) {
                 continue;
             }
             let nearest = distance(eye, posed_bounds(model.bounds, instance.state.pose));
@@ -368,7 +431,8 @@ impl Blases {
                     id: model_id,
                     nearest,
                     vertices: model.ray_meshes.iter().map(|mesh| mesh.vertex_count).sum(),
-                    // A model left out goes back under the budget.
+                    // A model left out goes back under the budget; a
+                    // replaced or re-pended one is built outside it.
                     replaced: matches!(built, Some(ModelBlas::Built { .. })),
                 });
         }
@@ -384,7 +448,7 @@ impl Blases {
         }
         for id in admit(held) {
             let model = models.slots.get(id).expect("a pending model lives");
-            match model_build(device, id, model) {
+            match model_build(device, id, model, form) {
                 Some(build) => {
                     self.building.insert(id, build.blas.clone());
                     builds.push(build);
@@ -405,17 +469,15 @@ impl Blases {
         );
     }
 
-    /// The BLAS of model `id`'s current geometry, built or building this
-    /// frame.
-    pub fn model(&self, models: &Models, id: ModelId) -> Option<&wgpu::Blas> {
+    /// The BLAS of model `id`'s current geometry as `form` builds it, built
+    /// or building this frame.
+    pub fn model(&self, models: &Models, id: ModelId, form: RayQueryForm) -> Option<&wgpu::Blas> {
         if let Some(blas) = self.building.get(&id) {
             return Some(blas);
         }
-        let geometry = models.slots.get(id).expect("a live model").geometry;
+        let model = models.slots.get(id).expect("a live model");
         match self.models.get(&id) {
-            Some(ModelBlas::Built {
-                blas, geometry: g, ..
-            }) if *g == geometry => Some(blas),
+            Some(built @ ModelBlas::Built { blas, .. }) if built.current(model, form) => Some(blas),
             _ => None,
         }
     }
@@ -426,18 +488,20 @@ impl Blases {
         matches!(self.models.get(&id), Some(ModelBlas::LeftOut { geometry: g }) if *g == geometry)
     }
 
-    /// The BLAS of deforming instance `id` as the frame deforms it, adding
-    /// its build to `builds` when its deformation changed since it was
-    /// built: whole, with `PREFER_FAST_BUILD`, outside the budget, as Wicked
-    /// Engine rebuilds its skinned meshes' BLASes every frame
-    /// (`wiScene.cpp` 4246–4252). None when the device cannot hold it.
+    /// The BLAS of deforming instance `id` as the frame deforms it under
+    /// `form`, adding its build to `builds` when its deformation changed
+    /// since it was built: whole, with `PREFER_FAST_BUILD`, outside the
+    /// budget, as Wicked Engine rebuilds its skinned meshes' BLASes every
+    /// frame (`wiScene.cpp` 4246–4252); a new BLAS where its geometries'
+    /// opacity changed, which a BLAS's build cannot. None when the device
+    /// cannot hold it.
     pub fn deformed(
         &mut self,
         device: &wgpu::Device,
         limits: &wgpu::Limits,
         models: &Models,
         (id, instance): (InstanceId, &Instance),
-        builds: &mut Vec<BlasBuild>,
+        (builds, form): (&mut Vec<BlasBuild>, RayQueryForm),
     ) -> Option<wgpu::Blas> {
         let model = models
             .slots
@@ -452,15 +516,18 @@ impl Blases {
                 blas,
                 geometry,
                 revision,
+                non_opaque: built,
                 ..
-            }) if *geometry == model.geometry => {
+            }) if *geometry == model.geometry
+                && built.iter().copied().eq(non_opaque(model, form)) =>
+            {
                 if *revision == deformation.revision {
                     return Some(blas.clone());
                 }
                 blas.clone()
             }
             _ => {
-                let sizes = sizes(&model.ray_meshes);
+                let sizes = sizes(&model.ray_meshes, non_opaque(model, form));
                 let created = fits(&model.ray_meshes, limits)
                     .then(|| {
                         create(
@@ -508,7 +575,7 @@ impl Blases {
                 revision: deformation.revision,
             },
             blas: blas.clone(),
-            sizes: sizes(&model.ray_meshes),
+            sizes: sizes(&model.ray_meshes, non_opaque(model, form)),
             starts,
             stride: u64::from(DEFORMED_POSITION_WORDS) * 4,
         });
@@ -526,6 +593,7 @@ impl Blases {
                 .iter()
                 .map(|size| u64::from(size.index_count.unwrap_or(0) / 3))
                 .sum();
+            let non_opaque = built_non_opaque(&build.sizes);
             match build.built {
                 Built::Model {
                     id,
@@ -537,6 +605,7 @@ impl Blases {
                         ModelBlas::Built {
                             blas: build.blas,
                             geometry,
+                            non_opaque,
                             #[cfg(any(test, feature = "diagnostics"))]
                             triangles,
                         },
@@ -559,6 +628,7 @@ impl Blases {
                             blas: build.blas,
                             geometry,
                             revision,
+                            non_opaque,
                             #[cfg(any(test, feature = "diagnostics"))]
                             triangles,
                         },
@@ -610,10 +680,13 @@ mod tests {
             indices: 0,
             index_count,
         };
-        let counts: Vec<_> = sizes(&[mesh(7), mesh(6), mesh(2), mesh(0)])
-            .iter()
-            .map(|size| size.index_count)
-            .collect();
+        let counts: Vec<_> = sizes(
+            &[mesh(7), mesh(6), mesh(2), mesh(0)],
+            [false; 4].into_iter(),
+        )
+        .iter()
+        .map(|size| size.index_count)
+        .collect();
         assert_eq!(counts, [Some(6), Some(6), Some(0), Some(0)]);
     }
 

@@ -5,7 +5,14 @@
 // their group 3 at this one entry (`shading::bind::tlas_entry`); the
 // re-trace past a hit the shared predicate rejects; the composition with
 // the portable walk over the instances the TLAS does not hold; and the one
-// per-ray budget. The query itself is the form's (`scene_hardware_query`).
+// per-ray budget. The query itself is the form's (`scene_hardware_query`):
+// it takes the ray from `t_min` over the kinds `mask` selects, the nearest
+// hit or, with `first_hit`, the first the hardware finds, and may judge
+// the candidates it meets by the shared predicate (scene_hardware_accepts)
+// with the ray's `receiver`, `sides` and `open_end`, each a step of its
+// `steps` (scene_hardware_step); it returns a miss, a committed hit for
+// the re-trace to judge (SCENE_HARDWARE_COMMITTED), or one it already
+// accepted (SCENE_HARDWARE_ACCEPTED).
 // Each instance's custom index is its entry's index, and its mask its kind
 // (`scene::rays::acceleration`, `MASK_STATIC` and `MASK_MOVING`), as Wicked
 // Engine 2ff1d9e (`raytracingHF.hlsli`; `rtreflectionCS.hlsl` 74–147) and
@@ -16,14 +23,18 @@ enable wgpu_ray_query;
 @group(3) @binding(16) var scene_tlas:acceleration_structure;
 // The most hardware steps one ray takes (AR-12): the queries it starts,
 // one for its first look and one for each re-trace past a hit the
-// predicate rejects. A ray re-traces past every rejected triangle in front
+// predicate rejects, and, under the candidate form, every candidate its
+// queries examine. A ray re-traces past every rejected triangle in front
 // of the one it stops at: a back face of a single-sided closed mesh the
 // ray starts inside, a blended mesh of a mixed model, a hidden group's
 // triangle, its receiver's own triangle, the interval's open end and,
 // under the baseline form, a cut-out texel of a masked deforming instance
 // (masked models that do not deform are on the portable walk, with its own
 // cap); a visibility ray whose first, any-hit look is rejected takes one
-// more. Counted on the GPU by an instrumented build (#23): every one of
+// more. Under the candidate form a masked mesh's triangles are candidates
+// instead, one step each for every one a query crosses short of its
+// nearest accepted hit. Counted on the GPU by an instrumented build of the
+// baseline form (#23): every one of
 // the dynamic GI example's 6.79 million probe and visibility rays took one
 // query; of 6.9 million world-space reflection rays over a glossy floor
 // among moving boxes the most took three; and among skinned characters
@@ -33,7 +44,8 @@ enable wgpu_ray_query;
 // crossed a re-trace. The cap is about nine times that, for denser hair,
 // and still bounds every ray: a ray that reaches it reports a miss, or a
 // visibility ray unoccluded, as the portable walk does at
-// SCENE_BVH_MOST_VISITS.
+// SCENE_BVH_MOST_VISITS. The candidate form's steps are unmeasured until
+// it runs on Vulkan or DX12 hardware.
 const SCENE_MOST_HARDWARE_STEPS:u32=256u;
 // Counts one more hardware step of a ray's `steps`, false once the ray has
 // taken SCENE_MOST_HARDWARE_STEPS, after which it stays exhausted.
@@ -48,6 +60,12 @@ fn scene_hardware_step(steps:ptr<function,u32>)->bool {
 fn scene_hardware_exhausted(steps:u32)->bool {
  return steps>SCENE_MOST_HARDWARE_STEPS;
 }
+
+// What a form's query reports in its hit's first word: a committed hit the
+// shared predicate has yet to judge, or one the query's own predicate
+// accepted (a confirmed candidate). Zero is a miss.
+const SCENE_HARDWARE_COMMITTED:u32=1u;
+const SCENE_HARDWARE_ACCEPTED:u32=2u;
 
 // The bits of the least normal f32, 2^-126.
 const SCENE_LEAST_NORMAL_BITS:u32=0x00800000u;
@@ -88,7 +106,10 @@ fn scene_hardware_accepts(ray:SceneRay,hit:RawSceneHit,receiver:vec2<u32>,sides:
 // The nearest hit of valid `ray` in the TLAS's instances of kinds `mask`
 // (SCENE_KIND_*, their instance masks) that the predicate accepts, or with `any_hit` any one,
 // leaving `receiver`, accepting `sides`, its interval's end excluded when
-// `open_end`; a miss once `steps` is exhausted. A rejected hit re-traces:
+// `open_end`; a miss once `steps` is exhausted. The predicate judges each
+// committed hit the query has not accepted already (a confirmed candidate,
+// under the candidate form; opaque geometry yields none), and a rejected
+// hit re-traces:
 // the ray keeps its origin and direction and its interval starts past the
 // rejected distance (scene_hardware_after), so the start rises strictly
 // and the ray ends once it passes the interval's end. A triangle at
@@ -106,12 +127,12 @@ fn scene_hardware_trace(ray:SceneRay,mask:u32,any_hit:bool,receiver:vec2<u32>,si
   if t_min>ray.direction.w || !scene_hardware_step(steps) {
    break;
   }
-  let hit=scene_hardware_query(ray.origin.xyz,ray.direction.xyz,t_min,ray.direction.w,mask,first_hit);
+  let hit=scene_hardware_query(ray,t_min,mask,first_hit,receiver,sides,open_end,steps);
   if hit.intersection.x==0u {
    break;
   }
-  if scene_hardware_accepts(ray,hit,receiver,sides,open_end) {
-   accepted=hit;
+  if hit.intersection.x==SCENE_HARDWARE_ACCEPTED || scene_hardware_accepts(ray,hit,receiver,sides,open_end) {
+   accepted=RawSceneHit(vec4(1u,hit.intersection.yzw),hit.coords);
    break;
   }
   if first_hit {
@@ -125,9 +146,10 @@ fn scene_hardware_trace(ray:SceneRay,mask:u32,any_hit:bool,receiver:vec2<u32>,si
 
 // The nearer of `ray`'s hit in the TLAS and the portable walk's over the
 // instance BVHs of the same kinds (`kinds`), which on a hardware-traced
-// frame bound the capture-visible instances the TLAS does not hold: those
-// whose model has a masked mesh (predicate instances), whose model's BLAS
-// is pending, or that the device's limits left out. A visibility ray is
+// frame bound the capture-visible instances the TLAS does not hold: under
+// the baseline form those whose model has a masked mesh (predicate
+// instances), and under either those whose model's BLAS is pending or
+// that the device's limits left out. A visibility ray is
 // occluded by either. The walk keeps its own visit budget beside the
 // hardware's steps; either exhausted, the ray reports a miss.
 fn scene_trace_hardware(ray:SceneRay,kinds:u32,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool)->RawSceneHit {

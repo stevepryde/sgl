@@ -1244,15 +1244,17 @@ code; it does not redeclare a struct, binding or function another module owns.
   version, and Vulkan and DX12 are supported as well, with separate code
   where needed. So the hardware path has one **baseline form**, which every
   native backend runs, and one **candidate form**, a specialisation where
-  the backend lowers the loop: `RayQueryForm` (`Baseline`, `Candidates`,
-  the second variant landing with the candidate specialisation),
+  the backend lowers the loop: `RayQueryForm` (`Baseline`, `Candidates`),
   a typed capability the renderer derives once from the adapter's backend
-  (Metal the baseline; Vulkan and DX12 may run candidates), selects the
+  (`RayQueryForm::of_backend`: Metal the baseline; Vulkan and DX12 may run
+  candidates), selects the
   per-query module a tracing pipeline composes and the geometry flags the
   scene builds with; nothing else branches on it. The form in effect on
   Vulkan and DX12 is the baseline until the candidate form's benefit is
   measured on their hardware (RD-6), a recorded decision kept as a
-  constant beside `RayQueryForm`, never a setting (AR-3). Shared by both
+  constant beside `RayQueryForm` (`shading::LOWERED_FORM`), never a
+  setting (AR-3); the owner has no Vulkan or DX12 hardware that traces
+  rays, so the candidate form has run on no device yet. Shared by both
   forms, in one hardware module, `scene_rays_hardware.wgsl`: the TLAS
   binding, the query's setup from the ray and its side policy, the
   re-trace, the conversion of a committed hit into the one hit, the
@@ -1262,7 +1264,13 @@ code; it does not redeclare a struct, binding or function another module owns.
   compaction, the shared predicate, the settings and reporting, and the
   stage placements. Per form, one function, the query itself, which the
   shared module calls: `scene_rays_query_opaque.wgsl` (baseline) and
-  `scene_rays_query_candidates.wgsl` (candidates).
+  `scene_rays_query_candidates.wgsl` (candidates). It takes the ray, the
+  interval's current start, the kinds, whether it asks for any hit, the
+  predicate's inputs (receiver, side policy, open end) and the ray's
+  budget, and returns a miss, a committed hit for the shared predicate
+  and re-trace (`SCENE_HARDWARE_COMMITTED`), or one it accepted itself
+  (`SCENE_HARDWARE_ACCEPTED`, a confirmed candidate), so no hit is judged
+  twice; the baseline's judges nothing and takes no step.
   *Baseline form.* Every BLAS geometry is `OPAQUE` and a query asks the
   hardware for two things, which every backend enforces, the cull mask
   that selects the kinds (naga's MSL `intersect` takes it, 4123–4128;
@@ -1358,15 +1366,29 @@ code; it does not redeclare a struct, binding or function another module owns.
   material (`wiScene.cpp` 4232–4244). Opaque geometry never yields a
   candidate, so the re-trace and the side rules stay as the baseline has
   them; the candidate form does not take the side rules, since Wicked's
-  per-instance cull exemptions are not available. The portable walk then
-  covers the pending and left-out instances alone. Under this form a
+  per-instance cull exemptions are not available. The loop stops at the
+  budget's cap by returning a miss, never through `rayQueryTerminate`:
+  naga 29.0.4's SPIR-V writer caches its terminate helper under proceed's
+  key (`back/spv/ray/query.rs` 1869–1870), so a proceed it writes after
+  one would call the terminate helper. The portable walk then
+  covers the pending and left-out instances alone. A BLAS is built for
+  its geometry and its geometries' opacity under the form in effect, so
+  under this form a
   material edit that moves a mesh between masked and not re-pends every
   model using it, rebuilt outside the budget before the next traced frame,
-  as Wicked rebuilds (4244). The form reaches a device only through error
-  scopes around its module and pipeline creation, popped on native by
-  polling, sticky per device: a failure (a compile or validation error;
-  not a wrong result or a driver fault) falls the device back to the
-  baseline form, typed in `RayQueryForm`, and `ray_tracing_error` says so.
+  as Wicked rebuilds (4232–4247), and a deforming instance's BLAS is made
+  again with its new flags. The form reaches a device only through error
+  scopes (validation and internal) around its module and pipeline
+  creation, popped on native by polling, a scope still pending counting as
+  a failure, sticky for the renderer's device (`DeviceRayForm`, which
+  `TracePaths::pipeline` consults): a failure (a compile or validation
+  error; not a wrong result or a driver fault) falls the device back to the
+  baseline form, typed in `RayQueryForm`, and `ray_tracing_error` says so
+  while `ray_tracing_in_effect` stays true. The frame in which it fails
+  finishes on the baseline over structures built for candidates, which the
+  baseline traces correctly, since it forces opacity and its committed
+  masked hits take the cut-out test and re-trace; the next frame builds for
+  the baseline.
   *Budget.* One budget per ray, `SCENE_MOST_HARDWARE_STEPS`, counts every
   query the ray starts and every candidate it examines, nested loops
   sharing it (AR-12); at the cap the query terminates and the ray reports
@@ -1378,7 +1400,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   through masked foliage, where the candidate form's candidates are every
   non-opaque triangle crossed; shadow rays through nested closed
   occluders), its reason beside it; the portable walk's visits are not
-  that measure.
+  that measure. The candidate form's steps are unmeasured until it runs on
+  Vulkan or DX12 hardware; until then the cap is the baseline's.
   *Structures.* A model that does not deform owns one BLAS, one geometry
   per mesh, over the packed vertices' `f32` positions and the mesh indices
   where they lie in the ray source, whose buffer gains `BLAS_INPUT`
@@ -1493,13 +1516,18 @@ code; it does not redeclare a struct, binding or function another module owns.
   occluders under every side policy and the equal-distance tie, on a
   device with the feature; where the adapter lacks it the test reports
   itself unsupported, never passed. The candidate form runs the same test
-  wherever its hardware exists, which no Mac has (MoltenVK offers no ray
-  query), so it ships with less local validation than the baseline form, a
-  risk recorded here. Per-pass GPU timings of the world-space trace, the
+  wherever its hardware exists (a device whose backend lowers the loop,
+  whatever form the renderer takes there by default), which no Mac has
+  (MoltenVK offers no ray query), so it ships with less local validation
+  than the baseline form, a risk recorded here: locally, naga's SPIR-V and
+  HLSL writers write both forms' tracing programs as wgpu's Vulkan and
+  DX12 backends do (the layout tests), and the scene's structures and the
+  fallback are tested on Metal; DXC, the drivers and the candidate loop's
+  results are not. Per-pass GPU timings of the world-space trace, the
   dynamic GI trace and the ray-traced shadows against the portable path on
   the examples and the consumer's route are the measured record (RD-6).
-  The baseline form and its Mac validation land first; the candidate
-  specialisation is a later, separate change.
+  The baseline form and its Mac validation landed first (#188); the
+  candidate specialisation is a separate change after it.
 - **GPU draw lists and occlusion culling.** The camera's opaque and masked
   surfaces and each directional shadow cascade draw from lists the GPU
   builds, in the form of Bevy's meshlet hardware raster (9d12036

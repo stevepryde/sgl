@@ -457,20 +457,59 @@ pub(crate) static SCENE_RAYS_QUERY_OPAQUE: Module = Module {
     source: include_str!("scene_rays_query_opaque.wgsl"),
     deps: &[&SCENE_RAYS_HARDWARE],
 };
+/// The candidate form's query (`RayQueryForm::Candidates`), the root of a
+/// hardware-traced pipeline where the backend lowers a candidate loop.
+pub(crate) static SCENE_RAYS_QUERY_CANDIDATES: Module = Module {
+    name: "scene_rays_query_candidates",
+    source: include_str!("scene_rays_query_candidates.wgsl"),
+    deps: &[&SCENE_RAYS_HARDWARE],
+};
 
 /// The form of the hardware path's ray queries (the architecture's Hardware
 /// ray tracing, *Two forms, one stage*), a capability of the device's
 /// backend: it selects the query module a tracing pipeline composes and the
 /// geometry flags the scene builds its BLASes with; nothing else branches
-/// on it. Every native backend runs the baseline form: naga 29's MSL writer
-/// cannot run a candidate loop, and the candidate specialisation that
-/// Vulkan and DX12 could run is a later, separate change.
+/// on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RayQueryForm {
     /// Every BLAS geometry opaque, one query per look and a re-trace past
     /// a committed hit the shared predicate rejects; masked models'
     /// instances are traced by the portable walk.
     Baseline,
+    /// A masked mesh's geometry not opaque, its instances in the TLAS, and
+    /// a candidate loop that runs the shared predicate on each of its
+    /// triangles a ray crosses, confirming those it accepts.
+    Candidates,
+}
+
+/// The form a device whose backend lowers the candidate loop runs (Vulkan
+/// and DX12): the baseline until the candidate form's benefit is measured
+/// on their hardware (RD-6), a recorded decision and never a setting
+/// (AR-3). The candidate form has not run on Vulkan or DX12 hardware yet
+/// (#23): the owner has none that traces rays, and no Mac does (MoltenVK
+/// offers no ray query).
+pub(crate) const LOWERED_FORM: RayQueryForm = RayQueryForm::Baseline;
+
+impl RayQueryForm {
+    /// Whether naga 29 lowers a candidate loop to `backend`'s shaders: its
+    /// SPIR-V (Vulkan) and HLSL (DX12) writers do; its MSL writer (Metal)
+    /// runs one intersection at initialisation, confirms nothing and reads
+    /// a candidate as the committed hit (`back/msl/writer.rs` 49,
+    /// 4111–4166, 2874); no other backend has ray queries.
+    pub fn lowered(backend: wgpu::Backend) -> bool {
+        matches!(backend, wgpu::Backend::Vulkan | wgpu::Backend::Dx12)
+    }
+
+    /// The form a device of `backend` runs: `lowered`, the form chosen for
+    /// backends that lower the candidate loop (`LOWERED_FORM`), where it
+    /// does, else the baseline.
+    pub fn of_backend(backend: wgpu::Backend, lowered: Self) -> Self {
+        if Self::lowered(backend) {
+            lowered
+        } else {
+            Self::Baseline
+        }
+    }
 }
 
 /// The root a tracing pipeline composes after its own modules: the hardware
@@ -480,6 +519,7 @@ pub(crate) fn ray_trace_root(form: Option<RayQueryForm>) -> &'static Module {
     match form {
         None => &SCENE_RAYS_PORTABLE,
         Some(RayQueryForm::Baseline) => &SCENE_RAYS_QUERY_OPAQUE,
+        Some(RayQueryForm::Candidates) => &SCENE_RAYS_QUERY_CANDIDATES,
     }
 }
 /// A surface's specular lobes, the lobe a screen-space method traces and
@@ -541,4 +581,43 @@ pub(crate) static SURFACE_RAY: Module = Module {
 #[cfg(test)]
 pub(crate) fn lit_compute_library() -> String {
     compose(&[&BIND_LIT, &SURFACE_RAY, &SCENE_RAYS_PORTABLE])
+}
+
+#[cfg(test)]
+mod form_tests {
+    use super::RayQueryForm;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Plausible defect: a backend whose shaders naga does not lower a
+    // candidate loop for given the candidate form once the recorded choice
+    // for Vulkan and DX12 (`LOWERED_FORM`) becomes it: on Metal, naga's MSL
+    // proceed never ends a candidate loop and its confirm does nothing, so
+    // every ray would spend its budget and miss. The oracle is naga 29's
+    // writers, as the architecture records them: SPIR-V and HLSL lower the
+    // loop, MSL does not, and no other backend has ray queries.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn only_vulkan_and_dx12_take_the_candidate_form() {
+        use wgpu::Backend::{BrowserWebGpu, Dx12, Gl, Metal, Noop, Vulkan};
+        for (backend, lowered) in [
+            (Vulkan, true),
+            (Dx12, true),
+            (Metal, false),
+            (Gl, false),
+            (BrowserWebGpu, false),
+            (Noop, false),
+        ] {
+            let form = RayQueryForm::of_backend(backend, RayQueryForm::Candidates);
+            let expected = if lowered {
+                RayQueryForm::Candidates
+            } else {
+                RayQueryForm::Baseline
+            };
+            assert_eq!(form, expected, "{backend:?}");
+            assert_eq!(
+                RayQueryForm::of_backend(backend, RayQueryForm::Baseline),
+                RayQueryForm::Baseline,
+                "{backend:?}"
+            );
+        }
+    }
 }
