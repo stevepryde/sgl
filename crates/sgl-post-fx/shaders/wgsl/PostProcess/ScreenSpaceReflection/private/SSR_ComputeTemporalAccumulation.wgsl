@@ -125,7 +125,7 @@ fn ComputeReflectionHitPosition(PixelCoord: vec2<i32>, Depth: f32) -> vec2<f32>
     // was not on its screen. It lies a screen off, where ComputeReprojection
     // rejects it, rather than mirrored onto the screen by ProjectPosition's
     // division by its negative w.
-    if ((cbCameraAttribs.g_PrevCamera.mViewProj * vec4<f32>(PositionWS, 1.0)).w <= 0.0) {
+    if (IsOnOrBehindCameraPlane(PositionWS, cbCameraAttribs.g_PrevCamera.mViewProj)) {
         return -cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
     }
     let PrevCoordUV = ProjectPosition(PositionWS, cbCameraAttribs.g_PrevCamera.mViewProj);

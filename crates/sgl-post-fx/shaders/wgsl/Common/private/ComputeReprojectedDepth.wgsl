@@ -39,7 +39,7 @@ fn ComputeReprojectedDepthPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) 
     // mirror it to a depth as far in front. It takes the previous camera's
     // near-plane depth, which the temporal passes read as disoccluded
     // (IsAtOrNearerThanNearPlane).
-    if ((cbCameraAttribs.g_PrevCamera.mViewProj * vec4<f32>(WorldPosition, 1.0)).w <= 0.0) {
+    if (IsOnOrBehindCameraPlane(WorldPosition, cbCameraAttribs.g_PrevCamera.mViewProj)) {
         return cbCameraAttribs.g_PrevCamera.fNearPlaneDepth;
     }
     let PrevScreenCoord = ProjectPosition(WorldPosition, cbCameraAttribs.g_PrevCamera.mViewProj);
