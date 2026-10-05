@@ -15,6 +15,24 @@ full API details.
 
 ## Unreleased
 
+### A failed FSR2 dispatch falls back to TAA instead of panicking
+
+- **Scope:** `sgl-3d` with `Antialiasing::Fsr2`, through the `sp-fidelity`
+  and `sp-fidelity-wgpu` 0.1.2 dependencies. When wgpu rejected a view or
+  bind group of one of FSR2's passes, the backend had already recorded that
+  pass into the frame's encoder, so the game's `finish` found the encoder
+  invalid: wgpu's default error handler panicked, and with a game's own
+  `Device::on_uncaptured_error` handler the whole frame was lost. The
+  backend now fails such a pass before recording it and stops the passes
+  after it (its SDK-P28), and SGL3D reads the failure the backend reports,
+  since FSR2's dispatch ignores its passes' result. The frame completes
+  without FSR2, its render-size image scaled to the scene size as for a
+  camera FSR2 cannot take, and TAA runs from the next `Renderer::resize`;
+  `Renderer::fsr2_error` says why (wgpu's reason where wgpu rejected a
+  pass). Frames whose dispatch succeeds are unchanged.
+- **Migration:** no game-code changes. Regenerate the game's distribution
+  notices for the new `sp-fidelity` versions; their licences are unchanged.
+
 ### SSR and TAA take no history for a surface behind the last frame's camera
 
 - **Scope:** `sgl-post-fx` screen-space reflections' and TAA's temporal
