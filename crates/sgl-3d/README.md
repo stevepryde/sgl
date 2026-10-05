@@ -1740,7 +1740,8 @@ the rays the frame's turns leave, so cost follows change and a moved light
 is answered sooner. Where the turns ask for more than the budget, every
 probe's turns are spaced out by the same power of two, so none starves and
 near probes keep up the most. On Hyperdrive's 3,179-probe course at High
-the rays pass costs about 2 ms a frame in motion on an Apple M5.
+the rays pass costs about 3.6 ms a frame in motion and 1.7 ms with the
+camera still on an Apple M5 at 1920x1080 (1.7 and 1.2 ms at Low).
 Once its light has converged, the volume pauses: it traces nothing and its
 probes hold their light, until something its light follows changes. That
 is any edit to the scene that changes what rays see or light (an instance

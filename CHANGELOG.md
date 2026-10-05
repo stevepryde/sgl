@@ -92,21 +92,53 @@ full API details.
 
 ### Dynamic GI traces within a per-frame ray budget
 
-- **Scope:** `sgl-3d` dynamic GI (#185). A volume now traces at most a
-  per-frame budget of rays, fixed rays included: 32,768 at
+- **Scope:** `sgl-3d` dynamic GI (#185, #196). A volume now traces at most
+  a per-frame budget of rays, fixed rays included: 32,768 at
   `DynamicGiQuality::High`, 16,384 at `Low`, after Wicked Engine's surfel
   GI (4323a33c `SURFEL_RAY_BUDGET`). Probes take turns at a period that
-  grows with their distance from the camera, and far probes trace fewer
-  rays (Wicked's distance boost, 8:1); a probe whose light is changing
-  takes its turns more often. Where requests exceed the budget, every
-  period lengthens so each probe keeps its turns. A volume whose content
-  keeps moving now costs a bounded amount: on Hyperdrive's moving route
-  (3,179 probes, High) rays fell from about 124k to 32k a frame and the
-  dynamic GI rays pass from about 12 ms (after #187) to about 3.4 ms, about
-  1.4 ms with the camera still. A volume converges over volume updates
-  rather than frames. New diagnostics observation: `Diagnostics::dynamic_gi`
-  with `Renderer::take_dynamic_gi_reports` (probes, rays, BVH visits,
-  budget stride, what kept the volume awake).
+  grows with their distance from the camera (every frame within a spacing,
+  every eighth at 128 spacings), and far probes trace fewer rays (Wicked's
+  distance boost, 8:1). Where the turns ask for more than the budget,
+  every period lengthens by the same power of two, so each probe keeps its
+  turns; a probe's turns under a longer stride are among those under a
+  shorter one, so none is skipped when the stride changes from frame to
+  frame. A probe whose light is changing (its most inconsistent texel above
+  the estimator's noise, 0.2) also takes turns more often, from the rays
+  the frame's turns and starting probes leave, never lengthening another
+  probe's turns. A probe's first turn traces all 32 of its classifying
+  fixed rays, in place of as many of its others, so it is classified at
+  once rather than from its first rotated rays until its first whole cycle
+  of 8 turns. A volume's convergence window now spans 16 turns of every
+  active probe (16 times the longest period among them), so it can pause
+  later than before while far probes catch up. A restart or a scroll's
+  entering planes start as many probes a frame as the budget holds beside
+  the blended probes (at least half of it): about 126 near the camera at
+  High and 124 at Low, more farther out. Measured on Hyperdrive's course
+  (3,179 probes; Apple M5, release, 1920x1080, 600 frames), the `dynamic GI
+  rays` pass, median/p95 ms, against #185 as merged:
+
+  | Hyperdrive | High | High (#185) | Low | Low (#185) |
+  | --- | ---: | ---: | ---: | ---: |
+  | Moving | 3.57 / 4.07 | 3.19 / 3.83 | 1.66 / 1.95 | 1.57 / 1.92 |
+  | Camera still | 1.74 / 3.00 | 1.67 / 2.37 | 1.19 / 1.51 | 0.75 / 1.03 |
+  | Garage | 0.68 / 0.96 | 0.67 / 0.88 | 0.43 / 0.56 | 0.40 / 0.53 |
+
+  In motion the probes near the camera now trace every frame or every
+  other (strides 1–2), where #185's shortened turns had spaced them to
+  every 4th or 8th; #185's lower Low cost with the camera still came from
+  probes that missed every turn while the stride alternated (2.2k rays a
+  frame of the 8.5k they asked for). The `dynamic GI blend` pass takes
+  0.28 / 0.36 ms moving at High. In the `dynamic_gi` example a lamp moved
+  at frame 150 is 90% answered within about 90 frames at High (about 160
+  without the shorter turns, 50 tracing every probe every frame). The ray
+  list now holds the frame's budget rather than every probe's most rays,
+  so a volume takes about 9 KB a probe at High (7 KB at Low) and a ray
+  list of 256 KB (128 KB). New diagnostics observation:
+  `Diagnostics::dynamic_gi` with `Renderer::take_dynamic_gi_reports`
+  (`diagnostics::DynamicGiReport`: each observed frame's number, probes,
+  rays, BVH visits, budget stride, what kept the volume awake, and the
+  observed frames skipped while 8 readbacks waited); the `dynamic_gi`
+  example's `--counters` prints them, waiting for each frame.
 - **Migration:** no game-code changes. Code that names every field of
   `Diagnostics` adds `dynamic_gi: false`. Afterwards, move a light inside a
   dynamic GI volume and watch how quickly the bounce follows, and fly
@@ -891,7 +923,7 @@ full API details.
   `SceneError::InvalidDynamicGiVolume`, and `settings::DynamicGiQuality`
   (`Off`, `Low`, `High`) as `Settings::dynamic_gi`, `High` by default. A
   scene holds at most one volume, a lattice of probes the game places; a
-  new stage, first after prepare, keeps the probes up every frame with rays
+  new stage, first after prepare, keeps the probes up with rays each frame
   through the scene's ray source, a port of Wicked Engine's DDGI: coloured
   bounce light from the frame's directional lights, the scene lights whose
   range reaches the volume (each hit's light, where it casts a shadow,
@@ -916,13 +948,13 @@ full API details.
   rather than a few. A probe more than a quarter of whose fixed rays meet
   single-sided surfaces from behind (inside geometry, beyond a wall) is
   inactive, as RTXGI classifies its probes: it lights nothing and traces the
-  fewest rays, and every probe traces 4 fixed rays a frame beside its
-  others. A probe with no surface within a spacing of it is dormant: it
+  fewest rays, and every probe traces all 32 of its fixed rays on its
+  first turn and 4 each turn after beside its others. A probe with no surface within a spacing of it is dormant: it
   lights moving instances alone (static surfaces skip it, so none takes
   light from beyond a room's corner) and traces the fewest rays unless a
   moving instance's bounds come within that spacing; a static object so
   small that no probe's fixed rays find it takes its other indirect light,
-  and a probe's class follows a change within 8 frames. The probes' own rays
+  and a probe's class follows a change within 8 of its turns. The probes' own rays
   take the volume's light at what they hit, never the environment's
   fallback, so a closed room starts dark rather than holding the sky for
   seconds. Once its light has converged (RTXGI's probe variability stops
@@ -935,15 +967,16 @@ full API details.
   enter start afresh; an origin off the lattice, or another spacing or
   count, is another placement. A restart (another placement or
   scene, or a frame without the volume), or a scroll's entering planes,
-  starts at most 128 probes a frame at High (256 at Low), nearest the camera
+  starts as many probes a frame as the ray budget holds (about 126 near
+  the camera at High, 124 at Low, more farther out), nearest the camera
   first, where Wicked starts every probe in one frame; the surfaces about a
   probe not yet started keep their other indirect light. The `dynamic_gi`
   example lights a room, scrolls a volume after its camera (`--scroll`) and
   prints the stage's cost. Timing groups `dynamic GI allocation`,
   `dynamic GI rays` and `dynamic GI blend` report its cost, and frames that
   run it rebuild the ray source's instance BVHs, as world-space reflections
-  do. A volume costs about 11 KB of GPU memory a probe at High (8 KB at
-  Low). Lit group 0 binds one more texture, so the device floor (S3D-1)
+  do. A volume costs about 9 KB of GPU memory a probe at High (7 KB at
+  Low) and a ray list of 256 KB (128 KB). Lit group 0 binds one more texture, so the device floor (S3D-1)
   rises from 19 to 20 sampled textures per shader stage; no known adapter
   offers 19 (WebGPU in Chromium reports 16 or 48, Metal, DX12 and Vulkan 31
   or more).

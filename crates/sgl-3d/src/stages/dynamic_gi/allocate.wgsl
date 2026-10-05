@@ -53,10 +53,14 @@
 // Added, SGL3D's own (neither Wicked, whose inconsistency sets a surfel's
 // rays a turn, nor RTXGI, which leaves scheduling to the application,
 // shortens a period): a probe whose light is changing, its most
-// inconsistent texel above DDGI_SHORTEN_FROM, also takes turns at its
-// period shortened toward 1 as its inconsistency rises, from the rays the
-// distance turns and the starting probes leave, so a light moved is answered
-// sooner without lengthening any probe's distance turns.
+// inconsistent texel above the estimator's noise (DDGI_INCONSISTENCY_NOISE),
+// also takes turns at its period shortened toward 1 as its inconsistency
+// rises, from the rays the distance turns and the starting probes leave, so
+// a light moved is answered sooner without lengthening any probe's distance
+// turns. Shortened turns counted toward the stride doubled every probe's
+// period on Hyperdrive's course from noise alone (#196); and the estimator's
+// noise keeps a still scene's probes from taking them, where any
+// inconsistency took them, for 0.3 ms more a frame there.
 // Added: each probe that traces also traces DDGI_FIXED_RAYS_PER_FRAME
 // fixed rays after its others, the next of its cycle, which classify it, as
 // NVIDIA RTXGI's probes trace their fixed rays among their others each
@@ -117,9 +121,6 @@ const DDGI_STRIDES:u32=7u;
 const DDGI_PERIOD_LEVELS:f32=7.;
 const DDGI_PERIOD_MAX:f32=8.;
 const DDGI_PERIOD_CAP:f32=32.;
-// The inconsistency of a probe's most inconsistent texel above which its
-// light is changing, so it takes shortened turns: SGL3D's own.
-const DDGI_SHORTEN_FROM:f32=0.;
 // The trace's indirect dispatch and the rays the frame traces; the blends'
 // and the probes that trace them; the starting probes: the nearer bins
 // whose probes all start, how many rays of the probes in the bin after
@@ -260,13 +261,13 @@ fn ddgi_request(inconsistency:f32,probe:DdgiProbe,position:vec3<f32>,spacings:f3
  return ray_count;
 }
 // The period of a blended probe's shortened turns: its distance's `period`
-// shortened toward 1 as its inconsistency rises from DDGI_SHORTEN_FROM to
-// 1; its distance's where it requests the fewest rays.
+// shortened toward 1 as its inconsistency rises from the estimator's noise
+// to 1; its distance's where it requests the fewest rays.
 fn ddgi_shortened_period(period:u32,inconsistency:f32,request:u32)->u32 {
  if request<=DDGI_RAY_BUCKET_COUNT {
   return period;
  }
- let change=saturate((inconsistency-DDGI_SHORTEN_FROM)/(1.-DDGI_SHORTEN_FROM));
+ let change=saturate((inconsistency-DDGI_INCONSISTENCY_NOISE)/(1.-DDGI_INCONSISTENCY_NOISE));
  return u32(round(1.+f32(period-1u)*(1.-change)));
 }
 // Counts the rays the probes not yet blended start with in each bin, and

@@ -1,9 +1,10 @@
-//! Dynamic GI: the scene's dynamic GI volume of probes, kept up every frame
-//! by rays through the scene's ray source, as Wicked Engine's DDGI keeps its
-//! own (`wiRenderer::DDGI`, df44c3d wiRenderer.cpp 12412–12618): each
-//! probe's rays allocated from its irradiance estimator, traced with each
-//! hit shaded as the probe-hit receiver kind, then blended into its
-//! irradiance and depth maps, the probe moving away from surfaces it nears.
+//! Dynamic GI: the scene's dynamic GI volume of probes, kept up by rays
+//! through the scene's ray source each frame, within a budget of rays, as
+//! Wicked Engine's DDGI keeps its own (`wiRenderer::DDGI`, df44c3d
+//! wiRenderer.cpp 12412–12618): each probe's rays allocated on its turns
+//! from its irradiance estimator, traced with each hit shaded as the
+//! probe-hit receiver kind, then blended into its irradiance and depth
+//! maps, the probe moving away from surfaces it nears.
 //! The shaders are in `dynamic_gi/`; the probe texture's layout and the
 //! sample are `shading::dynamic_gi`'s.
 //!
@@ -185,11 +186,11 @@ const STRIDES: u32 = 7;
 /// The frame's most rays, fixed rays included, in probes at the tier's
 /// most: 32,768 at High, 16,384 at Low. Wicked's surfel GI traces at most
 /// 100,000 a frame (4323a33c `SURFEL_RAY_BUDGET`) on hardware ray tracing;
-/// on SGL3D's portable walk this many cost Hyperdrive's course about 2 ms
-/// a frame on an Apple M5 (#196). A restart starts as many probes as the
-/// budget holds at their starting rays, nearest first: about 126 a frame
-/// within a spacing of the camera at High and about 124 at Low, and more
-/// farther out, where a probe starts with fewer.
+/// on SGL3D's portable walk this many cost Hyperdrive's 3,179-probe course
+/// about 3.6 ms a frame in motion on an Apple M5 (#196). A restart starts
+/// as many probes as the budget holds at their starting rays, nearest
+/// first: about 126 a frame within a spacing of the camera at High and 124
+/// at Low, and more farther out, where a probe starts with fewer.
 const BUDGET_PROBES: u32 = 128;
 
 /// The frame's most rays, fixed rays included, at the tier's `max_rays`:

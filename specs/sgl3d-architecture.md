@@ -947,10 +947,10 @@ code; it does not redeclare a struct, binding or function another module owns.
 - **Dynamic diffuse GI.** Coloured bounce light from the frame's lights, the
   scene's lights, emitters and the sky on static and moving surfaces, from a
   volume of probes the game places ([Scene content](#scene-content)), kept up
-  every frame by rays through the scene's ray source: a port of Wicked
-  Engine's DDGI (`ddgi_rayallocationCS`, `ddgi_raytraceCS`, `ddgi_updateCS`,
-  `ddgi_updateCS_depth`, `ShaderInterop_DDGI.h`, after Majercik et al. 2019
-  and 2021). Each probe's irradiance is the bordered octahedral colour map
+  by rays through the scene's ray source each frame within a budget: a
+  port of Wicked Engine's DDGI (`ddgi_rayallocationCS`, `ddgi_raytraceCS`,
+  `ddgi_updateCS`, `ddgi_updateCS_depth`, `ShaderInterop_DDGI.h`, after
+  Majercik et al. 2019 and 2021). Each probe's irradiance is the bordered octahedral colour map
   Wicked stored before it moved to spherical harmonics (revision 95e357f:
   `DDGI_COLOR_TEXELS`, `DDGI_COLOR_BORDER_OFFSETS`, `ddgi_probe_color_uv`,
   six by six texels and a border, as Godot's SDFGI probes are), its depth
@@ -970,41 +970,54 @@ code; it does not redeclare a struct, binding or function another module owns.
   bounce by π: the colour map holds irradiance / π, what a hit reflects per
   unit of its diffuse colour, as 95e357f bounces it. The stage runs first
   after prepare ([Frame](#frame)). Each probe asks for rays as Wicked's
-  allocation does: the tier's most rays scaled by the probe's
-  inconsistency, a tenth of that outside the camera's frustum, in buckets
-  of four and at least four; a probe not yet blended the tier's most, as
-  Wicked serves every probe on the first frame after a restart, and a probe
-  that enters by a scroll likewise. A frame traces at most the tier's
-  budget of rays, its fixed rays included: 128 probes at the tier's most,
-  as Wicked's surfel GI traces at most its `SURFEL_RAY_BUDGET` a frame
-  (4323a33c), which #120 had left to the per-probe maximum alone. A blended
-  probe traces on its turn alone, once in a period that grows with the
-  log2 of its distance from the camera in the least spacing, from every
-  frame within one spacing to every eighth at 128 and doubling beyond to
-  every 32nd, at a phase its hash staggers, as Wicked's surfels re-trace by
-  their distance level (`SURFEL_RAY_UPDATE_PERIOD_MAX` and `_CAP`), keeping
-  its light between turns; so a volume whose content keeps moving costs at
-  most its budget, its near probes keeping up the most. Two improvements on
-  Wicked (RD-2). Where its requests past the budget trace nothing in
-  dispatch order, so some may starve, every period is lengthened by the
-  least power of two under which the blended probes' requests on their
-  turns fit the budget beside the probes that start, so each probe keeps
-  its turns, near ones the more often; what still exceeds the budget traces
-  nothing, as Wicked's. A probe whose light is changing takes its turns the more often, its
-  period shortened by its most inconsistent texel's inconsistency toward
-  one (every frame at full inconsistency, its distance's period once
-  settled), so a lamp moved is answered near the speed of tracing every
-  probe every frame; neither Wicked nor RTXGI shortens periods (Wicked's
-  inconsistency sets rays per turn, RTXGI leaves scheduling to the
-  application), so this is SGL3D's own, kept within the budget by the same
-  stride. And where Wicked starts every probe of a restarted
-  volume in one frame, a hitch on a large volume, probes not yet blended
-  start at the tier's most, the nearest the camera first (a histogram of
-  their distances in the least spacing), with the budget the blended
-  probes leave, at least half of it, all of it after a restart; a probe not
-  yet started traces nothing and weighs nothing, so its receivers keep
-  their fallback, and the blends run over the probes that traced, which
-  Wicked's, whose probes always trace, need not. Each probe's
+  allocation does: its most rays scaled by its inconsistency, a tenth of
+  that outside the camera's frustum, in buckets of four and at least four;
+  a probe not yet blended its most, as Wicked serves every probe on the
+  first frame after a restart, and a probe that enters by a scroll
+  likewise. Its most rays fall with the log2 of its distance from the
+  camera in the least spacing, from the tier's most within one spacing to
+  an eighth of it at 128, as Wicked's surfels' rays fall by their level
+  (4323a33c `SURFEL_RAY_BOOST_MAX` to `_MIN`). A frame traces at most the
+  tier's budget of rays, its fixed rays included: 128 probes at the tier's
+  most, as Wicked's surfel GI traces at most its `SURFEL_RAY_BUDGET` a
+  frame, which #120 had left to the per-probe maximum alone. A blended
+  probe traces on its turn alone, once in a period that grows with that
+  level, from every frame within one spacing to every eighth at 128 and
+  doubling beyond to every 32nd, at a phase its hash staggers, as Wicked's
+  surfels re-trace by their distance level (`SURFEL_RAY_UPDATE_PERIOD_MAX`
+  and `_CAP`), keeping its light between turns; so a volume whose content
+  keeps moving costs at most its budget, its near probes keeping up the
+  most. Three improvements on Wicked (RD-2). Where its requests past the
+  budget trace nothing in dispatch order, so some may starve, every period
+  is lengthened by the least power of two (the stride) under which the
+  blended probes' requests on their turns fit the budget beside the probes
+  that start, so each probe keeps its turns, near ones the more often; a
+  probe's phase is Wicked's within its period plus whole periods its hash
+  chooses, so its turns under a longer stride are among its turns under a
+  shorter one and a stride that changes from frame to frame skips none
+  (phases that did not nest starved probes while the stride alternated);
+  what still exceeds the budget traces nothing, as Wicked's. A probe whose
+  light is changing, its most inconsistent texel above the estimator's
+  noise (0.2, below which Wicked's estimator catches a texel up at its
+  least), also takes turns at its period shortened toward one as its
+  inconsistency rises to one, from the rays the frame's turns and starting
+  probes leave, so it lengthens no other probe's turns; neither Wicked nor
+  RTXGI shortens periods (Wicked's inconsistency sets rays per turn, RTXGI
+  leaves scheduling to the application), so this is SGL3D's own. Counted
+  toward the stride, those turns doubled every probe's period on
+  Hyperdrive's course from noise alone; taken from what is left, they keep
+  a moved lamp answered as quickly (in the `dynamic_gi` example, 90% within
+  about 90 frames at High, against about 160 without them and 50 tracing
+  every probe every frame), and the noise threshold keeps a still scene's
+  probes from them (#196). And where Wicked starts every probe of a
+  restarted volume in one frame, a hitch on a large volume, probes not yet
+  blended start at their most rays, the nearest the camera first (a
+  histogram of their distances in the least spacing), with the budget the
+  blended probes leave, at least half of it, all of it after a restart,
+  leaving the shortened turns none while they wait; a probe not yet started
+  traces nothing and weighs nothing, so its receivers keep their fallback,
+  and the blends run over the probes that traced, which Wicked's, whose
+  probes always trace, need not. Each probe's
   estimator, depth and offset start afresh when it is first blended, where
   Wicked starts them all on the first frame. A scroll moves no probe: each
   is stored at its lattice coordinate plus the volume's scroll, wrapping, in
@@ -1109,14 +1122,16 @@ code; it does not redeclare a struct, binding or function another module owns.
   of whose fixed rays meet single-sided surfaces from behind, inside
   geometry or beyond a wall, is inactive, weighs nothing in the sample and
   traces the fewest rays. Its fixed rays are RTXGI's 32 directions spread
-  evenly and never rotated, unshaded and not blended, so its class holds
-  still while what it sees does; where RTXGI traces all of them every
-  update, a probe traces all of them on its first turn, which classifies
-  it at once, then four each turn after its others, and is classified
-  again from all of them once a cycle of eight turns (the share of each
-  frame's rotated rays, even blended over frames, wandered across the
-  threshold, and a far probe's first turn traces as few as 32). Its second phase finds whether a fixed ray met a front face
-  within the probe's cell, the spacing about it on each axis. Improved on
+  evenly and never rotated, so its class holds still while what it sees
+  does; where RTXGI traces all of them every update, a probe traces all of
+  them on its first turn, in place of as many of its others and shaded and
+  blended with them, which classifies it at once, then four each turn
+  after its others, unshaded and not blended, and is classified again from
+  all of them once a cycle of eight turns (the share of each frame's
+  rotated rays, even blended over frames, wandered across the threshold,
+  and a far probe's first turn traced as few as 32). Its second phase
+  finds whether a fixed ray met a front face within the probe's cell, the
+  spacing about it on each axis. Improved on
   RTXGI (RD-2), which deactivates a probe without one for every receiver,
   such a probe is dormant: static receivers skip it, so a probe diagonally
   beyond the edge or corner of a room of single-sided walls, which sees few

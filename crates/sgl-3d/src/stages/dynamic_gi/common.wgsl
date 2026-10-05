@@ -247,6 +247,10 @@ fn ddgi_probe_active(probe:DdgiProbe)->bool {
 fn ddgi_luminance_weights()->vec3<f32> {
  return vec3(.299,.587,.114);
 }
+// The inconsistency below which Wicked's estimator takes a texel's samples
+// as noise, catching its mean up at its least (MultiscaleMeanEstimator's
+// 0.2): below it, a probe's light is not changing (allocate.wgsl).
+const DDGI_INCONSISTENCY_NOISE:f32=.2;
 // Wicked's MultiscaleMeanEstimator: the texel's mean follows its samples
 // `y` quickly where they are inconsistent with it and slowly where they
 // agree, with fireflies suppressed.
@@ -276,7 +280,7 @@ fn multiscale_mean_estimator(y_in:vec3<f32>,data:ptr<function,DdgiVariance>,shor
  let relative_diff=dot(ddgi_luminance_weights(),abs(short_diff)/max(vec3(1e-5),dev));
  inconsistency=mix(inconsistency,relative_diff,.08);
  let variance_based_blend_reduction=clamp(dot(ddgi_luminance_weights(),.5*short_mean/max(vec3(1e-5),dev)),1./32.,1.);
- var catch_up_blend=clamp(vec3(smoothstep(0.,1.,relative_diff*max(.02,inconsistency-.2))),vec3(1./256.),vec3(1.));
+ var catch_up_blend=clamp(vec3(smoothstep(0.,1.,relative_diff*max(.02,inconsistency-DDGI_INCONSISTENCY_NOISE))),vec3(1./256.),vec3(1.));
  catch_up_blend*=vbbr;
  vbbr=mix(vbbr,variance_based_blend_reduction,.1);
  mean=mix(mean,y,saturate(catch_up_blend));
