@@ -77,7 +77,8 @@ fn texture(device: &wgpu::Device, queue: &wgpu::Queue, cells: [u32; 3]) -> wgpu:
             | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    queue.write_texture(
+    crate::counters::write_texture(
+        queue,
         texture.as_image_copy(),
         &[0; TEXEL_BYTES as usize],
         wgpu::TexelCopyBufferLayout::default(),
@@ -335,7 +336,8 @@ impl Scene {
         let [width, height, depth] = region.cells;
         let face_texels = region.texels.len() / 6;
         for (face, texels) in region.texels.chunks_exact(face_texels).enumerate() {
-            queue.write_texture(
+            crate::counters::write_texture(
+                queue,
                 wgpu::TexelCopyTextureInfo {
                     texture: &placement.texture,
                     mip_level: 0,
