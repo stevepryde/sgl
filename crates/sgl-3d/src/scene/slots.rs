@@ -77,13 +77,6 @@ impl<I: Identity, T> Slots<I, T> {
         self.entries.get(index)?.as_ref().map(|(_, value)| value)
     }
 
-    /// The identity of the live content at `index`.
-    #[cfg(feature = "diagnostics")]
-    pub fn id_at(&self, index: usize) -> Option<I> {
-        let (generation, _) = self.entries.get(index)?.as_ref()?;
-        Some(I::issue(index, *generation))
-    }
-
     /// Live content in index order.
     pub fn iter(&self) -> impl Iterator<Item = (I, &T)> {
         self.entries

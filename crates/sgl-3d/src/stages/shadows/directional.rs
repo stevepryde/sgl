@@ -1,6 +1,6 @@
 //! The directional light's shadow cascades: one layer of a depth array per
-//! cascade, each drawn from its view's draw list. A probe capture draws its
-//! own cascades into the same layers.
+//! cascade, each drawn from its view's GPU-built draw list. A probe capture
+//! draws its own cascades, CPU-built, into the same layers.
 use crate::Scene;
 use crate::view::cascades::MAX_SHADOW_CASCADES;
 use crate::view::draw_list::{DrawInstances, DrawList};
@@ -74,7 +74,6 @@ impl Directional {
             slot.list.draw(
                 ctx.scene,
                 ctx.pipelines,
-                &ctx.views.instances,
                 &mut pass,
                 GeometryPass::DirectionalShadow,
             );
@@ -101,7 +100,7 @@ impl Directional {
                 pipelines,
                 drawn,
                 &mut pass,
-                GeometryPass::DirectionalShadow,
+                GeometryPass::CaptureShadow,
             );
         }
     }

@@ -39,7 +39,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 22] = [
+    let roots: [&'static super::Module; 23] = [
         &crate::view::pipelines::GEOMETRY,
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
@@ -59,6 +59,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::post::tone_map::TONE_MAP,
         &crate::stages::exposure::EXPOSURE,
         &crate::stages::deform::DEFORM,
+        &crate::stages::cull::CULL,
         &crate::stages::dynamic_gi::ALLOCATE,
         &crate::stages::dynamic_gi::UPDATE,
         &crate::stages::motion_blur::MOTION_BLUR,
@@ -105,10 +106,6 @@ fn programs() -> Vec<(&'static str, String)> {
         (
             "frame_probe_coverage",
             compose(&[&crate::stages::frame_probe::COVERAGE]),
-        ),
-        (
-            "visible_instances",
-            compose(&[&crate::stages::visible_instances::VISIBLE_INSTANCES]),
         ),
     ]);
     programs
@@ -276,6 +273,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(super::bind::mirrors())
     .chain(super::lights::mirrors())
     .chain(super::clusters::mirrors())
+    .chain(super::culling::mirrors())
     .chain(super::decals::mirrors())
     .chain(crate::scene::rays::mirrors())
     .chain(crate::shading::deformation::mirrors())
@@ -478,7 +476,13 @@ fn vertex_layouts_match_wgsl_inputs() {
         ),
         (
             &[&DRAW_INSTANCE_LAYOUT][..],
-            &[("geometry", "source_vs")][..],
+            &[
+                ("geometry", "source_vs"),
+                ("caster", "shadow_pulled_vs"),
+                ("caster", "shadow_pulled_unclipped_vs"),
+                ("caster", "shadow_pulled_masked_vs"),
+                ("caster", "shadow_pulled_masked_unclipped_vs"),
+            ][..],
         ),
         (&[&effects::GLOW_LAYOUT][..], &[("glow", "glow_vs")][..]),
         (&[&heat::HEAT_LAYOUT][..], &[("heat_distortion", "vs")][..]),
@@ -719,6 +723,31 @@ fn rust_constants_match_wgsl_twins() {
             naga::Literal::U32(crate::shading::uniforms::OBJECT_STATIC),
         ),
         Constant::new(
+            "cull",
+            "OBJECT_VISIBLE",
+            naga::Literal::U32(crate::shading::uniforms::OBJECT_VISIBLE),
+        ),
+        Constant::new(
+            "cull",
+            "OBJECT_CAPTURE_VISIBLE",
+            naga::Literal::U32(crate::shading::uniforms::OBJECT_CAPTURE_VISIBLE),
+        ),
+        Constant::new(
+            "cull",
+            "OBJECT_DEFORMING",
+            naga::Literal::U32(crate::shading::uniforms::OBJECT_DEFORMING),
+        ),
+        Constant::new(
+            "cull",
+            "LOD_PIXELS",
+            naga::Literal::F32(crate::shading::lod::LOD_PIXELS),
+        ),
+        Constant::new(
+            "cull",
+            "LOD_ROUNDING",
+            naga::Literal::F32(crate::shading::lod::LOD_ROUNDING),
+        ),
+        Constant::new(
             "geometry",
             "SHADOW_CASCADE_OVERLAP",
             naga::Literal::F32(crate::view::cascades::SHADOW_CASCADE_OVERLAP),
@@ -729,6 +758,7 @@ fn rust_constants_match_wgsl_twins() {
     .chain(super::clusters::constants())
     .chain(super::dynamic_gi::constants())
     .chain(super::vertex::constants())
+    .chain(super::culling::constants())
     .chain(super::packed_vertex::constants())
     .chain(crate::scene::lookup_tables::constants())
     .chain(crate::scene::rays::constants())

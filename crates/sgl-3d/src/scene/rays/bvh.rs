@@ -394,6 +394,7 @@ mod tests {
         rebase,
     };
     use crate::asset::Vertex;
+    use crate::scene::mesh_ranges::MeshRanges;
     use glam::Vec3;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -529,9 +530,18 @@ mod tests {
                 (vertices, (0..triangles as u32 * 3).collect())
             })
             .collect();
+        let ranges: Vec<_> = meshes
+            .iter()
+            .map(|(vertices, indices)| MeshRanges::new(vertices, indices))
+            .collect();
         let rays: Vec<_> = meshes
             .iter()
-            .map(|(vertices, indices)| RayMesh { vertices, indices })
+            .zip(&ranges)
+            .map(|((vertices, indices), ranges)| RayMesh {
+                vertices,
+                indices,
+                ranges,
+            })
             .collect();
         for base in [1, 4096, 0x00ab_cdef] {
             let mut in_place = Vec::new();

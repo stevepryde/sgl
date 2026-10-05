@@ -273,11 +273,13 @@ Remaining work, in the existing roadmap order:
    the opaque stage's two passes, and world-space reflections that may
    reach everything.
 4. **GPU-driven culling and occlusion culling (22,
-   [#24](https://github.com/stevepryde/sgl/issues/24)).** Current visibility
-   uses CPU frustum/mesh-section culling, authored mesh LOD, and instanced
-   draws. The design is settled in the architecture
-   ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages));
-   its implementation follows it.
+   [#24](https://github.com/stevepryde/sgl/issues/24)).** The camera's
+   opaque and masked surfaces and the directional cascades draw from lists
+   the GPU builds (frustum, authored mesh LOD and mesh sections, one
+   indirect draw per set); blended surfaces, local-light faces and probe
+   captures keep CPU-built, instanced lists. Two-phase occlusion culling
+   remains, as the architecture designs it
+   ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages)).
 
 These are planned capabilities, not APIs a game can depend on yet. Implement
 them under RD-1 and the architecture rules, retaining native and browser

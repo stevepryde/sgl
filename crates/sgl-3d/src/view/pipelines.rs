@@ -4,12 +4,14 @@
 //! the diagnostics layer constants and by whether the scene holds rectangle
 //! lights and decals (`LitConstants`).
 use crate::Scene;
-use crate::settings::DisabledLayers;
 use crate::shading::{self, gbuffer};
 use crate::view::targets::mask_targets;
 use std::collections::HashMap;
 
+mod key;
 mod variant;
+use key::PipelineKey;
+pub(crate) use key::{LayerConstants, LitConstants};
 pub(crate) use variant::{Alpha, Cull, Variant};
 
 /// Scene geometry's camera and probe-capture passes.
@@ -37,6 +39,7 @@ pub(crate) static CASTER: shading::Module = shading::Module {
         &shading::BIND_SHADOW,
         &shading::BIND_SCENE,
         &shading::SCENE_RAYS,
+        &shading::VERTEX_PULL,
         &shading::MATERIAL_RASTER,
     ],
 };
@@ -57,15 +60,19 @@ pub(crate) enum GeometryPass {
     Lighting,
     /// `GBuffer` and `Lighting` in one pass.
     Fused,
+    /// A GPU-built directional cascade's casters, pulled from the scene
+    /// source as the camera's are.
     DirectionalShadow,
+    /// A probe capture's directional cascades' casters, from a CPU-built
+    /// list, indexed from the geometry slabs.
+    CaptureShadow,
+    /// A local-light shadow face's casters, indexed from the geometry slabs.
     LocalShadow,
     /// Blended surfaces' lit colour over the beauty, tested against the
     /// opaque depth without writing it, with the blended group 3
     /// (`shading::bind::blended`); with `fsr2_masks`, also FSR2's reactive
     /// and transparency-and-composition masks (`mask_targets`).
-    Blended {
-        fsr2_masks: bool,
-    },
+    Blended { fsr2_masks: bool },
     /// Blended receivers of screen-space reflections as the surface: their
     /// traced lobe into the receiver layer and their motion into the
     /// G-buffer's, over the surface depth, tested strictly nearer and
@@ -75,7 +82,10 @@ pub(crate) enum GeometryPass {
 
 impl GeometryPass {
     fn caster(self) -> bool {
-        matches!(self, Self::DirectionalShadow | Self::LocalShadow)
+        matches!(
+            self,
+            Self::DirectionalShadow | Self::CaptureShadow | Self::LocalShadow
+        )
     }
 
     /// Whether this pass draws materials whose alpha mode requires `alpha`.
@@ -85,9 +95,10 @@ impl GeometryPass {
 
     /// Whether the pass draws nonindexed pulled vertices instead of indexed
     /// vertex buffers: every camera and probe pass, so that the split and
-    /// fused forms rasterize one primitive stream (`source_vs`); shadow
-    /// casters, which take no derivatives, draw indexed positions
-    /// (`CasterVertex`).
+    /// fused forms rasterize one primitive stream (`source_vs`), and a
+    /// GPU-built cascade's, whose draw instances are sections; the CPU-built
+    /// lists' shadow casters, which take no derivatives, draw indexed
+    /// positions (`CasterVertex`).
     ///
     /// No camera or probe pass may draw indexed vertex buffers. On Apple
     /// GPUs (M5, Metal) an indexed geometry pass is not deterministic during
@@ -100,139 +111,7 @@ impl GeometryPass {
     /// history then keeps (#354). The same pass over pulled vertices is
     /// bit-exact between encodes and between runs.
     pub fn pulled(self) -> bool {
-        !self.caster()
-    }
-}
-
-/// The geometry shader's diagnostics layers, compiled as pipeline constants.
-/// Every layer is on outside diagnostics builds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct LayerConstants {
-    pub normal_maps: bool,
-    pub bump_maps: bool,
-    pub baked_lighting: bool,
-    pub instance_emission: bool,
-}
-
-impl LayerConstants {
-    pub const ALL: Self = Self {
-        normal_maps: true,
-        bump_maps: true,
-        baked_lighting: true,
-        instance_emission: true,
-    };
-
-    /// Every layer `disable` keeps on.
-    pub fn new(disable: &DisabledLayers) -> Self {
-        Self {
-            normal_maps: !disable.normal_maps,
-            bump_maps: !disable.bump_maps,
-            baked_lighting: !disable.baked_lighting,
-            instance_emission: !disable.instance_emission,
-        }
-    }
-
-    fn constants(self) -> [(&'static str, f64); 4] {
-        [
-            ("normal_maps_enabled", f64::from(u8::from(self.normal_maps))),
-            ("bump_maps_enabled", f64::from(u8::from(self.bump_maps))),
-            (
-                "baked_lighting_enabled",
-                f64::from(u8::from(self.baked_lighting)),
-            ),
-            (
-                "instance_emission_enabled",
-                f64::from(u8::from(self.instance_emission)),
-            ),
-        ]
-    }
-}
-
-/// What lit shading compiles in only while the scene holds it, so a scene
-/// without it pays nothing for it: the lit passes' and the world-space
-/// reflection trace's constants that follow the scene's content.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub(crate) struct LitConstants {
-    /// Rectangle lights' shading (`rect_lights_enabled` in lights.wgsl), as
-    /// Godot specialises its clustered pass on `cluster_has_area_light`.
-    pub rect_lights: bool,
-    /// Decals (`decals_enabled` in decals.wgsl). Neither Godot, whose
-    /// clustered pass walks each cluster's decals whatever the scene holds,
-    /// nor Bevy, whose `CLUSTERED_DECALS_ARE_USABLE` follows the device,
-    /// specialises on them; the trade is a compile when the first decal is
-    /// added or the last removed.
-    pub decals: bool,
-}
-
-impl LitConstants {
-    /// What `scene` holds.
-    pub fn of(scene: &Scene) -> Self {
-        Self {
-            rect_lights: scene.lights.holds_rect(),
-            decals: !scene.decals.is_empty(),
-        }
-    }
-
-    pub fn constants(self) -> [(&'static str, f64); 2] {
-        [
-            ("rect_lights_enabled", f64::from(u8::from(self.rect_lights))),
-            ("decals_enabled", f64::from(u8::from(self.decals))),
-        ]
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct PipelineKey {
-    pass: GeometryPass,
-    variant: Variant,
-    layers: LayerConstants,
-    lit: LitConstants,
-}
-
-impl PipelineKey {
-    /// Casters take no layer or lit constants and read the positions they
-    /// are given, deformed or not.
-    pub fn new(
-        pass: GeometryPass,
-        variant: Variant,
-        layers: LayerConstants,
-        lit: LitConstants,
-    ) -> Self {
-        let caster = pass.caster();
-        Self {
-            pass,
-            variant: Variant {
-                deformed: variant.deformed && !caster,
-                ..variant
-            },
-            layers: if caster { LayerConstants::ALL } else { layers },
-            lit: if caster { LitConstants::default() } else { lit },
-        }
-    }
-
-    /// The pipeline constants: a masked material's discard (`alpha_mask`,
-    /// material_raster.wgsl) and, for the pulled passes, the layers, the lit
-    /// constants and deformed vertices.
-    fn constants(self) -> Vec<(&'static str, f64)> {
-        let masked = (
-            "alpha_mask",
-            f64::from(u8::from(self.variant.alpha == Alpha::Mask)),
-        );
-        if self.pass.caster() {
-            return if self.variant.alpha == Alpha::Mask {
-                vec![masked]
-            } else {
-                Vec::new()
-            };
-        }
-        let mut constants = self.layers.constants().to_vec();
-        constants.extend(self.lit.constants());
-        constants.push(masked);
-        constants.push((
-            "deformed_vertices",
-            f64::from(u8::from(self.variant.deformed)),
-        ));
-        constants
+        !matches!(self, Self::CaptureShadow | Self::LocalShadow)
     }
 }
 
@@ -270,6 +149,7 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
     match pass {
         GeometryPass::Forward
         | GeometryPass::DirectionalShadow
+        | GeometryPass::CaptureShadow
         | GeometryPass::LocalShadow
         | GeometryPass::Receivers => (true, Greater),
         GeometryPass::GBuffer | GeometryPass::Fused => (true, GreaterEqual),
@@ -340,7 +220,7 @@ fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::TextureForm
             gbuffer::SOURCE_ID,
             gbuffer::ANISOTROPY,
         ],
-        DirectionalShadow | LocalShadow => Vec::new(),
+        DirectionalShadow | CaptureShadow | LocalShadow => Vec::new(),
         Blended { .. } => vec![gbuffer::COLOR],
         Receivers => vec![gbuffer::RECEIVER, gbuffer::MOTION],
     }
@@ -430,6 +310,7 @@ impl GeometryPipelines {
             GeometryPass::GBuffer,
             GeometryPass::Lighting,
             GeometryPass::DirectionalShadow,
+            GeometryPass::CaptureShadow,
             GeometryPass::LocalShadow,
             GeometryPass::Blended { fsr2_masks: false },
             GeometryPass::Blended { fsr2_masks: true },
@@ -493,7 +374,9 @@ impl GeometryPipelines {
         let masked = key.variant.alpha == Alpha::Mask;
         let vertex_buffers = &shading::vertex::GEOMETRY_BUFFERS;
         let (module, layout, label) = match key.pass {
-            DirectionalShadow | LocalShadow => (&self.caster, &self.shadow, "shadow caster"),
+            DirectionalShadow | CaptureShadow | LocalShadow => {
+                (&self.caster, &self.shadow, "shadow caster")
+            }
             Blended { .. } => (&self.geometry, &self.blended, "blended scene geometry"),
             Receivers => (&self.geometry, &self.lit, "blended receivers"),
             _ => (&self.geometry, &self.lit, "lit scene geometry"),
@@ -507,27 +390,35 @@ impl GeometryPipelines {
         // casters discard what it cuts out, as Bevy's do (MAY_DISCARD).
         let (vertex, fragment) = match key.pass {
             DirectionalShadow if masked && !self.unclipped_depth => (
+                "shadow_pulled_masked_unclipped_vs",
+                Some("shadow_masked_unclipped_fs"),
+            ),
+            DirectionalShadow if masked => ("shadow_pulled_masked_vs", Some("shadow_masked_fs")),
+            DirectionalShadow if !self.unclipped_depth => {
+                ("shadow_pulled_unclipped_vs", Some("shadow_unclipped_fs"))
+            }
+            DirectionalShadow => ("shadow_pulled_vs", None),
+            CaptureShadow if masked && !self.unclipped_depth => (
                 "shadow_masked_unclipped_vs",
                 Some("shadow_masked_unclipped_fs"),
             ),
-            DirectionalShadow | LocalShadow if masked => {
-                ("shadow_masked_vs", Some("shadow_masked_fs"))
-            }
+            CaptureShadow | LocalShadow if masked => ("shadow_masked_vs", Some("shadow_masked_fs")),
             Forward => ("source_vs", Some("fs")),
             GBuffer if self.anisotropy_inline => ("source_vs", Some("stable_fs")),
             GBuffer => ("source_vs", Some("stable_legacy_fs")),
             GBufferAnisotropy => ("source_vs", Some("anisotropy_fs")),
             Lighting => ("source_vs", Some("source_fs")),
             Fused => ("source_vs", Some("fused_opaque_fs")),
-            DirectionalShadow if !self.unclipped_depth => {
+            CaptureShadow if !self.unclipped_depth => {
                 ("shadow_unclipped_vs", Some("shadow_unclipped_fs"))
             }
-            DirectionalShadow | LocalShadow => ("shadow_vs", None),
+            CaptureShadow | LocalShadow => ("shadow_vs", None),
             Blended { fsr2_masks: false } => ("source_vs", Some("blended_fs")),
             Blended { fsr2_masks: true } => ("source_vs", Some("blended_fsr2_masked_fs")),
             Receivers => ("source_vs", Some("receiver_fs")),
         };
-        let unclipped_depth = key.pass == DirectionalShadow && self.unclipped_depth;
+        let unclipped_depth =
+            matches!(key.pass, DirectionalShadow | CaptureShadow) && self.unclipped_depth;
         // Blended surfaces blend over the beauty with their alpha, as Bevy's
         // `BLEND_ALPHA` pipelines do (crates/bevy_pbr/src/render/mesh.rs).
         let blend = matches!(key.pass, Blended { .. }).then_some(wgpu::BlendState::ALPHA_BLENDING);

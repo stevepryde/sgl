@@ -109,9 +109,16 @@ struct LegacyStableOutput {
 // the same triangles changes screen-space derivatives (filtered roughness,
 // normal maps, texture LOD) in 2x2 quads spanning two primitives. Godot and
 // Wicked likewise share one vertex path between depth prepass and colour pass.
-// Each instance of a draw reads its own object record (DrawInstance).
-@vertex fn source_vs(@builtin(vertex_index) index:u32,drawn:DrawInstance)->Fragment {
- let v=scene_source_vertex(drawn.object,drawn.mesh,index);
+// Each instance of a draw reads its own object record (DrawInstance); a
+// GPU-built draw's instance is a section, whose vertices past its triangles
+// are dummies.
+@vertex fn source_vs(@builtin(vertex_index) draw_vertex:u32,drawn:DrawInstance)->Fragment {
+ if drawn_dummy(drawn,draw_vertex) {
+  var dummy:Fragment;
+  dummy.clip=SCENE_DUMMY_CLIP;
+  return dummy;
+ }
+ let v=scene_source_vertex(drawn.object,drawn.mesh,drawn_index(drawn,draw_vertex));
  var o=vertex(drawn.object,Vertex(v.position,v.normal,v.uv,v.color,v.lightmap_uv,v.lightmap_bounds,v.tangent),v.previous_position);
  o.source_id=v.source_id;
  return o;

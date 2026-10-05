@@ -87,30 +87,41 @@ pub(crate) struct CasterVertex {
 
 pub(crate) const CASTER_LAYOUT: VertexLayout = vertex_layout!(CasterVertex, [position]);
 
-/// One instance of a scene geometry draw, in the frame's draw instances
-/// (`view::draw_list::DrawInstances`), which every geometry pipeline steps
-/// per instance at vertex buffer `DRAW_INSTANCE_SLOT` (`DrawInstance` in
-/// bind_scene.wgsl): the index of the instance's object record in the
-/// scene's object buffer, the drawn mesh's record in the scene source, and
-/// the base vertex an indexed draw of it adds to its indices (its first
-/// vertex in its positions slab, `scene::geometry`, zero for a deforming
-/// instance's own positions), which a caster that reads the source's vertex
-/// records by vertex index subtracts, as Bevy b56fc29's
+/// One instance of a scene geometry draw (`DrawInstance` in
+/// draw_instance.wgsl), which every geometry pipeline steps per instance at
+/// vertex buffer `DRAW_INSTANCE_SLOT`: from a CPU-built list's draw
+/// instances (`view::draw_list::DrawInstances`), or from a set's region of a
+/// GPU-built view's cluster list, which the cull stage writes. It holds the
+/// index of the instance's object record in the scene's object buffer, the
+/// drawn mesh's record in the scene source, the first index it draws,
+/// relative to its mesh's indices as the sections' are, and its triangles
+/// (a GPU-built draw's vertices past them are dummies), and the base vertex
+/// an indexed caster draw of it adds to its indices (its first vertex in its
+/// positions slab, `scene::geometry`, zero for a deforming instance's own
+/// positions), which a masked caster that reads the source's vertex records
+/// by vertex index subtracts, as Bevy b56fc29's
 /// `MeshUniform::first_vertex_index` (crates/bevy_pbr/src/render/mesh.rs)
 /// is subtracted in `morph_vertex` (mesh.wgsl). A draw of many instances
 /// reaches each one's record through its entry, as Bevy reaches each
-/// instance's `MeshUniform` from its instance index.
+/// instance's `MeshUniform` from its instance index and its meshlet raster
+/// each cluster's instance and meshlet from its slot.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DrawInstance {
     pub object: u32,
     pub mesh: u32,
+    pub first_index: u32,
+    pub triangles: u32,
     pub first_vertex: u32,
 }
 
 /// Its attributes follow `CasterVertex`'s position, at location 0.
-pub(crate) const DRAW_INSTANCE_LAYOUT: VertexLayout =
-    vertex_layout!(DrawInstance, Instance, 1, [object, mesh, first_vertex]);
+pub(crate) const DRAW_INSTANCE_LAYOUT: VertexLayout = vertex_layout!(
+    DrawInstance,
+    Instance,
+    1,
+    [object, mesh, first_index, triangles, first_vertex]
+);
 
 /// The vertex buffer every geometry pipeline reads `DrawInstance`s from.
 pub(crate) const DRAW_INSTANCE_SLOT: u32 = 0;

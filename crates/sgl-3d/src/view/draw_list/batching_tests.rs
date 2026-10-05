@@ -1,9 +1,12 @@
 //! Which draws merge into one instanced draw, against what each instance
 //! and mesh was authored with.
+use super::batching::{BatchKey, Batcher, InstanceDraw};
 use super::{DrawInstances, DrawList, Geometry};
-use crate::content::identity::Identity;
+use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::shading::uniforms::ViewUniform;
+use crate::shading::vertex::DrawInstance;
 use crate::view::View;
+use crate::view::pipelines::{Alpha, Cull, Variant};
 use crate::view::population::Population;
 use crate::{AlphaMode, InstanceState, Mobility, Scene, test_support};
 use bytemuck::Zeroable;
@@ -12,13 +15,13 @@ use std::collections::{HashMap, HashSet};
 
 // Plausible defects: a batch that takes instances drawn with another
 // material, another pipeline (a mirrored pose's opposite face culling, a
-// masked material's discard), another model's geometry or another
-// mobility; a draw lost or drawn twice; equal draws left unmerged; an
-// instance's meshes drawn out of their authored order. The oracle is what
-// each mesh and instance was authored with: its model, mesh, material,
-// alpha mode, whether its pose mirrors and its mobility.
+// masked material's discard) or another model's geometry; a draw lost or
+// drawn twice; equal draws left unmerged; an instance's meshes drawn out of
+// their authored order. The oracle is what each mesh and instance was
+// authored with: its model, mesh, material, alpha mode and whether its pose
+// mirrors. A probe capture's cascades bin their casters, static ones.
 #[test]
-fn merged_draws_share_material_pipeline_and_mobility() {
+fn merged_draws_share_material_pipeline_and_geometry() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
@@ -36,21 +39,20 @@ fn merged_draws_share_material_pipeline_and_mobility() {
     let a = scene.add_asset(&device, &queue, asset.clone()).unwrap();
     // Another model of the same geometry and its own copies of the materials.
     let b = scene.add_asset(&device, &queue, asset).unwrap();
-    // (model, materials, mirrored, mobility) of each instance, in the order
-    // added.
+    // (model, materials, mirrored) of each instance, in the order added.
     let placed = [
-        (&a, false, Mobility::Moving),
-        (&b, false, Mobility::Moving),
-        (&a, true, Mobility::Moving),
-        (&a, false, Mobility::Static),
-        (&a, false, Mobility::Moving),
-        (&b, true, Mobility::Static),
-        (&a, true, Mobility::Moving),
-        (&a, false, Mobility::Static),
-        (&b, false, Mobility::Moving),
+        (&a, false),
+        (&b, false),
+        (&a, true),
+        (&a, false),
+        (&a, false),
+        (&b, true),
+        (&a, true),
+        (&a, false),
+        (&b, false),
     ];
     let mut authored = HashMap::new();
-    for (index, &(ids, mirrored, mobility)) in placed.iter().enumerate() {
+    for (index, &(ids, mirrored)) in placed.iter().enumerate() {
         let x = index as f32 * 2.;
         let scale = if mirrored {
             Vec3::new(-1., 1., 1.)
@@ -68,12 +70,12 @@ fn merged_draws_share_material_pipeline_and_mobility() {
             capture_visible: true,
         };
         let instance = scene
-            .add_instance(&device, &queue, state, mobility)
+            .add_instance(&device, &queue, state, Mobility::Static)
             .unwrap();
         for mesh in 0..2 {
             authored.insert(
                 (instance.index(), mesh),
-                (ids.model, mesh, ids.materials[mesh], mirrored, mobility),
+                (ids.model, mesh, ids.materials[mesh], mirrored),
             );
         }
     }
@@ -83,17 +85,12 @@ fn merged_draws_share_material_pipeline_and_mobility() {
         ..ViewUniform::zeroed()
     });
     let mut list = DrawList::default();
-    let population = Population::Camera {
-        lod: None,
-        cull: false,
-        hidden: None,
-    };
     list.build(
         &mut DrawInstances::default(),
         &scene,
         &camera,
         None,
-        population,
+        Population::CaptureShadow,
     );
     let mut drawn = HashSet::new();
     // Each instance's meshes, in the order drawn.
@@ -111,10 +108,7 @@ fn merged_draws_share_material_pipeline_and_mobility() {
             shared.len(),
             1,
             "one draw holds instances authored differently: {:?}",
-            shared
-                .iter()
-                .map(|tuple| (tuple.3, tuple.4))
-                .collect::<Vec<_>>()
+            shared.iter().map(|tuple| tuple.3).collect::<Vec<_>>()
         );
         for instance in instances {
             let instance = instance.object as usize;
@@ -147,90 +141,137 @@ fn merged_draws_share_material_pipeline_and_mobility() {
 
 // Plausible defect: draws whose culled ranges share their first range but
 // differ after it merged into one bin, so an instance draws another's
-// sections. The fixture: a mesh of four leaves, the second behind the
-// camera and the outer two either side of the view, so each instance's pose
-// decides which of them it shows. The oracle is that authored layout: which
-// leaves each instance's pose places in the camera's view.
+// sections (a local-light face's casters bin by the cluster ranges each
+// instance's pose reaches). The oracle is each draw's authored ranges: the
+// batches must hold together exactly the draws authored with the same
+// ranges, each with its own ranges. CPU only.
 #[test]
-fn culled_draws_merge_only_with_the_same_sections() {
-    let Some((device, queue)) = test_support::device() else {
-        return;
+fn draws_merge_only_with_the_same_ranges() {
+    let key = BatchKey {
+        variant: Variant {
+            cull: Cull::Back,
+            alpha: Alpha::Opaque,
+            deformed: false,
+        },
+        material: MaterialId::issue(0, 1),
+        geometry: Geometry::Clusters {
+            model: ModelId::issue(0, 1),
+            mesh: 0,
+        },
+        mobility: Mobility::Static,
     };
-    let mut asset = test_support::cube();
-    // Leaves 0 to 3: ahead, behind the camera, to the right, to the left.
-    asset.meshes = vec![test_support::leaf_clusters(&[
-        Vec3::new(0., 0., -10.),
-        Vec3::new(0., 0., 20.),
-        Vec3::new(6., 0., -10.),
-        Vec3::new(-6., 0., -10.),
-    ])];
-    let mut scene = Scene::new(&device, &queue);
-    let model = scene.add_asset(&device, &queue, asset).unwrap().model;
-    // The view is ±5.46 m wide 10 m ahead: moved left, an instance shows
-    // leaves 0 and 2; moved right, leaves 0 and 3.
-    let placed = [(-2., [0, 2]), (2., [0, 3]), (-2.5, [0, 2])];
-    let instances: Vec<_> = placed
+    // Each draw's ranges: the first and third share theirs; the second
+    // shares only their first range.
+    let authored = [
+        vec![0..384, 768..1152],
+        vec![0..384, 1152..1536],
+        vec![0..384, 768..1152],
+    ];
+    let mut ranges = Vec::new();
+    let mut batcher = Batcher::default();
+    for (object, drawn) in authored.iter().enumerate() {
+        let start = ranges.len();
+        ranges.extend(drawn.iter().cloned());
+        batcher.push(InstanceDraw {
+            key,
+            ranges: start..ranges.len(),
+            instance: DrawInstance {
+                object: object as u32,
+                ..Zeroable::zeroed()
+            },
+            order: (0, 0),
+        });
+    }
+    let (mut batches, mut instances) = (Vec::new(), Vec::new());
+    batcher.bin((&ranges, &mut batches, &mut instances));
+    let mut together: Vec<Vec<u32>> = batches
         .iter()
-        .map(|&(x, _)| {
-            let state = InstanceState {
-                model,
-                pose: Mat4::from_translation(Vec3::new(x, 0., 0.)),
-                visible: true,
-                capture_visible: true,
-            };
-            scene
-                .add_instance(&device, &queue, state, Mobility::Static)
-                .unwrap()
-                .index()
+        .map(|batch| {
+            let held: Vec<u32> = instances
+                [batch.instances.start as usize..batch.instances.end as usize]
+                .iter()
+                .map(|drawn| drawn.object)
+                .collect();
+            for &object in &held {
+                assert_eq!(ranges[batch.ranges.clone()], authored[object as usize][..]);
+            }
+            held
         })
         .collect();
-    let projection = crate::perspective(1., 1., 0.1);
-    let camera = View::camera(ViewUniform {
-        view: Mat4::IDENTITY.to_cols_array_2d(),
-        projection: projection.to_cols_array_2d(),
-        view_projection: projection.to_cols_array_2d(),
-        ..ViewUniform::zeroed()
-    });
-    let mut list = DrawList::default();
-    let population = Population::Camera {
-        lod: None,
-        cull: true,
-        hidden: None,
-    };
-    list.build(
-        &mut DrawInstances::default(),
-        &scene,
-        &camera,
-        None,
-        population,
-    );
-    let leaf = crate::scene::mesh_ranges::INDICES_PER_LEAF as u32;
-    // Each instance's drawn leaves, and the instances each draw holds.
-    let mut leaves: HashMap<usize, Vec<u32>> = HashMap::new();
-    let mut together = Vec::new();
-    for batch in &list.batches {
-        let held: Vec<_> = list
-            .instances_of(batch)
-            .iter()
-            .map(|drawn| drawn.object as usize)
-            .collect();
-        for range in &list.ranges[batch.ranges.clone()] {
-            for &instance in &held {
-                leaves
-                    .entry(instance)
-                    .or_default()
-                    .extend((range.start / leaf)..(range.end / leaf));
-            }
-        }
-        together.push(held);
-    }
-    for (instance, (_, expected)) in instances.iter().zip(&placed) {
-        assert_eq!(leaves[instance], expected, "instance {instance}'s leaves");
-    }
     together.sort();
+    assert_eq!(together, [vec![0, 2], vec![1]]);
+}
+
+// Plausible defect: draws of a static and a moving instance merged into one
+// draw, which then takes one mobility's motion and statistics for both: the
+// blended list (adjacent draws) and the local-light faces (binned) batch
+// both mobilities. The oracle is each draw's authored mobility: whichever
+// way a list merges, a batch holds draws of one mobility, and equal draws
+// of one mobility still merge.
+#[test]
+fn draws_merge_only_with_the_same_mobility() {
+    let key = |mobility| BatchKey {
+        variant: Variant {
+            cull: Cull::Back,
+            alpha: Alpha::Opaque,
+            deformed: false,
+        },
+        material: MaterialId::issue(0, 1),
+        geometry: Geometry::Mesh {
+            model: ModelId::issue(0, 1),
+            mesh: 0,
+        },
+        mobility,
+    };
+    let authored = [
+        Mobility::Static,
+        Mobility::Static,
+        Mobility::Moving,
+        Mobility::Moving,
+        Mobility::Static,
+    ];
+    let ranges = std::iter::once(0..384).collect::<Vec<_>>();
+    let batcher = || {
+        let mut batcher = Batcher::default();
+        for (object, &mobility) in authored.iter().enumerate() {
+            batcher.push(InstanceDraw {
+                key: key(mobility),
+                ranges: 0..1,
+                instance: DrawInstance {
+                    object: object as u32,
+                    ..Zeroable::zeroed()
+                },
+                order: (0, 0),
+            });
+        }
+        batcher
+    };
+    let held = |batches: &[super::DrawBatch], instances: &[DrawInstance]| -> Vec<Vec<u32>> {
+        batches
+            .iter()
+            .map(|batch| {
+                let held: Vec<u32> = instances
+                    [batch.instances.start as usize..batch.instances.end as usize]
+                    .iter()
+                    .map(|drawn| drawn.object)
+                    .collect();
+                for &object in &held {
+                    assert_eq!(batch.key.mobility, authored[object as usize]);
+                }
+                held
+            })
+            .collect()
+    };
+    let (mut batches, mut instances) = (Vec::new(), Vec::new());
+    batcher().bin((&ranges, &mut batches, &mut instances));
+    let mut binned = held(&batches, &instances);
+    binned.sort();
+    assert_eq!(binned, [vec![0, 1, 4], vec![2, 3]], "binned");
+    let (mut batches, mut instances) = (Vec::new(), Vec::new());
+    batcher().merge_adjacent((&ranges, &mut batches, &mut instances));
     assert_eq!(
-        together,
-        [vec![instances[0], instances[2]], vec![instances[1]]],
-        "the instances that show the same leaves share one draw"
+        held(&batches, &instances),
+        [vec![0, 1], vec![2, 3], vec![4]],
+        "merged where adjacent"
     );
 }

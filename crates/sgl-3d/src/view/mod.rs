@@ -1,9 +1,10 @@
 //! Views and what they see. The main camera, each directional shadow
 //! cascade, each local-light shadow face and each probe-capture face is a
-//! `View` with its own `ViewUniform`; a `DrawList` built from the scene and a
-//! view holds its culled, LOD-selected, instanced draws, `Clusters` the
-//! scene lights and decals that reach each part of it, and `GeometryPipelines` the
-//! pipelines they draw with. `cascades` fits the directional shadow's cascades, and
+//! `View` with its own `ViewUniform`; its draw list holds its culled,
+//! LOD-selected draws: GPU-built for the camera's opaque and masked surfaces
+//! and the cascades (`draw_list::gpu`), CPU-built and instanced for the rest
+//! (`DrawList`); `Clusters` the scene lights and decals that reach each part
+//! of it, and `GeometryPipelines` the pipelines they draw with. `cascades` fits the directional shadow's cascades, and
 //! `frame_uniform` builds the frame data every view of a frame shares,
 //! including the cascades.
 //!
@@ -21,7 +22,6 @@ pub(crate) mod culling;
 pub(crate) mod draw_list;
 pub(crate) mod effective;
 pub(crate) mod frame;
-pub(crate) mod hidden;
 pub(crate) mod history;
 pub(crate) mod lod;
 pub(crate) mod pipelines;
@@ -394,16 +394,16 @@ impl View {
     }
 }
 
-/// One view of a frame: its view data, the uniform buffer group 0 binds it
-/// from, and its draws, with the CPU time its list's last build took and
-/// its passes since took to record its draws, in milliseconds (diagnostics;
-/// zero without them).
+/// One GPU-built view of a frame: its view data, the uniform buffer group 0
+/// binds it from, and its draw list, with the CPU time its list took to
+/// build (preparing it, and encoding its cull) and its passes since took to
+/// record its draws, in milliseconds (diagnostics; zero without them).
 pub(crate) struct ViewSlot {
     pub view: View,
     pub buffer: wgpu::Buffer,
-    pub list: draw_list::DrawList,
+    pub list: draw_list::gpu::GpuList,
     #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
-    build_ms: f64,
+    build_ms: std::cell::Cell<f64>,
     encode_ms: std::cell::Cell<f64>,
 }
 
@@ -420,16 +420,24 @@ impl ViewSlot {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             ),
             view,
-            list: draw_list::DrawList::default(),
-            build_ms: 0.,
+            list: draw_list::gpu::GpuList::new(device),
+            build_ms: std::cell::Cell::new(0.),
             encode_ms: std::cell::Cell::new(0.),
         }
     }
 
-    /// After its list was built from `started`.
+    /// After its list was prepared from `started`: the frame's build and
+    /// recording start.
     pub fn built(&mut self, started: crate::counters::Moment) {
-        self.build_ms = started.elapsed_ms();
+        self.build_ms.set(started.elapsed_ms());
         self.encode_ms.set(0.);
+    }
+
+    /// Adds the time since `started` to its list's build: the cull stage
+    /// took it as it began encoding the list's cull.
+    pub fn culled_since(&self, started: crate::counters::Moment) {
+        self.build_ms
+            .set(self.build_ms.get() + started.elapsed_ms());
     }
 
     /// Adds the time since `started` to its draws' recording: the caller
@@ -445,7 +453,7 @@ impl ViewSlot {
     #[cfg(feature = "diagnostics")]
     pub fn cpu_ms(&self) -> crate::diagnostics::ViewTime {
         crate::diagnostics::ViewTime {
-            build_ms: self.build_ms,
+            build_ms: self.build_ms.get(),
             encode_ms: self.encode_ms.get(),
         }
     }
@@ -460,8 +468,8 @@ impl ViewSlot {
 /// The views of one frame and what each sees, built once per frame by the
 /// prepare stage and read by every later stage: the camera and its
 /// clusters, the light and decal lists of world-space ray hits and of the
-/// dynamic GI probe rays' hits, the directional shadow's cascades, and the draw instances of every list the
-/// frame draws.
+/// dynamic GI probe rays' hits, the directional shadow's cascades and the
+/// draw instances of every CPU-built list the frame draws.
 pub(crate) struct FrameViews {
     pub camera: ViewSlot,
     /// The camera's blended surfaces, back to front; `camera.list` holds
@@ -482,8 +490,8 @@ pub(crate) struct FrameViews {
     /// The camera as reflections and DiligentFX see it: its view and its
     /// projection with the frame's jitter.
     pub reflection_camera: reflection_camera::Camera,
-    /// Every draw list's instances this frame: these views' and the
-    /// local-light shadow faces'.
+    /// Every CPU-built draw list's instances this frame: the blended
+    /// list's and the local-light shadow faces'.
     pub instances: draw_list::DrawInstances,
 }
 

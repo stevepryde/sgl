@@ -68,8 +68,9 @@ impl Renderer {
     }
 
     /// Prepares the frame of `scene` that `input` describes as `render`
-    /// does, without antialiasing's jitter, and encodes nothing: group 0, the
-    /// views, their draw lists and uniforms.
+    /// does, without antialiasing's jitter: group 0, the views, their draw
+    /// lists and uniforms, and, in a submission of its own, the cull
+    /// stage's early phase, which builds the GPU-built lists.
     pub(crate) fn prepare_test_frame(
         &mut self,
         device: &wgpu::Device,
@@ -102,7 +103,6 @@ impl Renderer {
             self.sizes.render,
             &mut self.views,
             &self.bindings.frame,
-            None,
         );
         if scene.materials.holds_receivers() {
             self.targets.hold_surface(device);
@@ -120,6 +120,7 @@ impl Renderer {
         self.views.instances.upload(device, queue);
         self.fog.prepare(device, effective.fog, self.sizes.render);
         self.dynamic_gi.prepare(device, scene, &effective);
+        self.cull_test_views(device, queue, scene);
         self.bindings.refresh(
             device,
             scene,
@@ -139,7 +140,8 @@ impl Renderer {
 
     /// Replaces the prepared frame's directional shadow with one cascade of
     /// view-projection `clip_from_world` and its casters, as prepare builds
-    /// them, for fixtures that need a known shadow view.
+    /// them and the cull stage culls them, for fixtures that need a known
+    /// shadow view.
     pub(crate) fn set_test_cascade(
         &mut self,
         gpu: (&wgpu::Device, &wgpu::Queue),
@@ -149,13 +151,29 @@ impl Renderer {
     ) {
         let (device, queue) = gpu;
         crate::stages::prepare::set_cascades(
-            queue,
+            gpu,
             scene,
             &mut self.views,
-            Some(frame.values.frame.visibility_mask),
+            frame.values.frame.visibility_mask,
             std::iter::once(clip_from_world),
         );
-        self.views.instances.upload(device, queue);
+        self.cull_test_views(device, queue, scene);
+    }
+
+    /// The deform pass and the cull stage's early phase over the prepared
+    /// views, in a submission of their own.
+    pub(crate) fn cull_test_views(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+    ) {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        self.deform
+            .dispatch(device, queue, &mut encoder, scene, None);
+        self.cull
+            .encode(device, &mut encoder, scene, &self.views, None);
+        queue.submit([encoder.finish()]);
     }
 
     /// The camera's directional shadow cascades (into the renderer's layers,
@@ -236,8 +254,8 @@ impl Renderer {
         );
     }
 
-    /// Draws the camera's draw list with `kind` into `pass` under the
-    /// camera's lit group 0; `Forward` draws the sky first, as a probe
+    /// Draws the camera's GPU-built draw list with `kind` into `pass` under
+    /// the camera's lit group 0; `Forward` draws the sky first, as a probe
     /// capture face does.
     pub(crate) fn draw_test_camera(
         &self,
@@ -245,20 +263,14 @@ impl Renderer {
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,
     ) {
-        let list = &self.views.camera.list;
         if kind == GeometryPass::Forward {
-            self.opaque.encode_forward(
-                pass,
-                scene,
-                &self.pipelines,
-                (list, &self.views.instances),
-                self.bindings.camera_unlit(),
-                self.bindings.camera_lit(),
-            );
-        } else {
-            pass.set_bind_group(0, self.bindings.camera_lit(), &[]);
-            list.draw(scene, &self.pipelines, &self.views.instances, pass, kind);
+            self.opaque.draw_sky(pass, self.bindings.camera_unlit());
         }
+        pass.set_bind_group(0, self.bindings.camera_lit(), &[]);
+        self.views
+            .camera
+            .list
+            .draw(scene, &self.pipelines, pass, kind);
     }
 
     /// The camera's lit group 0, as the frame binds it.

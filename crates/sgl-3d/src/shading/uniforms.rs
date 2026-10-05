@@ -24,6 +24,13 @@ pub(crate) const FRAME_DYNAMIC_GI: u32 = 64;
 pub(crate) const FRAME_IRRADIANCE_VOLUME: u32 = 128;
 /// `Object::flags`: a static instance; a moving one has the bit clear.
 pub(crate) const OBJECT_STATIC: u32 = 1;
+/// `Object::flags`: the main camera draws it (`InstanceState::visible`).
+pub(crate) const OBJECT_VISIBLE: u32 = 2;
+/// `Object::flags`: the other views show it
+/// (`InstanceState::capture_visible`).
+pub(crate) const OBJECT_CAPTURE_VISIBLE: u32 = 4;
+/// `Object::flags`: it deforms.
+pub(crate) const OBJECT_DEFORMING: u32 = 8;
 
 /// One rendered view (`View` in uniforms.wgsl).
 #[repr(C)]
