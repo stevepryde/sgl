@@ -5,9 +5,9 @@
 // MSL writer sets no triangle cull mode, and a global cull would be wrong
 // for mirrored instances and double-sided materials, so the shared
 // predicate judges the committed hit (scene_hardware_trace).
-// The committed hit of one query over kinds `mask` (SCENE_TLAS_*) in
-// [t_min,t_max], the nearest or, with `first_hit`, the first the hardware
-// finds (Metal's `accept_any_intersection`). The ray forces opacity, so no
+// The committed hit of one query over kinds `mask` (SCENE_KIND_*, their
+// instance masks) in [t_min,t_max], the nearest or, with `first_hit`, the
+// first the hardware finds (Metal's `accept_any_intersection`). The ray forces opacity, so no
 // candidate reaches the shader and one proceed ends the traversal on every
 // backend: naga's MSL writer intersects at initialisation and returns true
 // from every proceed until the query terminates, so a proceed is never

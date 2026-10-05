@@ -112,6 +112,9 @@ struct FrameWork {
 pub(crate) struct AccelerationStructures {
     blases: Blases,
     tlas: wgpu::Tlas,
+    /// Changes whenever `tlas` is replaced, so that a tracing pass's cached
+    /// group binds the TLAS it holds (`CachedGroup::get_with_structures`).
+    tlas_generation: u64,
     /// The instances `tlas` can hold, and how many the last frame set.
     capacity: usize,
     held: usize,
@@ -175,6 +178,7 @@ impl AccelerationStructures {
         Some(Self {
             blases: Blases::default(),
             tlas: tlas(device, 1)?,
+            tlas_generation: crate::scene::next_generation(),
             capacity: 1,
             held: 0,
             holds: Vec::new(),
@@ -298,6 +302,7 @@ impl AccelerationStructures {
             && let Some(grown) = tlas(device, capacity)
         {
             self.tlas = grown;
+            self.tlas_generation = crate::scene::next_generation();
             self.capacity = capacity;
             self.held = 0;
         }
@@ -363,9 +368,10 @@ impl AccelerationStructures {
         }
     }
 
-    /// The TLAS, which a tracing pass binds.
-    pub fn tlas(&self) -> &wgpu::Tlas {
-        &self.tlas
+    /// The TLAS, which a tracing pass binds, and its generation, which
+    /// changes whenever it is replaced.
+    pub fn tlas(&self) -> (&wgpu::Tlas, u64) {
+        (&self.tlas, self.tlas_generation)
     }
 
     /// Whether the last prepared frame's TLAS holds the instance whose

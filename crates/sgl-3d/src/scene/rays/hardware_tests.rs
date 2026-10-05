@@ -421,7 +421,8 @@ fn frame(
     let tlas = scene
         .acceleration_structures()
         .expect("structures were built")
-        .tlas();
+        .tlas()
+        .0;
     let readbacks: Vec<_> = batches
         .iter()
         .map(|batch| {
@@ -586,7 +587,8 @@ fn closed_box(centre: Vec3, half: f32) -> Vec<CpuMesh> {
 }
 
 /// The oracle scene: a wall behind everything, and before it a single-sided
-/// square seen from its back; a model whose blended square hides an opaque
+/// square seen from its back and a double-sided one seen from its back; a
+/// model whose blended square hides an opaque
 /// one; an all-blended square; a hidden group's square before an opaque
 /// one; a masked square (a predicate instance); a mirrored moving square; a
 /// moving square; two instances of one square at one pose (a tie both
@@ -687,6 +689,15 @@ fn oracle_scene(gpu: (&wgpu::Device, &wgpu::Queue), scene: &mut Scene) -> Vec<Pl
             vec![opaque()],
         ),
         at(Vec3::new(-2.2, 0., 3.)),
+        Mobility::Static,
+        None,
+    );
+    add(
+        asset(
+            vec![solid(Vec3::ZERO, 2., Vec3::NEG_Z, 0)],
+            vec![material(AlphaMode::Opaque, true, 0)],
+        ),
+        at(Vec3::new(-6.5, 4.5, 1.)),
         Mobility::Static,
         None,
     );
@@ -845,7 +856,7 @@ fn check(
 
 // Plausible defects, each a wrong answer against the oracle: the hardware's
 // side or winding read instead of the object-space winding (mirrored square,
-// boxes seen from inside); no re-trace past a rejected hit, or one that skips
+// boxes seen from inside); a double-sided material's back face rejected; no re-trace past a rejected hit, or one that skips
 // a nearer occluder (blended, hidden and back faces before an opaque one;
 // nested boxes; any-hit visibility rays whose first hit is rejected); the
 // re-trace stepping back onto the same hit; masks selecting the wrong kinds

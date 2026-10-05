@@ -47,6 +47,8 @@ pub(crate) struct FrameContext<'a> {
 pub(crate) struct HardwareRays<'a> {
     pub form: RayQueryForm,
     pub tlas: &'a wgpu::Tlas,
+    /// Changes whenever the scene replaces its TLAS.
+    pub tlas_generation: u64,
 }
 
 impl<'a> HardwareRays<'a> {
@@ -57,8 +59,12 @@ impl<'a> HardwareRays<'a> {
         let HardwareRayTracing::On(form) = effective.hardware_ray_tracing else {
             return None;
         };
-        let tlas = scene.acceleration_structures().filter(|_| prepared)?.tlas();
-        Some(Self { form, tlas })
+        let (tlas, tlas_generation) = scene.acceleration_structures().filter(|_| prepared)?.tlas();
+        Some(Self {
+            form,
+            tlas,
+            tlas_generation,
+        })
     }
 }
 

@@ -27,7 +27,8 @@ full API details.
   rules (sides, blended and hidden content, the reflecting surface's own
   triangle, cut-out texels), and the portable BVHs now cover only the
   instances the TLAS does not hold: models with a masked mesh, models whose
-  BLAS is pending, and what the device cannot hold. Unlike the portable
+  BLAS is pending, and what the device cannot hold (a deforming instance
+  the device cannot hold is seen by no ray). Unlike the portable
   path, these rays see skinned and morphed instances, at their deformed
   pose: deforming characters now appear in world-space reflections, cast
   the dynamic GI volume's visibility shadows and block its rays, and their

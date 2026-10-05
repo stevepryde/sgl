@@ -87,7 +87,7 @@ impl TracePaths {
     }
 
     /// Group 3 of the path `hardware` takes, binding `entries` and, on the
-    /// hardware path, its TLAS.
+    /// hardware path, its TLAS, kept while the TLAS and the entries are.
     pub fn group(
         &mut self,
         device: &wgpu::Device,
@@ -98,7 +98,7 @@ impl TracePaths {
         let path = self.path(device, hardware.map(|rays| rays.form));
         match hardware {
             None => path.group.get(device, label, entries),
-            Some(rays) => path.group.get(
+            Some(rays) => path.group.get_with_structures(
                 device,
                 label,
                 &[
@@ -106,6 +106,7 @@ impl TracePaths {
                     &[(shading::bind::hardware::SCENE_TLAS, rays.tlas.as_binding())],
                 ]
                 .concat(),
+                Some(rays.tlas_generation),
             ),
         }
     }

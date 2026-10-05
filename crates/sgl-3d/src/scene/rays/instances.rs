@@ -59,6 +59,15 @@ pub(crate) struct InstanceLeaf {
 /// An instance an instance BVH bounds (`bounded`).
 pub(crate) type Bounded = Primitive<InstanceLeaf>;
 
+/// A static BVH to build: over `instances`, the scene's static instances
+/// after `edits` static edits (`StaticEdits::edits`), whose entries are
+/// `covered`, in index order.
+pub(crate) struct StaticBuild<'a> {
+    pub instances: &'a mut [Bounded],
+    pub edits: u64,
+    pub covered: Vec<u32>,
+}
+
 /// Instance `index`, whose model has triangles within `bounds`, at `pose`,
 /// bounded by `posed_bounds`, which holds the posed model whatever the
 /// rounding.
@@ -260,26 +269,25 @@ impl RayInstances {
     }
 
     /// Before a traced frame: uploads the entries set since the last update,
-    /// builds the moving BVH over `moving` and, given them, the static BVH
-    /// over `statics` after `edits` static edits, the instances whose
-    /// entries are `covered`, and names their roots in the header. Through
-    /// the queue, never a frame's encoder, so an abandoned frame loses none
-    /// of it.
+    /// builds the moving BVH over `moving` and, given one, the static BVH,
+    /// and names their roots in the header. Through the queue, never a
+    /// frame's encoder, so an abandoned frame loses none of it.
     pub fn update(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         rays: &SceneRays,
-        statics: Option<(&mut [Bounded], u64, Vec<u32>)>,
+        statics: Option<StaticBuild<'_>>,
         moving: &mut [Bounded],
     ) {
         self.upload_entries(device, queue);
-        if let Some((statics, edits, covered)) = statics {
+        if let Some(statics) = statics {
             step(BuildStep::StaticInstanceBvh, || {
-                self.statics.build(queue, rays, statics, &mut self.words)
+                self.statics
+                    .build(queue, rays, statics.instances, &mut self.words)
             });
-            self.statics_built = Some(edits);
-            self.statics_covered = covered;
+            self.statics_built = Some(statics.edits);
+            self.statics_covered = statics.covered;
         }
         step(BuildStep::MovingInstanceBvh, || {
             self.moving.build(queue, rays, moving, &mut self.words)

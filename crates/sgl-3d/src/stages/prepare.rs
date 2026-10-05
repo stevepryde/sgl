@@ -91,8 +91,9 @@ pub(crate) fn set_cascades(
 }
 
 /// Why the hardware path did not trace a frame that asked for it.
-const NO_RAY_QUERIES: &str = "the device has no hardware ray queries: request \
-    graphics_device::ray_tracing_features with wgpu's experimental token";
+const NO_RAY_QUERIES: &str = "the device has no hardware ray queries: the browser's WebGPU \
+    has none, and a native device has them where its adapter does and the game requested \
+    graphics_device::ray_tracing_features";
 const NO_MEMORY: &str = "the device's memory could not hold the scene's TLAS";
 
 #[derive(Default)]

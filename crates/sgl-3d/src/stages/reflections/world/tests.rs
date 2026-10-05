@@ -67,7 +67,9 @@ fn deforming(mut asset: crate::asset::Asset) -> crate::asset::Asset {
 /// The reflection composite's red at every pixel of two frames on `device`
 /// with world-space rays and the hardware path as `hardware` says: a
 /// camera 2 m above a mirror floor looking down 45° at a moving unlit white
-/// wall (`deforms` where it deforms) 300 m ahead, then 1.1 km ahead.
+/// wall (`deforms` where it deforms) 300 m ahead, then 1.1 km ahead, with
+/// an instance out of sight added between them, which grows the instance
+/// entries and so replaces the hardware path's TLAS.
 fn reflected_wall(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     hardware: bool,
@@ -132,6 +134,17 @@ fn reflected_wall(
     let near = frame(&mut scene, &mut renderer, &input);
     assert_eq!(renderer.ray_tracing_in_effect(&settings), hardware);
     scene.set_instance(queue, wall, wall_at(-1100.)).unwrap();
+    let cube = scene
+        .add_asset(device, queue, test_support::cube())
+        .unwrap()
+        .model;
+    let below = InstanceState {
+        pose: Mat4::from_translation(Vec3::new(0., -50., 0.)),
+        ..InstanceState::new(cube)
+    };
+    scene
+        .add_instance(device, queue, below, Mobility::Static)
+        .unwrap();
     input.camera_cut = true;
     let far = frame(&mut scene, &mut renderer, &input);
     [near, far]
@@ -176,7 +189,8 @@ fn world_space_rays_reflect_a_moving_wall_300_metres_away() {
 // passed, elsewhere. Plausible defects: the trace's pipeline composing the
 // portable function set, binding no TLAS, or selecting static instances
 // rather than moving ones on the hardware path, which then reflects
-// nothing or something else; a deforming instance missing from the
+// nothing or something else; its cached group binding a TLAS the scene
+// replaced, which still holds the wall 300 m ahead; a deforming instance missing from the
 // hardware path's rays although its TLAS holds it as a moving instance; or
 // one reaching the portable path's, which sees no deforming instance. The
 // oracle is the geometry above: the hardware path reflects the wall as the

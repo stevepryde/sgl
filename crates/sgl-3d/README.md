@@ -1732,7 +1732,9 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   (a model past `max_blas_primitive_count` or `max_blas_geometry_count`,
   instances past `max_tlas_instance_count`, the farthest left out, or a
   structure its memory cannot hold) stays on the portable BVHs, which then
-  cover those instances alone. Turning the setting off frees the
+  cover those instances alone; a deforming instance the device cannot
+  hold is seen by no ray, since the portable BVHs never hold deforming
+  instances. Turning the setting off frees the
   structures; a scene on a device without the feature holds none. A mesh's
   indices past its last whole triangle are left out of its BLAS, as of its
   BVH. The one allocation no error scope reaches is the builds' scratch

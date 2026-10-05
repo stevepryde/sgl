@@ -110,7 +110,8 @@ fn bind_tlas((device, queue): (&wgpu::Device, &wgpu::Queue), scene: &Scene) {
     let tlas = scene
         .acceleration_structures()
         .expect("structures were built")
-        .tlas();
+        .tlas()
+        .0;
     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("TLAS test"),
         layout: &layout,
@@ -179,6 +180,7 @@ fn held(scene: &Scene) -> Vec<(u32, u8)> {
         .acceleration_structures()
         .expect("structures were built")
         .tlas()
+        .0
         .get()
         .iter()
         .map_while(|instance| instance.as_ref())

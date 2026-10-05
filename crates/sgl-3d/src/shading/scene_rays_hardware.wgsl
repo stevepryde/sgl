@@ -14,10 +14,6 @@
 // primitive.
 enable wgpu_ray_query;
 @group(3) @binding(16) var scene_tlas:acceleration_structure;
-// The TLAS instance masks a ray's cull mask selects, its kinds.
-const SCENE_TLAS_STATIC:u32=1u;
-const SCENE_TLAS_MOVING:u32=2u;
-const SCENE_TLAS_ALL:u32=3u;
 // The most hardware steps one ray takes (AR-12): the queries it starts,
 // one for its first look and one for each re-trace past a hit the
 // predicate rejects. A ray re-traces past every rejected triangle in front
@@ -86,7 +82,7 @@ fn scene_hardware_accepts(ray:SceneRay,hit:RawSceneHit,receiver:vec2<u32>,sides:
 }
 
 // The nearest hit of valid `ray` in the TLAS's instances of kinds `mask`
-// (SCENE_TLAS_*) that the predicate accepts, or with `any_hit` any one,
+// (SCENE_KIND_*, their instance masks) that the predicate accepts, or with `any_hit` any one,
 // leaving `receiver`, accepting `sides`, its interval's end excluded when
 // `open_end`; a miss once `steps` is exhausted. A rejected hit re-traces:
 // the ray keeps its origin and direction and its interval starts past the
@@ -124,49 +120,33 @@ fn scene_hardware_trace(ray:SceneRay,mask:u32,any_hit:bool,receiver:vec2<u32>,si
 }
 
 // The nearer of `ray`'s hit in the TLAS and the portable walk's over the
-// instance BVHs of the same kinds (`mask`), which on a hardware-traced frame
-// bound the capture-visible instances the TLAS does not hold: those whose
-// model has a masked mesh (predicate instances), whose model's BLAS is
-// pending, or that the device's limits left out. A visibility ray is
+// instance BVHs of the same kinds (`kinds`), which on a hardware-traced
+// frame bound the capture-visible instances the TLAS does not hold: those
+// whose model has a masked mesh (predicate instances), whose model's BLAS
+// is pending, or that the device's limits left out. A visibility ray is
 // occluded by either. The walk keeps its own visit budget beside the
 // hardware's steps; either exhausted, the ray reports a miss.
-fn scene_trace_hardware(ray:SceneRay,mask:u32,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool)->RawSceneHit {
+fn scene_trace_hardware(ray:SceneRay,kinds:u32,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool)->RawSceneHit {
  let miss=RawSceneHit(vec4(0u),vec4(0.));
  if !scene_ray_valid(ray) {
   return miss;
  }
  var steps=0u;
- var hit=scene_hardware_trace(ray,mask,any_hit,receiver,sides,open_end,&steps);
+ let hit=scene_hardware_trace(ray,kinds,any_hit,receiver,sides,open_end,&steps);
  if scene_hardware_exhausted(steps) {
   return miss;
  }
  if any_hit && hit.intersection.x!=0u {
   return hit;
  }
- var visits=0u;
- if (mask&SCENE_TLAS_STATIC)!=0u {
-  hit=scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,any_hit,receiver,sides,open_end,hit,&visits);
-  if scene_bvh_exhausted(visits) {
-   return miss;
-  }
-  if any_hit && hit.intersection.x!=0u {
-   return hit;
-  }
- }
- if (mask&SCENE_TLAS_MOVING)!=0u {
-  hit=scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,any_hit,receiver,sides,open_end,hit,&visits);
-  if scene_bvh_exhausted(visits) {
-   return miss;
-  }
- }
- return hit;
+ return scene_walk(ray,kinds,any_hit,receiver,sides,open_end,hit);
 }
 
 // The scene ray function set (the architecture's Ray source), as
 // scene_rays_portable.wgsl defines it for the portable path.
 // The nearest hit accepting `sides` (SCENE_SIDES_*).
 fn scene_trace_nearest(ray:SceneRay,sides:u32)->RawSceneHit {
- return scene_trace_hardware(ray,SCENE_TLAS_ALL,false,vec2(0u),sides,false);
+ return scene_trace_hardware(ray,SCENE_KINDS_ALL,false,vec2(0u),sides,false);
 }
 
 // Closed [t_min,t_max] visibility interval, blocked by the triangles whose
@@ -174,15 +154,15 @@ fn scene_trace_nearest(ray:SceneRay,sides:u32)->RawSceneHit {
 // choose geometric ray-origin offsets and emitter endpoints; this adds no bias.
 fn scene_segment_visible(origin:vec3<f32>,direction:vec3<f32>,t_min:f32,t_max:f32,sides:u32)->bool {
  let ray=SceneRay(vec4(origin,t_min),vec4(direction,t_max));
- return scene_trace_hardware(ray,SCENE_TLAS_ALL,true,vec2(0u),sides,false).intersection.x==0u;
+ return scene_trace_hardware(ray,SCENE_KINDS_ALL,true,vec2(0u),sides,false).intersection.x==0u;
 }
 
 // The nearest moving hit, leaving `receiver`, as raster sides it.
 fn scene_trace_moving_except_receiver(ray:SceneRay,receiver:vec2<u32>)->RawSceneHit {
- return scene_trace_hardware(ray,SCENE_TLAS_MOVING,false,receiver,SCENE_SIDES_AS_RASTER,false);
+ return scene_trace_hardware(ray,SCENE_KIND_MOVING,false,receiver,SCENE_SIDES_AS_RASTER,false);
 }
 
 // Visibility to a moving hit needs only a static any-hit in [t_min,t_hit).
 fn scene_static_segment_visible_except_receiver(ray:SceneRay,receiver:vec2<u32>)->bool {
- return scene_trace_hardware(ray,SCENE_TLAS_STATIC,true,receiver,SCENE_SIDES_AS_RASTER,true).intersection.x==0u;
+ return scene_trace_hardware(ray,SCENE_KIND_STATIC,true,receiver,SCENE_SIDES_AS_RASTER,true).intersection.x==0u;
 }

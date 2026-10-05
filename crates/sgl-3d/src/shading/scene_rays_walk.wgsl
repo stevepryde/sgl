@@ -27,6 +27,12 @@ const SCENE_BVH_INSTANCE_WORDS:u32=1u;
 // The most records a leaf names, in either kind of BVH
 // (`scene::rays::bvh::LEAF_PRIMITIVES`).
 const SCENE_BVH_LEAF_PRIMITIVES:u32=4u;
+// A ray's kinds of instance, as bits: the instance BVHs the walk takes
+// and, on the hardware path, the TLAS instance masks its cull mask selects
+// (`scene::rays::acceleration`, `MASK_STATIC` and `MASK_MOVING`).
+const SCENE_KIND_STATIC:u32=1u;
+const SCENE_KIND_MOVING:u32=2u;
+const SCENE_KINDS_ALL:u32=SCENE_KIND_STATIC|SCENE_KIND_MOVING;
 // The most BVH nodes one ray visits across its instance walk and the model
 // walks it starts (AR-12), as AMD's FidelityFX SSSR caps a ray's hierarchy
 // lookups at `max_traversal_intersections` (FidelityFX SDK
@@ -250,4 +256,32 @@ fn scene_trace_instances(root:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,s
   node=escape;
  }
  return closest;
+}
+
+// The walk of a valid ray over the instance BVHs of `kinds`
+// (SCENE_KIND_*), the static one first, then the moving one within its
+// nearest hit: the nearest accepted hit nearer than `nearest`, or with
+// `any_hit` the first, leaving `receiver`, accepting `sides`, its
+// interval's end excluded when `open_end`; else `nearest`. The two walks
+// share one visit budget, and a ray that exhausts it reports a miss.
+fn scene_walk(ray:SceneRay,kinds:u32,any_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,nearest:RawSceneHit)->RawSceneHit {
+ let miss=RawSceneHit(vec4(0u),vec4(0.));
+ var hit=nearest;
+ var visits=0u;
+ if (kinds&SCENE_KIND_STATIC)!=0u {
+  hit=scene_trace_instances(scene_source[SCENE_HEADER_STATIC_ROOT],ray,any_hit,receiver,sides,open_end,hit,&visits);
+  if scene_bvh_exhausted(visits) {
+   return miss;
+  }
+  if any_hit && hit.intersection.x!=0u {
+   return hit;
+  }
+ }
+ if (kinds&SCENE_KIND_MOVING)!=0u {
+  hit=scene_trace_instances(scene_source[SCENE_HEADER_MOVING_ROOT],ray,any_hit,receiver,sides,open_end,hit,&visits);
+  if scene_bvh_exhausted(visits) {
+   return miss;
+  }
+ }
+ return hit;
 }

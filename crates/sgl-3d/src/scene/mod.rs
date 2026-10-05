@@ -310,7 +310,11 @@ impl Scene {
             device,
             queue,
             &self.rays,
-            rebuild_statics.then_some((statics.as_mut_slice(), edits, covered)),
+            rebuild_statics.then_some(rays::instances::StaticBuild {
+                instances: statics.as_mut_slice(),
+                edits,
+                covered,
+            }),
             &mut moving,
         );
     }
