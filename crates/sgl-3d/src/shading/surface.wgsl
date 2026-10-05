@@ -263,7 +263,7 @@ fn surface_indirect_diffuse(s:Surface,normal:vec3<f32>)->IndirectDiffuse {
  let rest=1.-field.share;
  var dynamic_gi=vec4(0.);
  if rest>0. {
-  dynamic_gi=dynamic_gi_irradiance(s.position,normal);
+  dynamic_gi=dynamic_gi_irradiance(s.position,normal,s.view);
   dynamic_gi.a*=rest;
  }
  let fallback=rest-dynamic_gi.a;

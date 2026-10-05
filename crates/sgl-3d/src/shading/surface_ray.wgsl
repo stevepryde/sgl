@@ -134,7 +134,13 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
 // Changed: each light reaches the hit as every receiver's does
 // (scene_light_sample, a rectangle integrated over its face), its shadow
 // opacity applies, a light without a shadow casts no ray, and SGL3D's
-// lights are punctual, so Wicked's radius jitter has no counterpart.
+// lights are punctual, so Wicked's radius jitter has no counterpart. Not
+// taken: NVIDIA RTXGI's shading of every light at a hit (practice only),
+// which removes the noise of the light's choice. The allocation measures a
+// texel's inconsistency against its own deviation, so less noise leaves it
+// as it was: in a static room with two shadowed lights a probe still traced
+// about 63 rays a frame at High after 250 frames with one light per hit and
+// 76 with every light, each hit casting a shadow ray per light.
 fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
  var directional=array<u32,2>(0u,0u);
  var directional_count=0u;

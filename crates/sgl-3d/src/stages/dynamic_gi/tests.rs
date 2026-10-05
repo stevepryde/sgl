@@ -94,31 +94,45 @@ fn render(
     }
 }
 
-/// `dynamic_gi_irradiance` at each (position, normal) of `queries` with
-/// the last frame's camera group 0: irradiance / PI in rgb, the volume's
-/// share in a.
+/// `dynamic_gi_irradiance` at each (position, normal) of `queries`, seen
+/// along the normal, with the last frame's camera group 0: irradiance / PI
+/// in rgb, the volume's share in a.
 fn irradiance(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &Renderer,
     queries: &[(Vec3, Vec3)],
 ) -> Vec<[f32; 4]> {
+    let seen: Vec<_> = queries
+        .iter()
+        .map(|&(position, normal)| (position, normal, normal))
+        .collect();
+    irradiance_seen(device, queue, renderer, &seen)
+}
+
+/// `irradiance` at each (position, normal, view toward the viewer).
+fn irradiance_seen(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &Renderer,
+    queries: &[(Vec3, Vec3, Vec3)],
+) -> Vec<[f32; 4]> {
     observe(
         device,
         queue,
         renderer,
         queries,
-        "dynamic_gi_irradiance(queries[id.x].position.xyz,normalize(queries[id.x].normal.xyz))",
+        "dynamic_gi_irradiance(queries[id.x].position.xyz,normalize(queries[id.x].normal.xyz),normalize(queries[id.x].view.xyz))",
     )
 }
 
-/// `expression` at each (position, normal) of `queries`, as `irradiance`
-/// observes the sample.
+/// `expression` at each (position, normal, view) of `queries`, as
+/// `irradiance` observes the sample.
 fn observe(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &Renderer,
-    queries: &[(Vec3, Vec3)],
+    queries: &[(Vec3, Vec3, Vec3)],
     expression: &str,
 ) -> Vec<[f32; 4]> {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -127,7 +141,7 @@ fn observe(
             format!(
                 r#"{library}
 {INDIRECT}
-struct Query {{ position:vec4<f32>, normal:vec4<f32>, answer:vec4<f32> }}
+struct Query {{ position:vec4<f32>, normal:vec4<f32>, view:vec4<f32>, answer:vec4<f32> }}
 @group(3) @binding(0) var<storage,read_write> queries:array<Query>;
 @compute @workgroup_size(1) fn observe(@builtin(global_invocation_id) id:vec3<u32>) {{
  queries[id.x].answer={expression};
@@ -167,10 +181,11 @@ struct Query {{ position:vec4<f32>, normal:vec4<f32>, answer:vec4<f32> }}
     });
     let words: Vec<f32> = queries
         .iter()
-        .flat_map(|(position, normal)| {
+        .flat_map(|(position, normal, view)| {
             [
                 position.extend(1.).to_array(),
                 normal.extend(0.).to_array(),
+                view.extend(0.).to_array(),
                 [0.; 4],
             ]
         })
@@ -201,8 +216,8 @@ struct Query {{ position:vec4<f32>, normal:vec4<f32>, answer:vec4<f32> }}
     queue.submit([encoder.finish()]);
     let words = test_support::read_words(device, queue, &buffer);
     words
-        .chunks_exact(12)
-        .map(|query| std::array::from_fn(|channel| f32::from_bits(query[8 + channel])))
+        .chunks_exact(16)
+        .map(|query| std::array::from_fn(|channel| f32::from_bits(query[12 + channel])))
         .collect()
 }
 
@@ -212,6 +227,7 @@ fn indirect_of(position:vec3<f32>,moving:bool,lightmapped:bool)->vec4<f32> {
  var s:Surface;
  s.position=position;
  s.normal=vec3(0.,1.,0.);
+ s.view=s.normal;
  s.moving=moving;
  s.baked=lightmapped;
  s.front=true;
@@ -552,8 +568,12 @@ fn add_static(
 // walls' backs, which take no light and shorten its depth, so a receiver
 // inside weighs it as occluded and takes only the dark room; were the
 // probe ray to pass through the walls' backs, the probe would see the
-// room's far side as unoccluded and bring the sky in. The walls reflect
-// nothing, so no bounce from them carries light either way.
+// room's far side as unoccluded and bring the sky in. A receiver near a
+// wall and facing it weighs the probes behind it by the wrap weight and
+// those beyond the wall by their visibility, so the dark room's probes
+// outweigh the sky's, where Wicked's hard backface test and floor tied
+// them all (0.35 of the sky). The walls reflect nothing, so no bounce from
+// them carries light either way.
 #[test]
 fn an_inward_facing_room_keeps_the_sky_outside() {
     let Some((device, queue)) = test_support::device() else {
@@ -595,22 +615,97 @@ fn an_inward_facing_room_keeps_the_sky_outside() {
         &settings,
         3,
     );
-    // Inside, near a wall and facing along it, so the probes beyond the
-    // wall lie in front of the receiver; one facing the wall would weigh
-    // the probes inside as behind it and every probe at Wicked's floor.
+    // Inside, 0.3 m from a wall: facing along it, so the probes beyond the
+    // wall lie in front of the receiver, and facing it, seen obliquely from
+    // inside the room.
+    let along = |position, normal| (position, normal, normal);
+    let facing =
+        |position, normal: Vec3, across: Vec3| (position, normal, normal * 0.5 + across * 0.866);
     let queries = [
-        (Vec3::new(2.7, 0.3, 0.1), Vec3::Y),
-        (Vec3::new(-2.6, 0.2, 1.1), Vec3::Z),
-        (Vec3::new(0.3, 2.7, -0.4), Vec3::X),
-        (Vec3::new(0.4, -2.7, 0.9), Vec3::NEG_Z),
+        along(Vec3::new(2.7, 0.3, 0.1), Vec3::Y),
+        along(Vec3::new(-2.6, 0.2, 1.1), Vec3::Z),
+        along(Vec3::new(0.3, 2.7, -0.4), Vec3::X),
+        along(Vec3::new(0.4, -2.7, 0.9), Vec3::NEG_Z),
+        facing(Vec3::new(2.7, 0.3, 0.1), Vec3::X, Vec3::Z),
+        facing(Vec3::new(-2.7, 0.2, 1.1), Vec3::NEG_X, Vec3::NEG_Z),
+        facing(Vec3::new(0.3, 2.7, -0.4), Vec3::Y, Vec3::X),
+        facing(Vec3::new(0.4, -2.7, 0.9), Vec3::NEG_Y, Vec3::NEG_X),
     ];
     for (query, answer) in queries
         .iter()
-        .zip(irradiance(&device, &queue, &renderer, &queries))
+        .zip(irradiance_seen(&device, &queue, &renderer, &queries))
     {
         assert_eq!(answer[3], 1., "{query:?}");
         assert!(
             answer[..3].iter().all(|&channel| channel < 0.01),
+            "{query:?}: {answer:?}"
+        );
+    }
+}
+
+// A black floor under an open sky of radiance 1: a receiver on it facing
+// up takes the whole sky above, irradiance / PI 1, from the probes above
+// it. The wrap weight lets the probes below the floor weigh too, which the
+// floor hides from the receiver; the self-shadow bias tests visibility
+// from above the floor, where those probes are occluded and the probes
+// above are not, so the floor does not shadow itself.
+#[test]
+fn a_floor_under_an_open_sky_takes_all_of_it() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let environment = uniform_environment(&device, &queue, &mut scene, [1.; 3]);
+    let mut slab = test_support::cube();
+    slab.materials[0].base = [0., 0., 0., 1.];
+    slab.materials[0].metallic = 0.;
+    // Its top at y = 0; probes at -1, 1 and 3.
+    add_static(
+        &device,
+        &queue,
+        &mut scene,
+        slab,
+        Mat4::from_translation(Vec3::new(0., -0.1, 0.))
+            * Mat4::from_scale(Vec3::new(20., 0.2, 20.)),
+    );
+    scene
+        .set_dynamic_gi_volume(
+            &device,
+            Some(DynamicGiVolume {
+                origin: Vec3::new(-4., -1., -4.),
+                spacing: Vec3::splat(2.),
+                probes: [5, 3, 5],
+            }),
+        )
+        .unwrap();
+    let mut input = input(Vec3::new(0., 1.5, 1.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    render(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        3,
+    );
+    let queries: Vec<_> = [
+        Vec3::new(0.3, 0., 0.1),
+        Vec3::new(-1.3, 0., 1.1),
+        Vec3::new(1.7, 0., -0.6),
+        Vec3::new(-0.9, 0., -1.8),
+    ]
+    .into_iter()
+    .flat_map(|point| [Vec3::Y, Vec3::new(0.866, 0.5, 0.)].map(|view| (point, Vec3::Y, view)))
+    .collect();
+    for (query, answer) in queries
+        .iter()
+        .zip(irradiance_seen(&device, &queue, &renderer, &queries))
+    {
+        assert!(
+            answer[..3].iter().all(|&channel| close(channel, 1., 0.01)),
             "{query:?}: {answer:?}"
         );
     }
@@ -760,7 +855,13 @@ fn indirect(
         .flat_map(|&(position, moving, lightmapped)| {
             let expression =
                 format!("indirect_of(queries[id.x].position.xyz,{moving},{lightmapped})");
-            observe(device, queue, renderer, &[(position, Vec3::Y)], &expression)
+            observe(
+                device,
+                queue,
+                renderer,
+                &[(position, Vec3::Y, Vec3::Y)],
+                &expression,
+            )
         })
         .collect()
 }
@@ -874,7 +975,7 @@ fn a_receiver_the_volume_lights_takes_it_in_place_of_the_frames_ambient() {
         let settings = settings(quality);
         let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
         let output = crate::view::targets::target(&device, "receiver", SIZE, gbuffer::COLOR);
-        for _ in 0..3 {
+        for _ in 0..30 {
             let mut encoder = device.create_command_encoder(&Default::default());
             renderer.render(
                 &device,
@@ -900,7 +1001,10 @@ fn a_receiver_the_volume_lights_takes_it_in_place_of_the_frames_ambient() {
     assert!(lit[0] > 0.2 && lit[0] > lit[2] * 2., "{lit:?}");
     // The first frame's probe hits, about which no probe has yet been
     // blended, take the fill as their fallback, and the probes keep a
-    // trace of it; added to the receiver it would bring 8 / PI.
+    // trace of it that fades as the bounce carries it between the receiver
+    // and the probes about it (up to 2% of the receiver's light after
+    // three frames, 0.5% after thirty); added to the receiver the fill would
+    // bring 8 / PI.
     for channel in 0..3 {
         assert!(
             close(filled[channel], lit[channel], lit[channel] * 0.01),

@@ -19,7 +19,7 @@
 // meets a single-sided material from behind, the inside of closed geometry
 // or the outside of a shell built to be seen from within, which Wicked
 // shades as a back face, brings no light and shortens its depth to a fifth,
-// as Majercik et al. 2019 and NVIDIA RTXGI's probe trace (ProbeTraceRGS,
+// as Majercik et al. 2021 (section 4.1) and NVIDIA RTXGI's probe trace (ProbeTraceRGS,
 // practice only) treat back-face hits: the probe takes nothing from behind
 // the surface, and the receivers beyond it weigh the probe as occluded. One
 // difference from RTXGI: its ProbeBlendingCS skips back-face rays in the
