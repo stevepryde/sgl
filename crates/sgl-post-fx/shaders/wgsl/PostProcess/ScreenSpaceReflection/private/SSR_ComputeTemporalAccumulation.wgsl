@@ -11,6 +11,7 @@
 
 #include "ScreenSpaceReflectionStructures.fxh"
 #include "SSR_Common.fxh"
+#include "SSR_DenoiserTiles.fxh"
 #include "BasicStructures.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
 
@@ -41,6 +42,8 @@ struct CameraAttribsPair
 // WGSL: g_TexturePrevDepth_sampler is only declared upstream (depth is loaded).
 @group(0) @binding(10) var g_TexturePrevRadiance_sampler: sampler;
 @group(0) @binding(11) var g_TexturePrevVariance_sampler: sampler;
+// PROVENANCE.md DFX-29.
+@group(0) @binding(12) var g_TextureDenoiserTiles: texture_2d<f32>;
 
 struct ProjectionDesc
 {
@@ -239,6 +242,14 @@ fn ComputeReprojection(PrevPos: vec2<f32>, CurrDepth: f32) -> ProjectionDesc
 fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 {
     let Position = VSOut.f4PixelPos;
+
+    // DFX-29: the current neighbourhood is zero, which clamps any history to
+    // zero. The radiance history holds that zero, so no older reflection
+    // returns with the hits, and the variance holds 1, as where reprojection
+    // finds no history.
+    if (!IsActiveDenoiserTile(g_TextureDenoiserTiles, vec2<i32>(Position.xy))) {
+        return PSOutput(vec4<f32>(0.0), 1.0);
+    }
 
     // Secondary reprojection based on ray lengths:
     // https://www.ea.com/seed/news/seed-dd18-presentation-slides-raytracing (Slide 45)

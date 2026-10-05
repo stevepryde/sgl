@@ -13,6 +13,7 @@
 #include "BasicStructures.fxh"
 #include "PBR_Common.fxh"
 #include "SSR_Common.fxh"
+#include "SSR_DenoiserTiles.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
 #include "PostFX_Common.fxh"
 
@@ -35,6 +36,8 @@ struct PSOutput
 @group(0) @binding(4) var g_TextureDepth: texture_depth_2d;
 @group(0) @binding(5) var g_TextureRayDirectionPDF: texture_2d<f32>;
 @group(0) @binding(6) var g_TextureIntersectSpecular: texture_2d<f32>;
+// PROVENANCE.md DFX-29: the tiles the denoiser passes work on.
+@group(0) @binding(7) var g_TextureDenoiserTiles: texture_2d<f32>;
 
 struct PixelAreaStatistic
 {
@@ -141,6 +144,10 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 
     let Position = VSOut.f4PixelPos;
     let PixelCoord = vec2<i32>(Position.xy);
+    // DFX-29: every sample here missed, so the reconstruction is zero.
+    if (!IsActiveDenoiserTile(g_TextureDenoiserTiles, PixelCoord)) {
+        return PSOutput(vec4<f32>(0.0), 0.0, 0.0);
+    }
 
     let ScreenCoordUV = Position.xy * g_Camera.f4ViewportSize.zw;
     let Depth = LoadDepth(PixelCoord);
