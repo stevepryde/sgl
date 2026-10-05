@@ -461,7 +461,7 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
         angular_diameter: 0.,
         ..DirectionalLight::default()
     };
-    let size = [128, 96];
+    let size = [256, 192];
     let camera = camera(eye, Vec3::new(0., 0., -0.5), size);
     let settings = settings(true);
     let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
@@ -619,7 +619,7 @@ fn the_lighting_pass_takes_the_shadows_the_maps_lack_from_the_mask() {
         return;
     };
     let gpu = (&device, &queue);
-    let size = [128, 96];
+    let size = [256, 192];
     let camera = camera(Vec3::new(0., 7., 7.), Vec3::ZERO, size);
     // The directional light beyond its cascades.
     let block = Block::new(

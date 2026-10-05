@@ -1,8 +1,6 @@
 // Ports AMD FidelityFX Denoiser d7dfecbabe7b9523b14e7b067216e06b86e8d189,
 // ffx-shadows-dnsr/ffx_denoiser_shadows_filter.h, to WGSL, with upstream's
 // names and order (src/LICENSE-amd-fidelityfx-denoiser.txt):
-// ffx-shadows-dnsr/ffx_denoiser_shadows_util.h, to WGSL, with upstream's
-// names and order (src/LICENSE-amd-fidelityfx-denoiser.txt):
 /**********************************************************************
 Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
 
@@ -22,6 +20,8 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+********************************************************************/
 // Changed: translated to WGSL, out parameters as returned structs, and
 // float16_t values as f32, which pack2x16float and unpack2x16float pack in
 // the group's memory as upstream's PackFloat16 and UnpackFloat16 do. The

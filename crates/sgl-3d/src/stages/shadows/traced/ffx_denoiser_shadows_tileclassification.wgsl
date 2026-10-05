@@ -1,8 +1,6 @@
 // Ports AMD FidelityFX Denoiser d7dfecbabe7b9523b14e7b067216e06b86e8d189,
 // ffx-shadows-dnsr/ffx_denoiser_shadows_tileclassification.h, to WGSL,
 // with upstream's names and order (src/LICENSE-amd-fidelityfx-denoiser.txt):
-// ffx-shadows-dnsr/ffx_denoiser_shadows_util.h, to WGSL, with upstream's
-// names and order (src/LICENSE-amd-fidelityfx-denoiser.txt):
 /**********************************************************************
 Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
 
@@ -22,6 +20,8 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+********************************************************************/
 // Changed: translated to WGSL, out parameters as returned structs. The
 // thread group's all-true takes the workgroup fallback alone (28–45), its
 // count read through workgroupUniformLoad, which WGSL needs before the
