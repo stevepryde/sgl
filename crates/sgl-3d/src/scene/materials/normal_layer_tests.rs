@@ -2,7 +2,9 @@
 //! stage (the G-buffer normal reflections read) and a real ray hit.
 use crate::asset::{Asset, CpuMesh, Image, Material, Vertex};
 use crate::renderer::Renderer;
-use crate::settings::{AmbientOcclusionQuality, ScreenSpaceReflections, Settings};
+use crate::settings::{
+    AmbientOcclusionQuality, ScreenSpaceReflections, Settings, WorldSpaceReflections,
+};
 use crate::test_support;
 use crate::{Camera, FrameInput, NormalLayer, Scene, SceneError, perspective};
 use glam::{DVec2, Mat4, Vec2, Vec3};
@@ -160,7 +162,7 @@ fn fixture(
         ambient_occlusion: AmbientOcclusionQuality::Off,
         // World-space rays need a screen-space method to fill in.
         screen_space_reflections: ScreenSpaceReflections::Half,
-        world_space_reflections: true,
+        world_space_reflections: WorldSpaceReflections::Moving,
         ..Settings::default()
     };
     let renderer = Renderer::for_test(device, queue, SIZE, &settings);

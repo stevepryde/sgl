@@ -2,6 +2,7 @@
 //! frames.
 use crate::asset::{CpuMesh, Vertex};
 use crate::renderer::Renderer;
+use crate::settings::WorldSpaceReflections::{All, Moving};
 use crate::settings::{self, Settings};
 use crate::{Backdrop, Camera, FrameInput, InstanceState, Mobility, Scene, test_support};
 use glam::{Mat4, Vec3};
@@ -64,31 +65,58 @@ fn deforming(mut asset: crate::asset::Asset) -> crate::asset::Asset {
     asset
 }
 
-/// The reflection composite's red at every pixel of two frames on `device`
-/// with world-space rays and the hardware path as `hardware` says: a
-/// camera 2 m above a mirror floor looking down 45° at a moving unlit white
-/// wall (`deforms` where it deforms) 300 m ahead, then 1.1 km ahead, with
-/// an instance out of sight added between them, which grows the instance
-/// entries and so replaces the hardware path's TLAS.
+/// The wall the floor reflects: of `mobility`, deformed where `deforms`
+/// (moving, since a deforming instance is).
+#[derive(Clone, Copy)]
+struct Wall {
+    mobility: Mobility,
+    deforms: bool,
+}
+
+const MOVING: Wall = Wall {
+    mobility: Mobility::Moving,
+    deforms: false,
+};
+const STATIC: Wall = Wall {
+    mobility: Mobility::Static,
+    deforms: false,
+};
+const DEFORMING: Wall = Wall {
+    mobility: Mobility::Moving,
+    deforms: true,
+};
+
+/// The reflection composite's red at every pixel of frames on `device`
+/// with the hardware path as `hardware` says: a camera 2 m above a mirror
+/// floor looking down 45° at an unlit white `wall` 300 m ahead, one frame
+/// for each of `reaches`, then one more with the last 1.1 km ahead, with an
+/// instance out of sight added before it, which grows the instance entries
+/// and so replaces the hardware path's TLAS. Each frame is a camera cut, so
+/// each is the same first frame of the effect: frames that take the same
+/// rays on any renderer match.
 fn reflected_wall(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     hardware: bool,
-    deforms: bool,
-) -> [Vec<f32>; 2] {
-    let settings = Settings {
+    wall: Wall,
+    reaches: &[settings::WorldSpaceReflections],
+) -> Vec<Vec<f32>> {
+    let mut settings = Settings {
         antialiasing: settings::Antialiasing::Off,
         bloom: settings::Bloom::Off,
         atmosphere: false,
         screen_space_reflections: settings::ScreenSpaceReflections::Half,
-        world_space_reflections: true,
         hardware_ray_tracing: hardware,
         ..Settings::default()
     };
     let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     test_support::add_static(device, queue, &mut scene, floor());
-    let wall = if deforms { deforming(wall()) } else { wall() };
-    let model = scene.add_asset(device, queue, wall).unwrap().model;
+    let asset = if wall.deforms {
+        deforming(self::wall())
+    } else {
+        self::wall()
+    };
+    let model = scene.add_asset(device, queue, asset).unwrap().model;
     let wall_at = |z: f32| InstanceState {
         model,
         pose: Mat4::from_scale_rotation_translation(
@@ -99,8 +127,8 @@ fn reflected_wall(
         visible: true,
         capture_visible: true,
     };
-    let wall = scene
-        .add_instance(device, queue, wall_at(-300.), Mobility::Moving)
+    let instance = scene
+        .add_instance(device, queue, wall_at(-300.), wall.mobility)
         .unwrap();
     let eye = Vec3::new(0., 2., 0.);
     let mut input = FrameInput::new(Camera {
@@ -109,31 +137,38 @@ fn reflected_wall(
         eye,
     });
     input.backdrop = Backdrop::Color([0.; 3]);
+    input.camera_cut = true;
     let output = crate::view::targets::target(
         device,
         "world reflection frames",
         SIZE,
         crate::shading::gbuffer::COLOR,
     );
-    let frame = |scene: &mut Scene, renderer: &mut Renderer, input: &FrameInput| {
+    let mut frame = |scene: &mut Scene, settings: &Settings| {
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             device,
             queue,
             &mut encoder,
             scene,
-            input,
-            &settings,
+            &input,
+            settings,
             &output,
             None,
         );
         queue.submit([encoder.finish()]);
         renderer.finish_frame(scene);
-        composite(device, queue, renderer)
+        assert_eq!(renderer.ray_tracing_in_effect(settings), hardware);
+        composite(device, queue, &renderer)
     };
-    let near = frame(&mut scene, &mut renderer, &input);
-    assert_eq!(renderer.ray_tracing_in_effect(&settings), hardware);
-    scene.set_instance(queue, wall, wall_at(-1100.)).unwrap();
+    let mut composites = Vec::new();
+    for &reach in reaches {
+        settings.world_space_reflections = reach;
+        composites.push(frame(&mut scene, &settings));
+    }
+    scene
+        .set_instance(queue, instance, wall_at(-1100.))
+        .unwrap();
     let cube = scene
         .add_asset(device, queue, test_support::cube())
         .unwrap()
@@ -145,19 +180,30 @@ fn reflected_wall(
     scene
         .add_instance(device, queue, below, Mobility::Static)
         .unwrap();
-    input.camera_cut = true;
-    let far = frame(&mut scene, &mut renderer, &input);
-    [near, far]
+    composites.push(frame(&mut scene, &settings));
+    composites
 }
 
-/// Whether the floor reflects the wall: at more than a quarter of the
-/// pixels near, and nowhere far (beyond the rays' 1000 m).
-fn reflects([near, far]: &[Vec<f32>; 2], label: &str) -> bool {
+/// Whether the floor reflects the wall in each of `near`: at more than a
+/// quarter of the pixels; and nowhere in `far`, the wall beyond the rays'
+/// 1000 m.
+fn reflects(composites: &[Vec<f32>], label: &str) -> Vec<bool> {
+    let (far, near) = composites.split_last().unwrap();
     assert!(
         far.iter().all(|&red| red < 0.01),
         "{label}: the floor reflects the wall 1.1 km away, beyond the rays' 1000 m"
     );
-    near.iter().filter(|&&red| red > 0.25).count() > near.len() / 4
+    near.iter()
+        .map(|near| near.iter().filter(|&&red| red > 0.25).count() > near.len() / 4)
+        .collect()
+}
+
+/// The largest difference between two composites' pixels.
+fn largest_difference(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0., f32::max)
 }
 
 // Plausible defects: world-space rays stopping short of Wicked's 1000 m
@@ -178,9 +224,51 @@ fn world_space_rays_reflect_a_moving_wall_300_metres_away() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
-    assert!(
-        reflects(&reflected_wall((&device, &queue), false, false), "portable"),
+    assert_eq!(
+        reflects(
+            &reflected_wall((&device, &queue), false, MOVING, &[Moving]),
+            "portable"
+        ),
+        [true],
         "the floor reflects the wall 300 m away"
+    );
+}
+
+// The `All` reach (`WorldSpaceReflections::All`) on the portable path.
+// Plausible defects: `All` taking the moving-only rays, or keeping their
+// static visibility test, which leaves a static wall to the probes and sky;
+// `All` taking static geometry alone, which misses a moving wall; a static
+// hit shaded or composed otherwise than a moving one; the trace's pipelines
+// not keyed by the reach, so a renderer that ran `Moving` keeps its rays
+// under `All`; `All`'s rays without the 1000 m range. The oracle is the
+// geometry above: under `Moving` the floor reflects the static wall
+// nowhere, under `All` it reflects it, and the moving wall under both;
+// and a static wall reflects under `All` exactly as a moving wall in its
+// place does under `Moving`, since both are unlit and the rays meet the
+// same triangles.
+#[test]
+fn the_all_reach_reflects_a_static_wall_that_moving_does_not() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let still = reflected_wall(gpu, false, STATIC, &[Moving, All]);
+    assert_eq!(
+        reflects(&still, "static wall"),
+        [false, true],
+        "the floor reflects the static wall under All alone"
+    );
+    let moving = reflected_wall(gpu, false, MOVING, &[All, Moving]);
+    assert_eq!(
+        reflects(&moving, "moving wall"),
+        [true, true],
+        "the floor reflects the moving wall under both reaches"
+    );
+    let difference = largest_difference(&still[1], &moving[1]);
+    eprintln!("static wall under All against moving wall under Moving: {difference}");
+    assert!(
+        difference < 1e-3,
+        "the static wall reflects under All as the moving wall does under Moving: {difference}"
     );
 }
 
@@ -201,19 +289,58 @@ fn world_space_rays_on_the_hardware_path_reflect_deforming_instances() {
     let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
         return;
     };
-    for (hardware, deforms, reflected) in [
-        (true, false, true),
-        (true, true, true),
-        (false, true, false),
+    for (hardware, wall, reflected) in [
+        (true, MOVING, true),
+        (true, DEFORMING, true),
+        (false, DEFORMING, false),
     ] {
-        let label = format!("hardware {hardware}, deforming {deforms}");
+        let label = format!("hardware {hardware}, deforming {}", wall.deforms);
         assert_eq!(
             reflects(
-                &reflected_wall((&device, &queue), hardware, deforms),
+                &reflected_wall((&device, &queue), hardware, wall, &[Moving]),
                 &label
             ),
-            reflected,
+            [reflected],
             "{label}"
         );
     }
+}
+
+// The `All` reach on the hardware path, on a device with ray queries;
+// reported unsupported, never passed, elsewhere. Plausible defects: `All`'s
+// hardware query masking one kind (the static wall, or the deforming wall
+// the TLAS holds as moving, missed), or tracing another function set than
+// the portable path's. The oracle is the geometry above and the portable
+// path: the static wall reflects under `All` alone, the deforming wall
+// under `All` too, and the hardware path's static wall under `All` matches
+// the portable path's within 1 % of the wall's radiance: both meet the
+// same triangles, at distances that differ by the f32 rounding of two
+// solves, which only weights the denoiser, and the composite is f16.
+#[test]
+fn the_all_reach_on_the_hardware_path_matches_the_portable_path() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let hardware = reflected_wall(gpu, true, STATIC, &[Moving, All]);
+    assert_eq!(
+        reflects(&hardware, "hardware, static wall"),
+        [false, true],
+        "the floor reflects the static wall under All alone"
+    );
+    assert_eq!(
+        reflects(
+            &reflected_wall(gpu, true, DEFORMING, &[All]),
+            "hardware, deforming wall"
+        ),
+        [true],
+        "the floor reflects the deforming wall under All"
+    );
+    let portable = reflected_wall(gpu, false, STATIC, &[Moving, All]);
+    let difference = largest_difference(&hardware[1], &portable[1]);
+    eprintln!("All on the hardware path against the portable path: {difference}");
+    assert!(
+        difference < 0.01,
+        "the hardware path's All matches the portable path's: {difference}"
+    );
 }

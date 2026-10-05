@@ -220,7 +220,7 @@ override incident_radiance_enabled:bool=true;
 // specular alone.
 @group(0) @binding(20) var screen_space:texture_2d<f32>;
 // World-space reflection rays (world_reflections.wgsl): radiance premultiplied
-// by the share of rays that hit a moving object (a); probes and sky fill the rest.
+// by the share of rays that hit what they reach (a); probes and sky fill the rest.
 @group(0) @binding(23) var world_space:texture_2d<f32>;
 // The surface depth (the Surface contract, specs/sgl3d-architecture.md).
 @group(0) @binding(27) var source_surface_depth:texture_depth_2d;

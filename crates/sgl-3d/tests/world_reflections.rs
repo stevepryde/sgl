@@ -225,7 +225,7 @@ impl Frames {
         // A game's Ultra: High render resources plus full SSR and world rays.
         let settings = Settings {
             screen_space_reflections: settings::ScreenSpaceReflections::Full,
-            world_space_reflections: true,
+            world_space_reflections: settings::WorldSpaceReflections::Moving,
             scene_resolution: settings::SceneResolution::Full,
             atmosphere: false,
             bloom: settings::Bloom::Off,
@@ -439,11 +439,11 @@ fn opaque_static_geometry_blocks_offscreen_model_in_ultra() {
         return;
     };
     let clear_ray = clear.render();
-    clear.settings.world_space_reflections = false;
+    clear.settings.world_space_reflections = settings::WorldSpaceReflections::Off;
     let fallback = clear.render();
     let mut blocked = Frames::new(Some(1.)).unwrap();
     let blocked_ray = blocked.render();
-    blocked.settings.world_space_reflections = false;
+    blocked.settings.world_space_reflections = settings::WorldSpaceReflections::Off;
     let blocked_fallback = blocked.render();
     let mut behind = Frames::new(Some(3.)).unwrap();
     let behind_ray = behind.render();
@@ -480,7 +480,7 @@ fn ray_hits_take_installed_probe_specular() {
         return;
     };
     let sky_ray = frames.render();
-    frames.settings.world_space_reflections = false;
+    frames.settings.world_space_reflections = settings::WorldSpaceReflections::Off;
     let sky_fallback = frames.render();
     let face = 64usize;
     // Radiance four (binary16 0x4400) in every direction and at every level.
@@ -509,7 +509,7 @@ fn ray_hits_take_installed_probe_specular() {
         .set_baked_specular_probes(&frames.device, &frames.queue, std::slice::from_ref(&probe))
         .unwrap();
     let probe_fallback = frames.render();
-    frames.settings.world_space_reflections = true;
+    frames.settings.world_space_reflections = settings::WorldSpaceReflections::Moving;
     let probe_ray = frames.render();
     // Far off on all three axes, it makes the grid's axes unequal and puts the
     // offscreen model's cell at different coordinates on each, so a transposed
@@ -591,9 +591,9 @@ fn world_history_restarts_after_discontinuities() {
                 dirty.settings.screen_space_reflections = settings::ScreenSpaceReflections::Full;
             }
             "world off" => {
-                dirty.settings.world_space_reflections = false;
+                dirty.settings.world_space_reflections = settings::WorldSpaceReflections::Off;
                 dirty.frame(false);
-                dirty.settings.world_space_reflections = true;
+                dirty.settings.world_space_reflections = settings::WorldSpaceReflections::Moving;
             }
             "resize" => {
                 dirty.resize([144, 112]);
@@ -678,10 +678,10 @@ fn world_rays_trace_poses_moved_while_they_were_off() {
     };
     frames.pose_offscreen_model(Mat4::from_translation(Vec3::X * 100.));
     let aside = frames.render();
-    frames.settings.world_space_reflections = false;
+    frames.settings.world_space_reflections = settings::WorldSpaceReflections::Off;
     frames.frame(false);
     frames.pose_offscreen_model(Mat4::IDENTITY);
-    frames.settings.world_space_reflections = true;
+    frames.settings.world_space_reflections = settings::WorldSpaceReflections::Moving;
     frames.frame(false);
     let moved = frames.reflected();
     eprintln!(

@@ -38,7 +38,7 @@ fn a_device_at_the_sampled_texture_floor_runs_every_pipeline() {
     let settings = Settings {
         antialiasing: settings::Antialiasing::Taa,
         screen_space_reflections: settings::ScreenSpaceReflections::Full,
-        world_space_reflections: true,
+        world_space_reflections: settings::WorldSpaceReflections::Moving,
         dynamic_gi: DynamicGiQuality::High,
         ambient_occlusion: settings::AmbientOcclusionQuality::High,
         atmosphere: true,

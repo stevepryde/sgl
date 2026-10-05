@@ -118,6 +118,23 @@ pub enum ReflectionMethod {
     Velvet,
 }
 
+/// What world-space rays reach where the screen-space method misses, at
+/// half resolution up to 1000 m from the reflecting surface. Off reflects
+/// what the method and the probes and sky give.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WorldSpaceReflections {
+    #[default]
+    Off,
+    /// Moving objects, which baked probes cannot hold: a static surface in
+    /// front of one leaves the probes and sky in charge.
+    Moving,
+    /// Everything, static surfaces included, which then reflect as they
+    /// stand rather than as their probe recorded them, as Wicked Engine's
+    /// ray-traced reflections trace the whole scene. Meant for hardware ray
+    /// tracing; without it the software BVH walk costs more than `Moving`'s.
+    All,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Bloom {
     #[default]
@@ -324,16 +341,16 @@ pub struct Settings {
     pub ambient_occlusion: AmbientOcclusionQuality,
     pub screen_space_reflections: ScreenSpaceReflections,
     pub reflection_method: ReflectionMethod,
-    /// Traces what screen-space reflections miss on moving objects through
-    /// the scene's ray buffers; only effective with screen-space reflections.
-    pub world_space_reflections: bool,
+    /// Traces what screen-space reflections miss through the scene's ray
+    /// buffers; only effective with screen-space reflections.
+    pub world_space_reflections: WorldSpaceReflections,
     /// Hardware ray tracing, off by default and in no preset: a game opts
     /// in by turning it on and requesting the device's feature
     /// (`graphics_device::ray_tracing_features`). Where the device has it, on
     /// frames that trace rays (world-space reflections, the dynamic GI
     /// volume), the scene builds acceleration structures over its geometry
-    /// and keeps them (`Renderer::ray_tracing_stats`); off frees them. Rays
-    /// still trace the scene's portable BVHs.
+    /// and keeps them (`Renderer::ray_tracing_stats`), and the rays trace
+    /// them; off frees them.
     pub hardware_ray_tracing: bool,
     /// The volumetric fog and mist, while the frame turns its atmosphere on
     /// (`FrameInput::atmosphere`, off by default); this allows them, and is
@@ -379,7 +396,7 @@ impl Default for Settings {
             ambient_occlusion: AmbientOcclusionQuality::default(),
             screen_space_reflections: ScreenSpaceReflections::default(),
             reflection_method: ReflectionMethod::default(),
-            world_space_reflections: false,
+            world_space_reflections: WorldSpaceReflections::Off,
             hardware_ray_tracing: false,
             atmosphere: true,
             fog_quality: FogQuality::default(),

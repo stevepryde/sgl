@@ -2,7 +2,9 @@
 //! read, and through a real ray hit.
 use crate::asset::{CpuMesh, Image, Vertex};
 use crate::renderer::Renderer;
-use crate::settings::{AmbientOcclusionQuality, ScreenSpaceReflections, Settings};
+use crate::settings::{
+    AmbientOcclusionQuality, ScreenSpaceReflections, Settings, WorldSpaceReflections,
+};
 use crate::test_support;
 use crate::{Camera, Decal, FrameInput, Scene, SceneError, perspective};
 use glam::{Mat4, Quat, Vec3};
@@ -177,7 +179,7 @@ fn decals_change_base_colour_normal_and_roughness_inside_their_box_alone() {
         ambient_occlusion: AmbientOcclusionQuality::Off,
         // World-space rays need a screen-space method to fill in.
         screen_space_reflections: ScreenSpaceReflections::Half,
-        world_space_reflections: true,
+        world_space_reflections: WorldSpaceReflections::Moving,
         ..Settings::default()
     };
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);

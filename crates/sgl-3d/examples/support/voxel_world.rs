@@ -9,7 +9,9 @@ use sgl_3d::{
     Light, LightShape, MaterialId, ModelMesh, PreparedModel, Scene, SceneError,
     asset::{CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
-    settings::{Antialiasing, ReflectionMethod, ScreenSpaceReflections, Settings},
+    settings::{
+        Antialiasing, ReflectionMethod, ScreenSpaceReflections, Settings, WorldSpaceReflections,
+    },
 };
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -548,7 +550,7 @@ pub fn settings() -> Settings {
         antialiasing: Antialiasing::Taa,
         screen_space_reflections: ScreenSpaceReflections::Full,
         reflection_method: ReflectionMethod::Crystal,
-        world_space_reflections: true,
+        world_space_reflections: WorldSpaceReflections::Moving,
         ..Settings::default()
     }
 }
