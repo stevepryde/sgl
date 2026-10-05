@@ -1446,8 +1446,10 @@ stage (each stage's documentation lists its own), are:
   occlusion culling runs, `depth pyramid` (twice), `cull late` and
   `geometry late` between `geometry` and `sky`; then `ambient occlusion`;
 - ray-traced shadows, after the opaque stage's G-buffer passes and their
-  culling and before `sky` while they run: `ray-traced shadow rays`,
-  `ray-traced shadow temporal` and `ray-traced shadow upsample`;
+  culling and before `sky` while they run: `ray-traced shadow rays`, the
+  denoiser's `ray-traced shadow tile classification` and
+  `ray-traced shadow filter` (three passes), `ray-traced shadow temporal`
+  and `ray-traced shadow upsample`;
 - reflections: `probe culling`, `reflection source completion`, Crystal's
   `SSR` passes (named after DiligentFX's debug groups), Velvet's `Godot SSR`
   passes, `world reflection rays`, `world reflection denoise` and

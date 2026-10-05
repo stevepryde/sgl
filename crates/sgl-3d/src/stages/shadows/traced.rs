@@ -18,8 +18,9 @@
 //! slot table, which it lends to the opaque stage's lighting pass.
 //! Honours: the effective ray-traced shadows, on the frames whose rays
 //! trace in hardware.
-//! Timing groups: `ray-traced shadow rays`, `ray-traced shadow temporal`,
-//! `ray-traced shadow upsample`.
+//! Timing groups: `ray-traced shadow rays`, `ray-traced shadow tile
+//! classification`, `ray-traced shadow filter` (three passes),
+//! `ray-traced shadow temporal`, `ray-traced shadow upsample`.
 pub(crate) mod denoise;
 pub(crate) mod slots;
 
