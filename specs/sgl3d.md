@@ -250,8 +250,8 @@ Remaining work, in the existing roadmap order:
    [#21](https://github.com/stevepryde/sgl/issues/21)).** A volume of probes
    the game places lights surfaces with bounce light alongside game-authored
    lightmaps, irradiance atlases and ambient cubes
-   ([dynamic GI](../crates/sgl-3d/README.md#dynamic-diffuse-gi)); a volume
-   that scrolls with the player, and its adoption by the consumer, remain.
+   ([dynamic GI](../crates/sgl-3d/README.md#dynamic-diffuse-gi)), scrolled
+   with the player by whole spacings; its adoption by the consumer remains.
 2. **DLSS and MetalFX upscaling (12,
    [#22](https://github.com/stevepryde/sgl/issues/22)).** Current antialiasing
    choices are TAA, SMAA, and FSR2; FSR2 requires native device features and

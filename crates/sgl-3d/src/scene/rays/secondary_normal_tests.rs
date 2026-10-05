@@ -89,6 +89,7 @@ fn plane_asset(has_normal_map: bool) -> Asset {
             wrap: [gltf::texture::WrappingMode::Repeat; 2],
             double_sided: true,
             unlit: false,
+            emits_into_gi: true,
             alpha: crate::AlphaMode::Opaque,
         }],
         images: vec![
@@ -190,6 +191,7 @@ fn material_normal_oracle(
                     environment_scale: 1.,
                     visibility_group: 0,
                     unlit: false,
+                    emits_into_gi: true,
                     double_sided: true,
                     alpha: crate::AlphaMode::Opaque,
                 },

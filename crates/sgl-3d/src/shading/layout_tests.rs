@@ -370,6 +370,10 @@ fn rust_mirrors_match_wgsl_layouts() {
             "MATERIAL_NORMAL_LAYERS",
             super::material::MATERIAL_NORMAL_LAYERS,
         ),
+        (
+            "MATERIAL_EMITS_INTO_GI",
+            super::material::MATERIAL_EMITS_INTO_GI,
+        ),
     ] {
         assert_eq!(
             wgsl_constant(&uniforms, name),

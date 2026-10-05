@@ -1575,6 +1575,26 @@ so the probe keeps out what lies behind it. Each probe keeps its irradiance and
 the distances to what surrounds it, so a surface takes light only from the
 probes that see it.
 
+A glowing fixture that is also a scene light, such as a lamp's panel beside
+its rectangle light, would reach the probes twice: as the emitter their rays
+meet, and through the light, which already lights everything the fixture
+would. Mark its material so the probes' rays take none of the light it gives
+off itself (its emission, and an unlit material's whole colour):
+
+```rust
+for material in &mut asset.materials {
+    if material.name == "lamp-panel" {
+        material.emits_into_gi = false; // its rectangle light carries it
+    }
+}
+```
+
+`SurfaceMaterial::emits_into_gi` changes it later with `Scene::set_material`.
+The surface still glows on screen, shows in reflections, blocks the probes'
+rays and, when lit, reflects the light that reaches it, as Unity's emission
+"Global Illumination: None" keeps a material's glow out of its GI while the
+object stays in it.
+
 Surfaces take their indirect diffuse light by one determination: a
 lightmap or irradiance atlas chart keeps its bake; else the
 [irradiance volume](#irradiance-volume) where it lights the surface; else
