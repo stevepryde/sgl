@@ -134,6 +134,26 @@ pub(crate) fn moving_caster_reaches(
         && clip_intersects(bounds, view_projection * pose)
 }
 
+/// The pipeline variant the camera and every shadow kind, CPU-built or
+/// GPU-built (`draw_list::gpu`), draw a mesh with `material` with at a pose
+/// that is `mirrored`, of an instance that is `deformed`: Back culling of a
+/// single-sided material, swapped under a mirroring pose (`Cull::of`). Lit
+/// shaders do not discard back faces, so camera raster keeps hidden-surface
+/// removal. Every shadow kind culls as the camera does, so a single-sided
+/// material casts from its front faces: Bevy's shadow pipelines specialize
+/// the material's own cull mode, and its shadow bias assumes those casters.
+pub(crate) fn camera_variant(
+    material: &SurfaceMaterial,
+    mirrored: bool,
+    deformed: bool,
+) -> Variant {
+    Variant {
+        cull: Cull::of(Cull::Back, material.double_sided, mirrored),
+        alpha: Alpha::of(material.alpha),
+        deformed,
+    }
+}
+
 impl Population<'_> {
     /// Whether this population shows `instance`.
     pub(super) fn shows(&self, instance: &Instance) -> bool {
@@ -149,35 +169,24 @@ impl Population<'_> {
         }
     }
 
-    /// The faces this population's raster culls of a mesh with `material`,
-    /// `mirrored` when its pose reverses winding (`Cull::of`): of a
-    /// single-sided material, the side the population never draws.
-    fn cull(&self, material: &SurfaceMaterial, mirrored: bool) -> Cull {
-        let single_sided = match self {
-            // Lit shaders do not discard back faces, so camera raster keeps
-            // hidden-surface removal. Every shadow kind culls as the camera
-            // does, so a single-sided material casts from its front faces:
-            // Bevy's shadow pipelines specialize the material's own cull
-            // mode, and its shadow bias assumes those casters. The GPU-built
-            // camera and cascades cull so too (`draw_list::gpu`).
-            Self::Blended { .. } | Self::CaptureShadow | Self::LocalShadow { .. } => Cull::Back,
-            Self::ProbeFace => Cull::None,
-        };
-        Cull::of(single_sided, material.double_sided, mirrored)
-    }
-
     /// The pipeline variant of a mesh with `material` at a pose that is
-    /// `mirrored`, of an instance that is `deformed`.
+    /// `mirrored`, of an instance that is `deformed`: the camera's
+    /// (`camera_variant`), but a probe face, which draws both sides.
     pub(super) fn variant(
         &self,
         material: &SurfaceMaterial,
         mirrored: bool,
         deformed: bool,
     ) -> Variant {
-        Variant {
-            cull: self.cull(material, mirrored),
-            alpha: Alpha::of(material.alpha),
-            deformed,
+        match self {
+            Self::ProbeFace => Variant {
+                cull: Cull::None,
+                alpha: Alpha::of(material.alpha),
+                deformed,
+            },
+            Self::Blended { .. } | Self::CaptureShadow | Self::LocalShadow { .. } => {
+                camera_variant(material, mirrored, deformed)
+            }
         }
     }
 

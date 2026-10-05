@@ -24,7 +24,8 @@ use crate::shading::culling::{
 use crate::shading::vertex::{DRAW_INSTANCE_SLOT, DrawInstance};
 use crate::view::View;
 use crate::view::culling::Frustum;
-use crate::view::pipelines::{Alpha, Cull, GeometryPass, GeometryPipelines, Variant};
+use crate::view::pipelines::{GeometryPass, GeometryPipelines, Variant};
+use crate::view::population::camera_variant;
 use glam::{DMat4, Mat4};
 use std::ops::Range;
 
@@ -211,17 +212,10 @@ impl GpuList {
             if !shown {
                 continue;
             }
-            // The camera and every shadow kind cull as the camera does
-            // (`Population::cull`).
-            let values = &material.values;
             self.drawn.push(DrawnSet {
                 index,
                 region,
-                variant: Variant {
-                    cull: Cull::of(Cull::Back, values.double_sided, key.mirrored),
-                    alpha: Alpha::of(values.alpha),
-                    deformed: key.deforms,
-                },
+                variant: camera_variant(&material.values, key.mirrored, key.deforms),
                 material: key.material,
             });
         }

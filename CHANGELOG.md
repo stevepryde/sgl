@@ -30,8 +30,9 @@ full API details.
   those views; blended surfaces, local-light shadow faces and probe
   captures keep CPU-built, instanced lists, the blended walk now over only
   the instances whose models hold a blended mesh. Each GPU-built view keeps
-  a cluster list of 20 bytes per section the scene's sets can draw (about
-  2.8 MB a view at #19's scale; `SceneResources::cluster_list`). Changed
+  a cluster list of 20 bytes per section the scene's sets can draw
+  (measured 55 KB a view on the `streaming` example's walk and 514 KB at
+  its headroom scale; `SceneResources::cluster_list`). Changed
   symbols: `Renderer::geometry_stats`, `Renderer::geometry_stats_for_model`,
   `Renderer::diagnostic_draws`, `Renderer::diagnostic_view_times`,
   `GeometryStats`, `Scene::set_mesh_lods`, `PreparedModel::new`,
@@ -49,14 +50,15 @@ full API details.
     surfaces of different draws in the camera or a cascade no longer have
     a defined winner (the CPU builder drew each instance's meshes in their
     model's order). The blended list keeps its order.
-  - `Renderer::geometry_stats` takes the device and returns
-    `Option<GeometryStats>`: the most recent completed frame's counts, read
+  - `Renderer::geometry_stats` takes `&mut self` and the device and
+    returns `Option<GeometryStats>`: the most recent completed frame's counts, read
     back without blocking, a few frames late, and `None` until a frame's
     readback arrives. The camera's opaque and masked draws count one per
     section (at most 128 triangles) appended, with their triangles; its
     blended draws count as before.
-  - `Renderer::geometry_stats_for_model` needs the `diagnostics` feature,
-    takes the device, and returns `Result<Option<(usize, u64)>, _>` of the
+  - `Renderer::geometry_stats_for_model` needs the `diagnostics` feature
+    and does not exist without it; it takes `&mut self` and the device,
+    and returns `Result<Option<(usize, u64)>, _>` of the
     same frame: its instances' sections and triangles with the blended draws
     that hold one.
   - `Renderer::diagnostic_draws` counts a GPU-built view's indirect draws,
@@ -92,9 +94,11 @@ full API details.
     `finish_frame`, waits with `device.poll(wgpu::PollType::wait_indefinitely())`,
     then calls `geometry_stats(&device)`. Compare the camera's opaque draw
     counts with sections, not instanced draws.
-  - `geometry_stats_for_model(&scene, model)` becomes
-    `geometry_stats_for_model(&device, &scene, model)` under the
-    `diagnostics` feature, returning an `Option` inside the `Result`.
+  - Hold the renderer mutably where the game reads its statistics. A game
+    that calls `geometry_stats_for_model(&scene, model)` enables the
+    `diagnostics` feature (or drops the call; shipping builds should) and
+    calls `geometry_stats_for_model(&device, &scene, model)`, which returns
+    an `Option` inside the `Result`.
   - Give a coplanar overlay drawn as a separate opaque or masked mesh (a
     decal-like strip, a painted line on a road) a depth offset in its
     geometry, or make it a `Decal`, where it relied on drawing after the

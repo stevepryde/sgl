@@ -317,12 +317,15 @@ impl Scene {
         self.refresh_scene_group(device);
         let deformation = reserved?;
         let index = self.instances.slots.next_index();
-        if let Err(error) = self.candidates.place(
-            index,
-            (&state, deformation.as_ref()),
-            &self.models,
-            &self.materials,
-        ) {
+        let meshes = self.candidate_meshes(state.model, self.models.get(state.model)?);
+        let deformed = deformation
+            .as_ref()
+            .map(|deformation| deformation.mesh_bounds.as_slice());
+        let mirrored = state.pose.determinant() < 0.;
+        if let Err(error) = self
+            .candidates
+            .place(index, (state.model, &meshes), mirrored, deformed)
+        {
             if let Some(deformation) = deformation {
                 deformation.free(&mut self.rays);
             }
@@ -391,12 +394,18 @@ impl Scene {
         // mirrors, their sets.
         let mirrored = |pose: glam::Mat4| pose.determinant() < 0.;
         if previous != state.model || mirrored(old.pose) != mirrored(state.pose) {
-            let deformation = self.instances.get(id)?.deformation.as_ref();
+            let meshes = self.candidate_meshes(state.model, self.models.get(state.model)?);
+            let deformed = self
+                .instances
+                .get(id)?
+                .deformation
+                .as_ref()
+                .map(|deformation| deformation.mesh_bounds.as_slice());
             self.candidates.place(
                 id.index(),
-                (&state, deformation),
-                &self.models,
-                &self.materials,
+                (state.model, &meshes),
+                mirrored(state.pose),
+                deformed,
             )?;
         }
         if previous != state.model {
@@ -432,7 +441,7 @@ impl Scene {
             .slots
             .remove(id)
             .ok_or(SceneError::UnknownInstance)?;
-        self.candidates.remove(id.index(), &self.materials);
+        self.candidates.remove(id.index());
         if let Some(deformation) = instance.deformation.take() {
             deformation.free(&mut self.rays);
         }

@@ -15,16 +15,15 @@ mod chains;
 mod mirror;
 mod sets;
 
-pub(crate) use sets::SetKey;
+pub(crate) use sets::{SetKey, SetLook};
 
 use super::SceneError;
 use super::deformation::InstanceDeformation;
-use super::materials::Materials;
-use super::models::Models;
+use super::materials::Material;
+use super::models::{Mesh, Model, Models};
 use super::ranges::Ranges;
 use crate::content::identity::{Identity, MaterialId, ModelId};
-use crate::content::instance::InstanceState;
-use crate::shading::culling::{ChainLevel, CullListsHeader, DrawCandidate, NO_SET};
+use crate::shading::culling::{ChainLevel, CullListsHeader, DrawCandidate};
 use crate::shading::vertex::DrawInstance;
 use chains::Chains;
 use glam::Vec3;
@@ -40,6 +39,70 @@ use std::ops::Range;
 struct Slot {
     mesh: u32,
     need: u32,
+}
+
+/// A model's mesh as its instances' candidates take it
+/// (`Scene::candidate_meshes`): its material and how its set's record takes
+/// it, whether it is blended (and has no candidate), the most sections among
+/// its levels (none: no candidate), its bounds in the model's space, its
+/// record word and its level chain.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CandidateMesh {
+    pub material: MaterialId,
+    pub look: SetLook,
+    pub blended: bool,
+    pub need: u32,
+    pub bounds: [Vec3; 2],
+    pub word: u32,
+    pub chain: u32,
+}
+
+/// One candidate a placement accounts for: its set's key, how its set's
+/// record takes its material, and the sections it draws at most.
+pub(crate) type CandidateKey = (SetKey, SetLook, u32);
+
+/// The candidates of an instance whose pose is `mirrored` and that deforms
+/// or not, of `meshes`: each that is not blended and has sections, with its
+/// mesh's index.
+fn keyed(
+    meshes: &[CandidateMesh],
+    mirrored: bool,
+    deforms: bool,
+) -> impl Iterator<Item = (usize, CandidateKey)> + '_ {
+    meshes
+        .iter()
+        .enumerate()
+        .filter(|(_, mesh)| !mesh.blended && mesh.need > 0)
+        .map(move |(index, mesh)| {
+            let key = SetKey {
+                material: mesh.material,
+                mirrored,
+                deforms,
+            };
+            (index, (key, mesh.look, mesh.need))
+        })
+}
+
+/// What a placement of one instance's candidates changes of the sets and the
+/// slots: its held candidates' (set, need) leave their sets and its slots
+/// are freed, then `keys` take new slots and join their sets. Returns the
+/// new slots and each key's set. A dry run (`Candidates::fit`) and a
+/// placement take the same steps, so they agree on what fits.
+fn account(
+    (sets, placed): (&mut Sets, &mut Ranges),
+    (held, slots): (&[(u32, u32)], Range<u32>),
+    keys: &[CandidateKey],
+) -> Option<(Range<u32>, Vec<u32>)> {
+    for &(set, need) in held {
+        sets.remove(set, need);
+    }
+    placed.free(slots);
+    let range = placed.allocate(keys.len() as u32)?;
+    let joined = keys
+        .iter()
+        .map(|&(key, look, need)| sets.add(key, look, need))
+        .collect();
+    Some((range, joined))
 }
 
 pub(crate) struct Candidates {
@@ -64,16 +127,9 @@ pub(crate) struct Candidates {
     models: std::sync::Arc<Vec<Option<ModelId>>>,
 }
 
-/// One candidate of an instance being placed.
-struct Placing {
-    record: DrawCandidate,
-    key: SetKey,
-    slot: Slot,
-}
-
 impl Candidates {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let limits = device.limits();
+    /// Candidates for a device of `limits`.
+    pub fn new(limits: &wgpu::Limits) -> Self {
         let binding = limits
             .max_storage_buffer_binding_size
             .min(limits.max_buffer_size);
@@ -97,131 +153,157 @@ impl Candidates {
         }
     }
 
-    /// Places the candidates of the instance at `index` in `state`, as
-    /// `deformation` deforms it, replacing those it had. Fails with nothing
-    /// changed when they would pass what the device binds.
+    /// The (set, need) of each candidate the instance at `index` holds, and
+    /// its slots.
+    fn held(&self, index: usize) -> (Vec<(u32, u32)>, Range<u32>) {
+        let range = self.by_instance.get(index).cloned().unwrap_or(0..0);
+        let held = range
+            .clone()
+            .map(|slot| {
+                let set = self.records.get(slot).draw_set;
+                (set, self.slots[slot as usize].need)
+            })
+            .collect();
+        (held, range)
+    }
+
+    /// Whether the slots and sets fit what the device binds.
+    fn fits(&self, sets: &Sets, placed: &Ranges) -> bool {
+        placed.end() <= self.most_slots && sets.fit(self.most_regions)
+    }
+
+    /// Whether placing each listed instance's candidates in turn, as
+    /// `place` would, replacing those it holds, keeps every slot and region
+    /// within what the device binds after each placement: a dry run on
+    /// copies of the sets and slots, which an edit that places many
+    /// instances takes before it changes anything. Each instance is listed
+    /// once.
+    pub fn fit(&self, instances: impl IntoIterator<Item = (usize, Vec<CandidateKey>)>) -> bool {
+        let (mut sets, mut placed) = (self.sets.clone(), self.placed.clone());
+        for (index, keys) in instances {
+            let (held, slots) = self.held(index);
+            if account((&mut sets, &mut placed), (&held, slots), &keys).is_none()
+                || !self.fits(&sets, &placed)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The candidate keys of an instance of `meshes` at a pose that is
+    /// `mirrored`, deforming or not, for `fit`.
+    pub fn keys(meshes: &[CandidateMesh], mirrored: bool, deforms: bool) -> Vec<CandidateKey> {
+        keyed(meshes, mirrored, deforms)
+            .map(|(_, key)| key)
+            .collect()
+    }
+
+    /// Places the candidates of the instance at `index`, of `model`'s
+    /// `meshes`, at a pose that is `mirrored`, with each mesh's bounds
+    /// `deformed` where it deforms, replacing those it held. Fails with
+    /// nothing changed when they would pass what the device binds: the
+    /// sets and slots are restored from copies taken before.
     pub fn place(
         &mut self,
         index: usize,
-        (state, deformation): (&InstanceState, Option<&InstanceDeformation>),
-        models: &Models,
-        materials: &Materials,
+        (model, meshes): (ModelId, &[CandidateMesh]),
+        mirrored: bool,
+        deformed: Option<&[[Vec3; 2]]>,
     ) -> Result<(), SceneError> {
-        let model = models.get(state.model)?;
-        let mirrored = state.pose.determinant() < 0.;
-        let mut placing = Vec::new();
-        let mut blended = false;
-        for (mesh_index, mesh) in model.meshes.iter().enumerate() {
-            let material = materials.get(mesh.material)?;
-            if material.values.blended() {
-                blended = true;
-                continue;
-            }
-            let Some(bounds) = (match deformation {
-                Some(deformation) => Some(deformation.mesh_bounds[mesh_index]),
-                None => mesh.ranges.bounds(),
-            }) else {
-                continue;
+        #[cfg(not(feature = "diagnostics"))]
+        let _ = model;
+        let placing: Vec<(usize, CandidateKey)> =
+            keyed(meshes, mirrored, deformed.is_some()).collect();
+        let keys: Vec<CandidateKey> = placing.iter().map(|&(_, key)| key).collect();
+        let (held, slots) = self.held(index);
+        let restore = (self.sets.clone(), self.placed.clone());
+        let placed = account(
+            (&mut self.sets, &mut self.placed),
+            (&held, slots.clone()),
+            &keys,
+        )
+        .filter(|_| self.fits(&self.sets, &self.placed));
+        let Some((range, joined)) = placed else {
+            (self.sets, self.placed) = restore;
+            return Err(SceneError::DeviceLimit);
+        };
+        // Its old slots end before its new ones, which may reuse them, are
+        // written.
+        for slot in slots {
+            self.free_slot(slot);
+        }
+        for (slot, ((mesh, (_, _, need)), set)) in
+            range.clone().zip(placing.into_iter().zip(joined))
+        {
+            let shape = &meshes[mesh];
+            let bounds = deformed.map_or(shape.bounds, |deformed| deformed[mesh]);
+            let record = DrawCandidate {
+                bounds_min: bounds[0].to_array(),
+                object: index as u32,
+                bounds_max: bounds[1].to_array(),
+                mesh: shape.word,
+                draw_set: set,
+                chain: shape.chain,
+                padding: [0; 2],
             };
-            let need = mesh
-                .lods
-                .iter()
-                .fold(mesh.ranges.section_count(), |need, lod| {
-                    let alternative = &models
-                        .get(lod.model)
-                        .expect("a level of detail's model lives")
-                        .meshes[lod.mesh];
-                    need.max(alternative.ranges.section_count())
-                });
-            // A deforming instance's empty mesh has bounds but no section.
-            if need == 0 {
-                continue;
-            }
-            placing.push(Placing {
-                record: DrawCandidate {
-                    bounds_min: bounds[0].to_array(),
-                    object: index as u32,
-                    bounds_max: bounds[1].to_array(),
-                    mesh: model.ray.mesh_word(mesh_index),
-                    draw_set: NO_SET,
-                    chain: self.chains.of(state.model, mesh_index),
-                    padding: [0; 2],
-                },
-                key: SetKey {
-                    material: mesh.material,
-                    mirrored,
-                    deforms: deformation.is_some(),
-                },
-                slot: Slot {
-                    mesh: mesh_index as u32,
-                    need,
-                },
-            });
-        }
-        let range = self
-            .placed
-            .allocate(placing.len() as u32)
-            .ok_or(SceneError::DeviceLimit)?;
-        if self.placed.end() > self.most_slots {
-            self.placed.free(range);
-            return Err(SceneError::DeviceLimit);
-        }
-        for placing in &mut placing {
-            placing.record.draw_set = self.sets.add(placing.key, materials, placing.slot.need);
-        }
-        if self.sets.region_end() > self.most_regions {
-            for placing in &placing {
-                self.sets
-                    .remove(placing.record.draw_set, placing.slot.need, materials);
-            }
-            self.placed.free(range);
-            return Err(SceneError::DeviceLimit);
-        }
-        self.remove(index, materials);
-        for (slot, placing) in range.clone().zip(placing) {
-            self.records.set(slot, placing.record, DrawCandidate::FREE);
+            self.records.set(slot, record, DrawCandidate::FREE);
             if self.slots.len() <= slot as usize {
                 self.slots.resize(slot as usize + 1, Slot::default());
             }
-            self.slots[slot as usize] = placing.slot;
+            self.slots[slot as usize] = Slot {
+                mesh: mesh as u32,
+                need,
+            };
             #[cfg(feature = "diagnostics")]
             {
                 let models = std::sync::Arc::make_mut(&mut self.models);
                 if models.len() <= slot as usize {
                     models.resize(slot as usize + 1, None);
                 }
-                models[slot as usize] = Some(state.model);
+                models[slot as usize] = Some(model);
             }
         }
         if self.by_instance.len() <= index {
             self.by_instance.resize(index + 1, 0..0);
         }
         self.by_instance[index] = range;
-        if blended {
+        if meshes.iter().any(|mesh| mesh.blended) {
             self.blended.insert(index as u32);
+        } else {
+            self.blended.remove(&(index as u32));
         }
         Ok(())
     }
 
-    /// Removes the candidates of the instance at `index`.
-    pub fn remove(&mut self, index: usize, materials: &Materials) {
-        self.blended.remove(&(index as u32));
-        let Some(range) = self.by_instance.get_mut(index).map(std::mem::take) else {
-            return;
-        };
-        for slot in range.clone() {
-            let record = *self.records.get(slot);
-            self.sets
-                .remove(record.draw_set, self.slots[slot as usize].need, materials);
-            self.records
-                .set(slot, DrawCandidate::FREE, DrawCandidate::FREE);
-            self.slots[slot as usize] = Slot::default();
-            #[cfg(feature = "diagnostics")]
-            {
-                std::sync::Arc::make_mut(&mut self.models)[slot as usize] = None;
-            }
+    /// Ends slot `slot`'s candidate, which its sets and slots no longer
+    /// account for.
+    fn free_slot(&mut self, slot: u32) {
+        self.records
+            .set(slot, DrawCandidate::FREE, DrawCandidate::FREE);
+        self.slots[slot as usize] = Slot::default();
+        #[cfg(feature = "diagnostics")]
+        {
+            std::sync::Arc::make_mut(&mut self.models)[slot as usize] = None;
         }
-        self.placed.free(range);
+    }
+
+    /// Removes the candidates of the instance at `index`.
+    pub fn remove(&mut self, index: usize) {
+        self.blended.remove(&(index as u32));
+        let (held, slots) = self.held(index);
+        account(
+            (&mut self.sets, &mut self.placed),
+            (&held, slots.clone()),
+            &[],
+        )
+        .expect("an empty placement takes no slot");
+        for slot in slots {
+            self.free_slot(slot);
+        }
+        if let Some(range) = self.by_instance.get_mut(index) {
+            *range = 0..0;
+        }
     }
 
     /// Writes the bounds of the instance at `index` as `deformation`
@@ -237,14 +319,6 @@ impl Candidates {
             };
             self.records.set(slot, record, DrawCandidate::FREE);
         }
-    }
-
-    /// Whether candidates of `slots` more instance meshes, drawing at most
-    /// `sections` more sections, fit what the device binds, wherever
-    /// re-placing their sets' regions puts them.
-    pub fn can_hold(&self, slots: u64, sections: u64) -> bool {
-        u64::from(self.placed.end()) + slots <= u64::from(self.most_slots)
-            && u64::from(self.sets.region_end()) + 2 * sections < u64::from(self.most_regions)
     }
 
     /// Sets mesh `mesh` of `model`'s level chain from its registered
@@ -285,9 +359,9 @@ impl Candidates {
         self.chains.remove_model(model);
     }
 
-    /// `material`'s values changed: its sets take its visibility group.
-    pub fn material_changed(&mut self, id: MaterialId, materials: &Materials) {
-        self.sets.material_changed(id, materials);
+    /// Material `id`'s values changed: its sets take how it now looks.
+    pub fn material_changed(&mut self, id: MaterialId, look: SetLook) {
+        self.sets.material_changed(id, look);
     }
 
     /// Uploads what the edits since the last frame changed.
@@ -329,37 +403,108 @@ impl Candidates {
     }
 }
 
+/// How a set's record takes `material`.
+pub(crate) fn look(material: &Material) -> SetLook {
+    SetLook {
+        group: material.values.visibility_group,
+        casts: material.casts_directional_shadows(),
+    }
+}
+
+/// The most sections among `mesh`'s levels of `models`, none where the mesh
+/// itself has none.
+pub(crate) fn mesh_need(mesh: &Mesh, models: &Models) -> u32 {
+    let base = mesh.ranges.section_count();
+    if base == 0 {
+        return 0;
+    }
+    mesh.lods.iter().fold(base, |need, lod| {
+        let alternative = &models
+            .get(lod.model)
+            .expect("a level of detail's model lives")
+            .meshes[lod.mesh];
+        need.max(alternative.ranges.section_count())
+    })
+}
+
 impl super::Scene {
-    /// Places again the candidates of `model`'s instances, after an edit
-    /// changed what they name: its geometry or alternatives, or a material
-    /// of its meshes' alpha mode. The edit checked first that they fit
-    /// (`Candidates::can_hold`).
-    pub(crate) fn place_candidates_of(&mut self, model: ModelId) {
-        for (id, instance) in self.instances.slots.iter() {
-            if instance.state.model == model {
-                self.candidates
-                    .place(
-                        id.index(),
-                        (&instance.state, instance.deformation.as_ref()),
-                        &self.models,
-                        &self.materials,
-                    )
-                    .expect("an edit checks its candidates fit before it commits");
-            }
-        }
+    /// `model`'s meshes (`id`'s, or its replacement's) as its instances'
+    /// candidates take them.
+    pub(crate) fn candidate_meshes(&self, id: ModelId, model: &Model) -> Vec<CandidateMesh> {
+        model
+            .meshes
+            .iter()
+            .enumerate()
+            .map(|(index, mesh)| {
+                let material = self.drawn_material(mesh.material);
+                CandidateMesh {
+                    material: mesh.material,
+                    look: look(material),
+                    blended: material.values.blended(),
+                    need: mesh_need(mesh, &self.models),
+                    bounds: mesh.ranges.bounds().unwrap_or([Vec3::ZERO; 2]),
+                    word: model.ray.mesh_word(index),
+                    chain: self.candidates.chains.of(id, index),
+                }
+            })
+            .collect()
     }
 
-    /// Whether `model`'s instances' candidates fit the device when each of
-    /// their meshes may draw at most the sections `sections` lists.
-    pub(crate) fn candidates_fit(&self, model: ModelId, sections: &[u32]) -> bool {
-        let users = self
+    /// Places the candidates of the instance `id` as it is now.
+    pub(crate) fn place_candidates(&mut self, id: crate::InstanceId) -> Result<(), SceneError> {
+        let instance = self.instances.get(id)?;
+        let model = instance.state.model;
+        let meshes = self.candidate_meshes(model, self.drawn_model(model));
+        let mirrored = instance.state.pose.determinant() < 0.;
+        let deformed = instance
+            .deformation
+            .as_ref()
+            .map(|deformation| deformation.mesh_bounds.as_slice());
+        self.candidates
+            .place(id.index(), (model, &meshes), mirrored, deformed)
+    }
+
+    /// Whether the candidates of each listed model's instances fit the
+    /// device when, model by model, each takes the model's listed meshes,
+    /// deforming where the listed flag says or, for none, where it deforms
+    /// now: the dry run of the `place_candidates_of` calls an edit makes in
+    /// that order, which it takes before it changes anything.
+    pub(crate) fn candidates_fit(
+        &self,
+        plan: &[(ModelId, &[CandidateMesh], Option<bool>)],
+    ) -> bool {
+        let instances = plan.iter().flat_map(|&(model, meshes, deforms)| {
+            self.instances
+                .slots
+                .iter()
+                .filter(move |(_, instance)| instance.state.model == model)
+                .map(move |(id, instance)| {
+                    let mirrored = instance.state.pose.determinant() < 0.;
+                    let deforms = deforms.unwrap_or(instance.deformation.is_some());
+                    (id.index(), Candidates::keys(meshes, mirrored, deforms))
+                })
+        });
+        self.candidates.fit(instances)
+    }
+
+    /// Places again the candidates of `model`'s instances, in index order,
+    /// after an edit changed what they name: its geometry or alternatives,
+    /// or a material of its meshes' alpha mode. The edit took the same
+    /// placement's dry run first (`candidates_fit`), so it fits.
+    pub(crate) fn place_candidates_of(&mut self, model: ModelId) {
+        let ids: Vec<_> = self
             .instances
             .slots
             .iter()
             .filter(|(_, instance)| instance.state.model == model)
-            .count() as u64;
-        let total: u64 = sections.iter().map(|&count| u64::from(count)).sum();
-        self.candidates
-            .can_hold(users * sections.len() as u64, users * total)
+            .map(|(id, _)| id)
+            .collect();
+        for id in ids {
+            self.place_candidates(id)
+                .expect("an edit's dry run found its candidates fit");
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;

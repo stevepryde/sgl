@@ -116,7 +116,7 @@ fn cull_plane_in_model(plane:vec4<f32>,model:mat4x4<f32>)->vec4<f32> {
 // outside one plane by more than its tolerance. The planes and tolerance
 // rows are view::culling's, built pose-free in double precision; the pose is
 // applied here in f32, its rounding covered by the tolerance rows, which
-// allow twice what raster's own rounding needs (view::culling::ViewPlanes).
+// allow twice what raster's own rounding needs (view::culling::Frustum::planes).
 // Nonfinite bounds never reject.
 fn cull_reaches(model:mat4x4<f32>,lo:vec3<f32>,hi:vec3<f32>)->bool {
  if !cull_finite(lo) || !cull_finite(hi) {

@@ -1,6 +1,7 @@
 //! Materials: each one's values, raster group 2 (values, maps, sampler and
 //! lightmap eligibility) and record in the ray source, with the `Scene`
 //! operations that add, read, edit and remove them.
+use super::candidates::CandidateMesh;
 use super::rays::{MaterialTextures, SceneRays};
 use super::slots::Slots;
 use super::textures::{self, Textures};
@@ -538,19 +539,30 @@ impl Scene {
         // stops being blended adds or removes its users' instances' ones.
         let blending = matches!(alpha, AlphaMode::Blend { .. }) != values.blended();
         let users: Vec<ModelId> = self.materials.get(id)?.users.keys().copied().collect();
-        if blending
-            && !values.blended()
-            && !users.iter().all(|&model| {
-                let meshes = &self.drawn_model(model).meshes;
-                let sections: Vec<u32> = meshes
-                    .iter()
-                    .filter(|mesh| mesh.material == id)
-                    .map(|mesh| mesh.ranges.section_count())
-                    .collect();
-                self.candidates_fit(model, &sections)
-            })
-        {
-            return Err(SceneError::DeviceLimit);
+        if blending {
+            // Each user model's instances, in the order they are placed
+            // again below, take the material's meshes as blended or not.
+            let meshes: Vec<Vec<CandidateMesh>> = users
+                .iter()
+                .map(|&model| {
+                    let mut meshes = self.candidate_meshes(model, self.drawn_model(model));
+                    let owner = &self.drawn_model(model).meshes;
+                    for (mesh, shape) in owner.iter().zip(&mut meshes) {
+                        if mesh.material == id {
+                            shape.blended = values.blended();
+                        }
+                    }
+                    meshes
+                })
+                .collect();
+            let plan: Vec<_> = users
+                .iter()
+                .zip(&meshes)
+                .map(|(&model, meshes)| (model, meshes.as_slice(), None))
+                .collect();
+            if !self.candidates_fit(&plan) {
+                return Err(SceneError::DeviceLimit);
+            }
         }
         self.materials.set(queue, &self.rays, id, values)?;
         if std::mem::discriminant(&alpha) != std::mem::discriminant(&values.alpha) {
@@ -561,7 +573,8 @@ impl Scene {
                 self.place_candidates_of(model);
             }
         }
-        self.candidates.material_changed(id, &self.materials);
+        self.candidates
+            .material_changed(id, super::candidates::look(self.materials.get(id)?));
         Ok(())
     }
 

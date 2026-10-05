@@ -65,17 +65,17 @@ impl Scene {
                 return Err(SceneError::MissingAnisotropyTangents);
             }
         }
-        let sections = |lods: &[MeshLod]| -> Result<u32, SceneError> {
-            let mut most = 0;
-            for lod in lods {
-                let alternative = &self.models.get(lod.model)?.meshes[lod.mesh];
-                most = u32::max(most, alternative.ranges.section_count());
-            }
-            Ok(most)
-        };
-        let base_sections = self.models.get(model)?.meshes[mesh].ranges.section_count();
-        let extra = sections(&alternatives)?.saturating_sub(base_sections);
-        if !self.candidates_fit(model, &[extra]) {
+        // Its instances' candidates of the mesh then count the most
+        // sections among its new levels; nothing changes unless they fit.
+        let mut meshes = self.candidate_meshes(model, self.models.get(model)?);
+        let base = self.models.get(model)?.meshes[mesh].ranges.section_count();
+        if base > 0 {
+            meshes[mesh].need = alternatives.iter().fold(base, |need, lod| {
+                let alternative = &self.drawn_model(lod.model).meshes[lod.mesh];
+                need.max(alternative.ranges.section_count())
+            });
+        }
+        if !self.candidates_fit(&[(model, &meshes, None)]) {
             return Err(SceneError::DeviceLimit);
         }
         let previous = std::mem::take(&mut self.models.get_mut(model)?.meshes[mesh].lods);

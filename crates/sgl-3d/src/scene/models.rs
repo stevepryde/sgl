@@ -425,12 +425,9 @@ impl Scene {
         // The moving instances showing it deform as the new geometry does,
         // from its bind pose.
         let posed = built.and_then(|built| {
-            let sections: Vec<u32> = built
-                .meshes
-                .iter()
-                .map(|mesh| mesh.ranges.section_count())
-                .collect();
-            if !self.candidates_fit(id, &sections) {
+            let meshes = self.candidate_meshes(id, &built);
+            let deforms = Some(built.deformation.is_some());
+            if !self.candidates_fit(&[(id, &meshes, deforms)]) {
                 Models::free(
                     &mut self.rays,
                     &mut self.geometry,

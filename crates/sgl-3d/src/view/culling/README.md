@@ -16,8 +16,9 @@ Meshes retain their original vertex, index and primitive order. A retained
 hierarchy bounds consecutive groups of at most 128 triangles; its leaves are
 the mesh's sections, whose bounds, first index and triangle count its
 section table in the ray source holds. A section is the GPU's unit: it
-draws as one instance of its set's indirect draw, whose 384 vertices past
-its triangles are a dummy point outside the clip volume. The CPU traversal
+draws as one instance of its set's indirect draw, of 384 vertices: three
+for each of its triangles, then, past them, a dummy point outside the clip
+volume. The CPU traversal
 accepts fully inside subtrees at once and merges adjacent visible ranges
 into a draw. Either permits rejection inside large batched meshes without
 renumbering source primitives. Assets whose triangle order jumps across the

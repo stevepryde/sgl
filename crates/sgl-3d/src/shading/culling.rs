@@ -125,7 +125,7 @@ pub(crate) struct DrawSet {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct CullView {
-    /// The clip volume's planes in world space (`view::culling::ViewPlanes`),
+    /// The clip volume's planes in world space (`view::culling::Frustum::planes`),
     /// left, right, bottom, top, far and near: a point `p` lies inside where
     /// `dot(plane, p) >= 0`.
     pub planes: [[f32; 4]; 6],

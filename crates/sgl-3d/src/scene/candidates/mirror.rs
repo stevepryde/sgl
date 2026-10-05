@@ -5,6 +5,7 @@
 //! a frame's encoder, so an abandoned frame loses no edit.
 use bytemuck::Pod;
 
+#[derive(Clone)]
 pub(super) struct Mirror<T: Pod> {
     label: &'static str,
     records: Vec<T>,

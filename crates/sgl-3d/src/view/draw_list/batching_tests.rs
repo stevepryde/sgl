@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 // authored with: its model, mesh, material, alpha mode and whether its pose
 // mirrors. A probe capture's cascades bin their casters, static ones.
 #[test]
-fn merged_draws_share_material_pipeline_and_mobility() {
+fn merged_draws_share_material_pipeline_and_geometry() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
@@ -200,4 +200,78 @@ fn draws_merge_only_with_the_same_ranges() {
         .collect();
     together.sort();
     assert_eq!(together, [vec![0, 2], vec![1]]);
+}
+
+// Plausible defect: draws of a static and a moving instance merged into one
+// draw, which then takes one mobility's motion and statistics for both: the
+// blended list (adjacent draws) and the local-light faces (binned) batch
+// both mobilities. The oracle is each draw's authored mobility: whichever
+// way a list merges, a batch holds draws of one mobility, and equal draws
+// of one mobility still merge.
+#[test]
+fn draws_merge_only_with_the_same_mobility() {
+    let key = |mobility| BatchKey {
+        variant: Variant {
+            cull: Cull::Back,
+            alpha: Alpha::Opaque,
+            deformed: false,
+        },
+        material: MaterialId::issue(0, 1),
+        geometry: Geometry::Mesh {
+            model: ModelId::issue(0, 1),
+            mesh: 0,
+        },
+        mobility,
+    };
+    let authored = [
+        Mobility::Static,
+        Mobility::Static,
+        Mobility::Moving,
+        Mobility::Moving,
+        Mobility::Static,
+    ];
+    let ranges = std::iter::once(0..384).collect::<Vec<_>>();
+    let batcher = || {
+        let mut batcher = Batcher::default();
+        for (object, &mobility) in authored.iter().enumerate() {
+            batcher.push(InstanceDraw {
+                key: key(mobility),
+                ranges: 0..1,
+                instance: DrawInstance {
+                    object: object as u32,
+                    ..Zeroable::zeroed()
+                },
+                order: (0, 0),
+            });
+        }
+        batcher
+    };
+    let held = |batches: &[super::DrawBatch], instances: &[DrawInstance]| -> Vec<Vec<u32>> {
+        batches
+            .iter()
+            .map(|batch| {
+                let held: Vec<u32> = instances
+                    [batch.instances.start as usize..batch.instances.end as usize]
+                    .iter()
+                    .map(|drawn| drawn.object)
+                    .collect();
+                for &object in &held {
+                    assert_eq!(batch.key.mobility, authored[object as usize]);
+                }
+                held
+            })
+            .collect()
+    };
+    let (mut batches, mut instances) = (Vec::new(), Vec::new());
+    batcher().bin((&ranges, &mut batches, &mut instances));
+    let mut binned = held(&batches, &instances);
+    binned.sort();
+    assert_eq!(binned, [vec![0, 1, 4], vec![2, 3]], "binned");
+    let (mut batches, mut instances) = (Vec::new(), Vec::new());
+    batcher().merge_adjacent((&ranges, &mut batches, &mut instances));
+    assert_eq!(
+        held(&batches, &instances),
+        [vec![0, 1], vec![2, 3], vec![4]],
+        "merged where adjacent"
+    );
 }

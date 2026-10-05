@@ -234,10 +234,11 @@ fn gpu_frustum_never_drops_a_triangle_the_clip_oracle_keeps() {
 }
 
 // Plausible defect: the jitter left out of the planes, so a triangle the
-// jittered raster shows at the view's edge is culled; and, a million metres
-// out, a tolerance that does not cover the f32 product of the pose with the
-// planes (a mutation that drops the tolerance passes here: these steps do
-// not happen to round across the plane). The oracle clips each
+// jittered raster shows at the view's edge is culled. It also runs a million
+// metres out, but does not target the f32 tolerance: these steps do not
+// happen to round across the plane, so a cull without it passes here, and
+// the tolerance rests on its derivation (`view::culling::Frustum::planes`,
+// culling.wgsl's `cull_reaches`). The oracle clips each
 // triangle in double precision through the jittered camera, as above: tiny
 // triangles step across the view's left plane, at the origin and a million
 // metres from it, and every one it keeps must be appended; at the origin,
@@ -345,8 +346,9 @@ fn square(size: f32) -> CpuMesh {
 // coarser than the one it chose, and is the same where no level's CPU
 // bound lies within 0.1% of half a pixel, beyond the GPU's margins.
 // Instances recede from a metre to a kilometre, near the origin and a
-// million metres from it, so the GPU must also choose coarser levels where
-// they are admissible.
+// million metres from it, every other one rotated and scaled nonuniformly,
+// so the GPU composes the pose's every element, and the GPU must also
+// choose coarser levels where they are admissible.
 #[test]
 fn gpu_lod_is_never_coarser_than_the_cpu_admits() {
     let Some((device, queue)) = test_support::device() else {
@@ -388,7 +390,13 @@ fn gpu_lod_is_never_coarser_than_the_cpu_admits() {
         let mut placed = Vec::new();
         for step in 0..48 {
             let distance = 1.5 * 1.15_f32.powi(step);
-            let pose = Mat4::from_translation(origin + Vec3::new(0.1, 0.05, -distance));
+            let mut pose = Mat4::from_translation(origin + Vec3::new(0.1, 0.05, -distance));
+            if step % 2 == 1 {
+                pose = pose
+                    * Mat4::from_rotation_y(0.4)
+                    * Mat4::from_rotation_x(0.3)
+                    * Mat4::from_scale(Vec3::new(1.5, 0.7, 1.2));
+            }
             placed.push((
                 place(gpu, &mut scene, base, pose, (true, true, Mobility::Static)),
                 pose,

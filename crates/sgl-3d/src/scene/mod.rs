@@ -152,7 +152,7 @@ impl Scene {
         Self {
             materials: materials::Materials::new(device, queue),
             models: models::Models::default(),
-            candidates: candidates::Candidates::new(device),
+            candidates: candidates::Candidates::new(&device.limits()),
             lights: lights::Lights::new(device),
             decals: decals::Decals::new(device, queue),
             environments: environments::Environments::new(device, queue),

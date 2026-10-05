@@ -5,10 +5,11 @@
 //! every GPU-built view's cluster list, placed by `scene::ranges`, of at
 //! least the capacity its candidates' sections sum to, and re-placed only
 //! when it outgrows it or shrinks to a quarter of it, and one indirect
-//! command, at its index in each view's draws.
+//! command, at its index in each view's draws. Sets need no scene: what
+//! their records take of their material comes with each candidate
+//! (`SetLook`), so a refused placement restores a copy of them.
 use super::mirror::Mirror;
 use crate::content::identity::MaterialId;
-use crate::scene::materials::{Material, Materials};
 use crate::scene::ranges::Ranges;
 use crate::shading::culling::{DrawSet, SET_CASTS_DIRECTIONAL_SHADOW};
 use rustc_hash::FxHashMap;
@@ -25,9 +26,19 @@ pub(crate) struct SetKey {
     pub deforms: bool,
 }
 
+/// What a set's record takes of its material: its visibility group and
+/// whether it casts the directional shadow.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SetLook {
+    pub group: u32,
+    pub casts: bool,
+}
+
 /// A live set.
+#[derive(Clone)]
 struct Set {
     key: SetKey,
+    look: SetLook,
     /// Its candidates, and the sections they draw at most, each counting
     /// the most among its levels.
     candidates: u32,
@@ -35,6 +46,7 @@ struct Set {
     region: Range<u32>,
 }
 
+#[derive(Clone)]
 pub(crate) struct Sets {
     sets: Vec<Option<Set>>,
     by_key: FxHashMap<SetKey, u32>,
@@ -44,6 +56,8 @@ pub(crate) struct Sets {
     /// Every set's region of each GPU-built view's cluster list, in draw
     /// instances.
     regions: Ranges,
+    /// A region could not be placed within `u32`: the sets fit no device.
+    overflowed: bool,
 }
 
 impl Sets {
@@ -54,13 +68,14 @@ impl Sets {
             free: Vec::new(),
             records: Mirror::new("draw sets"),
             regions: Ranges::new(0),
+            overflowed: false,
         }
     }
 
     /// Adds a candidate drawing at most `need` sections to the set of
-    /// `key`, adding the set when there is none; returns its index. Its
-    /// region grows to hold them.
-    pub fn add(&mut self, key: SetKey, materials: &Materials, need: u32) -> u32 {
+    /// `key`, whose material looks as `look` says, adding the set when there
+    /// is none; returns its index. Its region grows to hold them.
+    pub fn add(&mut self, key: SetKey, look: SetLook, need: u32) -> u32 {
         let index = match self.by_key.get(&key) {
             Some(&index) => index,
             None => {
@@ -70,6 +85,7 @@ impl Sets {
                 }
                 self.sets[index as usize] = Some(Set {
                     key,
+                    look,
                     candidates: 0,
                     need: 0,
                     region: 0..0,
@@ -81,13 +97,13 @@ impl Sets {
         let set = self.sets[index as usize].as_mut().unwrap();
         set.candidates += 1;
         set.need += need;
-        self.place(index, materials);
+        self.place(index);
         index
     }
 
     /// Removes a candidate drawing at most `need` sections from set
     /// `index`, ending the set with its last one.
-    pub fn remove(&mut self, index: u32, need: u32, materials: &Materials) {
+    pub fn remove(&mut self, index: u32, need: u32) {
         let set = self.sets[index as usize]
             .as_mut()
             .expect("a candidate's set lives");
@@ -102,40 +118,42 @@ impl Sets {
                 .set(index, DrawSet::default(), DrawSet::default());
             return;
         }
-        self.place(index, materials);
+        self.place(index);
     }
 
     /// Re-places set `index`'s region when its candidates outgrew it or
     /// shrank to a quarter of it, with half as much again as they need,
     /// and writes its record.
-    fn place(&mut self, index: u32, materials: &Materials) {
+    fn place(&mut self, index: u32) {
         let set = self.sets[index as usize].as_mut().unwrap();
-        let material = materials
-            .get(set.key.material)
-            .expect("a set's material lives");
         let capacity = set.region.len() as u32;
         if set.need > capacity || set.need <= capacity / 4 {
             self.regions.free(set.region.clone());
-            let capacity = set.need + set.need / 2;
-            set.region = self
-                .regions
-                .allocate(capacity)
-                .expect("a scene's regions stay within u32");
+            let capacity = set.need.saturating_add(set.need / 2);
+            set.region = self.regions.allocate(capacity).unwrap_or_else(|| {
+                self.overflowed = true;
+                0..0
+            });
         }
-        let record = record(set, material);
-        self.records.set(index, record, DrawSet::default());
+        self.records.set(index, record(set), DrawSet::default());
     }
 
-    /// Rewrites the records of `material`'s sets, which take its visibility
-    /// group.
-    pub fn material_changed(&mut self, id: MaterialId, materials: &Materials) {
-        let material = materials.get(id).expect("an edited material lives");
-        for (index, set) in self.sets.iter().enumerate() {
-            if let Some(set) = set.as_ref().filter(|set| set.key.material == id) {
+    /// Rewrites the records of material `id`'s sets, which now looks as
+    /// `look` says.
+    pub fn material_changed(&mut self, id: MaterialId, look: SetLook) {
+        for (index, set) in self.sets.iter_mut().enumerate() {
+            if let Some(set) = set.as_mut().filter(|set| set.key.material == id) {
+                set.look = look;
                 self.records
-                    .set(index as u32, record(set, material), DrawSet::default());
+                    .set(index as u32, record(set), DrawSet::default());
             }
         }
+    }
+
+    /// Whether every region lies within `most` draw instances, which each
+    /// GPU-built view's cluster list binds.
+    pub fn fit(&self, most: u32) -> bool {
+        !self.overflowed && self.regions.end() <= most
     }
 
     /// One past the last draw instance a region holds: each GPU-built
@@ -173,13 +191,13 @@ impl Sets {
     }
 }
 
-/// Set `set`'s record, with `material`'s group and casting.
-fn record(set: &Set, material: &Material) -> DrawSet {
+/// Set `set`'s record.
+fn record(set: &Set) -> DrawSet {
     DrawSet {
         region: set.region.start,
         capacity: set.region.len() as u32,
-        visibility_group: material.values.visibility_group,
-        flags: if material.casts_directional_shadows() {
+        visibility_group: set.look.group,
+        flags: if set.look.casts {
             SET_CASTS_DIRECTIONAL_SHADOW
         } else {
             0

@@ -5,7 +5,7 @@
 //! waited on; a frame whose readback has arrived becomes what
 //! `Renderer::geometry_stats` describes, with its blended list's CPU
 //! counts. An abandoned frame's copy never ran, so every frame starts with
-//! nothing copied.
+//! nothing copied. A frame whose map fails reports nothing.
 use super::GeometryStats;
 use super::gpu::GpuList;
 #[cfg(feature = "diagnostics")]
@@ -129,7 +129,13 @@ impl StatisticsReadback {
             match front.ready.load(Ordering::Acquire) {
                 PENDING => break,
                 READY => {}
-                _ => panic!("geometry statistics readback failed"),
+                // A map that failed (a lost device) reports nothing of its
+                // frame, as `timing` drops a failed frame's timestamps; its
+                // buffer is not reused.
+                _ => {
+                    self.pending.pop_front();
+                    continue;
+                }
             }
             let pending = self.pending.pop_front().unwrap();
             let mut completed = Completed::default();
