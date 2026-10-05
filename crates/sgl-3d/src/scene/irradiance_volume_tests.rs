@@ -714,7 +714,9 @@ fn the_share_fades_over_the_cell_past_each_face() {
 // past the irradiance volume, the dynamic GI volume takes over; half a
 // cell past it, each takes half; beyond both, the moving receiver's cube;
 // with baked lighting off, the irradiance volume and the cube give way to
-// the dynamic GI volume.
+// the dynamic GI volume. A floor below the receivers gives the dynamic GI
+// probes about them a surface, as a static receiver's own surface gives its
+// probes, so the static receivers take that volume too.
 #[test]
 fn the_volume_lights_receivers_below_charts_and_above_dynamic_gi_and_ambient_cubes() {
     let Some((device, queue)) = test_support::device() else {
@@ -728,6 +730,26 @@ fn the_volume_lights_receivers_below_charts_and_above_dynamic_gi_and_ambient_cub
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
     let mut scene = Scene::new(&device, &queue);
     let environment = uniform_environment(gpu, &mut scene, 0.5);
+    // Its top at y = -0.5, below the receivers and 1.5 m below the probes
+    // at y = 1.
+    let mut floor = test_support::cube();
+    floor.materials[0].base = [0.5, 0.5, 0.5, 1.];
+    floor.materials[0].metallic = 0.;
+    let floor = scene.add_asset(&device, &queue, floor).unwrap().model;
+    scene
+        .add_instance(
+            &device,
+            &queue,
+            InstanceState {
+                model: floor,
+                pose: Mat4::from_translation(Vec3::new(0., -1., 0.))
+                    * Mat4::from_scale(Vec3::new(20., 1., 20.)),
+                visible: true,
+                capture_visible: true,
+            },
+            Mobility::Static,
+        )
+        .unwrap();
     scene
         .set_dynamic_gi_volume(
             &device,
@@ -765,7 +787,7 @@ fn the_volume_lights_receivers_below_charts_and_above_dynamic_gi_and_ambient_cub
   var s=fixture_surface(positions[i],vec3(0.,1.,0.),false,1.);
   s.moving=moving[i];
   s.baked=lightmapped[i];
-  let indirect=surface_indirect_diffuse(s,s.normal);
+  let indirect=surface_indirect_diffuse(s,s.normal,false);
   output[2u*i]=vec4(indirect.baked.r,indirect.field.r,indirect.dynamic_gi.r,indirect.dynamic_gi.a);
   output[2u*i+1u]=vec4(indirect.ambient,indirect.sky_visibility,0.,0.);
  }}"#,

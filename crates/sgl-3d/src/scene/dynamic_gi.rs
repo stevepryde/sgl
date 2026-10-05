@@ -55,7 +55,9 @@ impl Scene {
     /// Installing the same spacing and counts at an origin moved by whole
     /// spacings scrolls the volume, as a volume that follows the camera
     /// does: the probes that stay keep what they hold, and those that enter
-    /// start afresh. Another spacing or count, or an origin off the lattice
+    /// start afresh. The installed origin snaps to the nearest point of the
+    /// lattice, so `Scene::dynamic_gi_volume` may differ from the origin
+    /// given by up to that tolerance. Another spacing or count, or an origin off the lattice
     /// beyond a small tolerance of the spacing, is another placement, all of
     /// whose probes start afresh. Until a probe has been traced, it lights
     /// nothing and surfaces keep their other indirect light. Installing the

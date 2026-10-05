@@ -74,6 +74,7 @@ impl Layouts {
                     storage(4, false),
                     written(5, wgpu::TextureFormat::Rg32Uint),
                     storage(6, false),
+                    storage(7, true),
                 ],
             ),
             trace: layout(
@@ -114,7 +115,8 @@ pub(super) struct Volume {
     pub variance: wgpu::Buffer,
     /// Each depth texel's mean and mean square distance.
     pub depth_history: wgpu::Buffer,
-    /// Each probe's offset and whether it has been blended.
+    /// Each probe's offset, whether it has been blended, and its share of
+    /// back faces, which classifies it.
     pub probe_states: wgpu::Buffer,
     /// The rays each probe traces this frame.
     pub ray_counts: wgpu::Buffer,
@@ -198,7 +200,7 @@ impl Volume {
     pub fn new(
         device: &wgpu::Device,
         layouts: &Layouts,
-        uniform: &wgpu::Buffer,
+        uniform: (&wgpu::Buffer, &wgpu::Buffer),
         (key, installed): (Key, InstalledVolume),
         max_rays: u32,
     ) -> Self {
@@ -218,7 +220,7 @@ impl Volume {
         );
         let depth_history =
             storage_buffer(device, "dynamic GI depth moments", count * depth_texels * 4);
-        let probe_states = storage_buffer(device, "dynamic GI probe states", count * 8);
+        let probe_states = storage_buffer(device, "dynamic GI probe states", count * 16);
         let ray_counts = storage_buffer(device, "dynamic GI ray counts", count * 4);
         let traced_probes = storage_buffer(device, "dynamic GI traced probes", count * 4);
         let allocation = crate::counters::buffer(
@@ -256,7 +258,7 @@ impl Volume {
         &self,
         device: &wgpu::Device,
         layouts: &Layouts,
-        uniform: &wgpu::Buffer,
+        (uniform, moving_bounds): (&wgpu::Buffer, &wgpu::Buffer),
         max_rays: u32,
     ) -> Rays {
         let size = layout::ray_texture_size(probe_count(self.installed.probes), max_rays);
@@ -293,6 +295,7 @@ impl Volume {
                     buffer(4, &self.allocation),
                     view(5, &list),
                     buffer(6, &self.traced_probes),
+                    buffer(7, moving_bounds),
                 ],
             ),
             trace: group(

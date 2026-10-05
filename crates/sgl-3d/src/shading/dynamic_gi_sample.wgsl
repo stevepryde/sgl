@@ -10,8 +10,14 @@
 // weight floored and crushed), reading irradiance by the normal from
 // revision 95e357f73f28d24e70ce7a1ab8f9fb954de457e4's colour map (251–257)
 // in place of its spherical harmonics, MIT (src/LICENSE-wicked.txt).
-// Changed: a probe not yet blended weighs nothing, and a receiver whose
-// probes all weigh nothing keeps its fallback; the volume's share fades to
+// Changed: a probe not yet blended weighs nothing, nor does an inactive one,
+// as NVIDIA RTXGI's sample skips its inactive probes (RTXGI-DDGI
+// f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6, rtxgi-sdk/shaders/ddgi/
+// Irradiance.hlsl 101-103; practice only), nor a dormant one, with no
+// surface in its cell, for a static receiver, which RTXGI deactivates for
+// every receiver: a moving receiver keeps it, so a moving instance in open
+// space is lit; and a receiver whose probes all weigh nothing keeps its
+// fallback; the volume's share fades to
 // nothing over the one spacing past its extent, as RTXGI's volume blend
 // weight fades (volume_share.wgsl); f32 in place of half; the sampler is
 // `baked_sampler`; a probe's texels are where the volume's scroll stores
@@ -52,9 +58,14 @@ const DDGI_SELF_SHADOW_BIAS:f32=.3;
 // The volume's irradiance / PI at `position` along `normal`, seen from
 // `view` (toward the viewer), in rgb, and in a its share of the receiver's
 // indirect diffuse: 1 within the volume's extent, fading to 0 over the one
-// spacing past it; 0 where the volume does not light the frame or no probe
-// about the receiver has been blended.
-fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>)->vec4<f32> {
+// spacing past it; 0 where the volume does not light the frame. Where no
+// probe about the receiver weighs (none blended and active), a `probe_hit`,
+// a dynamic GI probe ray's hit, takes the volume's own zero at that share,
+// as Wicked's and RTXGI's hits sample their volumes, so the probes' bounce
+// starts from their own light and never from the sky's fallback; any other
+// receiver keeps its fallback, its share 0. A `moving` receiver, on a
+// moving instance, weighs dormant probes too.
+fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,probe_hit:bool,moving:bool)->vec4<f32> {
  if (frame.flags&FRAME_DYNAMIC_GI)==0u {
   return vec4(0.);
  }
@@ -84,7 +95,8 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>)->ve
   // Its texels, where the volume's scroll stores them.
   let stored=ddgi_probe_stored(probe_grid_coord,probes,frame.dynamic_gi_scroll);
   let data=textureLoad(dynamic_gi_probes,ddgi_probe_data_pixel(stored,probes),0);
-  if data.a<=0. {
+  // A probe with nothing in its cell lights moving receivers alone.
+  if data.a<=0. || (data.a<.75 && !moving) {
    continue;
   }
   let probe_pos=ddgi_probe_position(probe_grid_coord,origin,spacing,data.rgb);
@@ -121,7 +133,7 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>)->ve
   sum_weight+=weight;
  }
  if sum_weight<=0. {
-  return vec4(0.);
+  return vec4(0.,0.,0.,select(0.,share,probe_hit));
  }
  return vec4(sum_irradiance/sum_weight,share);
 }

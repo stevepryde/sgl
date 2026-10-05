@@ -188,7 +188,9 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   and on moving instances in place of their ambient cubes and the frame's
   ambient, fading out over one spacing past the volume. A new placement
   starts its probes over a few frames, nearest the camera first; one moved
-  by whole spacings scrolls, keeping the probes that stay.
+  by whole spacings scrolls, keeping the probes that stay. Probes inside
+  geometry or behind walls light nothing and cost little; those with no
+  surface near them light moving instances alone.
   `Settings::dynamic_gi` sets its rays.
   [Dynamic GI](../README.md#dynamic-diffuse-gi).
 - **Baked specular probes**: parallax-corrected reflection cubes with blended

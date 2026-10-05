@@ -19,16 +19,25 @@ pub(crate) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// default `DDGI_RAYCOUNT` (df44c3d wiRenderer.cpp 143), High's
 /// (`DDGI_MOST_RAYS`).
 pub(crate) const MOST_RAYS: u32 = 256;
+/// The fixed rays each probe traces a frame beside its others, which
+/// classify it and are not blended (`DDGI_FIXED_RAYS_PER_FRAME`).
+pub(crate) const FIXED_RAYS_PER_FRAME: u32 = 4;
 /// Texels to a row of the ray list and ray results (`DDGI_RAY_ROW`): a
-/// probe's rays, `max_rays` of them, follow one another from texel
-/// `probe * max_rays`.
+/// probe's rays, `max_rays` and its fixed rays, follow one another from
+/// texel `probe * ray_stride(max_rays)`.
 pub(crate) const RAY_ROW: u32 = 2048;
 /// The bytes each probe's blend history takes in the dynamic GI stage's
 /// buffers: its irradiance estimator (six words per irradiance texel), its
-/// depth moments (a word per depth texel) and its offset and state (two
+/// depth moments (a word per depth texel) and its offset and state (four
 /// words).
 pub(crate) const HISTORY_BYTES: u64 = 4
-    * (6 * (COLOR_RESOLUTION * COLOR_RESOLUTION) + DEPTH_RESOLUTION * DEPTH_RESOLUTION + 2) as u64;
+    * (6 * (COLOR_RESOLUTION * COLOR_RESOLUTION) + DEPTH_RESOLUTION * DEPTH_RESOLUTION + 4) as u64;
+
+/// The ray texels each probe takes at `max_rays` (`ddgi_ray_slot`): its
+/// rays and its fixed rays.
+pub(crate) fn ray_stride(max_rays: u32) -> u32 {
+    max_rays + FIXED_RAYS_PER_FRAME
+}
 
 /// The probe texture's width and height for a lattice of `probes`: the
 /// depth region's tiles, then the irradiance region's, two slabs to a band,
@@ -44,9 +53,9 @@ pub(crate) fn texture_size(probes: [u32; 3]) -> [u64; 2] {
 }
 
 /// The ray list's and ray results' width and height for `probe_count`
-/// probes tracing at most `max_rays` each.
+/// probes tracing at most `max_rays` each, and their fixed rays.
 pub(crate) fn ray_texture_size(probe_count: u64, max_rays: u32) -> [u64; 2] {
-    let rays = probe_count * u64::from(max_rays);
+    let rays = probe_count * u64::from(ray_stride(max_rays));
     [u64::from(RAY_ROW), rays.div_ceil(u64::from(RAY_ROW)).max(1)]
 }
 
@@ -64,7 +73,7 @@ pub(crate) fn fits(probes: [u32; 3], limits: &wgpu::Limits) -> bool {
         .iter()
         .all(|size| size.iter().all(|&side| side <= largest))
         && count * HISTORY_BYTES <= binding
-        && count * u64::from(MOST_RAYS) <= u64::from(u32::MAX)
+        && count * u64::from(ray_stride(MOST_RAYS)) <= u64::from(u32::MAX)
 }
 
 #[cfg(test)]
@@ -78,6 +87,7 @@ pub(crate) fn constants() -> Vec<super::layout_tests::Constant> {
         ("DDGI_DATA_SLABS", DATA_SLABS),
         ("DDGI_RAY_ROW", RAY_ROW),
         ("DDGI_MOST_RAYS", MOST_RAYS),
+        ("DDGI_FIXED_RAYS_PER_FRAME", FIXED_RAYS_PER_FRAME),
     ]
     .into_iter()
     .map(|(name, value)| Constant::new("geometry", name, naga::Literal::U32(value)))
