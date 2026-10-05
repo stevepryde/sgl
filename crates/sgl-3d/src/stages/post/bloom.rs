@@ -93,7 +93,8 @@ fn blend_factor(bloom: &BloomParameters, mip: u32, max_mip: u32) -> f32 {
 /// device allows, scaled to the device's largest width instead. Bevy's
 /// sizing alone fails for a scene more than `largest / MAX_MIP_DIMENSION`
 /// times as wide as it is high (32 at 16384; Bevy's issue 16182); the
-/// fallback keeps the scene's aspect and every size Bevy's sizing fits.
+/// fallback, which Filament c0d63e8 also takes (`PostProcessManager::bloom`,
+/// its #9784), keeps the scene's aspect and every size Bevy's sizing fits.
 /// Either way the longer side is at least 512 texels (WebGPU guarantees
 /// 8192), so `MIP_COUNT` levels fit.
 fn chain_size(scene_size: [u32; 2], largest: u32) -> [u32; 2] {
