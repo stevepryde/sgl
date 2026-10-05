@@ -1824,9 +1824,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   2.03 before it); every final frame identical, bit for bit. On such
   content that restores the CPU builder's cost; on shared-vertex content
   it does in part: across 100 glTF models from the owner's games, sections
-  are 87% full, 19% pair, and a section holds 0.41 distinct vertices a
-  corner, which an indexed draw would shade once each, so most of their
-  sections keep the slab positions' saving alone. Pairing is SGL3D's own
+  are 87% full, 19% pair (61% of their consecutive triangle pairs match,
+  but a section pairs only when all its pairs do), and a section holds
+  0.41 distinct vertices a corner, which an indexed draw would shade once
+  each, so most of their sections keep the slab positions' saving alone. Pairing is SGL3D's own
   (RD-2): Bevy's meshlets draw 384 pulled vertices a cluster with no
   reuse, and the engines that keep reuse in GPU-driven draws write
   compacted index buffers each frame. Not taken, on a memory argument and
