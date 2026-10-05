@@ -622,11 +622,16 @@ code; it does not redeclare a struct, binding or function another module owns.
   through workgroup memory; the trace gathers each 8×4 tile's bits by
   workgroup atomics into a storage texture, where Wicked ORs them into a
   buffer, so the trace binds no storage buffer beyond lit group 0's and
-  group 1's eight; one dispatch a denoiser pass covers the four denoised
-  slots, a slot a group's z, where Wicked dispatches each light; the
-  denoiser's scratch packs its two halves in a word (`pack2x16float`) and
-  its history is filtered bilinearly by the pass, its motion is the
-  surface's in UV and its previous depth the stage's own, linear; and the directional light's rays
+  group 1's eight; one invocation of each denoiser pass covers the four
+  denoised slots, a slot a lane, sharing the depth, normals, velocity,
+  disocclusion and the filters' depth and normal weights, which Wicked's
+  dispatch for each light computes again, a lane whose tile upstream
+  would skip taking the skip's values, and the denoiser does not run while
+  none of the four holds a light; the denoiser's scratch packs its two
+  halves in a word (`pack2x16float`), a slot a lane, and its history is
+  filtered bilinearly by the pass, its motion is the surface's in UV and
+  its previous depth the stage's own, linear; and the directional light's
+  rays
   ignore the cascades' distance, which bounds the maps alone, so a
   ray-traced shadow reaches as far as the scene. The lights in a pixel's
   mask, the slots, the filter taps and the upsample's four texels are the

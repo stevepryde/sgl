@@ -3,9 +3,10 @@
 //! `Postprocess_RTShadow`, wiRenderer.cpp 15629–15831): tile classification
 //! against the previous frame's moments and the reprojected history, then
 //! three edge-stopping filter passes at step sizes 1, 2 and 4, the last
-//! recovering contrast. One dispatch a pass covers the four slots, a slot a
-//! group's z, where Wicked dispatches each light apart. Its result replaces
-//! those slots' temporal blend.
+//! recovering contrast. One invocation a pixel covers the four slots, a
+//! slot a lane, sharing the depth, normals and their weights, where Wicked
+//! dispatches each light apart; with none of them held it does not run.
+//! Its result replaces those slots' temporal blend.
 use super::{Pass, texture};
 use crate::shading;
 use crate::view::cached_group::CachedGroup;
@@ -66,7 +67,8 @@ pub(super) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba1
 /// variance, packed as two halves (A, then B, which keeps the first filter
 /// pass's result for the next frame); the moments' pair, a layer a denoised
 /// slot; and the denoised visibility, a word a tracing pixel, packed as the
-/// trace packs its first word.
+/// trace packs its first word. The masks, metadata and halves hold the four
+/// denoised slots in a texel's lanes.
 pub(super) struct Targets {
     pub tiles: wgpu::TextureView,
     pub normal: wgpu::TextureView,
@@ -92,13 +94,16 @@ impl Targets {
                 device,
                 "ray-traced shadow tile metadata",
                 [width.div_ceil(8), height.div_ceil(8)],
-                DENOISED_SLOTS,
-                wgpu::TextureFormat::R32Uint,
+                1,
+                wgpu::TextureFormat::Rgba32Uint,
             ),
             scratch: [0, 1].map(|_| {
-                layers(
+                texture(
+                    device,
                     "ray-traced shadow denoise scratch",
-                    wgpu::TextureFormat::R32Uint,
+                    reduced,
+                    1,
+                    wgpu::TextureFormat::Rgba32Uint,
                 )
             }),
             moments: [0, 1].map(|_| {
@@ -119,7 +124,7 @@ impl Targets {
                 &wgpu::BufferDescriptor {
                     label: Some("ray-traced shadow denoised"),
                     size: u64::from(width) * u64::from(height) * 4,
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    usage: wgpu::BufferUsages::STORAGE,
                     mapped_at_creation: false,
                 },
             ),
@@ -175,7 +180,7 @@ impl Denoiser {
         let resource = wgpu::BindingResource::TextureView;
         let (current, previous) = (inputs.current, 1 - inputs.current);
         let [width, height] = inputs.reduced;
-        let groups = [width.div_ceil(8), height.div_ceil(8), DENOISED_SLOTS];
+        let groups = [width.div_ceil(8), height.div_ceil(8), 1];
         let dispatch = |encoder: &mut wgpu::CommandEncoder,
                         pipeline: &wgpu::ComputePipeline,
                         group: &wgpu::BindGroup,
@@ -216,9 +221,7 @@ impl Denoiser {
         );
         // Pass 0 filters A into B, which the next frame's classification
         // reads as its history; pass 1 B into A; pass 2 A into the denoised
-        // words, which each slot's group ORs its byte into, binding B,
-        // which it does not write.
-        encoder.clear_buffer(&targets.denoised, 0, None);
+        // words, binding B, which it does not write.
         for (pass, (input, history)) in self.filters.iter_mut().zip([
             (scratch_a, scratch_b),
             (scratch_b, scratch_a),

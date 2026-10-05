@@ -3,13 +3,13 @@
 //! on, the camera's opaque surfaces take the shadows of the slots' lights
 //! from rays through the scene instead of from the maps, as Wicked Engine
 //! traces them (2ff1d9e `Postprocess_RTShadow`, wiRenderer.cpp 15498–15880,
-//! its resources at 15440–15497): a trace at half the render size, a
-//! temporal blend and an upsample into the shadow mask, which the opaque
+//! its resources at 15440–15497): a trace at half the render size, AMD's
+//! shadow denoiser over the first four slots (`denoise`), a temporal blend
+//! of the rest and an upsample into the shadow mask, which the opaque
 //! stage's lighting pass reads with the slot table at its group 3. Slot 0
 //! is the directional light with the frame's cascades, slots 1 to 15 the
 //! casting local lights the local-light atlas places, in its ranking
-//! (`slots`). Wicked's shadow denoiser, which it runs on its first four
-//! slots, is not run: every slot takes the temporal blend.
+//! (`slots`).
 //!
 //! Reads: the G-buffer's depth, normals, F0 and motion, the camera's lit
 //! group 0 (its frame's directional lights and the scene's lights), the
@@ -425,22 +425,26 @@ impl TracedShadows {
                 1,
             );
         }
-        self.denoiser.encode(
-            ctx.device,
-            ctx.encoder,
-            ctx.timing,
-            &targets.denoise,
-            denoise::Inputs {
-                depth: &shared.depth,
-                motion: &shared.motion,
-                half_depth: &targets.depth[current],
-                previous_depth: &targets.depth[previous],
-                params: &self.params,
-                slot_table: &self.slot_table,
-                reduced: targets.reduced,
-                current,
-            },
-        );
+        // The denoised slots are the table's first four; with none held,
+        // nothing reads their word, and a light that takes one restarts it.
+        if self.table.lights[0] != [shadow_mask::SHADOW_MASK_EMPTY; 4] {
+            self.denoiser.encode(
+                ctx.device,
+                ctx.encoder,
+                ctx.timing,
+                &targets.denoise,
+                denoise::Inputs {
+                    depth: &shared.depth,
+                    motion: &shared.motion,
+                    half_depth: &targets.depth[current],
+                    previous_depth: &targets.depth[previous],
+                    params: &self.params,
+                    slot_table: &self.slot_table,
+                    reduced: targets.reduced,
+                    current,
+                },
+            );
+        }
         let temporal_group = self.temporal.groups[current].get(
             ctx.device,
             "ray-traced shadow temporal",

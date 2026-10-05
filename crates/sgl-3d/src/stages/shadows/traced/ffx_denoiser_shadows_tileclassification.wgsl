@@ -36,7 +36,14 @@ THE SOFTWARE.
 // (FFX_DNSR_Shadows_GetPreviousLinearDepth and
 // FFX_DNSR_Shadows_ReadPreviousLinearDepth stand in for the reprojection
 // matrix and the previous depth buffer). The loops' literal bounds are
-// named (AR-12). The caller supplies the FFX_DNSR_Shadows_* callbacks
+// named (AR-12). The four denoised slots are classified together, a lane
+// each of a vec4, where upstream classifies one light a dispatch: the
+// tile masks, the region's search, the local neighbourhood, the moments
+// and the history are per lane, and the depth, velocity, normals and
+// disocclusion, which upstream computes again for every light, once; a
+// lane whose tile upstream would skip is computed with the rest and takes
+// the values upstream's skip writes, and the group skips only when every
+// lane would. The caller supplies the FFX_DNSR_Shadows_* callbacks
 // upstream's host shader does.
 
 var<workgroup> g_FFX_DNSR_Shadows_false_count:i32;
@@ -50,10 +57,38 @@ fn FFX_DNSR_Shadows_ThreadGroupAllTrue(val:bool)->bool {
  workgroupBarrier();
  return workgroupUniformLoad(&g_FFX_DNSR_Shadows_false_count)==0;
 }
+// ThreadGroupAllTrue for each lane.
+var<workgroup> g_FFX_DNSR_Shadows_false_counts:vec4<i32>;
+fn FFX_DNSR_Shadows_ThreadGroupAllTrue4(val:vec4<bool>)->vec4<bool> {
+ workgroupBarrier();
+ g_FFX_DNSR_Shadows_false_counts=vec4(0);
+ workgroupBarrier();
+ if !val.x {
+  g_FFX_DNSR_Shadows_false_counts.x=1;
+ }
+ if !val.y {
+  g_FFX_DNSR_Shadows_false_counts.y=1;
+ }
+ if !val.z {
+  g_FFX_DNSR_Shadows_false_counts.z=1;
+ }
+ if !val.w {
+  g_FFX_DNSR_Shadows_false_counts.w=1;
+ }
+ workgroupBarrier();
+ return workgroupUniformLoad(&g_FFX_DNSR_Shadows_false_counts)==vec4(0);
+}
+
+// The four lanes' moments: mean, variance and temporal sample count.
+struct FFX_DNSR_Shadows_Moments {
+ m:vec4<f32>,
+ s:vec4<f32>,
+ count:vec4<f32>,
+}
 
 struct FFX_DNSR_Shadows_SpatialRegion {
- all_in_light:bool,
- all_in_shadow:bool,
+ all_in_light:vec4<bool>,
+ all_in_shadow:vec4<bool>,
 }
 
 fn FFX_DNSR_Shadows_SearchSpatialRegion(gid:vec2<u32>)->FFX_DNSR_Shadows_SpatialRegion {
@@ -74,8 +109,8 @@ fn FFX_DNSR_Shadows_SearchSpatialRegion(gid:vec2<u32>)->FFX_DNSR_Shadows_Spatial
  let base_tile=vec2<i32>(FFX_DNSR_Shadows_GetTileIndexFromPixelPosition(gid*vec2(8u,8u)));
 
  // Load the entire region of masks in a scalar fashion
- var combined_or_mask=0u;
- var combined_and_mask=0xFFFFFFFFu;
+ var combined_or_mask=vec4(0u);
+ var combined_and_mask=vec4(0xFFFFFFFFu);
  let dimensions=FFX_DNSR_Shadows_GetBufferDimensions();
  let tiles=vec2<i32>(vec2(FFX_DNSR_Shadows_RoundedDivide(dimensions.x,8u),FFX_DNSR_Shadows_RoundedDivide(dimensions.y,4u)));
  for (var j=-FFX_DNSR_SHADOWS_REGION_ROWS_ABOVE;j<=FFX_DNSR_SHADOWS_REGION_ROWS_BELOW;j++) {
@@ -89,7 +124,7 @@ fn FFX_DNSR_Shadows_SearchSpatialRegion(gid:vec2<u32>)->FFX_DNSR_Shadows_Spatial
   }
  }
 
- return FFX_DNSR_Shadows_SpatialRegion(combined_and_mask==0xFFFFFFFFu,combined_or_mask==0u);
+ return FFX_DNSR_Shadows_SpatialRegion(combined_and_mask==vec4(0xFFFFFFFFu),combined_or_mask==vec4(0u));
 }
 
 fn FFX_DNSR_Shadows_GetLinearDepth(did:vec2<u32>,depth:f32)->f32 {
@@ -209,18 +244,18 @@ fn FFX_DNSR_Shadows_KernelWeight(i:f32)->f32 {
  return FFX_DNSR_SHADOWS_KERNEL_WEIGHTS[u32(i)];
 }
 
-fn FFX_DNSR_Shadows_AccumulateMoments(value:f32,weight:f32,moments:ptr<function,f32>) {
+fn FFX_DNSR_Shadows_AccumulateMoments(value:vec4<f32>,weight:f32,moments:ptr<function,vec4<f32>>) {
  // We get value from the horizontal neighborhood calculations. Thus, it's both mean and variance due to using one sample per pixel
  *moments+=value*weight;
 }
 
 // The horizontal part of a 17x17 local neighborhood kernel
-fn FFX_DNSR_Shadows_HorizontalNeighborhood(did:vec2<i32>)->f32 {
+fn FFX_DNSR_Shadows_HorizontalNeighborhood(did:vec2<i32>)->vec4<f32> {
  let base_did=did;
 
  // Prevent vertical out of bounds access
  if (base_did.y<0) || (base_did.y>=i32(FFX_DNSR_Shadows_GetBufferDimensions().y)) {
-  return 0.;
+  return vec4(0.);
  }
 
  let tile_index=FFX_DNSR_Shadows_GetTileIndexFromPixelPosition(vec2<u32>(base_did));
@@ -233,12 +268,12 @@ fn FFX_DNSR_Shadows_HorizontalNeighborhood(did:vec2<i32>)->f32 {
  let is_first_tile_in_row=tile_index.x==0u;
  let is_last_tile_in_row=tile_index.x==(FFX_DNSR_Shadows_RoundedDivide(FFX_DNSR_Shadows_GetBufferDimensions().x,8u)-1u);
 
- var left_tile=0u;
+ var left_tile=vec4(0u);
  if !is_first_tile_in_row {
   left_tile=FFX_DNSR_Shadows_ReadRaytracedShadowMask(u32(left_tile_index));
  }
  let center_tile=FFX_DNSR_Shadows_ReadRaytracedShadowMask(u32(center_tile_index));
- var right_tile=0u;
+ var right_tile=vec4(0u);
  if !is_last_tile_in_row {
   right_tile=FFX_DNSR_Shadows_ReadRaytracedShadowMask(u32(right_tile_index));
  }
@@ -247,43 +282,43 @@ fn FFX_DNSR_Shadows_HorizontalNeighborhood(did:vec2<i32>)->f32 {
 
  // First extract the 8 bits of our row in each of the neighboring tiles
  let row_base_index=(u32(did.y)%4u)*8u;
- let left=(left_tile>>row_base_index)&0xFFu;
- let center=(center_tile>>row_base_index)&0xFFu;
- let right=(right_tile>>row_base_index)&0xFFu;
+ let left=(left_tile>>vec4(row_base_index))&vec4(0xFFu);
+ let center=(center_tile>>vec4(row_base_index))&vec4(0xFFu);
+ let right=(right_tile>>vec4(row_base_index))&vec4(0xFFu);
 
  // Combine them into a single mask containting [left, center, right] from least significant to most significant bit
- var neighborhood=left|(center<<8u)|(right<<16u);
+ var neighborhood=left|(center<<vec4(8u))|(right<<vec4(16u));
 
  // Make sure our pixel is at bit position 9 to get the highest contribution from the filter kernel
  let bit_index_in_row=u32(did.x)%8u;
- neighborhood=neighborhood>>bit_index_in_row; // Shift out bits to the right, so the center bit ends up at bit 9.
+ neighborhood=neighborhood>>vec4(bit_index_in_row); // Shift out bits to the right, so the center bit ends up at bit 9.
 
- var moment=0.; // For one sample per pixel this is both, mean and variance
+ var moment=vec4(0.); // For one sample per pixel this is both, mean and variance
 
  // First 8 bits up to the center pixel
  var mask:u32;
  for (var i=0;i<FFX_DNSR_SHADOWS_TILE_ROW;i++) {
   mask=1u<<u32(i);
-  moment+=select(0.,FFX_DNSR_Shadows_KernelWeight(f32(FFX_DNSR_SHADOWS_TILE_ROW-i)),(mask&neighborhood)!=0u);
+  moment+=select(vec4(0.),vec4(FFX_DNSR_Shadows_KernelWeight(f32(FFX_DNSR_SHADOWS_TILE_ROW-i))),(vec4(mask)&neighborhood)!=vec4(0u));
  }
 
  // Center pixel
  mask=1u<<u32(FFX_DNSR_SHADOWS_TILE_ROW);
- moment+=select(0.,FFX_DNSR_Shadows_KernelWeight(0.),(mask&neighborhood)!=0u);
+ moment+=select(vec4(0.),vec4(FFX_DNSR_Shadows_KernelWeight(0.)),(vec4(mask)&neighborhood)!=vec4(0u));
 
  // Last 8 bits
  for (var i=1;i<=FFX_DNSR_SHADOWS_TILE_ROW;i++) {
   mask=1u<<u32(FFX_DNSR_SHADOWS_TILE_ROW+i);
-  moment+=select(0.,FFX_DNSR_Shadows_KernelWeight(f32(i)),(mask&neighborhood)!=0u);
+  moment+=select(vec4(0.),vec4(FFX_DNSR_Shadows_KernelWeight(f32(i))),(vec4(mask)&neighborhood)!=vec4(0u));
  }
 
  return moment;
 }
 
-var<workgroup> g_FFX_DNSR_Shadows_neighborhood:array<array<f32,24>,8>;
+var<workgroup> g_FFX_DNSR_Shadows_neighborhood:array<array<vec4<f32>,24>,8>;
 
-fn FFX_DNSR_Shadows_ComputeLocalNeighborhood(did:vec2<i32>,gtid:vec2<i32>)->f32 {
- var local_neighborhood=0.;
+fn FFX_DNSR_Shadows_ComputeLocalNeighborhood(did:vec2<i32>,gtid:vec2<i32>)->vec4<f32> {
+ var local_neighborhood=vec4(0.);
 
  let upper=FFX_DNSR_Shadows_HorizontalNeighborhood(vec2(did.x,did.y-8));
  let center=FFX_DNSR_Shadows_HorizontalNeighborhood(vec2(did.x,did.y));
@@ -313,21 +348,21 @@ fn FFX_DNSR_Shadows_ComputeLocalNeighborhood(did:vec2<i32>,gtid:vec2<i32>)->f32 
  return local_neighborhood;
 }
 
-fn FFX_DNSR_Shadows_WriteTileMetaData(gid:vec2<u32>,gtid:vec2<u32>,is_cleared:bool,all_in_light:bool) {
+fn FFX_DNSR_Shadows_WriteTileMetaData(gid:vec2<u32>,gtid:vec2<u32>,is_cleared:vec4<bool>,all_in_light:vec4<bool>) {
  if all(gtid==vec2(0u)) {
-  let light_mask=select(0u,TILE_META_DATA_LIGHT_MASK,all_in_light);
-  let clear_mask=select(0u,TILE_META_DATA_CLEAR_MASK,is_cleared);
+  let light_mask=select(vec4(0u),vec4(TILE_META_DATA_LIGHT_MASK),all_in_light);
+  let clear_mask=select(vec4(0u),vec4(TILE_META_DATA_CLEAR_MASK),is_cleared);
   let mask=light_mask|clear_mask;
   FFX_DNSR_Shadows_WriteMetadata(gid.y*FFX_DNSR_Shadows_RoundedDivide(FFX_DNSR_Shadows_GetBufferDimensions().x,8u)+gid.x,mask);
  }
 }
 
-fn FFX_DNSR_Shadows_ClearTargets(did:vec2<u32>,gtid:vec2<u32>,gid:vec2<u32>,shadow_value:f32,is_shadow_receiver:bool,all_in_light:bool) {
- FFX_DNSR_Shadows_WriteTileMetaData(gid,gtid,true,all_in_light);
- FFX_DNSR_Shadows_WriteReprojectionResults(did,vec2(shadow_value,0.)); // mean, variance
+fn FFX_DNSR_Shadows_ClearTargets(did:vec2<u32>,gtid:vec2<u32>,gid:vec2<u32>,shadow_value:vec4<f32>,is_shadow_receiver:bool,all_in_light:vec4<bool>) {
+ FFX_DNSR_Shadows_WriteTileMetaData(gid,gtid,vec4(true),all_in_light);
+ FFX_DNSR_Shadows_WriteReprojectionResults(did,shadow_value,vec4(0.)); // mean, variance
 
  let temporal_sample_count=select(0.,1.,is_shadow_receiver);
- FFX_DNSR_Shadows_WriteMoments(did,vec3(shadow_value,0.,temporal_sample_count)); // mean, variance, temporal sample count
+ FFX_DNSR_Shadows_WriteMoments(did,shadow_value,vec4(0.),vec4(temporal_sample_count)); // mean, variance, temporal sample count
 }
 
 fn FFX_DNSR_Shadows_TileClassification(group_index:u32,gid:vec2<u32>) {
@@ -339,25 +374,26 @@ fn FFX_DNSR_Shadows_TileClassification(group_index:u32,gid:vec2<u32>) {
  let skip_sky=FFX_DNSR_Shadows_ThreadGroupAllTrue(!is_shadow_receiver);
  if skip_sky {
   // We have to set all resources of the tile we skipped to sensible values as neighboring active denoiser tiles might want to read them.
-  FFX_DNSR_Shadows_ClearTargets(did,gtid,gid,0.,is_shadow_receiver,false);
+  FFX_DNSR_Shadows_ClearTargets(did,gtid,gid,vec4(0.),is_shadow_receiver,vec4(false));
   return;
  }
 
  let region=FFX_DNSR_Shadows_SearchSpatialRegion(gid);
  let all_in_light=region.all_in_light;
  let all_in_shadow=region.all_in_shadow;
- let shadow_value=select(0.,1.,all_in_light); // Either all_in_light or all_in_shadow must be true, otherwise we would not skip the tile.
+ let shadow_value=select(vec4(0.),vec4(1.),all_in_light); // Either all_in_light or all_in_shadow must be true, otherwise we would not skip the tile.
 
- let can_skip=all_in_light || all_in_shadow;
+ let can_skip=all_in_light|all_in_shadow;
  // We have to append the entire tile if there is a single lane that we can't skip
- let skip_tile=FFX_DNSR_Shadows_ThreadGroupAllTrue(can_skip);
- if skip_tile {
+ let skip_tile=FFX_DNSR_Shadows_ThreadGroupAllTrue4(can_skip);
+ if all(skip_tile) {
   // We have to set all resources of the tile we skipped to sensible values as neighboring active denoiser tiles might want to read them.
   FFX_DNSR_Shadows_ClearTargets(did,gtid,gid,shadow_value,is_shadow_receiver,all_in_light);
   return;
  }
 
- FFX_DNSR_Shadows_WriteTileMetaData(gid,gtid,false,false);
+ // The slots whose tile is skipped as cleared, the rest not.
+ FFX_DNSR_Shadows_WriteTileMetaData(gid,gtid,skip_tile,skip_tile&all_in_light);
 
  let depth=FFX_DNSR_Shadows_ReadDepth(did);
  let velocity=FFX_DNSR_Shadows_GetClosestVelocity(vec2<i32>(did),gtid,depth); // Must happen before we deactivate lanes
@@ -373,29 +409,33 @@ fn FFX_DNSR_Shadows_TileClassification(group_index:u32,gid:vec2<u32>) {
 
  let shadow_tile=FFX_DNSR_Shadows_ReadRaytracedShadowMask(linear_tile_index);
 
- var moments_current=vec3(0.);
- var variance=0.;
- var shadow_clamped=0.;
+ var moments_m=vec4(0.);
+ var moments_s=vec4(0.);
+ var moments_count=vec4(0.);
+ var variance=vec4(0.);
+ var shadow_clamped=vec4(0.);
  if is_shadow_receiver { // do not process sky pixels
-  let hit_light=(shadow_tile&FFX_DNSR_Shadows_GetBitMaskFromPixelPosition(did))!=0u;
-  let shadow_current=select(0.,1.,hit_light);
+  let hit_light=(shadow_tile&vec4(FFX_DNSR_Shadows_GetBitMaskFromPixelPosition(did)))!=vec4(0u);
+  let shadow_current=select(vec4(0.),vec4(1.),hit_light);
 
   // Perform moments and variance calculations
   {
    let is_disoccluded=FFX_DNSR_Shadows_IsDisoccluded(did,depth,velocity);
-   var previous_moments=vec3(0.); // Can't trust previous moments on disocclusion
+   var previous_moments=FFX_DNSR_Shadows_Moments(vec4(0.),vec4(0.),vec4(0.)); // Can't trust previous moments on disocclusion
    if !is_disoccluded {
     previous_moments=FFX_DNSR_Shadows_ReadPreviousMomentsBuffer(history_pos);
    }
 
-   let old_m=previous_moments.x;
-   let old_s=previous_moments.y;
-   let sample_count=previous_moments.z+1.;
+   let old_m=previous_moments.m;
+   let old_s=previous_moments.s;
+   let sample_count=previous_moments.count+1.;
    let new_m=old_m+(shadow_current-old_m)/sample_count;
    let new_s=old_s+(shadow_current-old_m)*(shadow_current-new_m);
 
-   variance=select(1.,new_s/(sample_count-1.),sample_count>1.);
-   moments_current=vec3(new_m,new_s,sample_count);
+   variance=select(vec4(1.),new_s/(sample_count-1.),sample_count>vec4(1.));
+   moments_m=new_m;
+   moments_s=new_s;
+   moments_count=sample_count;
   }
 
   // Retrieve local neighborhood and reproject
@@ -403,7 +443,7 @@ fn FFX_DNSR_Shadows_TileClassification(group_index:u32,gid:vec2<u32>) {
    let mean=local_neighborhood;
    var spatial_variance=local_neighborhood;
 
-   spatial_variance=max(spatial_variance-mean*mean,0.);
+   spatial_variance=max(spatial_variance-mean*mean,vec4(0.));
 
    // Compute the clamping bounding box
    let std_deviation=sqrt(spatial_variance);
@@ -411,33 +451,30 @@ fn FFX_DNSR_Shadows_TileClassification(group_index:u32,gid:vec2<u32>) {
    let nmax=mean+.5*std_deviation;
 
    // Clamp reprojected sample to local neighborhood
-   var shadow_previous=shadow_current;
-   if FFX_DNSR_Shadows_IsFirstFrame()==0 {
-    shadow_previous=FFX_DNSR_Shadows_ReadHistory(history_uv);
-   }
+   let shadow_previous=select(FFX_DNSR_Shadows_ReadHistory(history_uv),shadow_current,FFX_DNSR_Shadows_IsFirstFrame());
 
    shadow_clamped=clamp(shadow_previous,nmin,nmax);
 
    // Reduce history weighting
    let sigma=20.;
-   let temporal_discontinuity=(shadow_previous-mean)/max(.5*std_deviation,.001);
+   let temporal_discontinuity=(shadow_previous-mean)/max(.5*std_deviation,vec4(.001));
    let sample_counter_damper=exp(-temporal_discontinuity*temporal_discontinuity/sigma);
-   moments_current.z*=sample_counter_damper;
+   moments_count*=sample_counter_damper;
 
    // Boost variance on first frames
-   if moments_current.z<16. {
-    let variance_boost=max(16.-moments_current.z,1.);
-    variance=max(variance,spatial_variance);
-    variance*=variance_boost;
-   }
+   let boosted=moments_count<vec4(16.);
+   let variance_boost=max(16.-moments_count,vec4(1.));
+   variance=select(variance,max(variance,spatial_variance)*variance_boost,boosted);
   }
 
   // Perform the temporal blend
-  let history_weight=sqrt(max(8.-moments_current.z,0.)/8.);
-  shadow_clamped=mix(shadow_clamped,shadow_current,mix(.05,1.,history_weight));
+  let history_weight=sqrt(max(8.-moments_count,vec4(0.))/8.);
+  shadow_clamped=mix(shadow_clamped,shadow_current,mix(vec4(.05),vec4(1.),history_weight));
  }
 
- // Output the results of the temporal pass
- FFX_DNSR_Shadows_WriteReprojectionResults(did,vec2(shadow_clamped,variance));
- FFX_DNSR_Shadows_WriteMoments(did,moments_current);
+ // Output the results of the temporal pass, the skipped slots' as
+ // upstream's skip writes them.
+ let skipped_count=select(0.,1.,is_shadow_receiver);
+ FFX_DNSR_Shadows_WriteReprojectionResults(did,select(shadow_clamped,shadow_value,skip_tile),select(variance,vec4(0.),skip_tile));
+ FFX_DNSR_Shadows_WriteMoments(did,select(moments_m,shadow_value,skip_tile),select(moments_s,vec4(0.),skip_tile),select(moments_count,vec4(skipped_count),skip_tile));
 }
