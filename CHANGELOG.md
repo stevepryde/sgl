@@ -15,6 +15,34 @@ full API details.
 
 ## Unreleased
 
+### Directional cascades back to the CPU-built draws' GPU cost
+
+- **Scope:** `sgl-3d` (#192). No API change. Since #190 the directional
+  cascades, drawn from GPU-built lists, cost the GPU more than the
+  CPU-built indexed draws they replaced. They now cost the same again.
+- **Behaviour:**
+  - A cascade's casters read each vertex's position from the scene's
+    12-byte caster positions, the slabs the CPU-built casters draw from,
+    rather than the scene source's 32-byte vertex records.
+  - A cascade draws each set's sections whose triangles pair as quads do
+    (each even triangle and the next are (a, b, c) and (a, c, d), as
+    Blender and quad meshers emit them) with a second, indexed draw over
+    one fixed pattern, so each pair's shared corners are shaded once. Other
+    sections draw as before. Content and shadows are unchanged, bit for
+    bit.
+  - Measured on an Apple M5 at 1920×1080 (median GPU time of the four
+    cascades): the `streaming` walk 0.75–0.77 → 0.55–0.56 ms (before #190:
+    0.52–0.53), its headroom scale 1.90–1.94 → 1.29–1.33 ms (before #190:
+    1.33–1.36).
+  - `Renderer::diagnostic_draws` counts two draws a set for each cascade.
+  - A positions slab is now also bound as storage, so it stays within the
+    device's `max_storage_buffer_binding_size`. The scene source, which
+    holds each vertex in 32 bytes, already refuses content past that size
+    (`SceneError::DeviceLimit`), so nothing the scene held before is
+    refused.
+- **Migration:** no game-code changes and no regenerated content. A HUD or
+  test that reads `diagnostic_draws` for the cascades sees two a set.
+
 ### Two-phase occlusion culling of the camera's list (opt-in)
 
 - **Scope:** `sgl-3d` (#24, roadmap 22). New `Settings::occlusion_culling`

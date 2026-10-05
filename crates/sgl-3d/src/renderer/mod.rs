@@ -186,6 +186,7 @@ impl Renderer {
                 &bindings.scene,
                 &bindings.material,
                 &bindings.blended,
+                &bindings.caster_positions,
             ],
             layers,
         );

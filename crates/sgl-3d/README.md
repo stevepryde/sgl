@@ -953,9 +953,17 @@ detail, tests the view's frustum, then tests each of the chosen mesh's
 sections, the 128-triangle leaves of its range hierarchy, and appends those
 that pass to their set's draw. A set is what draws with one pipeline and one
 material: a material, whether its instances' poses mirror and whether they
-deform. Each set draws with one indirect draw, whatever its instances and
-their mobility, so recording a view costs the same at a hundred instances as
-at a hundred thousand. The CPU walks no instance for these views: it builds
+deform, and the positions slab its meshes' positions lie in (one, unless the
+scene's geometry passes a slab's size). Each set draws with one indirect
+draw, whatever its instances and their mobility, so recording a view costs
+the same at a hundred instances as at a hundred thousand. A cascade's
+casters read each vertex's position from the 12-byte positions the scene
+keeps for shadow casters, not the 32-byte vertex records the camera pulls,
+and a cascade's set draws a second, indexed draw of its sections whose
+triangles pair as quads do (each even triangle and the next are (a, b, c)
+and (a, c, d), as Blender and quad meshers emit them), so the corners a
+pair shares are shaded once: a depth-only pass is bound by the bytes and
+vertices it fetches. The CPU walks no instance for these views: it builds
 the camera's blended list (culled per instance, sorted back to front), the
 local-light shadow faces and probe captures. Hardware culling preserves
 authored single/double-sided and mirrored materials. Each probe face uses

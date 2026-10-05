@@ -52,7 +52,12 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
         } = chart_tables(meshes)?;
         let sections: Vec<Vec<SectionRecord>> = meshes
             .iter()
-            .map(|mesh| mesh.ranges.sections().map(SectionRecord::of).collect())
+            .map(|mesh| {
+                mesh.ranges
+                    .sections()
+                    .map(|section| SectionRecord::of(mesh.indices, section))
+                    .collect()
+            })
             .collect();
         let section_words: usize = sections
             .iter()
@@ -198,7 +203,8 @@ pub(super) struct MeshRecord {
 /// A section table's entry: a leaf of its mesh's range hierarchy
 /// (`MeshRanges::sections`), at most `SECTION_VERTICES` / 3 triangles in the
 /// mesh's own order, with its bounds in the model's space, its first index,
-/// relative to its mesh's indices, and its triangles.
+/// relative to its mesh's indices, and its triangles, with `SECTION_PAIRED`
+/// where they pair.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct SectionRecord {
@@ -208,13 +214,32 @@ pub(super) struct SectionRecord {
     pub triangles: u32,
 }
 
+/// `SectionRecord::triangles`' bit marking a section whose triangles pair:
+/// each even triangle and the next are (a, b, c) and (a, c, d), a quad split
+/// along its first diagonal, as Blender's tessellation and quad meshers
+/// emit it, a lone last triangle aside. A GPU-built cascade draws such a
+/// section indexed over one fixed pattern (`shading::culling::PAIRED_INDICES`),
+/// so the post-transform cache shades each pair's shared corners once. Its
+/// count is the bits below.
+pub(crate) const SECTION_PAIRED: u32 = 1 << 31;
+
+/// Whether `indices`, a section's, pair (`SECTION_PAIRED`).
+fn paired(indices: &[u32]) -> bool {
+    indices
+        .chunks_exact(6)
+        .all(|pair| pair[3] == pair[0] && pair[4] == pair[2])
+}
+
 impl SectionRecord {
-    fn of((bounds, indices): ([Vec3; 2], Range<u32>)) -> Self {
+    /// Section `range` of a mesh with `indices`, whose bounds are `bounds`.
+    fn of(indices: &[u32], (bounds, range): ([Vec3; 2], Range<u32>)) -> Self {
+        let section = &indices[range.start as usize..range.end as usize];
         Self {
             bounds_min: bounds[0].to_array(),
             bounds_max: bounds[1].to_array(),
-            first_index: indices.start,
-            triangles: (indices.end - indices.start) / 3,
+            first_index: range.start,
+            triangles: ((range.end - range.start) / 3)
+                | if paired(section) { SECTION_PAIRED } else { 0 },
         }
     }
 }
@@ -228,8 +253,8 @@ pub(super) const MESH_WORDS: usize = std::mem::size_of::<MeshRecord>() / 4;
 #[cfg(test)]
 mod record_tests {
     use super::{
-        CHART_WORDS, MESH_WORDS, MeshRecord, RayMesh, SECTION_WORDS, SectionRecord, VERTEX_WORDS,
-        prepare_model, rebase_records,
+        CHART_WORDS, MESH_WORDS, MeshRecord, RayMesh, SECTION_PAIRED, SECTION_WORDS, SectionRecord,
+        VERTEX_WORDS, prepare_model, rebase_records,
     };
     use crate::asset::Vertex;
     use crate::scene::mesh_ranges::MeshRanges;
@@ -346,8 +371,9 @@ mod record_tests {
                     section.first_index, next,
                     "sections take the indices in order"
                 );
-                assert!((1..=128).contains(&section.triangles));
-                next += section.triangles * 3;
+                let triangles = section.triangles & !SECTION_PAIRED;
+                assert!((1..=128).contains(&triangles));
+                next += triangles * 3;
                 let [min, max] = [section.bounds_min, section.bounds_max].map(Vec3::from_array);
                 for &index in &indices[section.first_index as usize..next as usize] {
                     let p = Vec3::from_array(vertices[index as usize].position);

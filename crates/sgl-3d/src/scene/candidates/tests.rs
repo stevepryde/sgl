@@ -36,6 +36,7 @@ fn mesh(material: usize, need: u32) -> CandidateMesh {
         bounds: [Vec3::ZERO; 2],
         word: 0,
         chain: NO_CHAIN,
+        positions: (0, 0),
     }
 }
 

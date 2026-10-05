@@ -85,6 +85,10 @@ pub(crate) struct FrameBindings {
     /// The blended pipelines' group 3 (`shading::bind::blended`), which the
     /// transparent stage binds.
     pub blended: wgpu::BindGroupLayout,
+    /// The GPU-built cascades' casters' group 3
+    /// (`shading::bind::caster_positions`), which the scene's positions
+    /// slabs bind (`scene::geometry`).
+    pub caster_positions: wgpu::BindGroupLayout,
     /// The frame's `FrameUniform`, shared by every view of the frame.
     pub frame: wgpu::Buffer,
     /// No specular probes: lit groups bind this while the scene has none
@@ -138,6 +142,7 @@ impl FrameBindings {
             scene: shading::bind::scene(device),
             material: shading::bind::material(device),
             blended: shading::bind::blended(device),
+            caster_positions: shading::bind::caster_positions(device),
             frame,
             empty_probes: UploadedProbes::empty(device),
             shadow_maps,

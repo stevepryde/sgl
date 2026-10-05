@@ -23,7 +23,10 @@ the mesh's sections, whose bounds, first index and triangle count its
 section table in the ray source holds. A section is the GPU's unit: it
 draws as one instance of its set's indirect draw, of 384 vertices: three
 for each of its triangles, then, past them, a dummy point outside the clip
-volume. The CPU traversal
+volume. A cascade draws a section whose triangles pair, each even one and
+the next a quad split along its first diagonal, as an instance of its
+set's indexed draw over one fixed pattern instead, four vertices a pair,
+so the corners a pair shares are shaded once. The CPU traversal
 accepts fully inside subtrees at once and merges adjacent visible ranges
 into a draw. Either permits rejection inside large batched meshes without
 renumbering source primitives. Assets whose triangle order jumps across the

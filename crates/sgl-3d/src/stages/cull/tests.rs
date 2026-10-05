@@ -4,7 +4,7 @@ use super::Cull;
 use crate::asset::{Asset, CpuMesh, Vertex};
 use crate::content::identity::Identity;
 use crate::lod::MeshLod;
-use crate::shading::culling::{CullStatistics, DrawCommand, words};
+use crate::shading::culling::CullStatistics;
 use crate::shading::uniforms::ViewUniform;
 use crate::shading::vertex::DrawInstance;
 use crate::view::culling::tests::{clipped_triangle, mesh};
@@ -68,30 +68,11 @@ fn cull(
     let mut encoder = device.create_command_encoder(&Default::default());
     Cull::new(device).encode(device, &mut encoder, scene, &views, None);
     queue.submit([encoder.finish()]);
+    // Pulled and paired alike.
     let read = |list: &crate::view::draw_list::gpu::GpuList| {
-        let buffers = list.buffers();
-        let draws = test_support::read_words(device, queue, buffers.draws);
-        let regions = test_support::read_words(device, queue, buffers.regions);
-        let mut appended = Vec::new();
-        for (index, _, region) in scene.candidates.sets.iter() {
-            let command = (words::<CullStatistics>() + index * words::<DrawCommand>()) as usize;
-            let count: u32 = bytemuck::cast_slice::<u32, DrawCommand>(
-                &draws[command..command + words::<DrawCommand>() as usize],
-            )[0]
-            .instance_count;
-            assert!(
-                count as usize <= region.len(),
-                "a set's draw stays within its region"
-            );
-            let first = region.start as usize * words::<DrawInstance>() as usize;
-            let entries =
-                &regions[first..first + count as usize * words::<DrawInstance>() as usize];
-            appended.extend_from_slice(bytemuck::cast_slice::<u32, DrawInstance>(entries));
-        }
-        (
-            appended,
-            *bytemuck::from_bytes::<CullStatistics>(bytemuck::cast_slice(&draws[..4])),
-        )
+        let ([pulled, paired], statistics) =
+            crate::view::draw_list::gpu::read_early(list, device, queue, scene);
+        ([pulled, paired].concat(), statistics)
     };
     let (camera_list, camera_statistics) = read(&views.camera.list);
     let mut culled = Culled {

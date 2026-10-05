@@ -174,20 +174,33 @@ fn cull_source_v3(at:u32)->vec3<f32> {
 // cluster list, the late one's where `late`: the next slot by an atomic add
 // on the set's command's instance count, written as a draw instance while
 // the slot is within the region; an append past it subtracts its add back,
-// so the count ends at the region's capacity. The view's statistics count
-// the sections appended and their triangles by mobility, and, with
-// CULL_CANDIDATE_STATISTICS, by candidate.
+// so the count ends at the region's capacity. Where the view pairs
+// (CULL_PAIRED, a cascade), a section whose triangles pair goes to its set's
+// paired region and command instead, which the view draws indexed. Its
+// first vertex is the candidate's in its positions slab where it draws the
+// candidate's own mesh (a cascade's always, at level 0), where a cascade's
+// caster pulls its positions; the camera's pulled passes read none. The
+// view's statistics count the sections appended and their triangles by
+// mobility, and, with CULL_CANDIDATE_STATISTICS, by candidate.
 fn cull_append(index:u32,candidate:DrawCandidate,mesh:u32,at:u32,flags:u32,late:bool) {
  let draw_set=cull_sets[candidate.draw_set];
- let command_index=select(0u,cull_view.late_command,late)+candidate.draw_set;
- let command=CULL_STATISTICS_WORDS+command_index*DRAW_COMMAND_WORDS+DRAW_COMMAND_INSTANCE_COUNT;
+ let word=cull_source[at+SCENE_SECTION_TRIANGLES];
+ let triangles=word&~SCENE_SECTION_PAIRED;
+ let paired=(cull_view.flags&CULL_PAIRED)!=0u && (word&SCENE_SECTION_PAIRED)!=0u;
+ var first_command=select(0u,cull_view.late_command,late);
+ var region=draw_set.region;
+ if paired {
+  first_command=cull_view.paired_command;
+  region+=cull_view.paired_region;
+ }
+ let command=CULL_STATISTICS_WORDS+(first_command+candidate.draw_set)*DRAW_COMMAND_WORDS+DRAW_COMMAND_INSTANCE_COUNT;
  let slot=atomicAdd(&cull_draws[command],1u);
  if slot>=draw_set.capacity {
   atomicSub(&cull_draws[command],1u);
   return;
  }
- let triangles=cull_source[at+SCENE_SECTION_TRIANGLES];
- cull_regions[draw_set.region+slot]=DrawInstance(candidate.object,mesh,cull_source[at+SCENE_SECTION_FIRST_INDEX],triangles,0u);
+ let first_vertex=select(NO_POSITIONS,candidate.positions,mesh==candidate.mesh);
+ cull_regions[region+slot]=DrawInstance(candidate.object,mesh,cull_source[at+SCENE_SECTION_FIRST_INDEX],triangles,first_vertex);
  let moving=(flags&OBJECT_STATIC)==0u;
  atomicAdd(&cull_draws[select(CULL_STATIC_SECTIONS,CULL_MOVING_SECTIONS,moving)],1u);
  atomicAdd(&cull_draws[select(CULL_STATIC_TRIANGLES,CULL_MOVING_TRIANGLES,moving)],triangles);

@@ -3,17 +3,33 @@
 // record's pose (DrawInstance). A CPU-built list's casters (a local-light
 // face's, a probe capture's cascades) draw indexed positions of the drawn
 // mesh or of a deforming instance's deformed vertices (CasterVertex); a
-// GPU-built cascade's pull theirs from the scene source by the draw
-// instance's mesh, first index and triangles, as source_vs pulls the
-// camera's, and bind no positions slab. Each cascade and face is a view; its
-// draw list holds only the frame's visibility groups, and each draw's cull
-// selects the side its material and pose cast (draw_list::Population::cull,
-// and a GPU-built set's variant).
+// GPU-built cascade's pull theirs by the draw instance's mesh, first index
+// and triangles, as source_vs pulls the camera's: the index from the scene
+// source and the position from the positions slab its set binds as group 3
+// (bind_caster_positions.wgsl), the slab the CPU-built casters draw from,
+// at the draw instance's first vertex, or a deforming instance's deformed
+// one. Each cascade and face is a view; its draw list holds only the
+// frame's visibility groups, and each draw's cull selects the side its
+// material and pose cast (draw_list::Population::cull, and a GPU-built
+// set's variant).
 fn caster_clip(position:vec3<f32>,drawn:DrawInstance)->vec4<f32> {
  return view.view_projection*objects[drawn.object].model*vec4(position,1.);
 }
 @vertex fn shadow_vs(@location(0) position:vec3<f32>,drawn:DrawInstance)->@builtin(position) vec4<f32> {
  return caster_clip(position,drawn);
+}
+// A GPU-built cascade's caster's vertex `vertex_index` of the mesh `drawn`
+// names: its position in its positions slab, 12 bytes a vertex, as a
+// CPU-built caster list's vertex buffer reads it, rather than from the scene
+// source's 32-byte vertex records, which cost the depth-only cascades their
+// bandwidth (#192); a deforming instance's deformed position, or a mesh's
+// without slab positions from the scene source.
+fn pulled_caster_position(drawn:DrawInstance,vertex_index:u32)->vec3<f32> {
+ if deformed_vertices || drawn.first_vertex==NO_POSITIONS {
+  return scene_pulled_position(drawn.object,drawn.mesh,vertex_index);
+ }
+ let at=(drawn.first_vertex+vertex_index)*CASTER_VERTEX_WORDS;
+ return vec3(caster_positions[at],caster_positions[at+1u],caster_positions[at+2u]);
 }
 // A GPU-built cascade's caster: draw vertex `vertex` of the section `drawn`
 // names, or a dummy past its triangles.
@@ -22,10 +38,29 @@ fn pulled_caster_clip(drawn:DrawInstance,vertex:u32)->vec4<f32> {
   return SCENE_DUMMY_CLIP;
  }
  let vertex_index=scene_pulled_vertex(drawn.mesh,drawn_index(drawn,vertex));
- return caster_clip(scene_pulled_position(drawn.object,drawn.mesh,vertex_index),drawn);
+ return caster_clip(pulled_caster_position(drawn,vertex_index),drawn);
 }
 @vertex fn shadow_pulled_vs(@builtin(vertex_index) vertex:u32,drawn:DrawInstance)->@builtin(position) vec4<f32> {
  return pulled_caster_clip(drawn,vertex);
+}
+// A paired draw's slot `slot` of the section `drawn` names (CULL_PAIRED in
+// culling.wgsl): its draw vertex, the corner of the section it stands for.
+// Pair slot / 4's slots are its corners a, b, c and d, as PAIRED_INDICES
+// (shading::culling) draws them, (a, b, c) then (a, c, d): its triangles'
+// first three corners and the second's last, which a paired section's
+// second triangle names after a and c. A lone last triangle's d is its a,
+// so the pattern's second triangle, (a, c, a), has no area; past the
+// section's triangles the slots are dummies'.
+fn paired_corner(drawn:DrawInstance,slot:u32)->u32 {
+ let pair=slot/4u;
+ let corner=slot%4u;
+ if corner==3u && 2u*pair+1u>=drawn.triangles {
+  return pair*6u;
+ }
+ return pair*6u+select(corner,5u,corner==3u);
+}
+@vertex fn shadow_paired_vs(@builtin(vertex_index) slot:u32,drawn:DrawInstance)->@builtin(position) vec4<f32> {
+ return pulled_caster_clip(drawn,paired_corner(drawn,slot));
 }
 // A directional cascade's caster where the device lacks DEPTH_CLIP_CONTROL:
 // Bevy 9d12036's UNCLIPPED_DEPTH_ORTHO_EMULATION
@@ -51,6 +86,9 @@ fn unclipped_caster(clip:vec4<f32>)->UnclippedCaster {
 }
 @vertex fn shadow_pulled_unclipped_vs(@builtin(vertex_index) vertex:u32,drawn:DrawInstance)->UnclippedCaster {
  return unclipped_caster(pulled_caster_clip(drawn,vertex));
+}
+@vertex fn shadow_paired_unclipped_vs(@builtin(vertex_index) slot:u32,drawn:DrawInstance)->UnclippedCaster {
+ return unclipped_caster(pulled_caster_clip(drawn,paired_corner(drawn,slot)));
 }
 @fragment fn shadow_unclipped_fs(in:UnclippedCaster)->@builtin(frag_depth) f32 {
  return min(in.unclipped_depth,1.0);
@@ -94,7 +132,7 @@ fn pulled_masked_caster(drawn:DrawInstance,vertex:u32)->MaskedCaster {
   return out;
  }
  let vertex_index=scene_pulled_vertex(drawn.mesh,drawn_index(drawn,vertex));
- return masked_caster_vertex(scene_pulled_position(drawn.object,drawn.mesh,vertex_index),drawn,vertex_index);
+ return masked_caster_vertex(pulled_caster_position(drawn,vertex_index),drawn,vertex_index);
 }
 @vertex fn shadow_masked_vs(@location(0) position:vec3<f32>,drawn:DrawInstance,@builtin(vertex_index) index:u32)->MaskedCaster {
  return masked_caster(position,drawn,index);
@@ -109,6 +147,14 @@ fn pulled_masked_caster(drawn:DrawInstance,vertex:u32)->MaskedCaster {
 }
 @vertex fn shadow_pulled_masked_unclipped_vs(@builtin(vertex_index) vertex:u32,drawn:DrawInstance)->MaskedCaster {
  var out=pulled_masked_caster(drawn,vertex);
+ out.position.z=min(out.position.z,1.0);
+ return out;
+}
+@vertex fn shadow_paired_masked_vs(@builtin(vertex_index) slot:u32,drawn:DrawInstance)->MaskedCaster {
+ return pulled_masked_caster(drawn,paired_corner(drawn,slot));
+}
+@vertex fn shadow_paired_masked_unclipped_vs(@builtin(vertex_index) slot:u32,drawn:DrawInstance)->MaskedCaster {
+ var out=pulled_masked_caster(drawn,paired_corner(drawn,slot));
  out.position.z=min(out.position.z,1.0);
  return out;
 }

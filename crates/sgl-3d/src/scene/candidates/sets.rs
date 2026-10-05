@@ -1,7 +1,8 @@
 //! The draw sets: what draws with one pipeline and one material, keyed by
 //! its material, whether its instances' poses mirror and whether they
-//! deform; the pipeline variant follows from those and the material's sides
-//! and alpha mode (`view::draw_list::gpu`). Each set holds a region of
+//! deform, and the positions slab its meshes' positions lie in, which a
+//! GPU-built cascade's draw of it binds; the pipeline variant follows from
+//! those and the material's sides and alpha mode (`view::draw_list::gpu`). Each set holds a region of
 //! every GPU-built view's cluster list, placed by `scene::ranges`, of at
 //! least the capacity its candidates' sections sum to, and re-placed only
 //! when it outgrows it or shrinks to a quarter of it, and one indirect
@@ -24,6 +25,11 @@ pub(crate) struct SetKey {
     /// Its instances deform, so its pulled passes read their deformed
     /// vertices.
     pub deforms: bool,
+    /// The positions slab its meshes' positions lie in
+    /// (`scene::geometry`), which the GPU-built cascades' casters pull them
+    /// from; `GeometryRange::EMPTY`'s for meshes without (a deforming
+    /// model's).
+    pub positions: u32,
 }
 
 /// What a set's record takes of its material: its visibility group and

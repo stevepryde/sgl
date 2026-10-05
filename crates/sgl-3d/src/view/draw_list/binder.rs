@@ -47,4 +47,10 @@ impl<'a> Binder<'a> {
             self.material = Some(material);
         }
     }
+
+    /// After the caller bound another pipeline: the next `bind` binds its
+    /// variant's again.
+    pub fn forget_pipeline(&mut self) {
+        self.variant = None;
+    }
 }
