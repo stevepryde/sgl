@@ -131,7 +131,7 @@ struct Case { n:vec4<f32>,v:vec4<f32>,l:vec4<f32>,t:vec4<f32> }
 fn observed_direct(c:Case,axis_strength:vec4<f32>)->vec3<f32> {
  var surface:Surface;
  surface.normal=c.n.xyz;
- surface.coat_normal=c.n.xyz;
+ surface.geometry_normal=c.n.xyz;
  surface.view=c.v.xyz;
  surface.roughness=c.n.w;
  surface.coat=c.l.w;

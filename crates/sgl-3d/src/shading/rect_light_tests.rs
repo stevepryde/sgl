@@ -156,7 +156,7 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
  var surface:Surface;
  surface.position=c.p.xyz;
  surface.normal=c.n.xyz;
- surface.coat_normal=c.n.xyz;
+ surface.geometry_normal=c.n.xyz;
  surface.view=c.v.xyz;
  surface.roughness=c.n.w;
  surface.coat=c.f.z;
@@ -165,7 +165,7 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
  reflectance.diffuse=vec3(c.f.y);
  reflectance.f0=vec3(c.f.x);
  reflectance.coat_fresnel=c.f.w;
- let light=scene_light_sample(index,c.p.xyz,c.n.xyz,vec2(0.),SHADOW_RECEIVER_CAMERA);
+ let light=scene_light_sample(index,c.p.xyz,c.n.xyz,c.n.xyz,vec2(0.),SHADOW_RECEIVER_CAMERA);
  result[id.x]=vec4(surface_direct_light(surface,reflectance,light),0.);
 }
 "#

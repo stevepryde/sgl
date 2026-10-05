@@ -65,9 +65,10 @@ fn local_shadow_corner(shadow:LocalShadow,face:u32)->vec2<f32> {
 }
 // The fraction of scene light `index`, at `light_position` and reaching
 // `range`, that reaches `receiver` (SHADOW_RECEIVER_*) at `world` with
-// `normal` past its shadow's casters; 1 for a light without a shadow. The
-// camera's surfaces and fog sample the frame's atlas at `pixel`; probe
-// captures and ray hits sample its static layers, where it has them.
+// geometry normal `normal` past its shadow's casters; 1 for a light without
+// a shadow. The camera's surfaces and fog sample the frame's atlas at
+// `pixel`; probe captures and ray hits sample its static layers, where it
+// has them.
 fn local_shadow_visibility(index:u32,light_position:vec3<f32>,range:f32,world:vec3<f32>,normal:vec3<f32>,pixel:vec2<f32>,receiver:u32)->f32 {
  if index>=arrayLength(&local_shadows) {
   return 1.;

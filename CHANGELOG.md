@@ -15,6 +15,22 @@ full API details.
 
 ## Unreleased
 
+### Shadows offset their receivers along the geometry normal
+
+- **Scope:** `sgl-3d` shadow lookups of the directional cascades and of
+  point, spot and rectangle lights offset the receiver along its geometry
+  normal (the interpolated vertex normal toward the side shaded) instead of
+  the normal its normal map, bump map, decals or scrolling normal layers
+  make, as Bevy and Filament do. This is a correctness fix with no setting.
+  On normal-mapped surfaces, shadow edges no longer shift texel by texel
+  with the map, and on surfaces with scrolling normal layers, such as water,
+  they no longer crawl from frame to frame. Surfaces without a normal or
+  bump map are unchanged, as are probe captures and ray hits of such
+  surfaces and the fog, which takes no offset.
+- **Migration:** no game-code changes. Afterwards, look at shadow edges and
+  contact shadows on normal-mapped and bump-mapped surfaces, and on water
+  with normal layers, at grazing light: acne or peter-panning there may
+  differ from before.
 ### Crystal's denoiser skips tiles where every ray missed
 
 - **Scope:** `sgl-post-fx` screen-space reflections, and so `sgl-3d`'s

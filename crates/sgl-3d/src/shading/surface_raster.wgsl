@@ -97,7 +97,7 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  s.position=i.world;
  s.view=normalize(view.eye-i.world);
  s.normal=n;
- s.coat_normal=geometry_normal;
+ s.geometry_normal=geometry_normal;
  s.base=vec4(decaled.base,base.a);
  s.metallic=decaled.metallic;
  s.roughness=surface_roughness(decaled.roughness,n,i);

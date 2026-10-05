@@ -13,9 +13,16 @@ struct Surface {
  // Unit direction toward the viewer: the camera for a fragment, back along
  // the ray for a hit.
  view:vec3<f32>,
- // The mapped base normal, and the geometry normal the coat follows.
+ // The mapped base normal, and the geometry normal: the interpolated vertex
+ // normal toward the side shaded, which the coat follows and along which a
+ // shadow lookup offsets the receiver, as Bevy 9d12036 offsets its point,
+ // spot and directional shadows along `in.world_normal`
+ // (crates/bevy_pbr/src/render/pbr_functions.wesl, apply_pbr_lighting) and
+ // Filament ef1a133 its spot and cascade shadows along
+ // getWorldGeometricNormalVector() (shaders/src/surface_getters.fs), so a
+ // normal map or its scrolling layers move no shadow.
  normal:vec3<f32>,
- coat_normal:vec3<f32>,
+ geometry_normal:vec3<f32>,
  base:vec4<f32>,
  metallic:f32,
  // Perceptual roughness, already filtered or clamped by the builder.
@@ -109,7 +116,7 @@ struct SurfaceReflectance {
 fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
  let f0=mix(vec3(0.04),surface.base.rgb,surface.metallic);
  let diffuse=surface.base.rgb*(1.-surface.metallic);
- let coat_fresnel=pbr_coat_fresnel(surface.coat_normal,surface.view,surface.coat);
+ let coat_fresnel=pbr_coat_fresnel(surface.geometry_normal,surface.view,surface.coat);
  return SurfaceReflectance(diffuse,f0,view_dfg,coat_fresnel);
 }
 // The light one sample brings to a surface, as Filament's
@@ -154,8 +161,8 @@ fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_dire
  }
  var coat=vec3(0.);
  if specular>0. {
-  let coat_cosine=clamp(dot(surface.coat_normal,light_direction),0.,1.);
-  let coat_specular=pbr_three_specular(surface.coat_normal,surface.view,light_direction,surface.coat_roughness,vec3(.04));
+  let coat_cosine=clamp(dot(surface.geometry_normal,light_direction),0.,1.);
+  let coat_specular=pbr_three_specular(surface.geometry_normal,surface.view,light_direction,surface.coat_roughness,vec3(.04));
   coat=surface.coat*coat_specular*coat_cosine*specular;
  }
  return base*(1.-reflectance.coat_fresnel)*cosine+coat;
@@ -182,7 +189,7 @@ fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,
  var coat=vec3(0.);
  for (var lobe=0;lobe<lobes;lobe++) {
   let coat_lobe=lobe==2;
-  let n=select(surface.normal,surface.coat_normal,coat_lobe);
+  let n=select(surface.normal,surface.geometry_normal,coat_lobe);
   var inverse=mat3x3(vec3(1.,0.,0.),vec3(0.,1.,0.),vec3(0.,0.,1.));
   var weight=reflectance.diffuse;
   if lobe>0 {
@@ -203,12 +210,12 @@ fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,
  return base*(1.-reflectance.coat_fresnel)+coat;
 }
 // Directional light `index` (Frame.directional_lights) as it reaches a
-// surface at `position` with `normal`, shadowed when it has the frame's
-// shadow cascades.
-fn directional_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,context:ShadeContext)->LightSample {
+// surface at `position` with `geometry_normal` (Surface), shadowed when it
+// has the frame's shadow cascades.
+fn directional_light_sample(index:u32,position:vec3<f32>,geometry_normal:vec3<f32>,context:ShadeContext)->LightSample {
  let l=normalize(frame.directional_lights[index].direction_to_light);
  let radiance=frame.directional_lights[index].color*frame.directional_lights[index].illuminance;
- let shadow=directional_light_shadow(index,position,normal,context.pixel,context.receiver);
+ let shadow=directional_light_shadow(index,position,geometry_normal,context.pixel,context.receiver);
  return LightSample(l,radiance,shadow,1.,NO_RECT_LIGHT);
 }
 // A receiver's indirect diffuse light, by the one determination: its
@@ -242,7 +249,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let base=s.base;
  let metallic=s.metallic;
  let n=s.normal;
- let coat_n=s.coat_normal;
+ let coat_n=s.geometry_normal;
  let rough=s.roughness;
  let coat=s.coat;
  let coat_rough=s.coat_roughness;
@@ -282,10 +289,10 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  color+=indirect.baked*diffuse*(vec3(1.)-f0)*(1.-volume.a);
  if !probe_hit {
   if frame.directional_lights[0].illuminance>0. {
-   color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,n,context));
+   color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,s.geometry_normal,context));
   }
   if frame.directional_lights[1].illuminance>0. {
-   color+=surface_direct_light(s,reflectance,directional_light_sample(1u,s.position,n,context));
+   color+=surface_direct_light(s,reflectance,directional_light_sample(1u,s.position,s.geometry_normal,context));
   }
   // The scene lights that reach the surface: live ones, then baked ones
   // where no baked map already holds their light.
@@ -295,7 +302,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
    end+=lights.baked;
   }
   for (var at=lights.first;at<end;at++) {
-   let light=scene_light_sample(cluster_item(at),s.position,n,context.pixel,context.receiver);
+   let light=scene_light_sample(cluster_item(at),s.position,n,s.geometry_normal,context.pixel,context.receiver);
    if light.visibility>0. {
     color+=surface_direct_light(s,reflectance,light);
    }
