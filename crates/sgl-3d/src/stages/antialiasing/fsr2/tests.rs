@@ -400,9 +400,8 @@ fn fsr2_sharpening_follows_its_settings() {
 // first dispatch, so the pass that writes it cannot view it. Expected, from
 // wgpu's validation and the textures: no validation error reaches the game,
 // the frame's output is no longer the zeroed start (the composite reached
-// it), FSR2 stops with
-// wgpu's reason, which names the destroyed texture by its label, and the
-// next frame runs TAA at the scene size.
+// it), FSR2 stops with wgpu's reason, which names the destroyed texture by
+// its label, and the next frame runs TAA at the scene size.
 #[test]
 fn a_failed_fsr2_dispatch_completes_the_frame_and_taa_takes_over() {
     let Some((device, queue)) = test_support::fsr2_device() else {
