@@ -1034,7 +1034,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   toward the stride, those turns doubled every probe's period on
   Hyperdrive's course from noise alone; taken from what is left, they keep
   a moved lamp answered as quickly (in the `dynamic_gi` example, 90% within
-  about 90 frames at High, against about 160 without them and 50 tracing
+  about 100 frames at High, against about 160 without them and 50 tracing
   every probe every frame), and the noise threshold keeps a still scene's
   probes from them (#196). And where Wicked starts every probe of a
   restarted volume in one frame, a hitch on a large volume, probes not yet
@@ -1154,9 +1154,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   of them every update, a probe's first turn is classified from the share
   of its rays that met back faces, its second traces all of them, which
   classify it, and its next seven none, so its first turns cost no more
-  rays than any (all of them on its first turn cut the probes a moving
-  camera's frame starts by a fifth, the budget leaving starting probes
-  their share), then it traces four each turn after its others and is
+  rays than any (all of them on its first turn tripled the probes a moving
+  camera leaves waiting to start, the budget leaving starting probes their
+  share), then it traces four each turn after its others and is
   classified again from all of them once a cycle of eight turns (the share
   of each frame's rotated rays, even blended over frames, wandered across
   the threshold, and a far probe's first turn traces as few as 32, whose

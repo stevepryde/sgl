@@ -58,9 +58,10 @@
 // rises, from the rays the distance turns and the starting probes leave, so
 // a light moved is answered sooner without lengthening any probe's distance
 // turns. Shortened turns counted toward the stride doubled every probe's
-// period on Hyperdrive's course from noise alone (#196); and the estimator's
-// noise keeps a still scene's probes from taking them, where any
-// inconsistency took them, for 0.3 ms more a frame there.
+// period on Hyperdrive's course from noise alone (#196); and below the
+// estimator's noise a probe takes none, where taking them at any
+// inconsistency cost 0.3 ms more a frame there with the camera still, for
+// no measurably quicker answer to a moved light in the dynamic_gi example.
 // Added: each probe that traces also traces DDGI_FIXED_RAYS_PER_FRAME
 // fixed rays after its others, the next of its cycle, which classify it, as
 // NVIDIA RTXGI's probes trace their fixed rays among their others each
@@ -70,13 +71,13 @@
 // classifying it; its second all DDGI_FIXED_RAYS, which classify it, and
 // its next DDGI_FIXED_CYCLE - 1 none, so its first cycles cost what any
 // other's do (ddgi_turn_fixed_rays). Its first turn tracing them all, as
-// RTXGI's every update does, cut the probes a moving camera's frame starts
-// by a fifth, as the budget leaves starting probes their share, and
-// tripled those waiting to start on Hyperdrive's course (#196). Changed: an inactive probe (ddgi_probe_active)
-// traces the fewest others, a bucket, beside its fixed rays, and still
-// blends them, where RTXGI's inactive probes trace their fixed rays alone
-// and blend nothing: its depth and irradiance stay warm, so it lights
-// rightly the turn it becomes active again. A dormant probe, with no
+// RTXGI's every update does, tripled the probes waiting to start in motion
+// on Hyperdrive's course (#196), as the budget leaves starting probes their
+// share. Changed: an inactive probe (ddgi_probe_active) traces the fewest
+// others, a bucket, beside its fixed rays, and still blends them, where
+// RTXGI's inactive probes trace their fixed rays alone and blend nothing:
+// its depth and irradiance stay warm, so it lights rightly the turn it
+// becomes active again. A dormant probe, with no
 // surface in its cell, traces the fewest too, staying warm for the moving
 // receivers it lights, unless a moving instance's bounds reach into its
 // cell: then it traces as an active probe does, so the light about the

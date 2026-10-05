@@ -153,7 +153,7 @@ full API details.
   fixed rays and its next 7 turns none, so the class its first turn's
   rotated rays give it lasts one turn rather than its first whole cycle of
   8, for no more rays over those turns (all 32 on its first turn, as RTXGI
-  traces them, cut the probes a moving camera's frame starts by a fifth). A volume's convergence window now spans 16 turns of every
+  traces them, tripled the probes waiting to start in motion). A volume's convergence window now spans 16 turns of every
   active probe (16 times the longest period among them), so it can pause
   later than before while far probes catch up. A restart or a scroll's
   entering planes start as many probes a frame as the budget holds beside
@@ -164,18 +164,21 @@ full API details.
 
   | Hyperdrive | High | High (#185) | Low | Low (#185) |
   | --- | ---: | ---: | ---: | ---: |
-  | Moving | 3.57 / 4.07 | 3.19 / 3.83 | 1.66 / 1.95 | 1.57 / 1.92 |
-  | Camera still | 1.74 / 3.00 | 1.67 / 2.37 | 1.19 / 1.51 | 0.75 / 1.03 |
-  | Garage | 0.68 / 0.96 | 0.67 / 0.88 | 0.43 / 0.56 | 0.40 / 0.53 |
+  | Moving | 3.43 / 3.99 | 3.15 / 3.77 | 1.62 / 1.91 | 1.56 / 1.89 |
+  | Camera still | 1.69 / 2.80 | 1.66 / 2.35 | 1.18 / 1.52 | 0.73 / 1.07 |
+  | Garage | 0.66 / 0.92 | 0.68 / 0.90 | 0.40 / 0.53 | 0.42 / 0.53 |
 
-  In motion the probes near the camera now trace every frame or every
-  other (strides 1–2), where #185's shortened turns had spaced them to
-  every 4th or 8th; #185's lower Low cost with the camera still came from
-  probes that missed every turn while the stride alternated (2.2k rays a
-  frame of the 8.5k they asked for). The `dynamic GI blend` pass takes
-  0.28 / 0.36 ms moving at High. In the `dynamic_gi` example a lamp moved
-  at frame 150 is 90% answered within about 90 frames at High (about 160
-  without the shorter turns, 50 tracing every probe every frame). The ray
+  In motion at High the stride is 1 or 2 in 96% of frames, where #185's
+  shortened turns, counted toward it, made it 4 or more in two thirds;
+  the rays pass costs more because it now uses the budget those strides
+  left idle. #185's lower Low cost with the camera still came from probes
+  that missed every turn while the stride alternated (2.2k rays a frame of
+  the 8.5k they asked for). The probes waiting to start in motion are as
+  before (median 187). The `dynamic GI blend` pass takes 0.30 / 0.39 ms
+  moving at High. In the `dynamic_gi` example a lamp moved at frame 150
+  is 90% answered within about 100 frames at High, as with #185 merged
+  (about 160 without the shorter turns, 50 tracing every probe every
+  frame). The ray
   list now holds the frame's budget rather than every probe's most rays,
   so a volume takes about 9 KB a probe at High (7 KB at Low) and a ray
   list of 256 KB (128 KB). New diagnostics observation:
