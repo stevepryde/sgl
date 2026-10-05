@@ -36,10 +36,10 @@ fn observe(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_inde
  if id>=volume.rays {
   return;
  }
- let ray_alloc=textureLoad(ray_list,ddgi_ray_texel(id),0).xy;
- let probe_index=ray_alloc.x;
- let ray_index=ray_alloc.y&0xffffu;
- let ray_count=ray_alloc.y>>16u;
+ let entry=ddgi_unpack_ray_entry(textureLoad(ray_list,ddgi_ray_texel(id),0).xy);
+ let probe_index=entry.probe;
+ let ray_index=entry.ray;
+ let ray_count=entry.rays;
  let costs=textureLoad(ray_costs,ddgi_ray_texel(ddgi_ray_slot(probe_index,ray_index,volume.max_rays)),0).xy;
  let own=costs.x;
  let visibility=costs.y;

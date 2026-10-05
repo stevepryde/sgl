@@ -76,6 +76,12 @@ pub struct DynamicGiReport {
     pub probes: u32,
     pub traced_probes: u32,
     pub unblended_probes: u32,
+    /// The rays, fixed rays included, the blended probes asked for on
+    /// their turns at their own periods, and the stride the frame
+    /// lengthened every period by so they fit the frame's budget beside the
+    /// probes that start.
+    pub blended_requests: u32,
+    pub stride: u32,
     /// The probes that traced, by how many rays each traced beside its
     /// fixed rays: 4, 5–8, 9–16, 17–32, 33–64, 65–128, 129–255 and 256.
     pub probes_by_rays: [u32; 8],
@@ -96,9 +102,9 @@ pub struct DynamicGiReport {
     /// visits (AR-12), or at a link that does not lead forward, and so
     /// reported a miss.
     pub exhausted_queries: u32,
-    /// Whether the volume traced nothing, having converged while what its
-    /// light follows held still, and whether it has converged after the
-    /// frame.
+    /// Whether the volume paused, tracing nothing, having converged while
+    /// what its light follows held still, and whether it has converged
+    /// after the frame.
     pub paused: bool,
     pub converged: bool,
     /// What its light follows that changed since the last frame that ran

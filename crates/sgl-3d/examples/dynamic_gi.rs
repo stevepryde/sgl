@@ -527,10 +527,12 @@ fn report_counts(reports: &[sgl_3d::diagnostics::DynamicGiReport]) {
     let per_ray = |visits: u64, rays: u32| visits as f64 / f64::from(rays.max(1));
     for (frame, r) in reports.iter().enumerate() {
         println!(
-            "frame {frame}: probes {}/{} traced ({} unblended), by rays {:?}; rays {} + {} fixed, {} hits; visits/ray {:.1} (most {}); visibility rays {}, visits/ray {:.1} (most {}); exhausted {}; paused {}, converged {}, changes {:?}",
+            "frame {frame}: probes {}/{} traced ({} unblended), blended asked {} rays, stride {}, by rays {:?}; rays {} + {} fixed, {} hits; visits/ray {:.1} (most {}); visibility rays {}, visits/ray {:.1} (most {}); exhausted {}; paused {}, converged {}, changes {:?}",
             r.traced_probes,
             r.probes,
             r.unblended_probes,
+            r.blended_requests,
+            r.stride,
             r.probes_by_rays,
             r.rays,
             r.fixed_rays,

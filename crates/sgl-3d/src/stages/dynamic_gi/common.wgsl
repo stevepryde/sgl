@@ -61,8 +61,8 @@ struct DdgiVolume {
  // The rays the frame traces, which the allocation counts and a copy
  // brings here before the trace.
  rays:u32,
- // The most probes not yet blended that start this frame.
- ramp_probes:u32,
+ // The most rays the frame traces, fixed rays included.
+ budget:u32,
  // The probes that trace rays this frame, which a copy brings here before
  // the blends.
  traced:u32,
@@ -114,6 +114,22 @@ struct DdgiBounds {
 }
 // The most moving instances' bounds a frame takes.
 const DDGI_MOST_MOVING_BOUNDS:u32=256u;
+// A ray of the frame's ray list: its probe, its index among the probe's
+// rays (past `rays`, its fixed rays), the rays the probe traces beside its
+// fixed rays, and which of its cycle's fixed rays it traces (the probe's
+// turns in its cycle so far, DdgiProbe::fixed_frames).
+struct DdgiRayEntry {
+ probe:u32,
+ ray:u32,
+ rays:u32,
+ cycle:u32,
+}
+fn ddgi_pack_ray_entry(entry:DdgiRayEntry)->vec2<u32> {
+ return vec2(entry.probe,entry.ray|(entry.cycle<<12u)|(entry.rays<<16u));
+}
+fn ddgi_unpack_ray_entry(words:vec2<u32>)->DdgiRayEntry {
+ return DdgiRayEntry(words.x,words.y&0xfffu,words.y>>16u,(words.y>>12u)&0xfu);
+}
 // The probe a workgroup of a two-dimensional dispatch over probes serves.
 fn ddgi_group_probe(group:vec3<u32>)->u32 {
  return group.x+group.y*DDGI_GROUP_ROW;
@@ -172,8 +188,8 @@ fn ddgi_unpack_variance(words:array<u32,6>)->DdgiVariance {
 // A probe's state in the stage's probe buffer: its relocated offset in half
 // spacings, whether it has been blended since the volume restarted, the
 // share of its rays that meet single-sided surfaces from behind, which
-// classifies it, and the back faces its fixed rays have met over the frames
-// of the cycle it has traced so far.
+// classifies it, and the back faces its fixed rays have met over the turns
+// of the cycle it has traced so far (fixed_frames).
 struct DdgiProbe {
  offset:vec3<f32>,
  blended:bool,
@@ -199,8 +215,8 @@ fn ddgi_fresh_probe()->DdgiProbe {
 // RTXGI's RTXGI_DDGI_NUM_FIXED_RAYS: the fixed directions that classify a
 // probe, spread evenly over the sphere and never rotated, so a probe's class
 // holds still while what it sees does. A probe traces
-// DDGI_FIXED_RAYS_PER_FRAME of them a frame, all of them over a cycle of
-// DDGI_FIXED_CYCLE frames.
+// DDGI_FIXED_RAYS_PER_FRAME of them each turn it traces, all of them over a
+// cycle of DDGI_FIXED_CYCLE turns.
 const DDGI_FIXED_RAYS:u32=32u;
 const DDGI_FIXED_CYCLE:u32=DDGI_FIXED_RAYS/DDGI_FIXED_RAYS_PER_FRAME;
 // RTXGI's probeBackfaceThreshold: a probe more than this share of whose rays

@@ -86,21 +86,21 @@ struct DdgiTraced {
 }
 // Ray `id` of the frame's rays, traced.
 fn ddgi_trace_ray(id:u32)->DdgiTraced {
- let ray_alloc=textureLoad(ray_list,ddgi_ray_texel(id),0).xy;
- let probe_index=ray_alloc.x;
- let ray_index=ray_alloc.y&0xffffu;
- let ray_count=ray_alloc.y>>16u;
+ let entry=ddgi_unpack_ray_entry(textureLoad(ray_list,ddgi_ray_texel(id),0).xy);
+ let probe_index=entry.probe;
+ let ray_index=entry.ray;
+ let ray_count=entry.rays;
  let stored=ddgi_probe_coord(probe_index,volume.probes);
  let probe_data=textureLoad(dynamic_gi_probes,ddgi_probe_data_pixel(stored,volume.probes),0);
  let lattice=ddgi_probe_lattice(stored,volume.probes,volume.scroll);
  let probe_pos=ddgi_probe_position(lattice,volume.origin,volume.spacing,probe_data.rgb);
  var rng=ddgi_rng_init(vec2(id,id),volume.frame);
- // Past its rays, its fixed rays: this frame's of the cycle, unrotated,
+ // Past its rays, its fixed rays: this turn's of its cycle, unrotated,
  // which classify it and bring no light.
  let fixed=ray_index>=ray_count;
  var direction=normalize(volume.rotation*ddgi_spherical_fibonacci(f32(ray_index),f32(ray_count)));
  if fixed {
-  let ray=(volume.frame%DDGI_FIXED_CYCLE)*DDGI_FIXED_RAYS_PER_FRAME+ray_index-ray_count;
+  let ray=entry.cycle*DDGI_FIXED_RAYS_PER_FRAME+ray_index-ray_count;
   direction=ddgi_spherical_fibonacci(f32(ray),f32(DDGI_FIXED_RAYS));
  }
  var ray=DdgiRay(direction,-1.,vec3(0.),false);

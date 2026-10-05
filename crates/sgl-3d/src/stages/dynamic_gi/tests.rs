@@ -808,8 +808,10 @@ fn a_closed_room_holds_no_light_from_the_sky_beyond_it() {
 
 // Probes inside a closed box see only its faces' backs, every one of their
 // fixed rays meeting one, so the first frame classifies them inactive and
-// from then on each traces the fewest rays and its fixed rays, where a
-// probe whose light has only just started traces nearly the most.
+// from then on each traces the fewest rays and its fixed rays on its turns,
+// where a probe whose light has only just started traces the most. Each
+// probe here, 5 to 8 spacings from the camera, takes its turn within
+// DDGI_PERIOD_MAX (8) frames.
 #[test]
 fn probes_inside_closed_geometry_trace_the_fewest_rays() {
     let Some((device, queue)) = test_support::device() else {
@@ -850,10 +852,24 @@ fn probes_inside_closed_geometry_trace_the_fewest_rays() {
             &settings,
             1,
         );
-        renderer.test_dynamic_gi().test_traced_rays(&device, &queue)
+        renderer.test_dynamic_gi().test_probe_rays(&device, &queue)
     };
-    assert_eq!(rays(), 27 * STARTING_RAYS, "the start");
-    assert_eq!(rays(), 27 * SETTLED_RAYS, "inactive");
+    assert_eq!(rays(), vec![MOST_RAYS; 27], "the start");
+    let turns = most_over_turns(&mut rays);
+    assert_eq!(turns, vec![SETTLED; 27], "inactive");
+}
+
+/// The rays each probe traced beside its fixed rays on any of the next
+/// `PERIOD` frames: every probe's turns there, as `rays` reports each
+/// frame's.
+fn most_over_turns(rays: &mut dyn FnMut() -> Vec<u32>) -> Vec<u32> {
+    (0..PERIOD).fold(Vec::new(), |most: Vec<u32>, _| {
+        let frame = rays();
+        if most.is_empty() {
+            return frame;
+        }
+        most.iter().zip(frame).map(|(a, b)| (*a).max(b)).collect()
+    })
 }
 
 // Probes 2 m beyond the walls of a room of single-sided walls facing inward
@@ -1112,19 +1128,24 @@ fn dormant_probes_trace_the_fewest_rays_but_about_a_moving_instance() {
                 &settings,
                 1,
             );
-            renderer.test_dynamic_gi().test_traced_rays(&device, &queue)
+            renderer.test_dynamic_gi().test_probe_rays(&device, &queue)
         };
-        assert_eq!(rays(), 125 * STARTING_RAYS, "the start");
-        rays()
+        assert_eq!(rays(), vec![MOST_RAYS; 125], "the start");
+        most_over_turns(&mut rays)
     };
     let open = second_frame(false);
-    assert_eq!(open, 125 * SETTLED_RAYS, "dormant");
-    // Just started, their light is far from settled, so each traces many.
+    assert_eq!(open, vec![SETTLED; 125], "dormant");
+    // Just started, their light is far from settled, so each about the box
+    // traces many on its turn; the others the fewest.
     let about = second_frame(true);
-    assert!(
-        about >= 98 * SETTLED_RAYS + 27 * 4 * SETTLED_RAYS,
-        "{about}"
-    );
+    for (index, rays) in about.into_iter().enumerate() {
+        let lattice = [index % 5, index / 5 % 5, index / 25];
+        if lattice.iter().all(|at| (1..=3).contains(at)) {
+            assert!(rays > 4 * SETTLED, "probe {index}: {rays}");
+        } else {
+            assert_eq!(rays, SETTLED, "probe {index}");
+        }
+    }
 }
 
 /// An open floor under a sky and a sun that casts shadows, whose cascades
@@ -1185,8 +1206,8 @@ fn floor_scene(
 /// An edit to a scene or its frame.
 type Edit<'a> = dyn Fn(&mut Scene, &mut FrameInput) + 'a;
 
-/// Renders frames of `scene` until one traces no ray, at most `most`, and
-/// returns how many it took.
+/// Renders frames of `scene` until one pauses the volume, at most `most`,
+/// and returns how many it took.
 fn render_until_paused(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     renderer: &mut Renderer,
@@ -1197,7 +1218,7 @@ fn render_until_paused(
 ) -> Option<usize> {
     (1..=most).find(|_| {
         render(device, queue, renderer, scene, input, settings, 1);
-        renderer.test_dynamic_gi().test_traced_rays(device, queue) == 0
+        renderer.test_dynamic_gi().test_paused(device, queue)
     })
 }
 
@@ -1235,6 +1256,10 @@ fn a_converged_volume_traces_nothing_until_what_its_light_follows_changes() {
             &input,
             &settings,
             10,
+        );
+        assert!(
+            renderer.test_dynamic_gi().test_paused(&device, &queue),
+            "a camera that moves"
         );
         assert_eq!(
             renderer.test_dynamic_gi().test_traced_rays(&device, &queue),
@@ -1275,7 +1300,7 @@ fn a_converged_volume_traces_nothing_until_what_its_light_follows_changes() {
             1,
         );
         assert!(
-            renderer.test_dynamic_gi().test_traced_rays(&device, &queue) > 0,
+            !renderer.test_dynamic_gi().test_paused(&device, &queue),
             "{edit}"
         );
         let again = render_until_paused(gpu, &mut renderer, &mut scene, &input, &settings, 400);
@@ -1297,7 +1322,7 @@ fn a_converged_volume_traces_nothing_until_what_its_light_follows_changes() {
             1,
         );
         assert!(
-            renderer.test_dynamic_gi().test_traced_rays(&device, &queue) > 0,
+            !renderer.test_dynamic_gi().test_paused(&device, &queue),
             "the scene's lights left out"
         );
     }
@@ -1313,7 +1338,7 @@ fn a_volume_does_not_pause_while_probes_have_yet_to_start() {
     };
     let mut scene = Scene::new(&device, &queue);
     let environment = uniform_environment(&device, &queue, &mut scene, [0.5; 3]);
-    // 4800 probes: 38 frames of 128.
+    // 4800 probes: at least half the frame's budget starts them.
     let volume = DynamicGiVolume {
         origin: Vec3::new(-19., -11., -19.),
         spacing: Vec3::splat(2.),
@@ -1331,7 +1356,7 @@ fn a_volume_does_not_pause_while_probes_have_yet_to_start() {
         &mut scene,
         &input,
         &settings,
-        60,
+        4800usize.div_ceil(least_started()) + 2,
     );
     // Far from the camera, among the last probes to start.
     let far = [(Vec3::new(-18.3, -10.2, -18.1), Vec3::Y)];
@@ -1691,10 +1716,15 @@ fn shares(
     [answers[0][3], answers[1][3]]
 }
 
+/// The probes that start a frame at High at least: half the frame's
+/// budget's worth at the most rays.
+fn least_started() -> usize {
+    (super::BUDGET_PROBES * MOST_RAYS / 2 / STARTING_RAYS) as usize
+}
+
 /// The frames that start every probe of `LARGE` at High, with a margin.
 fn ramp_frames() -> usize {
-    let started = (super::RAMP_RAYS / crate::shading::dynamic_gi::MOST_RAYS) as usize;
-    1024usize.div_ceil(started) + 2
+    1024usize.div_ceil(least_started()) + 2
 }
 
 // A restart starts no more probes in a frame than its budget of rays holds
@@ -1719,11 +1749,18 @@ fn a_restart_starts_the_probes_nearest_the_camera_first() {
         &settings,
         1,
     );
-    let most = crate::shading::dynamic_gi::MOST_RAYS;
+    // Nothing else asks for rays, so the probes nearest the camera that
+    // the whole budget holds at the most start.
+    let started = renderer
+        .test_dynamic_gi()
+        .test_probe_rays(&device, &queue)
+        .into_iter()
+        .filter(|&rays| rays == MOST_RAYS)
+        .count();
     assert_eq!(
-        renderer.test_dynamic_gi().test_traced_rays(&device, &queue),
-        super::RAMP_RAYS / most * STARTING_RAYS,
-        "the first frame's rays"
+        started as u32,
+        super::BUDGET_PROBES * MOST_RAYS / STARTING_RAYS,
+        "the first frame's probes"
     );
     assert_eq!(shares(&device, &queue, &renderer, Vec3::ZERO), [1., 0.]);
     render(
@@ -2012,21 +2049,25 @@ const SCROLLED: DynamicGiVolume = DynamicGiVolume {
     probes: [8, 2, 2],
 };
 
-// The rays a probe traces once its light has settled: the fewest, a bucket
-// (DDGI_RAY_BUCKET_COUNT), and its fixed rays.
-const SETTLED_RAYS: u32 = 4 + crate::shading::dynamic_gi::FIXED_RAYS_PER_FRAME;
-// The rays a probe that starts afresh traces: the most at High, and its
-// fixed rays.
-const STARTING_RAYS: u32 =
-    crate::shading::dynamic_gi::MOST_RAYS + crate::shading::dynamic_gi::FIXED_RAYS_PER_FRAME;
+// The rays a probe traces beside its fixed rays on its turns once its light
+// has settled: the fewest, a bucket (DDGI_RAY_BUCKET_COUNT).
+const SETTLED: u32 = 4;
+// The most rays at High, which a probe that starts afresh traces, and with
+// its fixed rays.
+const MOST_RAYS: u32 = crate::shading::dynamic_gi::MOST_RAYS;
+const STARTING_RAYS: u32 = MOST_RAYS + crate::shading::dynamic_gi::FIXED_RAYS_PER_FRAME;
+// The frames within which every probe within 128 spacings of the camera
+// takes a turn while the frame's budget holds every request
+// (DDGI_PERIOD_MAX).
+const PERIOD: usize = 8;
 
 // Under an unchanging sky every probe's light settles, so each traces the
-// fewest rays and the volume then pauses; a probe that starts afresh traces
-// the most, as a restart's do. A scroll by whole spacings keeps the probes
-// that stay, so only those of the planes that enter trace the most: one
-// plane forward, the planes of two axes at once, and after a move of the
-// render origin, in its new frame. An origin off the lattice is another
-// placement, and every probe starts again.
+// fewest rays on its turns and the volume then pauses; a probe that starts
+// afresh traces the most, as a restart's do. A scroll by whole spacings
+// keeps the probes that stay, so only those of the planes that enter trace
+// the most: one plane forward, the planes of two axes at once, and after a
+// move of the render origin, in its new frame. An origin off the lattice is
+// another placement, and every probe starts again.
 #[test]
 fn a_scroll_starts_only_the_probes_that_enter() {
     let Some((device, queue)) = test_support::device() else {
@@ -2041,28 +2082,34 @@ fn a_scroll_starts_only_the_probes_that_enter() {
     input.environment = Some(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
-    let most = STARTING_RAYS;
     // Installs the volume with its origin at `origin`, renders one frame,
-    // and returns the rays it traced, then lets the light settle again.
+    // and returns how many probes traced the most, whether the others traced
+    // the fewest at most, and whether it paused, then lets the light settle
+    // again.
     let mut scroll_to = |scene: &mut Scene, input: &FrameInput, origin: Vec3| {
         let volume = DynamicGiVolume { origin, ..SCROLLED };
         scene.set_dynamic_gi_volume(&device, Some(volume)).unwrap();
         render(&device, &queue, &mut renderer, scene, input, &settings, 1);
-        let rays = renderer.test_dynamic_gi().test_traced_rays(&device, &queue);
+        let rays = renderer.test_dynamic_gi().test_probe_rays(&device, &queue);
+        let paused = renderer.test_dynamic_gi().test_paused(&device, &queue);
         render(&device, &queue, &mut renderer, scene, input, &settings, 100);
-        rays
+        let started = rays.iter().filter(|&&rays| rays == MOST_RAYS).count();
+        let rest = rays
+            .iter()
+            .all(|&rays| rays == MOST_RAYS || rays <= SETTLED);
+        (started, rest, paused)
     };
     let origin = SCROLLED.origin;
     assert_eq!(
         scroll_to(&mut scene, &input, origin),
-        32 * most,
+        (32, true, false),
         "the start"
     );
     // The same placement again changes nothing: the settled volume has
     // paused.
     assert_eq!(
         scroll_to(&mut scene, &input, origin),
-        0,
+        (0, true, true),
         "the settled light"
     );
     // One spacing forward along x, within the lattice's rounding: its last
@@ -2070,7 +2117,7 @@ fn a_scroll_starts_only_the_probes_that_enter() {
     let forward = origin + Vec3::new(2. + 1e-5, 0., 0.);
     assert_eq!(
         scroll_to(&mut scene, &input, forward),
-        28 * SETTLED_RAYS + 4 * most,
+        (4, true, false),
         "one plane"
     );
     // Two spacings back along x and one up along y: x's first two planes
@@ -2078,7 +2125,7 @@ fn a_scroll_starts_only_the_probes_that_enter() {
     let back = forward + Vec3::new(-4., 2., 0.);
     assert_eq!(
         scroll_to(&mut scene, &input, back),
-        12 * SETTLED_RAYS + 20 * most,
+        (20, true, false),
         "two axes"
     );
     // A move of the render origin, then one spacing along z in its frame.
@@ -2089,19 +2136,19 @@ fn a_scroll_starts_only_the_probes_that_enter() {
     let moved = scene.dynamic_gi_volume().unwrap().origin;
     assert_eq!(
         scroll_to(&mut scene, &input, moved),
-        32 * SETTLED_RAYS,
+        (0, true, false),
         "the move itself"
     );
     assert_eq!(
         scroll_to(&mut scene, &input, moved + Vec3::new(0., 0., 2.)),
-        16 * SETTLED_RAYS + 16 * most,
+        (16, true, false),
         "a scroll after the move"
     );
     // A quarter spacing off the lattice.
     let off = moved + Vec3::new(0., 0., 2.5);
     assert_eq!(
         scroll_to(&mut scene, &input, off),
-        32 * most,
+        (32, true, false),
         "another placement"
     );
 }

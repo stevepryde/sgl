@@ -105,7 +105,7 @@ pub(crate) struct VolumeUniform {
     eye: [f32; 3],
     frame: u32,
     rays: u32,
-    ramp_probes: u32,
+    budget: u32,
     traced: u32,
     padding: u32,
     scroll: [u32; 3],
@@ -133,8 +133,11 @@ const MOST_MOVING_BOUNDS: u32 = 256;
 
 /// The allocation's buffer (`DdgiAllocation` in allocate.wgsl): the
 /// trace's indirect dispatch and ray count, the blends' dispatch and the
-/// count of probes that trace, the ramp's words and its bins. The trace and
-/// the blends read the counts in the volume's uniform.
+/// count of probes that trace, the starting probes' words, whether the
+/// volume paused, the stride the frame's periods take, the rays reserved
+/// against the budget, the blended
+/// probes' requests under each stride, and the starting probes' bins. The
+/// trace and the blends read the counts in the volume's uniform.
 #[repr(C)]
 struct Allocation {
     groups: [u32; 3],
@@ -145,6 +148,10 @@ struct Allocation {
     ramp_room: u32,
     ramp_taken: u32,
     unblended: u32,
+    paused: u32,
+    stride: u32,
+    reserved: u32,
+    demand: [u32; STRIDES as usize],
     bins: [u32; RAMP_BINS as usize],
 }
 const ALLOCATION_RAYS: u64 = std::mem::offset_of!(Allocation, rays) as u64;
@@ -167,12 +174,19 @@ struct Convergence {
 }
 const CONVERGENCE_SUMS: u64 = std::mem::offset_of!(Convergence, average) as u64;
 const CONVERGENCE_BYTES: u64 = std::mem::size_of::<Convergence>() as u64;
-/// The ramp's bins of distance (`RAMP_BINS` in allocate.wgsl).
+/// The starting probes' bins of distance (`RAMP_BINS` in allocate.wgsl).
 const RAMP_BINS: u32 = 1024;
-/// The rays a frame gives the probes it starts while some have not
-/// started: at most this many over the quality's most rays start a frame,
-/// where Wicked starts every probe at once.
-const RAMP_RAYS: u32 = 32768;
+/// The lengthenings of every period the allocation weighs (`DDGI_STRIDES`).
+const STRIDES: u32 = 7;
+/// The frame's most rays, fixed rays included, in probes at the tier's
+/// most: 32,768 at High, 16,384 at Low. Wicked's surfel GI traces at most
+/// 100,000 a frame (4323a33c `SURFEL_RAY_BUDGET`) on hardware ray tracing;
+/// SGL3D's portable walk costs about 0.8 ns a BVH node visited on an Apple
+/// M5, and a dynamic GI ray over a large world visits about 120 with its
+/// visibility ray's share (#185), so this many cost a few milliseconds. It
+/// is the rays the restart's ramp gave the probes it started (#152), so a
+/// restart starts them as fast.
+const BUDGET_PROBES: u32 = 128;
 const UNIFORM_RAYS: u64 = std::mem::offset_of!(VolumeUniform, rays) as u64;
 const UNIFORM_TRACED: u64 = std::mem::offset_of!(VolumeUniform, traced) as u64;
 
@@ -531,7 +545,7 @@ impl DynamicGi {
             eye: camera.eye.to_array(),
             frame,
             rays: 0,
-            ramp_probes: (RAMP_RAYS / max_rays).max(1),
+            budget: max_rays * BUDGET_PROBES,
             traced: 0,
             padding: 0,
             scroll,
@@ -671,6 +685,30 @@ impl DynamicGi {
             [(ALLOCATION_RAYS / 4) as usize]
     }
 
+    /// Whether the last frame that ran the stage paused the volume.
+    pub fn test_paused(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
+        let volume = match (&self.rendered, &self.committed) {
+            (Some(Rendered::Fresh(volume)), _) => volume,
+            (_, Some((volume, _))) => volume,
+            _ => return false,
+        };
+        crate::test_support::read_words(device, queue, &volume.allocation)
+            [std::mem::offset_of!(Allocation, paused) / 4]
+            != 0
+    }
+
+    /// The rays each probe traced beside its fixed rays in the last frame
+    /// that ran the stage, by its stored index: none off its turn.
+    pub fn test_probe_rays(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u32> {
+        let volume = match (&self.rendered, &self.committed) {
+            (Some(Rendered::Fresh(volume)), _) => volume,
+            (_, Some((volume, _))) => volume,
+            _ => return Vec::new(),
+        };
+        let count = volume::probe_count(volume.installed.probes) as usize;
+        crate::test_support::read_words(device, queue, &volume.ray_counts)[..count].to_vec()
+    }
+
     /// Each probe's share of back faces (`DdgiProbe::backfaces`), by its
     /// stored index, after the last frame that ran the stage.
     pub fn test_backface_shares(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<f32> {
@@ -789,7 +827,7 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
                 eye,
                 frame,
                 rays,
-                ramp_probes,
+                budget,
                 traced,
                 scroll,
                 scrolled,
@@ -830,6 +868,10 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
                 ramp_room,
                 ramp_taken,
                 unblended,
+                paused,
+                stride,
+                reserved,
+                demand,
                 bins,
             ]
         ),
@@ -853,6 +895,11 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "dynamic_gi_allocate",
             "RAMP_BINS",
             naga::Literal::U32(RAMP_BINS),
+        ),
+        Constant::new(
+            "dynamic_gi_allocate",
+            "DDGI_STRIDES",
+            naga::Literal::U32(STRIDES),
         ),
         Constant::new(
             "dynamic_gi_allocate",

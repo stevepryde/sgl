@@ -28,9 +28,9 @@
 // probe more than probeBackfaceThreshold (0.25) of whose fixed rays meet
 // single-sided surfaces from behind, one inside geometry or beyond a wall,
 // is inactive. Changed: RTXGI traces all 32 fixed rays every update; here a
-// probe traces 4 a frame and is classified from all 32 once a cycle of 8
-// frames, so they cost an eighth, and a probe's first blend takes its first
-// frame's rays' share until its first whole cycle. The share of each
+// probe traces 4 each turn it traces and is classified from all 32 once a
+// cycle of 8 turns, so they cost an eighth, and a probe's first blend takes
+// its first frame's rays' share until its first whole cycle. The share of each
 // frame's rotated rays, blended as the depths are, flickered: in a room
 // whose probes beyond the walls see a quarter of back faces, 66 changes of
 // class in 200 frames among 125 probes. Its second phase (172-214) finds
@@ -405,8 +405,9 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   var blended=probe;
   blended.offset=probe_offset;
   // Its class: first from the share of its first frame's rays that met
-  // back faces, then from its fixed rays' share over each whole cycle it
-  // traces, as RTXGI classifies from its fixed rays.
+  // back faces, then from its fixed rays' share over each cycle of
+  // DDGI_FIXED_CYCLE turns it traces, as RTXGI classifies from its fixed
+  // rays.
   if !probe.blended {
    blended=ddgi_fresh_probe();
    blended.offset=probe_offset;
@@ -420,11 +421,9 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
    blended.fixed_nearby+=select(0u,1u,ddgi_in_cell(fixed));
   }
   blended.fixed_frames+=1u;
-  if volume.frame%DDGI_FIXED_CYCLE==DDGI_FIXED_CYCLE-1u {
-   if blended.fixed_frames==DDGI_FIXED_CYCLE {
-    blended.backfaces=f32(blended.fixed_backfaces)/f32(DDGI_FIXED_RAYS);
-    blended.surfaced=blended.fixed_nearby>0u;
-   }
+  if blended.fixed_frames>=DDGI_FIXED_CYCLE {
+   blended.backfaces=f32(blended.fixed_backfaces)/f32(DDGI_FIXED_RAYS);
+   blended.surfaced=blended.fixed_nearby>0u;
    blended.fixed_backfaces=0u;
    blended.fixed_nearby=0u;
    blended.fixed_frames=0u;
