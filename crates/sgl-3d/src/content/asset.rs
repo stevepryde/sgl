@@ -178,14 +178,18 @@ pub struct Asset {
 /// handedness +1 or -1, which anisotropy requires of each mesh drawn with an
 /// anisotropic material.
 pub(crate) fn tangent_frames(vertices: &[Vertex]) -> bool {
-    vertices.iter().all(|vertex| {
-        let n = Vec3::from_array(vertex.normal);
-        let t = Vec3::from_slice(&vertex.tangent[..3]);
-        n.try_normalize().is_some()
-            && t.try_normalize().is_some()
-            && n.cross(t).try_normalize().is_some()
-            && matches!(vertex.tangent[3], -1.0 | 1.0)
-    })
+    vertices.iter().all(tangent_frame)
+}
+
+/// Whether `vertex` carries a finite, nonzero authored tangent frame: a
+/// tangent that keeps a length off its normal, with handedness +1 or -1.
+pub(crate) fn tangent_frame(vertex: &Vertex) -> bool {
+    let n = Vec3::from_array(vertex.normal);
+    let t = Vec3::from_slice(&vertex.tangent[..3]);
+    n.try_normalize().is_some()
+        && t.try_normalize().is_some()
+        && n.cross(t).try_normalize().is_some()
+        && matches!(vertex.tangent[3], -1.0 | 1.0)
 }
 
 pub(crate) fn valid_anisotropy(strength: f32, rotation: f32) -> bool {

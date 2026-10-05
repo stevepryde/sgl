@@ -18,6 +18,11 @@ pub(crate) mod gbuffer;
 pub(crate) mod layout_tests;
 pub(crate) mod lights;
 pub(crate) mod material;
+// Wired into the ray source and its readers with #135's prepared models.
+#[allow(dead_code)]
+pub(crate) mod packed_vertex;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod packed_vertex_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rect_light_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -129,6 +134,14 @@ pub(crate) static PBR: Module = Module {
     name: "pbr",
     source: include_str!("pbr.wgsl"),
     deps: &[],
+};
+/// The scene's packed vertex: its words and their decoding
+/// (`shading::packed_vertex`).
+#[allow(dead_code)]
+pub(crate) static PACKED_VERTEX: Module = Module {
+    name: "packed_vertex",
+    source: include_str!("packed_vertex.wgsl"),
+    deps: &[&PBR],
 };
 pub(crate) static ANISOTROPY: Module = Module {
     name: "anisotropy",

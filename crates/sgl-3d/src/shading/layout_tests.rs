@@ -39,8 +39,9 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 23] = [
+    let roots: [&'static super::Module; 24] = [
         &crate::view::pipelines::GEOMETRY,
+        &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
         &crate::stages::transparent::effects::GLOW,
@@ -693,6 +694,7 @@ fn rust_constants_match_wgsl_twins() {
     .chain(super::clusters::constants())
     .chain(super::dynamic_gi::constants())
     .chain(super::vertex::constants())
+    .chain(super::packed_vertex::constants())
     .chain(crate::scene::lookup_tables::constants())
     .chain(crate::scene::rays::constants())
     .chain(crate::shading::deformation::constants())
