@@ -1394,7 +1394,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   rays. A built BLAS is prepared for compaction and, once ready, compacted
   through the queue under Bevy's budget (`blas.rs` 104–142), the TLAS
   taking the compacted BLAS at its next build; compaction stays, as Bevy
-  keeps it, and its measured cost is recorded. What the device cannot hold
+  keeps it, its cost unmeasured until wgpu can timestamp acceleration-structure
+  work: wgpu 29's `build_acceleration_structures` and `Queue::compact_blas`
+  take no timestamp writes, and a compaction's copy runs in the queue's own
+  submission ahead of the frame's, outside the frame's pass timings. What the device cannot hold
   is left out and counted, never reaching wgpu's validation: a model beyond
   `max_blas_primitive_count` or `max_blas_geometry_count`, an instance
   beyond `max_tlas_instance_count` (the farthest from the camera first) or

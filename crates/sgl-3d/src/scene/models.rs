@@ -46,7 +46,7 @@ pub(crate) struct Model {
     /// Where each mesh's vertices and indices lie in the ray source.
     pub ray_meshes: Vec<RayMeshWords>,
     /// What rays see of it, from its meshes' alpha modes, kept through its
-    /// materials' use lists (`Models::classify`).
+    /// materials' use lists (`Models::classify_users`).
     pub ray_class: RayClass,
     /// What deforms it; none when it is rigid.
     pub deformation: Option<ModelDeformation>,

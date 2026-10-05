@@ -1384,9 +1384,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             | sgl_3d::graphics_device::features(&adapter)
             | ray_tracing,
         required_limits: sgl_3d::graphics_device::limits(&adapter),
-        // SAFETY: with `--hardware-ray-tracing` the example accepts wgpu's
-        // experimental ray queries; without it, it requests none.
-        experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
+        experimental_features: if hardware {
+            // SAFETY: with `--hardware-ray-tracing` the example accepts
+            // wgpu's experimental ray queries.
+            unsafe { wgpu::ExperimentalFeatures::enabled() }
+        } else {
+            wgpu::ExperimentalFeatures::disabled()
+        },
         ..Default::default()
     }))?;
     let gpu = (&device, &queue);

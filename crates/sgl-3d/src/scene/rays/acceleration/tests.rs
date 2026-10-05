@@ -185,8 +185,8 @@ fn held(scene: &Scene) -> Vec<(u32, u8)> {
 }
 
 // Plausible defects: a model past the device's BLAS limits, an instance
-// past its TLAS capacity or a mesh's dangling index reaching wgpu (whose
-// validation refuses the frame), the nearest instances left out rather than the farthest, a
+// past its TLAS capacity, a mesh's dangling index or a mesh without a whole
+// triangle reaching wgpu (whose validation refuses the frame), the nearest instances left out rather than the farthest, a
 // predicate instance (a masked mesh) or one rays pass through (blended
 // only) given to the TLAS, one not capture-visible counted, or a material's
 // alpha mode edited without its users' ray class following. The oracles
@@ -206,11 +206,14 @@ fn what_the_device_cannot_hold_is_left_out_and_counted() {
     let mut scene = Scene::new(&device, &queue);
     // One triangle and an index past it, which the scene accepts and the
     // BLAS must not take (wgpu refuses a count of indices not a multiple of
-    // three).
+    // three), and a mesh with no whole triangle, whose geometry holds none
+    // and keeps the next mesh's geometry index its own.
     let mut dangling = triangles(Vec3::ZERO, 1);
     dangling.indices.push(0);
+    let mut empty = triangles(Vec3::X, 1);
+    empty.indices.truncate(2);
     let small = scene
-        .add_asset(&device, &queue, asset(vec![dangling]))
+        .add_asset(&device, &queue, asset(vec![dangling, empty]))
         .unwrap();
     // Five triangles: one more than a BLAS holds.
     let large = scene
@@ -456,12 +459,16 @@ fn frames_build_the_structures_after_their_deformations() {
     let (stats, counted) = frame(&mut renderer, &mut scene, &settings, false);
     assert_eq!(stats, held);
     assert_eq!(counts(&counted), [1, 1, 1]);
+    // The model's BLAS is compacted once, in whichever later frame finds it
+    // ready.
+    let mut compactions = 0;
     // An abandoned frame commits nothing, and a frame that traces no rays
     // records nothing of it: the next traced frame records its
     // deformation's build again.
     pose(&mut scene, 0.25);
     let (_, abandoned) = frame(&mut renderer, &mut scene, &settings, true);
     assert_eq!(counts(&abandoned), [0, 1, 1]);
+    compactions += abandoned.blas_compactions;
     let untraced = crate::settings::Settings {
         world_space_reflections: false,
         ..settings
@@ -469,12 +476,13 @@ fn frames_build_the_structures_after_their_deformations() {
     let (stats, counted) = frame(&mut renderer, &mut scene, &untraced, false);
     assert_eq!(stats, RayTracingStats::default());
     assert_eq!(counts(&counted), [0, 0, 0]);
+    compactions += counted.blas_compactions;
     let (stats, counted) = frame(&mut renderer, &mut scene, &settings, false);
     assert_eq!(stats, held);
     assert_eq!(counts(&counted), [0, 1, 1]);
+    compactions += counted.blas_compactions;
     // A deformation unchanged since the last submitted frame keeps its
-    // BLAS; the model's BLAS is compacted once.
-    let mut compactions = 0;
+    // BLAS.
     for _ in 0..6 {
         let (stats, counted) = frame(&mut renderer, &mut scene, &settings, false);
         assert_eq!(stats, held);
