@@ -124,6 +124,9 @@ pub(crate) struct Effective {
     /// skipped.
     #[cfg(feature = "diagnostics")]
     pub instance_visibility: crate::settings::InstanceVisibility,
+    /// The dynamic GI stage observes this frame, while it runs.
+    #[cfg(feature = "diagnostics")]
+    pub dynamic_gi_observation: bool,
     /// Tone mapping writes a target before presentation, for diagnostics.
     pub capture_tone_target: bool,
 }

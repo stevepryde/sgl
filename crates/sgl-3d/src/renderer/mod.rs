@@ -492,6 +492,18 @@ impl Renderer {
             .map_or_else(Vec::new, |visible| visible.take_reports(device))
     }
 
+    /// The dynamic GI stage's observed frames (`Diagnostics::dynamic_gi`)
+    /// read back since the last call, oldest first. Readback is
+    /// asynchronous: a frame's report arrives once the device completed it,
+    /// and waits here until taken.
+    #[cfg(feature = "diagnostics")]
+    pub fn take_dynamic_gi_reports(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Vec<crate::diagnostics::DynamicGiReport> {
+        self.dynamic_gi.take_reports(device)
+    }
+
     /// The numerical frame probe's reports of finished frames read back
     /// since the last call, one JSON object per frame, oldest first
     /// (`Diagnostics::frame_probe`). Readback is asynchronous: a frame's

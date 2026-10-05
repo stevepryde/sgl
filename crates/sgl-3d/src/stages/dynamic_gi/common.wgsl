@@ -26,6 +26,18 @@ const DDGI_GROUP_ROW:u32=32768u;
 const DDGI_TRACE_THREADS:u32=32u;
 // Half's largest finite value: Wicked's MEDIUMP_FLT_MAX.
 const DDGI_HALF_MAX:f32=65504.;
+// A ray's costs in the observed trace's ray costs (feature diagnostics):
+// a word for its own query and one for the visibility query its hit cast,
+// each the nodes the query's walks visited, whether it was made, whether
+// its walks stopped at the cap (scene_rays_portable.wgsl's
+// SceneRayWalks), and for the ray's own whether it hit and whether it is a
+// fixed ray. A query visits at most SCENE_BVH_MOST_VISITS, which the low
+// bits hold.
+const DDGI_COST_VISITS:u32=0x1ffffu;
+const DDGI_COST_QUERIED:u32=0x20000u;
+const DDGI_COST_EXHAUSTED:u32=0x40000u;
+const DDGI_COST_HIT:u32=0x80000u;
+const DDGI_COST_FIXED:u32=0x100000u;
 // The frame's volume.
 struct DdgiVolume {
  origin:vec3<f32>,

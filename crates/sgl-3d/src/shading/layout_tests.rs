@@ -97,6 +97,10 @@ fn programs() -> Vec<(&'static str, String)> {
             "visible_instances",
             compose(&[&crate::stages::visible_instances::VISIBLE_INSTANCES]),
         ),
+        (
+            "dynamic_gi_observe",
+            compose(&[&crate::stages::dynamic_gi::observe::OBSERVE]),
+        ),
     ]);
     programs
 }

@@ -440,6 +440,12 @@ mod diagnostics {
         /// Which of the camera's opaque and masked instances show, an
         /// oracle for occlusion culling.
         pub instance_visibility: InstanceVisibility,
+        /// Each frame that runs the dynamic GI volume counts its probes,
+        /// its rays and the BVH walks they and their visibility rays make,
+        /// read back without blocking: `Renderer::take_dynamic_gi_reports`.
+        /// The observed frame's trace writes each ray's costs, which a pass
+        /// sums, so observe separately from timing it.
+        pub dynamic_gi: bool,
     }
 
     /// The camera's instance visibility, measured from the source identity

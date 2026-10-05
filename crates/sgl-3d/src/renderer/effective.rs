@@ -243,6 +243,8 @@ pub(super) fn resolve(
         frame_probe: diagnostics.frame_probe,
         #[cfg(feature = "diagnostics")]
         instance_visibility: diagnostics.instance_visibility,
+        #[cfg(feature = "diagnostics")]
+        dynamic_gi_observation: diagnostics.dynamic_gi,
         capture_tone_target: diagnostics.frame_probe || diagnostics.capture_tone_target,
     }
 }

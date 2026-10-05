@@ -74,12 +74,18 @@ fn ddgi_spherical_fibonacci(i:f32,n:f32)->vec3<f32> {
  let sin_theta=sqrt(clamp(1.-cos_theta*cos_theta,0.,1.));
  return vec3(cos(phi)*sin_theta,sin(phi)*sin_theta,cos_theta);
 }
-@compute @workgroup_size(DDGI_TRACE_THREADS)
-fn trace(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
- let id=ddgi_group_probe(group)*DDGI_TRACE_THREADS+lane;
- if id>=volume.rays {
-  return;
- }
+// A traced ray: where its result goes, the result, and with ray
+// observation what its walks cost (ddgi_trace_ray).
+struct DdgiTraced {
+ texel:vec2<u32>,
+ ray:DdgiRay,
+ fixed:bool,
+ // The probe ray's own query, and the visibility query its hit cast.
+ nearest:SceneRayWalks,
+ visibility:SceneRayWalks,
+}
+// Ray `id` of the frame's rays, traced.
+fn ddgi_trace_ray(id:u32)->DdgiTraced {
  let ray_alloc=textureLoad(ray_list,ddgi_ray_texel(id),0).xy;
  let probe_index=ray_alloc.x;
  let ray_index=ray_alloc.y&0xffffu;
@@ -100,6 +106,7 @@ fn trace(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index)
  var ray=DdgiRay(direction,-1.,vec3(0.),false);
  // No interval start: the ray leaves a probe, not a surface.
  let raw=scene_trace_nearest(SceneRay(vec4(probe_pos,0.),vec4(direction,3.402823466e+38)),SCENE_SIDES_BOTH);
+ let nearest=scene_ray_walks;
  if raw.intersection.x==0u {
   if !fixed {
    ray.radiance=sample_environment(direction,0.)+pbr_hemisphere_radiance(direction,frame.hemisphere_sky_color,frame.hemisphere_ground_color,frame.hemisphere_intensity);
@@ -122,5 +129,39 @@ fn trace(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index)
    }
   }
  }
- textureStore(ray_results,ddgi_ray_texel(ddgi_ray_slot(probe_index,ray_index,volume.max_rays)),ddgi_pack_ray(ray));
+ let visibility=SceneRayWalks(scene_ray_walks.queries-nearest.queries,scene_ray_walks.visits-nearest.visits,scene_ray_walks.exhausted-nearest.exhausted);
+ return DdgiTraced(ddgi_ray_texel(ddgi_ray_slot(probe_index,ray_index,volume.max_rays)),ray,fixed,nearest,visibility);
+}
+@compute @workgroup_size(DDGI_TRACE_THREADS)
+fn trace(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
+ let id=ddgi_group_probe(group)*DDGI_TRACE_THREADS+lane;
+ if id>=volume.rays {
+  return;
+ }
+ let traced=ddgi_trace_ray(id);
+ textureStore(ray_results,traced.texel,ddgi_pack_ray(traced.ray));
+}
+// A query's cost in a word of ray_costs (DDGI_COST_*).
+fn ddgi_pack_ray_cost(walks:SceneRayWalks,fixed:bool,hit:bool)->u32 {
+ var word=min(walks.visits,DDGI_COST_VISITS);
+ word|=select(0u,DDGI_COST_QUERIED,walks.queries>0u);
+ word|=select(0u,DDGI_COST_EXHAUSTED,walks.exhausted>0u);
+ word|=select(0u,DDGI_COST_HIT,hit);
+ word|=select(0u,DDGI_COST_FIXED,fixed);
+ return word;
+}
+// The trace observed (feature diagnostics), its pipeline with
+// ray_observation_enabled: each ray's slot in ray_costs also takes what its
+// walks cost (ddgi_pack_ray_cost), which observe.wgsl sums.
+@group(2) @binding(0) var ray_costs:texture_storage_2d<rg32uint,write>;
+@compute @workgroup_size(DDGI_TRACE_THREADS)
+fn trace_observed(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
+ let id=ddgi_group_probe(group)*DDGI_TRACE_THREADS+lane;
+ if id>=volume.rays {
+  return;
+ }
+ let traced=ddgi_trace_ray(id);
+ textureStore(ray_results,traced.texel,ddgi_pack_ray(traced.ray));
+ let hit=traced.ray.depth>=0.;
+ textureStore(ray_costs,traced.texel,vec4(ddgi_pack_ray_cost(traced.nearest,traced.fixed,hit),ddgi_pack_ray_cost(traced.visibility,false,false),0u,0u));
 }

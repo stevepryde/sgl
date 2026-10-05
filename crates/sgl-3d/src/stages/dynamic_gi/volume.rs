@@ -141,6 +141,10 @@ pub(super) struct Rays {
     pub allocate: wgpu::BindGroup,
     pub trace: wgpu::BindGroup,
     pub update: wgpu::BindGroup,
+    /// The list, which an observed frame's sums read (feature
+    /// `diagnostics`).
+    #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
+    pub list: wgpu::TextureView,
 }
 
 fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -338,6 +342,7 @@ impl Volume {
                     buffer(8, &self.convergence),
                 ],
             ),
+            list,
         }
     }
 }
