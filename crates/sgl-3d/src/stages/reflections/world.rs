@@ -1,7 +1,8 @@
-//! World-space reflection rays for screen-space misses on moving objects, and
-//! their denoiser, as Wicked Engine's RT reflections run them
+//! World-space reflection rays for screen-space misses on moving objects or
+//! everything, and their denoiser, as Wicked Engine's RT reflections run them
 //! (`Postprocess_RTReflection`, wiRenderer.cpp): trace at half resolution,
 //! spatial resolve, temporal accumulation, bilateral upsample.
+use crate::settings::WorldSpaceReflections;
 use crate::shading;
 use crate::shading::RayQueryForm;
 use crate::view::cached_group::CachedGroup;
@@ -15,8 +16,8 @@ use std::collections::HashMap;
 
 /// Wicked's default RT reflection downscale.
 const DOWNSCALE: u32 = 2;
-/// How far a reflection ray looks for moving objects, in metres: Wicked's
-/// default RT reflection range (4323a33 `Postprocess_RTReflection`,
+/// How far a reflection ray looks, in metres: Wicked's default RT
+/// reflection range (4323a33 `Postprocess_RTReflection`,
 /// wiRenderer.h).
 const RANGE: f32 = 1000.;
 
@@ -143,10 +144,11 @@ pub(crate) struct WorldReflections {
     /// The trace's programs for each path its rays take, with its receivers
     /// at group 3.
     paths: TracePaths,
-    /// The trace's pipelines for each set of lit constants and path, each
+    /// The trace's pipelines for each set of lit constants, path and
+    /// whether the rays reach static geometry (`world_reach_all`), each
     /// created when a frame first needs it, as the geometry pipelines
     /// specialise on the scene's rectangle lights and decals.
-    trace: HashMap<(LitConstants, Option<RayQueryForm>), wgpu::RenderPipeline>,
+    trace: HashMap<(LitConstants, Option<RayQueryForm>, bool), wgpu::RenderPipeline>,
     resolve: Denoise,
     temporal: Denoise,
     upsample: Denoise,
@@ -269,21 +271,28 @@ impl WorldReflections {
         }
     }
 
-    /// Premultiplied radiance of the moving objects each receiver's traced
-    /// lobe reflects (rgb), and the share of its rays that hit them (a).
+    /// Premultiplied radiance of what each receiver's traced lobe reflects
+    /// (rgb), and the share of its rays that hit it (a).
     pub fn output(&self) -> &wgpu::TextureView {
         &self.targets.output
     }
 
-    /// The trace's pipeline compiled with `lit` for the path `form` takes.
+    /// The trace's pipeline compiled with `lit` for the path `form` takes,
+    /// its rays reaching static geometry where `all`.
     fn trace(
         &mut self,
         device: &wgpu::Device,
         lit: LitConstants,
         form: Option<RayQueryForm>,
+        all: bool,
     ) -> &wgpu::RenderPipeline {
         let TracePath { shader, layout, .. } = self.paths.path(device, form);
-        self.trace.entry((lit, form)).or_insert_with(|| {
+        self.trace.entry((lit, form, all)).or_insert_with(|| {
+            let constants = [
+                lit.constants().as_slice(),
+                &[("world_reach_all", f64::from(u8::from(all)))],
+            ]
+            .concat();
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("world-space reflection rays"),
                 layout: Some(layout),
@@ -297,7 +306,7 @@ impl WorldReflections {
                     module: shader,
                     entry_point: Some("world_trace"),
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &lit.constants(),
+                        constants: &constants,
                         ..Default::default()
                     },
                     targets: &[
@@ -318,7 +327,7 @@ impl WorldReflections {
     /// `groups` are the camera's ray-hit lit group 0 (with the installed
     /// probes) and the scene's group 1; `lit_constants`, the scene's
     /// (`LitConstants::of`); `hardware`, the hardware path the frame's rays
-    /// take, if any.
+    /// take, if any; `reach`, what they reach (`Moving` or `All`).
     #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
@@ -328,13 +337,15 @@ impl WorldReflections {
         [lit, scene]: [&wgpu::BindGroup; 2],
         lit_constants: LitConstants,
         hardware: Option<HardwareRays<'_>>,
+        reach: WorldSpaceReflections,
         history: HistoryFrame,
         size: [u32; 2],
         input: Inputs<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
         let form = hardware.map(|rays| rays.form);
-        self.trace(device, lit_constants, form);
+        let all = reach == WorldSpaceReflections::All;
+        self.trace(device, lit_constants, form, all);
         let resized = self.targets.full != size;
         if resized {
             self.targets = Targets::new(device, size);
@@ -414,7 +425,7 @@ impl WorldReflections {
                 timestamp_writes: timing.and_then(|t| t.render_pass("world reflection rays")),
                 ..Default::default()
             });
-            pass.set_pipeline(&self.trace[&(lit_constants, form)]);
+            pass.set_pipeline(&self.trace[&(lit_constants, form, all)]);
             pass.set_bind_group(0, lit, &[]);
             pass.set_bind_group(1, scene, &[]);
             pass.set_bind_group(3, trace_group, &[]);

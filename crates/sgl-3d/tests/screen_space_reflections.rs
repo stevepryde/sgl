@@ -575,7 +575,7 @@ fn world_space_reflections_find_a_moving_objects_hidden_underside() {
         .unwrap();
     frames.render(FRAMES, true);
     let screen_only = frames.composite();
-    frames.settings.world_space_reflections = true;
+    frames.settings.world_space_reflections = settings::WorldSpaceReflections::Moving;
     frames.render(FRAMES, true);
     let traced = frames.composite();
     let floor = Vec3::new(0., -1., -2.4);

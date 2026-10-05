@@ -825,7 +825,9 @@ fn check(
         _ => (Kinds::All, false),
     };
     let sides = match function {
-        Function::MovingNearest | Function::StaticVisible => AS_RASTER,
+        Function::MovingNearest | Function::StaticVisible | Function::NearestExceptReceiver => {
+            AS_RASTER
+        }
         _ => sides,
     };
     let mut decided = 0;
@@ -866,7 +868,9 @@ fn check(
 // its deformation or from its rest pose, or its hits judged or decoded at
 // rest; cut-out texels not cut on a deforming instance's committed hits;
 // barycentrics in another vertex order; a receiver's own triangle not left
-// (by index, mesh and triangle as the hardware reports them); a hit's
+// (by index, mesh and triangle as the hardware reports them), or a nearest
+// ray leaving one that takes one kind only (world-space reflections' `All`
+// reach); a hit's
 // distance or normals decoded from the rest pose or the wrong triangle.
 // Run twice: at the device's limits,
 // where the TLAS holds every opaque and deforming instance, and with the
@@ -894,8 +898,9 @@ fn hardware_rays_match_the_oracle() {
             (0.05 * (i % 3) as f32, t_max)
         });
         // The moving rays leave the deforming instance's first triangle,
-        // and the static ones the wall's, as a receiver's own triangle: its
-        // index plus one and the word of its first index.
+        // the static ones the wall's, and the nearest rays of both kinds
+        // either, as a receiver's own triangle: its index plus one and the
+        // word of its first index.
         let receiver = |placed: &Placed| {
             let indices = scene.models.get(placed.model).unwrap().ray_meshes[0].indices;
             ([placed.index + 1, indices], Some((placed.index, 0, 0)))
@@ -921,6 +926,19 @@ fn hardware_rays_match_the_oracle() {
                 AS_RASTER,
                 (wall, wall_id),
                 &segments,
+            ),
+            (Function::NearestExceptReceiver, AS_RASTER, none, &nearest),
+            (
+                Function::NearestExceptReceiver,
+                AS_RASTER,
+                (wall, wall_id),
+                &nearest,
+            ),
+            (
+                Function::NearestExceptReceiver,
+                AS_RASTER,
+                (moving, moving_id),
+                &nearest,
             ),
             (Function::Decoded, BOTH, none, &nearest),
         ];

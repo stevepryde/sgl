@@ -262,8 +262,9 @@ Remaining work, in the existing roadmap order:
    on a device with ray queries, the scene builds its acceleration
    structures and world-space reflections' and the dynamic GI volume's rays
    trace them in the baseline form; elsewhere they traverse the software
-   BVHs. Ray-traced shadows, world-space reflections that reach static
-   content, and the candidate form remain. The design is settled in the architecture
+   BVHs. World-space reflections reach static content too where the game
+   chooses `WorldSpaceReflections::All`. Ray-traced shadows and the
+   candidate form remain. The design is settled in the architecture
    ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
    [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
    acceleration structures beside the portable BVHs behind

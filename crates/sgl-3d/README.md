@@ -716,9 +716,11 @@ different scene. Switching SSR off releases it. DiligentFX's camera has a finite
 plane (10 km) where SGL3D's is infinite; surfaces beyond it are background to
 SSR and TAA.
 
-`Settings::world_space_reflections` (with SSR on) traces what SSR misses on moving
-objects, which baked probes cannot hold, as Lumen and HDRP's mixed tracing
-continue failed screen traces in world space. Each traced lobe of an opaque
+`Settings::world_space_reflections` (with SSR on) traces what SSR misses, as
+Lumen and HDRP's mixed tracing continue failed screen traces in world space:
+`Moving` reaches moving objects, which baked probes cannot hold, and `All`
+everything, static surfaces included, as Wicked Engine's RT reflections trace
+the whole scene. Each traced lobe of an opaque
 surface that SSR did not fully resolve, and that no blended receiver covers,
 casts one GGX-sampled ray at half resolution through the portable scene BVHs,
 or the scene's acceleration structures with
@@ -731,13 +733,20 @@ model's own BVH, so a ray's cost follows the instances it reaches rather than
 how many the scene holds. Adding an instance reserves room for its kind's BVH
 in the ray source, about 30 bytes an instance in doubling steps, so
 `add_instance` can fail with `SceneError::DeviceLimit` when the ray source is
-nearly full. All opaque geometry participates in closest-hit visibility; only a
-moving nearest hit supplies secondary radiance. Wicked Engine's RT reflection
+nearly full. All opaque geometry participates in closest-hit visibility. Under
+`Moving` only a moving nearest hit supplies secondary radiance: a ray finds its
+nearest moving hit, then tests static visibility to it, and a ray that meets no
+moving object walks no static geometry. Under `All` a ray takes its nearest hit
+of either kind, leaving the reflecting surface's own triangle, so an off-screen
+static wall reflects as it stands rather than as its probe recorded it; every
+ray then walks the static geometry, which is what `All` costs over `Moving` on
+the portable BVHs, so it is meant for [hardware ray tracing](#hardware-ray-tracing).
+Neither is on by default or in a preset. Wicked Engine's RT reflection
 resolve, temporal and bilateral upsample passes denoise the rays. The result is
 premultiplied radiance with the share of rays that hit in alpha, and it composites as
 `ssr.rgb + (world.rgb + environment * (1 - world.a)) * (1 - ssr.a)`, so misses
-keep the probe and sky specular. A static nearest hit also keeps that fallback,
-while blocking moving objects behind it. Switching world reflections or SSR off
+keep the probe and sky specular. Under `Moving` a static nearest hit also keeps
+that fallback, while blocking moving objects behind it. Switching world reflections or SSR off
 releases world history. Camera cuts, missed effect frames, a different scene and
 resize restart accumulation from current data.
 

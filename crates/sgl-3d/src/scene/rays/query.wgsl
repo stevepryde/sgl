@@ -2,7 +2,7 @@
 @group(3) @binding(1) var<storage,read_write> query_hits:array<RawSceneHit>;
 // The rays' count, the side policy they accept (SCENE_SIDES_*), the
 // function they take (`scene::rays::query::Function`) and a row's
-// invocations; then the receiver the moving and static functions leave.
+// invocations; then the receiver the functions that leave one leave.
 @group(3) @binding(2) var<uniform> query_limits:array<vec4<u32>,2>;
 // A visibility function's result as a hit's first word: 1 where visible.
 fn query_visible(visible:bool)->RawSceneHit {
@@ -27,6 +27,9 @@ fn query_visible(visible:bool)->RawSceneHit {
   case 4u: {
    let hit=scene_decode_hit(scene_trace_nearest(ray,sides),ray.origin.xyz,ray.direction.xyz);
    query_hits[pixel]=RawSceneHit(vec4(select(0u,1u,hit.hit),bitcast<vec3<u32>>(hit.normal)),vec4(hit.geometric_normal,hit.distance));
+  }
+  case 5u: {
+   query_hits[pixel]=scene_trace_nearest_except_receiver(ray,receiver);
   }
   default: {
    query_hits[pixel]=scene_trace_nearest(ray,sides);

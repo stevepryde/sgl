@@ -6,7 +6,7 @@ pub(crate) mod velvet;
 pub(crate) mod world;
 
 use crate::scene::probes::UploadedProbes;
-use crate::settings::ReflectionMethod;
+use crate::settings::{ReflectionMethod, WorldSpaceReflections};
 use crate::view::bindings::FogVolume;
 use crate::view::effective::{Effective, ScreenSpace};
 use crate::view::frame::FrameContext;
@@ -31,8 +31,9 @@ static TEMPORAL_REPROJECTION: crate::shading::Module = crate::shading::Module {
 /// radiance. `resolve` runs the screen-space method over the surface and
 /// the incident radiance, which returns premultiplied radiance and
 /// confidence (Crystal through the lent post-effect context, or Velvet);
-/// world-space rays fill its misses on moving objects, from opaque surfaces
-/// not under a receiver; one composition adds both to the composite's opaque
+/// world-space rays fill its misses with what they reach (moving objects,
+/// or everything), from opaque surfaces not under a receiver; one
+/// composition adds both to the composite's opaque
 /// lobes, giving a lobe under a receiver its fallback alone, since the
 /// result there is the receiver's, which `resolve` returns for the blended
 /// draw. Another method returns the same and plugs in beside these.
@@ -177,7 +178,8 @@ impl Reflections {
         if !screen_space.is_some_and(|ssr| ssr.method == ReflectionMethod::Velvet) {
             self.velvet = None;
         }
-        if !ctx.effective.world_space {
+        let reach = ctx.effective.world_space;
+        if reach == WorldSpaceReflections::Off {
             self.world = None;
         }
         let ScreenSpace {
@@ -225,7 +227,7 @@ impl Reflections {
                     ctx.timing,
                 ),
         };
-        let world_space = if ctx.effective.world_space {
+        let world_space = if reach != WorldSpaceReflections::Off {
             let world = self.world.get_or_insert_with(|| {
                 world::WorldReflections::new(
                     ctx.device,
@@ -241,6 +243,7 @@ impl Reflections {
                 [ctx.bindings.ray_hit_lit(), &ctx.scene.scene_group],
                 LitConstants::of(ctx.scene),
                 ctx.hardware_rays,
+                reach,
                 ctx.history,
                 ctx.sizes.render,
                 world::Inputs {

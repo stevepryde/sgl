@@ -15,6 +15,44 @@ full API details.
 
 ## Unreleased
 
+### World-space reflections can reach static geometry
+
+- **Scope:** `sgl-3d`: `Settings::world_space_reflections` changes from
+  `bool` to `settings::WorldSpaceReflections` (`Off`, the default,
+  `Moving`, `All`). `Moving` is the old `true`: rays fill screen-space
+  reflections' misses with moving objects, and a static surface in front
+  of one leaves the probe or sky reflection. `All` is new: each ray takes
+  its nearest hit of either kind, leaving the reflecting surface's own
+  triangle, so an off-screen static wall reflects as it stands rather than
+  as its probe recorded it, as Wicked Engine's ray-traced reflections trace
+  the whole scene. `All` is meant for hardware ray tracing
+  (`Settings::hardware_ray_tracing`); on the portable BVHs every ray also
+  walks the static geometry, COST_PORTABLE. With hardware ray tracing,
+  COST_HARDWARE. No preset turns either on, and the default stays off.
+- **Migration:** replace the bool in code that sets the field:
+
+  ```rust
+  // Before
+  settings.world_space_reflections = true;
+  settings.world_space_reflections = false;
+  // After
+  use sgl_3d::settings::WorldSpaceReflections;
+  settings.world_space_reflections = WorldSpaceReflections::Moving;
+  settings.world_space_reflections = WorldSpaceReflections::Off;
+  ```
+
+  A saved settings file with the old bool fails to load: serde rejects
+  `"world_space_reflections": true` (expected a variant name, `"Moving"` in
+  JSON, `Moving` in RON), and SGL3D keeps no compatibility shim. Convert
+  the field where the game loads its saved settings (`true` becomes
+  `Moving`, `false` `Off`), or remove it, which loads `Off` since
+  `Settings` is `#[serde(default)]`. A game that offers the setting to
+  players can offer `All` beside `Moving`, best where hardware ray tracing
+  is in effect (`Renderer::ray_tracing_in_effect`). Afterwards, load a
+  settings file saved before the change, and look at glossy floors with
+  `All` on: off-screen static walls and props now reflect where the probes
+  showed them before.
+
 ### Hardware-traced scene rays
 
 - **Scope:** `sgl-3d`: `Settings::hardware_ray_tracing` (now traces rays),

@@ -53,7 +53,10 @@ use sgl_3d::{
     Mobility, ModelId, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene,
     asset::{CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
-    settings::{Antialiasing, ReflectionMethod, SceneResolution, ScreenSpaceReflections, Settings},
+    settings::{
+        Antialiasing, ReflectionMethod, SceneResolution, ScreenSpaceReflections, Settings,
+        WorldSpaceReflections,
+    },
     static_lighting::AmbientCube,
     timing::{FrameTime, GpuTiming},
 };
@@ -1062,7 +1065,7 @@ fn settings() -> Settings {
         antialiasing: Antialiasing::Taa,
         screen_space_reflections: ScreenSpaceReflections::Full,
         reflection_method: ReflectionMethod::Crystal,
-        world_space_reflections: true,
+        world_space_reflections: WorldSpaceReflections::Moving,
         ..Settings::default()
     }
 }

@@ -24,6 +24,7 @@
 //! Timing groups: none.
 use crate::scene::dynamic_gi::ProbePlacement;
 use crate::scene::rays::acceleration::RayTracingStats;
+use crate::settings::WorldSpaceReflections;
 use crate::shading::uniforms::{FrameValues, ViewUniform};
 use crate::view::clusters::{BoxVolume, CAMERA_CLUSTERS, Clusters, ViewVolume};
 use crate::view::draw_list::{DrawInstances, DrawList};
@@ -186,7 +187,8 @@ impl Prepare {
         // instances and visibility mask. The entries set and static edits
         // made since the last traced frame wait for the next, so the frames
         // that skip it leave it nothing stale.
-        let traced = effective.world_space || volume.is_some();
+        let world_space = effective.world_space != WorldSpaceReflections::Off;
+        let traced = world_space || volume.is_some();
         // The acceleration structures are built on the frames that trace,
         // and freed by a frame with hardware ray tracing off. The portable
         // BVHs then cover what the TLAS does not hold.
@@ -222,7 +224,7 @@ impl Prepare {
             render_size,
             CAMERA_CLUSTERS,
         );
-        if effective.world_space {
+        if world_space {
             // Ray hits shade with the lights and decals in the camera's
             // view, as Wicked Engine's take the frame's culled light list.
             let volume = ViewVolume::new(camera.projection * camera.view);

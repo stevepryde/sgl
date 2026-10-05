@@ -425,7 +425,7 @@ fn frames_build_the_structures_after_their_deformations() {
     };
     let mut settings = crate::settings::Settings {
         screen_space_reflections: crate::settings::ScreenSpaceReflections::Half,
-        world_space_reflections: true,
+        world_space_reflections: crate::settings::WorldSpaceReflections::Moving,
         hardware_ray_tracing: true,
         ..Default::default()
     };
@@ -474,7 +474,7 @@ fn frames_build_the_structures_after_their_deformations() {
     assert_eq!(counts(&abandoned), [0, 1, 1]);
     compactions += abandoned.blas_compactions;
     let untraced = crate::settings::Settings {
-        world_space_reflections: false,
+        world_space_reflections: crate::settings::WorldSpaceReflections::Off,
         ..settings
     };
     let (stats, counted) = frame(&mut renderer, &mut scene, &untraced, false);
@@ -521,7 +521,7 @@ fn frames_build_the_structures_after_their_deformations() {
 fn the_renderer_reports_whether_the_hardware_path_traces() {
     let settings = crate::settings::Settings {
         screen_space_reflections: crate::settings::ScreenSpaceReflections::Half,
-        world_space_reflections: true,
+        world_space_reflections: crate::settings::WorldSpaceReflections::Moving,
         hardware_ray_tracing: true,
         ..Default::default()
     };

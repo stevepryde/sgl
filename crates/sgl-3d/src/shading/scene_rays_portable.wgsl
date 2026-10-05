@@ -26,6 +26,11 @@ fn scene_segment_visible(origin:vec3<f32>,direction:vec3<f32>,t_min:f32,t_max:f3
  return scene_trace_portable(ray,SCENE_KINDS_ALL,true,vec2(0u),sides,false).intersection.x==0u;
 }
 
+// The nearest hit of either kind, leaving `receiver`, as raster sides it.
+fn scene_trace_nearest_except_receiver(ray:SceneRay,receiver:vec2<u32>)->RawSceneHit {
+ return scene_trace_portable(ray,SCENE_KINDS_ALL,false,receiver,SCENE_SIDES_AS_RASTER,false);
+}
+
 // The nearest moving hit, leaving `receiver`, as raster sides it.
 fn scene_trace_moving_except_receiver(ray:SceneRay,receiver:vec2<u32>)->RawSceneHit {
  return scene_trace_portable(ray,SCENE_KIND_MOVING,false,receiver,SCENE_SIDES_AS_RASTER,false);
