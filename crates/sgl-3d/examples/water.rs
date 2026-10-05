@@ -21,7 +21,8 @@
 use sgl_3d::glam::{Quat, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameInput, InstanceState,
-    MaterialId, Mobility, ModelId, ModelMesh, MotionBlurParameters, NormalLayer, Renderer, Scene,
+    MaterialId, Mobility, ModelId, ModelMesh, MotionBlurParameters, NormalLayer, PreparedModel,
+    Renderer, Scene,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{
@@ -576,7 +577,9 @@ struct Times {
     totals: Vec<f64>,
     /// Bytes of vertices and indices a frame gave `Scene::set_model`.
     edited_bytes: usize,
-    /// Each measured frame's `Scene::set_model` call, in CPU milliseconds.
+    /// Each measured frame's `PreparedModel::new` and `Scene::set_model`
+    /// calls, in CPU milliseconds.
+    prepares: Vec<f64>,
     edits: Vec<f64>,
 }
 
@@ -599,9 +602,10 @@ impl Times {
         }
     }
 
-    fn edit(&mut self, bytes: usize, ms: f64) {
+    fn edit(&mut self, bytes: usize, [prepare, edit]: [f64; 2]) {
         self.edited_bytes = bytes;
-        self.edits.push(ms);
+        self.prepares.push(prepare);
+        self.edits.push(edit);
     }
 
     fn report(&self, name: &str) {
@@ -626,9 +630,10 @@ impl Times {
         if self.edits.is_empty() {
             println!("  scene edits per frame: none");
         } else {
+            let (prepare, prepare_p95) = quantiles(&self.prepares, self.prepares.len());
             let (median, p95) = quantiles(&self.edits, self.edits.len());
             println!(
-                "  set_model per frame: {} bytes of vertices and indices, {median:.3} / {p95:.3} ms CPU",
+                "  per frame: {} bytes of vertices and indices, prepared in {prepare:.3} / {prepare_p95:.3} ms and set_model {median:.3} / {p95:.3} ms CPU",
                 self.edited_bytes
             );
         }
@@ -689,10 +694,10 @@ fn render(
     let water = scene.add_materials(device, queue, &[water], &images)?[0];
     let (lake_model, mobility): (ModelId, _) = if mesh {
         // Moving: replacing its geometry each frame is no static edit.
-        let model = scene.add_model(device, queue, vec![lake(0., water)])?;
+        let model = scene.add_model(device, queue, PreparedModel::new(vec![lake(0., water)])?)?;
         (model, Mobility::Moving)
     } else {
-        let model = scene.add_model(device, queue, vec![lake_quad(water)])?;
+        let model = scene.add_model(device, queue, PreparedModel::new(vec![lake_quad(water)])?)?;
         (model, Mobility::Static)
     };
     scene.add_instance(device, queue, InstanceState::new(lake_model), mobility)?;
@@ -718,9 +723,13 @@ fn render(
             let bytes = surface.vertices.len() * size_of::<Vertex>()
                 + surface.indices.len() * size_of::<u32>();
             let start = Instant::now();
-            scene.set_model(device, queue, lake_model, vec![surface])?;
+            let prepared = PreparedModel::new(vec![surface])?;
+            let prepared_at = Instant::now();
+            scene.set_model(device, queue, lake_model, prepared)?;
             if index >= WARM_UP {
-                times.edit(bytes, start.elapsed().as_secs_f64() * 1000.);
+                let ms = |from: Instant, to: Instant| (to - from).as_secs_f64() * 1000.;
+                let done = Instant::now();
+                times.edit(bytes, [ms(start, prepared_at), ms(prepared_at, done)]);
             }
         }
         let mut input = FrameInput::new(camera(index, run.orbit, size));

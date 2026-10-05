@@ -4,8 +4,8 @@ use crate::asset::{CpuMesh, Vertex};
 use crate::*;
 use glam::{Mat4, Vec3};
 
-/// `quads` unit quads of a chunk, scattered by `seed` over a 16 m cube.
-fn chunk_mesh(quads: usize, seed: u64, material: MaterialId) -> ModelMesh {
+/// A chunk of `quads` unit quads, scattered by `seed` over a 16 m cube.
+fn chunk(quads: usize, seed: u64, material: MaterialId) -> PreparedModel {
     let mut mesh = CpuMesh {
         vertices: Vec::with_capacity(quads * 4),
         indices: Vec::with_capacity(quads * 6),
@@ -35,12 +35,13 @@ fn chunk_mesh(quads: usize, seed: u64, material: MaterialId) -> ModelMesh {
         mesh.indices
             .extend([0, 2, 1, 0, 3, 2].map(|index| start + index));
     }
-    ModelMesh {
+    PreparedModel::new(vec![ModelMesh {
         vertices: mesh.vertices,
         indices: mesh.indices,
         material,
         deformation: Default::default(),
-    }
+    }])
+    .unwrap()
 }
 
 /// The sizes of the buffers content grows: the ray source, the object
@@ -115,7 +116,7 @@ fn a_bounded_stream_of_chunks_keeps_bounded_buffers() {
         match slots[slot] {
             None if quads > 0 => {
                 let model = scene
-                    .add_model(&device, &queue, vec![chunk_mesh(quads, random(), material)])
+                    .add_model(&device, &queue, chunk(quads, random(), material))
                     .unwrap();
                 let pose = Mat4::from_translation(Vec3::new(slot as f32 * 16., 0., 0.));
                 let instance = scene
@@ -139,12 +140,7 @@ fn a_bounded_stream_of_chunks_keeps_bounded_buffers() {
             }
             Some((model, instance, _)) => {
                 scene
-                    .set_model(
-                        &device,
-                        &queue,
-                        model,
-                        vec![chunk_mesh(quads, random(), material)],
-                    )
+                    .set_model(&device, &queue, model, chunk(quads, random(), material))
                     .unwrap();
                 slots[slot] = Some((model, instance, quads));
             }

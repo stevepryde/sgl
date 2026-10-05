@@ -5,25 +5,31 @@
 //! static-edit boxes recorded and merged. Without the feature every function here is a
 //! pass-through and nothing is kept.
 
-/// A step of building a model's GPU content or an instance BVH, which
-/// `Counters::steps` times.
+/// A step of preparing or placing a model, or of building an instance BVH,
+/// which `Counters::steps` times. Preparing a model (`PreparedModel::new`)
+/// runs `Validate`, `Pack`, `RayBvh`, `Ranges` and `Clusters` on the
+/// thread that prepares it; `Scene::add_model` and `set_model` run `Place`
+/// and `Write` on theirs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildStep {
-    /// Checking a mesh's indices and positions.
+    /// Checking a mesh's indices, positions and deformation.
     Validate,
-    /// Building a model's BVH in the ray source.
+    /// Packing a model's ray-source words (mesh records, vertices, indices,
+    /// a deforming model's influences and morph targets) and its meshes'
+    /// shadow-caster positions.
+    Pack,
+    /// Building a model's BVH.
     RayBvh,
-    /// Writing a model's ray-source range: its records, vertices, indices
-    /// and BVH.
-    RayWrite,
-    /// Placing a mesh's positions and indices in the scene's geometry slabs
-    /// and writing them, growing a slab when one must.
-    MeshBuffers,
     /// A mesh's culling hierarchy.
     Ranges,
-    /// A mesh's local-light shadow caster clusters, with their indices placed
-    /// in a geometry slab and written, growing it when it must.
+    /// A mesh's local-light shadow caster clusters.
     Clusters,
+    /// Placing a prepared model: checking it against the scene and the
+    /// device, allocating its ranges (growing a buffer if it must) and
+    /// rebasing the words that address them.
+    Place,
+    /// Copying a placed model's words and geometry to the queue.
+    Write,
     /// Building the static instance BVH (after a static edit).
     StaticInstanceBvh,
     /// Building the moving instance BVH (every traced frame).

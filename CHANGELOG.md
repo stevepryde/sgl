@@ -15,6 +15,45 @@ full API details.
 
 ## Unreleased
 
+### Models are prepared before the scene takes them
+
+- **Scope:** `sgl-3d` adds `PreparedModel`. `Scene::add_model` and
+  `Scene::set_model` take a `PreparedModel` instead of `Vec<ModelMesh>`.
+  `PreparedModel::new(meshes)` does everything of building a model that
+  depends only on its meshes, without a device or the scene: it validates
+  them (the `IndexOutOfRange`, `NonFiniteGeometry` and `InvalidDeformation`
+  errors now come from it), builds their culling hierarchies, shadow-caster
+  clusters and ray-query BVH, and packs their ray-source words, deformation
+  and shadow-caster geometry. The value is `Send`, so a game prepares on its
+  own worker threads; SGL3D starts no thread. `add_model` and `set_model`
+  then only check what needs the scene and the device (an unknown
+  material, an anisotropic material without tangents, a deforming model
+  with static instances, device limits), place the model's ranges and copy
+  them to the queue: in the streaming example a chunk's `set_model` on the
+  thread that edits the scene takes about a third of what it did. A failed
+  operation places nothing and consumes the prepared model. `add_asset` is
+  unchanged and prepares inside. With the `diagnostics` feature,
+  `BuildStep` loses `RayWrite` and `MeshBuffers` and gains `Pack`, `Place`
+  and `Write`; counters are each thread's own, so preparation's steps are
+  counted on the thread that prepares.
+- **Migration:** wrap the meshes given to `add_model` and `set_model` in
+  `PreparedModel::new`, ideally on a worker thread for geometry the game
+  makes at run time (a voxel chunk's mesh), and handle its validation
+  errors there:
+
+  ```rust
+  // Before
+  let model = scene.add_model(&device, &queue, meshes)?;
+  scene.set_model(&device, &queue, model, remeshed)?;
+  // After
+  let prepared = PreparedModel::new(meshes)?; // any thread
+  let model = scene.add_model(&device, &queue, prepared)?;
+  scene.set_model(&device, &queue, model, PreparedModel::new(remeshed)?)?;
+  ```
+
+  Afterwards, exercise the game's streaming and editing on its route and
+  compare its frame times while it streams.
+
 ### Shader loops end whatever the data
 
 - **Scope:** `sgl-3d` and `sgl-post-fx` shaders. A loop whose count came from

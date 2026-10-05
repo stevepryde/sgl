@@ -81,8 +81,12 @@ impl Fixture {
                 .map(|mesh| RayMesh {
                     vertices: &mesh.vertices,
                     indices: &mesh.indices,
-                    material_word: words[mesh.material],
                 })
+                .collect();
+            let material_words: Vec<_> = asset
+                .meshes
+                .iter()
+                .map(|mesh| words[mesh.material])
                 .collect();
             let bounds = asset.meshes.iter().flat_map(|mesh| &mesh.vertices).fold(
                 [Vec3::INFINITY, Vec3::NEG_INFINITY],
@@ -91,7 +95,12 @@ impl Fixture {
                     [min.min(p), max.max(p)]
                 },
             );
-            models.push((rays.add_model(device, queue, &meshes).unwrap().ray, bounds));
+            let mut prepared = super::prepare_model(&meshes);
+            let placed = rays
+                .place_model(device, queue, &mut prepared, &material_words)
+                .unwrap();
+            rays.write(queue, placed.range.start, prepared.words());
+            models.push((placed.ray, bounds));
             materials.push(words);
         }
         Self {

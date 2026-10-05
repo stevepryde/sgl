@@ -3,21 +3,21 @@
 //! levels of detail), its range of the ray source and a deforming model's
 //! deformation, with the `Scene` operations that add, replace and remove
 //! them and add a loaded asset whole.
-use super::deformation::{self, InstanceDeformation, ModelDeformation};
+use super::deformation::{InstanceDeformation, ModelDeformation};
 use super::geometry::{Elements, GeometryBuffers, GeometryRange};
 use super::materials::Materials;
 use super::mesh_ranges::MeshRanges;
-use super::rays::{RayMesh, RayModel, SceneRays};
-use super::shadow_clusters::{ClusteredIndices, MeshClusters, PosedClusters};
+use super::prepared::{PreparedMesh, PreparedModel};
+use super::rays::{RayModel, SceneRays};
+use super::shadow_clusters::{MeshClusters, PosedClusters};
 use super::slots::Slots;
 use super::static_edits::posed_bounds;
 use super::{Scene, SceneError};
-use crate::asset::{self, Asset, Vertex};
+use crate::asset::Asset;
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::content::model::{AssetIds, ModelMesh};
 use crate::counters::{BuildStep, step};
 use crate::lod::MeshLod;
-use crate::shading::vertex::CasterVertex;
 use glam::Vec3;
 use std::ops::Range;
 
@@ -50,87 +50,73 @@ pub(crate) struct Model {
     pub lod_uses: u32,
 }
 
-impl Mesh {
-    /// Mesh `mesh` placed in `geometry`: its positions, unless its model
-    /// `deforms` (its instances' casters read their deformed positions from
-    /// the ray source), its indices and its caster clusters' indices, with
-    /// its culling hierarchy.
+/// A prepared mesh's ranges of the geometry buffers, placed and not yet
+/// written.
+struct PlacedMesh {
+    positions: GeometryRange,
+    indices: GeometryRange,
+    clusters: Option<GeometryRange>,
+}
+
+impl PlacedMesh {
+    /// Places `mesh`'s positions, indices and caster clusters' indices in
+    /// `geometry`, or nothing when one does not fit.
     fn place(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         geometry: &mut GeometryBuffers,
-        mesh: &ModelMesh,
-        (tangents, deforms): (bool, bool),
+        mesh: &PreparedMesh,
     ) -> Result<Self, SceneError> {
-        let (positions, indices) = step(BuildStep::MeshBuffers, || {
-            let positions: Vec<_> = if deforms {
-                Vec::new()
-            } else {
-                mesh.vertices
-                    .iter()
-                    .map(|vertex| CasterVertex {
-                        position: vertex.position,
-                    })
-                    .collect()
-            };
-            let positions = geometry.place(
-                device,
-                queue,
-                Elements::Positions,
-                bytemuck::cast_slice(&positions),
-            )?;
-            match geometry.place(
-                device,
-                queue,
-                Elements::Indices,
-                bytemuck::cast_slice(&mesh.indices),
-            ) {
-                Ok(indices) => Ok((positions, indices)),
-                Err(error) => {
-                    geometry.free(positions);
-                    Err(error)
-                }
-            }
-        })?;
-        let clusters = step(BuildStep::Clusters, || {
-            ClusteredIndices::new(&mesh.vertices, &mesh.indices)
-                .map(|clustered| {
-                    let placed = geometry.place(
-                        device,
-                        queue,
-                        Elements::Indices,
-                        bytemuck::cast_slice(&clustered.indices),
-                    )?;
-                    Ok(MeshClusters {
-                        indices: placed,
-                        clusters: clustered.clusters,
-                        groups: clustered.groups,
-                    })
-                })
-                .transpose()
-        });
-        let clusters = match clusters {
-            Ok(clusters) => clusters,
-            Err(error) => {
-                geometry.free(positions);
-                geometry.free(indices);
-                return Err(error);
-            }
+        let mut placed = Self {
+            positions: GeometryRange::EMPTY,
+            indices: GeometryRange::EMPTY,
+            clusters: None,
         };
-        Ok(Self {
-            positions,
-            indices,
-            count: mesh.indices.len() as u32,
-            material: mesh.material,
-            ranges: step(BuildStep::Ranges, || {
-                MeshRanges::new(&mesh.vertices, &mesh.indices)
-            }),
-            lods: Vec::new(),
-            tangents,
-            clusters,
-        })
+        match placed.fill(device, queue, geometry, mesh) {
+            Ok(()) => Ok(placed),
+            Err(error) => {
+                placed.free(geometry);
+                Err(error)
+            }
+        }
     }
 
+    fn fill(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        geometry: &mut GeometryBuffers,
+        mesh: &PreparedMesh,
+    ) -> Result<(), SceneError> {
+        self.positions =
+            geometry.place(device, queue, Elements::Positions, mesh.positions.len())?;
+        self.indices = geometry.place(device, queue, Elements::Indices, mesh.indices.len())?;
+        if let Some(clustered) = &mesh.clusters {
+            let count = clustered.indices.len();
+            self.clusters = Some(geometry.place(device, queue, Elements::Indices, count)?);
+        }
+        Ok(())
+    }
+
+    /// Copies `mesh`'s geometry to its ranges.
+    fn write(&self, queue: &wgpu::Queue, geometry: &GeometryBuffers, mesh: &PreparedMesh) {
+        geometry.write(queue, self.positions, bytemuck::cast_slice(&mesh.positions));
+        geometry.write(queue, self.indices, bytemuck::cast_slice(&mesh.indices));
+        if let (Some(range), Some(clustered)) = (self.clusters, &mesh.clusters) {
+            geometry.write(queue, range, bytemuck::cast_slice(&clustered.indices));
+        }
+    }
+
+    fn free(&self, geometry: &mut GeometryBuffers) {
+        geometry.free(self.positions);
+        geometry.free(self.indices);
+        if let Some(clusters) = self.clusters {
+            geometry.free(clusters);
+        }
+    }
+}
+
+impl Mesh {
     /// Frees its ranges of `geometry`.
     fn free(&self, geometry: &mut GeometryBuffers) {
         geometry.free(self.positions);
@@ -159,24 +145,6 @@ impl Model {
     fn in_use(&self, replacing: bool) -> bool {
         self.lod_uses > 0 || (!replacing && self.instances > 0)
     }
-}
-
-/// `vertices` and `indices` as a mesh: indices name vertices and positions
-/// are finite. Returns whether every vertex has an authored tangent frame.
-fn validate_geometry(vertices: &[Vertex], indices: &[u32]) -> Result<bool, SceneError> {
-    if indices
-        .iter()
-        .any(|&index| index as usize >= vertices.len())
-    {
-        return Err(SceneError::IndexOutOfRange);
-    }
-    if !vertices
-        .iter()
-        .all(|vertex| vertex.position.iter().all(|x| x.is_finite()))
-    {
-        return Err(SceneError::NonFiniteGeometry);
-    }
-    Ok(asset::tangent_frames(vertices))
 }
 
 /// A mesh with `tangents` drawn with a material of `anisotropy` strength.
@@ -252,77 +220,101 @@ impl Models {
         }
     }
 
-    /// A model of validated, uploaded meshes and their ray source range,
-    /// which nothing uses yet and which does not use its materials yet.
-    fn build(
+    /// Prepared `model` placed and written: a model which nothing uses yet
+    /// and which does not use its materials yet. Placing it checks it
+    /// against `materials` and the device, allocates its ranges and rebases
+    /// the words that address them; on failure nothing stays placed.
+    fn place(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (rays, geometry): (&mut SceneRays, &mut GeometryBuffers),
         materials: &Materials,
-        meshes: Vec<ModelMesh>,
+        mut model: PreparedModel,
     ) -> Result<Model, SceneError> {
-        let limit = device.limits().max_buffer_size;
-        let mut tangents = Vec::with_capacity(meshes.len());
-        let mut ray_meshes = Vec::with_capacity(meshes.len());
-        for mesh in &meshes {
-            let material = materials.get(mesh.material)?;
-            let has_tangents = step(BuildStep::Validate, || {
-                validate_geometry(&mesh.vertices, &mesh.indices)
-            })?;
-            validate_tangents(material.values.anisotropy_strength, has_tangents)?;
-            if std::mem::size_of_val(mesh.vertices.as_slice()) as u64 > limit
-                || std::mem::size_of_val(mesh.indices.as_slice()) as u64 > limit
+        let (words, deformation, placed) = step(BuildStep::Place, || {
+            // Geometry beyond the device's limits fails where it is placed:
+            // the ray source and the geometry slabs refuse what they cannot
+            // hold.
+            let mut material_words = Vec::with_capacity(model.meshes.len());
+            for mesh in &model.meshes {
+                let material = materials.get(mesh.material)?;
+                validate_tangents(material.values.anisotropy_strength, mesh.tangents)?;
+                material_words.push(material.word());
+            }
+            if model
+                .deformation
+                .as_ref()
+                .is_some_and(|deformation| !deformation.dispatchable(device))
             {
                 return Err(SceneError::DeviceLimit);
             }
-            tangents.push(has_tangents);
-            ray_meshes.push(RayMesh {
-                vertices: &mesh.vertices,
-                indices: &mesh.indices,
-                material_word: material.word(),
-            });
-        }
-        deformation::validate(device, &meshes)?;
-        let words = rays.add_model(device, queue, &ray_meshes)?;
-        let deformation = match ModelDeformation::add(device, queue, rays, &meshes, &words.vertices)
-        {
-            Ok(deformation) => deformation,
-            Err(error) => {
-                rays.free(words.range);
-                return Err(error);
-            }
-        };
-        let (ray, ray_range) = (words.ray, words.range);
-        let bounds = meshes.iter().flat_map(|mesh| &mesh.vertices).fold(
-            [Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)],
-            |bounds, vertex| {
-                let p = Vec3::from_array(vertex.position);
-                [bounds[0].min(p), bounds[1].max(p)]
-            },
-        );
-        let mut placed = Vec::with_capacity(meshes.len());
-        for (mesh, tangents) in meshes.iter().zip(tangents) {
-            match Mesh::place(
-                device,
-                queue,
-                geometry,
-                mesh,
-                (tangents, deformation.is_some()),
-            ) {
-                Ok(mesh) => placed.push(mesh),
-                Err(error) => {
-                    Models::free(rays, geometry, (ray_range, deformation, &placed));
+            let words = rays.place_model(device, queue, &mut model.rays, &material_words)?;
+            let deformation = match model.deformation.take().map(|prepared| {
+                ModelDeformation::place(device, queue, rays, prepared, &words.vertices)
+            }) {
+                Some(Ok(placed)) => Some(placed),
+                Some(Err(error)) => {
+                    rays.free(words.range);
                     return Err(error);
                 }
+                None => None,
+            };
+            let mut placed = Vec::with_capacity(model.meshes.len());
+            for mesh in &model.meshes {
+                match PlacedMesh::place(device, queue, geometry, mesh) {
+                    Ok(mesh) => placed.push(mesh),
+                    Err(error) => {
+                        for mesh in &placed {
+                            mesh.free(geometry);
+                        }
+                        if let Some((deformation, _)) = deformation {
+                            deformation.free(rays);
+                        }
+                        rays.free(words.range);
+                        return Err(error);
+                    }
+                }
             }
-        }
+            Ok((words, deformation, placed))
+        })?;
+        step(BuildStep::Write, || {
+            rays.write(queue, words.range.start, model.rays.words());
+            if let Some((deformation, words)) = &deformation {
+                rays.write(queue, deformation.word(), words);
+            }
+            for (placed, mesh) in placed.iter().zip(&model.meshes) {
+                placed.write(queue, geometry, mesh);
+            }
+        });
+        let meshes = model
+            .meshes
+            .into_iter()
+            .zip(placed)
+            .map(|(mesh, placed)| Mesh {
+                positions: placed.positions,
+                indices: placed.indices,
+                count: mesh.indices.len() as u32,
+                material: mesh.material,
+                ranges: mesh.ranges,
+                lods: Vec::new(),
+                tangents: mesh.tangents,
+                clusters: mesh
+                    .clusters
+                    .zip(placed.clusters)
+                    .map(|(clustered, indices)| MeshClusters {
+                        indices,
+                        clusters: clustered.clusters,
+                        groups: clustered.groups,
+                    }),
+            })
+            .collect();
         Ok(Model {
-            bounds,
-            meshes: placed,
+            bounds: model.bounds,
+            meshes,
             geometry: super::next_generation(),
-            ray,
-            ray_range,
-            deformation,
+            ray: words.ray,
+            ray_range: words.range,
+            deformation: deformation.map(|(deformation, _)| deformation),
             instances: 0,
             lod_uses: 0,
         })
@@ -357,20 +349,21 @@ impl Models {
 }
 
 impl Scene {
-    /// Adds a model: an ordered list of meshes, each drawn with a material
-    /// already in the scene.
+    /// Adds a prepared model (`PreparedModel::new`): an ordered list of
+    /// meshes, each drawn with a material already in the scene. It only
+    /// places the model's ranges and copies its geometry to the queue.
     pub fn add_model(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        meshes: Vec<ModelMesh>,
+        model: PreparedModel,
     ) -> Result<ModelId, SceneError> {
-        let model = Models::build(
+        let model = Models::place(
             device,
             queue,
             (&mut self.rays, &mut self.geometry),
             &self.materials,
-            meshes,
+            model,
         );
         self.refresh_scene_group(device);
         let model = model?;
@@ -378,29 +371,29 @@ impl Scene {
         Ok(self.models.slots.insert(model))
     }
 
-    /// Replaces a model's whole geometry, with any vertex and index counts,
-    /// none included, and clears the levels of detail registered on it. A
-    /// model that is a level of detail cannot be replaced.
+    /// Replaces a model's whole geometry with a prepared model's, with any
+    /// vertex and index counts, none included, and clears the levels of
+    /// detail registered on it. A model that is a level of detail cannot be
+    /// replaced.
     pub fn set_model(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         id: ModelId,
-        meshes: Vec<ModelMesh>,
+        model: PreparedModel,
     ) -> Result<(), SceneError> {
         if self.models.get(id)?.in_use(true) {
             return Err(SceneError::ModelInUse);
         }
-        let deforms = meshes.iter().any(|mesh| !mesh.deformation.is_rigid());
-        if deforms && self.instances.static_poses(id).next().is_some() {
+        if model.deformation.is_some() && self.instances.static_poses(id).next().is_some() {
             return Err(SceneError::DeformingModel);
         }
-        let built = Models::build(
+        let built = Models::place(
             device,
             queue,
             (&mut self.rays, &mut self.geometry),
             &self.materials,
-            meshes,
+            model,
         );
         // The moving instances showing it deform as the new geometry does,
         // from its bind pose.
@@ -489,22 +482,21 @@ impl Scene {
         Ok(())
     }
 
-    /// Adds a loaded asset whole: its materials and images, then its meshes
-    /// as one model. Its own indices do not outlive this call. On failure
-    /// nothing remains added.
+    /// Adds a loaded asset whole: its materials and images, then its meshes,
+    /// prepared here, as one model. Its own indices do not outlive this
+    /// call. On failure nothing remains added.
     pub fn add_asset(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         asset: Asset,
     ) -> Result<AssetIds, SceneError> {
-        for mesh in &asset.meshes {
-            let material = asset
-                .materials
-                .get(mesh.material)
-                .ok_or(SceneError::MissingMaterial)?;
-            let tangents = validate_geometry(&mesh.vertices, &mesh.indices)?;
-            validate_tangents(material.anisotropy_strength, tangents)?;
+        if asset
+            .meshes
+            .iter()
+            .any(|mesh| mesh.material >= asset.materials.len())
+        {
+            return Err(SceneError::MissingMaterial);
         }
         let materials = self.add_materials(device, queue, &asset.materials, &asset.images)?;
         let meshes = asset
@@ -517,7 +509,7 @@ impl Scene {
                 deformation: mesh.deformation,
             })
             .collect();
-        match self.add_model(device, queue, meshes) {
+        match PreparedModel::new(meshes).and_then(|model| self.add_model(device, queue, model)) {
             Ok(model) => Ok(AssetIds { materials, model }),
             Err(error) => {
                 for &material in &materials {

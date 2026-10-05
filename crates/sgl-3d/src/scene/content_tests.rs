@@ -863,12 +863,13 @@ fn content_in_use_is_neither_removed_nor_replaced() {
         )
         .unwrap();
     let geometry = || {
-        vec![ModelMesh {
+        PreparedModel::new(vec![ModelMesh {
             vertices: test_support::cube().meshes[0].vertices.clone(),
             indices: test_support::cube().meshes[0].indices.clone(),
             material: base.materials[0],
             deformation: Default::default(),
-        }]
+        }])
+        .unwrap()
     };
     assert!(matches!(
         scene.remove_material(base.materials[0]),

@@ -72,8 +72,8 @@ readback, runs natively only. WebGL2 is not a target: SGL3D needs compute.
   receives the frame's screen-space reflections where it is the nearest
   receiver, and that TAA, FSR2 and motion blur reproject by its own motion.
   No refraction; one reflecting layer per pixel. Animate water with scrolling
-  normal layers; a mesh replaced every frame with `Scene::set_model` rebuilds
-  its ray BVH every frame. [Blended receivers](../README.md#blended-receivers).
+  normal layers; a mesh replaced every frame with `Scene::set_model` is
+  prepared again, ray BVH included, every frame. [Blended receivers](../README.md#blended-receivers).
 - **Scrolling normal layers** (`asset::Material::normal_layers`,
   `SurfaceMaterial::normal_layers`, `NormalLayer`): a material's repeating
   normal map drawn as two layers, each with its velocity, scale and

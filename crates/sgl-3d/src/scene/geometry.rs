@@ -68,7 +68,7 @@ pub(crate) struct GeometryRange {
 }
 
 impl GeometryRange {
-    const EMPTY: Self = Self {
+    pub const EMPTY: Self = Self {
         slab: u32::MAX,
         first: 0,
         count: 0,
@@ -108,32 +108,44 @@ impl GeometryBuffers {
             .buffer
     }
 
-    /// Places `data`, whole elements of kind `elements`, and writes it:
-    /// in the first slab of that kind with room, growing it if it must, or
-    /// in a new slab.
+    /// Places `count` elements of kind `elements`: in the first slab of
+    /// that kind with room, growing it if it must, or in a new slab.
     pub fn place(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         elements: Elements,
-        data: &[u8],
+        count: usize,
     ) -> Result<GeometryRange, SceneError> {
-        let size = elements.size();
-        debug_assert_eq!(data.len() as u64 % size, 0, "whole elements");
-        let bytes = data.len() as u64;
-        if bytes == 0 {
+        if count == 0 {
             return Ok(GeometryRange::EMPTY);
         }
-        let count = u32::try_from(bytes / size).map_err(|_| SceneError::DeviceLimit)?;
+        let size = elements.size();
+        let bytes = count as u64 * size;
+        let count = u32::try_from(count).map_err(|_| SceneError::DeviceLimit)?;
         let largest = MAX_SLAB_BYTES.min(self.limit);
-        let range = if bytes >= LARGE_BYTES.min(largest) {
-            self.place_large(device, elements, count)?
+        if bytes >= LARGE_BYTES.min(largest) {
+            self.place_large(device, elements, count)
         } else {
-            self.place_general(device, queue, elements, count, (largest / size) as u32)
-        };
-        let slab = self.slabs[range.slab as usize].as_ref().unwrap();
+            Ok(self.place_general(device, queue, elements, count, (largest / size) as u32))
+        }
+    }
+
+    /// Writes `data`, the elements `range` was placed for.
+    pub fn write(&self, queue: &wgpu::Queue, range: GeometryRange, data: &[u8]) {
+        if range.count == 0 {
+            return;
+        }
+        let slab = self.slabs[range.slab as usize]
+            .as_ref()
+            .expect("a placed range's slab lives");
+        let size = slab.elements.size();
+        debug_assert_eq!(
+            data.len() as u64,
+            u64::from(range.count) * size,
+            "its elements"
+        );
         crate::counters::write_buffer(queue, &slab.buffer, u64::from(range.first) * size, data);
-        Ok(range)
     }
 
     /// `count` elements in the first general slab of `elements` with room,
@@ -321,23 +333,16 @@ mod tests {
                 .collect()
         };
         let first = positions(100, 1.);
-        let placed = geometry
-            .place(
-                &device,
-                &queue,
-                Elements::Positions,
-                bytemuck::cast_slice(&first),
-            )
-            .unwrap();
+        let place_and_write = |geometry: &mut GeometryBuffers, data: &[CasterVertex]| {
+            let range = geometry
+                .place(&device, &queue, Elements::Positions, data.len())
+                .unwrap();
+            geometry.write(&queue, range, bytemuck::cast_slice(data));
+            range
+        };
+        let placed = place_and_write(&mut geometry, &first);
         let larger = (MIN_SLAB_BYTES / Elements::Positions.size()) as usize;
-        let grown = geometry
-            .place(
-                &device,
-                &queue,
-                Elements::Positions,
-                bytemuck::cast_slice(&positions(larger, 1e4)),
-            )
-            .unwrap();
+        let grown = place_and_write(&mut geometry, &positions(larger, 1e4));
         assert_eq!(
             grown.slab, placed.slab,
             "the larger mesh grew the first slab"
