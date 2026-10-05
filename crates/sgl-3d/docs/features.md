@@ -237,6 +237,14 @@ Environment and probe specular always apply. On top of them:
   hold them. `Renderer::ray_tracing_in_effect` and
   `ray_tracing_error` report it.
   [Hardware ray tracing](../README.md#hardware-ray-tracing).
+- **Ray-traced shadows** (opt-in, `Settings::ray_traced_shadows`, which
+  needs hardware ray tracing): the camera's opaque surfaces take hard,
+  temporally blended shadows of the directional light and of up to fifteen
+  casting local lights from rays instead of the maps, reaching beyond the
+  directional shadow's distance; the fog, blended surfaces and reflections
+  keep the maps. Soft shadows from lights with a size and a denoiser are
+  planned. `Renderer::ray_traced_shadows_in_effect` reports it.
+  [Hardware ray tracing](../README.md#hardware-ray-tracing).
 
 ## Image quality and post-processing
 
@@ -312,7 +320,7 @@ Environment and probe specular always apply. On top of them:
 ## Not provided
 
 Animation playback (sampling and blending clips is the game's).
-DLSS/MetalFX, ray-traced shadows, and occlusion culling are
+DLSS/MetalFX, soft ray-traced shadows, and occlusion culling are
 [planned](../../../specs/sgl3d.md#planned). Current culling is by frustum
 alone. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is

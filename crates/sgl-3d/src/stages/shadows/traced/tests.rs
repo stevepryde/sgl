@@ -504,7 +504,7 @@ fn the_lighting_pass_takes_the_shadows_the_maps_lack_from_the_mask() {
         return;
     };
     let gpu = (&device, &queue);
-    let size = [96, 64];
+    let size = [128, 96];
     let camera = camera(Vec3::new(0., 7., 7.), Vec3::ZERO, size);
     // The directional light beyond its cascades.
     let block = Block::new(
@@ -514,7 +514,7 @@ fn the_lighting_pass_takes_the_shadows_the_maps_lack_from_the_mask() {
     );
     let (mut sun_scene, _) = scene(gpu, 8., &[block], &[]);
     let sun = DirectionalLight {
-        direction: Vec3::new(0.3, -1., 0.2),
+        direction: Vec3::new(0.8, -1., 0.5),
         illuminance: 3.,
         shadow: Some(DirectionalShadow {
             distance: 1.,

@@ -565,7 +565,10 @@ another size only after holding them for half a second at 60 frames per
 second; a light not seen gives up its slots, least recently seen first, to
 lights that need them. Lights the atlas has no room for are lit without a
 shadow. `Renderer::local_shadow_stats` reports how many lights in the view
-have a shadow, how many do not, and what the frame drew.
+have a shadow, how many do not, and what the frame drew. With ray-traced
+shadows the camera's opaque surfaces take up to fifteen of the placed
+lights' shadows from rays instead
+([Hardware ray tracing](#hardware-ray-tracing)).
 
 A point light has six cube faces around it, side by side in one quadrant as
 Wicked Engine lays them out; a spot light has one face covering its cone, or
@@ -1755,7 +1758,7 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   Vulkan on a Mac. `sgl-3d` enables no `static-dxc` itself.
 - **Structures.** While `Settings::hardware_ray_tracing` is on, frames
   that trace rays (world-space reflections, the dynamic
-  GI volume) build, in the frame's encoder after the deform pass: a BLAS
+  GI volume, ray-traced shadows) build, in the frame's encoder after the deform pass: a BLAS
   for each model that does not deform, has no masked mesh and has an
   opaque one, over all its meshes' positions in the scene's ray source,
   pending until such a frame and then built nearest the camera first under
@@ -1811,10 +1814,35 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   With the `diagnostics` feature, `diagnostics::counters` counts the BLAS
   and TLAS builds and compactions, and `Scene::diagnostic_resources` the
   BLASes held and their triangles.
+- **Ray-traced shadows.** With `Settings::ray_traced_shadows` on too (off
+  by default and in every preset), the camera's opaque surfaces take their
+  shadows from rays instead of the shadow maps, as Wicked Engine's
+  ray-traced shadows do, for up to sixteen lights: the directional light
+  with the frame's cascades, and up to fifteen of the casting local lights
+  the local-light atlas places, in its ranking by screen coverage, each
+  keeping its place while the atlas places it. At half the render size,
+  each pixel casts one ray toward each of those lights that reaches it,
+  from 1 cm past the surface to the light's position, or toward the
+  directional light as far as the scene reaches, beyond the shadow's
+  distance; a single-sided surface occludes from its back, as a map draws
+  its front from the light, and a double-sided one from either side. The
+  visibilities are blended with the previous frames' (a light that takes
+  another's place, and a camera cut, start afresh) and upsampled to the
+  render size by depth, then the lighting pass takes them through the
+  light's shadow opacity. Shadows are hard: lights have no size yet, and
+  the denoiser Wicked runs on its first four lights is not run. The opaque
+  stage takes its two-pass form while they run (a G-buffer pass, then a
+  lighting pass), so the setting costs the second geometry pass besides
+  the rays. The volumetric fog, blended surfaces, probe captures,
+  reflections' ray hits and the lights beyond those sixteen keep the maps,
+  which are still drawn. `Renderer::ray_traced_shadows_in_effect(&settings)`
+  says whether they run; without hardware ray tracing in effect the maps
+  shadow everything.
 
 The [streaming example](examples/streaming.rs) and the
 [dynamic GI example](examples/dynamic_gi.rs) opt in with
-`--hardware-ray-tracing`.
+`--hardware-ray-tracing`; the streaming example takes ray-traced shadows
+with `--ray-traced-shadows`.
 
 ## Settings and capability fallback
 

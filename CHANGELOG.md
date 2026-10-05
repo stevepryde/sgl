@@ -15,6 +15,38 @@ full API details.
 
 ## Unreleased
 
+### Ray-traced shadows
+
+- **Scope:** `sgl-3d` (#23): new `Settings::ray_traced_shadows` (`bool`,
+  off by default and in every preset, as `Settings::hardware_ray_tracing`
+  is, D-28) and `Renderer::ray_traced_shadows_in_effect`. While hardware
+  ray tracing is in effect and the setting is on, the camera's opaque
+  surfaces take the shadows of the directional light with the frame's
+  cascades and of up to fifteen casting local lights (those the local-light
+  atlas places, by screen coverage, each keeping its place while placed)
+  from rays instead of the shadow maps, as Wicked Engine's ray-traced
+  shadows do: traced at half the render size from 1 cm past each surface
+  toward each light that reaches it, blended over frames, and upsampled by
+  depth. Shadows are hard (lights have no size yet) and reach as far as
+  the scene: the directional light's beyond its `DirectionalShadow`
+  distance. The fog, blended surfaces, probe captures, reflections' ray
+  hits and lights beyond those sixteen keep the maps, which are still
+  drawn. While the setting runs, the opaque stage takes its two-pass form
+  (a G-buffer pass, then a lighting pass) instead of the fused pass, and
+  frames build the acceleration structures. TIMINGS. Without hardware ray
+  tracing in effect (the browser, a device without ray queries, the
+  setting off), the setting does nothing and the maps shadow everything.
+  The streaming example takes it with `--ray-traced-shadows`.
+- **Migration:** no game-code changes unless code names every field of
+  `Settings` without `..`: add `ray_traced_shadows: false`. A saved
+  settings file without the field loads it off. A game that offers
+  ray-traced shadows turns `Settings::hardware_ray_tracing` on with it
+  (requesting `graphics_device::ray_tracing_features`) and shows
+  `Renderer::ray_traced_shadows_in_effect`. Afterwards, with both on, walk
+  past shadowed lights and moving casters: shadows should stay where the
+  maps put them, sharper, and stretch beyond the directional shadow's
+  distance; look for noise or lag at shadow edges in motion.
+
 ### Dynamic GI traces within a per-frame ray budget
 
 - **Scope:** `sgl-3d` dynamic GI (#185). A volume now traces at most a
