@@ -358,6 +358,7 @@ impl Scene {
         queue: &wgpu::Queue,
         model: PreparedModel,
     ) -> Result<ModelId, SceneError> {
+        self.edited();
         let model = Models::place(
             device,
             queue,
@@ -382,6 +383,7 @@ impl Scene {
         id: ModelId,
         model: PreparedModel,
     ) -> Result<(), SceneError> {
+        self.edited();
         if self.models.get(id)?.in_use(true) {
             return Err(SceneError::ModelInUse);
         }
@@ -469,6 +471,7 @@ impl Scene {
 
     /// Removes a model no instance uses and that is no level of detail.
     pub fn remove_model(&mut self, id: ModelId) -> Result<(), SceneError> {
+        self.edited();
         if self.models.get(id)?.in_use(false) {
             return Err(SceneError::ModelInUse);
         }
@@ -491,6 +494,7 @@ impl Scene {
         queue: &wgpu::Queue,
         asset: Asset,
     ) -> Result<AssetIds, SceneError> {
+        self.edited();
         if asset
             .meshes
             .iter()

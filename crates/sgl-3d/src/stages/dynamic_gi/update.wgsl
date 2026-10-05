@@ -43,7 +43,17 @@
 // instance in open space is lit from its first frame where RTXGI's probes
 // about it wait for its fixed rays to find it (a box appearing in open air
 // took 7 frames); and it traces the fewest rays but for a moving instance
-// near it (allocate.wgsl).
+// near it (allocate.wgsl). Added: RTXGI's probe variability, the mean
+// coefficient of variation of the active probes' irradiance texels
+// (ProbeBlendingCS.hlsl 552-562, averaged as ReductionCS.hlsl averages it),
+// which `settle` takes over windows of 16 frames, as RTXGI's sample waits
+// 16 frames of it before pausing a volume (DDGI.cpp 1628-1640). Changed:
+// RTXGI's sample pauses below a threshold each scene sets (0.03 to 0.4 in
+// its configurations), where the variability settles; SGL3D has no scene to
+// ask, so the volume has converged once a window's mean falls by less than
+// a tenth from the last's, the plateau RTXGI describes the variability
+// settling to (DDGIVolume.md 774-782). In a lit room it settled at 0.03 and
+// in an open one at 0.004-0.014, so no one threshold would serve.
 @group(0) @binding(0) var<uniform> volume:DdgiVolume;
 @group(0) @binding(1) var<storage,read> ray_counts:array<u32>;
 @group(0) @binding(2) var ray_results:texture_2d<u32>;
@@ -52,6 +62,12 @@
 @group(0) @binding(5) var<storage,read_write> probe_states:array<vec4<u32>>;
 @group(0) @binding(6) var probes_out:texture_storage_2d<rgba16float,write>;
 @group(0) @binding(7) var<storage,read> traced_probes:array<u32>;
+@group(0) @binding(8) var<storage,read_write> convergence:DdgiConvergence;
+// Fixed-point units of variability in the sums, and the most a texel adds,
+// which keeps the sum of a lattice's worth within a word.
+const DDGI_VARIABILITY_UNIT:f32=1024.;
+const DDGI_MOST_VARIABILITY:f32=4.;
+var<workgroup> probe_variability:atomic<u32>;
 // The probe a workgroup of the blends' dispatch over the probes that trace
 // blends, or none past them.
 fn traced_probe(group:vec3<u32>)->u32 {
@@ -189,6 +205,7 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
  }
  if group_index==0u {
   irradiance_ray_count=min(ray_counts[probe_index],min(volume.max_rays,DDGI_MOST_RAYS));
+  atomicStore(&probe_variability,0u);
  }
  let ray_count=workgroupUniformLoad(&irradiance_ray_count);
  if ray_count==0u {
@@ -228,8 +245,19 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
   if !probe.blended {
    data=DdgiVariance(result,result,0.,vec3(0.),1.);
   }
+  let previous_mean=data.mean;
   multiscale_mean_estimator(result,&data,DDGI_BLEND_SPEED);
   ddgi_store_variance(index,data);
+  // RTXGI's coefficient of variation of the texel (ProbeBlendingCS.hlsl
+  // 552-562): the sample's spread about the means before and after it, over
+  // the mean.
+  let spread=dot(ddgi_luminance_weights(),(result-previous_mean)*(result-data.mean));
+  let luminance=dot(ddgi_luminance_weights(),data.mean);
+  var variation=0.;
+  if luminance>1./1024. {
+   variation=sqrt(max(spread,0.))/luminance;
+  }
+  atomicAdd(&probe_variability,u32(min(variation,DDGI_MOST_VARIABILITY)*DDGI_VARIABILITY_UNIT));
   shared_texels[(1u+thread.x)+(1u+thread.y)*DDGI_COLOR_TEXELS]=data.mean;
  }
  workgroupBarrier();
@@ -241,6 +269,44 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
  workgroupBarrier();
  let tile=ddgi_probe_color_pixel(probe_coord,volume.probes)-vec2(1u);
  textureStore(probes_out,tile+thread.xy,vec4(shared_texels[group_index],1.));
+ // An active probe's mean over its texels joins the volume's.
+ if group_index==0u && ddgi_probe_active(probe) && probe.surfaced {
+  atomicAdd(&convergence.variability,atomicLoad(&probe_variability)/(DDGI_COLOR_RESOLUTION*DDGI_COLOR_RESOLUTION));
+  atomicAdd(&convergence.probes,1u);
+ }
+}
+// Averages the frame's variability over the active probes that blended,
+// none counting as none, and finds whether the volume has converged: once
+// a window's mean falls by less than DDGI_CONVERGENCE_FALL from the last's,
+// until what the probes' light follows changes.
+@compute @workgroup_size(1)
+fn settle() {
+ if volume.changed!=0u {
+  convergence.window_sum=0.;
+  convergence.window_frames=0u;
+  convergence.previous=-1.;
+  convergence.converged=0u;
+ }
+ // A frame whose blends did not run adds nothing.
+ if volume.traced==0u {
+  return;
+ }
+ let probes=atomicLoad(&convergence.probes);
+ var average=0.;
+ if probes>0u {
+  average=f32(atomicLoad(&convergence.variability))/(f32(probes)*DDGI_VARIABILITY_UNIT);
+ }
+ convergence.average=average;
+ convergence.window_sum+=average;
+ convergence.window_frames+=1u;
+ if convergence.window_frames>=DDGI_CONVERGENCE_WINDOW {
+  let mean=convergence.window_sum/f32(convergence.window_frames);
+  let previous=convergence.previous;
+  convergence.converged=select(0u,1u,previous>=0. && mean>=previous*(1.-DDGI_CONVERGENCE_FALL));
+  convergence.previous=mean;
+  convergence.window_sum=0.;
+  convergence.window_frames=0u;
+ }
 }
 // Whether `ray` met a front face within its probe's cell, the spacing
 // about it along each axis: RTXGI's second phase.

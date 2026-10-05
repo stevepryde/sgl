@@ -106,6 +106,47 @@ pub(crate) struct VolumeUniform {
     padding_scroll: u32,
     scrolled: [i32; 3],
     moving_count: u32,
+    changed: u32,
+    padding_changed: [u32; 3],
+}
+
+/// What the probes' light follows: the scene's content edits, the frame's
+/// lights and environment as the frame's data carries them (but for what
+/// the camera and the clock change), the environment it binds and the rays
+/// a probe may trace. While they hold still, a converged volume pauses.
+#[derive(Clone, Copy)]
+struct Inputs {
+    edits: u64,
+    frame: crate::shading::uniforms::FrameUniform,
+    environment: Option<crate::EnvironmentId>,
+    max_rays: u32,
+}
+
+impl Inputs {
+    fn of(ctx: &FrameContext<'_>, max_rays: u32) -> Self {
+        let mut frame = ctx.values.frame;
+        // The camera's cascades, which probe hits do not use, and the
+        // clock, but for materials it scrolls.
+        frame.shadow_cascades = bytemuck::Zeroable::zeroed();
+        frame.elapsed_seconds = 0.;
+        frame.frame_count = 0;
+        if !ctx.scene.scrolls_materials() {
+            frame.animation_phase = 0.;
+        }
+        Self {
+            edits: ctx.scene.edits,
+            frame,
+            environment: ctx.input.environment,
+            max_rays,
+        }
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        self.edits == other.edits
+            && bytemuck::bytes_of(&self.frame) == bytemuck::bytes_of(&other.frame)
+            && self.environment == other.environment
+            && self.max_rays == other.max_rays
+    }
 }
 
 /// `DdgiBounds` in common.wgsl.
@@ -143,6 +184,22 @@ const ALLOCATION_RAYS: u64 = std::mem::offset_of!(Allocation, rays) as u64;
 const ALLOCATION_BLEND_GROUPS: u64 = std::mem::offset_of!(Allocation, blend_groups) as u64;
 const ALLOCATION_TRACED: u64 = std::mem::offset_of!(Allocation, traced) as u64;
 const ALLOCATION_BYTES: u64 = std::mem::size_of::<Allocation>() as u64;
+
+/// `DdgiConvergence` in common.wgsl: the frame's sums of the active probes'
+/// variability, which the blends add and each frame clears, and the
+/// windows the settle pass averages them over.
+#[repr(C)]
+struct Convergence {
+    variability: u32,
+    probes: u32,
+    average: f32,
+    window_sum: f32,
+    window_frames: u32,
+    previous: f32,
+    converged: u32,
+}
+const CONVERGENCE_SUMS: u64 = std::mem::offset_of!(Convergence, average) as u64;
+const CONVERGENCE_BYTES: u64 = std::mem::size_of::<Convergence>() as u64;
 /// The ramp's bins of distance (`RAMP_BINS` in allocate.wgsl).
 const RAMP_BINS: u32 = 1024;
 /// The rays a frame gives the probes it starts while some have not
@@ -180,6 +237,7 @@ pub(crate) struct DynamicGi {
     prepare_trace: wgpu::ComputePipeline,
     update_irradiance: wgpu::ComputePipeline,
     update_depth: wgpu::ComputePipeline,
+    settle: wgpu::ComputePipeline,
     scroll: wgpu::ComputePipeline,
     trace_shader: wgpu::ShaderModule,
     trace_layout: wgpu::PipelineLayout,
@@ -197,6 +255,9 @@ pub(crate) struct DynamicGi {
     /// What the frame being rendered does with them, which `finish_frame`
     /// commits; an abandoned frame's is dropped by the next.
     rendered: Option<Rendered>,
+    /// What the rendered frame's probes followed, which `finish_frame`
+    /// commits with them.
+    rendered_inputs: Option<Inputs>,
 }
 
 /// What a rendered frame does with the probes.
@@ -277,6 +338,12 @@ impl DynamicGi {
             &update_shader,
             "update_depth",
         );
+        let settle = pipeline(
+            "dynamic GI convergence",
+            &layouts.update,
+            &update_shader,
+            "settle",
+        );
         let scroll = pipeline(
             "dynamic GI scroll",
             &layouts.update,
@@ -298,6 +365,7 @@ impl DynamicGi {
             prepare_trace,
             update_irradiance,
             update_depth,
+            settle,
             scroll,
             uniform: crate::counters::buffer(
                 device,
@@ -321,6 +389,7 @@ impl DynamicGi {
             layouts,
             committed: None,
             rendered: None,
+            rendered_inputs: None,
         }
     }
 
@@ -391,16 +460,21 @@ impl DynamicGi {
     /// After the caller submitted the rendered frame: its probes become the
     /// committed ones.
     pub fn finish_frame(&mut self) {
+        let inputs = self.rendered_inputs.take();
         match self.rendered.take() {
             None => {}
             Some(Rendered::Off) => self.committed = None,
             Some(Rendered::Continue(installed)) => {
                 if let Some((volume, frames)) = &mut self.committed {
                     volume.installed = installed;
+                    volume.inputs = inputs;
                     *frames = frames.wrapping_add(1);
                 }
             }
-            Some(Rendered::Fresh(volume)) => self.committed = Some((*volume, 0)),
+            Some(Rendered::Fresh(mut volume)) => {
+                volume.inputs = inputs;
+                self.committed = Some((*volume, 0));
+            }
         }
     }
 
@@ -472,10 +546,22 @@ impl DynamicGi {
             padding_scroll: 0,
             scrolled: scrolled.to_array(),
             moving_count: 0,
+            changed: 0,
+            padding_changed: [0; 3],
         };
         let bounds = moving_bounds(ctx.scene, &placement, camera.eye);
+        let inputs = Inputs::of(ctx, max_rays);
+        let changed = match (&self.rendered, &self.committed) {
+            (Some(Rendered::Continue(_)), Some((volume, _))) => volume
+                .inputs
+                .as_ref()
+                .is_none_or(|committed| !committed.same(&inputs)),
+            _ => true,
+        };
+        self.rendered_inputs = Some(inputs);
         let uniform = VolumeUniform {
             moving_count: bounds.len() as u32,
+            changed: u32::from(changed),
             ..uniform
         };
         if !bounds.is_empty() {
@@ -491,6 +577,7 @@ impl DynamicGi {
         let timing = ctx.timing;
         let encoder = &mut *ctx.encoder;
         encoder.clear_buffer(&volume.allocation, 0, None);
+        encoder.clear_buffer(&volume.convergence, 0, Some(CONVERGENCE_SUMS));
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("dynamic GI allocation"),
@@ -545,6 +632,8 @@ impl DynamicGi {
         pass.dispatch_workgroups_indirect(&volume.allocation, ALLOCATION_BLEND_GROUPS);
         pass.set_pipeline(&self.update_depth);
         pass.dispatch_workgroups_indirect(&volume.allocation, ALLOCATION_BLEND_GROUPS);
+        pass.set_pipeline(&self.settle);
+        pass.dispatch_workgroups(1, 1, 1);
     }
 }
 
@@ -684,6 +773,21 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
                 scroll,
                 scrolled,
                 moving_count,
+                changed,
+            ]
+        ),
+        mirror!(
+            "dynamic_gi_allocate",
+            "DdgiConvergence",
+            Convergence,
+            [
+                variability,
+                probes,
+                average,
+                window_sum,
+                window_frames,
+                previous,
+                converged,
             ]
         ),
         mirror!(

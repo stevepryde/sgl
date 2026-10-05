@@ -1127,6 +1127,197 @@ fn dormant_probes_trace_the_fewest_rays_but_about_a_moving_instance() {
     );
 }
 
+/// An open floor under a sky and a sun that casts shadows, whose cascades
+/// follow the camera, a box on the floor and probes 2 m apart above it: a
+/// scene whose volume converges in a few seconds.
+fn floor_scene(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (Scene, FrameInput, (crate::InstanceId, InstanceState)) {
+    let mut scene = Scene::new(device, queue);
+    let environment = uniform_environment(device, queue, &mut scene, [0.5; 3]);
+    add_cube(
+        device,
+        queue,
+        &mut scene,
+        Mat4::from_translation(Vec3::new(0., -3.5, 0.)) * Mat4::from_scale(Vec3::new(30., 1., 30.)),
+        Mobility::Static,
+        |material| {
+            material.base = [0.5, 0.5, 0.5, 1.];
+            material.metallic = 0.;
+        },
+    );
+    let mut cube = test_support::cube();
+    cube.materials[0].base = [0.6, 0.2, 0.2, 1.];
+    cube.materials[0].metallic = 0.;
+    let model = scene.add_asset(device, queue, cube).unwrap().model;
+    let state = InstanceState {
+        model,
+        pose: Mat4::from_translation(Vec3::new(1., -2.5, 0.)),
+        visible: true,
+        capture_visible: true,
+    };
+    let instance = scene
+        .add_instance(device, queue, state, Mobility::Moving)
+        .unwrap();
+    // Probes at y = -2, 0, 2 and 4.
+    scene
+        .set_dynamic_gi_volume(
+            device,
+            Some(DynamicGiVolume {
+                origin: Vec3::new(-4., -2., -4.),
+                spacing: Vec3::splat(2.),
+                probes: [5, 4, 5],
+            }),
+        )
+        .unwrap();
+    let mut input = input(Vec3::new(0., 0.5, 3.5));
+    input.environment = Some(environment);
+    input.directional_lights[0] = Some(crate::DirectionalLight {
+        direction: Vec3::new(0.3, -1., 0.2),
+        illuminance: 3.,
+        shadow: Some(crate::DirectionalShadow::default()),
+        ..Default::default()
+    });
+    (scene, input, (instance, state))
+}
+
+/// An edit to a scene or its frame.
+type Edit<'a> = dyn Fn(&mut Scene, &mut FrameInput) + 'a;
+
+/// Renders frames of `scene` until one traces no ray, at most `most`, and
+/// returns how many it took.
+fn render_until_paused(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    renderer: &mut Renderer,
+    scene: &mut Scene,
+    input: &FrameInput,
+    settings: &Settings,
+    most: usize,
+) -> Option<usize> {
+    (1..=most).find(|_| {
+        render(device, queue, renderer, scene, input, settings, 1);
+        renderer.test_dynamic_gi().test_traced_rays(device, queue) == 0
+    })
+}
+
+// Once its light has converged (RTXGI's probe variability stops falling),
+// a volume traces nothing while what its light follows holds still: its
+// light then holds exactly, and a camera that moves, with the sun's
+// cascades about it, changes nothing of it.
+// Each edit to what it follows starts it again, and it pauses again once
+// its light has settled: an instance moved, the sun turned, the hemisphere
+// fill and the environment's intensity.
+#[test]
+fn a_converged_volume_traces_nothing_until_what_its_light_follows_changes() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let (mut scene, mut input, (instance, state)) = floor_scene(&device, &queue);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let first = render_until_paused(gpu, &mut renderer, &mut scene, &input, &settings, 400);
+    assert!(first.is_some_and(|frames| frames > 32), "{first:?}");
+    let queries = [
+        (Vec3::new(0.3, -2.9, 0.4), Vec3::Y),
+        (Vec3::new(1.51, -2.5, 0.1), Vec3::X),
+    ];
+    let paused = irradiance(&device, &queue, &renderer, &queries);
+    for eye in [Vec3::new(2., 1., 3.), Vec3::new(-3., 0., -1.)] {
+        input.camera.eye = eye;
+        input.camera.view = Mat4::from_translation(-eye);
+        render(
+            &device,
+            &queue,
+            &mut renderer,
+            &mut scene,
+            &input,
+            &settings,
+            10,
+        );
+        assert_eq!(
+            renderer.test_dynamic_gi().test_traced_rays(&device, &queue),
+            0,
+            "a camera that moves"
+        );
+    }
+    assert_eq!(irradiance(&device, &queue, &renderer, &queries), paused);
+    let edits: [(&str, &Edit<'_>); 4] = [
+        ("an instance moved", &|scene, _| {
+            let moved = InstanceState {
+                pose: Mat4::from_translation(Vec3::new(-1., -2.5, 0.5)),
+                ..state
+            };
+            scene.set_instance(&queue, instance, moved).unwrap();
+        }),
+        ("the sun's direction", &|_, input| {
+            if let Some(sun) = &mut input.directional_lights[0] {
+                sun.direction = Vec3::new(-0.4, -1., 0.1);
+            }
+        }),
+        ("the hemisphere fill", &|_, input| {
+            input.hemisphere_light.intensity = 0.5;
+        }),
+        ("the environment's intensity", &|_, input| {
+            input.diffuse_environment.intensity = 0.5;
+        }),
+    ];
+    for (edit, apply) in edits {
+        apply(&mut scene, &mut input);
+        render(
+            &device,
+            &queue,
+            &mut renderer,
+            &mut scene,
+            &input,
+            &settings,
+            1,
+        );
+        assert!(
+            renderer.test_dynamic_gi().test_traced_rays(&device, &queue) > 0,
+            "{edit}"
+        );
+        let again = render_until_paused(gpu, &mut renderer, &mut scene, &input, &settings, 400);
+        assert!(again.is_some(), "{edit}: never paused again");
+    }
+}
+
+// Under an open sky, with nothing about its probes, a volume's variability
+// is nothing from the start; one too large for its first frames to start
+// every probe still starts them all before it pauses.
+#[test]
+fn a_volume_does_not_pause_while_probes_have_yet_to_start() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let environment = uniform_environment(&device, &queue, &mut scene, [0.5; 3]);
+    // 4800 probes: 38 frames of 128.
+    let volume = DynamicGiVolume {
+        origin: Vec3::new(-19., -11., -19.),
+        spacing: Vec3::splat(2.),
+        probes: [20, 12, 20],
+    };
+    scene.set_dynamic_gi_volume(&device, Some(volume)).unwrap();
+    let mut input = input(Vec3::new(0., 0., 18.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    render(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        60,
+    );
+    // Far from the camera, among the last probes to start.
+    let far = [(Vec3::new(-18.3, -10.2, -18.1), Vec3::Y)];
+    assert_eq!(irradiance(&device, &queue, &renderer, &far)[0][3], 1.);
+}
+
 // A closed box of single-sided faces turned inward, which glow and hold a
 // shadowed light, over a floor, with every probe outside it and nothing
 // else lit: the probes' rays meet the box's backs and take nothing from
@@ -1810,12 +2001,12 @@ const STARTING_RAYS: u32 =
     crate::shading::dynamic_gi::MOST_RAYS + crate::shading::dynamic_gi::FIXED_RAYS_PER_FRAME;
 
 // Under an unchanging sky every probe's light settles, so each traces the
-// fewest rays; a probe that starts afresh traces the most, as a restart's
-// do. A scroll by whole spacings keeps the probes that stay, so only those
-// of the planes that enter trace the most: one plane forward, the planes
-// of two axes at once, and after a move of the render origin, in its new
-// frame. An origin off the lattice is another placement, and every probe
-// starts again.
+// fewest rays and the volume then pauses; a probe that starts afresh traces
+// the most, as a restart's do. A scroll by whole spacings keeps the probes
+// that stay, so only those of the planes that enter trace the most: one
+// plane forward, the planes of two axes at once, and after a move of the
+// render origin, in its new frame. An origin off the lattice is another
+// placement, and every probe starts again.
 #[test]
 fn a_scroll_starts_only_the_probes_that_enter() {
     let Some((device, queue)) = test_support::device() else {
@@ -1847,9 +2038,11 @@ fn a_scroll_starts_only_the_probes_that_enter() {
         32 * most,
         "the start"
     );
+    // The same placement again changes nothing: the settled volume has
+    // paused.
     assert_eq!(
         scroll_to(&mut scene, &input, origin),
-        32 * SETTLED_RAYS,
+        0,
         "the settled light"
     );
     // One spacing forward along x, within the lattice's rounding: its last

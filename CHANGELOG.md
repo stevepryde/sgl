@@ -387,7 +387,12 @@ full API details.
   and a probe's class follows a change within 8 frames. The probes' own rays
   take the volume's light at what they hit, never the environment's
   fallback, so a closed room starts dark rather than holding the sky for
-  seconds. Installing the volume again with its origin moved by whole
+  seconds. Once its light has converged (RTXGI's probe variability stops
+  falling), the volume pauses until something its light follows changes: a
+  scene edit that changes what its rays see or light, the frame's
+  directional lights, hemisphere fill or environment, the quality or the
+  placement; a converged static scene's dynamic GI then costs next to
+  nothing. Materials that scroll their normal maps keep it running. Installing the volume again with its origin moved by whole
   spacings scrolls it: the probes that stay keep their light, and those that
   enter start afresh; an origin off the lattice, or another spacing or
   count, is another placement. A restart (another placement or

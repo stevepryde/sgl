@@ -116,6 +116,7 @@ impl Scene {
         queue: &wgpu::Queue,
         map: &EnvironmentMap,
     ) -> Result<EnvironmentId, SceneError> {
+        self.edited();
         textures::validate_size(device, map.panorama.dimensions().into())?;
         let atlas = &map.filtered;
         if atlas.width == 0
@@ -133,6 +134,7 @@ impl Scene {
 
     /// Removes an environment. A frame that names it has none.
     pub fn remove_environment(&mut self, id: EnvironmentId) -> Result<(), SceneError> {
+        self.edited();
         self.environments
             .slots
             .remove(id)

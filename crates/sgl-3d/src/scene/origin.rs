@@ -30,6 +30,7 @@ impl Scene {
         queue: &wgpu::Queue,
         to: Vec3,
     ) -> Result<(), SceneError> {
+        self.edited();
         if !to.is_finite() {
             return Err(SceneError::InvalidOrigin);
         }

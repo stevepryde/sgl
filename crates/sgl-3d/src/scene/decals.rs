@@ -289,6 +289,7 @@ impl Scene {
     /// decoded. Decals sample it as sRGB colour or linear data by the map
     /// that names it.
     pub fn add_decal_image(&mut self, image: Image) -> Result<DecalImageId, SceneError> {
+        self.edited();
         if let Image::Compressed(compressed) = &image
             && !compressed.is_valid()
         {
@@ -307,6 +308,7 @@ impl Scene {
 
     /// Removes a decal image no decal uses.
     pub fn remove_decal_image(&mut self, id: DecalImageId) -> Result<(), SceneError> {
+        self.edited();
         let image = self
             .decals
             .images
@@ -328,6 +330,7 @@ impl Scene {
         queue: &wgpu::Queue,
         decal: Decal,
     ) -> Result<DecalId, SceneError> {
+        self.edited();
         let decals = &mut self.decals;
         decals.validate(&decal)?;
         let room = decals.room(device, decals.slots.next_index() + 1)?;
@@ -359,6 +362,9 @@ impl Scene {
         id: DecalId,
         decal: Decal,
     ) -> Result<(), SceneError> {
+        if *self.decals.get(id)? != decal {
+            self.edited();
+        }
         let decals = &mut self.decals;
         let old = *decals.get(id)?;
         decals.validate(&decal)?;
@@ -373,6 +379,7 @@ impl Scene {
 
     /// Removes a decal. Its index is reused under a new identity.
     pub fn remove_decal(&mut self, id: DecalId) -> Result<(), SceneError> {
+        self.edited();
         let decal = self
             .decals
             .slots

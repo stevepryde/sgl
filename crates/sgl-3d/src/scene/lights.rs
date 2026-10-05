@@ -194,6 +194,7 @@ impl Scene {
         queue: &wgpu::Queue,
         light: Light,
     ) -> Result<LightId, SceneError> {
+        self.edited();
         validate(&light)?;
         let count = self.lights.slots.next_index() + 1;
         if self.lights.reserve(device, queue, count)? {
@@ -218,6 +219,9 @@ impl Scene {
         light: Light,
     ) -> Result<(), SceneError> {
         let old = *self.lights.get(id)?;
+        if old != light {
+            self.edited();
+        }
         validate(&light)?;
         self.lights.rects =
             self.lights.rects + usize::from(is_rect(&light)) - usize::from(is_rect(&old));
@@ -228,6 +232,7 @@ impl Scene {
 
     /// Removes a light. Its index is reused under a new identity.
     pub fn remove_light(&mut self, id: LightId) -> Result<(), SceneError> {
+        self.edited();
         let light = self
             .lights
             .slots

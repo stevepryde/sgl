@@ -24,6 +24,7 @@ impl Scene {
         mesh: usize,
         alternatives: Vec<MeshLod>,
     ) -> Result<(), SceneError> {
+        self.edited();
         let owner = self.models.get(model)?;
         let base = owner.meshes.get(mesh).ok_or(SceneError::MissingMesh)?;
         // A deforming instance's vertices are its model's, deformed.

@@ -271,6 +271,7 @@ impl Scene {
         queue: &wgpu::Queue,
         volume: Option<IrradianceVolume>,
     ) -> Result<(), SceneError> {
+        self.edited();
         let Some(volume) = volume else {
             if self.irradiance_cells.placement.is_some() {
                 self.irradiance_cells.set(None);
@@ -343,6 +344,7 @@ impl Scene {
         queue: &wgpu::Queue,
         region: &PreparedIrradianceRegion,
     ) -> Result<(), SceneError> {
+        self.edited();
         let placement = self
             .irradiance_cells
             .placement

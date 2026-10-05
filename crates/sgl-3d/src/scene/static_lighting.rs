@@ -293,6 +293,7 @@ impl Scene {
         queue: &wgpu::Queue,
         atlas: &IrradianceAtlas,
     ) -> Result<(), SceneError> {
+        self.edited();
         self.static_lighting.atlas = BakedMap::atlas(device, queue, atlas)?;
         self.static_lighting.atlas_scale = 1.;
         self.static_lighting.atlas_installed = true;
@@ -308,6 +309,7 @@ impl Scene {
         queue: &wgpu::Queue,
         atlas: &CompressedIrradianceAtlas,
     ) -> Result<(), SceneError> {
+        self.edited();
         self.static_lighting.atlas = BakedMap::compressed_atlas(device, queue, atlas)?;
         self.static_lighting.atlas_scale = atlas.scale;
         self.static_lighting.atlas_installed = true;
@@ -325,6 +327,7 @@ impl Scene {
         map: &Lightmap,
         materials: &[MaterialId],
     ) -> Result<(), SceneError> {
+        self.edited();
         for &material in materials {
             self.materials.get(material)?;
         }

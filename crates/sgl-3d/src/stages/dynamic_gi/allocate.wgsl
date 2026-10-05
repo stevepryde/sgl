@@ -19,15 +19,21 @@
 // (`rank` and `threshold` choose them). The blends run over the probes that
 // trace, where Wicked's run over every probe, each of which always traces.
 // Added: each probe that traces also traces DDGI_FIXED_RAYS_PER_FRAME
-// fixed rays after its others, which classify it, and an inactive probe
-// (ddgi_probe_active) traces the fewest others, as NVIDIA RTXGI's probes
-// trace their fixed rays beside their others and its inactive probes their
-// fixed rays alone (RTXGI-DDGI f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6,
-// docs/DDGIVolume.md 736-767; practice only). A dormant probe, with no
-// surface in its cell, traces the fewest too, staying warm for the moving
-// receivers it lights, unless a moving instance's bounds reach into its
-// cell: then it traces as an active probe does, so the light about the
-// instance keeps up with it.
+// fixed rays after its others, which classify it, as NVIDIA RTXGI's probes
+// trace their fixed rays beside their others (RTXGI-DDGI
+// f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6, docs/DDGIVolume.md 736-767;
+// practice only). Changed: an inactive probe (ddgi_probe_active) traces the
+// fewest others, a bucket, beside its fixed rays, and still blends them,
+// where RTXGI's inactive probes trace their fixed rays alone and blend
+// nothing: its depth and irradiance stay warm, so it lights rightly the
+// frame it becomes active again. A dormant probe, with no surface in its
+// cell, traces the fewest too, staying warm for the moving receivers it
+// lights, unless a moving instance's bounds reach into its cell: then it
+// traces as an active probe does, so the light about the instance keeps up
+// with it. A volume that has converged while what its light follows held
+// still traces nothing (ddgi_paused; update.wgsl's settle), as RTXGI's
+// sample pauses a volume whose variability has settled (DDGI.cpp
+// 1628-1640).
 @group(0) @binding(0) var<uniform> volume:DdgiVolume;
 @group(0) @binding(1) var<storage,read> variance:array<u32>;
 @group(0) @binding(2) var<storage,read> probe_states:array<vec4<u32>>;
@@ -37,6 +43,12 @@
 // The probes that trace rays this frame, which the blends gather.
 @group(0) @binding(6) var<storage,read_write> traced_probes:array<u32>;
 @group(0) @binding(7) var<storage,read> moving_bounds:array<DdgiBounds>;
+@group(0) @binding(8) var<storage,read_write> convergence:DdgiConvergence;
+// Whether the volume pauses this frame: it has converged, nothing its light
+// follows has changed, and every probe has started.
+fn ddgi_paused()->bool {
+ return volume.changed==0u && convergence.converged!=0u && atomicLoad(&allocation.unblended)==0u;
+}
 // Whether a moving instance's bounds reach into the cell about a probe at
 // `position`.
 fn ddgi_near_moving(position:vec3<f32>)->bool {
@@ -180,6 +192,10 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   }
   if !probe.blended {
    ray_count=select(0u,most_rays,ramp_starts(ddgi_probe_position_rest(probe_coord,volume.origin,volume.spacing)));
+  }
+  // A paused volume traces nothing; its probes keep what they hold.
+  if ddgi_paused() {
+   ray_count=0u;
   }
   ray_counts[probe_index]=ray_count;
   shared_ray_count=ray_count;

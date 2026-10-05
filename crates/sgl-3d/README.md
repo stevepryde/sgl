@@ -1590,7 +1590,9 @@ Placement:
   beyond a room's corner lights none of its walls, and probes in open air
   cost little yet light whatever moves among them. A static object so small
   that no probe about it finds it (a probe classifies from 32 directions)
-  takes its other indirect light. A probe's class follows a change in what
+  takes its other indirect light, once its probes' first cycle of those
+  directions has classified them; until then, their first frame's rays
+  classify them and may light it. A probe's class follows a change in what
   it sees within 8 frames. Keep probes
   off the surfaces themselves, where a probe sees both sides at once:
   offset the lattice so walls fall between probes. Probes near a surface
@@ -1631,15 +1633,25 @@ default) sets the most rays a probe traces a frame: 128 or 256. Each probe
 traces rays by how consistent its irradiance is, a tenth of that outside the
 camera's view, at least four: a probe whose light settles traces few, and
 one whose light changes traces up to the most, so cost follows change.
+Once its light has converged, the volume pauses: it traces nothing and its
+probes hold their light, until something its light follows changes. That
+is any edit to the scene that changes what rays see or light (an instance
+that does not deform, a model, material, light, decal, environment, bake
+or the irradiance volume), the frame's directional lights, hemisphere fill
+or environment, `Settings::dynamic_gi`, or the volume's placement; the
+camera, the clock and a deforming instance's animation are not. Setting a
+pose or a value to what it already is changes nothing. A scene whose
+materials scroll their normal maps changes every frame and never pauses.
 Frames that run the volume trace the ray source, so its instance BVHs
 rebuild on them as for world-space reflections. Deforming instances are
 lit by the volume but do not block its rays. Per-pass cost is reported in
 the `dynamic GI *` timing groups. The [dynamic GI example](examples/dynamic_gi.rs)
 lights a room through a window and with a lamp, two boxes moving through
 it; `--timing` prints the stage's GPU time in each frame as its probes
-start and settle, `--quality off` renders the room without the volume, and
-`--scroll` walks the camera along the room with a shorter volume that
-scrolls to follow it:
+start and settle, `--still` parks the boxes so the volume pauses and
+`--edit N` moves the lamp at frame N, which starts it again, `--quality
+off` renders the room without the volume, and `--scroll` walks the camera
+along the room with a shorter volume that scrolls to follow it:
 
 ```sh
 cargo run --release -p sgl-3d --example dynamic_gi -- target/dynamic_gi.png --timing

@@ -918,7 +918,23 @@ code; it does not redeclare a struct, binding or function another module owns.
   takes the volume's own zero there instead, as Wicked's and RTXGI's hits
   sample their volumes, so the probes' bounce starts from their own light
   and never from the sky's fallback, which would carry the sky about a
-  closed room for seconds. A receiver the volume lights takes its irradiance
+  closed room for seconds. A volume whose light has converged pauses, as
+  RTXGI's sample pauses one whose probe variability (the mean coefficient of
+  variation of the active probes' irradiance texels) has settled: it traces
+  nothing and its probes hold their light while what that light follows
+  holds still. That is the scene's edits that change what the rays see or
+  light (the scene counts them; a deforming instance's pose and
+  deformation, which no ray sees, the transient effects and a value set to
+  what it was are none), the frame's data but for the camera's cascades and
+  the clock (whose animation phase counts while a material scrolls), the
+  environment bound, the quality and the placement. Improved on RTXGI
+  (RD-2), whose sample pauses below a threshold each scene sets, which
+  SGL3D has no scene to ask for: the volume has converged once the mean of
+  its variability over a window of 16 frames falls by less than a tenth
+  from the last window's, the plateau RTXGI describes, and never while a
+  probe has yet to start. The allocation decides it on the GPU from the
+  blends' last windows, so nothing is read back, and a paused frame costs
+  the allocation alone. A receiver the volume lights takes its irradiance
   in place of the environment's diffuse light and the hemisphere fill,
   recorded apart as the ambient that ambient occlusion weights; beyond the
   volume's extent a receiver keeps its fallback, the volume's share fading

@@ -63,7 +63,35 @@ struct DdgiVolume {
  // The moving instances' bounds in moving_bounds, at most
  // DDGI_MOST_MOVING_BOUNDS.
  moving_count:u32,
+ // 1 where what the probes' light follows changed since the last frame
+ // that ran them: the scene's content, the frame's lights and environment,
+ // the volume's placement or the rays a probe may trace.
+ changed:u32,
 }
+// Whether the volume has converged: NVIDIA RTXGI's probe variability, the
+// mean coefficient of variation of the active probes' irradiance texels,
+// which the blends sum and the settle pass averages over windows of frames.
+struct DdgiConvergence {
+ // The frame's sum of the active probes' mean variability, in
+ // DDGI_VARIABILITY_UNITs, and how many; cleared each frame.
+ variability:atomic<u32>,
+ probes:atomic<u32>,
+ // The last average, of the frames whose blends ran.
+ average:f32,
+ // The window's sum of averages and its frames.
+ window_sum:f32,
+ window_frames:u32,
+ // The last whole window's mean, or -1 before one since the last change.
+ previous:f32,
+ // 1 once a window's mean has stopped falling, until a change.
+ converged:u32,
+}
+// The frames of a convergence window: RTXGI's sample's least frames of
+// variability before it pauses a volume (DDGI.cpp 1631-1637).
+const DDGI_CONVERGENCE_WINDOW:u32=16u;
+// The fall from one window's mean variability to the next below which the
+// volume has converged.
+const DDGI_CONVERGENCE_FALL:f32=.1;
 // A moving instance's world bounds, about which every probe traces as an
 // active one.
 struct DdgiBounds {
