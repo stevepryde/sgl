@@ -22,7 +22,7 @@ This page is the detailed reference:
 - [Reflections](#reflections), [TAA, SMAA and FSR2](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
-- [Skinning and morphs](#skinned-meshes-and-morph-targets), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
+- [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
 - [Settings and fallbacks](#settings-and-capability-fallback), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
 
 ## Dependencies and data conventions
@@ -930,6 +930,40 @@ in one eight-target pass, with ambient occlusion on or off. Only devices without
 them draw a geometry pass before lighting. Use `graphics_device::limits` when
 requesting the caller-owned device.
 
+## Scrolling normal layers
+
+`asset::Material::normal_layers` and `SurfaceMaterial::normal_layers` draw a
+material's normal map as two layers moving across its surface: water's
+waves, with no geometry uploaded per frame. Each `NormalLayer` has a
+`velocity` (the material's UV units per second along U and V), a `scale`
+(repeats of the map per UV unit, positive) and a `strength` (how much of its
+slopes the surface takes, with `normal_scale`). The layers' height fields
+add, so their slopes add (Barré-Brisebois and Hill's partial derivative
+blend), as Wicked Engine's water and Bevy's water example scroll one map
+twice or more.
+
+- **Time.** `FrameInput::elapsed_seconds`, the game's presentation clock in
+  seconds as an `f64`, places the layers, so every view of a frame (the
+  G-buffer, the receiver pass, blended surfaces, probe captures and
+  world-space ray hits) sees one surface. SGL3D reduces it modulo an hour on
+  the CPU and rounds each layer's speed to whole repeats of its map per hour
+  (at most 1/7200 of a repeat per second off), so the waves keep their
+  precision however long a session runs and nothing jumps when the hour
+  turns.
+- **Requirements.** A normal map that repeats on both axes, finite
+  velocities and strengths, and positive finite scales; otherwise
+  `add_materials`, `add_asset` and `set_material` refuse the material with
+  `SceneError::InvalidNormalLayers`. `set_material` changes the layers like
+  any value; the glTF loader leaves them `None`.
+- **Cost.** Two normal map samples in place of one in each pass that
+  evaluates the material. Moving layers are no scene edit: a static instance
+  can hold the material, and its shadow layers stay valid.
+- **History.** The layers change shading, not geometry: they write no
+  motion, and TAA, FSR2 and the reflection methods' accumulation reject what
+  they change by their colour clamps, as for any change of shading.
+
+The [water example](examples/water.rs) scrolls a procedural wave map.
+
 ## Alpha-masked and blended materials
 
 `asset::Material::alpha` and `SurfaceMaterial::alpha` are an `AlphaMode`; the
@@ -1002,18 +1036,22 @@ background, not its reflection. World-space rays do not fill a receiver's
 misses; probe and sky specular do. Unlit receivers, additive effects and mist
 reflect nothing.
 
-The game supplies the receiver as any surface: its mesh, with the normals it
-animates, and its material's roughness, F0 and coat. Place it as a moving
-instance, so that replacing its geometry is no static edit. `Scene::set_model`
-rebuilds that model's ray source each call, so a mesh regenerated every frame
-pays a BVH build every frame: keep the grid as coarse as the look allows, or
-animate a deforming model with `set_instance_deformation`, which rays do not
-see. The renderer allocates the surface's targets (a depth and an RGBA16F
+The game supplies the receiver as any surface: its mesh, the normals it
+animates, and its material's roughness, F0 and coat. Animate water's waves
+with its material's [scrolling normal layers](#scrolling-normal-layers):
+they move with the frame's time and upload nothing, so the receiver can be a
+static instance, and many water chunks cost nothing per frame beyond their
+pixels. A mesh replaced every frame belongs on a moving instance, so that
+the replacement is no static edit; `Scene::set_model` rebuilds that model's
+buffers, ray source and BVH each call. A deforming model animated with
+`set_instance_deformation` is not seen by rays. The renderer allocates the surface's targets (a depth and an RGBA16F
 layer, 12 bytes per render pixel) in the first frame whose scene holds a
 receiver and keeps them from then on; a renderer that has never rendered a
 receiver pays nothing. The [water example](examples/water.rs) is a lake that
-receives reflections; it prints the GPU time of the passes receivers touch,
-before and after its lake is marked:
+receives reflections, its waves from its material's normal layers; it prints
+the GPU time of the passes receivers touch before and after its lake is
+marked, and with its waves instead replaced every frame by `set_model`
+(`set-model`), with what that uploads:
 
 ```sh
 cargo run --release -p sgl-3d --example water

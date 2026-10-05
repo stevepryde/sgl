@@ -95,8 +95,10 @@ pub struct FrameInput {
     /// restarts. A target-changing resize and another scene restart it
     /// without this.
     pub camera_cut: bool,
-    /// Presentation seconds, for atmosphere animation.
-    pub elapsed_seconds: f32,
+    /// Presentation seconds, which place materials' scrolling normal layers
+    /// and the mist's drift. Double precision, so sessions hours long keep
+    /// their animation smooth.
+    pub elapsed_seconds: f64,
     /// Milliseconds since the previous frame: FSR2's `frameTimeDelta` and
     /// auto exposure's time step.
     pub frame_time_ms: f32,

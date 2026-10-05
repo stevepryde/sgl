@@ -5,12 +5,12 @@ use super::{
     IMAGE_BC7, IMAGE_RGBA8, ImageHeader, MaterialRecord, MaterialTextures, MeshRecord,
     SourceHeader, bvh,
 };
-use crate::shading::material::MaterialUniform;
+use crate::shading::material::{MaterialUniform, NormalLayerUniform};
 
 /// The WGSL twins of the source's record layouts, in words: `SourceHeader`,
 /// `ImageHeader` and its formats, `asset::Vertex` (which the source holds
-/// verbatim), `MeshRecord`, `MaterialRecord`, the BVH's node and leaf
-/// primitive and an instance BVH's leaf.
+/// verbatim), `MeshRecord`, `MaterialRecord` with its normal layers, the
+/// BVH's node and leaf primitive and an instance BVH's leaf.
 pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
     use crate::asset::Vertex;
     use std::mem::{offset_of, size_of};
@@ -109,6 +109,23 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         (
             "SCENE_MATERIAL_FLAGS",
             material(offset_of!(MaterialUniform, flags)),
+        ),
+        (
+            "SCENE_MATERIAL_NORMAL_LAYERS",
+            material(offset_of!(MaterialUniform, normal_layers)),
+        ),
+        ("SCENE_NORMAL_LAYER_WORDS", size_of::<NormalLayerUniform>()),
+        (
+            "SCENE_NORMAL_LAYER_CYCLES",
+            offset_of!(NormalLayerUniform, cycles),
+        ),
+        (
+            "SCENE_NORMAL_LAYER_SCALE",
+            offset_of!(NormalLayerUniform, scale),
+        ),
+        (
+            "SCENE_NORMAL_LAYER_STRENGTH",
+            offset_of!(NormalLayerUniform, strength),
         ),
         (
             "SCENE_MATERIAL_TEXTURES",

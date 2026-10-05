@@ -65,6 +65,104 @@ pub(crate) fn read_words(
     bytemuck::cast_slice(&readback.get_mapped_range(..)).to_vec()
 }
 
+/// A unit vector's octahedral coordinates (Cigolle et al. 2014, "A Survey of
+/// Efficient Representations for Independent Unit Vectors", section 3.1),
+/// signed, as the G-buffer stores normals.
+pub(crate) fn octahedral(v: glam::Vec3) -> [f32; 2] {
+    let n = v / v.abs().element_sum();
+    if n.z >= 0. {
+        [n.x, n.y]
+    } else {
+        [
+            (1. - n.y.abs()) * n.x.signum(),
+            (1. - n.x.abs()) * n.y.signum(),
+        ]
+    }
+}
+
+/// Runs `observation` in compute under the frame's ray-hit lit group 0 and
+/// the scene's group 1, and reads back its `words` vec4 outputs.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn observe_ray_hits(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut crate::Renderer,
+    scene: &mut crate::Scene,
+    input: &crate::FrameInput,
+    settings: &crate::settings::Settings,
+    observation: &str,
+    outputs: usize,
+) -> Vec<[f32; 4]> {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("ray hit observation"),
+        source: wgpu::ShaderSource::Wgsl(
+            format!("{}\n{}", crate::shading::lit_compute_library(), observation).into(),
+        ),
+    });
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(
+            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[
+                    Some(renderer.test_lit_layout()),
+                    Some(scene.scene_layout()),
+                    None,
+                    Some(&layout),
+                ],
+                immediate_size: 0,
+            }),
+        ),
+        module: &shader,
+        entry_point: Some("observe"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let bytes = (outputs * 16) as u64;
+    let output = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: bytes,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: output.as_entire_binding(),
+        }],
+    });
+    renderer.prepare_test_frame(device, queue, scene, input, settings);
+    scene.update_rays(device, queue, input.visibility_mask);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, renderer.test_ray_hit_lit(), &[]);
+        pass.set_bind_group(1, &scene.scene_group, &[]);
+        pass.set_bind_group(3, &group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    queue.submit([encoder.finish()]);
+    scene.finish_frame();
+    let words = read_words(device, queue, &output);
+    bytemuck::cast_slice::<u32, [f32; 4]>(&words).to_vec()
+}
+
 /// The words of `buffer`, a storage buffer that cannot be copied from, as
 /// a compute pass reads them.
 pub(crate) fn storage_words(
@@ -249,6 +347,7 @@ pub(crate) fn cube() -> crate::asset::Asset {
             emissive_texture: None,
             normal_texture: None,
             normal_scale: 1.,
+            normal_layers: None,
             bump_texture: None,
             bump_scale: 0.,
             wrap: [gltf::texture::WrappingMode::Repeat; 2],

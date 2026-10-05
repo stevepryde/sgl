@@ -1,10 +1,11 @@
 // A rasterized fragment's Surface (surface.wgsl): material textures sampled
 // with the view's mip bias, normal and bump maps along screen derivatives,
+// a normal map's scrolling layers where the frame's time puts them,
 // the view's decals (decals.wgsl) over a lit material, and roughness filtered
 // by the geometry normal's variance. Every geometry pass evaluates materials
 // through these, so the G-buffer, split lighting and the fused pass share
-// their equations. Reads `view`, the fragment's object record, the material
-// and the decal bindings.
+// their equations. Reads `view`, `frame`, the fragment's object record, the
+// material and the decal bindings.
 fn surface_tangent_frame(i:Fragment,front:bool)->mat3x3<f32> {
  let f=pbr_tangent_frame(normalize(i.normal),i.tangent);
  let side=select(-1.,1.,front);
@@ -33,8 +34,15 @@ fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
   let tangent=(a*uv_dx.x-b*uv_dy.x)*face;
   let bitangent=(a*uv_dx.y-b*uv_dy.y)*face;
   let scale=inverseSqrt(max(max(dot(tangent,tangent),dot(bitangent,bitangent)),0.0000001));
-  var mapped=textureSampleBias(normal_map,tex_sampler,i.uv,view.mip_bias).xyz*2.-vec3(1.);
-  mapped=vec3(mapped.xy*material.normal_scale,mapped.z);
+  var mapped:vec3<f32>;
+  if (material.flags&MATERIAL_NORMAL_LAYERS)!=0u {
+   let phase=frame.animation_phase;
+   let first=textureSampleBias(normal_map,tex_sampler,material_normal_layer_uv(material.normal_layers[0],i.uv,phase),view.mip_bias);
+   let second=textureSampleBias(normal_map,tex_sampler,material_normal_layer_uv(material.normal_layers[1],i.uv,phase),view.mip_bias);
+   mapped=material_layered_normal(material,first,second);
+  } else {
+   mapped=material_mapped_normal(material,textureSampleBias(normal_map,tex_sampler,i.uv,view.mip_bias));
+  }
   if material.anisotropy_strength>0. {
    n=normalize(surface_tangent_frame(i,front)*mapped);
   } else {

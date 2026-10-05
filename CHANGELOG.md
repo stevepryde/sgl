@@ -15,6 +15,59 @@ full API details.
 
 ## Unreleased
 
+### Materials scroll their normal maps; frame time is `f64`
+
+- **Scope:** `sgl-3d` adds `NormalLayer` and the field `normal_layers:
+  Option<[NormalLayer; 2]>` on `asset::Material` and `SurfaceMaterial`
+  (`None` by default and from the glTF loader), and
+  `SceneError::InvalidNormalLayers`. With layers, the material's normal map
+  is drawn twice, each layer at its `scale`, moving across the surface at its
+  `velocity` (material UV units per second) with `FrameInput::elapsed_seconds`,
+  their slopes added at their `strength`: water's waves with no geometry
+  uploaded per frame, seen alike by the G-buffer, the receiver pass, blended
+  surfaces, probe captures and world-space ray hits. Speeds are rounded to
+  whole repeats of the map per hour (at most 1/7200 of a repeat per second
+  off). A material with layers needs a normal map that repeats on both
+  axes, finite velocities and strengths and positive finite scales;
+  `add_materials`, `add_asset` and `set_material` refuse others.
+  `FrameInput::elapsed_seconds` is now `f64` (was `f32`): SGL3D reduces it
+  modulo an hour on the CPU, so the layers keep their precision however long
+  a session runs. The mist drifts as before. The `water` example's lake is
+  now one static quad whose material scrolls a wave map; its `set-model` run
+  keeps the per-frame `Scene::set_model` waves for comparison. Materials
+  without layers render as before.
+- **Migration:** assign `elapsed_seconds` an `f64`, ideally straight from
+  the game's clock rather than through an `f32`:
+
+  ```rust
+  // Before
+  input.elapsed_seconds = start.elapsed().as_secs_f32();
+  // After
+  input.elapsed_seconds = start.elapsed().as_secs_f64();
+  ```
+
+  `asset::Material` and `SurfaceMaterial` struct literals that list every
+  field add `normal_layers: None`; those built with `..Default::default()`,
+  or from `Scene::material`, need nothing. A game that matches `SceneError`
+  exhaustively adds the `InvalidNormalLayers` arm. To move water's waves in
+  its material, give it a repeating normal map and two layers, and drop the
+  per-frame `Scene::set_model` (the receiver can then be a static instance):
+
+  ```rust
+  let water = Material {
+      normal_texture: Some(waves),
+      normal_layers: Some([
+          NormalLayer { velocity: [0.06, 0.025], scale: 1., strength: 1. },
+          NormalLayer { velocity: [-0.04, 0.07], scale: 2.7, strength: 0.6 },
+      ]),
+      ..water
+  };
+  ```
+
+  Afterwards, look at the water in motion with TAA, FSR2 and screen-space
+  reflections, and compare the `receivers`, `blended` and `SSR *` or
+  `Godot SSR *` timing groups on the game's route.
+
 ### Dynamic diffuse GI from a volume of probes
 
 - **Scope:** `sgl-3d` adds `DynamicGiVolume { origin, spacing, probes }`,
@@ -135,9 +188,9 @@ full API details.
   if matches!(material.alpha, AlphaMode::Blend { .. }) { /* ... */ }
   ```
 
-  Mark water and glass that should reflect the scene with `true`, place
-  them as moving instances, and animate their normals in the mesh (see the
-  package README's
+  Mark water and glass that should reflect the scene with `true`, and
+  animate their normals with material normal layers (the entry above) or in
+  a mesh on a moving instance (see the package README's
   [blended receivers](crates/sgl-3d/README.md#blended-receivers) and the
   `water` example). A mesh
   replaced with `Scene::set_model` every frame rebuilds its ray BVH every

@@ -1,9 +1,10 @@
 // A world-space ray hit's Surface (surface.wgsl). The hit supplies its actual
 // position, authored material and triangle UV differential frame; textures are
-// pulled from the scene's ray buffers at LOD 0, and the decals its list holds
-// (decals.wgsl) sample the atlas's level 0. The outgoing direction is toward
-// the receiver, never toward the primary camera. Reads the lit bindings and
-// the scene's ray buffers.
+// pulled from the scene's ray buffers at LOD 0 (a normal map's scrolling
+// layers where the frame's time puts them, as raster's), and the decals its
+// list holds (decals.wgsl) sample the atlas's level 0. The outgoing
+// direction is toward the receiver, never toward the primary camera. Reads
+// the lit bindings and the scene's ray buffers.
 fn ray_tangent_frame(hit:SceneHit)->mat3x3<f32> {
  let side=select(-1.,1.,hit.front_face);
  let frame=pbr_tangent_frame(hit.normal*side,hit.authored_tangent);
@@ -28,8 +29,16 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
   let tangent=cross(dv,n)*orientation;
   let bitangent=cross(n,du)*orientation;
   let scale=inverseSqrt(max(max(dot(tangent,tangent),dot(bitangent,bitangent)),0.0000001));
-  var mapped=scene_sample_texture(material.textures[SCENE_TEXTURE_NORMAL],hit.uv,material.wrap,false).xyz*2.-vec3(1.);
-  mapped=vec3(mapped.xy*material.values.normal_scale,mapped.z);
+  let normal_map=material.textures[SCENE_TEXTURE_NORMAL];
+  var mapped:vec3<f32>;
+  if (material.values.flags&MATERIAL_NORMAL_LAYERS)!=0u {
+   let phase=frame.animation_phase;
+   let first=scene_sample_texture(normal_map,material_normal_layer_uv(material.values.normal_layers[0],hit.uv,phase),material.wrap,false);
+   let second=scene_sample_texture(normal_map,material_normal_layer_uv(material.values.normal_layers[1],hit.uv,phase),material.wrap,false);
+   mapped=material_layered_normal(material.values,first,second);
+  } else {
+   mapped=material_mapped_normal(material.values,scene_sample_texture(normal_map,hit.uv,material.wrap,false));
+  }
   if material.values.anisotropy_strength>0. {
    n=normalize(ray_tangent_frame(hit)*mapped);
   } else {

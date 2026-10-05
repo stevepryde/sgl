@@ -516,7 +516,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         moving.pose = Mat4::from_translation(Vec3::new(-0.5 + phase, 0.85, 0.))
             * Mat4::from_rotation_y(phase);
         scene.set_instance(&queue, instance, moving)?;
-        frame.elapsed_seconds = frame_index as f32 / 60.;
+        frame.elapsed_seconds = frame_index as f64 / 60.;
         frame.camera_cut = frame_index == 0;
         // Cheap when neither the output size nor the settings changed.
         renderer.resize(&device, size, 1., &settings);

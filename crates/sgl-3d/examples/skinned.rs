@@ -453,7 +453,7 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
                 &weights,
             )?;
         }
-        input.elapsed_seconds = seconds;
+        input.elapsed_seconds = f64::from(seconds);
         input.camera_cut = frame == 0;
         renderer.resize(&device, size, 1., &settings);
         let mut encoder = device.create_command_encoder(&Default::default());

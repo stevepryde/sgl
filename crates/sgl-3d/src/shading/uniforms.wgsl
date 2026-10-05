@@ -92,6 +92,10 @@ struct Frame {
  // Frames since history restarted: the temporal shadow filter's noise
  // turns with it.
  frame_count:u32,
+ // The frame's time within the period over which material animation
+ // repeats, as a fraction of it (shading::material::animation_phase): a
+ // normal layer moves its whole repeats per period times it (material.wgsl).
+ animation_phase:f32,
  // The lightmap's chart transform: chart UV = material UV * xy + zw.
  lightmap_chart:vec4<f32>,
  // With FRAME_DYNAMIC_GI, the scene's dynamic GI volume (dynamic_gi.wgsl):

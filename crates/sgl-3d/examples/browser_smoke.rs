@@ -750,7 +750,7 @@ async fn render(
             )
             .map_err(|e| format!("set_instance_deformation: {e}"))?;
         frame.camera_cut = index == 0;
-        frame.elapsed_seconds = index as f32 / 60.;
+        frame.elapsed_seconds = index as f64 / 60.;
         renderer.resize(device, SIZE, 1., settings);
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(

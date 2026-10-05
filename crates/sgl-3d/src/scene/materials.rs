@@ -7,9 +7,10 @@ use super::textures::{self, Textures};
 use super::{Scene, SceneError, buffer};
 use crate::asset::{self, Image, Material as AuthoredMaterial};
 use crate::content::identity::MaterialId;
-use crate::content::material::{AlphaMode, SurfaceMaterial};
+use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 use crate::shading::bind::group2;
-use crate::shading::material::{MaterialMaps, MaterialUniform};
+use crate::shading::material::{MATERIAL_NORMAL_MAP, MaterialMaps, MaterialUniform};
+use gltf::texture::WrappingMode;
 use std::ops::Range;
 
 pub(crate) struct Material {
@@ -44,7 +45,7 @@ struct Bound {
     normal: Option<usize>,
     bump: Option<usize>,
     anisotropy: Option<usize>,
-    wrap: [gltf::texture::WrappingMode; 2],
+    wrap: [WrappingMode; 2],
 }
 
 impl Material {
@@ -101,6 +102,33 @@ fn validate_alpha(values: &SurfaceMaterial) -> Result<(), SceneError> {
     }
 }
 
+/// Normal layers `values` may take on a material added with `maps` and
+/// `wrap`: they scroll its normal map, which must be there and repeat on both
+/// axes, at finite velocities and strengths and positive finite scales.
+fn validate_normal_layers(
+    values: &SurfaceMaterial,
+    maps: MaterialMaps,
+    wrap: [WrappingMode; 2],
+) -> Result<(), SceneError> {
+    let Some(layers) = values.normal_layers else {
+        return Ok(());
+    };
+    let valid = |layer: &NormalLayer| {
+        layer.velocity.iter().all(|speed| speed.is_finite())
+            && layer.scale.is_finite()
+            && layer.scale > 0.
+            && layer.strength.is_finite()
+    };
+    if maps.0 & MATERIAL_NORMAL_MAP != 0
+        && wrap == [WrappingMode::Repeat; 2]
+        && layers.iter().all(valid)
+    {
+        Ok(())
+    } else {
+        Err(SceneError::InvalidNormalLayers)
+    }
+}
+
 pub(crate) struct Materials {
     pub slots: Slots<MaterialId, Material>,
     /// Changes when an edit changes a value casters read
@@ -130,6 +158,15 @@ fn maps(material: &AuthoredMaterial) -> [(Option<usize>, bool); 6] {
         (material.bump_texture, false),
         (material.anisotropy_texture, false),
     ]
+}
+
+/// The maps `material` is added with.
+fn authored_maps(material: &AuthoredMaterial) -> MaterialMaps {
+    MaterialMaps::new(
+        material.normal_texture.is_some(),
+        material.bump_texture.is_some(),
+        material.anisotropy_texture.is_some(),
+    )
 }
 
 impl Materials {
@@ -209,6 +246,7 @@ impl Materials {
             let values = SurfaceMaterial::authored(material);
             validate_anisotropy(&values, 0)?;
             validate_alpha(&values)?;
+            validate_normal_layers(&values, authored_maps(material), material.wrap)?;
         }
         Ok(())
     }
@@ -294,11 +332,7 @@ impl Materials {
             texture(index).map_or(0, |texture| self.textures.get(texture).ray.start)
         };
         let values = SurfaceMaterial::authored(material);
-        let map_bits = MaterialMaps::new(
-            material.normal_texture.is_some(),
-            material.bump_texture.is_some(),
-            material.anisotropy_texture.is_some(),
-        );
+        let map_bits = authored_maps(material);
         let uniform = MaterialUniform::new(&values, map_bits);
         let record = rays.add_material(
             device,
@@ -385,9 +419,9 @@ impl Materials {
             }
         };
         let address = |mode| match mode {
-            gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
-            gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
-            gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+            WrappingMode::Repeat => wgpu::AddressMode::Repeat,
+            WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+            WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
         };
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("authored material sampler"),
@@ -460,6 +494,7 @@ impl Materials {
         let material = self.slots.get_mut(id).ok_or(SceneError::UnknownMaterial)?;
         validate_anisotropy(&values, material.untangented)?;
         validate_alpha(&values)?;
+        validate_normal_layers(&values, material.maps, material.bound.wrap)?;
         if material.values != values {
             if material.values.caster_values() != values.caster_values() {
                 self.casters = super::next_generation();
@@ -543,3 +578,6 @@ impl Scene {
         self.materials.remove(&mut self.rays, id)
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod normal_layer_tests;

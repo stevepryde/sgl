@@ -19,7 +19,7 @@ pub use super::gltf::{
     load_with_options,
 };
 pub use super::images::{CompressedFormat, CompressedImage, Image};
-use super::material::AlphaMode;
+use super::material::{AlphaMode, NormalLayer};
 
 /// A loader failure, including the source asset path for file loads.
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -101,6 +101,11 @@ pub struct Material {
     pub normal_texture: Option<usize>,
     /// Scale applied to the normal map's tangent-space X and Y components.
     pub normal_scale: f32,
+    /// The normal map drawn as two scrolling layers
+    /// ([`SurfaceMaterial::normal_layers`](crate::SurfaceMaterial::normal_layers));
+    /// `None` draws it once. glTF has no such extension: the loader leaves
+    /// it `None`.
+    pub normal_layers: Option<[NormalLayer; 2]>,
     /// Bump image index, sampled as linear height data.
     pub bump_texture: Option<usize>,
     /// Bump height multiplier.
@@ -118,10 +123,10 @@ pub struct Material {
 impl Default for Material {
     /// glTF 2.0's default material, which the loader gives a primitive
     /// without one: unnamed, a white base, metallic and roughness 1, no
-    /// emission, clearcoat, anisotropy, bump or textures, normal scale 1,
-    /// repeating, single-sided, lit and opaque, in visibility group 0 and
-    /// casting directional shadows. Set what differs and take the rest with
-    /// `..Default::default()`.
+    /// emission, clearcoat, anisotropy, bump or textures, normal scale 1, no
+    /// normal layers, repeating, single-sided, lit and opaque, in visibility
+    /// group 0 and casting directional shadows. Set what differs and take the
+    /// rest with `..Default::default()`.
     fn default() -> Self {
         Self {
             name: String::new(),
@@ -141,6 +146,7 @@ impl Default for Material {
             emissive_texture: None,
             normal_texture: None,
             normal_scale: 1.0,
+            normal_layers: None,
             bump_texture: None,
             bump_scale: 0.0,
             wrap: [WrappingMode::Repeat; 2],

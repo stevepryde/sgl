@@ -29,7 +29,7 @@ pub use content::light::{Light, LightShape};
 pub use content::lighting::{
     Backdrop, DirectionalLight, DirectionalShadow, EnvironmentLight, HemisphereLight, Mist,
 };
-pub use content::material::{AlphaMode, SurfaceMaterial};
+pub use content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 pub use content::model::{AssetIds, ModelMesh};
 pub use content::transient::FogVolume;
 pub use content::{

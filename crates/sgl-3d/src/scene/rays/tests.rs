@@ -197,6 +197,7 @@ fn material(double_sided: bool) -> Material {
         emissive_texture: None,
         normal_texture: None,
         normal_scale: 1.,
+        normal_layers: None,
         bump_texture: None,
         bump_scale: 0.,
         wrap: [gltf::texture::WrappingMode::Repeat; 2],

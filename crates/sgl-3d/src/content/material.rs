@@ -25,6 +25,36 @@ pub enum AlphaMode {
     },
 }
 
+/// One layer of a material's scrolling normals
+/// ([`SurfaceMaterial::normal_layers`]): the material's normal map drawn at
+/// its own scale, moving across the surface.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NormalLayer {
+    /// The direction and speed the layer moves across the surface, in the
+    /// material's UV units per second along U and V. SGL3D rounds it to a
+    /// whole number of the layer's repeats per hour (a change of at most
+    /// 1/7200 of a repeat per second), so the layer is where it was an hour
+    /// earlier and long sessions keep their precision.
+    pub velocity: [f32; 2],
+    /// How many times the normal map repeats per unit of the material's UVs;
+    /// positive.
+    pub scale: f32,
+    /// How much of the layer's slopes the surface takes, with the
+    /// material's `normal_scale`: 1 as the map is authored, 0 none.
+    pub strength: f32,
+}
+
+impl Default for NormalLayer {
+    /// The map as authored, at the material's UVs, standing still.
+    fn default() -> Self {
+        Self {
+            velocity: [0.; 2],
+            scale: 1.,
+            strength: 1.,
+        }
+    }
+}
+
 /// A material's values, read by [`Scene::material`](crate::Scene::material)
 /// and replaced by [`Scene::set_material`](crate::Scene::set_material).
 /// Author initial content with [`asset::Material`](crate::asset::Material);
@@ -45,6 +75,12 @@ pub struct SurfaceMaterial {
     pub coat_roughness: f32,
     /// Scale of the normal map's tangent-space X and Y.
     pub normal_scale: f32,
+    /// Scrolling normals: the normal map drawn as two layers that move
+    /// across the surface, their slopes added as superposed waves' are, at
+    /// the frame's `FrameInput::elapsed_seconds`: water's moving waves, with
+    /// no geometry uploaded per frame. Needs a normal map that repeats on
+    /// both axes. `None` draws the map once at the material's UVs.
+    pub normal_layers: Option<[NormalLayer; 2]>,
     /// Bump height multiplier.
     pub bump_scale: f32,
     /// Anisotropy strength in `0..=1`; zero is isotropic.
@@ -87,6 +123,7 @@ impl SurfaceMaterial {
             clearcoat: m.clearcoat,
             coat_roughness: m.coat_roughness,
             normal_scale: m.normal_scale,
+            normal_layers: m.normal_layers,
             bump_scale: m.bump_scale,
             anisotropy_strength: m.anisotropy_strength,
             anisotropy_rotation: m.anisotropy_rotation,
