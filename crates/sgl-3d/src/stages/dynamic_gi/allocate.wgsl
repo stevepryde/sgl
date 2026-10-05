@@ -31,7 +31,12 @@
 // (DDGI_STRIDES) under which the blended probes' requests fit the budget
 // beside the probes that start, so every probe keeps its turns and none
 // starves; the request past the budget that remains traces nothing, as
-// Wicked's. The budget replaces the restart's own (#152): probes not yet
+// Wicked's. Its distance level also scales the most rays a probe traces,
+// from the tier's most within a spacing to an eighth of it
+// DDGI_PERIOD_LEVELS levels out, as Wicked scales each surfel's rays by
+// its level (surfel_updateCS.hlsl 196–214, SURFEL_RAY_BOOST_MAX 64 to
+// SURFEL_RAY_BOOST_MIN 8, 53–54), for a probe that starts and one whose
+// light changes alike. The budget replaces the restart's own (#152): probes not yet
 // blended start, the nearest the camera first (`rank` and `threshold`
 // choose them), at the most rays with what the blended probes leave, which
 // is at least half the budget, and all of it after a restart; a probe not
@@ -83,8 +88,8 @@ fn ddgi_near_moving(position:vec3<f32>)->bool {
  }
  return false;
 }
-// The probes not yet blended, by their distance from the camera in
-// spacings, which start nearest first.
+// The rays the probes not yet blended start with, by their distance from
+// the camera in spacings, which start nearest first.
 const RAMP_BINS:u32=1024u;
 // The lengthenings of every period the allocation weighs: by 1, 2, 4 and
 // so on to 64.
@@ -97,9 +102,9 @@ const DDGI_PERIOD_MAX:f32=8.;
 const DDGI_PERIOD_CAP:f32=32.;
 // The trace's indirect dispatch and the rays the frame traces; the blends'
 // and the probes that trace them; the starting probes: the nearer bins
-// whose probes all start, how many of the probes in the bin after them
-// start, how many of those have, the probes not yet blended, and each
-// bin's of them; whether the volume pauses, the stride the frame's periods
+// whose probes all start, how many rays of the probes in the bin after
+// them start, how many of those have, the probes not yet blended and the
+// rays they start with, and each bin's rays; whether the volume pauses, the stride the frame's periods
 // take (as a power of two), the rays the frame reserves against the
 // budget, and the blended probes' requests on their turns under each
 // stride.
@@ -111,8 +116,9 @@ struct DdgiAllocation {
  ramp_bins:u32,
  ramp_room:u32,
  ramp_taken:atomic<u32>,
- // The probes not yet blended.
+ // The probes not yet blended, and the rays they start with.
  unblended:atomic<u32>,
+ unblended_rays:atomic<u32>,
  paused:u32,
  stride:u32,
  reserved:atomic<u32>,
@@ -142,6 +148,14 @@ fn ddgi_spacings_away(position:vec3<f32>)->f32 {
 fn ramp_bin(spacings:f32)->u32 {
  return u32(min(spacings,f32(RAMP_BINS-1u)));
 }
+// A probe that far away's distance level: Wicked's continuous level, the
+// log2 of its distance in the least spacings.
+fn ddgi_level(spacings:f32)->f32 {
+ return log2(max(spacings,1.));
+}
+// The share of the most rays the farthest probes trace: Wicked's
+// SURFEL_RAY_BOOST_MIN over SURFEL_RAY_BOOST_MAX.
+const DDGI_FARTHEST_RAYS:f32=.125;
 // Wicked's surfel_hash01, a stable hash of a probe's stored index: its
 // turns' phase.
 fn ddgi_phase_hash(index:u32)->u32 {
@@ -157,7 +171,7 @@ fn ddgi_phase_hash(index:u32)->u32 {
 // DDGI_PERIOD_LEVELS doublings of its distance to DDGI_PERIOD_MAX, then
 // doubling with each beyond, up to DDGI_PERIOD_CAP (Wicked's ray_period).
 fn ddgi_period(spacings:f32)->u32 {
- let level=log2(max(spacings,1.));
+ let level=ddgi_level(spacings);
  var period=mix(1.,DDGI_PERIOD_MAX,saturate(level/DDGI_PERIOD_LEVELS));
  period*=exp2(max(0.,level-DDGI_PERIOD_LEVELS));
  return u32(clamp(round(period),1.,DDGI_PERIOD_CAP));
@@ -167,22 +181,27 @@ fn ddgi_turn(index:u32,period:u32)->bool {
  let phase=u32(f32(ddgi_phase_hash(index))/16777216.*f32(period));
  return (volume.frame+phase)%period==0u;
 }
-// The rays a probe traces beside its fixed rays at most this frame.
-fn ddgi_most_rays()->u32 {
- return min(volume.max_rays,DDGI_MOST_RAYS);
+// The rays a probe that far away traces beside its fixed rays at most this
+// frame: the tier's most within a spacing, falling over DDGI_PERIOD_LEVELS
+// levels to DDGI_FARTHEST_RAYS of it (Wicked's ray_boost), in buckets.
+fn ddgi_most_rays(spacings:f32)->u32 {
+ let most=f32(min(volume.max_rays,DDGI_MOST_RAYS));
+ let rays=most*mix(1.,DDGI_FARTHEST_RAYS,saturate(ddgi_level(spacings)/DDGI_PERIOD_LEVELS));
+ let buckets=u32(round(rays/f32(DDGI_RAY_BUCKET_COUNT)));
+ return clamp(buckets*DDGI_RAY_BUCKET_COUNT,DDGI_RAY_BUCKET_COUNT,u32(most));
 }
-// A blended probe's request (Wicked's allocation): the most rays scaled by
+// A blended probe's request (Wicked's allocation): its most rays scaled by
 // its most inconsistent texel, a tenth outside the camera's frustum, in
 // buckets, at least one; the fewest where it is inactive, or dormant with
 // no moving instance about it.
-fn ddgi_request(probe_index:u32,probe:DdgiProbe,position:vec3<f32>)->u32 {
+fn ddgi_request(probe_index:u32,probe:DdgiProbe,position:vec3<f32>,spacings:f32)->u32 {
  let texels=DDGI_COLOR_RESOLUTION*DDGI_COLOR_RESOLUTION;
  var inconsistency=0.;
  for (var i=0u;i<texels;i++) {
   let at=(probe_index*texels+i)*DDGI_VARIANCE_WORDS+5u;
   inconsistency=max(inconsistency,unpack2x16float(variance[at]).x);
  }
- let most_rays=ddgi_most_rays();
+ let most_rays=ddgi_most_rays(spacings);
  var ray_count=u32(saturate(inconsistency)*f32(most_rays));
  let spacing=volume.spacing;
  if !camera_frustum_intersects(position,max(spacing.x,max(spacing.y,spacing.z))*2.) {
@@ -202,8 +221,9 @@ fn ddgi_request(probe_index:u32,probe:DdgiProbe,position:vec3<f32>)->u32 {
  }
  return ray_count;
 }
-// Counts the probes not yet blended in each bin, and finds each blended
-// probe's request and period and what its turns ask under each stride.
+// Counts the rays the probes not yet blended start with in each bin, and
+// finds each blended probe's request and period and what its turns ask
+// under each stride.
 @compute @workgroup_size(64)
 fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) groups:vec3<u32>) {
  let probe_index=id.x+id.y*groups.x*64u;
@@ -214,11 +234,13 @@ fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) gro
  let lattice=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
  let spacings=ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing));
  if !probe.blended {
-  atomicAdd(&allocation.bins[ramp_bin(spacings)],1u);
+  let starting=ddgi_most_rays(spacings)+DDGI_FIXED_RAYS_PER_FRAME;
+  atomicAdd(&allocation.bins[ramp_bin(spacings)],starting);
   atomicAdd(&allocation.unblended,1u);
+  atomicAdd(&allocation.unblended_rays,starting);
   return;
  }
- let request=ddgi_request(probe_index,probe,ddgi_probe_position(lattice,volume.origin,volume.spacing,probe.offset));
+ let request=ddgi_request(probe_index,probe,ddgi_probe_position(lattice,volume.origin,volume.spacing,probe.offset),spacings);
  let period=ddgi_period(spacings);
  ray_counts[probe_index]=request|(period<<16u);
  for (var stride=0u;stride<DDGI_STRIDES;stride++) {
@@ -229,15 +251,13 @@ fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) gro
 }
 // The stride the frame's periods take: the least under which the blended
 // probes' requests fit the budget beside at least half of it, or all of it
-// where fewer start, for the probes that start; and those that start: the
-// bins whose probes all start, and how many of the next bin's do.
+// where fewer ask, for the probes that start; and those that start: the
+// bins whose probes all start, and how many rays of the next bin's start.
 @compute @workgroup_size(1)
 fn threshold() {
  allocation.paused=select(0u,1u,ddgi_paused());
- let starting_rays=ddgi_most_rays()+DDGI_FIXED_RAYS_PER_FRAME;
- let unblended=atomicLoad(&allocation.unblended);
  let budget=volume.budget;
- let room=budget-min(unblended*starting_rays,budget/2u);
+ let room=budget-min(atomicLoad(&allocation.unblended_rays),budget/2u);
  var stride=0u;
  loop {
   if stride+1u>=DDGI_STRIDES || atomicLoad(&allocation.demand[stride])<=room {
@@ -246,11 +266,11 @@ fn threshold() {
   stride++;
  }
  allocation.stride=stride;
- let starts=(budget-min(atomicLoad(&allocation.demand[stride]),room))/starting_rays;
+ let starts=budget-min(atomicLoad(&allocation.demand[stride]),room);
  var started=0u;
  var bin=0u;
  // Where every probe not yet blended fits, all start without the scan.
- if unblended<=starts {
+ if atomicLoad(&allocation.unblended_rays)<=starts {
   bin=RAMP_BINS;
  }
  loop {
@@ -267,13 +287,14 @@ fn threshold() {
  allocation.ramp_bins=bin;
  allocation.ramp_room=starts-started;
 }
-// Whether a probe not yet blended that far away starts this frame.
-fn ramp_starts(spacings:f32)->bool {
+// Whether a probe not yet blended that far away, which starts with
+// `rays`, starts this frame.
+fn ramp_starts(spacings:f32,rays:u32)->bool {
  let bin=ramp_bin(spacings);
  if bin<allocation.ramp_bins {
   return true;
  }
- return bin==allocation.ramp_bins && atomicAdd(&allocation.ramp_taken,1u)<allocation.ramp_room;
+ return bin==allocation.ramp_bins && atomicAdd(&allocation.ramp_taken,rays)+rays<=allocation.ramp_room;
 }
 @compute @workgroup_size(ALLOCATION_THREADS)
 fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) group_index:u32) {
@@ -286,8 +307,10 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   var ray_count=0u;
   if !probe.blended {
    let lattice=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
-   if ramp_starts(ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing))) {
-    ray_count=ddgi_most_rays();
+   let spacings=ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing));
+   let starting=ddgi_most_rays(spacings);
+   if ramp_starts(spacings,starting+DDGI_FIXED_RAYS_PER_FRAME) {
+    ray_count=starting;
    }
   } else {
    let requested=ray_counts[probe_index];

@@ -82,7 +82,8 @@ struct DdgiVolume {
 }
 // Whether the volume has converged: NVIDIA RTXGI's probe variability, the
 // mean coefficient of variation of the active probes' irradiance texels,
-// which the blends sum and the settle pass averages over windows of frames.
+// which the blends sum and the settle pass averages over windows of updates
+// of the volume.
 struct DdgiConvergence {
  // The frame's sum of the active probes' mean variability, in
  // DDGI_VARIABILITY_UNITs, and how many; cleared each frame.
@@ -90,19 +91,23 @@ struct DdgiConvergence {
  probes:atomic<u32>,
  // The last average, of the frames whose blends ran.
  average:f32,
- // The window's sum of averages and its frames.
+ // The window's sum of averages, each weighed by the share of the volume's
+ // probes that blended, and the volume's updates it holds: those shares'
+ // sum.
  window_sum:f32,
- window_frames:u32,
+ window_updates:f32,
  // The last whole window's mean, or -1 before one since the last change.
  previous:f32,
  // 1 once a window's mean has stopped falling, until a change.
  converged:u32,
 }
-// The frames of a convergence window: RTXGI's sample's least frames of
-// variability before it pauses a volume (RTXGI-DDGI f33e496,
+// The updates of the volume a convergence window holds: RTXGI's sample's
+// least frames of variability before it pauses a volume, each of which
+// updates every probe (RTXGI-DDGI f33e496,
 // samples/test-harness/src/graphics/DDGI_VK.cpp 1629-1637 and
-// DDGI_D3D12.cpp 1239-1246).
-const DDGI_CONVERGENCE_WINDOW:u32=16u;
+// DDGI_D3D12.cpp 1239-1246). A frame that blends some of the probes, on
+// their turns, is that share of an update.
+const DDGI_CONVERGENCE_WINDOW:f32=16.;
 // The fall from one window's mean variability to the next below which the
 // volume has converged.
 const DDGI_CONVERGENCE_FALL:f32=.1;

@@ -1142,8 +1142,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   the scene's lights (a diagnostic setting) and the placement. Improved on
   RTXGI (RD-2), whose sample pauses below a threshold each scene sets,
   which SGL3D has no scene to ask for: the volume has converged once the
-  mean of its variability over a window of 16 frames falls by less than a
-  tenth from the last window's, the plateau RTXGI describes, and never
+  mean of its variability over a window of 16 updates of the volume, a
+  frame that blends some probes on their turns counting that share of one,
+  falls by less than a tenth from the last window's, the plateau RTXGI describes, and never
   while a probe has yet to start. The allocation decides it on the GPU from
   the blends' last windows, so nothing is read back, and a paused frame
   costs the allocation alone. A receiver the volume lights takes its

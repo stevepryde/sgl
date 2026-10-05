@@ -46,10 +46,14 @@
 // near it (allocate.wgsl). Added: RTXGI's probe variability, the mean
 // coefficient of variation of the active probes' irradiance texels
 // (ProbeBlendingCS.hlsl 552-562, averaged as ReductionCS.hlsl averages it),
-// which `settle` takes over windows of 16 frames, as RTXGI's sample waits
-// 16 frames of it before pausing a volume
-// (samples/test-harness/src/graphics/DDGI_VK.cpp 1629-1637 and
-// DDGI_D3D12.cpp 1239-1246). Changed:
+// which `settle` takes over windows of 16 updates of the volume, as
+// RTXGI's sample waits 16 frames of it, each updating every probe, before
+// pausing a volume (samples/test-harness/src/graphics/DDGI_VK.cpp
+// 1629-1637 and DDGI_D3D12.cpp 1239-1246); a frame that blends some probes
+// on their turns is that share of an update, so a window spans as many of
+// each probe's turns however long its period, where a window of 16 frames
+// closed before the slower probes' bounces had settled (a closed room's
+// wall stopped at 0.298 of a bound between 0.300 and 0.381). Changed:
 // RTXGI's sample pauses below a threshold each scene sets (0.03 to 0.4 in
 // its configurations), where the variability settles; SGL3D has no scene to
 // ask, so the volume has converged once a window's mean falls by less than
@@ -285,7 +289,7 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
 fn settle() {
  if volume.changed!=0u {
   convergence.window_sum=0.;
-  convergence.window_frames=0u;
+  convergence.window_updates=0.;
   convergence.previous=-1.;
   convergence.converged=0u;
  }
@@ -299,15 +303,16 @@ fn settle() {
   average=f32(atomicLoad(&convergence.variability))/(f32(probes)*DDGI_VARIABILITY_UNIT);
  }
  convergence.average=average;
- convergence.window_sum+=average;
- convergence.window_frames+=1u;
- if convergence.window_frames>=DDGI_CONVERGENCE_WINDOW {
-  let mean=convergence.window_sum/f32(convergence.window_frames);
+ let share=f32(volume.traced)/f32(max(volume.probe_count,1u));
+ convergence.window_sum+=average*share;
+ convergence.window_updates+=share;
+ if convergence.window_updates>=DDGI_CONVERGENCE_WINDOW {
+  let mean=convergence.window_sum/convergence.window_updates;
   let previous=convergence.previous;
   convergence.converged=select(0u,1u,previous>=0. && mean>=previous*(1.-DDGI_CONVERGENCE_FALL));
   convergence.previous=mean;
   convergence.window_sum=0.;
-  convergence.window_frames=0u;
+  convergence.window_updates=0.;
  }
 }
 // Whether `ray` met a front face within its probe's cell, the spacing

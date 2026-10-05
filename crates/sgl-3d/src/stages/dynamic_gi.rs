@@ -130,7 +130,7 @@ const MOST_MOVING_BOUNDS: u32 = 256;
 
 /// The allocation's buffer (`DdgiAllocation` in allocate.wgsl): the
 /// trace's indirect dispatch and ray count, the blends' dispatch and the
-/// count of probes that trace, the starting probes' words, whether the
+/// count of probes that trace, the starting probes' words and rays, whether the
 /// volume paused, the stride the frame's periods take, the rays reserved
 /// against the budget, the blended
 /// probes' requests under each stride, and the starting probes' bins. The
@@ -145,6 +145,7 @@ struct Allocation {
     ramp_room: u32,
     ramp_taken: u32,
     unblended: u32,
+    unblended_rays: u32,
     paused: u32,
     stride: u32,
     reserved: u32,
@@ -165,7 +166,7 @@ struct Convergence {
     probes: u32,
     average: f32,
     window_sum: f32,
-    window_frames: u32,
+    window_updates: f32,
     previous: f32,
     converged: u32,
 }
@@ -850,7 +851,7 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
                 probes,
                 average,
                 window_sum,
-                window_frames,
+                window_updates,
                 previous,
                 converged,
             ]
@@ -874,6 +875,7 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
                 ramp_room,
                 ramp_taken,
                 unblended,
+                unblended_rays,
                 paused,
                 stride,
                 reserved,
