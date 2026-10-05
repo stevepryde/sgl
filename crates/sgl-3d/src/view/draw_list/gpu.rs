@@ -91,11 +91,19 @@ fn grown(
     if buffer.size() >= size {
         return false;
     }
+    // Rounded up to a power of two, but never past what the device creates
+    // and, for a storage buffer, binds whole: the scene refuses content
+    // past those, so `size` itself fits.
+    let limits = device.limits();
+    let mut most = limits.max_buffer_size;
+    if usage.contains(wgpu::BufferUsages::STORAGE) {
+        most = most.min(limits.max_storage_buffer_binding_size);
+    }
     *buffer = crate::counters::buffer(
         device,
         &wgpu::BufferDescriptor {
             label: Some(label),
-            size: size.next_power_of_two(),
+            size: size.next_power_of_two().min(most).max(size),
             usage,
             mapped_at_creation: false,
         },

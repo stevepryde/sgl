@@ -46,11 +46,10 @@ full API details.
   - `Renderer::geometry_stats` counts both phases' sections.
     `Renderer::diagnostic_draws` counts two draws a set for the camera
     while it runs.
-  - Content past what the device binds for the camera's lists while it
-    culls occlusion is refused with `SceneError::DeviceLimit`, whether or
-    not the setting is on. Those lists hold three entries a draw candidate
-    and one a section the sets can draw. On a device binding 128 MiB this
-    is reached only past about a million candidates.
+  - The camera's lists while it culls occlusion (three entries a draw
+    candidate and one a section its sets can draw) always fit within the
+    limits the scene already refuses content past
+    (`SceneError::DeviceLimit`): no new refusal.
 - **Migration:** no game-code changes. Code that builds `Settings` naming
   every field adds `occlusion_culling: false`. A saved settings file loads
   unchanged (`Settings` is `#[serde(default)]`). To opt in, set

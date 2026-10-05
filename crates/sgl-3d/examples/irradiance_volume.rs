@@ -1155,7 +1155,7 @@ fn walk(
         // Inside the cave: past the cliff, after the warm-up.
         let inside = frame >= WARM_UP as usize && Game::eye(seconds).z >= CLIFF as f32;
         culling.frame(
-            &renderer,
+            (&renderer, &settings),
             frame,
             with_volume && inside,
             (rendered, finished),

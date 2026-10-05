@@ -9,7 +9,7 @@ const USAGE =
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
 } else if (task === "measure-browser") {
-  if (options.length % 2 !== 0) throw new Error(USAGE);
+  // measureBrowser checks its own options.
 } else if (task !== "mutants" && (task !== "check" || options.length !== 0)) {
   throw new Error(USAGE);
 }
@@ -203,12 +203,11 @@ async function measureBrowser(args: string[]): Promise<void> {
   let frames = 600;
   let radius = [4, 2];
   let occlusion = false;
-  for (let at = 0; at < args.length; at += 2) {
-    if (args[at] === "--frames") frames = Number(args[at + 1]);
-    else if (args[at] === "--radius") radius = args[at + 1].split(",").map(Number);
-    else if (args[at] === "--occlusion") {
-      occlusion = true;
-      at -= 1;
+  for (let at = 0; at < args.length; at += 1) {
+    if (args[at] === "--occlusion") occlusion = true;
+    else if (args[at] === "--frames" && at + 1 < args.length) frames = Number(args[++at]);
+    else if (args[at] === "--radius" && at + 1 < args.length) {
+      radius = args[++at].split(",").map(Number);
     } else throw new Error(USAGE);
   }
   if (!Number.isInteger(frames) || frames < 60) throw new Error("--frames must be at least 60");

@@ -41,17 +41,20 @@ impl Options {
         settings.occlusion_culling = self.occlusion;
     }
 
-    /// What the run renders, for its report.
-    pub fn describe(self) -> String {
-        let form = if self.split || self.occlusion {
+    /// What the run renders, for its report: occlusion culling as the
+    /// renderer ran it (`occluded`, its last measured frame's
+    /// `Renderer::occlusion_culling_in_effect`), since a device without
+    /// the pyramid's storage textures culls by frustum alone.
+    pub fn describe(self, occluded: bool) -> String {
+        let form = if self.split || occluded {
             "two-pass"
         } else {
             "fused"
         };
-        let occlusion = if self.occlusion {
-            ", occlusion culling"
-        } else {
-            ""
+        let occlusion = match (self.occlusion, occluded) {
+            (_, true) => ", occlusion culling",
+            (true, false) => ", occlusion culling asked, not in effect",
+            (false, false) => "",
         };
         format!("opaque {form}{occlusion}")
     }
@@ -79,6 +82,8 @@ pub struct Culling {
     options: Options,
     /// Whether each loop index so far is measured.
     measured: Vec<bool>,
+    /// Whether occlusion culling ran in the last measured frame.
+    occluded: bool,
     views: Vec<ViewTimes>,
     render_ms: Vec<f64>,
     finish_ms: Vec<f64>,
@@ -93,12 +98,13 @@ impl Culling {
         }
     }
 
-    /// After the frame of loop index `index` was submitted and finished,
-    /// `measure` it or not, which took `render_ms` in `Renderer::render`
-    /// and `finish_ms` finishing its encoder.
+    /// After the frame of loop index `index`, rendered with `settings`,
+    /// was submitted and finished, `measure` it or not, which took
+    /// `render_ms` in `Renderer::render` and `finish_ms` finishing its
+    /// encoder.
     pub fn frame(
         &mut self,
-        renderer: &Renderer,
+        (renderer, settings): (&Renderer, &Settings),
         index: usize,
         measure: bool,
         (render_ms, finish_ms): (f64, f64),
@@ -108,6 +114,7 @@ impl Culling {
         if !measure {
             return;
         }
+        self.occluded = renderer.occlusion_culling_in_effect(settings);
         self.views.push(renderer.diagnostic_view_times());
         self.render_ms.push(render_ms);
         self.finish_ms.push(finish_ms);
@@ -135,7 +142,7 @@ impl Culling {
         let print = |text: String| {
             let _ = writeln!(out.borrow_mut(), "{text}");
         };
-        print(format!("  {}", self.options.describe()));
+        print(format!("  {}", self.options.describe(self.occluded)));
         let line = |label: &str, values: &[f64], unit: &str| {
             let (median, p95) = median_p95(values);
             print(format!("  {label:<40} {median:10.3} / {p95:10.3} {unit}"));

@@ -237,7 +237,7 @@ async fn measured(
         }
         renderer.finish_frame(&mut scene);
         let measure = index >= WARM_UP;
-        culling.frame(&renderer, index, measure, (rendered, finished));
+        culling.frame((&renderer, &settings), index, measure, (rendered, finished));
         if measure {
             draws.push(renderer.diagnostic_draws());
         }

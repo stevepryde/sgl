@@ -1160,7 +1160,7 @@ fn render(
         }
         renderer.finish_frame(&mut scene);
         culling.frame(
-            &renderer,
+            (&renderer, &settings),
             index,
             step.is_some(),
             (rendered, recording - rendered),

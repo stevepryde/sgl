@@ -256,6 +256,58 @@ fn an_object_that_comes_into_view_is_drawn_in_that_frame() {
     );
 }
 
+// Plausible defect: the occlusion test projecting a box that reaches the
+// camera's near plane (its corners behind the camera flip sign through the
+// divide), or a near-plane test reversed or dropped, so such a box takes a
+// rectangle and a nearest depth behind what the camera sees and is culled.
+// The oracle is the geometry and the image: a floor 40 m square passes
+// under the camera, half of it behind, and a wall 3 m ahead stands on it;
+// the floor between the camera and the wall fills the bottom of the view,
+// so on every frame the floor is drawn, early or late, and the opaque stage
+// records it at the bottom middle pixel.
+#[test]
+fn a_floor_through_the_near_plane_is_kept() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let Some(mut frames) = Frames::new(&device, &queue) else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let floor = object(add(
+        gpu,
+        &mut scene,
+        test_support::cube(),
+        Mat4::from_translation(Vec3::new(0., -1.5, 0.))
+            * Mat4::from_scale(Vec3::new(40., 0.2, 40.)),
+        Mobility::Static,
+    ));
+    add(
+        gpu,
+        &mut scene,
+        test_support::cube(),
+        Mat4::from_translation(Vec3::new(0., 18.5, -3.))
+            * Mat4::from_scale(Vec3::new(40., 40., 0.2)),
+        Mobility::Static,
+    );
+    // The bottom row looks 0.5 rad down, meeting the floor's top (y = -1.4)
+    // about 2.6 m ahead, before the wall.
+    let bottom = [SIZE[0] / 2, SIZE[1] - 1];
+    for frame in 0..3 {
+        let [early, late] = frames.frame(gpu, &mut scene, &input());
+        assert!(
+            objects(&early).contains(&floor) || objects(&late).contains(&floor),
+            "frame {frame} draws the floor"
+        );
+        assert_eq!(
+            frames.source_at(gpu, bottom),
+            Some(floor),
+            "frame {frame} shows the floor"
+        );
+    }
+}
+
 /// A plane at z = -15 facing the camera, x in -6..6 and y in -0.4..0.4, of
 /// 0.1 m cells built a column at a time, so each 128-triangle section is
 /// 0.8 m square.

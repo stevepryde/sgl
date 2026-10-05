@@ -1675,10 +1675,12 @@ code; it does not redeclare a struct, binding or function another module owns.
   builder culls it whole. Each phase's visible list, the late list and the
   late section queue, each with its count, are one buffer of the view's,
   the lists, with capacities that make every append a slot: the candidate
-  count, and the queue's the sum over candidates of the most sections among
-  each one's levels, as a region's; past a capacity a producer skips its
-  write and the finalize clamps the count it reads, so a wrong capacity
-  loses a section and never a bound (AR-12). The late section cull is one
+  count, and the queue's the cluster list's length, at least the sum over
+  candidates of the most sections among each one's levels, as a region's;
+  past a capacity a producer skips its write and the finalize clamps the
+  count it reads, so a wrong capacity loses a list entry and never a bound
+  (AR-12), except the queue's: an occluded section that finds no slot there
+  is appended to the early set, drawn rather than lost. The late section cull is one
   dispatch whose workgroups the late finalize derives from both counts: one
   per candidate the late instance cull passed, striding its sections as the
   early cull does, then one per 64 queue entries, a thread each, so no

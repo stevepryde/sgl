@@ -183,15 +183,16 @@ fn cull_reaches(model:mat4x4<f32>,lo:vec3<f32>,hi:vec3<f32>)->bool {
 // `clip_from_world`, lie wholly behind the depth pyramid: Bevy 9d12036's
 // meshlet occlusion test (crates/bevy_pbr/src/meshlet/cull_shared.wesl,
 // MIT OR Apache-2.0, see src/LICENSE-bevy.txt): the box's eight corners
-// projected as zeux's approximate projected bounds (project_aabb 81-121),
+// projected as zeux's approximate projected bounds (project_aabb 83-121),
 // its screen rectangle's texels at the finest level whose 4x4 block holds
 // it, and the farthest depth there against the box's nearest
-// (occlusion_cull_screen_aabb 143-167, sample_hzb 123-141). Changed: a box
-// that reaches the near plane is kept by the clip-space test of a
-// reversed-Z projection (z > w, or w <= 0), which is Bevy's `min w < near`
-// for its projections and holds for any the game gives; a box is occluded
+// (occlusion_cull_screen_aabb 144-168, sample_hzb and sample_hzb_row
+// 123-142). Changed: a box that reaches the near plane is kept by the
+// clip-space test of a reversed-Z projection (z > w, or w <= 0), which is
+// Bevy's `min w < near` for its projections and holds for any the game
+// gives; a box is occluded
 // only when its nearest depth is strictly behind the farthest, as Bevy's
-// mesh preprocessing compares (mesh_preprocess.wesl 323), so a surface
+// mesh preprocessing compares (mesh_preprocess.wesl 324), so a surface
 // facing the camera square on is not hidden by its own depth; a rectangle
 // that needs a level past the pyramid's built ones, and nonfinite bounds,
 // are kept.
