@@ -1091,20 +1091,13 @@ fn a_light_with_a_size_softens_its_shadow() {
         return;
     };
     let gpu = (&device, &queue);
-    let size = [128, 128];
-    let height = 9.;
-    let camera = Camera {
-        view: glam::camera::rh::view::look_at_mat4(
-            Vec3::new(0., height, 0.),
-            Vec3::ZERO,
-            Vec3::NEG_Z,
-        ),
-        projection: crate::perspective(0.9, 1., 0.1),
-        eye: Vec3::new(0., height, 0.),
-    };
+    let size = [256, 256];
+    // Looking down at the floor beneath the slab from the side, so that the
+    // slab hides only the floor beyond its shadows.
+    let camera = camera(Vec3::new(0., 9., 9.), Vec3::ZERO, size);
     let slab = Block::new(
         Vec3::new(0., 2.5, 0.),
-        Vec3::new(1.2, 0.05, 1.2),
+        Vec3::new(1.6, 0.05, 1.6),
         Mobility::Static,
     );
     // Converged frames of a scene with the slab, `lights` and `sun`.
