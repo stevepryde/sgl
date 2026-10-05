@@ -252,13 +252,19 @@ impl DynamicGi {
         }
     }
 
-    /// The placement of the committed probes while they are `scene`'s
-    /// installed volume's: what a probe capture between frames is lit by.
-    pub fn lights(&self, scene: &Scene) -> Option<DynamicGiVolume> {
+    /// The committed probes, those of the last submitted frame that ran
+    /// the stage, with their placement, while they are `scene`'s installed
+    /// volume's: what a probe capture between frames is lit by. A frame
+    /// rendered since and abandoned does not change them.
+    pub fn lights(&self, scene: &Scene) -> Option<(DynamicGiVolume, &wgpu::TextureView)> {
         let (volume, _) = self.committed.as_ref()?;
-        (Some(volume.key) == Key::of(scene))
-            .then(|| scene.dynamic_gi_volume())
-            .flatten()
+        let placement = scene.dynamic_gi_volume()?;
+        (Some(volume.key) == Key::of(scene)).then_some((placement, &volume.probes))
+    }
+
+    /// What lit group 0 binds where no probes light the view.
+    pub fn stand_in(&self) -> &wgpu::TextureView {
+        &self.stand_in
     }
 
     /// Chooses the frame's probes: the committed ones where they are for

@@ -201,6 +201,7 @@ impl FrameBindings {
             probes,
             &clusters[0],
             self.local_shadows(),
+            &self.dynamic_gi,
         );
         let ray_hit_lit = self.lit_group(
             device,
@@ -210,6 +211,7 @@ impl FrameBindings {
             probes,
             &clusters[1],
             self.static_local_shadows(&self.shadow_maps.local_records),
+            &self.dynamic_gi,
         );
         let volume_lit = self.lit_group(
             device,
@@ -219,6 +221,7 @@ impl FrameBindings {
             probes,
             &clusters[2],
             self.static_local_shadows(&self.shadow_maps.local_records),
+            &self.dynamic_gi,
         );
         let camera_unlit =
             self.unlit_group(device, scene, environment, &self.camera_view, &self.frame);
@@ -292,7 +295,7 @@ impl FrameBindings {
 
     /// A lit group 0: `view` and `frame`, the scene's lighting, decals and
     /// `environment`, `probes`, the view's `clusters`, the `local` shadows
-    /// its lights take, the fog volume and the dynamic GI volume's probes.
+    /// its lights take, the fog volume and the `dynamic_gi` volume's probes.
     #[allow(clippy::too_many_arguments)]
     pub fn lit_group(
         &self,
@@ -303,6 +306,7 @@ impl FrameBindings {
         probes: &UploadedProbes,
         clusters: &wgpu::Buffer,
         local: LocalShadows<'_>,
+        dynamic_gi: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
         let environments = &scene.environments;
         let baked = &scene.static_lighting;
@@ -374,7 +378,7 @@ impl FrameBindings {
                     binding: group0::FOG_SAMPLER,
                     resource: wgpu::BindingResource::Sampler(&self.fog.1),
                 },
-                texture(group0::DYNAMIC_GI_PROBES, &self.dynamic_gi),
+                texture(group0::DYNAMIC_GI_PROBES, dynamic_gi),
             ],
         })
     }

@@ -68,6 +68,12 @@ impl Renderer {
         // quality, and its groups bind them.
         self.shadows.resize(device, settings.shadow_quality);
         self.bindings.shadow_maps = self.shadows.maps();
+        // The volume the committed probes light, and those probes: what the
+        // last submitted frame left, never a fresher frame's abandoned ones.
+        let dynamic_gi = self
+            .dynamic_gi
+            .lights(scene)
+            .filter(|_| settings.dynamic_gi.rays().is_some());
         let mut views = self.prepare.capture(
             device,
             queue,
@@ -76,10 +82,7 @@ impl Renderer {
             !settings.diagnostics_in_effect().disable.local_lights,
             center,
             settings.shadow_quality.cascade_size(),
-            self.dynamic_gi
-                .lights(scene)
-                .filter(|_| settings.dynamic_gi.rays().is_some())
-                .as_ref(),
+            dynamic_gi.map(|(volume, _)| volume).as_ref(),
         );
         // Their lights' shadows sample static layers placed for the capture.
         let local_records = self.shadows.local.plan_capture(
@@ -121,6 +124,7 @@ impl Renderer {
                 probes,
                 views.clusters.buffer(),
                 self.bindings.static_local_shadows(&local_records),
+                dynamic_gi.map_or(self.dynamic_gi.stand_in(), |(_, probes)| probes),
             );
             let sky =
                 self.bindings

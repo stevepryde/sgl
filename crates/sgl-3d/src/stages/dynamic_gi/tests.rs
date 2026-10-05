@@ -6,9 +6,10 @@
 //! its shadow opacity; its share fades over the spacing past its extent; the
 //! one determination puts it below charts and above ambient cubes, and in
 //! place of the frame's ambient; the probes continue across renderer resets,
-//! abandoned frames and render origin moves and restart for another
-//! placement or scene or after a frame that did not run them; and the scene
-//! refuses a placement that is not a lattice or does not fit the device.
+//! abandoned frames and render origin moves, light probe captures as the
+//! last submitted frame left them, and restart for another placement or
+//! scene or after a frame that did not run them; and the scene refuses a
+//! placement that is not a lattice or does not fit the device.
 use crate::renderer::Renderer;
 use crate::settings::{self, DynamicGiQuality, Settings};
 use crate::shading::gbuffer;
@@ -1021,4 +1022,125 @@ fn a_render_origin_move_translates_the_volume_and_keeps_its_probes() {
         close(answer[0][0], 0.5, 0.005) && answer[0][3] == 1.,
         "{answer:?}"
     );
+}
+
+/// The sum of a capture's RGB from inside the emissive room of
+/// `a_receiver_the_volume_lights_takes_it_in_place_of_the_frames_ambient`,
+/// whose white static box the volume lights.
+fn capture_sum(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &mut Renderer,
+    scene: &mut Scene,
+    input: &FrameInput,
+    settings: &Settings,
+) -> f32 {
+    let radiance = renderer
+        .capture_specular_probe(
+            device,
+            queue,
+            scene,
+            input,
+            settings,
+            Vec3::new(0., 0., 3.),
+            64,
+        )
+        .unwrap();
+    let crate::SpecularProbeTexels::Rgba16Float(texels) = radiance.texels else {
+        unreachable!("captures return RGBA16F")
+    };
+    texels
+        .chunks_exact(4)
+        .flat_map(|texel| texel[..3].to_vec())
+        .map(|half| test_support::half(&half.to_le_bytes()))
+        .sum()
+}
+
+// A probe capture between frames is lit by the probes of the last
+// submitted frame: a frame since for another placement, abandoned, leaves
+// it as it was, and the volume lights the capture's static box.
+#[test]
+fn a_capture_takes_the_submitted_probes_not_an_abandoned_frames() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    add_cube(
+        &device,
+        &queue,
+        &mut scene,
+        Mat4::from_scale(Vec3::splat(10.)),
+        Mobility::Static,
+        |material| {
+            material.base = [0., 0., 0., 1.];
+            material.metallic = 0.;
+            material.emissive = [0.4, 0.2, 0.1];
+        },
+    );
+    add_cube(
+        &device,
+        &queue,
+        &mut scene,
+        Mat4::IDENTITY,
+        Mobility::Static,
+        |material| {
+            material.base = [1.; 4];
+            material.metallic = 0.;
+            material.roughness = 1.;
+        },
+    );
+    scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
+    let input = input(Vec3::new(0., 0., 3.));
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    render(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        3,
+    );
+    let submitted = capture_sum(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+    );
+    let unlit = {
+        let off = self::settings(DynamicGiQuality::Off);
+        capture_sum(&device, &queue, &mut renderer, &mut scene, &input, &off)
+    };
+    assert!(submitted > unlit, "{submitted} {unlit}");
+    let moved = DynamicGiVolume {
+        origin: VOLUME.origin + Vec3::splat(0.5),
+        ..VOLUME
+    };
+    scene.set_dynamic_gi_volume(&device, Some(moved)).unwrap();
+    let output = crate::view::targets::target(&device, "abandoned", SIZE, gbuffer::COLOR);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.render(
+        &device,
+        &queue,
+        &mut encoder,
+        &mut scene,
+        &input,
+        &settings,
+        &output,
+        None,
+    );
+    drop(encoder);
+    scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
+    let after = capture_sum(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+    );
+    assert_eq!(after, submitted);
 }

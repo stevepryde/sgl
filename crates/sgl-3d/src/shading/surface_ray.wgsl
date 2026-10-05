@@ -172,7 +172,9 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
   let visible=scene_segment_visible(s.position,direction,.001,distance);
   sample.visibility=shadow_opacity_visibility(select(0.,1.,visible),opacity);
  }
- let reflectance=surface_reflectance(s,vec2(0.));
+ // The surface's reflectance as shade_lit derives it, its DFG lookup at the
+ // view included, so the one light is shaded as every receiver's lights are.
+ let reflectance=surface_reflectance(s,surface_dfg(specular_nv(s.normal,s.view),s.roughness));
  return surface_direct_light(s,reflectance,sample)*f32(light_count);
 }
 // Radiance leaving a ray hit toward `outgoing` as `receiver`, a world-space
