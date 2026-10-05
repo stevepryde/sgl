@@ -4,16 +4,16 @@
 // The key slot `slot` holds: SHADOW_MASK_EMPTY, SHADOW_MASK_DIRECTIONAL or
 // a scene light's index.
 fn shadow_mask_slot_key(slot:u32)->u32 {
- return shadow_mask_slots.lights[slot/4u][slot%4u];
+ return shadow_mask_slots.lights[shadow_mask_layer(slot)][shadow_mask_channel(slot)];
 }
 // The slot that holds `key`, RT_SHADOW_LIGHTS for none: a key is in at most
 // one slot, so the table's four vectors are compared whole and the one
 // that holds it gives its lane.
 fn shadow_mask_slot_of(key:u32)->u32 {
- for (var row=0u;row<RT_SHADOW_LIGHTS/4u;row++) {
-  let found=shadow_mask_slots.lights[row]==vec4(key);
+ for (var layer=0u;layer<SHADOW_MASK_LAYERS;layer++) {
+  let found=shadow_mask_slots.lights[layer]==vec4(key);
   if any(found) {
-   return row*4u+dot(select(vec4(0u),vec4(0u,1u,2u,3u),found),vec4(1u));
+   return dot(select(vec4(0u),shadow_mask_layer_slots(layer),found),vec4(1u));
   }
  }
  return RT_SHADOW_LIGHTS;

@@ -47,7 +47,7 @@ struct Params {
 static COMMON: shading::Module = shading::Module {
     name: "traced_shadows_common",
     source: include_str!("traced/traced_common.wgsl"),
-    deps: &[],
+    deps: &[&shading::SHADOW_MASK_SLOTS],
 };
 /// The trace: the camera's lit group 0, the scene at group 1 and the
 /// stage's own group 3 with the TLAS, composed with the hardware form's

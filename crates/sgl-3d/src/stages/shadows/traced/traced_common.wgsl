@@ -31,24 +31,27 @@ fn traced_position(uv:vec2<f32>,z:f32)->vec3<f32> {
 fn traced_linear_depth(position:vec3<f32>)->f32 {
  return -(traced.view*vec4(position,1.)).z;
 }
-// A word's four slots' visibility, slot 4w + i in bits 8i to 8i + 7 of
-// word w: the passes read and write a word's four slots together, as the
-// mask's layer w holds them in its channels.
+// A word's four slots' visibility: word w holds the slots of the mask's
+// layer w (shadow_mask_layer_slots), channel i's in bits 8i to 8i + 7, so
+// the passes read and write a word's four slots together, as the layer
+// holds them in its channels.
+const TRACED_CHANNEL_SHIFTS:vec4<u32>=vec4(0u,8u,16u,24u);
 fn traced_unpack(word:u32)->vec4<f32> {
- return vec4<f32>((vec4(word)>>vec4(0u,8u,16u,24u))&vec4(0xffu))/255.;
+ return vec4<f32>((vec4(word)>>TRACED_CHANNEL_SHIFTS)&vec4(0xffu))/255.;
 }
 // A texel's four words' slots, word w's in column w.
 fn traced_unpack_words(words:vec4<u32>)->mat4x4<f32> {
  return mat4x4(traced_unpack(words.x),traced_unpack(words.y),traced_unpack(words.z),traced_unpack(words.w));
 }
 fn traced_pack(visibility:vec4<f32>)->u32 {
- let bytes=vec4<u32>(round(saturate(visibility)*255.))<<vec4(0u,8u,16u,24u);
+ let bytes=vec4<u32>(round(saturate(visibility)*255.))<<TRACED_CHANNEL_SHIFTS;
  return bytes.x|bytes.y|bytes.z|bytes.w;
 }
 // `words` with slot `slot`'s visibility, which they held as zero, set to
 // `visibility`.
 fn traced_store(words:vec4<u32>,slot:u32,visibility:f32)->vec4<u32> {
  var stored=words;
- stored[slot/4u]|=traced_pack(select(vec4(0.),vec4(visibility),vec4(slot%4u)==vec4(0u,1u,2u,3u)));
+ let word=shadow_mask_layer(slot);
+ stored[word]|=traced_pack(select(vec4(0.),vec4(visibility),shadow_mask_layer_slots(word)==vec4(slot)));
  return stored;
 }

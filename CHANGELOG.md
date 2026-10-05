@@ -40,12 +40,15 @@ full API details.
 - **Cost:** measured on an Apple M5 at 1920×1080, natively on Metal
   (median GPU frame time, against the maps with hardware ray tracing off):
   - the `streaming` example's walk (the sun and up to fifteen shadowed
-    torches): 7.9 ms against 6.5 ms;
+    torches): 7.8 ms against 6.5 ms;
   - its fly: 7.1 ms against 6.2 ms;
   - 1000 props under the sun and eight shadowed point and spot lights:
     5.5 ms against 5.1 ms.
   Of that, the trace took 0.4–0.6 ms, the temporal blend 0.1–0.3 ms, the
   upsample 0.2–0.4 ms, and the opaque stage's two-pass form up to 0.4 ms.
+  The props' frame grew by less than those passes sum, since there the
+  two-pass form is faster than the fused pass and the lighting pass skips
+  the maps' filtering for the lights the mask holds.
 - **Migration:** no game-code changes unless code names every field of
   `Settings` without `..`: add `ray_traced_shadows: false`. A saved
   settings file without the field loads it off. A game that offers
