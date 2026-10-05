@@ -62,11 +62,7 @@ pub(crate) fn upload(
                 for c in 0..4 {
                     let x = from[c] as f32 / 255.0;
                     to[c] = if srgb && c < 3 {
-                        if x <= 0.04045 {
-                            x / 12.92
-                        } else {
-                            ((x + 0.055) / 1.055).powf(2.4)
-                        }
+                        crate::shading::srgb::to_linear(x)
                     } else {
                         x
                     };
@@ -83,11 +79,7 @@ pub(crate) fn upload(
                 for c in 0..4 {
                     let x = from[c];
                     let x = if srgb && c < 3 {
-                        if x <= 0.0031308 {
-                            x * 12.92
-                        } else {
-                            1.055 * x.powf(1.0 / 2.4) - 0.055
-                        }
+                        crate::shading::srgb::from_linear(x)
                     } else {
                         x
                     };

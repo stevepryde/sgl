@@ -57,7 +57,7 @@ fn packed_vertex_uv(uv:u32,rect:vec4<f32>)->vec2<f32> {
 // The linear colour and alpha of `color`, whose colour is sRGB-encoded.
 fn packed_vertex_color(color:u32)->vec4<f32> {
  let encoded=unpack4x8unorm(color);
- return vec4(pbr_srgb_to_linear(encoded.rgb),encoded.a);
+ return vec4(srgb_to_linear(encoded.rgb),encoded.a);
 }
 fn packed_vertex_lightmap_uv(lightmap_uv:u32)->vec2<f32> {
  return unpack2x16unorm(lightmap_uv);

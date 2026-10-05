@@ -50,7 +50,7 @@ fn masked_caster(position:vec3<f32>,drawn:DrawInstance,index:u32)->MaskedCaster 
  let vertex=scene_vertex_word(drawn.mesh,index-drawn.first_vertex);
  var out:MaskedCaster;
  out.position=view.view_projection*objects[drawn.object].model*vec4(position,1.);
- out.uv=scene_vertex_uv(drawn.mesh,vertex);
+ out.uv=scene_vertex_uv(vertex,scene_mesh_uv_rect(drawn.mesh));
  out.color=scene_vertex_color(vertex);
  out.unclipped_depth=out.position.z;
  return out;

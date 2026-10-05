@@ -65,9 +65,6 @@ fn scene_wrap_texel(p:i32,size:i32,mode:u32)->i32 {
  }
  return ((p%size)+size)%size;
 }
-fn scene_srgb_to_linear(c:vec3<f32>)->vec3<f32> {
- return select(pow((c+vec3(0.055))/1.055,vec3(2.4)),c/12.92,c<=vec3(0.04045));
-}
 fn scene_image_size(image_word:u32)->vec2<u32> {
  return vec2(scene_source[image_word+SCENE_IMAGE_WIDTH],scene_source[image_word+SCENE_IMAGE_HEIGHT]);
 }
@@ -87,7 +84,7 @@ fn scene_texel(image_word:u32,p:vec2<i32>,wrap:vec2<u32>,srgb:bool)->vec4<f32> {
   rgba=unpack4x8unorm(scene_source[texels+u32(y*size.x+x)]);
  }
  if srgb {
-  return vec4(scene_srgb_to_linear(rgba.rgb),rgba.a);
+  return vec4(srgb_to_linear(rgba.rgb),rgba.a);
  }
  return rgba;
 }
@@ -109,16 +106,21 @@ fn scene_sample_texture(image_word:u32,uv:vec2<f32>,wrap:vec2<u32>,srgb:bool)->v
 fn scene_base_color(material:SceneMaterial,uv:vec2<f32>,color:vec4<f32>)->vec4<f32> {
  return material.values.base*color*scene_sample_texture(material.textures[SCENE_TEXTURE_BASE],uv,material.wrap,true);
 }
-// The packed vertex (packed_vertex.wgsl) whose record starts at word `at`
-// of the mesh whose record is at `mesh`, field by field.
+// The rectangle the packed UVs of the mesh whose record is at `mesh` span
+// (min in xy, extent in zw).
+fn scene_mesh_uv_rect(mesh:u32)->vec4<f32> {
+ return scene_v4(mesh+SCENE_MESH_UV_RECT);
+}
+// The packed vertex (packed_vertex.wgsl) whose record starts at word `at`,
+// field by field; its UV across its mesh's rectangle `rect`.
 fn scene_vertex_position(at:u32)->vec3<f32> {
  return scene_v3(at+PACKED_VERTEX_POSITION);
 }
 fn scene_vertex_frame(at:u32)->PackedFrame {
  return packed_vertex_frame(scene_source[at+PACKED_VERTEX_AXIS],scene_source[at+PACKED_VERTEX_ANGLE_CHART]);
 }
-fn scene_vertex_uv(mesh:u32,at:u32)->vec2<f32> {
- return packed_vertex_uv(scene_source[at+PACKED_VERTEX_UV],scene_v4(mesh+SCENE_MESH_UV_RECT));
+fn scene_vertex_uv(at:u32,rect:vec4<f32>)->vec2<f32> {
+ return packed_vertex_uv(scene_source[at+PACKED_VERTEX_UV],rect);
 }
 fn scene_vertex_color(at:u32)->vec4<f32> {
  return packed_vertex_color(scene_source[at+PACKED_VERTEX_COLOR]);
@@ -126,7 +128,8 @@ fn scene_vertex_color(at:u32)->vec4<f32> {
 fn scene_vertex_lightmap_uv(at:u32)->vec2<f32> {
  return packed_vertex_lightmap_uv(scene_source[at+PACKED_VERTEX_LIGHTMAP_UV]);
 }
-// Its lightmap chart's bounds, from its model's chart table.
+// Its lightmap chart's bounds, from the chart table of the model of the
+// mesh whose record is at `mesh`.
 fn scene_vertex_lightmap_bounds(mesh:u32,at:u32)->vec4<f32> {
  let chart=packed_vertex_chart(scene_source[at+PACKED_VERTEX_ANGLE_CHART]);
  return scene_v4(scene_source[mesh+SCENE_MESH_CHARTS]+chart*SCENE_CHART_WORDS);
@@ -139,11 +142,11 @@ fn scene_vertex_words(mesh:u32,primitive:u32)->vec3<u32> {
  let indices=scene_source[mesh+SCENE_MESH_INDICES]+primitive*3u;
  return vec3(scene_vertex_word(mesh,scene_source[indices]),scene_vertex_word(mesh,scene_source[indices+1u]),scene_vertex_word(mesh,scene_source[indices+2u]));
 }
-// The texture coordinates and colour of triangle `vertices` of the mesh
-// whose record is at `mesh`, at barycentrics `b`, as a hit's shading and the
+// The texture coordinates of triangle `vertices` of a mesh whose UVs span
+// `rect`, and its colour, at barycentrics `b`, as a hit's shading and the
 // masked any-hit test read them.
-fn scene_interpolated_uv(mesh:u32,vertices:vec3<u32>,b:vec3<f32>)->vec2<f32> {
- return scene_vertex_uv(mesh,vertices.x)*b.x+scene_vertex_uv(mesh,vertices.y)*b.y+scene_vertex_uv(mesh,vertices.z)*b.z;
+fn scene_interpolated_uv(rect:vec4<f32>,vertices:vec3<u32>,b:vec3<f32>)->vec2<f32> {
+ return scene_vertex_uv(vertices.x,rect)*b.x+scene_vertex_uv(vertices.y,rect)*b.y+scene_vertex_uv(vertices.z,rect)*b.z;
 }
 fn scene_interpolated_color(vertices:vec3<u32>,b:vec3<f32>)->vec4<f32> {
  return scene_vertex_color(vertices.x)*b.x+scene_vertex_color(vertices.y)*b.y+scene_vertex_color(vertices.z)*b.z;
@@ -176,9 +179,10 @@ fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->Scene
  let mesh=instance.mesh_word+raw.intersection.z*SCENE_MESH_WORDS;
  let vertices=scene_vertex_words(mesh,raw.intersection.w);
  let b=vec3(1.-raw.coords.yz.x-raw.coords.yz.y,raw.coords.yz);
- let uv0=scene_vertex_uv(mesh,vertices.x);
- let uv1=scene_vertex_uv(mesh,vertices.y);
- let uv2=scene_vertex_uv(mesh,vertices.z);
+ let rect=scene_mesh_uv_rect(mesh);
+ let uv0=scene_vertex_uv(vertices.x,rect);
+ let uv1=scene_vertex_uv(vertices.y,rect);
+ let uv2=scene_vertex_uv(vertices.z,rect);
  var frames=array<PackedFrame,3>(scene_vertex_frame(vertices.x),scene_vertex_frame(vertices.y),scene_vertex_frame(vertices.z));
  let n=frames[0].normal*b.x+frames[1].normal*b.y+frames[2].normal*b.z;
  result.hit=true;

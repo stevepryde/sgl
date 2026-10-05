@@ -129,15 +129,6 @@ fn frame(vertex: &Vertex) -> (u32, u32) {
     (unorm16_pair(octahedral(axis)), code)
 }
 
-/// The sRGB encoding of linear `value` in 0..=1.
-fn srgb(value: f64) -> f64 {
-    if value <= 0.0031308 {
-        value * 12.92
-    } else {
-        1.055 * value.powf(1. / 2.4) - 0.055
-    }
-}
-
 /// `vertex`, whose normal is finite and not zero, packed with its UV across
 /// `uv` and its lightmap chart `chart` in its model's table.
 pub(crate) fn pack(vertex: &Vertex, uv: &UvRect, chart: u16) -> PackedVertex {
@@ -149,7 +140,8 @@ pub(crate) fn pack(vertex: &Vertex, uv: &UvRect, chart: u16) -> PackedVertex {
             0.
         }
     };
-    let [r, g, b, a] = vertex.color.map(|channel| f64::from(channel).clamp(0., 1.));
+    let [r, g, b, a] = vertex.color.map(|channel| channel.clamp(0., 1.));
+    let srgb = |value: f32| f64::from(super::srgb::from_linear(value));
     let lightmap = Vec2::from_array(vertex.lightmap_uv);
     PackedVertex {
         position: vertex.position,
@@ -162,7 +154,7 @@ pub(crate) fn pack(vertex: &Vertex, uv: &UvRect, chart: u16) -> PackedVertex {
         color: unorm(srgb(r), 255.)
             | unorm(srgb(g), 255.) << 8
             | unorm(srgb(b), 255.) << 16
-            | unorm(a, 255.) << 24,
+            | unorm(f64::from(a), 255.) << 24,
         lightmap_uv: if lightmap.cmplt(Vec2::ZERO).any() {
             0
         } else {

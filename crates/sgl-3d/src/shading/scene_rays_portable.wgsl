@@ -184,7 +184,7 @@ fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32
  // test samples the base alpha as a hit's shading does (scene_base_color).
  if (material.values.flags&MATERIAL_ALPHA_MASK)!=0u {
   let b=vec3(1.-u-v,u,v);
-  let uv=scene_interpolated_uv(mesh,vertices,b);
+  let uv=scene_interpolated_uv(scene_mesh_uv_rect(mesh),vertices,b);
   let color=scene_interpolated_color(vertices,b);
   if material_cut_out(material.values,scene_base_color(material,uv,color).a) {
    return miss;
