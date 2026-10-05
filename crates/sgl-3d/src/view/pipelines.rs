@@ -56,6 +56,7 @@ pub(crate) static CASTER: shading::Module = shading::Module {
         &shading::SCENE_RAYS,
         &shading::VERTEX_PULL,
         &shading::MATERIAL_RASTER,
+        &shading::BIND_CASTER_POSITIONS,
     ],
 };
 
@@ -77,9 +78,13 @@ pub(crate) enum GeometryPass {
     Lighting { shadow_mask: bool },
     /// `GBuffer` and `Lighting` in one pass.
     Fused,
-    /// A GPU-built directional cascade's casters, pulled from the scene
-    /// source as the camera's are.
+    /// A GPU-built directional cascade's casters, pulled as the camera's
+    /// are, their positions from the positions slab their set binds.
     DirectionalShadow,
+    /// A GPU-built directional cascade's paired casters of opaque materials
+    /// (`shading::culling::CULL_PAIRED`, `SET_PAIRS`): `DirectionalShadow`'s,
+    /// drawn indexed over `PAIRED_INDICES`, each slot pulling its corner.
+    PairedShadow,
     /// A probe capture's directional cascades' casters, from a CPU-built
     /// list, indexed from the geometry slabs.
     CaptureShadow,
@@ -101,21 +106,29 @@ impl GeometryPass {
     fn caster(self) -> bool {
         matches!(
             self,
-            Self::DirectionalShadow | Self::CaptureShadow | Self::LocalShadow
+            Self::DirectionalShadow | Self::PairedShadow | Self::CaptureShadow | Self::LocalShadow
         )
     }
 
-    /// Whether this pass draws materials whose alpha mode requires `alpha`.
+    /// Whether this pass draws materials whose alpha mode requires `alpha`:
+    /// `PairedShadow` opaque ones alone.
     fn draws(self, alpha: Alpha) -> bool {
+        if self == Self::PairedShadow {
+            return alpha == Alpha::Opaque;
+        }
         matches!(self, Self::Blended { .. } | Self::Receivers) == (alpha == Alpha::Blend)
     }
 
-    /// Whether the pass draws nonindexed pulled vertices instead of indexed
-    /// vertex buffers: every camera and probe pass, so that the split and
-    /// fused forms rasterize one primitive stream (`source_vs`), and a
-    /// GPU-built cascade's, whose draw instances are sections; the CPU-built
-    /// lists' shadow casters, which take no derivatives, draw indexed
-    /// positions (`CasterVertex`).
+    /// Whether the pass pulls its vertices instead of reading vertex
+    /// buffers: every camera and probe pass, nonindexed, so that the split
+    /// and fused forms rasterize one primitive stream (`source_vs`), and a
+    /// GPU-built cascade's, whose draw instances are sections, nonindexed
+    /// or, paired, indexed over a fixed pattern of slots; the CPU-built
+    /// lists' shadow casters draw indexed positions (`CasterVertex`).
+    /// Opaque casters take no screen-space derivatives, so a GPU-built cascade draws
+    /// them indexed where their triangles pair; a masked material's casters
+    /// sample its base map with implicit derivatives
+    /// (`material_base_color`), so its GPU-built ones stay pulled.
     ///
     /// No camera or probe pass may draw indexed vertex buffers. On Apple
     /// GPUs (M5, Metal) an indexed geometry pass is not deterministic during
@@ -129,6 +142,13 @@ impl GeometryPass {
     /// bit-exact between encodes and between runs.
     pub fn pulled(self) -> bool {
         !matches!(self, Self::CaptureShadow | Self::LocalShadow)
+    }
+
+    /// Whether the pass's casters pull their positions from a positions
+    /// slab, which its draws bind as group 3 (`shading::bind::caster_positions`):
+    /// a GPU-built cascade's.
+    pub fn binds_caster_positions(self) -> bool {
+        matches!(self, Self::DirectionalShadow | Self::PairedShadow)
     }
 }
 
@@ -166,6 +186,7 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
     match pass {
         GeometryPass::Forward
         | GeometryPass::DirectionalShadow
+        | GeometryPass::PairedShadow
         | GeometryPass::CaptureShadow
         | GeometryPass::LocalShadow
         | GeometryPass::Receivers => (true, Greater),
@@ -184,6 +205,9 @@ pub(crate) struct GeometryPipelines {
     shadow_masked: wgpu::PipelineLayout,
     /// Group 0 shadow, then scene and material.
     shadow: wgpu::PipelineLayout,
+    /// `shadow`'s, then the caster positions group 3, for the GPU-built
+    /// cascades' casters.
+    pulled_shadow: wgpu::PipelineLayout,
     geometry: wgpu::ShaderModule,
     /// The geometry program with the shadow mask's provider, made when the
     /// ray-traced shadows first run.
@@ -245,7 +269,7 @@ fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::TextureForm
             gbuffer::SOURCE_ID,
             gbuffer::ANISOTROPY,
         ],
-        DirectionalShadow | CaptureShadow | LocalShadow => Vec::new(),
+        DirectionalShadow | PairedShadow | CaptureShadow | LocalShadow => Vec::new(),
         Blended { .. } => vec![gbuffer::COLOR],
         Receivers => vec![gbuffer::RECEIVER, gbuffer::MOTION],
     }
@@ -269,10 +293,19 @@ fn attachments_fit(limits: &wgpu::Limits, formats: &[wgpu::TextureFormat]) -> bo
 impl GeometryPipelines {
     /// Creates every pipeline the frame and probe captures draw with for
     /// `layers`, over group 0's `lit` and `shadow` layouts, the scene's and
-    /// a material's, and the blended and shadow-mask group 3 layouts.
+    /// a material's, and the blended, shadow-mask and caster positions
+    /// group 3 layouts.
     pub fn new(
         device: &wgpu::Device,
-        [lit, shadow, scene, material, blended, shadow_mask]: [&wgpu::BindGroupLayout; 6],
+        [
+            lit,
+            shadow,
+            scene,
+            material,
+            blended,
+            shadow_mask,
+            positions,
+        ]: [&wgpu::BindGroupLayout; 7],
         layers: LayerConstants,
     ) -> Self {
         let layout = |label, groups: &[&wgpu::BindGroupLayout]| {
@@ -291,6 +324,10 @@ impl GeometryPipelines {
                 &[lit, scene, material, shadow_mask],
             ),
             shadow: layout("shadow casters", &[shadow, scene, material]),
+            pulled_shadow: layout(
+                "GPU-built cascade casters",
+                &[shadow, scene, material, positions],
+            ),
             geometry: device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("SGL material"),
                 source: wgpu::ShaderSource::Wgsl(geometry_program(false).into()),
@@ -364,6 +401,7 @@ impl GeometryPipelines {
             GeometryPass::GBuffer,
             GeometryPass::Lighting { shadow_mask: false },
             GeometryPass::DirectionalShadow,
+            GeometryPass::PairedShadow,
             GeometryPass::CaptureShadow,
             GeometryPass::LocalShadow,
             GeometryPass::Blended { fsr2_masks: false },
@@ -431,9 +469,10 @@ impl GeometryPipelines {
         let masked = key.variant.alpha == Alpha::Mask;
         let vertex_buffers = &shading::vertex::GEOMETRY_BUFFERS;
         let (module, layout, label) = match key.pass {
-            DirectionalShadow | CaptureShadow | LocalShadow => {
-                (&self.caster, &self.shadow, "shadow caster")
+            DirectionalShadow | PairedShadow => {
+                (&self.caster, &self.pulled_shadow, "shadow caster")
             }
+            CaptureShadow | LocalShadow => (&self.caster, &self.shadow, "shadow caster"),
             Blended { .. } => (&self.geometry, &self.blended, "blended scene geometry"),
             Receivers => (&self.geometry, &self.lit, "blended receivers"),
             Lighting { shadow_mask: true } => (
@@ -462,6 +501,10 @@ impl GeometryPipelines {
                 ("shadow_pulled_unclipped_vs", Some("shadow_unclipped_fs"))
             }
             DirectionalShadow => ("shadow_pulled_vs", None),
+            PairedShadow if !self.unclipped_depth => {
+                ("shadow_paired_unclipped_vs", Some("shadow_unclipped_fs"))
+            }
+            PairedShadow => ("shadow_paired_vs", None),
             CaptureShadow if masked && !self.unclipped_depth => (
                 "shadow_masked_unclipped_vs",
                 Some("shadow_masked_unclipped_fs"),
@@ -481,8 +524,8 @@ impl GeometryPipelines {
             Blended { fsr2_masks: true } => ("source_vs", Some("blended_fsr2_masked_fs")),
             Receivers => ("source_vs", Some("receiver_fs")),
         };
-        let unclipped_depth =
-            matches!(key.pass, DirectionalShadow | CaptureShadow) && self.unclipped_depth;
+        let unclipped_depth = matches!(key.pass, DirectionalShadow | PairedShadow | CaptureShadow)
+            && self.unclipped_depth;
         // Blended surfaces blend over the beauty with their alpha, as Bevy's
         // `BLEND_ALPHA` pipelines do (crates/bevy_pbr/src/render/mesh.rs).
         let blend = matches!(key.pass, Blended { .. }).then_some(wgpu::BlendState::ALPHA_BLENDING);

@@ -130,4 +130,6 @@ fn begin<'a>(
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod casters_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

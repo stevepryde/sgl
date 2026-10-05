@@ -140,6 +140,12 @@ pub(crate) static BIND_MATERIAL: Module = Module {
     source: include_str!("bind_material.wgsl"),
     deps: &[&MATERIAL],
 };
+/// The GPU-built directional cascades' casters' group 3: a positions slab.
+pub(crate) static BIND_CASTER_POSITIONS: Module = Module {
+    name: "bind_caster_positions",
+    source: include_str!("bind_caster_positions.wgsl"),
+    deps: &[],
+};
 /// The blended pipelines' group 3: the screen-space method's result, the
 /// surface depth and the method's cutoff and fade.
 pub(crate) static BIND_BLENDED: Module = Module {

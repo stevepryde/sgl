@@ -38,12 +38,14 @@ const SCENE_MESH_SECTION_COUNT:u32=10u;
 // A section table entry's: a leaf of the mesh's range hierarchy, at most
 // SECTION_VERTICES / 3 triangles in the mesh's own order: its bounds in the
 // model's space, min then max, its first index, relative to its mesh's
-// indices, and its triangles.
+// indices, and its triangles, with SCENE_SECTION_PAIRED where they pair
+// (scene::rays::model::SECTION_PAIRED).
 const SCENE_SECTION_WORDS:u32=8u;
 const SCENE_SECTION_MIN:u32=0u;
 const SCENE_SECTION_MAX:u32=3u;
 const SCENE_SECTION_FIRST_INDEX:u32=6u;
 const SCENE_SECTION_TRIANGLES:u32=7u;
+const SCENE_SECTION_PAIRED:u32=2147483648u;
 // A chart table entry's: a lightmap chart's normalized atlas bounds, min
 // then max.
 const SCENE_CHART_WORDS:u32=4u;

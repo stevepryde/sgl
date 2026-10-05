@@ -11,7 +11,10 @@
 //! (`ranges`) rather than Bevy's `offset_allocator`. Where Bevy commits a
 //! frame's allocations together, a range is placed and written at the scene
 //! operation, and a slab grows by copying it through the queue, as the ray
-//! source grows: an abandoned frame loses no content.
+//! source grows: an abandoned frame loses no content. A positions slab is
+//! also bound whole as storage, through a group of its own, by the
+//! GPU-built cascades' casters, which pull their positions from it
+//! (bind_caster_positions.wgsl), so it stays within what the device binds.
 use super::SceneError;
 use super::ranges::Ranges;
 use crate::shading::vertex::CasterVertex;
@@ -45,7 +48,7 @@ impl Elements {
     fn usage(self) -> wgpu::BufferUsages {
         let copies = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
         match self {
-            Self::Positions => copies | wgpu::BufferUsages::VERTEX,
+            Self::Positions => copies | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             Self::Indices => copies | wgpu::BufferUsages::INDEX,
         }
     }
@@ -83,20 +86,45 @@ struct Slab {
     ranges: Option<Ranges>,
     /// The elements its buffer holds.
     capacity: u32,
+    /// A positions slab's caster positions group, over its buffer.
+    group: Option<wgpu::BindGroup>,
 }
 
 pub(crate) struct GeometryBuffers {
     /// By identity; a released slab's identity is reused.
     slabs: Vec<Option<Slab>>,
-    /// The device's largest buffer, in bytes.
+    /// The largest slab of indices, in bytes: the device's largest buffer;
+    /// and of positions, which the casters bind whole: also no more than a
+    /// storage binding.
     limit: u64,
+    positions_limit: u64,
+    /// The caster positions layout, and its group over a stand-in buffer,
+    /// which a set without slab positions binds.
+    layout: wgpu::BindGroupLayout,
+    no_positions: wgpu::BindGroup,
 }
 
 impl GeometryBuffers {
     pub fn new(device: &wgpu::Device) -> Self {
+        let limits = device.limits();
+        let layout = crate::shading::bind::caster_positions(device);
+        let stand_in = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("no caster positions"),
+                size: Elements::Positions.size(),
+                usage: wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            },
+        );
         Self {
             slabs: Vec::new(),
-            limit: device.limits().max_buffer_size,
+            limit: limits.max_buffer_size,
+            positions_limit: limits
+                .max_buffer_size
+                .min(limits.max_storage_buffer_binding_size),
+            no_positions: positions_group(device, &layout, &stand_in),
+            layout,
         }
     }
 
@@ -106,6 +134,43 @@ impl GeometryBuffers {
             .as_ref()
             .expect("a placed range's slab lives")
             .buffer
+    }
+
+    /// The caster positions group of positions slab `slab`, or a stand-in
+    /// for `GeometryRange::EMPTY`'s, which names none.
+    pub fn positions_group(&self, slab: u32) -> &wgpu::BindGroup {
+        if slab == GeometryRange::EMPTY.slab {
+            return &self.no_positions;
+        }
+        self.slabs[slab as usize]
+            .as_ref()
+            .and_then(|slab| slab.group.as_ref())
+            .expect("a placed positions range's slab lives")
+    }
+
+    /// Positions slabs of at most `bytes`, as on a device that binds no
+    /// more, so a test's content fills several.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn limit_positions(&mut self, bytes: u64) {
+        self.positions_limit = bytes;
+    }
+
+    /// How many positions slabs there are.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn positions_slabs(&self) -> usize {
+        self.slabs
+            .iter()
+            .flatten()
+            .filter(|slab| slab.elements == Elements::Positions)
+            .count()
+    }
+
+    /// The largest slab of `elements`, in bytes.
+    fn limit(&self, elements: Elements) -> u64 {
+        match elements {
+            Elements::Positions => self.positions_limit,
+            Elements::Indices => self.limit,
+        }
     }
 
     /// Places `count` elements of kind `elements`: in the first slab of
@@ -123,9 +188,10 @@ impl GeometryBuffers {
         let size = elements.size();
         let bytes = count as u64 * size;
         let count = u32::try_from(count).map_err(|_| SceneError::DeviceLimit)?;
-        let largest = MAX_SLAB_BYTES.min(self.limit);
+        let limit = self.limit(elements);
+        let largest = MAX_SLAB_BYTES.min(limit);
         if bytes >= LARGE_BYTES.min(largest) {
-            self.place_large(device, elements, count)
+            self.place_large(device, elements, count, limit)
         } else {
             Ok(self.place_general(device, queue, elements, count, (largest / size) as u32))
         }
@@ -178,7 +244,7 @@ impl GeometryBuffers {
                 while capacity < range.end {
                     capacity = ((f64::from(capacity) * GROWTH).ceil() as u32).min(most);
                 }
-                slab.grow(device, queue, capacity);
+                slab.grow(device, queue, capacity, &self.layout);
             }
             return GeometryRange {
                 slab: index as u32,
@@ -191,12 +257,13 @@ impl GeometryBuffers {
             .min(most);
         let mut ranges = Ranges::new(0);
         let range = ranges.allocate(count).expect("a new slab has room");
-        let slab = self.insert(Slab {
+        let slab = self.insert(Slab::new(
+            device,
+            &self.layout,
             elements,
-            buffer: slab_buffer(device, elements, capacity),
-            ranges: Some(ranges),
+            Some(ranges),
             capacity,
-        });
+        ));
         GeometryRange {
             slab,
             first: range.start,
@@ -204,22 +271,18 @@ impl GeometryBuffers {
         }
     }
 
-    /// `count` elements in a slab of their own.
+    /// `count` elements in a slab of their own, of at most `limit` bytes.
     fn place_large(
         &mut self,
         device: &wgpu::Device,
         elements: Elements,
         count: u32,
+        limit: u64,
     ) -> Result<GeometryRange, SceneError> {
-        if u64::from(count) * elements.size() > self.limit {
+        if u64::from(count) * elements.size() > limit {
             return Err(SceneError::DeviceLimit);
         }
-        let slab = self.insert(Slab {
-            elements,
-            buffer: slab_buffer(device, elements, count),
-            ranges: None,
-            capacity: count,
-        });
+        let slab = self.insert(Slab::new(device, &self.layout, elements, None, count));
         Ok(GeometryRange {
             slab,
             first: 0,
@@ -281,9 +344,35 @@ impl GeometryBuffers {
 }
 
 impl Slab {
+    /// A slab of `capacity` elements, with its caster positions group over
+    /// `layout` where it holds positions.
+    fn new(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        elements: Elements,
+        ranges: Option<Ranges>,
+        capacity: u32,
+    ) -> Self {
+        let buffer = slab_buffer(device, elements, capacity);
+        Self {
+            group: (elements == Elements::Positions)
+                .then(|| positions_group(device, layout, &buffer)),
+            elements,
+            buffer,
+            ranges,
+            capacity,
+        }
+    }
+
     /// Grows it to `capacity` elements, copying what it holds through the
-    /// queue, never a frame's encoder.
-    fn grow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, capacity: u32) {
+    /// queue, never a frame's encoder, and binding the grown buffer.
+    fn grow(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        capacity: u32,
+        layout: &wgpu::BindGroupLayout,
+    ) {
         crate::counters::geometry_growth();
         let grown = slab_buffer(device, self.elements, capacity);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -291,9 +380,29 @@ impl Slab {
         });
         encoder.copy_buffer_to_buffer(&self.buffer, 0, &grown, 0, self.buffer.size());
         queue.submit([encoder.finish()]);
+        if self.group.is_some() {
+            self.group = Some(positions_group(device, layout, &grown));
+        }
         self.buffer = grown;
         self.capacity = capacity;
     }
+}
+
+/// The caster positions group (`shading::bind::caster_positions`) over
+/// `buffer`.
+fn positions_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffer: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("caster positions"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: crate::shading::bind::caster::POSITIONS,
+            resource: buffer.as_entire_binding(),
+        }],
+    })
 }
 
 fn slab_buffer(device: &wgpu::Device, elements: Elements, capacity: u32) -> wgpu::Buffer {

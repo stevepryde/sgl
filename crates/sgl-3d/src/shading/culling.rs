@@ -39,6 +39,12 @@ pub(crate) const NO_CHAIN: u32 = u32::MAX;
 
 /// `DrawSet::flags`: its material casts the directional shadow.
 pub(crate) const SET_CASTS_DIRECTIONAL_SHADOW: u32 = 1;
+/// `DrawSet::flags`: its material is opaque, so a cascade draws its paired
+/// sections indexed (`CULL_PAIRED`). A masked material's casters sample
+/// its base map with implicit derivatives, which an indexed draw makes
+/// nondeterministic on Apple GPUs (`GeometryPass::pulled`), so they stay
+/// pulled.
+pub(crate) const SET_PAIRS: u32 = 2;
 
 /// `CullView::flags`: the view is the camera, whose population is the
 /// `visible` instances and the materials whose group the mask enables;
@@ -57,6 +63,27 @@ pub(crate) const CULL_LOD: u32 = 8;
 /// `CullView::flags`: each candidate's appended sections and triangles are
 /// counted at `CullView::candidate_statistics` (diagnostics, the camera).
 pub(crate) const CULL_CANDIDATE_STATISTICS: u32 = 16;
+/// `CullView::flags`: a section whose triangles pair
+/// (`scene::rays::model::SECTION_PAIRED`) is appended to its set's paired
+/// region, which the view draws indexed over `PAIRED_INDICES`: a cascade's
+/// casters. The camera never draws indexed (`GeometryPass::pulled`).
+pub(crate) const CULL_PAIRED: u32 = 32;
+
+/// The indices a paired draw's instance draws, over its slots: four a pair
+/// of its section's triangles, (a, b, c) then (a, c, d), the slots
+/// `paired_corner` in caster.wgsl takes to the section's corners, so the
+/// post-transform cache shades the corners a pair shares once, as an
+/// indexed draw of the section's own indices would.
+pub(crate) const PAIRED_INDICES: [u32; SECTION_VERTICES as usize] = {
+    let mut indices = [0; SECTION_VERTICES as usize];
+    let mut at = 0;
+    while at < indices.len() {
+        let pair = (at / 6) as u32;
+        indices[at] = 4 * pair + [0, 1, 2, 0, 2, 3][at % 6];
+        at += 1;
+    }
+    indices
+};
 
 /// `CullOcclusion::flags`: the early phase tests the camera's candidates
 /// and sections against the last submitted frame's depth pyramid.
@@ -74,7 +101,9 @@ pub(crate) const CULL_DISPATCH_WORDS: u32 = 9;
 /// One instance's mesh, which a GPU-built view may draw (`DrawCandidate` in
 /// culling.wgsl): its bounds in its model's space (the mesh's, or a
 /// deforming instance's deformed ones), its object record's index, its
-/// mesh's record word in the ray source, its set and its level chain.
+/// mesh's record word in the ray source, its set, its level chain and its
+/// mesh's first vertex in its set's positions slab (`scene::geometry`), or
+/// `NO_POSITIONS` for a mesh without slab positions.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DrawCandidate {
@@ -84,7 +113,8 @@ pub(crate) struct DrawCandidate {
     pub mesh: u32,
     pub draw_set: u32,
     pub chain: u32,
-    pub padding: [u32; 2],
+    pub positions: u32,
+    pub padding: u32,
 }
 
 impl DrawCandidate {
@@ -96,7 +126,8 @@ impl DrawCandidate {
         mesh: 0,
         draw_set: NO_SET,
         chain: NO_CHAIN,
-        padding: [0; 2],
+        positions: crate::shading::vertex::NO_POSITIONS,
+        padding: 0,
     };
 }
 
@@ -168,7 +199,13 @@ pub(crate) struct CullView {
     /// The late section queue's entries, zero for a view without a late
     /// phase.
     pub queue_capacity: u32,
-    pub padding: [u32; 3],
+    /// The index of the view's first paired command in its draws, and where
+    /// its cluster list's paired regions start, in draw instances
+    /// (`CULL_PAIRED`): set `s`'s paired draw is command `paired_command +
+    /// s`, over the region at `paired_region` past the set's.
+    pub paired_command: u32,
+    pub paired_region: u32,
+    pub padding: u32,
 }
 
 /// The camera's occlusion test for a frame (`CullOcclusion` in
@@ -233,26 +270,34 @@ pub(crate) struct CullStatistics {
     pub moving_triangles: u32,
 }
 
-/// One set's indirect draw in a view's draws, after its statistics:
-/// `wgpu::util::DrawIndirectArgs`, whose instance count the section cull
-/// adds its appended sections to.
+/// One set's indirect draw in a view's draws, after its statistics, whose
+/// instance count the section cull adds its appended sections to: a pulled
+/// draw's `wgpu::util::DrawIndirectArgs` (its first four words), or a
+/// paired one's `DrawIndexedIndirectArgs`, so one layout serves both.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DrawCommand {
-    pub vertex_count: u32,
+    /// Vertices of a pulled draw's instance, indices of a paired one's.
+    pub count: u32,
     pub instance_count: u32,
-    pub first_vertex: u32,
+    /// A pulled draw's first vertex, a paired one's first index.
+    pub first: u32,
+    /// A pulled draw's first instance, a paired one's base vertex.
+    pub base: u32,
+    /// A paired draw's first instance.
     pub first_instance: u32,
 }
 
 impl DrawCommand {
-    /// A set's command as each frame starts: `SECTION_VERTICES` vertices of
-    /// no instance, from vertex and instance zero, since the set's region is
-    /// bound as the draw-instance buffer.
+    /// A set's command as each frame starts: `SECTION_VERTICES` vertices,
+    /// or `PAIRED_INDICES`' as many indices, of no instance, from the first
+    /// vertex, index and instance, since the set's region is bound as the
+    /// draw-instance buffer.
     pub const RESET: Self = Self {
-        vertex_count: SECTION_VERTICES,
+        count: SECTION_VERTICES,
         instance_count: 0,
-        first_vertex: 0,
+        first: 0,
+        base: 0,
         first_instance: 0,
     };
 }
@@ -290,11 +335,13 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         ("NO_SET", NO_SET),
         ("NO_CHAIN", NO_CHAIN),
         ("SET_CASTS_DIRECTIONAL_SHADOW", SET_CASTS_DIRECTIONAL_SHADOW),
+        ("SET_PAIRS", SET_PAIRS),
         ("CULL_CAMERA", CULL_CAMERA),
         ("CULL_FRUSTUM", CULL_FRUSTUM),
         ("CULL_NEAR", CULL_NEAR),
         ("CULL_LOD", CULL_LOD),
         ("CULL_CANDIDATE_STATISTICS", CULL_CANDIDATE_STATISTICS),
+        ("CULL_PAIRED", CULL_PAIRED),
         ("OCCLUSION_EARLY", OCCLUSION_EARLY),
         ("DISPATCH_EARLY_SECTIONS", DISPATCH_EARLY_SECTIONS),
         ("DISPATCH_LATE_INSTANCES", DISPATCH_LATE_INSTANCES),
@@ -337,7 +384,9 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 7] {
             "cull",
             "DrawCandidate",
             DrawCandidate,
-            [bounds_min, object, bounds_max, mesh, draw_set, chain]
+            [
+                bounds_min, object, bounds_max, mesh, draw_set, chain, positions
+            ]
         ),
         mirror!(
             "cull",
@@ -369,6 +418,8 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 7] {
                 candidate_statistics,
                 late_command,
                 queue_capacity,
+                paired_command,
+                paired_region,
             ]
         ),
         mirror!(

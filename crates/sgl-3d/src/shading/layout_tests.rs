@@ -739,7 +739,7 @@ fn declared_bindings(label: &str, source: &str, group: u32) -> Vec<(String, u32)
 // numbers come from naga's parse of the WGSL.
 #[wasm_bindgen_test(unsupported = test)]
 fn rust_binding_names_match_wgsl_bindings() {
-    use super::bind::{self, blended, group0, group1, group2, hardware, shadow_mask};
+    use super::bind::{self, blended, caster, group0, group1, group2, hardware, shadow_mask};
     let named = [
         (0, "view", group0::VIEW),
         (0, "frame", group0::FRAME),
@@ -790,6 +790,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         (3, "blended_reflections", blended::REFLECTIONS),
         (3, "blended_surface_depth", blended::SURFACE_DEPTH),
         (3, "blended_trace", blended::TRACE),
+        (3, "caster_positions", caster::POSITIONS),
         (3, "scene_tlas", hardware::SCENE_TLAS),
         (3, "shadow_mask", shadow_mask::MASK),
         (3, "shadow_mask_slots", shadow_mask::SLOTS),
@@ -833,6 +834,12 @@ fn rust_binding_names_match_wgsl_bindings() {
             &[&super::BIND_BLENDED],
             3,
             numbers(&bind::blended_entries()),
+        ),
+        (
+            "bind_caster_positions",
+            &[&super::BIND_CASTER_POSITIONS],
+            3,
+            numbers(&bind::caster_positions_entries()),
         ),
         (
             "scene_rays_hardware",

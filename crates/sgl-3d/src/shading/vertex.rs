@@ -72,12 +72,14 @@ macro_rules! vertex_layout {
 }
 pub(crate) use vertex_layout;
 
-/// What a shadow caster reads of a vertex from a vertex buffer: its
-/// position, from its mesh's range of a positions slab (`scene::geometry`)
-/// or a deforming instance's
-/// deformed positions (`shading::deformation`). A masked material's casters
-/// pull its texel coordinates and colour from the scene source. Every camera
-/// and probe pass pulls whole vertices from the scene source instead
+/// What a shadow caster reads of a vertex: its position, from its mesh's
+/// range of a positions slab (`scene::geometry`) or a deforming instance's
+/// deformed positions (`shading::deformation`), from a vertex buffer for a
+/// CPU-built list's casters, and pulled from the slab, bound as storage, by
+/// a GPU-built cascade's (bind_caster_positions.wgsl, whose
+/// `CASTER_VERTEX_WORDS` it ties). A masked material's casters pull its
+/// texel coordinates and colour from the scene source. Every camera and
+/// probe pass pulls whole vertices from the scene source instead
 /// (`scene_source_vertex`), never a vertex buffer (`GeometryPass::pulled`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -96,10 +98,14 @@ pub(crate) const CASTER_LAYOUT: VertexLayout = vertex_layout!(CasterVertex, [pos
 /// drawn mesh's record in the scene source, the first index it draws,
 /// relative to its mesh's indices as the sections' are, and its triangles
 /// (a GPU-built draw's vertices past them are dummies), and the base vertex
-/// an indexed caster draw of it adds to its indices (its first vertex in its
-/// positions slab, `scene::geometry`, zero for a deforming instance's own
-/// positions), which a masked caster that reads the source's vertex records
-/// by vertex index subtracts, as Bevy b56fc29's
+/// a caster of it adds to its vertex indices to reach its position: its
+/// first vertex in its positions slab (`scene::geometry`), which an indexed
+/// caster draw adds to its indices and a GPU-built cascade's caster to the
+/// vertex index it pulls; zero for a CPU-built draw of a deforming
+/// instance's own positions and `NO_POSITIONS` for a GPU-built one of a
+/// mesh without slab positions. A CPU-built list's masked caster, which
+/// reads the source's vertex records by vertex index, subtracts it, as Bevy
+/// b56fc29's
 /// `MeshUniform::first_vertex_index` (crates/bevy_pbr/src/render/mesh.rs)
 /// is subtracted in `morph_vertex` (mesh.wgsl). A draw of many instances
 /// reaches each one's record through its entry, as Bevy reaches each
@@ -114,6 +120,11 @@ pub(crate) struct DrawInstance {
     pub triangles: u32,
     pub first_vertex: u32,
 }
+
+/// `DrawInstance::first_vertex` of a GPU-built draw whose mesh has no
+/// positions in a slab (a deforming model's), whose casters pull their
+/// positions from the scene source.
+pub(crate) const NO_POSITIONS: u32 = u32::MAX;
 
 /// Its attributes follow `CasterVertex`'s position, at location 0.
 pub(crate) const DRAW_INSTANCE_LAYOUT: VertexLayout = vertex_layout!(
@@ -191,11 +202,18 @@ impl GlowVertex {
 
 /// The constants with WGSL twins.
 #[cfg(test)]
-pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 2] {
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 5] {
     use crate::shading::layout_tests::Constant;
     use naga::Literal::U32;
     [
         Constant::new("glow", "GLOW_TAPERED", U32(GLOW_TAPERED)),
         Constant::new("glow", "GLOW_LINE", U32(GLOW_LINE)),
+        Constant::new(
+            "caster",
+            "CASTER_VERTEX_WORDS",
+            U32((std::mem::size_of::<CasterVertex>() / 4) as u32),
+        ),
+        Constant::new("caster", "NO_POSITIONS", U32(NO_POSITIONS)),
+        Constant::new("cull", "NO_POSITIONS", U32(NO_POSITIONS)),
     ]
 }
