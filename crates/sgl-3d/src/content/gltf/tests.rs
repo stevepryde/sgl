@@ -420,7 +420,8 @@ fn embedded_part_selection_keeps_ancestors_and_excludes_other_mesh_nodes() {
 
 // Defects: the loader reads or decodes an image the game supplies, puts a
 // supplied or decoded image at another index than the materials address,
-// or tells the game the wrong image (a data URI is embedded, not a file).
+// tells the game the wrong image (a data URI is embedded, not a file), or
+// cannot decode a data URI from bytes (#107).
 // Oracle: an image whose file does not exist loads only while supplied, and
 // a written PNG's and an embedded one's known texels.
 #[test]
@@ -502,18 +503,22 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
             (2, None, None),
         ]
     );
-    // Bytes resolve no external file: supplying every image loads them.
-    let supply_all = |_: GltfImage<'_>| -> Result<ImageSource> {
-        Ok(ImageSource::Supplied(Image::Rgba8(supplied.clone())))
+    // Bytes resolve no external file: supplying the files loads them, and
+    // the data URI decodes as the file's did.
+    let supply_files = |image: GltfImage<'_>| -> Result<ImageSource> {
+        Ok(match image.uri {
+            Some(_) => ImageSource::Supplied(Image::Rgba8(supplied.clone())),
+            None => ImageSource::Decode,
+        })
     };
     let embedded = load_slice_with_options(
         &fixture.embedded(),
         LoadOptions {
-            images: Some(&supply_all),
+            images: Some(&supply_files),
             ..LoadOptions::default()
         },
     )
     .unwrap();
-    assert_eq!(embedded.images.len(), 3);
+    assert_eq!(texels(&embedded.images[2]), [70, 80, 90, 255]);
     assert!(load_slice(&fixture.embedded()).is_err());
 }
