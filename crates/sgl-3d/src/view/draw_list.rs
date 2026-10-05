@@ -145,7 +145,7 @@ impl DrawList {
         self.batcher.clear();
         self.stats = GeometryStats::default();
         for (id, instance) in scene.instances.slots.iter() {
-            if !population.shows(instance) {
+            if !population.shows(id, instance) {
                 continue;
             }
             let rank = self.batcher.rank(instance.state.model);
@@ -217,7 +217,7 @@ impl DrawList {
         );
         let caster = matches!(population, Population::DirectionalShadow { .. });
         let (lod, culled) = match population {
-            Population::Camera { lod, cull } | Population::Blended { lod, cull } => {
+            Population::Camera { lod, cull, .. } | Population::Blended { lod, cull } => {
                 (lod.as_ref(), *cull)
             }
             Population::DirectionalShadow { cull, .. } => (None, *cull),
@@ -446,6 +446,23 @@ impl DrawList {
     #[cfg(any(test, feature = "diagnostics"))]
     pub fn draws(&self) -> usize {
         self.calls().count()
+    }
+
+    /// The triangles it submits for each object record it draws, by its
+    /// index, in no particular order.
+    #[cfg(feature = "diagnostics")]
+    pub fn triangles_by_object(&self) -> Vec<(u32, u64)> {
+        let mut by_object = rustc_hash::FxHashMap::default();
+        for batch in &self.batches {
+            let triangles: u64 = self.ranges[batch.ranges.clone()]
+                .iter()
+                .map(|range| u64::from((range.end - range.start) / 3))
+                .sum();
+            for drawn in self.instances_of(batch) {
+                *by_object.entry(drawn.object).or_insert(0) += triangles;
+            }
+        }
+        by_object.into_iter().collect()
     }
 
     /// Submitted draws of the instances of `model` in this camera list: the

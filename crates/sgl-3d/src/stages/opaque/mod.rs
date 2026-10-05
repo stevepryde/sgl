@@ -19,6 +19,7 @@
 pub(crate) mod ambient_occlusion;
 pub(crate) mod sky;
 
+use crate::counters::Moment;
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::{GeometryPass, GeometryPipelines};
@@ -113,36 +114,41 @@ impl Opaque {
             }
             target
         });
-        let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("fused opaque material and lighting"),
-            color_attachments: &attachments,
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &targets.depth,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
+        let started = Moment::now();
+        {
+            let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fused opaque material and lighting"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &targets.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: ctx
-                .timing
-                .and_then(|t| t.render_pass("opaque geometry + lighting")),
-            ..Default::default()
-        });
-        pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-        ctx.views.camera.list.draw(
-            ctx.scene,
-            ctx.pipelines,
-            &ctx.views.instances,
-            &mut pass,
-            GeometryPass::Fused,
-        );
+                timestamp_writes: ctx
+                    .timing
+                    .and_then(|t| t.render_pass("opaque geometry + lighting")),
+                ..Default::default()
+            });
+            pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
+            ctx.views.camera.list.draw(
+                ctx.scene,
+                ctx.pipelines,
+                &ctx.views.instances,
+                &mut pass,
+                GeometryPass::Fused,
+            );
+        }
+        ctx.views.camera.recorded_since(started);
     }
 
     fn encode_split(&mut self, ctx: &mut FrameContext<'_>) {
         let targets = ctx.targets;
         let anisotropy_inline = ctx.pipelines.anisotropy_inline;
         // The G-buffer and depth.
+        let started = Moment::now();
         {
             let colors = [
                 &targets.normal,
@@ -175,7 +181,9 @@ impl Opaque {
                 GeometryPass::GBuffer,
             );
         }
+        ctx.views.camera.recorded_since(started);
         if !anisotropy_inline {
+            let started = Moment::now();
             let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("stable anisotropy attachment fallback"),
                 color_attachments: &[attachment(&targets.anisotropy)],
@@ -198,6 +206,8 @@ impl Opaque {
                 &mut pass,
                 GeometryPass::GBufferAnisotropy,
             );
+            drop(pass);
+            ctx.views.camera.recorded_since(started);
         }
         // The sky writes color and motion; opaque geometry then writes color,
         // ambient diffuse and identity together once, and its motion over the
@@ -235,6 +245,7 @@ impl Opaque {
             }
             target
         });
+        let started = Moment::now();
         let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("opaque HDR with stable depth ownership"),
             timestamp_writes: ctx.timing.and_then(|t| t.render_pass("opaque lighting")),
@@ -257,6 +268,8 @@ impl Opaque {
             &mut pass,
             GeometryPass::Lighting,
         );
+        drop(pass);
+        ctx.views.camera.recorded_since(started);
     }
 
     /// Probe capture face `face`: the sky under `unlit`, then `list`'s lit

@@ -20,6 +20,7 @@ pub(crate) mod culling;
 pub(crate) mod draw_list;
 pub(crate) mod effective;
 pub(crate) mod frame;
+pub(crate) mod hidden;
 pub(crate) mod history;
 pub(crate) mod lod;
 pub(crate) mod pipelines;
@@ -392,11 +393,16 @@ impl View {
 }
 
 /// One view of a frame: its view data, the uniform buffer group 0 binds it
-/// from, and its draws.
+/// from, and its draws, with the CPU time its list's last build took and
+/// its passes since took to record its draws, in milliseconds (diagnostics;
+/// zero without them).
 pub(crate) struct ViewSlot {
     pub view: View,
     pub buffer: wgpu::Buffer,
     pub list: draw_list::DrawList,
+    #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
+    build_ms: f64,
+    encode_ms: std::cell::Cell<f64>,
 }
 
 impl ViewSlot {
@@ -413,6 +419,32 @@ impl ViewSlot {
             ),
             view,
             list: draw_list::DrawList::default(),
+            build_ms: 0.,
+            encode_ms: std::cell::Cell::new(0.),
+        }
+    }
+
+    /// After its list was built from `started`.
+    pub fn built(&mut self, started: crate::counters::Moment) {
+        self.build_ms = started.elapsed_ms();
+        self.encode_ms.set(0.);
+    }
+
+    /// Adds the time since `started` to its draws' recording: the caller
+    /// took it at the start of a pass that draws its list and calls this
+    /// once the pass has ended.
+    pub fn recorded_since(&self, started: crate::counters::Moment) {
+        self.encode_ms
+            .set(self.encode_ms.get() + started.elapsed_ms());
+    }
+
+    /// The CPU time its list's last build took and its passes took to
+    /// record its draws since.
+    #[cfg(feature = "diagnostics")]
+    pub fn cpu_ms(&self) -> crate::diagnostics::ViewTime {
+        crate::diagnostics::ViewTime {
+            build_ms: self.build_ms,
+            encode_ms: self.encode_ms.get(),
         }
     }
 

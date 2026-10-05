@@ -86,6 +86,7 @@ fn merged_draws_share_material_pipeline_and_mobility() {
     let population = Population::Camera {
         lod: None,
         cull: false,
+        hidden: None,
     };
     list.build(
         &mut DrawInstances::default(),
@@ -194,6 +195,7 @@ fn culled_draws_merge_only_with_the_same_sections() {
     let population = Population::Camera {
         lod: None,
         cull: true,
+        hidden: None,
     };
     list.build(
         &mut DrawInstances::default(),

@@ -49,6 +49,8 @@ pub(super) fn render(
         rendered,
         #[cfg(feature = "diagnostics")]
         probe,
+        #[cfg(feature = "diagnostics")]
+        visible_instances,
         ..
     } = renderer;
     // The surface's own targets, from a scene's first receiver on.
@@ -110,6 +112,30 @@ pub(super) fn render(
     // The camera history commits the jitter this frame applies.
     history.camera.jitter = jitter.map_or([0.; 2], |jitter| jitter.ndc);
     *rendered = Some((history, scene.id));
+    #[cfg(feature = "diagnostics")]
+    let mut visible_instances = {
+        use crate::settings::InstanceVisibility;
+        let used = effective.instance_visibility != InstanceVisibility::Off;
+        crate::stages::visible_instances::VisibleInstances::for_frame(
+            visible_instances,
+            device,
+            used,
+        )
+    };
+    // The diagnostics oracle's skipped instances: the newest observed
+    // frame's hidden ones.
+    #[cfg(feature = "diagnostics")]
+    let hidden = match (
+        effective.instance_visibility,
+        visible_instances.as_deref_mut(),
+    ) {
+        (crate::settings::InstanceVisibility::SkipHidden, Some(visible)) => {
+            Some(visible.hidden(device))
+        }
+        _ => None,
+    };
+    #[cfg(not(feature = "diagnostics"))]
+    let hidden = None;
     let values = prepare.run(
         device,
         queue,
@@ -121,6 +147,7 @@ pub(super) fn render(
         sizes.render,
         views,
         &bindings.frame,
+        hidden,
     );
     shadows.resize(device, effective.shadow_quality);
     shadows.local.prepare(
@@ -174,6 +201,18 @@ pub(super) fn render(
     shadows.encode_directional(&mut ctx);
     fog.encode(&mut ctx);
     opaque.encode(&mut ctx);
+    #[cfg(feature = "diagnostics")]
+    if effective.instance_visibility == crate::settings::InstanceVisibility::Observe
+        && let Some(visible) = visible_instances
+    {
+        visible.observe(
+            device,
+            ctx.encoder,
+            timing,
+            &targets.source_id,
+            (ctx.scene, &ctx.views.camera.list),
+        );
+    }
     #[cfg(feature = "diagnostics")]
     if let Some(probe) = probe.as_deref() {
         probe.observe(

@@ -49,8 +49,8 @@ pub struct UploadSite {
     pub writes: u64,
 }
 
-/// One build step's calls and time; the time is zero in the browser, which
-/// has no clock.
+/// One build step's calls and time; in the browser, the time is
+/// `performance.now()`'s, which the browser coarsens.
 #[cfg(any(test, feature = "diagnostics"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StepTime {
@@ -239,18 +239,73 @@ pub(crate) fn texture_init(
     device.create_texture_with_data(queue, descriptor, order, data)
 }
 
-/// Runs `work`, one `step` of building, counting its calls and, natively,
-/// its time.
+/// A moment on the diagnostics clock, which `elapsed_ms` measures from:
+/// `Instant` natively and the page's `performance.now()` in the browser,
+/// with the feature; nothing without it, where every measure is zero.
+#[derive(Clone, Copy)]
+pub(crate) struct Moment {
+    #[cfg(all(any(test, feature = "diagnostics"), not(target_arch = "wasm32")))]
+    at: std::time::Instant,
+    #[cfg(all(feature = "diagnostics", target_arch = "wasm32"))]
+    at: f64,
+}
+
+impl Moment {
+    pub fn now() -> Self {
+        Self {
+            #[cfg(all(any(test, feature = "diagnostics"), not(target_arch = "wasm32")))]
+            at: std::time::Instant::now(),
+            #[cfg(all(feature = "diagnostics", target_arch = "wasm32"))]
+            at: performance_now(),
+        }
+    }
+
+    /// Milliseconds since this moment.
+    pub fn elapsed_ms(self) -> f64 {
+        #[cfg(all(any(test, feature = "diagnostics"), not(target_arch = "wasm32")))]
+        let elapsed = self.at.elapsed().as_secs_f64() * 1e3;
+        #[cfg(all(feature = "diagnostics", target_arch = "wasm32"))]
+        let elapsed = performance_now() - self.at;
+        #[cfg(not(any(
+            all(any(test, feature = "diagnostics"), not(target_arch = "wasm32")),
+            all(feature = "diagnostics", target_arch = "wasm32")
+        )))]
+        let elapsed = {
+            let _ = self;
+            0.
+        };
+        elapsed
+    }
+}
+
+/// The page's or worker's `performance.now()`, in milliseconds; zero where
+/// the global has none.
+#[cfg(all(feature = "diagnostics", target_arch = "wasm32"))]
+fn performance_now() -> f64 {
+    use js_sys::wasm_bindgen::{JsCast, JsValue};
+    thread_local! {
+        static NOW: Option<(JsValue, js_sys::Function)> = {
+            let performance = js_sys::Reflect::get(&js_sys::global(), &"performance".into()).ok();
+            performance.and_then(|performance| {
+                let now = js_sys::Reflect::get(&performance, &"now".into()).ok()?;
+                Some((performance, now.dyn_into().ok()?))
+            })
+        };
+    }
+    NOW.with(|now| {
+        now.as_ref()
+            .and_then(|(performance, now)| now.call0(performance).ok()?.as_f64())
+            .unwrap_or(0.)
+    })
+}
+
+/// Runs `work`, one `step` of building, counting its calls and its time.
 pub(crate) fn step<T>(step: BuildStep, work: impl FnOnce() -> T) -> T {
     #[cfg(any(test, feature = "diagnostics"))]
     {
-        #[cfg(not(target_arch = "wasm32"))]
-        let started = std::time::Instant::now();
+        let started = Moment::now();
         let result = work();
-        #[cfg(not(target_arch = "wasm32"))]
-        let nanoseconds = started.elapsed().as_nanos() as u64;
-        #[cfg(target_arch = "wasm32")]
-        let nanoseconds = 0;
+        let nanoseconds = (started.elapsed_ms() * 1e6) as u64;
         COUNTERS.with_borrow_mut(|counters| {
             if !counters.steps.iter().any(|time| time.step == step) {
                 counters.steps.push(StepTime {

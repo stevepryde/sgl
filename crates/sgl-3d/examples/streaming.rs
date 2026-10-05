@@ -7,7 +7,8 @@
 //! moving instance per surface chunk that holds any. Fifty creatures walk
 //! about the camera. The render origin follows the camera, chunk-aligned.
 //!
-//! `cargo run --release -p sgl-3d --example streaming [-- RUN... | --check]`
+//! `cargo run --release -p sgl-3d --example streaming [-- RUN... [--split]
+//! [--visibility] | --check]`
 //!
 //! The game's side is modelled on a block game's: its mesher finishes up to
 //! 24 chunks a 33 ms tick, nearest the camera first, meshing and preparing
@@ -37,6 +38,14 @@
 //! update to each upload and build step, so these CPU times sit slightly
 //! above a game's without it.
 //!
+//! Each run then prints what occlusion culling could save on its route
+//! (`support/culling.rs`): the CPU time each view's draw list takes to build
+//! and record; with `--visibility`, frames alternately draw every instance,
+//! observing which of the camera's the frame drew without a pixel, and skip
+//! those hidden instances, and it prints the hidden share and each pass
+//! group's GPU time in both kinds of frame. `--split` renders the opaque
+//! stage's two-pass form instead of its fused pass.
+//!
 //! `--check` holds the camera still in the world while the render origin
 //! moves by a chunk and by 256 m, and fails unless static content shows no
 //! motion and no shadow is redrawn; then it remeshes the chunks holding
@@ -44,32 +53,26 @@
 //! static shadow layers and the one after redraws none. An abandoned frame
 //! precedes each submitted one.
 use sgl_3d::diagnostics::{Counters, DiagnosticTarget, SceneResources};
-use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3, camera};
+use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3};
 use sgl_3d::{
-    AlphaMode, Camera, DirectionalLight, DirectionalShadow, EnvironmentId, Exposure, FrameInput,
-    InstanceId, InstanceState, Light, LightId, LightShape, MaterialId, Mobility, ModelId,
+    EnvironmentId, FrameInput, InstanceId, InstanceState, LightId, MaterialId, Mobility, ModelId,
     ModelMesh, PreparedModel, Renderer, Scene, SceneError,
-    asset::{CpuMesh, Image, Material, Vertex},
-    environment::{EnvironmentMap, PmremAtlas},
-    settings::{Antialiasing, ReflectionMethod, ScreenSpaceReflections, Settings},
     timing::{FrameTime, GpuTiming},
 };
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
-use std::hash::BuildHasherDefault;
 use std::path::Path;
 use std::time::Instant;
+use voxel_world::{
+    CHUNK, ChunkSet, Chunks, Mesher, Prepared, SEA, SIZE, World, chunk_of, creature, hash,
+    settings, sky,
+};
 
-/// Maps and sets of chunks that iterate alike in every run.
-type Chunks<V> = HashMap<IVec3, V, BuildHasherDefault<DefaultHasher>>;
-type ChunkSet = HashSet<IVec3, BuildHasherDefault<DefaultHasher>>;
+#[path = "support/culling.rs"]
+mod culling;
+#[path = "support/voxel_world.rs"]
+mod voxel_world;
 
-/// A chunk's side, in metres and blocks.
-const CHUNK: i32 = 16;
-/// The water's surface: the top of block 29.
-const SEA: i32 = 30;
-const SIZE: [u32; 2] = [1920, 1080];
 /// Frames the first window may take to stream in.
 const STREAM_IN_LIMIT: usize = 2_000;
 /// The simulation's frame time: 60 frames a second.
@@ -181,276 +184,6 @@ fn runs(frames: usize) -> Vec<Run> {
     ]
 }
 
-/// A small deterministic hash.
-fn hash(mut value: u64) -> u64 {
-    value ^= value >> 33;
-    value = value.wrapping_mul(0xff51_afd7_ed55_8ccd);
-    value ^= value >> 33;
-    value = value.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-    value ^ (value >> 33)
-}
-
-fn hash3(at: IVec3, salt: u64) -> u64 {
-    hash((at.x as u32 as u64) ^ ((at.y as u32 as u64) << 21) ^ ((at.z as u32 as u64) << 42) ^ salt)
-}
-
-/// The terrain: rolling hills with ridges and rough ground, a column's top
-/// block's height. A surface chunk meshes to 300-1,400 quads.
-fn ground(x: i32, z: i32) -> i32 {
-    let rough = (i64::from(x).wrapping_mul(73_856_093) ^ i64::from(z).wrapping_mul(19_349_663))
-        .rem_euclid(7) as f64
-        / 6.;
-    let (x, z) = (f64::from(x), f64::from(z));
-    let hills = 14. * (x * 0.031).sin() * (z * 0.027).cos() + 8. * (x * 0.083 + z * 0.051).sin();
-    let ridges = 8. * ((x * 0.21).sin() * (z * 0.17).sin()).abs();
-    let fine = 5. * (x * 0.61 + 1.3 * (z * 0.37).sin()).sin() * (z * 0.53).cos();
-    (34. + hills + ridges + fine + 4. * rough).floor() as i32
-}
-
-/// The world as the game edits it: the terrain with its edited columns.
-#[derive(Default)]
-struct World {
-    /// Height changes of edited columns.
-    edits: BTreeMap<(i32, i32), i32>,
-    /// Remeshes of each chunk since it was first meshed, which shade it.
-    revisions: Chunks<u32>,
-}
-
-impl World {
-    fn height(&self, x: i32, z: i32) -> i32 {
-        ground(x, z) + self.edits.get(&(x, z)).copied().unwrap_or(0)
-    }
-}
-
-/// The atlas's tiles.
-#[derive(Clone, Copy)]
-enum Block {
-    Grass,
-    Dirt,
-    Stone,
-    Sand,
-}
-
-fn empty(material: usize) -> CpuMesh {
-    CpuMesh {
-        vertices: Vec::new(),
-        indices: Vec::new(),
-        material,
-        deformation: Default::default(),
-    }
-}
-
-/// A quad of a mesh: its corner, the two edges from it and the vertex
-/// colour's shade, its texture coordinates spanning 0 to 1.
-fn quad(mesh: &mut CpuMesh, corner: Vec3, u: Vec3, v: Vec3, shade: f32) {
-    let start = mesh.vertices.len() as u32;
-    let normal = u.cross(v).normalize();
-    for [s, t] in [[0., 0.], [1., 0.], [1., 1.], [0., 1.]] {
-        mesh.vertices.push(Vertex {
-            tangent: u.normalize().extend(1.).to_array(),
-            lightmap_bounds: [0., 0., 1., 1.],
-            lightmap_uv: [0.; 2],
-            position: (corner + u * s + v * t).to_array(),
-            normal: normal.to_array(),
-            uv: [s, t],
-            color: [shade, shade, shade, 1.],
-        });
-    }
-    mesh.indices
-        .extend([0, 1, 2, 0, 2, 3].map(|index| start + index));
-}
-
-/// One mesh of `meshes`, one per block, with each block's texture
-/// coordinates moved into its tile of the atlas.
-fn atlas_mesh(meshes: Vec<CpuMesh>) -> CpuMesh {
-    let mut merged = empty(0);
-    for mesh in meshes {
-        let tile = mesh.material as f32;
-        let start = merged.vertices.len() as u32;
-        merged
-            .vertices
-            .extend(mesh.vertices.into_iter().map(|vertex| Vertex {
-                uv: [(tile + vertex.uv[0]) * 0.25, vertex.uv[1]],
-                ..vertex
-            }));
-        merged
-            .indices
-            .extend(mesh.indices.into_iter().map(|index| start + index));
-    }
-    merged
-}
-
-/// Chunk `chunk`'s meshes in its own space: its opaque blocks' exposed
-/// faces, one mesh per block (each mesh's material is its block), and its
-/// water's surface, any of them empty. `seconds` moves the water's normals.
-fn mesh_chunk(world: &World, chunk: IVec3, seconds: f32) -> (Vec<CpuMesh>, CpuMesh) {
-    let mut blocks: Vec<CpuMesh> = (0..4).map(empty).collect();
-    let mut water = empty(0);
-    let base = chunk * CHUNK;
-    let shade = 1. - 0.04 * (world.revisions.get(&chunk).copied().unwrap_or(0) % 4) as f32;
-    let mut surface = false;
-    for local_z in 0..CHUNK {
-        for local_x in 0..CHUNK {
-            let (x, z) = (base.x + local_x, base.z + local_z);
-            let top = world.height(x, z);
-            let in_chunk = |y: i32| y >= base.y && y < base.y + CHUNK;
-            let at = |y: i32| Vec3::new(local_x as f32, (y - base.y) as f32, local_z as f32);
-            if in_chunk(top) {
-                surface = true;
-                let tile = if top < SEA + 1 {
-                    Block::Sand
-                } else {
-                    Block::Grass
-                };
-                quad(
-                    &mut blocks[tile as usize],
-                    at(top) + Vec3::new(0., 1., 1.),
-                    Vec3::X,
-                    Vec3::NEG_Z,
-                    shade,
-                );
-            }
-            // Each side face down to the neighbouring column's top.
-            for (dx, dz, corner, u) in [
-                (1, 0, Vec3::new(1., 0., 1.), Vec3::NEG_Z),
-                (-1, 0, Vec3::new(0., 0., 0.), Vec3::Z),
-                (0, 1, Vec3::new(0., 0., 1.), Vec3::X),
-                (0, -1, Vec3::new(1., 0., 0.), Vec3::NEG_X),
-            ] {
-                let neighbour = world.height(x + dx, z + dz);
-                for y in (neighbour + 1).max(base.y)..=top.min(base.y + CHUNK - 1) {
-                    // A block's kind is the terrain's: stone below the
-                    // ground's top four, dirt above and wherever placed.
-                    let tile = if ground(x, z) - y > 3 {
-                        Block::Stone
-                    } else {
-                        Block::Dirt
-                    };
-                    quad(
-                        &mut blocks[tile as usize],
-                        at(y) + corner,
-                        u,
-                        Vec3::Y,
-                        shade * 0.75,
-                    );
-                }
-            }
-            if top < SEA && in_chunk(SEA - 1) {
-                // A water surface over the column; its normal sways.
-                let phase = 0.4 * x as f32 + 0.3 * z as f32 - 2. * seconds;
-                let tilt = Vec3::new(0.08 * phase.sin(), 1., 0.06 * phase.cos()).normalize();
-                let start = water.vertices.len() as u32;
-                for [s, t] in [[0., 0.], [1., 0.], [1., 1.], [0., 1.]] {
-                    water.vertices.push(Vertex {
-                        tangent: [1., 0., 0., 1.],
-                        lightmap_bounds: [0., 0., 1., 1.],
-                        lightmap_uv: [0.; 2],
-                        position: (at(SEA - 1) + Vec3::new(s, 0.9, 1. - t)).to_array(),
-                        normal: tilt.to_array(),
-                        uv: [s, t],
-                        color: [1.; 4],
-                    });
-                }
-                water
-                    .indices
-                    .extend([0, 1, 2, 0, 2, 3].map(|index| start + index));
-            }
-        }
-    }
-    if !surface && base.y + CHUNK <= ground(base.x, base.z) {
-        // Underground: a cave's few faces in some chunks.
-        let faces = match hash3(chunk, 7) % 4 {
-            0 => (hash3(chunk, 11) % 51) as usize,
-            _ => 0,
-        };
-        for face in 0..faces {
-            let cell = hash3(chunk, face as u64);
-            let at = Vec3::new(
-                (cell % 16) as f32,
-                ((cell >> 8) % 16) as f32,
-                ((cell >> 16) % 16) as f32,
-            );
-            quad(
-                &mut blocks[Block::Stone as usize],
-                at,
-                Vec3::X,
-                Vec3::Z,
-                0.4,
-            );
-        }
-    }
-    (blocks, water)
-}
-
-/// Each block's colour: grass, dirt, stone and sand.
-const COLOURS: [[u8; 3]; 4] = [
-    [96, 160, 64],
-    [134, 96, 67],
-    [128, 128, 132],
-    [218, 204, 150],
-];
-
-/// A speckled texel of block `tile`.
-fn texel(tile: usize, x: u32, y: u32) -> image::Rgba<u8> {
-    let speck = (hash(u64::from(x * 64 + y)) % 24) as u8;
-    let [r, g, b] = COLOURS[tile];
-    image::Rgba([r - speck.min(r), g - speck.min(g), b - speck.min(b), 255])
-}
-
-/// The atlas: a row of the blocks' 16-texel tiles.
-fn atlas() -> Image {
-    Image::Rgba8(image::RgbaImage::from_fn(64, 16, |x, y| {
-        texel((x / 16) as usize, x % 16, y)
-    }))
-}
-
-/// Block `tile`'s own texture.
-fn tile_texture(tile: usize) -> Image {
-    Image::Rgba8(image::RgbaImage::from_fn(16, 16, |x, y| texel(tile, x, y)))
-}
-
-/// The sky: a constant blue radiance, as the water example's, which draws
-/// the backdrop, lights what the sun does not reach and backs reflections.
-fn sky() -> EnvironmentMap {
-    let radiance = [0x3800u16, 0x3933, 0x3b33, 0x3c00];
-    EnvironmentMap {
-        panorama: image::RgbaImage::from_pixel(4, 2, image::Rgba([150, 175, 220, 255])),
-        filtered: PmremAtlas {
-            width: 336,
-            height: 64,
-            rgba16: radiance
-                .into_iter()
-                .flat_map(u16::to_le_bytes)
-                .cycle()
-                .take(336 * 64 * 8)
-                .collect(),
-        },
-    }
-}
-
-/// A creature's box, about a metre and a half tall.
-fn creature() -> CpuMesh {
-    let mut mesh = CpuMesh {
-        vertices: Vec::new(),
-        indices: Vec::new(),
-        material: 0,
-        deformation: Default::default(),
-    };
-    let size = Vec3::new(0.6, 1.5, 0.6);
-    for (normal, u, v) in [
-        (Vec3::X, Vec3::NEG_Z, Vec3::Y),
-        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
-        (Vec3::Y, Vec3::X, Vec3::NEG_Z),
-        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
-        (Vec3::Z, Vec3::X, Vec3::Y),
-        (Vec3::NEG_Z, Vec3::NEG_X, Vec3::Y),
-    ] {
-        let corner = (normal - u - v) * 0.5 * size + Vec3::Y * 0.75;
-        quad(&mut mesh, corner, u * size, v * size, 0.9);
-    }
-    mesh
-}
-
 /// A chunk in the scene.
 #[derive(Default)]
 struct Resident {
@@ -469,118 +202,45 @@ struct Meshed {
     prepared: Prepared,
 }
 
-/// What the game's mesher prepares for a chunk: its terrain's model, as the
-/// run gives it, and its water's, each with its triangles (none for an
-/// empty one), or None when it was not asked for; its terrain's quads; and
-/// the bytes of vertices and indices it gives the scene.
-struct Prepared {
-    terrain: Option<(PreparedModel, usize)>,
-    water: Option<(PreparedModel, usize)>,
-    quads: usize,
-    bytes: usize,
-}
-
-/// What the game's mesher reads: the world as it stands, and the run's
-/// materials. Worker threads share it.
-struct Mesher<'a> {
-    world: &'a World,
-    seconds: f32,
-    per_block: bool,
-    terrain: &'a [MaterialId],
-    water: MaterialId,
-}
-
 /// The game's worker threads, which mesh and prepare chunks off the thread
 /// that edits the scene (S3D-1: the game schedules them).
 const WORKERS: usize = 4;
 
-impl Mesher<'_> {
-    /// Meshes chunk `chunk` and prepares the parts `[terrain, water]` asks
-    /// for.
-    fn prepare(&self, chunk: IVec3, [terrain, water]: [bool; 2]) -> Result<Prepared, SceneError> {
-        let (blocks, waves) = mesh_chunk(self.world, chunk, self.seconds);
-        let terrain_meshes = if self.per_block {
-            blocks
-        } else {
-            vec![atlas_mesh(blocks)]
-        };
-        let mut prepared = Prepared {
-            terrain: None,
-            water: None,
-            quads: quads(&terrain_meshes),
-            bytes: 0,
-        };
-        for (meshes, wanted, water) in
-            [(terrain_meshes, terrain, false), (vec![waves], water, true)]
-        {
-            if !wanted {
-                continue;
-            }
-            let meshes: Vec<ModelMesh> = meshes
-                .into_iter()
-                .filter(|mesh| !mesh.indices.is_empty())
-                .map(|mesh| ModelMesh {
-                    material: if water {
-                        self.water
-                    } else {
-                        self.terrain[mesh.material]
-                    },
-                    vertices: mesh.vertices,
-                    indices: mesh.indices,
-                    deformation: Default::default(),
-                })
-                .collect();
-            prepared.bytes += meshes
-                .iter()
-                .map(|mesh| mesh.vertices.len() * size_of::<Vertex>() + mesh.indices.len() * 4)
-                .sum::<usize>();
-            let triangles = meshes.iter().map(|mesh| mesh.indices.len() / 3).sum();
-            let model = Some((PreparedModel::new(meshes)?, triangles));
-            if water {
-                prepared.water = model;
-            } else {
-                prepared.terrain = model;
-            }
-        }
-        Ok(prepared)
+/// Prepares `jobs` with `mesher` on the game's worker threads and returns
+/// them in order, with what the library counted on the workers: counters
+/// are each thread's own. A game keeps a worker pool and takes what it
+/// prepared on a later frame; the example waits within the frame so each
+/// frame's figures hold its own preparation.
+fn prepare_all(
+    mesher: &Mesher<'_>,
+    jobs: &[(IVec3, [bool; 2])],
+) -> Result<(Vec<Prepared>, Vec<Counters>), SceneError> {
+    if jobs.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
     }
-
-    /// Prepares `jobs` on the game's worker threads and returns them in
-    /// order, with what the library counted on the workers: counters are
-    /// each thread's own. A game keeps a worker pool and takes what it
-    /// prepared on a later frame; the example waits within the frame so
-    /// each frame's figures hold its own preparation.
-    fn prepare_all(
-        &self,
-        jobs: &[(IVec3, [bool; 2])],
-    ) -> Result<(Vec<Prepared>, Vec<Counters>), SceneError> {
-        if jobs.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
-        }
-        std::thread::scope(|scope| {
-            let workers: Vec<_> = jobs
-                .chunks(jobs.len().div_ceil(WORKERS))
-                .map(|part| {
-                    scope.spawn(move || {
-                        let before = sgl_3d::diagnostics::counters();
-                        let prepared: Result<Vec<_>, _> = part
-                            .iter()
-                            .map(|&(chunk, which)| self.prepare(chunk, which))
-                            .collect();
-                        (prepared, sgl_3d::diagnostics::counters().since(&before))
-                    })
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = jobs
+            .chunks(jobs.len().div_ceil(WORKERS))
+            .map(|part| {
+                scope.spawn(move || {
+                    let before = sgl_3d::diagnostics::counters();
+                    let prepared: Result<Vec<_>, _> = part
+                        .iter()
+                        .map(|&(chunk, which)| mesher.prepare(chunk, which))
+                        .collect();
+                    (prepared, sgl_3d::diagnostics::counters().since(&before))
                 })
-                .collect();
-            let mut prepared = Vec::with_capacity(jobs.len());
-            let mut counted = Vec::with_capacity(workers.len());
-            for worker in workers {
-                let (part, steps) = worker.join().expect("a worker finishes");
-                prepared.extend(part?);
-                counted.push(steps);
-            }
-            Ok((prepared, counted))
-        })
-    }
+            })
+            .collect();
+        let mut prepared = Vec::with_capacity(jobs.len());
+        let mut counted = Vec::with_capacity(workers.len());
+        for worker in workers {
+            let (part, steps) = worker.join().expect("a worker finishes");
+            prepared.extend(part?);
+            counted.push(steps);
+        }
+        Ok((prepared, counted))
+    })
 }
 
 /// CPU times of scene operations of one kind, in microseconds, by size, and
@@ -851,48 +511,7 @@ impl Game {
         scene: &mut Scene,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
     ) -> Result<Self, Box<dyn Error>> {
-        let block = |name: &str, texture| Material {
-            name: name.into(),
-            base_texture: Some(texture),
-            roughness: 0.9,
-            ..Default::default()
-        };
-        let (blocks, images) = if run.per_block {
-            (
-                ["grass", "dirt", "stone", "sand"]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(tile, name)| block(name, tile))
-                    .collect(),
-                (0..4).map(tile_texture).collect(),
-            )
-        } else {
-            (vec![block("atlas", 0)], vec![atlas()])
-        };
-        let terrain = scene.add_materials(device, queue, &blocks, &images)?;
-        let materials = scene.add_materials(
-            device,
-            queue,
-            &[
-                Material {
-                    name: "water".into(),
-                    base: [0.05, 0.12, 0.16, 0.6],
-                    roughness: 0.05,
-                    alpha: AlphaMode::Blend {
-                        receives_screen_space_reflections: true,
-                    },
-                    casts_directional_shadow: false,
-                    ..Default::default()
-                },
-                Material {
-                    name: "creature".into(),
-                    base: [0.7, 0.35, 0.25, 1.],
-                    roughness: 0.6,
-                    ..Default::default()
-                },
-            ],
-            &[],
-        )?;
+        let materials = voxel_world::add_materials(scene, (device, queue), run.per_block)?;
         let creature = creature();
         let creature = scene.add_model(
             device,
@@ -900,7 +519,7 @@ impl Game {
             PreparedModel::new(vec![ModelMesh {
                 vertices: creature.vertices,
                 indices: creature.indices,
-                material: materials[1],
+                material: materials.creature,
                 deformation: Default::default(),
             }])?,
         )?;
@@ -912,8 +531,8 @@ impl Game {
             requested: VecDeque::new(),
             meshed: VecDeque::new(),
             tick: 0.,
-            terrain,
-            water: materials[0],
+            terrain: materials.terrain,
+            water: materials.water,
             creatures: Vec::new(),
             creature,
             sky,
@@ -938,23 +557,16 @@ impl Game {
         Ok(game)
     }
 
-    /// Puts the eye at `x` along the line it travels, at a walker's height
-    /// over the ground or, faster than 10 m/s, a flyer's.
+    /// Puts the eye at `x` along the line it travels.
     fn walk(&mut self, x: f64, speed: f64) {
-        let ground = f64::from(self.world.height(x.floor() as i32, 0));
-        self.eye = DVec3::new(x, ground + if speed > 10. { 24. } else { 2.6 }, 0.5);
-    }
-
-    /// The chunk holding world position `at`.
-    fn chunk_of(at: DVec3) -> IVec3 {
-        (at / f64::from(CHUNK)).floor().as_ivec3()
+        self.eye = voxel_world::eye(&self.world, x, speed);
     }
 
     /// The render origin for an eye at `eye`: its chunk's corner, rounded
     /// down to the origin cell along x and z.
     fn origin_for(&self, eye: DVec3) -> IVec3 {
         let cell = self.run.origin_cell * CHUNK;
-        let chunk = Self::chunk_of(eye) * CHUNK;
+        let chunk = chunk_of(eye) * CHUNK;
         IVec3::new(
             chunk.x.div_euclid(cell) * cell,
             0,
@@ -969,18 +581,13 @@ impl Game {
 
     /// Creature `index`'s pose: walking circles about the eye.
     fn creature_pose(&self, index: usize) -> Mat4 {
-        let angle = self.seconds * 0.3 + index as f64 * 0.7;
-        let radius = 6. + (index % 10) as f64 * 3.;
-        let x = self.eye.x + radius * angle.cos();
-        let z = self.eye.z + radius * angle.sin();
-        let y = f64::from(self.world.height(x.floor() as i32, z.floor() as i32) + 1);
-        Mat4::from_translation(self.render(DVec3::new(x, y, z)))
-            * Mat4::from_rotation_y(-angle as f32)
+        let place = voxel_world::creature_place(&self.world, self.eye, self.seconds, index);
+        voxel_world::creature_pose(place, self.origin.as_dvec3())
     }
 
     /// The chunks streamed about the eye's, nearest first.
     fn window(&self) -> Vec<IVec3> {
-        let centre = Self::chunk_of(self.eye);
+        let centre = chunk_of(self.eye);
         let [across, up] = self.run.radius;
         let mut chunks = Vec::new();
         for dy in -up..=up {
@@ -1005,7 +612,7 @@ impl Game {
             terrain: &self.terrain,
             water: self.water,
         };
-        let (prepared, counted) = mesher.prepare_all(jobs)?;
+        let (prepared, counted) = prepare_all(&mesher, jobs)?;
         self.preparing_ms += started.elapsed().as_secs_f64() * 1e3;
         for steps in counted.iter().flat_map(|counted| &counted.steps) {
             let total = self
@@ -1133,15 +740,7 @@ impl Game {
         shadowed: bool,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
     ) -> Result<LightId, Box<dyn Error>> {
-        let light = Light {
-            position: self.render(at.as_dvec3() + DVec3::new(0.5, 1., 0.5)),
-            shape: LightShape::Point,
-            color: [1., 0.7, 0.4],
-            intensity: 20.,
-            range: 10.,
-            casts_shadow: shadowed,
-            ..Default::default()
-        };
+        let light = voxel_world::torch(at, shadowed, self.origin.as_dvec3());
         Ok(self
             .measured
             .operations
@@ -1156,22 +755,11 @@ impl Game {
         chunk: IVec3,
         gpu: (&wgpu::Device, &wgpu::Queue),
     ) -> Result<(Vec<LightId>, bool), Box<dyn Error>> {
-        let base = chunk * CHUNK;
         let mut lights = Vec::new();
         let mut any_shadowed = false;
-        for torch in 0..self.run.torches {
-            let roll = hash3(chunk, 3 + u64::from(torch));
-            let (x, z) = (
-                base.x + ((roll >> 8) % CHUNK as u64) as i32,
-                base.z + ((roll >> 16) % CHUNK as u64) as i32,
-            );
-            let top = self.world.height(x, z);
-            if top < base.y || top >= base.y + CHUNK {
-                continue;
-            }
-            let shadowed = (roll >> 24).is_multiple_of(8);
+        for (at, shadowed) in voxel_world::torches(&self.world, chunk, self.run.torches) {
             any_shadowed |= shadowed;
-            lights.push(self.torch(scene, IVec3::new(x, top + 1, z), shadowed, gpu)?);
+            lights.push(self.torch(scene, at, shadowed, gpu)?);
         }
         Ok((lights, any_shadowed))
     }
@@ -1302,7 +890,7 @@ impl Game {
         frame: usize,
         gpu: (&wgpu::Device, &wgpu::Queue),
     ) -> Result<(), Box<dyn Error>> {
-        let centre = Self::chunk_of(self.eye);
+        let centre = chunk_of(self.eye);
         let near: Vec<IVec3> = self
             .resident
             .iter()
@@ -1410,56 +998,9 @@ impl Game {
         Ok(())
     }
 
-    /// The frame's camera, looking ahead along +x and a little down.
-    fn camera(&self) -> Camera {
-        let eye = self.render(self.eye);
-        Camera {
-            eye,
-            view: camera::rh::view::look_to_mat4(eye, Vec3::new(1., -0.25, 0.2), Vec3::Y),
-            projection: sgl_3d::perspective(
-                70f32.to_radians(),
-                SIZE[0] as f32 / SIZE[1] as f32,
-                0.1,
-            ),
-        }
-    }
-
     fn input(&self) -> FrameInput {
-        let mut input = FrameInput::new(self.camera());
-        input.elapsed_seconds = self.seconds;
-        input.environment = Some(self.sky);
-        input.exposure = Exposure {
-            stops: 0.,
-            automatic: None,
-        };
-        input.directional_lights[0] = Some(DirectionalLight {
-            direction: Vec3::new(-0.4, -1., -0.3),
-            color: [1., 0.95, 0.85],
-            illuminance: 3.,
-            shadow: Some(DirectionalShadow {
-                distance: self.run.shadow_distance,
-                cascades: 4,
-            }),
-            ..Default::default()
-        });
-        input
-    }
-}
-
-/// The quads of `meshes`.
-fn quads(meshes: &[CpuMesh]) -> usize {
-    meshes.iter().map(|mesh| mesh.indices.len() / 6).sum()
-}
-
-fn settings() -> Settings {
-    Settings {
-        scene_resolution: sgl_3d::settings::SceneResolution::Full,
-        atmosphere: false,
-        antialiasing: Antialiasing::Taa,
-        screen_space_reflections: ScreenSpaceReflections::Full,
-        reflection_method: ReflectionMethod::Crystal,
-        world_space_reflections: true,
-        ..Settings::default()
+        let camera = voxel_world::camera(self.render(self.eye));
+        voxel_world::input(camera, self.seconds, self.sky, self.run.shadow_distance)
     }
 }
 
@@ -1489,15 +1030,17 @@ fn streamed_in(game: &Game) -> bool {
     !game.resident.is_empty() && game.requested.is_empty() && game.meshed.is_empty()
 }
 
-/// Renders `run`: streams its first window in, then measures `run.frames`
-/// frames and writes the last to `directory`.
+/// Renders `run` as `options` choose: streams its first window in, then
+/// measures `run.frames` frames and writes the last to `directory`.
 fn render(
     run: &Run,
     gpu: (&wgpu::Device, &wgpu::Queue),
     directory: &Path,
-) -> Result<Game, Box<dyn Error>> {
+    options: culling::Options,
+) -> Result<(Game, culling::Culling), Box<dyn Error>> {
     let (device, queue) = gpu;
-    let settings = settings();
+    let mut settings = settings();
+    let mut culling = culling::Culling::new(options);
     let mut scene = Scene::new(device, queue);
     let mut game = Game::new(run, &mut scene, gpu)?;
     let (texture, output) = output(device);
@@ -1550,8 +1093,10 @@ fn render(
         let preparing = std::mem::take(&mut game.preparing_ms);
         let mut input = game.input();
         input.camera_cut = index == 0;
+        options.apply(&mut settings, index);
         if let Some(timing) = &mut timing {
             for done in timing.begin_frame(device, queue) {
+                culling.gpu(&done);
                 game.measured.gpu(done);
             }
         }
@@ -1567,6 +1112,7 @@ fn render(
             &output,
             timing.as_ref(),
         );
+        let rendered = started.elapsed().as_secs_f64() * 1e3;
         let commands = encoder.finish();
         let recording = started.elapsed().as_secs_f64() * 1e3;
         let submission = queue.submit([commands]);
@@ -1580,6 +1126,12 @@ fn render(
             });
         }
         renderer.finish_frame(&mut scene);
+        culling.frame(
+            (&mut renderer, device),
+            index,
+            step.is_some(),
+            (rendered, recording - rendered),
+        );
         if step.is_some() {
             let frame = sgl_3d::diagnostics::counters().since(&before);
             let m = &mut game.measured;
@@ -1611,10 +1163,13 @@ fn render(
         for _ in 0..3 {
             let _ = device.poll(wgpu::PollType::wait_indefinitely());
             for done in timing.begin_frame(device, queue) {
+                culling.gpu(&done);
                 game.measured.gpu(done);
             }
         }
     }
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    culling.take_visibility(&mut renderer, device);
     game.measured.lights = game.resident.values().map(|r| r.lights.len()).sum();
     let pixels = sgl_3d::diagnostics::read(device, queue, &texture, 4);
     image::save_buffer(
@@ -1624,7 +1179,7 @@ fn render(
         SIZE[1],
         image::ColorType::Rgba8,
     )?;
-    Ok(game)
+    Ok((game, culling))
 }
 
 /// The largest motion, in UV, the last frame's motion target holds.
@@ -1768,11 +1323,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut frames = 600;
     let mut names = Vec::new();
     let mut check_only = false;
+    let mut options = culling::Options::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--frames" => frames = args.next().ok_or("--frames requires a count")?.parse()?,
             "--check" => check_only = true,
+            option if options.take(option) => {}
             name => names.push(name.to_owned()),
         }
     }
@@ -1814,8 +1371,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         directory.display()
     );
     for run in chosen {
-        let game = render(run, gpu, &directory)?;
+        let (game, culling) = render(run, gpu, &directory, options)?;
         game.measured.report(run);
+        print!("{}", culling.report());
     }
     Ok(())
 }

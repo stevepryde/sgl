@@ -113,3 +113,53 @@ fn diagnostics_switch_layers_between_frames_and_return_probe_reports() {
     assert_eq!(reports[0]["lit_scene"]["observed"], true);
     assert!(renderer.take_frame_probe_reports(&device).is_empty());
 }
+
+// Plausible defect: a probed frame abandoned before `finish_frame` leaves its
+// readback pending, and the next submitted frame, which probes nothing, maps
+// it though its copy never ran: a report of a frame that was never
+// submitted. No probed frame was submitted, so nothing is reported.
+#[test]
+fn an_abandoned_probed_frame_reports_nothing() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, test_support::cube());
+    let input = FrameInput::new(Camera {
+        view: Mat4::from_translation(Vec3::new(0., 0., -3.)),
+        projection: perspective(1., 1., 0.1),
+        eye: Vec3::new(0., 0., 3.),
+    });
+    let mut settings = Settings {
+        antialiasing: Antialiasing::Off,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let output = crate::view::targets::target(
+        &device,
+        "frame output",
+        SIZE,
+        crate::shading::gbuffer::COLOR,
+    );
+    for probed in [true, false] {
+        settings.diagnostics.frame_probe = probed;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        if !probed {
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+        }
+    }
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let reports = renderer.take_frame_probe_reports(&device);
+    assert!(reports.is_empty(), "{reports:?}");
+}

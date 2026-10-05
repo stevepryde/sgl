@@ -14,7 +14,7 @@ description = "Caller-driven 3D rendering for SGL games, native and in the brows
 
 [features]
 default = []
-diagnostics = []
+diagnostics = ["dep:js-sys"]
 
 [dependencies]
 # Decodes a BC7 material image's level 0 for the scene's ray source.
@@ -36,6 +36,10 @@ sp-fidelity.workspace = true
 sp-fidelity-wgpu.workspace = true
 wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan", "gles", "webgpu"] }
 
+# The diagnostics clock in the browser: the page's `performance.now()`.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { workspace = true, optional = true }
+
 [dev-dependencies]
 # The layout tests parse and validate the composed WGSL.
 naga = { workspace = true, features = ["wgsl-in"] }
@@ -49,9 +53,15 @@ sgl-3d = { path = ".", features = ["diagnostics"] }
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 console_error_panic_hook.workspace = true
 futures.workspace = true
+js-sys.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 
 [[example]]
 name = "browser_smoke"
+crate-type = ["cdylib"]
+
+# The browser lane builds it; `bun scripts/tasks.ts measure-browser` runs it.
+[[example]]
+name = "browser_streaming"
 crate-type = ["cdylib"]

@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SGL3D browser streaming measurement</title>
+<link rel="icon" href="data:,">
+<pre id="report">measuring…</pre>
+<script type="module">
+  import init, { measure } from "./browser_streaming.js";
+  const out = document.getElementById("report");
+  const query = new URLSearchParams(location.search);
+  const frames = Number(query.get("frames") ?? 600);
+  const across = Number(query.get("across") ?? 4);
+  const up = Number(query.get("up") ?? 2);
+  try {
+    await init();
+    const report = await measure(frames, across, up);
+    out.textContent = report;
+    window.__sglReport = report;
+  } catch (error) {
+    out.textContent = `FAIL init: ${error}`;
+    window.__sglReport = `FAIL init: ${error}\n`;
+  }
+</script>

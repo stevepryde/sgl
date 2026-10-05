@@ -5,7 +5,7 @@
 //! renderer lends them (`view::frame::FrameContext`) and the values it
 //! passes between them; no stage uses another. Two modules are not in the
 //! frame's order: a probe capture's GGX prefilter (`probe_prefilter`) and
-//! the diagnostics frame probe (`frame_probe`).
+//! the diagnostics observations (`frame_probe`, `visible_instances`).
 pub(crate) mod antialiasing;
 pub(crate) mod deform;
 pub(crate) mod dynamic_gi;
@@ -21,3 +21,5 @@ pub(crate) mod probe_prefilter;
 pub(crate) mod reflections;
 pub(crate) mod shadows;
 pub(crate) mod transparent;
+#[cfg(feature = "diagnostics")]
+pub(crate) mod visible_instances;
