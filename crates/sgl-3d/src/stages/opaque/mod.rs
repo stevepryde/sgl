@@ -133,13 +133,10 @@ impl Opaque {
                 ..Default::default()
             });
             pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-            ctx.views.camera.list.draw(
-                ctx.scene,
-                ctx.pipelines,
-                &ctx.views.instances,
-                &mut pass,
-                GeometryPass::Fused,
-            );
+            ctx.views
+                .camera
+                .list
+                .draw(ctx.scene, ctx.pipelines, &mut pass, GeometryPass::Fused);
         }
         ctx.views.camera.recorded_since(started);
     }
@@ -173,13 +170,10 @@ impl Opaque {
                 ..Default::default()
             });
             pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-            ctx.views.camera.list.draw(
-                ctx.scene,
-                ctx.pipelines,
-                &ctx.views.instances,
-                &mut pass,
-                GeometryPass::GBuffer,
-            );
+            ctx.views
+                .camera
+                .list
+                .draw(ctx.scene, ctx.pipelines, &mut pass, GeometryPass::GBuffer);
         }
         ctx.views.camera.recorded_since(started);
         if !anisotropy_inline {
@@ -202,7 +196,6 @@ impl Opaque {
             ctx.views.camera.list.draw(
                 ctx.scene,
                 ctx.pipelines,
-                &ctx.views.instances,
                 &mut pass,
                 GeometryPass::GBufferAnisotropy,
             );
@@ -261,13 +254,10 @@ impl Opaque {
             ..Default::default()
         });
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-        ctx.views.camera.list.draw(
-            ctx.scene,
-            ctx.pipelines,
-            &ctx.views.instances,
-            &mut pass,
-            GeometryPass::Lighting,
-        );
+        ctx.views
+            .camera
+            .list
+            .draw(ctx.scene, ctx.pipelines, &mut pass, GeometryPass::Lighting);
         drop(pass);
         ctx.views.camera.recorded_since(started);
     }
@@ -302,10 +292,17 @@ impl Opaque {
         self.encode_forward(&mut pass, scene, pipelines, list, unlit, lit);
     }
 
+    /// The sky under `unlit`, in the caller's pass, as a probe capture face
+    /// draws it first.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn draw_sky(&self, pass: &mut wgpu::RenderPass<'_>, unlit: &wgpu::BindGroup) {
+        self.sky.draw(pass, unlit);
+    }
+
     /// A probe capture face: the sky, then `list`'s lit colour and motion
     /// with depth (`GeometryPass::Forward`) from `drawn`, in the caller's
     /// pass.
-    pub fn encode_forward(
+    fn encode_forward(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         scene: &crate::Scene,

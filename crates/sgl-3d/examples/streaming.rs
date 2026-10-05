@@ -8,7 +8,7 @@
 //! about the camera. The render origin follows the camera, chunk-aligned.
 //!
 //! `cargo run --release -p sgl-3d --example streaming [-- RUN... [--split]
-//! [--visibility] [--hardware-ray-tracing] | --check [--hardware-ray-tracing]]`
+//! [--hardware-ray-tracing] | --check [--hardware-ray-tracing]]`
 //!
 //! The game's side is modelled on a block game's: its mesher finishes up to
 //! 24 chunks a 33 ms tick, nearest the camera first, meshing and preparing
@@ -45,13 +45,10 @@
 //! it builds the scene's acceleration structures; without the flag the runs
 //! are as before it existed, comparable with earlier measurements.
 //!
-//! Each run then prints what occlusion culling could save on its route
-//! (`support/culling.rs`): the CPU time each view's draw list takes to build
-//! and record; with `--visibility`, frames alternately draw every instance,
-//! observing which of the camera's the frame drew without a pixel, and skip
-//! those hidden instances, and it prints the hidden share and each pass
-//! group's GPU time in both kinds of frame. `--split` renders the opaque
-//! stage's two-pass form instead of its fused pass.
+//! Each run then prints what its views' draw lists cost on its route
+//! (`support/culling.rs`): the CPU time each GPU-built view's draw list
+//! takes to build and record, and each pass group's GPU time. `--split`
+//! renders the opaque stage's two-pass form instead of its fused pass.
 //!
 //! `--check` holds the camera still in the world while the render origin
 //! moves by a chunk and by 256 m, and fails unless static content shows no
@@ -462,6 +459,10 @@ impl Measured {
             row("geometry buffers", |r| r.geometry_buffers);
             row("BLASes", |r| r.blases);
             row("BLAS triangles", |r| r.blas_triangles);
+            row("draw candidate bytes", |r| r.draw_candidates);
+            row("draw set bytes", |r| r.draw_sets);
+            row("level chain bytes", |r| r.level_chains);
+            row("cluster list bytes a GPU-built view", |r| r.cluster_list);
             let quads = self.quads.last().copied().unwrap_or(0.).max(1.);
             println!(
                 "  bytes a resident quad: ray source {:.0}, geometry {:.0}",
@@ -1123,7 +1124,7 @@ fn render(
         let preparing = std::mem::take(&mut game.preparing_ms);
         let mut input = game.input();
         input.camera_cut = index == 0;
-        options.apply(&mut settings, index);
+        options.apply(&mut settings);
         if let Some(timing) = &mut timing {
             for done in timing.begin_frame(device, queue) {
                 culling.gpu(&done);
@@ -1157,7 +1158,7 @@ fn render(
         }
         renderer.finish_frame(&mut scene);
         culling.frame(
-            (&mut renderer, device),
+            &renderer,
             index,
             step.is_some(),
             (rendered, recording - rendered),
@@ -1172,7 +1173,10 @@ fn render(
             m.uploaded_bytes.push(frame.uploaded_bytes() as f64);
             m.buffers_created.push(frame.buffers_created as f64);
             m.draws.push(renderer.diagnostic_draws());
-            m.triangles.push(renderer.geometry_stats().total().1 as f64);
+            // The newest frame read back so far: a few frames before this.
+            if let Some(stats) = renderer.geometry_stats(device) {
+                m.triangles.push(stats.total().1 as f64);
+            }
             let shadows = renderer.local_shadow_stats();
             m.faces.push(shadows.faces_drawn as f64);
             m.layers.push(shadows.layers_drawn as f64);
@@ -1199,8 +1203,6 @@ fn render(
             }
         }
     }
-    let _ = device.poll(wgpu::PollType::wait_indefinitely());
-    culling.take_visibility(&mut renderer, device);
     game.measured.lights = game.resident.values().map(|r| r.lights.len()).sum();
     let pixels = sgl_3d::diagnostics::read(device, queue, &texture, 4);
     image::save_buffer(

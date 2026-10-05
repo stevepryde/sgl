@@ -64,6 +64,11 @@ pub enum SceneError {
     InvalidNormalLayers,
     /// A level of detail's error is not finite and nonnegative.
     InvalidLod,
+    /// A mesh is given more alternatives than `lod::MAX_MESH_LODS`.
+    TooManyLods,
+    /// A mesh holds more than 65,536 sections of 128 triangles (8,388,608
+    /// triangles), the most a GPU-built draw list culls a mesh by.
+    TooManySections,
     /// A level of detail names a mesh of the model it details, which draws
     /// all its meshes.
     LodInSameModel,
@@ -182,6 +187,8 @@ impl std::fmt::Display for SceneError {
                 "normal layers need finite velocities and strengths, positive finite scales, at most 2^24 repeats per hour and a normal map that repeats on both axes"
             }
             Self::InvalidLod => "LOD error must be finite and nonnegative",
+            Self::TooManyLods => "a mesh takes at most 8 levels of detail",
+            Self::TooManySections => "a mesh holds at most 65,536 sections of 128 triangles",
             Self::LodInSameModel => "a level of detail must be a mesh of another model",
             Self::StaticInstance => {
                 "a static instance takes baked light from charts, not an ambient cube"

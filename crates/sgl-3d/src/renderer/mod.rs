@@ -23,18 +23,21 @@ use crate::scene::rays::acceleration::RayTracingStats;
 use crate::settings::{Antialiasing, RenderPreset, SceneResolution, Settings};
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
-    antialiasing, deform::Deform, dynamic_gi::DynamicGi, exposure::Exposure, fog::VolumetricFog,
-    motion_blur::MotionBlur, opaque::Opaque, post::Post, prepare::Prepare,
+    antialiasing, cull::Cull, deform::Deform, dynamic_gi::DynamicGi, exposure::Exposure,
+    fog::VolumetricFog, motion_blur::MotionBlur, opaque::Opaque, post::Post, prepare::Prepare,
     reflections::Reflections, shadows::Shadows, transparent::Transparent,
 };
 use crate::view::FrameViews;
 use crate::view::bindings::FrameBindings;
 use crate::view::draw_list::GeometryStats;
+use crate::view::draw_list::readback::StatisticsReadback;
 use crate::view::history::{CameraFrame, CameraHistory, HistoryFrame};
 use crate::view::pipelines::{GeometryPipelines, LayerConstants};
 use crate::view::post_fx::PostFx;
 use crate::view::targets::{SharedTargets, Sizes};
-use crate::{FrameInput, ModelId, Scene, SceneError};
+use crate::{FrameInput, Scene};
+#[cfg(feature = "diagnostics")]
+use crate::{ModelId, SceneError};
 
 /// Renders a [`Scene`] into a caller's texture, one frame at a time: call
 /// `resize` (cheap when nothing changed), then `render` into an encoder, and
@@ -52,6 +55,9 @@ pub struct Renderer {
     post_fx: Option<PostFx>,
     prepare: Prepare,
     deform: Deform,
+    cull: Cull,
+    /// The camera's geometry statistics, read back without blocking.
+    statistics: StatisticsReadback,
     dynamic_gi: DynamicGi,
     shadows: Shadows,
     fog: VolumetricFog,
@@ -75,9 +81,6 @@ pub struct Renderer {
     /// The numerical frame probe, once a frame asked for it.
     #[cfg(feature = "diagnostics")]
     probe: Option<crate::stages::frame_probe::FrameProbe>,
-    /// The camera's instance visibility, once a frame asked for it.
-    #[cfg(feature = "diagnostics")]
-    visible_instances: Option<crate::stages::visible_instances::VisibleInstances>,
 }
 
 /// Why a renderer could not be created.
@@ -214,6 +217,8 @@ impl Renderer {
             .map_err(RendererError::LookupTextures)?,
             prepare: Prepare::default(),
             deform: Deform::new(device),
+            cull: Cull::new(device),
+            statistics: StatisticsReadback::default(),
             dynamic_gi,
             sizes,
             bloom_targets: sizing.bloom_targets,
@@ -231,8 +236,6 @@ impl Renderer {
             rendered: None,
             #[cfg(feature = "diagnostics")]
             probe: None,
-            #[cfg(feature = "diagnostics")]
-            visible_instances: None,
         })
     }
 
@@ -313,13 +316,10 @@ impl Renderer {
             scene.finish_frame();
             self.shadows.local.finish_frame();
             self.dynamic_gi.finish_frame();
+            self.statistics.submitted();
             #[cfg(feature = "diagnostics")]
             if let Some(probe) = &mut self.probe {
                 probe.submitted();
-            }
-            #[cfg(feature = "diagnostics")]
-            if let Some(visible) = &mut self.visible_instances {
-                visible.submitted();
             }
         }
     }
@@ -360,9 +360,14 @@ impl Renderer {
         self.sizes.scene
     }
 
-    /// The last rendered camera's submitted draws.
-    pub fn geometry_stats(&self) -> GeometryStats {
-        self.views.camera.list.stats.with(&self.views.blended.stats)
+    /// The camera's submitted geometry in the most recent completed frame:
+    /// its opaque and masked surfaces counted on the GPU and read back
+    /// without blocking, the map requested at `finish_frame`, with its
+    /// blended surfaces' counts from the same frame. None until a frame's
+    /// readback has arrived, which takes a few frames.
+    pub fn geometry_stats(&mut self, device: &wgpu::Device) -> Option<GeometryStats> {
+        self.statistics.poll(device);
+        self.statistics.latest()
     }
 
     /// The last rendered frame's local-light shadows: how many casting
@@ -381,19 +386,6 @@ impl Renderer {
     /// `Settings::hardware_ray_tracing` off, or tracing no rays.
     pub fn ray_tracing_stats(&self) -> RayTracingStats {
         self.prepare.ray_tracing_stats()
-    }
-
-    /// The last rendered camera's submitted draws of `scene`'s instances of
-    /// `model`.
-    pub fn geometry_stats_for_model(
-        &self,
-        scene: &Scene,
-        model: ModelId,
-    ) -> Result<(usize, u64), SceneError> {
-        scene.models.get(model)?;
-        let [opaque, blended] = [&self.views.camera.list, &self.views.blended]
-            .map(|list| list.stats_for_model(scene, model));
-        Ok((opaque.0 + blended.0, opaque.1 + blended.1))
     }
 
     #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -450,8 +442,9 @@ impl Renderer {
     }
 
     /// The draws the last frame's camera, blended and directional-cascade
-    /// views encoded; local-light shadow faces, probe captures and
-    /// full-screen passes are not counted.
+    /// views encoded: a CPU-built list's draws, and a GPU-built list's
+    /// indirect draws, one per set; local-light shadow faces, probe captures
+    /// and full-screen passes are not counted.
     pub fn diagnostic_draws(&self) -> crate::diagnostics::ViewDraws {
         let views = &self.views;
         crate::diagnostics::ViewDraws {
@@ -478,18 +471,21 @@ impl Renderer {
         }
     }
 
-    /// The camera visibility of the frames observed
-    /// (`InstanceVisibility::Observe`) and read back since the last call,
-    /// oldest first. Readback is asynchronous: a frame's report arrives once
-    /// the device completed it, and waits here until taken.
+    /// The camera's submitted geometry of `scene`'s instances of `model` in
+    /// the most recent completed frame (`geometry_stats`): the sections its
+    /// instances' candidates appended and their triangles, read back from
+    /// the GPU, with the blended draws that hold one and the triangles they
+    /// submit for them. None until a frame's readback has arrived.
     #[cfg(feature = "diagnostics")]
-    pub fn take_instance_visibility(
+    pub fn geometry_stats_for_model(
         &mut self,
         device: &wgpu::Device,
-    ) -> Vec<crate::diagnostics::InstanceVisibilityReport> {
-        self.visible_instances
-            .as_mut()
-            .map_or_else(Vec::new, |visible| visible.take_reports(device))
+        scene: &Scene,
+        model: ModelId,
+    ) -> Result<Option<(usize, u64)>, SceneError> {
+        scene.models.get(model)?;
+        self.statistics.poll(device);
+        Ok(self.statistics.latest_for(model))
     }
 
     /// The numerical frame probe's reports of finished frames read back

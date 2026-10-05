@@ -241,8 +241,6 @@ pub(super) fn resolve(
         source_environment: !disable.source_environment,
         #[cfg(feature = "diagnostics")]
         frame_probe: diagnostics.frame_probe,
-        #[cfg(feature = "diagnostics")]
-        instance_visibility: diagnostics.instance_visibility,
         capture_tone_target: diagnostics.frame_probe || diagnostics.capture_tone_target,
     }
 }
