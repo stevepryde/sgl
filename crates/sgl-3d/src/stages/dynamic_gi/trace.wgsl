@@ -21,7 +21,11 @@
 // shades as a back face, brings no light and shortens its depth to a fifth,
 // as Majercik et al. 2019 and NVIDIA RTXGI's probe trace (ProbeTraceRGS,
 // practice only) treat back-face hits: the probe takes nothing from behind
-// the surface, and the receivers beyond it weigh the probe as occluded.
+// the surface, and the receivers beyond it weigh the probe as occluded. One
+// difference from RTXGI: its ProbeBlendingCS skips back-face rays in the
+// radiance blend and takes |0.2 t| only as their distance, where here they
+// count black at their full cosine weight in the irradiance blend, which
+// darkens a probe that sees back faces rather than brightening it.
 @group(3) @binding(0) var<uniform> volume:DdgiVolume;
 @group(3) @binding(1) var ray_list:texture_2d<u32>;
 @group(3) @binding(2) var ray_results:texture_storage_2d<rgba32uint,write>;
@@ -93,7 +97,7 @@ fn trace(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index)
  } else {
   let hit=scene_decode_hit(raw,probe_pos,direction);
   ray.depth=hit.distance;
-  let double_sided=(scene_source[hit.material_word+SCENE_MATERIAL_FLAGS]&MATERIAL_DOUBLE_SIDED)!=0u;
+  let double_sided=(scene_material(hit.material_word).values.flags&MATERIAL_DOUBLE_SIDED)!=0u;
   if !hit.front_face && !double_sided {
    ray.depth*=DDGI_BACKFACE_DEPTH;
   } else {
