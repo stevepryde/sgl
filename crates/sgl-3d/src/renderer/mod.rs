@@ -72,6 +72,9 @@ pub struct Renderer {
     /// The numerical frame probe, once a frame asked for it.
     #[cfg(feature = "diagnostics")]
     probe: Option<crate::stages::frame_probe::FrameProbe>,
+    /// The camera's instance visibility, once a frame asked for it.
+    #[cfg(feature = "diagnostics")]
+    visible_instances: Option<crate::stages::visible_instances::VisibleInstances>,
 }
 
 /// Why a renderer could not be created.
@@ -220,6 +223,8 @@ impl Renderer {
             rendered: None,
             #[cfg(feature = "diagnostics")]
             probe: None,
+            #[cfg(feature = "diagnostics")]
+            visible_instances: None,
         })
     }
 
@@ -303,6 +308,10 @@ impl Renderer {
             #[cfg(feature = "diagnostics")]
             if let Some(probe) = &mut self.probe {
                 probe.submitted();
+            }
+            #[cfg(feature = "diagnostics")]
+            if let Some(visible) = &mut self.visible_instances {
+                visible.submitted();
             }
         }
     }
@@ -434,6 +443,34 @@ impl Renderer {
                 .map(|cascade| cascade.list.draws())
                 .collect(),
         }
+    }
+
+    /// The CPU time the last frame took building and recording its camera's
+    /// opaque and masked draw list and each directional cascade's.
+    #[cfg(feature = "diagnostics")]
+    pub fn diagnostic_view_times(&self) -> crate::diagnostics::ViewTimes {
+        let views = &self.views;
+        crate::diagnostics::ViewTimes {
+            camera: views.camera.cpu_ms(),
+            cascades: views.cascades[..views.cascade_count]
+                .iter()
+                .map(crate::view::ViewSlot::cpu_ms)
+                .collect(),
+        }
+    }
+
+    /// The camera visibility of the frames observed
+    /// (`InstanceVisibility::Observe`) and read back since the last call,
+    /// oldest first. Readback is asynchronous: a frame's report arrives once
+    /// the device completed it, and waits here until taken.
+    #[cfg(feature = "diagnostics")]
+    pub fn take_instance_visibility(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Vec<crate::diagnostics::InstanceVisibilityReport> {
+        self.visible_instances
+            .as_mut()
+            .map_or_else(Vec::new, |visible| visible.take_reports(device))
     }
 
     /// The numerical frame probe's reports of finished frames read back

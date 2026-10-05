@@ -31,6 +31,39 @@ pub struct ViewDraws {
     pub cascades: Vec<usize>,
 }
 
+/// The CPU time the last frame's camera and directional-cascade views took
+/// (`Renderer::diagnostic_view_times`): the camera's opaque and masked draw
+/// list, and each cascade's, nearest first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ViewTimes {
+    pub camera: ViewTime,
+    pub cascades: Vec<ViewTime>,
+}
+
+/// One view's CPU time in a frame, in milliseconds: building its draw list
+/// (walking, culling, LOD-selecting and batching the instances), and
+/// recording its passes' draws from it into the game's encoder, from each
+/// pass's start to its end. On WebGPU, recording issues each command to the
+/// browser; natively, wgpu validates and encodes a pass's commands when the
+/// game finishes the encoder, which this does not include.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ViewTime {
+    pub build_ms: f64,
+    pub encode_ms: f64,
+}
+
+/// One frame's camera visibility (`InstanceVisibility::Observe`,
+/// `Renderer::take_instance_visibility`): the instances of the camera's
+/// opaque and masked draws and the triangles the frame submitted for them,
+/// and those of them with no pixel in its source identity target.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InstanceVisibilityReport {
+    /// Instances drawn, and their triangles.
+    pub drawn: (usize, u64),
+    /// Instances drawn without a pixel, and their triangles.
+    pub hidden: (usize, u64),
+}
+
 /// The value `DiagnosticTarget::SourceId`'s R channel holds for `instance`'s
 /// pixels in a frame rendered while the scene had it.
 pub fn source_id(instance: InstanceId) -> u32 {

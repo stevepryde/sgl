@@ -2,9 +2,10 @@
 //! instances and materials, and the static casters a local light's range
 //! reaches.
 use super::culling::clip_intersects;
+use super::hidden::HiddenInstances;
 use super::lod::LodSelector;
 use super::pipelines::{Alpha, Cull, Variant};
-use crate::content::identity::Identity;
+use crate::content::identity::{Identity, InstanceId};
 use crate::content::material::SurfaceMaterial;
 use crate::scene::instances::Instance;
 use crate::scene::materials::Material;
@@ -19,10 +20,12 @@ pub(crate) enum Population<'a> {
     /// The main camera's opaque and masked surfaces: `visible` instances,
     /// each mesh whose material's groups the mask enables, culled against
     /// the view per instance unless `cull` is false, raster-culled by
-    /// material side and pose, with the selected LOD.
+    /// material side and pose, with the selected LOD; without the instances
+    /// in `hidden`, the diagnostics oracle's (`InstanceVisibility`).
     Camera {
         lod: Option<LodSelector>,
         cull: bool,
+        hidden: Option<&'a HiddenInstances>,
     },
     /// The main camera's blended surfaces, as `Camera` selects them, sorted
     /// back to front by the view depth of each mesh's bounds centre, as
@@ -140,11 +143,14 @@ pub(crate) fn moving_caster_reaches(
 }
 
 impl Population<'_> {
-    /// Whether this population shows `instance`.
-    pub(super) fn shows(&self, instance: &Instance) -> bool {
+    /// Whether this population shows `instance`, identified as `id`.
+    pub(super) fn shows(&self, id: InstanceId, instance: &Instance) -> bool {
         let state = &instance.state;
         match self {
-            Self::Camera { .. } | Self::Blended { .. } => state.visible,
+            Self::Camera { hidden, .. } => {
+                state.visible && !hidden.is_some_and(|hidden| hidden.holds(id))
+            }
+            Self::Blended { .. } => state.visible,
             Self::ProbeFace => state.capture_visible && instance.mobility == Mobility::Static,
             Self::DirectionalShadow { moving, .. } => {
                 state.capture_visible && (*moving || instance.mobility == Mobility::Static)

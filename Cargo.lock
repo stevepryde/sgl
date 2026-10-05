@@ -2146,6 +2146,7 @@ dependencies = [
  "glam",
  "gltf",
  "image",
+ "js-sys",
  "ktx2",
  "naga",
  "pollster",

@@ -3,10 +3,13 @@ import { mkdirSync } from "node:fs";
 const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
-  "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>]";
+  "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
+  "measure-browser [--frames <count>] [--radius <across>,<up>]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
+} else if (task === "measure-browser") {
+  if (options.length % 2 !== 0) throw new Error(USAGE);
 } else if (task !== "mutants" && (task !== "check" || options.length !== 0)) {
   throw new Error(USAGE);
 }
@@ -165,6 +168,8 @@ async function checkBrowser(): Promise<void> {
     ["bun", "install", "--frozen-lockfile"],
     ["cargo", "build", "-p", "sgl-net", "--example", "browser_probe", "--target", "wasm32-unknown-unknown"],
     ["cargo", "build", "-p", "sgl-3d", "--example", "browser_smoke", "--target", "wasm32-unknown-unknown"],
+    // Built, not run: `measure-browser` runs it.
+    ["cargo", "build", "-p", "sgl-3d", "--example", "browser_streaming", "--target", "wasm32-unknown-unknown"],
     ...["browser_probe", "browser_smoke"].map((example) => [
       "wasm-bindgen",
       "--target",
@@ -183,4 +188,96 @@ async function checkBrowser(): Promise<void> {
 
 if (task === "check" || task === "check-browser") {
   await checkBrowser();
+}
+
+// --- Browser measurement (#24): the streaming example's world on the
+// browser's WebGPU in headless Chromium, as the browser lane runs SGL3D,
+// built in release. It prints what the CPU spends building and recording
+// each view's draw list there. Not part of `check`; it needs the browser
+// lane's setup and a GPU.
+
+const MEASURE_DIR = "target/browser-measure";
+const MEASURE_PORT = 8125;
+
+async function measureBrowser(args: string[]): Promise<void> {
+  let frames = 600;
+  let radius = [4, 2];
+  for (let at = 0; at < args.length; at += 2) {
+    if (args[at] === "--frames") frames = Number(args[at + 1]);
+    else if (args[at] === "--radius") radius = args[at + 1].split(",").map(Number);
+    else throw new Error(USAGE);
+  }
+  if (!Number.isInteger(frames) || frames < 60) throw new Error("--frames must be at least 60");
+  if (radius.length !== 2 || !radius.every((r) => Number.isInteger(r) && r >= 0)) {
+    throw new Error("--radius takes two whole numbers, across and up");
+  }
+  const steps: string[][] = [
+    ["bun", "install", "--frozen-lockfile"],
+    [
+      "cargo", "build", "--release", "-p", "sgl-3d", "--example", "browser_streaming",
+      "--target", "wasm32-unknown-unknown",
+    ],
+    [
+      "wasm-bindgen", "--target", "web", "--out-dir", MEASURE_DIR,
+      "target/wasm32-unknown-unknown/release/examples/browser_streaming.wasm",
+    ],
+  ];
+  for (const argv of steps) {
+    const result = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
+    if (result.exitCode !== 0) process.exit(result.exitCode ?? 1);
+  }
+  const { chromium } = await import("playwright");
+  const types: Record<string, string> = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript",
+    ".wasm": "application/wasm",
+  };
+  // Cross-origin isolation gives `performance.now()` its finest resolution.
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: MEASURE_PORT,
+    async fetch(request) {
+      const path = new URL(request.url).pathname;
+      const file = path === "/" ? "browser/streaming.html" : `${MEASURE_DIR}${path}`;
+      const body = Bun.file(file);
+      if (!(await body.exists())) return new Response("not found", { status: 404 });
+      const type = types[path.slice(path.lastIndexOf("."))] ?? types[".html"];
+      return new Response(body, {
+        headers: {
+          "content-type": type,
+          "cross-origin-opener-policy": "same-origin",
+          "cross-origin-embedder-policy": "require-corp",
+        },
+      });
+    },
+  });
+  const browser = await chromium.launch({ channel: "chromium" });
+  try {
+    const page = await browser.newPage();
+    page.on("console", (message) => {
+      if (message.type() === "error" || message.type() === "warning") {
+        console.log(`console ${message.type()}: ${message.text()}`);
+      }
+    });
+    const query = `frames=${frames}&across=${radius[0]}&up=${radius[1]}`;
+    await page.goto(`http://127.0.0.1:${MEASURE_PORT}/?${query}`);
+    const deadline = Date.now() + 15 * 60_000;
+    let report: string | null = null;
+    while (report === null) {
+      if (Date.now() > deadline) throw new Error("the measurement never reported");
+      report = await page.evaluate(
+        () => (window as unknown as { __sglReport?: string }).__sglReport ?? null,
+      );
+      if (report === null) await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    console.log(report.trimEnd());
+    if (report.startsWith("FAIL")) process.exitCode = 1;
+  } finally {
+    await browser.close();
+    server.stop(true);
+  }
+}
+
+if (task === "measure-browser") {
+  await measureBrowser(options);
 }

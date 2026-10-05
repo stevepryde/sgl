@@ -94,6 +94,7 @@ impl Renderer {
             self.sizes.render,
             &mut self.views,
             &self.bindings.frame,
+            None,
         );
         if scene.materials.holds_receivers() {
             self.targets.hold_surface(device);

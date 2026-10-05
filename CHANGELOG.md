@@ -15,6 +15,32 @@ full API details.
 
 ## Unreleased
 
+### Diagnostics measure the camera's hidden instances and each view's CPU time
+
+- **Scope:** `sgl-3d` with the `diagnostics` feature (#24's measurement).
+  `settings::Diagnostics` gains `instance_visibility`
+  (`settings::InstanceVisibility`: `Off` by default, `Observe`,
+  `SkipHidden`). An `Observe` frame marks, after the opaque stage, the
+  instances with a pixel in the source identity target and reads them back
+  without blocking; `Renderer::take_instance_visibility` returns a
+  `diagnostics::InstanceVisibilityReport` per observed frame: the camera's
+  opaque and masked instances and triangles drawn, and those drawn without
+  a pixel. A `SkipHidden` frame's camera list leaves out the newest
+  observed frame's hidden instances: an oracle of what culling them would
+  save, whose image is incorrect by design; a game alternates it with
+  `Observe`. `Renderer::diagnostic_view_times` returns
+  `diagnostics::ViewTimes`: the CPU time the last frame's camera and each
+  cascade's draw list took to build and to record. In the browser, build
+  steps' times (`diagnostics::Counters::steps`) now come from
+  `performance.now()`, where they were zero. The `streaming` and
+  `irradiance_volume` examples print these with `--split` and
+  `--visibility`, and `bun scripts/tasks.ts measure-browser` runs the
+  streaming world in headless Chromium.
+- **Migration:** code that builds `Diagnostics` naming every field adds
+  `instance_visibility: InstanceVisibility::Off`, or takes the rest from
+  `..Default::default()`. Nothing changes without the feature, or with it
+  and the switch off.
+
 ### A failed FSR2 dispatch falls back to TAA instead of panicking
 
 - **Scope:** `sgl-3d` with `Antialiasing::Fsr2`, through the `sp-fidelity`

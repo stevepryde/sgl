@@ -87,6 +87,10 @@ fn programs() -> Vec<(&'static str, String)> {
             "frame_probe_coverage",
             compose(&[&crate::stages::frame_probe::COVERAGE]),
         ),
+        (
+            "visible_instances",
+            compose(&[&crate::stages::visible_instances::VISIBLE_INSTANCES]),
+        ),
     ]);
     programs
 }

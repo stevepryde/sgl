@@ -24,6 +24,7 @@ use crate::shading::uniforms::{FrameValues, ViewUniform};
 use crate::view::clusters::{BoxVolume, CAMERA_CLUSTERS, Clusters, ViewVolume};
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::effective::Effective;
+use crate::view::hidden::HiddenInstances;
 use crate::view::history::HistoryFrame;
 use crate::view::population::Population;
 use crate::view::reflection_camera;
@@ -69,6 +70,7 @@ pub(crate) fn set_cascades(
     for (slot, clip_from_world) in views.cascades.iter_mut().zip(clip_from_world) {
         let view = View::shadow_cascade(clip_from_world);
         slot.set(queue, view);
+        let started = crate::counters::Moment::now();
         slot.list.build(
             &mut views.instances,
             scene,
@@ -79,6 +81,7 @@ pub(crate) fn set_cascades(
                 moving: true,
             },
         );
+        slot.built(started);
     }
 }
 
@@ -87,8 +90,10 @@ pub(crate) struct Prepare;
 
 impl Prepare {
     /// Uploads the view and frame data of `input` seen with `history` and
-    /// `jitter` at `render_size`, and builds the frame's views. `history`'s
-    /// camera carries `jitter`'s offset. Returns the data as uploaded.
+    /// `jitter` at `render_size`, and builds the frame's views, the camera's
+    /// opaque and masked list without the `hidden` instances (the
+    /// diagnostics oracle's). `history`'s camera carries `jitter`'s offset.
+    /// Returns the data as uploaded.
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         &mut self,
@@ -102,6 +107,7 @@ impl Prepare {
         render_size: [u32; 2],
         views: &mut FrameViews,
         frame_buffer: &wgpu::Buffer,
+        hidden: Option<&HiddenInstances>,
     ) -> FrameValues {
         let camera = input.camera;
         let stable = history.stable;
@@ -213,13 +219,15 @@ impl Prepare {
         let camera_view = views.camera.view;
         let lod = LodSelector::new(camera.view, camera.projection, render_size);
         let cull = effective.culling;
+        let started = crate::counters::Moment::now();
         views.camera.list.build(
             &mut views.instances,
             scene,
             &camera_view,
             mask,
-            Population::Camera { lod, cull },
+            Population::Camera { lod, cull, hidden },
         );
+        views.camera.built(started);
         views.blended.build(
             &mut views.instances,
             scene,

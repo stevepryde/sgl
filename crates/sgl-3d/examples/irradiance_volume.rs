@@ -12,7 +12,7 @@
 //! walk in and out of the cave mouth through the field.
 //!
 //! `cargo run --release -p sgl-3d --example irradiance_volume [-- --night]
-//! [--frames N]`
+//! [--frames N] [--split] [--visibility]`
 //!
 //! It renders the walk twice at 1920×1080 with TAA, screen-space and
 //! world-space reflections and shadows: with the volume, and with the
@@ -28,6 +28,16 @@
 //! idle GPU has finished it (uploads and copies are not passes, so they
 //! have no pass timestamps). `--night` turns the sun off and dims the sky,
 //! with no cell rewritten. Printed numbers are diagnostics, not image QA.
+//!
+//! The walk with the volume then prints what occlusion culling could save
+//! inside the cave, over the frames after the warm-up with the camera past
+//! the cliff (`support/culling.rs`): the CPU time each view's draw list
+//! takes to build and record; with `--visibility`, which walks with the
+//! volume alone, frames alternately draw every instance, observing which of
+//! the camera's the frame drew without a pixel, and skip those hidden
+//! instances, and it prints the hidden share and each pass group's GPU time
+//! in both kinds of frame. `--split` renders the opaque stage's two-pass
+//! form instead of its fused pass.
 //!
 //! The light field and its cells are the game's: each air cell's face
 //! toward a side takes the levels of the air cell on that side (or its own
@@ -51,6 +61,9 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+#[path = "support/culling.rs"]
+mod culling;
 
 const SIZE: [u32; 2] = [1920, 1080];
 const CHUNK: i32 = 16;
@@ -1076,13 +1089,14 @@ fn output(device: &wgpu::Device) -> wgpu::Texture {
 /// `REPEATS` more of each with the volume.
 fn walk(
     gpu: (&wgpu::Device, &wgpu::Queue),
-    with_volume: bool,
-    night: bool,
+    (with_volume, night): (bool, bool),
     frames: usize,
     directory: &Path,
-) -> Result<(Vec<FrameTime>, Measured), Box<dyn Error>> {
+    options: culling::Options,
+) -> Result<(Vec<FrameTime>, Measured, culling::Culling), Box<dyn Error>> {
     let (device, queue) = gpu;
-    let settings = settings();
+    let mut settings = settings();
+    let mut culling = culling::Culling::new(options);
     let mut scene = Scene::new(device, queue);
     let mut game = Game::new(&mut scene, gpu, with_volume, night)?;
     let texture = output(device);
@@ -1106,10 +1120,14 @@ fn walk(
         game.creatures(&mut scene, queue, seconds)?;
         let mut input = game.input(seconds);
         input.camera_cut = frame == 0;
+        options.apply(&mut settings, frame);
         if let Some(timing) = &mut timing {
-            times.extend(timing.begin_frame(device, queue));
+            let done: Vec<_> = timing.begin_frame(device, queue).collect();
+            done.iter().for_each(|done| culling.gpu(done));
+            times.extend(done);
         }
         let mut encoder = device.create_command_encoder(&Default::default());
+        let started = Instant::now();
         renderer.render(
             device,
             queue,
@@ -1120,7 +1138,10 @@ fn walk(
             &view,
             timing.as_ref(),
         );
-        let submission = queue.submit([encoder.finish()]);
+        let rendered = ms(started);
+        let commands = encoder.finish();
+        let finished = ms(started) - rendered;
+        let submission = queue.submit([commands]);
         if let Some(timing) = &mut timing {
             timing.submitted(queue);
         }
@@ -1131,6 +1152,14 @@ fn walk(
             });
         }
         renderer.finish_frame(&mut scene);
+        // Inside the cave: past the cliff, after the warm-up.
+        let inside = frame >= WARM_UP as usize && Game::eye(seconds).z >= CLIFF as f32;
+        culling.frame(
+            (&mut renderer, device),
+            frame,
+            with_volume && inside,
+            (rendered, finished),
+        );
         if let Some(&(_, capture)) = CAPTURES.iter().find(|(at, _)| *at == frame) {
             let pixels = sgl_3d::diagnostics::read(device, queue, &texture, 4);
             image::save_buffer(
@@ -1145,9 +1174,13 @@ fn walk(
     if let Some(timing) = &mut timing {
         for _ in 0..4 {
             let _ = device.poll(wgpu::PollType::wait_indefinitely());
-            times.extend(timing.begin_frame(device, queue));
+            let done: Vec<_> = timing.begin_frame(device, queue).collect();
+            done.iter().for_each(|done| culling.gpu(done));
+            times.extend(done);
         }
     }
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    culling.take_visibility(&mut renderer, device);
     times.retain(|frame| frame.frame >= WARM_UP);
     if with_volume {
         // Repeated updates on an otherwise idle GPU: the torch toggled,
@@ -1169,7 +1202,7 @@ fn walk(
             game.measured.idle.push(complete);
         }
     }
-    Ok((times, game.measured))
+    Ok((times, game.measured, culling))
 }
 
 /// Each pass group's GPU time with and without the volume.
@@ -1213,15 +1246,17 @@ fn report_passes(volume: &[FrameTime], ambient: &[FrameTime]) {
 fn main() -> Result<(), Box<dyn Error>> {
     let mut night = false;
     let mut frames = 960;
+    let mut options = culling::Options::default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--night" => night = true,
             "--frames" => frames = args.next().ok_or("--frames requires a count")?.parse()?,
             "--help" | "-h" => {
-                println!("irradiance_volume [--night] [--frames N]");
+                println!("irradiance_volume [--night] [--frames N] [--split] [--visibility]");
                 return Ok(());
             }
+            option if options.take(option) => {}
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -1248,8 +1283,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         if night { ", night" } else { "" },
         directory.display()
     );
-    let (volume, measured) = walk(gpu, true, night, frames, &directory)?;
-    let (ambient, _) = walk(gpu, false, night, frames, &directory)?;
+    let (volume, measured, culling) = walk(gpu, (true, night), frames, &directory, options)?;
+    if options.visibility {
+        println!("Inside the cave:");
+        print!("{}", culling.report());
+        return Ok(());
+    }
+    let (ambient, _, _) = walk(gpu, (false, night), frames, &directory, options)?;
     report_passes(&volume, &ambient);
     println!("Keeping the volume up, median / p95:");
     measured
@@ -1266,5 +1306,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .report("whole install (10 slabs on as many threads)");
     let (median, p95) = median_p95(&measured.idle);
     println!("an empty submission, call to GPU done: {median:.3} / {p95:.3} ms");
+    println!("Inside the cave, with the volume:");
+    print!("{}", culling.report());
     Ok(())
 }

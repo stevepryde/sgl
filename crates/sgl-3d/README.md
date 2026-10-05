@@ -1911,9 +1911,13 @@ example on WebGPU in headless Chromium
 retained capture inputs; the ordinary test command does not establish those
 results. Run relevant cases explicitly when changing their boundary. The
 `diagnostics` feature adds `Settings::diagnostics` (`settings::Diagnostics`,
-not serialized: switches that turn a layer off, the numerical frame probe and
-the tone-target capture), `Renderer::diagnostic_target`,
-`Renderer::take_frame_probe_reports`, `diagnostics::read`,
+not serialized: switches that turn a layer off, the numerical frame probe,
+the tone-target capture and the camera's instance visibility), `Renderer::diagnostic_target`,
+`Renderer::take_frame_probe_reports`, `Renderer::take_instance_visibility`
+(with `InstanceVisibility::Observe`, which of the camera's opaque and masked
+instances a frame drew without a pixel, read back without blocking;
+`SkipHidden` frames leave those out, an oracle of what culling them would
+save whose image is incorrect by design), `diagnostics::read`,
 `diagnostics::source_id`, the value the source-identity target holds for an
 instance's pixels, `diagnostics::crystal_roughness_threshold`, where
 Crystal stops tracing, `diagnostics::counters` (what `sgl-3d` itself counted on
@@ -1921,9 +1925,13 @@ the thread: uploads by file and line, buffers created, the steps of
 preparing and placing models and of building instance BVHs, ray-source and
 geometry-slab growths and static-edit boxes; subtract
 two with `Counters::since`, and compare versions by totals since lines move),
-`Scene::diagnostic_resources` (the scene's buffer sizes) and
+`Scene::diagnostic_resources` (the scene's buffer sizes),
 `Renderer::diagnostic_draws` (the last frame's camera, blended and cascade
-draws).
+draws) and `Renderer::diagnostic_view_times` (the CPU time the camera's and
+each cascade's draw list took to build and to record). The `streaming` and
+`irradiance_volume` examples print these for their routes, and
+`bun scripts/tasks.ts measure-browser` the view times of the streaming world
+in headless Chromium.
 Diagnostics are
 configuration: the library reads no environment variables and writes no files.
 Normal rendering does not require the feature.

@@ -64,6 +64,7 @@ impl Directional {
     pub fn encode(&self, ctx: &mut FrameContext<'_>) {
         let count = ctx.views.cascade_count;
         for (index, slot) in ctx.views.cascades[..count].iter().enumerate() {
+            let started = crate::counters::Moment::now();
             let mut pass = begin(
                 ctx.encoder,
                 &self.layers[index],
@@ -77,6 +78,8 @@ impl Directional {
                 &mut pass,
                 GeometryPass::DirectionalShadow,
             );
+            drop(pass);
+            slot.recorded_since(started);
         }
     }
 

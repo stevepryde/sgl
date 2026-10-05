@@ -275,8 +275,11 @@ Environment and probe specular always apply. On top of them:
 - **CPU rays** against scene triangles: `geometry::triangles` and
   `obstructed_distance`.
 - **Diagnostics** feature: `Settings::diagnostics` turns layers off, runs the
-  frame probe and captures the tone-mapped target; `Renderer::diagnostic_target`
-  and `take_frame_probe_reports` return what they observed. Configuration only:
+  frame probe, captures the tone-mapped target and observes which of the
+  camera's instances a frame drew without a pixel, or skips them as an
+  oracle of occlusion culling; `Renderer::diagnostic_target`,
+  `take_frame_probe_reports`, `take_instance_visibility` and
+  `diagnostic_view_times` return what they observed. Configuration only:
   no environment variables or files. Shipping builds leave it off.
 
 ## Not provided
