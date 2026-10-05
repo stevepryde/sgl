@@ -765,18 +765,11 @@ code; it does not redeclare a struct, binding or function another module owns.
   ramps to the most and back. One improvement on Wicked (RD-2): where Wicked
   starts every probe of a restarted volume in one frame, a hitch on a large
   volume, a frame starts no more probes not yet blended than a fixed budget
-  of rays holds at the tier's most (32768, 128 probes at High), the nearest
-  the camera first (a histogram of their distances in the least spacing);
-  a probe not yet started traces nothing and weighs nothing, so its
-  receivers keep their fallback, and the blends run over the probes that
-  traced, which Wicked's, whose probes always trace, need not. Measured in
-  the `dynamic_gi` example's room at High on an Apple M5 (the stage's GPU
-  time, median of three runs): a restart of 2048 probes costs Wicked's
-  start 12–21 ms in its first frame, the ramp's 1.5 ms, and its worst frame
-  8.7 ms against 12.1 ms, as the probes it started settle at the most rays;
-  8192 probes cost Wicked 48 ms in the first frame and the ramp 1.0 ms,
-  worst 47 ms against 29 ms. Once started both settle to the same cost
-  (5.0 and 5.2 ms; 22 and 24 ms). Each probe's
+  of rays holds at the tier's most, the nearest the camera first (a
+  histogram of their distances in the least spacing); a probe not yet
+  started traces nothing and weighs nothing, so its receivers keep their
+  fallback, and the blends run over the probes that traced, which
+  Wicked's, whose probes always trace, need not. Each probe's
   estimator, depth and offset start afresh when it is first blended, where
   Wicked starts them all on the first frame. It traces them through
   `scene_trace_nearest` over both kinds and both sides of every triangle,

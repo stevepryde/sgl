@@ -289,16 +289,16 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             ..Default::default()
         },
     )?;
-    // The probes reach half a spacing past every wall, so the volume covers
-    // each surface in the room and no probe sits on one: a probe on a wall
-    // would see both its sides at once, and beyond its probes a volume's
-    // light fades out over one spacing. The probes inside the walls see
-    // only their backs and weigh as occluded.
+    // The outer layer of probes lies inside the walls, floor and ceiling,
+    // halfway through each slab, so the volume covers every surface in the
+    // room with no probe on one (a probe on a surface sees both its sides
+    // at once). A probe inside a slab sees only the slab's backs, so the
+    // receivers in the room weigh it as occluded.
     let counts = Vec3::from_array(options.probes.map(|n| n as f32));
     let room = Vec3::new(2. * HALF, HEIGHT, 2. * HALF);
-    let spacing = room / (counts - 2.).max(Vec3::ONE);
+    let spacing = (room + WALL) / (counts - 1.);
     let volume = DynamicGiVolume {
-        origin: Vec3::new(-HALF, 0., -HALF) - spacing * 0.5,
+        origin: Vec3::new(-HALF, 0., -HALF) - WALL * 0.5,
         spacing,
         probes: options.probes,
     };
