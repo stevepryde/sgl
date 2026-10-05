@@ -30,7 +30,7 @@ enable wgpu_ray_query;
 // each crowned with a swaying bundle of 24 masked, double-sided hair cards
 // three quarters cut out, under a dynamic GI volume with world-space
 // reflections, the most of 7.8 million rays took 29, each cut-out card it
-// crossed a re-trace. The cap is about four times that, for denser hair,
+// crossed a re-trace. The cap is about nine times that, for denser hair,
 // and still bounds every ray: a ray that reaches it reports a miss, or a
 // visibility ray unoccluded, as the portable walk does at
 // SCENE_BVH_MOST_VISITS.
