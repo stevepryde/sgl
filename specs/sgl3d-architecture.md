@@ -990,7 +990,14 @@ code; it does not redeclare a struct, binding or function another module owns.
   least power of two under which the blended probes' requests on their
   turns fit the budget beside the probes that start, so each probe keeps
   its turns, near ones the more often; what still exceeds the budget traces
-  nothing, as Wicked's. And where Wicked starts every probe of a restarted
+  nothing, as Wicked's. A probe whose light is changing takes its turns the more often, its
+  period shortened by its most inconsistent texel's inconsistency toward
+  one (every frame at full inconsistency, its distance's period once
+  settled), so a lamp moved is answered near the speed of tracing every
+  probe every frame; neither Wicked nor RTXGI shortens periods (Wicked's
+  inconsistency sets rays per turn, RTXGI leaves scheduling to the
+  application), so this is SGL3D's own, kept within the budget by the same
+  stride. And where Wicked starts every probe of a restarted
   volume in one frame, a hitch on a large volume, probes not yet blended
   start at the tier's most, the nearest the camera first (a histogram of
   their distances in the least spacing), with the budget the blended
