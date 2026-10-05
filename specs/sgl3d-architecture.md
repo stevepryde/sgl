@@ -300,7 +300,8 @@ Stages run in one order, written in one place in `renderer`:
    geometry, the instances whose deformation changed since the last
    submitted frame; then, while hardware ray tracing is in effect, the
    frame's acceleration-structure builds, the deforming instances' after
-   their deform ([Hardware ray tracing](#designs-that-span-stages)).
+   their deform ([Hardware ray tracing](#designs-that-span-stages)); then
+   the cull stage's early phase, where it runs.
 2. **Dynamic GI**: the dynamic GI volume's update, while the scene holds one
    and the setting runs it: its probes' ray allocation, their rays through
    the scene's ray source, each hit shaded with one light and one visibility
@@ -323,16 +324,17 @@ Stages run in one order, written in one place in `renderer`:
    pass and a lighting pass at its depth write the same targets. While
    **ray-traced shadows** run ([Ray-traced shadows](#designs-that-span-stages)),
    the stage takes its two-pass form whatever the device, and the renderer
-   calls it in two halves with the ray-traced shadow stage between them:
-   the geometry half, which leaves the G-buffer complete (its depth, the
-   late set and the pyramid included where the cull stage adds them), then
-   the traced shadow stage, which from the G-buffer's depth and normals
-   traces the camera's shadow rays through the hardware ray source,
-   denoises them and writes the shadow mask, then the lighting half, the
-   sky and the lighting pass at that depth, which takes the mask for the
-   lights it holds; Wicked Engine traces its RT shadows after its depth
-   prepass and before the camera's main pass (2ff1d9e `wiRenderPath3D.cpp`
-   1050–1065, 1171–1179, 1625–1643).
+   encodes its named parts (G-buffer, per phase, lighting and ambient
+   occlusion) with the ray-traced shadow stage between them: the G-buffer
+   parts, which leave the G-buffer complete (the cull stage's late phase,
+   late G-buffer and pyramid included where occlusion culling runs), then
+   the traced shadow stage, which from the G-buffer's depth and normals,
+   and nothing from the pyramid, traces the camera's shadow rays through
+   the hardware ray source, denoises them and writes the shadow mask, then
+   the sky and the lighting part at that depth, which takes the mask for
+   the lights it holds, then ambient occlusion; Wicked Engine traces its RT
+   shadows after its depth prepass and before the camera's main pass
+   (2ff1d9e `wiRenderPath3D.cpp` 1050–1065, 1171–1179, 1625–1643).
 6. **Receivers**: the transparent stage draws its reflective blended
    receivers' depth and traced lobe over a copy of the opaque depth, and
    their motion into the G-buffer's, so the surface that reflections and the
@@ -368,7 +370,10 @@ views.
 
 A stage is one module with one struct. It owns its private pipelines, bind
 groups, targets and history, and offers the renderer the same few operations:
-create, resize, prepare, encode and reset history. It states what it reads,
+create, resize, prepare, encode and reset history, encode in named parts
+where the stage order interleaves two stages (the opaque stage's G-buffer,
+per phase, lighting and ambient occlusion, around the ray-traced shadow
+stage). It states what it reads,
 what it writes, which settings it honours and its timing group. Stages meet
 only through the shared contracts below and the values the renderer passes
 between them; no stage imports another. What two stages share (a port's
@@ -393,14 +398,14 @@ Each has one definition, which every producer and consumer uses.
 | Material records | A material's values reach the GPU as one record, `Material` in `shading/material.wgsl`, mirrored by `MaterialUniform`: named fields, and flags as integer `MATERIAL_*` bits (unlit, double-sided, the maps it was added with, its alpha mode and, for a blended one, whether it receives screen-space reflections, and whether it scrolls its normal map). The scene packs it from the public typed `SurfaceMaterial` (named fields, `bool`s and the `AlphaMode` enum, whose `Blend { receives_screen_space_reflections }` carries the receiver flag where it applies, and `normal_layers`) and from the maps the material was added with, which no edit changes; group 2 binds it and the ray source holds the same record. No GPU layout is public. Normal layers are content (S3D-6): two `NormalLayer`s, each the material's repeating normal map at its own scale, moving across the surface at its velocity, its slopes taken at its strength, the two layers' slopes added (Barré-Brisebois and Hill's partial derivative blend), as Wicked Engine's water draws its normal map twice offset by its material's texture animation and Bevy's water example sums octaves of one map scrolled by velocity times time. The record holds each layer's speed as the whole repeats of its map it moves per animation period, rounded from the velocity and scale and at most 2^24, which `f32` holds exactly, so the frame's phase places it and nothing is uploaded per frame; how they move and blend is SGL3D's. A layer's time is the frame's, so a material moves in every view of a frame alike; nothing it changes is static content a cache holds (shadow layers hold depth, and bakes and probe captures stay the game's to take again), so it is no static edit. |
 | Scene records | An instance has one object record, declared in `shading::uniforms`, at its identity's index in the scene's object buffer, a storage buffer. Its flags are named bits; static or moving is one of them, never a range of indices. A deforming instance's record names its deformed vertices this frame and its positions in the last submitted frame. That index is the source identity the G-buffer stores and a ray hit reports; it names an instance within one frame only. Each instance of a draw reaches its record through its draw instance (`shading::vertex::DrawInstance`, a vertex buffer stepped per instance): the record's index, the drawn mesh's record in the ray source, and the base vertex an indexed draw of it adds to its indices ([Raster geometry](#shared-contracts)), as Bevy's batched draws reach each instance's `MeshUniform`, and its `first_vertex_index`, from its instance index. A fragment reads the record at the source identity it carries. Instancing renumbers no instance. |
 | Raster geometry | What shadow casters draw from vertex and index buffers (each mesh's positions as `CasterVertex`, its indices, and its local-light caster clusters' indices) lives in shared geometry buffers that the scene suballocates, as Bevy packs meshes into slabs (`bevy_render` b56fc29, `mesh/allocator.rs` over `slab_allocator.rs`): slabs of one element layout each (positions; `u32` indices, which mesh and cluster indices share), whose ranges the scene's range allocator (`scene::ranges`, first fit over its free ranges, merged with their neighbours) hands out in elements. An element is a whole number of 4-byte words, the copy alignment, so any range is written and copied whole; a layout whose element is not would take Bevy's slot, the fewest elements that are (`elements_per_slot`), as its unit. With Bevy's defaults, a slab starts at 1 MiB or its first data, whichever is larger, and grows by half again up to 512 MiB or the device's largest buffer, whichever is smaller; data that fits no slab gets a new one, data of 256 MiB or more a slab of its own, and an emptied slab is released. A slab grows by copying it in its own submission through the queue, as Bevy's `reallocate_slab` and the ray source do; the only difference is that Bevy defers a frame's allocations to one commit, where the scene places a model's ranges at its operation, as every edit uploads at its call. A mesh names its slab and first element for each kind; its indices stay its own, so a caster draw binds a slab's buffers only when they differ from the last draw's and draws its index range offset by the first index of the indices it draws (the mesh's own or its caster clusters'), with the mesh's first vertex as the base vertex. A deforming model takes no positions range: its instances' caster draws read their positions from the ray source and their indices from the index slab, with base vertex zero. The draw instance carries the base vertex, which a batch's instances share, as they share their geometry, and which a masked caster, reading the ray source's vertex records by vertex index, subtracts, as Bevy's `morph_vertex` subtracts `MeshUniform::first_vertex_index` (`mesh.wgsl`). Removing or replacing a model frees its ranges for reuse; nothing creates a buffer per mesh, and a steady stream of bounded geometry creates none once the slabs hold its peak. Pulled passes read vertices and indices from the ray source and bind no geometry buffer. |
-| Ray source | Each material, texture and model owns ranges of the ray buffers (its record; its level 0 in its image's format: RGBA8 texels, or a block-compressed image's blocks as stored, which a ray decodes texel by texel as raster's level 0 decodes them; its vertices, packed ([Vertex encoding](#shared-contracts)), indices and BVH; a deforming model's influences and morph targets), and each deforming instance its joint matrices, morph weights and deformed vertices (`shading::deformation`), written when it is added or replaced and freed for reuse when it is removed. A model's words arrive prepared and addressed from zero ([Prepared geometry](#scene-content)): placing them names each mesh's material record in its mesh record and adds the range's start to every word that addresses the source (its mesh records' vertex and index words and the word where their model's chart table starts; its BVH nodes' escape and first-leaf words, walked in their depth-first order, a zero root, a model without triangles, staying zero; and where a deforming model's influences and morph targets start), the rebase split among the owners of each layout (the mesh records' in `scene::rays`, the nodes' in the BVH builder's module beside the builder, a deformation's starts in `scene::deformation`), so no model BVH is built on the thread that places it. Above the model BVHs the source is two-level, as DXR and Vulkan acceleration structures, Bevy's ray-traced scene and Wicked Engine's hardware path are (Wald et al. 2003; Meister et al. 2021, §5.3.3). Each instance has one entry in the instance list at its identity's index, holding what its object record lacks (its model's ray words and its inverse pose), written when what it holds changes (its pose, its model or that model's geometry); a deforming instance's, which no ray sees, is never written. The list is never rebuilt for a frame, and a hit names the index raster names, whose object record holds its pose, flags and ambient cube. Two instance BVHs, static and moving, bound the capture-visible instances of each kind that do not deform by their posed model bounds; a leaf names entries. A traversal walks the BVH of the kind it wants, both for all, with the world-space ray, and at a leaf each instance's model BVH with the ray in that model's space, the one acceptance predicate (visibility group, alpha mode, side under the ray's side policy, cut-out texels, the receiver's own triangle and an open end of the interval) deciding each candidate; nothing tests a kind inside a traversal. Camera-origin rays reject single-sided back faces as raster does; a dynamic GI probe ray and its visibility ray accept both sides, as Wicked's DDGI trace culls none, the side policy given beside the receiver. The scene builds both BVHs on the CPU with the model BVHs' builder and node record, into ranges of the source whose roots the header names, each kept by its BVH and reallocated only when it outgrows it: the moving BVH on every traced frame and the static one on the first traced frame after a static edit, rebuilt rather than refitted, as Bevy and Wicked rebuild their TLAS every frame and NVIDIA and AMD advise; a frame traces when world-space reflections or the dynamic GI stage run. Nothing else is uploaded for unchanged content. The entries and both BVHs are in the object records' space, so a ray from the G-buffer traverses without a transform; a change of that space's origin (#17) is one scene operation that rewrites every entry and rebuilds both BVHs, never a static edit per instance nor a rewrite per frame. The hardware path ([Hardware ray tracing](#designs-that-span-stages)) builds its TLAS over the same entries, each instance naming its model's BLAS as the entry names its BVH, with the index as the instance's custom index and its kind as its mask bit, selected by the ray's cull mask, and judges a hardware hit by the same predicate, so both paths share one list and one hit: the instance index, mesh (the BLAS's geometry index), triangle (its primitive index), distance and barycentrics, decoded once from the entry; the hardware's own front-face flag is never read, since winding conventions differ by backend. The predicate takes a found candidate and the ray in the model's space and decides it (the receiver's own triangle, visibility group, alpha mode, side from the triangle's object-space winding, cut-out texels, the interval and its open end); the triangle solve that finds a candidate belongs to the portable traversal alone, the hardware finding its own. The predicate, the ray's validity test and the side policies (`SCENE_SIDES_*`) move out of the portable module into a shared one, `scene_rays_predicate.wgsl`, which every trace module composes. Every scene ray goes through one set of functions (`scene_trace_nearest`, `scene_trace_nearest_except_receiver`, which the `All` reach of world-space reflections takes, `scene_segment_visible` and the moving-nearest and static-visibility pair of the `Moving` reach) with one signature and one side policy per ray, implemented once by each form's module, `scene_rays_portable.wgsl`, `scene_rays_hardware.wgsl` (the baseline form, which also walks the portable BVHs over the predicate instances and takes the nearer result) and `scene_rays_candidates.wgsl`; a tracing pipeline composes the module of the form in effect. |
+| Ray source | Each material, texture and model owns ranges of the ray buffers (its record; its level 0 in its image's format: RGBA8 texels, or a block-compressed image's blocks as stored, which a ray decodes texel by texel as raster's level 0 decodes them; its vertices, packed ([Vertex encoding](#shared-contracts)), indices and BVH; a deforming model's influences and morph targets), and each deforming instance its joint matrices, morph weights and deformed vertices (`shading::deformation`), written when it is added or replaced and freed for reuse when it is removed. A model's words arrive prepared and addressed from zero ([Prepared geometry](#scene-content)): placing them names each mesh's material record in its mesh record and adds the range's start to every word that addresses the source (its mesh records' vertex and index words and the word where their model's chart table starts; its BVH nodes' escape and first-leaf words, walked in their depth-first order, a zero root, a model without triangles, staying zero; and where a deforming model's influences and morph targets start), the rebase split among the owners of each layout (the mesh records' in `scene::rays`, the nodes' in the BVH builder's module beside the builder, a deformation's starts in `scene::deformation`), so no model BVH is built on the thread that places it. Above the model BVHs the source is two-level, as DXR and Vulkan acceleration structures, Bevy's ray-traced scene and Wicked Engine's hardware path are (Wald et al. 2003; Meister et al. 2021, §5.3.3). Each instance has one entry in the instance list at its identity's index, holding what its object record lacks (its model's ray words and its inverse pose), written when what it holds changes (its pose, its model or that model's geometry); a deforming instance's, which the portable path never reads, is written while the hardware path is in effect, whose predicate and hit decode take its positions, normals and tangents through the object record's deformed slot. The list is never rebuilt for a frame, and a hit names the index raster names, whose object record holds its pose, flags and ambient cube. Two instance BVHs, static and moving, bound the capture-visible instances of each kind that do not deform by their posed model bounds, on a hardware-traced frame those the TLAS does not hold alone ([Hardware ray tracing](#designs-that-span-stages)); a leaf names entries. A traversal walks the BVH of the kind it wants, both for all, with the world-space ray, and at a leaf each instance's model BVH with the ray in that model's space, the one acceptance predicate (visibility group, alpha mode, side under the ray's side policy, cut-out texels, the receiver's own triangle and an open end of the interval) deciding each candidate; nothing tests a kind inside a traversal. Camera-origin rays reject single-sided back faces as raster does; a dynamic GI probe ray and its visibility ray accept both sides, as Wicked's DDGI trace culls none, the side policy given beside the receiver. The scene builds both BVHs on the CPU with the model BVHs' builder and node record, into ranges of the source whose roots the header names, each kept by its BVH and reallocated only when it outgrows it: the moving BVH on every traced frame and the static one on the first traced frame after a static edit, rebuilt rather than refitted, as Bevy and Wicked rebuild their TLAS every frame and NVIDIA and AMD advise; a frame traces when world-space reflections or the dynamic GI stage run. Nothing else is uploaded for unchanged content. The entries and both BVHs are in the object records' space, so a ray from the G-buffer traverses without a transform; a change of that space's origin (#17) is one scene operation that rewrites every entry and rebuilds both BVHs, never a static edit per instance nor a rewrite per frame. The hardware path ([Hardware ray tracing](#designs-that-span-stages)) builds its TLAS over the same entries, each instance naming its model's BLAS as the entry names its BVH, with the index as the instance's custom index and its kind as its mask bit, selected by the ray's cull mask, and judges a hardware hit by the same predicate, so both paths share one list and one hit: the instance index, mesh (the BLAS's geometry index), triangle (its primitive index), distance and barycentrics, decoded once from the entry; the hardware's own front-face flag is never read, since winding conventions differ by backend. The predicate takes a found candidate and the ray in the model's space and decides it (the receiver's own triangle, visibility group, alpha mode, side from the triangle's object-space winding, cut-out texels, the interval and its open end); the triangle solve that finds a candidate belongs to the portable traversal alone, the hardware finding its own. The predicate, the ray's validity test and the side policies (`SCENE_SIDES_*`) move out of the portable module into a shared one, `scene_rays_predicate.wgsl`, which every trace module composes. Every scene ray goes through one set of functions (`scene_trace_nearest`, `scene_trace_nearest_except_receiver`, which the `All` reach of world-space reflections takes, `scene_segment_visible` and the moving-nearest and static-visibility pair of the `Moving` reach) with one signature and one side policy per ray, implemented once by the portable module, `scene_rays_portable.wgsl`, and once by the hardware module, `scene_rays_hardware.wgsl`, which walks the portable BVHs over the instances the TLAS does not hold and takes the nearer result, and whose query alone each form supplies (`scene_rays_query_opaque.wgsl`, `scene_rays_query_candidates.wgsl`); a tracing pipeline composes the modules of the form in effect. |
 | Draw lists | One builder turns a scene and a view into instanced draws. A view's population is a filter over instances by their flags (static, `visible`, `capture_visible`) and over materials by the visibility mask and alpha mode, not a walk of named collections. Blended materials are the camera's blended population alone, sorted back to front; the receiver pass draws that list's receiver batches, not a second list. Each instance is culled and selects its level of detail on its own; its draws of one mesh then merge with other instances' into one instanced draw per index range when they share geometry (model and mesh, or a deforming instance's own, as that instance deforms it), material, pipeline variant and mobility and draw the same ranges, as Bevy batches its phases: opaque, masked, capture and caster populations wherever they are, in bins ordered by their model's first instance and mesh, so each instance's meshes keep their order; blended ones only where adjacent in their sorted order. A batch names its instances by index, its geometry by model and mesh, and its material by identity. A deforming instance is culled by its deformed bounds and draws no level of detail. Every list of a frame, or of a probe capture, appends its draw instances to one buffer, which the renderer uploads once every list is built and before any pass draws, as Bevy writes one batched instance buffer for every view. Every geometry pass (G-buffer, lighting, shadow, capture) draws from a draw list; none walks the scene. Draw statistics count the draws and triangles of static and moving instances; a draw holds one mobility. |
-| Geometry pipelines | One cache keyed by pass and by what the material and instance require (face culling; the alpha mode: opaque, masked or blended; and for pulled passes whether the instance deforms), not a field per variant, and by the lit constants: whether the scene holds a rectangle light and whether it holds a decal, one value (`LitConstants`) that the world-space reflection trace's pipelines are keyed by too. A masked material's pipelines discard the texels it cuts out, so opaque ones keep early depth; masked, blended and deformed pipelines are prepared once the scene holds such content. The lit constants specialise the lit passes and the world-space reflection trace, so a scene without rectangle lights or decals pays nothing for their shading: they shade rectangles (`rect_lights_enabled`) only while the scene holds one, as Godot specialises its clustered pass on `cluster_has_area_light`, and apply decals (`decals_enabled`) only while it holds one. A pipeline that traces (the world-space trace, the dynamic GI trace, the ray-traced shadow trace) is keyed by the ray form in effect too (portable, hardware baseline or hardware candidates) and composes that form's module ([Hardware ray tracing](#designs-that-span-stages)). The lit shading library asks one function, `camera_shadow_mask`, for the mask's visibility of a light at the camera's pixel, and two provider modules define it: `shadow_mask.wgsl`, which reads the ray-traced shadow stage's mask and slot table at group 3 and which only the opaque stage's two-pass lighting pipeline composes, and `shadow_mask_none.wgsl`, which reports no slot and which every other lit composition (the fused pass, captures, blended surfaces, ray hits, the fog) composes; a program composes exactly one, which the layout test's validation of every composed program holds. |
+| Geometry pipelines | One cache keyed by pass and by what the material and instance require (face culling; the alpha mode: opaque, masked or blended; and for pulled passes whether the instance deforms), not a field per variant, and by the lit constants: whether the scene holds a rectangle light and whether it holds a decal, one value (`LitConstants`) that the world-space reflection trace's pipelines are keyed by too. A masked material's pipelines discard the texels it cuts out, so opaque ones keep early depth; masked, blended and deformed pipelines are prepared once the scene holds such content. The lit constants specialise the lit passes and the world-space reflection trace, so a scene without rectangle lights or decals pays nothing for their shading: they shade rectangles (`rect_lights_enabled`) only while the scene holds one, as Godot specialises its clustered pass on `cluster_has_area_light`, and apply decals (`decals_enabled`) only while it holds one. A pipeline that traces (the world-space trace, the dynamic GI trace, the ray-traced shadow trace) is keyed by the ray form in effect too (portable, hardware baseline or hardware candidates) and composes the portable module, or the shared hardware module with that form's query module ([Hardware ray tracing](#designs-that-span-stages)). The lit shading library asks one function, `camera_shadow_mask`, for the mask's visibility of a light at the camera's pixel, and two provider modules define it: `shadow_mask.wgsl`, which reads the ray-traced shadow stage's mask and slot table at group 3 and which only the opaque stage's two-pass lighting pipeline composes, and `shadow_mask_none.wgsl`, which reports no slot and which every other lit composition (the fused pass, captures, blended surfaces, ray hits, the fog) composes; a program composes exactly one, which the layout test's validation of every composed program holds. |
 | Sizes | Render size up to antialiasing, scene size after it, output size at presentation. Defined once by the renderer. |
 | History | A stage owns its history. The receiver pass keeps none: the surface is rebuilt in every frame it runs. The renderer issues one reset for `FrameInput::camera_cut`, a `Renderer::resize` that changed the targets, or a different `Scene`. Content edits, lighting changes and material animation restart no history: each history rejects what changed by reprojection and clamping, as its upstream does (FSR2 takes a blended surface's changing shading from the reactive and composition masks blended surfaces write; an opaque material's moving normal layers write none); the scene's change tracking rebuilds bindings and instance motion and reports static edits to caches of static content ([Scene content](#scene-content)), nothing more. Camera history is the renderer's (S3D-4): the last submitted camera's unjittered view and projection, from which the `View`'s previous matrices come, and the jitter that frame applied; a stage reprojects through them, with the jitter where it reprojects what was rasterized jittered, and keeps no camera of its own. The frame's history carries the scene's render origin, its summed moves as a value ([Scene content](#scene-content)). Each holder of state retained in the render frame records the origin that state is expressed in and, where the frame's differs, translates the state by the difference and records the frame's origin with it: the renderer its camera history, committed at `finish_frame` as that history is, as Filament keeps its antialiasing history in the user's world across its origin snaps; a stage what it retains (a shadow face's light and the poses of the moving casters it drew), committed as that state is. Repeating the step is idempotent, so an abandoned frame, which commits nothing, translates nothing twice: the next frame compares the same origins. What a stage keeps in screen space (colour, depth, motion, confidence, the fog's volume) needs nothing, and nothing restarts; a reset records the frame's origin with the new history. The dynamic GI stage's probe state is world-space history about each probe's centre and takes no renderer reset: the stage keys it on the scene identity and the lattice the volume it sees in prepare lies on, restarting when either differs (a scroll keeps the probes that stay, clearing those that enter) and after frames in which it did not run; the placement a frame scrolled to is committed with it. The ray-traced shadow stage's history (its temporal mask pair, and the denoiser's moments and filter history for the slots it denoises) is screen space, reset by the renderer's one reset and after a frame in which the stage did not run; a slot whose light changed restarts alone, through the slot table's restart bit, and a move of the render origin touches none of it. |
 | Settings | The renderer resolves requested settings into one effective configuration per frame. Stages read only that, and report why a choice could not run. `Settings::dynamic_gi` (`DynamicGiQuality`: `Off`, `Low`, `High`; `High` by default) is the dynamic GI volume's quality tier: the most rays a probe traces a frame, Wicked's 256 at High; the volume's placement is content, and everything else about it is SGL3D's (S3D-6). `Settings::hardware_ray_tracing` (`bool`, `true`) traces every scene ray through the device's acceleration structures where it has ray queries, else through the portable BVHs; `Settings::ray_traced_shadows` (`RayTracedShadows`: `Preset`, `Off`, `On`; `Preset` gives Off at both tiers until the denoiser and the deforming casters' BLASes land, then On at High) gives the camera's opaque surfaces ray-traced shadows while hardware ray tracing is in effect; `Settings::world_space_reflections` (`WorldSpaceReflections`: `Off`, `Moving`, `All`; `Off`) is what world-space rays fill the screen-space method's misses with. `Renderer::ray_tracing_in_effect` and `ray_tracing_error` report the hardware path as `antialiasing_in_effect` and `fsr2_error` report FSR2 ([Hardware ray tracing](#designs-that-span-stages), [Ray-traced shadows](#designs-that-span-stages)). |
 | Timing | Every pass belongs to its stage's timing group. |
-| Diagnostics | Behind the `diagnostics` feature. Switches are `Settings::diagnostics`, resolved into the effective configuration, never environment variables; observations return to the game, and the library writes no files. Every layer writes to the GPU, creates buffers (with contents or without; creating or growing a geometry slab or the ray source counts as a creation, and its copy as a growth), prepares and places models and builds instance BVHs through `counters`, a leaf module that counts them on the calling thread with the feature (`diagnostics::counters`) and passes straight through without it; `Scene::diagnostic_resources` and `Renderer::diagnostic_draws` report the buffers content holds and each view's draws; the hardware path's BLAS builds, compactions and TLAS builds count through `counters` too, `diagnostic_resources` reports the acceleration structures' bytes, and `Renderer::ray_tracing_stats` counts the instances traced in hardware, on the portable walk and left out. |
+| Diagnostics | Behind the `diagnostics` feature. Switches are `Settings::diagnostics`, resolved into the effective configuration, never environment variables; observations return to the game, and the library writes no files. Every layer writes to the GPU, creates buffers (with contents or without; creating or growing a geometry slab or the ray source counts as a creation, and its copy as a growth), prepares and places models and builds instance BVHs through `counters`, a leaf module that counts them on the calling thread with the feature (`diagnostics::counters`) and passes straight through without it; `Scene::diagnostic_resources` and `Renderer::diagnostic_draws` report the buffers content holds and each view's draws; the hardware path's BLAS builds, compactions and TLAS builds count through `counters` too, and `diagnostic_resources` reports the acceleration structures' bytes. |
 
 WGSL is composed from named modules by one function, `shading::compose`: each
 module declares the modules it uses, and a program is their concatenation in
@@ -501,10 +506,11 @@ code; it does not redeclare a struct, binding or function another module owns.
   58–85, where the mask multiplies the light under `SHADOW_MASK_ENABLED`
   and never for `TRANSPARENT`). The stage, `stages::shadows::traced`, sits
   inside the opaque stage's two-pass form ([Frame](#frame)): the renderer
-  calls the opaque stage's geometry encode (the G-buffer, complete, with
-  whatever the cull stage adds to it), then the traced shadow stage's
-  encode, then the opaque stage's lighting encode (the sky and the lighting
-  pass at the G-buffer's depth); the fused form never carries a mask, so
+  encodes the opaque stage's G-buffer parts, per phase, with the cull
+  stage's late phase and pyramid where occlusion culling runs, then the
+  traced shadow stage's encode, then the opaque stage's lighting part (the
+  sky and the lighting pass at the G-buffer's depth) and its ambient
+  occlusion; the fused form never carries a mask, so
   the setting's cost is the second geometry pass (which shades each pixel
   once, where the fused pass shades its overdraw) beside the trace,
   measured against the fused form on the consumer's route (RD-6). It
@@ -1077,9 +1083,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   1629-1637 and DDGI_D3D12.cpp 1239-1246, practice only): it traces
   nothing and its probes hold their light while what that light follows
   holds still. That is the scene's edits that change what the rays see or
-  light (the scene counts them; a deforming instance's pose and
-  deformation, which no ray sees, the transient effects and a value set to
-  what it was are none), the frame's data but for the camera's cascades and
+  light (the scene counts them; the transient effects and a value set to
+  what it was are none, and a deforming instance's pose and deformation
+  are none on the portable path, which never sees it, and edits while
+  hardware ray tracing is in effect, whose rays do), the frame's data but for the camera's cascades and
   the clock (whose animation phase counts while a material scrolls), the
   environment bound, the quality, whether the probe hits' light list takes
   the scene's lights (a diagnostic setting) and the placement. Improved on
@@ -1172,82 +1179,125 @@ code; it does not redeclare a struct, binding or function another module owns.
   The owner's decision: hardware ray tracing works on the Mac in its first
   version, and Vulkan and DX12 are supported as well, with separate code
   where needed. So the hardware path has one **baseline form**, which every
-  native backend runs, and one **candidate form**, a specialisation of the
-  trace module where the backend lowers the loop: `RayQueryForm`
-  (`Baseline`, `Candidates`), a typed capability the renderer derives once
-  from the adapter's backend (Metal baseline; Vulkan and DX12 candidates),
-  selects the trace module a tracing pipeline composes and the geometry
-  flags the scene builds with; nothing else branches on it. Shared by both
-  forms: the instance entries and the one hit decode, the acceleration
-  structures and their building, budget, refit and compaction, the shared
-  predicate, the settings and reporting, the stage placements and the
-  AR-12 caps. Per form: the trace module alone, `scene_rays_hardware.wgsl`
-  (baseline) and `scene_rays_candidates.wgsl` (candidates), each
-  implementing the one function set.
-  *Baseline form.* Every BLAS geometry is `OPAQUE` and a ray is one query
-  (Bevy's `trace_ray`; `blas.rs` 155), with `TERMINATE_ON_FIRST_HIT` for a
-  visibility ray; the hardware is asked for two things, which every backend
-  enforces, the cull mask that selects the kinds (naga's MSL `intersect`
-  takes it, 4123–4128; SPIR-V and HLSL pass it) and the interval, and for
-  nothing else: `CULL_BACK_FACING` and `CULL_FRONT_FACING` reach the
-  SPIR-V and HLSL queries but naga's MSL writer sets no triangle cull mode,
-  and a global cull would be wrong anyway for a mirrored instance, whose
-  world winding is reversed, and for a double-sided material, since
-  `TlasInstance` carries no per-instance flag to exempt them (Wicked exempts
-  them so, `wiScene.cpp` 4782–4791). The committed hit then passes the
-  shared predicate's checks that need no triangle solve (the visibility
-  group, the alpha mode, the side under the ray's policy from the
-  triangle's object-space winding, the receiver's own triangle and the
-  interval's open end), and a rejected hit **re-traces**: the query is
-  initialised again from just past the rejected distance, never finding
-  that hit again, at most `SCENE_MOST_RETRACES` times (AR-12; a bound set
-  from the most rejections a ray met on the consumer's content with the CPU
-  oracle, its reason beside it), after which the ray reports a miss, or a
-  visibility ray unoccluded, as the portable walk does at its visit cap. A
-  rejection is rare on opaque content (a single-sided back face, a hidden
-  group, a blended mesh of a mixed model), so a ray is one query almost
-  always; a material edit costs nothing, since no BLAS flag follows a
-  material. The hardware's `front_face` is never read: winding conventions
-  differ by backend, and the predicate derives the side from the positions
-  it reads anyway. What the predicate cannot judge from a committed hit is a
-  masked material's cut-out texel, which needs the hit's UV and a texture
-  sample per crossing, so, under the baseline form, an instance whose
-  model has a masked mesh is a **predicate instance**: it is left out of
-  the TLAS and the portable walk covers it. The portable walk is limited to
-  the predicate instances with no second copy of scene data: on a
-  hardware-traced frame the scene builds its two instance BVHs over the
-  predicate instances alone, from the same entries, leaves naming the same
-  indices, the static one rebuilt when the set changes (a form or setting
-  change, a static edit) and the moving one every traced frame as before;
-  the header's roots are those BVHs' and the portable module is composed
-  as it is on a portable frame. Every ray then takes the nearer of its two
-  results, hardware and portable (a visibility ray is occluded by either),
-  and the portable walk keeps its one shared visit budget. An instance
-  whose model has only blended meshes is in neither: rays pass through
-  blended surfaces.
+  native backend runs, and one **candidate form**, a specialisation where
+  the backend lowers the loop: `RayQueryForm` (`Baseline`, `Candidates`),
+  a typed capability the renderer derives once from the adapter's backend
+  (Metal the baseline; Vulkan and DX12 may run candidates), selects the
+  per-query module a tracing pipeline composes and the geometry flags the
+  scene builds with; nothing else branches on it. The form in effect on
+  Vulkan and DX12 is the baseline until the candidate form's benefit is
+  measured on their hardware (RD-6), a recorded decision kept as a
+  constant beside `RayQueryForm`, never a setting (AR-3). Shared by both
+  forms, in one hardware module, `scene_rays_hardware.wgsl`: the TLAS
+  binding, the query's setup from the ray and its side policy, the
+  re-trace, the conversion of a committed hit into the one hit, the
+  composition with the portable walk's result and the one per-ray budget;
+  and beyond it the instance entries and the one hit decode, the
+  acceleration structures with their building, budget, rebuilds and
+  compaction, the shared predicate, the settings and reporting, and the
+  stage placements. Per form, one function, the query itself, which the
+  shared module calls: `scene_rays_query_opaque.wgsl` (baseline) and
+  `scene_rays_query_candidates.wgsl` (candidates).
+  *Baseline form.* Every BLAS geometry is `OPAQUE` and a query asks the
+  hardware for two things, which every backend enforces, the cull mask
+  that selects the kinds (naga's MSL `intersect` takes it, 4123–4128;
+  SPIR-V and HLSL pass it) and the interval, and for nothing else:
+  `CULL_BACK_FACING` and `CULL_FRONT_FACING` reach the SPIR-V and HLSL
+  queries but naga's MSL writer sets no triangle cull mode, and a global
+  cull would be wrong anyway for a mirrored instance, whose world winding
+  is reversed, and for a double-sided material, since `TlasInstance`
+  carries no per-instance flag to exempt them (Wicked exempts them so,
+  `wiScene.cpp` 4782–4791). The shared predicate's checks that need no
+  triangle solve judge the committed hit (the visibility group, the alpha
+  mode, the side under the ray's policy from the triangle's object-space
+  winding, the receiver's own triangle and the interval's open end), and a
+  rejected hit **re-traces**: the ray keeps its origin and direction and
+  its t_min becomes the next `f32` above the rejected distance (an
+  absolute step rounds back to the same distance far from the origin and
+  repeats the hit), so t_min rises strictly and the ray ends once t_min
+  passes t_max, as Vulkan requires t_min ≤ t_max (a dynamic GI ray's t_max
+  is `f32::MAX`). An acceptable triangle at exactly a rejected one's
+  distance (back-to-back single-sided quads, coplanar meshes of a hidden
+  and a shown group) is skipped, since one opaque query cannot list ties: a
+  limitation stated here and pinned by the oracle test. A nearest ray asks
+  nearest queries throughout. A visibility ray asks for any hit first
+  (`TERMINATE_ON_FIRST_HIT`; Metal's `accept_any_intersection`): an
+  accepted hit occludes whatever its order and a miss is unoccluded, each
+  one query; a rejected hit carries no order, so the ray then asks nearest
+  queries from its original t_min, stepping past each rejected nearest
+  hit, so no nearer occluder is skipped. The cost: under
+  `SCENE_SIDES_SHADOW` every closed single-sided occluder's entry face is
+  rejected, so an occluded shadow ray costs one query when the hardware's
+  first hit is the exit face and three when it is the entry face, two on
+  average, what nearest queries from the start would cost it; under
+  `SCENE_SIDES_BOTH` a rejection is rare (a hidden group, a blended mesh
+  of a mixed model), so a dynamic GI visibility ray is one any-hit query
+  almost always, where an all-nearest form would make it a slower nearest
+  query; hence the two steps. The hardware's `front_face` is never read:
+  winding conventions differ by backend, and the predicate derives the
+  side from the positions it reads anyway. A mirrored instance (a pose
+  with a negative determinant) is in the TLAS as any other, its back faces
+  rejected and re-traced; a second BLAS built under a mirror transform
+  (`USE_TRANSFORM`) to spare that re-trace is an implementation choice
+  measured on a consumer that mirrors much. What the predicate cannot
+  judge from a committed hit cheaply is a masked material's cut-out texel,
+  which needs the hit's UV and a texture sample per crossing, so, under
+  the baseline form, a non-deforming instance whose model has a masked
+  mesh is a **predicate instance**, left out of the TLAS and covered by the
+  portable walk; a deforming instance has no portable BVH, so its committed
+  hits take the cut-out test (the hit's UV from the rest-pose packed
+  vertices, which deformation leaves) and re-trace under the budget, and
+  masked hair or cloth cuts out on the Mac too.
+  *Portable coverage.* One rule for both forms: on a hardware-traced frame
+  the portable walk covers every capture-visible, non-deforming instance
+  the TLAS does not hold, the predicate instances, the instances whose
+  model's BLAS is pending and the instances left out at the device's
+  limits, with no second copy of scene data: the scene builds its two
+  instance BVHs over them alone, from the same entries, leaves naming the
+  same indices, the moving one every traced frame as before and the static
+  one when its set changes (a static edit; a material's alpha mode edited,
+  which moves every instance of every model using it between the TLAS, the
+  walk and neither, so the scene keeps each model's ray class from its
+  meshes' alpha modes and recomputes it for the material's users through
+  the material's use list, a cost proportional to its users; a pending
+  BLAS built or an instance left out; the form or the setting), the
+  header's roots those BVHs' and the portable module composed as on a
+  portable frame. Every ray then takes the nearer of its two results,
+  hardware and portable (a visibility ray is occluded by either), and the
+  walk keeps its one shared visit budget. An instance whose model has only
+  blended meshes is in neither: rays pass through blended surfaces.
   *Candidate form.* Where the backend lowers the loop, a masked mesh's
-  geometry is built `NO_OPAQUE` and its instance joins the TLAS: the
-  hardware reports each of its triangles as a candidate, and the candidate
-  loop (`rayQueryProceed`, `rayQueryGetCandidateIntersection`,
-  `rayQueryConfirmIntersection`) runs the whole predicate on it, the
-  cut-out test included, confirming an accepted candidate, so masked
-  content runs through hardware candidates instead of the portable walk,
-  as Wicked's `wiRayQuery` confirms its alpha-tested candidates
-  (`rtreflectionCS.hlsl` 82–109; `screenspaceshadowCS.hlsl` 232–256) with
-  `FLAG_OPAQUE` on every other material (`wiScene.cpp` 4232–4244). Opaque
-  geometry never yields a candidate, so the re-trace and the side rules
-  stay as the baseline has them; the candidate form does not take the
-  side rules, since Wicked's per-instance cull exemptions are not
-  available. The portable walk then covers nothing and its BVHs bound
-  nothing, and the candidate loop ends at `SCENE_MOST_CANDIDATES`
-  iterations (AR-12; a bound set from the most candidates a grazing ray
-  met through the consumer's masked foliage with the CPU oracle, its reason
-  beside the constant, since hardware candidates are every non-opaque
-  triangle crossed and not the portable walk's visits), terminating the
-  query and reporting a miss or unoccluded at the cap. Under this form a
+  geometry is built without `OPAQUE` and its instance joins the TLAS: the
+  hardware reports each of its triangles as a candidate, and the per-query
+  function's candidate loop (`rayQueryProceed`,
+  `rayQueryGetCandidateIntersection`, `rayQueryConfirmIntersection`) runs
+  the whole predicate on it, the cut-out test included, confirming an
+  accepted candidate, so masked content runs through hardware candidates
+  instead of the portable walk, as Wicked's `wiRayQuery` confirms its
+  alpha-tested candidates (`rtreflectionCS.hlsl` 82–109;
+  `screenspaceshadowCS.hlsl` 232–256) with `FLAG_OPAQUE` on every other
+  material (`wiScene.cpp` 4232–4244). Opaque geometry never yields a
+  candidate, so the re-trace and the side rules stay as the baseline has
+  them; the candidate form does not take the side rules, since Wicked's
+  per-instance cull exemptions are not available. The portable walk then
+  covers the pending and left-out instances alone. Under this form a
   material edit that moves a mesh between masked and not re-pends every
   model using it, rebuilt outside the budget before the next traced frame,
-  as Wicked rebuilds (4244); under the baseline form it costs nothing.
+  as Wicked rebuilds (4244). The form reaches a device only through error
+  scopes around its module and pipeline creation, popped on native by
+  polling, sticky per device: a failure (a compile or validation error;
+  not a wrong result or a driver fault) falls the device back to the
+  baseline form, typed in `RayQueryForm`, and `ray_tracing_error` says so.
+  *Budget.* One budget per ray, `SCENE_MOST_HARDWARE_STEPS`, counts every
+  query the ray starts and every candidate it examines, nested loops
+  sharing it (AR-12); at the cap the query terminates and the ray reports
+  a miss, or a visibility ray unoccluded, as the portable walk does at its
+  visit cap. The constant sits above the most steps a ray took with the
+  CPU oracle on the examples and the consumer's content (grazing rays
+  through masked foliage, where the candidate form's candidates are every
+  non-opaque triangle crossed; shadow rays through nested closed
+  occluders), its reason beside it; the portable walk's visits are not
+  that measure.
   *Structures.* A model that does not deform owns one BLAS, one geometry
   per mesh, over the packed vertices' `f32` positions and the mesh indices
   where they lie in the ray source, whose buffer gains `BLAS_INPUT`
@@ -1262,29 +1312,38 @@ code; it does not redeclare a struct, binding or function another module owns.
   game changes a rigid model's geometry by replacement, never by refit. A
   deforming instance owns a BLAS of its own over its deformed positions
   (`DEFORMED_POSITION_WORDS`, a 12-byte stride, its range placed at a
-  three-word boundary) and its model's indices, built again after the
-  deform pass in every frame that deforms it (`ALLOW_UPDATE | PREFER_FAST_BUILD`
-  with `PreferUpdate`, which wgpu 29 builds as a full build), as Wicked
-  refits its skinned meshes' BLASes every frame (`wiScene.cpp` 4246–4252;
-  `wiRenderer.cpp` 5749–5760), so deforming casters and reflectors are in
-  the TLAS as moving instances; its hit decodes its deformed positions,
-  normals and tangents through the object record, as the pulled passes
-  read them, and the portable path still sees no deforming instance
+  three-word boundary) and its model's indices, built whole again after
+  the deform pass in every frame that deforms it, with `Build` and
+  `PREFER_FAST_BUILD` (wgpu 29 builds `PreferUpdate` as a full build,
+  `command/ray_tracing.rs` 917, 937, so `ALLOW_UPDATE` buys nothing until
+  it refits), outside the budget, as Wicked refits its skinned meshes'
+  BLASes every frame (`wiScene.cpp` 4246–4252; `wiRenderer.cpp`
+  5749–5760): a crowd of 64 instances of the skinned example's model is
+  measured in PR 2, and a nearest-first cap that keeps the rest's last
+  BLAS is added only if that calls for it. So deforming casters and
+  reflectors are in the TLAS as moving instances: a deforming instance's
+  entry is written while the hardware path is in effect (its inverse pose
+  and mesh word, for the predicate's model-space ray and mesh records),
+  and the predicate and the hit decode take its positions, normals and
+  tangents through the object record's deformed slot, as the pulled
+  passes read them; the portable path still sees no deforming instance
   ([Deformation](#designs-that-span-stages)). Only models that a
-  capture-visible instance names are built, never a level of detail. The
-  TLAS is built over the capture-visible instances the forms admit (every
+  capture-visible instance names are built, never a level of detail and,
+  under the baseline form, never a predicate instance's model. The TLAS is
+  built over the capture-visible instances the forms admit (every
   non-deforming instance whose model has a BLAS, less the predicate
   instances under the baseline form and the all-blended ones, plus the
   deforming instances), from their entries: the entry index as the 24-bit
   custom index, the pose as the transform, the kind as the mask (static 1,
-  moving 2), where Wicked's masks select by purpose (`wiRenderer.h` 38–40;
-  `wiScene.cpp` 4749–4794) and Bevy's take every ray (`binder.rs` 171–176);
-  created with a capacity of at least one, so wgpu builds it even when it
-  holds no instance (wgpu-core 29 sizes its scratch from the capacity,
-  `device/ray_tracing.rs` 205–218, and skips only a build with nothing at
-  all to build, `command/ray_tracing.rs` 286–294), and grown with the
-  entry buffer. Builds are frame work: one `build_acceleration_structures`
-  call in the frame's encoder, in prepare after the deform pass, holds the
+  moving 2), where Wicked's masks select by purpose (`wiRenderer.h`
+  38–40; `wiScene.cpp` 4749–4794) and Bevy's take every ray (`binder.rs`
+  171–176); created with a capacity of at least one, so wgpu builds it
+  even when it holds no instance (wgpu-core 29 sizes its scratch from the
+  capacity, `device/ray_tracing.rs` 205–218, and skips only a build with
+  nothing at all to build, `command/ray_tracing.rs` 286–294), and grown
+  with the entry buffer. Builds are frame work: one
+  `build_acceleration_structures` call in the frame's encoder, in prepare
+  after the deform pass and before the cull stage's early phase, holds the
   frame's pending model BLASes, its deforming instances' BLASes and the
   TLAS, so the TLAS is rebuilt whole every hardware-traced frame, as Bevy
   (`binder.rs` 74–81, 265–267) and Wicked (`wiRenderer.cpp` 5809–5820)
@@ -1299,8 +1358,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   no memory, and one that turns it on, or installs a world, ramps the
   structures in over a few frames rather than one, as the dynamic GI
   volume starts its probes (an RD-2 improvement on Bevy, which builds every
-  extracted mesh in the frame it arrives); an instance whose model's BLAS
-  is pending is left out of the TLAS until it is built. A replaced model
+  extracted mesh in the frame it arrives); the portable walk covers an
+  instance whose model's BLAS is pending until it is built
+  ([Portable coverage](#designs-that-span-stages)). A replaced model
   (`set_model`) and a re-pended one are rebuilt before the next traced
   frame outside the budget, so an edited chunk never drops out of a frame's
   rays. A built BLAS is prepared for compaction and, once ready, compacted
@@ -1311,16 +1371,17 @@ code; it does not redeclare a struct, binding or function another module owns.
   `max_blas_primitive_count` or `max_blas_geometry_count`, an instance
   beyond `max_tlas_instance_count` (the farthest from the camera first) or
   past the 24-bit custom index, and a BLAS whose allocation fails under an
-  error scope all stay off the TLAS, their instances traced by the portable
-  walk, and `Renderer::ray_tracing_stats` counts the instances traced in
-  hardware, on the portable walk and left out. The scene frees the
-  structures when a frame runs with the setting off and builds them again
-  when it turns on. The structures' bytes, builds and compactions count
-  through `counters`, and a scene on a device without the feature holds
-  none of this.
+  error scope all stay off the TLAS and on the portable walk, and
+  `Renderer::ray_tracing_stats`, a plain method as `local_shadow_stats`
+  is, counts the instances traced in hardware, on the portable walk and
+  left out, so a game without the `diagnostics` feature sees them. The
+  scene frees the structures when a frame runs with the setting off and
+  builds them again when it turns on. The structures' bytes, builds and
+  compactions count through `counters`, and a scene on a device without
+  the feature holds none of this.
   *Bindings and composition.* The TLAS is bound only by the passes that
   trace, in each tracing stage's group 3 at one entry
-  ([Bind groups](#shared-contracts)); the hardware modules declare `enable
+  ([Bind groups](#shared-contracts)); the hardware module declares `enable
   wgpu_ray_query;`, which `shading::compose` hoists to the program's head,
   since naga accepts the directive before any declaration only.
   *Costs.* The structures' memory and build times are unknown until PR 2
@@ -1334,17 +1395,17 @@ code; it does not redeclare a struct, binding or function another module owns.
   (`scene::rays::query`) runs the hardware module against the same oracle
   as the portable tests (`geometry::triangles` and `obstructed_distance`,
   brute force) over masked, blended, single- and double-sided, mirrored,
-  moving and deforming content and the receiver's own triangle, on a device
-  with the feature; where the adapter lacks it the test reports itself
-  unsupported, never passed. The candidate form runs the same test wherever
-  its hardware exists, which no Mac has, so it ships with less local
-  validation than the baseline form, a risk recorded here; a candidate
-  pipeline that fails to compile falls back to the baseline form, typed in
-  `RayQueryForm`, and reported. Per-pass GPU timings of the world-space
-  trace, the dynamic GI trace and the ray-traced shadows against the
-  portable path on the examples and the consumer's route are the measured
-  record (RD-6). The baseline form and its Mac validation land first; the
-  candidate specialisation is a later, separate change.
+  moving and deforming content, the receiver's own triangle, nested closed
+  occluders under every side policy and the equal-distance tie, on a
+  device with the feature; where the adapter lacks it the test reports
+  itself unsupported, never passed. The candidate form runs the same test
+  wherever its hardware exists, which no Mac has (MoltenVK offers no ray
+  query), so it ships with less local validation than the baseline form, a
+  risk recorded here. Per-pass GPU timings of the world-space trace, the
+  dynamic GI trace and the ray-traced shadows against the portable path on
+  the examples and the consumer's route are the measured record (RD-6).
+  The baseline form and its Mac validation land first; the candidate
+  specialisation is a later, separate change.
 
 ## Rules
 
