@@ -417,6 +417,21 @@ impl Renderer {
         })
     }
 
+    /// The draws the last frame's camera, blended and directional-cascade
+    /// views encoded; local-light shadow faces, probe captures and
+    /// full-screen passes are not counted.
+    pub fn diagnostic_draws(&self) -> crate::diagnostics::ViewDraws {
+        let views = &self.views;
+        crate::diagnostics::ViewDraws {
+            camera: views.camera.list.draws(),
+            blended: views.blended.draws(),
+            cascades: views.cascades[..views.cascade_count]
+                .iter()
+                .map(|cascade| cascade.list.draws())
+                .collect(),
+        }
+    }
+
     /// The numerical frame probe's reports of finished frames read back
     /// since the last call, one JSON object per frame, oldest first
     /// (`Diagnostics::frame_probe`). Readback is asynchronous: a frame's

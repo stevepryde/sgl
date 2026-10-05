@@ -152,7 +152,6 @@ impl ProbePrefilter {
 
     /// After all six faces: the solid-angle mip chain, then every GGX level.
     pub fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        use wgpu::util::DeviceExt;
         for level in 1..self.cube_mips.len() {
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("specular probe adjacent mips"),
@@ -175,11 +174,14 @@ impl ProbePrefilter {
             pass.dispatch_workgroups(size.div_ceil(8), size.div_ceil(8), 6);
         }
         for level in 0..LEVELS {
-            let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("specular probe level"),
-                contents: bytemuck::bytes_of(&level),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+            let uniform = crate::counters::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("specular probe level"),
+                    contents: bytemuck::bytes_of(&level),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                },
+            );
             let target = self.filtered.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::D2Array),
                 base_mip_level: level,

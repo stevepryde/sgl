@@ -1254,6 +1254,29 @@ procedural geometry, caller-created environments, animation and PNG output:
 cargo run -p sgl-3d --example offscreen -- target/sgl3d.png
 ```
 
+The [streaming example](examples/streaming.rs) is a block world at a block
+game's scale: 16 m chunks, each one model placed as a static instance at its
+integer chunk origin, added under a per-frame budget as a camera walks or
+flies, replaced by block edits and remeshing waves, and removed behind it;
+water as moving blended receivers; torches; and the render origin moved
+every chunk or every 256 m. A block edit remeshes the chunk holding the
+block it changed and the chunks of that block's solid neighbours across a
+border, since a solid block owns its faces toward air. Once the first window
+has streamed in, it prints each scene operation's CPU time by size, a frame's
+time in scene calls apart from the game's meshing, its recording time,
+uploads by call site, buffers created, model build steps, the scene's buffer
+sizes, draws per view, the local-light shadow faces each frame redraws and
+GPU time per pass, and writes each run's last frame to
+`target/streaming-example/`. `--check` moves the origin under a still camera
+and fails if static content shows motion or a shadow is redrawn, then
+remeshes chunks holding shadowed torches and fails unless their static
+shadow layers are redrawn once:
+
+```sh
+cargo run --release -p sgl-3d --example streaming -- walk fly
+cargo run --release -p sgl-3d --example streaming -- --check
+```
+
 ### GPU pass timing
 
 `timing::GpuTiming::new(&device, &queue)` returns `None` unless the device was
@@ -1700,8 +1723,15 @@ not serialized: switches that turn a layer off, the numerical frame probe and
 the tone-target capture), `Renderer::diagnostic_target`,
 `Renderer::take_frame_probe_reports`, `diagnostics::read`,
 `diagnostics::source_id`, the value the source-identity target holds for an
-instance's pixels, and `diagnostics::crystal_roughness_threshold`, where
-Crystal stops tracing. Diagnostics are
+instance's pixels, `diagnostics::crystal_roughness_threshold`, where
+Crystal stops tracing, `diagnostics::counters` (what `sgl-3d` itself counted on
+the thread: uploads by file and line, buffers created with contents, model and
+instance BVH build steps, ray-source growths and static-edit boxes; subtract
+two with `Counters::since`, and compare versions by totals since lines move),
+`Scene::diagnostic_resources` (the scene's buffer sizes) and
+`Renderer::diagnostic_draws` (the last frame's camera, blended and cascade
+draws).
+Diagnostics are
 configuration: the library reads no environment variables and writes no files.
 Normal rendering does not require the feature.
 

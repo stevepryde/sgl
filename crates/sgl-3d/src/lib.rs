@@ -2,6 +2,7 @@
 //! WebGPU). Games own composition, simulation and content.
 #![deny(unsafe_code)]
 mod content;
+pub(crate) mod counters;
 #[cfg(any(test, feature = "diagnostics"))]
 pub mod diagnostics;
 mod frame_input;

@@ -48,7 +48,8 @@ pub(crate) fn lookup_tables(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu:
         dfg[at..at + 4].copy_from_slice(texel);
     }
     texels.extend(dfg);
-    queue.write_texture(
+    crate::counters::write_texture(
+        queue,
         texture.as_image_copy(),
         &texels,
         wgpu::TexelCopyBufferLayout {

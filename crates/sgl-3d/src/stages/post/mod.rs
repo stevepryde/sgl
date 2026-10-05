@@ -162,7 +162,8 @@ impl Post {
         // Without bloom, or at intensity 0 where Bevy skips its node, the
         // completed scene goes to SMAA and tone mapping.
         let combined = if presentation.bloom && look.bloom.intensity != 0. {
-            queue.write_buffer(
+            crate::counters::write_buffer(
+                queue,
                 &self.inputs.settings,
                 0,
                 bytemuck::bytes_of(&bloom::settings(look.bloom, look.stops)),

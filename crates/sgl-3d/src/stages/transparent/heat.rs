@@ -6,7 +6,6 @@ use crate::scene::transient::Transient;
 use crate::shading::gbuffer::COLOR as HDR;
 use crate::shading::vertex::{VertexLayout, vertex_layout};
 use crate::view::targets::{attachment, target};
-use wgpu::util::DeviceExt;
 
 pub(crate) static HEAT: crate::shading::Module = crate::shading::Module {
     name: "heat_distortion",
@@ -97,11 +96,14 @@ impl Heat {
         Self {
             pipeline,
             layout,
-            matrix: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("heat stable camera"),
-                contents: bytemuck::cast_slice(&glam::Mat4::IDENTITY.to_cols_array()),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }),
+            matrix: crate::counters::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("heat stable camera"),
+                    contents: bytemuck::cast_slice(&glam::Mat4::IDENTITY.to_cols_array()),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
             source: None,
         }
     }
@@ -129,7 +131,7 @@ impl Heat {
             self.source = Some(target(device, "immutable heat source", size, HDR));
         }
         let source = self.source.as_ref().unwrap();
-        queue.write_buffer(&self.matrix, 0, bytemuck::bytes_of(matrix));
+        crate::counters::write_buffer(queue, &self.matrix, 0, bytemuck::bytes_of(matrix));
         encoder.copy_texture_to_texture(
             color.texture().as_image_copy(),
             source.texture().as_image_copy(),

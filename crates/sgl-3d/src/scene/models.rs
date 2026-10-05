@@ -14,6 +14,7 @@ use super::{Scene, SceneError, buffer};
 use crate::asset::{self, Asset, Vertex};
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::content::model::{AssetIds, ModelMesh};
+use crate::counters::{BuildStep, step};
 use crate::lod::MeshLod;
 use crate::shading::vertex::CasterVertex;
 use glam::Vec3;
@@ -173,7 +174,9 @@ impl Models {
         let mut ray_meshes = Vec::with_capacity(meshes.len());
         for mesh in &meshes {
             let material = materials.get(mesh.material)?;
-            let has_tangents = validate_geometry(&mesh.vertices, &mesh.indices)?;
+            let has_tangents = step(BuildStep::Validate, || {
+                validate_geometry(&mesh.vertices, &mesh.indices)
+            })?;
             validate_tangents(material.values.anisotropy_strength, has_tangents)?;
             if std::mem::size_of_val(mesh.vertices.as_slice()) as u64 > limit
                 || std::mem::size_of_val(mesh.indices.as_slice()) as u64 > limit
@@ -208,33 +211,44 @@ impl Models {
         let meshes = meshes
             .iter()
             .zip(tangents)
-            .map(|(mesh, tangents)| Mesh {
-                positions: buffer(
-                    device,
-                    "mesh positions",
-                    bytemuck::cast_slice(
-                        &mesh
-                            .vertices
-                            .iter()
-                            .map(|vertex| CasterVertex {
-                                position: vertex.position,
-                            })
-                            .collect::<Vec<_>>(),
-                    ),
-                    wgpu::BufferUsages::VERTEX,
-                ),
-                indices: buffer(
-                    device,
-                    "mesh indices",
-                    bytemuck::cast_slice(&mesh.indices),
-                    wgpu::BufferUsages::INDEX,
-                ),
-                count: mesh.indices.len() as u32,
-                material: mesh.material,
-                ranges: MeshRanges::new(&mesh.vertices, &mesh.indices),
-                lods: Vec::new(),
-                tangents,
-                clusters: MeshClusters::new(device, &mesh.vertices, &mesh.indices),
+            .map(|(mesh, tangents)| {
+                let (positions, indices) = step(BuildStep::MeshBuffers, || {
+                    let positions: Vec<_> = mesh
+                        .vertices
+                        .iter()
+                        .map(|vertex| CasterVertex {
+                            position: vertex.position,
+                        })
+                        .collect();
+                    (
+                        buffer(
+                            device,
+                            "mesh positions",
+                            bytemuck::cast_slice(&positions),
+                            wgpu::BufferUsages::VERTEX,
+                        ),
+                        buffer(
+                            device,
+                            "mesh indices",
+                            bytemuck::cast_slice(&mesh.indices),
+                            wgpu::BufferUsages::INDEX,
+                        ),
+                    )
+                });
+                Mesh {
+                    positions,
+                    indices,
+                    count: mesh.indices.len() as u32,
+                    material: mesh.material,
+                    ranges: step(BuildStep::Ranges, || {
+                        MeshRanges::new(&mesh.vertices, &mesh.indices)
+                    }),
+                    lods: Vec::new(),
+                    tangents,
+                    clusters: step(BuildStep::Clusters, || {
+                        MeshClusters::new(device, &mesh.vertices, &mesh.indices)
+                    }),
+                }
             })
             .collect();
         Ok(Model {

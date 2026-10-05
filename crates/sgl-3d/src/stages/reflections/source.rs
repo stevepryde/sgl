@@ -6,7 +6,6 @@ use crate::shading;
 use crate::view::bindings::FogVolume;
 use crate::view::cached_group::CachedGroup;
 use crate::view::reflection_camera;
-use wgpu::util::DeviceExt;
 
 /// Source completion (`main`) and screen-space composition
 /// (`fullscreen_vs`, `compose_screen_space`).
@@ -51,16 +50,19 @@ pub(crate) fn environment_uniform(
     rotation: f32,
     strength: f32,
 ) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("application reflection environment intensity"),
-        contents: bytemuck::bytes_of(&ReflectionEnvironment {
-            yaw: rotation,
-            intensity: strength,
-            fade: 0.,
-            traced: 0.,
-        }),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    })
+    crate::counters::buffer_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("application reflection environment intensity"),
+            contents: bytemuck::bytes_of(&ReflectionEnvironment {
+                yaw: rotation,
+                intensity: strength,
+                fade: 0.,
+                traced: 0.,
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        },
+    )
 }
 
 pub(crate) struct Environment<'a> {
@@ -405,7 +407,8 @@ impl ReflectionSource {
         input: Inputs<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &self.camera,
             0,
             bytemuck::bytes_of(&SourceCamera::new(input.camera, input.frame_fog)),
@@ -474,7 +477,8 @@ impl ReflectionSource {
         collection: &wgpu::Buffer,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &self.culling_camera,
             0,
             bytemuck::bytes_of(&CullingCamera::new(camera)),

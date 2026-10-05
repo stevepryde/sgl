@@ -80,7 +80,6 @@ impl Query {
         rays: &wgpu::Buffer,
         hits: &wgpu::Buffer,
     ) -> SceneRayBindings {
-        use wgpu::util::DeviceExt;
         assert_eq!(
             rays.size() % 32,
             0,
@@ -93,11 +92,14 @@ impl Query {
         );
         let count =
             u32::try_from(rays.size() / 32).expect("ray count exceeds shader address range");
-        let limits = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("scene ray allocation bounds"),
-            contents: bytemuck::cast_slice(&[count, 0, 0, count.div_ceil(64).min(65535) * 64]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let limits = crate::counters::buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("scene ray allocation bounds"),
+                contents: bytemuck::cast_slice(&[count, 0, 0, count.div_ceil(64).min(65535) * 64]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene ray dispatch IO"),
             layout: &self.layout,

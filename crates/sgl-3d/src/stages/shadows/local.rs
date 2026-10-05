@@ -287,7 +287,7 @@ impl Local {
         if (self.records.size() as usize) < std::mem::size_of_val(records) {
             self.records = records_buffer(device, records.len());
         }
-        queue.write_buffer(&self.records, 0, bytemuck::cast_slice(records));
+        crate::counters::write_buffer(queue, &self.records, 0, bytemuck::cast_slice(records));
     }
 
     /// Places the static layers a probe capture at `center` of `scene`
@@ -343,7 +343,7 @@ impl Local {
         for (index, face) in self.plan.faces().iter().enumerate() {
             let uniform = bytemuck::bytes_of(&face.view.uniform);
             if let Some(view) = self.views.get(index) {
-                queue.write_buffer(&view.buffer, 0, uniform);
+                crate::counters::write_buffer(queue, &view.buffer, 0, uniform);
             } else {
                 let buffer = crate::scene::buffer(
                     device,

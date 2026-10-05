@@ -20,7 +20,6 @@
 //! restarts or automatic exposure starts.
 use crate::frame_input::{AutoExposure, Exposure as AuthoredExposure, MeteringMask};
 use crate::view::frame::FrameContext;
-use wgpu::util::DeviceExt;
 
 /// The histogram and adaptation.
 pub(crate) static EXPOSURE: crate::shading::Module = crate::shading::Module {
@@ -260,16 +259,22 @@ impl Exposure {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
-            histogram: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("auto exposure histogram"),
-                contents: &[0; 64 * 4],
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            }),
-            correction: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("auto exposure correction"),
-                contents: &[0; 4],
-                usage: wgpu::BufferUsages::STORAGE,
-            }),
+            histogram: crate::counters::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("auto exposure histogram"),
+                    contents: &[0; 64 * 4],
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                },
+            ),
+            correction: crate::counters::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("auto exposure correction"),
+                    contents: &[0; 4],
+                    usage: wgpu::BufferUsages::STORAGE,
+                },
+            ),
             mask: texture(
                 "metering mask",
                 16,
@@ -306,7 +311,8 @@ impl Exposure {
         let AuthoredExposure { stops, automatic } = ctx.input.exposure;
         let Some(automatic) = automatic else {
             if self.fixed != Some(stops) {
-                ctx.queue.write_texture(
+                crate::counters::write_texture(
+                    ctx.queue,
                     self.exposure.as_image_copy(),
                     bytemuck::bytes_of(&stops.exp2()),
                     wgpu::TexelCopyBufferLayout::default(),
@@ -367,9 +373,10 @@ impl Exposure {
             metering.delta_time,
             metering.reset,
         );
-        queue.write_buffer(&self.settings, 0, bytemuck::bytes_of(&uniform));
+        crate::counters::write_buffer(queue, &self.settings, 0, bytemuck::bytes_of(&uniform));
         if self.mask_weights != Some(automatic.metering_mask) {
-            queue.write_texture(
+            crate::counters::write_texture(
+                queue,
                 self.mask.as_image_copy(),
                 automatic.metering_mask.weights.as_flattened(),
                 wgpu::TexelCopyBufferLayout {

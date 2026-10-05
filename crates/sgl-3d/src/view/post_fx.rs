@@ -380,7 +380,8 @@ impl PostFx {
         }
         let inputs = self.inputs.as_ref().unwrap();
         let near = projection.w_axis.z;
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &self.planes,
             0,
             bytemuck::cast_slice(&[near, FAR_PLANE, 0., 0.]),

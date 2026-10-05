@@ -107,7 +107,7 @@ impl Transient {
             self.fog_volumes = fog_volume_buffer(device, volumes.len() as u64);
         }
         if !bytes.is_empty() {
-            queue.write_buffer(&self.fog_volumes, 0, bytes);
+            crate::counters::write_buffer(queue, &self.fog_volumes, 0, bytes);
         }
         self.fog_volume_corners = volumes.iter().map(fog::corners).collect();
         self.fog_volume_list = volumes.to_vec();
@@ -125,7 +125,7 @@ impl Transient {
             self.mist = mist_buffer(device, positions.len() as u64);
         }
         if !bytes.is_empty() {
-            queue.write_buffer(&self.mist, 0, bytes);
+            crate::counters::write_buffer(queue, &self.mist, 0, bytes);
         }
         self.mist_positions = positions.to_vec();
     }
@@ -145,7 +145,7 @@ impl Transient {
         }
         self.glow_count = vertices.len() as u32;
         if !bytes.is_empty() {
-            queue.write_buffer(&self.glow, 0, bytes);
+            crate::counters::write_buffer(queue, &self.glow, 0, bytes);
         }
         self.glow_vertices = vertices.to_vec();
     }
@@ -170,7 +170,7 @@ impl Transient {
         }
         self.heat_count = vertices.len() as u32;
         if self.heat_count > 0 {
-            queue.write_buffer(&self.heat, 0, bytemuck::cast_slice(vertices));
+            crate::counters::write_buffer(queue, &self.heat, 0, bytemuck::cast_slice(vertices));
         }
         self.heat_vertices = vertices.to_vec();
         Ok(())
@@ -193,7 +193,12 @@ impl Transient {
             vertex.position = moved(vertex.position);
         }
         if !self.heat_vertices.is_empty() {
-            queue.write_buffer(&self.heat, 0, bytemuck::cast_slice(&self.heat_vertices));
+            crate::counters::write_buffer(
+                queue,
+                &self.heat,
+                0,
+                bytemuck::cast_slice(&self.heat_vertices),
+            );
         }
         for position in &mut self.mist_positions {
             *position = moved(*position);
@@ -214,7 +219,12 @@ impl Transient {
                 .total_cmp(&Vec3::from_array(*a).distance_squared(eye))
         });
         if !self.mist_positions.is_empty() {
-            queue.write_buffer(&self.mist, 0, bytemuck::cast_slice(&self.mist_positions));
+            crate::counters::write_buffer(
+                queue,
+                &self.mist,
+                0,
+                bytemuck::cast_slice(&self.mist_positions),
+            );
         }
     }
 }

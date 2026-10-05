@@ -112,7 +112,7 @@ impl Deform {
             chunk[..std::mem::size_of::<DeformDispatch>()]
                 .copy_from_slice(bytemuck::bytes_of(record));
         }
-        queue.write_buffer(&self.records, 0, &self.staging);
+        crate::counters::write_buffer(queue, &self.records, 0, &self.staging);
         let source = scene.rays.source();
         if self.group.as_ref().is_none_or(|(bound, _)| bound != source) {
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {

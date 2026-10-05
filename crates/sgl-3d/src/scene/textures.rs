@@ -35,7 +35,8 @@ pub(crate) fn upload(
     });
     let mut mip = image.clone();
     for level in 0..levels {
-        queue.write_texture(
+        crate::counters::write_texture(
+            queue,
             wgpu::TexelCopyTextureInfo {
                 texture: &tex,
                 mip_level: level,
@@ -112,7 +113,6 @@ fn upload_compressed(
     image: &CompressedImage,
     [color, data]: [bool; 2],
 ) -> [Option<wgpu::TextureView>; 2] {
-    use wgpu::util::DeviceExt;
     let linear = match image.format {
         CompressedFormat::Bc7 => wgpu::TextureFormat::Bc7RgbaUnorm,
     };
@@ -123,7 +123,8 @@ fn upload_compressed(
         [false, true] => (linear, &[]),
         _ => (linear, &srgb_view),
     };
-    let texture = device.create_texture_with_data(
+    let texture = crate::counters::texture_init(
+        device,
         queue,
         &wgpu::TextureDescriptor {
             label: Some("retained compressed material map"),

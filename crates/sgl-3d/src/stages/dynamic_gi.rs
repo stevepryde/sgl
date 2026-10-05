@@ -365,8 +365,7 @@ impl DynamicGi {
             rays: 0,
             padding: [0; 3],
         };
-        ctx.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
+        crate::counters::write_buffer(ctx.queue, &self.uniform, 0, bytemuck::bytes_of(&uniform));
         let probes = dispatch(uniform.probe_count);
         let timing = ctx.timing;
         let encoder = &mut *ctx.encoder;

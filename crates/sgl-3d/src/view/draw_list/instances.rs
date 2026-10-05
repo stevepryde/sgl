@@ -45,7 +45,7 @@ impl DrawInstances {
                 mapped_at_creation: false,
             }));
         }
-        queue.write_buffer(self.buffer.as_ref().unwrap(), 0, bytes);
+        crate::counters::write_buffer(queue, self.buffer.as_ref().unwrap(), 0, bytes);
     }
 
     /// The buffer the draws step through.

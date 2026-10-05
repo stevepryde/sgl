@@ -1,7 +1,8 @@
 //! Lights: each point, spot and rectangle light's description and its
 //! record in the scene's light buffer, which group 0 binds, with the `Scene`
 //! operations that add, read, change and remove them. A removed light's
-//! record stays until its index is reused; no view lists it.
+//! record stays until its index is reused, or until the render origin moves
+//! while a light of a higher index lives, which zeroes it; no view lists it.
 use super::slots::Slots;
 use super::{Scene, SceneError};
 use crate::content::identity::{Identity, LightId};
@@ -56,7 +57,8 @@ impl Lights {
     }
 
     fn write(&self, queue: &wgpu::Queue, index: usize, light: &Light) {
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &self.buffer,
             index as u64 * RECORD,
             bytemuck::bytes_of(&LightRecord::new(light)),
@@ -93,13 +95,21 @@ impl Lights {
 
 impl Lights {
     /// Moves the render origin by `by` (`Scene::move_origin`): each light's
-    /// position and record.
+    /// position, and every record in one write, as `Objects::write_all`
+    /// writes the instances', rather than one write a light. The write
+    /// zeroes the records of removed indices below the highest live one,
+    /// which no view lists.
     pub fn move_origin(&mut self, queue: &wgpu::Queue, by: glam::Vec3) {
-        for (_, light) in self.slots.iter_mut() {
+        let mut records = Vec::new();
+        for (id, light) in self.slots.iter_mut() {
             light.position -= by;
+            if records.len() <= id.index() {
+                records.resize(id.index() + 1, bytemuck::Zeroable::zeroed());
+            }
+            records[id.index()] = LightRecord::new(light);
         }
-        for (id, light) in self.slots.iter() {
-            self.write(queue, id.index(), light);
+        if !records.is_empty() {
+            crate::counters::write_buffer(queue, &self.buffer, 0, bytemuck::cast_slice(&records));
         }
     }
 }

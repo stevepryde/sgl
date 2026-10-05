@@ -38,7 +38,8 @@ impl Environment {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        queue.write_texture(
+        crate::counters::write_texture(
+            queue,
             texture.as_image_copy(),
             &atlas.rgba16,
             wgpu::TexelCopyBufferLayout {

@@ -1,7 +1,35 @@
 //! Raw GPU observations for renderer integration tests and diagnostics
-//! (feature `diagnostics`): the frame's intermediate targets and readback.
+//! (feature `diagnostics`): the frame's intermediate targets and readback,
+//! and what the library counted on this thread (`counters`): its uploads by
+//! call site, buffers created, build steps' times, ray-source growths and
+//! static-edit boxes.
 use crate::InstanceId;
 use crate::content::identity::Identity;
+pub use crate::counters::{BuildStep, Counters, StepTime, UploadSite};
+pub use crate::scene::SceneResources;
+
+/// What the library counted on this thread since it started. Take two and
+/// `Counters::since` for what a frame or an operation cost.
+///
+/// It counts `sgl-3d`'s own uploads and buffers only: the constant and
+/// staging buffers `sgl-post-fx` and the FSR2 port (`sp-fidelity`) write
+/// for their passes are not included.
+pub fn counters() -> Counters {
+    crate::counters::snapshot()
+}
+
+/// The draws the last frame's camera and directional-cascade views encoded
+/// (`Renderer::diagnostic_draws`): one per instanced draw call. Local-light
+/// shadow faces, probe captures and full-screen passes are not counted; the
+/// local-light shadow atlas's draws are `LocalShadowStats::draws`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ViewDraws {
+    /// The camera's opaque and masked surfaces, and its blended ones.
+    pub camera: usize,
+    pub blended: usize,
+    /// Each directional shadow cascade, nearest first.
+    pub cascades: Vec<usize>,
+}
 
 /// The value `DiagnosticTarget::SourceId`'s R channel holds for `instance`'s
 /// pixels in a frame rendered while the scene had it.

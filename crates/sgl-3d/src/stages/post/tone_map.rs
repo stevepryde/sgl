@@ -238,7 +238,8 @@ impl ToneMap {
         {
             self.captured = capture;
         }
-        queue.write_buffer(
+        crate::counters::write_buffer(
+            queue,
             &self.grading,
             0,
             bytemuck::bytes_of(&ColorGradingUniform::new(grading)),

@@ -548,8 +548,7 @@ impl VolumetricFog {
             volumes.inject = Some((fog_volumes.clone(), reached.clone(), groups));
         }
         let inject = &volumes.inject.as_ref().unwrap().2[index];
-        ctx.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
+        crate::counters::write_buffer(ctx.queue, &self.uniform, 0, bytemuck::bytes_of(&uniform));
         let [x, y, z] = volumes.size;
         // Two passes, so the integration binds no group 0.
         let mut pass = ctx

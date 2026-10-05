@@ -57,7 +57,7 @@ impl ReachedFroxels {
             self.buffer = buffer(device, reached.len());
         }
         if !reached.is_empty() {
-            queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&reached));
+            crate::counters::write_buffer(queue, &self.buffer, 0, bytemuck::cast_slice(&reached));
         }
         reached.len() as u32
     }

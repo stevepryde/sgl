@@ -50,7 +50,6 @@ pub(super) struct Targets {
 
 impl Targets {
     pub(super) fn new(device: &wgpu::Device, full: [u32; 2], half: bool) -> Self {
-        use wgpu::util::DeviceExt;
         let size = if half {
             full.map(|v| (v / 2).max(1))
         } else {
@@ -121,15 +120,18 @@ impl Targets {
             ssr: view(ssr),
             filter_params: (0..mipmaps)
                 .map(|m| {
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Godot SSR filter parameters"),
-                        contents: bytemuck::bytes_of(&FilterParams {
-                            screen_size: size.map(|v| (v >> m).max(1) as i32),
-                            mip_level: m,
-                            pad: 0,
-                        }),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    })
+                    crate::counters::buffer_init(
+                        device,
+                        &wgpu::util::BufferInitDescriptor {
+                            label: Some("Godot SSR filter parameters"),
+                            contents: bytemuck::bytes_of(&FilterParams {
+                                screen_size: size.map(|v| (v >> m).max(1) as i32),
+                                mip_level: m,
+                                pad: 0,
+                            }),
+                            usage: wgpu::BufferUsages::UNIFORM,
+                        },
+                    )
                 })
                 .collect(),
             mip_level: view(texture(

@@ -35,7 +35,6 @@ pub use error::SceneError;
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::content::instance::Mobility;
 use std::sync::atomic::{AtomicU64, Ordering};
-use wgpu::util::DeviceExt;
 
 /// Retained content and the GPU buffers mirroring it, which a
 /// [`Renderer`](crate::Renderer) renders. A scene starts empty; the game
@@ -304,23 +303,74 @@ impl Scene {
     }
 }
 
+/// The GPU memory a scene's content holds (`Scene::diagnostic_resources`,
+/// re-exported as `diagnostics::SceneResources`).
+#[cfg(any(test, feature = "diagnostics"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SceneResources {
+    /// The ray source buffer's bytes, the bytes up to the last word content
+    /// holds, and the bytes content holds.
+    pub ray_source: u64,
+    pub ray_source_used: u64,
+    pub ray_source_live: u64,
+    /// The object records', instance entries' and light records' buffers.
+    pub object_records: u64,
+    pub instance_entries: u64,
+    pub light_records: u64,
+    /// Every model's mesh position, index and caster-cluster index buffers,
+    /// and how many there are.
+    pub mesh_buffers: u64,
+    pub mesh_buffer_count: u64,
+}
+
+#[cfg(any(test, feature = "diagnostics"))]
+impl Scene {
+    /// The GPU memory the scene's content holds.
+    pub fn diagnostic_resources(&self) -> SceneResources {
+        let (ray_source_used, ray_source_live) = self.rays.words_in_use();
+        let mut resources = SceneResources {
+            ray_source: self.rays.source().size(),
+            ray_source_used: ray_source_used * 4,
+            ray_source_live: ray_source_live * 4,
+            object_records: self.instances.objects.buffer().size(),
+            instance_entries: self.ray_instances.buffer().size(),
+            light_records: self.lights.buffer().size(),
+            ..Default::default()
+        };
+        for (_, model) in self.models.slots.iter() {
+            for mesh in &model.meshes {
+                let clusters = mesh.clusters.as_ref().map(|clusters| &clusters.indices);
+                for buffer in [&mesh.positions, &mesh.indices].into_iter().chain(clusters) {
+                    resources.mesh_buffers += buffer.size();
+                    resources.mesh_buffer_count += 1;
+                }
+            }
+        }
+        resources
+    }
+}
+
 /// A value no other scene, resource or identity generation has.
 pub(crate) fn next_generation() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+#[cfg_attr(any(test, feature = "diagnostics"), track_caller)]
 pub(crate) fn buffer(
     device: &wgpu::Device,
     label: &str,
     contents: &[u8],
     usage: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(label),
-        contents,
-        usage,
-    })
+    crate::counters::buffer_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents,
+            usage,
+        },
+    )
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -329,3 +379,6 @@ mod content_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod origin_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod streaming_tests;
