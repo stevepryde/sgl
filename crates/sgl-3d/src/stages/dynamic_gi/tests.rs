@@ -1370,7 +1370,9 @@ fn a_scroll_starts_only_the_probes_that_enter() {
     };
     let mut scene = Scene::new(&device, &queue);
     let environment = uniform_environment(&device, &queue, &mut scene, [0.5; 3]);
-    scene.set_dynamic_gi_volume(&device, Some(SCROLLED)).unwrap();
+    scene
+        .set_dynamic_gi_volume(&device, Some(SCROLLED))
+        .unwrap();
     let mut input = input(Vec3::new(0., 0., 6.));
     input.environment = Some(environment);
     let settings = settings(DynamicGiQuality::High);
@@ -1379,10 +1381,7 @@ fn a_scroll_starts_only_the_probes_that_enter() {
     // Installs the volume with its origin at `origin`, renders one frame,
     // and returns the rays it traced, then lets the light settle again.
     let mut scroll_to = |scene: &mut Scene, input: &FrameInput, origin: Vec3| {
-        let volume = DynamicGiVolume {
-            origin,
-            ..SCROLLED
-        };
+        let volume = DynamicGiVolume { origin, ..SCROLLED };
         scene.set_dynamic_gi_volume(&device, Some(volume)).unwrap();
         render(&device, &queue, &mut renderer, scene, input, &settings, 1);
         let rays = renderer.test_dynamic_gi().test_traced_rays(&device, &queue);
@@ -1390,7 +1389,11 @@ fn a_scroll_starts_only_the_probes_that_enter() {
         rays
     };
     let origin = SCROLLED.origin;
-    assert_eq!(scroll_to(&mut scene, &input, origin), 32 * most, "the start");
+    assert_eq!(
+        scroll_to(&mut scene, &input, origin),
+        32 * most,
+        "the start"
+    );
     assert_eq!(
         scroll_to(&mut scene, &input, origin),
         32 * SETTLED_RAYS,
@@ -1430,7 +1433,11 @@ fn a_scroll_starts_only_the_probes_that_enter() {
     );
     // A quarter spacing off the lattice.
     let off = moved + Vec3::new(0., 0., 2.5);
-    assert_eq!(scroll_to(&mut scene, &input, off), 32 * most, "another placement");
+    assert_eq!(
+        scroll_to(&mut scene, &input, off),
+        32 * most,
+        "another placement"
+    );
 }
 
 // Above a glowing floor that covers only positive x, under a black sky, the
@@ -1480,7 +1487,13 @@ fn a_scroll_keeps_each_probe_where_it_lies() {
     // Facing the floor, seen from below, in the cells between the probes
     // at x from -3 to 3, which stay.
     let queries: Vec<_> = (-3..3)
-        .map(|x| (Vec3::new(x as f32 + 0.5, 0.5, 0.2), Vec3::NEG_Y, Vec3::NEG_Y))
+        .map(|x| {
+            (
+                Vec3::new(x as f32 + 0.5, 0.5, 0.2),
+                Vec3::NEG_Y,
+                Vec3::NEG_Y,
+            )
+        })
         .collect();
     let before = irradiance_seen(&device, &queue, &renderer, &queries);
     // The light falls off along x, so a probe sampled a spacing from where
@@ -1490,7 +1503,9 @@ fn a_scroll_keeps_each_probe_where_it_lies() {
         origin: volume.origin + Vec3::X,
         ..volume
     };
-    scene.set_dynamic_gi_volume(&device, Some(scrolled)).unwrap();
+    scene
+        .set_dynamic_gi_volume(&device, Some(scrolled))
+        .unwrap();
     for frames in [1, 60] {
         render(
             &device,
@@ -1593,8 +1608,10 @@ fn capture_sum(
 }
 
 // A probe capture between frames is lit by the probes of the last
-// submitted frame: a frame since for another placement, abandoned, leaves
-// it as it was, and the volume lights the capture's static box.
+// submitted frame, where that frame placed them: a scroll no frame has run,
+// and a frame since for it, abandoned, which would have started every probe
+// afresh, leave it as it was, and the volume lights the capture's static
+// box.
 #[test]
 fn a_capture_takes_the_submitted_probes_not_an_abandoned_frames() {
     let Some((device, queue)) = test_support::device() else {
@@ -1651,11 +1668,12 @@ fn a_capture_takes_the_submitted_probes_not_an_abandoned_frames() {
         capture_sum(&device, &queue, &mut renderer, &mut scene, &input, &off)
     };
     assert!(submitted > unlit, "{submitted} {unlit}");
-    let moved = DynamicGiVolume {
-        origin: VOLUME.origin + Vec3::splat(0.5),
+    // Scrolled a whole lattice away, every probe of which enters.
+    let away = DynamicGiVolume {
+        origin: VOLUME.origin + Vec3::X * VOLUME.spacing.x * VOLUME.probes[0] as f32,
         ..VOLUME
     };
-    scene.set_dynamic_gi_volume(&device, Some(moved)).unwrap();
+    scene.set_dynamic_gi_volume(&device, Some(away)).unwrap();
     let output = crate::view::targets::target(&device, "abandoned", SIZE, gbuffer::COLOR);
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.render(
@@ -1669,6 +1687,15 @@ fn a_capture_takes_the_submitted_probes_not_an_abandoned_frames() {
         None,
     );
     drop(encoder);
+    let pending = capture_sum(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+    );
+    assert_eq!(pending, submitted, "a scroll no frame has run");
     scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
     let after = capture_sum(
         &device,
@@ -1678,5 +1705,5 @@ fn a_capture_takes_the_submitted_probes_not_an_abandoned_frames() {
         &input,
         &settings,
     );
-    assert_eq!(after, submitted);
+    assert_eq!(after, submitted, "scrolled back");
 }

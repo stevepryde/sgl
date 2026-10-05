@@ -193,8 +193,8 @@ impl Prepare {
             // The probe rays' hits shade with the lights whose range reaches
             // the volume's extent and the decals that reach it.
             let extent = BoxVolume {
-                min: volume.origin,
-                max: volume.end(),
+                min: volume.volume.origin,
+                max: volume.volume.end(),
             };
             views.volume_lists.list(
                 device,

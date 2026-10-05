@@ -86,7 +86,9 @@ impl Scene {
         let scrolled = self.dynamic_gi.and_then(|current| {
             let lattice = current.spacing == volume.spacing && current.probes == volume.probes;
             let steps = lattice
-                .then(|| super::lattice::steps(current.origin, current.spacing, origin, volume.origin))
+                .then(|| {
+                    super::lattice::steps(current.origin, current.spacing, origin, volume.origin)
+                })
                 .flatten()?;
             Some(InstalledVolume {
                 origin: current.origin + steps.as_dvec3() * current.spacing.as_dvec3(),
@@ -106,7 +108,8 @@ impl Scene {
 
     /// The installed dynamic GI volume, in the scene's render frame.
     pub fn dynamic_gi_volume(&self) -> Option<DynamicGiVolume> {
-        self.dynamic_gi_placement().map(|placement| placement.volume)
+        self.dynamic_gi_placement()
+            .map(|placement| placement.volume)
     }
 
     /// The installed dynamic GI volume as a frame packs it.

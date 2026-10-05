@@ -311,7 +311,7 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
 fn ddgi_entered(coord:vec3<u32>,scrolled:vec3<i32>)->bool {
  let at=vec3<i32>(coord);
  let count=vec3<i32>(volume.probes);
- return any((scrolled>vec3(0) & at>=count-scrolled) | (scrolled<vec3(0) & at< -scrolled));
+ return any(((scrolled>vec3(0))&(at>=count-scrolled))|((scrolled<vec3(0))&(at<-scrolled)));
 }
 // Clears the probes that entered with the frame's scroll: not blended, at
 // rest, and so lighting nothing until they trace.

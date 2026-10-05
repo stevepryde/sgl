@@ -29,9 +29,9 @@ pub(crate) mod reflection_camera;
 pub(crate) mod targets;
 
 use crate::FrameInput;
-use crate::scene::dynamic_gi::ProbePlacement;
 use crate::content::irradiance_volume::IrradianceVolume;
 use crate::content::lighting::{Backdrop, DirectionalLight, DirectionalShadow};
+use crate::scene::dynamic_gi::ProbePlacement;
 use crate::scene::static_lighting::StaticLighting;
 use crate::shading::uniforms::{
     DIRECTIONAL_LIGHT_SHADOW, DirectionalLightUniform, FRAME_BACKDROP_COLOR, FRAME_BAKED_LIGHTING,
@@ -257,13 +257,11 @@ pub(crate) fn frame_uniform(
         shadow_cascade_count: cascades.len() as u32,
         frame_count: shadow.frame_count,
         animation_phase: crate::shading::material::animation_phase(input.elapsed_seconds),
-        dynamic_gi_origin: dynamic_gi.map_or([0.; 3], |placement| {
-            placement.volume.origin.to_array()
-        }),
+        dynamic_gi_origin: dynamic_gi
+            .map_or([0.; 3], |placement| placement.volume.origin.to_array()),
         padding_origin: 0.,
-        dynamic_gi_spacing: dynamic_gi.map_or([0.; 3], |placement| {
-            placement.volume.spacing.to_array()
-        }),
+        dynamic_gi_spacing: dynamic_gi
+            .map_or([0.; 3], |placement| placement.volume.spacing.to_array()),
         padding_spacing: 0.,
         dynamic_gi_probes: dynamic_gi.map_or([0; 3], |placement| placement.volume.probes),
         padding_probes: 0,
