@@ -175,7 +175,10 @@ impl TracePaths {
                     pipelines.insert((key, form), pipeline);
                 }
                 Some(error) => {
-                    let _ = rays.device_form.failure.set(error);
+                    let _ = rays.device_form.failure.set(format!(
+                        "a tracing program of the candidate form failed on this device, so \
+                         rays trace in the baseline form: {error}"
+                    ));
                     self.paths.retain(|(path, _)| *path != form);
                 }
             }
