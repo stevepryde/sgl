@@ -35,6 +35,10 @@ struct PSOutput
 @group(0) @binding(4) var g_TextureDepth: texture_depth_2d;
 @group(0) @binding(5) var g_TextureRayDirectionPDF: texture_2d<f32>;
 @group(0) @binding(6) var g_TextureIntersectSpecular: texture_2d<f32>;
+// PROVENANCE.md DFX-29: active tiles for the reconstruction, or the hits per
+// 4×4 block for the dilation, which gathers them with g_LinearClamp.
+@group(0) @binding(7) var g_TextureDenoiserTiles: texture_2d<f32>;
+@group(0) @binding(8) var g_LinearClamp: sampler;
 
 struct PixelAreaStatistic
 {
@@ -141,6 +145,10 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 
     let Position = VSOut.f4PixelPos;
     let PixelCoord = vec2<i32>(Position.xy);
+    // DFX-29: every sample here missed, so the reconstruction is zero.
+    if (!IsActiveDenoiserTile(g_TextureDenoiserTiles, PixelCoord)) {
+        return PSOutput(vec4<f32>(0.0), 0.0, 0.0);
+    }
 
     let ScreenCoordUV = Position.xy * g_Camera.f4ViewportSize.zw;
     let Depth = LoadDepth(PixelCoord);
@@ -191,4 +199,47 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     Output.ResolvedVariance = PixelAreaStat.Variance / max(PixelAreaStat.WeightSum, 1e-6f);
     Output.ResolvedDepth = ComputeResolvedDepth(PositionWS, Depth, NearestSurfaceHitDistance);
     return Output;
+}
+
+// PROVENANCE.md DFX-29: whether any ray of a 4×4 block of pixels found a
+// confident hit. One fragment per block; each gather reads 2×2 rays.
+@fragment
+fn ClassifyDenoiserTilesPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) f32
+{
+#if SSR_OPTION_HALF_RESOLUTION
+    const Rays = 2;
+#else
+    const Rays = 4;
+#endif
+    let Size = vec2<f32>(textureDimensions(g_TextureIntersectSpecular));
+    let Origin = floor(VSOut.f4PixelPos.xy) * f32(Rays);
+    var Confidence = vec4<f32>(0.0);
+    for (var y = 1; y < Rays; y += 2)
+    {
+        for (var x = 1; x < Rays; x += 2)
+        {
+            let Corner = Origin + vec2<f32>(f32(x), f32(y));
+            Confidence = max(Confidence, textureGather(3, g_TextureIntersectSpecular, g_LinearClamp, Corner / Size));
+        }
+    }
+    return select(0.0, 1.0, any(Confidence > vec4<f32>(0.0)));
+}
+
+// PROVENANCE.md DFX-29: a tile is active when it or a neighbouring tile has a
+// hit. One fragment per tile, whose 2×2 blocks of g_TextureDenoiserTiles one
+// gather reads.
+@fragment
+fn DilateDenoiserTilesPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) f32
+{
+    let Size = vec2<f32>(textureDimensions(g_TextureDenoiserTiles));
+    let Corner = floor(VSOut.f4PixelPos.xy) * 2.0 + 1.0;
+    var Hits = vec4<f32>(0.0);
+    for (var y = -1; y <= 1; y++)
+    {
+        for (var x = -1; x <= 1; x++)
+        {
+            Hits = max(Hits, textureGather(0, g_TextureDenoiserTiles, g_LinearClamp, (Corner + 2.0 * vec2<f32>(f32(x), f32(y))) / Size));
+        }
+    }
+    return select(0.0, 1.0, any(Hits > vec4<f32>(0.0)));
 }

@@ -22,6 +22,8 @@
 
 @group(0) @binding(5) var g_TextureRadiance: texture_2d<f32>;
 @group(0) @binding(6) var g_TextureVariance: texture_2d<f32>;
+// PROVENANCE.md DFX-29.
+@group(0) @binding(7) var g_TextureDenoiserTiles: texture_2d<f32>;
 
 fn LoadDepth(PixelCoord: vec2<i32>) -> f32
 {
@@ -58,6 +60,12 @@ fn ComputeBilateralCleanupPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) 
     let NormalWS  = LoadNormalWS(PixelCoord);
     let CameraZ   = DepthToCameraZ(LoadDepth(PixelCoord), g_Camera.mProj);
     let GradCamZ  = vec2<f32>(dpdx(CameraZ), dpdy(CameraZ));
+
+    // DFX-29: every radiance in reach is zero. After the derivatives, which
+    // need uniform control flow.
+    if (!IsActiveDenoiserTile(g_TextureDenoiserTiles, PixelCoord)) {
+        return vec4<f32>(0.0);
+    }
 
     let RoughnessTarget = saturate(f32(SSR_BILATERAL_ROUGHNESS_FACTOR) * Roughness);
     let Radius = mix(0.0, select(0.0, 2.0, Variance > SSS_BILATERAL_VARIANCE_ESTIMATE_THRESHOLD), RoughnessTarget);

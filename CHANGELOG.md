@@ -15,6 +15,22 @@ full API details.
 
 ## Unreleased
 
+### Crystal's denoiser skips tiles where every ray missed
+
+- **Scope:** `sgl-post-fx` screen-space reflections, and so `sgl-3d`'s
+  Crystal method at `Full` and `Half`. Spatial reconstruction, temporal
+  accumulation and bilateral cleanup now run only on 8×8 tiles with a
+  confident hit in or beside them, as AMD's SSSR denoiser runs only over
+  its tile list; elsewhere their result was already zero. On an Apple M5
+  at 1920×1080 the three passes take about half the time (a lake 1.22 →
+  0.60 ms, a scene of mixed ray lengths 1.62 → 0.66 ms). Reflections are
+  unchanged, but a skipped tile's history now holds zero radiance and
+  variance 1, so a reflection returning there can be filtered slightly
+  differently for its first frames. The `SSR spatial reconstruction` timing
+  group includes the two small passes that find the tiles.
+- **Migration:** no game-code changes. Afterwards, compare the `SSR`
+  timing groups on the game's route.
+
 ### Materials scroll their normal maps; frame time is `f64`
 
 - **Scope:** `sgl-3d` adds `NormalLayer` and the field `normal_layers:

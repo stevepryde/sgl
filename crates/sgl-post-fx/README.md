@@ -34,7 +34,9 @@ files unedited.
   pass reprojects by the reflection's virtual point as AMD's reflection
   denoiser places it, rejects a surface history far from the current
   neighbourhood as AMD's does, and clamps to Wicked Engine's 2-deviation box
-  (DFX-25).
+  (DFX-25). Its denoiser passes run only on the 8×8 tiles with a confident
+  hit in or beside them, as AMD's denoiser runs only over its tile list; a
+  skipped tile's histories hold zero radiance and variance 1 (DFX-29).
 - TAA accumulates a Halton-jittered frame into a history, rejecting by depth
   disocclusion and motion and clipping to the neighbourhood's variance box;
   `vendor/DiligentFX/PostProcess/TemporalAntiAliasing/README.md` describes it.

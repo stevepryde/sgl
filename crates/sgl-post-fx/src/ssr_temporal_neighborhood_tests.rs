@@ -493,6 +493,7 @@ fn departed_reflections_cannot_support_current_dark_history() {
                 ssr.update_constant_buffer(&render, false);
                 ssr.compute_stencil_mask_and_extract_roughness(&mut render);
                 ssr.compute_downsampled_stencil_mask(&mut render);
+                ssr.classify_denoiser_tiles(&mut render);
                 ssr.compute_spatial_reconstruction(&mut render);
                 ssr.compute_temporal_accumulation(&mut render);
                 queue.submit([encoder.finish()]);
@@ -679,6 +680,13 @@ fn resolved_depth_is_the_virtual_point_along_the_view_ray() {
             1.0,
         ]),
     );
+    // Confident hits: DFX-29 reconstructs only tiles with one.
+    ssr.resources.as_mut().unwrap().radiance = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[1.0, 1.0, 1.0, 1.0]),
+    );
     let attribs = ScreenSpaceReflectionAttribs::default();
     let mut render = RenderAttributes {
         device: &device,
@@ -698,6 +706,7 @@ fn resolved_depth_is_the_virtual_point_along_the_view_ray() {
     ssr.update_constant_buffer(&render, false);
     ssr.compute_stencil_mask_and_extract_roughness(&mut render);
     ssr.compute_downsampled_stencil_mask(&mut render);
+    ssr.classify_denoiser_tiles(&mut render);
     ssr.compute_spatial_reconstruction(&mut render);
     queue.submit([encoder.finish()]);
     let resolved = read_r16f(&device, &queue, &ssr.resources().resolved_depth)
@@ -706,4 +715,274 @@ fn resolved_depth_is_the_virtual_point_along_the_view_ray() {
         (resolved - expected).abs() <= 0.01 * expected,
         "resolved depth {resolved}, the virtual point's {expected}"
     );
+}
+
+/// The SSR textures one denoised frame leaves, row-major at full size.
+struct Denoised {
+    output: Vec<[f32; 4]>,
+    radiance_history: Vec<[f32; 4]>,
+    variance_history: Vec<f32>,
+}
+
+/// One frame of SSR's denoiser over rays supplied at the reconstruction
+/// boundary: a ray at `(x, y)` of the ray grid where `hit` holds found a
+/// white surface with full confidence; every other ray missed. With
+/// `all_tiles`, every denoiser tile is active, as before DFX-29.
+#[allow(clippy::too_many_arguments)]
+fn denoise_frame(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    ssr: &mut ScreenSpaceReflection,
+    context: &mut PostFXContext,
+    flags: FeatureFlags,
+    index: u32,
+    all_tiles: bool,
+    hit: impl Fn(u32, u32) -> bool,
+) -> Denoised {
+    use wgpu::util::DeviceExt;
+    let mut encoder = device.create_command_encoder(&Default::default());
+    // A glossy plane facing the camera (perceptual roughness 0.196, which
+    // gives spatial reconstruction nearly its full radius), standing still.
+    let scene_depth = depth(device, &mut encoder, 0.95);
+    let normal = texture(
+        device,
+        queue,
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[0.0, 0.0, -1.0, 0.0]),
+    );
+    let material = texture(device, queue, wgpu::TextureFormat::R8Unorm, &[50]);
+    let motion = texture(
+        device,
+        queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0.0, 0.0]),
+    );
+    context.prepare_resources(
+        device,
+        &FrameDesc {
+            index,
+            width: SIZE[0],
+            height: SIZE[1],
+            output_width: SIZE[0],
+            output_height: SIZE[1],
+        },
+        post_fx_context::FeatureFlags::NONE,
+    );
+    ssr.prepare_resources(device, &mut encoder, context, flags);
+    ssr.prepare_shaders_and_pso(device);
+    let camera = camera(false, index);
+    context.execute(&mut post_fx_context::RenderAttributes {
+        device,
+        queue,
+        device_context: &mut encoder,
+        curr_depth_buffer_srv: &scene_depth,
+        prev_depth_buffer_srv: &scene_depth,
+        curr_camera: Some(&camera),
+        prev_camera: Some(&camera),
+        camera_attribs_cb: None,
+        pass_timestamps: None,
+    });
+    let [width, height] = if flags.contains(FeatureFlags::HALF_RESOLUTION) {
+        [SIZE[0] / 2, SIZE[1] / 2]
+    } else {
+        SIZE
+    };
+    let rays = |texel: &dyn Fn(u32, u32) -> [f32; 4]| {
+        let data: Vec<u8> = (0..height)
+            .flat_map(|y| (0..width).flat_map(move |x| half(&texel(x, y))))
+            .collect();
+        device
+            .create_texture_with_data(
+                queue,
+                &wgpu::TextureDescriptor {
+                    label: None,
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                &data,
+            )
+            .create_view(&Default::default())
+    };
+    let resources = ssr.resources.as_mut().unwrap();
+    // Rays 1 m long back towards the camera, PDF 1, so every sample weighs.
+    resources.ray_direction_pdf = rays(&|_, _| [0.0, 0.0, -1.0, 1.0]);
+    resources.radiance = rays(&|x, y| {
+        if hit(x, y) { [1.0; 4] } else { [0.0; 4] }
+    });
+    let attribs = ScreenSpaceReflectionAttribs {
+        temporal_radiance_stability_factor: 0.95,
+        ..Default::default()
+    };
+    let mut render = RenderAttributes {
+        device,
+        queue,
+        device_context: &mut encoder,
+        post_fx_context: context,
+        color_buffer_srv: &normal,
+        depth_buffer_srv: &scene_depth,
+        normal_buffer_srv: &normal,
+        material_buffer_srv: &material,
+        motion_vectors_srv: &motion,
+        ssr_attribs: &attribs,
+        pass_timestamps: None,
+        reset_accumulation: false,
+        frame_time: 1.0 / 60.0,
+    };
+    ssr.update_constant_buffer(&render, false);
+    ssr.compute_stencil_mask_and_extract_roughness(&mut render);
+    ssr.compute_downsampled_stencil_mask(&mut render);
+    if all_tiles {
+        ssr.resources.as_mut().unwrap().denoiser_tiles =
+            texture(device, queue, wgpu::TextureFormat::R8Unorm, &[255]);
+    } else {
+        ssr.classify_denoiser_tiles(&mut render);
+    }
+    ssr.compute_spatial_reconstruction(&mut render);
+    ssr.compute_temporal_accumulation(&mut render);
+    ssr.compute_bilateral_cleanup(&mut render);
+    queue.submit([encoder.finish()]);
+    let r = ssr.resources();
+    let current = (index & 1) as usize;
+    Denoised {
+        output: read_rgba16f(device, queue, &r.output),
+        radiance_history: read_rgba16f(device, queue, &r.radiance_history[current]),
+        variance_history: read_r16f(device, queue, &r.variance_history[current]),
+    }
+}
+
+/// Rays along one column, the last of the third denoiser tile (pixel 23).
+fn hit_column(flags: FeatureFlags) -> impl Fn(u32, u32) -> bool {
+    let column = if flags.contains(FeatureFlags::HALF_RESOLUTION) {
+        11
+    } else {
+        23
+    };
+    move |x, _| x == column
+}
+
+/// Pixels of tiles two or more from the hit column's tile, which no
+/// denoiser pass reaches from it.
+fn far_from_hit_column(pixel: usize) -> bool {
+    let tile = pixel % SIZE[0] as usize / 8;
+    tile.abs_diff(2) >= 2
+}
+
+// PROVENANCE.md DFX-29: skipping the tiles where every ray in reach missed
+// changes no radiance. A column of hits on a tile's last pixel reaches the
+// next tile through spatial reconstruction, the temporal neighbourhood and
+// the bilateral kernel; denoising every tile is the reference. The skipped
+// tiles' variance history holds 1, as DFX-29 defines.
+#[test]
+fn skipping_tiles_without_hits_changes_no_radiance() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        let run = |all_tiles| {
+            let mut ssr = ScreenSpaceReflection::new(&device);
+            // No fade-in, so the first frame's output is the denoised radiance.
+            let mut context = PostFXContext::new(
+                &device,
+                &queue,
+                post_fx_context::CreateInfo {
+                    transition_duration: 0.0,
+                },
+            );
+            denoise_frame(
+                &device,
+                &queue,
+                &mut ssr,
+                &mut context,
+                flags,
+                0,
+                all_tiles,
+                hit_column(flags),
+            )
+        };
+        let (skipped, reference) = (run(false), run(true));
+        assert_eq!(
+            skipped.output, reference.output,
+            "{flags:?}: skipping tiles changed the denoised radiance"
+        );
+        assert_eq!(
+            skipped.radiance_history, reference.radiance_history,
+            "{flags:?}: skipping tiles changed the radiance history"
+        );
+        let next_tile = (24..32).map(|x| (SIZE[0] * 24 + x) as usize);
+        assert!(
+            next_tile
+                .clone()
+                .any(|pixel| reference.output[pixel][3] > 0.0),
+            "{flags:?}: the hits must reach the next tile for this check to bite"
+        );
+        for pixel in (0..(SIZE[0] * SIZE[1]) as usize).filter(|&p| far_from_hit_column(p)) {
+            assert_eq!(
+                skipped.variance_history[pixel], 1.0,
+                "{flags:?}: pixel {pixel} of a tile without hits was denoised"
+            );
+        }
+    }
+}
+
+// PROVENANCE.md DFX-29: a tile whose rays all start to miss keeps no older
+// reflection. Two frames of hits everywhere fill both radiance histories;
+// then only one column hits, and the histories of the tiles out of its reach
+// hold zero radiance and variance 1 after each frame.
+#[test]
+fn tiles_that_stop_hitting_keep_no_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        let mut ssr = ScreenSpaceReflection::new(&device);
+        // No fade-in, so the first frame's output is the denoised radiance.
+        let mut context = PostFXContext::new(
+            &device,
+            &queue,
+            post_fx_context::CreateInfo {
+                transition_duration: 0.0,
+            },
+        );
+        for index in 0..4 {
+            let column = hit_column(flags);
+            let frame = denoise_frame(
+                &device,
+                &queue,
+                &mut ssr,
+                &mut context,
+                flags,
+                index,
+                false,
+                |x, y| index < 2 || column(x, y),
+            );
+            for pixel in (0..(SIZE[0] * SIZE[1]) as usize).filter(|&p| far_from_hit_column(p)) {
+                if index < 2 {
+                    assert!(
+                        frame.radiance_history[pixel][3] > 0.5,
+                        "{flags:?} frame {index}: pixel {pixel} must accumulate the hits"
+                    );
+                } else {
+                    assert_eq!(
+                        (
+                            frame.radiance_history[pixel],
+                            frame.variance_history[pixel],
+                            frame.output[pixel]
+                        ),
+                        ([0.0; 4], 1.0, [0.0; 4]),
+                        "{flags:?} frame {index}: pixel {pixel} kept an older reflection"
+                    );
+                }
+            }
+        }
+    }
 }

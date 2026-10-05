@@ -90,6 +90,8 @@ enum RenderTech {
     ComputeStencilMaskAndExtractRoughness,
     ComputeDownsampledStencilMask,
     ComputeIntersection,
+    ClassifyDenoiserTiles,
+    DilateDenoiserTiles,
     ComputeSpatialReconstruction,
     ComputeTemporalAccumulation,
     ComputeBilateralCleanup,
@@ -104,6 +106,9 @@ struct RenderTechniqueKey {
 
 const DEPTH_HIERARCHY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const ROUGHNESS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+/// DFX-29: `SSR_DENOISER_TILE_SIZE`, the side of a denoiser tile in pixels.
+const DENOISER_TILE_SIZE: u32 = 8;
+const DENOISER_TILE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 const RADIANCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const VARIANCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
@@ -117,6 +122,11 @@ struct Resources {
     roughness: wgpu::TextureView,
     radiance: wgpu::TextureView,
     ray_direction_pdf: wgpu::TextureView,
+    /// DFX-29: per 4×4 block of pixels, whether a ray in it found a
+    /// confident hit.
+    denoiser_hits: wgpu::TextureView,
+    /// DFX-29: per denoiser tile, whether it or a neighbour has a hit.
+    denoiser_tiles: wgpu::TextureView,
     resolved_radiance: wgpu::TextureView,
     resolved_variance: wgpu::TextureView,
     resolved_depth: wgpu::TextureView,
@@ -455,6 +465,22 @@ impl ScreenSpaceReflection {
                 RADIANCE_FORMAT,
                 1,
             )),
+            denoiser_hits: view(&texture_2d(
+                device,
+                "ScreenSpaceReflection::DenoiserHits",
+                width.div_ceil(DENOISER_TILE_SIZE / 2),
+                height.div_ceil(DENOISER_TILE_SIZE / 2),
+                DENOISER_TILE_FORMAT,
+                1,
+            )),
+            denoiser_tiles: view(&texture_2d(
+                device,
+                "ScreenSpaceReflection::DenoiserTiles",
+                width.div_ceil(DENOISER_TILE_SIZE),
+                height.div_ceil(DENOISER_TILE_SIZE),
+                DENOISER_TILE_FORMAT,
+                1,
+            )),
             resolved_radiance: view(&texture_2d(
                 device,
                 "ScreenSpaceReflection::ResolvedRadiance",
@@ -499,6 +525,7 @@ impl ScreenSpaceReflection {
             self.compute_stencil_mask_and_extract_roughness(render_attribs);
             self.compute_downsampled_stencil_mask(render_attribs);
             self.compute_intersection(render_attribs);
+            self.classify_denoiser_tiles(render_attribs);
             self.compute_spatial_reconstruction(render_attribs);
             self.compute_temporal_accumulation(render_attribs);
             self.compute_bilateral_cleanup(render_attribs);
@@ -662,6 +689,33 @@ impl ScreenSpaceReflection {
             }
         }
         {
+            for (render_tech, entry, input) in [
+                (
+                    RenderTech::ClassifyDenoiserTiles,
+                    "ClassifyDenoiserTilesPS",
+                    6,
+                ),
+                (RenderTech::DilateDenoiserTiles, "DilateDenoiserTilesPS", 7),
+            ] {
+                let tech = self.render_technique(render_tech);
+                if !tech.is_initialized_pso() {
+                    tech.initialize_pso(
+                        device,
+                        "ScreenSpaceReflection::DenoiserTiles",
+                        &vs(&[]),
+                        &ps("SSR_ComputeSpatialReconstruction.fx", entry),
+                        &[
+                            (input, Resource::FilterableTexture),
+                            (8, Resource::Sampler { filtering: true }),
+                        ],
+                        &[DENOISER_TILE_FORMAT],
+                        None,
+                        DepthStencilStateDesc::DisableDepth,
+                    );
+                }
+            }
+        }
+        {
             let tech = self.render_technique(RenderTech::ComputeSpatialReconstruction);
             if !tech.is_initialized_pso() {
                 tech.initialize_pso(
@@ -680,6 +734,7 @@ impl ScreenSpaceReflection {
                         (4, Resource::DepthTexture),
                         (5, Resource::Texture),
                         (6, Resource::Texture),
+                        (7, Resource::Texture),
                     ],
                     &[RADIANCE_FORMAT, VARIANCE_FORMAT, RESOLVED_DEPTH_FORMAT],
                     Some(DEPTH_STENCIL_FORMAT),
@@ -711,6 +766,7 @@ impl ScreenSpaceReflection {
                         (9, Resource::FilterableTexture),
                         (10, Resource::Sampler { filtering: true }),
                         (11, Resource::Sampler { filtering: true }),
+                        (12, Resource::Texture),
                     ],
                     &[RADIANCE_FORMAT, VARIANCE_FORMAT],
                     Some(DEPTH_STENCIL_FORMAT),
@@ -737,6 +793,7 @@ impl ScreenSpaceReflection {
                         (4, Resource::Texture),
                         (5, Resource::Texture),
                         (6, Resource::Texture),
+                        (7, Resource::Texture),
                     ],
                     &[RADIANCE_FORMAT],
                     Some(DEPTH_STENCIL_FORMAT),
@@ -984,6 +1041,53 @@ impl ScreenSpaceReflection {
         );
     }
 
+    /// DFX-29: the tiles the denoiser passes work on, as AMD's ClassifyTiles
+    /// lists them. Timed with spatial reconstruction, the first pass to use
+    /// them.
+    fn classify_denoiser_tiles(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
+        let r = self.resources();
+        for (render_tech, input, output) in [
+            (
+                RenderTech::ClassifyDenoiserTiles,
+                (6, &r.radiance),
+                &r.denoiser_hits,
+            ),
+            (
+                RenderTech::DilateDenoiserTiles,
+                (7, &r.denoiser_hits),
+                &r.denoiser_tiles,
+            ),
+        ] {
+            let tech = self.technique(render_tech);
+            let group = tech.bind_group(
+                render_attribs.device,
+                "DenoiserTiles",
+                &[
+                    wgpu::BindGroupEntry {
+                        binding: input.0,
+                        resource: texture(input.1),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 8,
+                        resource: wgpu::BindingResource::Sampler(&self.linear_clamp),
+                    },
+                ],
+            );
+            draw_pass(
+                render_attribs.device_context,
+                "DenoiserTiles",
+                &[output],
+                false,
+                None,
+                tech,
+                &group,
+                render_attribs
+                    .pass_timestamps
+                    .and_then(|timestamps| timestamps("SpatialReconstruction")),
+            );
+        }
+    }
+
     fn compute_spatial_reconstruction(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
         let tech = self.technique(RenderTech::ComputeSpatialReconstruction);
         let r = self.resources();
@@ -1019,6 +1123,10 @@ impl ScreenSpaceReflection {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: texture(&r.radiance),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: texture(&r.denoiser_tiles),
                 },
             ],
         );
@@ -1101,6 +1209,10 @@ impl ScreenSpaceReflection {
                     binding: 11,
                     resource: wgpu::BindingResource::Sampler(&self.linear_clamp),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: texture(&r.denoiser_tiles),
+                },
             ],
         );
         draw_pass(
@@ -1156,6 +1268,10 @@ impl ScreenSpaceReflection {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: texture(&r.variance_history[curr_frame_idx]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: texture(&r.denoiser_tiles),
                 },
             ],
         );
