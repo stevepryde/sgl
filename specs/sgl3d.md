@@ -269,7 +269,8 @@ Remaining work, in the existing roadmap order:
    `Settings::ray_traced_shadows` (off by default, D-28), the camera's
    opaque surfaces take ray-traced shadows of the directional light and up
    to fifteen local lights, soft by the light's size, the first four
-   denoised by AMD's shadow denoiser and the rest temporally blended. The design is settled in the architecture
+   (the directional light's alone at `Settings::ray_traced_shadow_quality`
+   Low) denoised by AMD's shadow denoiser and the rest temporally blended. The design is settled in the architecture
    ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
    [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
    acceleration structures beside the portable BVHs behind

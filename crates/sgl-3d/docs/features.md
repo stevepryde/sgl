@@ -250,8 +250,9 @@ Environment and probe specular always apply. On top of them:
   shadows of the directional light and of up to fifteen casting local
   lights from rays instead of the maps, soft by the light's size (a point
   or spot light's `radius`, the directional light's `angular_diameter`),
-  denoised by AMD's FidelityFX shadow denoiser for the first four and
-  temporally blended for the rest, reaching beyond the directional
+  denoised by AMD's FidelityFX shadow denoiser for the first four (the
+  directional light's alone at `Settings::ray_traced_shadow_quality` Low)
+  and temporally blended for the rest, reaching beyond the directional
   shadow's distance; the fog, blended surfaces and reflections keep the
   maps. `Renderer::ray_traced_shadows_in_effect` reports it.
   [Hardware ray tracing](../README.md#hardware-ray-tracing).

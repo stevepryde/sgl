@@ -271,3 +271,16 @@ Use the [current specs](README.md) for implementation and the
   have resolved them on at High once their denoiser landed.
   Rationale: wgpu 29 marks its ray queries experimental, so a game takes
   them on deliberately.
+
+- **D-29** Owner direction, 2026-10-06 (#204): the ray-traced shadow
+  denoiser's cheaper form is a setting, not the default:
+  `Settings::ray_traced_shadow_quality` Low filters the directional light's
+  shadow alone, in two passes, and leaves the local lights to the temporal
+  blend; High, the default on the High preset, keeps the four denoised
+  slots and three passes; the Low preset takes Low unless the game sets
+  High. A saving that leaves the image as it was, within one 8-bit step,
+  needs no setting: High filters the directional light's alone whenever no
+  local light holds a denoised slot.
+  Rationale: Low looked nearly as good in the owner's comparison for about
+  1 ms a frame less, so a game chooses it, or takes it with the Low
+  preset; the High preset keeps the look.

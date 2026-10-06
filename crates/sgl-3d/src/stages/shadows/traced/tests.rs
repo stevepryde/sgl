@@ -546,23 +546,27 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
     }
 }
 
-// Plausible defects: the denoiser's passes mixing the four slots they
-// take a lane each: a slot's mean and variance packed into or unpacked
-// from another's word of the scratch, a tile's metadata (cleared, all lit)
-// written or read for another lane, or a slot's tile mask or result put in
-// another's byte. Each denoised slot holds a light here, the sun and three
-// hard point lights, each casting one slab's shadow toward its own side
-// of the floor, so any two of them disagree at thousands of the texels
-// beyond the denoiser's reach of their shadows' edges. The oracle is the
-// slab's geometry in f64, the slab test from each floor texel's position
-// toward each light: there each slot holds the oracle's 0 or 1, in the
-// first frame and with history.
-#[test]
-fn every_denoised_slot_matches_a_cpu_oracle_away_from_its_edges() {
-    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
-        return;
-    };
-    let gpu = (&device, &queue);
+/// One frame of the slab scene (`slab_frames`): its label, and for each of
+/// its lights, the sun first, the slot that holds it and the oracle's
+/// decision at each floor texel it decides.
+struct SlabFrame {
+    label: String,
+    observed: Observed,
+    lights: Vec<(usize, std::collections::HashMap<[u32; 2], bool>)>,
+}
+
+/// The sun (hard, from the side) and, where `local`, three hard point
+/// lights, each casting one slab's shadow toward its own side of the floor,
+/// so any two of them disagree at thousands of texels, at ray-traced shadow
+/// quality `quality`, seen from straight above through a camera cut and
+/// then a still frame. With the local lights they hold the denoised slots,
+/// the slot table's layer 0.
+fn slab_frames(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    quality: settings::RayTracedShadowQuality,
+    local: bool,
+) -> Vec<SlabFrame> {
+    let gpu = (device, queue);
     let slab = Block::new(
         Vec3::new(0., 3., 0.),
         Vec3::new(1.5, 0.05, 1.5),
@@ -582,7 +586,8 @@ fn every_denoised_slot_matches_a_cpu_oracle_away_from_its_edges() {
         casts_shadow: true,
         ..Light::default()
     });
-    let (mut scene, ids) = scene(gpu, 8., &[slab], &lights);
+    let lights = &lights[..if local { lights.len() } else { 0 }];
+    let (mut scene, ids) = scene(gpu, 8., &[slab], lights);
     let sun = DirectionalLight {
         direction: Vec3::new(-1., -1., 0.),
         illuminance: 3.,
@@ -599,52 +604,149 @@ fn every_denoised_slot_matches_a_cpu_oracle_away_from_its_edges() {
         projection: crate::perspective(0.9, 1., 0.1),
         eye,
     };
-    let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let settings = Settings {
+        ray_traced_shadow_quality: quality,
+        ..settings(true)
+    };
+    let mut renderer = Renderer::for_test(device, queue, size, &settings);
     let mut input = input(camera, Some(sun));
-    for cut in [true, false] {
-        let frame = if cut { "cut" } else { "still" };
-        input.camera_cut = cut;
-        let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
-        let slots: Vec<usize> = std::iter::once(SHADOW_MASK_DIRECTIONAL)
-            .chain(ids.iter().map(|id| id.index() as u32))
-            .map(|key| observed.slot(key))
-            .collect();
-        let mut held = slots.clone();
-        held.sort_unstable();
-        assert_eq!(
-            held,
-            (0..super::denoise::DENOISED_SLOTS as usize).collect::<Vec<_>>(),
-            "frame {frame}: the four lights hold the denoised slots"
-        );
-        let texels = floor_texels(&observed, &camera);
-        for (light, &slot) in slots.iter().enumerate() {
-            let decisions: std::collections::HashMap<[u32; 2], bool> = texels
-                .iter()
-                .filter_map(|&(pixel, position)| {
-                    let visible = match light {
-                        0 => occluded(&[slab], position, to_sun, (0.01, f64::from(f32::MAX)))
-                            .map(|occluded| !occluded),
-                        _ => local_visibility(&lights[light - 1], position, &[slab]).flatten(),
-                    };
-                    Some((pixel, visible?))
+    [true, false]
+        .into_iter()
+        .map(|cut| {
+            let label = format!("{quality:?}, {} frame", if cut { "cut" } else { "still" });
+            input.camera_cut = cut;
+            let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+            let slots: Vec<usize> = std::iter::once(SHADOW_MASK_DIRECTIONAL)
+                .chain(ids.iter().map(|id| id.index() as u32))
+                .map(|key| observed.slot(key))
+                .collect();
+            let mut held = slots.clone();
+            held.sort_unstable();
+            assert_eq!(
+                held,
+                (0..slots.len()).collect::<Vec<_>>(),
+                "{label}: the lights hold the first slots"
+            );
+            let texels = floor_texels(&observed, &camera);
+            let lights = slots
+                .into_iter()
+                .enumerate()
+                .map(|(light, slot)| {
+                    let decisions = texels
+                        .iter()
+                        .filter_map(|&(pixel, position)| {
+                            let visible = match light {
+                                0 => {
+                                    occluded(&[slab], position, to_sun, (0.01, f64::from(f32::MAX)))
+                                        .map(|occluded| !occluded)
+                                }
+                                _ => local_visibility(&lights[light - 1], position, &[slab])
+                                    .flatten(),
+                            };
+                            Some((pixel, visible?))
+                        })
+                        .collect();
+                    (slot, decisions)
                 })
                 .collect();
-            let mut decided = [0; 2];
-            for pixel in interior(&decisions, DENOISER_REACH) {
-                let visible = decisions[&pixel];
-                assert_eq!(
-                    observed.mask(slot, pixel),
-                    if visible { 255 } else { 0 },
-                    "frame {frame}: light {light} in slot {slot} at {pixel:?}: the oracle says {visible}"
-                );
-                decided[usize::from(visible)] += 1;
+            SlabFrame {
+                label,
+                observed,
+                lights,
             }
-            let [shadowed, lit] = decided;
-            assert!(
-                shadowed > 20 && lit > 20,
-                "frame {frame}: light {light}: only {shadowed} shadowed and {lit} lit texels beyond the denoiser's reach of the edges"
-            );
+        })
+        .collect()
+}
+
+// Plausible defects: the denoiser's passes mixing the slots they take a
+// lane each: a slot's mean and variance packed into or unpacked from
+// another's word of the scratch, a tile's metadata (cleared, all lit)
+// written or read for another lane, or a slot's tile mask or result put in
+// another's byte; and, where it filters slot 0 alone (at Low, and at High
+// where no local light holds a denoised slot), its one lane reading or
+// writing another channel than slot 0's, or a chain of passes that loses a
+// pass's result or leaves a cleared tile's unwritten. The oracle is the
+// slab's geometry in f64, the slab test from each floor texel's position
+// toward each light: beyond the denoiser's reach of a shadow's edges each
+// denoised slot holds the oracle's 0 or 1, in the first frame and with
+// history, at High with every denoised slot held, at High with the sun's
+// alone, and at Low.
+#[test]
+fn every_denoised_slot_matches_a_cpu_oracle_away_from_its_edges() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    use settings::RayTracedShadowQuality::{High, Low};
+    for (quality, local) in [(High, true), (High, false), (Low, true)] {
+        for frame in slab_frames((&device, &queue), quality, local) {
+            for (light, (slot, decisions)) in frame.lights.iter().enumerate() {
+                let mut decided = [0; 2];
+                for pixel in interior(decisions, DENOISER_REACH) {
+                    let visible = decisions[&pixel];
+                    assert_eq!(
+                        frame.observed.mask(*slot, pixel),
+                        if visible { 255 } else { 0 },
+                        "{}: light {light} in slot {slot} at {pixel:?}: the oracle says {visible}",
+                        frame.label
+                    );
+                    decided[usize::from(visible)] += 1;
+                }
+                let [shadowed, lit] = decided;
+                assert!(
+                    shadowed > 20 && lit > 20,
+                    "{}: light {light}: only {shadowed} shadowed and {lit} lit texels beyond the denoiser's reach of the edges",
+                    frame.label
+                );
+            }
+        }
+    }
+}
+
+// Plausible defects: `Settings::ray_traced_shadow_quality` not reaching
+// the stage (Low denoising the local lights as High does, or High leaving
+// them to the temporal blend), or Low's local lights in the denoised slots
+// taking neither the denoiser's result nor their own blend. The oracle is
+// the slab's geometry in f64 and the stage's two treatments of a hard
+// light's shadow: the temporal blend leaves its trace, the oracle's 0 or 1
+// at every texel the oracle decides, edges and all, where AMD's denoiser
+// softens its edges by design (`ffx_denoiser_shadows_tileclassification.h`
+// 380–405: its first frames boost the variance its filters blur by), so
+// that texels about them hold neither.
+#[test]
+fn the_quality_decides_which_slots_the_denoiser_filters() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    use settings::RayTracedShadowQuality::{High, Low};
+    for quality in [High, Low] {
+        for frame in slab_frames((&device, &queue), quality, true) {
+            // The local lights, after the sun.
+            for (light, (slot, decisions)) in frame.lights.iter().enumerate().skip(1) {
+                let mut counts = [0; 2];
+                for (&pixel, &visible) in decisions {
+                    let value = frame.observed.mask(*slot, pixel);
+                    let exact = value == if visible { 255 } else { 0 };
+                    counts[usize::from(exact)] += 1;
+                }
+                let [inexact, exact] = counts;
+                assert!(
+                    exact > 1000,
+                    "{}: light {light}: {exact} texels",
+                    frame.label
+                );
+                match quality {
+                    Low => assert_eq!(
+                        inexact, 0,
+                        "{}: light {light} in slot {slot}, which the temporal blend alone takes, differs from the oracle at {inexact} texels",
+                        frame.label
+                    ),
+                    _ => assert!(
+                        inexact > 20,
+                        "{}: light {light} in slot {slot}, which the denoiser filters, differs from the oracle at only {inexact} texels about its edges",
+                        frame.label
+                    ),
+                }
+            }
         }
     }
 }
@@ -1035,6 +1137,213 @@ fn a_denoised_slot_keeps_its_light_s_history_and_restarts_alone() {
         differing, 0,
         "after its light changed slot {slot} differs from a camera cut at {differing} pixels"
     );
+}
+
+// Plausible defects: a lane of the denoiser reading another lane's
+// history or moments (every lane slot 0's, as a `.xxxx` swizzle would
+// read it), which the twins above cannot show, since twins' histories
+// agree. The oracle is independence itself: two renderers draw the same
+// grate, lit by the sun and two local lights in denoised slots 1 and 2,
+// through the same frames, except that one turns the sun after the
+// history has formed. The local lights' slots must then hold the same
+// bytes in both, while the sun's slot, the control, differs: its history
+// is what a lane reading slot 0's would take.
+#[test]
+fn each_denoised_slot_keeps_its_own_history() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = [128, 128];
+    let lights = [Vec3::new(0., 6., -0.3), Vec3::new(0.5, 6., 0.4)].map(|position| Light {
+        position,
+        shape: LightShape::Point { radius: 0. },
+        intensity: 60.,
+        range: 20.,
+        casts_shadow: true,
+        ..Light::default()
+    });
+    let sun = |direction| DirectionalLight {
+        direction,
+        illuminance: 3.,
+        shadow: Some(DirectionalShadow::DEFAULT),
+        angular_diameter: 0.,
+        ..DirectionalLight::default()
+    };
+    let camera = camera(Vec3::new(0., 9., 3.), Vec3::ZERO, size);
+    let settings = settings(true);
+    let mut runs: Vec<_> = (0..2)
+        .map(|_| {
+            let (scene, ids) = scene(gpu, 6., &grate(), &lights);
+            let renderer = Renderer::for_test(&device, &queue, size, &settings);
+            (scene, ids, renderer)
+        })
+        .collect();
+    let still = Vec3::new(0.3, -1., 0.2);
+    let turned = Vec3::new(-0.2, -1., -0.3);
+    for (index, cut) in [true, false, false, false, false].into_iter().enumerate() {
+        let frames: Vec<Observed> = runs
+            .iter_mut()
+            .enumerate()
+            .map(|(run, (scene, _, renderer))| {
+                // The second run turns its sun from the fourth frame.
+                let direction = if run == 1 && index >= 3 {
+                    turned
+                } else {
+                    still
+                };
+                let mut input = input(camera, Some(sun(direction)));
+                input.camera_cut = cut;
+                render(gpu, renderer, scene, &input, &settings)
+            })
+            .collect();
+        let (_, ids, _) = &runs[0];
+        for (light, id) in ids.iter().enumerate() {
+            let slot = frames[0].slot(id.index() as u32);
+            assert!(
+                (1..super::denoise::DENOISED_SLOTS as usize).contains(&slot),
+                "frame {index}: light {light} holds denoised slot {slot}"
+            );
+            let differing = frames[0].differing(slot, &frames[1], slot);
+            assert_eq!(
+                differing, 0,
+                "frame {index}: light {light} in slot {slot} differs at {differing} pixels where only the sun turned"
+            );
+        }
+        if index == 4 {
+            let sun_slot = frames[0].slot(SHADOW_MASK_DIRECTIONAL);
+            let differing = frames[0].differing(sun_slot, &frames[1], sun_slot);
+            assert!(
+                differing > 100,
+                "the turned sun's slot differs at only {differing} pixels"
+            );
+        }
+    }
+}
+
+/// The most two runs' slot 0 may differ by, in 8-bit steps, where one
+/// renderer's denoiser filters it in one lane and the other's in four:
+/// one step of the stored mask, as the two programs round the same
+/// arithmetic apart (the frames of the sun alone in one lane and in four
+/// differed by at most one step, #204).
+const SHAPE_ROUNDING: u8 = 1;
+
+// Plausible defects: the denoiser's shapes at High keeping slot 0's
+// history apart (each shape its own targets, or the one-lane programs
+// reading or writing lane 0's history or moments elsewhere than the
+// four-lane ones), so that the directional light's shadow restarts or
+// takes a stale history whenever a local light enters or leaves slots 1
+// to 3; a switch of shape restarting the history; and a slot that joins
+// the four-lane shape keeping what its channel held. The oracles: a second
+// renderer whose local light casts throughout, so that it never leaves the
+// four-lane shape, whose slot 0 the first's matches within the rounding
+// the shapes' programs differ by (`SHAPE_ROUNDING`); and, for the joining
+// slot, the camera-cut frame after, which restarts every slot. The sun
+// moves half a stripe of the grate as the shapes switch, so that a history
+// from elsewhere, or none, shows: the control is the reference's sun
+// against its cut frame.
+#[test]
+fn the_directional_light_keeps_its_history_across_the_denoiser_s_shapes() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = [128, 128];
+    let light = |casts_shadow| Light {
+        position: Vec3::new(0., 6., -0.3),
+        shape: LightShape::Point { radius: 0. },
+        intensity: 60.,
+        range: 20.,
+        casts_shadow,
+        ..Light::default()
+    };
+    // The sun's shadow of the grate (bars at 1.2 m, 0.24 m apart) moves
+    // half a bar's spacing as its direction's z moves by 0.1.
+    let sun = |z: f32| DirectionalLight {
+        direction: Vec3::new(0.2, -1., z),
+        illuminance: 3.,
+        shadow: Some(DirectionalShadow::DEFAULT),
+        angular_diameter: 0.,
+        ..DirectionalLight::default()
+    };
+    let camera = camera(Vec3::new(0., 9., 3.), Vec3::ZERO, size);
+    // High, the default.
+    let settings = settings(true);
+    // The switching run's light casts in the middle phase alone.
+    let (mut switching, ids) = scene(gpu, 6., &grate(), &[light(false)]);
+    let (mut reference, _) = scene(gpu, 6., &grate(), &[light(true)]);
+    let mut renderers = [(); 2].map(|_| Renderer::for_test(&device, &queue, size, &settings));
+    let mut frame = |switching: &mut Scene, reference: &mut Scene, z: f32, cut: bool| {
+        let mut frame_input = input(camera, Some(sun(z)));
+        frame_input.camera_cut = cut;
+        let [first, second] = &mut renderers;
+        [
+            render(gpu, first, switching, &frame_input, &settings),
+            render(gpu, second, reference, &frame_input, &settings),
+        ]
+    };
+    let local_held = |observed: &Observed| {
+        let (_, table) = observed
+            .mask
+            .as_ref()
+            .expect("the ray-traced shadow stage ran");
+        table.lights[0][1..] != [crate::shading::shadow_mask::SHADOW_MASK_EMPTY; 3]
+    };
+    let assert_together = |[switched, kept]: &[Observed; 2], label: &str, local: bool| {
+        assert_eq!(
+            local_held(switched),
+            local,
+            "{label}: the switching run's light holds a denoised slot"
+        );
+        assert!(
+            local_held(kept),
+            "{label}: the reference's light holds a denoised slot"
+        );
+        let [width, height] = switched.size;
+        let apart = (0..height)
+            .flat_map(|y| (0..width).map(move |x| [x, y]))
+            .map(|pixel| switched.mask(0, pixel).abs_diff(kept.mask(0, pixel)))
+            .max()
+            .unwrap();
+        assert!(
+            apart <= SHAPE_ROUNDING,
+            "{label}: the sun's slot is {apart} steps from the reference's"
+        );
+    };
+    // The sun alone in a denoised slot: one lane.
+    for index in 0..3 {
+        let frames = frame(&mut switching, &mut reference, 0., index == 0);
+        assert_together(&frames, &format!("one lane, frame {index}"), false);
+    }
+    // The light casts and takes slot 1, the sun moves: four lanes.
+    switching.set_light(&queue, ids[0], light(true)).unwrap();
+    let joined = frame(&mut switching, &mut reference, 0.1, false);
+    assert_together(&joined, "four lanes, joined", true);
+    let cut = frame(&mut switching, &mut reference, 0.1, true);
+    let slot = joined[0].slot(ids[0].index() as u32);
+    assert_eq!(slot, 1, "the light takes slot 1");
+    let differing = joined[0].differing(slot, &cut[0], slot);
+    assert_eq!(
+        differing, 0,
+        "the slot the light joined differs from a camera cut at {differing} pixels"
+    );
+    // The control: the reference's sun moved without a restart shows its
+    // history against the cut.
+    let differing = joined[1].differing(0, &cut[1], 0);
+    assert!(
+        differing > 100,
+        "the moved sun's history shows at only {differing} pixels"
+    );
+    for index in 0..2 {
+        let frames = frame(&mut switching, &mut reference, 0.1, false);
+        assert_together(&frames, &format!("four lanes, frame {index}"), true);
+    }
+    // The light stops casting and the sun moves back: one lane again.
+    switching.set_light(&queue, ids[0], light(false)).unwrap();
+    for index in 0..2 {
+        let frames = frame(&mut switching, &mut reference, 0., false);
+        assert_together(&frames, &format!("one lane again, frame {index}"), false);
+    }
 }
 
 // Plausible defects: history reprojected along the motion the wrong way,

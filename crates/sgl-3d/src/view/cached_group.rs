@@ -64,6 +64,14 @@ impl CachedGroup {
         }
     }
 
+    /// Lets go of the group and what it binds, so that they live no longer
+    /// than their owners keep them; the next `get` makes the group again.
+    pub fn forget(&mut self) {
+        self.bound.clear();
+        self.structures = None;
+        self.group = None;
+    }
+
     /// The group binding `entries` (binding, resource).
     pub fn get(
         &mut self,

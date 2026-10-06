@@ -3,8 +3,8 @@
 //! read only this and the frame's authored values.
 use super::pipelines::LayerConstants;
 use crate::settings::{
-    AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, ReflectionMethod,
-    ShadowQuality, SmaaQuality, WorldSpaceReflections,
+    AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, RayTracedShadowQuality,
+    ReflectionMethod, ShadowQuality, SmaaQuality, WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 
@@ -98,6 +98,9 @@ pub(crate) struct Effective {
     /// the ray-traced shadow stage runs (`renderer::effective::traced_shadows`),
     /// and the opaque stage then takes its two-pass form.
     pub ray_traced_shadows: bool,
+    /// How the ray-traced shadow stage denoises, while it runs: the
+    /// setting resolved for the preset, Low or High.
+    pub ray_traced_shadow_quality: RayTracedShadowQuality,
     /// The receiver pass runs: the scene holds a blended receiver of
     /// screen-space reflections, and a screen-space method, TAA, FSR2 or
     /// motion blur reads the surface it draws.
