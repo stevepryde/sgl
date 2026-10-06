@@ -1,6 +1,7 @@
 //! Reflections: ambient occlusion of opaque surfaces' ambient diffuse,
 //! environment and probe specular, the screen-space method, world-space
 //! rays, and their one composition.
+pub(crate) mod probe_culling;
 pub(crate) mod source;
 pub(crate) mod velvet;
 pub(crate) mod world;

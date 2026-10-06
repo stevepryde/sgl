@@ -1,6 +1,7 @@
 //! Source completion's environment and probe specular, probe culling, and
 //! the variant a renderer builds completion for.
 use super::*;
+use crate::stages::reflections::probe_culling::{PROBE_BUCKETS, ProbeCulling};
 use crate::view::bindings::FogVolume;
 use glam::camera;
 use glam::{Mat4, Vec3, Vec4};
@@ -405,7 +406,7 @@ fn probe_tiles_keep_the_probes_whose_influence_reaches_their_geometry() {
             })
             .create_view(&Default::default())
     };
-    let cull = |source: &mut ReflectionSource, depth: &wgpu::TextureView| {
+    let cull = |culling: &mut ProbeCulling, depth: &wgpu::TextureView| {
         let mut encoder = device.create_command_encoder(&Default::default());
         drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
@@ -420,7 +421,7 @@ fn probe_tiles_keep_the_probes_whose_influence_reaches_their_geometry() {
             }),
             ..Default::default()
         }));
-        source.cull(
+        culling.encode(
             &mut encoder,
             &device,
             &queue,
@@ -433,17 +434,17 @@ fn probe_tiles_keep_the_probes_whose_influence_reaches_their_geometry() {
     };
     // Culled first at another size, so a group kept from then binds other
     // tiles and depth.
-    let mut source = ReflectionSource::new(&device, [32, 32], ENVIRONMENT);
-    queue.submit([cull(&mut source, &depth_target([32, 32])).finish()]);
-    source.resize(&device, size);
+    let mut culling = ProbeCulling::new(&device, [32, 32]);
+    queue.submit([cull(&mut culling, &depth_target([32, 32])).finish()]);
+    culling.resize(&device, size);
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: source.tiles.size(),
+        size: culling.tiles.size(),
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    let mut encoder = cull(&mut source, &depth_target(size));
-    encoder.copy_buffer_to_buffer(&source.tiles, 0, &readback, 0, source.tiles.size());
+    let mut encoder = cull(&mut culling, &depth_target(size));
+    encoder.copy_buffer_to_buffer(&culling.tiles, 0, &readback, 0, culling.tiles.size());
     queue.submit([encoder.finish()]);
     readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
