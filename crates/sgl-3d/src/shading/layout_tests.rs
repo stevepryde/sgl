@@ -51,7 +51,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::opaque::ambient_occlusion::XE_GTAO,
         &crate::view::post_fx::INPUTS,
         &crate::stages::reflections::source::COMPLETION,
-        &crate::stages::reflections::source::PROBE_CULLING,
+        &crate::stages::reflections::probe_culling::PROBE_CULLING,
         &crate::stages::reflections::world::DENOISE,
         &crate::stages::post::smaa::SMAA,
         &crate::stages::probe_prefilter::PREFILTER,
@@ -131,7 +131,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::stages::dynamic_gi::pipelines as gi;
     use crate::stages::opaque::{ambient_occlusion as ao, sky};
     use crate::stages::post::{bloom, inputs, smaa, tone_map};
-    use crate::stages::reflections::{source, velvet, world};
+    use crate::stages::reflections::{probe_culling, source, velvet, world};
     use crate::stages::shadows::{local, traced, traced::denoise};
     use crate::stages::transparent::{effects, heat, mist};
     use crate::stages::{deform, exposure, fog, motion_blur, probe_prefilter};
@@ -212,7 +212,10 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
                 source::COMPOSE_SCREEN_SPACE_ENTRY,
             ],
         ),
-        (source::PROBE_CULLING.name, vec![source::MAIN_ENTRY]),
+        (
+            probe_culling::PROBE_CULLING.name,
+            vec![probe_culling::MAIN_ENTRY],
+        ),
         (
             world::DENOISE.name,
             vec![
@@ -681,6 +684,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::shading::deformation::mirrors())
     .chain(crate::scene::probes::mirrors())
     .chain(crate::stages::reflections::source::mirrors())
+    .chain(crate::stages::reflections::probe_culling::mirrors())
     .chain(crate::stages::reflections::world::mirrors())
     .chain(crate::stages::reflections::velvet::mirrors())
     .chain(crate::stages::opaque::ambient_occlusion::mirrors())
@@ -1196,6 +1200,7 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::scene::probe_grid::constants())
     .chain(crate::stages::dynamic_gi::constants())
     .chain(crate::stages::reflections::source::constants())
+    .chain(crate::stages::reflections::probe_culling::constants())
     .chain(crate::stages::reflections::velvet::constants())
     .chain(crate::stages::exposure::constants())
     .chain(crate::stages::opaque::ambient_occlusion::constants())
