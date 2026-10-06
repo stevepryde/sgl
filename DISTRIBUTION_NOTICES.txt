@@ -7697,7 +7697,11 @@ targets and exports (samples/fsrapi/fsrapirendermodule.cpp,
 framework/rendermodules/translucency/shaders/ and
 framework/rendermodules/animatedtextures/) in view/targets.rs,
 view/geometry.wgsl, stages/antialiasing/fsr2.rs,
-stages/transparent/glow.wgsl and stages/transparent/mist.wgsl.
+stages/transparent/glow.wgsl and stages/transparent/mist.wgsl, and ports
+SSSR's tile classification and indirect arguments
+(sdk/include/FidelityFX/gpu/sssr/ffx_sssr_classify_tiles.h and
+ffx_sssr_prepare_indirect_args.h) to the world-space reflections'
+classification (stages/reflections/world/world_reflections_classify.wgsl).
 
 This file is part of the FidelityFX SDK.
 
@@ -7760,7 +7764,9 @@ AMD FidelityFX Denoiser, https://github.com/GPUOpen-Effects/FidelityFX-Denoiser
 Revision d7dfecbabe7b9523b14e7b067216e06b86e8d189, LICENSE.txt. SGL3D ports
 ffx-shadows-dnsr/ffx_denoiser_shadows_util.h, ffx_denoiser_shadows_tileclassification.h
 and ffx_denoiser_shadows_filter.h to the ray-traced shadow stage
-(stages/shadows/traced/ffx_denoiser_shadows_*.wgsl), as Wicked Engine runs them.
+(stages/shadows/traced/ffx_denoiser_shadows_*.wgsl), as Wicked Engine runs them,
+and the filter's tile-metadata skip to the world-space reflections' denoise
+passes (stages/reflections/world/world_reflections_denoise.wgsl).
 
 Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
 
