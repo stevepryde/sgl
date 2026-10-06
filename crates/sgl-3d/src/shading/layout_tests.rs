@@ -867,29 +867,40 @@ fn vertex_inputs(
 fn vertex_layouts_match_wgsl_inputs() {
     use super::vertex::{CASTER_LAYOUT, DRAW_INSTANCE_LAYOUT};
     use crate::stages::transparent::{effects, heat, mist};
+    use crate::view::pipelines as view;
+    let caster = view::CASTER.name;
     let pipelines = [
         (
             &[&DRAW_INSTANCE_LAYOUT, &CASTER_LAYOUT][..],
             &[
-                ("caster", "shadow_vs"),
-                ("caster", "shadow_unclipped_vs"),
-                ("caster", "shadow_masked_vs"),
-                ("caster", "shadow_masked_unclipped_vs"),
+                (caster, view::SHADOW_VS_ENTRY),
+                (caster, view::SHADOW_UNCLIPPED_VS_ENTRY),
+                (caster, view::SHADOW_MASKED_VS_ENTRY),
+                (caster, view::SHADOW_MASKED_UNCLIPPED_VS_ENTRY),
             ][..],
         ),
         (
             &[&DRAW_INSTANCE_LAYOUT][..],
             &[
-                ("geometry", "source_vs"),
-                ("caster", "shadow_pulled_vs"),
-                ("caster", "shadow_pulled_unclipped_vs"),
-                ("caster", "shadow_pulled_masked_vs"),
-                ("caster", "shadow_pulled_masked_unclipped_vs"),
+                (view::GEOMETRY.name, view::SOURCE_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_UNCLIPPED_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_MASKED_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY),
             ][..],
         ),
-        (&[&effects::GLOW_LAYOUT][..], &[("glow", "glow_vs")][..]),
-        (&[&heat::HEAT_LAYOUT][..], &[("heat_distortion", "vs")][..]),
-        (&[&mist::MIST_LAYOUT][..], &[("mist", "mist_vs")][..]),
+        (
+            &[&effects::GLOW_LAYOUT][..],
+            &[(effects::GLOW.name, effects::GLOW_VS_ENTRY)][..],
+        ),
+        (
+            &[&heat::HEAT_LAYOUT][..],
+            &[(heat::HEAT.name, heat::VS_ENTRY)][..],
+        ),
+        (
+            &[&mist::MIST_LAYOUT][..],
+            &[(mist::MIST.name, mist::MIST_VS_ENTRY)][..],
+        ),
     ];
     let programs = programs();
     for (layouts, readers) in pipelines {

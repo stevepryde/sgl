@@ -426,7 +426,8 @@ dependency order, each once, with any `enable` directive a module declares
 hoisted to the program's head, where naga alone accepts it. The layout test
 also parses and validates every composed program and checks that it holds
 exactly the entry points its pipelines are created with: a constant beside
-the program's root names each, and the pipeline code and the test use it. A
+the module that declares each entry point names it, and the pipeline code and
+the test use it. A
 shader file holds its entry points and its stage's own
 code; it does not redeclare a struct, binding or function another module owns.
 
