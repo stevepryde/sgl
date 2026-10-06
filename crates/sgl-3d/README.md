@@ -765,8 +765,10 @@ Neither is on by default or in a preset. Rays are traced only where a
 pixel needs one: a classification pass lists the half-resolution pixels whose
 surface takes world-space reflections and that screen-space reflections did
 not resolve, and the trace runs over that list, as AMD FidelityFX SSSR traces
-its rays, so a frame with no such pixel pays the classification alone
-(TIMINGS-README). Wicked Engine's RT reflection
+its rays, so a frame with no such pixel pays the classification alone: on an
+Apple M5 at 1920×1080 the streaming example, which traces no world-space ray,
+spends 0.21 ms on the stage against 0.35 ms before with hardware ray tracing
+(0.07 ms of it the classification), and the same 0.21 ms without. Wicked Engine's RT reflection
 resolve, temporal and bilateral upsample passes denoise the rays. The result is
 premultiplied radiance with the share of rays that hit in alpha, and it composites as
 `ssr.rgb + (world.rgb + environment * (1 - world.a)) * (1 - ssr.a)`, so misses

@@ -852,8 +852,13 @@ code; it does not redeclare a struct, binding or function another module owns.
   classification 0.12–0.14 ms at 1920×1080 to save the denoise passes
   0.08, and made the portable path 0.09–0.12 ms slower on the streaming
   example than the full-screen trace before it. Without it the
-  classification costs about 0.07 ms there (0.02 at 960×540), which the
-  trace's skipped pixels repay on the hardware path.
+  classification costs about 0.07 ms there (0.02 at 960×540): on the
+  hardware path, where every pixel of the full-screen trace paid the ray
+  query's footprint (#221), the stage costs 0.13 ms less on that route,
+  which traces no world-space ray, and 0.01 ms less over #23's glossy
+  strip, which traces many; on the portable path it is unchanged on that
+  route and 0.015 ms (4 %) more over the strip, where the full-screen
+  trace's skipped pixels were already cheap.
   Another method plugs in beside the existing ones.
 - **Deformation.** Skinned and morphed positions reach every geometry pass the
   same way, with the previous frame's positions for motion. Prepare's deform
