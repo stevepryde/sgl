@@ -586,7 +586,7 @@ fn slab_frames(
         casts_shadow: true,
         ..Light::default()
     });
-    let lights = if local { &lights[..] } else { &[] };
+    let lights = &lights[..if local { lights.len() } else { 0 }];
     let (mut scene, ids) = scene(gpu, 8., &[slab], lights);
     let sun = DirectionalLight {
         direction: Vec3::new(-1., -1., 0.),

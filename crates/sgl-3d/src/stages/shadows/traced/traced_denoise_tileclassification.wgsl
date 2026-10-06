@@ -130,7 +130,7 @@ fn FFX_DNSR_Shadows_WriteReprojectionResults(did:vec2<u32>,mean:FfxDnsrFloat,var
 }
 // Each slot's moments in its lane's layer.
 fn FFX_DNSR_Shadows_WriteMoments(did:vec2<u32>,m:FfxDnsrFloat,s:FfxDnsrFloat,count:FfxDnsrFloat) {
- let moments=transpose(mat4x4(ffx_dnsr_float_texel(m),ffx_dnsr_float_texel(s),ffx_dnsr_float_texel(count),vec4(0.)));
+ var moments=transpose(mat4x4(ffx_dnsr_float_texel(m),ffx_dnsr_float_texel(s),ffx_dnsr_float_texel(count),vec4(0.)));
  for (var lane=0u;lane<FFX_DNSR_LANES;lane++) {
   textureStore(denoise_moments,did,lane,moments[lane]);
  }
