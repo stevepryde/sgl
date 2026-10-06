@@ -2951,3 +2951,98 @@ fn reports_number_their_frames_and_count_those_skipped() {
         renderer.test_dynamic_gi().test_traced_rays(&device, &queue)
     );
 }
+
+// Plausible defect: the probes' inputs take the frame's animation phase for
+// a material whose surface does not move, so a scene whose only layered
+// material stands still, is unlit or is blended changes them every frame and
+// its volume never pauses; or they leave it out for one that moves, so the
+// volume pauses on light that has moved on. The oracle is the material
+// definition (`Material::surface_moves`, the README's scrolling normal
+// layers): a lit material with a layer moving at least a repeat of its map
+// an hour, which the rays meet unless it is blended, since they pass
+// through blended surfaces. A frame one second after the first reports the
+// frame's data changed for such a material alone, and nothing else changed.
+#[cfg(feature = "diagnostics")]
+#[test]
+fn the_clock_changes_the_probes_inputs_only_where_a_surface_moves() {
+    use crate::diagnostics::DynamicGiChanges;
+    use crate::{AlphaMode, NormalLayer};
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    // 180 and 108 whole repeats an hour.
+    const MOVING: [NormalLayer; 2] = [
+        NormalLayer {
+            velocity: [0.05, 0.],
+            scale: 1.,
+            strength: 1.,
+        },
+        NormalLayer {
+            velocity: [0., 0.03],
+            scale: 1.,
+            strength: 1.,
+        },
+    ];
+    const STILL: [NormalLayer; 2] = [NormalLayer {
+        velocity: [0.; 2],
+        scale: 1.,
+        strength: 1.,
+    }; 2];
+    let blend = AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+    };
+    // Each case's layers, whether its material is unlit, its alpha mode
+    // and whether its surface moves.
+    let cases = [
+        ("still layers", STILL, false, AlphaMode::Opaque, false),
+        ("unlit moving layers", MOVING, true, AlphaMode::Opaque, false),
+        ("blended moving layers", MOVING, false, blend, false),
+        ("lit moving layers", MOVING, false, AlphaMode::Opaque, true),
+    ];
+    let mut settings = settings(DynamicGiQuality::High);
+    settings.diagnostics.dynamic_gi = true;
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let changes = cases.map(|(case, layers, unlit, alpha, _)| {
+        let mut scene = Scene::new(&device, &queue);
+        let environment = uniform_environment(&device, &queue, &mut scene, [0.5; 3]);
+        let mut cube = test_support::cube();
+        let flat = image::RgbaImage::from_pixel(4, 4, image::Rgba([128, 128, 255, 255]));
+        cube.images.push(crate::asset::Image::Rgba8(flat));
+        let material = &mut cube.materials[0];
+        material.normal_texture = Some(0);
+        material.normal_layers = Some(layers);
+        material.unlit = unlit;
+        material.alpha = alpha;
+        test_support::add_static(&device, &queue, &mut scene, cube);
+        scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
+        let mut input = input(Vec3::new(0., 0., 8.));
+        input.environment = Some(environment);
+        for elapsed_seconds in [0., 1.] {
+            input.elapsed_seconds = elapsed_seconds;
+            render(
+                &device,
+                &queue,
+                &mut renderer,
+                &mut scene,
+                &input,
+                &settings,
+                1,
+            );
+        }
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let reports = renderer.take_dynamic_gi_reports(&device);
+        let [first, second] = &reports[..] else {
+            panic!("{case}: {reports:?}");
+        };
+        assert!(first.changes.restarted, "{case}: {first:?}");
+        (case, second.changes)
+    });
+    let expected = cases.map(|(case, .., moves)| {
+        let changes = DynamicGiChanges {
+            frame: moves,
+            ..DynamicGiChanges::default()
+        };
+        (case, changes)
+    });
+    assert_eq!(changes, expected);
+}
