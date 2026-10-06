@@ -28,7 +28,7 @@ full API details.
   and blends those local lights' with the previous frames' as it does the
   other local lights': their soft shadows' edges are noisier, in motion
   most. On an Apple M5 at 1920×1080 natively on Metal the denoiser took
-  0.88–1.04 ms at Low against 1.85–2.05 ms at High on the examples'
+  0.89–1.06 ms at Low against 1.92–2.10 ms at High on the examples'
   routes, about 1 ms off the frame. At High, a frame where no local light
   holds one of those three places now filters the directional light's
   shadow alone: about 0.8 ms less (1.17 against 1.94 ms on a route lit by

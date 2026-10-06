@@ -616,9 +616,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   a change of quality restarts the stage's history. Decision (#204,
   RD-2/RD-6), measured natively on Metal on an Apple M5 at 1920×1080 on
   the props, streaming walk and streaming fly routes, median: the denoiser
-  took 1.85–2.05 ms with four lanes in three passes, 0.88–1.04 ms with
-  slot 0 alone in two (Low), and 1.94 against 1.17 ms with slot 0 alone in
-  three where only the directional light held a denoised slot, whose
+  took 1.92–2.10 ms with four lanes in three passes (High), 0.89–1.06 ms
+  with slot 0 alone in two (Low), and 1.94 against 1.17 ms with slot 0
+  alone in three where only the directional light held a denoised slot, whose
   output differed from the four lanes' by at most 1/255 at about 0.03% of
   the pixels, from the order of the filter weight's products. The owner
   judged Low's soft local shadows nearly as good and kept both as a
