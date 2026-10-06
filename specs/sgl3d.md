@@ -215,7 +215,7 @@ The code's structure follows the
 
 ## Roadmap
 
-The status below reflects the `0.1.0` public baseline. Parenthesized numbers
+The status below reflects the `0.2.0` release. Parenthesized numbers
 are stable roadmap labels, not GitHub issue numbers. Keep this status current
 when a roadmap feature lands. The
 [SGL project](https://github.com/users/stevepryde/projects/12) owns priority
@@ -241,67 +241,67 @@ current capabilities and limits.
 - **Effects:** motion blur (9) and volumetric fog with light shafts (10).
   See [motion blur](../crates/sgl-3d/README.md#motion-blur) and
   [fog](../crates/sgl-3d/README.md#volumetric-fog).
+- **Dynamic diffuse GI (11,
+  [#21](https://github.com/stevepryde/sgl/issues/21)):** a volume of probes
+  the game places lights surfaces with bounce light alongside game-authored
+  lightmaps, irradiance atlases and ambient cubes
+  ([dynamic GI](../crates/sgl-3d/README.md#dynamic-diffuse-gi)), scrolled
+  with the player by whole spacings; its adoption by the consumer remains.
+- **Hardware ray-traced reflections and shadows (13,
+  [#23](https://github.com/stevepryde/sgl/issues/23)):** behind the opt-in
+  `Settings::hardware_ray_tracing` (off by default, [D-28](decisions.md)),
+  on a device with ray queries, the scene builds its acceleration
+  structures and world-space reflections' and the dynamic GI volume's rays
+  trace them; elsewhere they traverse the software BVHs. World-space
+  reflections reach static content too where the game chooses
+  `WorldSpaceReflections::All`. Metal runs the candidate form, in which
+  masked models join the acceleration structures (#211); Vulkan and DX12
+  run the baseline, in which the software BVHs trace masked models, until
+  the candidate form is measured on their hardware, which it has not run
+  on yet. Behind the opt-in
+  `Settings::ray_traced_shadows` (off by default, D-28), the camera's
+  opaque surfaces take ray-traced shadows of the directional light and up
+  to fifteen local lights, soft by the light's size, the first four
+  (the directional light's alone at `Settings::ray_traced_shadow_quality`
+  Low) denoised by AMD's shadow denoiser and the rest temporally blended;
+  without hardware ray tracing the maps shadow them, since a software trace
+  of their rays was too slow to use ([D-30](decisions.md): no feature
+  requires hardware ray tracing). The design is settled in the architecture
+  ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
+  [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
+  acceleration structures beside the portable BVHs behind
+  `Settings::hardware_ray_tracing`, a baseline form on every native
+  backend and a candidate specialisation where the shader backend lowers
+  it, one predicate and one hit for every form, ray-traced shadows between
+  the opaque stage's two passes, and world-space reflections that may
+  reach everything.
+- **GPU-driven culling and occlusion culling (22,
+  [#24](https://github.com/stevepryde/sgl/issues/24)):** the camera's
+  opaque and masked surfaces and the directional cascades draw from lists
+  the GPU builds (frustum, authored mesh LOD and mesh sections, one
+  indirect draw per set); blended surfaces, local-light faces and probe
+  captures keep CPU-built, instanced lists. The camera's two-phase
+  occlusion culling runs behind `Settings::occlusion_culling` (off by
+  default), as the architecture designs it
+  ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages)).
+  The cascades' casters read the slabs' 12-byte positions, and opaque
+  sections whose triangles pair as quads draw indexed, so on quad
+  content like the examples' they cost the GPU what the CPU-built
+  indexed draws did ([#192](https://github.com/stevepryde/sgl/issues/192)). The cascades' occlusion culling, a design of its own
+  whose pyramids #192 found would cost more than they save on the
+  examples' routes, and the consumer's adoption remain.
 
 ### Planned
 
 Remaining work, in the existing roadmap order:
 
-1. **Dynamic diffuse GI (11,
-   [#21](https://github.com/stevepryde/sgl/issues/21)).** A volume of probes
-   the game places lights surfaces with bounce light alongside game-authored
-   lightmaps, irradiance atlases and ambient cubes
-   ([dynamic GI](../crates/sgl-3d/README.md#dynamic-diffuse-gi)), scrolled
-   with the player by whole spacings; its adoption by the consumer remains.
-2. **DLSS and MetalFX upscaling (12,
-   [#22](https://github.com/stevepryde/sgl/issues/22)).** Current antialiasing
-   choices are TAA, SMAA, and FSR2; FSR2 requires native device features and
-   falls back to TAA in the browser.
-3. **Hardware ray-traced reflections and shadows (13,
-   [#23](https://github.com/stevepryde/sgl/issues/23)).** Behind the opt-in
-   `Settings::hardware_ray_tracing` (off by default, [D-28](decisions.md)),
-   on a device with ray queries, the scene builds its acceleration
-   structures and world-space reflections' and the dynamic GI volume's rays
-   trace them; elsewhere they traverse the software BVHs. World-space
-   reflections reach static content too where the game chooses
-   `WorldSpaceReflections::All`. Metal runs the candidate form, in which
-   masked models join the acceleration structures (#211); Vulkan and DX12
-   run the baseline, in which the software BVHs trace masked models, until
-   the candidate form is measured on their hardware, which it has not run
-   on yet. Behind the opt-in
-   `Settings::ray_traced_shadows` (off by default, D-28), the camera's
-   opaque surfaces take ray-traced shadows of the directional light and up
-   to fifteen local lights, soft by the light's size, the first four
-   (the directional light's alone at `Settings::ray_traced_shadow_quality`
-   Low) denoised by AMD's shadow denoiser and the rest temporally blended;
-   without hardware ray tracing the maps shadow them, since a software trace
-   of their rays was too slow to use ([D-30](decisions.md): no feature
-   requires hardware ray tracing). The design is settled in the architecture
-   ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
-   [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
-   acceleration structures beside the portable BVHs behind
-   `Settings::hardware_ray_tracing`, a baseline form on every native
-   backend and a candidate specialisation where the shader backend lowers
-   it, one predicate and one hit for every form, ray-traced shadows between
-   the opaque stage's two passes, and world-space reflections that may
-   reach everything.
-4. **GPU-driven culling and occlusion culling (22,
-   [#24](https://github.com/stevepryde/sgl/issues/24)).** The camera's
-   opaque and masked surfaces and the directional cascades draw from lists
-   the GPU builds (frustum, authored mesh LOD and mesh sections, one
-   indirect draw per set); blended surfaces, local-light faces and probe
-   captures keep CPU-built, instanced lists. The camera's two-phase
-   occlusion culling runs behind `Settings::occlusion_culling` (off by
-   default), as the architecture designs it
-   ([GPU draw lists and occlusion culling](sgl3d-architecture.md#designs-that-span-stages)).
-   The cascades' casters read the slabs' 12-byte positions, and opaque
-   sections whose triangles pair as quads draw indexed, so on quad
-   content like the examples' they cost the GPU what the CPU-built
-   indexed draws did ([#192](https://github.com/stevepryde/sgl/issues/192)). The cascades' occlusion culling, a design of its own
-   whose pyramids #192 found would cost more than they save on the
-   examples' routes, and the consumer's adoption remain.
+1. **DLSS and MetalFX upscaling (12,
+   [#22](https://github.com/stevepryde/sgl/issues/22)),** planned for
+   `0.3.0`. Current antialiasing choices are TAA, SMAA, and FSR2; FSR2
+   requires native device features and falls back to TAA in the browser.
 
-These are planned capabilities, not APIs a game can depend on yet. Implement
-them under RD-1 and the architecture rules, retaining native and browser
+This is a planned capability, not an API a game can depend on yet. Implement
+it under RD-1 and the architecture rules, retaining native and browser
 support: native takes every capability the device has, and the browser an
 explicit fallback or none where it cannot (D-27).
 
