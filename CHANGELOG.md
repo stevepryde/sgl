@@ -18,13 +18,21 @@ full API details.
 ### SGL moves to wgpu 30
 
 - **Scope:** `sgl-2d`, `sgl-3d` and `sgl-post-fx` move from wgpu and naga
-  29 to 30, and from `sp-fidelity`/`sp-fidelity-wgpu` 0.1 to 0.2, which
-  are on wgpu 30 too (#207). The root manifest's requirements on wgpu, naga,
-  `wasm-bindgen`, `wasm-bindgen-futures`, `wasm-bindgen-test`, `js-sys`
-  and `web-sys` are now caret ranges (`wgpu = "30.0"`) instead of `=`
-  pins. A game can therefore resolve any wgpu 30.x, including 30.0.1, which
-  needs `wasm-bindgen` 0.2.127 or later. SGL's own `Cargo.lock` stays at
-  wgpu 30.0.0 and `wasm-bindgen` 0.2.126 (#212 moves it to 30.0.1).
+  29.0.4 to 30.0.1, and from `sp-fidelity`/`sp-fidelity-wgpu` 0.1 to 0.2,
+  which are on wgpu 30.0.1 too (#207, #212). The root manifest's
+  requirements are caret ranges, not `=` pins: wgpu and naga `"30.0.1"`,
+  `wasm-bindgen` `"0.2.127"`, `js-sys` and `web-sys` `"0.3.104"`,
+  `wasm-bindgen-futures` `"0.4.77"` and `wasm-bindgen-test` `"0.3.77"`.
+  SGL's `Cargo.lock` holds wgpu 30.0.1 and `wasm-bindgen` 0.2.129.
+  wgpu 30.0.0 is excluded on purpose: built with a `wasm-bindgen` older
+  than 0.2.127 it panics on WebGPU ("Unexpected error") whenever an error
+  scope pops without an error, and 30.0.1 requires the fixed
+  `wasm-bindgen` (gfx-rs/wgpu#10034, backported in #10105). 30.0.1 also
+  stops a per-frame Vulkan validation error on acquire (gfx-rs/wgpu#9855).
+  It also resolves Metal's DisplayP3 and BT.2100 colour-space constants at
+  runtime instead of linking them, so a binary loads on macOS versions that
+  lack them (gfx-rs/wgpu#9819). SGL's canvas uses `SurfaceColorSpace::Auto`,
+  so its output is unchanged.
 - **Behaviour:**
   - `sgl-2d`'s `Frame::present` keeps its signature. It now presents
     through `Queue::present`. The canvas surface takes
@@ -41,8 +49,9 @@ full API details.
 - **Migration:** a game that calls wgpu or writes WGSL itself updates that
   code for wgpu 30 ([wgpu's changelog](https://github.com/gfx-rs/wgpu/blob/v30.0.0/CHANGELOG.md)).
   These are the changes SGL's own code needed:
-  - Require `wgpu = "30.0"` (and `naga = "30.0"` where the game uses it
-    directly). Don't pin it with `=`, so that compatible fixes resolve.
+  - Require `wgpu = "30.0.1"` (and `naga = "30.0.1"` where the game uses
+    it directly), and `wasm-bindgen` 0.2.127 or later in the browser.
+    Don't pin them with `=`, so that compatible fixes resolve.
   - `get_mapped_range` returns a `Result`: add `.expect("mapped")` or `?`.
   - `VertexState::buffers` takes `&[Option<VertexBufferLayout>]`: wrap
     each layout in `Some`.
@@ -60,9 +69,12 @@ full API details.
   Regenerate the game's distribution notices. wgpu 30 drops
   `gpu-descriptor` and `hexf-parse`, whose CC0 text the notices no longer
   carry, and adds `naga-types` and `objc2-core-graphics`.
+  `wasm-bindgen-futures` 0.4.79 names `tokio` (MIT) for Emscripten builds
+  under an unstable cfg, so cargo-about lists its notice too.
 
   The browser lane's `wasm-bindgen-cli` must match the `wasm-bindgen`
-  locked in the game's `Cargo.lock`. Afterwards, run the game natively and
+  locked in the game's `Cargo.lock` exactly. For SGL's lockfile that is
+  `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. Afterwards, run the game natively and
   in the browser. With hardware ray tracing on a Mac, look at ray-traced
   shadows, reflections and dynamic GI, and compare their GPU timings.
 

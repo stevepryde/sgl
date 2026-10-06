@@ -50,7 +50,7 @@ objc2-game-controller = { version = "0.3.2", default-features = false }
 rustc-hash = "1.1"
 ruzstd = { version = "0.8", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
-js-sys = "0.3.103"
+js-sys = "0.3.104"
 console_error_panic_hook = "=0.1.7"
 pollster = "=0.4.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -58,21 +58,21 @@ serde_json = "1.0"
 sp-fidelity = "0.2.0"
 sp-fidelity-wgpu = "0.2.0"
 zeroize = "1.8"
-wasm-bindgen = "0.2.126"
-wasm-bindgen-futures = "0.4.76"
-wasm-bindgen-test = "0.3.76"
+wasm-bindgen = "0.2.127"
+wasm-bindgen-futures = "0.4.77"
+wasm-bindgen-test = "0.3.77"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 tungstenite = { version = "0.29", default-features = false, features = [
     "handshake",
 ] }
 getrandom = "0.4.3"
 mio = { version = "1.2", default-features = false, features = ["os-poll", "net"] }
-wgpu = { version = "30.0", default-features = false }
+wgpu = { version = "30.0.1", default-features = false }
 # wgpu re-exports naga only with its native core; SGL3D's layout tests parse WGSL
 # with it directly, at wgpu's version.
-naga = "30.0"
+naga = "30.0.1"
 winit = { version = "=0.30.13", default-features = false }
-web-sys = { version = "0.3.103", features = [
+web-sys = { version = "0.3.104", features = [
     "Document",
     "Element",
     "HtmlCanvasElement",
@@ -113,5 +113,5 @@ overflow-checks = true
 # sp-fidelity 0.2.0 from its pull request until it is published; remove this
 # before merging (#207).
 [patch.crates-io]
-sp-fidelity = { git = "https://github.com/stevepryde/sp-fidelity", rev = "198be11ffc542d6cd4f463a9c60133f59258dd3d" }
-sp-fidelity-wgpu = { git = "https://github.com/stevepryde/sp-fidelity", rev = "198be11ffc542d6cd4f463a9c60133f59258dd3d" }
+sp-fidelity = { git = "https://github.com/stevepryde/sp-fidelity", rev = "27ec84db7520ebe1699d6b322859d1247ef0fdd5" }
+sp-fidelity-wgpu = { git = "https://github.com/stevepryde/sp-fidelity", rev = "27ec84db7520ebe1699d6b322859d1247ef0fdd5" }
