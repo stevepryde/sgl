@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 30] = [
+    let roots: [&'static super::Module; 31] = [
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
@@ -53,6 +53,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::reflections::source::COMPLETION,
         &crate::stages::reflections::probe_culling::PROBE_CULLING,
         &crate::stages::reflections::world::DENOISE,
+        &crate::stages::reflections::world::classify::CLASSIFY,
         &crate::stages::post::smaa::SMAA,
         &crate::stages::probe_prefilter::PREFILTER,
         &crate::stages::post::bloom::BLOOM,
@@ -227,6 +228,13 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             ],
         ),
         (
+            world::classify::CLASSIFY.name,
+            vec![
+                world::classify::CLASSIFY_ENTRY,
+                world::classify::PREPARE_RAYS_ENTRY,
+            ],
+        ),
+        (
             smaa::SMAA.name,
             vec![
                 smaa::DETECT_VERTEX_ENTRY,
@@ -358,7 +366,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
 /// path `form` takes (`ray_trace_root`), each with the pipeline constants
 /// it needs and its entry points.
 fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
-    use naga::ShaderStage::{Compute, Fragment, Vertex};
+    use naga::ShaderStage::Compute;
     let root = super::ray_trace_root(form);
     let world = &crate::stages::reflections::world::TRACE;
     let gi = &crate::stages::dynamic_gi::pipelines::TRACE;
@@ -377,13 +385,10 @@ fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
                 "world_reflections_candidates",
             ),
             compose(&[world, root]),
-            vec![
-                (Vertex, super::FULLSCREEN_VS_ENTRY),
-                (
-                    Fragment,
-                    crate::stages::reflections::world::WORLD_TRACE_ENTRY,
-                ),
-            ],
+            vec![(
+                Compute,
+                crate::stages::reflections::world::WORLD_TRACE_ENTRY,
+            )],
         ),
         (
             label(
@@ -693,6 +698,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::reflections::source::mirrors())
     .chain(crate::stages::reflections::probe_culling::mirrors())
     .chain(crate::stages::reflections::world::mirrors())
+    .chain(crate::stages::reflections::world::classify::mirrors())
     .chain(crate::stages::reflections::velvet::mirrors())
     .chain(crate::stages::opaque::ambient_occlusion::mirrors())
     .chain(crate::stages::exposure::mirrors())
@@ -1208,6 +1214,7 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::stages::dynamic_gi::constants())
     .chain(crate::stages::reflections::source::constants())
     .chain(crate::stages::reflections::probe_culling::constants())
+    .chain(crate::stages::reflections::world::classify::constants())
     .chain(crate::stages::reflections::velvet::constants())
     .chain(crate::stages::exposure::constants())
     .chain(crate::stages::opaque::ambient_occlusion::constants())

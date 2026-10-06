@@ -428,3 +428,349 @@ fn a_masked_wall_cuts_out_on_the_hardware_path_as_on_the_portable_path() {
         "the hardware path cuts the masked wall out as the portable path does: {difference}"
     );
 }
+
+/// A square facing +Y at height `y` over `x` and `z`, of one material of
+/// base `base`, `metallic` and perceptual `roughness`.
+fn plane(
+    x: [f32; 2],
+    z: [f32; 2],
+    y: f32,
+    base: f32,
+    metallic: f32,
+    roughness: f32,
+) -> crate::asset::Asset {
+    let mut asset = floor();
+    asset.meshes[0].vertices = [(x[0], z[0]), (x[1], z[0]), (x[1], z[1]), (x[0], z[1])]
+        .map(|(x, z)| Vertex {
+            tangent: [0.; 4],
+            lightmap_bounds: [0., 0., 1., 1.],
+            lightmap_uv: [0.; 2],
+            position: [x, y, z],
+            normal: [0., 1., 0.],
+            uv: [0.; 2],
+            color: [1.; 4],
+        })
+        .to_vec();
+    let material = &mut asset.materials[0];
+    material.base = [base, base, base, 1.];
+    material.metallic = metallic;
+    material.roughness = roughness;
+    asset
+}
+
+/// A frame size whose reduced grid leaves a remainder column and row, and
+/// whose mirror needs more rays than one row of the trace's indirect
+/// dispatch holds.
+const COVERAGE: [u32; 2] = [257, 193];
+
+/// A camera 2 m above a rough floor, looking down 45°, over a mirror on it
+/// from x = -0.3 and from z = -3 towards the camera, past the frame's right
+/// and bottom edges, which reflects an unlit white moving wall 100 m ahead,
+/// out of view.
+struct MirrorScene {
+    scene: Scene,
+    mirror: crate::InstanceId,
+    input: FrameInput,
+}
+
+fn mirror_scene(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    size: [u32; 2],
+    mirror_shown: bool,
+) -> MirrorScene {
+    let mut scene = Scene::new(device, queue);
+    test_support::add_static(
+        device,
+        queue,
+        &mut scene,
+        plane([-50., 50.], [-50., 50.], 0., 0.2, 0., 0.9),
+    );
+    let model = scene
+        .add_asset(
+            device,
+            queue,
+            plane([-0.3, 20.], [-3., 1.], 0.002, 1., 1., 0.05),
+        )
+        .unwrap()
+        .model;
+    let mirror = scene
+        .add_instance(
+            device,
+            queue,
+            InstanceState {
+                visible: mirror_shown,
+                capture_visible: mirror_shown,
+                ..InstanceState::new(model)
+            },
+            Mobility::Static,
+        )
+        .unwrap();
+    let model = scene.add_asset(device, queue, wall()).unwrap().model;
+    scene
+        .add_instance(
+            device,
+            queue,
+            InstanceState {
+                pose: Mat4::from_scale_rotation_translation(
+                    Vec3::new(1200., 600., 10.),
+                    glam::Quat::IDENTITY,
+                    Vec3::new(0., 300., -100.),
+                ),
+                ..InstanceState::new(model)
+            },
+            Mobility::Moving,
+        )
+        .unwrap();
+    let eye = Vec3::new(0., 2., 0.);
+    let mut input = FrameInput::new(Camera {
+        view: glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::new(0., -1., -1.), Vec3::Y),
+        projection: crate::perspective(1., size[0] as f32 / size[1] as f32, 0.1),
+        eye,
+    });
+    input.backdrop = Backdrop::Color([0.; 3]);
+    MirrorScene {
+        scene,
+        mirror,
+        input,
+    }
+}
+
+/// Renders `frame`'s scene once through `renderer` at `size`.
+fn render_mirror(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    renderer: &mut Renderer,
+    frame: &mut MirrorScene,
+    settings: &Settings,
+    size: [u32; 2],
+) {
+    let output = crate::view::targets::target(
+        device,
+        "world reflection coverage",
+        size,
+        crate::shading::gbuffer::COLOR,
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.render(
+        device,
+        queue,
+        &mut encoder,
+        &mut frame.scene,
+        &frame.input,
+        settings,
+        &output,
+        None,
+    );
+    queue.submit([encoder.finish()]);
+    renderer.finish_frame(&mut frame.scene);
+}
+
+fn mirror_settings(reach: settings::WorldSpaceReflections) -> Settings {
+    Settings {
+        antialiasing: settings::Antialiasing::Off,
+        bloom: settings::Bloom::Off,
+        atmosphere: false,
+        screen_space_reflections: settings::ScreenSpaceReflections::Half,
+        world_space_reflections: reach,
+        ..Settings::default()
+    }
+}
+
+// The classification's coverage of the tracing grid, on the first frame,
+// where every tracing pixel starts as a miss. Plausible defects: a tile
+// holding mirror pixels left unflagged, which the denoise passes then skip
+// (its pixels reflect nothing); rays listed past the first row of the
+// trace's indirect dispatch left untraced, or traced at another tracing
+// pixel than their own (a wrong ray texel, packing or row); the upsample
+// taking another tile's flag than its own pixels', or missing the
+// remainder column and row past the reduced grid at an odd size. The
+// oracle is geometric, observed through the composite: against the same
+// frame without world-space reflections, every mirror pixel at least 4
+// pixels inside the mirror (the denoiser's reach; the frame's edges count
+// as inside, since the mirror passes them), the remainder column and row
+// included, gains the wall's reflection, and no other pixel changes, since
+// only receivers compose world-space rays. The mirror's pixels come from
+// the G-buffer's source identities; more tracing pixels lie on it than one
+// row of the trace's dispatch holds.
+#[test]
+fn every_mirror_pixel_reflects_and_no_other_pixel_changes() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = COVERAGE;
+    let mut composites = Vec::new();
+    let mut identities = Vec::new();
+    for reach in [settings::WorldSpaceReflections::Off, Moving] {
+        let settings = mirror_settings(reach);
+        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let mut frame = mirror_scene(gpu, size, true);
+        frame.input.camera_cut = true;
+        render_mirror(gpu, &mut renderer, &mut frame, &settings, size);
+        composites.push(composite(&device, &queue, &renderer));
+        let ids = test_support::read(&device, &queue, renderer.targets().source_id.texture(), 8);
+        let mirror = crate::diagnostics::source_id(frame.mirror);
+        identities = bytemuck::cast_slice::<u8, [u32; 2]>(&ids)
+            .iter()
+            .map(|id| id[0] == mirror)
+            .collect::<Vec<_>>();
+    }
+    let [width, height] = size.map(|side| side as i32);
+    let mirror = |x: i32, y: i32| identities[(y * width + x) as usize];
+    let interior = |x: i32, y: i32| {
+        (-4..=4).all(|dy| {
+            (-4..=4).all(|dx| {
+                let (x, y) = (x + dx, y + dy);
+                x < 0 || y < 0 || x >= width || y >= height || mirror(x, y)
+            })
+        })
+    };
+    let mirror_pixels = identities.iter().filter(|&&on| on).count() as u32;
+    assert!(
+        mirror_pixels / 4 > super::classify::GROUP_ROW * super::classify::TRACE_THREADS,
+        "the mirror's {mirror_pixels} pixels need more than one row of the trace's dispatch"
+    );
+    let (mut inside, mut holes, mut changed) = (0, Vec::new(), Vec::new());
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y * width + x) as usize;
+            let gain = composites[1][index] - composites[0][index];
+            if mirror(x, y) && interior(x, y) {
+                inside += 1;
+                if gain <= 0.25 {
+                    holes.push((x, y, gain));
+                }
+            } else if !mirror(x, y) && gain.abs() > 1e-3 {
+                changed.push((x, y, gain));
+            }
+        }
+    }
+    let gains = (0..identities.len()).map(|i| composites[1][i] - composites[0][i]);
+    let least = gains
+        .clone()
+        .enumerate()
+        .filter(|&(i, _)| {
+            let (x, y) = (i as i32 % width, i as i32 / width);
+            mirror(x, y) && interior(x, y)
+        })
+        .map(|(_, gain)| gain)
+        .fold(f32::MAX, f32::min);
+    let largest = gains
+        .enumerate()
+        .filter(|&(i, _)| !identities[i])
+        .map(|(_, gain)| gain.abs())
+        .fold(0., f32::max);
+    eprintln!(
+        "{mirror_pixels} mirror pixels, {inside} inside: least gain {least}; largest change off the mirror {largest}"
+    );
+    let remainder = |&(x, y, _): &(i32, i32, f32)| x == width - 1 || y == height - 1;
+    assert!(inside > 1000, "{inside} interior mirror pixels");
+    assert!(
+        holes.is_empty(),
+        "{} of {inside} interior mirror pixels reflect nothing ({} in the remainder column or row): {:?}",
+        holes.len(),
+        holes.iter().filter(|hole| remainder(hole)).count(),
+        &holes[..holes.len().min(8)]
+    );
+    assert!(
+        changed.is_empty(),
+        "pixels off the mirror changed: {:?}",
+        &changed[..changed.len().min(8)]
+    );
+}
+
+// The denoise passes over tiles the classification found empty. Plausible
+// defects: a pass over an empty tile writing nothing, or less than it
+// writes for a pixel that is no receiver, so that its targets keep the
+// mirror's radiance, variance or depth history from earlier frames, which
+// the temporal pass's neighbourhood and history then read; or its depth
+// history not the G-buffer's. The oracle is metamorphic and the G-buffer:
+// a renderer that showed the mirror for frames and then hides it, and one
+// that never showed it, render the same frame after the same number of
+// frames, every tile empty in both, so the stage's targets must agree bit
+// for bit, and the depth history must hold the frame's depth at each
+// tracing pixel's first full-resolution pixel.
+#[test]
+fn a_hidden_mirror_leaves_the_stage_as_if_it_never_showed() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = [97, 65];
+    let settings = mirror_settings(Moving);
+    let shown_frames = 4;
+    let mut targets = Vec::new();
+    let mut depths = Vec::new();
+    for shown in [true, false] {
+        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let mut frame = mirror_scene(gpu, size, shown);
+        for index in 0..=shown_frames {
+            frame.input.camera_cut = index == 0;
+            if index == shown_frames {
+                frame
+                    .scene
+                    .set_instance(
+                        &queue,
+                        frame.mirror,
+                        InstanceState {
+                            visible: false,
+                            capture_visible: false,
+                            ..*frame.scene.instance(frame.mirror).unwrap()
+                        },
+                    )
+                    .unwrap();
+            }
+            render_mirror(gpu, &mut renderer, &mut frame, &settings, size);
+            if shown && index + 1 == shown_frames {
+                let (stage, _) = renderer.world_reflections().unwrap().test_targets();
+                let temporal = test_support::read(&device, &queue, stage[3].texture(), 8);
+                assert!(
+                    temporal
+                        .chunks_exact(2)
+                        .any(|half| test_support::half(half) > 0.1),
+                    "the mirror reflects the wall while it shows"
+                );
+            }
+        }
+        let (stage, reduced) = renderer.world_reflections().unwrap().test_targets();
+        let bpp = [8, 8, 4, 8, 8, 4, 8];
+        targets.push(
+            stage
+                .iter()
+                .zip(bpp)
+                .map(|(view, bpp)| test_support::read(&device, &queue, view.texture(), bpp))
+                .collect::<Vec<_>>(),
+        );
+        let depth = test_support::read(&device, &queue, renderer.targets().depth.texture(), 4);
+        depths.push((depth, reduced));
+    }
+    let names = [
+        "resolve",
+        "resolve variance",
+        "reprojection depth",
+        "temporal",
+        "temporal variance",
+        "depth history",
+        "output",
+    ];
+    for ((name, hidden), never) in names.iter().zip(&targets[0]).zip(&targets[1]) {
+        assert!(
+            hidden == never,
+            "the {name} differs from a renderer's that never showed the mirror"
+        );
+    }
+    let (depth, reduced) = &depths[0];
+    assert_eq!(depth, &depths[1].0, "both frames' G-buffer depth");
+    let depth: &[f32] = bytemuck::cast_slice(depth);
+    let history: &[f32] = bytemuck::cast_slice(&targets[0][5]);
+    for y in 0..reduced[1] {
+        for x in 0..reduced[0] {
+            let full =
+                depth[((y * 2).min(size[1] - 1) * size[0] + (x * 2).min(size[0] - 1)) as usize];
+            assert_eq!(
+                history[(y * reduced[0] + x) as usize].to_bits(),
+                full.to_bits(),
+                "depth history at ({x}, {y})"
+            );
+        }
+    }
+}

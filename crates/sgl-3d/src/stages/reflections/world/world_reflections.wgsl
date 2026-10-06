@@ -5,26 +5,28 @@
 // the scene ray function set (the portable scene BVH, as ddgi_raytraceCS.hlsl
 // traces Wicked's software BVH, or the hardware path's TLAS), with
 // ReflectionDir_GGX, ImportanceSampleVisibleGGX, GetTangentBasis and
-// SampleDisk from stochasticSSRHF.hlsli. Modified: translated to WGSL; a
-// fragment pass (the lit bindings are fragment-visible); hits are shaded as
-// raster shades surfaces (surface_ray.wgsl); rays test all scene geometry
-// and reach what `Settings::world_space_reflections` says: `Moving`, the
-// closest moving hit, then static any-hit visibility to that hit; `All`,
-// the closest hit of either kind, as Wicked's ray traces every instance in
-// its reflection mask (rtreflectionCS.hlsl 74–81).
-// Every sample reads the same full-resolution receiver pixel (Wicked samples depth at a differently
-// offset UV); hashes replace the
-// blue-noise texture; a miss stores no radiance and no coverage (a = 0) and a
-// zero length, so the composition keeps probe and sky specular there; receivers
-// the screen-space method fully resolved, and opaque ones under a blended
-// receiver, trace nothing.
-@group(3) @binding(5) var world_screen_space:texture_2d<f32>;
+// SampleDisk from stochasticSSRHF.hlsli. Modified: translated to WGSL; hits
+// are shaded as raster shades surfaces (surface_ray.wgsl); rays test all
+// scene geometry and reach what `Settings::world_space_reflections` says:
+// `Moving`, the closest moving hit, then static any-hit visibility to that
+// hit; `All`, the closest hit of either kind, as Wicked's ray traces every
+// instance in its reflection mask (rtreflectionCS.hlsl 74–81).
+// Every sample reads the same full-resolution receiver pixel (Wicked samples
+// depth at a differently offset UV); hashes replace the blue-noise texture;
+// a miss stores no radiance and no coverage (a = 0) and a zero length, so
+// the composition keeps probe and sky specular there. Which tracing pixels
+// trace is the classification's (world_reflections_classify.wgsl), which
+// lists them and writes every pixel's miss first; the trace runs over its
+// list, a ray a thread, as FidelityFX SSSR intersects its ray list and the
+// Hybrid Reflections sample traces its hardware rays from theirs
+// (Intersect.hlsl 273–300).
 // Raster identity of each receiver's triangle, excluded from its own ray.
 @group(3) @binding(6) var world_source_id:texture_2d<u32>;
-// The surface depth (the Surface contract, specs/sgl3d-architecture.md): the
-// method's result where it is nearer than the opaque depth is a blended
-// receiver's, which composes its own.
-@group(3) @binding(7) var world_surface_depth:texture_depth_2d;
+// The classification's ray list (world_ray_texel) and the trace's targets.
+@group(3) @binding(9) var world_rays:texture_2d<u32>;
+@group(3) @binding(10) var world_indirect:texture_storage_2d<rgba16float,write>;
+@group(3) @binding(11) var world_direction_pdf:texture_storage_2d<rgba16float,write>;
+@group(3) @binding(12) var world_length:texture_storage_2d<r32float,write>;
 
 // The rays reach static geometry too (`WorldSpaceReflections::All`), else
 // moving objects alone.
@@ -78,35 +80,20 @@ fn world_reflection_ggx(v:vec3<f32>,n:vec3<f32>,roughness_in:f32,random:vec2<f32
  }
  return vec4(reflect(-v,n),1.);
 }
-fn world_random(p:vec2<u32>,frame:u32)->vec2<f32> {
- return hash33_unit(vec3(p,frame)).xy;
-}
 struct WorldRay {
- @location(0) indirect:vec4<f32>,
- @location(1) direction_pdf:vec4<f32>,
- @location(2) length:f32,
+ indirect:vec4<f32>,
+ direction_pdf:vec4<f32>,
+ length:f32,
 }
-@fragment fn world_trace(@builtin(position) position:vec4<f32>)->WorldRay {
+// The ray of the tracing pixel `tracing`, which the classification listed.
+fn world_trace_ray(tracing:vec2<u32>)->WorldRay {
  var output=WorldRay(vec4(0.),vec4(0.),0.);
- let tracing=vec2<u32>(position.xy);
- let downscale=world.downscale;
- let frame=world.frame;
- // One jitter per frame chooses which pixel of each tracing block traces,
- // so that upscaling does not reuse the same pixels.
- let jitter=vec2<u32>(floor(world_random(vec2(0u),frame)*f32(downscale)));
- let pixel=vec2<i32>(jitter+tracing*downscale);
+ let pixel=world_traced_pixel(tracing);
  let receiver=world_receiver(pixel);
- if !receiver.traced || textureLoad(world_screen_space,pixel,0).a>=0.999 {
-  return output;
- }
- let surface_depth=textureLoad(world_surface_depth,clamp(pixel,vec2(0),vec2<i32>(world.full.xy)-vec2(1)),0);
- if gbuffer_under_receiver(surface_depth,receiver.depth) {
-  return output;
- }
  let uv=(vec2<f32>(pixel)+.5)*world.full.zw;
  let p=world_position(uv,receiver.depth);
  let v=normalize(world.eye.xyz-p);
- let ggx=world_reflection_ggx(v,receiver.normal,receiver.roughness,world_random(tracing,frame+1u));
+ let ggx=world_reflection_ggx(v,receiver.normal,receiver.roughness,world_random(tracing,world.frame+1u));
  let direction=normalize(ggx.xyz);
  output.direction_pdf=vec4(direction,ggx.w);
  let ray=SceneRay(vec4(p,.01),vec4(direction,world.range));
@@ -131,4 +118,17 @@ struct WorldRay {
  output.indirect=vec4(shade_ray_hit(hit,-direction,SHADOW_RECEIVER_CAPTURE,vec3(0.)),1.);
  output.length=hit.distance;
  return output;
+}
+@compute @workgroup_size(WORLD_TRACE_THREADS)
+fn world_trace(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
+ let index=(group.y*WORLD_GROUP_ROW+group.x)*WORLD_TRACE_THREADS+lane;
+ // A ray a tracing pixel at most, whatever the count holds (AR-12).
+ if index>=min(world.rays,u32(world.reduced.x)*u32(world.reduced.y)) {
+  return;
+ }
+ let tracing=world_unpack_ray(textureLoad(world_rays,world_ray_texel(index),0).x);
+ let ray=world_trace_ray(tracing);
+ textureStore(world_indirect,tracing,ray.indirect);
+ textureStore(world_direction_pdf,tracing,ray.direction_pdf);
+ textureStore(world_length,tracing,vec4(ray.length));
 }

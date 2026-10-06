@@ -10,9 +10,16 @@ use glam::{Mat4, Vec3};
 
 /// S3D-1's floor of sampled textures per shader stage.
 const SAMPLED_TEXTURES: u32 = 21;
+/// S3D-1's floor of storage buffers per shader stage, and wgpu's default of
+/// storage textures, which the stages that write the most bind (the
+/// world-space reflection classification, the ray-traced shadow trace).
+const STORAGE_BUFFERS: u32 = 8;
+const STORAGE_TEXTURES: u32 = 4;
 
-// Plausible defect: a change binds another sampled texture to a stage (lit
-// group 0, a material, a stage's own group) past the floor S3D-1 states, so
+// Plausible defect: a change binds another sampled texture, storage buffer
+// or storage texture to a stage (lit group 0 and group 1 hold the storage
+// buffers' floor already; a material; a stage's own group, such as a ray
+// list passed as a storage buffer beside them) past the floor S3D-1 states, so
 // a device that offers exactly that floor fails to create a pipeline though
 // the spec, the README and the docs promise it runs SGL3D. The oracle is
 // S3D-1's floor and wgpu's validation of every pipeline layout against the
@@ -28,6 +35,8 @@ fn a_device_at_the_sampled_texture_floor_runs_every_pipeline() {
     };
     let mut limits = crate::graphics_device::limits(&adapter);
     limits.max_sampled_textures_per_shader_stage = SAMPLED_TEXTURES;
+    limits.max_storage_buffers_per_shader_stage = STORAGE_BUFFERS;
+    limits.max_storage_textures_per_shader_stage = STORAGE_TEXTURES;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: crate::graphics_device::features(&adapter),
         required_limits: limits,

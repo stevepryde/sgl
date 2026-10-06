@@ -15,6 +15,21 @@ full API details.
 
 ## Unreleased
 
+### World-space reflections trace only the pixels that need rays
+
+- **Scope:** `sgl-3d` world-space reflections (#223). A classification pass
+  now lists the half-resolution pixels whose surface takes world-space
+  reflections and that screen-space reflections did not resolve, and the
+  trace runs over that list as a compute pass, as AMD FidelityFX SSSR traces
+  its rays; the denoise passes skip the 8×8 tiles that hold no such surface.
+  Reflections are unchanged. TIMINGS-CL GPU timing gains the group
+  `world reflection classify` (the classification and the trace's
+  arguments); `world reflection rays` is now a compute pass over the listed
+  rays.
+- **Migration:** no game-code changes. A game that reads GPU timings by
+  group name adds `world reflection classify` to its world-space
+  reflection cost.
+
 ### Metal traces masked models in hardware, off by default
 
 - **Scope:** `sgl-3d` hardware ray tracing on Metal (#211). Behind

@@ -8,8 +8,17 @@
 // (premultiplied radiance), weighted like colour; a pixel that traced nothing
 // contributes no weight; loads outside the grid are skipped or clamped where
 // HLSL would read zero; the temporal pass keeps its own reduced-grid depth
-// history.
+// history; a pass over a tile the classification found empty
+// (world_reflections_classify.wgsl) writes what it writes for a pixel that
+// is no receiver, without loading the receiver (world_receiver_in_tile), as
+// FidelityFX Denoiser's shadow filter skips a tile by its metadata.
 @group(0) @binding(8) var linear_sampler:sampler;
+// Each tile's flag from the classification (world_tile).
+@group(0) @binding(60) var<storage,read> world_tiles:array<u32>;
+// Whether the tile that holds tracing pixel `tracing` holds a receiver.
+fn world_tile_active(tracing:vec2<u32>)->bool {
+ return world_tiles[world_tile(tracing)]!=0u;
+}
 
 // Walter et al. 2007; Heitz 2014 (Wicked brdf.hlsli, mediump-saturated).
 fn world_d_ggx(roughness:f32,nh:f32)->f32 {
@@ -62,13 +71,13 @@ fn world_hammersley(index:u32,count:u32,random:vec2<u32>)->vec2<f32> {
  let radical=f32(bits^random.y)*2.3283064365386963e-10;
  return vec2(fract(f32(index)/f32(count)+f32(random.x&0xffffu)/65536.),radical);
 }
-@compute @workgroup_size(8,8) fn world_resolve(@builtin(global_invocation_id) id:vec3<u32>) {
+@compute @workgroup_size(WORLD_TILE,WORLD_TILE) fn world_resolve(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup_id) group:vec3<u32>) {
  if !world_in_grid(vec2<i32>(id.xy),world.reduced) {
   return;
  }
  let p=vec2<i32>(id.xy);
- let downscale=i32(world.downscale);
- let receiver=world_receiver(p*downscale);
+ let downscale=i32(WORLD_DOWNSCALE);
+ let receiver=world_receiver_in_tile(p*downscale,world_tile_active(group.xy*WORLD_TILE));
  if !receiver.traced {
   textureStore(resolve_output,p,textureLoad(ray_indirect,p,0));
   textureStore(resolve_variance_output,p,vec4(0.));
@@ -138,13 +147,13 @@ fn world_hammersley(index:u32,count:u32,random:vec2<u32>)->vec2<f32> {
 @group(0) @binding(41) var temporal_variance_output:texture_storage_2d<rgba16float,write>;
 @group(0) @binding(42) var temporal_depth_output:texture_storage_2d<r32float,write>;
 const VARIANCE_TEMPORAL_RESPONSE:f32=.9;
-@compute @workgroup_size(8,8) fn world_temporal(@builtin(global_invocation_id) id:vec3<u32>) {
+@compute @workgroup_size(WORLD_TILE,WORLD_TILE) fn world_temporal(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup_id) group:vec3<u32>) {
  if !world_in_grid(vec2<i32>(id.xy),world.reduced) {
   return;
  }
  let p=vec2<i32>(id.xy);
- let downscale=i32(world.downscale);
- let receiver=world_receiver(p*downscale);
+ let downscale=i32(WORLD_DOWNSCALE);
+ let receiver=world_receiver_in_tile(p*downscale,world_tile_active(group.xy*WORLD_TILE));
  textureStore(temporal_depth_output,p,vec4(receiver.depth));
  let current=textureLoad(temporal_current,p,0);
  if world.frame==0u {
@@ -185,12 +194,14 @@ const UPSAMPLE_VARIANCE_ESTIMATE_THRESHOLD:f32=.015;
 const UPSAMPLE_VARIANCE_EXIT_THRESHOLD:f32=.005;
 const UPSAMPLE_RADIUS_MAX:f32=2.;
 const UPSAMPLE_BILATERAL_SIGMA:f32=.9;
-@compute @workgroup_size(8,8) fn world_upsample(@builtin(global_invocation_id) id:vec3<u32>) {
+// Its workgroups of WORLD_TILE squared full-resolution pixels each lie in
+// one tile (world_tracing_of_full), since the downscale divides WORLD_TILE.
+@compute @workgroup_size(WORLD_TILE,WORLD_TILE) fn world_upsample(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup_id) group:vec3<u32>) {
  if !world_in_grid(vec2<i32>(id.xy),world.full) {
   return;
  }
  let p=vec2<i32>(id.xy);
- let receiver=world_receiver(p);
+ let receiver=world_receiver_in_tile(p,world_tile_active(world_tracing_of_full(group.xy*WORLD_TILE)));
  if !receiver.traced {
   textureStore(upsample_output,p,vec4(0.));
   return;

@@ -71,6 +71,14 @@ pub(crate) struct Reflections {
     full_visibility: wgpu::TextureView,
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl Reflections {
+    /// The world-space reflection stage, once a frame ran it.
+    pub(crate) fn world(&self) -> Option<&world::WorldReflections> {
+        self.world.as_ref()
+    }
+}
+
 impl Reflections {
     /// Reflections at `size`, with source completion built for the
     /// `first_frame` the renderer expects.

@@ -1,7 +1,9 @@
 //! World-space reflection rays for screen-space misses on moving objects or
 //! everything, and their denoiser, as Wicked Engine's RT reflections run them
 //! (`Postprocess_RTReflection`, wiRenderer.cpp): trace at half resolution,
-//! spatial resolve, temporal accumulation, bilateral upsample.
+//! spatial resolve, temporal accumulation, bilateral upsample; the tracing
+//! pixels that need a ray classified first and traced from a list, as
+//! FidelityFX SSSR traces its rays (`classify`).
 use crate::settings::WorldSpaceReflections;
 use crate::shading;
 use crate::shading::RayQueryForm;
@@ -13,6 +15,8 @@ use crate::view::reflection_camera;
 use crate::view::trace_paths::{TracePath, TracePaths};
 use glam::Mat4;
 use std::collections::HashMap;
+
+pub(crate) mod classify;
 
 /// Wicked's default RT reflection downscale.
 const DOWNSCALE: u32 = 2;
@@ -47,10 +51,13 @@ struct Params {
     full: [f32; 4],
     reduced: [f32; 4],
     frame: u32,
-    downscale: u32,
+    rays: u32,
     traced: f32,
     range: f32,
 }
+/// Where the listed rays' count lies in the parameters, which the trace
+/// reads it from.
+const PARAMS_RAYS: wgpu::BufferAddress = std::mem::offset_of!(Params, rays) as u64;
 
 struct Targets {
     full: [u32; 2],
@@ -65,6 +72,7 @@ struct Targets {
     temporal_variance: [wgpu::TextureView; 2],
     depth: [wgpu::TextureView; 2],
     output: wgpu::TextureView,
+    lists: classify::Lists,
 }
 
 fn texture(
@@ -86,7 +94,8 @@ fn texture(
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | usage,
+            // Copied from by the tests, as the ray-traced shadow stage's.
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | usage,
             view_formats: &[],
         })
         .create_view(&Default::default())
@@ -95,7 +104,6 @@ fn texture(
 impl Targets {
     fn new(device: &wgpu::Device, full: [u32; 2]) -> Self {
         let reduced = full.map(|v| (v / DOWNSCALE).max(1));
-        let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let storage = wgpu::TextureUsages::STORAGE_BINDING;
         let hdr = crate::shading::gbuffer::COLOR;
         let float = wgpu::TextureFormat::R32Float;
@@ -103,9 +111,9 @@ impl Targets {
         Self {
             full,
             reduced,
-            indirect: half("world reflection radiance", hdr, attachment),
-            direction_pdf: half("world reflection direction and pdf", hdr, attachment),
-            length: half("world reflection ray length", float, attachment),
+            indirect: half("world reflection radiance", hdr, storage),
+            direction_pdf: half("world reflection direction and pdf", hdr, storage),
+            length: half("world reflection ray length", float, storage),
             resolve: half("world reflection resolve", hdr, storage),
             resolve_variance: half("world reflection resolve variance", hdr, storage),
             reprojection: half("world reflection reprojection depth", float, storage),
@@ -114,6 +122,7 @@ impl Targets {
                 .map(|_| half("world reflection temporal variance", hdr, storage)),
             depth: [0, 1].map(|_| half("world reflection depth history", float, storage)),
             output: texture(device, "world reflections", full, hdr, storage),
+            lists: classify::Lists::new(device, reduced),
         }
     }
 }
@@ -148,7 +157,8 @@ pub(crate) struct WorldReflections {
     /// rays reach static geometry (`world_reach_all`) and path, each
     /// created when a frame first needs it, as the geometry pipelines
     /// specialise on the scene's rectangle lights and decals.
-    trace: HashMap<((LitConstants, bool), Option<RayQueryForm>), wgpu::RenderPipeline>,
+    trace: HashMap<((LitConstants, bool), Option<RayQueryForm>), wgpu::ComputePipeline>,
+    classify: classify::Classify,
     resolve: Denoise,
     temporal: Denoise,
     upsample: Denoise,
@@ -161,16 +171,17 @@ pub(crate) struct WorldReflections {
     previous_scene_frame: Option<u32>,
 }
 
-static COMMON: shading::Module = shading::Module {
+pub(crate) static COMMON: shading::Module = shading::Module {
     name: "world_reflections_common",
     source: include_str!("world/world_reflections_common.wgsl"),
     deps: &[&shading::GBUFFER, &shading::DEPTH, &shading::HASH],
 };
-/// The trace: the lit layout at group 0 (the camera's ray-hit group, with the
-/// installed probes), the scene at group 1 and its receivers at group 3, with
-/// the TLAS on the hardware path. Its pipelines compose the ray function set
-/// of the path the frame's rays take (`TracePaths`). The denoiser's
-/// receivers are at group 3 too, its own bindings at group 0.
+/// The trace, a compute pass over the classification's ray list: the lit
+/// layout at group 0 (the camera's ray-hit group, with the installed
+/// probes), the scene at group 1 and its receivers, list and targets at
+/// group 3, with the TLAS on the hardware path. Its pipelines compose the
+/// ray function set of the path the frame's rays take (`TracePaths`). The
+/// denoiser's receivers are at group 3 too, its own bindings at group 0.
 pub(crate) static TRACE: shading::Module = shading::Module {
     name: "world_reflections",
     source: include_str!("world/world_reflections.wgsl"),
@@ -178,12 +189,10 @@ pub(crate) static TRACE: shading::Module = shading::Module {
         &shading::BIND_LIT,
         &shading::SURFACE_RAY,
         &shading::SHADOW_MASK_NONE,
-        &shading::FULLSCREEN_VS,
         &COMMON,
     ],
 };
-/// The entry point the trace's pipelines are created with, beside
-/// `shading::FULLSCREEN_VS_ENTRY`.
+/// The entry point the trace's pipelines are created with.
 pub(crate) const WORLD_TRACE_ENTRY: &str = "world_trace";
 pub(crate) static DENOISE: shading::Module = shading::Module {
     name: "world_reflections_denoise",
@@ -209,9 +218,14 @@ impl WorldReflections {
         });
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: wgpu::ShaderStages::COMPUTE,
             ty,
             count: None,
+        };
+        let write = |format| wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format,
+            view_dimension: wgpu::TextureViewDimension::D2,
         };
         let sampled = |sample_type| wgpu::BindingType::Texture {
             sample_type,
@@ -232,9 +246,11 @@ impl WorldReflections {
                     min_binding_size: None,
                 },
             ),
-            entry(5, unfilterable),
             entry(6, sampled(wgpu::TextureSampleType::Uint)),
-            entry(7, sampled(wgpu::TextureSampleType::Depth)),
+            entry(9, sampled(wgpu::TextureSampleType::Uint)),
+            entry(10, write(crate::shading::gbuffer::COLOR)),
+            entry(11, write(crate::shading::gbuffer::COLOR)),
+            entry(12, write(wgpu::TextureFormat::R32Float)),
         ];
         let compute = |entry_point| {
             Denoise::new(
@@ -256,6 +272,7 @@ impl WorldReflections {
                 [lit, scene],
             ),
             trace: HashMap::new(),
+            classify: classify::Classify::new(device),
             resolve: compute(WORLD_RESOLVE_ENTRY),
             temporal: compute(WORLD_TEMPORAL_ENTRY),
             upsample: compute(WORLD_UPSAMPLE_ENTRY),
@@ -305,32 +322,15 @@ impl WorldReflections {
                     &[("world_reach_all", f64::from(u8::from(all)))],
                 ]
                 .concat();
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("world-space reflection rays"),
                     layout: Some(layout),
-                    vertex: wgpu::VertexState {
-                        module: shader,
-                        entry_point: Some(shading::FULLSCREEN_VS_ENTRY),
-                        compilation_options: Default::default(),
-                        buffers: &[],
+                    module: shader,
+                    entry_point: Some(WORLD_TRACE_ENTRY),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
                     },
-                    fragment: Some(wgpu::FragmentState {
-                        module: shader,
-                        entry_point: Some(WORLD_TRACE_ENTRY),
-                        compilation_options: wgpu::PipelineCompilationOptions {
-                            constants: &constants,
-                            ..Default::default()
-                        },
-                        targets: &[
-                            Some(crate::shading::gbuffer::COLOR.into()),
-                            Some(crate::shading::gbuffer::COLOR.into()),
-                            Some(wgpu::TextureFormat::R32Float.into()),
-                        ],
-                    }),
-                    primitive: Default::default(),
-                    depth_stencil: None,
-                    multisample: Default::default(),
-                    multiview_mask: None,
                     cache: None,
                 })
             },
@@ -398,7 +398,7 @@ impl WorldReflections {
                 full: [w, h, 1. / w, 1. / h],
                 reduced: [rw, rh, 1. / rw, 1. / rh],
                 frame: self.frame,
-                downscale: DOWNSCALE,
+                rays: 0,
                 traced: input.traced,
                 range: RANGE,
             }),
@@ -413,35 +413,54 @@ impl WorldReflections {
             (3, view(input.f0)),
             (4, self.params.as_entire_binding()),
         ];
+        self.classify.encode(
+            device,
+            encoder,
+            t.reduced,
+            classify::Bindings {
+                targets: [&t.indirect, &t.direction_pdf, &t.length],
+                lists: &t.lists,
+                depth: input.depth,
+                material: input.material,
+                f0: input.f0,
+                params: &self.params,
+                screen_space: input.screen_space,
+                surface_depth: input.surface_depth,
+            },
+            timing,
+        );
+        encoder.copy_buffer_to_buffer(
+            &t.lists.count,
+            classify::RAYS_OFFSET,
+            &self.params,
+            PARAMS_RAYS,
+            4,
+        );
         let trace_group = self.paths.group(
             device,
             hardware,
             &[
                 receivers.as_slice(),
                 &[
-                    (5, view(input.screen_space)),
                     (6, view(input.source_id)),
-                    (7, view(input.surface_depth)),
+                    (9, view(&t.lists.rays)),
+                    (10, view(&t.indirect)),
+                    (11, view(&t.direction_pdf)),
+                    (12, view(&t.length)),
                 ],
             ]
             .concat(),
         );
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("world-space reflection rays"),
-                color_attachments: &[
-                    crate::view::targets::attachment(&t.indirect),
-                    crate::view::targets::attachment(&t.direction_pdf),
-                    crate::view::targets::attachment(&t.length),
-                ],
-                timestamp_writes: timing.and_then(|t| t.render_pass("world reflection rays")),
-                ..Default::default()
+                timestamp_writes: timing.and_then(|t| t.compute_pass("world reflection rays")),
             });
             pass.set_pipeline(&self.trace[&((lit_constants, all), form)]);
             pass.set_bind_group(0, lit, &[]);
             pass.set_bind_group(1, scene, &[]);
             pass.set_bind_group(3, trace_group, &[]);
-            pass.draw(0..3, 0..1);
+            pass.dispatch_workgroups_indirect(&t.lists.count, classify::GROUPS_OFFSET);
         }
         let sampler = || wgpu::BindingResource::Sampler(&self.sampler);
         // `slot`: the half of the history pair a pass that binds it writes.
@@ -463,7 +482,11 @@ impl WorldReflections {
             pass.set_pipeline(&denoise.pipeline);
             pass.set_bind_group(0, bind, &[]);
             pass.set_bind_group(3, receiver_group, &[]);
-            pass.dispatch_workgroups(grid[0].div_ceil(8), grid[1].div_ceil(8), 1);
+            pass.dispatch_workgroups(
+                grid[0].div_ceil(classify::TILE),
+                grid[1].div_ceil(classify::TILE),
+                1,
+            );
         };
         dispatch(
             &mut self.resolve,
@@ -476,6 +499,7 @@ impl WorldReflections {
                 (20, view(&t.resolve)),
                 (21, view(&t.resolve_variance)),
                 (22, view(&t.reprojection)),
+                (60, t.lists.tiles.as_entire_binding()),
             ],
             t.reduced,
             encoder,
@@ -496,6 +520,7 @@ impl WorldReflections {
                 (40, view(&t.temporal[current])),
                 (41, view(&t.temporal_variance[current])),
                 (42, view(&t.depth[current])),
+                (60, t.lists.tiles.as_entire_binding()),
             ],
             t.reduced,
             encoder,
@@ -509,11 +534,36 @@ impl WorldReflections {
                 (50, view(&t.temporal[current])),
                 (51, view(&t.temporal_variance[current])),
                 (52, view(&t.output)),
+                (60, t.lists.tiles.as_entire_binding()),
             ],
             t.full,
             encoder,
         );
         self.frame = self.frame.wrapping_add(1).max(1);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl WorldReflections {
+    /// The textures the last encoded frame wrote: the resolve's radiance,
+    /// variance and reprojection depth, the temporal pass's radiance,
+    /// variance and depth history (the half of each pair it wrote), the
+    /// output, and the reduced grid's size.
+    pub(crate) fn test_targets(&self) -> ([&wgpu::TextureView; 7], [u32; 2]) {
+        let t = &self.targets;
+        let written = (self.frame.wrapping_sub(1) % 2) as usize;
+        (
+            [
+                &t.resolve,
+                &t.resolve_variance,
+                &t.reprojection,
+                &t.temporal[written],
+                &t.temporal_variance[written],
+                &t.depth[written],
+                &t.output,
+            ],
+            t.reduced,
+        )
     }
 }
 
@@ -530,7 +580,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
             full,
             reduced,
             frame,
-            downscale,
+            rays,
             traced,
             range,
         ]
