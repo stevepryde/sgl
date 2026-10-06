@@ -858,8 +858,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   classification costs about 0.07 ms there (0.02 at 960×540): on the
   hardware path, where every pixel of the full-screen trace paid the ray
   query's footprint (#221), the stage costs 0.13 ms less on that route,
-  which traces no world-space ray, and 0.01 ms less over #23's glossy
-  strip, which traces many; on the portable path it is unchanged on that
+  which traces no world-space ray, and 0.005–0.015 ms less over #23's
+  glossy strip, which traces many, in either form; on the portable path it is unchanged on that
   route and 0.015 ms (4 %) more over the strip, where the full-screen
   trace's skipped pixels were already cheap.
   Another method plugs in beside the existing ones.
