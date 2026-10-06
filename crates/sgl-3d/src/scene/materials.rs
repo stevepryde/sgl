@@ -9,9 +9,8 @@ use super::{Scene, SceneError, buffer};
 use crate::asset::{Image, Material as AuthoredMaterial};
 use crate::content::identity::{MaterialId, ModelId};
 use crate::content::material::{AlphaMode, SurfaceMaterial};
-use crate::shading::bind::group2;
 use crate::shading::material::{MaterialMaps, MaterialUniform};
-use gltf::texture::WrappingMode;
+use group::{Bound, Groups};
 use std::collections::HashMap;
 use std::ops::Range;
 use validate::{validate_alpha, validate_anisotropy, validate_normal_layers};
@@ -38,18 +37,6 @@ pub(crate) struct Material {
     /// Meshes drawn with it, model meshes and their levels of detail alike,
     /// without authored tangent frames.
     pub untangented: u32,
-}
-
-/// The maps group 2 binds, each a texture index or `None` for the white
-/// fallback, and their wrapping, which its sampler takes.
-struct Bound {
-    base: Option<usize>,
-    emission: Option<usize>,
-    metallic_roughness: Option<usize>,
-    normal: Option<usize>,
-    bump: Option<usize>,
-    anisotropy: Option<usize>,
-    wrap: [WrappingMode; 2],
 }
 
 impl Material {
@@ -107,11 +94,7 @@ pub(crate) struct Materials {
     receivers: usize,
     moving: usize,
     textures: Textures,
-    /// White, for maps a material does not have.
-    fallback: wgpu::TextureView,
-    layout: wgpu::BindGroupLayout,
-    /// The samplers' `anisotropy_clamp`.
-    anisotropy: u16,
+    groups: Groups,
 }
 
 /// A material's maps: each one's index into the images added with it, and
@@ -138,7 +121,6 @@ fn authored_maps(material: &AuthoredMaterial) -> MaterialMaps {
 
 impl Materials {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let white = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
         Self {
             slots: Slots::default(),
             casters: 0,
@@ -147,9 +129,7 @@ impl Materials {
             receivers: 0,
             moving: 0,
             textures: Textures::default(),
-            fallback: textures::upload(device, queue, &white, false),
-            layout: crate::shading::bind::material(device),
-            anisotropy: crate::settings::AnisotropicFiltering::default().clamp(),
+            groups: Groups::new(device, queue),
         }
     }
 
@@ -347,7 +327,9 @@ impl Materials {
             anisotropy: texture(material.anisotropy_texture),
             wrap: material.wrap,
         };
-        let group = self.group(device, &bound, &values_buffer, &baked);
+        let group = self
+            .groups
+            .group(device, &self.textures, &bound, &values_buffer, &baked);
         let mut distinct: Vec<usize> = maps(material)
             .into_iter()
             .filter_map(|(index, _)| texture(index))
@@ -373,90 +355,26 @@ impl Materials {
         }))
     }
 
-    /// Group 2 of a material binding `bound`, its values `buffer` and
-    /// lightmap eligibility `baked`, sampled with the current anisotropy.
-    fn group(
-        &self,
-        device: &wgpu::Device,
-        bound: &Bound,
-        buffer: &wgpu::Buffer,
-        baked: &wgpu::Buffer,
-    ) -> wgpu::BindGroup {
-        let view = |texture: Option<usize>, colour: bool| -> &wgpu::TextureView {
-            match texture {
-                Some(texture) => {
-                    let texture = self.textures.get(texture);
-                    if colour {
-                        texture.color.as_ref()
-                    } else {
-                        texture.data.as_ref()
-                    }
-                    .expect("a texture is uploaded as each material samples it")
-                }
-                None => &self.fallback,
-            }
-        };
-        let address = |mode| match mode {
-            WrappingMode::Repeat => wgpu::AddressMode::Repeat,
-            WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
-            WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
-        };
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("authored material sampler"),
-            address_mode_u: address(bound.wrap[0]),
-            address_mode_v: address(bound.wrap[1]),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: self.anisotropy,
-            ..Default::default()
-        });
-        let entry = |binding, view| wgpu::BindGroupEntry {
-            binding,
-            resource: wgpu::BindingResource::TextureView(view),
-        };
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("retained material"),
-            layout: &self.layout,
-            entries: &[
-                entry(group2::ANISOTROPY_MAP, view(bound.anisotropy, false)),
-                wgpu::BindGroupEntry {
-                    binding: group2::BAKED_MATERIAL,
-                    resource: baked.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: group2::MATERIAL,
-                    resource: buffer.as_entire_binding(),
-                },
-                entry(group2::BASE_MAP, view(bound.base, true)),
-                entry(group2::MR_MAP, view(bound.metallic_roughness, false)),
-                wgpu::BindGroupEntry {
-                    binding: group2::TEX_SAMPLER,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                entry(group2::EMISSION_MAP, view(bound.emission, true)),
-                entry(group2::NORMAL_MAP, view(bound.normal, false)),
-                entry(group2::BUMP_MAP, view(bound.bump, false)),
-            ],
-        })
-    }
-
     /// Samples every material's maps with at most `anisotropy` anisotropic
     /// samples (`anisotropy_clamp`), remaking their groups when it changes.
     pub fn set_anisotropy(&mut self, device: &wgpu::Device, anisotropy: u16) {
-        if self.anisotropy == anisotropy {
+        if self.groups.anisotropy == anisotropy {
             return;
         }
-        self.anisotropy = anisotropy;
-        let groups: Vec<_> = self
+        self.groups.anisotropy = anisotropy;
+        let remade: Vec<_> = self
             .slots
             .iter()
             .map(|(id, material)| {
-                let group = self.group(device, &material.bound, &material.buffer, &material.baked);
+                let bound = &material.bound;
+                let (buffer, baked) = (&material.buffer, &material.baked);
+                let group = self
+                    .groups
+                    .group(device, &self.textures, bound, buffer, baked);
                 (id, group)
             })
             .collect();
-        for (id, group) in groups {
+        for (id, group) in remade {
             self.slots.get_mut(id).expect("a live material").group = group;
         }
     }
@@ -602,6 +520,7 @@ impl Scene {
     }
 }
 
+mod group;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod normal_layer_tests;
 mod validate;
