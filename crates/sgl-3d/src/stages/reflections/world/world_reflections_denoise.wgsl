@@ -67,7 +67,7 @@ fn world_hammersley(index:u32,count:u32,random:vec2<u32>)->vec2<f32> {
   return;
  }
  let p=vec2<i32>(id.xy);
- let downscale=i32(world.downscale);
+ let downscale=i32(WORLD_DOWNSCALE);
  let receiver=world_receiver(p*downscale);
  if !receiver.traced {
   textureStore(resolve_output,p,textureLoad(ray_indirect,p,0));
@@ -143,7 +143,7 @@ const VARIANCE_TEMPORAL_RESPONSE:f32=.9;
   return;
  }
  let p=vec2<i32>(id.xy);
- let downscale=i32(world.downscale);
+ let downscale=i32(WORLD_DOWNSCALE);
  let receiver=world_receiver(p*downscale);
  textureStore(temporal_depth_output,p,vec4(receiver.depth));
  let current=textureLoad(temporal_current,p,0);

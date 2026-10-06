@@ -15,6 +15,25 @@ full API details.
 
 ## Unreleased
 
+### World-space reflections trace only the pixels that need rays
+
+- **Scope:** `sgl-3d` world-space reflections (#223). A classification pass
+  now lists the half-resolution pixels whose surface takes world-space
+  reflections and that screen-space reflections did not resolve, and the
+  trace runs over that list as a compute pass, as AMD FidelityFX SSSR traces
+  its rays. Reflections are unchanged. On an Apple M5 at 1920×1080 the
+  streaming example, which traces no world-space ray, now spends about
+  0.21 ms on the stage with hardware ray tracing against 0.35 ms, and the
+  same without it; over a glossy strip that traces many rays the stage
+  costs 0.01 ms less with hardware ray tracing and 0.015 ms more without.
+  GPU timing gains the group
+  `world reflection classify` (the classification and the trace's
+  arguments); `world reflection rays` is now a compute pass over the listed
+  rays.
+- **Migration:** no game-code changes. A game that reads GPU timings by
+  group name adds `world reflection classify` to its world-space
+  reflection cost.
+
 ### Metal traces masked models in hardware, off by default
 
 - **Scope:** `sgl-3d` hardware ray tracing on Metal (#211). Behind

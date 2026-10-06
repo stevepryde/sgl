@@ -761,8 +761,16 @@ On an Apple M5, over a glossy 1 km strip with posts, boxes and 60 moving boxes
 at 960×540 with full-resolution SSR, the `world reflection rays` pass took
 0.49 ms under `All` against 0.22 ms under `Moving` on the portable BVHs, and
 0.11 ms against 0.09 ms in hardware.
-Neither is on by default or in a preset. Wicked Engine's RT reflection
-resolve, temporal and bilateral upsample passes denoise the rays. The result is
+Neither is on by default or in a preset. Rays are traced only where a
+pixel needs one: a classification pass lists the half-resolution pixels whose
+surface takes world-space reflections and that screen-space reflections did
+not resolve, and the trace runs over that list, as AMD FidelityFX SSSR traces
+its rays, so a frame with no such pixel pays the classification (about
+0.07 ms at 1920×1080 on an Apple M5) in place of the trace. The stage then
+costs about 0.21 ms there with its denoise passes, with or without hardware
+ray tracing, against 0.35 ms before with it, on the streaming example, which
+traces no world-space ray. Wicked Engine's RT reflection resolve, temporal and
+bilateral upsample passes denoise the rays. The result is
 premultiplied radiance with the share of rays that hit in alpha, and it composites as
 `ssr.rgb + (world.rgb + environment * (1 - world.a)) * (1 - ssr.a)`, so misses
 keep the probe and sky specular. Under `Moving` a static nearest hit also keeps
@@ -1471,8 +1479,8 @@ stage (each stage's documentation lists its own), are:
   and `ray-traced shadow upsample`;
 - reflections: `probe culling`, `reflection source completion`, Crystal's
   `SSR` passes (named after DiligentFX's debug groups), Velvet's `Godot SSR`
-  passes, `world reflection rays`, `world reflection denoise` and
-  `reflection composition`;
+  passes, `world reflection classify`, `world reflection rays`,
+  `world reflection denoise` and `reflection composition`;
 - transparent: `receivers` (the receiver pass, after opaque); `blended`
   (blended surfaces) and `transparent` (additive effects and mist), each
   drawn into the reflection input while screen-space reflections run and onto
@@ -1898,10 +1906,13 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   the tracing passes cost more under wgpu 30 than under wgpu 29 (#221):
   naga 30's lowering drops the triangle-geometry hint naga 29 gave Metal,
   which leaves every pixel of a tracing pass on Metal's general ray-query
-  path whether or not it traces. On an Apple M5 at 1920×1080 the
+  path whether or not it traces. On an Apple M5 at 1920×1080, as #221
+  measured it before world-space rays were traced from a list (#223), the
   streaming example's world reflection rays, which trace nothing there,
-  cost 0.20 ms against wgpu 29's 0.09, and its ray-traced shadow rays
-  about 40–57 % more. SGL3D cannot restore the hint; it is naga's.
+  cost 0.20 ms against wgpu 29's 0.09 (since #223 they cost the
+  classification, about 0.07 ms, in place of the trace), and its ray-traced
+  shadow rays about 40–57 % more. SGL3D cannot restore the hint; it is
+  naga's.
 - **Reporting.** `Renderer::ray_tracing_in_effect(&settings)` says whether
   the hardware path traces the scene's rays, as
   `antialiasing_in_effect` does for antialiasing, and

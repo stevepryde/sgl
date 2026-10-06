@@ -3,7 +3,7 @@
     "component": "AMD FidelityFX",
     "path": "crates/sgl-3d/src/LICENSE-amd-fidelityfx.txt",
     "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/c6efa6bf7f2027b3ec94f28578bb5965eabb9e55/LICENSE.txt",
-    "prefix": "AMD FidelityFX SDK, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK\nRevision c6efa6bf7f2027b3ec94f28578bb5965eabb9e55 (SDK 1.1.4), LICENSE.txt. SGL3D\nadapts the FSR sample's reactive and transparency-and-composition mask\ntargets and exports (samples/fsrapi/fsrapirendermodule.cpp,\nframework/rendermodules/translucency/shaders/ and\nframework/rendermodules/animatedtextures/) in view/targets.rs,\nview/geometry.wgsl, stages/antialiasing/fsr2.rs,\nstages/transparent/glow.wgsl and stages/transparent/mist.wgsl.\n\n"
+    "prefix": "AMD FidelityFX SDK, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK\nRevision c6efa6bf7f2027b3ec94f28578bb5965eabb9e55 (SDK 1.1.4), LICENSE.txt. SGL3D\nadapts the FSR sample's reactive and transparency-and-composition mask\ntargets and exports (samples/fsrapi/fsrapirendermodule.cpp,\nframework/rendermodules/translucency/shaders/ and\nframework/rendermodules/animatedtextures/) in view/targets.rs,\nview/geometry.wgsl, stages/antialiasing/fsr2.rs,\nstages/transparent/glow.wgsl and stages/transparent/mist.wgsl, and ports\nSSSR's tile classification and indirect arguments\n(sdk/include/FidelityFX/gpu/sssr/ffx_sssr_classify_tiles.h and\nffx_sssr_prepare_indirect_args.h) to the world-space reflections'\nclassification (stages/reflections/world/world_reflections_classify.wgsl).\n\n"
   },
   {
     "component": "AMD FidelityFX",

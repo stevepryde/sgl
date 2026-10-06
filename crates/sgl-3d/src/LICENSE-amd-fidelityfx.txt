@@ -5,7 +5,11 @@ targets and exports (samples/fsrapi/fsrapirendermodule.cpp,
 framework/rendermodules/translucency/shaders/ and
 framework/rendermodules/animatedtextures/) in view/targets.rs,
 view/geometry.wgsl, stages/antialiasing/fsr2.rs,
-stages/transparent/glow.wgsl and stages/transparent/mist.wgsl.
+stages/transparent/glow.wgsl and stages/transparent/mist.wgsl, and ports
+SSSR's tile classification and indirect arguments
+(sdk/include/FidelityFX/gpu/sssr/ffx_sssr_classify_tiles.h and
+ffx_sssr_prepare_indirect_args.h) to the world-space reflections'
+classification (stages/reflections/world/world_reflections_classify.wgsl).
 
 This file is part of the FidelityFX SDK.
 

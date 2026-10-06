@@ -61,11 +61,12 @@ pub(crate) mod hardware {
 }
 
 /// The entry a tracing pass's group 3 binds the scene's TLAS at
-/// (`hardware::SCENE_TLAS`), which its fragment and compute stages read.
+/// (`hardware::SCENE_TLAS`), which its compute stage reads: every pass that
+/// traces is a compute pass.
 pub(crate) fn tlas_entry() -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding: hardware::SCENE_TLAS,
-        visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+        visibility: wgpu::ShaderStages::COMPUTE,
         ty: wgpu::BindingType::AccelerationStructure {
             vertex_return: false,
         },
