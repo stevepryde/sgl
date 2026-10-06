@@ -9,7 +9,10 @@
 //! runs, so metering reads the frame at the render size before
 //! antialiasing, as Godot reduces luminance on its render-size internal
 //! texture (b130438 `renderer_scene_render_rd.cpp` 570). The histogram sees
-//! the jittered, un-antialiased frame and no bloom.
+//! the jittered, un-antialiased frame and no bloom. It meters every texel:
+//! on Apple's GPUs it overlaps TAA, which does not wait for it, and metering
+//! a strided lattice of 256×256 texels instead changed Hyperdrive's frame
+//! time by nothing measurable (#235).
 //!
 //! Reads: the complete HDR frame at the render size (the composite), the
 //! frame's exposure and frame time, and whether history continues.
