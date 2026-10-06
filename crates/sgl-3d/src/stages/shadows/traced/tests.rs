@@ -1305,7 +1305,6 @@ fn the_directional_light_keeps_its_history_across_the_denoiser_s_shapes() {
             .map(|pixel| switched.mask(0, pixel).abs_diff(kept.mask(0, pixel)))
             .max()
             .unwrap();
-        eprintln!("{label}: the sun's slot is {apart} steps from the reference's");
         assert!(
             apart <= SHAPE_ROUNDING,
             "{label}: the sun's slot is {apart} steps from the reference's"
