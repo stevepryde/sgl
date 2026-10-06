@@ -1880,9 +1880,9 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   models that do not deform, and a ray through a deforming instance's
   hair cards spends a step for each cut-out card it crosses, at most 36
   in that crowd. The portable BVHs trace the instances the TLAS does not
-  hold, cut-out texels included, and the nearer hit wins. A deforming instance's hits take its deformed
-  positions, normals and tangents, and a masked mesh on it cuts out at the
-  hit. One limitation: a triangle at exactly the distance of a rejected
+  hold, cut-out texels included, and the nearer hit wins. A deforming
+  instance's hits take its deformed positions, normals and tangents, and a
+  masked mesh on it cuts out at the hit. One limitation: a triangle at exactly the distance of a rejected
   one (back-to-back single-sided faces, coplanar meshes of a shown and a
   hidden group) may be skipped, since one opaque query cannot list ties.
   While hardware ray tracing traces the dynamic GI volume's rays, a
@@ -1890,9 +1890,9 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   wakes a converged volume, since its rays see it. The candidate form
   runs on Metal by default: on an Apple M5 it cut the tracing passes by
   35–60 % among cut-out foliage and cost up to 14 % of the ray-traced
-  shadow rays (0.12 ms) where nothing is masked; Vulkan and DX12, whose shader
-  compilers lower the loop too, run the baseline until it is measured on
-  their hardware, which it has not run on yet. A device whose candidate
+  shadow rays (0.12 ms) where nothing is masked; Vulkan and DX12, whose
+  shader compilers lower the loop too, run the baseline until it is
+  measured on their hardware, which it has not run on yet. A device whose candidate
   programs fail to compile falls back to the baseline for good.
 - **Reporting.** `Renderer::ray_tracing_in_effect(&settings)` says whether
   the hardware path traces the scene's rays, as

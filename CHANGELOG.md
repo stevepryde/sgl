@@ -33,9 +33,8 @@ full API details.
   less); where nothing is masked, the larger program costs 2–3 % of the
   streaming example's ray-traced shadow rays and up to 14 % (0.12 ms, 1.2 %
   of the frame) over a thousand opaque props under nine shadowed lights.
-  Vulkan and DX12
-  are unchanged: they run the baseline form until the candidate form is
-  measured on their hardware.
+  Vulkan and DX12 are unchanged: they run the baseline form until the
+  candidate form is measured on their hardware.
 - **Migration:** no game-code changes. A Mac game that turns hardware ray
   tracing on and has masked content (foliage, fences, hair cards) should
   re-measure its routes' `world reflection rays`, `dynamic GI rays` and
