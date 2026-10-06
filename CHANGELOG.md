@@ -15,6 +15,76 @@ full API details.
 
 ## Unreleased
 
+### SGL moves to wgpu 30
+
+- **Scope:** `sgl-2d`, `sgl-3d` and `sgl-post-fx` move from wgpu and naga
+  29.0.4 to 30.0.1, and from `sp-fidelity`/`sp-fidelity-wgpu` 0.1 to 0.2,
+  which are on wgpu 30.0.1 too (#207, #212). The root manifest's
+  requirements are caret ranges, not `=` pins: wgpu and naga `"30.0.1"`,
+  `wasm-bindgen` `"0.2.127"`, `js-sys` and `web-sys` `"0.3.104"`,
+  `wasm-bindgen-futures` `"0.4.77"` and `wasm-bindgen-test` `"0.3.77"`.
+  SGL's `Cargo.lock` holds wgpu 30.0.1 and `wasm-bindgen` 0.2.129.
+  wgpu 30.0.0 is excluded on purpose: under `wasm-bindgen` 0.2.123 or
+  later it panics on WebGPU ("Unexpected error") whenever an error scope
+  pops without an error, because it reads the result as a `JsOption`,
+  which no longer takes `null` as empty. 30.0.1 reads it as a
+  `JsNullable`, which needs `wasm-bindgen` 0.2.127 (gfx-rs/wgpu#10034,
+  backported in #10105). 30.0.1 also
+  stops a per-frame Vulkan validation error on acquire (gfx-rs/wgpu#9855).
+  It also resolves Metal's DisplayP3 and BT.2100 colour-space constants at
+  runtime instead of linking them, so a binary loads on macOS versions that
+  lack them (gfx-rs/wgpu#9819). SGL's canvas uses `SurfaceColorSpace::Auto`,
+  so its output is unchanged.
+- **Behaviour:**
+  - `sgl-2d`'s `Frame::present` keeps its signature. It now presents
+    through `Queue::present`. The canvas surface takes
+    `SurfaceColorSpace::Auto`, which is wgpu's earlier behaviour (sRGB for
+    its formats), and its adapter request applies no limit buckets.
+  - The irradiance volume no longer writes one zero texel into each
+    volume texture at creation (#156). wgpu 30 tracks a copy into a 3D
+    texture at any depth (gfx-rs/wgpu#9765), so wgpu's own
+    zero-initialisation holds; the 30.0.1 minimum is what rules the old
+    tracking out. No visible change.
+  - On Metal, naga 30 lowers ray queries through Metal's
+    `intersection_query` instead of `intersector`. The hardware path keeps
+    its baseline form there (#211 decides the candidate form), but its
+    passes' GPU time on Metal may differ from wgpu 29's.
+- **Migration:** a game that calls wgpu or writes WGSL itself updates that
+  code for wgpu 30 ([wgpu's changelog](https://github.com/gfx-rs/wgpu/blob/v30.0.0/CHANGELOG.md)).
+  These are the changes SGL's own code needed:
+  - Require `wgpu = "30.0.1"` (and `naga = "30.0.1"` where the game uses
+    it directly), and `wasm-bindgen` 0.2.127 or later in the browser.
+    Don't pin them with `=`, so that compatible fixes resolve.
+  - `get_mapped_range` returns a `Result`: add `.expect("mapped")` or `?`.
+  - `VertexState::buffers` takes `&[Option<VertexBufferLayout>]`: wrap
+    each layout in `Some`.
+  - `surface_texture.present()` becomes `queue.present(surface_texture)`.
+  - `SurfaceConfiguration` gains `color_space`: add
+    `color_space: wgpu::SurfaceColorSpace::Auto` for the old behaviour.
+  - `RequestAdapterOptions` gains `apply_limit_buckets`: add
+    `apply_limit_buckets: false`, or use `..Default::default()`.
+  - WGSL: an integer value passed from the vertex to the fragment stage
+    declares `@interpolate(flat)` itself; naga no longer assumes it.
+  - `TextureUsages::TRANSIENT` becomes `TRANSIENT_ATTACHMENT`.
+  - On Metal, a stage's buffers of every kind (storage, uniform, vertex)
+    and acceleration structures together may number at most 29
+    (`max_buffers_and_acceleration_structures_per_shader_stage`), where
+    wgpu 29 allowed 31 of each kind: a game's own pipeline layout past it
+    is refused when it is created.
+
+  Regenerate the game's distribution notices. wgpu 30 drops
+  `gpu-descriptor` and `hexf-parse`, whose CC0 text the notices no longer
+  carry, and adds `naga-types` and `objc2-core-graphics`.
+  `wasm-bindgen-futures` 0.4.79 names `tokio` (MIT) for Emscripten builds
+  under an unstable cfg, so cargo-about lists its notice too.
+
+  The browser lane's `wasm-bindgen-cli` must match the `wasm-bindgen`
+  locked in the game's `Cargo.lock` exactly. For SGL's lockfile that is
+  `cargo install wasm-bindgen-cli --version 0.2.129 --locked`. Afterwards,
+  run the game natively and in the browser. With hardware ray tracing on a
+  Mac, look at ray-traced shadows, reflections and dynamic GI, and compare
+  their GPU timings.
+
 ### FSR2 is told where opaque surfaces' normal layers move
 
 - **Scope:** `sgl-3d` (#146). No API change. While FSR2 runs, opaque and

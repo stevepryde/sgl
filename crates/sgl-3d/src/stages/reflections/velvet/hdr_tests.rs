@@ -119,7 +119,7 @@ fn read(
     queue.submit([encoder.finish()]);
     mapped.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    bytemuck::cast_slice(&mapped.get_mapped_range(..)).to_vec()
+    bytemuck::cast_slice(&mapped.get_mapped_range(..).unwrap()).to_vec()
 }
 
 #[test]

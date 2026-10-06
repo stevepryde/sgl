@@ -63,7 +63,7 @@ impl Effects {
             bind_group_layouts: &[Some(unlit), Some(&depth_layout)],
             immediate_size: 0,
         });
-        let buffers = [GLOW_LAYOUT.buffer];
+        let buffers = [Some(GLOW_LAYOUT.buffer)];
         let glow_targets = [Some(wgpu::ColorTargetState {
             format: gbuffer::COLOR,
             blend: Some(wgpu::BlendState {

@@ -97,7 +97,10 @@ pub(crate) fn read_texture(
     rx.recv()
         .expect("map callback")
         .expect("map readback buffer");
-    let data = buffer.slice(..).get_mapped_range();
+    let data = buffer
+        .slice(..)
+        .get_mapped_range()
+        .expect("mapped readback buffer");
     let mut out = Vec::with_capacity((unpadded * height) as usize);
     for row in 0..height {
         let start = (row * padded) as usize;

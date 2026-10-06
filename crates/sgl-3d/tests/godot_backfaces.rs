@@ -257,7 +257,7 @@ fn grazing_mapped_normals_keep_distant_visible_targets() {
         queue.submit([encoder.finish()]);
         buffer.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        let bytes = buffer.get_mapped_range(..);
+        let bytes = buffer.get_mapped_range(..).unwrap();
         let offset = ((64 * SIZE + 32) * 8) as usize;
         let rgba: [f32; 4] =
             std::array::from_fn(|c| half(&bytes[offset + c * 2..offset + c * 2 + 2]));

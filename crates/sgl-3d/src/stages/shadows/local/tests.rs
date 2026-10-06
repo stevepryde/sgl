@@ -287,7 +287,7 @@ override camera:bool=true;
             .map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         rx.recv().unwrap().unwrap();
-        let data = readback.slice(..).get_mapped_range();
+        let data = readback.slice(..).get_mapped_range().unwrap();
         data.chunks_exact(4)
             .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
             .collect()

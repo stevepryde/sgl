@@ -546,7 +546,8 @@ pub(crate) static SCENE_RAYS_QUERY_OPAQUE: Module = Module {
     deps: &[&SCENE_RAYS_HARDWARE],
 };
 /// The candidate form's query (`RayQueryForm::Candidates`), the root of a
-/// hardware-traced pipeline where the backend lowers a candidate loop.
+/// hardware-traced pipeline on a backend that may run the candidate form
+/// (`RayQueryForm::lowered`: Vulkan and DX12).
 pub(crate) static SCENE_RAYS_QUERY_CANDIDATES: Module = Module {
     name: "scene_rays_query_candidates",
     source: include_str!("scene_rays_query_candidates.wgsl"),
@@ -570,27 +571,29 @@ pub(crate) enum RayQueryForm {
     Candidates,
 }
 
-/// The form a device whose backend lowers the candidate loop runs (Vulkan
-/// and DX12): the baseline until the candidate form's benefit is measured
-/// on their hardware (RD-6), a recorded decision and never a setting
-/// (AR-3). The candidate form has not run on Vulkan or DX12 hardware yet
-/// (#23): the owner has none that traces rays, and no Mac does (MoltenVK
-/// offers no ray query).
+/// The form a device whose backend may run the candidate form runs
+/// (`RayQueryForm::lowered`: Vulkan and DX12): the baseline until the
+/// candidate form's benefit is measured on their hardware (RD-6), a
+/// recorded decision and never a setting (AR-3). The candidate form has not
+/// run on Vulkan or DX12 hardware yet (#23): the owner has none that traces
+/// rays, and MoltenVK offers no ray query. Metal's naga 30 lowers the loop
+/// too, but Metal stays on the baseline by recorded decision until #211.
 pub(crate) const LOWERED_FORM: RayQueryForm = RayQueryForm::Baseline;
 
 impl RayQueryForm {
-    /// Whether naga 29 lowers a candidate loop to `backend`'s shaders: its
-    /// SPIR-V (Vulkan) and HLSL (DX12) writers do; its MSL writer (Metal)
-    /// runs one intersection at initialisation, confirms nothing and reads
-    /// a candidate as the committed hit (`back/msl/writer.rs` 49,
-    /// 4111–4166, 2874); no other backend has ray queries.
+    /// Whether `backend` may run a candidate loop: Vulkan and DX12, whose
+    /// naga 30 SPIR-V and HLSL writers lower it. naga 30's MSL writer lowers
+    /// it too, through Metal's `intersection_query` (`back/msl/ray.rs`
+    /// 363–495), but Metal keeps the baseline, a recorded decision, until
+    /// the candidate form is validated and measured there (#211). No other
+    /// backend has ray queries.
     pub fn lowered(backend: wgpu::Backend) -> bool {
         matches!(backend, wgpu::Backend::Vulkan | wgpu::Backend::Dx12)
     }
 
     /// The form a device of `backend` runs: `lowered`, the form chosen for
-    /// backends that lower the candidate loop (`LOWERED_FORM`), where it
-    /// does, else the baseline.
+    /// backends that may run the candidate form (`LOWERED_FORM`), where
+    /// `backend` is one, else the baseline.
     pub fn of_backend(backend: wgpu::Backend, lowered: Self) -> Self {
         if Self::lowered(backend) {
             lowered
@@ -682,13 +685,12 @@ mod form_tests {
     use super::RayQueryForm;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    // Plausible defect: a backend whose shaders naga does not lower a
-    // candidate loop for given the candidate form once the recorded choice
-    // for Vulkan and DX12 (`LOWERED_FORM`) becomes it: on Metal, naga's MSL
-    // proceed never ends a candidate loop and its confirm does nothing, so
-    // every ray would spend its budget and miss. The oracle is naga 29's
-    // writers, as the architecture records them: SPIR-V and HLSL lower the
-    // loop, MSL does not, and no other backend has ray queries.
+    // Plausible defect: a backend that cannot run a candidate loop given
+    // the candidate form once the recorded choice for Vulkan and DX12
+    // (`LOWERED_FORM`) becomes it. The oracle is what the architecture
+    // records: naga 30's SPIR-V and HLSL writers lower the loop, Metal
+    // keeps the baseline until #211 validates the candidate form there,
+    // and no other backend has ray queries.
     #[wasm_bindgen_test(unsupported = test)]
     fn only_vulkan_and_dx12_take_the_candidate_form() {
         use wgpu::Backend::{BrowserWebGpu, Dx12, Gl, Metal, Noop, Vulkan};

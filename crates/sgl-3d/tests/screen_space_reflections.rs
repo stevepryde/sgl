@@ -342,7 +342,7 @@ impl Frames {
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .unwrap();
-        let mapped = buffer.get_mapped_range(..);
+        let mapped = buffer.get_mapped_range(..).unwrap();
         mapped
             .chunks(row as usize)
             .flat_map(|line| line[..(width * bytes) as usize].chunks_exact(bytes as usize))

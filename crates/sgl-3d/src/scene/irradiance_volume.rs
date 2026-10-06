@@ -48,25 +48,15 @@ fn face_texel(face: usize, cell: [u32; 3], cells: [u32; 3]) -> wgpu::Origin3d {
     }
 }
 
-/// A 3D texture of `size` texels, every texel zero (the fallback).
-///
-/// It is initialised at once, through `queue`, by a write of one zero
-/// texel, which clears the rest, so no copy into it ever meets an
-/// uninitialised texture: wgpu-core 29 tracks a 3D texture's
-/// initialisation as one layer, which a queue write takes whole
-/// (device/queue.rs `write_texture`), but registers a command encoder's
-/// copy by its depth slices (command/transfer.rs `handle_texture_init`), so
-/// a copy at a nonzero depth into a texture not yet initialised (a
-/// scroll's into a volume the game has not yet written) would leave it
-/// marked uninitialised, and its next use would clear what the copy wrote.
+/// A 3D texture of `size` texels, every texel zero (the fallback) until
+/// something writes it: wgpu zero-initialises a texture on its first use.
 fn zeroed(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
     label: &str,
     [width, height, depth]: [u32; 3],
     usage: wgpu::TextureUsages,
 ) -> wgpu::Texture {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
             width,
@@ -77,24 +67,18 @@ fn zeroed(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D3,
         format: FORMAT,
-        usage: usage | wgpu::TextureUsages::COPY_DST,
+        usage,
         view_formats: &[],
-    });
-    crate::counters::write_texture(
-        queue,
-        texture.as_image_copy(),
-        &[0; TEXEL_BYTES as usize],
-        wgpu::TexelCopyBufferLayout::default(),
-        wgpu::Extent3d::default(),
-    );
-    texture
+    })
 }
 
 /// A volume of `cells`' texture.
-fn texture(device: &wgpu::Device, queue: &wgpu::Queue, cells: [u32; 3]) -> wgpu::Texture {
+fn texture(device: &wgpu::Device, cells: [u32; 3]) -> wgpu::Texture {
     let size = texture_size(cells).map(|side| side as u32);
-    let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
-    zeroed(device, queue, "irradiance volume", size, usage)
+    let usage = wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_SRC
+        | wgpu::TextureUsages::COPY_DST;
+    zeroed(device, "irradiance volume", size, usage)
 }
 
 /// What a scroll along one axis moves cells through: a face's box of cells
@@ -108,13 +92,18 @@ struct Stripe {
 }
 
 impl Stripe {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, cells: [u32; 3], axis: usize) -> Self {
+    fn new(device: &wgpu::Device, cells: [u32; 3], axis: usize) -> Self {
         let mut size = cells;
         size[axis] = cells[axis].min(STRIPE);
-        let usage = wgpu::TextureUsages::COPY_SRC;
+        let copy = wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST;
         Self {
-            staging: zeroed(device, queue, "irradiance volume scroll", size, usage),
-            zero: zeroed(device, queue, "irradiance volume zeros", size, usage),
+            staging: zeroed(device, "irradiance volume scroll", size, copy),
+            zero: zeroed(
+                device,
+                "irradiance volume zeros",
+                size,
+                wgpu::TextureUsages::COPY_SRC,
+            ),
             thickness: size[axis],
         }
     }
@@ -221,8 +210,8 @@ pub(crate) struct IrradianceCells {
 }
 
 impl IrradianceCells {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let stand_in = texture(device, queue, [1; 3]).create_view(&Default::default());
+    pub fn new(device: &wgpu::Device) -> Self {
+        let stand_in = texture(device, [1; 3]).create_view(&Default::default());
         Self {
             placement: None,
             view: stand_in.clone(),
@@ -308,7 +297,7 @@ impl Scene {
             origin,
             cell_size: volume.cell_size,
             cells: volume.cells,
-            texture: texture(device, queue, volume.cells),
+            texture: texture(device, volume.cells),
             stripes: [None, None, None],
         };
         // Group 0 binds the new texture.
@@ -420,7 +409,7 @@ fn scroll(device: &wgpu::Device, queue: &wgpu::Queue, placement: &mut Placement,
         let entering = by.unsigned_abs().min(u64::from(cells[axis])) as u32;
         let kept = cells[axis] - entering;
         let stripe =
-            placement.stripes[axis].get_or_insert_with(|| Stripe::new(device, queue, cells, axis));
+            placement.stripes[axis].get_or_insert_with(|| Stripe::new(device, cells, axis));
         let texture = &placement.texture;
         // A box of `depth` cells across the axis from `at` along it.
         let extent = |depth: u32| {

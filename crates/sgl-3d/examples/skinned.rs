@@ -520,7 +520,7 @@ fn read_pixels(
     });
     device.poll(wgpu::PollType::wait_indefinitely())?;
     receiver.recv()??;
-    let mapped = buffer.get_mapped_range(..);
+    let mapped = buffer.get_mapped_range(..).unwrap();
     Ok(mapped
         .chunks(row as usize)
         .flat_map(|line| &line[..(size.width * 4) as usize])

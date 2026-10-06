@@ -296,7 +296,8 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
     queue.submit([encoder.finish()]);
     readback.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let rows: Vec<[f32; 4]> = bytemuck::cast_slice(&readback.get_mapped_range(..)).to_vec();
+    let rows: Vec<[f32; 4]> =
+        bytemuck::cast_slice(&readback.get_mapped_range(..).unwrap()).to_vec();
     Some(rows.iter().map(|row| row[0] as f64).collect())
 }
 

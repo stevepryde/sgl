@@ -21,8 +21,8 @@ bunx playwright install chromium
 
 Install the matching CLI with
 `cargo install wasm-bindgen-cli --version VERSION --locked`, replacing
-`VERSION` with the workspace's `wasm-bindgen` version from
-[Cargo.toml](Cargo.toml), without the leading `=`. It provides both
+`VERSION` with the `wasm-bindgen` version locked in [Cargo.lock](Cargo.lock):
+the CLI must match it exactly. It provides both
 `wasm-bindgen` and `wasm-bindgen-test-runner`. Node.js runs the pure WASM tests. Playwright's
 Chromium and a WebGPU-capable GPU run the browser lane. Native examples and
 GPU tests need a supported graphics driver; Linux also needs the development

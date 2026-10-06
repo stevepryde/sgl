@@ -38,7 +38,7 @@ pub(crate) fn read(
     });
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     rx.recv().unwrap().unwrap();
-    let mapped = buffer.get_mapped_range(..);
+    let mapped = buffer.get_mapped_range(..).unwrap();
     let mut pixels = Vec::new();
     for line in mapped.chunks(row as usize) {
         pixels.extend_from_slice(&line[..(size.width * bpp) as usize]);
@@ -62,7 +62,7 @@ pub(crate) fn read_words(
     queue.submit([encoder.finish()]);
     readback.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    bytemuck::cast_slice(&readback.get_mapped_range(..)).to_vec()
+    bytemuck::cast_slice(&readback.get_mapped_range(..).unwrap()).to_vec()
 }
 
 /// A unit vector's octahedral coordinates (Cigolle et al. 2014, "A Survey of

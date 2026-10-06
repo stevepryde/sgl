@@ -217,7 +217,7 @@ fn observed_direct(c:Case,axis_strength:vec4<f32>)->vec3<f32> {
         readback.map_async(wgpu::MapMode::Read, .., move |r| tx.send(r).unwrap());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         rx.recv().unwrap().unwrap();
-        let mapped = readback.get_mapped_range(..);
+        let mapped = readback.get_mapped_range(..).unwrap();
         let rows: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
         let mut max_relative = 0f64;
         let mut max_bent = 0f64;

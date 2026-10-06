@@ -190,7 +190,7 @@ pub fn read(
     });
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     rx.recv().unwrap().unwrap();
-    let mapped = buffer.get_mapped_range(..);
+    let mapped = buffer.get_mapped_range(..).expect("mapped readback");
     let mut pixels = Vec::new();
     for line in mapped.chunks(row as usize) {
         pixels.extend_from_slice(&line[..(size.width * bpp) as usize]);

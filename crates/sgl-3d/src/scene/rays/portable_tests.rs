@@ -50,7 +50,7 @@ fn query(
     });
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     rx.recv().unwrap().unwrap();
-    let result = bytemuck::cast_slice(&readback.get_mapped_range(..)).to_vec();
+    let result = bytemuck::cast_slice(&readback.get_mapped_range(..).unwrap()).to_vec();
     readback.unmap();
     result
 }
@@ -451,7 +451,7 @@ fn portable_scene_fragment_segment_visibility() {
         readback.map_async(wgpu::MapMode::Read, .., move |r| tx.send(r).unwrap());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         rx.recv().unwrap().unwrap();
-        let mapped = readback.get_mapped_range(..);
+        let mapped = readback.get_mapped_range(..).unwrap();
         let pixels: &[[f32; 4]] = bytemuck::cast_slice(&mapped[..64]);
         assert_eq!(
             pixels,

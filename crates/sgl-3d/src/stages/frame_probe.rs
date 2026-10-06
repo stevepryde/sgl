@@ -286,7 +286,11 @@ impl FrameProbe {
             if p.ready.load(Ordering::Acquire) == 2 {
                 panic!("frame probe readback failed");
             }
-            let mapped = p.buffer.slice(..).get_mapped_range();
+            let mapped = p
+                .buffer
+                .slice(..)
+                .get_mapped_range()
+                .expect("mapped frame probe readback");
             let words: &[u32] = bytemuck::cast_slice(&mapped);
             let mut result = p.metadata;
             for (stage, name) in STAGES.iter().enumerate() {

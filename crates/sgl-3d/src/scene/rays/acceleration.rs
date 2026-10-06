@@ -36,8 +36,8 @@ pub(crate) const MASK_STATIC: u8 = 1;
 pub(crate) const MASK_MOVING: u8 = 2;
 
 /// Instances a TLAS instance's 24-bit custom index can name: an entry at a
-/// higher index is left out (wgpu 29 refuses a larger custom index,
-/// `wgpu-core` `command/ray_tracing.rs` 223–227).
+/// higher index is left out (wgpu 30 refuses a larger custom index,
+/// `wgpu-core` `command/ray_tracing.rs` 236–240).
 const CUSTOM_INDICES: usize = 1 << 24;
 
 /// Whether `device` traces rays in hardware: it has wgpu's experimental ray
@@ -151,9 +151,9 @@ fn allocated<T>(device: &wgpu::Device, create: impl FnOnce() -> T) -> Option<T> 
 }
 
 /// A TLAS of `capacity` instances, at least one, so wgpu builds it even
-/// when it holds none (wgpu-core 29 sizes its scratch from the capacity,
-/// `device/ray_tracing.rs` 205–218, and skips only a build with nothing at
-/// all to build, `command/ray_tracing.rs` 286–294). Bevy's flags
+/// when it holds none (wgpu-core 30 sizes its scratch from the capacity,
+/// `device/ray_tracing.rs` 242–255, and skips only a build with nothing at
+/// all to build, `command/ray_tracing.rs` 303–308). Bevy's flags
 /// (`binder.rs` 74–81).
 fn tlas(device: &wgpu::Device, capacity: usize) -> Option<wgpu::Tlas> {
     allocated(device, || {

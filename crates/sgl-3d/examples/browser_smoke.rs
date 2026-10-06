@@ -632,7 +632,7 @@ async fn read_pixels(
         .await
         .map_err(|_| "readback dropped".to_string())?
         .map_err(|e| format!("readback: {e}"))?;
-    let mapped = buffer.slice(..).get_mapped_range();
+    let mapped = buffer.slice(..).get_mapped_range().unwrap();
     Ok(mapped
         .chunks_exact(stride as usize)
         .flat_map(|row| row[..texture.width() as usize * 4].iter().copied())
