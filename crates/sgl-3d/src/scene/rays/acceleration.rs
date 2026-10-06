@@ -63,8 +63,8 @@ pub struct RayTracingStats {
     /// Instances the scene's TLAS held.
     pub hardware: u32,
     /// Instances that do not deform and that the TLAS did not hold, which
-    /// the portable BVHs cover: those whose model has a masked mesh (in the
-    /// baseline form every device runs by default), whose model's BLAS is
+    /// the portable BVHs cover: those whose model has a masked mesh (under
+    /// the baseline form, which Vulkan and DX12 run), whose model's BLAS is
     /// pending, or that were left out.
     pub portable: u32,
     /// Instances left out of the TLAS because the device could not hold

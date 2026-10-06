@@ -673,19 +673,36 @@ fn frames_build_the_structures_after_their_deformations() {
             counted.tlas_builds,
         ]
     };
-    let held = RayTracingStats {
-        hardware: 2,
-        portable: 1,
-        left_out: 0,
+    // Under the form the renderer takes on this device's backend: the
+    // baseline holds the opaque model's BLAS and the deforming instance's,
+    // the masked model a predicate instance on the portable BVHs; the
+    // candidate form holds the masked model's BLAS too.
+    let (models, held) = match RayQueryForm::of_backend(device.adapter_info().backend) {
+        RayQueryForm::Baseline => (
+            1,
+            RayTracingStats {
+                hardware: 2,
+                portable: 1,
+                left_out: 0,
+            },
+        ),
+        RayQueryForm::Candidates => (
+            2,
+            RayTracingStats {
+                hardware: 3,
+                portable: 0,
+                left_out: 0,
+            },
+        ),
     };
-    // The first frame builds the model's BLAS, the deforming instance's
+    // The first frame builds the models' BLASes, the deforming instance's
     // and the TLAS.
     pose(&mut scene, 0.5);
     let (stats, counted) = frame(&mut renderer, &mut scene, &settings, false);
     assert_eq!(stats, held);
-    assert_eq!(counts(&counted), [1, 1, 1]);
-    // The model's BLAS is compacted once, in whichever later frame finds it
-    // ready.
+    assert_eq!(counts(&counted), [models, 1, 1]);
+    // Each model's BLAS is compacted once, in whichever later frame finds
+    // it ready.
     let mut compactions = 0;
     // An abandoned frame commits nothing, and a frame that traces no rays
     // records nothing of it: the next traced frame records its
@@ -714,7 +731,7 @@ fn frames_build_the_structures_after_their_deformations() {
         assert_eq!(counts(&counted), [0, 0, 1]);
         compactions += counted.blas_compactions;
     }
-    assert_eq!(compactions, 1);
+    assert_eq!(compactions, models);
     // Off frees the structures; on builds them again.
     settings.hardware_ray_tracing = false;
     let (stats, counted) = frame(&mut renderer, &mut scene, &settings, false);
@@ -725,7 +742,7 @@ fn frames_build_the_structures_after_their_deformations() {
     settings.hardware_ray_tracing = true;
     let (stats, counted) = frame(&mut renderer, &mut scene, &settings, false);
     assert_eq!(stats, held);
-    assert_eq!(counts(&counted), [1, 1, 1]);
+    assert_eq!(counts(&counted), [models, 1, 1]);
     bind_tlas(gpu, &scene);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let error = pollster::block_on(validation.pop());

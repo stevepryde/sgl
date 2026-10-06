@@ -239,8 +239,9 @@ Environment and probe specular always apply. On top of them:
   `Settings::hardware_ray_tracing` on, world-space reflections' rays, the
   dynamic GI volume's and ray-traced shadows' trace the scene's
   acceleration structures, built
-  on the frames that trace rays; masked models and what the device cannot
-  hold stay on the software BVHs. Skinned and morphed instances are seen by
+  on the frames that trace rays, masked models among them on Metal; masked
+  models on Vulkan and DX12 and what the device cannot hold stay on the
+  software BVHs. Skinned and morphed instances are seen by
   those rays only on this path, and not at all where the device cannot
   hold them. `Renderer::ray_tracing_in_effect` and
   `ray_tracing_error` report it.

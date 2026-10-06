@@ -27,9 +27,7 @@ mod packed_vertex_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rect_light_tests;
 mod scene_rays;
-pub(crate) use scene_rays::{
-    LOWERED_FORM, RayQueryForm, SCENE_RAYS, SCENE_RAYS_PREDICATE, ray_trace_root,
-};
+pub(crate) use scene_rays::{RayQueryForm, SCENE_RAYS, SCENE_RAYS_PREDICATE, ray_trace_root};
 #[cfg(test)]
 pub(crate) use scene_rays::{SCENE_RAYS_PORTABLE, SCENE_RAYS_QUERY_OPAQUE};
 pub(crate) mod shadow_mask;

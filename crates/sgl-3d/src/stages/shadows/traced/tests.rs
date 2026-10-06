@@ -262,6 +262,9 @@ fn render(
     renderer.finish_frame(scene);
     let error = pollster::block_on(validation.pop());
     assert!(error.is_none(), "{error:?}");
+    // A candidate program the device fails to compile falls back to the
+    // baseline, which would pass these frames unseen.
+    assert_eq!(renderer.ray_tracing_error(), None);
     let depth = test_support::read(device, queue, renderer.targets().depth.texture(), 4)
         .chunks_exact(4)
         .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))

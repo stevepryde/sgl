@@ -1,11 +1,16 @@
 // The candidate form's query (the architecture's Hardware ray tracing,
 // *Candidate form*), the composition root of the hardware path where the
-// backend runs a candidate loop: naga 30's SPIR-V writer (Vulkan;
+// backend runs a candidate loop (`shading::scene_rays::METAL_FORM`: Metal, validated
+// and measured on an Apple M5, #211). naga 30's MSL writer lowers it
+// through Metal's `intersection_query` (`back/msl/ray.rs`: `reset`
+// 363–368, each proceed one `next()` 386–417, a confirmation
+// `commit_triangle_intersection()` 472–495, guarded by its ray-query
+// initialisation tracking); its SPIR-V writer (Vulkan;
 // `back/spv/ray/query.rs`, proceed 637–781, confirm 1081–1211, candidate
 // and committed reads 15–500) and HLSL writer (DX12; `back/hlsl/ray.rs`,
 // `Proceed` 424, `CommitNonOpaqueTriangleHit` 529, candidate reads
-// 143–222). Metal keeps the baseline until this form is validated there
-// (#211), though naga 30's MSL writer lowers the loop too. Every BLAS
+// 143–222) lower it too, where it is not yet the default
+// (`LOWERED_FORM`). Every BLAS
 // geometry is opaque but a masked mesh's, so the hardware reports each
 // triangle of a masked mesh a query crosses as a candidate, and the loop
 // runs the whole shared predicate on it, the cut-out test included,
@@ -21,7 +26,9 @@
 // the first committed, each candidate on the way judged by the shared
 // predicate (with `receiver`, `sides` and `open_end`) and confirmed where
 // it accepts it. Each candidate is a step of `steps` (AR-12): at the cap
-// the query stops by returning and the ray reports a miss.
+// the query stops by returning and the ray reports a miss, so its
+// proceeds (on Metal, `next()` calls) pass the ray's remaining steps by
+// one at most. A triangle reported twice is judged the same twice.
 fn scene_hardware_query(ray:SceneRay,t_min:f32,mask:u32,first_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,steps:ptr<function,u32>)->RawSceneHit {
  let miss=RawSceneHit(vec4(0u),vec4(0.));
  var query:ray_query;

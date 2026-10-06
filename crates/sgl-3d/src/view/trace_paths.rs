@@ -155,8 +155,9 @@ impl TracePaths {
     /// are made inside error scopes; a compile, validation or internal error
     /// falls the device back to the baseline form for good, which
     /// `hardware`'s form then names, and the baseline's pipeline is made
-    /// instead. A failure on Vulkan or DX12 is one naga's or the driver's
-    /// compiler raises; a wrong result or a driver fault is no failure.
+    /// instead. A failure is one naga's or the driver's compiler (Metal's
+    /// shader compiler, Vulkan's driver, DX12's DXC) raises; a wrong result
+    /// or a driver fault is no failure.
     pub fn pipeline<K: Copy + Eq + Hash, P>(
         &mut self,
         device: &wgpu::Device,
@@ -233,7 +234,8 @@ mod tests {
     };
 
     // The candidate form's fallback, which no device here would otherwise
-    // take: Metal runs the baseline, and no Mac has Vulkan ray queries.
+    // take: Metal's candidate programs compile, and no Mac has Vulkan ray
+    // queries.
     // Plausible defects: a failed candidate pipeline outside an error scope
     // (its error reaches the device's uncaptured-error handler, which
     // panics in wgpu's default, and the frame binds an invalid pipeline);

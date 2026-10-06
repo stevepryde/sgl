@@ -1836,8 +1836,10 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
 - **Structures.** While `Settings::hardware_ray_tracing` is on, frames
   that trace rays (world-space reflections, the dynamic
   GI volume, ray-traced shadows) build, in the frame's encoder after the deform pass: a BLAS
-  for each model that does not deform, has no masked mesh and has an
-  opaque one, over all its meshes' positions in the scene's ray source,
+  for each model that does not deform and has an opaque or masked mesh
+  (under the baseline form, an opaque one and no masked one), over all its
+  meshes' positions in the scene's ray source, a masked mesh's geometry
+  not opaque under the candidate form,
   pending until such a frame and then built nearest the camera first under
   Bevy's budget of 400 000 vertices a frame (the first pending always, a
   replaced model at once), then compacted; a BLAS for each deforming
@@ -1845,7 +1847,8 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   deformation changed; and a TLAS over the capture-visible instances,
   rebuilt every such frame, each instance named by its entry's index with
   its kind (static or moving) as its mask. An instance of a model with a
-  masked mesh, of one whose BLAS is pending, or that the device cannot hold
+  masked mesh under the baseline form, of one whose BLAS is pending, or
+  that the device cannot hold
   (a model past `max_blas_primitive_count` or `max_blas_geometry_count`,
   instances past `max_tlas_instance_count`, the farthest left out, or a
   structure its memory cannot hold) stays on the portable BVHs, which then
@@ -1858,33 +1861,40 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   buffer, which wgpu allocates when the game finishes the frame's encoder:
   its out-of-memory error reaches the game's error handler, as any failure
   of its encoder does.
-- **Tracing.** Every native backend runs one form, the baseline: each ray
-  asks the hardware for the nearest opaque hit over the kinds it wants
+- **Tracing.** Metal runs the candidate form and Vulkan and DX12 the
+  baseline (below). In both, each ray
+  asks the hardware for the nearest hit over the kinds it wants
   (any hit for a visibility ray), and the same acceptance rules as the
   portable path judge it: a back face a ray's side policy rejects (a
   camera-origin ray rejects a single-sided material's, judged from the
   triangle's own winding, so mirrored instances keep their sides), a
   blended mesh of a model that also has opaque ones, a hidden visibility
   group, the reflecting surface's own triangle, a cut-out texel of a
-  masked deforming instance. A rejected hit is traced past, up to 256
-  queries a ray, after which the ray reports a miss: a ray through
-  hair cards spends one for each cut-out card it crosses, at most 29 in
-  a crowd of 24-card bundles. The portable BVHs trace the
-  instances the TLAS does not hold, cut-out texels included, and the
-  nearer hit wins. A deforming instance's hits take its deformed
-  positions, normals and tangents, and a masked mesh on it cuts out at the
-  hit. One limitation: a triangle at exactly the distance of a rejected
+  masked deforming instance under the baseline. A rejected hit is traced
+  past, within 256 steps a ray, after which the ray reports a miss. Under
+  the candidate form, masked models join the acceleration structures with
+  their masked meshes not opaque, and the hardware's candidate loop
+  judges each of their triangles a ray crosses by the same rules, cut-out
+  texels included, each a step: on an Apple M5 the most a ray took was 44
+  through a crowd of 24-card hair bundles and 84 grazing rows of dense
+  cut-out hedges. Under the baseline, the software BVHs trace masked
+  models that do not deform, and a ray through a deforming instance's
+  hair cards spends a step for each cut-out card it crosses, at most 36
+  in that crowd. The portable BVHs trace the instances the TLAS does not
+  hold, cut-out texels included, and the nearer hit wins. A deforming
+  instance's hits take its deformed positions, normals and tangents, and a
+  masked mesh on it cuts out at the hit. One limitation: a triangle at exactly the distance of a rejected
   one (back-to-back single-sided faces, coplanar meshes of a shown and a
   hidden group) may be skipped, since one opaque query cannot list ties.
   While hardware ray tracing traces the dynamic GI volume's rays, a
   capture-visible deforming instance's pose or deformation is an edit that
-  wakes a converged volume, since its rays see it. Vulkan and DX12, whose
-  shader compilers can run the hardware's candidate loop, also have a
-  candidate form, in which masked models join the acceleration structures
-  and the loop cuts out their texels; it is not their default until it is
-  measured on their hardware, and it has not run on such hardware yet. A
-  device whose candidate programs fail to compile falls back to the
-  baseline for good.
+  wakes a converged volume, since its rays see it. Metal runs the
+  candidate form: on an Apple M5 it cut the tracing passes by 35–60 %
+  among cut-out foliage and cost up to 14 % of the ray-traced shadow rays
+  (0.12–0.13 ms) where nothing is masked; Vulkan and DX12, whose
+  shader compilers lower the loop too, run the baseline until it is
+  measured on their hardware, which it has not run on yet. A device whose candidate
+  programs fail to compile falls back to the baseline for good.
 - **Reporting.** `Renderer::ray_tracing_in_effect(&settings)` says whether
   the hardware path traces the scene's rays, as
   `antialiasing_in_effect` does for antialiasing, and

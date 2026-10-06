@@ -261,11 +261,13 @@ Remaining work, in the existing roadmap order:
    `Settings::hardware_ray_tracing` (off by default, [D-28](decisions.md)),
    on a device with ray queries, the scene builds its acceleration
    structures and world-space reflections' and the dynamic GI volume's rays
-   trace them in the baseline form; elsewhere they traverse the software
-   BVHs. World-space reflections reach static content too where the game
-   chooses `WorldSpaceReflections::All`. The candidate form exists for
-   Vulkan and DX12 but is not their default until it is measured on their
-   hardware, which it has not run on yet. Behind the opt-in
+   trace them; elsewhere they traverse the software BVHs. World-space
+   reflections reach static content too where the game chooses
+   `WorldSpaceReflections::All`. Metal runs the candidate form, in which
+   masked models join the acceleration structures (#211); Vulkan and DX12
+   run the baseline, in which the software BVHs trace masked models, until
+   the candidate form is measured on their hardware, which it has not run
+   on yet. Behind the opt-in
    `Settings::ray_traced_shadows` (off by default, D-28), the camera's
    opaque surfaces take ray-traced shadows of the directional light and up
    to fifteen local lights, soft by the light's size, the first four

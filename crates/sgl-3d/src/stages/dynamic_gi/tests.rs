@@ -1491,6 +1491,9 @@ fn a_deformation_wakes_a_converged_volume_while_the_hardware_path_traces() {
         let paused = render_until_paused(gpu, &mut renderer, &mut scene, &input, &settings, 400);
         assert!(paused.is_some(), "hardware {hardware}: never paused");
         assert_eq!(renderer.ray_tracing_in_effect(&settings), hardware);
+        // A candidate program the device fails to compile falls back to
+        // the baseline, which would pass these frames unseen.
+        assert_eq!(renderer.ray_tracing_error(), None);
         light.push(irradiance(&device, &queue, &renderer, &queries));
         scene
             .set_instance_deformation(

@@ -4,6 +4,7 @@ use crate::asset::{CpuMesh, Vertex};
 use crate::renderer::Renderer;
 use crate::settings::WorldSpaceReflections::{All, Moving};
 use crate::settings::{self, Settings};
+use crate::shading::RayQueryForm;
 use crate::{Backdrop, Camera, FrameInput, InstanceState, Mobility, Scene, test_support};
 use glam::{Mat4, Vec3};
 
@@ -66,24 +67,35 @@ fn deforming(mut asset: crate::asset::Asset) -> crate::asset::Asset {
 }
 
 /// The wall the floor reflects: of `mobility`, deformed where `deforms`
-/// (moving, since a deforming instance is).
+/// (moving, since a deforming instance is), and masked over
+/// `test_support::half_cut_out` where `masked`, which cuts out the half of
+/// its front and back faces at negative x.
 #[derive(Clone, Copy)]
 struct Wall {
     mobility: Mobility,
     deforms: bool,
+    masked: bool,
 }
 
 const MOVING: Wall = Wall {
     mobility: Mobility::Moving,
     deforms: false,
+    masked: false,
 };
 const STATIC: Wall = Wall {
     mobility: Mobility::Static,
     deforms: false,
+    masked: false,
 };
 const DEFORMING: Wall = Wall {
     mobility: Mobility::Moving,
     deforms: true,
+    masked: false,
+};
+const MASKED: Wall = Wall {
+    mobility: Mobility::Static,
+    deforms: false,
+    masked: true,
 };
 
 /// The reflection composite's red at every pixel of frames on `device`
@@ -115,6 +127,11 @@ fn reflected_wall(
         deforming(self::wall())
     } else {
         self::wall()
+    };
+    let asset = if wall.masked {
+        test_support::masked(asset, 0.5)
+    } else {
+        asset
     };
     let model = scene.add_asset(device, queue, asset).unwrap().model;
     let wall_at = |z: f32| InstanceState {
@@ -159,12 +176,38 @@ fn reflected_wall(
         queue.submit([encoder.finish()]);
         renderer.finish_frame(scene);
         assert_eq!(renderer.ray_tracing_in_effect(settings), hardware);
-        composite(device, queue, &renderer)
+        // A candidate program the device fails to compile falls back to
+        // the baseline, which would pass these frames unseen.
+        assert_eq!(renderer.ray_tracing_error(), None);
+        (
+            composite(device, queue, &renderer),
+            renderer.ray_tracing_stats(),
+        )
     };
     let mut composites = Vec::new();
     for &reach in reaches {
         settings.world_space_reflections = reach;
-        composites.push(frame(&mut scene, &settings));
+        let (composite, stats) = frame(&mut scene, &settings);
+        if hardware && wall.masked {
+            // Where the masked wall is traced: in the TLAS beside the floor
+            // under the candidate form, on the portable BVHs under the
+            // baseline, so the masked wall's frames compare the form the
+            // device runs with the portable path, not the walk with itself.
+            let (hardware, portable) = match RayQueryForm::of_backend(device.adapter_info().backend)
+            {
+                RayQueryForm::Baseline => (1, 1),
+                RayQueryForm::Candidates => (2, 0),
+            };
+            assert_eq!(
+                stats,
+                crate::RayTracingStats {
+                    hardware,
+                    portable,
+                    left_out: 0,
+                }
+            );
+        }
+        composites.push(composite);
     }
     scene
         .set_instance(queue, instance, wall_at(-1100.))
@@ -180,7 +223,7 @@ fn reflected_wall(
     scene
         .add_instance(device, queue, below, Mobility::Static)
         .unwrap();
-    composites.push(frame(&mut scene, &settings));
+    composites.push(frame(&mut scene, &settings).0);
     composites
 }
 
@@ -342,5 +385,46 @@ fn the_all_reach_on_the_hardware_path_matches_the_portable_path() {
     assert!(
         difference < 0.01,
         "the hardware path's All matches the portable path's: {difference}"
+    );
+}
+
+// A masked static wall under `All` on the hardware path, on a device with
+// ray queries; reported unsupported, never passed, elsewhere. Under the
+// candidate form (the architecture's Hardware ray tracing, *Candidate
+// form*: Metal's, #211) the wall is in the TLAS and the candidate loop in
+// this stage's fragment shader cuts its texels out, which the scene ray
+// tests' compute dispatch does not reach; under the baseline it is a
+// predicate instance on the portable walk. Plausible defects: the loop
+// confirming cut-out candidates or never confirming kept ones, which
+// reflects the wall whole or not at all; a confirmed candidate decoded as
+// another triangle; the masked wall left off both the TLAS and the walk;
+// or, under the candidate form, the wall kept on the walk (its BLAS
+// pending), which would compare the walk with itself: `reflected_wall`
+// asserts where the form puts it (`RayTracingStats`).
+// The oracle is the portable path, whose walk cuts the same texels out, and
+// the geometry above: the floor reflects the masked wall at a quarter to
+// three quarters of the pixels where it reflects the whole wall, since half
+// of the wall is cut out, and the hardware path's composite matches the
+// portable path's within 1 % of the wall's radiance.
+#[test]
+fn a_masked_wall_cuts_out_on_the_hardware_path_as_on_the_portable_path() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let shown = |composite: &[f32]| composite.iter().filter(|&&red| red > 0.25).count();
+    let whole = shown(&reflected_wall(gpu, false, STATIC, &[All])[0]);
+    let portable = reflected_wall(gpu, false, MASKED, &[All]);
+    let cut = shown(&portable[0]);
+    assert!(
+        cut * 4 > whole && cut * 4 < whole * 3,
+        "the floor reflects the masked wall at {cut} pixels, the whole wall at {whole}"
+    );
+    let hardware = reflected_wall(gpu, true, MASKED, &[All]);
+    let difference = largest_difference(&hardware[0], &portable[0]);
+    eprintln!("the masked wall on the hardware path against the portable path: {difference}");
+    assert!(
+        difference < 0.01,
+        "the hardware path cuts the masked wall out as the portable path does: {difference}"
     );
 }
