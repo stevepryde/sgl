@@ -42,6 +42,27 @@ fn light_ray_end(light:Light,position:vec3<f32>,random:vec2<f32>)->vec3<f32> {
  }
  return light.position+get_tangentspace(normalize(toward))*hemispherepoint_cos(random.x,random.y)*light.radius;
 }
+// The visibility ray from `position` toward the point of scene light
+// `light` that `random` draws (light_ray_end), for a ray that starts
+// `t_min` past `position`: its unit direction in xyz and in w the end of
+// its interval, `t_min` short of that point, so that a surface the point
+// lies on, such as the light's own fixture, never occludes it, where an
+// interval closed at the point would meet that surface at its end and
+// rounding would decide. Bevy Solari ends its visibility rays so, keeping
+// a ray's start clearance at its end (9d12036
+// crates/bevy_solari/src/scene/sampling.wesl 226-241, `dist - RAY_T_MIN`
+// with `RAY_T_MIN` its start), and pbrt-v4 ends its shadow rays a relative
+// `ShadowEpsilon` short (b4ce968 src/pbrt/cpu/integrators.h 52-54); Wicked
+// Engine 2ff1d9e, which ends them at the point (screenspaceshadowCS.hlsl
+// 146, 178 and 205), keeps a light's fixture off them by a flag instead.
+// A point within twice `t_min` leaves an end before the start, an
+// interval scene_ray_valid refuses, so the light is unoccluded, as at a
+// distance of 0, where Bevy calls it occluded.
+fn light_visibility_ray(light:Light,position:vec3<f32>,random:vec2<f32>,t_min:f32)->vec4<f32> {
+ let to_light=light_ray_end(light,position,random)-position;
+ let distance=length(to_light);
+ return vec4(to_light/max(distance,1e-20),distance-t_min);
+}
 // The unit direction of a ray toward a directional light whose direction
 // toward it is unit `toward` and whose disc has radius `disc_radius` at
 // unit distance, drawn by `random` in [0, 1]².

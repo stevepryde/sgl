@@ -7,9 +7,9 @@ use glam::Vec3;
 pub enum LightShape {
     /// Every direction alike. `radius` (metres, nonnegative) is the size
     /// of the sphere it shines from, which only rays see: a ray-traced
-    /// shadow's rays, and the dynamic GI volume's visibility rays, end at
-    /// a point of it, so a larger light casts a softer shadow and 0 a hard
-    /// one, as Wicked Engine's `LightComponent::radius`
+    /// shadow's rays, and the dynamic GI volume's visibility rays, end just
+    /// short of a point of it, so a larger light casts a softer shadow and
+    /// 0 a hard one, as Wicked Engine's `LightComponent::radius`
     /// (`LightShape::DEFAULT_RADIUS`). Shading and the shadow maps treat
     /// the light as a point.
     Point { radius: f32 },

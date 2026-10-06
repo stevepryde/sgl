@@ -112,6 +112,10 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.baked_irradiance=objects[hit.instance_id].baked_irradiance;
  return s;
 }
+// Where a probe hit's visibility ray starts past the hit, and how far
+// short of the light it ends (light_visibility_ray), in metres: Wicked's
+// DDGI shadow ray's TMin (ddgi_raytraceCS.hlsl).
+const PROBE_HIT_T_MIN:f32=.001;
 // A dynamic GI probe ray's hit's direct light (SHADOW_RECEIVER_PROBE_HIT):
 // one light drawn uniformly by `random.x` from the frame's directional
 // lights and the lights of `list` the surface takes, times their count; its
@@ -124,9 +128,10 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
 // (b13043816a0f234985030ec035363a005bc86c32,
 // servers/rendering/renderer_rd/shaders/environment/voxel_gi.glsl 297,
 // `has_shadow` from gi.cpp 3036; MIT, src/LICENSE-godot.txt). The ray ends
-// where `random.yz` draws it on the light, as ray-traced shadows' rays do
-// (light_surface.wgsl): a point of a point or spot light's sphere or of a
-// rectangle's face, or a direction within a directional light's disc.
+// short of where `random.yz` draws it on the light, as ray-traced shadows'
+// rays do (light_surface.wgsl, light_visibility_ray): a point of a point or
+// spot light's sphere or of a rectangle's face, or a direction within a
+// directional light's disc.
 //
 // Ports Wicked Engine df44c3db4c4927492bc9c791eac715d98d7ed091's light
 // sampling at a hit (WickedEngine/shaders/ddgi_raytraceCS.hlsl 329–490: one
@@ -136,7 +141,9 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
 // Changed: each light reaches the hit as every receiver's does
 // (scene_light_sample, a rectangle integrated over its face), its shadow
 // opacity applies, a light without a shadow casts no ray, and the ray's
-// end is drawn on the light as SGL3D's ray-traced shadows draw it. Not
+// end is drawn on the light as SGL3D's ray-traced shadows draw it and
+// ends its TMin short of it, so the light's own fixture never occludes it
+// (#228). Not
 // taken: NVIDIA RTXGI's shading of every light at a hit (practice only),
 // which removes the noise of the light's choice. The allocation measures a
 // texel's inconsistency against its own deviation, so less noise leaves it
@@ -187,14 +194,14 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
    return vec3(0.);
   }
   let light=lights[index];
-  let to_light=light_ray_end(light,s.position,random.yz)-s.position;
-  distance=length(to_light);
-  ray=to_light/max(distance,1e-20);
+  let visibility_ray=light_visibility_ray(light,s.position,random.yz,PROBE_HIT_T_MIN);
+  ray=visibility_ray.xyz;
+  distance=visibility_ray.w;
   opacity=select(0.,light.shadow_opacity,(light.flags&LIGHT_CASTS_SHADOW)!=0u);
  }
  sample.specular=0.;
  if opacity>SHADOW_OPACITY_CUTOFF {
-  let visible=scene_segment_visible(s.position,ray,.001,distance,SCENE_SIDES_BOTH);
+  let visible=scene_segment_visible(s.position,ray,PROBE_HIT_T_MIN,distance,SCENE_SIDES_BOTH);
   sample.visibility=shadow_opacity_visibility(select(0.,1.,visible),opacity);
  }
  // The surface's reflectance as shade_lit derives it, its DFG lookup at the

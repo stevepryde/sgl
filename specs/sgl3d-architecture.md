@@ -593,7 +593,26 @@ code; it does not redeclare a struct, binding or function another module owns.
   draw per pixel per frame from the hash world-space reflections took in
   place of Wicked's blue noise, a departure recorded there whose look the
   owner judges here too (RD-5); a radius of 0 is a hard shadow. Both fields
-  are content a light carries and only rays read. The visibilities pack
+  are content a light carries and only rays read. A ray toward a point or
+  spot light or a rectangle ends its `TMin` short of the point it draws
+  (`light_visibility_ray`, which the dynamic GI visibility ray shares with
+  its own 0.001), where Wicked's ends at it (146, 178, 205): a point on a
+  rectangle's face lies on that light's fixture where a game draws one,
+  as a ceiling bar's underside carries its light, and a ray closed at the
+  point meets the fixture at its very end, rounding deciding: on an Apple
+  M5 a fixture shadowed about a quarter of the floor under its own light,
+  and left the probes 15–25 % of that light on the portable path and
+  79–82 % in hardware (#228). Wicked
+  keeps a light's fixture off its rays by an object flag
+  (`IsCastingShadow`, the TLAS instance's shadow mask, `wiScene.cpp`);
+  SGL3D's rays have no caster flag, so the ray ends short, as Bevy Solari's
+  visibility rays keep their start's clearance at their end (9d12036
+  `crates/bevy_solari/src/scene/sampling.wesl` 226–241, `dist -
+  RAY_T_MIN`) and pbrt-v4's shadow rays end a relative `ShadowEpsilon`
+  short (b4ce968 `src/pbrt/cpu/integrators.h` 52–54); a point within
+  twice the `TMin` leaves no interval, and the light is unoccluded, where
+  Bevy's is occluded. An occluder within the `TMin` of the light is so
+  passed, as one within it of the receiver is. The visibilities pack
   into Wicked's 8-bit mask, four slots a word (298–301), with the
   8×4-group hit bitmask the tile classification reads (309–319). Slots 0
   to 3 are denoised by AMD's shadow denoiser as Wicked runs it: tile
@@ -1172,7 +1191,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   lights and the volume list's lights the hit takes, times their count, its
   visibility one any-hit ray from the hit toward the light (a point's or
   spot's position, a directional light's direction, and for a rectangle a
-  point drawn uniformly on its face, as Wicked draws it) through the one
+  point drawn uniformly on its face, as Wicked draws it), from 0.001 past
+  the hit to 0.001 short of that point (the light's end of the ray as
+  ray-traced shadows take it), through the one
   acceptance predicate over both kinds and both sides
   (`scene_segment_visible`; on the hardware path a query whose traversal
   ends at its first accepted hit, `TERMINATE_ON_FIRST_HIT`),

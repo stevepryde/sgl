@@ -486,14 +486,15 @@ fn light_outside_a_closed_room_reaches_its_probes_only_without_a_shadow() {
 
 /// What the volume holds facing down over a grey floor `floor_half` metres
 /// to each side, its top at height 0, under a static black `occluder`, lit
-/// by `point` or `sun` alone: each query's red, irradiance / PI.
+/// by `point` or `sun` alone, its rays traced in hardware where `hardware`:
+/// each query's red, irradiance / PI.
 fn floor_under(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     floor_half: f32,
     occluder: Mat4,
-    point: Option<crate::Light>,
-    sun: Option<crate::DirectionalLight>,
+    (point, sun): (Option<crate::Light>, Option<crate::DirectionalLight>),
+    hardware: bool,
 ) -> Vec<f32> {
     let mut scene = Scene::new(device, queue);
     let mut floor = test_support::cube();
@@ -526,7 +527,10 @@ fn floor_under(
         .unwrap();
     let mut input = input(Vec3::new(0., 2., 6.));
     input.directional_lights[0] = sun;
-    let settings = settings(DynamicGiQuality::High);
+    let settings = Settings {
+        hardware_ray_tracing: hardware,
+        ..settings(DynamicGiQuality::High)
+    };
     let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
     render(
         device,
@@ -610,7 +614,7 @@ fn a_lights_size_lets_its_visibility_rays_past_an_occluder() {
         ),
     ] {
         let [hard, soft, unshadowed] = [hard, soft, unshadowed]
-            .map(|(point, sun)| floor_under(&device, &queue, floor_half, occluder, point, sun));
+            .map(|lights| floor_under(&device, &queue, floor_half, occluder, lights, false));
         assert!(
             hard.iter().all(|&red| red == 0.),
             "{label} of size 0 reached the floor: {hard:?}"
@@ -624,6 +628,73 @@ fn a_lights_size_lets_its_visibility_rays_past_an_occluder() {
             );
         }
     }
+}
+
+// A rectangle light lying on its fixture's face (#228), as a game's
+// ceiling bar carries one: the volume's visibility rays end at points
+// drawn on that face, so a ray that ends exactly there, its interval
+// closed, meets the fixture at its end, and rounding decides whether it
+// calls the light occluded. Plausible defect: the visibility ray
+// ending at the point it draws on the light rather than short of it. The
+// oracle is the geometry: the fixture lies wholly at and above the
+// light's plane and nothing else stands between the floor and the light,
+// so the probes hold what they hold when the light casts no shadow, on
+// the portable path and in hardware. The fixture's bounds are exact in
+// binary, so its underside lies in the light's plane exactly. The frames
+// are deterministic, within the volume's ray budget (50 probes of
+// BUDGET_PROBES' 128): four runs of the unshadowed scene agreed bit for
+// bit on each path, so the bound is exact. Before the fix the probes held
+// 15–25 % of the unshadowed light on the portable path and 79–82 % in
+// hardware.
+#[test]
+fn a_rectangle_lights_own_fixture_does_not_occlude_its_visibility_rays() {
+    let rectangle = |casts_shadow: bool| crate::Light {
+        position: Vec3::new(0., 6., 0.),
+        shape: crate::LightShape::Rect {
+            direction: Vec3::NEG_Y,
+            width_axis: Vec3::X,
+            width: 4.,
+            height: 0.25,
+        },
+        intensity: 200.,
+        range: 30.,
+        casts_shadow,
+        ..Default::default()
+    };
+    let fixture = Mat4::from_translation(Vec3::new(0., 6.125, 0.))
+        * Mat4::from_scale(Vec3::new(4., 0.25, 0.25));
+    let mut occluded = Vec::new();
+    for hardware in [false, true] {
+        let device = if hardware {
+            test_support::ray_tracing_device(|limits| limits)
+        } else {
+            test_support::device()
+        };
+        let Some((device, queue)) = device else {
+            continue;
+        };
+        let [shadowed, open] = [true, false].map(|casts_shadow| {
+            floor_under(
+                &device,
+                &queue,
+                10.,
+                fixture,
+                (Some(rectangle(casts_shadow)), None),
+                hardware,
+            )
+        });
+        assert!(
+            open.iter().all(|&red| red > 0.01),
+            "hardware {hardware}: unshadowed {open:?}"
+        );
+        if shadowed != open {
+            occluded.push(format!("hardware {hardware}: {shadowed:?} of {open:?}"));
+        }
+    }
+    assert!(
+        occluded.is_empty(),
+        "the fixture occluded its own light: {occluded:?}"
+    );
 }
 
 /// `asset` turned inside out and single-sided: each triangle's winding and
