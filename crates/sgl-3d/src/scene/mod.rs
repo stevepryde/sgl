@@ -167,7 +167,7 @@ impl Scene {
             geometry: geometry::GeometryBuffers::new(device),
             static_lighting: static_lighting::StaticLighting::empty(device, queue),
             baked_specular_probes: None,
-            irradiance_cells: irradiance_volume::IrradianceCells::new(device, queue),
+            irradiance_cells: irradiance_volume::IrradianceCells::new(device),
             dynamic_gi: None,
             id: next_generation(),
             resources: next_generation(),
@@ -471,7 +471,7 @@ pub struct SceneResources {
     pub geometry_live: u64,
     pub geometry_buffers: u64,
     /// The hardware path's BLASes, its models' and deforming instances',
-    /// and the triangles they hold. wgpu 29 reports no acceleration
+    /// and the triangles they hold. wgpu 30 reports no acceleration
     /// structure's size.
     pub blases: u64,
     pub blas_triangles: u64,

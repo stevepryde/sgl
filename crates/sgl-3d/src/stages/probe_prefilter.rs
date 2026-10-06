@@ -290,7 +290,9 @@ impl ProbePrefilter {
         let mut rgba16 =
             Vec::with_capacity(payload_size(wgpu::TextureFormat::Rgba16Float, face_size) / 2);
         {
-            let mapped = readback.get_mapped_range(..);
+            let mapped = readback
+                .get_mapped_range(..)
+                .expect("mapped prefilter readback");
             let mut offset = 0;
             for &(size, row) in &rows {
                 for line in

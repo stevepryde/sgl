@@ -160,8 +160,8 @@ const PROBE_DIR = "target/browser-probe";
 async function checkBrowser(): Promise<void> {
   if (!Bun.which("wasm-bindgen")) {
     throw new Error(
-      "the browser lane needs the wasm-bindgen CLI matching the workspace pin: " +
-        "`cargo install wasm-bindgen-cli --version 0.2.126`",
+      "the browser lane needs the wasm-bindgen CLI matching the wasm-bindgen " +
+        "Cargo.lock holds: `cargo install wasm-bindgen-cli --version <it> --locked`",
     );
   }
   const steps: string[][] = [

@@ -140,7 +140,11 @@ impl StatisticsReadback {
             let pending = self.pending.pop_front().unwrap();
             let mut completed = Completed::default();
             {
-                let mapped = pending.buffer.slice(..).get_mapped_range();
+                let mapped = pending
+                    .buffer
+                    .slice(..)
+                    .get_mapped_range()
+                    .expect("mapped draw list readback");
                 let words: &[u32] = bytemuck::cast_slice(&mapped);
                 let statistics: CullStatistics =
                     bytemuck::pod_read_unaligned(bytemuck::cast_slice(&words[..4]));

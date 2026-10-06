@@ -423,7 +423,7 @@ struct TestResult { position_t:vec4<f32>, normal_front:vec4<f32>, ids:vec4<f32>,
             });
             device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
             recv.recv().unwrap().unwrap();
-            let mapped = readback.get_mapped_range(..);
+            let mapped = readback.get_mapped_range(..).unwrap();
             let result: &[[f32; 20]] = bytemuck::cast_slice(&mapped);
             eprintln!(
                 "mirrored={mirrored}, moved={moved}, enabled={enabled}: hit distances {:?}",

@@ -1036,7 +1036,10 @@ impl Renderer {
             .map_err(|e| CaptureError::Readback(format!("map: {e}")))?;
 
         // Strip row padding; opaque alpha.
-        let data = buffer.slice(..).get_mapped_range();
+        let data = buffer
+            .slice(..)
+            .get_mapped_range()
+            .expect("mapped readback buffer");
         let mut pixels = Vec::with_capacity((unpadded * h) as usize);
         for row in 0..h {
             let start = (row * padded) as usize;

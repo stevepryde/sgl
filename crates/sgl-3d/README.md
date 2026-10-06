@@ -1813,7 +1813,7 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
 
 - **Device.** Request `graphics_device::ray_tracing_features(&adapter)`
   with `graphics_device::limits(&adapter)`, which requests the adapter's
-  acceleration-structure limits. wgpu 29 marks the feature experimental, so
+  acceleration-structure limits. wgpu 30 marks the feature experimental, so
   the descriptor's `experimental_features` must be
   `unsafe { wgpu::ExperimentalFeatures::enabled() }`, the game's
   acceptance of it. Metal has it from macOS 15 on Apple silicon (in

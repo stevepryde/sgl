@@ -122,13 +122,14 @@ impl Deref for Context {
 /// One acquired swapchain frame: an attachable view plus `present`.
 pub struct Frame {
     surface_texture: wgpu::SurfaceTexture,
+    queue: wgpu::Queue,
     pub view: wgpu::TextureView,
 }
 
 impl Frame {
     /// Queue the frame for presentation. Call after submitting all passes.
     pub fn present(self) {
-        self.surface_texture.present();
+        self.queue.present(self.surface_texture);
     }
 }
 
@@ -173,6 +174,7 @@ impl Context {
                 power_preference: wgpu::PowerPreference::None,
                 force_fallback_adapter: false,
                 compatible_surface: Some(&surface),
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|error| RendererInitError::Adapter(error.to_string()))?;
@@ -211,6 +213,7 @@ impl Context {
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: if vsync {
@@ -272,6 +275,7 @@ impl Context {
             .create_view(&wgpu::TextureViewDescriptor::default());
         Some(Frame {
             surface_texture,
+            queue: self.gpu.queue.clone(),
             view,
         })
     }

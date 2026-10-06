@@ -229,7 +229,7 @@ fn regression(@builtin(global_invocation_id) id: vec3<u32>) {
         .slice(..)
         .map_async(wgpu::MapMode::Read, |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let mapped = readback.slice(..).get_mapped_range();
+    let mapped = readback.slice(..).get_mapped_range().unwrap();
     let result: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
     eprintln!("budget rows (endpoint xyz, accepted; premultiplied radiance): {result:?}");
     assert_eq!(

@@ -539,7 +539,7 @@ fn save(
     buffer.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely())?;
     let pixels: Vec<u8> = buffer
-        .get_mapped_range(..)
+        .get_mapped_range(..)?
         .chunks_exact(stride as usize)
         .flat_map(|row| row[..texture.width() as usize * 4].to_vec())
         .collect();

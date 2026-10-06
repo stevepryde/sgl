@@ -447,7 +447,8 @@ fn probe_tiles_keep_the_probes_whose_influence_reaches_their_geometry() {
     queue.submit([encoder.finish()]);
     readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let tiles: Vec<u32> = bytemuck::cast_slice(&readback.slice(..).get_mapped_range()).to_vec();
+    let tiles: Vec<u32> =
+        bytemuck::cast_slice(&readback.slice(..).get_mapped_range().unwrap()).to_vec();
     let buckets = PROBE_BUCKETS as usize;
     let mut expected = vec![0; 2 * buckets];
     expected[0] = 0b101;

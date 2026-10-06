@@ -493,7 +493,7 @@ fn frame(
     readbacks
         .iter()
         .map(|readback| {
-            let hits = bytemuck::cast_slice(&readback.get_mapped_range(..)).to_vec();
+            let hits = bytemuck::cast_slice(&readback.get_mapped_range(..).unwrap()).to_vec();
             readback.unmap();
             hits
         })

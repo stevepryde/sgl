@@ -15,6 +15,53 @@ full API details.
 
 ## Unreleased
 
+### SGL moves to wgpu 30
+
+- **Scope:** `sgl-2d`, `sgl-3d` and `sgl-post-fx` move from wgpu and naga
+  29 to 30, and from `sp-fidelity`/`sp-fidelity-wgpu` 0.1 to 0.2, which
+  are on wgpu 30 too (#207). The root manifest's requirements on wgpu, naga,
+  `wasm-bindgen`, `wasm-bindgen-futures`, `wasm-bindgen-test`, `js-sys`
+  and `web-sys` are now caret ranges (`wgpu = "30.0"`) instead of `=`
+  pins. A game can therefore resolve any wgpu 30.x, including 30.0.1, which
+  needs `wasm-bindgen` 0.2.127 or later. SGL's own `Cargo.lock` stays at
+  wgpu 30.0.0 and `wasm-bindgen` 0.2.126 (#212 moves it to 30.0.1).
+- **Behaviour:**
+  - `sgl-2d`'s `Frame::present` keeps its signature. It now presents
+    through `Queue::present`. The canvas surface takes
+    `SurfaceColorSpace::Auto`, which is wgpu's earlier behaviour (sRGB for
+    its formats), and its adapter request applies no limit buckets.
+  - The irradiance volume no longer writes one zero texel into each
+    volume texture at creation (#156). wgpu 30 tracks a copy into a 3D
+    texture at any depth (gfx-rs/wgpu#9765), so wgpu's own
+    zero-initialisation holds. No visible change.
+  - On Metal, naga 30 lowers ray queries through Metal's
+    `intersection_query` instead of `intersector`. The hardware path keeps
+    its baseline form there (#211 decides the candidate form), but its
+    passes' GPU time on Metal may differ from wgpu 29's.
+- **Migration:** a game that calls wgpu or writes WGSL itself updates that
+  code for wgpu 30 ([wgpu's changelog](https://github.com/gfx-rs/wgpu/blob/v30.0.0/CHANGELOG.md)).
+  These are the changes SGL's own code needed:
+  - Require `wgpu = "30.0"` (and `naga = "30.0"` where the game uses it
+    directly). Don't pin it with `=`, so that compatible fixes resolve.
+  - `get_mapped_range` returns a `Result`: add `.expect("mapped")` or `?`.
+  - `VertexState::buffers` takes `&[Option<VertexBufferLayout>]`: wrap
+    each layout in `Some`.
+  - `surface_texture.present()` becomes `queue.present(surface_texture)`.
+  - `SurfaceConfiguration` gains `color_space`: add
+    `color_space: wgpu::SurfaceColorSpace::Auto` for the old behaviour.
+  - `RequestAdapterOptions` gains `apply_limit_buckets`: add
+    `apply_limit_buckets: false`, or use `..Default::default()`.
+  - WGSL: an integer value passed from the vertex to the fragment stage
+    declares `@interpolate(flat)` itself; naga no longer assumes it.
+  - Also renamed: the encoders' `dispatch` and `dispatch_indirect` become
+    `dispatch_workgroups` and `dispatch_workgroups_indirect`, and
+    `TextureUsages::TRANSIENT` becomes `TRANSIENT_ATTACHMENT`.
+
+  The browser lane's `wasm-bindgen-cli` must match the `wasm-bindgen`
+  locked in the game's `Cargo.lock`. Afterwards, run the game natively and
+  in the browser. With hardware ray tracing on a Mac, look at ray-traced
+  shadows, reflections and dynamic GI, and compare their GPU timings.
+
 ### glTF bytes decode data-URI images
 
 - **Scope:** `sgl-3d` `asset::load_slice` and `asset::load_slice_with_options`

@@ -211,7 +211,7 @@ fn admit(mut pending: Vec<Pending>) -> Vec<ModelId> {
 
 /// Whether the device holds a BLAS over `meshes`: no more geometries than
 /// `max_blas_geometry_count`, no more triangles than
-/// `max_blas_primitive_count`, and, as wgpu 29 also checks each geometry's
+/// `max_blas_primitive_count`, and, as wgpu 30 also checks each geometry's
 /// vertex count against that limit (`wgpu-core` `device/ray_tracing.rs`
 /// 93–98), no mesh of more vertices than it.
 fn fits(meshes: &[RayMeshWords], limits: &wgpu::Limits) -> bool {

@@ -418,7 +418,7 @@ Each has one definition, which every producer and consumer uses.
 | History | A stage owns its history. The receiver pass keeps none: the surface is rebuilt in every frame it runs. The renderer issues one reset for `FrameInput::camera_cut`, a `Renderer::resize` that changed the targets, or a different `Scene`. Content edits, lighting changes and material animation restart no history: each history rejects what changed by reprojection and clamping, as its upstream does (FSR2 takes a blended surface's changing shading from the reactive and composition masks blended surfaces write; an opaque material's moving normal layers write none); the scene's change tracking rebuilds bindings and instance motion and reports static edits to caches of static content ([Scene content](#scene-content)), nothing more. Camera history is the renderer's (S3D-4): the last submitted camera's unjittered view and projection, from which the `View`'s previous matrices come, and the jitter that frame applied; a stage reprojects through them, with the jitter where it reprojects what was rasterized jittered, and keeps no camera of its own. The frame's history carries the scene's render origin, its summed moves as a value ([Scene content](#scene-content)). Each holder of state retained in the render frame records the origin that state is expressed in and, where the frame's differs, translates the state by the difference and records the frame's origin with it: the renderer its camera history, committed at `finish_frame` as that history is, as Filament keeps its antialiasing history in the user's world across its origin snaps; a stage what it retains (a shadow face's light and the poses of the moving casters it drew), committed as that state is. Repeating the step is idempotent, so an abandoned frame, which commits nothing, translates nothing twice: the next frame compares the same origins. What a stage keeps in screen space (colour, depth, motion, confidence, the fog's volume) needs nothing, and nothing restarts; a reset records the frame's origin with the new history. The dynamic GI stage's probe state is world-space history about each probe's centre and takes no renderer reset: the stage keys it on the scene identity and the lattice the volume it sees in prepare lies on, restarting when either differs (a scroll keeps the probes that stay, clearing those that enter) and after frames in which it did not run; the placement a frame scrolled to is committed with it. The ray-traced shadow stage's history (its temporal mask pair, and the denoiser's moments and filter history for the slots it denoises) is screen space, reset by the renderer's one reset and after a frame in which the stage did not run; a slot whose light changed restarts alone, through the slot table's restart bit, and a move of the render origin touches none of it. The cull stage's history is the camera's depth pyramid, its own last executed build, so it holds the last submitted frame's; the next frame's early phase reads it through the camera history's previous matrices and jitter and the object records' previous poses, and a reset frame, or one whose last submitted frame built none, reads none and culls by frustum alone; a mismatch costs time, not a surface, since the late phase tests again ([GPU draw lists](#designs-that-span-stages)). |
 | Settings | The renderer resolves requested settings into one effective configuration per frame. Stages read only that, and report why a choice could not run. `Settings::dynamic_gi` (`DynamicGiQuality`: `Off`, `Low`, `High`; `High` by default) is the dynamic GI volume's quality tier: the most rays a probe traces a frame, Wicked's 256 at High; the volume's placement is content, and everything else about it is SGL3D's (S3D-6). `Settings::hardware_ray_tracing` (`bool`, `false`: off by default and in every preset, the game opts in, the owner's decision, [D-28](decisions.md)) traces every scene ray through the device's acceleration structures where it has ray queries, else through the portable BVHs; `Settings::ray_traced_shadows` (`bool`, `false`: off by default and in every preset, as hardware ray tracing is, [D-28](decisions.md)) gives the camera's opaque surfaces ray-traced shadows while hardware ray tracing is in effect, reported by `Renderer::ray_traced_shadows_in_effect`; `Settings::world_space_reflections` (`WorldSpaceReflections`: `Off`, `Moving`, `All`; `Off`, and no preset turns it on) is what world-space rays fill the screen-space method's misses with, `All` meant for the hardware path and allowed on the portable one ([Reflections](#designs-that-span-stages)). `Renderer::ray_tracing_in_effect` and `ray_tracing_error` report the hardware path as `antialiasing_in_effect` and `fsr2_error` report FSR2 ([Hardware ray tracing](#designs-that-span-stages), [Ray-traced shadows](#designs-that-span-stages)). `Settings::occlusion_culling` (a `bool`, off by default, as Bevy's `OcclusionCulling` is opt-in, until a net saving measured on the consumer's routes records otherwise) runs the two-phase occlusion test in the opaque stage's two-pass form with its pyramids, a cost that pays only where a frame submits much hidden geometry, which the game knows: on Apple's tile-based GPUs, which discard hidden fragments before shading them, #24's oracle found a saving in a large open view and none on a walk or in a cave, and the real culling cost 0.2–0.5 ms a frame natively on Metal on all three while saving 0.9–1.4 ms in Chrome over a large window seen from the ground; off, the GPU-built views draw everything their frustums hold. Which views build their lists on the GPU is SGL3D's ([GPU draw lists](#designs-that-span-stages)). |
 | Timing | Every pass belongs to its stage's timing group. |
-| Diagnostics | Behind the `diagnostics` feature. Switches are `Settings::diagnostics`, resolved into the effective configuration, never environment variables; observations return to the game, and the library writes no files. Every layer writes to the GPU, creates buffers (with contents or without; creating or growing a geometry slab or the ray source counts as a creation, and its copy as a growth), prepares and places models and builds instance BVHs through `counters`, a leaf module that counts them on the calling thread with the feature (`diagnostics::counters`) and passes straight through without it; `Scene::diagnostic_resources` and `Renderer::diagnostic_draws` report the buffers content holds (the candidates, chains and sets among them) and each view's draws as encoded; the hardware path's BLAS builds, compactions and TLAS builds count through `counters` too, and `diagnostic_resources` reports the BLASes it holds and their triangles: wgpu 29 reports no acceleration structure's size. `geometry_stats_for_model` reads back each candidate's visible sections under this feature. The `culling` layer makes both builders submit every level-selected draw, the GPU's cull accepting every candidate and section. `Renderer::diagnostic_view_times` reports the CPU time each camera and cascade list took to build and to record. `Diagnostics::dynamic_gi` observes the dynamic GI stage: an observed frame traces through the trace's portable program with its BVH walks counted (`ray_observation_enabled`), a pass sums them, and `Renderer::take_dynamic_gi_reports` returns each observed frame's probes, rays, visits, budget stride and what kept the volume awake, numbered by the frames the renderer finished before it, read back without blocking; at most 8 readbacks wait, and the next report counts the observed frames skipped past them. Off, the stage runs its plain trace program and counts nothing. |
+| Diagnostics | Behind the `diagnostics` feature. Switches are `Settings::diagnostics`, resolved into the effective configuration, never environment variables; observations return to the game, and the library writes no files. Every layer writes to the GPU, creates buffers (with contents or without; creating or growing a geometry slab or the ray source counts as a creation, and its copy as a growth), prepares and places models and builds instance BVHs through `counters`, a leaf module that counts them on the calling thread with the feature (`diagnostics::counters`) and passes straight through without it; `Scene::diagnostic_resources` and `Renderer::diagnostic_draws` report the buffers content holds (the candidates, chains and sets among them) and each view's draws as encoded; the hardware path's BLAS builds, compactions and TLAS builds count through `counters` too, and `diagnostic_resources` reports the BLASes it holds and their triangles: wgpu 30 reports no acceleration structure's size. `geometry_stats_for_model` reads back each candidate's visible sections under this feature. The `culling` layer makes both builders submit every level-selected draw, the GPU's cull accepting every candidate and section. `Renderer::diagnostic_view_times` reports the CPU time each camera and cascade list took to build and to record. `Diagnostics::dynamic_gi` observes the dynamic GI stage: an observed frame traces through the trace's portable program with its BVH walks counted (`ray_observation_enabled`), a pass sums them, and `Renderer::take_dynamic_gi_reports` returns each observed frame's probes, rays, visits, budget stride and what kept the volume awake, numbered by the frames the renderer finished before it, read back without blocking; at most 8 readbacks wait, and the next report counts the observed frames skipped past them. Off, the stage runs its plain trace program and counts nothing. |
 
 WGSL is composed from named modules by one function, `shading::compose`: each
 module declares the modules it uses, and a program is their concatenation in
@@ -535,7 +535,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   `Rgba8Unorm` storage array of four layers, one 8-bit visibility per
   slot, `RT_SHADOW_LIGHTS` (16, Wicked's `MAX_RTSHADOWS`) slots in all (a
   core storage format, where Wicked's `R8_UNORM` array is not one in
-  wgpu 29), and the **slot table**, a uniform naming each slot's light and
+  wgpu 30), and the **slot table**, a uniform naming each slot's light and
   whether its history restarts, both lent to the lighting pass at its group
   3 ([Bind groups](#shared-contracts)); the lighting pass's camera surfaces
   take a light's slot visibility in place of its map through the one
@@ -1277,7 +1277,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   by default and no preset turns it on: a game opts in by requesting the
   feature and turning the setting on, the owner's decision
   ([D-28](decisions.md)), which no later change reverses.
-  *Device.* wgpu 29 marks the feature experimental: `request_device`
+  *Device.* wgpu 30 marks the feature experimental: `request_device`
   refuses it unless the descriptor's `experimental_features` is
   `ExperimentalFeatures::enabled()`, an `unsafe` token the game gives
   (S3D-1: the game owns the device), so `graphics_device::features` does
@@ -1298,14 +1298,17 @@ code; it does not redeclare a struct, binding or function another module owns.
   a GPU that supports ray tracing from render stages, Apple silicon, in
   hardware from M3; never the browser, whose WebGPU has none. MoltenVK
   offers no ray query, so Vulkan on a Mac has none either.
-  *Two forms, one stage.* naga 29's MSL writer runs one `intersect` at
-  initialisation, returns `rayQueryProceed` true until terminate, emits
-  nothing for `rayQueryConfirmIntersection` and reads a candidate as the
-  committed hit (`back/msl/writer.rs` 49, 4111–4166, 2874), so a candidate
-  loop cannot filter on Metal; its SPIR-V and HLSL writers lower the loop
-  (`back/spv/ray/query.rs`: `OpRayQueryInitializeKHR` with the flags and
+  *Two forms, one stage.* naga 29's MSL writer could not run a candidate
+  loop: it ran one `intersect` at initialisation and emitted nothing for
+  `rayQueryConfirmIntersection`. naga 30's lowers the loop through Metal's
+  `intersection_query` (`back/msl/ray.rs`: `reset` 363–368, `next` 386–417,
+  `commit_triangle_intersection` 472–495), but the candidate form has not
+  been validated or measured there, so Metal keeps the baseline by
+  recorded decision until #211 settles it. naga 30's SPIR-V and HLSL
+  writers lower the loop (`back/spv/ray/query.rs`:
+  `OpRayQueryInitializeKHR` with the flags and
   cull mask, `Proceed`, `ConfirmIntersection`, `Terminate`, candidate and
-  committed reads at 170–200; `back/hlsl/ray.rs`: `TraceRayInline` with the
+  committed reads at 75–105; `back/hlsl/ray.rs`: `TraceRayInline` with the
   flags and cull mask at 376–380, `Proceed` 424, `CommitNonOpaqueTriangleHit`
   529, `Abort` 547, candidate reads 190–222 and committed reads 86–119).
   The owner's decision: hardware ray tracing works on the Mac in its first
@@ -1435,10 +1438,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   candidate, so the re-trace and the side rules stay as the baseline has
   them; the candidate form does not take the side rules, since Wicked's
   per-instance cull exemptions are not available. The loop stops at the
-  budget's cap by returning a miss, never through `rayQueryTerminate`:
-  naga 29.0.4's SPIR-V writer caches its terminate helper under proceed's
-  key (`back/spv/ray/query.rs` 1869–1870), so a proceed it writes after
-  one would call the terminate helper. The portable walk then
+  budget's cap by returning a miss. The portable walk then
   covers the pending and left-out instances alone. A BLAS is built for
   its geometry and its geometries' opacity under the form in effect, so
   under this form a
@@ -1487,8 +1487,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   position slots start, placed at a three-word boundary) and its model's
   indices, built whole again after
   the deform pass in every frame that deforms it, with `Build` and
-  `PREFER_FAST_BUILD` (wgpu 29 builds `PreferUpdate` as a full build,
-  `command/ray_tracing.rs` 917, 937, so `ALLOW_UPDATE` buys nothing until
+  `PREFER_FAST_BUILD` (wgpu 30 builds `PreferUpdate` as a full build,
+  `command/ray_tracing.rs` 1106, 1126, so `ALLOW_UPDATE` buys nothing until
   it refits), outside the budget, as Wicked refits its skinned meshes'
   BLASes every frame (`wiScene.cpp` 4246–4252; `wiRenderer.cpp`
   5749–5760): a crowd of 64 instances of the skinned example's model is
@@ -1513,9 +1513,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   moving 2), where Wicked's masks select by purpose (`wiRenderer.h`
   38–40; `wiScene.cpp` 4749–4794) and Bevy's take every ray (`binder.rs`
   171–176); created with a capacity of at least one, so wgpu builds it
-  even when it holds no instance (wgpu-core 29 sizes its scratch from the
-  capacity, `device/ray_tracing.rs` 205–218, and skips only a build with
-  nothing at all to build, `command/ray_tracing.rs` 286–294), and grown
+  even when it holds no instance (wgpu-core 30 sizes its scratch from the
+  capacity, `device/ray_tracing.rs` 242–255, and skips only a build with
+  nothing at all to build, `command/ray_tracing.rs` 303–308), and grown
   with the entry buffer. Builds are frame work: one
   `build_acceleration_structures` call in the frame's encoder, in prepare
   after the deform pass and before the cull stage's early phase, holds the
@@ -1542,7 +1542,7 @@ code; it does not redeclare a struct, binding or function another module owns.
   through the queue under Bevy's budget (`blas.rs` 104–142), the TLAS
   taking the compacted BLAS at its next build; compaction stays, as Bevy
   keeps it, its cost unmeasured until wgpu can timestamp acceleration-structure
-  work: wgpu 29's `build_acceleration_structures` and `Queue::compact_blas`
+  work: wgpu 30's `build_acceleration_structures` and `Queue::compact_blas`
   take no timestamp writes, and a compaction's copy runs in the queue's own
   submission ahead of the frame's, outside the frame's pass timings. What the device cannot hold
   is left out and counted, never reaching wgpu's validation: a model beyond
@@ -1624,9 +1624,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   Rendering Pipelines, SIGGRAPH 2015). Bevy's meshlet raster is taken over
   its batched GPU preprocessing for the draws because of what each costs
   to encode: a batched list is one indirect command per batch, which wgpu
-  issues one at a time on Metal (`wgpu-hal/src/metal/command.rs` 1555-1597)
-  and WebGPU (`wgpu/src/backend/webgpu.rs` 3560-3588) and validates one at a
-  time where its indirect validation is on (wgpu 29 `instance.rs` 258-264,
+  issues one at a time on Metal (`wgpu-hal/src/metal/command.rs` 1589-1629)
+  and WebGPU (`wgpu/src/backend/webgpu.rs` 3725-3753) and validates one at a
+  time where its indirect validation is on (wgpu 30 `instance.rs` 268-274,
   on by default in release builds), so at the consumer's scale (#19: every
   chunk its own model) a frame would encode tens of thousands of commands
   across its views, no better than the CPU walk; a cluster draw is one

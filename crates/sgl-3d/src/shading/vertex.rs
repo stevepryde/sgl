@@ -141,8 +141,10 @@ pub(crate) const CASTER_SLOT: u32 = 1;
 /// The vertex buffers of scene geometry pipelines, in slot order: the camera
 /// and probe passes read the first, which pulls the rest of each vertex from
 /// the scene source; shadow casters read both.
-pub(crate) const GEOMETRY_BUFFERS: [wgpu::VertexBufferLayout<'static>; 2] =
-    [DRAW_INSTANCE_LAYOUT.buffer, CASTER_LAYOUT.buffer];
+pub(crate) const GEOMETRY_BUFFERS: [Option<wgpu::VertexBufferLayout<'static>>; 2] = [
+    Some(DRAW_INSTANCE_LAYOUT.buffer),
+    Some(CASTER_LAYOUT.buffer),
+];
 
 /// One glow vertex (`Glow`) as the scene's glow buffer holds it, which
 /// `glow_vs` (stages/transparent/glow.wgsl) reads: its kind as a `GLOW_*`

@@ -1,10 +1,11 @@
 // The candidate form's query (the architecture's Hardware ray tracing,
 // *Candidate form*), the composition root of the hardware path where the
-// backend lowers a candidate loop: naga 29's SPIR-V writer (Vulkan;
-// `back/spv/ray/query.rs`, proceed 1037–1160, confirm 1460–1590, candidate
-// and committed reads 109–594) and HLSL writer (DX12; `back/hlsl/ray.rs`,
+// backend runs a candidate loop: naga 30's SPIR-V writer (Vulkan;
+// `back/spv/ray/query.rs`, proceed 637–781, confirm 1081–1211, candidate
+// and committed reads 15–500) and HLSL writer (DX12; `back/hlsl/ray.rs`,
 // `Proceed` 424, `CommitNonOpaqueTriangleHit` 529, candidate reads
-// 143–222), never its MSL writer, which runs no candidate loop. Every BLAS
+// 143–222). Metal keeps the baseline until this form is validated there
+// (#211), though naga 30's MSL writer lowers the loop too. Every BLAS
 // geometry is opaque but a masked mesh's, so the hardware reports each
 // triangle of a masked mesh a query crosses as a candidate, and the loop
 // runs the whole shared predicate on it, the cut-out test included,
@@ -20,10 +21,7 @@
 // the first committed, each candidate on the way judged by the shared
 // predicate (with `receiver`, `sides` and `open_end`) and confirmed where
 // it accepts it. Each candidate is a step of `steps` (AR-12): at the cap
-// the query stops and the ray reports a miss. It stops by returning, never
-// through `rayQueryTerminate`: naga 29.0.4's SPIR-V writer caches its
-// terminate helper under proceed's key (`back/spv/ray/query.rs` 1869–1870),
-// so a proceed it writes after one would call the terminate helper.
+// the query stops by returning and the ray reports a miss.
 fn scene_hardware_query(ray:SceneRay,t_min:f32,mask:u32,first_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,steps:ptr<function,u32>)->RawSceneHit {
  let miss=RawSceneHit(vec4(0u),vec4(0.));
  var query:ray_query;

@@ -93,7 +93,10 @@ compatibility shims solely to avoid updating consumers.
 - Keep all dependency version requirements in the root `[workspace.dependencies]`;
   member crates inherit them with `workspace = true` and select their own features
   and target conditions. Keep the diagnostics-only self dev-dependency path-only
-  so Cargo omits it when packaging. Do not duplicate current dependency versions
+  so Cargo omits it when packaging. Require wgpu, naga and the wasm-bindgen
+  family (`wasm-bindgen*`, `js-sys`, `web-sys`) as caret ranges, never `=`
+  pins, so a game can resolve their compatible fixes; `Cargo.lock` fixes what
+  SGL itself builds and tests with. Do not duplicate current dependency versions
   in prose; link to the workspace manifest and lockfile. Retain version numbers where
   they identify a release migration, an exact-pin example, or upstream provenance.
 - `crates/sgl-3d/docs/` is SGL3D's guide for agents building games: what it

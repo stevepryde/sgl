@@ -74,7 +74,7 @@ fn read(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> 
     queue.submit([encoder.finish()]);
     buffer.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let mapped = buffer.get_mapped_range(..);
+    let mapped = buffer.get_mapped_range(..).unwrap();
     mapped
         .chunks(8)
         .map(|texel| std::array::from_fn(|c| crate::test_support::half(&texel[c * 2..c * 2 + 2])))

@@ -204,7 +204,7 @@ fn resolve_borders_match_hardware_filtering_and_clamp_metadata() {
             queue.submit([encoder.finish()]);
             buffer.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
             device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-            let bytes = buffer.get_mapped_range(..);
+            let bytes = buffer.get_mapped_range(..).unwrap();
             let alpha: Vec<_> = (0..full[1])
                 .flat_map(|y| (0..full[0]).map(move |x| (y * row + x * 8 + 6) as usize))
                 .map(|offset| half(&bytes[offset..offset + 2]))
