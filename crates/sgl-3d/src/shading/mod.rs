@@ -26,6 +26,8 @@ pub(crate) mod packed_vertex;
 mod packed_vertex_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rect_light_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod scene_ray_valid_tests;
 mod scene_rays;
 pub(crate) use scene_rays::{RayQueryForm, SCENE_RAYS, SCENE_RAYS_PREDICATE, ray_trace_root};
 #[cfg(test)]

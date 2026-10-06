@@ -1894,7 +1894,14 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   (0.12–0.13 ms) where nothing is masked; Vulkan and DX12, whose
   shader compilers lower the loop too, run the baseline until it is
   measured on their hardware, which it has not run on yet. A device whose candidate
-  programs fail to compile falls back to the baseline for good.
+  programs fail to compile falls back to the baseline for good. On Metal
+  the tracing passes cost more under wgpu 30 than under wgpu 29 (#221):
+  naga 30's lowering drops the triangle-geometry hint naga 29 gave Metal,
+  which leaves every pixel of a tracing pass on Metal's general ray-query
+  path whether or not it traces. On an Apple M5 at 1920×1080 the
+  streaming example's world reflection rays, which trace nothing there,
+  cost 0.20 ms against wgpu 29's 0.09, and its ray-traced shadow rays
+  about 40–57 % more. SGL3D cannot restore the hint; it is naga's.
 - **Reporting.** `Renderer::ray_tracing_in_effect(&settings)` says whether
   the hardware path traces the scene's rays, as
   `antialiasing_in_effect` does for antialiasing, and
