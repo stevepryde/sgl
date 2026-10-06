@@ -87,9 +87,7 @@ AMD FidelityFX Denoiser, https://github.com/GPUOpen-Effects/FidelityFX-Denoiser
 Revision d7dfecbabe7b9523b14e7b067216e06b86e8d189, LICENSE.txt. SGL3D ports
 ffx-shadows-dnsr/ffx_denoiser_shadows_util.h, ffx_denoiser_shadows_tileclassification.h
 and ffx_denoiser_shadows_filter.h to the ray-traced shadow stage
-(stages/shadows/traced/ffx_denoiser_shadows_*.wgsl), as Wicked Engine runs them,
-and the filter's tile-metadata skip to the world-space reflections' denoise
-passes (stages/reflections/world/world_reflections_denoise.wgsl).
+(stages/shadows/traced/ffx_denoiser_shadows_*.wgsl), as Wicked Engine runs them.
 
 Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
 

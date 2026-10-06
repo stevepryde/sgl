@@ -2,7 +2,7 @@
 // the receiver G-buffer, the reduced tracing grid and camera
 // reconstruction, as Wicked Engine's RT reflection passes read them
 // (world_reflections.wgsl header), and the one owner of the tracing grid's
-// jitter, its tiles and the ray list's packing.
+// jitter and the ray list's packing.
 struct WorldParams {
  inverse_view_projection:mat4x4<f32>,
  previous_view_projection:mat4x4<f32>,
@@ -31,13 +31,8 @@ struct WorldParams {
 // Full-resolution pixels per tracing pixel on each axis (world.rs
 // DOWNSCALE).
 const WORLD_DOWNSCALE:u32=2u;
-// The most full-resolution pixels a tracing pixel's block spans on an axis:
-// its downscale, and on the last column or row the remainder past the last
-// whole block (world_tracing_of_full), a constant bound (AR-12).
-const WORLD_MOST_COVERED:u32=2u*WORLD_DOWNSCALE-1u;
-// The classification's tiles, its workgroups, of WORLD_TILE squared tracing
-// pixels; the denoise passes skip those that hold no receiver (world.rs
-// WORLD_TILE).
+// The classification's workgroups: tiles of WORLD_TILE squared tracing
+// pixels (world.rs classify::TILE).
 const WORLD_TILE:u32=8u;
 // The trace's threads in a workgroup, and its workgroups in a row of its
 // indirect dispatch, small so that ordinary frames span several rows
@@ -81,15 +76,6 @@ fn world_receives(p:vec2<i32>)->bool {
  let lit=gbuffer_lit(textureLoad(world_f0,q,0));
  return world_traces(textureLoad(world_depth,q,0),lit,gbuffer_traced_roughness(material,lit));
 }
-// The receiver at `p` where its tile holds one (`occupied`), else a pixel
-// that is no receiver, with its depth alone: what the denoise passes see
-// in a tile the classification found empty, without the rest of its loads.
-fn world_receiver_in_tile(p:vec2<i32>,occupied:bool)->WorldReceiver {
- if occupied {
-  return world_receiver(p);
- }
- return WorldReceiver(textureLoad(world_depth,world_clamped(p),0),vec3(0.),0.,false);
-}
 fn world_random(p:vec2<u32>,frame:u32)->vec2<f32> {
  return hash33_unit(vec3(p,frame)).xy;
 }
@@ -99,17 +85,6 @@ fn world_random(p:vec2<u32>,frame:u32)->vec2<f32> {
 fn world_traced_pixel(tracing:vec2<u32>)->vec2<i32> {
  let jitter=vec2<u32>(floor(world_random(vec2(0u),world.frame)*f32(WORLD_DOWNSCALE)));
  return vec2<i32>(jitter+tracing*WORLD_DOWNSCALE);
-}
-// The tracing pixel whose block holds full-resolution pixel `p`: the last
-// column and row also hold the remainder past the last whole block.
-fn world_tracing_of_full(p:vec2<u32>)->vec2<u32> {
- return min(p/WORLD_DOWNSCALE,vec2<u32>(world.reduced.xy)-vec2(1u));
-}
-// The index of the tile that holds tracing pixel `tracing`.
-fn world_tile(tracing:vec2<u32>)->u32 {
- let tiles=(u32(world.reduced.x)+WORLD_TILE-1u)/WORLD_TILE;
- let tile=tracing/WORLD_TILE;
- return tile.y*tiles+tile.x;
 }
 // A listed ray: its tracing pixel's coordinates in 16 bits each, as
 // FidelityFX SSSR packs its ray list's (PackRayCoords).

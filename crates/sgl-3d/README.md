@@ -767,8 +767,7 @@ surface takes world-space reflections and that screen-space reflections did
 not resolve, and the trace runs over that list, as AMD FidelityFX SSSR traces
 its rays, so a frame with no such pixel pays the classification alone
 (TIMINGS-README). Wicked Engine's RT reflection
-resolve, temporal and bilateral upsample passes denoise the rays, skipping the
-8×8 tiles that hold no such surface. The result is
+resolve, temporal and bilateral upsample passes denoise the rays. The result is
 premultiplied radiance with the share of rays that hit in alpha, and it composites as
 `ssr.rgb + (world.rgb + environment * (1 - world.a)) * (1 - ssr.a)`, so misses
 keep the probe and sky specular. Under `Moving` a static nearest hit also keeps

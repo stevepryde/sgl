@@ -94,8 +94,7 @@ fn texture(
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            // Copied from by the tests, as the ray-traced shadow stage's.
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | usage,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | usage,
             view_formats: &[],
         })
         .create_view(&Default::default())
@@ -482,11 +481,7 @@ impl WorldReflections {
             pass.set_pipeline(&denoise.pipeline);
             pass.set_bind_group(0, bind, &[]);
             pass.set_bind_group(3, receiver_group, &[]);
-            pass.dispatch_workgroups(
-                grid[0].div_ceil(classify::TILE),
-                grid[1].div_ceil(classify::TILE),
-                1,
-            );
+            pass.dispatch_workgroups(grid[0].div_ceil(8), grid[1].div_ceil(8), 1);
         };
         dispatch(
             &mut self.resolve,
@@ -499,7 +494,6 @@ impl WorldReflections {
                 (20, view(&t.resolve)),
                 (21, view(&t.resolve_variance)),
                 (22, view(&t.reprojection)),
-                (60, t.lists.tiles.as_entire_binding()),
             ],
             t.reduced,
             encoder,
@@ -520,7 +514,6 @@ impl WorldReflections {
                 (40, view(&t.temporal[current])),
                 (41, view(&t.temporal_variance[current])),
                 (42, view(&t.depth[current])),
-                (60, t.lists.tiles.as_entire_binding()),
             ],
             t.reduced,
             encoder,
@@ -534,36 +527,11 @@ impl WorldReflections {
                 (50, view(&t.temporal[current])),
                 (51, view(&t.temporal_variance[current])),
                 (52, view(&t.output)),
-                (60, t.lists.tiles.as_entire_binding()),
             ],
             t.full,
             encoder,
         );
         self.frame = self.frame.wrapping_add(1).max(1);
-    }
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-impl WorldReflections {
-    /// The textures the last encoded frame wrote: the resolve's radiance,
-    /// variance and reprojection depth, the temporal pass's radiance,
-    /// variance and depth history (the half of each pair it wrote), the
-    /// output, and the reduced grid's size.
-    pub(crate) fn test_targets(&self) -> ([&wgpu::TextureView; 7], [u32; 2]) {
-        let t = &self.targets;
-        let written = (self.frame.wrapping_sub(1) % 2) as usize;
-        (
-            [
-                &t.resolve,
-                &t.resolve_variance,
-                &t.reprojection,
-                &t.temporal[written],
-                &t.temporal_variance[written],
-                &t.depth[written],
-                &t.output,
-            ],
-            t.reduced,
-        )
     }
 }
 

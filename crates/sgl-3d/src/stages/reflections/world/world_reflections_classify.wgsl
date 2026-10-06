@@ -18,11 +18,8 @@
 // a texture and its count reaches the trace through WorldParams (world.rs),
 // since the trace's compute stage holds S3D-1's storage buffers already;
 // the count is cleared each frame before the classification rather than
-// reset here; a tile's flag, whether any pixel of its tracing pixels'
-// blocks is a receiver, is FidelityFX Denoiser's tile metadata (revision
-// d7dfecbabe7b9523b14e7b067216e06b86e8d189, MIT, see
-// LICENSE-amd-fidelityfx-denoiser.txt; ffx_denoiser_shadows_filter.h
-// 239–251), which the denoise passes read to skip a tile; and the indirect
+// reset here; no denoiser tile list, since the denoise passes run over the
+// whole grid (the architecture's Reflections says why); and the indirect
 // dispatch runs in rows of WORLD_GROUP_ROW workgroups.
 // The screen-space method's result and the surface depth (the Surface
 // contract, specs/sgl3d-architecture.md): a receiver the method resolved,
@@ -41,8 +38,6 @@ struct WorldRayCount {
  groups:array<u32,3>,
 }
 @group(0) @binding(14) var<storage,read_write> world_ray_count:WorldRayCount;
-// Each tile's flag (world_tile): 1 where a receiver lies in it.
-@group(0) @binding(15) var<storage,read_write> world_tile_flags:array<u32>;
 
 // Whether tracing pixel `tracing` traces a ray this frame.
 fn world_needs_ray(tracing:vec2<u32>)->bool {
@@ -53,27 +48,10 @@ fn world_needs_ray(tracing:vec2<u32>)->bool {
  let clamped=world_clamped(pixel);
  return !gbuffer_under_receiver(textureLoad(world_surface_depth,clamped,0),textureLoad(world_depth,clamped,0));
 }
-// Whether a full-resolution pixel of tracing pixel `tracing`'s block
-// (world_tracing_of_full) is a receiver: the pixel the resolve and the
-// temporal pass take (its first) and those the upsample does.
-fn world_block_receives(tracing:vec2<u32>)->bool {
- let full=vec2<u32>(world.full.xy);
- for (var y=0u;y<WORLD_MOST_COVERED;y++) {
-  for (var x=0u;x<WORLD_MOST_COVERED;x++) {
-   let p=tracing*WORLD_DOWNSCALE+vec2(x,y);
-   if all(p<full) && all(world_tracing_of_full(p)==tracing) && world_receives(vec2<i32>(p)) {
-    return true;
-   }
-  }
- }
- return false;
-}
-
 var<workgroup> tile_rays:atomic<u32>;
-var<workgroup> tile_receives:atomic<u32>;
 var<workgroup> tile_base:u32;
 @compute @workgroup_size(WORLD_TILE,WORLD_TILE)
-fn world_classify(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
+fn world_classify(@builtin(global_invocation_id) id:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
  let tracing=id.xy;
  var needs_ray=false;
  if all(tracing<vec2<u32>(world.reduced.xy)) {
@@ -81,9 +59,6 @@ fn world_classify(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup
   textureStore(classify_direction_pdf,tracing,vec4(0.));
   textureStore(classify_length,tracing,vec4(0.));
   needs_ray=world_needs_ray(tracing);
-  if world_block_receives(tracing) {
-   atomicOr(&tile_receives,1u);
-  }
  }
  var slot=0u;
  if needs_ray {
@@ -92,7 +67,6 @@ fn world_classify(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup
  workgroupBarrier();
  if lane==0u {
   tile_base=atomicAdd(&world_ray_count.rays,atomicLoad(&tile_rays));
-  world_tile_flags[world_tile(group.xy*WORLD_TILE)]=atomicLoad(&tile_receives);
  }
  let base=workgroupUniformLoad(&tile_base);
  if needs_ray {

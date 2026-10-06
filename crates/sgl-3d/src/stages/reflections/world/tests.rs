@@ -576,13 +576,11 @@ fn mirror_settings(reach: settings::WorldSpaceReflections) -> Settings {
 }
 
 // The classification's coverage of the tracing grid, on the first frame,
-// where every tracing pixel starts as a miss. Plausible defects: a tile
-// holding mirror pixels left unflagged, which the denoise passes then skip
-// (its pixels reflect nothing); rays listed past the first row of the
-// trace's indirect dispatch left untraced, or traced at another tracing
-// pixel than their own (a wrong ray texel, packing or row); the upsample
-// taking another tile's flag than its own pixels', or missing the
-// remainder column and row past the reduced grid at an odd size. The
+// where every tracing pixel starts as a miss. Plausible defects: rays
+// listed past the first row of the trace's indirect dispatch left
+// untraced, or traced at another tracing pixel than their own (a wrong ray
+// texel, packing or row); a workgroup's rays written over another's (a
+// wrong base); a tracing pixel that needs a ray left off the list. The
 // oracle is geometric, observed through the composite: against the same
 // frame without world-space reflections, every mirror pixel at least 4
 // pixels inside the mirror (the denoiser's reach; the frame's edges count
@@ -676,101 +674,4 @@ fn every_mirror_pixel_reflects_and_no_other_pixel_changes() {
         "pixels off the mirror changed: {:?}",
         &changed[..changed.len().min(8)]
     );
-}
-
-// The denoise passes over tiles the classification found empty. Plausible
-// defects: a pass over an empty tile writing nothing, or less than it
-// writes for a pixel that is no receiver, so that its targets keep the
-// mirror's radiance, variance or depth history from earlier frames, which
-// the temporal pass's neighbourhood and history then read; or its depth
-// history not the G-buffer's. The oracle is metamorphic and the G-buffer:
-// a renderer that showed the mirror for frames and then hides it, and one
-// that never showed it, render the same frame after the same number of
-// frames, every tile empty in both, so the stage's targets must agree bit
-// for bit, and the depth history must hold the frame's depth at each
-// tracing pixel's first full-resolution pixel.
-#[test]
-fn a_hidden_mirror_leaves_the_stage_as_if_it_never_showed() {
-    let Some((device, queue)) = test_support::device() else {
-        return;
-    };
-    let gpu = (&device, &queue);
-    let size = [97, 65];
-    let settings = mirror_settings(Moving);
-    let shown_frames = 4;
-    let mut targets = Vec::new();
-    let mut depths = Vec::new();
-    for shown in [true, false] {
-        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
-        let mut frame = mirror_scene(gpu, size, shown);
-        for index in 0..=shown_frames {
-            frame.input.camera_cut = index == 0;
-            if index == shown_frames {
-                frame
-                    .scene
-                    .set_instance(
-                        &queue,
-                        frame.mirror,
-                        InstanceState {
-                            visible: false,
-                            capture_visible: false,
-                            ..*frame.scene.instance(frame.mirror).unwrap()
-                        },
-                    )
-                    .unwrap();
-            }
-            render_mirror(gpu, &mut renderer, &mut frame, &settings, size);
-            if shown && index + 1 == shown_frames {
-                let (stage, _) = renderer.world_reflections().unwrap().test_targets();
-                let temporal = test_support::read(&device, &queue, stage[3].texture(), 8);
-                assert!(
-                    temporal
-                        .chunks_exact(2)
-                        .any(|half| test_support::half(half) > 0.1),
-                    "the mirror reflects the wall while it shows"
-                );
-            }
-        }
-        let (stage, reduced) = renderer.world_reflections().unwrap().test_targets();
-        let bpp = [8, 8, 4, 8, 8, 4, 8];
-        targets.push(
-            stage
-                .iter()
-                .zip(bpp)
-                .map(|(view, bpp)| test_support::read(&device, &queue, view.texture(), bpp))
-                .collect::<Vec<_>>(),
-        );
-        let depth = test_support::read(&device, &queue, renderer.targets().depth.texture(), 4);
-        depths.push((depth, reduced));
-    }
-    let names = [
-        "resolve",
-        "resolve variance",
-        "reprojection depth",
-        "temporal",
-        "temporal variance",
-        "depth history",
-        "output",
-    ];
-    for ((name, hidden), never) in names.iter().zip(&targets[0]).zip(&targets[1]) {
-        assert!(
-            hidden == never,
-            "the {name} differs from a renderer's that never showed the mirror"
-        );
-    }
-    let (depth, reduced) = &depths[0];
-    assert_eq!(depth, &depths[1].0, "both frames' G-buffer depth");
-    let depth: &[f32] = bytemuck::cast_slice(depth);
-    let history: &[f32] = bytemuck::cast_slice(&targets[0][5]);
-    for y in 0..reduced[1] {
-        for x in 0..reduced[0] {
-            let full =
-                depth[((y * 2).min(size[1] - 1) * size[0] + (x * 2).min(size[0] - 1)) as usize];
-            assert_eq!(
-                history[(y * reduced[0] + x) as usize].to_bits(),
-                full.to_bits(),
-                "depth history at ({x}, {y})"
-            );
-        }
-    }
 }

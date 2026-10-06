@@ -1,8 +1,7 @@
 //! The classification of the world-space reflection rays' tracing grid
 //! (world_reflections_classify.wgsl; the architecture's Reflections), as
 //! FidelityFX SSSR classifies its tiles: which tracing pixels trace a ray,
-//! listed for the trace's indirect dispatch, and which tiles hold a
-//! receiver, which the denoise passes read to skip the rest.
+//! listed for the trace's indirect dispatch.
 use crate::shading;
 use crate::view::cached_group::CachedGroup;
 
@@ -38,12 +37,11 @@ pub(super) const RAYS_OFFSET: wgpu::BufferAddress = std::mem::offset_of!(RayCoun
 pub(super) const GROUPS_OFFSET: wgpu::BufferAddress = std::mem::offset_of!(RayCount, groups) as u64;
 
 /// The classification's outputs for a tracing grid of `reduced` pixels: the
-/// ray list, a texel a ray, at most one a tracing pixel; the rays listed
-/// with the trace's indirect arguments; and each tile's flag.
+/// ray list, a texel a ray, at most one a tracing pixel, and the rays
+/// listed with the trace's indirect arguments.
 pub(super) struct Lists {
     pub rays: wgpu::TextureView,
     pub count: wgpu::Buffer,
-    pub tiles: wgpu::Buffer,
 }
 
 impl Lists {
@@ -76,17 +74,7 @@ impl Lists {
                 mapped_at_creation: false,
             },
         );
-        let tiles = reduced.map(|side| side.div_ceil(TILE));
-        let tiles = crate::counters::buffer(
-            device,
-            &wgpu::BufferDescriptor {
-                label: Some("world reflection tiles"),
-                size: 4 * u64::from(tiles[0] * tiles[1]),
-                usage: wgpu::BufferUsages::STORAGE,
-                mapped_at_creation: false,
-            },
-        );
-        Self { rays, count, tiles }
+        Self { rays, count }
     }
 }
 
@@ -100,8 +88,8 @@ pub(super) struct Classify {
 }
 
 /// What the classification reads and writes: its group 0's targets (the
-/// trace's radiance, direction and pdf, and length), list, count and
-/// flags; its group 3's receiver depth, material and F0, parameters, the
+/// trace's radiance, direction and pdf, and length), list and count; its
+/// group 3's receiver depth, material and F0, parameters, the
 /// screen-space method's result and the surface depth.
 pub(super) struct Bindings<'a> {
     pub targets: [&'a wgpu::TextureView; 3],
@@ -170,7 +158,6 @@ impl Classify {
                 (12, view(length)),
                 (13, view(&lists.rays)),
                 (14, lists.count.as_entire_binding()),
-                (15, lists.tiles.as_entire_binding()),
             ],
         );
         let classify_3 = classify_3.get(

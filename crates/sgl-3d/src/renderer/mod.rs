@@ -472,14 +472,6 @@ impl Renderer {
         self.traced_shadows.last()
     }
 
-    /// The world-space reflection stage, once a frame ran it.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn world_reflections(
-        &self,
-    ) -> Option<&crate::stages::reflections::world::WorldReflections> {
-        self.reflections.world()
-    }
-
     /// FSR2's upscaled frame of the last frame it ran.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn fsr2_output(&self) -> &wgpu::TextureView {
