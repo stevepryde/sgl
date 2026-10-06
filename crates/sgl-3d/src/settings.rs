@@ -279,16 +279,17 @@ impl ShadowQuality {
 
 /// How much of the ray-traced shadows (`Settings::ray_traced_shadows`)
 /// is denoised while they run; without them it has no effect. High filters
-/// the directional light's shadow and the three longest-held local
-/// lights' with AMD's FidelityFX shadow denoiser in three passes, as
-/// Wicked Engine filters its first four lights. Low filters the
-/// directional light's alone, in two passes, and blends those local
-/// lights' with the previous frames' as it does every other local light's:
-/// their soft shadows' edges are noisier, in motion most, for about 1 ms a
-/// frame less at 1920×1080 on an Apple M5. Where no local light holds one
-/// of those three places, High filters the directional light's alone too,
-/// which looks the same and costs about 0.8 ms less. A change starts the
-/// shadows' history afresh.
+/// the directional light's shadow and those of three of the local lights
+/// (the first three slots after it, each kept by the light that holds it)
+/// with AMD's FidelityFX shadow denoiser in three passes, as Wicked Engine
+/// filters its first four lights. Low filters the directional light's
+/// alone, in two passes, and blends those local lights' with the previous
+/// frames' as it does every other local light's: their soft shadows' edges
+/// are noisier, in motion most, for about 1 ms a frame less at 1920×1080
+/// on an Apple M5. Where no local light holds one of those three places,
+/// High filters the directional light's alone too, the same result within
+/// one 8-bit step, for about 0.8 ms less. A change starts the shadows'
+/// history afresh.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RayTracedShadowQuality {
     /// The preset's: Low on `RenderPreset::Low`, High on

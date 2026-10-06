@@ -1221,6 +1221,130 @@ fn each_denoised_slot_keeps_its_own_history() {
     }
 }
 
+/// The most two runs' slot 0 may differ by, in 8-bit steps, where one
+/// renderer's denoiser filters it in one lane and the other's in four:
+/// the two programs round the same arithmetic apart.
+const SHAPE_ROUNDING: u8 = 2;
+
+// Plausible defects: the denoiser's shapes at High keeping slot 0's
+// history apart (each shape its own targets, or the one-lane programs
+// reading or writing lane 0's history or moments elsewhere than the
+// four-lane ones), so that the directional light's shadow restarts or
+// takes a stale history whenever a local light enters or leaves slots 1
+// to 3; a switch of shape restarting the history; and a slot that joins
+// the four-lane shape keeping what its channel held. The oracles: a second
+// renderer whose local light casts throughout, so that it never leaves the
+// four-lane shape, whose slot 0 the first's matches within the rounding
+// the shapes' programs differ by (`SHAPE_ROUNDING`); and, for the joining
+// slot, the camera-cut frame after, which restarts every slot. The sun
+// moves half a stripe of the grate as the shapes switch, so that a history
+// from elsewhere, or none, shows: the control is the reference's sun
+// against its cut frame.
+#[test]
+fn the_directional_light_keeps_its_history_across_the_denoiser_s_shapes() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = [128, 128];
+    let light = |casts_shadow| Light {
+        position: Vec3::new(0., 6., -0.3),
+        shape: LightShape::Point { radius: 0. },
+        intensity: 60.,
+        range: 20.,
+        casts_shadow,
+        ..Light::default()
+    };
+    // The sun's shadow of the grate (bars at 1.2 m, 0.24 m apart) moves
+    // half a bar's spacing as its direction's z moves by 0.1.
+    let sun = |z: f32| DirectionalLight {
+        direction: Vec3::new(0.2, -1., z),
+        illuminance: 3.,
+        shadow: Some(DirectionalShadow::DEFAULT),
+        angular_diameter: 0.,
+        ..DirectionalLight::default()
+    };
+    let camera = camera(Vec3::new(0., 9., 3.), Vec3::ZERO, size);
+    // High, the default.
+    let settings = settings(true);
+    // The switching run's light casts in the middle phase alone.
+    let (mut switching, ids) = scene(gpu, 6., &grate(), &[light(false)]);
+    let (mut reference, _) = scene(gpu, 6., &grate(), &[light(true)]);
+    let mut renderers = [(); 2].map(|_| Renderer::for_test(&device, &queue, size, &settings));
+    let mut frame = |switching: &mut Scene, reference: &mut Scene, z: f32, cut: bool| {
+        let mut frame_input = input(camera, Some(sun(z)));
+        frame_input.camera_cut = cut;
+        let [first, second] = &mut renderers;
+        [
+            render(gpu, first, switching, &frame_input, &settings),
+            render(gpu, second, reference, &frame_input, &settings),
+        ]
+    };
+    let local_held = |observed: &Observed| {
+        let (_, table) = observed
+            .mask
+            .as_ref()
+            .expect("the ray-traced shadow stage ran");
+        table.lights[0][1..] != [crate::shading::shadow_mask::SHADOW_MASK_EMPTY; 3]
+    };
+    let assert_together = |[switched, kept]: &[Observed; 2], label: &str, local: bool| {
+        assert_eq!(
+            local_held(switched),
+            local,
+            "{label}: the switching run's light holds a denoised slot"
+        );
+        assert!(
+            local_held(kept),
+            "{label}: the reference's light holds a denoised slot"
+        );
+        let [width, height] = switched.size;
+        let apart = (0..height)
+            .flat_map(|y| (0..width).map(move |x| [x, y]))
+            .map(|pixel| switched.mask(0, pixel).abs_diff(kept.mask(0, pixel)))
+            .max()
+            .unwrap();
+        eprintln!("{label}: the sun's slot is {apart} steps from the reference's");
+        assert!(
+            apart <= SHAPE_ROUNDING,
+            "{label}: the sun's slot is {apart} steps from the reference's"
+        );
+    };
+    // The sun alone in a denoised slot: one lane.
+    for index in 0..3 {
+        let frames = frame(&mut switching, &mut reference, 0., index == 0);
+        assert_together(&frames, &format!("one lane, frame {index}"), false);
+    }
+    // The light casts and takes slot 1, the sun moves: four lanes.
+    switching.set_light(&queue, ids[0], light(true)).unwrap();
+    let joined = frame(&mut switching, &mut reference, 0.1, false);
+    assert_together(&joined, "four lanes, joined", true);
+    let cut = frame(&mut switching, &mut reference, 0.1, true);
+    let slot = joined[0].slot(ids[0].index() as u32);
+    assert_eq!(slot, 1, "the light takes slot 1");
+    let differing = joined[0].differing(slot, &cut[0], slot);
+    assert_eq!(
+        differing, 0,
+        "the slot the light joined differs from a camera cut at {differing} pixels"
+    );
+    // The control: the reference's sun moved without a restart shows its
+    // history against the cut.
+    let differing = joined[1].differing(0, &cut[1], 0);
+    assert!(
+        differing > 100,
+        "the moved sun's history shows at only {differing} pixels"
+    );
+    for index in 0..2 {
+        let frames = frame(&mut switching, &mut reference, 0.1, false);
+        assert_together(&frames, &format!("four lanes, frame {index}"), true);
+    }
+    // The light stops casting and the sun moves back: one lane again.
+    switching.set_light(&queue, ids[0], light(false)).unwrap();
+    for index in 0..2 {
+        let frames = frame(&mut switching, &mut reference, 0., false);
+        assert_together(&frames, &format!("one lane again, frame {index}"), false);
+    }
+}
+
 // Plausible defects: history reprojected along the motion the wrong way,
 // by a scaled or flipped motion, or from the texel beside the nearest; and
 // the upsample fetching other texels for an odd pixel than the two or four

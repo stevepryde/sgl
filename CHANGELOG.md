@@ -23,8 +23,8 @@ full API details.
   `RenderPreset::High`, the default preset. It acts only while ray-traced
   shadows run, which stay off by default and in every preset (D-28). High
   is the denoiser as before: AMD's FidelityFX shadow denoiser over the
-  directional light's shadow and the three longest-held local lights', in
-  three passes. Low filters the directional light's alone, in two passes,
+  directional light's shadow and those of the local lights in slots 1 to 3,
+  in three passes. Low filters the directional light's alone, in two passes,
   and blends those local lights' with the previous frames' as it does the
   other local lights': their soft shadows' edges are noisier, in motion
   most. On an Apple M5 at 1920×1080 natively on Metal the denoiser took

@@ -61,7 +61,9 @@ const TEMPORAL_TAPS:u32=9u;
 // `blended`'s.
 fn temporal_word0(blended:u32,texel:vec2<u32>)->u32 {
  let denoised=temporal_denoised[texel.y*u32(traced.reduced.x)+texel.x];
- let mask=select(0xffu,0xffffffffu,traced.denoised>=TRACED_DENOISED_SLOTS);
+ // The denoised slots' bytes, from byte 0; the whole word where they are
+ // its four.
+ let mask=select((1u<<(8u*traced.denoised))-1u,0xffffffffu,traced.denoised>=TRACED_DENOISED_SLOTS);
  return (denoised&mask)|(blended&~mask);
 }
 // `current` with its denoised slots the denoiser's.

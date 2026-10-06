@@ -33,9 +33,9 @@ THE SOFTWARE.
 // 0 for the sky, so the depth is not linearised through the inverse
 // projection, and a sky neighbour, and the centre, are skipped, where
 // upstream weighs them by zero. Whether a pass writes a cleared tile is
-// the caller's (FilterSoftShadowsPass's `write_cleared`), where upstream
-// skips its second pass's of three, so that a chain of other lengths ends
-// in a pass that writes it. The loops' literal bounds are named (AR-12).
+// the caller's (FilterSoftShadowsPass's `write_cleared`), where upstream's
+// second pass of three skips it, so that a chain of other lengths ends in
+// a pass that writes it. The loops' literal bounds are named (AR-12).
 // The caller's lanes (traced_denoise_lanes_*.wgsl: the FfxDnsr* types) are
 // the slots filtered together, a lane each, where upstream filters one
 // light a dispatch: the input, the shadow similarity, the sums and the

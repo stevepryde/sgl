@@ -326,6 +326,7 @@ impl TracedShadows {
         let resized = self.targets.as_ref().is_none_or(|t| t.full != size);
         if resized {
             self.targets = Some(Targets::new(ctx.device, size));
+            self.denoiser.forget_groups();
         }
         // History continues across consecutive valid frames the stage runs
         // in, as the world-space reflection denoiser's does.
@@ -344,6 +345,7 @@ impl TracedShadows {
         self.previous_frame = Some(history.frames);
         let table = self.slots.assign(lights.directional, &lights.local);
         self.table = table;
+        self.denoiser.prepare(ctx.device, quality);
         let shape = denoise::Shape::of(quality, table.lights[0]);
         crate::counters::write_buffer(ctx.queue, &self.slot_table, 0, bytemuck::bytes_of(&table));
         let targets = self.targets.as_ref().unwrap();
@@ -373,7 +375,7 @@ impl TracedShadows {
                 eye: [eye.x, eye.y, eye.z, 1.],
                 frame: self.frame,
                 seed: self.seed,
-                denoised: shape.slots,
+                denoised: shape.lanes.slots(),
                 padding: 0,
             }),
         );

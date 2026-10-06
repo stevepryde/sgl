@@ -1914,15 +1914,16 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   shadow, sharp near its caster and widening away from it; a size of 0 a
   hard one. A single-sided surface occludes from its back, as a map draws
   its front from the light, and a double-sided one from either side. AMD's
-  FidelityFX shadow denoiser filters the directional light's and the three
-  longest-held local lights' visibilities, as Wicked Engine filters its
+  FidelityFX shadow denoiser filters the directional light's visibility
+  and those of three of the local lights (the first three slots after it,
+  each kept by the light that holds it), as Wicked Engine filters its
   first four; the others are blended with the previous frames'.
   `Settings::ray_traced_shadow_quality` Low filters the directional
   light's alone, in two passes instead of three, and blends those three
   local lights' with the rest: noisier soft local shadows for about 1 ms
   a frame less. While no local light holds one of the three places, High
-  filters the directional light's alone too, which looks the same and
-  costs less. A light
+  filters the directional light's alone too: the same result within one
+  8-bit step, for less. A light
   that takes another's place, and a camera cut, start afresh. The
   visibilities are upsampled to the render size by depth, then the
   lighting pass takes them through the light's shadow opacity. The opaque
