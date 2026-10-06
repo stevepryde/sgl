@@ -40,7 +40,7 @@ compatibility shims solely to avoid updating consumers.
   migration notes. Use Cargo-compatible semantic versioning: during `0.x`,
   incompatible changes advance the minor version, not just the patch version.
 - Games needing stability should pin every direct SGL dependency to an exact
-  version (for example, `=0.1.0`) and commit `Cargo.lock`. Git consumers should
+  version (for example, `=0.2.0`) and commit `Cargo.lock`. Git consumers should
   pin a full commit `rev`. Upgrade deliberately, applying all intervening
   migration notes and validating the game's affected workflows and targets.
 
