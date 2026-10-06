@@ -8,9 +8,12 @@
 //! baked ones, so a receiver with baked lighting stops after the live ones,
 //! and its decals after both.
 //!
-//! The grid and its assignment, a port of Bevy's clustered forward
-//! assignment, are in `assign`.
+//! The grid's configuration ports Bevy 9d12036's `ClusterConfig::FixedZ`
+//! (`crates/bevy_light/src/cluster/mod.rs`), MIT OR Apache-2.0
+//! (`src/LICENSE-bevy.txt`); the assignment, a port of Bevy's clustered
+//! forward assignment, is in `assign`, and culling by range in `volumes`.
 mod assign;
+mod volumes;
 
 use crate::content::decal::Decal;
 use crate::content::identity::Identity;
@@ -18,9 +21,51 @@ use crate::content::light::Light;
 use crate::scene::decals::Decals;
 use crate::scene::lights::Lights;
 use crate::shading::clusters::{CLUSTER_HEADER_WORDS, CLUSTER_MOST_ITEMS, ClusterGrid};
-pub(crate) use assign::{BoxVolume, CAMERA_CLUSTERS, ClusterConfig, ViewVolume};
 use assign::{Clusterable, Scratch};
-use glam::{Mat4, UVec2};
+use glam::{Mat4, UVec2, UVec3};
+pub(crate) use volumes::{BoxVolume, ViewVolume};
+
+/// Bevy's `ClusterConfig::FixedZ`: at most `total` clusters, `z_slices` of
+/// them in depth and the rest square on the screen, the first slice
+/// reaching `first_slice_depth` metres.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ClusterConfig {
+    pub total: u32,
+    pub z_slices: u32,
+    pub first_slice_depth: f32,
+}
+
+/// The camera's grid: Bevy's 4096 clusters and first slice, with twice its
+/// 24 depth slices. Measured on Hyperdrive's tunnel route, the lights whose
+/// range reaches a pixel set most of its cost; twice the slices took 2% off
+/// opaque lighting there at no CPU cost, and four times the clusters 5% for
+/// about a sixth more CPU time per frame.
+pub(crate) const CAMERA_CLUSTERS: ClusterConfig = ClusterConfig {
+    total: 4096,
+    z_slices: 48,
+    first_slice_depth: 5.,
+};
+
+impl ClusterConfig {
+    /// `ClusterConfig::dimensions_for_screen_size`.
+    fn dimensions_for_screen_size(&self, screen_size: UVec2) -> UVec3 {
+        let aspect_ratio = screen_size.x as f32 / screen_size.y as f32;
+        let z_slices = self.z_slices.min(self.total);
+        let per_layer = self.total as f32 / z_slices as f32;
+        let y = (per_layer / aspect_ratio).sqrt();
+        let mut x = (y * aspect_ratio) as u32;
+        let mut y = y as u32;
+        if x == 0 {
+            x = 1;
+            y = per_layer as u32;
+        }
+        if y == 0 {
+            x = per_layer as u32;
+            y = 1;
+        }
+        UVec3::new(x, y, z_slices)
+    }
+}
 
 /// Marks a baked light's index in a (cluster, item) pair.
 const BAKED: u32 = 1 << 31;

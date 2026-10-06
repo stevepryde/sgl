@@ -1,8 +1,8 @@
 //! Light and decal assignment to a camera's clusters (`super::Clusters`).
 //!
 //! The grid and its assignment port Bevy 9d12036
-//! `crates/bevy_light/src/cluster/mod.rs` (`ClusterConfig::FixedZ`,
-//! `Clusters::update`) and `assign.rs` (`assign_objects_to_clusters`, with
+//! `crates/bevy_light/src/cluster/mod.rs` (`ClusterConfig::FixedZ`, in
+//! `super`, and `Clusters::update`) and `assign.rs` (`assign_objects_to_clusters`, with
 //! Persson's iterative sphere refinement and Wronski's cone test for spot
 //! lights, and its helpers), MIT OR Apache-2.0 (`src/LICENSE-bevy.txt`).
 //! Changes: point, spot and rectangle lights share one list per cluster,
@@ -21,52 +21,12 @@
 //! mirrors a center behind the camera and misses clusters its sphere
 //! reaches in front, and it cuts a center between the camera and the near
 //! plane at the camera's plane, which is not conservative.
+use super::ClusterConfig;
+use super::volumes::{HalfSpace, Sphere, decal_sphere, frustum, intersects_sphere};
 use crate::content::decal::Decal;
 use crate::content::light::{Light, LightShape};
 use crate::shading::clusters::ClusterGrid;
 use glam::{Mat4, UVec2, UVec3, Vec2, Vec3, Vec4, Vec4Swizzles};
-
-/// Bevy's `ClusterConfig::FixedZ`: at most `total` clusters, `z_slices` of
-/// them in depth and the rest square on the screen, the first slice
-/// reaching `first_slice_depth` metres.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ClusterConfig {
-    pub total: u32,
-    pub z_slices: u32,
-    pub first_slice_depth: f32,
-}
-
-/// The camera's grid: Bevy's 4096 clusters and first slice, with twice its
-/// 24 depth slices. Measured on Hyperdrive's tunnel route, the lights whose
-/// range reaches a pixel set most of its cost; twice the slices took 2% off
-/// opaque lighting there at no CPU cost, and four times the clusters 5% for
-/// about a sixth more CPU time per frame.
-pub(crate) const CAMERA_CLUSTERS: ClusterConfig = ClusterConfig {
-    total: 4096,
-    z_slices: 48,
-    first_slice_depth: 5.,
-};
-
-impl ClusterConfig {
-    /// `ClusterConfig::dimensions_for_screen_size`.
-    fn dimensions_for_screen_size(&self, screen_size: UVec2) -> UVec3 {
-        let aspect_ratio = screen_size.x as f32 / screen_size.y as f32;
-        let z_slices = self.z_slices.min(self.total);
-        let per_layer = self.total as f32 / z_slices as f32;
-        let y = (per_layer / aspect_ratio).sqrt();
-        let mut x = (y * aspect_ratio) as u32;
-        let mut y = y as u32;
-        if x == 0 {
-            x = 1;
-            y = per_layer as u32;
-        }
-        if y == 0 {
-            x = per_layer as u32;
-            y = 1;
-        }
-        UVec3::new(x, y, z_slices)
-    }
-}
 
 /// A light or decal as the assignment sees it.
 #[derive(Clone, Copy)]
@@ -112,115 +72,6 @@ impl Clusterable {
             sphere: decal_sphere(decal),
             spot: None,
         }
-    }
-}
-
-/// The sphere that bounds `decal`'s box.
-fn decal_sphere(decal: &Decal) -> Sphere {
-    Sphere {
-        center: decal.position,
-        radius: 0.5 * decal.size.length(),
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Sphere {
-    center: Vec3,
-    radius: f32,
-}
-
-/// Bevy's `HalfSpace`: a plane through `normal_d`, normalised; a point `p`
-/// is inside where `normal · p + d > 0`.
-#[derive(Clone, Copy)]
-struct HalfSpace(Vec4);
-
-impl HalfSpace {
-    fn new(normal_d: Vec4) -> Self {
-        Self(normal_d * normal_d.xyz().length_recip())
-    }
-    fn normal(&self) -> Vec3 {
-        self.0.xyz()
-    }
-    fn d(&self) -> f32 {
-        self.0.w
-    }
-}
-
-/// The view's clip volume without a far plane (Bevy's
-/// `ViewFrustum::from_clip_from_world_no_far`): left, right, bottom, top and
-/// the reversed-Z near plane.
-fn frustum(clip_from_world: Mat4) -> [HalfSpace; 5] {
-    let row = |i| clip_from_world.row(i);
-    let row3 = row(3);
-    [
-        HalfSpace::new(row3 + row(0)),
-        HalfSpace::new(row3 - row(0)),
-        HalfSpace::new(row3 + row(1)),
-        HalfSpace::new(row3 - row(1)),
-        HalfSpace::new(row3 - row(2)),
-    ]
-}
-
-/// `Frustum::intersects_sphere`.
-fn intersects_sphere(frustum: &[HalfSpace; 5], sphere: &Sphere) -> bool {
-    let center = sphere.center.extend(1.);
-    frustum
-        .iter()
-        .all(|half_space| half_space.0.dot(center) + sphere.radius > 0.)
-}
-
-/// A view's clip volume without a far plane, for culling lights by their
-/// range, as the camera's assignment culls them and Wicked Engine culls the
-/// frame's light list.
-pub(crate) struct ViewVolume([HalfSpace; 5]);
-
-impl ViewVolume {
-    pub fn new(clip_from_world: Mat4) -> Self {
-        Self(frustum(clip_from_world))
-    }
-
-    /// Whether `light`'s range reaches into the volume.
-    pub fn reaches(&self, light: &Light) -> bool {
-        intersects_sphere(
-            &self.0,
-            &Sphere {
-                center: light.position,
-                radius: light.range,
-            },
-        )
-    }
-
-    /// Whether the sphere about `decal`'s box reaches into the volume.
-    pub fn reaches_decal(&self, decal: &Decal) -> bool {
-        intersects_sphere(&self.0, &decal_sphere(decal))
-    }
-}
-
-/// A box, for culling lights by their range as the dynamic GI volume's list
-/// culls them against its extent: a sphere reaches it where its centre lies
-/// within its radius of the box's nearest point.
-pub(crate) struct BoxVolume {
-    pub min: Vec3,
-    pub max: Vec3,
-}
-
-impl BoxVolume {
-    fn reaches_sphere(&self, sphere: &Sphere) -> bool {
-        let nearest = sphere.center.clamp(self.min, self.max);
-        nearest.distance_squared(sphere.center) <= sphere.radius * sphere.radius
-    }
-
-    /// Whether `light`'s range reaches into the box.
-    pub fn reaches(&self, light: &Light) -> bool {
-        self.reaches_sphere(&Sphere {
-            center: light.position,
-            radius: light.range,
-        })
-    }
-
-    /// Whether the sphere about `decal`'s box reaches into the box.
-    pub fn reaches_decal(&self, decal: &Decal) -> bool {
-        self.reaches_sphere(&decal_sphere(decal))
     }
 }
 
