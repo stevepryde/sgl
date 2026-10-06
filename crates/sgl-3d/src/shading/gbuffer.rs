@@ -10,7 +10,7 @@ pub(crate) const AMBIENT: TextureFormat = TextureFormat::Rgba16Float;
 pub(crate) const NORMAL: TextureFormat = TextureFormat::Rgba16Float;
 /// Coat and base roughness, coat strength and environment scale.
 pub(crate) const MATERIAL: TextureFormat = TextureFormat::Rgba16Float;
-/// F0 and the lit flag.
+/// F0, with whether the surface is lit and takes baked scene lights.
 pub(crate) const F0: TextureFormat = TextureFormat::Rgba8Unorm;
 /// World anisotropy tangent and strength.
 pub(crate) const ANISOTROPY: TextureFormat = TextureFormat::Rgba16Float;

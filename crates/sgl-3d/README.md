@@ -1943,7 +1943,11 @@ hardware.
   `radius`), a rectangle's face, or, for the directional light, within its
   disc in the sky (`DirectionalLight::angular_diameter`), as far as the
   scene reaches, beyond the shadow's distance. The light's own fixture, a
-  mesh whose face the rectangle lies on, so never shadows it. A light with a size so casts a soft
+  mesh whose face the rectangle lies on, so never shadows it. A `baked`
+  light casts no ray at a receiver with baked lighting, which it does not
+  light; its place in the mask holds 1 there wherever it reaches, so the
+  passes that follow carry no false shadow onto a moving instance beside
+  that receiver. A light with a size so casts a soft
   shadow, sharp near its caster and widening away from it; a size of 0 a
   hard one. A single-sided surface occludes from its back, as a map draws
   its front from the light, and a double-sided one from either side. AMD's

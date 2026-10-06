@@ -136,7 +136,10 @@ impl SharedTargets {
                 "stable world anisotropy tangent and strength",
                 gbuffer::ANISOTROPY,
             ),
-            f0: gbuffer_target("stable material F0 and lit mask", gbuffer::F0),
+            f0: gbuffer_target(
+                "stable material F0 and lit and baked-light flags",
+                gbuffer::F0,
+            ),
             motion: gbuffer_target("stable rigid motion", gbuffer::MOTION),
             composite: target_with_usage(
                 device,

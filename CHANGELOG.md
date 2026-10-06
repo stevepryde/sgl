@@ -15,6 +15,38 @@ full API details.
 
 ## Unreleased
 
+### Ray-traced shadows cast no rays for baked lights at baked receivers
+
+- **Scope:** `sgl-3d` ray-traced shadows (#227). A baked light
+  (`Light::baked`) lights only receivers without baked lighting: moving
+  instances, and static ones with no lightmap or atlas chart. The trace
+  used to cast its rays at every surface anyway, and on a game's
+  lightmapped tunnels most of its rays went to baked fixture lights. It
+  now casts none toward a baked light at a receiver with baked lighting.
+  - The G-buffer's F0 alpha records which surfaces take baked lights.
+  - The slot table records which slots hold baked lights.
+  - Those slots hold "unoccluded" at the skipped receivers wherever the
+    light reaches.
+- **What changes in the image:** at receivers that take a baked light,
+  their own rays are unchanged. Near their edges the shadow mask's
+  upsample and denoiser now blend in the skipped neighbours' unoccluded
+  value rather than the traced one. A moving instance beside a lightmapped
+  floor may show a baked light's shadow slightly lighter at its edge,
+  where the floor beside it was shadowed. Interiors are unchanged.
+  - In captures of Hyperdrive's tunnels under its baked ceiling bars,
+    frames differed only along a craft's silhouette: at most 43 pixels a
+    frame by more than 8/255, and none by more than 32.
+- **Cost** (Apple M5, natively on Metal; Hyperdrive's Meridian tunnels at
+  High, 1720–1920 by 1080):
+  - The ray pass fell from 5.7–10.7 ms to 1.5–1.7 ms median, and from
+    7.5–14.8 ms to 1.8–2.4 ms at the 95th percentile.
+  - The frame fell from 20–28 ms to 16–18 ms.
+  - Routes without baked lights are unchanged.
+  - The G-buffer pass costs 0.01–0.07 ms more to record the flag.
+- **Migration:** no game-code changes. A game with baked shadow-casting
+  lights should look at moving instances' edges beside its lightmapped
+  surfaces under ray-traced shadows.
+
 ### A light's own fixture no longer shadows it in rays
 
 - **Scope:** `sgl-3d` ray-traced shadows and the dynamic GI volume's

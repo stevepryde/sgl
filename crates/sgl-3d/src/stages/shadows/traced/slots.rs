@@ -7,7 +7,10 @@
 //! highest-ranked light without one, and its history restarts. Wicked
 //! Engine's slot is a light's index among the first sixteen of its sorted
 //! entity array (2ff1d9e `screenspaceshadowCS.hlsl` 76–84); SGL3D's lights
-//! have no such order.
+//! have no such order. Each held slot's bit in the table's `baked` says
+//! whether its light is baked, as the scene holds it this frame; a slot
+//! whose light turns baked or live restarts too, since its history then
+//! records another set of receivers' rays.
 use crate::content::identity::{Identity, LightId};
 use crate::shading::lights::SHADOW_OPACITY_CUTOFF;
 use crate::shading::shadow_mask::{
@@ -17,12 +20,13 @@ use crate::shading::uniforms::FrameUniform;
 
 /// The lights a frame's slots may hold: the directional light with the
 /// frame's cascades, by its index in `FrameInput::directional_lights`, and
-/// the casting local lights the atlas placed, best first; each only with a
-/// shadow above the opacity cutoff, which lighting looks up.
+/// the casting local lights the atlas placed, best first, each with whether
+/// it is baked (`Light::baked`); each only with a shadow above the opacity
+/// cutoff, which lighting looks up.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SlotLights {
     pub directional: Option<usize>,
-    pub local: Vec<LightId>,
+    pub local: Vec<(LightId, bool)>,
 }
 
 impl SlotLights {
@@ -41,11 +45,9 @@ impl SlotLights {
             });
         let local = ranked
             .iter()
-            .copied()
-            .filter(|&light| {
-                scene
-                    .light(light)
-                    .is_ok_and(|light| light.shadow_opacity > SHADOW_OPACITY_CUTOFF)
+            .filter_map(|&id| {
+                let light = scene.light(id).ok()?;
+                (light.shadow_opacity > SHADOW_OPACITY_CUTOFF).then_some((id, light.baked))
             })
             .collect();
         Self { directional, local }
@@ -65,34 +67,44 @@ pub(crate) struct Slots {
     directional: Option<usize>,
     /// Slots 1 to 15's lights, at their slot less one.
     local: [Option<LightId>; RT_SHADOW_LIGHTS - 1],
+    /// The last table's `baked` bits.
+    baked: u32,
 }
 
 impl Slots {
     /// This frame's slot table, for the shadowed directional light
     /// `directional` (by its index in `FrameInput::directional_lights`) and
-    /// the local lights the atlas placed, `ranked` best first. A slot whose
-    /// light changed restarts its history.
-    pub fn assign(&mut self, directional: Option<usize>, ranked: &[LightId]) -> ShadowMaskSlots {
+    /// the local lights the atlas placed, `ranked` best first, each with
+    /// whether it is baked. A slot whose light changed, or turned baked or
+    /// live, restarts its history.
+    pub fn assign(
+        &mut self,
+        directional: Option<usize>,
+        ranked: &[(LightId, bool)],
+    ) -> ShadowMaskSlots {
         let mut restart = 0;
         if directional.is_some() && directional != self.directional {
             restart |= 1;
         }
         self.directional = directional;
+        let placed = |light: LightId| ranked.iter().any(|&(id, _)| id == light);
         // A light keeps its slot while the atlas places it.
         for held in &mut self.local {
-            if held.is_some_and(|light| !ranked.contains(&light)) {
+            if held.is_some_and(|light| !placed(light)) {
                 *held = None;
             }
         }
         // The free slots, lowest first, go to the highest-ranked lights
         // without one.
         let held = self.local;
-        let mut newcomers = ranked.iter().filter(|light| !held.contains(&Some(**light)));
+        let mut newcomers = ranked
+            .iter()
+            .filter(|&&(light, _)| !held.contains(&Some(light)));
         for (slot, held) in self.local.iter_mut().enumerate() {
             if held.is_some() {
                 continue;
             }
-            let Some(&light) = newcomers.next() else {
+            let Some(&(light, _)) = newcomers.next() else {
                 break;
             };
             *held = Some(light);
@@ -102,12 +114,23 @@ impl Slots {
         if directional.is_some() {
             keys[0] = SHADOW_MASK_DIRECTIONAL;
         }
-        for (key, held) in keys[1..].iter_mut().zip(&self.local) {
-            if let Some(light) = held {
-                *key = u32::try_from(light.index()).expect("light indices fit in u32");
+        let (mut held, mut baked) = (0, 0);
+        for (slot, light) in self.local.iter().enumerate() {
+            if let Some(light) = light {
+                keys[slot + 1] = u32::try_from(light.index()).expect("light indices fit in u32");
+                held |= 1 << (slot + 1);
+                if ranked
+                    .iter()
+                    .any(|&(id, is_baked)| id == *light && is_baked)
+                {
+                    baked |= 1 << (slot + 1);
+                }
             }
         }
-        ShadowMaskSlots::new(keys, restart)
+        // A held slot whose light turned baked or live.
+        restart |= (baked ^ self.baked) & held;
+        self.baked = baked;
+        ShadowMaskSlots::new(keys, restart, baked)
     }
 }
 
@@ -118,6 +141,11 @@ mod tests {
 
     fn light(index: usize) -> LightId {
         LightId::issue(index, index as u64 + 1)
+    }
+
+    /// `lights` ranked, none of them baked.
+    fn live(lights: &[LightId]) -> Vec<(LightId, bool)> {
+        lights.iter().map(|&light| (light, false)).collect()
     }
 
     /// Each slot's key, slot by slot.
@@ -142,7 +170,7 @@ mod tests {
     fn a_light_keeps_its_slot_while_placed_and_a_freed_slot_goes_to_the_best_ranked() {
         let mut slots = Slots::default();
         let [a, b, c, d, e] = [10, 11, 12, 13, 14].map(light);
-        let first = slots.assign(Some(1), &[a, b, c]);
+        let first = slots.assign(Some(1), &live(&[a, b, c]));
         assert_eq!(keys(&first)[0], SHADOW_MASK_DIRECTIONAL);
         assert_eq!(
             [a, b, c].map(|light| slot_of(&first, light)),
@@ -156,13 +184,13 @@ mod tests {
         );
 
         // Reranked, each keeps its slot and its history.
-        let reranked = slots.assign(Some(1), &[c, a, b]);
+        let reranked = slots.assign(Some(1), &live(&[c, a, b]));
         assert_eq!(keys(&reranked), keys(&first));
         assert_eq!(reranked.restart, 0);
 
         // b leaves; of the newcomers e outranks d, so e takes b's slot, and
         // d the next free one.
-        let swapped = slots.assign(Some(1), &[e, c, a, d]);
+        let swapped = slots.assign(Some(1), &live(&[e, c, a, d]));
         assert_eq!(slot_of(&swapped, e), Some(2));
         assert_eq!(slot_of(&swapped, d), Some(4));
         assert_eq!(slot_of(&swapped, b), None);
@@ -174,8 +202,8 @@ mod tests {
 
         // The directional light changes from the second to the first, then
         // casts no shadow.
-        assert_eq!(slots.assign(Some(0), &[e, c, a, d]).restart, 1);
-        let none = slots.assign(None, &[e, c, a, d]);
+        assert_eq!(slots.assign(Some(0), &live(&[e, c, a, d])).restart, 1);
+        let none = slots.assign(None, &live(&[e, c, a, d]));
         assert_eq!(keys(&none)[0], SHADOW_MASK_EMPTY);
         assert_eq!(none.restart, 0);
     }
@@ -184,7 +212,7 @@ mod tests {
     fn more_lights_than_slots_fill_them_in_rank_order() {
         let mut slots = Slots::default();
         let ranked: Vec<_> = (0..20).map(light).collect();
-        let table = slots.assign(None, &ranked);
+        let table = slots.assign(None, &live(&ranked));
         for (rank, &light) in ranked.iter().enumerate() {
             let expected = (rank < RT_SHADOW_LIGHTS - 1).then_some(rank + 1);
             assert_eq!(slot_of(&table, light), expected, "rank {rank}");
@@ -193,8 +221,32 @@ mod tests {
         // its slot.
         let mut next = ranked.clone();
         next.remove(6);
-        let table = slots.assign(None, &next);
+        let table = slots.assign(None, &live(&next));
         assert_eq!(slot_of(&table, ranked[15]), Some(7));
         assert_eq!(table.restart, 1 << 7);
+    }
+
+    // Plausible defects: a slot's baked bit taken from another slot's light,
+    // set only when a light takes its slot (so a light whose flag changes
+    // keeps its old bit and the trace keeps skipping or tracing the wrong
+    // receivers), left set on a freed slot, and a flip that does not
+    // restart the slot's history. The oracle is the architecture's rule:
+    // each held slot's bit is its light's flag this frame, and a slot whose
+    // light kept its place but turned baked or live restarts.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn each_held_slot_says_whether_its_light_is_baked_this_frame() {
+        let mut slots = Slots::default();
+        let [a, b, c] = [10, 11, 12].map(light);
+        let first = slots.assign(None, &[(a, false), (b, true), (c, false)]);
+        assert_eq!(first.baked, 1 << 2);
+        let flipped = slots.assign(None, &[(a, false), (b, false), (c, true)]);
+        assert_eq!(flipped.baked, 1 << 3);
+        assert_eq!(flipped.restart, 1 << 2 | 1 << 3);
+        let reranked = slots.assign(None, &[(c, true), (a, false), (b, false)]);
+        assert_eq!(reranked.baked, 1 << 3);
+        assert_eq!(reranked.restart, 0);
+        let left = slots.assign(None, &[(a, false), (b, false)]);
+        assert_eq!(left.baked, 0);
+        assert_eq!(left.restart, 0);
     }
 }

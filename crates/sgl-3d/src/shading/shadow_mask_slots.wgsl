@@ -21,12 +21,17 @@ const SHADOW_MASK_DIRECTIONAL:u32=0xfffffffeu;
 // What a mask provider (camera_shadow_mask) returns for a light no slot
 // holds: the light takes its shadow from the maps.
 const SHADOW_MASK_NO_SLOT:f32=-1.;
-// The slot table: each slot's key, four to a vector, and the slots whose
-// history restarts this frame because another light took them.
+// The slot table: each slot's key, four to a vector, the slots whose
+// history restarts this frame because another light took them, and the
+// slots whose light is baked.
 struct ShadowMaskSlots {
  lights:array<vec4<u32>,4>,
  // Bit s: slot s's history restarts.
  restart:u32,
+ // Bit s: slot s's light is baked (Light::baked), so only a receiver
+ // that takes baked lights reads it, which the ray-traced shadow trace
+ // casts its rays for alone.
+ baked:u32,
 }
 // The mask's layer that holds slot `slot`, and its channel there; and the
 // slots layer `layer` holds, by channel. The slot table's vectors and the

@@ -1832,3 +1832,248 @@ fn a_rectangle_lights_own_fixture_does_not_shadow_it() {
         &shadowed[..shadowed.len().min(4)]
     );
 }
+
+/// The tracing texels of `observed` on the top of `block` (its height, and
+/// within its extent less 2 cm), each with the world position its depth
+/// gives, as `floor_texels` takes the floor's.
+fn top_texels(observed: &Observed, camera: &Camera, block: Block) -> Vec<([u32; 2], DVec3)> {
+    let [width, height] = observed.size;
+    let top = f64::from(block.centre.y + block.half.y);
+    let (centre, half) = (block.centre.as_dvec3(), block.half.as_dvec3());
+    (0..height)
+        .step_by(2)
+        .flat_map(|y| (0..width).step_by(2).map(move |x| [x, y]))
+        .filter_map(|pixel| {
+            let position = observed.position(camera, pixel)?;
+            ((position.y - top).abs() < 1e-3
+                && (position.x - centre.x).abs() < half.x - 0.02
+                && (position.z - centre.z).abs() < half.z - 0.02)
+                .then_some((pixel, position))
+        })
+        .collect()
+}
+
+/// Asserts that `slot` of `observed` holds, at each of `texels` the oracle
+/// decides, `light`'s visibility past `blocks`: 255 unoccluded, 0
+/// occluded or not reached, where `fill` (the texels a baked light is not
+/// traced at) holds 255 wherever the light reaches. Returns how many
+/// texels the light reaches unoccluded and occluded.
+fn assert_slot(
+    observed: &Observed,
+    slot: usize,
+    texels: &[([u32; 2], DVec3)],
+    (light, blocks): (&Light, &[Block]),
+    fill: bool,
+    label: &str,
+) -> [usize; 2] {
+    let mut decided = [0; 2];
+    for &(pixel, position) in texels {
+        let Some(visible) = local_visibility(light, position, blocks) else {
+            continue;
+        };
+        let expected = match visible {
+            None => 0,
+            Some(_) if fill => 255,
+            Some(visible) => {
+                decided[usize::from(!visible)] += 1;
+                if visible { 255 } else { 0 }
+            }
+        };
+        let byte = observed.mask(slot, pixel);
+        assert_eq!(
+            byte, expected,
+            "{label}: slot {slot} at {pixel:?} ({position:?}): the oracle says {visible:?}"
+        );
+    }
+    decided
+}
+
+// A baked light (`Light::baked`) lights only the receivers that take baked
+// lights, the moving instances and static ones without baked lighting, so
+// the trace casts no ray toward it at a receiver with baked lighting, and
+// its slot holds 1 there wherever it reaches (#227). A lightmapped floor
+// takes no baked lights; a moving block over it, and an unlightmapped
+// static slab above that, do, each under a smaller slab that shadows part
+// of it from the baked light; a live light shadows the floor too.
+// Plausible defects, each with the check that fails on it: rays still
+// traced toward the baked light at the lightmapped floor (the floor's
+// texels the oracle shadows hold 0, not the fill); the G-buffer's flag
+// written wrong or never, so receivers that take baked lights are skipped
+// too (the moving block's and the slab's shadowed texels hold the fill);
+// the slot's baked bit ignored, so the live light is skipped at the floor
+// too (its shadowed floor texels hold the fill); the flag taken from
+// whether an instance moves alone (the unlightmapped static slab skipped);
+// and the flag not following the frame's baked lighting, off in a second
+// frame, when the floor takes baked lights again (its shadowed texels hold
+// the fill). The oracle is the boxes' geometry in f64, the slab test from
+// each texel's position toward each light, beside its reach; a camera cut
+// starts each frame, and decoys keep both lights out of the denoised
+// slots, so each texel holds its own trace.
+#[test]
+fn a_baked_light_casts_no_ray_at_a_receiver_with_baked_lighting() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let moving = Block::new(
+        Vec3::new(1.5, 1., 0.),
+        Vec3::new(1.2, 0.25, 1.2),
+        Mobility::Moving,
+    );
+    let slab = Block::new(
+        Vec3::new(0.5, 2.5, 0.),
+        Vec3::new(1., 0.1, 1.),
+        Mobility::Static,
+    );
+    let shade = Block::new(
+        Vec3::new(0., 4., 0.),
+        Vec3::new(0.4, 0.05, 0.4),
+        Mobility::Static,
+    );
+    let blocks = [moving, slab, shade];
+    let baked = Light {
+        position: Vec3::new(0., 6., 0.),
+        shape: LightShape::Point { radius: 0. },
+        intensity: 40.,
+        range: 8.,
+        baked: true,
+        casts_shadow: true,
+        ..Light::default()
+    };
+    let live = Light {
+        position: Vec3::new(-3., 5., 2.),
+        shape: LightShape::Point { radius: 0. },
+        intensity: 40.,
+        range: 9.,
+        casts_shadow: true,
+        ..Light::default()
+    };
+    let eye = Vec3::new(0., 10., 8.);
+    let decoys = decoys(eye);
+    let mut scene = Scene::new(&device, &queue);
+    let (floor, _) = test_support::add_static(&device, &queue, &mut scene, quad(6., false));
+    scene
+        .set_lightmap(
+            &device,
+            &queue,
+            &crate::static_lighting::Lightmap {
+                directionality: vec![],
+                size: [2, 2],
+                uv_scale_offset: [1., 1., 0., 0.],
+                irradiance: vec![[0.; 3]; 4],
+            },
+            &floor.materials,
+        )
+        .unwrap();
+    let cube = scene
+        .add_asset(&device, &queue, test_support::cube())
+        .unwrap()
+        .model;
+    for block in blocks {
+        let state = InstanceState {
+            pose: Mat4::from_scale_rotation_translation(
+                block.half * 2.,
+                Quat::IDENTITY,
+                block.centre,
+            ),
+            ..InstanceState::new(cube)
+        };
+        scene
+            .add_instance(&device, &queue, state, block.mobility)
+            .unwrap();
+    }
+    for light in decoys {
+        scene.add_light(&device, &queue, light).unwrap();
+    }
+    let [baked_id, live_id] =
+        [baked, live].map(|light| scene.add_light(&device, &queue, light).unwrap());
+    let size = [256, 192];
+    let camera = camera(eye, Vec3::new(0., 0., -0.5), size);
+    let settings = settings(true);
+    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut input = input(camera, None);
+    for baked_lighting in [true, false] {
+        let label = |what: &str| format!("baked lighting {baked_lighting}: {what}");
+        input.baked_lighting = baked_lighting;
+        input.camera_cut = true;
+        let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+        let [baked_slot, live_slot] =
+            [baked_id, live_id].map(|id| observed.slot(id.index() as u32));
+        assert!(
+            [baked_slot, live_slot]
+                .iter()
+                .all(|&slot| slot >= super::denoise::DENOISED_SLOTS as usize),
+            "the decoys outrank the watched lights: {baked_slot}, {live_slot}"
+        );
+        let floor = floor_texels(&observed, &camera);
+        let unreached = floor
+            .iter()
+            .filter(|(_, position)| local_visibility(&baked, *position, &blocks) == Some(None))
+            .count();
+        assert!(
+            unreached > 20,
+            "{unreached} floor texels beyond the baked light's range"
+        );
+        let checks = [
+            (
+                "the floor and the baked light",
+                baked_slot,
+                &floor,
+                &baked,
+                baked_lighting,
+            ),
+            (
+                "the floor and the live light",
+                live_slot,
+                &floor,
+                &live,
+                false,
+            ),
+            (
+                "the moving block and the baked light",
+                baked_slot,
+                &top_texels(&observed, &camera, moving),
+                &baked,
+                false,
+            ),
+            (
+                "the static slab and the baked light",
+                baked_slot,
+                &top_texels(&observed, &camera, slab),
+                &baked,
+                false,
+            ),
+        ];
+        for (what, slot, texels, light, fill) in checks {
+            let [lit, shadowed] = assert_slot(
+                &observed,
+                slot,
+                texels,
+                (light, &blocks),
+                fill,
+                &label(what),
+            );
+            if !fill {
+                assert!(
+                    lit > 10 && shadowed > 10,
+                    "{}: only {lit} lit and {shadowed} shadowed texels decided of {}",
+                    label(what),
+                    texels.len()
+                );
+            }
+        }
+        if baked_lighting {
+            // The fill differs from a ray where the oracle shadows the floor.
+            let filled = floor
+                .iter()
+                .filter(|(_, position)| {
+                    local_visibility(&baked, *position, &blocks) == Some(Some(false))
+                })
+                .count();
+            assert!(
+                filled > 20,
+                "only {filled} shadowed floor texels hold the fill"
+            );
+        }
+    }
+}

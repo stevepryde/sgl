@@ -18,20 +18,23 @@ pub(crate) const LAYERS: u32 = (RT_SHADOW_LIGHTS / 4) as u32;
 
 /// The slot table (`ShadowMaskSlots`): each slot's key, four to a vector
 /// (`SHADOW_MASK_EMPTY`, `SHADOW_MASK_DIRECTIONAL` or a scene light's
-/// index), and a bit for each slot whose history restarts this frame.
+/// index), a bit for each slot whose history restarts this frame, and a bit
+/// for each slot whose light is baked (`Light::baked`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct ShadowMaskSlots {
     pub lights: [[u32; 4]; RT_SHADOW_LIGHTS / 4],
     pub restart: u32,
+    pub baked: u32,
     /// WGSL rounds the struct up to its 16-byte alignment.
-    pub padding: [u32; 3],
+    pub padding: [u32; 2],
 }
 
 impl ShadowMaskSlots {
     /// The table holding `keys`, slot by slot, restarting the slots whose
-    /// bit `restart` sets.
-    pub fn new(keys: [u32; RT_SHADOW_LIGHTS], restart: u32) -> Self {
+    /// bit `restart` sets, the lights of the slots whose bit `baked` sets
+    /// baked.
+    pub fn new(keys: [u32; RT_SHADOW_LIGHTS], restart: u32, baked: u32) -> Self {
         let mut lights = [[SHADOW_MASK_EMPTY; 4]; RT_SHADOW_LIGHTS / 4];
         for (slot, key) in keys.into_iter().enumerate() {
             lights[slot / 4][slot % 4] = key;
@@ -39,7 +42,8 @@ impl ShadowMaskSlots {
         Self {
             lights,
             restart,
-            padding: [0; 3],
+            baked,
+            padding: [0; 2],
         }
     }
 }
@@ -50,7 +54,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
         "geometry_shadow_mask",
         "ShadowMaskSlots",
         ShadowMaskSlots,
-        [lights, restart]
+        [lights, restart, baked]
     )]
 }
 
