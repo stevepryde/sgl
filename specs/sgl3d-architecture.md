@@ -1227,7 +1227,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   what it was are none, and a deforming instance's pose and deformation
   are none on the portable path, which never sees it, and edits while
   hardware ray tracing is in effect, whose rays do), the frame's data but for the camera's cascades and
-  the clock (whose animation phase counts while a material scrolls), the
+  the clock (whose animation phase counts while an opaque or masked
+  material's surface moves, `Material::surface_moves`, which the scene's
+  materials count; the rays pass through blended ones), the
   environment bound, the quality, whether the probe hits' light list takes
   the scene's lights (a diagnostic setting) and the placement. Improved on
   RTXGI (RD-2), whose sample pauses below a threshold each scene sets,

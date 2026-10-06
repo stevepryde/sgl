@@ -31,7 +31,9 @@ pub struct DynamicGiChanges {
     /// hardware path traces them, a deforming instance's deformation.
     pub scene_edits: bool,
     /// The frame's lights, environment, fog or other data the hits take,
-    /// but for the camera's cascades and the clock.
+    /// but for the camera's cascades and the clock, whose animation phase
+    /// counts while an opaque or masked material's surface moves
+    /// (`SurfaceMaterial::normal_layers`).
     pub frame: bool,
     pub environment: bool,
     /// The most rays a probe traces (`Settings::dynamic_gi`).
@@ -55,11 +57,13 @@ impl Inputs {
     pub fn of(ctx: &FrameContext<'_>, max_rays: u32) -> Self {
         let mut frame = ctx.values.frame;
         // The camera's cascades, which probe hits do not use, and the
-        // clock, but for materials it scrolls.
+        // clock, but for the phase of an opaque or masked surface whose
+        // shading it moves (`Material::surface_moves`); the rays pass
+        // through blended ones.
         frame.shadow_cascades = bytemuck::Zeroable::zeroed();
         frame.elapsed_seconds = 0.;
         frame.frame_count = 0;
-        if !ctx.scene.scrolls_materials() {
+        if !ctx.scene.materials.holds_moving_surfaces() {
             frame.animation_phase = 0.;
         }
         Self {
