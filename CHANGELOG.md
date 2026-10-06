@@ -15,6 +15,24 @@ full API details.
 
 ## Unreleased
 
+### Dynamic GI follows the clock only where a surface moves
+
+- **Scope:** `sgl-3d` (#216). No API change. The dynamic GI volume's
+  inputs took the frame's animation phase, so changed every frame and kept
+  a converged volume from pausing, whenever any material had
+  `normal_layers`, including still layers, unlit materials and blended
+  ones. They now take it only while an opaque or masked lit material's
+  layer moves at least one repeat of its map an hour, the definition FSR2's
+  composition mask uses (#146): an unlit surface takes no normal, the
+  probes' rays pass through blended surfaces, and a still layer does not
+  move. Such scenes now pause the volume once its light has converged, as
+  scenes without layers do; the volume's light is unchanged.
+  `DynamicGiReport::changes.frame` no longer reports the clock for them.
+- **Migration:** no game-code changes. Afterwards, in a scene with still,
+  unlit or blended layered materials (such as blended water) and dynamic
+  GI, check that the volume pauses once converged
+  (`DynamicGiReport::paused`, feature `diagnostics`).
+
 ### SGL moves to wgpu 30
 
 - **Scope:** `sgl-2d`, `sgl-3d` and `sgl-post-fx` move from wgpu and naga

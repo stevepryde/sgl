@@ -1790,7 +1790,9 @@ or environment, `Settings::dynamic_gi`, or the volume's placement; the
 camera and the clock are not, nor a deforming instance's animation unless
 hardware ray tracing traces the volume's rays, which then see it. Setting a
 pose or a value to what it already is changes nothing. A scene whose
-materials scroll their normal maps changes every frame and never pauses.
+opaque or masked materials' normal layers move (a lit material, a layer
+moving at least a repeat per hour) changes every frame and never pauses;
+still layers and unlit or blended materials' layers do not.
 Frames that run the volume trace the ray source, so its instance BVHs
 rebuild on them as for world-space reflections. Deforming instances are
 lit by the volume, and block its rays only with hardware ray tracing. Per-pass cost is reported in
