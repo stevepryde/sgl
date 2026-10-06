@@ -1829,6 +1829,10 @@ so they see what they saw before and, in addition, skinned and morphed
 instances. It is opt-in: off by default and in every preset, a game takes
 it by requesting the feature and turning `Settings::hardware_ray_tracing`
 on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
+No feature needs it ([D-30](../../specs/decisions.md)): without it
+world-space reflections and the dynamic GI volume trace the portable BVHs,
+and the shadow maps stand in for ray-traced shadows, which run only in
+hardware.
 
 - **Device.** Request `graphics_device::ray_tracing_features(&adapter)`
   with `graphics_device::limits(&adapter)`, which requests the adapter's
@@ -1962,7 +1966,9 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   which are still drawn. `Renderer::ray_traced_shadows_in_effect(&settings)`
   says whether the setting is in effect; they then run on the frames where
   a light holds a slot. Without hardware ray tracing in effect the maps
-  shadow everything.
+  shadow everything: SGL3D has no software path for these rays, since on
+  its software BVHs they cost 3–5 times the hardware's with local lights
+  ([D-30](../../specs/decisions.md)).
 
 The [streaming example](examples/streaming.rs) and the
 [dynamic GI example](examples/dynamic_gi.rs) opt in with

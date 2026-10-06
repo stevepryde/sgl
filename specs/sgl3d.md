@@ -272,7 +272,10 @@ Remaining work, in the existing roadmap order:
    opaque surfaces take ray-traced shadows of the directional light and up
    to fifteen local lights, soft by the light's size, the first four
    (the directional light's alone at `Settings::ray_traced_shadow_quality`
-   Low) denoised by AMD's shadow denoiser and the rest temporally blended. The design is settled in the architecture
+   Low) denoised by AMD's shadow denoiser and the rest temporally blended;
+   without hardware ray tracing the maps shadow them, since a software trace
+   of their rays was too slow to use ([D-30](decisions.md): no feature
+   requires hardware ray tracing). The design is settled in the architecture
    ([Hardware ray tracing](sgl3d-architecture.md#designs-that-span-stages),
    [Ray-traced shadows](sgl3d-architecture.md#designs-that-span-stages)):
    acceleration structures beside the portable BVHs behind

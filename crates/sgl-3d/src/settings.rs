@@ -381,9 +381,12 @@ pub struct Settings {
     /// in by turning it on and requesting the device's feature
     /// (`graphics_device::ray_tracing_features`). Where the device has it, on
     /// frames that trace rays (world-space reflections, the dynamic GI
-    /// volume), the scene builds acceleration structures over its geometry
-    /// and keeps them (`Renderer::ray_tracing_stats`), and the rays trace
-    /// them; off frees them.
+    /// volume, ray-traced shadows), the scene builds acceleration
+    /// structures over its geometry and keeps them
+    /// (`Renderer::ray_tracing_stats`), and the rays trace them; off frees
+    /// them. No feature requires it: without it world-space reflections and
+    /// the dynamic GI volume trace the software BVHs, and the shadow maps
+    /// shadow what ray-traced shadows would.
     pub hardware_ray_tracing: bool,
     /// Ray-traced shadows, off by default and in no preset: while hardware
     /// ray tracing is in effect (`Renderer::ray_tracing_in_effect`), the
@@ -392,7 +395,8 @@ pub struct Settings {
     /// light instead of from the shadow maps, which still shadow the fog,
     /// blended surfaces, reflections and the lights the rays leave out.
     /// Without hardware ray tracing the maps shadow everything
-    /// (`Renderer::ray_traced_shadows_in_effect`).
+    /// (`Renderer::ray_traced_shadows_in_effect`): a software trace of these
+    /// rays cost too much to offer.
     pub ray_traced_shadows: bool,
     /// How ray-traced shadows are denoised while they run; no effect
     /// without them.

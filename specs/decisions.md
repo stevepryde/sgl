@@ -284,3 +284,26 @@ Use the [current specs](README.md) for implementation and the
   Rationale: Low looked nearly as good in the owner's comparison for about
   1 ms a frame less, so a game chooses it, or takes it with the Low
   preset; the High preset keeps the look.
+
+- **D-30** Owner direction, 2026-10-06 (#226): hardware ray tracing is an
+  optional luxury, never a requirement. No SGL feature requires it: every
+  feature that uses it has a path without it, which its design states.
+  Dynamic GI and world-space reflections (`Moving` and `All`) trace the
+  portable BVHs without it. Ray-traced shadows' path without it is the
+  shadow maps, which then shadow everything: a portable trace of their rays
+  was measured and not taken, the owner keeping it only if it was usable.
+  On an Apple M5 natively on Metal (release, 1920×1080, the rays at half
+  resolution; medians), over 1000 props the portable shadow rays took
+  1.16 ms with the sun alone and 2.27, 4.32 and 6.93 ms with 3, 8 and 15
+  local lights, against 0.49, 0.70, 1.02 and 1.47 in hardware: about
+  0.38 ms a local light against 0.065. The feature then cost 2.6–9.1 ms a
+  frame over the maps, against 1.9–3.7 in hardware. On the consumer's
+  route (Hyperdrive's Meridian at High, 1721×1080) the portable rays took
+  8.5 ms median and 92 ms at the 95th percentile, against 2.1 and 13.6 in
+  hardware, and the frame 23.0 and 112 ms against the maps' 13.9 and 15.6.
+  The sun alone is the one case that might be usable without hardware
+  ray tracing (2.6–2.9 ms over the maps on the props), unmeasured on the
+  consumer's route; it is built only if the owner asks.
+  Rationale: almost no games use hardware ray tracing, so no feature may
+  depend on it; a software path too slow to use adds nothing over the
+  fallback a feature already has.
