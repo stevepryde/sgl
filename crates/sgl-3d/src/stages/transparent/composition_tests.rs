@@ -6,7 +6,8 @@ use crate::renderer::Renderer;
 use crate::settings::{self, Settings};
 use crate::shading::gbuffer;
 use crate::{
-    AlphaMode, Camera, FrameInput, InstanceState, Mobility, NormalLayer, Scene, test_support,
+    AlphaMode, AssetIds, Camera, FrameInput, InstanceId, InstanceState, Mobility, NormalLayer,
+    Scene, test_support,
 };
 use glam::{Mat4, Vec3};
 
@@ -60,24 +61,44 @@ fn square(z: f32, half: f32) -> Asset {
     asset
 }
 
-/// `asset` placed whole at `offset` as a static instance.
+/// `asset` placed whole at `offset` as a moving instance, its identities
+/// and the instance's state.
 fn place(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene: &mut Scene,
     asset: Asset,
     offset: Vec3,
-) {
-    let model = scene.add_asset(device, queue, asset).unwrap().model;
+) -> (AssetIds, InstanceId, InstanceState) {
+    let ids = scene.add_asset(device, queue, asset).unwrap();
     let state = InstanceState {
-        model,
+        model: ids.model,
         pose: Mat4::from_translation(offset),
         visible: true,
         capture_visible: true,
     };
-    scene
-        .add_instance(device, queue, state, Mobility::Static)
+    let instance = scene
+        .add_instance(device, queue, state, Mobility::Moving)
         .unwrap();
+    (ids, instance, state)
+}
+
+/// A square at 3 m in front of the camera whose layers are `layers`.
+fn layered(layers: [NormalLayer; 2], unlit: bool) -> Asset {
+    let mut asset = square(-3., 0.4);
+    asset.materials[0].normal_layers = Some(layers);
+    asset.materials[0].unlit = unlit;
+    asset
+}
+
+/// A blended square of alpha 0.4 at 2 m in front of the camera.
+fn glass() -> Asset {
+    let mut glass = square(-2., 0.2);
+    glass.materials[0].base = [0.2, 0.9, 0.3, 0.4];
+    glass.materials[0].alpha = AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+    };
+    glass
 }
 
 /// A renderer running FSR2 at the scene size, or `None` where it cannot.
@@ -160,9 +181,11 @@ fn assert_masks(masks: &[Vec<f32>; 2], expected: &[((u32, u32), [f32; 2], &str)]
 // Plausible defects: opaque or masked surfaces whose normal layers move
 // leave FSR2's transparency and composition mask unmarked, or write the
 // reactive mask; surfaces whose shading does not move (layers standing
-// still, an unlit material, a masked material's cut-out texels, the floor)
-// are marked, or a moving surface where an opaque one hides it; or the
-// blended surfaces drawn after clear what the opaque ones marked. The
+// still, an unlit material, the floor) are marked, or a moving surface
+// where an opaque one hides it; or the blended surfaces drawn after clear
+// what the opaque ones marked. A masked material's cut-out texels are not
+// sampled: the opaque depth behind them already fails the pass's equal
+// test, so this scene cannot show its discard. The
 // oracle is AMD's FSR documentation, which names animated textures for this
 // mask, and its FSR sample, whose animated textures write 1 to it and leave
 // the reactive mask, before its translucency writes alpha to both with
@@ -189,12 +212,6 @@ fn moving_opaque_surfaces_mark_fsr2s_composition_mask() {
     };
     let mut scene = Scene::new(&device, &queue);
     test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
-    let layered = |layers: [NormalLayer; 2], unlit: bool| {
-        let mut asset = square(-3., 0.4);
-        asset.materials[0].normal_layers = Some(layers);
-        asset.materials[0].unlit = unlit;
-        asset
-    };
     let top = 0.6;
     let bottom = -0.6;
     for (asset, x, y) in [
@@ -207,7 +224,8 @@ fn moving_opaque_surfaces_mark_fsr2s_composition_mask() {
     ] {
         place(&device, &queue, &mut scene, asset, Vec3::new(x, y, 0.));
     }
-    // Masked over a base map cut out over its left half, u < 0.5.
+    // Masked over a base map cut out over its left half, u < 0.5, sampled
+    // over its right half.
     let mut cut = layered(MOVING, false);
     cut.images.push(Image::Rgba8(test_support::half_cut_out()));
     cut.materials[0].base_texture = Some(cut.images.len() - 1);
@@ -219,16 +237,11 @@ fn moving_opaque_surfaces_mark_fsr2s_composition_mask() {
         cut,
         Vec3::new(-1.2, bottom, 0.),
     );
-    let mut glass = square(-2., 0.2);
-    glass.materials[0].base = [0.2, 0.9, 0.3, 0.4];
-    glass.materials[0].alpha = AlphaMode::Blend {
-        receives_screen_space_reflections: false,
-    };
     place(
         &device,
         &queue,
         &mut scene,
-        glass,
+        glass(),
         Vec3::new(0.273, -0.4, 0.),
     );
     let masks = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 1.);
@@ -239,7 +252,6 @@ fn moving_opaque_surfaces_mark_fsr2s_composition_mask() {
             ((20, 20), [0., 0.], "the floor"),
             ((32, 20), [0., 0.], "still layers"),
             ((55, 20), [0., 0.], "an unlit material's moving layers"),
-            ((4, 44), [0., 0.], "a masked material's cut-out texels"),
             ((12, 44), [0., 1.], "a masked material's moving layers"),
             ((28, 44), [0., 1.], "moving layers"),
             ((37, 44), [0.4, 1.], "a blended square over moving layers"),
@@ -285,4 +297,130 @@ fn a_material_set_moving_marks_fsr2s_composition_mask() {
     scene.set_material(&queue, material, values).unwrap();
     let after = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 2.);
     assert_masks(&after, &[((32, 32), [0., 1.], "layers set moving")]);
+}
+
+// Plausible defect: the composition pass loads FSR2's masks rather than
+// clearing them, so what a blended surface wrote stays in them after it has
+// gone. The oracle is AMD's FSR sample, which clears both masks every frame
+// before its animated textures and translucency write them
+// (fsrapirendermodule.cpp, PreTransCallback): with a moving surface keeping
+// the pass running, the floor behind a blended square of alpha 0.4 reads
+// (0.4, 0.4) while it shows and (0, 0) the frame after it is hidden.
+#[test]
+fn fsr2s_masks_start_clear_each_frame_with_moving_surfaces() {
+    let Some((device, queue)) = test_support::fsr2_device() else {
+        return;
+    };
+    let Some((mut renderer, settings)) = fsr2_renderer(&device, &queue) else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
+    place(
+        &device,
+        &queue,
+        &mut scene,
+        layered(MOVING, false),
+        Vec3::new(-1.2, 0.6, 0.),
+    );
+    let (_, glass, mut state) = place(
+        &device,
+        &queue,
+        &mut scene,
+        glass(),
+        Vec3::new(0.273, -0.4, 0.),
+    );
+    let shown = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 1.);
+    assert_masks(
+        &shown,
+        &[
+            ((8, 20), [0., 1.], "moving layers"),
+            ((43, 44), [0.4, 0.4], "a blended square over the floor"),
+        ],
+    );
+    state.visible = false;
+    scene.set_instance(&queue, glass, state).unwrap();
+    let hidden = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 2.);
+    assert_masks(
+        &hidden,
+        &[
+            ((8, 20), [0., 1.], "moving layers"),
+            ((43, 44), [0., 0.], "the floor where the blended square was"),
+        ],
+    );
+}
+
+// Plausible defect: the scene's count of moving opaque materials drops too
+// far when an edit stops one material's layers, so the frame runs no pass
+// for the others that still move. The oracle is the documented contract:
+// with two moving squares, after `Scene::set_material` stops one, the
+// stopped one reads (0, 0) and the other still (0, 1).
+#[test]
+fn a_material_set_still_leaves_the_others_marked() {
+    let Some((device, queue)) = test_support::fsr2_device() else {
+        return;
+    };
+    let Some((mut renderer, settings)) = fsr2_renderer(&device, &queue) else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
+    let (stopped, ..) = place(
+        &device,
+        &queue,
+        &mut scene,
+        layered(MOVING, false),
+        Vec3::new(-1.2, 0.6, 0.),
+    );
+    place(
+        &device,
+        &queue,
+        &mut scene,
+        layered(MOVING, false),
+        Vec3::new(1.2, 0.6, 0.),
+    );
+    let both = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 1.);
+    assert_masks(
+        &both,
+        &[
+            ((8, 20), [0., 1.], "moving layers"),
+            ((55, 20), [0., 1.], "moving layers"),
+        ],
+    );
+    let material = stopped.materials[0];
+    let mut values = scene.material(material).unwrap();
+    values.normal_layers = Some(STILL);
+    scene.set_material(&queue, material, values).unwrap();
+    let one = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 2.);
+    assert_masks(
+        &one,
+        &[
+            ((8, 20), [0., 0.], "layers set still"),
+            ((55, 20), [0., 1.], "moving layers"),
+        ],
+    );
+}
+
+// Plausible defect: removing a moving material takes more from the scene's
+// count than adding it gave, which underflows and panics. The oracle is the
+// documented contract: a material no model uses can be removed, and the
+// next frame renders.
+#[test]
+fn removing_the_last_moving_material_renders_on() {
+    let Some((device, queue)) = test_support::fsr2_device() else {
+        return;
+    };
+    let Some((mut renderer, settings)) = fsr2_renderer(&device, &queue) else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
+    let asset = layered(MOVING, false);
+    let material = scene
+        .add_materials(&device, &queue, &asset.materials, &asset.images)
+        .unwrap()[0];
+    masks(&device, &queue, (&mut renderer, &settings), &mut scene, 1.);
+    scene.remove_material(material).unwrap();
+    let after = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 2.);
+    assert_masks(&after, &[((32, 32), [0., 0.], "the floor")]);
 }

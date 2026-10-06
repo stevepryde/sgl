@@ -12,14 +12,14 @@
 //! `Renderer` API and prints, per run, the median and 95th percentile GPU
 //! time of the frame and of the pass groups receivers touch, over the frames
 //! after a warm-up, with up to two frames in flight, and what the frames
-//! replace in the scene. `--run` renders only the runs it names. `before` and `after` are the same frames with the
-//! lake and the sheet unmarked and marked; `set-model` is `after` with the
-//! waves animated as before material layers existed: a 128×128 grid whose
-//! normals follow a sum of sines, replaced every frame with
-//! `Scene::set_model`. `fsr2-opaque` is `fsr2` with the lake opaque, whose
-//! moving layers mark FSR2's transparency and composition mask. Every 30th
-//! frame and the last of each run are written to
-//! `target/water-example/<run>/` for the owner to judge.
+//! replace in the scene. `--run` renders only the runs it names. `before`
+//! and `after` are the same frames with the lake and the sheet unmarked and
+//! marked; `set-model` is `after` with the waves animated as before material
+//! layers existed: a 128×128 grid whose normals follow a sum of sines,
+//! replaced every frame with `Scene::set_model`. `fsr2-opaque` is `fsr2`
+//! with the lake opaque, whose moving layers mark FSR2's transparency and
+//! composition mask. Every 30th frame and the last of each run are written
+//! to `target/water-example/<run>/` for the owner to judge.
 use sgl_3d::glam::{Quat, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameInput, InstanceState,

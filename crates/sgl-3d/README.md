@@ -1079,9 +1079,8 @@ twice or more.
   blended surface's changing shading, a receiver's included, from the
   reactive and transparency-and-composition masks blended surfaces write,
   and an opaque or masked surface's from the transparency-and-composition
-  mask its moving layers mark ([FSR2](#fsr2)), which AMD documents for
-  animated textures: FSR2 then keeps no detail locked there, so the moving
-  waves do not trail.
+  mask its moving layers mark ([FSR2](#fsr2)), as AMD documents for
+  animated textures: FSR2 then keeps no detail locked there.
 
 The [water example](examples/water.rs) scrolls a procedural wave map.
 

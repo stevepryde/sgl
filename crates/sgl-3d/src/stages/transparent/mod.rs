@@ -19,8 +19,8 @@ pub(crate) enum Beauty<'a> {
     /// screen-space method returned while one ran, which receivers that are
     /// the surface compose into their traced lobe. While FSR2 runs, these
     /// draws also write its reactive and transparency and composition
-    /// masks, which start clear here, after the opaque surfaces whose
-    /// shading moves mark the latter.
+    /// masks, which are cleared here and, while the scene holds an opaque
+    /// surface whose shading moves, marked by it first.
     Composite {
         reflections: Option<&'a wgpu::TextureView>,
     },

@@ -22,9 +22,12 @@ full API details.
   a layer moving at least one repeat of its map an hour) now mark FSR2's
   transparency-and-composition mask, as AMD's FSR documentation names
   animated textures for that mask and AMD's FSR sample marks them. Before,
-  only blended surfaces wrote FSR2's masks, so an opaque water surface's
-  moving waves could trail under FSR2. Blended surfaces' masks are
-  unchanged, as are TAA, SMAA and frames without FSR2.
+  only blended surfaces, additive effects and mist wrote FSR2's masks, and
+  opaque surfaces wrote none. Blended surfaces, additive effects and mist
+  write their masks as before, accumulating onto the marks: over a moving
+  opaque surface the transparency-and-composition mask now reads 1 where
+  a blended surface's alpha read before. TAA, SMAA and frames without FSR2
+  are unchanged.
 - **Cost:** while FSR2 runs and the scene holds such a material, the camera
   draws those materials' surfaces once more at their depth, writing one
   8-bit mask (timing group `FSR2 composition`); nothing otherwise. On an
