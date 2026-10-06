@@ -232,7 +232,8 @@ pub(super) fn resolve(
         (true, Some(form)) => HardwareRayTracing::On(form),
     };
     // Ray-traced shadows trace through the hardware path alone (the
-    // architecture's Ray-traced shadows); elsewhere the maps shadow. The
+    // architecture's Ray-traced shadows); elsewhere the maps shadow, their
+    // path without hardware ray tracing (D-30). The
     // frame narrows it to whether the stage runs (`traced_shadows`).
     let ray_traced_shadows =
         settings.ray_traced_shadows && matches!(hardware_ray_tracing, HardwareRayTracing::On(_));

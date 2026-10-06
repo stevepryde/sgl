@@ -15,6 +15,21 @@ full API details.
 
 ## Unreleased
 
+### Ray-traced shadows stay hardware-only; the maps are their fallback
+
+- **Scope:** `sgl-3d` `Settings::ray_traced_shadows` and
+  `Settings::hardware_ray_tracing` documentation (#226, D-30). No SGL
+  feature requires hardware ray tracing: world-space reflections and the
+  dynamic GI volume trace the software BVHs without it, as before, and
+  ray-traced shadows keep the shadow maps as their path without it. A
+  software trace of the shadow rays was measured and not taken: on an
+  Apple M5 at 1920×1080 it cost 3–5 times the hardware rays with local
+  lights (6.9 against 1.5 ms with fifteen) and 8.5 ms median, over 90 ms
+  at the 95th percentile, on Hyperdrive's route. Behaviour is unchanged.
+- **Migration:** no game-code changes. A game that offers ray-traced
+  shadows still offers them only where `Renderer::ray_tracing_in_effect`
+  is true; elsewhere its players keep the shadow maps.
+
 ### World-space reflections trace only the pixels that need rays
 
 - **Scope:** `sgl-3d` world-space reflections (#223). A classification pass
