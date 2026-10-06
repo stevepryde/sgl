@@ -2,10 +2,11 @@
 // (source_vs): the G-buffer (stable_fs and its fallbacks), lit color with
 // motion (fs), lit color with its ambient diffuse, motion and exact primitive
 // identity (source_fs), the G-buffer and source_fs's outputs at once
-// (fused_opaque_fs), blended receivers as the surface (receiver_fs) and
-// blended surfaces' colour (blended_fs). A masked material's pipelines
-// discard the texels it cuts out in each opaque pass
-// (material_alpha_discard), after the fragment's last derivative.
+// (fused_opaque_fs), blended receivers as the surface (receiver_fs),
+// blended surfaces' colour (blended_fs) and FSR2's transparency and
+// composition mask over moving opaque surfaces (fsr2_composition_fs). A
+// masked material's pipelines discard the texels it cuts out in each opaque
+// pass (material_alpha_discard), after the fragment's last derivative.
 struct SceneOutput {
  @location(0) color:vec4<f32>,
  @location(1) motion:vec2<f32>,
@@ -234,4 +235,17 @@ struct BlendedFsr2Masked {
 @fragment fn blended_fsr2_masked_fs(i:Fragment,@builtin(front_facing) front:bool)->BlendedFsr2Masked {
  let color=blended_color(i,front);
  return BlendedFsr2Masked(color,min(color.a,.9),color.a);
+}
+// FSR2's transparency and composition mask over an opaque or masked
+// surface whose shading moves where its geometry stands still (its
+// material's normal layers; stages/transparent), drawn at the G-buffer's
+// depth: 1, as AMD's FSR sample's animated textures write it, its depth and
+// motion a static surface's but its contents changing
+// (framework/rendermodules/animatedtextures/shaders/AnimatedTexture.hlsl;
+// FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt). The reactive
+// mask at location 0 is kept (view::targets::composition_targets). A masked
+// material's cut-out texels are not its surface.
+@fragment fn fsr2_composition_fs(i:Fragment)->@location(1) f32 {
+ material_alpha_discard(surface_base_color(i).a);
+ return 1.;
 }

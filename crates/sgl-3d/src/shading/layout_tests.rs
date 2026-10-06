@@ -147,6 +147,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         view::BLENDED_FS_ENTRY,
         view::BLENDED_FSR2_MASKED_FS_ENTRY,
         view::RECEIVER_FS_ENTRY,
+        view::FSR2_COMPOSITION_FS_ENTRY,
     ];
     let mut entries = vec![
         (view::GEOMETRY.name, geometry.clone()),

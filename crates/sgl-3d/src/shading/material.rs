@@ -157,4 +157,16 @@ impl MaterialUniform {
                 }),
         }
     }
+
+    /// Whether its shading changes with the frame's time where its geometry
+    /// stands still: it is lit and a normal layer moves, whole repeats of
+    /// its map each animation period. An unlit surface's shading takes no
+    /// normal, and a layer whose speed rounds to none stands still.
+    pub fn surface_moves(&self) -> bool {
+        self.flags & MATERIAL_UNLIT == 0
+            && self
+                .normal_layers
+                .iter()
+                .any(|layer| layer.cycles != [0.; 2])
+    }
 }

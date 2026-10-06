@@ -3,7 +3,7 @@
     "component": "AMD FidelityFX",
     "path": "crates/sgl-3d/src/LICENSE-amd-fidelityfx.txt",
     "url": "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/c6efa6bf7f2027b3ec94f28578bb5965eabb9e55/LICENSE.txt",
-    "prefix": "AMD FidelityFX SDK, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK\nRevision c6efa6bf7f2027b3ec94f28578bb5965eabb9e55 (SDK 1.1.4), LICENSE.txt. SGL3D\nadapts the FSR sample's reactive and transparency-and-composition mask\ntargets and exports (samples/fsrapi/fsrapirendermodule.cpp and\nframework/rendermodules/translucency/shaders/) in view/targets.rs,\nstages/antialiasing/fsr2.rs, stages/transparent/glow.wgsl and\nstages/transparent/atmosphere.wgsl.\n\n"
+    "prefix": "AMD FidelityFX SDK, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK\nRevision c6efa6bf7f2027b3ec94f28578bb5965eabb9e55 (SDK 1.1.4), LICENSE.txt. SGL3D\nadapts the FSR sample's reactive and transparency-and-composition mask\ntargets and exports (samples/fsrapi/fsrapirendermodule.cpp,\nframework/rendermodules/translucency/shaders/ and\nframework/rendermodules/animatedtextures/) in view/targets.rs,\nview/geometry.wgsl, stages/antialiasing/fsr2.rs,\nstages/transparent/glow.wgsl and stages/transparent/mist.wgsl.\n\n"
   },
   {
     "component": "AMD FidelityFX",

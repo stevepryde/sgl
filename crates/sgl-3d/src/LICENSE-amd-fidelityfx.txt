@@ -1,10 +1,11 @@
 AMD FidelityFX SDK, https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK
 Revision c6efa6bf7f2027b3ec94f28578bb5965eabb9e55 (SDK 1.1.4), LICENSE.txt. SGL3D
 adapts the FSR sample's reactive and transparency-and-composition mask
-targets and exports (samples/fsrapi/fsrapirendermodule.cpp and
-framework/rendermodules/translucency/shaders/) in view/targets.rs,
-stages/antialiasing/fsr2.rs, stages/transparent/glow.wgsl and
-stages/transparent/atmosphere.wgsl.
+targets and exports (samples/fsrapi/fsrapirendermodule.cpp,
+framework/rendermodules/translucency/shaders/ and
+framework/rendermodules/animatedtextures/) in view/targets.rs,
+view/geometry.wgsl, stages/antialiasing/fsr2.rs,
+stages/transparent/glow.wgsl and stages/transparent/mist.wgsl.
 
 This file is part of the FidelityFX SDK.
 
