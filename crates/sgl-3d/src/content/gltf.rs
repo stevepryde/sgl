@@ -157,26 +157,31 @@ fn read_images(
         .images()
         .map(|image| {
             let index = image.index();
+            let file = match image.source() {
+                gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => Some(uri),
+                _ => None,
+            };
             let source = match options.images {
                 None => ImageSource::Decode,
-                Some(sources) => {
-                    let uri = match image.source() {
-                        gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => {
-                            Some(uri)
-                        }
-                        _ => None,
-                    };
-                    sources(GltfImage {
-                        index,
-                        name: image.name(),
-                        uri,
-                    })
-                    .map_err(|error| format!("image {index}: {error}"))?
-                }
+                Some(sources) => sources(GltfImage {
+                    index,
+                    name: image.name(),
+                    uri: file,
+                })
+                .map_err(|error| format!("image {index}: {error}"))?,
             };
             match source {
                 ImageSource::Supplied(supplied) => Ok(supplied),
                 ImageSource::Decode => {
+                    // An embedded image reads no file, but gltf 1.4.1's
+                    // `image::Data::from_source` refuses every URI without
+                    // a base path, a data URI's too. Give an embedded image
+                    // an unused one, so bytes decode a data URI as a file
+                    // load does, and as Bevy's `load_image` does either way.
+                    let base = match file {
+                        Some(_) => base,
+                        None => Some(Path::new("")),
+                    };
                     let data = gltf::image::Data::from_source(image.source(), base, buffers)
                         .map_err(|error| format!("image {index} import failed: {error}; check referenced files and re-export valid glTF from the Blender source"))?;
                     rgba(index, data)

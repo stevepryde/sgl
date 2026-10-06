@@ -37,6 +37,19 @@ full API details.
   opaque surface with moving normal layers in motion; the `water` example's
   `fsr2-opaque` run renders an opaque lake under FSR2.
 
+### glTF bytes decode data-URI images
+
+- **Scope:** `sgl-3d` `asset::load_slice` and `asset::load_slice_with_options`
+  (#107). An image embedded as a base64 `data:` URI failed to load from
+  bytes (`image N import failed: external reference in slice only import`),
+  because gltf 1.4.1 refuses every image URI without a base path; only
+  images in buffer views decoded. It now decodes as it does from a file
+  (`asset::load`). `LoadOptions::images` still sees it as embedded
+  (`GltfImage::uri` is `None`), and external image files still need
+  supplying when loading from bytes.
+- **Migration:** no game-code changes. A game that supplied a data-URI
+  image only to avoid the failure can return `ImageSource::Decode` for it.
+
 ### Ray-traced shadows are soft and denoised; lights gain a size
 
 - **Scope:** `sgl-3d` (#23). `LightShape::Point` becomes
