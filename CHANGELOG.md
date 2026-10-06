@@ -2632,8 +2632,8 @@ since a pin, compare with the
 - Rectangle lights lying on emitting fixtures: before #228, the fixture
   shadowed its own light, in ray-traced shadows and in the dynamic GI
   volume's probes (which kept 15–25 % of such a light on the software BVHs
-  and 79–82 % with hardware ray tracing). Expect those lights to reach
-  further after updating.
+  and 79–82 % with hardware ray tracing). Expect what those lights light
+  to be brighter after updating.
 - Behaviour of features added during the cycle (dynamic GI and its ray
   budget, hardware ray tracing and its forms, ray-traced shadows, GPU-built
   lists, normal layers and the FSR2 composition mask) is described above in
