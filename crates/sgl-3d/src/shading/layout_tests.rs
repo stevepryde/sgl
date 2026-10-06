@@ -1,4 +1,5 @@
-//! Every composed program parses and validates, every Rust mirror of a WGSL
+//! Every composed program parses and validates and holds exactly the entry
+//! points its pipelines are created with, every Rust mirror of a WGSL
 //! struct has its members' names, offsets and size as naga lays them out, and
 //! every vertex buffer layout supplies what its vertex entry points read.
 use super::compose;
@@ -39,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 27] = [
+    let roots: [&'static super::Module; 28] = [
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
@@ -67,10 +68,15 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::shadows::traced::UPSAMPLE,
         &crate::stages::shadows::traced::denoise::TILE_CLASSIFICATION,
         &crate::stages::shadows::traced::denoise::FILTER,
+        &crate::stages::shadows::local::COPY,
     ];
     let mut programs: Vec<_> = roots
         .into_iter()
-        .chain(crate::stages::reflections::velvet::PROGRAMS)
+        .chain(
+            crate::stages::reflections::velvet::PROGRAMS
+                .iter()
+                .map(|&(root, _)| root),
+        )
         .map(|root| (root.name, compose(&[root])))
         .collect();
     // The geometry program with each shadow-mask provider: exactly one,
@@ -114,25 +120,227 @@ fn programs() -> Vec<(&'static str, String)> {
 /// A program's label, source and entry points.
 type Program = (&'static str, String, Vec<(naga::ShaderStage, &'static str)>);
 
-/// The entry points the pipeline code creates pipelines with, by the label
-/// of the program that must hold each.
-fn pipeline_entries() -> Vec<(&'static str, &'static str)> {
-    use crate::stages::shadows::traced::{self, denoise};
+/// The entry points each program's pipelines are created with, by the
+/// program's label: the constants beside its root that the pipeline code
+/// names. Both geometry programs hold the geometry passes' entries, and a
+/// tracing stage's program on each path its rays take holds its root's. A
+/// library validated whole is listed nowhere and holds none.
+fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
+    use super::FULLSCREEN_VS_ENTRY;
+    use crate::stages::cull::{self, pyramid};
+    use crate::stages::dynamic_gi::pipelines as gi;
+    use crate::stages::opaque::{ambient_occlusion as ao, sky};
+    use crate::stages::post::{bloom, inputs, smaa, tone_map};
+    use crate::stages::reflections::{source, velvet, world};
+    use crate::stages::shadows::{local, traced, traced::denoise};
+    use crate::stages::transparent::{effects, heat, mist};
+    use crate::stages::{deform, exposure, fog, motion_blur, probe_prefilter};
+    use crate::view::{pipelines as view, post_fx};
+    let geometry = vec![
+        view::SOURCE_VS_ENTRY,
+        view::FS_ENTRY,
+        view::STABLE_FS_ENTRY,
+        view::STABLE_LEGACY_FS_ENTRY,
+        view::ANISOTROPY_FS_ENTRY,
+        view::SOURCE_FS_ENTRY,
+        view::FUSED_OPAQUE_FS_ENTRY,
+        view::BLENDED_FS_ENTRY,
+        view::BLENDED_FSR2_MASKED_FS_ENTRY,
+        view::RECEIVER_FS_ENTRY,
+        view::FSR2_COMPOSITION_FS_ENTRY,
+    ];
     let mut entries = vec![
-        (traced::TEMPORAL.name, traced::TEMPORAL_ENTRY),
-        (traced::UPSAMPLE.name, traced::UPSAMPLE_ENTRY),
+        (view::GEOMETRY.name, geometry.clone()),
+        ("geometry_shadow_mask", geometry),
+        (
+            view::CASTER.name,
+            vec![
+                view::SHADOW_VS_ENTRY,
+                view::SHADOW_UNCLIPPED_VS_ENTRY,
+                view::SHADOW_MASKED_VS_ENTRY,
+                view::SHADOW_MASKED_UNCLIPPED_VS_ENTRY,
+                view::SHADOW_PULLED_VS_ENTRY,
+                view::SHADOW_PULLED_UNCLIPPED_VS_ENTRY,
+                view::SHADOW_PULLED_MASKED_VS_ENTRY,
+                view::SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY,
+                view::SHADOW_PAIRED_VS_ENTRY,
+                view::SHADOW_PAIRED_UNCLIPPED_VS_ENTRY,
+                view::SHADOW_UNCLIPPED_FS_ENTRY,
+                view::SHADOW_MASKED_FS_ENTRY,
+                view::SHADOW_MASKED_UNCLIPPED_FS_ENTRY,
+            ],
+        ),
+        (sky::SKY.name, vec![sky::SKY_VS_ENTRY, sky::SKY_FS_ENTRY]),
+        (
+            effects::GLOW.name,
+            vec![
+                effects::GLOW_VS_ENTRY,
+                effects::GLOW_SOFT_FS_ENTRY,
+                effects::GLOW_SOFT_FSR2_MASKED_FS_ENTRY,
+            ],
+        ),
+        (
+            mist::MIST.name,
+            vec![
+                mist::MIST_VS_ENTRY,
+                mist::MIST_FS_ENTRY,
+                mist::MIST_FSR2_MASKED_FS_ENTRY,
+            ],
+        ),
+        (
+            fog::VOLUMETRIC_FOG.name,
+            vec![
+                fog::INJECT_ENTRY,
+                fog::FILTER_FROXELS_ENTRY,
+                fog::INTEGRATE_ENTRY,
+            ],
+        ),
+        (heat::HEAT.name, vec![heat::VS_ENTRY, heat::FS_ENTRY]),
+        (
+            ao::XE_GTAO.name,
+            vec![ao::PREFILTER_ENTRY, ao::MAIN_PASS_ENTRY, ao::DENOISE_ENTRY],
+        ),
+        (
+            post_fx::INPUTS.name,
+            vec![FULLSCREEN_VS_ENTRY, post_fx::FS_MAIN_ENTRY],
+        ),
+        (
+            source::COMPLETION.name,
+            vec![
+                source::MAIN_ENTRY,
+                FULLSCREEN_VS_ENTRY,
+                source::COMPOSE_SCREEN_SPACE_ENTRY,
+            ],
+        ),
+        (source::PROBE_CULLING.name, vec![source::MAIN_ENTRY]),
+        (
+            world::DENOISE.name,
+            vec![
+                world::WORLD_RESOLVE_ENTRY,
+                world::WORLD_TEMPORAL_ENTRY,
+                world::WORLD_UPSAMPLE_ENTRY,
+            ],
+        ),
+        (
+            smaa::SMAA.name,
+            vec![
+                smaa::DETECT_VERTEX_ENTRY,
+                smaa::DETECT_ENTRY,
+                smaa::CALCULATE_VERTEX_ENTRY,
+                smaa::CALCULATE_ENTRY,
+                smaa::BLEND_VERTEX_ENTRY,
+                smaa::BLEND_ENTRY,
+            ],
+        ),
+        (
+            probe_prefilter::PREFILTER.name,
+            vec![
+                probe_prefilter::PREFILTER_ENTRY,
+                probe_prefilter::MIP_REDUCE_ENTRY,
+            ],
+        ),
+        (
+            bloom::BLOOM.name,
+            vec![
+                inputs::VS_ENTRY,
+                bloom::DOWNSAMPLE_FIRST_ENTRY,
+                bloom::DOWNSAMPLE_ENTRY,
+                bloom::UPSAMPLE_ENTRY,
+                bloom::COMPOSITE_ENTRY,
+            ],
+        ),
+        (
+            tone_map::TONE_MAP.name,
+            vec![
+                inputs::VS_ENTRY,
+                tone_map::PRESENT_ENTRY,
+                tone_map::PRESENT_DIRECT_ENTRY,
+                tone_map::COPY_PIXEL_ENTRY,
+            ],
+        ),
+        (
+            exposure::EXPOSURE.name,
+            vec![
+                exposure::COMPUTE_HISTOGRAM_ENTRY,
+                exposure::COMPUTE_AVERAGE_ENTRY,
+            ],
+        ),
+        (deform::DEFORM.name, vec![deform::DEFORM_ENTRY]),
+        (
+            cull::CULL.name,
+            vec![
+                cull::CULL_INSTANCES_ENTRY,
+                cull::CULL_FINALIZE_ENTRY,
+                cull::CULL_SECTIONS_ENTRY,
+                cull::CULL_INSTANCES_LATE_ENTRY,
+                cull::CULL_FINALIZE_LATE_ENTRY,
+                cull::CULL_SECTIONS_LATE_ENTRY,
+            ],
+        ),
+        (
+            pyramid::PYRAMID.name,
+            vec![
+                pyramid::DOWNSAMPLE_DEPTH_FIRST_ENTRY,
+                pyramid::DOWNSAMPLE_DEPTH_SECOND_ENTRY,
+            ],
+        ),
+        (
+            gi::ALLOCATE.name,
+            vec![
+                gi::RANK_ENTRY,
+                gi::THRESHOLD_ENTRY,
+                gi::ALLOCATE_ENTRY,
+                gi::PREPARE_TRACE_ENTRY,
+            ],
+        ),
+        (
+            gi::UPDATE.name,
+            vec![
+                gi::UPDATE_IRRADIANCE_ENTRY,
+                gi::UPDATE_DEPTH_ENTRY,
+                gi::SETTLE_ENTRY,
+                gi::SCROLL_ENTRY,
+            ],
+        ),
+        (
+            motion_blur::MOTION_BLUR.name,
+            motion_blur::ENTRY_POINTS.to_vec(),
+        ),
+        (traced::TEMPORAL.name, vec![traced::TEMPORAL_ENTRY]),
+        (traced::UPSAMPLE.name, vec![traced::UPSAMPLE_ENTRY]),
         (
             denoise::TILE_CLASSIFICATION.name,
-            denoise::TILE_CLASSIFICATION_ENTRY,
+            vec![denoise::TILE_CLASSIFICATION_ENTRY],
         ),
-        (denoise::FILTER.name, denoise::FILTER_ENTRY),
+        (denoise::FILTER.name, vec![denoise::FILTER_ENTRY]),
+        (
+            local::COPY.name,
+            vec![FULLSCREEN_VS_ENTRY, local::COPY_FS_ENTRY],
+        ),
     ];
     entries.extend(
-        traced_programs(None)
-            .into_iter()
-            .chain(hardware_programs())
-            .flat_map(|(label, _, points)| points.into_iter().map(move |(_, name)| (label, name))),
+        velvet::PROGRAMS
+            .iter()
+            .map(|&(root, names)| (root.name, names.to_vec())),
     );
+    // The dynamic GI stage's observed trace (feature `diagnostics`) is
+    // created from its portable program alone, but every path's holds it.
+    for (label, _, points) in traced_programs(None).into_iter().chain(hardware_programs()) {
+        let mut names: Vec<_> = points.into_iter().map(|(_, name)| name).collect();
+        if label.starts_with(gi::TRACE.name) {
+            names.push(gi::TRACE_OBSERVED_ENTRY);
+        }
+        entries.push((label, names));
+    }
+    #[cfg(feature = "diagnostics")]
+    {
+        use crate::stages::{dynamic_gi::observe, frame_probe};
+        entries.extend([
+            ("frame_probe", vec![frame_probe::MAIN_ENTRY]),
+            ("frame_probe_coverage", vec![frame_probe::MAIN_ENTRY]),
+            ("dynamic_gi_observe", vec![observe::OBSERVE_ENTRY]),
+        ]);
+    }
     entries
 }
 
@@ -159,7 +367,13 @@ fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
                 "world_reflections_candidates",
             ),
             compose(&[world, root]),
-            vec![(Vertex, "fullscreen_vs"), (Fragment, "world_trace")],
+            vec![
+                (Vertex, super::FULLSCREEN_VS_ENTRY),
+                (
+                    Fragment,
+                    crate::stages::reflections::world::WORLD_TRACE_ENTRY,
+                ),
+            ],
         ),
         (
             label(
@@ -168,7 +382,7 @@ fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
                 "dynamic_gi_trace_candidates",
             ),
             compose(&[gi, root]),
-            vec![(Compute, "trace")],
+            vec![(Compute, crate::stages::dynamic_gi::pipelines::TRACE_ENTRY)],
         ),
         (
             label(
@@ -186,7 +400,7 @@ fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
                 "scene_rays_candidates_query",
             ),
             compose(&[query, root]),
-            vec![(Compute, "scene_intersect")],
+            vec![(Compute, crate::scene::rays::SCENE_INTERSECT_ENTRY)],
         ),
     ]
 }
@@ -222,19 +436,24 @@ fn every_program_composes_and_validates() {
         .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(&source)));
         // A module that swallows the code after it, as a block comment left
         // open does (naga reads it to the program's end), leaves a valid
-        // program without the entry points its pipelines are created with.
-        // Only the two libraries validated whole hold none.
-        assert!(
-            [super::PACKED_VERTEX.name, "lit_compute_library"].contains(&label)
-                || !module.entry_points.is_empty(),
-            "{label} holds no entry point"
+        // program without the entry points its pipelines are created with;
+        // an entry point a program holds that no pipeline names is unlisted.
+        let mut held: Vec<_> = module
+            .entry_points
+            .iter()
+            .map(|point| point.name.as_str())
+            .collect();
+        let mut named: Vec<_> = entries
+            .iter()
+            .filter(|(program, _)| *program == label)
+            .flat_map(|(_, names)| names.iter().copied())
+            .collect();
+        held.sort_unstable();
+        named.sort_unstable();
+        assert_eq!(
+            held, named,
+            "{label} holds other entry points than its pipelines are created with"
         );
-        for &(_, entry) in entries.iter().filter(|&&(program, _)| program == label) {
-            assert!(
-                module.entry_points.iter().any(|point| point.name == entry),
-                "{label} lacks {entry}, which its pipeline is created with"
-            );
-        }
     }
 }
 
@@ -649,29 +868,40 @@ fn vertex_inputs(
 fn vertex_layouts_match_wgsl_inputs() {
     use super::vertex::{CASTER_LAYOUT, DRAW_INSTANCE_LAYOUT};
     use crate::stages::transparent::{effects, heat, mist};
+    use crate::view::pipelines as view;
+    let caster = view::CASTER.name;
     let pipelines = [
         (
             &[&DRAW_INSTANCE_LAYOUT, &CASTER_LAYOUT][..],
             &[
-                ("caster", "shadow_vs"),
-                ("caster", "shadow_unclipped_vs"),
-                ("caster", "shadow_masked_vs"),
-                ("caster", "shadow_masked_unclipped_vs"),
+                (caster, view::SHADOW_VS_ENTRY),
+                (caster, view::SHADOW_UNCLIPPED_VS_ENTRY),
+                (caster, view::SHADOW_MASKED_VS_ENTRY),
+                (caster, view::SHADOW_MASKED_UNCLIPPED_VS_ENTRY),
             ][..],
         ),
         (
             &[&DRAW_INSTANCE_LAYOUT][..],
             &[
-                ("geometry", "source_vs"),
-                ("caster", "shadow_pulled_vs"),
-                ("caster", "shadow_pulled_unclipped_vs"),
-                ("caster", "shadow_pulled_masked_vs"),
-                ("caster", "shadow_pulled_masked_unclipped_vs"),
+                (view::GEOMETRY.name, view::SOURCE_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_UNCLIPPED_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_MASKED_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY),
             ][..],
         ),
-        (&[&effects::GLOW_LAYOUT][..], &[("glow", "glow_vs")][..]),
-        (&[&heat::HEAT_LAYOUT][..], &[("heat_distortion", "vs")][..]),
-        (&[&mist::MIST_LAYOUT][..], &[("mist", "mist_vs")][..]),
+        (
+            &[&effects::GLOW_LAYOUT][..],
+            &[(effects::GLOW.name, effects::GLOW_VS_ENTRY)][..],
+        ),
+        (
+            &[&heat::HEAT_LAYOUT][..],
+            &[(heat::HEAT.name, heat::VS_ENTRY)][..],
+        ),
+        (
+            &[&mist::MIST_LAYOUT][..],
+            &[(mist::MIST.name, mist::MIST_VS_ENTRY)][..],
+        ),
     ];
     let programs = programs();
     for (layouts, readers) in pipelines {

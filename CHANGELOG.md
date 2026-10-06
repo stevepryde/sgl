@@ -92,6 +92,12 @@ full API details.
   point, spot and directional lights softens slightly. Afterwards, with
   ray-traced shadows on, look at the shadows of small and large lights and
   of the sun in motion, and at a dynamic GI volume near shadowed lights.
+- **Fixed** (#205): the denoiser's tile classification gathered its four
+  slots' votes on skipping a tile in one workgroup vector written a
+  component at a time, so a GPU that stores a component as the whole
+  vector could lose a slot's vote and leave a black 8×8 tile for a frame.
+  The votes are now bits of one atomic word. Nothing else changes; no
+  game-code changes.
 
 ### Directional cascades cost less GPU time
 

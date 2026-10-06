@@ -129,8 +129,11 @@ impl Atlas {
 pub(crate) static COPY: crate::shading::Module = crate::shading::Module {
     name: "local_shadow_copy",
     source: include_str!("local/copy.wgsl"),
-    deps: &[&crate::shading::FULLSCREEN],
+    deps: &[&crate::shading::FULLSCREEN_VS],
 };
+/// The entry point the copy's pipeline is created with, beside
+/// `shading::FULLSCREEN_VS_ENTRY`, which the clear's alone has.
+pub(crate) const COPY_FS_ENTRY: &str = "copy_fs";
 
 fn records_buffer(device: &wgpu::Device, count: usize) -> wgpu::Buffer {
     crate::counters::buffer(
@@ -158,7 +161,7 @@ fn face_pipeline(
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module,
-            entry_point: Some("fullscreen_vs"),
+            entry_point: Some(crate::shading::FULLSCREEN_VS_ENTRY),
             compilation_options: Default::default(),
             buffers: &[],
         },
@@ -238,7 +241,7 @@ impl Local {
             "local light shadow layer copy",
             &module,
             &pipeline_layout("local light shadow layer copy", &[Some(&copy_layout)]),
-            Some("copy_fs"),
+            Some(COPY_FS_ENTRY),
         );
         Self {
             frame: Atlas::new(device, "local light shadow atlas", size),

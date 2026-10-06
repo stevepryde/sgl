@@ -10,6 +10,14 @@ pub(crate) static SMAA: crate::shading::Module = crate::shading::Module {
     source: include_str!("smaa.wgsl"),
     deps: &[],
 };
+/// The entry points SMAA's pipelines are created with: each pass's
+/// fragment and vertex.
+pub(crate) const DETECT_ENTRY: &str = "detect";
+pub(crate) const DETECT_VERTEX_ENTRY: &str = "detect_vertex";
+pub(crate) const CALCULATE_ENTRY: &str = "calculate";
+pub(crate) const CALCULATE_VERTEX_ENTRY: &str = "calculate_vertex";
+pub(crate) const BLEND_ENTRY: &str = "blend";
+pub(crate) const BLEND_VERTEX_ENTRY: &str = "blend_vertex";
 
 struct Bindings {
     input: wgpu::TextureView,
@@ -231,8 +239,8 @@ impl Smaa {
             blend: pipeline(
                 device,
                 &shader,
-                "blend",
-                "blend_vertex",
+                BLEND_ENTRY,
+                BLEND_VERTEX_ENTRY,
                 output_format,
                 &preset(quality),
             ),
@@ -249,8 +257,8 @@ impl Smaa {
     ) -> [wgpu::RenderPipeline; 2] {
         let constants = preset(quality);
         [
-            ("detect", "detect_vertex"),
-            ("calculate", "calculate_vertex"),
+            (DETECT_ENTRY, DETECT_VERTEX_ENTRY),
+            (CALCULATE_ENTRY, CALCULATE_VERTEX_ENTRY),
         ]
         .map(|(entry, vertex)| {
             pipeline(

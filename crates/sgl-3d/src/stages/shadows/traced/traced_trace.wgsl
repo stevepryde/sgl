@@ -30,8 +30,9 @@
 // the light is a hash of the pixel and the frame (hash.wgsl), where Wicked
 // reads blue noise, a departure the owner judges (RD-5); the tile's bits
 // gather through workgroup atomics into a storage texture, where Wicked
-// ORs them into a buffer; and Wicked's half-resolution normals copy is not
-// written, the denoiser reading the G-buffer's.
+// ORs them into a buffer; and the half-resolution normals copy (310) holds
+// the shading normal as it is, which the denoiser reads directly, where
+// Wicked's encodes it to [0, 1] and its denoiser normalises it back.
 @group(3) @binding(0) var traced_depth:texture_depth_2d;
 @group(3) @binding(1) var traced_normal:texture_2d<f32>;
 @group(3) @binding(2) var traced_f0:texture_2d<f32>;

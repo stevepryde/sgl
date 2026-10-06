@@ -14,9 +14,9 @@
 // boundary: the four slots in one invocation, a slot a lane of the port's
 // vectors (ffx_denoiser_shadows_filter.wgsl), where Wicked dispatches each
 // light, so the metadata, input and history hold the four slots in one
-// texel's lanes; the pass a pipeline constant, where Wicked pushes it; depth and normals the
-// trace's half-resolution copies, as Wicked's half-resolution depth and
-// normals (traced_denoise_common.wgsl): the depth linear already, so AMD's
+// texel's lanes; the pass a pipeline constant, where Wicked pushes it;
+// depth and normals the trace's copies at the tracing resolution
+// (traced_denoise_common.wgsl): the depth linear already, so AMD's
 // linearisation through the inverse projection is not applied, and a
 // pixel the trace found nothing lit at reading as the sky, 0; the tile's
 // metadata read once by the group through workgroupUniformLoad; and the
@@ -60,9 +60,14 @@ fn FFX_DNSR_Shadows_IsShadowReciever(did:vec2<u32>)->bool {
  return traced_denoise_receiver(did);
 }
 
-// The four slots' mean and variance, packed as two halves a lane.
+// The four slots' mean and variance, packed as the scratch holds them
+// (traced_denoise_common.wgsl), and unpacked.
 fn FFX_DNSR_Shadows_ReadInput(p:vec2<i32>)->vec4<u32> {
  return textureLoad(denoise_input,p,0);
+}
+fn FFX_DNSR_Shadows_UnpackInput(packed:vec4<u32>)->FFX_DNSR_Shadows_Input {
+ let input=traced_denoise_unpack(packed);
+ return FFX_DNSR_Shadows_Input(input.mean,input.variance);
 }
 
 fn FFX_DNSR_Shadows_ReadTileMetaData(p:u32)->vec4<u32> {
@@ -79,7 +84,7 @@ fn FFX_DNSR_Shadows_ReadTileMetaData(p:u32)->vec4<u32> {
   return;
  }
  if filter_pass<2u {
-  textureStore(denoise_history,did.xy,FFX_DNSR_Shadows_PackInput(filtered.results));
+  textureStore(denoise_history,did.xy,traced_denoise_pack(filtered.results.mean,filtered.results.variance));
  } else {
   // final pass:
   // Recover some of the contrast lost during denoising

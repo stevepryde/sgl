@@ -11,6 +11,8 @@ pub(crate) static INPUTS: crate::shading::Module = crate::shading::Module {
     source: include_str!("inputs.wgsl"),
     deps: &[&crate::shading::FULLSCREEN],
 };
+/// The full-screen vertex entry point every post pipeline is created with.
+pub(crate) const VS_ENTRY: &str = "vs";
 
 struct Binding {
     scene: wgpu::TextureView,
@@ -177,7 +179,7 @@ pub(super) fn pipeline(
         layout: Some(&layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some("vs"),
+            entry_point: Some(VS_ENTRY),
             compilation_options: Default::default(),
             buffers: &[],
         },

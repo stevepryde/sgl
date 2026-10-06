@@ -12,6 +12,9 @@ pub(crate) static HEAT: crate::shading::Module = crate::shading::Module {
     source: include_str!("heat.wgsl"),
     deps: &[],
 };
+/// The entry points the shimmer's pipeline is created with.
+pub(crate) const VS_ENTRY: &str = "vs";
+pub(crate) const FS_ENTRY: &str = "fs";
 /// The heat shimmer's vertex buffer, read by `vs`.
 pub(crate) const HEAT_LAYOUT: VertexLayout =
     vertex_layout!(HeatDistortion, [position, displacement, weight]);
@@ -73,13 +76,13 @@ impl Heat {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs"),
+                entry_point: Some(VS_ENTRY),
                 compilation_options: Default::default(),
                 buffers: &[HEAT_LAYOUT.buffer],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs"),
+                entry_point: Some(FS_ENTRY),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: HDR,

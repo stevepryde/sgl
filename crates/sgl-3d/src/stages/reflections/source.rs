@@ -17,7 +17,7 @@ pub(crate) static COMPLETION: shading::Module = shading::Module {
         &shading::PROBE_SAMPLING,
         &shading::SPECULAR_LOBES,
         &shading::PROBE_COLLECTION,
-        &shading::FULLSCREEN,
+        &shading::FULLSCREEN_VS,
         &shading::FOG,
     ],
 };
@@ -26,6 +26,10 @@ pub(crate) static PROBE_CULLING: shading::Module = shading::Module {
     source: include_str!("probe_culling.wgsl"),
     deps: &[&shading::PROBE_SAMPLING],
 };
+/// The entry points the two programs' pipelines are created with: each
+/// one's `main`, and composition's beside `shading::FULLSCREEN_VS_ENTRY`.
+pub(crate) const MAIN_ENTRY: &str = "main";
+pub(crate) const COMPOSE_SCREEN_SPACE_ENTRY: &str = "compose_screen_space";
 
 /// Completion's and composition's reflection environment; matches
 /// `ReflectionEnvironment` in source.wgsl.
@@ -244,7 +248,7 @@ fn completion(device: &wgpu::Device, variant: Variant) -> Completion {
         label: Some("reflection source completion"),
         layout: None,
         module: &shader,
-        entry_point: Some("main"),
+        entry_point: Some(MAIN_ENTRY),
         compilation_options: compilation_options(),
         cache: None,
     });
@@ -253,13 +257,13 @@ fn completion(device: &wgpu::Device, variant: Variant) -> Completion {
         layout: None,
         vertex: wgpu::VertexState {
             module: &shader,
-            entry_point: Some("fullscreen_vs"),
+            entry_point: Some(shading::FULLSCREEN_VS_ENTRY),
             compilation_options: compilation_options(),
             buffers: &[],
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
-            entry_point: Some("compose_screen_space"),
+            entry_point: Some(COMPOSE_SCREEN_SPACE_ENTRY),
             compilation_options: compilation_options(),
             targets: &[Some(wgpu::ColorTargetState {
                 format: crate::shading::gbuffer::COLOR,
@@ -320,7 +324,7 @@ impl ReflectionSource {
             label: Some("specular probe tiled culling"),
             layout: None,
             module: &culling,
-            entry_point: Some("main"),
+            entry_point: Some(MAIN_ENTRY),
             compilation_options: Default::default(),
             cache: None,
         });

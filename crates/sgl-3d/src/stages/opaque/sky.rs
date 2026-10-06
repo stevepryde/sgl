@@ -11,6 +11,9 @@ pub(crate) static SKY: shading::Module = shading::Module {
         &shading::GBUFFER,
     ],
 };
+/// The entry points the sky's pipeline is created with.
+pub(crate) const SKY_VS_ENTRY: &str = "sky_vs";
+pub(crate) const SKY_FS_ENTRY: &str = "sky_fs";
 
 pub(crate) struct Sky {
     pipeline: wgpu::RenderPipeline,
@@ -40,13 +43,13 @@ impl Sky {
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("sky_vs"),
+                    entry_point: Some(SKY_VS_ENTRY),
                     compilation_options: Default::default(),
                     buffers: &[],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("sky_fs"),
+                    entry_point: Some(SKY_FS_ENTRY),
                     compilation_options: Default::default(),
                     targets: &targets,
                 }),
