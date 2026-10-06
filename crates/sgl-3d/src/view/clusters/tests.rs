@@ -338,7 +338,7 @@ fn look_up(
         });
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     receive.recv().unwrap().unwrap();
-    bytemuck::cast_slice(&readback.slice(..).get_mapped_range()).to_vec()
+    bytemuck::cast_slice(&readback.slice(..).get_mapped_range().unwrap()).to_vec()
 }
 
 /// Clusters `lights` and `decals` for `camera` as a frame does and checks

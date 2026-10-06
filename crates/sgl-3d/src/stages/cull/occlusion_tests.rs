@@ -482,7 +482,7 @@ fn read_level(
     queue.submit([encoder.finish()]);
     buffer.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let mapped = buffer.get_mapped_range(..);
+    let mapped = buffer.get_mapped_range(..).unwrap();
     let mut texels = Vec::new();
     for line in mapped.chunks(row as usize) {
         texels.extend_from_slice(bytemuck::cast_slice(&line[..(size.width * 4) as usize]));

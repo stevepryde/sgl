@@ -123,7 +123,7 @@ fn observe(
     readback.map_async(wgpu::MapMode::Read, .., move |r| send.send(r).unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     recv.recv().unwrap().unwrap();
-    bytemuck::cast_slice::<u8, f32>(&readback.get_mapped_range(..))
+    bytemuck::cast_slice::<u8, f32>(&readback.get_mapped_range(..).unwrap())
         .try_into()
         .unwrap()
 }

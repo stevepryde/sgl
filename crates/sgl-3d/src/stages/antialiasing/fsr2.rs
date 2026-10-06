@@ -48,7 +48,10 @@
 //!   translucency pass (`view::targets::mask_targets`): cleared before the camera's
 //!   transparent draws, additive effects marking reactivity as its reactive
 //!   particles do and mist marking transparency and composition as its
-//!   translucent materials do (`glow.wgsl`, `atmosphere.wgsl`). SDK
+//!   translucent materials do (`glow.wgsl`, `mist.wgsl`). Before them,
+//!   opaque and masked surfaces whose material's normal layers move mark
+//!   transparency and composition 1, as its animated textures do (docs 237
+//!   name animated textures; `view::targets::composition_targets`). SDK
 //!   1.1.4's `ffxFsr2ContextGenerateReactiveMask` schedules nothing, and the
 //!   docs prefer masks rendered from materials to generated ones.
 //! - Reset on SGL3D history loss: an invalid temporal frame (a camera cut, a

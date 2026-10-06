@@ -188,7 +188,7 @@ fn read_pixels(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Textu
     queue.submit([encoder.finish()]);
     buffer.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let mapped = buffer.get_mapped_range(..);
+    let mapped = buffer.get_mapped_range(..).unwrap();
     mapped
         .chunks_exact(stride as usize)
         .flat_map(|row| row[..texture.width() as usize * 4].iter().copied())

@@ -831,7 +831,13 @@ its source. It antialiases like TAA while upscaling:
   AMD's 0..=1 (0.8 by default, as AMD's sample).
   The camera's blended surfaces, additive effects and mist also write FSR2's
   reactive and transparency-and-composition masks, as AMD's FSR documentation
-  and sample write them from translucent draws.
+  and sample write them from translucent draws. Opaque and masked surfaces
+  whose material's [normal layers](#scrolling-normal-layers) move (a lit
+  material, a layer moving at least a repeat per hour) mark the
+  transparency-and-composition mask, as AMD's sample marks its animated
+  textures: the camera draws those materials' surfaces once more, at their
+  depth, before its blended surfaces (timing group `FSR2 composition`;
+  nothing in a scene without such a material).
 - Request `graphics_device::fsr2_features(&adapter)` when creating the device.
   `antialiasing` and `fsr2_quality` take effect at the next `Renderer::resize`,
   which creates the FSR2 context. Where the device lacks the features or the
@@ -1071,8 +1077,10 @@ twice or more.
   motion. TAA and the reflection methods' accumulation reject what they
   change by their colour clamps, as for any change of shading. FSR2 takes a
   blended surface's changing shading, a receiver's included, from the
-  reactive and transparency-and-composition masks blended surfaces write;
-  an opaque material's layers write no mask.
+  reactive and transparency-and-composition masks blended surfaces write,
+  and an opaque or masked surface's from the transparency-and-composition
+  mask its moving layers mark ([FSR2](#fsr2)), as AMD documents for
+  animated textures: FSR2 then keeps no detail locked there.
 
 The [water example](examples/water.rs) scrolls a procedural wave map.
 
@@ -1813,7 +1821,7 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
 
 - **Device.** Request `graphics_device::ray_tracing_features(&adapter)`
   with `graphics_device::limits(&adapter)`, which requests the adapter's
-  acceleration-structure limits. wgpu 29 marks the feature experimental, so
+  acceleration-structure limits. wgpu 30 marks the feature experimental, so
   the descriptor's `experimental_features` must be
   `unsafe { wgpu::ExperimentalFeatures::enabled() }`, the game's
   acceptance of it. Metal has it from macOS 15 on Apple silicon (in

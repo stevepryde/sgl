@@ -257,7 +257,7 @@ fn read_rgba16f(
     queue.submit([encoder.finish()]);
     buffer.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let bytes = buffer.get_mapped_range(..);
+    let bytes = buffer.get_mapped_range(..).unwrap();
     let half = |h: u16| {
         let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
         let exponent = i32::from((h >> 10) & 0x1f);
@@ -606,7 +606,7 @@ fn read_r16f(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureVie
     queue.submit([encoder.finish()]);
     buffer.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let bytes = buffer.get_mapped_range(..);
+    let bytes = buffer.get_mapped_range(..).unwrap();
     (0..SIZE[1])
         .flat_map(|y| (0..SIZE[0]).map(move |x| (y * stride + x * 2) as usize))
         .map(|at| {

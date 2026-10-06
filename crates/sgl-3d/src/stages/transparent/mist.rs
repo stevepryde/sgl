@@ -65,7 +65,7 @@ impl Mist {
                     module: &shader,
                     entry_point: Some(MIST_VS_ENTRY),
                     compilation_options: Default::default(),
-                    buffers: &[MIST_LAYOUT.buffer],
+                    buffers: &[Some(MIST_LAYOUT.buffer)],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,

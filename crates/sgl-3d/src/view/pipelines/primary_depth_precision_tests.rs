@@ -54,11 +54,11 @@ struct V { @invariant @builtin(position) position:vec4<f32>, @location(0) @inter
                     module: &module,
                     entry_point: Some("vs"),
                     compilation_options: Default::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
+                    buffers: &[Some(wgpu::VertexBufferLayout {
                         array_stride: 12,
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![0=>Float32x3],
-                    }],
+                    })],
                 },
                 primitive: wgpu::PrimitiveState {
                     cull_mode: None,

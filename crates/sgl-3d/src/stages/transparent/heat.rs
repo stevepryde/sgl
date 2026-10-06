@@ -78,7 +78,7 @@ impl Heat {
                 module: &shader,
                 entry_point: Some(VS_ENTRY),
                 compilation_options: Default::default(),
-                buffers: &[HEAT_LAYOUT.buffer],
+                buffers: &[Some(HEAT_LAYOUT.buffer)],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,

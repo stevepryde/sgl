@@ -200,7 +200,7 @@ fn half_resolution_color_matches_metadata_at_odd_even_and_minimum_sizes() {
         queue.submit([encoder.finish()]);
         buffer.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-        let bytes = buffer.get_mapped_range(..);
+        let bytes = buffer.get_mapped_range(..).unwrap();
         let offset = (pixel[1] * row + pixel[0] * 8) as usize;
         let rgba: [f32; 4] =
             std::array::from_fn(|c| half(&bytes[offset + c * 2..offset + c * 2 + 2]));

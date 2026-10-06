@@ -45,6 +45,22 @@ pub(crate) fn mask_targets() -> [Option<wgpu::ColorTargetState>; 2] {
     })
 }
 
+/// The reactive and transparency-and-composition mask targets of the draw
+/// that marks moving opaque surfaces, as AMD's FSR sample's animated
+/// textures draw them (`framework/rendermodules/animatedtextures/`
+/// `animatedtexturesrendermodule.cpp` 81–90, MIT, see
+/// `LICENSE-amd-fidelityfx.txt`): the reactive mask kept as it is, the
+/// transparency and composition mask written in red, unblended.
+pub(crate) fn composition_targets() -> [Option<wgpu::ColorTargetState>; 2] {
+    [wgpu::ColorWrites::empty(), wgpu::ColorWrites::RED].map(|write_mask| {
+        Some(wgpu::ColorTargetState {
+            format: MASK_FORMAT,
+            blend: None,
+            write_mask,
+        })
+    })
+}
+
 /// The targets opaque writes and later stages read, at the render size.
 pub(crate) struct SharedTargets {
     pub color: wgpu::TextureView,

@@ -72,6 +72,12 @@ impl Material {
         MaterialUniform::new(&self.values, self.maps)
     }
 
+    /// Whether its shading changes with the frame's time where its geometry
+    /// stands still (`MaterialUniform::surface_moves`).
+    pub fn surface_moves(&self) -> bool {
+        self.uniform().surface_moves()
+    }
+
     /// Visibility and explicit casting are independent caller policies.
     pub fn casts_directional_shadow(&self, mask: u32) -> bool {
         self.casts_directional_shadow && self.enabled(Some(mask))
@@ -94,10 +100,12 @@ pub(crate) struct Materials {
     /// (`SurfaceMaterial::caster_values`).
     pub casters: u64,
     /// How many of its materials are masked, how many blended and how many
-    /// of those receive screen-space reflections.
+    /// of those receive screen-space reflections, and how many opaque or
+    /// masked ones' surfaces move (`Material::surface_moves`).
     masked: usize,
     blended: usize,
     receivers: usize,
+    moving: usize,
     textures: Textures,
     /// White, for maps a material does not have.
     fallback: wgpu::TextureView,
@@ -137,6 +145,7 @@ impl Materials {
             masked: 0,
             blended: 0,
             receivers: 0,
+            moving: 0,
             textures: Textures::default(),
             fallback: textures::upload(device, queue, &white, false),
             layout: crate::shading::bind::material(device),
@@ -159,9 +168,19 @@ impl Materials {
         self.receivers > 0
     }
 
-    /// Counts `by` more materials of alpha mode `alpha`.
-    fn count(&mut self, alpha: AlphaMode, by: isize) {
+    /// Whether an opaque or masked material's surface moves
+    /// (`Material::surface_moves`).
+    pub fn holds_moving_surfaces(&self) -> bool {
+        self.moving > 0
+    }
+
+    /// Counts `by` more materials of alpha mode `alpha` whose surface
+    /// `moves` or not.
+    fn count(&mut self, alpha: AlphaMode, moves: bool, by: isize) {
         let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
+        if moves && !matches!(alpha, AlphaMode::Blend { .. }) {
+            add(&mut self.moving);
+        }
         match alpha {
             AlphaMode::Opaque => {}
             AlphaMode::Mask { .. } => add(&mut self.masked),
@@ -338,7 +357,7 @@ impl Materials {
         for &texture in &distinct {
             self.textures.use_texture(texture);
         }
-        self.count(values.alpha, 1);
+        self.count(values.alpha, uniform.surface_moves(), 1);
         Ok(self.slots.insert(Material {
             values,
             maps: map_bits,
@@ -458,13 +477,13 @@ impl Materials {
             if material.values.caster_values() != values.caster_values() {
                 self.casters = super::next_generation();
             }
-            let old = material.values.alpha;
+            let old = (material.values.alpha, material.surface_moves());
             material.values = values;
             let uniform = material.uniform();
             crate::counters::write_buffer(queue, &material.buffer, 0, bytemuck::bytes_of(&uniform));
             rays.write_material(queue, material.word(), &uniform);
-            self.count(old, -1);
-            self.count(values.alpha, 1);
+            self.count(old.0, old.1, -1);
+            self.count(values.alpha, uniform.surface_moves(), 1);
         }
         Ok(())
     }
@@ -486,7 +505,7 @@ impl Materials {
             return Err(SceneError::MaterialInUse);
         }
         let material = self.slots.remove(id).unwrap();
-        self.count(material.values.alpha, -1);
+        self.count(material.values.alpha, material.surface_moves(), -1);
         rays.free(material.record);
         for texture in material.textures {
             self.textures.release(rays, texture);

@@ -217,7 +217,7 @@ fn finite_output(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::Textur
     queue.submit([encoder.finish()]);
     buffer.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let bytes = buffer.get_mapped_range(..);
+    let bytes = buffer.get_mapped_range(..).unwrap();
     bytes.chunks_exact(2).all(|h| {
         let bits = u16::from_le_bytes([h[0], h[1]]);
         bits & 0x7c00 != 0x7c00
@@ -447,7 +447,7 @@ fn read_rgba16f(
     queue.submit([encoder.finish()]);
     buffer.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let bytes = buffer.get_mapped_range(..);
+    let bytes = buffer.get_mapped_range(..).unwrap();
     let half = |h: u16| {
         let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
         let exponent = i32::from((h >> 10) & 0x1f);

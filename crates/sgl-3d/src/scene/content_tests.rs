@@ -55,7 +55,7 @@ fn mapped(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<f32> {
     });
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     receive.recv().unwrap().unwrap();
-    let bytes = buffer.get_mapped_range(..);
+    let bytes = buffer.get_mapped_range(..).unwrap();
     bytemuck::cast_slice(&bytes).to_vec()
 }
 

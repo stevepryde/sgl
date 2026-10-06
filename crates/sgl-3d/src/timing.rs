@@ -289,7 +289,8 @@ fn read(slot: &mut Slot, period_ns: f64, previous: Option<u64>) -> Option<(Frame
         let view = slot
             .readback
             .slice(..(count * size_of::<u64>()) as u64)
-            .get_mapped_range();
+            .get_mapped_range()
+            .expect("mapped timestamp readback");
         bytemuck::cast_slice(&view).to_vec()
     };
     slot.readback.unmap();

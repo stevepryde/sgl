@@ -361,7 +361,10 @@ impl SpritePass {
                     vertex: wgpu::VertexState {
                         module: &shader,
                         entry_point: Some("vs_main"),
-                        buffers: &[quad_vb_layout.clone(), instance_vb_layout.clone()],
+                        buffers: &[
+                            Some(quad_vb_layout.clone()),
+                            Some(instance_vb_layout.clone()),
+                        ],
                         compilation_options: Default::default(),
                     },
                     fragment: Some(wgpu::FragmentState {

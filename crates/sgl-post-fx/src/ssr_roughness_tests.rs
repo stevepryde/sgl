@@ -113,7 +113,7 @@ fn read_mask(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureVie
     queue.submit([encoder.finish()]);
     buffer.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let bytes = buffer.get_mapped_range(..);
+    let bytes = buffer.get_mapped_range(..).unwrap();
     (0..texture.height())
         .flat_map(|y| (0..texture.width()).map(move |x| (y * stride + x * 2) as usize))
         .map(|at| u16::from_le_bytes([bytes[at], bytes[at + 1]]) != 0)

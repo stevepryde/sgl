@@ -147,6 +147,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         view::BLENDED_FS_ENTRY,
         view::BLENDED_FSR2_MASKED_FS_ENTRY,
         view::RECEIVER_FS_ENTRY,
+        view::FSR2_COMPOSITION_FS_ENTRY,
     ];
     let mut entries = vec![
         (view::GEOMETRY.name, geometry.clone()),
@@ -456,14 +457,14 @@ fn every_program_composes_and_validates() {
     }
 }
 
-// The hardware path's programs of both forms through naga 29's SPIR-V and
+// The hardware path's programs of both forms through naga 30's SPIR-V and
 // HLSL writers, as wgpu-hal's Vulkan and DX12 backends write each entry
-// point when they create its pipeline (`vulkan/adapter.rs` 2620–2715 sets
+// point when they create its pipeline (`vulkan/adapter.rs` 2773–2877 sets
 // the SPIR-V options followed here; DX12 needs shader model 6.5 for ray
 // queries). Plausible defects: a construct that validates but that either
 // writer cannot emit in the candidate loop or the baseline query, such as a
 // hit's vertex positions read from the query, which naga's HLSL writer
-// does not lower (`back/hlsl/writer.rs` 4382–4386): on that backend every
+// does not lower (`back/hlsl/writer.rs` 4643–4647): on that backend every
 // tracing pipeline of the form would fail, the candidate form falling back
 // to the baseline and the baseline leaving the device without a hardware
 // trace, where no GPU here can show it. The oracle is the writers the

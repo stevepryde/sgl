@@ -424,7 +424,11 @@ impl Observer {
             }
             let pending = self.pending.pop_front().unwrap();
             let report = {
-                let mapped = pending.readback.slice(..).get_mapped_range();
+                let mapped = pending
+                    .readback
+                    .slice(..)
+                    .get_mapped_range()
+                    .expect("mapped observation readback");
                 report(&mapped, pending.frame, pending.skipped)
             };
             pending.readback.unmap();

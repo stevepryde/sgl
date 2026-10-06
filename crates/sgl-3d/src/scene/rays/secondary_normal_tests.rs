@@ -262,7 +262,7 @@ override fixture_axis:bool=false;
                 module: &raster_shader,
                 entry_point: Some("fixture_vs"),
                 compilation_options: Default::default(),
-                buffers: &[FIXTURE_LAYOUT.buffer],
+                buffers: &[Some(FIXTURE_LAYOUT.buffer)],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &raster_shader,
@@ -545,7 +545,7 @@ override fixture_axis:bool=false;
         });
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         recv.recv().unwrap().unwrap();
-        let mapped = readback.get_mapped_range(..);
+        let mapped = readback.get_mapped_range(..).unwrap();
         let secondary: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
         let raster_pixels: &[[f32; 4]] = bytemuck::cast_slice(&pixels);
         let mut failures = Vec::new();

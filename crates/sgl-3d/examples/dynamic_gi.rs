@@ -652,7 +652,7 @@ fn read_pixels(
         });
     device.poll(wgpu::PollType::wait_indefinitely())?;
     receive.recv()??;
-    let mapped = buffer.slice(..).get_mapped_range();
+    let mapped = buffer.slice(..).get_mapped_range().unwrap();
     Ok(mapped
         .chunks_exact(stride as usize)
         .flat_map(|row| row[..texture.width() as usize * 4].iter().copied())
