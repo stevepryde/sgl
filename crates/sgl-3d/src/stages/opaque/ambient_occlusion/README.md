@@ -39,10 +39,12 @@ The default small-radius fade, projected-normal 0.05 adjustment, pixel minimum
   to a 16×16 tile through workgroup memory, as upstream. Mip 4 would be a fifth
   storage texture, past WebGPU's default four per stage, so a second, small
   dispatch filters it from mip 3. Each output uses the identical four children
-  and weighted filter; there is no intermediate FP16 conversion. Point-clamp
-  loads replace GatherRed. Full mip dimensions use floor division, exactly as
-  texture mip extents do, and a child past a one-texel-wide mip clamps onto
-  its last texel, as the loads clamp.
+  and weighted filter, except where a child mip is one texel wide (a target
+  under 16 pixels on that axis): upstream's tile then reads scratch holding the
+  filter of edge-clamped pixels past that mip, where the port clamps onto the
+  child mip's last texel, as its loads clamp. There is no intermediate FP16
+  conversion. Point-clamp loads replace GatherRed. Full mip dimensions use
+  floor division, exactly as texture mip extents do.
 - Tiny targets allocate at least 16×16 backing depth storage so all five mips
   exist; the valid viewport and sample clamp remain the actual mip dimensions.
 - Explicit point-mip selection and clamped integer texture loads replace the
@@ -56,9 +58,10 @@ The default small-radius fade, projected-normal 0.05 adjustment, pixel minimum
 - One R32Uint working word holds the same 8-bit packed working visibility
   (bits 0–7) and the same packed R8 UNORM edge value (its 8-bit integer, bits
   8–15) that upstream writes to two R8 targets, so the main pass makes one
-  store and the denoiser one load per pixel. Main output quantizes before
-  denoising. The final R32Uint output holds the visibility alone and
-  explicitly saturates the integer to 255, matching R8Uint typed-UAV
+  store per pixel and the denoiser reads one word per texel it reads, where
+  it read two. Main output quantizes before denoising. The final R32Uint
+  output holds the visibility alone and explicitly saturates the integer to
+  255, matching R8Uint typed-UAV
   conversion ([Direct3D 11.3 §3.2.3.13](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#3.2.3.13)). Consumers divide the integer by 255.
 - `XeGTAO_ClampDepth` uses `#ifdef XE_GTAO_USE_HALF_FLOAT_PRECISION` even when the
   selected mode defines it as zero. Its resulting 65504 clamp is preserved.
@@ -117,7 +120,8 @@ to Rust `hilbert_index`, which fills the lookup texture, and
 `view_depth`, `DepthMIPFilter` to `filter_depth`, and `PrefilterDepths16x16`
 to `prefilter_depths` and `prefilter_depth4`. The active scalar,
 supplied-normal `MainPass` branches map to `main_pass`, including
-`CalculateEdges`, `PackEdges`, `FastSqrt`/`FastACos`, and `OutputWorkingTerm`.
+`CalculateEdges`, `PackEdges`, `FastSqrt`/`FastACos`, and `OutputWorkingTerm`,
+which stores through `pack_working`.
 `UnpackEdges` maps to `unpack_edges`; `AddSample` and final `Output` map to
 `denoise_pixel`, which `denoise` runs for each pixel of its pair.
 The signed arithmetic right shift in `FastSqrt` is retained exactly.

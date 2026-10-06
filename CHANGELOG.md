@@ -17,9 +17,8 @@ docs and specs the entry links.
 
 ### sgl-3d: behaviour changes
 
-- **Ambient occlusion** costs less at the same visibility: XeGTAO's depth
-  prefilter takes two dispatches (was five) and its denoiser two pixels an
-  invocation. No game-code change.
+- `Settings::ambient_occlusion` costs less GPU time; its output is
+  unchanged. No game-code change.
 
 ## 0.2.0 — 2026-10-06
 

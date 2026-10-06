@@ -198,15 +198,18 @@ fn main_pass(@builtin(global_invocation_id) id:vec3<u32>) {
         visibility+=projected_length*(arc0+arc1);
     }
     visibility=max(0.03,pow(visibility/f32(slices),2.2));
-    // XeGTAO's R8 working visibility and R8 packed edges, in one word.
-    textureStore(output_ao,q,vec4(u32(sat(visibility/1.5)*255.0+0.5)|(u32(packed)<<8u),0u,0u,0u));
+    textureStore(output_ao,q,vec4(pack_working(u32(sat(visibility/1.5)*255.0+0.5),u32(packed)),0u,0u,0u));
 }
 fn working_at(q:vec2<i32>)->u32 { return textureLoad(input_ao,bounded(q,p.size),0).x; }
+// XeGTAO's R8 working visibility and R8 packed edges in one R32Uint word:
+// the visibility in bits 0-7, the edges in bits 8-15.
+const WORKING_EDGES_SHIFT: u32 = 8u;
+fn pack_working(visibility:u32,packed_edges:u32)->u32 { return visibility|(packed_edges<<WORKING_EDGES_SHIFT); }
 fn unpack_edges(word:u32)->vec4<f32> {
-    let packed=(word>>8u)&255u;
+    let packed=(word>>WORKING_EDGES_SHIFT)&255u;
     return vec4<f32>((vec4(packed)>>vec4(6u,4u,2u,0u))&vec4(3u))/3.0;
 }
-fn unpack_visibility(words:vec4<u32>)->vec4<f32> { return vec4<f32>(words&vec4(255u))/255.0; }
+fn unpack_visibility(words:vec4<u32>)->vec4<f32> { return vec4<f32>(words&vec4((1u<<WORKING_EDGES_SHIFT)-1u))/255.0; }
 // One pixel of XeGTAO_Denoise's final pass from its edges (centre, left,
 // right, top, bottom) and visibility (centre, then the cardinal neighbours
 // left, right, top, bottom, then the corners top-left, top-right,
