@@ -22,7 +22,12 @@ fn scene_hardware_query(ray:SceneRay,t_min:f32,mask:u32,first_hit:bool,receiver:
  var query:ray_query;
  let flags=RAY_FLAG_FORCE_OPAQUE|select(RAY_FLAG_NONE,RAY_FLAG_TERMINATE_ON_FIRST_HIT,first_hit);
  rayQueryInitialize(&query,scene_tlas,RayDesc(flags,mask,t_min,ray.direction.w,ray.origin.xyz,ray.direction.xyz));
- _=rayQueryProceed(&query);
+ // A query whose proceed reports a candidate, which forced opacity over
+ // triangles never does, has not finished traversal: its committed hit is
+ // not to be read (wgpu's ShaderRuntimeChecks), so it reports a miss.
+ if rayQueryProceed(&query) {
+  return RawSceneHit(vec4(0u),vec4(0.));
+ }
  let committed=rayQueryGetCommittedIntersection(&query);
  if committed.kind!=RAY_QUERY_INTERSECTION_TRIANGLE {
   return RawSceneHit(vec4(0u),vec4(0.));

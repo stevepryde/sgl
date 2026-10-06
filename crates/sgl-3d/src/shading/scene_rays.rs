@@ -108,7 +108,12 @@ pub(crate) const LOWERED_FORM: RayQueryForm = RayQueryForm::Baseline;
 /// rays, and 14 % of the ray-traced shadow rays over a thousand opaque
 /// props under nine shadowed lights (1.00 against 0.88, 0.12–0.13 more;
 /// the frame 0.06–0.10 more), of which forcing opacity recovers a
-/// quarter, so most is the loop's code, not its traversal.
+/// quarter, so most is the loop's code, not its traversal. Revisit if naga
+/// sets `assume_geometry_type(triangle)` in its MSL lowering (#221): with
+/// that hint the baseline cost 0.09 of world reflection rays against the
+/// candidate form's 0.20, and 0.59/0.47 of ray-traced shadow rays against
+/// 0.77/0.69, on the streaming example's walk and fly, where nothing is
+/// masked.
 pub(crate) const METAL_FORM: RayQueryForm = RayQueryForm::Candidates;
 
 impl RayQueryForm {

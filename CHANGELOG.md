@@ -125,7 +125,11 @@ full API details.
     hardware" above). On an Apple M5 the baseline's passes cost more
     than under wgpu 29 on the streaming example's walk and fly: world
     reflection rays 0.20 ms against 0.09, ray-traced shadow rays 40–57 %
-    more, about 0.25 ms of the frame; #221 tracks it.
+    more, about 0.25 ms of the frame. #221 found the cause: naga 30's
+    `intersection_query` lowering sets no `assume_geometry_type(triangle)`
+    where naga 29's `intersector` did; wgpu's ray-query initialisation
+    tracking costs within measurement noise. SGL keeps wgpu's checked
+    shaders, so no game-code changes.
 - **Migration:** a game that calls wgpu or writes WGSL itself updates that
   code for wgpu 30 ([wgpu's changelog](https://github.com/gfx-rs/wgpu/blob/v30.0.0/CHANGELOG.md)).
   These are the changes SGL's own code needed:

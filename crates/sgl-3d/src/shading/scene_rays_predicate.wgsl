@@ -22,11 +22,17 @@
 const SCENE_SIDES_AS_RASTER:u32=0u;
 const SCENE_SIDES_BOTH:u32=1u;
 const SCENE_SIDES_SHADOW:u32=2u;
+// Whether `v` is finite, from its exponent bits: a comparison such as
+// abs(v)<=f32::MAX is one a compiler under fast math (Metal's default, which
+// wgpu-hal leaves) may assume true of every value and fold away, and then a
+// NaN or infinity would reach a ray query, whose behaviour for one is
+// undefined (wgpu's ShaderRuntimeChecks::ray_query_initialization_tracking).
+const SCENE_EXPONENT_BITS:u32=0x7f800000u;
 fn scene_finite(v:f32)->bool {
- return abs(v)<=3.402823466e+38;
+ return (bitcast<u32>(v)&SCENE_EXPONENT_BITS)!=SCENE_EXPONENT_BITS;
 }
 fn scene_finite3(v:vec3<f32>)->bool {
- return all(abs(v)<=vec3(3.402823466e+38));
+ return all((bitcast<vec3<u32>>(v)&vec3(SCENE_EXPONENT_BITS))!=vec3(SCENE_EXPONENT_BITS));
 }
 
 // A finite ray with a nonempty direction over a nonnegative interval.
