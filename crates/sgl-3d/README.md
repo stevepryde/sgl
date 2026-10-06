@@ -1888,10 +1888,10 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   hidden group) may be skipped, since one opaque query cannot list ties.
   While hardware ray tracing traces the dynamic GI volume's rays, a
   capture-visible deforming instance's pose or deformation is an edit that
-  wakes a converged volume, since its rays see it. The candidate form
-  runs on Metal by default: on an Apple M5 it cut the tracing passes by
-  35–60 % among cut-out foliage and cost up to 14 % of the ray-traced
-  shadow rays (0.12 ms) where nothing is masked; Vulkan and DX12, whose
+  wakes a converged volume, since its rays see it. Metal runs the
+  candidate form: on an Apple M5 it cut the tracing passes by 35–60 %
+  among cut-out foliage and cost up to 14 % of the ray-traced shadow rays
+  (0.12–0.13 ms) where nothing is masked; Vulkan and DX12, whose
   shader compilers lower the loop too, run the baseline until it is
   measured on their hardware, which it has not run on yet. A device whose candidate
   programs fail to compile falls back to the baseline for good.

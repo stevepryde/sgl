@@ -1366,17 +1366,15 @@ code; it does not redeclare a struct, binding or function another module owns.
   scene builds with; nothing else branches on it. The form each backend
   runs is a recorded decision kept as a constant beside `RayQueryForm`,
   never a setting (AR-3). Metal runs the candidate form
-  (`shading::scene_rays::METAL_FORM`), the owner's choice on #211's
-  measurements on an Apple M5, where it matched the CPU oracle and the
-  portable walk over masked content: where masked content is traced the
-  candidate loop costs far less than the portable walk or the re-traces
-  it replaces (among 266 static hedges of cut-out cards, the frame 15 %
-  less and the tracing passes 35–60 % less; among a crowd's masked hair
-  cards, the dynamic GI rays 30 % less), and where nothing is masked its
-  larger program costs 2–3 % of the streaming example's ray-traced shadow
-  rays and 14 % of them over a thousand opaque props under nine shadowed
-  lights (0.12 ms, 1.2 % of the frame), most of it the loop's code rather
-  than traversal without forced opacity. Vulkan and DX12 run
+  (`shading::scene_rays::METAL_FORM`, which records the measurements),
+  the owner's choice on #211's measurements on an Apple M5, where it
+  matched the CPU oracle and the portable walk over masked content: where
+  masked content is traced it costs far less than the portable walk or
+  the re-traces it replaces (the tracing passes 30–60 % less), and where
+  nothing is masked its larger program costs up to 14 % of the ray-traced
+  shadow rays (0.12–0.13 ms; the frame 0.06–0.10 ms more), most of it
+  the loop's code rather than traversal without forced opacity. Vulkan
+  and DX12 run
   the baseline (`LOWERED_FORM`) until the candidate form's
   benefit is measured on their hardware (RD-6); the owner has no Vulkan
   or DX12 hardware that traces rays. Shared by both
@@ -1497,8 +1495,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   budget's cap by returning a miss: every proceed that yields a
   candidate is a step, so a query's proceeds (on Metal, its
   `intersection_query::next()` calls) never pass the ray's remaining
-  steps by more than one. A triangle the hardware reports twice (wgpu's
-  geometries do not ask for `NO_DUPLICATE_ANY_HIT_INVOCATION`, and Metal
+  steps by more than one. A triangle the hardware reports twice (SGL3D's
+  BLAS geometries do not set `NO_DUPLICATE_ANY_HIT_INVOCATION`, so Metal
   may report duplicates) is judged the same twice and costs a step. The
   portable walk then
   covers the pending and left-out instances alone. A BLAS is built for
@@ -1530,17 +1528,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   through masked foliage, where the candidate form's candidates are every
   non-opaque triangle crossed; shadow rays through nested closed
   occluders), its reason beside it; the portable walk's visits are not
-  that measure. The candidate form's were counted on Metal (#211): among
-  skinned characters each crowned with a swaying bundle of 24 masked,
-  double-sided hair cards three quarters cut out, under a dynamic GI
-  volume with world-space reflections, the most of 6.3 million rays took
-  44 steps, against 36 under the baseline; and among 266 static hedges,
-  each 24 crossed cards three quarters cut out, beside a glossy strip
-  under world-space reflections that reach everything, ray-traced
-  shadows and a dynamic GI volume, the most of 25.8 million nearest rays
-  took 84 steps and of 39.1 million visibility rays 24, every crossed
-  card a candidate, where the baseline walks the hedges. The cap stays
-  the baseline's 256, three times the hedges' worst grazing ray.
+  that measure. The candidate form's were counted on Metal (#211), the
+  worst 84 steps, through dense cut-out foliage; the cap stays 256, its
+  evidence beside `SCENE_MOST_HARDWARE_STEPS`.
   *Structures.* A model that does not deform owns one BLAS, one geometry
   per mesh, over the packed vertices' `f32` positions and the mesh indices
   where they lie in the ray source, whose buffer gains `BLAS_INPUT`

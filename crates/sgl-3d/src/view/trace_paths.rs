@@ -234,7 +234,8 @@ mod tests {
     };
 
     // The candidate form's fallback, which no device here would otherwise
-    // take: Metal runs the baseline, and no Mac has Vulkan ray queries.
+    // take: Metal's candidate programs compile, and no Mac has Vulkan ray
+    // queries.
     // Plausible defects: a failed candidate pipeline outside an error scope
     // (its error reaches the device's uncaptured-error handler, which
     // panics in wgpu's default, and the frame binds an invalid pipeline);

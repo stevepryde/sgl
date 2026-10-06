@@ -2,6 +2,7 @@
 //! frames.
 use crate::asset::{CpuMesh, Vertex};
 use crate::renderer::Renderer;
+use crate::shading::RayQueryForm;
 use crate::settings::WorldSpaceReflections::{All, Moving};
 use crate::settings::{self, Settings};
 use crate::{Backdrop, Camera, FrameInput, InstanceState, Mobility, Scene, test_support};
@@ -178,12 +179,35 @@ fn reflected_wall(
         // A candidate program the device fails to compile falls back to
         // the baseline, which would pass these frames unseen.
         assert_eq!(renderer.ray_tracing_error(), None);
-        composite(device, queue, &renderer)
+        (
+            composite(device, queue, &renderer),
+            renderer.ray_tracing_stats(),
+        )
     };
     let mut composites = Vec::new();
     for &reach in reaches {
         settings.world_space_reflections = reach;
-        composites.push(frame(&mut scene, &settings));
+        let (composite, stats) = frame(&mut scene, &settings);
+        if hardware && wall.masked {
+            // Where the masked wall is traced: in the TLAS beside the floor
+            // under the candidate form, on the portable BVHs under the
+            // baseline, so the masked wall's frames compare the form the
+            // device runs with the portable path, not the walk with itself.
+            let (hardware, portable) =
+                match RayQueryForm::of_backend(device.adapter_info().backend) {
+                    RayQueryForm::Baseline => (1, 1),
+                    RayQueryForm::Candidates => (2, 0),
+                };
+            assert_eq!(
+                stats,
+                crate::RayTracingStats {
+                    hardware,
+                    portable,
+                    left_out: 0,
+                }
+            );
+        }
+        composites.push(composite);
     }
     scene
         .set_instance(queue, instance, wall_at(-1100.))
@@ -199,7 +223,7 @@ fn reflected_wall(
     scene
         .add_instance(device, queue, below, Mobility::Static)
         .unwrap();
-    composites.push(frame(&mut scene, &settings));
+    composites.push(frame(&mut scene, &settings).0);
     composites
 }
 
@@ -373,7 +397,10 @@ fn the_all_reach_on_the_hardware_path_matches_the_portable_path() {
 // predicate instance on the portable walk. Plausible defects: the loop
 // confirming cut-out candidates or never confirming kept ones, which
 // reflects the wall whole or not at all; a confirmed candidate decoded as
-// another triangle; or the masked wall left off both the TLAS and the walk.
+// another triangle; the masked wall left off both the TLAS and the walk;
+// or, under the candidate form, the wall kept on the walk (its BLAS
+// pending), which would compare the walk with itself: `reflected_wall`
+// asserts where the form puts it (`RayTracingStats`).
 // The oracle is the portable path, whose walk cuts the same texels out, and
 // the geometry above: the floor reflects the masked wall at a quarter to
 // three quarters of the pixels where it reflects the whole wall, since half

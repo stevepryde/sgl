@@ -106,9 +106,9 @@ pub(crate) const LOWERED_FORM: RayQueryForm = RayQueryForm::Baseline;
 /// example's ray-traced shadow rays on its walk and fly (about 0.02),
 /// nothing measurable on the dynamic GI example or the world reflection
 /// rays, and 14 % of the ray-traced shadow rays over a thousand opaque
-/// props under nine shadowed lights (1.00 against 0.88, 1.2 % of the
-/// frame), of which forcing opacity recovers a quarter, so most is the
-/// loop's code, not its traversal.
+/// props under nine shadowed lights (1.00 against 0.88, 0.12–0.13 more;
+/// the frame 0.06–0.10 more), of which forcing opacity recovers a
+/// quarter, so most is the loop's code, not its traversal.
 pub(crate) const METAL_FORM: RayQueryForm = RayQueryForm::Candidates;
 
 impl RayQueryForm {
@@ -161,33 +161,31 @@ mod form_tests {
     use super::RayQueryForm;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    // Plausible defect: a backend that cannot run a candidate loop given
-    // the candidate form once a recorded choice (`LOWERED_FORM`,
-    // `METAL_FORM`) becomes it. The oracle is what the architecture
-    // records: naga 30's SPIR-V, HLSL and MSL writers lower the loop, #211
-    // validated the MSL lowering on an Apple M5, and no other backend has
-    // ray queries.
+    // Plausible defects: a backend given another backend's recorded form
+    // (the match in `of_backend` wrong), or a backend whose shader writer
+    // cannot lower the candidate loop given the candidate form once a
+    // recorded choice becomes it (the gate bypassed or dropped). The oracle
+    // is what the architecture records: Metal runs the candidate form
+    // (#211), Vulkan and DX12 the baseline until it is measured there, and
+    // no other backend has ray queries.
     #[wasm_bindgen_test(unsupported = test)]
-    fn only_backends_that_lower_the_loop_take_the_candidate_form() {
+    fn each_backend_runs_its_recorded_form() {
+        use RayQueryForm::{Baseline, Candidates};
         use wgpu::Backend::{BrowserWebGpu, Dx12, Gl, Metal, Noop, Vulkan};
-        for (backend, lowered) in [
-            (Vulkan, true),
-            (Dx12, true),
-            (Metal, true),
-            (Gl, false),
-            (BrowserWebGpu, false),
-            (Noop, false),
+        for (backend, form) in [
+            (Vulkan, Baseline),
+            (Dx12, Baseline),
+            (Metal, Candidates),
+            (Gl, Baseline),
+            (BrowserWebGpu, Baseline),
+            (Noop, Baseline),
         ] {
-            let form = RayQueryForm::gated(backend, RayQueryForm::Candidates);
-            let expected = if lowered {
-                RayQueryForm::Candidates
-            } else {
-                RayQueryForm::Baseline
-            };
-            assert_eq!(form, expected, "{backend:?}");
+            assert_eq!(RayQueryForm::of_backend(backend), form, "{backend:?}");
+        }
+        for backend in [Gl, BrowserWebGpu, Noop] {
             assert_eq!(
-                RayQueryForm::gated(backend, RayQueryForm::Baseline),
-                RayQueryForm::Baseline,
+                RayQueryForm::gated(backend, Candidates),
+                Baseline,
                 "{backend:?}"
             );
         }

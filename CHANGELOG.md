@@ -31,8 +31,9 @@ full API details.
   1920×1080: among 266 static hedges of cut-out cards, the GPU frame took
   19.2 ms against 22.6 (the dynamic GI, shadow and reflection rays 35–60 %
   less); where nothing is masked, the larger program costs 2–3 % of the
-  streaming example's ray-traced shadow rays and up to 14 % (0.12 ms, 1.2 %
-  of the frame) over a thousand opaque props under nine shadowed lights.
+  streaming example's ray-traced shadow rays and up to 14 % (0.12–0.13 ms;
+  the frame 0.06–0.10 ms more) over a thousand opaque props under nine
+  shadowed lights.
   Vulkan and DX12 are unchanged: they run the baseline form until the
   candidate form is measured on their hardware.
 - **Migration:** no game-code changes. A Mac game that turns hardware ray
@@ -124,7 +125,7 @@ full API details.
     hardware" above). On an Apple M5 the baseline's passes cost more
     than under wgpu 29 on the streaming example's walk and fly: world
     reflection rays 0.20 ms against 0.09, ray-traced shadow rays 40–57 %
-    more, about 0.25 ms of the frame; #221 attributes it.
+    more, about 0.25 ms of the frame; #221 tracks it.
 - **Migration:** a game that calls wgpu or writes WGSL itself updates that
   code for wgpu 30 ([wgpu's changelog](https://github.com/gfx-rs/wgpu/blob/v30.0.0/CHANGELOG.md)).
   These are the changes SGL's own code needed:
