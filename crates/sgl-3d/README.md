@@ -1942,11 +1942,18 @@ hardware.
   each frame another: on a point or spot light's sphere (`LightShape`'s
   `radius`), a rectangle's face, or, for the directional light, within its
   disc in the sky (`DirectionalLight::angular_diameter`), as far as the
-  scene reaches, beyond the shadow's distance. The light's own fixture, a
-  mesh whose face the rectangle lies on, so never shadows it. A light with a size so casts a soft
-  shadow, sharp near its caster and widening away from it; a size of 0 a
-  hard one. A single-sided surface occludes from its back, as a map draws
-  its front from the light, and a double-sided one from either side. AMD's
+  scene reaches, beyond the shadow's distance. A light with a size so
+  casts a soft shadow, sharp near its caster and widening away from it; a
+  size of 0 a hard one. Since a ray stops short of the light, the light's
+  own fixture, a mesh whose face a rectangle lies on, never shadows it. A
+  single-sided surface occludes from its back, as a map draws its front
+  from the light, and a double-sided one from either side. A `baked` light
+  casts no ray at a receiver with baked lighting, which it does not light;
+  its place in the mask holds 1 there wherever it reaches, so the passes
+  that follow, which blend neighbouring texels, carry no false shadow onto
+  a moving instance beside that receiver, though that instance's edge may
+  read slightly lighter where the light would have shadowed the receiver
+  beside it. AMD's
   FidelityFX shadow denoiser filters the directional light's visibility
   and those of three of the local lights (the first three slots after it,
   each kept by the light that holds it), as Wicked Engine filters its
@@ -1956,8 +1963,8 @@ hardware.
   local lights' with the rest: noisier soft local shadows for about 1 ms
   a frame less. While no local light holds one of the three places, High
   filters the directional light's alone too: the same result within one
-  8-bit step, for less. A light
-  that takes another's place, and a camera cut, start afresh. The
+  8-bit step, for less. A light that takes another's place, a light whose
+  `baked` changes, and a camera cut start afresh. The
   visibilities are upsampled to the render size by depth, then the
   lighting pass takes them through the light's shadow opacity. The opaque
   stage takes its two-pass form while they run (a G-buffer pass, then a

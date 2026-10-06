@@ -149,7 +149,8 @@ SGL3D needs compute.
   cluster (a probe capture's cluster is the whole scene, a ray hit's the
   view, a dynamic GI probe ray's the volume). A `baked` light lights only
   receivers without baked lighting (moving instances, and static ones with
-  no lightmap or assigned atlas chart), leaving the rest to the game's bake; `specular` scales its
+  no lightmap or assigned atlas chart), leaving the rest to the game's bake,
+  and casts ray-traced shadow rays only at those receivers; `specular` scales its
   highlights (0 for a fixture already reflected as an emitter), and
   `fog_energy` its light in the volumetric fog (at most 0.001 leaves it out
   of the fog, which then skips its attenuation and shadow lookup), and

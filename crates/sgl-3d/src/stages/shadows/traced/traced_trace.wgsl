@@ -20,7 +20,11 @@
 // light_reach says (range, cone, and the lit side of the shading normal; a
 // rectangle the half-space before its face), a directional light where
 // either the shading or the geometry normal faces it, since the coat
-// takes it along the geometry normal; the depth and normals are the
+// takes it along the geometry normal; a baked light casts no ray at a
+// receiver that takes no baked lights, which the lighting never gives
+// them (the slot table's baked bits, the G-buffer's F0 flag), its slot
+// holding 1 there wherever the light reaches (traced_visible), where
+// Wicked traces no static light live at all; the depth and normals are the
 // G-buffer's at the full-resolution pixel 2q of tracing pixel q, where
 // Wicked samples depth linearly between four; the side policy and
 // cut-out texels are the shared predicate's, where Wicked's query culls
@@ -71,8 +75,18 @@ fn traced_directional_light()->u32 {
 // Whether slot `key`'s light is unoccluded from the surface at `position`
 // with shading normal `normal` and geometry normal `geometry_normal`, along
 // a ray toward the point of the light `random` draws (light_surface.wgsl);
-// false where the light does not reach the surface.
-fn traced_visible(key:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,random:vec2<f32>)->bool {
+// false where the light does not reach the surface. Where `untraced`, a
+// baked light at a receiver that takes no baked lights, which the lighting
+// never gives it, no ray is cast and the light is unoccluded where it
+// reaches: a value no lighting at the pixel reads, chosen for the passes
+// after, whose upsample and denoiser carry a texel's value onto receivers
+// beside it that do take the light (a moving instance over a lightmapped
+// floor), where 1 leaves what their own rays see, as most of that floor's
+// rays found it, and 0 would darken their edges and take a light from a
+// receiver a few pixels across. The light's reach is kept, so a 1 never
+// stands where a light does not reach, whose lighting term is zero beside
+// it.
+fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,random:vec2<f32>)->bool {
  if key==SHADOW_MASK_DIRECTIONAL {
   let index=traced_directional_light();
   if index>=2u {
@@ -93,6 +107,9 @@ fn traced_visible(key:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:ve
  if light_reach(light,position,normal,false).attenuation<=0. {
   return false;
  }
+ if untraced {
+  return true;
+ }
  let ray=light_visibility_ray(light,position,random,TRACED_T_MIN);
  return scene_segment_visible(position,ray.xyz,TRACED_T_MIN,ray.w,SCENE_SIDES_SHADOW);
 }
@@ -109,7 +126,8 @@ fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  // A pixel the G-buffer drew nothing lit at is no receiver: the lighting
  // reads none of its slots, and it records the sky's depth, so the
  // upsample and the denoiser weigh it as a sky texel.
- if z<=0. || !gbuffer_lit(textureLoad(traced_f0,pixel,0)) {
+ let f0=textureLoad(traced_f0,pixel,0);
+ if z<=0. || !gbuffer_lit(f0) {
   textureStore(traced_raw,q,words);
   textureStore(traced_half_depth,q,vec4(TRACED_SKY_DEPTH));
   textureStore(traced_half_normal,q,vec4(0.));
@@ -125,9 +143,12 @@ fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  // One draw on every light a pixel and frame, where Wicked reads its blue
  // noise.
  let random=hash33_unit(vec3(q,traced.seed)).xy;
+ // The slots whose baked light the receiver never takes, as the lighting
+ // pass decides it (gbuffer_takes_baked_lights): no ray for them.
+ let untraced=select(shadow_mask_slots.baked,0u,gbuffer_takes_baked_lights(f0));
  for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
   let key=shadow_mask_slot_key(slot);
-  if key!=SHADOW_MASK_EMPTY && traced_visible(key,position,normal,geometry_normal,random) {
+  if key!=SHADOW_MASK_EMPTY && traced_visible(key,((untraced>>slot)&1u)!=0u,position,normal,geometry_normal,random) {
    words=traced_store(words,slot,1.);
   }
  }

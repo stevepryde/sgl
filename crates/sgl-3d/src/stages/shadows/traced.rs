@@ -298,6 +298,7 @@ impl TracedShadows {
             table: shadow_mask::ShadowMaskSlots::new(
                 [shadow_mask::SHADOW_MASK_EMPTY; shadow_mask::RT_SHADOW_LIGHTS],
                 0,
+                0,
             ),
             ran: false,
             targets: None,
