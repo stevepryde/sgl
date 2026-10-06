@@ -54,14 +54,27 @@ const TEMPORAL_VELOCITY_RESPONSE:f32=.2;
 // The neighbourhood's offsets: Wicked's 3×3 SampleOffset.
 const TEMPORAL_TAPS:u32=9u;
 
+// Measurement (#204): the slots the denoiser filters, word 0's first 4 or
+// its first alone; the others of word 0 are blended as words 1 to 3 are.
+override temporal_denoised_slots:u32=4u;
+
 // The denoised slots, the first TRACED_DENOISED_SLOTS, are word 0: the
 // denoiser's word at tracing texel `texel`.
 fn temporal_denoised_word(texel:vec2<u32>)->u32 {
  return temporal_denoised[texel.y*u32(traced.reduced.x)+texel.x];
 }
-// `current` with its denoised word the denoiser's.
+// Word 0 of `blended`, the pass's word 0, with the denoised slots the
+// denoiser's at `texel`.
+fn temporal_word0(blended:u32,texel:vec2<u32>)->u32 {
+ let denoised=temporal_denoised_word(texel);
+ if temporal_denoised_slots==1u {
+  return (blended&~0xffu)|(denoised&0xffu);
+ }
+ return denoised;
+}
+// `current` with its denoised slots the denoiser's.
 fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
- return vec4(temporal_denoised_word(texel),current.yzw);
+ return vec4(temporal_word0(current.x,texel),current.yzw);
 }
 
 @compute @workgroup_size(8,8) fn traced_shadow_temporal(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -106,8 +119,12 @@ fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
  }
  let velocity=length(motion*traced.reduced.xy);
  let refresh=saturate(velocity/TEMPORAL_VELOCITY_PIXELS);
+ var word0=current.x;
+ if temporal_denoised_slots==1u {
+  word0=temporal_blend(0u,current,history,m1,m2,refresh);
+ }
  textureStore(temporal_output,id.xy,vec4(
-  temporal_denoised_word(id.xy),
+  temporal_word0(word0,id.xy),
   temporal_blend(1u,current,history,m1,m2,refresh),
   temporal_blend(2u,current,history,m1,m2,refresh),
   temporal_blend(3u,current,history,m1,m2,refresh),

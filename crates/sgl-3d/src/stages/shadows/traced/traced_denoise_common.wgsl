@@ -8,8 +8,8 @@
 // Engine's denoiser reads (2ff1d9e rtshadow_denoise_tileclassificationCS.hlsl
 // and rtshadow_denoise_filterCS.hlsl, `texture_depth[did * 2]`), and the
 // shading normals, as Wicked's denoiser reads its half-resolution normals
-// copy. Reads `denoise_half_depth` and `denoise_normal`, which each pass's
-// bindings declare.
+// copy (the normal module's traced_denoise_normal). Reads
+// `denoise_half_depth`, which each pass's bindings declare.
 // Whether tracing pixel `p` receives shadows: neither sky nor unlit, which
 // the trace records as the sky's depth.
 fn traced_denoise_receiver(p:vec2<u32>)->bool {
@@ -19,10 +19,6 @@ fn traced_denoise_receiver(p:vec2<u32>)->bool {
 fn traced_denoise_linear_depth(p:vec2<u32>)->f32 {
  let depth=textureLoad(denoise_half_depth,min(p,vec2<u32>(traced.reduced.xy)-1u),0).x;
  return select(0.,depth,depth<TRACED_SKY_DEPTH);
-}
-// Tracing pixel `p`'s shading normal.
-fn traced_denoise_normal(p:vec2<u32>)->vec3<f32> {
- return textureLoad(denoise_normal,min(p,vec2<u32>(traced.reduced.xy)-1u),0).xyz;
 }
 // A texel of the denoiser's scratch (denoise.rs `Targets::scratch`): the
 // four denoised slots' mean and variance, a slot a word, the mean its low
@@ -46,4 +42,13 @@ fn traced_denoise_unpack(words:vec4<u32>)->TracedDenoiseScratch {
  let z=unpack2x16float(words.z);
  let w=unpack2x16float(words.w);
  return TracedDenoiseScratch(vec4(x.x,y.x,z.x,w.x),vec4(x.y,y.y,z.y,w.y));
+}
+// Measurement (#204): a texel of the scalar denoiser's scratch, slot 0's
+// mean in its low half and variance in its high, as Wicked keeps a light's
+// in R16G16.
+fn traced_denoise_pack1(results:vec2<f32>)->u32 {
+ return pack2x16float(results);
+}
+fn traced_denoise_unpack1(word:u32)->vec2<f32> {
+ return unpack2x16float(word);
 }

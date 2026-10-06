@@ -24,8 +24,10 @@
 // byte s, as the trace packs its first word, where Wicked writes a channel
 // a light.
 override filter_pass:u32;
-// The tracing pixels' shading normals the trace writes.
-@group(0) @binding(1) var denoise_normal:texture_2d<f32>;
+// Measurement (#204): the pass's step, and whether it writes the denoised
+// visibility; AMD's three passes take steps 1, 2 and 4, the last final.
+override filter_step:u32;
+override filter_final:bool;
 @group(0) @binding(2) var denoise_metadata:texture_2d<u32>;
 @group(0) @binding(3) var denoise_input:texture_2d<u32>;
 @group(0) @binding(4) var<uniform> traced:TracedParams;
@@ -78,12 +80,13 @@ fn FFX_DNSR_Shadows_ReadTileMetaData(p:u32)->vec4<u32> {
 }
 
 @compute @workgroup_size(8,8) fn traced_denoise_filter(@builtin(workgroup_id) gid:vec3<u32>,@builtin(local_invocation_id) gtid:vec3<u32>,@builtin(global_invocation_id) did:vec3<u32>) {
- let step_size=1u<<filter_pass;
- let filtered=FFX_DNSR_Shadows_FilterSoftShadowsPass(gid.xy,gtid.xy,did.xy,filter_pass,step_size);
+ // A final pass writes a cleared tile as upstream's last does.
+ let pass_index=select(filter_pass,2u,filter_final);
+ let filtered=FFX_DNSR_Shadows_FilterSoftShadowsPass(gid.xy,gtid.xy,did.xy,pass_index,filter_step);
  if !filtered.write_results {
   return;
  }
- if filter_pass<2u {
+ if !filter_final {
   textureStore(denoise_history,did.xy,traced_denoise_pack(filtered.results.mean,filtered.results.variance));
  } else {
   // final pass:

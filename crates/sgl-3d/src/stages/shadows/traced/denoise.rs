@@ -17,8 +17,6 @@ pub(crate) const FILTER_ENTRY: &str = "traced_denoise_filter";
 /// The slots the denoiser filters (`TRACED_DENOISED_SLOTS`): Wicked's first
 /// four.
 pub(super) const DENOISED_SLOTS: u32 = 4;
-/// The filter passes' step sizes are 1 << pass.
-const FILTER_PASSES: u32 = 3;
 
 static UTIL: shading::Module = shading::Module {
     name: "ffx_denoiser_shadows_util",
@@ -42,6 +40,12 @@ static COMMON: shading::Module = shading::Module {
     source: include_str!("traced_denoise_common.wgsl"),
     deps: &[&super::COMMON],
 };
+/// The passes' reading of the trace's normals at their binding 1.
+static NORMAL: shading::Module = shading::Module {
+    name: "traced_denoise_normal",
+    source: include_str!("traced_denoise_normal.wgsl"),
+    deps: &[],
+};
 pub(crate) static TILE_CLASSIFICATION: shading::Module = shading::Module {
     name: "traced_denoise_tileclassification",
     source: include_str!("traced_denoise_tileclassification.wgsl"),
@@ -49,13 +53,112 @@ pub(crate) static TILE_CLASSIFICATION: shading::Module = shading::Module {
         &FFX_TILE_CLASSIFICATION,
         &shading::SHADOW_MASK_SLOTS,
         &COMMON,
+        &NORMAL,
     ],
 };
 pub(crate) static FILTER: shading::Module = shading::Module {
     name: "traced_denoise_filter",
     source: include_str!("traced_denoise_filter.wgsl"),
-    deps: &[&FFX_FILTER, &COMMON],
+    deps: &[&FFX_FILTER, &COMMON, &NORMAL],
 };
+
+// Measurement (#204): the scalar denoiser over slot 0 alone, and the
+// normals packed in a word.
+static NORMAL_PACKED: shading::Module = shading::Module {
+    name: "traced_denoise_normal_packed",
+    source: include_str!("traced_denoise_normal_packed.wgsl"),
+    deps: &[&shading::GBUFFER],
+};
+static FFX_TILE_CLASSIFICATION_SCALAR: shading::Module = shading::Module {
+    name: "ffx_denoiser_shadows_tileclassification_scalar",
+    source: include_str!("ffx_denoiser_shadows_tileclassification_scalar.wgsl"),
+    deps: &[&UTIL],
+};
+static FFX_FILTER_SCALAR: shading::Module = shading::Module {
+    name: "ffx_denoiser_shadows_filter_scalar",
+    source: include_str!("ffx_denoiser_shadows_filter_scalar.wgsl"),
+    deps: &[&UTIL],
+};
+pub(super) static TILE_CLASSIFICATION_SCALAR: shading::Module = shading::Module {
+    name: "traced_denoise_tileclassification_scalar",
+    source: include_str!("traced_denoise_tileclassification_scalar.wgsl"),
+    deps: &[
+        &FFX_TILE_CLASSIFICATION_SCALAR,
+        &shading::SHADOW_MASK_SLOTS,
+        &COMMON,
+        &NORMAL,
+    ],
+};
+pub(super) static TILE_CLASSIFICATION_SCALAR_PACKED: shading::Module = shading::Module {
+    name: "traced_denoise_tileclassification_scalar",
+    source: include_str!("traced_denoise_tileclassification_scalar.wgsl"),
+    deps: &[
+        &FFX_TILE_CLASSIFICATION_SCALAR,
+        &shading::SHADOW_MASK_SLOTS,
+        &COMMON,
+        &NORMAL_PACKED,
+    ],
+};
+pub(super) static FILTER_SCALAR: shading::Module = shading::Module {
+    name: "traced_denoise_filter_scalar",
+    source: include_str!("traced_denoise_filter_scalar.wgsl"),
+    deps: &[&FFX_FILTER_SCALAR, &COMMON, &NORMAL],
+};
+pub(super) static FILTER_SCALAR_PACKED: shading::Module = shading::Module {
+    name: "traced_denoise_filter_scalar",
+    source: include_str!("traced_denoise_filter_scalar.wgsl"),
+    deps: &[&FFX_FILTER_SCALAR, &COMMON, &NORMAL_PACKED],
+};
+
+/// Measurement (#204): the denoiser variant `SGL_RT_DENOISE` names, read
+/// once when the stage is made. v0 (or unset) is #200's: four slots, a
+/// lane each, three passes at steps 1, 2 and 4. v1 denoises slot 0 alone
+/// through AMD's scalar port, its other slots temporally blended; v2 takes
+/// two passes, at steps 1 and 2 (v2w: 1 and 4); v3 is v1 with v2's
+/// passes; v4 is v3 with the normals packed in a word and each pass's
+/// apron its step.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Variant {
+    pub scalar: bool,
+    pub steps: &'static [u32],
+    pub lean: bool,
+}
+
+impl Variant {
+    pub fn from_env() -> Self {
+        let name = std::env::var("SGL_RT_DENOISE").unwrap_or_default();
+        let variant = |scalar: bool, steps: &'static [u32], lean: bool| Self {
+            scalar,
+            steps,
+            lean,
+        };
+        let variant = match name.as_str() {
+            "" | "v0" => variant(false, &[1, 2, 4], false),
+            "v1" => variant(true, &[1, 2, 4], false),
+            "v2" => variant(false, &[1, 2], false),
+            "v2w" => variant(false, &[1, 4], false),
+            "v3" => variant(true, &[1, 2], false),
+            "v4" => variant(true, &[1, 2], true),
+            other => panic!("SGL_RT_DENOISE={other} names no variant"),
+        };
+        eprintln!("ray-traced shadow denoiser variant {name:?}: {variant:?}");
+        variant
+    }
+
+    /// The slots the denoiser filters, the first of word 0.
+    pub fn slots(&self) -> u32 {
+        if self.scalar { 1 } else { DENOISED_SLOTS }
+    }
+
+    /// The format of the normals the trace writes for the denoiser.
+    pub fn normal_format(&self) -> wgpu::TextureFormat {
+        if self.lean {
+            wgpu::TextureFormat::R32Uint
+        } else {
+            NORMAL_FORMAT
+        }
+    }
+}
 
 /// The format of the tracing pixels' shading normals the trace writes for
 /// the denoiser.
@@ -79,9 +182,14 @@ pub(super) struct Targets {
 }
 
 impl Targets {
-    pub fn new(device: &wgpu::Device, reduced: [u32; 2]) -> Self {
+    pub fn new(device: &wgpu::Device, reduced: [u32; 2], variant: Variant) -> Self {
         let [width, height] = reduced;
-        let layers = |label, format| texture(device, label, reduced, DENOISED_SLOTS, format);
+        let layers = |label, format| texture(device, label, reduced, variant.slots(), format);
+        let lanes = if variant.scalar {
+            wgpu::TextureFormat::R32Uint
+        } else {
+            wgpu::TextureFormat::Rgba32Uint
+        };
         Self {
             tiles: texture(
                 device,
@@ -95,7 +203,7 @@ impl Targets {
                 "ray-traced shadow tile metadata",
                 [width.div_ceil(8), height.div_ceil(8)],
                 1,
-                wgpu::TextureFormat::Rgba32Uint,
+                lanes,
             ),
             scratch: [0, 1].map(|_| {
                 texture(
@@ -103,7 +211,7 @@ impl Targets {
                     "ray-traced shadow denoise scratch",
                     reduced,
                     1,
-                    wgpu::TextureFormat::Rgba32Uint,
+                    lanes,
                 )
             }),
             moments: [0, 1].map(|_| {
@@ -117,7 +225,7 @@ impl Targets {
                 "ray-traced shadow normals",
                 reduced,
                 1,
-                NORMAL_FORMAT,
+                variant.normal_format(),
             ),
             denoised: crate::counters::buffer(
                 device,
@@ -149,21 +257,46 @@ pub(super) struct Inputs<'a> {
 
 pub(super) struct Denoiser {
     classification: Pass,
-    filters: [Pass; FILTER_PASSES as usize],
+    filters: Vec<Pass>,
 }
 
 impl Denoiser {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device, variant: Variant) -> Self {
+        let (classification, filter) = match (variant.scalar, variant.lean) {
+            (false, _) => (&TILE_CLASSIFICATION, &FILTER),
+            (true, false) => (&TILE_CLASSIFICATION_SCALAR, &FILTER_SCALAR),
+            (true, true) => (&TILE_CLASSIFICATION_SCALAR_PACKED, &FILTER_SCALAR_PACKED),
+        };
+        let last = variant.steps.len() - 1;
         Self {
-            classification: Pass::new(device, &TILE_CLASSIFICATION, TILE_CLASSIFICATION_ENTRY, &[]),
-            filters: std::array::from_fn(|pass| {
-                Pass::new(
-                    device,
-                    &FILTER,
-                    FILTER_ENTRY,
-                    &[("filter_pass", pass as f64)],
-                )
-            }),
+            classification: Pass::new(device, classification, TILE_CLASSIFICATION_ENTRY, &[]),
+            filters: variant
+                .steps
+                .iter()
+                .enumerate()
+                .map(|(pass, &step)| {
+                    let final_pass = f64::from(u8::from(pass == last));
+                    let constants: Vec<(&str, f64)> = if variant.scalar {
+                        // Upstream writes a cleared tile in every pass but
+                        // its second of three, which finds it written.
+                        let write_cleared = pass != 1 || pass == last;
+                        let apron = if variant.lean { step } else { 4 };
+                        vec![
+                            ("filter_step", f64::from(step)),
+                            ("filter_final", final_pass),
+                            ("filter_write_cleared", f64::from(u8::from(write_cleared))),
+                            ("filter_apron", f64::from(apron)),
+                        ]
+                    } else {
+                        vec![
+                            ("filter_pass", pass as f64),
+                            ("filter_step", f64::from(step)),
+                            ("filter_final", final_pass),
+                        ]
+                    };
+                    Pass::new(device, filter, FILTER_ENTRY, &constants)
+                })
+                .collect(),
         }
     }
 
@@ -220,13 +353,15 @@ impl Denoiser {
             "ray-traced shadow tile classification",
         );
         // Pass 0 filters A into B, which the next frame's classification
-        // reads as its history; pass 1 B into A; pass 2 A into the denoised
-        // words, binding B, which it does not write.
-        for (pass, (input, history)) in self.filters.iter_mut().zip([
-            (scratch_a, scratch_b),
-            (scratch_b, scratch_a),
-            (scratch_a, scratch_b),
-        ]) {
+        // reads as its history; each later pass the other into the one it
+        // read, the last into the denoised words, binding as its history
+        // the half it does not write.
+        for (index, pass) in self.filters.iter_mut().enumerate() {
+            let (input, history) = if index % 2 == 0 {
+                (scratch_a, scratch_b)
+            } else {
+                (scratch_b, scratch_a)
+            };
             let group = filter_group(
                 &mut pass.groups[current],
                 device,

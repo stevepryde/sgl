@@ -26,8 +26,6 @@
 // the moments are kept in RGBA16F, a layer a slot, where Wicked keeps
 // R11G11B10.
 @group(0) @binding(0) var denoise_depth:texture_depth_2d;
-// The tracing pixels' shading normals the trace writes.
-@group(0) @binding(1) var denoise_normal:texture_2d<f32>;
 @group(0) @binding(2) var denoise_tiles:texture_2d<u32>;
 @group(0) @binding(3) var denoise_moments_previous:texture_2d_array<f32>;
 @group(0) @binding(4) var denoise_history:texture_2d<u32>;
