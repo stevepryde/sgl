@@ -191,15 +191,6 @@ impl Scene {
         self.deformation_edits = self.deformation_edits.wrapping_add(1);
     }
 
-    /// Whether a material scrolls its normal map with the frame's time, so
-    /// the surfaces rays meet change from frame to frame.
-    pub(crate) fn scrolls_materials(&self) -> bool {
-        self.materials
-            .slots
-            .iter()
-            .any(|(_, material)| material.values.normal_layers.is_some())
-    }
-
     fn buffers(
         instances: &instances::Instances,
         rays: &rays::SceneRays,

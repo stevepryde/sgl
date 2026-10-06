@@ -195,7 +195,7 @@ impl Renderer {
         );
         let targets = SharedTargets::new(device, render, false);
         // The form recorded for the device's backend
-        // (`shading::METAL_FORM`, `shading::LOWERED_FORM`).
+        // (`shading::scene_rays::METAL_FORM`, `LOWERED_FORM`).
         let ray_form = crate::scene::rays::acceleration::supported(device).then(|| {
             crate::view::trace_paths::DeviceRayForm::new(crate::shading::RayQueryForm::of_backend(
                 device.adapter_info().backend,

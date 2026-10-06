@@ -1,6 +1,7 @@
 // The baseline form's query (the architecture's Hardware ray tracing,
-// *Baseline form*), the composition root of the hardware path on every
-// native backend. Every BLAS geometry is opaque, and a query asks the
+// *Baseline form*), the composition root of the hardware path on Vulkan
+// and DX12 and on a device that fell back from the candidate form. Every
+// BLAS geometry is opaque, and a query asks the
 // hardware for its cull mask and interval and for nothing else: naga 30's
 // MSL writer sets no triangle cull mode, and a global cull would be wrong
 // for mirrored instances and double-sided materials, so the shared

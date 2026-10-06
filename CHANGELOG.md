@@ -27,7 +27,13 @@ full API details.
   volume's rays and ray-traced shadows see the same content as before,
   matching the software BVHs within the f32 rounding of two triangle
   solves. `Renderer::ray_tracing_stats` now counts such instances under
-  `hardware` rather than `portable` on Metal. TIMINGS-CL Vulkan and DX12
+  `hardware` rather than `portable` on Metal. Measured on an Apple M5 at
+  1920×1080: among 266 static hedges of cut-out cards, the GPU frame took
+  19.2 ms against 22.6 (the dynamic GI, shadow and reflection rays 35–60 %
+  less); where nothing is masked, the larger program costs 2–3 % of the
+  streaming example's ray-traced shadow rays and up to 14 % (0.12 ms, 1.2 %
+  of the frame) over a thousand opaque props under nine shadowed lights.
+  Vulkan and DX12
   are unchanged: they run the baseline form until the candidate form is
   measured on their hardware.
 - **Migration:** no game-code changes. A Mac game that turns hardware ray
@@ -35,6 +41,24 @@ full API details.
   re-measure its routes' `world reflection rays`, `dynamic GI rays` and
   `ray-traced shadow rays` GPU time and the acceleration structures'
   memory, which now include those models' BLASes.
+
+### Dynamic GI follows the clock only where a surface moves
+
+- **Scope:** `sgl-3d` (#216). No API change. The dynamic GI volume's
+  inputs took the frame's animation phase, so changed every frame and kept
+  a converged volume from pausing, whenever any material had
+  `normal_layers`, including still layers, unlit materials and blended
+  ones. They now take it only while an opaque or masked lit material's
+  layer moves at least one repeat of its map an hour, the definition FSR2's
+  composition mask uses (#146): an unlit surface takes no normal, the
+  probes' rays pass through blended surfaces, and a still layer does not
+  move. Such scenes now pause the volume once its light has converged, as
+  scenes without layers do; the volume's light is unchanged.
+  `DynamicGiReport::changes.frame` no longer reports the clock for them.
+- **Migration:** no game-code changes. Afterwards, in a scene with still,
+  unlit or blended layered materials (such as blended water) and dynamic
+  GI, check that the volume pauses once converged
+  (`DynamicGiReport::paused`, feature `diagnostics`).
 
 ### SGL moves to wgpu 30
 
@@ -69,7 +93,10 @@ full API details.
   - On Metal, naga 30 lowers ray queries through Metal's
     `intersection_query` instead of `intersector`, which lets Metal run
     the hardware path's candidate form (see "Metal traces masked models in
-    hardware" below). TIMINGS-T6
+    hardware" above). On an Apple M5 the baseline's passes cost more
+    than under wgpu 29 on the streaming example's walk and fly: world
+    reflection rays 0.20 ms against 0.09, ray-traced shadow rays 40–57 %
+    more, about 0.25 ms of the frame; #221 attributes it.
 - **Migration:** a game that calls wgpu or writes WGSL itself updates that
   code for wgpu 30 ([wgpu's changelog](https://github.com/gfx-rs/wgpu/blob/v30.0.0/CHANGELOG.md)).
   These are the changes SGL's own code needed:

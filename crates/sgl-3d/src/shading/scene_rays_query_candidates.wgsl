@@ -1,6 +1,6 @@
 // The candidate form's query (the architecture's Hardware ray tracing,
 // *Candidate form*), the composition root of the hardware path where the
-// backend runs a candidate loop (`shading::METAL_FORM`: Metal, validated
+// backend runs a candidate loop (`shading::scene_rays::METAL_FORM`: Metal, validated
 // and measured on an Apple M5, #211). naga 30's MSL writer lowers it
 // through Metal's `intersection_query` (`back/msl/ray.rs`: `reset`
 // 363–368, each proceed one `next()` 386–417, a confirmation
@@ -10,7 +10,7 @@
 // and committed reads 15–500) and HLSL writer (DX12; `back/hlsl/ray.rs`,
 // `Proceed` 424, `CommitNonOpaqueTriangleHit` 529, candidate reads
 // 143–222) lower it too, where it is not yet the default
-// (`shading::LOWERED_FORM`). Every BLAS
+// (`LOWERED_FORM`). Every BLAS
 // geometry is opaque but a masked mesh's, so the hardware reports each
 // triangle of a masked mesh a query crosses as a candidate, and the loop
 // runs the whole shared predicate on it, the cut-out test included,

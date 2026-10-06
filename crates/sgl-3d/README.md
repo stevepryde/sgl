@@ -1790,7 +1790,9 @@ or environment, `Settings::dynamic_gi`, or the volume's placement; the
 camera and the clock are not, nor a deforming instance's animation unless
 hardware ray tracing traces the volume's rays, which then see it. Setting a
 pose or a value to what it already is changes nothing. A scene whose
-materials scroll their normal maps changes every frame and never pauses.
+opaque or masked materials' normal layers move (a lit material, a layer
+moving at least a repeat per hour) changes every frame and never pauses;
+still layers and unlit or blended materials' layers do not.
 Frames that run the volume trace the ray source, so its instance BVHs
 rebuild on them as for world-space reflections. Deforming instances are
 lit by the volume, and block its rays only with hardware ray tracing. Per-pass cost is reported in
@@ -1886,7 +1888,9 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   While hardware ray tracing traces the dynamic GI volume's rays, a
   capture-visible deforming instance's pose or deformation is an edit that
   wakes a converged volume, since its rays see it. The candidate form
-  runs on Metal by default (TIMINGS); Vulkan and DX12, whose shader
+  runs on Metal by default: on an Apple M5 it cut the tracing passes by
+  35–60 % among cut-out foliage and cost up to 14 % of the ray-traced
+  shadow rays (0.12 ms) where nothing is masked; Vulkan and DX12, whose shader
   compilers lower the loop too, run the baseline until it is measured on
   their hardware, which it has not run on yet. A device whose candidate
   programs fail to compile falls back to the baseline for good.
