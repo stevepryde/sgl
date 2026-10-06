@@ -25,19 +25,23 @@ THE SOFTWARE.
 // Changed: translated to WGSL, out parameters as returned structs, and
 // float16_t values as f32, which pack2x16float and unpack2x16float pack in
 // the group's memory as upstream's PackFloat16 and UnpackFloat16 do. The
-// tile's metadata reaches every thread of the group through
-// workgroupUniformLoad, which WGSL needs before the branch whose barrier
-// follows. The caller reads linear depth, 0 for the sky, so the depth is
-// not linearised through the inverse projection, and a sky neighbour, and
-// the centre, are skipped, where upstream weighs them by zero. The loops'
-// literal bounds are named (AR-12). The four denoised slots are filtered
+// input arrives packed as the caller keeps it and stays so in the group's
+// memory, where upstream packs it there; the caller's
+// FFX_DNSR_Shadows_UnpackInput unpacks it. The tile's metadata reaches
+// every thread of the group through workgroupUniformLoad, which WGSL needs
+// before the branch whose barrier follows. The caller reads linear depth,
+// 0 for the sky, so the depth is not linearised through the inverse
+// projection, and a sky neighbour, and the centre, are skipped, where
+// upstream weighs them by zero. The loops' literal bounds are named
+// (AR-12). The four denoised slots are filtered
 // together, a lane each of a vec4, where upstream filters one light a
 // dispatch: the input, the shadow similarity, the sums and the results
 // are per lane, and the depth, normals and their weights, which upstream
 // loads and computes again for every light, once; a lane whose tile is
 // cleared is computed with the rest and takes the cleared tile's values,
-// and the group skips only when every lane's tile is cleared. The caller supplies the FFX_DNSR_Shadows_* callbacks upstream's
-// host shader does.
+// and the group skips only when every lane's tile is cleared. The caller
+// supplies the FFX_DNSR_Shadows_* callbacks upstream's host shader does,
+// and FFX_DNSR_Shadows_UnpackInput.
 
 var<workgroup> g_FFX_DNSR_Shadows_shared_input:array<array<vec4<u32>,16>,16>;
 var<workgroup> g_FFX_DNSR_Shadows_shared_depth:array<array<f32,16>,16>;
@@ -56,23 +60,6 @@ fn FFX_DNSR_Shadows_UnpackFloat16(a:u32)->vec2<f32> {
 struct FFX_DNSR_Shadows_Input {
  mean:vec4<f32>,
  variance:vec4<f32>,
-}
-
-fn FFX_DNSR_Shadows_UnpackInput(packed:vec4<u32>)->FFX_DNSR_Shadows_Input {
- let x=FFX_DNSR_Shadows_UnpackFloat16(packed.x);
- let y=FFX_DNSR_Shadows_UnpackFloat16(packed.y);
- let z=FFX_DNSR_Shadows_UnpackFloat16(packed.z);
- let w=FFX_DNSR_Shadows_UnpackFloat16(packed.w);
- return FFX_DNSR_Shadows_Input(vec4(x.x,y.x,z.x,w.x),vec4(x.y,y.y,z.y,w.y));
-}
-
-fn FFX_DNSR_Shadows_PackInput(input:FFX_DNSR_Shadows_Input)->vec4<u32> {
- return vec4(
-  FFX_DNSR_Shadows_PackFloat16(vec2(input.mean.x,input.variance.x)),
-  FFX_DNSR_Shadows_PackFloat16(vec2(input.mean.y,input.variance.y)),
-  FFX_DNSR_Shadows_PackFloat16(vec2(input.mean.z,input.variance.z)),
-  FFX_DNSR_Shadows_PackFloat16(vec2(input.mean.w,input.variance.w)),
- );
 }
 
 fn FFX_DNSR_Shadows_LoadInputFromGroupSharedMemory(idx:vec2<i32>)->FFX_DNSR_Shadows_Input {

@@ -36,7 +36,7 @@ static FFX_FILTER: shading::Module = shading::Module {
     deps: &[&UTIL],
 };
 /// The passes' reading of the trace's half-resolution depth and normals for
-/// AMD's callbacks.
+/// AMD's callbacks, and the scratch layout's pack and unpack.
 static COMMON: shading::Module = shading::Module {
     name: "traced_denoise_common",
     source: include_str!("traced_denoise_common.wgsl"),

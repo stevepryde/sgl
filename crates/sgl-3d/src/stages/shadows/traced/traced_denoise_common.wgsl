@@ -1,11 +1,15 @@
 // Shared by the ray-traced shadow stage's denoiser passes
 // (traced_denoise_tileclassification.wgsl, traced_denoise_filter.wgsl):
+// the layout of the denoiser's scratch, which both write and read, and
 // their reading of the tracing pixels' depth and normals for AMD's
-// callbacks, from the half-resolution copies the trace writes, as Wicked
-// Engine's denoiser reads its half-resolution depth and normals
-// (2ff1d9e Postprocess_RTShadow) where AMD's sample reads its full
-// G-buffer. Reads `denoise_half_depth` and `denoise_normal`, which each
-// pass's bindings declare.
+// callbacks, from the copies the trace writes at the tracing resolution,
+// where AMD's sample reads its full G-buffer: the linear depth of each
+// tracing pixel's full-resolution pixel 2q, the pixel whose depth Wicked
+// Engine's denoiser reads (2ff1d9e rtshadow_denoise_tileclassificationCS.hlsl
+// and rtshadow_denoise_filterCS.hlsl, `texture_depth[did * 2]`), and the
+// shading normals, as Wicked's denoiser reads its half-resolution normals
+// copy. Reads `denoise_half_depth` and `denoise_normal`, which each pass's
+// bindings declare.
 // Whether tracing pixel `p` receives shadows: neither sky nor unlit, which
 // the trace records as the sky's depth.
 fn traced_denoise_receiver(p:vec2<u32>)->bool {
@@ -19,4 +23,27 @@ fn traced_denoise_linear_depth(p:vec2<u32>)->f32 {
 // Tracing pixel `p`'s shading normal.
 fn traced_denoise_normal(p:vec2<u32>)->vec3<f32> {
  return textureLoad(denoise_normal,min(p,vec2<u32>(traced.reduced.xy)-1u),0).xyz;
+}
+// A texel of the denoiser's scratch (denoise.rs `Targets::scratch`): the
+// four denoised slots' mean and variance, a slot a word, the mean its low
+// half and the variance its high (pack2x16float), as Wicked keeps a light's
+// in R16G16.
+struct TracedDenoiseScratch {
+ mean:vec4<f32>,
+ variance:vec4<f32>,
+}
+fn traced_denoise_pack(mean:vec4<f32>,variance:vec4<f32>)->vec4<u32> {
+ return vec4(
+  pack2x16float(vec2(mean.x,variance.x)),
+  pack2x16float(vec2(mean.y,variance.y)),
+  pack2x16float(vec2(mean.z,variance.z)),
+  pack2x16float(vec2(mean.w,variance.w)),
+ );
+}
+fn traced_denoise_unpack(words:vec4<u32>)->TracedDenoiseScratch {
+ let x=unpack2x16float(words.x);
+ let y=unpack2x16float(words.y);
+ let z=unpack2x16float(words.z);
+ let w=unpack2x16float(words.w);
+ return TracedDenoiseScratch(vec4(x.x,y.x,z.x,w.x),vec4(x.y,y.y,z.y,w.y));
 }

@@ -8,12 +8,10 @@
 // re-packing its history does not drift down a step at a time.
 struct TracedParams {
  // The camera's view-projection as it rasterized the G-buffer (jittered),
- // inverted, and its view; its projection as it rasterized, inverted; and
- // the last submitted frame's view in this frame's render frame (this
- // frame's after a restart).
+ // inverted, and its view; and the last submitted frame's view in this
+ // frame's render frame (this frame's after a restart).
  inverse_view_projection:mat4x4<f32>,
  view:mat4x4<f32>,
- inverse_projection:mat4x4<f32>,
  previous_view:mat4x4<f32>,
  // The full (render) and the tracing resolutions: width, height,
  // 1/width, 1/height.

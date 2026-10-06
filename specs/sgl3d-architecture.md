@@ -607,8 +607,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   the filter takes that linear depth as it is, where AMD's linearises a
   projected depth through the inverse projection at every tap; AMD's
   kernel weights are constants, which its compiler folds; the denoised
-  slots' result is one word a tracing pixel, each slot's group ORing its
-  byte, which the temporal blend takes as its first word; and the
+  slots' result is one word a tracing pixel, which the last filter pass
+  writes whole, a slot a byte, and the temporal blend takes as its first
+  word; and the
   upsample's bilinear fractions are those of the trace's grid, where
   Wicked's taps and fractions disagree; the temporal blend clamps
   its history to the 3×3 box, which Wicked computes and leaves unused;
@@ -621,8 +622,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   since the coat takes it along the geometry normal, so the trace casts a
   ray wherever lighting shades the light; the denoiser's wave reduction
   takes its own workgroup fallback
-  (`ffx_denoiser_shadows_tileclassification.h` 28–45), subgroups being a
-  measured specialisation later (AR-3), and its quad reads exchange
+  (`ffx_denoiser_shadows_tileclassification.h` 28–45), the four slots'
+  votes bits of one atomic word, subgroups being a measured
+  specialisation later (AR-3), and its quad reads exchange
   through workgroup memory; the trace gathers each 8×4 tile's bits by
   workgroup atomics into a storage texture, where Wicked ORs them into a
   buffer, so the trace binds no storage buffer beyond lit group 0's and
@@ -632,7 +634,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   dispatch for each light computes again, a lane whose tile upstream
   would skip taking the skip's values, and the denoiser does not run while
   none of the four holds a light; the denoiser's scratch packs its two
-  halves in a word (`pack2x16float`), a slot a lane, and its history is
+  halves in a word (`pack2x16float`), a slot a lane, through one pair of
+  functions both passes share, and its history is
   filtered bilinearly by the pass, its motion is the surface's in UV and
   its previous depth the stage's own, linear; and the directional light's
   rays

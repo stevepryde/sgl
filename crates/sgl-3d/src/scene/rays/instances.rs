@@ -251,7 +251,7 @@ impl RayInstances {
     }
 
     /// The entries the next upload writes.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn pending(&self) -> usize {
         self.written.len()
     }
