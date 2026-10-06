@@ -35,6 +35,8 @@ pub(crate) static COVERAGE: crate::shading::Module = crate::shading::Module {
     source: include_str!("frame_probe_coverage.wgsl"),
     deps: &[&STATS],
 };
+/// The entry point both programs' pipelines are created with.
+pub(crate) const MAIN_ENTRY: &str = "main";
 const STAGES: [&str; 5] = [
     "lit_scene",
     "sssr_filtered",
@@ -96,7 +98,7 @@ impl FrameProbe {
             label: Some("numerical frame probe"),
             layout: None,
             module: &shader,
-            entry_point: Some("main"),
+            entry_point: Some(MAIN_ENTRY),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -108,7 +110,7 @@ impl FrameProbe {
             label: Some("primary raster coverage probe"),
             layout: None,
             module: &coverage_shader,
-            entry_point: Some("main"),
+            entry_point: Some(MAIN_ENTRY),
             compilation_options: Default::default(),
             cache: None,
         });

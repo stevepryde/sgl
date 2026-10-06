@@ -13,7 +13,7 @@
 //! layers and the diagnostics tone-map capture.
 //! Timing groups: `bloom`, `SMAA`, `tone map`.
 pub(crate) mod bloom;
-mod inputs;
+pub(crate) mod inputs;
 pub(crate) mod smaa;
 pub(crate) mod tone_map;
 

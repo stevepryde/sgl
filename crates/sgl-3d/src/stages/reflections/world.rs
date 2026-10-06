@@ -178,15 +178,22 @@ pub(crate) static TRACE: shading::Module = shading::Module {
         &shading::BIND_LIT,
         &shading::SURFACE_RAY,
         &shading::SHADOW_MASK_NONE,
-        &shading::FULLSCREEN,
+        &shading::FULLSCREEN_VS,
         &COMMON,
     ],
 };
+/// The entry point the trace's pipelines are created with, beside
+/// `shading::FULLSCREEN_VS_ENTRY`.
+pub(crate) const WORLD_TRACE_ENTRY: &str = "world_trace";
 pub(crate) static DENOISE: shading::Module = shading::Module {
     name: "world_reflections_denoise",
     source: include_str!("world/world_reflections_denoise.wgsl"),
     deps: &[&COMMON, &super::TEMPORAL_REPROJECTION, &shading::LUMINANCE],
 };
+/// The entry points the denoiser's pipelines are created with.
+pub(crate) const WORLD_RESOLVE_ENTRY: &str = "world_resolve";
+pub(crate) const WORLD_TEMPORAL_ENTRY: &str = "world_temporal";
+pub(crate) const WORLD_UPSAMPLE_ENTRY: &str = "world_upsample";
 
 impl WorldReflections {
     /// `lit` and `scene` are group 0's lit layout and group 1's.
@@ -249,9 +256,9 @@ impl WorldReflections {
                 [lit, scene],
             ),
             trace: HashMap::new(),
-            resolve: compute("world_resolve"),
-            temporal: compute("world_temporal"),
-            upsample: compute("world_upsample"),
+            resolve: compute(WORLD_RESOLVE_ENTRY),
+            temporal: compute(WORLD_TEMPORAL_ENTRY),
+            upsample: compute(WORLD_UPSAMPLE_ENTRY),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
@@ -303,13 +310,13 @@ impl WorldReflections {
                     layout: Some(layout),
                     vertex: wgpu::VertexState {
                         module: shader,
-                        entry_point: Some("fullscreen_vs"),
+                        entry_point: Some(shading::FULLSCREEN_VS_ENTRY),
                         compilation_options: Default::default(),
                         buffers: &[],
                     },
                     fragment: Some(wgpu::FragmentState {
                         module: shader,
-                        entry_point: Some("world_trace"),
+                        entry_point: Some(WORLD_TRACE_ENTRY),
                         compilation_options: wgpu::PipelineCompilationOptions {
                             constants: &constants,
                             ..Default::default()

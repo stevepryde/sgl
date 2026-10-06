@@ -16,6 +16,11 @@ pub(crate) static TONE_MAP: crate::shading::Module = crate::shading::Module {
     source: include_str!("tone_map.wgsl"),
     deps: &[&inputs::INPUTS, &crate::shading::LUMINANCE],
 };
+/// The entry points tone mapping's pipelines are created with, beside
+/// `inputs::VS_ENTRY`.
+pub(crate) const PRESENT_ENTRY: &str = "present";
+pub(crate) const PRESENT_DIRECT_ENTRY: &str = "present_direct";
+pub(crate) const COPY_PIXEL_ENTRY: &str = "copy_pixel";
 
 /// `ColorGrading` in `tone_map.wgsl`: Bevy's `ColorGradingUniform` without
 /// its exposure.
@@ -154,9 +159,16 @@ impl ToneMap {
         let layouts = [Some(inputs.layout()), Some(&look_layout)];
         let copy = [Some(inputs.layout())];
         Self {
-            present: pipeline(device, &layouts, &shader, "present", &[HDR], None),
-            present_direct: pipeline(device, &layouts, &shader, "present_direct", &[format], None),
-            present_copy: pipeline(device, &copy, &shader, "copy_pixel", &[format], None),
+            present: pipeline(device, &layouts, &shader, PRESENT_ENTRY, &[HDR], None),
+            present_direct: pipeline(
+                device,
+                &layouts,
+                &shader,
+                PRESENT_DIRECT_ENTRY,
+                &[format],
+                None,
+            ),
+            present_copy: pipeline(device, &copy, &shader, COPY_PIXEL_ENTRY, &[format], None),
             grading: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {

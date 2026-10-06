@@ -20,6 +20,10 @@ pub(crate) static MIST: crate::shading::Module = crate::shading::Module {
         &MIST_NOISE,
     ],
 };
+/// The entry points the mist's pipelines are created with.
+pub(crate) const MIST_VS_ENTRY: &str = "mist_vs";
+pub(crate) const MIST_FS_ENTRY: &str = "mist_fs";
+pub(crate) const MIST_FSR2_MASKED_FS_ENTRY: &str = "mist_fsr2_masked_fs";
 /// The mist's instance buffer, one position (`Transient::mist_positions`)
 /// per quad, read by `mist_vs`.
 pub(crate) const MIST_LAYOUT: VertexLayout = VertexLayout {
@@ -59,16 +63,16 @@ impl Mist {
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("mist_vs"),
+                    entry_point: Some(MIST_VS_ENTRY),
                     compilation_options: Default::default(),
                     buffers: &[Some(MIST_LAYOUT.buffer)],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some(if masked {
-                        "mist_fsr2_masked_fs"
+                        MIST_FSR2_MASKED_FS_ENTRY
                     } else {
-                        "mist_fs"
+                        MIST_FS_ENTRY
                     }),
                     compilation_options: Default::default(),
                     targets: &[

@@ -124,8 +124,11 @@ struct History {
 pub(crate) static INPUTS: shading::Module = shading::Module {
     name: "post_fx_inputs",
     source: include_str!("post_fx_inputs.wgsl"),
-    deps: &[&shading::GBUFFER, &shading::FULLSCREEN],
+    deps: &[&shading::GBUFFER, &shading::FULLSCREEN_VS],
 };
+/// The entry point the inputs' pipeline is created with, beside
+/// `shading::FULLSCREEN_VS_ENTRY`.
+pub(crate) const FS_MAIN_ENTRY: &str = "fs_main";
 
 pub(crate) struct PostFx {
     context: PostFXContext,
@@ -249,13 +252,13 @@ impl PostFx {
                 layout: None,
                 vertex: wgpu::VertexState {
                     module: &module,
-                    entry_point: Some("fullscreen_vs"),
+                    entry_point: Some(shading::FULLSCREEN_VS_ENTRY),
                     compilation_options: Default::default(),
                     buffers: &[],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
-                    entry_point: Some("fs_main"),
+                    entry_point: Some(FS_MAIN_ENTRY),
                     compilation_options: Default::default(),
                     targets: &[
                         target(NORMAL_FORMAT),
