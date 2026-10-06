@@ -201,7 +201,12 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         (heat::HEAT.name, vec![heat::VS_ENTRY, heat::FS_ENTRY]),
         (
             ao::XE_GTAO.name,
-            vec![ao::PREFILTER_ENTRY, ao::MAIN_PASS_ENTRY, ao::DENOISE_ENTRY],
+            vec![
+                ao::PREFILTER_ENTRY,
+                ao::PREFILTER_MIP4_ENTRY,
+                ao::MAIN_PASS_ENTRY,
+                ao::DENOISE_ENTRY,
+            ],
         ),
         (
             post_fx::INPUTS.name,

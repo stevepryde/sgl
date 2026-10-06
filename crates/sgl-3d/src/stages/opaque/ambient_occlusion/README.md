@@ -8,7 +8,9 @@ Intel Corporation. The WGSL adaptation retains that license.
 
 Configuration is full-resolution FP32 (`XE_GTAO_FP32_DEPTHS`,
 `XE_GTAO_USE_HALF_FLOAT_PRECISION=0`), scalar visibility, supplied normals,
-NoiseIndex zero, and the upstream default one final denoise pass (beta 1.2).
+NoiseIndex zero, the Hilbert lookup texture (`XE_GTAO_HILBERT_LUT_AVAILABLE`,
+vaGTAO's 64×64 R16Uint table of `HilbertIndex`), and the upstream default
+one final denoise pass (beta 1.2).
 There is no history or temporal accumulation. Low/Medium/High/Ultra use the
 upstream 1×2, 2×2, 3×3, and 9×3 slice/step counts. The physical radius is
 clamped to 0.01–10000 m and multiplied by 1.457 internally.
@@ -33,26 +35,53 @@ The default small-radius fade, projected-normal 0.05 adjustment, pixel minimum
   follow `GTAOUpdateConstants`, including its handedness correction. Sky texels
   are excluded before unpack. Jitter-free depth and matching stable matrices are
   the caller's responsibility.
-- Five sequential dispatches replace the 16×16 shared-memory prefilter. Each
-  output uses the identical four children and weighted filter; there is no
-  intermediate FP16 conversion. Point-clamp loads replace GatherRed. Full mip
-  dimensions use floor division, exactly as texture mip extents do.
+- `XeGTAO_PrefilterDepths16x16` writes mips 0–3 in one dispatch, an 8×8 group
+  to a 16×16 tile through workgroup memory, as upstream. Mip 4 would be a fifth
+  storage texture, past WebGPU's default four per stage, so a second, small
+  dispatch filters it from mip 3. Each output uses the identical four children
+  and weighted filter; there is no intermediate FP16 conversion. Point-clamp
+  loads replace GatherRed. Full mip dimensions use floor division, exactly as
+  texture mip extents do, and a child past a one-texel-wide mip clamps onto
+  its last texel, as the loads clamp.
 - Tiny targets allocate at least 16×16 backing depth storage so all five mips
   exist; the valid viewport and sample clamp remain the actual mip dimensions.
 - Explicit point-mip selection and clamped integer texture loads replace the
   point/point/point sampler. Positions still use the original snapped UVs;
   depth coordinate clamping does not change reconstructed sample XY.
-- A single invocation per denoised pixel replaces the two-pixel gather batching;
-  cardinal/diagonal neighbors, symmetric edges, leak correction and summation
-  order remain the original denoiser.
-- R32Uint stores the same 8-bit packed working/output visibility; R32Float stores
-  the same packed R8 UNORM edge values. Main output quantizes before denoising.
-  Final output explicitly saturates the integer to 255, matching R8Uint typed-UAV
+- Each denoise invocation filters two horizontally adjacent pixels, as
+  upstream, from twelve clamped integer loads of the 4×3 neighbourhood the
+  pair shares in place of its seven gathers; cardinal/diagonal neighbors,
+  symmetric edges, leak correction and summation order remain the original
+  denoiser.
+- One R32Uint working word holds the same 8-bit packed working visibility
+  (bits 0–7) and the same packed R8 UNORM edge value (its 8-bit integer, bits
+  8–15) that upstream writes to two R8 targets, so the main pass makes one
+  store and the denoiser one load per pixel. Main output quantizes before
+  denoising. The final R32Uint output holds the visibility alone and
+  explicitly saturates the integer to 255, matching R8Uint typed-UAV
   conversion ([Direct3D 11.3 §3.2.3.13](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#3.2.3.13)). Consumers divide the integer by 255.
 - `XeGTAO_ClampDepth` uses `#ifdef XE_GTAO_USE_HALF_FLOAT_PRECISION` even when the
   selected mode defines it as zero. Its resulting 65504 clamp is preserved.
 - Optional bent normals, generated normals, debug visualizations and TAA are
   not enabled configurations; no replacement AO algorithm is introduced.
+
+## Cost decisions
+
+The prefilter's two dispatches (upstream's tile filter, where the port had
+five full-image passes), the Hilbert lookup texture, the shared working word
+and the two-pixel denoise were each measured on Hyperdrive's route against
+the five-pass port (sgl#234) and kept for a lower GPU frame time with every
+visibility value unchanged. Not taken:
+
+- One prefilter dispatch for all five mips where the adapter offers five
+  storage textures per stage (an AR-3 specialisation): the mip-4 dispatch
+  costs next to nothing.
+- Half-precision math (`XE_GTAO_USE_HALF_FLOAT_PRECISION`): upstream has no
+  half path with FP32 depths, and Apple GPUs run f16 FMA at the f32 rate, so
+  the gain would be registers alone, for `SHADER_F16` and a specialised
+  pipeline.
+- `s*s` for the sample distribution power 2 and ∓sin(n) for the low-horizon
+  cosines: they changed a few pixels by 1/255 without a measurable saving.
 
 ## Predeclared numerical acceptance
 
@@ -81,13 +110,16 @@ evidence. Numerical test results are reported with implementation delivery.
 
 ## Active-branch source audit
 
-`GTAOUpdateConstants` maps to Rust `Params` construction. `HilbertIndex` and
-`SpatioTemporalNoise` map to `noise`; `ComputeViewspacePosition` maps to
-`position`; `ScreenSpaceToViewSpaceDepth`, `ClampDepth`, `DepthMIPFilter`, and
-`PrefilterDepths16x16` map to `prefilter`/`filter_depth`. The active scalar,
+`GTAOUpdateConstants` maps to Rust `Params` construction. `HilbertIndex` maps
+to Rust `hilbert_index`, which fills the lookup texture, and
+`SpatioTemporalNoise` to `noise`; `ComputeViewspacePosition` maps to
+`position`; `ScreenSpaceToViewSpaceDepth` and `ClampDepth` map to
+`view_depth`, `DepthMIPFilter` to `filter_depth`, and `PrefilterDepths16x16`
+to `prefilter_depths` and `prefilter_depth4`. The active scalar,
 supplied-normal `MainPass` branches map to `main_pass`, including
 `CalculateEdges`, `PackEdges`, `FastSqrt`/`FastACos`, and `OutputWorkingTerm`.
-`UnpackEdges`, `AddSample`, and final `Output` map to `denoise`.
+`UnpackEdges` maps to `unpack_edges`; `AddSample` and final `Output` map to
+`denoise_pixel`, which `denoise` runs for each pixel of its pair.
 The signed arithmetic right shift in `FastSqrt` is retained exactly.
 No active-branch mathematical deviations are known after this audit; the
 intentional storage/dispatch/normal-coordinate differences are catalogued above.
