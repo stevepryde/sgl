@@ -110,5 +110,4 @@ is done (its algorithm and internal parameters) is SGL3D's.
 
 With the `diagnostics` feature, `Settings::diagnostics` holds investigation
 switches (layers off, the frame probe, the tone-target capture, the
-camera's instance visibility). It is not serialized and is never shown to
-players.
+dynamic GI observer). It is not serialized and is never shown to players.

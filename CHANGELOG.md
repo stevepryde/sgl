@@ -221,9 +221,10 @@ These compile unchanged; check them on the game's routes.
   no browser): request `graphics_device::ray_tracing_features(&adapter)`
   with `experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() }`
   and set `Settings::hardware_ray_tracing`; `Renderer::ray_tracing_in_effect`,
-  `ray_tracing_error` and `ray_tracing_stats` report it. Ray-traced shadows
-  (`Settings::ray_traced_shadows`, `ray_traced_shadow_quality`) need it and
-  soften by light size.
+  `ray_tracing_error` and `ray_tracing_stats` report it. No feature
+  requires it. Ray-traced shadows (`Settings::ray_traced_shadows`,
+  `ray_traced_shadow_quality`) soften by light size while it is in effect;
+  without it the shadow maps shadow everything.
 - Occlusion culling (opt-in): `Settings::occlusion_culling`; timing groups
   `cull late`, `depth pyramid`, `geometry late`.
 - [Scrolling normal layers](crates/sgl-3d/README.md#scrolling-normal-layers)
