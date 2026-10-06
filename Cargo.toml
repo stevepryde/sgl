@@ -109,9 +109,3 @@ overflow-checks = true
 
 [profile.bench]
 overflow-checks = true
-
-# sp-fidelity 0.2.0 from its pull request until it is published; remove this
-# before merging (#207).
-[patch.crates-io]
-sp-fidelity = { git = "https://github.com/stevepryde/sp-fidelity", rev = "27ec84db7520ebe1699d6b322859d1247ef0fdd5" }
-sp-fidelity-wgpu = { git = "https://github.com/stevepryde/sp-fidelity", rev = "27ec84db7520ebe1699d6b322859d1247ef0fdd5" }
