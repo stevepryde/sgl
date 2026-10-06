@@ -392,8 +392,8 @@ fn the_all_reach_on_the_hardware_path_matches_the_portable_path() {
 // ray queries; reported unsupported, never passed, elsewhere. Under the
 // candidate form (the architecture's Hardware ray tracing, *Candidate
 // form*: Metal's, #211) the wall is in the TLAS and the candidate loop in
-// this stage's fragment shader cuts its texels out, which the scene ray
-// tests' compute dispatch does not reach; under the baseline it is a
+// this stage's trace, a compute program of its own, cuts its texels out,
+// which the scene ray tests' dispatch does not compose; under the baseline it is a
 // predicate instance on the portable walk. Plausible defects: the loop
 // confirming cut-out candidates or never confirming kept ones, which
 // reflects the wall whole or not at all; a confirmed candidate decoded as
@@ -458,10 +458,12 @@ fn plane(
     asset
 }
 
-/// A frame size whose reduced grid leaves a remainder column and row, and
-/// whose mirror needs more rays than one row of the trace's indirect
-/// dispatch holds.
-const COVERAGE: [u32; 2] = [257, 193];
+/// A frame size whose reduced grid (130 by 98) is no multiple of the
+/// classification's tiles, so its last column and row of workgroups are
+/// partial, and leaves a remainder column and row at full resolution; its
+/// mirror needs more rays than one row of the trace's indirect dispatch
+/// holds.
+const COVERAGE: [u32; 2] = [261, 197];
 
 /// A camera 2 m above a rough floor, looking down 45°, over a mirror on it
 /// from x = -0.3 and from z = -3 towards the camera, past the frame's right
@@ -473,11 +475,7 @@ struct MirrorScene {
     input: FrameInput,
 }
 
-fn mirror_scene(
-    (device, queue): (&wgpu::Device, &wgpu::Queue),
-    size: [u32; 2],
-    mirror_shown: bool,
-) -> MirrorScene {
+fn mirror_scene((device, queue): (&wgpu::Device, &wgpu::Queue), size: [u32; 2]) -> MirrorScene {
     let mut scene = Scene::new(device, queue);
     test_support::add_static(
         device,
@@ -494,16 +492,7 @@ fn mirror_scene(
         .unwrap()
         .model;
     let mirror = scene
-        .add_instance(
-            device,
-            queue,
-            InstanceState {
-                visible: mirror_shown,
-                capture_visible: mirror_shown,
-                ..InstanceState::new(model)
-            },
-            Mobility::Static,
-        )
+        .add_instance(device, queue, InstanceState::new(model), Mobility::Static)
         .unwrap();
     let model = scene.add_asset(device, queue, wall()).unwrap().model;
     scene
@@ -576,21 +565,26 @@ fn mirror_settings(reach: settings::WorldSpaceReflections) -> Settings {
 }
 
 // The classification's coverage of the tracing grid, on the first frame,
-// where every tracing pixel starts as a miss. Plausible defects: rays
-// listed past the first row of the trace's indirect dispatch left
-// untraced, or traced at another tracing pixel than their own (a wrong ray
-// texel, packing or row); a workgroup's rays written over another's (a
-// wrong base); a tracing pixel that needs a ray left off the list. The
-// oracle is geometric, observed through the composite: against the same
+// where every tracing pixel starts as a miss. Plausible defects: the
+// classification dispatched over whole tiles alone, so the grid's last
+// partial column and row of tiles list nothing; rays listed past the first
+// row of the trace's indirect dispatch left untraced, or traced at another
+// tracing pixel than their own (a wrong ray texel, packing or row); a
+// workgroup's rays written over another's (a wrong base); a tracing pixel
+// that needs a ray left off the list. The oracle is geometric: every ray
+// over the mirror meets the unlit white wall, so every tracing pixel whose
+// full-resolution block lies on the mirror (the jitter picks a pixel of
+// its block) holds a hit in the trace's radiance target (alpha 1, the
+// share of its rays that hit), and, through the composite against the same
 // frame without world-space reflections, every mirror pixel at least 4
 // pixels inside the mirror (the denoiser's reach; the frame's edges count
 // as inside, since the mirror passes them), the remainder column and row
-// included, gains the wall's reflection, and no other pixel changes, since
-// only receivers compose world-space rays. The mirror's pixels come from
-// the G-buffer's source identities; more tracing pixels lie on it than one
-// row of the trace's dispatch holds.
+// included, gains the wall's reflection, about 1 (a metallic white mirror
+// of roughness 0.05, a black sky). The mirror's pixels come from the
+// G-buffer's source identities; more tracing pixels lie on it than one row
+// of the trace's dispatch holds.
 #[test]
-fn every_mirror_pixel_reflects_and_no_other_pixel_changes() {
+fn every_tracing_pixel_over_the_mirror_hits_and_every_mirror_pixel_reflects() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
@@ -598,10 +592,12 @@ fn every_mirror_pixel_reflects_and_no_other_pixel_changes() {
     let size = COVERAGE;
     let mut composites = Vec::new();
     let mut identities = Vec::new();
+    let mut hits = Vec::new();
+    let mut reduced = [0; 2];
     for reach in [settings::WorldSpaceReflections::Off, Moving] {
         let settings = mirror_settings(reach);
         let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
-        let mut frame = mirror_scene(gpu, size, true);
+        let mut frame = mirror_scene(gpu, size);
         frame.input.camera_cut = true;
         render_mirror(gpu, &mut renderer, &mut frame, &settings, size);
         composites.push(composite(&device, &queue, &renderer));
@@ -611,9 +607,48 @@ fn every_mirror_pixel_reflects_and_no_other_pixel_changes() {
             .iter()
             .map(|id| id[0] == mirror)
             .collect::<Vec<_>>();
+        if let Some(world) = renderer.world_reflections() {
+            let (radiance, grid) = world.test_radiance();
+            reduced = grid;
+            hits = test_support::read(&device, &queue, radiance.texture(), 8)
+                .chunks_exact(8)
+                .map(|texel| test_support::half(&texel[6..8]))
+                .collect();
+        }
     }
     let [width, height] = size.map(|side| side as i32);
     let mirror = |x: i32, y: i32| identities[(y * width + x) as usize];
+    let mirror_pixels = identities.iter().filter(|&&on| on).count() as u32;
+    assert!(
+        mirror_pixels / 4 > super::classify::GROUP_ROW * super::classify::TRACE_THREADS,
+        "the mirror's {mirror_pixels} pixels need more than one row of the trace's dispatch"
+    );
+    let [rw, rh] = reduced.map(|side| side as i32);
+    assert_eq!(
+        reduced,
+        [130, 98],
+        "the reduced grid is no multiple of the tiles"
+    );
+    let (mut over, mut missed) = (0, Vec::new());
+    for y in 0..rh {
+        for x in 0..rw {
+            if (0..2).all(|dy| (0..2).all(|dx| mirror(2 * x + dx, 2 * y + dy))) {
+                over += 1;
+                if hits[(y * rw + x) as usize] < 0.5 {
+                    missed.push((x, y));
+                }
+            }
+        }
+    }
+    let partial = |&(x, y): &(i32, i32)| x >= rw / 8 * 8 || y >= rh / 8 * 8;
+    assert!(over > 1000, "{over} tracing pixels over the mirror");
+    assert!(
+        missed.is_empty(),
+        "{} of {over} tracing pixels over the mirror hold no hit ({} in the last partial tiles): {:?}",
+        missed.len(),
+        missed.iter().filter(|pixel| partial(pixel)).count(),
+        &missed[..missed.len().min(8)]
+    );
     let interior = |x: i32, y: i32| {
         (-4..=4).all(|dy| {
             (-4..=4).all(|dx| {
@@ -622,56 +657,30 @@ fn every_mirror_pixel_reflects_and_no_other_pixel_changes() {
             })
         })
     };
-    let mirror_pixels = identities.iter().filter(|&&on| on).count() as u32;
-    assert!(
-        mirror_pixels / 4 > super::classify::GROUP_ROW * super::classify::TRACE_THREADS,
-        "the mirror's {mirror_pixels} pixels need more than one row of the trace's dispatch"
-    );
-    let (mut inside, mut holes, mut changed) = (0, Vec::new(), Vec::new());
+    let (mut inside, mut dark, mut least) = (0, Vec::new(), f32::MAX);
     for y in 0..height {
         for x in 0..width {
-            let index = (y * width + x) as usize;
-            let gain = composites[1][index] - composites[0][index];
             if mirror(x, y) && interior(x, y) {
+                let index = (y * width + x) as usize;
+                let gain = composites[1][index] - composites[0][index];
                 inside += 1;
-                if gain <= 0.25 {
-                    holes.push((x, y, gain));
+                least = least.min(gain);
+                if gain <= 0.9 {
+                    dark.push((x, y, gain));
                 }
-            } else if !mirror(x, y) && gain.abs() > 1e-3 {
-                changed.push((x, y, gain));
             }
         }
     }
-    let gains = (0..identities.len()).map(|i| composites[1][i] - composites[0][i]);
-    let least = gains
-        .clone()
-        .enumerate()
-        .filter(|&(i, _)| {
-            let (x, y) = (i as i32 % width, i as i32 / width);
-            mirror(x, y) && interior(x, y)
-        })
-        .map(|(_, gain)| gain)
-        .fold(f32::MAX, f32::min);
-    let largest = gains
-        .enumerate()
-        .filter(|&(i, _)| !identities[i])
-        .map(|(_, gain)| gain.abs())
-        .fold(0., f32::max);
     eprintln!(
-        "{mirror_pixels} mirror pixels, {inside} inside: least gain {least}; largest change off the mirror {largest}"
+        "{over} tracing pixels over the mirror; {inside} interior mirror pixels, least gain {least}"
     );
     let remainder = |&(x, y, _): &(i32, i32, f32)| x == width - 1 || y == height - 1;
     assert!(inside > 1000, "{inside} interior mirror pixels");
     assert!(
-        holes.is_empty(),
-        "{} of {inside} interior mirror pixels reflect nothing ({} in the remainder column or row): {:?}",
-        holes.len(),
-        holes.iter().filter(|hole| remainder(hole)).count(),
-        &holes[..holes.len().min(8)]
-    );
-    assert!(
-        changed.is_empty(),
-        "pixels off the mirror changed: {:?}",
-        &changed[..changed.len().min(8)]
+        dark.is_empty(),
+        "{} of {inside} interior mirror pixels gain less than 0.9 ({} in the remainder column or row): {:?}",
+        dark.len(),
+        dark.iter().filter(|pixel| remainder(pixel)).count(),
+        &dark[..dark.len().min(8)]
     );
 }

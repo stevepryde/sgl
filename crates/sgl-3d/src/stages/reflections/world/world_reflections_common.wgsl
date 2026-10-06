@@ -87,7 +87,9 @@ fn world_traced_pixel(tracing:vec2<u32>)->vec2<i32> {
  return vec2<i32>(jitter+tracing*WORLD_DOWNSCALE);
 }
 // A listed ray: its tracing pixel's coordinates in 16 bits each, as
-// FidelityFX SSSR packs its ray list's (PackRayCoords).
+// FidelityFX SSSR packs its denoiser tiles' (ffx_sssr_callbacks_hlsl.h
+// 418–421, StoreDenoiserTile), where its ray list's PackRayCoords gives x 15
+// bits and y 14 beside copy flags SGL3D has no use for.
 fn world_pack_ray(tracing:vec2<u32>)->u32 {
  return tracing.x|(tracing.y<<16u);
 }

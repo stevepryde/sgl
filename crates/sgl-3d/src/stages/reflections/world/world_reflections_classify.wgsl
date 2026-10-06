@@ -3,7 +3,7 @@
 // MIT, see LICENSE-amd-fidelityfx.txt), SSSR's ClassifyTiles
 // (sdk/include/FidelityFX/gpu/sssr/ffx_sssr_classify_tiles.h) and
 // PrepareIndirectArgs (ffx_sssr_prepare_indirect_args.h), dispatched as
-// src/components/sssr/ffx_sssr.cpp 684–687 dispatches them: a workgroup a
+// sdk/src/components/sssr/ffx_sssr.cpp 684–687 dispatches them: a workgroup a
 // tile of tracing pixels, each deciding whether its receiver needs a ray,
 // the rays compacted into the ray list with one count increment a
 // workgroup, and the trace's indirect arguments from the count. Modified:

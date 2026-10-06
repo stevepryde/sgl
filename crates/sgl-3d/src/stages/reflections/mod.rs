@@ -53,7 +53,8 @@ static TEMPORAL_REPROJECTION: crate::shading::Module = crate::shading::Module {
 /// layer.
 /// Timing groups: `probe culling`, `reflection source completion`, `SSR *`
 /// (Crystal, through the context), `Godot SSR *` (Velvet), `world reflection
-/// rays`, `world reflection denoise`, `reflection composition`.
+/// classify`, `world reflection rays`, `world reflection denoise`,
+/// `reflection composition`.
 /// History: Velvet's and world rays' accumulation, each continuing across
 /// consecutive valid frames and dropped while it does not run; Crystal's is
 /// in the context.
@@ -69,6 +70,14 @@ pub(crate) struct Reflections {
     /// Full ambient visibility, which completion and composition read in
     /// frames without ambient occlusion.
     full_visibility: wgpu::TextureView,
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl Reflections {
+    /// The world-space reflection stage, once a frame ran it.
+    pub(crate) fn world(&self) -> Option<&world::WorldReflections> {
+        self.world.as_ref()
+    }
 }
 
 impl Reflections {

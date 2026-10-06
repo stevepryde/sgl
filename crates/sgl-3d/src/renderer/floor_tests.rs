@@ -29,7 +29,7 @@ const STORAGE_TEXTURES: u32 = 4;
 // device with the adapter's limits but that floor raise no validation
 // error.
 #[test]
-fn a_device_at_the_sampled_texture_floor_runs_every_pipeline() {
+fn a_device_at_the_binding_floor_runs_every_pipeline() {
     let Some(adapter) = test_support::adapter() else {
         return;
     };

@@ -18,8 +18,11 @@
 // trace is the classification's (world_reflections_classify.wgsl), which
 // lists them and writes every pixel's miss first; the trace runs over its
 // list, a ray a thread, as FidelityFX SSSR intersects its ray list and the
-// Hybrid Reflections sample traces its hardware rays from theirs
-// (Intersect.hlsl 273–300).
+// AMD FidelityFX SDK 1.1.4 (revision
+// c6efa6bf7f2027b3ec94f28578bb5965eabb9e55, MIT, see
+// LICENSE-amd-fidelityfx.txt) Hybrid Reflections sample traces its hardware
+// rays from theirs (samples/hybridreflections/shaders/Intersect.hlsl
+// 273–300).
 // Raster identity of each receiver's triangle, excluded from its own ray.
 @group(3) @binding(6) var world_source_id:texture_2d<u32>;
 // The classification's ray list (world_ray_texel) and the trace's targets.

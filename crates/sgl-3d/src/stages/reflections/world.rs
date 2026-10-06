@@ -110,7 +110,12 @@ impl Targets {
         Self {
             full,
             reduced,
-            indirect: half("world reflection radiance", hdr, storage),
+            // Read back by the tests, as the ray-traced shadow stage's.
+            indirect: half(
+                "world reflection radiance",
+                hdr,
+                storage | wgpu::TextureUsages::COPY_SRC,
+            ),
             direction_pdf: half("world reflection direction and pdf", hdr, storage),
             length: half("world reflection ray length", float, storage),
             resolve: half("world reflection resolve", hdr, storage),
@@ -532,6 +537,16 @@ impl WorldReflections {
             encoder,
         );
         self.frame = self.frame.wrapping_add(1).max(1);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl WorldReflections {
+    /// The trace's radiance target, as the last frame left it, with the
+    /// share of each tracing pixel's rays that hit in alpha, and the
+    /// tracing grid's size.
+    pub(crate) fn test_radiance(&self) -> (&wgpu::TextureView, [u32; 2]) {
+        (&self.targets.indirect, self.targets.reduced)
     }
 }
 
