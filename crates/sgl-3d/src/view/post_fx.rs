@@ -22,7 +22,9 @@ use sgl_post_fx::{CameraAttribs, ScreenSpaceReflectionAttribs, TemporalAntiAlias
 /// (`CameraAttribs::SetClipPlanes`) has a finite far plane where SGL3D's
 /// projection is infinite; surfaces beyond it are background to the effects
 /// (for SSR neither traced nor reflected). DiligentFX stores ray vectors in
-/// RGBA16F, so it must stay well below 65 504 m.
+/// RGBA16F, so it must stay well below 65 504 m. Full-float storage with a
+/// farther plane was measured and not taken (`sgl-post-fx` PROVENANCE.md
+/// DFX-33).
 pub(crate) const FAR_PLANE: f32 = 10_000.;
 
 /// DiligentFX's inputs converted from SGL3D's G-buffer, at one render size.
