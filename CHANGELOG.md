@@ -27,6 +27,8 @@ full API details.
   - The slot table records which slots hold baked lights.
   - Those slots hold "unoccluded" at the skipped receivers wherever the
     light reaches.
+  - A held light whose `Light::baked` changes restarts its slot's history,
+    a one-frame reset, as a light taking another's slot does.
 - **What changes in the image:** at receivers that take a baked light,
   their own rays are unchanged. Near their edges the shadow mask's
   upsample and denoiser now blend in the skipped neighbours' unoccluded
@@ -36,11 +38,14 @@ full API details.
   - In captures of Hyperdrive's tunnels under its baked ceiling bars,
     frames differed only along a craft's silhouette: at most 43 pixels a
     frame by more than 8/255, and none by more than 32.
-- **Cost** (Apple M5, natively on Metal; Hyperdrive's Meridian tunnels at
-  High, 1720–1920 by 1080):
-  - The ray pass fell from 5.7–10.7 ms to 1.5–1.7 ms median, and from
-    7.5–14.8 ms to 1.8–2.4 ms at the 95th percentile.
-  - The frame fell from 20–28 ms to 16–18 ms.
+- **Cost** (Apple M5, natively on Metal; Hyperdrive's Meridian tunnels by
+  day, each pair at one resolution, 1720×1080 or 1920×1080, at High and
+  Low):
+  - The ray pass fell from 5.7–7.2 ms to 1.5–1.7 ms median, and from
+    7.5–9.4 ms to 1.8–2.4 ms at the 95th percentile.
+  - The frame fell from 20–24 ms to 16–18 ms.
+  - At night, whose pairs ran at different resolutions, the ray pass fell
+    from 8.5–10.6 ms to 1.7–1.9 ms median.
   - Routes without baked lights are unchanged.
   - The G-buffer pass costs 0.01–0.07 ms more to record the flag.
 - **Migration:** no game-code changes. A game with baked shadow-casting

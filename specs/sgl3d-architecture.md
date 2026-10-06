@@ -594,10 +594,12 @@ code; it does not redeclare a struct, binding or function another module owns.
   table a bit for each slot whose light is baked, which the slots set each
   frame from the scene's light, a slot whose light turns baked or live
   restarting. Such a slot holds 1 there wherever the light reaches, the
-  stage's decision (RD-2): Wicked traces no static light live (a static
-  light gets no culling sphere, 4323a33 `wiRenderer.cpp` 4884–4889, and
-  its upsample skips static lights, `rtshadow_upsampleCS.hlsl` 91), so no
-  engine skips a light per receiver
+  stage's decision (RD-2): Wicked traces no static light live (every
+  static light, directional, point, spot or rectangle, gets a zeroed
+  culling sphere, 4323a33 `wiRenderer.cpp` 4785, 4884–4889, 4969 and
+  5051, so light culling never lists it, `lightCullingCS.hlsl` 384, and
+  its upsample skips static lights, `rtshadow_upsampleCS.hlsl` 91), and
+  none of the engines checked (Wicked, Godot) skips a light per receiver
   inside a denoised mask. No lighting at the pixel reads the value, but the
   upsample, which weighs a texel by depth alone, and the denoiser, whose
   tile classification clamps history to a neighbourhood that ignores depth

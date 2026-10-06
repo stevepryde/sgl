@@ -26,7 +26,15 @@ use crate::shading::uniforms::FrameUniform;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SlotLights {
     pub directional: Option<usize>,
-    pub local: Vec<(LightId, bool)>,
+    pub local: Vec<SlotLight>,
+}
+
+/// A local light a slot may hold, and whether it is baked
+/// (`Light::baked`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SlotLight {
+    pub id: LightId,
+    pub baked: bool,
 }
 
 impl SlotLights {
@@ -47,7 +55,10 @@ impl SlotLights {
             .iter()
             .filter_map(|&id| {
                 let light = scene.light(id).ok()?;
-                (light.shadow_opacity > SHADOW_OPACITY_CUTOFF).then_some((id, light.baked))
+                (light.shadow_opacity > SHADOW_OPACITY_CUTOFF).then_some(SlotLight {
+                    id,
+                    baked: light.baked,
+                })
             })
             .collect();
         Self { directional, local }
@@ -77,17 +88,13 @@ impl Slots {
     /// the local lights the atlas placed, `ranked` best first, each with
     /// whether it is baked. A slot whose light changed, or turned baked or
     /// live, restarts its history.
-    pub fn assign(
-        &mut self,
-        directional: Option<usize>,
-        ranked: &[(LightId, bool)],
-    ) -> ShadowMaskSlots {
+    pub fn assign(&mut self, directional: Option<usize>, ranked: &[SlotLight]) -> ShadowMaskSlots {
         let mut restart = 0;
         if directional.is_some() && directional != self.directional {
             restart |= 1;
         }
         self.directional = directional;
-        let placed = |light: LightId| ranked.iter().any(|&(id, _)| id == light);
+        let placed = |light: LightId| ranked.iter().any(|ranked| ranked.id == light);
         // A light keeps its slot while the atlas places it.
         for held in &mut self.local {
             if held.is_some_and(|light| !placed(light)) {
@@ -99,15 +106,15 @@ impl Slots {
         let held = self.local;
         let mut newcomers = ranked
             .iter()
-            .filter(|&&(light, _)| !held.contains(&Some(light)));
+            .filter(|ranked| !held.contains(&Some(ranked.id)));
         for (slot, held) in self.local.iter_mut().enumerate() {
             if held.is_some() {
                 continue;
             }
-            let Some(&(light, _)) = newcomers.next() else {
+            let Some(newcomer) = newcomers.next() else {
                 break;
             };
-            *held = Some(light);
+            *held = Some(newcomer.id);
             restart |= 1 << (slot + 1);
         }
         let mut keys = [SHADOW_MASK_EMPTY; RT_SHADOW_LIGHTS];
@@ -121,7 +128,7 @@ impl Slots {
                 held |= 1 << (slot + 1);
                 if ranked
                     .iter()
-                    .any(|&(id, is_baked)| id == *light && is_baked)
+                    .any(|ranked| ranked.id == *light && ranked.baked)
                 {
                     baked |= 1 << (slot + 1);
                 }
@@ -144,8 +151,16 @@ mod tests {
     }
 
     /// `lights` ranked, none of them baked.
-    fn live(lights: &[LightId]) -> Vec<(LightId, bool)> {
-        lights.iter().map(|&light| (light, false)).collect()
+    fn live(lights: &[LightId]) -> Vec<SlotLight> {
+        lights
+            .iter()
+            .map(|&id| SlotLight { id, baked: false })
+            .collect()
+    }
+
+    /// `lights` ranked, each baked as its flag says.
+    fn ranked<const N: usize>(lights: [(LightId, bool); N]) -> [SlotLight; N] {
+        lights.map(|(id, baked)| SlotLight { id, baked })
     }
 
     /// Each slot's key, slot by slot.
@@ -237,15 +252,15 @@ mod tests {
     fn each_held_slot_says_whether_its_light_is_baked_this_frame() {
         let mut slots = Slots::default();
         let [a, b, c] = [10, 11, 12].map(light);
-        let first = slots.assign(None, &[(a, false), (b, true), (c, false)]);
+        let first = slots.assign(None, &ranked([(a, false), (b, true), (c, false)]));
         assert_eq!(first.baked, 1 << 2);
-        let flipped = slots.assign(None, &[(a, false), (b, false), (c, true)]);
+        let flipped = slots.assign(None, &ranked([(a, false), (b, false), (c, true)]));
         assert_eq!(flipped.baked, 1 << 3);
         assert_eq!(flipped.restart, 1 << 2 | 1 << 3);
-        let reranked = slots.assign(None, &[(c, true), (a, false), (b, false)]);
+        let reranked = slots.assign(None, &ranked([(c, true), (a, false), (b, false)]));
         assert_eq!(reranked.baked, 1 << 3);
         assert_eq!(reranked.restart, 0);
-        let left = slots.assign(None, &[(a, false), (b, false)]);
+        let left = slots.assign(None, &ranked([(a, false), (b, false)]));
         assert_eq!(left.baked, 0);
         assert_eq!(left.restart, 0);
     }
