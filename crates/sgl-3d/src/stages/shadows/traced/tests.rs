@@ -636,13 +636,10 @@ fn slab_frames(
                         .iter()
                         .filter_map(|&(pixel, position)| {
                             let visible = match light {
-                                0 => occluded(
-                                    &[slab],
-                                    position,
-                                    to_sun,
-                                    (0.01, f64::from(f32::MAX)),
-                                )
-                                .map(|occluded| !occluded),
+                                0 => {
+                                    occluded(&[slab], position, to_sun, (0.01, f64::from(f32::MAX)))
+                                        .map(|occluded| !occluded)
+                                }
                                 _ => local_visibility(&lights[light - 1], position, &[slab])
                                     .flatten(),
                             };
@@ -732,7 +729,11 @@ fn the_quality_decides_which_slots_the_denoiser_filters() {
                     counts[usize::from(exact)] += 1;
                 }
                 let [inexact, exact] = counts;
-                assert!(exact > 1000, "{}: light {light}: {exact} texels", frame.label);
+                assert!(
+                    exact > 1000,
+                    "{}: light {light}: {exact} texels",
+                    frame.label
+                );
                 match quality {
                     Low => assert_eq!(
                         inexact, 0,
@@ -1186,7 +1187,11 @@ fn each_denoised_slot_keeps_its_own_history() {
             .enumerate()
             .map(|(run, (scene, _, renderer))| {
                 // The second run turns its sun from the fourth frame.
-                let direction = if run == 1 && index >= 3 { turned } else { still };
+                let direction = if run == 1 && index >= 3 {
+                    turned
+                } else {
+                    still
+                };
                 let mut input = input(camera, Some(sun(direction)));
                 input.camera_cut = cut;
                 render(gpu, renderer, scene, &input, &settings)

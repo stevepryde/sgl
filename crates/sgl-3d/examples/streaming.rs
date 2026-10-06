@@ -66,8 +66,8 @@
 //! precedes each submitted one. `--hardware-ray-tracing` and
 //! `--ray-traced-shadows` apply to it too.
 use sgl_3d::diagnostics::{Counters, DiagnosticTarget, SceneResources};
-use sgl_3d::settings::RayTracedShadowQuality;
 use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3};
+use sgl_3d::settings::RayTracedShadowQuality;
 use sgl_3d::{
     EnvironmentId, FrameInput, InstanceId, InstanceState, LightId, MaterialId, Mobility, ModelId,
     ModelMesh, PreparedModel, RayTracingStats, Renderer, Scene, SceneError,
@@ -1097,11 +1097,6 @@ fn render(
     )?;
     let mut timing = GpuTiming::new(device, queue);
     let mut in_flight = None;
-    // Measurement (#204): the last SGL_CAPTURE_FRAMES measured frames are
-    // written as <run>-<step>.png, for a clip.
-    let capture_frames: Option<usize> = std::env::var("SGL_CAPTURE_FRAMES")
-        .ok()
-        .and_then(|frames| frames.parse().ok());
     // The loop index of the first measured frame, and the counters then.
     let mut from = None;
     let mut counted = Counters::default();
@@ -1174,18 +1169,6 @@ fn render(
             });
         }
         renderer.finish_frame(&mut scene);
-        if let (Some(step), Some(count)) = (step, capture_frames)
-            && step + count >= run.frames
-        {
-            let pixels = sgl_3d::diagnostics::read(device, queue, &texture, 4);
-            image::save_buffer(
-                directory.join(format!("{}-{step:04}.png", run.name)),
-                &pixels,
-                SIZE[0],
-                SIZE[1],
-                image::ColorType::Rgba8,
-            )?;
-        }
         culling.frame(
             (&renderer, &settings),
             index,

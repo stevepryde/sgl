@@ -110,7 +110,10 @@ impl Shape {
             .iter()
             .any(|&key| key != shadow_mask::SHADOW_MASK_EMPTY);
         match quality {
-            RayTracedShadowQuality::Low => Self { slots: 1, passes: 2 },
+            RayTracedShadowQuality::Low => Self {
+                slots: 1,
+                passes: 2,
+            },
             _ => Self {
                 slots: if local { DENOISED_SLOTS } else { 1 },
                 passes: 3,
