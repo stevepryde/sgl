@@ -24,10 +24,12 @@ full API details.
   `wasm-bindgen` `"0.2.127"`, `js-sys` and `web-sys` `"0.3.104"`,
   `wasm-bindgen-futures` `"0.4.77"` and `wasm-bindgen-test` `"0.3.77"`.
   SGL's `Cargo.lock` holds wgpu 30.0.1 and `wasm-bindgen` 0.2.129.
-  wgpu 30.0.0 is excluded on purpose: built with a `wasm-bindgen` older
-  than 0.2.127 it panics on WebGPU ("Unexpected error") whenever an error
-  scope pops without an error, and 30.0.1 requires the fixed
-  `wasm-bindgen` (gfx-rs/wgpu#10034, backported in #10105). 30.0.1 also
+  wgpu 30.0.0 is excluded on purpose: under `wasm-bindgen` 0.2.123 or
+  later it panics on WebGPU ("Unexpected error") whenever an error scope
+  pops without an error, because it reads the result as a `JsOption`,
+  which no longer takes `null` as empty. 30.0.1 reads it as a
+  `JsNullable`, which needs `wasm-bindgen` 0.2.127 (gfx-rs/wgpu#10034,
+  backported in #10105). 30.0.1 also
   stops a per-frame Vulkan validation error on acquire (gfx-rs/wgpu#9855).
   It also resolves Metal's DisplayP3 and BT.2100 colour-space constants at
   runtime instead of linking them, so a binary loads on macOS versions that
@@ -41,7 +43,8 @@ full API details.
   - The irradiance volume no longer writes one zero texel into each
     volume texture at creation (#156). wgpu 30 tracks a copy into a 3D
     texture at any depth (gfx-rs/wgpu#9765), so wgpu's own
-    zero-initialisation holds. No visible change.
+    zero-initialisation holds; the 30.0.1 minimum is what rules the old
+    tracking out. No visible change.
   - On Metal, naga 30 lowers ray queries through Metal's
     `intersection_query` instead of `intersector`. The hardware path keeps
     its baseline form there (#211 decides the candidate form), but its
@@ -62,9 +65,12 @@ full API details.
     `apply_limit_buckets: false`, or use `..Default::default()`.
   - WGSL: an integer value passed from the vertex to the fragment stage
     declares `@interpolate(flat)` itself; naga no longer assumes it.
-  - Also renamed: the encoders' `dispatch` and `dispatch_indirect` become
-    `dispatch_workgroups` and `dispatch_workgroups_indirect`, and
-    `TextureUsages::TRANSIENT` becomes `TRANSIENT_ATTACHMENT`.
+  - `TextureUsages::TRANSIENT` becomes `TRANSIENT_ATTACHMENT`.
+  - On Metal, a stage's buffers of every kind (storage, uniform, vertex)
+    and acceleration structures together may number at most 29
+    (`max_buffers_and_acceleration_structures_per_shader_stage`), where
+    wgpu 29 allowed 31 of each kind: a game's own pipeline layout past it
+    is refused when it is created.
 
   Regenerate the game's distribution notices. wgpu 30 drops
   `gpu-descriptor` and `hexf-parse`, whose CC0 text the notices no longer

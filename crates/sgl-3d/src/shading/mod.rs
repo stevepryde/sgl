@@ -546,7 +546,8 @@ pub(crate) static SCENE_RAYS_QUERY_OPAQUE: Module = Module {
     deps: &[&SCENE_RAYS_HARDWARE],
 };
 /// The candidate form's query (`RayQueryForm::Candidates`), the root of a
-/// hardware-traced pipeline where the backend lowers a candidate loop.
+/// hardware-traced pipeline on a backend that may run the candidate form
+/// (`RayQueryForm::lowered`: Vulkan and DX12).
 pub(crate) static SCENE_RAYS_QUERY_CANDIDATES: Module = Module {
     name: "scene_rays_query_candidates",
     source: include_str!("scene_rays_query_candidates.wgsl"),
@@ -570,12 +571,13 @@ pub(crate) enum RayQueryForm {
     Candidates,
 }
 
-/// The form a device whose backend lowers the candidate loop runs (Vulkan
-/// and DX12): the baseline until the candidate form's benefit is measured
-/// on their hardware (RD-6), a recorded decision and never a setting
-/// (AR-3). The candidate form has not run on Vulkan or DX12 hardware yet
-/// (#23): the owner has none that traces rays, and no Mac does (MoltenVK
-/// offers no ray query).
+/// The form a device whose backend may run the candidate form runs
+/// (`RayQueryForm::lowered`: Vulkan and DX12): the baseline until the
+/// candidate form's benefit is measured on their hardware (RD-6), a
+/// recorded decision and never a setting (AR-3). The candidate form has not
+/// run on Vulkan or DX12 hardware yet (#23): the owner has none that traces
+/// rays, and MoltenVK offers no ray query. Metal's naga 30 lowers the loop
+/// too, but Metal stays on the baseline by recorded decision until #211.
 pub(crate) const LOWERED_FORM: RayQueryForm = RayQueryForm::Baseline;
 
 impl RayQueryForm {
@@ -590,8 +592,8 @@ impl RayQueryForm {
     }
 
     /// The form a device of `backend` runs: `lowered`, the form chosen for
-    /// backends that lower the candidate loop (`LOWERED_FORM`), where it
-    /// does, else the baseline.
+    /// backends that may run the candidate form (`LOWERED_FORM`), where
+    /// `backend` is one, else the baseline.
     pub fn of_backend(backend: wgpu::Backend, lowered: Self) -> Self {
         if Self::lowered(backend) {
             lowered

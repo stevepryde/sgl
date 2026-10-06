@@ -399,8 +399,9 @@ struct Batch<'a> {
 }
 
 /// The hardware forms `device`'s backend runs: the baseline on every one,
-/// and the candidate form where its shader backend lowers a candidate loop
-/// (`RayQueryForm::lowered`).
+/// and the candidate form where the backend may run it
+/// (`RayQueryForm::lowered`: Vulkan and DX12; Metal stays on the baseline
+/// until #211).
 fn forms(device: &wgpu::Device) -> Vec<RayQueryForm> {
     let mut forms = vec![RayQueryForm::Baseline];
     if RayQueryForm::lowered(device.adapter_info().backend) {

@@ -11,10 +11,12 @@
 // the shared predicate to judge: no candidate reaches the shader, so this
 // form takes no step of `steps` and judges nothing itself (`receiver`,
 // `sides` and `open_end` are the candidate form's). The ray forces
-// opacity, so one proceed ends the traversal on every backend: naga's MSL
-// writer intersects at initialisation and returns true from every proceed
-// until the query terminates, so a proceed is never looped on
-// (`back/msl/writer.rs` 4111–4146).
+// opacity, so one proceed ends the traversal on every backend: forced-opaque
+// geometry yields no candidate, so the first proceed completes it. On
+// Metal, naga 30 passes the cull mask to the query's `reset` and writes a
+// proceed as one `intersection_query::next()` (`back/msl/ray.rs` 365–368,
+// 386–417), which finishes traversal for opaque geometry, so a proceed is
+// never looped on.
 fn scene_hardware_query(ray:SceneRay,t_min:f32,mask:u32,first_hit:bool,receiver:vec2<u32>,sides:u32,open_end:bool,steps:ptr<function,u32>)->RawSceneHit {
  var query:ray_query;
  let flags=RAY_FLAG_FORCE_OPAQUE|select(RAY_FLAG_NONE,RAY_FLAG_TERMINATE_ON_FIRST_HIT,first_hit);
