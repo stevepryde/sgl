@@ -771,6 +771,8 @@ that drives `sgl-post-fx` itself.
       metallic_roughness: None, color: [1.; 4], base_color_mix: 1., upper_fade: 0.3,
       lower_fade: 0.3, normal_fade: 0.5 };
   let state = InstanceState { model, pose: Mat4::IDENTITY, visible: true, capture_visible: true };
+  const COURSE_SHADOW: DirectionalShadow =
+      DirectionalShadow { distance: 200., cascades: 4, first_split: 12. };
   // After
   const COURSE_SHADOW: DirectionalShadow =
       DirectionalShadow { distance: 200., ..DirectionalShadow::DEFAULT };
@@ -1719,7 +1721,8 @@ that drives `sgl-post-fx` itself.
   direction within the directional light's disc, so a shadow is sharp near
   its caster and widens away from it
   ([light size](#lights-gain-a-size-fog-energy-and-shadow-opacity-and-implement-default)).
-  A ray ends 1 cm short of the light's drawn point, as far as it starts
+  A ray toward a point, spot or rectangle light ends 1 cm short of its
+  drawn point, as far as it starts
   past the surface, as Bevy Solari's visibility rays do, so a mesh face
   lying on its light (a ceiling bar's underside carrying its rectangle
   light) does not shadow it, and nor does an occluder within that distance
@@ -1798,8 +1801,9 @@ that drives `sgl-post-fx` itself.
   and stretch beyond the directional shadow's distance; look for noise or
   lag at shadow edges in motion at each quality. A game with emitting
   fixtures modelled where its rectangle lights lie (tunnel bars, panels)
-  looks at what those lights shadow and the receivers beneath. A game with
-  baked shadow-casting lights looks at moving instances' edges beside its
+  looks at what those lights shadow and the receivers beneath, with
+  ray-traced shadows and in the dynamic GI volume's light near them. A game
+  with baked shadow-casting lights looks at moving instances' edges beside its
   lightmapped surfaces.
 
 ### sgl-3d: reflections
@@ -2573,7 +2577,9 @@ that drives `sgl-post-fx` itself.
 
 A game pinned to a Git revision between the two releases may use symbols
 that changed again before 0.2.0. The entries above describe 0.2.0 from
-0.1.0; these steps cover what they leave out:
+0.1.0; these steps cover what they leave out. To see which entries are new
+since a pin, compare with the
+[changelog before the release](https://github.com/stevepryde/sgl/blob/095e23613c160aa8e001061f01b8e22040d4bf6a/CHANGELOG.md).
 
 - `diagnostics::SceneResources::mesh_buffers` and `mesh_buffer_count` are
   now `geometry_live` (the bytes the old field summed) and
@@ -2617,6 +2623,17 @@ that changed again before 0.2.0. The entries above describe 0.2.0 from
 - On Metal, `Renderer::ray_tracing_stats` counts models with a masked mesh
   under `hardware` rather than `portable`, and the acceleration structures
   hold their BLASes.
+- `diagnostics::DynamicGiReport` gains `frame` (the frames finished before
+  it) and `skipped` (observed frames skipped while 8 readbacks waited); a
+  pattern that names every field adds them. `changes.frame` reports the
+  clock only while an opaque or masked lit material's normal layer moves,
+  so a converged volume in a scene whose layers are still, unlit or blended
+  now pauses.
+- Rectangle lights lying on emitting fixtures: before #228, the fixture
+  shadowed its own light, in ray-traced shadows and in the dynamic GI
+  volume's probes (which kept 15–25 % of such a light on the software BVHs
+  and 79–82 % with hardware ray tracing). Expect those lights to reach
+  further after updating.
 - Behaviour of features added during the cycle (dynamic GI and its ray
   budget, hardware ray tracing and its forms, ray-traced shadows, GPU-built
   lists, normal layers and the FSR2 composition mask) is described above in
@@ -2626,7 +2643,7 @@ that changed again before 0.2.0. The entries above describe 0.2.0 from
 
 - **Scope:** `sgl-core`, `sgl-net`, `sgl-input`, `sgl-2d`, `sgl-3d`, and
   `sgl-post-fx`, all at `0.1.0`. This is the public repository's starting
-  snapshot; it does not assert that a crates.io upload has taken place.
+  snapshot, also published on crates.io.
 - **Migration from the private repository:** update Git dependency URLs from
   `stevepryde/stevegame` to `stevepryde/sgl` and select a revision from the new
   repository. Its history starts fresh, so old commit pins do not exist there.
