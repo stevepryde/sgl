@@ -35,16 +35,19 @@ THE SOFTWARE.
 // the previous view directly, as the stage keeps its previous depth linear
 // (FFX_DNSR_Shadows_GetPreviousLinearDepth and
 // FFX_DNSR_Shadows_ReadPreviousLinearDepth stand in for the reprojection
-// matrix and the previous depth buffer). The loops' literal bounds are
-// named (AR-12). The four denoised slots are classified together, a lane
-// each of a vec4, where upstream classifies one light a dispatch: the
+// matrix and the previous depth buffer), so FFX_DNSR_Shadows_GetLinearDepth,
+// which only IsDisoccluded calls, is dropped with the inverse projection it
+// reads (FFX_DNSR_Shadows_GetProjectionInverse). The loops' literal bounds
+// are named (AR-12). The four denoised slots are classified together, a
+// lane each of a vec4, where upstream classifies one light a dispatch: the
 // tile masks, the region's search, the local neighbourhood, the moments
 // and the history are per lane, and the depth, velocity, normals and
 // disocclusion, which upstream computes again for every light, once; a
 // lane whose tile upstream would skip is computed with the rest and takes
 // the values upstream's skip writes, and the group skips only when every
-// lane would. The caller supplies the FFX_DNSR_Shadows_* callbacks
-// upstream's host shader does.
+// lane would, the lanes' all-true votes being bits of one atomic word, so
+// that no lane's vote overwrites another's. The caller supplies the
+// FFX_DNSR_Shadows_* callbacks upstream's host shader does.
 
 var<workgroup> g_FFX_DNSR_Shadows_false_count:i32;
 fn FFX_DNSR_Shadows_ThreadGroupAllTrue(val:bool)->bool {
@@ -57,26 +60,21 @@ fn FFX_DNSR_Shadows_ThreadGroupAllTrue(val:bool)->bool {
  workgroupBarrier();
  return workgroupUniformLoad(&g_FFX_DNSR_Shadows_false_count)==0;
 }
-// ThreadGroupAllTrue for each lane.
-var<workgroup> g_FFX_DNSR_Shadows_false_counts:vec4<i32>;
+// ThreadGroupAllTrue for each lane: lane i's false vote is bit i of one
+// word, which the group's invocations set by atomicOr.
+const FFX_DNSR_SHADOWS_LANE_BITS:vec4<u32>=vec4(1u,2u,4u,8u);
+var<workgroup> g_FFX_DNSR_Shadows_false_lanes:atomic<u32>;
 fn FFX_DNSR_Shadows_ThreadGroupAllTrue4(val:vec4<bool>)->vec4<bool> {
  workgroupBarrier();
- g_FFX_DNSR_Shadows_false_counts=vec4(0);
+ atomicStore(&g_FFX_DNSR_Shadows_false_lanes,0u);
  workgroupBarrier();
- if !val.x {
-  g_FFX_DNSR_Shadows_false_counts.x=1;
- }
- if !val.y {
-  g_FFX_DNSR_Shadows_false_counts.y=1;
- }
- if !val.z {
-  g_FFX_DNSR_Shadows_false_counts.z=1;
- }
- if !val.w {
-  g_FFX_DNSR_Shadows_false_counts.w=1;
+ let votes=select(FFX_DNSR_SHADOWS_LANE_BITS,vec4(0u),val);
+ let false_lanes=votes.x|votes.y|votes.z|votes.w;
+ if false_lanes!=0u {
+  atomicOr(&g_FFX_DNSR_Shadows_false_lanes,false_lanes);
  }
  workgroupBarrier();
- return workgroupUniformLoad(&g_FFX_DNSR_Shadows_false_counts)==vec4(0);
+ return (vec4(workgroupUniformLoad(&g_FFX_DNSR_Shadows_false_lanes))&FFX_DNSR_SHADOWS_LANE_BITS)==vec4(0u);
 }
 
 // The four lanes' moments: mean, variance and temporal sample count.
@@ -125,14 +123,6 @@ fn FFX_DNSR_Shadows_SearchSpatialRegion(gid:vec2<u32>)->FFX_DNSR_Shadows_Spatial
  }
 
  return FFX_DNSR_Shadows_SpatialRegion(combined_and_mask==vec4(0xFFFFFFFFu),combined_or_mask==vec4(0u));
-}
-
-fn FFX_DNSR_Shadows_GetLinearDepth(did:vec2<u32>,depth:f32)->f32 {
- let uv=(vec2<f32>(did)+.5)*FFX_DNSR_Shadows_GetInvBufferDimensions();
- let ndc=2.*vec2(uv.x,1.-uv.y)-1.;
-
- let projected=FFX_DNSR_Shadows_GetProjectionInverse()*vec4(ndc,depth,1.);
- return abs(projected.z/projected.w);
 }
 
 fn FFX_DNSR_Shadows_IsDisoccluded(did:vec2<u32>,depth:f32,velocity:vec2<f32>)->bool {
