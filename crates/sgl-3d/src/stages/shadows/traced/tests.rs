@@ -1742,3 +1742,93 @@ fn a_light_with_a_size_softens_its_shadow() {
         "{between} of {beyond} texels of the sun's penumbra beyond the denoiser's reach of the hard edge hold neither 0 nor 1"
     );
 }
+
+// A rectangle light lying on its fixture's face, as a game's ceiling bar
+// carries one (#228): the light's rays end at points drawn on that face,
+// so a ray that ends exactly there, its interval closed, meets the
+// fixture at its end, and rounding decides whether it calls the light
+// occluded. Plausible defect: the visibility ray ending at the point it
+// draws on the light rather than short of it. The oracle is the geometry:
+// the fixture lies wholly at and above the light's plane, and nothing
+// else stands between the floor and the light, so every floor texel the
+// light reaches sees it. The fixture is double-sided, so the shadow side
+// policy takes its face from either side, and its bounds are exact in
+// binary, so the face lies in the light's plane exactly. Before the fix
+// 2,327 of 8,767 floor texels read shadowed (Metal's candidate form).
+#[test]
+fn a_rectangle_lights_own_fixture_does_not_shadow_it() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let rectangle = Light {
+        position: Vec3::new(0., 3., 0.),
+        shape: LightShape::Rect {
+            direction: Vec3::NEG_Y,
+            width_axis: Vec3::X,
+            width: 4.,
+            height: 0.25,
+        },
+        intensity: 20.,
+        range: 12.,
+        casts_shadow: true,
+        ..Light::default()
+    };
+    let eye = Vec3::new(0., 8., 7.);
+    let decoys = decoys(eye);
+    let lights: Vec<Light> = decoys.iter().copied().chain([rectangle]).collect();
+    let (mut scene, ids) = scene(gpu, 6., &[], &lights);
+    // The fixture: a black slab 4 m by 0.25 m and 0.25 m thick, its
+    // underside the light's face.
+    let mut fixture = test_support::cube();
+    fixture.materials[0].base = [0., 0., 0., 1.];
+    fixture.materials[0].double_sided = true;
+    let model = scene.add_asset(&device, &queue, fixture).unwrap().model;
+    let state = InstanceState {
+        pose: Mat4::from_scale_rotation_translation(
+            Vec3::new(4., 0.25, 0.25),
+            Quat::IDENTITY,
+            Vec3::new(0., 3.125, 0.),
+        ),
+        ..InstanceState::new(model)
+    };
+    scene
+        .add_instance(&device, &queue, state, Mobility::Static)
+        .unwrap();
+    let size = [256, 192];
+    let camera = camera(eye, Vec3::ZERO, size);
+    let settings = settings(true);
+    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut input = input(camera, None);
+    input.camera_cut = true;
+    let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+    let slot = observed.slot(ids[decoys.len()].index() as u32);
+    assert!(
+        slot >= super::denoise::DENOISED_SLOTS as usize,
+        "the decoys outrank the rectangle: slot {slot}"
+    );
+    let texels = floor_texels(&observed, &camera);
+    let reached: Vec<_> = texels
+        .iter()
+        .filter(|(_, position)| {
+            position.distance(rectangle.position.as_dvec3()) < f64::from(rectangle.range) - 1e-3
+        })
+        .collect();
+    let shadowed: Vec<_> = reached
+        .iter()
+        .filter(|(pixel, _)| observed.mask(slot, *pixel) != 255)
+        .map(|(pixel, _)| *pixel)
+        .collect();
+    assert!(
+        reached.len() > 1000,
+        "{} floor texels reached",
+        reached.len()
+    );
+    assert!(
+        shadowed.is_empty(),
+        "{} of {} floor texels hold the rectangle shadowed by its own fixture, such as {:?}",
+        shadowed.len(),
+        reached.len(),
+        &shadowed[..shadowed.len().min(4)]
+    );
+}

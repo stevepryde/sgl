@@ -1938,11 +1938,12 @@ hardware.
   the local-light atlas places, in its ranking by screen coverage, each
   keeping its place while the atlas places it. At half the render size,
   each pixel casts one ray toward each of those lights that reaches it,
-  from 1 cm past the surface to a point drawn on the light, each frame
-  another: on a point or spot light's sphere (`LightShape`'s `radius`), a
-  rectangle's face, or, for the directional light, within its disc in the
-  sky (`DirectionalLight::angular_diameter`), as far as the scene reaches,
-  beyond the shadow's distance. A light with a size so casts a soft
+  from 1 cm past the surface to 1 cm short of a point drawn on the light,
+  each frame another: on a point or spot light's sphere (`LightShape`'s
+  `radius`), a rectangle's face, or, for the directional light, within its
+  disc in the sky (`DirectionalLight::angular_diameter`), as far as the
+  scene reaches, beyond the shadow's distance. The light's own fixture, a
+  mesh whose face the rectangle lies on, so never shadows it. A light with a size so casts a soft
   shadow, sharp near its caster and widening away from it; a size of 0 a
   hard one. A single-sided surface occludes from its back, as a map draws
   its front from the light, and a double-sided one from either side. AMD's

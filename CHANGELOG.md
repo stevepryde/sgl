@@ -15,6 +15,28 @@ full API details.
 
 ## Unreleased
 
+### A light's own fixture no longer shadows it in rays
+
+- **Scope:** `sgl-3d` ray-traced shadows and the dynamic GI volume's
+  visibility rays (#228). A ray toward a point, spot or rectangle light
+  used to end exactly at the point it drew on the light. Where a mesh's
+  face lay on the light, such as a ceiling bar's underside carrying its
+  rectangle light, rounding let that face occlude the ray. On an Apple M5
+  this shadowed about a quarter of the floor under such a light in
+  ray-traced shadows. Dynamic GI probes kept 15–25 % of its light on the
+  software BVHs and 79–82 % with hardware ray tracing.
+- Rays now end as far short of the light as they start past the surface:
+  1 cm for ray-traced shadows and 1 mm for dynamic GI, as Bevy Solari's
+  visibility rays do.
+  - Surfaces under such fixtures now take their full light.
+  - An occluder within that distance of the light's drawn point no longer
+    shadows it, as one within it of the receiver never did.
+  - Directional lights are unchanged.
+- **Migration:** no game-code changes. A game with emitting fixtures
+  modelled where its rectangle lights lie (tunnel bars, panels) should
+  look again at what those lights shadow. Check the receivers beneath
+  with ray-traced shadows, and the dynamic GI volume's light near them.
+
 ### Ray-traced shadows stay hardware-only; the maps are their fallback
 
 - **Scope:** `sgl-3d` `Settings::ray_traced_shadows` and

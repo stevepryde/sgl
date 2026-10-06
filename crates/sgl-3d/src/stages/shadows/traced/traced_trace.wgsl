@@ -28,7 +28,10 @@
 // nothing lit at (an unlit material) casts nothing and is the sky to the
 // passes after, which Wicked, without unlit pixels, traces; the draw on
 // the light is a hash of the pixel and the frame (hash.wgsl), where Wicked
-// reads blue noise, a departure the owner judges (RD-5); the tile's bits
+// reads blue noise, a departure the owner judges (RD-5); a ray toward a
+// local light ends TMin short of the point it draws, where Wicked's ends
+// at it, so the light's own fixture, which that point may lie on, never
+// occludes it (light_visibility_ray, #228); the tile's bits
 // gather through workgroup atomics into a storage texture, where Wicked
 // ORs them into a buffer; and the half-resolution normals copy (310) holds
 // the shading normal as it is, which the denoiser reads directly, where
@@ -90,12 +93,8 @@ fn traced_visible(key:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:ve
  if light_reach(light,position,normal,false).attenuation<=0. {
   return false;
  }
- let to_light=light_ray_end(light,position,random)-position;
- let distance=length(to_light);
- if distance<=0. {
-  return true;
- }
- return scene_segment_visible(position,to_light/distance,TRACED_T_MIN,distance,SCENE_SIDES_SHADOW);
+ let ray=light_visibility_ray(light,position,random,TRACED_T_MIN);
+ return scene_segment_visible(position,ray.xyz,TRACED_T_MIN,ray.w,SCENE_SIDES_SHADOW);
 }
 
 // The visibility words of tracing pixel `q`, and its linear depth, which
