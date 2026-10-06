@@ -23,12 +23,17 @@ struct TracedParams {
  frame:u32,
  // Turns the rays' draws on the lights from frame to frame.
  seed:u32,
+ // The slots from slot 0 the denoiser filtered this frame (denoise.rs
+ // `Shape`): 4, or 1 for the directional light's alone. The temporal
+ // blend takes those from it and blends word 0's others.
+ denoised:u32,
 }
 // The linear depth a texel the G-buffer drew nothing at records.
 const TRACED_SKY_DEPTH:f32=1e30;
-// The slots AMD's shadow denoiser filters, as Wicked's first four: the
-// directional light and the three longest-held local lights. The others
-// take the temporal blend alone. They are the packed visibility's word 0.
+// The slots AMD's shadow denoiser may filter, as Wicked's first four: the
+// directional light and the three longest-held local lights, the packed
+// visibility's word 0; which of them it filters a frame is
+// TracedParams.denoised. The others take the temporal blend alone.
 const TRACED_DENOISED_SLOTS:u32=4u;
 // The full-resolution pixel whose depth and normals tracing pixel `q`
 // takes: pixel 2q, within the render size.

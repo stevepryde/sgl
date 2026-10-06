@@ -8,8 +8,9 @@
 //! about the camera. The render origin follows the camera, chunk-aligned.
 //!
 //! `cargo run --release -p sgl-3d --example streaming [-- RUN... [--split]
-//! [--occlusion] [--hardware-ray-tracing] [--ray-traced-shadows] | --check
-//! [--hardware-ray-tracing] [--ray-traced-shadows]]`
+//! [--occlusion] [--hardware-ray-tracing] [--ray-traced-shadows]
+//! [--ray-traced-shadow-quality low|high] | --check [--hardware-ray-tracing]
+//! [--ray-traced-shadows]]`
 //!
 //! The game's side is modelled on a block game's: its mesher finishes up to
 //! 24 chunks a 33 ms tick, nearest the camera first, meshing and preparing
@@ -48,7 +49,8 @@
 //! it existed, comparable with earlier measurements. `--ray-traced-shadows`
 //! implies it and turns `Settings::ray_traced_shadows` on, so the camera's
 //! opaque surfaces take the sun's and the shadowed torches' shadows from
-//! rays.
+//! rays; `--ray-traced-shadow-quality` sets
+//! `Settings::ray_traced_shadow_quality` (the preset's by default, High).
 //!
 //! Each run then prints what its views' draw lists cost on its route
 //! (`support/culling.rs`): the CPU time each GPU-built view's draw list
@@ -64,6 +66,7 @@
 //! precedes each submitted one. `--hardware-ray-tracing` and
 //! `--ray-traced-shadows` apply to it too.
 use sgl_3d::diagnostics::{Counters, DiagnosticTarget, SceneResources};
+use sgl_3d::settings::RayTracedShadowQuality;
 use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3};
 use sgl_3d::{
     EnvironmentId, FrameInput, InstanceId, InstanceState, LightId, MaterialId, Mobility, ModelId,
@@ -1079,6 +1082,7 @@ fn render(
     let mut settings = settings();
     settings.hardware_ray_tracing = tracing.hardware;
     settings.ray_traced_shadows = tracing.shadows;
+    settings.ray_traced_shadow_quality = tracing.quality;
     let mut culling = culling::Culling::new(options);
     let mut scene = Scene::new(device, queue);
     let mut game = Game::new(run, &mut scene, gpu)?;
@@ -1382,11 +1386,13 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue), tracing: Tracing) -> Result<(), Box
 }
 
 /// What the runs trace in hardware: their rays (`--hardware-ray-tracing`),
-/// and the camera's shadows too (`--ray-traced-shadows`).
+/// and the camera's shadows too (`--ray-traced-shadows`), at a quality
+/// (`--ray-traced-shadow-quality`).
 #[derive(Clone, Copy, Default)]
 struct Tracing {
     hardware: bool,
     shadows: bool,
+    quality: RayTracedShadowQuality,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -1402,9 +1408,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             "--check" => check_only = true,
             "--hardware-ray-tracing" => tracing.hardware = true,
             "--ray-traced-shadows" => {
-                tracing = Tracing {
-                    hardware: true,
-                    shadows: true,
+                tracing.hardware = true;
+                tracing.shadows = true;
+            }
+            "--ray-traced-shadow-quality" => {
+                tracing.quality = match args.next().as_deref() {
+                    Some("low") => RayTracedShadowQuality::Low,
+                    Some("high") => RayTracedShadowQuality::High,
+                    _ => return Err("--ray-traced-shadow-quality takes low or high".into()),
                 }
             }
             option if options.take(option) => {}

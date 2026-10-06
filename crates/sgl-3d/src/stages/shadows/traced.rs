@@ -4,7 +4,8 @@
 //! from rays through the scene instead of from the maps, as Wicked Engine
 //! traces them (2ff1d9e `Postprocess_RTShadow`, wiRenderer.cpp 15498–15880,
 //! its resources at 15440–15497): a trace at half the render size, AMD's
-//! shadow denoiser over the first four slots (`denoise`), a temporal blend
+//! shadow denoiser over the first four slots, or the first alone at
+//! `Settings::ray_traced_shadow_quality` Low (`denoise`), a temporal blend
 //! of the rest and an upsample into the shadow mask, which the opaque
 //! stage's lighting pass reads with the slot table at its group 3. Slot 0
 //! is the directional light with the frame's cascades, slots 1 to 15 the
@@ -18,13 +19,15 @@
 //! Writes: its own tracing targets and history, the shadow mask and the
 //! slot table, which it lends to the opaque stage's lighting pass.
 //! Honours: the effective ray-traced shadows, on the frames whose rays
-//! trace in hardware.
+//! trace in hardware, and their quality.
 //! Timing groups: `ray-traced shadow rays`, `ray-traced shadow tile
-//! classification`, `ray-traced shadow filter` (three passes),
+//! classification`, `ray-traced shadow filter` (three passes, or two at
+//! Low),
 //! `ray-traced shadow temporal`, `ray-traced shadow upsample`.
 pub(crate) mod denoise;
 pub(crate) mod slots;
 
+use crate::settings::RayTracedShadowQuality;
 use crate::shading::RayQueryForm;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
@@ -47,7 +50,8 @@ struct Params {
     eye: [f32; 4],
     frame: u32,
     seed: u32,
-    padding: [u32; 2],
+    denoised: u32,
+    padding: u32,
 }
 
 static COMMON: shading::Module = shading::Module {
@@ -70,34 +74,6 @@ pub(crate) static TRACE: shading::Module = shading::Module {
         &shading::SHADOW_MASK_SLOT_KEY,
         &shading::SCENE_RAYS_PREDICATE,
         &COMMON,
-        &NORMAL_STORE,
-    ],
-};
-/// The trace's store of each tracing pixel's normal for the denoiser.
-static NORMAL_STORE: shading::Module = shading::Module {
-    name: "traced_normal_store",
-    source: include_str!("traced/traced_normal_store.wgsl"),
-    deps: &[],
-};
-// Measurement (#204): the trace with its normals packed in a word.
-static NORMAL_STORE_PACKED: shading::Module = shading::Module {
-    name: "traced_normal_store_packed",
-    source: include_str!("traced/traced_normal_store_packed.wgsl"),
-    deps: &[],
-};
-static TRACE_PACKED: shading::Module = shading::Module {
-    name: "traced_shadows_trace",
-    source: include_str!("traced/traced_trace.wgsl"),
-    deps: &[
-        &shading::BIND_LIT,
-        &shading::GBUFFER,
-        &shading::LIGHT_REACH,
-        &shading::LIGHT_SURFACE,
-        &shading::HASH,
-        &shading::SHADOW_MASK_SLOT_KEY,
-        &shading::SCENE_RAYS_PREDICATE,
-        &COMMON,
-        &NORMAL_STORE_PACKED,
     ],
 };
 /// The entry points the stage's pipelines are created with.
@@ -162,7 +138,7 @@ struct Targets {
 }
 
 impl Targets {
-    fn new(device: &wgpu::Device, full: [u32; 2], variant: denoise::Variant) -> Self {
+    fn new(device: &wgpu::Device, full: [u32; 2]) -> Self {
         let reduced = full.map(|side| side.div_ceil(DOWNSAMPLE).max(1));
         let words = wgpu::TextureFormat::Rgba32Uint;
         let half = |label, format| texture(device, label, reduced, 1, format);
@@ -179,7 +155,7 @@ impl Targets {
                 shadow_mask::LAYERS,
                 shadow_mask::FORMAT,
             ),
-            denoise: denoise::Targets::new(device, reduced, variant),
+            denoise: denoise::Targets::new(device, reduced),
         }
     }
 }
@@ -231,10 +207,10 @@ pub(crate) struct TracedShadows {
     trace: HashMap<((), Option<RayQueryForm>), wgpu::ComputePipeline>,
     temporal: Pass,
     upsample: Pass,
-    /// AMD's shadow denoiser over the first four slots.
+    /// AMD's shadow denoiser over the first slots.
     denoiser: denoise::Denoiser,
-    /// Measurement (#204): the denoiser's variant.
-    variant: denoise::Variant,
+    /// The quality the history was made at; another restarts it.
+    quality: Option<RayTracedShadowQuality>,
     params: wgpu::Buffer,
     /// The slot table, which the lighting pass reads too.
     slot_table: wgpu::Buffer,
@@ -281,7 +257,6 @@ impl TracedShadows {
             view_dimension: wgpu::TextureViewDimension::D2,
         };
         let unfilterable = wgpu::TextureSampleType::Float { filterable: false };
-        let variant = denoise::Variant::from_env();
         let entries = [
             entry(0, sampled(wgpu::TextureSampleType::Depth)),
             entry(1, sampled(unfilterable)),
@@ -291,7 +266,7 @@ impl TracedShadows {
             entry(5, storage(wgpu::TextureFormat::Rgba32Uint)),
             entry(6, storage(wgpu::TextureFormat::R32Float)),
             entry(7, storage(wgpu::TextureFormat::Rgba32Uint)),
-            entry(8, storage(variant.normal_format())),
+            entry(8, storage(denoise::NORMAL_FORMAT)),
         ];
         let uniform_buffer = |label, size| {
             crate::counters::buffer(
@@ -305,22 +280,12 @@ impl TracedShadows {
             )
         };
         Self {
-            paths: TracePaths::new(
-                "ray-traced shadow rays",
-                if variant.lean { &TRACE_PACKED } else { &TRACE },
-                &entries,
-                [lit, scene],
-            ),
+            paths: TracePaths::new("ray-traced shadow rays", &TRACE, &entries, [lit, scene]),
             trace: HashMap::new(),
-            temporal: Pass::new(
-                device,
-                &TEMPORAL,
-                TEMPORAL_ENTRY,
-                &[("temporal_denoised_slots", f64::from(variant.slots()))],
-            ),
+            temporal: Pass::new(device, &TEMPORAL, TEMPORAL_ENTRY, &[]),
             upsample: Pass::new(device, &UPSAMPLE, UPSAMPLE_ENTRY, &[]),
-            denoiser: denoise::Denoiser::new(device, variant),
-            variant,
+            denoiser: denoise::Denoiser::default(),
+            quality: None,
             params: uniform_buffer(
                 "ray-traced shadow parameters",
                 std::mem::size_of::<Params>() as u64,
@@ -360,7 +325,7 @@ impl TracedShadows {
         let size = ctx.sizes.render;
         let resized = self.targets.as_ref().is_none_or(|t| t.full != size);
         if resized {
-            self.targets = Some(Targets::new(ctx.device, size, self.variant));
+            self.targets = Some(Targets::new(ctx.device, size));
         }
         // History continues across consecutive valid frames the stage runs
         // in, as the world-space reflection denoiser's does.
@@ -369,12 +334,17 @@ impl TracedShadows {
             && self
                 .previous_frame
                 .is_some_and(|previous| history.frames == previous.wrapping_add(1));
-        if resized || !continuous {
+        // A change of quality changes which slots the denoiser keeps a
+        // history for.
+        let quality = ctx.effective.ray_traced_shadow_quality;
+        if resized || !continuous || self.quality != Some(quality) {
             self.frame = 0;
         }
+        self.quality = Some(quality);
         self.previous_frame = Some(history.frames);
         let table = self.slots.assign(lights.directional, &lights.local);
         self.table = table;
+        let shape = denoise::Shape::of(quality, table.lights[0]);
         crate::counters::write_buffer(ctx.queue, &self.slot_table, 0, bytemuck::bytes_of(&table));
         let targets = self.targets.as_ref().unwrap();
         let [width, height] = targets.full.map(|side| side as f32);
@@ -403,7 +373,8 @@ impl TracedShadows {
                 eye: [eye.x, eye.y, eye.z, 1.],
                 frame: self.frame,
                 seed: self.seed,
-                padding: [0; 2],
+                denoised: shape.slots,
+                padding: 0,
             }),
         );
         self.seed = self.seed.wrapping_add(1);
@@ -464,17 +435,14 @@ impl TracedShadows {
                 1,
             );
         }
-        // The denoised slots are the table's first four; with none held,
-        // nothing reads their word, and a light that takes one restarts it.
-        let denoised = &self.table.lights[0][..self.variant.slots() as usize];
-        if denoised
-            .iter()
-            .any(|&key| key != shadow_mask::SHADOW_MASK_EMPTY)
-        {
+        // With none of the slots it filters held, nothing reads their
+        // result, and a light that takes one restarts it.
+        if shape.runs(table.lights[0]) {
             self.denoiser.encode(
                 ctx.device,
                 ctx.encoder,
                 ctx.timing,
+                shape,
                 &targets.denoise,
                 denoise::Inputs {
                     depth: &shared.depth,
@@ -577,61 +545,11 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
             reduced,
             eye,
             frame,
-            seed
+            seed,
+            denoised
         ]
     )]
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
-
-// Measurement (#204): the variants' programs compose and validate, as the
-// layout test checks the rest.
-#[cfg(test)]
-mod measurement_tests {
-    use super::*;
-
-    #[test]
-    fn the_denoiser_variants_compose_and_validate() {
-        let trace_root = shading::ray_trace_root(Some(RayQueryForm::Baseline));
-        let programs = [
-            (
-                "trace packed",
-                shading::compose(&[&TRACE_PACKED, trace_root]),
-            ),
-            ("trace", shading::compose(&[&TRACE, trace_root])),
-            (
-                "classification scalar",
-                shading::compose(&[&denoise::TILE_CLASSIFICATION_SCALAR]),
-            ),
-            (
-                "classification scalar packed",
-                shading::compose(&[&denoise::TILE_CLASSIFICATION_SCALAR_PACKED]),
-            ),
-            (
-                "filter scalar",
-                shading::compose(&[&denoise::FILTER_SCALAR]),
-            ),
-            (
-                "filter scalar packed",
-                shading::compose(&[&denoise::FILTER_SCALAR_PACKED]),
-            ),
-            ("filter", shading::compose(&[&denoise::FILTER])),
-            ("temporal", shading::compose(&[&TEMPORAL])),
-        ];
-        for (label, source) in programs {
-            let module = naga::front::wgsl::parse_str(&source)
-                .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(&source)));
-            naga::valid::Validator::new(
-                naga::valid::ValidationFlags::all(),
-                naga::valid::Capabilities::all(),
-            )
-            .validate(&module)
-            .unwrap_or_else(|error| panic!("{label}: {}", error.emit_to_string(&source)));
-            assert!(
-                !module.entry_points.is_empty(),
-                "{label} holds no entry point"
-            );
-        }
-    }
-}

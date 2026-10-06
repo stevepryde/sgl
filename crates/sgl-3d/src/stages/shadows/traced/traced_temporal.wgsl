@@ -14,9 +14,11 @@
 // computes and then leaves unused, so a shadow that moves takes the
 // current value where its history falls outside the box, as Wicked's own
 // SSR and RT diffuse temporal passes clamp theirs (ssr_temporalCS.hlsl
-// 209, rtdiffuse_temporalCS.hlsl 197); the denoised slots take the
-// denoiser's result as Wicked's first four do (74–79), each from its layer
-// where Wicked reads a channel a light; a slot whose light changed takes
+// 209, rtdiffuse_temporalCS.hlsl 197); the denoised slots
+// (TracedParams.denoised) take the denoiser's result as Wicked's first
+// four do (74–79), each from its layer where Wicked reads a channel a
+// light, and word 0's others, when the denoiser filters slot 0 alone, are
+// blended as words 1 to 3 are; a slot whose light changed takes
 // its current value
 // (ShadowMaskSlots.restart), and so does every slot after the stage's
 // history restarts (TracedParams.frame 0); the history is the stage's own
@@ -54,23 +56,13 @@ const TEMPORAL_VELOCITY_RESPONSE:f32=.2;
 // The neighbourhood's offsets: Wicked's 3×3 SampleOffset.
 const TEMPORAL_TAPS:u32=9u;
 
-// Measurement (#204): the slots the denoiser filters, word 0's first 4 or
-// its first alone; the others of word 0 are blended as words 1 to 3 are.
-override temporal_denoised_slots:u32=4u;
-
-// The denoised slots, the first TRACED_DENOISED_SLOTS, are word 0: the
-// denoiser's word at tracing texel `texel`.
-fn temporal_denoised_word(texel:vec2<u32>)->u32 {
- return temporal_denoised[texel.y*u32(traced.reduced.x)+texel.x];
-}
-// Word 0 of `blended`, the pass's word 0, with the denoised slots the
-// denoiser's at `texel`.
+// Word 0 of the output at tracing texel `texel`: the denoised slots
+// (TracedParams.denoised, from slot 0) the denoiser's, the others
+// `blended`'s.
 fn temporal_word0(blended:u32,texel:vec2<u32>)->u32 {
- let denoised=temporal_denoised_word(texel);
- if temporal_denoised_slots==1u {
-  return (blended&~0xffu)|(denoised&0xffu);
- }
- return denoised;
+ let denoised=temporal_denoised[texel.y*u32(traced.reduced.x)+texel.x];
+ let mask=select(0xffu,0xffffffffu,traced.denoised>=TRACED_DENOISED_SLOTS);
+ return (denoised&mask)|(blended&~mask);
 }
 // `current` with its denoised slots the denoiser's.
 fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
@@ -119,8 +111,9 @@ fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
  }
  let velocity=length(motion*traced.reduced.xy);
  let refresh=saturate(velocity/TEMPORAL_VELOCITY_PIXELS);
+ // Word 0 is blended where the denoiser filters slot 0 alone.
  var word0=current.x;
- if temporal_denoised_slots==1u {
+ if traced.denoised<TRACED_DENOISED_SLOTS {
   word0=temporal_blend(0u,current,history,m1,m2,refresh);
  }
  textureStore(temporal_output,id.xy,vec4(
