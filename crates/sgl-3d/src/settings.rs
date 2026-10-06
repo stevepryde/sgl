@@ -277,6 +277,39 @@ impl ShadowQuality {
     }
 }
 
+/// How much of the ray-traced shadows (`Settings::ray_traced_shadows`)
+/// is denoised while they run; without them it has no effect. High filters
+/// the directional light's shadow and those of three of the local lights
+/// (the first three slots after it, each kept by the light that holds it)
+/// with AMD's FidelityFX shadow denoiser in three passes, as Wicked Engine
+/// filters its first four lights. Low filters the directional light's
+/// alone, in two passes, and blends those local lights' with the previous
+/// frames' as it does every other local light's: their soft shadows' edges
+/// are noisier, in motion most, for about 1 ms a frame less at 1920×1080
+/// on an Apple M5. Where no local light holds one of those three places,
+/// High filters the directional light's alone too, the same result within
+/// one 8-bit step, for about 0.8 ms less. A change starts the shadows'
+/// history afresh.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RayTracedShadowQuality {
+    /// The preset's: Low on `RenderPreset::Low`, High on
+    /// `RenderPreset::High`.
+    #[default]
+    Preset,
+    Low,
+    High,
+}
+impl RayTracedShadowQuality {
+    /// The chosen quality: Low or High.
+    pub fn resolve(self, low: bool) -> Self {
+        match self {
+            Self::Preset if low => Self::Low,
+            Self::Preset => Self::High,
+            other => other,
+        }
+    }
+}
+
 /// Presentation cadence. Display follows the surface's refresh-paced FIFO;
 /// explicit limits cap rendering without changing the simulation tick rate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -361,6 +394,9 @@ pub struct Settings {
     /// Without hardware ray tracing the maps shadow everything
     /// (`Renderer::ray_traced_shadows_in_effect`).
     pub ray_traced_shadows: bool,
+    /// How ray-traced shadows are denoised while they run; no effect
+    /// without them.
+    pub ray_traced_shadow_quality: RayTracedShadowQuality,
     /// Two-phase occlusion culling of the camera's opaque and masked
     /// surfaces, off by default and in every preset: what was hidden last
     /// frame is tested again this frame against what the frame draws first,
@@ -418,6 +454,7 @@ impl Default for Settings {
             world_space_reflections: WorldSpaceReflections::Off,
             hardware_ray_tracing: false,
             ray_traced_shadows: false,
+            ray_traced_shadow_quality: RayTracedShadowQuality::default(),
             occlusion_culling: false,
             atmosphere: true,
             fog_quality: FogQuality::default(),

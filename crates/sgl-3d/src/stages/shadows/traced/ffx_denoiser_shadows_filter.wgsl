@@ -32,18 +32,22 @@ THE SOFTWARE.
 // before the branch whose barrier follows. The caller reads linear depth,
 // 0 for the sky, so the depth is not linearised through the inverse
 // projection, and a sky neighbour, and the centre, are skipped, where
-// upstream weighs them by zero. The loops' literal bounds are named
-// (AR-12). The four denoised slots are filtered
-// together, a lane each of a vec4, where upstream filters one light a
-// dispatch: the input, the shadow similarity, the sums and the results
-// are per lane, and the depth, normals and their weights, which upstream
-// loads and computes again for every light, once; a lane whose tile is
-// cleared is computed with the rest and takes the cleared tile's values,
-// and the group skips only when every lane's tile is cleared. The caller
+// upstream weighs them by zero. Whether a pass writes a cleared tile is
+// the caller's (FilterSoftShadowsPass's `write_cleared`), where upstream's
+// second pass of three skips it, so that a chain of other lengths ends in
+// a pass that writes it. The loops' literal bounds are named (AR-12).
+// The caller's lanes (traced_denoise_lanes_*.wgsl: the FfxDnsr* types) are
+// the slots filtered together, a lane each, where upstream filters one
+// light a dispatch: the input, the shadow similarity, the sums and the
+// results are per lane, and the depth, normals and their weights, which
+// upstream loads and computes again for every light, once; a lane whose
+// tile is cleared is computed with the rest and takes the cleared tile's
+// values, and the group skips only when every lane's tile is cleared.
+// With one lane this is upstream's filter of one light. The caller
 // supplies the FFX_DNSR_Shadows_* callbacks upstream's host shader does,
 // and FFX_DNSR_Shadows_UnpackInput.
 
-var<workgroup> g_FFX_DNSR_Shadows_shared_input:array<array<vec4<u32>,16>,16>;
+var<workgroup> g_FFX_DNSR_Shadows_shared_input:array<array<FfxDnsrUint,16>,16>;
 var<workgroup> g_FFX_DNSR_Shadows_shared_depth:array<array<f32,16>,16>;
 var<workgroup> g_FFX_DNSR_Shadows_shared_normals_xy:array<array<u32,16>,16>;
 var<workgroup> g_FFX_DNSR_Shadows_shared_normals_zw:array<array<u32,16>,16>;
@@ -56,10 +60,10 @@ fn FFX_DNSR_Shadows_UnpackFloat16(a:u32)->vec2<f32> {
  return unpack2x16float(a);
 }
 
-// The four lanes' filter inputs: mean and variance.
+// The lanes' filter inputs: mean and variance.
 struct FFX_DNSR_Shadows_Input {
- mean:vec4<f32>,
- variance:vec4<f32>,
+ mean:FfxDnsrFloat,
+ variance:FfxDnsrFloat,
 }
 
 fn FFX_DNSR_Shadows_LoadInputFromGroupSharedMemory(idx:vec2<i32>)->FFX_DNSR_Shadows_Input {
@@ -79,7 +83,7 @@ fn FFX_DNSR_Shadows_LoadNormalsFromGroupSharedMemory(idx:vec2<i32>)->vec3<f32> {
  return normals;
 }
 
-fn FFX_DNSR_Shadows_StoreInGroupSharedMemory(idx:vec2<i32>,normals:vec3<f32>,input:vec4<u32>,depth:f32) {
+fn FFX_DNSR_Shadows_StoreInGroupSharedMemory(idx:vec2<i32>,normals:vec3<f32>,input:FfxDnsrUint,depth:f32) {
  g_FFX_DNSR_Shadows_shared_input[idx.y][idx.x]=input;
  g_FFX_DNSR_Shadows_shared_depth[idx.y][idx.x]=depth;
  g_FFX_DNSR_Shadows_shared_normals_xy[idx.y][idx.x]=FFX_DNSR_Shadows_PackFloat16(normals.xy);
@@ -88,7 +92,7 @@ fn FFX_DNSR_Shadows_StoreInGroupSharedMemory(idx:vec2<i32>,normals:vec3<f32>,inp
 
 struct FFX_DNSR_Shadows_Loaded {
  normals:vec3<f32>,
- input:vec4<u32>,
+ input:FfxDnsrUint,
  depth:f32,
 }
 
@@ -125,7 +129,7 @@ fn FFX_DNSR_Shadows_InitializeGroupSharedMemory(did_in:vec2<i32>,gtid:vec2<i32>)
  FFX_DNSR_Shadows_StoreWithOffset(gtid,offset_3,loaded_3); // C
 }
 
-fn FFX_DNSR_Shadows_GetShadowSimilarity(x1:vec4<f32>,x2:vec4<f32>,sigma:vec4<f32>)->vec4<f32> {
+fn FFX_DNSR_Shadows_GetShadowSimilarity(x1:FfxDnsrFloat,x2:FfxDnsrFloat,sigma:FfxDnsrFloat)->FfxDnsrFloat {
  return exp(-abs(x1-x2)/sigma);
 }
 
@@ -146,9 +150,9 @@ fn FFX_DNSR_Shadows_GetLinearDepth(did:vec2<u32>,depth:f32)->f32 {
 // The filters' radius in steps, upstream's literal k (AR-12).
 const FFX_DNSR_SHADOWS_FILTER_RADIUS:i32=1;
 
-fn FFX_DNSR_Shadows_FetchFilteredVarianceFromGroupSharedMemory(pos:vec2<i32>)->vec4<f32> {
+fn FFX_DNSR_Shadows_FetchFilteredVarianceFromGroupSharedMemory(pos:vec2<i32>)->FfxDnsrFloat {
  let k=FFX_DNSR_SHADOWS_FILTER_RADIUS;
- var variance=vec4(0.);
+ var variance=FfxDnsrFloat(0.);
  var kernel=array<array<f32,2>,2>(
   array<f32,2>(1./4.,1./8.),
   array<f32,2>(1./8.,1./16.)
@@ -163,9 +167,9 @@ fn FFX_DNSR_Shadows_FetchFilteredVarianceFromGroupSharedMemory(pos:vec2<i32>)->v
 }
 
 struct FFX_DNSR_Shadows_Sums {
- weight_sum:vec4<f32>,
- mean_sum:vec4<f32>,
- variance_sum:vec4<f32>,
+ weight_sum:FfxDnsrFloat,
+ mean_sum:FfxDnsrFloat,
+ variance_sum:FfxDnsrFloat,
 }
 
 fn FFX_DNSR_Shadows_DenoiseFromGroupSharedMemory(did:vec2<u32>,gtid:vec2<u32>,depth:f32,stepsize:u32)->FFX_DNSR_Shadows_Sums {
@@ -173,12 +177,12 @@ fn FFX_DNSR_Shadows_DenoiseFromGroupSharedMemory(did:vec2<u32>,gtid:vec2<u32>,de
  let shadow_center=FFX_DNSR_Shadows_LoadInputFromGroupSharedMemory(vec2<i32>(gtid));
  let normal_center=FFX_DNSR_Shadows_LoadNormalsFromGroupSharedMemory(vec2<i32>(gtid));
 
- var weight_sum=vec4(1.);
+ var weight_sum=FfxDnsrFloat(1.);
  var mean_sum=shadow_center.mean;
  var variance_sum=shadow_center.variance;
 
  let variance=FFX_DNSR_Shadows_FetchFilteredVarianceFromGroupSharedMemory(vec2<i32>(gtid));
- let std_deviation=sqrt(max(variance+1e-9,vec4(0.)));
+ let std_deviation=sqrt(max(variance+1e-9,FfxDnsrFloat(0.)));
  let depth_center=FFX_DNSR_Shadows_GetLinearDepth(did,depth); // linearize the depth value
 
  // Iterate filter kernel
@@ -223,9 +227,9 @@ fn FFX_DNSR_Shadows_DenoiseFromGroupSharedMemory(did:vec2<u32>,gtid:vec2<u32>,de
 }
 
 fn FFX_DNSR_Shadows_ApplyFilterWithPrecache(did:vec2<u32>,gtid_in:vec2<u32>,stepsize:u32)->FFX_DNSR_Shadows_Input {
- var weight_sum=vec4(1.);
- var mean_sum=vec4(0.);
- var variance_sum=vec4(0.);
+ var weight_sum=FfxDnsrFloat(1.);
+ var mean_sum=FfxDnsrFloat(0.);
+ var variance_sum=FfxDnsrFloat(0.);
 
  FFX_DNSR_Shadows_InitializeGroupSharedMemory(vec2<i32>(did),vec2<i32>(gtid_in));
  let needs_denoiser=FFX_DNSR_Shadows_IsShadowReciever(did);
@@ -245,13 +249,13 @@ fn FFX_DNSR_Shadows_ApplyFilterWithPrecache(did:vec2<u32>,gtid_in:vec2<u32>,step
 }
 
 struct FFX_DNSR_Shadows_TileMetaData {
- is_cleared:vec4<bool>,
- all_in_light:vec4<bool>,
+ is_cleared:FfxDnsrBool,
+ all_in_light:FfxDnsrBool,
 }
 
 fn FFX_DNSR_Shadows_ReadTileMetaDataOf(gid:vec2<u32>)->FFX_DNSR_Shadows_TileMetaData {
  let meta_data=FFX_DNSR_Shadows_ReadTileMetaData(gid.y*FFX_DNSR_Shadows_RoundedDivide(FFX_DNSR_Shadows_GetBufferDimensions().x,8u)+gid.x);
- return FFX_DNSR_Shadows_TileMetaData((meta_data&vec4(TILE_META_DATA_CLEAR_MASK))!=vec4(0u),(meta_data&vec4(TILE_META_DATA_LIGHT_MASK))!=vec4(0u));
+ return FFX_DNSR_Shadows_TileMetaData((meta_data&FfxDnsrUint(TILE_META_DATA_CLEAR_MASK))!=FfxDnsrUint(0u),(meta_data&FfxDnsrUint(TILE_META_DATA_LIGHT_MASK))!=FfxDnsrUint(0u));
 }
 
 struct FFX_DNSR_Shadows_FilterResult {
@@ -259,14 +263,15 @@ struct FFX_DNSR_Shadows_FilterResult {
  write_results:bool,
 }
 
-fn FFX_DNSR_Shadows_FilterSoftShadowsPass(gid:vec2<u32>,gtid:vec2<u32>,did:vec2<u32>,pass_index:u32,stepsize:u32)->FFX_DNSR_Shadows_FilterResult {
+// `write_cleared`: whether the pass writes a cleared tile, its value, as
+// upstream's every pass but its second of three does; that pass's target
+// holds the value already, as the tile classification wrote it.
+fn FFX_DNSR_Shadows_FilterSoftShadowsPass(gid:vec2<u32>,gtid:vec2<u32>,did:vec2<u32>,write_cleared:bool,stepsize:u32)->FFX_DNSR_Shadows_FilterResult {
  let meta_data=FFX_DNSR_Shadows_ReadTileMetaDataOf(gid);
 
- // A cleared tile's value; upstream's pass 1 leaves a cleared tile as the
- // tile classification wrote it, which is that value too.
- let cleared=FFX_DNSR_Shadows_Input(select(vec4(0.),vec4(1.),meta_data.all_in_light),vec4(0.));
- if all(meta_data.is_cleared) {
-  return FFX_DNSR_Shadows_FilterResult(cleared,pass_index!=1u);
+ let cleared=FFX_DNSR_Shadows_Input(select(FfxDnsrFloat(0.),FfxDnsrFloat(1.),meta_data.all_in_light),FfxDnsrFloat(0.));
+ if ffx_dnsr_all(meta_data.is_cleared) {
+  return FFX_DNSR_Shadows_FilterResult(cleared,write_cleared);
  }
  let filtered=FFX_DNSR_Shadows_ApplyFilterWithPrecache(did,gtid,stepsize);
  let results=FFX_DNSR_Shadows_Input(

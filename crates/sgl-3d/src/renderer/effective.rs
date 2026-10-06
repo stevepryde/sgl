@@ -254,6 +254,7 @@ pub(super) fn resolve(
         },
         hardware_ray_tracing,
         ray_traced_shadows,
+        ray_traced_shadow_quality: settings.ray_traced_shadow_quality.resolve(low),
         receivers: content.receivers
             && (screen_space.is_some() || taa || fsr2 || motion_blur.is_some()),
         // Occlusion culling's late phase falls between the G-buffer passes,

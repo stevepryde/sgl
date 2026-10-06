@@ -1,24 +1,27 @@
 //! AMD's FidelityFX shadow denoiser over the ray-traced shadow stage's
-//! first four slots, as Wicked Engine runs it (2ff1d9e
-//! `Postprocess_RTShadow`, wiRenderer.cpp 15629–15831): tile classification
-//! against the previous frame's moments and the reprojected history, then
-//! three edge-stopping filter passes at step sizes 1, 2 and 4, the last
-//! recovering contrast. One invocation a pixel covers the four slots, a
-//! slot a lane, sharing the depth, normals and their weights, where Wicked
-//! dispatches each light apart; with none of them held it does not run.
-//! Its result replaces those slots' temporal blend.
+//! first slots, as Wicked Engine runs it over its first four lights
+//! (2ff1d9e `Postprocess_RTShadow`, wiRenderer.cpp 15629–15831): tile
+//! classification against the previous frame's moments and the
+//! reprojected history, then edge-stopping filter passes at step sizes 1,
+//! 2 and 4, the last recovering contrast. One invocation a pixel covers the
+//! slots it filters, a slot a lane, sharing the depth, normals and their
+//! weights, where Wicked dispatches each light apart; with none of them
+//! held it does not run. Its result replaces those slots' temporal blend.
+//! Which slots and how many passes is the frame's `Shape`, from
+//! `Settings::ray_traced_shadow_quality`; one port serves every shape, its
+//! lanes the program's (traced_denoise_lanes_*.wgsl) and its passes
+//! pipeline constants.
 use super::{Pass, texture};
-use crate::shading;
+use crate::settings::RayTracedShadowQuality;
+use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
 
 /// The entry points the denoiser's pipelines are created with.
 pub(crate) const TILE_CLASSIFICATION_ENTRY: &str = "traced_denoise_tile_classification";
 pub(crate) const FILTER_ENTRY: &str = "traced_denoise_filter";
-/// The slots the denoiser filters (`TRACED_DENOISED_SLOTS`): Wicked's first
-/// four.
+/// The slots the denoiser may filter (`TRACED_DENOISED_SLOTS`): Wicked's
+/// first four, the slot table's layer 0.
 pub(super) const DENOISED_SLOTS: u32 = 4;
-/// The filter passes' step sizes are 1 << pass.
-const FILTER_PASSES: u32 = 3;
 
 static UTIL: shading::Module = shading::Module {
     name: "ffx_denoiser_shadows_util",
@@ -42,20 +45,131 @@ static COMMON: shading::Module = shading::Module {
     source: include_str!("traced_denoise_common.wgsl"),
     deps: &[&super::COMMON],
 };
-pub(crate) static TILE_CLASSIFICATION: shading::Module = shading::Module {
-    name: "traced_denoise_tileclassification",
+/// The lanes a program's invocation filters: slots 0 to 3, or slot 0.
+static LANES_FOUR: shading::Module = shading::Module {
+    name: "traced_denoise_lanes_four",
+    source: include_str!("traced_denoise_lanes_four.wgsl"),
+    deps: &[],
+};
+static LANES_ONE: shading::Module = shading::Module {
+    name: "traced_denoise_lanes_one",
+    source: include_str!("traced_denoise_lanes_one.wgsl"),
+    deps: &[],
+};
+/// The tile classification and the filter, with four lanes and with one:
+/// one source each, its lanes its program's.
+pub(crate) static TILE_CLASSIFICATION_FOUR: shading::Module = shading::Module {
+    name: "traced_denoise_tileclassification_four",
     source: include_str!("traced_denoise_tileclassification.wgsl"),
     deps: &[
         &FFX_TILE_CLASSIFICATION,
         &shading::SHADOW_MASK_SLOTS,
         &COMMON,
+        &LANES_FOUR,
     ],
 };
-pub(crate) static FILTER: shading::Module = shading::Module {
-    name: "traced_denoise_filter",
-    source: include_str!("traced_denoise_filter.wgsl"),
-    deps: &[&FFX_FILTER, &COMMON],
+pub(crate) static TILE_CLASSIFICATION_ONE: shading::Module = shading::Module {
+    name: "traced_denoise_tileclassification_one",
+    source: include_str!("traced_denoise_tileclassification.wgsl"),
+    deps: &[
+        &FFX_TILE_CLASSIFICATION,
+        &shading::SHADOW_MASK_SLOTS,
+        &COMMON,
+        &LANES_ONE,
+    ],
 };
+pub(crate) static FILTER_FOUR: shading::Module = shading::Module {
+    name: "traced_denoise_filter_four",
+    source: include_str!("traced_denoise_filter.wgsl"),
+    deps: &[&FFX_FILTER, &COMMON, &LANES_FOUR],
+};
+pub(crate) static FILTER_ONE: shading::Module = shading::Module {
+    name: "traced_denoise_filter_one",
+    source: include_str!("traced_denoise_filter.wgsl"),
+    deps: &[&FFX_FILTER, &COMMON, &LANES_ONE],
+};
+
+/// The lanes of the denoiser's programs: slot 0 alone, or slots 0 to 3,
+/// the slot table's layer 0, a lane each (traced_denoise_lanes_*.wgsl).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Lanes {
+    One,
+    Four,
+}
+
+impl Lanes {
+    /// The slots they filter, from slot 0 (`TracedParams.denoised`).
+    pub fn slots(self) -> u32 {
+        match self {
+            Self::One => 1,
+            Self::Four => DENOISED_SLOTS,
+        }
+    }
+}
+
+/// What the denoiser runs in a frame: its lanes, and its filter passes, at
+/// steps 1, 2 and 4 in turn, the last final. High filters slots 0 to 3 in
+/// three passes, as Wicked runs AMD's denoiser over its first four lights,
+/// or slot 0 alone in them where slots 1 to 3 hold no light, which leaves
+/// slot 0's result as four lanes leave it, at less cost; Low filters slot
+/// 0 alone in two (the architecture's Ray-traced shadows, RD-6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Shape {
+    pub lanes: Lanes,
+    pub passes: u32,
+}
+
+impl Shape {
+    const HIGH: Self = Self {
+        lanes: Lanes::Four,
+        passes: 3,
+    };
+    const HIGH_ALONE: Self = Self {
+        lanes: Lanes::One,
+        passes: 3,
+    };
+    const LOW: Self = Self {
+        lanes: Lanes::One,
+        passes: 2,
+    };
+
+    /// The shapes `quality` (resolved) takes, as its frames' slots decide.
+    fn all(quality: RayTracedShadowQuality) -> &'static [Self] {
+        match quality {
+            RayTracedShadowQuality::Low => &[Self::LOW],
+            RayTracedShadowQuality::High | RayTracedShadowQuality::Preset => {
+                &[Self::HIGH, Self::HIGH_ALONE]
+            }
+        }
+    }
+
+    /// The shape at `quality`, which the effective configuration resolved
+    /// (Low or High), of a frame whose slot table's layer 0, slots 0 to 3,
+    /// holds `lights`.
+    pub fn of(quality: RayTracedShadowQuality, lights: [u32; 4]) -> Self {
+        debug_assert_ne!(
+            quality,
+            RayTracedShadowQuality::Preset,
+            "the effective quality is resolved"
+        );
+        let local = lights[1..]
+            .iter()
+            .any(|&key| key != shadow_mask::SHADOW_MASK_EMPTY);
+        match quality {
+            RayTracedShadowQuality::Low => Self::LOW,
+            RayTracedShadowQuality::High | RayTracedShadowQuality::Preset if local => Self::HIGH,
+            RayTracedShadowQuality::High | RayTracedShadowQuality::Preset => Self::HIGH_ALONE,
+        }
+    }
+
+    /// Whether a slot it filters holds a light, without which nothing
+    /// reads its result.
+    pub fn runs(self, lights: [u32; 4]) -> bool {
+        lights[..self.lanes.slots() as usize]
+            .iter()
+            .any(|&key| key != shadow_mask::SHADOW_MASK_EMPTY)
+    }
+}
 
 /// The format of the tracing pixels' shading normals the trace writes for
 /// the denoiser.
@@ -68,7 +182,8 @@ pub(super) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba1
 /// pass's result for the next frame); the moments' pair, a layer a denoised
 /// slot; and the denoised visibility, a word a tracing pixel, packed as the
 /// trace packs its first word. The masks, metadata and halves hold the four
-/// denoised slots in a texel's lanes.
+/// denoised slots in a texel's channels. Every shape shares them, so slot
+/// 0's history continues from a frame of one shape to the next of another.
 pub(super) struct Targets {
     pub tiles: wgpu::TextureView,
     pub normal: wgpu::TextureView,
@@ -147,36 +262,91 @@ pub(super) struct Inputs<'a> {
     pub current: usize,
 }
 
-pub(super) struct Denoiser {
+/// A shape's passes: the tile classification and the filter passes.
+struct Chain {
     classification: Pass,
-    filters: [Pass; FILTER_PASSES as usize],
+    filters: Vec<Pass>,
+}
+
+impl Chain {
+    fn new(device: &wgpu::Device, shape: Shape) -> Self {
+        let (classification, filter) = match shape.lanes {
+            Lanes::One => (&TILE_CLASSIFICATION_ONE, &FILTER_ONE),
+            Lanes::Four => (&TILE_CLASSIFICATION_FOUR, &FILTER_FOUR),
+        };
+        let last = shape.passes - 1;
+        let flag = |on: bool| f64::from(u8::from(on));
+        Self {
+            classification: Pass::new(device, classification, TILE_CLASSIFICATION_ENTRY, &[]),
+            filters: (0..shape.passes)
+                .map(|pass| {
+                    // Upstream's second pass of three finds a cleared tile
+                    // in its target as the classification wrote it; every
+                    // other pass, the last among them, writes it.
+                    let write_cleared = pass != 1 || pass == last;
+                    Pass::new(
+                        device,
+                        filter,
+                        FILTER_ENTRY,
+                        &[
+                            ("filter_step", f64::from(1u32 << pass)),
+                            ("filter_final", flag(pass == last)),
+                            ("filter_write_cleared", flag(write_cleared)),
+                        ],
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The denoiser's passes for each shape of the qualities its frames took,
+/// made in the first frame at the quality: every shape it may take, so
+/// that a light that joins or leaves slots 1 to 3 makes no pipeline.
+#[derive(Default)]
+pub(super) struct Denoiser {
+    chains: Vec<(Shape, Chain)>,
 }
 
 impl Denoiser {
-    pub fn new(device: &wgpu::Device) -> Self {
-        Self {
-            classification: Pass::new(device, &TILE_CLASSIFICATION, TILE_CLASSIFICATION_ENTRY, &[]),
-            filters: std::array::from_fn(|pass| {
-                Pass::new(
-                    device,
-                    &FILTER,
-                    FILTER_ENTRY,
-                    &[("filter_pass", pass as f64)],
-                )
-            }),
+    /// Makes the passes of every shape `quality` (resolved) takes.
+    pub fn prepare(&mut self, device: &wgpu::Device, quality: RayTracedShadowQuality) {
+        for &shape in Shape::all(quality) {
+            if !self.chains.iter().any(|(made, _)| *made == shape) {
+                self.chains.push((shape, Chain::new(device, shape)));
+            }
         }
     }
 
-    /// Denoises the slots' traced visibility, whose tiles `targets` holds,
-    /// into its denoised words.
+    /// Lets go of every shape's bind groups, which hold the targets they
+    /// bound, as the stage's targets are made anew.
+    pub fn forget_groups(&mut self) {
+        for (_, chain) in &mut self.chains {
+            for pass in std::iter::once(&mut chain.classification).chain(&mut chain.filters) {
+                for group in &mut pass.groups {
+                    group.forget();
+                }
+            }
+        }
+    }
+
+    /// Denoises the traced visibility of the slots `shape` filters, whose
+    /// tiles `targets` holds, into its denoised words; its passes are
+    /// `prepare`'s.
     pub fn encode(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         timing: Option<&crate::timing::GpuTiming>,
+        shape: Shape,
         targets: &Targets,
         inputs: Inputs<'_>,
     ) {
+        let chain = self
+            .chains
+            .iter_mut()
+            .find_map(|(made, chain)| (*made == shape).then_some(chain))
+            .expect("the shape's passes are prepared");
         let resource = wgpu::BindingResource::TextureView;
         let (current, previous) = (inputs.current, 1 - inputs.current);
         let [width, height] = inputs.reduced;
@@ -194,7 +364,7 @@ impl Denoiser {
             compute.dispatch_workgroups(groups[0], groups[1], groups[2]);
         };
         let [scratch_a, scratch_b] = &targets.scratch;
-        let classification = self.classification.groups[current].get(
+        let classification = chain.classification.groups[current].get(
             device,
             "ray-traced shadow tile classification",
             &[
@@ -215,18 +385,20 @@ impl Denoiser {
         );
         dispatch(
             encoder,
-            &self.classification.pipeline,
+            &chain.classification.pipeline,
             classification,
             "ray-traced shadow tile classification",
         );
         // Pass 0 filters A into B, which the next frame's classification
-        // reads as its history; pass 1 B into A; pass 2 A into the denoised
-        // words, binding B, which it does not write.
-        for (pass, (input, history)) in self.filters.iter_mut().zip([
-            (scratch_a, scratch_b),
-            (scratch_b, scratch_a),
-            (scratch_a, scratch_b),
-        ]) {
+        // reads as its history, and each pass after it the half the one
+        // before wrote into the other, the last into the denoised words,
+        // binding as its history the half it does not write.
+        for (index, pass) in chain.filters.iter_mut().enumerate() {
+            let (input, history) = if index % 2 == 0 {
+                (scratch_a, scratch_b)
+            } else {
+                (scratch_b, scratch_a)
+            };
             let group = filter_group(
                 &mut pass.groups[current],
                 device,

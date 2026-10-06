@@ -27,12 +27,15 @@ fn traced_denoise_normal(p:vec2<u32>)->vec3<f32> {
 // A texel of the denoiser's scratch (denoise.rs `Targets::scratch`): the
 // four denoised slots' mean and variance, a slot a word, the mean its low
 // half and the variance its high (pack2x16float), as Wicked keeps a light's
-// in R16G16.
+// in R16G16; the passes' lanes (traced_denoise_lanes_*.wgsl) are its first
+// words, and one lane leaves the others zero.
 struct TracedDenoiseScratch {
- mean:vec4<f32>,
- variance:vec4<f32>,
+ mean:FfxDnsrFloat,
+ variance:FfxDnsrFloat,
 }
-fn traced_denoise_pack(mean:vec4<f32>,variance:vec4<f32>)->vec4<u32> {
+fn traced_denoise_pack(mean_lanes:FfxDnsrFloat,variance_lanes:FfxDnsrFloat)->vec4<u32> {
+ let mean=ffx_dnsr_float_texel(mean_lanes);
+ let variance=ffx_dnsr_float_texel(variance_lanes);
  return vec4(
   pack2x16float(vec2(mean.x,variance.x)),
   pack2x16float(vec2(mean.y,variance.y)),
@@ -45,5 +48,5 @@ fn traced_denoise_unpack(words:vec4<u32>)->TracedDenoiseScratch {
  let y=unpack2x16float(words.y);
  let z=unpack2x16float(words.z);
  let w=unpack2x16float(words.w);
- return TracedDenoiseScratch(vec4(x.x,y.x,z.x,w.x),vec4(x.y,y.y,z.y,w.y));
+ return TracedDenoiseScratch(ffx_dnsr_float(vec4(x.x,y.x,z.x,w.x)),ffx_dnsr_float(vec4(x.y,y.y,z.y,w.y)));
 }

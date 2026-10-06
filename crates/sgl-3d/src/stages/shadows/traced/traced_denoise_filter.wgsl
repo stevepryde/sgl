@@ -1,20 +1,24 @@
 // The ray-traced shadow stage's denoiser, its filter passes (the
 // architecture's Ray-traced shadows): AMD's edge-stopping filter over the
-// slots it denoises at step 1, 2 and 4 (`filter_pass` 0, 1 and 2), all
-// four slots in one invocation, a slot a lane. The first
-// two keep their result for the next, and the first's for the next frame's
-// tile classification; the last recovers some of the contrast the
-// filtering took and writes the denoised visibility. Group 0 is the
+// slots it denoises, from slot 0, in one invocation, a slot a lane of the
+// program's lanes (traced_denoise_lanes_*.wgsl), at step `filter_step`
+// (1, 2 and then 4, denoise.rs `Shape`). Each pass but the last keeps its
+// result for the next, and the first's for the next frame's tile
+// classification; the last (`filter_final`) recovers some of the contrast
+// the filtering took and writes the denoised visibility. Group 0 is the
 // pass's own.
 //
 // Ports Wicked Engine 2ff1d9e's rtshadow_denoise_filterCS.hlsl (MIT,
 // src/LICENSE-wicked.txt): the callbacks AMD's
 // ffx_denoiser_shadows_filter.h takes, its depth similarity's sigma of 1,
 // and the last pass's contrast recovery (79–82). Changed at the port
-// boundary: the four slots in one invocation, a slot a lane of the port's
-// vectors (ffx_denoiser_shadows_filter.wgsl), where Wicked dispatches each
+// boundary: the slots in one invocation, a slot a lane of the port's
+// values (ffx_denoiser_shadows_filter.wgsl), where Wicked dispatches each
 // light, so the metadata, input and history hold the four slots in one
-// texel's lanes; the pass a pipeline constant, where Wicked pushes it;
+// texel's channels, a lane's its own; the step a pipeline constant, where
+// Wicked pushes it, and whether the pass writes a cleared tile
+// (`filter_write_cleared`) one too, where upstream's second pass of three
+// alone does not, so that two passes end in one that writes it;
 // depth and normals the trace's copies at the tracing resolution
 // (traced_denoise_common.wgsl): the depth linear already, so AMD's
 // linearisation through the inverse projection is not applied, and a
@@ -23,7 +27,9 @@
 // denoised visibility written as one word a tracing pixel, slot s in its
 // byte s, as the trace packs its first word, where Wicked writes a channel
 // a light.
-override filter_pass:u32;
+override filter_step:u32;
+override filter_final:bool;
+override filter_write_cleared:bool;
 // The tracing pixels' shading normals the trace writes.
 @group(0) @binding(1) var denoise_normal:texture_2d<f32>;
 @group(0) @binding(2) var denoise_metadata:texture_2d<u32>;
@@ -60,39 +66,38 @@ fn FFX_DNSR_Shadows_IsShadowReciever(did:vec2<u32>)->bool {
  return traced_denoise_receiver(did);
 }
 
-// The four slots' mean and variance, packed as the scratch holds them
+// The lanes' mean and variance, packed as the scratch holds them
 // (traced_denoise_common.wgsl), and unpacked.
-fn FFX_DNSR_Shadows_ReadInput(p:vec2<i32>)->vec4<u32> {
- return textureLoad(denoise_input,p,0);
+fn FFX_DNSR_Shadows_ReadInput(p:vec2<i32>)->FfxDnsrUint {
+ return ffx_dnsr_uint(textureLoad(denoise_input,p,0));
 }
-fn FFX_DNSR_Shadows_UnpackInput(packed:vec4<u32>)->FFX_DNSR_Shadows_Input {
- let input=traced_denoise_unpack(packed);
+fn FFX_DNSR_Shadows_UnpackInput(packed:FfxDnsrUint)->FFX_DNSR_Shadows_Input {
+ let input=traced_denoise_unpack(ffx_dnsr_uint_texel(packed));
  return FFX_DNSR_Shadows_Input(input.mean,input.variance);
 }
 
-fn FFX_DNSR_Shadows_ReadTileMetaData(p:u32)->vec4<u32> {
+fn FFX_DNSR_Shadows_ReadTileMetaData(p:u32)->FfxDnsrUint {
  let groups=FFX_DNSR_Shadows_RoundedDivide(FFX_DNSR_Shadows_GetBufferDimensions().x,8u);
  denoise_tile_meta_data=textureLoad(denoise_metadata,vec2(p%groups,p/groups),0);
  workgroupBarrier();
- return workgroupUniformLoad(&denoise_tile_meta_data);
+ return ffx_dnsr_uint(workgroupUniformLoad(&denoise_tile_meta_data));
 }
 
 @compute @workgroup_size(8,8) fn traced_denoise_filter(@builtin(workgroup_id) gid:vec3<u32>,@builtin(local_invocation_id) gtid:vec3<u32>,@builtin(global_invocation_id) did:vec3<u32>) {
- let step_size=1u<<filter_pass;
- let filtered=FFX_DNSR_Shadows_FilterSoftShadowsPass(gid.xy,gtid.xy,did.xy,filter_pass,step_size);
+ let filtered=FFX_DNSR_Shadows_FilterSoftShadowsPass(gid.xy,gtid.xy,did.xy,filter_write_cleared,filter_step);
  if !filtered.write_results {
   return;
  }
- if filter_pass<2u {
+ if !filter_final {
   textureStore(denoise_history,did.xy,traced_denoise_pack(filtered.results.mean,filtered.results.variance));
  } else {
   // final pass:
   // Recover some of the contrast lost during denoising
-  let shadow_remap=max(1.2-filtered.results.variance,vec4(1.));
+  let shadow_remap=max(1.2-filtered.results.variance,FfxDnsrFloat(1.));
   let mean=saturate(pow(abs(filtered.results.mean),shadow_remap));
   let size=vec2<u32>(traced.reduced.xy);
   if all(did.xy<size) {
-   denoise_output[did.y*size.x+did.x]=traced_pack(mean);
+   denoise_output[did.y*size.x+did.x]=traced_pack(ffx_dnsr_float_texel(mean));
   }
  }
 }

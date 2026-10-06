@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 28] = [
+    let roots: [&'static super::Module; 30] = [
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
@@ -66,8 +66,10 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::motion_blur::MOTION_BLUR,
         &crate::stages::shadows::traced::TEMPORAL,
         &crate::stages::shadows::traced::UPSAMPLE,
-        &crate::stages::shadows::traced::denoise::TILE_CLASSIFICATION,
-        &crate::stages::shadows::traced::denoise::FILTER,
+        &crate::stages::shadows::traced::denoise::TILE_CLASSIFICATION_FOUR,
+        &crate::stages::shadows::traced::denoise::TILE_CLASSIFICATION_ONE,
+        &crate::stages::shadows::traced::denoise::FILTER_FOUR,
+        &crate::stages::shadows::traced::denoise::FILTER_ONE,
         &crate::stages::shadows::local::COPY,
     ];
     let mut programs: Vec<_> = roots
@@ -312,10 +314,15 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         (traced::TEMPORAL.name, vec![traced::TEMPORAL_ENTRY]),
         (traced::UPSAMPLE.name, vec![traced::UPSAMPLE_ENTRY]),
         (
-            denoise::TILE_CLASSIFICATION.name,
+            denoise::TILE_CLASSIFICATION_FOUR.name,
             vec![denoise::TILE_CLASSIFICATION_ENTRY],
         ),
-        (denoise::FILTER.name, vec![denoise::FILTER_ENTRY]),
+        (
+            denoise::TILE_CLASSIFICATION_ONE.name,
+            vec![denoise::TILE_CLASSIFICATION_ENTRY],
+        ),
+        (denoise::FILTER_FOUR.name, vec![denoise::FILTER_ENTRY]),
+        (denoise::FILTER_ONE.name, vec![denoise::FILTER_ENTRY]),
         (
             local::COPY.name,
             vec![FULLSCREEN_VS_ENTRY, local::COPY_FS_ENTRY],
