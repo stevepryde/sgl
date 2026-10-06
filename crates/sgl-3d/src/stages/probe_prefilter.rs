@@ -16,6 +16,9 @@ pub(crate) static PREFILTER: crate::shading::Module = crate::shading::Module {
     source: include_str!("probe_prefilter.wgsl"),
     deps: &[&crate::shading::SPECULAR_PROBE_LEVELS],
 };
+/// The entry points the prefilter's pipelines are created with.
+pub(crate) const PREFILTER_ENTRY: &str = "prefilter";
+pub(crate) const MIP_REDUCE_ENTRY: &str = "mip_reduce";
 
 pub(crate) struct ProbePrefilter {
     face_size: u32,
@@ -129,8 +132,8 @@ impl ProbePrefilter {
                     | wgpu::TextureUsages::COPY_SRC,
                 "prefiltered specular probe",
             ),
-            pipeline: compute("prefilter"),
-            mip_pipeline: compute("mip_reduce"),
+            pipeline: compute(PREFILTER_ENTRY),
+            mip_pipeline: compute(MIP_REDUCE_ENTRY),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("specular probe capture trilinear"),
                 mag_filter: wgpu::FilterMode::Linear,

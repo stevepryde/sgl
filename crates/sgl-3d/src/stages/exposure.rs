@@ -29,6 +29,9 @@ pub(crate) static EXPOSURE: crate::shading::Module = crate::shading::Module {
     source: include_str!("exposure.wgsl"),
     deps: &[&crate::shading::LUMINANCE],
 };
+/// The entry points the exposure's pipelines are created with.
+pub(crate) const COMPUTE_HISTOGRAM_ENTRY: &str = "compute_histogram";
+pub(crate) const COMPUTE_AVERAGE_ENTRY: &str = "compute_average";
 
 /// The exposure multiplier's format, which FSR2 reads as its exposure.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
@@ -263,8 +266,8 @@ impl Exposure {
             wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
         );
         Self {
-            histogram_pipeline: pipeline("compute_histogram"),
-            average_pipeline: pipeline("compute_average"),
+            histogram_pipeline: pipeline(COMPUTE_HISTOGRAM_ENTRY),
+            average_pipeline: pipeline(COMPUTE_AVERAGE_ENTRY),
             settings: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {

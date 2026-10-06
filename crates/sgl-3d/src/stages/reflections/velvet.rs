@@ -55,16 +55,21 @@ static RESOLVE: Module = Module {
     source: include_str!("velvet/godot_reflections_resolve.wgsl"),
     deps: &[],
 };
-/// Velvet's programs.
+/// The entry points the programs' pipelines are created with: each one's
+/// `main`, and the resolve's at half and at full size.
+const MAIN_ENTRY: &str = "main";
+const RESOLVE_HALF_ENTRY: &str = "resolve_half";
+const RESOLVE_FULL_ENTRY: &str = "resolve_full";
+/// Velvet's programs and the entry points their pipelines are created with.
 #[cfg(test)]
-pub(crate) static PROGRAMS: [&Module; 7] = [
-    &INPUTS,
-    &DOWNSAMPLE,
-    &HIZ,
-    &TRACE,
-    &TEMPORAL,
-    &FILTER,
-    &RESOLVE,
+pub(crate) static PROGRAMS: [(&Module, &[&str]); 7] = [
+    (&INPUTS, &[MAIN_ENTRY]),
+    (&DOWNSAMPLE, &[MAIN_ENTRY]),
+    (&HIZ, &[MAIN_ENTRY]),
+    (&TRACE, &[MAIN_ENTRY]),
+    (&TEMPORAL, &[MAIN_ENTRY]),
+    (&FILTER, &[MAIN_ENTRY]),
+    (&RESOLVE, &[RESOLVE_HALF_ENTRY, RESOLVE_FULL_ENTRY]),
 ];
 
 /// Godot's `Environment` defaults: `ssr_max_steps`, `ssr_fade_in`,
@@ -212,14 +217,18 @@ impl Velvet {
             )
         };
         Self {
-            inputs: pipeline("Godot SSR inputs", &INPUTS, "main"),
-            downsample: pipeline("Godot SSR downsample", &DOWNSAMPLE, "main"),
-            hiz: pipeline("Godot SSR hi-z", &HIZ, "main"),
-            trace: pipeline("Godot SSR main", &TRACE, "main"),
-            temporal: pipeline("Godot SSR temporal", &TEMPORAL, "main"),
-            filter: pipeline("Godot SSR roughness filter", &FILTER, "main"),
-            resolve_half: pipeline("Godot SSR resolve", &RESOLVE, "resolve_half"),
-            resolve_full: pipeline("Godot SSR resolve at full size", &RESOLVE, "resolve_full"),
+            inputs: pipeline("Godot SSR inputs", &INPUTS, MAIN_ENTRY),
+            downsample: pipeline("Godot SSR downsample", &DOWNSAMPLE, MAIN_ENTRY),
+            hiz: pipeline("Godot SSR hi-z", &HIZ, MAIN_ENTRY),
+            trace: pipeline("Godot SSR main", &TRACE, MAIN_ENTRY),
+            temporal: pipeline("Godot SSR temporal", &TEMPORAL, MAIN_ENTRY),
+            filter: pipeline("Godot SSR roughness filter", &FILTER, MAIN_ENTRY),
+            resolve_half: pipeline("Godot SSR resolve", &RESOLVE, RESOLVE_HALF_ENTRY),
+            resolve_full: pipeline(
+                "Godot SSR resolve at full size",
+                &RESOLVE,
+                RESOLVE_FULL_ENTRY,
+            ),
             linear: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("Godot SSR linear"),
                 mag_filter: wgpu::FilterMode::Linear,

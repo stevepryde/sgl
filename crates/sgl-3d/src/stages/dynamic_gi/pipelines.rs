@@ -20,6 +20,11 @@ pub(crate) static ALLOCATE: shading::Module = shading::Module {
     source: include_str!("allocate.wgsl"),
     deps: &[&COMMON],
 };
+/// The entry points the allocation's pipelines are created with.
+pub(crate) const RANK_ENTRY: &str = "rank";
+pub(crate) const THRESHOLD_ENTRY: &str = "threshold";
+pub(crate) const ALLOCATE_ENTRY: &str = "allocate";
+pub(crate) const PREPARE_TRACE_ENTRY: &str = "prepare_trace";
 /// The trace: the volume's lit group 0, the scene's group 1 and the stage's
 /// own group 3.
 pub(crate) static TRACE: shading::Module = shading::Module {
@@ -32,12 +37,23 @@ pub(crate) static TRACE: shading::Module = shading::Module {
         &COMMON,
     ],
 };
+/// The entry points the trace's pipelines are created with: the trace's,
+/// and the observed trace's from the portable program (feature
+/// `diagnostics`), which every path's program holds.
+pub(crate) const TRACE_ENTRY: &str = "trace";
+#[cfg(any(test, feature = "diagnostics"))]
+pub(crate) const TRACE_OBSERVED_ENTRY: &str = "trace_observed";
 /// The irradiance and depth blends, at the stage's own group 0.
 pub(crate) static UPDATE: shading::Module = shading::Module {
     name: "dynamic_gi_update",
     source: include_str!("update.wgsl"),
     deps: &[&COMMON],
 };
+/// The entry points the blends' pipelines are created with.
+pub(crate) const UPDATE_IRRADIANCE_ENTRY: &str = "update_irradiance";
+pub(crate) const UPDATE_DEPTH_ENTRY: &str = "update_depth";
+pub(crate) const SETTLE_ENTRY: &str = "settle";
+pub(crate) const SCROLL_ENTRY: &str = "scroll";
 
 /// The stage's pipelines.
 pub(super) struct Pipelines {
@@ -93,49 +109,49 @@ impl Pipelines {
             "dynamic GI ramp rank",
             &layouts.allocate,
             &allocate_shader,
-            "rank",
+            RANK_ENTRY,
         );
         let threshold = pipeline(
             "dynamic GI ramp threshold",
             &layouts.allocate,
             &allocate_shader,
-            "threshold",
+            THRESHOLD_ENTRY,
         );
         let allocate = pipeline(
             "dynamic GI allocation",
             &layouts.allocate,
             &allocate_shader,
-            "allocate",
+            ALLOCATE_ENTRY,
         );
         let prepare_trace = pipeline(
             "dynamic GI dispatch",
             &layouts.allocate,
             &allocate_shader,
-            "prepare_trace",
+            PREPARE_TRACE_ENTRY,
         );
         let update_irradiance = pipeline(
             "dynamic GI irradiance blend",
             &layouts.update,
             &update_shader,
-            "update_irradiance",
+            UPDATE_IRRADIANCE_ENTRY,
         );
         let update_depth = pipeline(
             "dynamic GI depth blend",
             &layouts.update,
             &update_shader,
-            "update_depth",
+            UPDATE_DEPTH_ENTRY,
         );
         let settle = pipeline(
             "dynamic GI convergence",
             &layouts.update,
             &update_shader,
-            "settle",
+            SETTLE_ENTRY,
         );
         let scroll = pipeline(
             "dynamic GI scroll",
             &layouts.update,
             &update_shader,
-            "scroll",
+            SCROLL_ENTRY,
         );
         Self {
             paths: TracePaths::new("dynamic GI rays", &TRACE, &layouts.trace, [lit, scene]),
@@ -168,7 +184,7 @@ impl Pipelines {
                     label: Some("dynamic GI rays"),
                     layout: Some(layout),
                     module: shader,
-                    entry_point: Some("trace"),
+                    entry_point: Some(TRACE_ENTRY),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &lit.constants(),
                         ..Default::default()

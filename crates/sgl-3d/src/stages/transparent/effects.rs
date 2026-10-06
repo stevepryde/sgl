@@ -11,6 +11,10 @@ pub(crate) static GLOW: crate::shading::Module = crate::shading::Module {
     source: include_str!("glow.wgsl"),
     deps: &[&crate::shading::BIND_UNLIT, &crate::shading::FRAME_FOG],
 };
+/// The entry points the glow's pipelines are created with.
+pub(crate) const GLOW_VS_ENTRY: &str = "glow_vs";
+pub(crate) const GLOW_SOFT_FS_ENTRY: &str = "glow_soft_fs";
+pub(crate) const GLOW_SOFT_FSR2_MASKED_FS_ENTRY: &str = "glow_soft_fsr2_masked_fs";
 /// The glow's vertex buffer, read by `glow_vs`.
 pub(crate) const GLOW_LAYOUT: VertexLayout = vertex_layout!(
     GlowVertex,
@@ -80,16 +84,16 @@ impl Effects {
                 layout: Some(&soft_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("glow_vs"),
+                    entry_point: Some(GLOW_VS_ENTRY),
                     compilation_options: Default::default(),
                     buffers: &buffers,
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some(if masked {
-                        "glow_soft_fsr2_masked_fs"
+                        GLOW_SOFT_FSR2_MASKED_FS_ENTRY
                     } else {
-                        "glow_soft_fs"
+                        GLOW_SOFT_FS_ENTRY
                     }),
                     compilation_options: Default::default(),
                     targets: if masked {

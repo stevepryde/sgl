@@ -24,6 +24,8 @@ pub(crate) static OBSERVE: crate::shading::Module = crate::shading::Module {
     source: include_str!("observe.wgsl"),
     deps: &[&super::pipelines::COMMON],
 };
+/// The entry point the observation's pipeline is created with.
+pub(crate) const OBSERVE_ENTRY: &str = "observe";
 
 /// The probes' bins of rays (`DDGI_OBSERVED_RAY_BINS`).
 const RAY_BINS: usize = 8;
@@ -181,7 +183,7 @@ impl Observer {
                 }),
             ),
             module: &shader,
-            entry_point: Some("observe"),
+            entry_point: Some(OBSERVE_ENTRY),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -268,7 +270,7 @@ impl Observer {
                 label: Some("dynamic GI rays observed"),
                 layout: Some(layout),
                 module: shader,
-                entry_point: Some("trace_observed"),
+                entry_point: Some(super::pipelines::TRACE_OBSERVED_ENTRY),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &constants,
                     ..Default::default()

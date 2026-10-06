@@ -449,12 +449,21 @@ pub(crate) static GBUFFER: Module = Module {
     source: include_str!("gbuffer.wgsl"),
     deps: &[&SPECULAR_LOBES],
 };
-/// The full-screen triangle and its vertex entry point, `fullscreen_vs`.
+/// The full-screen triangle: each vertex's corner and clip position, for a
+/// vertex entry point of a pass's own.
 pub(crate) static FULLSCREEN: Module = Module {
     name: "fullscreen",
     source: include_str!("fullscreen.wgsl"),
     deps: &[],
 };
+/// The full-screen triangle's vertex entry point, which a pipeline is
+/// created with as `FULLSCREEN_VS_ENTRY`.
+pub(crate) static FULLSCREEN_VS: Module = Module {
+    name: "fullscreen_vs",
+    source: include_str!("fullscreen_vs.wgsl"),
+    deps: &[&FULLSCREEN],
+};
+pub(crate) const FULLSCREEN_VS_ENTRY: &str = "fullscreen_vs";
 /// The scene source's layout: its records' words.
 pub(crate) static SCENE_SOURCE: Module = Module {
     name: "scene_source",
