@@ -15,10 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
-### sgl-3d: behaviour changes
+## 0.2.1 — 2026-10-07
 
+- Move every SGL crate to `0.2.1` together; no API changes and no game-code
+  changes.
 - `Settings::ambient_occlusion` costs less GPU time; its output is
-  unchanged. No game-code change.
+  unchanged.
 
 ## 0.2.0 — 2026-10-06
 
