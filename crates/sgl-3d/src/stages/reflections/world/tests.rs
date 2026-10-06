@@ -2,9 +2,9 @@
 //! frames.
 use crate::asset::{CpuMesh, Vertex};
 use crate::renderer::Renderer;
-use crate::shading::RayQueryForm;
 use crate::settings::WorldSpaceReflections::{All, Moving};
 use crate::settings::{self, Settings};
+use crate::shading::RayQueryForm;
 use crate::{Backdrop, Camera, FrameInput, InstanceState, Mobility, Scene, test_support};
 use glam::{Mat4, Vec3};
 
@@ -193,11 +193,11 @@ fn reflected_wall(
             // under the candidate form, on the portable BVHs under the
             // baseline, so the masked wall's frames compare the form the
             // device runs with the portable path, not the walk with itself.
-            let (hardware, portable) =
-                match RayQueryForm::of_backend(device.adapter_info().backend) {
-                    RayQueryForm::Baseline => (1, 1),
-                    RayQueryForm::Candidates => (2, 0),
-                };
+            let (hardware, portable) = match RayQueryForm::of_backend(device.adapter_info().backend)
+            {
+                RayQueryForm::Baseline => (1, 1),
+                RayQueryForm::Candidates => (2, 0),
+            };
             assert_eq!(
                 stats,
                 crate::RayTracingStats {
