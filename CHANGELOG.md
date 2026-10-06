@@ -15,6 +15,27 @@ full API details.
 
 ## Unreleased
 
+### Metal traces masked models in hardware, off by default
+
+- **Scope:** `sgl-3d` hardware ray tracing on Metal (#211). Behind
+  `Settings::hardware_ray_tracing` (still off by default and in every
+  preset, D-28), Metal now runs the hardware path's candidate form, which
+  naga 30's MSL writer lowers: models with a masked mesh join the
+  acceleration structures with their masked meshes not opaque, and the
+  hardware's candidate loop cuts out their texels, where the software
+  BVHs traced them before. World-space reflections, the dynamic GI
+  volume's rays and ray-traced shadows see the same content as before,
+  matching the software BVHs within the f32 rounding of two triangle
+  solves. `Renderer::ray_tracing_stats` now counts such instances under
+  `hardware` rather than `portable` on Metal. TIMINGS-CL Vulkan and DX12
+  are unchanged: they run the baseline form until the candidate form is
+  measured on their hardware.
+- **Migration:** no game-code changes. A Mac game that turns hardware ray
+  tracing on and has masked content (foliage, fences, hair cards) should
+  re-measure its routes' `world reflection rays`, `dynamic GI rays` and
+  `ray-traced shadow rays` GPU time and the acceleration structures'
+  memory, which now include those models' BLASes.
+
 ### SGL moves to wgpu 30
 
 - **Scope:** `sgl-2d`, `sgl-3d` and `sgl-post-fx` move from wgpu and naga
@@ -46,9 +67,9 @@ full API details.
     zero-initialisation holds; the 30.0.1 minimum is what rules the old
     tracking out. No visible change.
   - On Metal, naga 30 lowers ray queries through Metal's
-    `intersection_query` instead of `intersector`. The hardware path keeps
-    its baseline form there (#211 decides the candidate form), but its
-    passes' GPU time on Metal may differ from wgpu 29's.
+    `intersection_query` instead of `intersector`, which lets Metal run
+    the hardware path's candidate form (see "Metal traces masked models in
+    hardware" below). TIMINGS-T6
 - **Migration:** a game that calls wgpu or writes WGSL itself updates that
   code for wgpu 30 ([wgpu's changelog](https://github.com/gfx-rs/wgpu/blob/v30.0.0/CHANGELOG.md)).
   These are the changes SGL's own code needed:

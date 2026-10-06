@@ -51,8 +51,14 @@ enable wgpu_ray_query;
 // crossed a re-trace. The cap is about nine times that, for denser hair,
 // and still bounds every ray: a ray that reaches it reports a miss, or a
 // visibility ray unoccluded, as the portable walk does at
-// SCENE_BVH_MOST_VISITS. The candidate form's steps are unmeasured until
-// it runs on Vulkan or DX12 hardware.
+// SCENE_BVH_MOST_VISITS. The candidate form's, counted on Metal (#211):
+// among the same hair cards the most of 6.3 million rays took 44 steps
+// (36 under the baseline), each crossed card a candidate; and among 266
+// static hedges, each 24 crossed cards three quarters cut out, beside a
+// glossy strip under world-space reflections that reach everything,
+// ray-traced shadows and a dynamic GI volume, the most of 25.8 million
+// nearest rays took 84 and of 39.1 million visibility rays 24, grazing
+// rays along the hedges the most. The cap is three times that.
 const SCENE_MOST_HARDWARE_STEPS:u32=256u;
 // Counts one more hardware step of a ray's `steps`, false once the ray has
 // taken SCENE_MOST_HARDWARE_STEPS, after which it stays exhausted.

@@ -194,13 +194,11 @@ impl Renderer {
             layers,
         );
         let targets = SharedTargets::new(device, render, false);
-        // Metal runs the baseline form (#211 decides the candidate form
-        // there); Vulkan and DX12 the form recorded for backends that may
-        // run the candidate form (`shading::LOWERED_FORM`).
+        // The form recorded for the device's backend
+        // (`shading::METAL_FORM`, `shading::LOWERED_FORM`).
         let ray_form = crate::scene::rays::acceleration::supported(device).then(|| {
             crate::view::trace_paths::DeviceRayForm::new(crate::shading::RayQueryForm::of_backend(
                 device.adapter_info().backend,
-                crate::shading::LOWERED_FORM,
             ))
         });
         let cull = Cull::new(device);

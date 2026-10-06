@@ -6,10 +6,9 @@
 //! prepare builds them, then rays go through the scene ray function set the
 //! hardware form's query module composes, under each form the device's
 //! backend runs (`forms`): the baseline on every one, the candidate form
-//! where the backend lowers its loop (Vulkan, DX12), whichever the
+//! where the backend lowers its loop (Vulkan, DX12, Metal), whichever the
 //! renderer takes by default. Each test reports itself unsupported, never
-//! passed, where the adapter has no ray queries; the candidate form has run
-//! on no device yet (#23).
+//! passed, where the adapter has no ray queries.
 use super::{Function, Query};
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
 use crate::content::identity::Identity;
@@ -400,8 +399,7 @@ struct Batch<'a> {
 
 /// The hardware forms `device`'s backend runs: the baseline on every one,
 /// and the candidate form where the backend may run it
-/// (`RayQueryForm::lowered`: Vulkan and DX12; Metal stays on the baseline
-/// until #211).
+/// (`RayQueryForm::lowered`: Vulkan, DX12 and Metal).
 fn forms(device: &wgpu::Device) -> Vec<RayQueryForm> {
     let mut forms = vec![RayQueryForm::Baseline];
     if RayQueryForm::lowered(device.adapter_info().backend) {
