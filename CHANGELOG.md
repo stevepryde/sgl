@@ -15,6 +15,31 @@ full API details.
 
 ## Unreleased
 
+### FSR2 is told where opaque surfaces' normal layers move
+
+- **Scope:** `sgl-3d` (#146). No API change. While FSR2 runs, opaque and
+  masked surfaces whose material's normal layers move (a lit material with
+  a layer moving at least one repeat of its map an hour) now mark FSR2's
+  transparency-and-composition mask, as AMD's FSR documentation names
+  animated textures for that mask and AMD's FSR sample marks them. Before,
+  only blended surfaces, additive effects and mist wrote FSR2's masks, and
+  opaque surfaces wrote none. Blended surfaces, additive effects and mist
+  write their masks as before, accumulating onto the marks: over a moving
+  opaque surface the transparency-and-composition mask now reads 1 where
+  a blended surface's alpha read before. TAA, SMAA and frames without FSR2
+  are unchanged.
+- **Cost:** while FSR2 runs and the scene holds such a material, the camera
+  draws those materials' surfaces once more at their depth, writing one
+  8-bit mask (timing group `FSR2 composition`); nothing otherwise. On an
+  Apple M5 at 1920×1080 with FSR2 Quality, the water example's
+  `fsr2-opaque` run (an opaque lake) took 4.94 ms a frame (median GPU
+  time) against 4.87 ms before: the pass 0.03 ms, and FSR2 0.07 ms more
+  where the mask is set, as it costs where blended water sets its masks.
+  Frames of a scene without such a material are unchanged.
+- **Migration:** none. Afterwards, under FSR2, look at opaque water or any
+  opaque surface with moving normal layers in motion; the `water` example's
+  `fsr2-opaque` run renders an opaque lake under FSR2.
+
 ### glTF bytes decode data-URI images
 
 - **Scope:** `sgl-3d` `asset::load_slice` and `asset::load_slice_with_options`

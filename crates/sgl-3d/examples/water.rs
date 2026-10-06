@@ -6,17 +6,19 @@
 //! bright panel above the far shore. A second receiver sheet lies partly
 //! over the lake and a glass pane that does not receive stands in front.
 //!
-//! `cargo run --release -p sgl-3d --example water [-- --frames N]`
+//! `cargo run --release -p sgl-3d --example water [-- --frames N] [--run NAME]...`
 //!
 //! Renders each run below at 1920×1080 through the public `Scene` and
 //! `Renderer` API and prints, per run, the median and 95th percentile GPU
 //! time of the frame and of the pass groups receivers touch, over the frames
 //! after a warm-up, with up to two frames in flight, and what the frames
-//! replace in the scene. `before` and `after` are the same frames with the
-//! lake and the sheet unmarked and marked; `set-model` is `after` with the
-//! waves animated as before material layers existed: a 128×128 grid whose
-//! normals follow a sum of sines, replaced every frame with
-//! `Scene::set_model`. Every 30th frame and the last of each run are written
+//! replace in the scene. `--run` renders only the runs it names. `before`
+//! and `after` are the same frames with the lake and the sheet unmarked and
+//! marked; `set-model` is `after` with the waves animated as before material
+//! layers existed: a 128×128 grid whose normals follow a sum of sines,
+//! replaced every frame with `Scene::set_model`. `fsr2-opaque` is `fsr2`
+//! with the lake opaque, whose moving layers mark FSR2's transparency and
+//! composition mask. Every 30th frame and the last of each run are written
 //! to `target/water-example/<run>/` for the owner to judge.
 use sgl_3d::glam::{Quat, Vec3, camera};
 use sgl_3d::{
@@ -66,6 +68,8 @@ struct Run {
     settings: Settings,
     /// The lake and the sheet receive screen-space reflections.
     marked: bool,
+    /// The lake is opaque rather than blended.
+    opaque_lake: bool,
     /// The camera orbits; otherwise it stands still.
     orbit: bool,
     waves: Waves,
@@ -86,6 +90,7 @@ fn runs() -> Vec<Run> {
         name,
         settings,
         marked: true,
+        opaque_lake: false,
         orbit: true,
         waves: Waves::Material,
         resize_and_cut: false,
@@ -96,6 +101,10 @@ fn runs() -> Vec<Run> {
         settings
     };
     let blurred = with(|s| s.motion_blur = MotionBlur::Full);
+    let fsr2 = with(|s| {
+        s.antialiasing = Antialiasing::Fsr2;
+        s.fsr2_quality = Fsr2Quality::Quality;
+    });
     vec![
         Run {
             marked: false,
@@ -134,13 +143,11 @@ fn runs() -> Vec<Run> {
             with(|s| s.screen_space_reflections = ScreenSpaceReflections::Off),
         ),
         run("smaa", with(|s| s.antialiasing = Antialiasing::Smaa)),
-        run(
-            "fsr2",
-            with(|s| {
-                s.antialiasing = Antialiasing::Fsr2;
-                s.fsr2_quality = Fsr2Quality::Quality;
-            }),
-        ),
+        run("fsr2", fsr2),
+        Run {
+            opaque_lake: true,
+            ..run("fsr2-opaque", fsr2)
+        },
         Run {
             resize_and_cut: true,
             ..run("resize-and-cut", base)
@@ -646,6 +653,7 @@ impl Times {
             "reflection composition",
             "blended",
             "TAA",
+            "FSR2 composition",
             "FSR2",
             "motion blur",
         ] {
@@ -675,8 +683,12 @@ fn render(
     )?;
     let mesh = run.waves == Waves::Mesh;
     let water = Material {
-        alpha: AlphaMode::Blend {
-            receives_screen_space_reflections: run.marked,
+        alpha: if run.opaque_lake {
+            AlphaMode::Opaque
+        } else {
+            AlphaMode::Blend {
+                receives_screen_space_reflections: run.marked,
+            }
         },
         casts_directional_shadow: false,
         ..material("water", [0.02, 0.05, 0.06, 0.6], 0.04)
@@ -802,10 +814,12 @@ fn render(
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut frames = 120;
+    let mut only = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--frames" => frames = args.next().ok_or("--frames requires a count")?.parse()?,
+            "--run" => only.push(args.next().ok_or("--run requires a run's name")?),
             other => return Err(format!("unknown argument {other}").into()),
         }
     }
@@ -826,7 +840,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         "{frames} frames per run at {}x{}; GPU time median / p95",
         SIZE[0], SIZE[1]
     );
-    for run in runs() {
+    let runs: Vec<Run> = runs()
+        .into_iter()
+        .filter(|run| only.is_empty() || only.iter().any(|name| name == run.name))
+        .collect();
+    if runs.is_empty() {
+        return Err(format!("no run is named {only:?}").into());
+    }
+    for run in runs {
         render(&run, frames, (&device, &queue), &directory)?.report(run.name);
     }
     println!("Frames: {}", directory.canonicalize()?.display());

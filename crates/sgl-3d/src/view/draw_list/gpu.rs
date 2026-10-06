@@ -378,16 +378,14 @@ impl GpuList {
     /// and one more per opaque set where it pairs.
     #[cfg(any(test, feature = "diagnostics"))]
     pub fn draws(&self) -> usize {
-        self.drawn.len() * self.phases().len() + if self.paired { self.paired_sets() } else { 0 }
-    }
-
-    /// The sets it draws whose paired sections it draws indexed: the
-    /// opaque ones (`SET_PAIRS`).
-    fn paired_sets(&self) -> usize {
-        self.drawn
+        // The sets whose paired sections it draws indexed: the opaque ones
+        // (`SET_PAIRS`).
+        let paired = self
+            .drawn
             .iter()
-            .filter(|set| set.variant.alpha == Alpha::Opaque)
-            .count()
+            .filter(|set| self.paired && set.variant.alpha == Alpha::Opaque)
+            .count();
+        self.drawn.len() * self.phases().len() + paired
     }
 
     /// Issues every phase's draws in `pass`, whose group 0 the caller
@@ -401,7 +399,20 @@ impl GpuList {
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,
     ) -> usize {
-        self.issue(scene, pipelines, pass, kind, self.phases())
+        self.issue(scene, pipelines, pass, kind, self.phases(), &|_| true)
+    }
+
+    /// Issues every phase's draws of the sets whose material `drawn`
+    /// holds for, as `draw` issues them, and returns how many it issued.
+    pub fn draw_materials(
+        &self,
+        scene: &Scene,
+        pipelines: &GeometryPipelines,
+        pass: &mut wgpu::RenderPass<'_>,
+        kind: GeometryPass,
+        drawn: &dyn Fn(MaterialId) -> bool,
+    ) -> usize {
+        self.issue(scene, pipelines, pass, kind, self.phases(), drawn)
     }
 
     /// Issues `phase`'s draws alone in `pass`, as `draw` issues them: none
@@ -417,17 +428,17 @@ impl GpuList {
         if phase == Phase::Late && !self.late {
             return 0;
         }
-        self.issue(scene, pipelines, pass, kind, &[phase])
+        self.issue(scene, pipelines, pass, kind, &[phase], &|_| true)
     }
 
-    /// Per set, in set order, one indirect draw of each of `phases`'
-    /// commands, whose instances are the sections in the set's region of
-    /// that phase's cluster list, with its pipeline and material and, in a
-    /// pass whose casters pull from it, its positions slab's group 3; then,
-    /// where the view pairs and the early phase draws, an opaque set's one
-    /// indexed indirect draw of its paired command over `PAIRED_INDICES`,
-    /// whose instances are the sections in its paired region, with its
-    /// paired pipeline.
+    /// Per set whose material `drawn` holds for, in set order, one
+    /// indirect draw of each of `phases`' commands, whose instances are the
+    /// sections in the set's region of that phase's cluster list, with its
+    /// pipeline and material and, in a pass whose casters pull from it, its
+    /// positions slab's group 3; then, where the view pairs and the early
+    /// phase draws, an opaque set's one indexed indirect draw of its paired
+    /// command over `PAIRED_INDICES`, whose instances are the sections in
+    /// its paired region, with its paired pipeline.
     fn issue(
         &self,
         scene: &Scene,
@@ -435,6 +446,7 @@ impl GpuList {
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,
         phases: &[Phase],
+        drawn: &dyn Fn(MaterialId) -> bool,
     ) -> usize {
         if self.drawn.is_empty() {
             return 0;
@@ -450,7 +462,8 @@ impl GpuList {
         let command = std::mem::size_of::<DrawCommand>() as u64;
         let first = std::mem::size_of::<CullStatistics>() as u64;
         let mut positions = None;
-        for set in &self.drawn {
+        let mut issued = 0;
+        for set in self.drawn.iter().filter(|set| drawn(set.material)) {
             binder.bind(pass, scene, set.variant, set.material);
             if kind.binds_caster_positions() && positions != Some(set.positions) {
                 pass.set_bind_group(3, scene.geometry.positions_group(set.positions), &[]);
@@ -466,6 +479,7 @@ impl GpuList {
                 };
                 pass.set_vertex_buffer(DRAW_INSTANCE_SLOT, regions.slice(region(0)));
                 pass.draw_indirect(&self.draws, first + u64::from(index) * command);
+                issued += 1;
             }
             if paired && set.variant.alpha == Alpha::Opaque {
                 pass.set_pipeline(pipelines.get(GeometryPass::PairedShadow, set.variant));
@@ -476,9 +490,10 @@ impl GpuList {
                     self.regions.slice(region(self.paired_region)),
                 );
                 pass.draw_indexed_indirect(&self.draws, first + u64::from(index) * command);
+                issued += 1;
             }
         }
-        self.drawn.len() * phases.len() + if paired { self.paired_sets() } else { 0 }
+        issued
     }
 }
 

@@ -19,7 +19,8 @@ pub(crate) enum Beauty<'a> {
     /// screen-space method returned while one ran, which receivers that are
     /// the surface compose into their traced lobe. While FSR2 runs, these
     /// draws also write its reactive and transparency and composition
-    /// masks, which start clear here.
+    /// masks, which are cleared here and, while the scene holds an opaque
+    /// surface whose shading moves, marked by it first.
     Composite {
         reflections: Option<&'a wgpu::TextureView>,
     },
@@ -30,14 +31,23 @@ pub(crate) enum Beauty<'a> {
 /// blended surfaces, back to front, and additive glow and ground mist, drawn
 /// (`encode`) into the reflections' incident radiance while they trace it
 /// and onto the composite, each fogged from the frame's fog volume where it
-/// lies, then heat distortion (`encode_heat`).
+/// lies, then heat distortion (`encode_heat`). While FSR2 runs and the scene
+/// holds an opaque or masked material whose shading moves where its
+/// geometry stands still (`Material::surface_moves`: its normal layers), the
+/// draw onto the composite first marks those surfaces in FSR2's
+/// transparency and composition mask, at the opaque depth, as AMD's FSR
+/// sample marks its animated textures after its lighting and before its
+/// translucency (`samples/fsrapi/config/fsrapiconfig.json`, its render
+/// modules' order; SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt).
 ///
 /// Reads: the camera's blended draw list with its lit group 0 and the
-/// geometry pipelines, its unlit group 0 (with the fog volume), the opaque
-/// depth (copied into the surface depth, and tested by every draw but the
-/// receiver pass, never written), the surface depth and the screen-space
-/// method's result (receivers that are the surface), the scene's transient
-/// geometry (glow, heat and mist), the beauty it draws onto.
+/// geometry pipelines, the camera's opaque draw list (its sets whose
+/// material's surface moves, while FSR2 runs), its unlit group 0 (with the
+/// fog volume), the opaque depth (copied into the surface depth, and tested
+/// by every draw but the receiver pass, never written), the surface depth
+/// and the screen-space method's result (receivers that are the surface),
+/// the scene's transient geometry (glow, heat and mist), the beauty it draws
+/// onto.
 /// Writes: the surface depth, the receiver layer and the G-buffer's motion
 /// (the receiver pass); that beauty in place; FSR2's masks while FSR2 runs;
 /// the completed scene in place (heat) through its own snapshot of it.
@@ -45,8 +55,9 @@ pub(crate) enum Beauty<'a> {
 /// Honours: the receiver pass (the effective configuration's), atmosphere
 /// (mist), heat distortion, FSR2 (its masks), the effects and atmosphere
 /// diagnostics layers.
-/// Timing groups: `receivers`, `blended` (blended surfaces, both draws),
-/// `transparent` (glow and mist, both draws), `heat distortion`.
+/// Timing groups: `receivers`, `FSR2 composition` (the moving opaque
+/// surfaces' mask), `blended` (blended surfaces, both draws), `transparent`
+/// (glow and mist, both draws), `heat distortion`.
 /// History: none; the receiver pass rebuilds the surface every frame it
 /// runs.
 pub(crate) struct Transparent {
@@ -178,7 +189,13 @@ impl Transparent {
                 (1, reflections),
             ),
         };
-        // The first pass that writes FSR2's masks clears them.
+        // The first pass that writes FSR2's masks clears them: the moving
+        // opaque surfaces' while the scene holds one, else the blended
+        // surfaces', else the additive effects'.
+        let moving = fsr2_masks.filter(|_| ctx.scene.materials.holds_moving_surfaces());
+        if let Some(masks) = moving {
+            Self::encode_composition(ctx, masks);
+        }
         let blended = !ctx.views.blended.is_empty();
         if blended {
             let group = Self::blended_group(
@@ -187,10 +204,11 @@ impl Transparent {
                 &self.no_reflections,
                 reflections,
             );
-            Self::encode_blended(ctx, beauty, fsr2_masks, group);
+            Self::encode_blended(ctx, beauty, fsr2_masks, moving.is_some(), group);
         }
+        let cleared = moving.is_some() || blended;
         let draw = ctx.effective.effects;
-        if draw || (fsr2_masks.is_some() && !blended) {
+        if draw || (fsr2_masks.is_some() && !cleared) {
             let mut color = attachment(beauty).unwrap();
             color.ops.load = wgpu::LoadOp::Load;
             let mut attachments = vec![Some(color)];
@@ -198,7 +216,7 @@ impl Transparent {
                 fsr2_masks
                     .into_iter()
                     .flatten()
-                    .map(|mask| loaded(attachment(mask), blended)),
+                    .map(|mask| loaded(attachment(mask), cleared)),
             );
             let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("additive effects"),
@@ -272,19 +290,56 @@ impl Transparent {
         )
     }
 
+    /// FSR2's `masks`, cleared, with the camera's opaque and masked
+    /// surfaces whose material's shading moves (`Material::surface_moves`)
+    /// marked in its transparency and composition mask, drawn at the
+    /// opaque depth, which they test for equality without writing it.
+    fn encode_composition(ctx: &mut FrameContext<'_>, masks: &[wgpu::TextureView; 2]) {
+        let attachments = masks.each_ref().map(attachment);
+        let started = crate::counters::Moment::now();
+        let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("FSR2 composition of moving surfaces"),
+            color_attachments: &attachments,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &ctx.targets.depth,
+                depth_ops: None,
+                stencil_ops: None,
+            }),
+            timestamp_writes: ctx.timing.and_then(|t| t.render_pass("FSR2 composition")),
+            ..Default::default()
+        });
+        pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
+        let scene = ctx.scene;
+        ctx.views.camera.list.draw_materials(
+            scene,
+            ctx.pipelines,
+            &mut pass,
+            GeometryPass::Fsr2Composition,
+            &|material| scene.drawn_material(material).surface_moves(),
+        );
+        drop(pass);
+        ctx.views.camera.recorded_since(started);
+    }
+
     /// The camera's blended surfaces onto `beauty`, back to front, tested
     /// against the opaque depth without writing it, with their group 3
     /// `group`, and, with `fsr2_masks`, onto FSR2's masks, which this pass
-    /// clears.
+    /// clears unless they were `cleared`.
     fn encode_blended(
         ctx: &mut FrameContext<'_>,
         beauty: &wgpu::TextureView,
         fsr2_masks: Option<&[wgpu::TextureView; 2]>,
+        cleared: bool,
         group: &wgpu::BindGroup,
     ) {
         let color = loaded(attachment(beauty), true);
         let mut attachments = vec![color];
-        attachments.extend(fsr2_masks.into_iter().flatten().map(attachment));
+        attachments.extend(
+            fsr2_masks
+                .into_iter()
+                .flatten()
+                .map(|mask| loaded(attachment(mask), cleared)),
+        );
         let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("blended surfaces"),
             color_attachments: &attachments,
@@ -327,6 +382,8 @@ impl Transparent {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod blended_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod composition_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod effects_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
