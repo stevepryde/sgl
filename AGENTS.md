@@ -25,20 +25,23 @@ library over minimizing migration work; do not retain obsolete APIs or add
 compatibility shims solely to avoid updating consumers.
 
 - Every consumer-visible change must update [CHANGELOG.md](CHANGELOG.md) in
-  the same change, under `Unreleased`. Name affected crates and symbols,
-  describe the old and new behavior, and give concrete migration steps or
-  before/after code. Explicitly say when no game-code changes are needed.
+  the same change, under `Unreleased`, as one short bullet: the affected crate
+  and symbol, the old and new behavior in a clause, and the migration in a
+  line or a short code sample. Explicitly say when no game-code changes are
+  needed. Rationale, measurements, sources and implementation details belong
+  in package docs, specs and the PR, not the changelog.
 - Record changes that compile successfully but alter behavior too: defaults,
-  settings, units, frame ordering, platform support, and asset/bake formats.
-  Include any required data conversion or explicit re-export and the relevant
-  game workflow to exercise after migrating. Never require regeneration for
-  unrelated edits or dependency bumps.
+  settings, units, frame ordering, platform support, and asset/bake formats,
+  with any required data conversion or explicit re-export, and what to
+  exercise afterwards only when it is not obvious. Never require regeneration
+  for unrelated edits or dependency bumps.
 - All six library crates share `workspace.package.version` in the root
   `Cargo.toml`; keep `version.workspace = true` in each crate. Update the
   root's internal dependency version requirements alongside release bumps.
-- At release, move those entries into a dated version section; retain older
-  migration notes. Use Cargo-compatible semantic versioning: during `0.x`,
-  incompatible changes advance the minor version, not just the patch version.
+- At release, move those entries into a dated version section, merging
+  entries that changed the same symbol; retain older migration notes. Use
+  Cargo-compatible semantic versioning: during `0.x`, incompatible changes
+  advance the minor version, not just the patch version.
 - Games needing stability should pin every direct SGL dependency to an exact
   version (for example, `=0.2.0`) and commit `Cargo.lock`. Git consumers should
   pin a full commit `rev`. Upgrade deliberately, applying all intervening
