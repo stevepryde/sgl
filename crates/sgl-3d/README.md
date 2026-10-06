@@ -1466,7 +1466,8 @@ stage (each stage's documentation lists its own), are:
 - ray-traced shadows, after the opaque stage's G-buffer passes and their
   culling and before `sky` while they run: `ray-traced shadow rays`, the
   denoiser's `ray-traced shadow tile classification` and
-  `ray-traced shadow filter` (three passes), `ray-traced shadow temporal`
+  `ray-traced shadow filter` (three passes, two at Low),
+  `ray-traced shadow temporal`
   and `ray-traced shadow upsample`;
 - reflections: `probe culling`, `reflection source completion`, Crystal's
   `SSR` passes (named after DiligentFX's debug groups), Velvet's `Godot SSR`
@@ -1915,7 +1916,13 @@ on. Elsewhere, or with the setting off, rays traverse the portable BVHs.
   its front from the light, and a double-sided one from either side. AMD's
   FidelityFX shadow denoiser filters the directional light's and the three
   longest-held local lights' visibilities, as Wicked Engine filters its
-  first four; the others are blended with the previous frames'. A light
+  first four; the others are blended with the previous frames'.
+  `Settings::ray_traced_shadow_quality` Low filters the directional
+  light's alone, in two passes instead of three, and blends those three
+  local lights' with the rest: noisier soft local shadows for about 1 ms
+  a frame less. While no local light holds one of the three places, High
+  filters the directional light's alone too, which looks the same and
+  costs less. A light
   that takes another's place, and a camera cut, start afresh. The
   visibilities are upsampled to the render size by depth, then the
   lighting pass takes them through the light's shadow opacity. The opaque

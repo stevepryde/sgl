@@ -15,6 +15,35 @@ full API details.
 
 ## Unreleased
 
+### Ray-traced shadows gain a denoising quality
+
+- **Scope:** `sgl-3d` (#204). New `settings::RayTracedShadowQuality`
+  (`Preset`, `Low`, `High`) and `Settings::ray_traced_shadow_quality`,
+  `Preset` by default: Low on `RenderPreset::Low`, High on
+  `RenderPreset::High`, the default preset. It acts only while ray-traced
+  shadows run, which stay off by default and in every preset (D-28). High
+  is the denoiser as before: AMD's FidelityFX shadow denoiser over the
+  directional light's shadow and the three longest-held local lights', in
+  three passes. Low filters the directional light's alone, in two passes,
+  and blends those local lights' with the previous frames' as it does the
+  other local lights': their soft shadows' edges are noisier, in motion
+  most. On an Apple M5 at 1920×1080 natively on Metal the denoiser took
+  0.88–1.04 ms at Low against 1.85–2.05 ms at High on the examples'
+  routes, about 1 ms off the frame. At High, a frame where no local light
+  holds one of those three places now filters the directional light's
+  shadow alone: about 0.8 ms less (1.17 against 1.94 ms on a route lit by
+  the sun alone), its result within one 8-bit step of before at about
+  0.03% of the pixels. The streaming example takes
+  `--ray-traced-shadow-quality low|high`.
+- **Migration:** no game-code changes for code that builds `Settings` with
+  `..Default::default()` (or `Settings::default()`); a `Settings` literal
+  that names every field adds
+  `ray_traced_shadow_quality: RayTracedShadowQuality::Preset`. Saved
+  settings without the field load as `Preset`. A game on the Low preset
+  with ray-traced shadows on now gets Low; set `High` to keep the previous
+  look, or offer the choice to players. Afterwards, with ray-traced shadows
+  on, look at soft local-light shadows in motion at each quality.
+
 ### Dynamic GI follows the clock only where a surface moves
 
 - **Scope:** `sgl-3d` (#216). No API change. The dynamic GI volume's
