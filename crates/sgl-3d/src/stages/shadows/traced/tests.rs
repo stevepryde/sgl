@@ -1223,8 +1223,10 @@ fn each_denoised_slot_keeps_its_own_history() {
 
 /// The most two runs' slot 0 may differ by, in 8-bit steps, where one
 /// renderer's denoiser filters it in one lane and the other's in four:
-/// the two programs round the same arithmetic apart.
-const SHAPE_ROUNDING: u8 = 2;
+/// one step of the stored mask, as the two programs round the same
+/// arithmetic apart (the frames of the sun alone in one lane and in four
+/// differed by at most one step, #204).
+const SHAPE_ROUNDING: u8 = 1;
 
 // Plausible defects: the denoiser's shapes at High keeping slot 0's
 // history apart (each shape its own targets, or the one-lane programs
