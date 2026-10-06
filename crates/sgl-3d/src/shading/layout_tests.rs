@@ -60,8 +60,8 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::deform::DEFORM,
         &crate::stages::cull::CULL,
         &crate::stages::cull::pyramid::PYRAMID,
-        &crate::stages::dynamic_gi::ALLOCATE,
-        &crate::stages::dynamic_gi::UPDATE,
+        &crate::stages::dynamic_gi::pipelines::ALLOCATE,
+        &crate::stages::dynamic_gi::pipelines::UPDATE,
         &crate::stages::motion_blur::MOTION_BLUR,
         &crate::stages::shadows::traced::TEMPORAL,
         &crate::stages::shadows::traced::UPSAMPLE,
@@ -143,7 +143,7 @@ fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
     use naga::ShaderStage::{Compute, Fragment, Vertex};
     let root = super::ray_trace_root(form);
     let world = &crate::stages::reflections::world::TRACE;
-    let gi = &crate::stages::dynamic_gi::TRACE;
+    let gi = &crate::stages::dynamic_gi::pipelines::TRACE;
     let query = &crate::scene::rays::QUERY;
     let traced_shadows = &crate::stages::shadows::traced::TRACE;
     let label = |portable, baseline, candidates| match form {
