@@ -57,6 +57,10 @@ full API details.
     `dispatch_workgroups` and `dispatch_workgroups_indirect`, and
     `TextureUsages::TRANSIENT` becomes `TRANSIENT_ATTACHMENT`.
 
+  Regenerate the game's distribution notices. wgpu 30 drops
+  `gpu-descriptor` and `hexf-parse`, whose CC0 text the notices no longer
+  carry, and adds `naga-types` and `objc2-core-graphics`.
+
   The browser lane's `wasm-bindgen-cli` must match the `wasm-bindgen`
   locked in the game's `Cargo.lock`. Afterwards, run the game natively and
   in the browser. With hardware ray tracing on a Mac, look at ray-traced
