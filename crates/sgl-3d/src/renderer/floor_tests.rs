@@ -12,7 +12,8 @@ use glam::{Mat4, Vec3};
 const SAMPLED_TEXTURES: u32 = 21;
 /// S3D-1's floor of storage buffers per shader stage, and wgpu's default of
 /// storage textures, which the stages that write the most bind (the
-/// world-space reflection classification, the ray-traced shadow trace).
+/// world-space reflection classification, the ray-traced shadow trace,
+/// ambient occlusion's depth prefilter).
 const STORAGE_BUFFERS: u32 = 8;
 const STORAGE_TEXTURES: u32 = 4;
 

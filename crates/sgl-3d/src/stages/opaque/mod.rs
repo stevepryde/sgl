@@ -106,7 +106,9 @@ impl Opaque {
         if let Some(settings) = ctx.effective.ambient_occlusion {
             let targets = ctx.targets;
             self.ambient_occlusion
-                .get_or_insert_with(|| ambient_occlusion::AmbientOcclusion::new(ctx.device))
+                .get_or_insert_with(|| {
+                    ambient_occlusion::AmbientOcclusion::new(ctx.device, ctx.queue)
+                })
                 .encode(
                     ctx.device,
                     ctx.queue,

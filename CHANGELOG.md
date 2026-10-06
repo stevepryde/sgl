@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+### sgl-3d: behaviour changes
+
+- `Settings::ambient_occlusion` costs less GPU time; its output is
+  unchanged. No game-code change.
+
 ## 0.2.0 — 2026-10-06
 
 No baked or exported asset format changed: nothing needs re-baking. SGL3D's
