@@ -40,7 +40,8 @@ THE SOFTWARE.
 // loads and computes again for every light, once; a lane whose tile is
 // cleared is computed with the rest and takes the cleared tile's values,
 // and the group skips only when every lane's tile is cleared. The caller
-// supplies the FFX_DNSR_Shadows_* callbacks upstream's host shader does.
+// supplies the FFX_DNSR_Shadows_* callbacks upstream's host shader does,
+// and FFX_DNSR_Shadows_UnpackInput.
 
 var<workgroup> g_FFX_DNSR_Shadows_shared_input:array<array<vec4<u32>,16>,16>;
 var<workgroup> g_FFX_DNSR_Shadows_shared_depth:array<array<f32,16>,16>;
