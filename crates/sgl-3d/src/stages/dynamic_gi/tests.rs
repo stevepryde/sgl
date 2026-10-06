@@ -2988,16 +2988,17 @@ fn the_clock_changes_the_probes_inputs_only_where_a_surface_moves() {
         scale: 1.,
         strength: 1.,
     }; 2];
+    let opaque = AlphaMode::Opaque;
     let blend = AlphaMode::Blend {
         receives_screen_space_reflections: false,
     };
     // Each case's layers, whether its material is unlit, its alpha mode
     // and whether its surface moves.
     let cases = [
-        ("still layers", STILL, false, AlphaMode::Opaque, false),
-        ("unlit moving layers", MOVING, true, AlphaMode::Opaque, false),
+        ("still layers", STILL, false, opaque, false),
+        ("unlit moving layers", MOVING, true, opaque, false),
         ("blended moving layers", MOVING, false, blend, false),
-        ("lit moving layers", MOVING, false, AlphaMode::Opaque, true),
+        ("lit moving layers", MOVING, false, opaque, true),
     ];
     let mut settings = settings(DynamicGiQuality::High);
     settings.diagnostics.dynamic_gi = true;
