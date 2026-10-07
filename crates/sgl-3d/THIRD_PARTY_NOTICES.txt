@@ -212,9 +212,13 @@ Revision ef1a133d6777299ad971a0f9612adf4aad281f46, LICENSE (Apache-2.0). SGL3D p
 SpecularAO_Lagarde and gtaoMultiBounce (shaders/src/surface_ambient_occlusion.fs)
 with their desktop defaults into specular_lobes.wgsl, AgxToneMapper
 (filament/src/ToneMapper.cpp) with the sRGB and Rec. 2020 conversions
-(filament/src/ColorSpaceUtils.h) into tone_map.wgsl, and F_SchlickIridescence,
+(filament/src/ColorSpaceUtils.h) into tone_map.wgsl, F_SchlickIridescence,
 iorToF0, f0ToIor, evaluateIridescenceSensitivity, F_Iridescence and
-F_IridescenceToF0 (shaders/src/surface_brdf.fs) into iridescence.wgsl.
+F_IridescenceToF0 (shaders/src/surface_brdf.fs) into iridescence.wgsl, D_Charlie
+and V_Neubelt (shaders/src/surface_brdf.fs) with the sheen layering into
+sheen.wgsl, and DFV_Charlie_Uniform (libs/ibl/src/CubemapIBL.cpp) with
+hammersley (libs/ibl/include/ibl/utilities.h) into scripts/sheen-dfg.ts, which
+writes src/scene/sheen_dfg.r16.
 
 
                                  Apache License
@@ -543,7 +547,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
---- Three.js (SMAA and mist noise)
+--- Three.js (SMAA, mist noise and shading ports)
 Sources:
 crates/sgl-3d/src/stages/post/smaa/LICENSE-three.txt
 

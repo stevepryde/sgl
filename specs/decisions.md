@@ -397,3 +397,54 @@ Use the [current specs](README.md) for implementation and the
   environment's, and indirect diffuse was weighted by its source; one named
   reference per concern fixes them at their cause (S3D-5) and tells later
   changes which engine to port from.
+
+  Sheen and diffuse transmission (#245, Mission Control's decision on its
+  design review):
+  - KHR_materials_sheen follows Filament ef1a133 whole, which implements
+    it: the Charlie distribution with Ashikhmin's (Neubelt's) visibility,
+    its directional albedo E in the DFG table's blue channel from
+    Filament's own generator (`DFV_Charlie_Uniform`, ported as
+    `scripts/sheen-dfg.ts`), and the base scaled by 1 − max3(sheen) E at
+    the view under lights and the environment alike, beneath the coat (KHR
+    layers the coat over the sheen). three.js r185's lobe is Filament's;
+    its analytic E, `IBLSheenBRDF`, is a fit within 0.146 of the
+    Charlie–Kulla albedo and 0.24 of the Charlie–Ashikhmin one for N·V and
+    roughness from 0.25, and missed them by up to 2.4 below; paired with
+    the Ashikhmin lobe, a white sheen over a white Lambertian reflected up
+    to 1.24 of a uniform sky of directional lights (3.4 at N·V 0.02 and
+    roughness 0.1), so it is not taken. KHR's min of the view's and each
+    light's scaling is not taken either: the view's alone keeps lights and
+    the environment one model.
+  - Three departures: the scaling is clamped to 0–1, since E exceeds 1
+    below N·V 0.1 at roughness below 0.3 (to 10.7 at the table's smoothest
+    grazing texel), where Filament leaves it unclamped; the indirect lobe
+    is the albedo at the view times the irradiance, as three.js r185 lights
+    it, where Filament and Khronos's sample renderer take prefiltered
+    radiance, so every indirect source lights it by the one rule, it needs
+    no G-buffer channel, and ambient occlusion occludes it linearly with
+    the diffuse share; and a rectangle light takes no sheen, as three.js
+    r185's takes none, Filament having no rectangle lights.
+  - Beneath a sheen the G-buffer's F0 and F90 hold the base lobe dimmed at
+    the camera's view, which scales the split sum's single scattering
+    exactly, so source completion needs no channel for it; ambient
+    occlusion's multi-bounce tint reads the dimmed F0.
+  - KHR_materials_diffuse_transmission takes KHR's meaning, its colour and
+    the dielectric's Fresnel at the light's mirror image (the Khronos
+    sample renderer's), where Bevy 9d12036 colours the lobe with the base
+    and leaves it uncoupled, and Bevy's back lobe: a Lambertian about the
+    reversed normal, each light's shadow looked up on that side, and that
+    side's ambient light. Departures: Bevy's opt-in back-side shadow is
+    always taken; the back side's ambient light is occluded by neither the
+    material's occlusion nor the frame's, as Bevy leaves it, where the
+    Khronos sample renderer applies the occlusion map to it; a lightmap
+    holds one side's light, so one without directionality, and every
+    lightmap on the Basic binding tier, gives the back side the front's;
+    and the ray-traced shadows' mask holds the camera surface's own side,
+    so the back side takes the maps. With KHR_materials_volume the back
+    lobe lies the volume's thickness behind the surface, as Bevy places it,
+    the thickness in world metres the mean of the pose's axis scales, as
+    the Khronos sample renderer takes it for diffuse transmission, and is
+    attenuated over it by Beer-Lambert's law, as that renderer attenuates
+    it; each light's direction and fall-off stay the surface's, where Bevy
+    takes them at the back lobe's point.
+

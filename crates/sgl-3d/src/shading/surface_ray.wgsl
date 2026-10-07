@@ -133,6 +133,23 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
   s.coat_normal=ray_coat_normal(hit,material);
  }
  s.coat_roughness=clamp(coat_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
+ // The sheen's and the diffuse transmission's maps likewise, their colours
+ // sRGB.
+ var sheen_roughness=material.values.sheen_roughness;
+ if any(material.values.sheen>vec3(0.)) {
+  s.sheen=material_sheen(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_SHEEN_COLOR],hit.uv,material.wrap,true));
+  sheen_roughness=material_sheen_roughness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_SHEEN_ROUGHNESS],hit.uv,material.wrap,false));
+ }
+ s.sheen_roughness=clamp(sheen_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
+ s.diffuse_transmission_color=material.values.diffuse_transmission_color;
+ if material.values.diffuse_transmission>0. {
+  s.diffuse_transmission=material_diffuse_transmission(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION],hit.uv,material.wrap,false));
+  s.diffuse_transmission_color=material_diffuse_transmission_color(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR],hit.uv,material.wrap,true));
+  // Its volume, as raster_surface takes it.
+  let thickness=material_thickness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_THICKNESS],hit.uv,material.wrap,false));
+  s.volume_thickness=transmission_world_thickness(thickness,objects[hit.instance_id].model);
+  s.volume_attenuation=material.values.attenuation;
+ }
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.values.environment_scale;
@@ -171,7 +188,10 @@ const PROBE_HIT_T_MIN:f32=.001;
 // short of where `random.yz` draws it on the light, as ray-traced shadows'
 // rays do (light_surface.wgsl, light_visibility_ray): a point of a point or
 // spot light's sphere or of a rectangle's face, or a direction within a
-// directional light's disc.
+// directional light's disc. A hit that passes diffuse light to its other
+// side takes a light behind it there (surface_transmitted_brdf), seen by
+// the same ray, which then leaves from its transmitted lobe's point
+// (surface_transmitted_point), a thin wall's own face behind at its TMin.
 //
 // Ports Wicked Engine df44c3db4c4927492bc9c791eac715d98d7ed091's light
 // sampling at a hit (WickedEngine/shaders/ddgi_raytraceCS.hlsl 329–490: one
@@ -216,33 +236,43 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
  var distance=3.402823466e+38;
  // The shadow opacity of a light that casts a shadow, else none.
  var opacity=0.;
+ // Where the visibility ray leaves: the hit, or, toward a light behind a
+ // hit that passes light through, its transmitted lobe's point.
+ let transmits=surface_transmits(s);
+ let back=surface_transmitted_point(s);
+ var origin=s.position;
  if pick<directional_count {
   let light=frame.directional_lights[directional[pick]];
   direction=normalize(light.direction_to_light);
-  if dot(s.normal,direction)<=0. {
+  let behind=dot(s.normal,direction)<=0.;
+  if behind && !transmits {
    return vec3(0.);
   }
-  sample=LightSample(direction,light.color*light.illuminance,1.,0.,NO_RECT_LIGHT,0.);
+  sample=LightSample(direction,light.color*light.illuminance,select(1.,0.,behind),select(0.,1.,behind),0.,NO_RECT_LIGHT,0.);
+  origin=select(s.position,back,behind);
   // The light with the frame's cascades is the one directional light
   // that casts a shadow. Its visibility ray leaves within its disc.
   opacity=select(0.,light.shadow_opacity,(light.flags&DIRECTIONAL_LIGHT_SHADOW)!=0u);
   ray=directional_ray_direction(direction,light.disc_radius,random.yz);
  } else {
   let index=cluster_item(list.first+pick-directional_count);
-  sample=scene_light_sample(index,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT);
-  if sample.visibility<=0. {
+  sample=scene_light_sample(index,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT,transmits,back);
+  if sample.visibility<=0. && sample.transmitted_visibility<=0. {
    return vec3(0.);
   }
+  origin=select(s.position,back,transmits && dot(s.normal,sample.direction)<0.);
   let light=lights[index];
-  let visibility_ray=light_visibility_ray(light,s.position,random.yz,PROBE_HIT_T_MIN);
+  let visibility_ray=light_visibility_ray(light,origin,random.yz,PROBE_HIT_T_MIN);
   ray=visibility_ray.xyz;
   distance=visibility_ray.w;
   opacity=select(0.,light.shadow_opacity,(light.flags&LIGHT_CASTS_SHADOW)!=0u);
  }
  sample.specular=0.;
  if opacity>SHADOW_OPACITY_CUTOFF {
-  let visible=scene_segment_visible(s.position,ray,PROBE_HIT_T_MIN,distance,SCENE_SIDES_BOTH);
-  sample.visibility=shadow_opacity_visibility(select(0.,1.,visible),opacity);
+  let visible=scene_segment_visible(origin,ray,PROBE_HIT_T_MIN,distance,SCENE_SIDES_BOTH);
+  let visibility=shadow_opacity_visibility(select(0.,1.,visible),opacity);
+  sample.visibility*=visibility;
+  sample.transmitted_visibility*=visibility;
  }
  // The surface's reflectance as shade_lit derives it, its DFG lookup at the
  // view included, so the one light is shaded as every receiver's lights are.

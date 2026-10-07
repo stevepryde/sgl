@@ -57,6 +57,13 @@ struct Material {
  thickness:f32,
  ior:f32,
  dispersion:f32,
+ // KHR_materials_sheen's linear colour (0 none) and perceptual roughness.
+ sheen:vec3<f32>,
+ sheen_roughness:f32,
+ // KHR_materials_diffuse_transmission's colour, and the share of the light
+ // the base diffuses that it passes to its other side (0 none).
+ diffuse_transmission_color:vec3<f32>,
+ diffuse_transmission:f32,
 }
 const MATERIAL_UNLIT:u32=1u;
 const MATERIAL_DOUBLE_SIDED:u32=2u;
@@ -99,6 +106,10 @@ const MATERIAL_MAP_IRIDESCENCE:u32=1024u;
 const MATERIAL_MAP_IRIDESCENCE_THICKNESS:u32=2048u;
 const MATERIAL_MAP_TRANSMISSION:u32=4096u;
 const MATERIAL_MAP_THICKNESS:u32=8192u;
+const MATERIAL_MAP_SHEEN_COLOR:u32=16384u;
+const MATERIAL_MAP_SHEEN_ROUGHNESS:u32=32768u;
+const MATERIAL_MAP_DIFFUSE_TRANSMISSION:u32=65536u;
+const MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR:u32=131072u;
 // The share of ambient light that reaches a texel of material `m` whose
 // metallic-roughness map reads `mr`: with MATERIAL_MAP_OCCLUSION its red
 // channel at occlusion_strength, as glTF 2.0 applies occlusionTexture
@@ -170,6 +181,32 @@ fn material_iridescence(m:Material,texel:vec4<f32>)->f32 {
 // (iridescenceThicknessTexture; material_info.glsl 321, 327–330).
 fn material_iridescence_thickness(m:Material,texel:vec4<f32>)->f32 {
  return mix(m.iridescence_thickness.x,m.iridescence_thickness.y,texel.g);
+}
+// Material `m`'s sheen colour at a texel whose sheen colour map reads
+// `texel` (white without one): its factor times the map's RGB, as
+// KHR_materials_sheen defines sheenColorTexture and the Khronos glTF Sample
+// Renderer 0686eb2 reads it (material_info.glsl 248–251).
+fn material_sheen(m:Material,texel:vec4<f32>)->vec3<f32> {
+ return m.sheen*texel.rgb;
+}
+// Material `m`'s sheen perceptual roughness at a texel whose sheen roughness
+// map reads `texel`: its factor times the alpha channel
+// (sheenRoughnessTexture; material_info.glsl 253–256).
+fn material_sheen_roughness(m:Material,texel:vec4<f32>)->f32 {
+ return m.sheen_roughness*texel.a;
+}
+// Material `m`'s diffuse transmission at a texel whose diffuse transmission
+// map reads `texel`: its factor times the alpha channel, as
+// KHR_materials_diffuse_transmission defines diffuseTransmissionTexture and
+// the Sample Renderer reads it (material_info.glsl 358–360).
+fn material_diffuse_transmission(m:Material,texel:vec4<f32>)->f32 {
+ return m.diffuse_transmission*texel.a;
+}
+// Material `m`'s diffuse transmission colour at a texel whose diffuse
+// transmission colour map reads `texel`: its factor times the map's RGB
+// (diffuseTransmissionColorTexture; material_info.glsl 362–364).
+fn material_diffuse_transmission_color(m:Material,texel:vec4<f32>)->vec3<f32> {
+ return m.diffuse_transmission_color*texel.rgb;
 }
 // Where normal layer `layer` samples its material's normal map at material
 // UV `uv` at the frame's animation phase `phase` (Frame.animation_phase):

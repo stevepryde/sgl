@@ -144,6 +144,23 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
   s.coat_normal=surface_coat_normal(i,front);
  }
  s.coat_roughness=surface_roughness(coat_roughness,n,i);
+ // The sheen's and the diffuse transmission's maps likewise. The sheen's
+ // roughness is filtered as the base's is, as Filament ef1a133 filters it
+ // (surface_shading_lit.fs 154–160).
+ var sheen_roughness=material.sheen_roughness;
+ if any(material.sheen>vec3(0.)) {
+  s.sheen=material_sheen(material,material_sheen_color_texel(i.uv));
+  sheen_roughness=material_sheen_roughness(material,material_sheen_roughness_texel(i.uv));
+ }
+ s.sheen_roughness=surface_roughness(sheen_roughness,n,i);
+ s.diffuse_transmission_color=material.diffuse_transmission_color;
+ if material.diffuse_transmission>0. {
+  s.diffuse_transmission=material_diffuse_transmission(material,material_diffuse_transmission_texel(i.uv));
+  s.diffuse_transmission_color=material_diffuse_transmission_color(material,material_diffuse_transmission_color_texel(i.uv));
+  // Its volume, which the transmitted lobe lies behind and crosses.
+  s.volume_thickness=transmission_world_thickness(surface_thickness(i),objects[object].model);
+  s.volume_attenuation=material.attenuation;
+ }
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.environment_scale;

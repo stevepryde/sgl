@@ -735,6 +735,10 @@ fn rust_mirrors_match_wgsl_layouts() {
                 thickness,
                 ior,
                 dispersion,
+                sheen,
+                sheen_roughness,
+                diffuse_transmission_color,
+                diffuse_transmission,
             ]
         ),
         mirror!(
@@ -885,6 +889,10 @@ fn rust_mirrors_match_wgsl_layouts() {
             IridescenceThickness => "MATERIAL_MAP_IRIDESCENCE_THICKNESS",
             Transmission => "MATERIAL_MAP_TRANSMISSION",
             Thickness => "MATERIAL_MAP_THICKNESS",
+            SheenColor => "MATERIAL_MAP_SHEEN_COLOR",
+            SheenRoughness => "MATERIAL_MAP_SHEEN_ROUGHNESS",
+            DiffuseTransmission => "MATERIAL_MAP_DIFFUSE_TRANSMISSION",
+            DiffuseTransmissionColor => "MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR",
         };
         (name, map.bit())
     })) {
@@ -1125,6 +1133,18 @@ fn rust_binding_names_match_wgsl_bindings() {
         ),
         (2, "transmission_map", group2::TRANSMISSION_MAP),
         (2, "thickness_map", group2::THICKNESS_MAP),
+        (2, "sheen_color_map", group2::SHEEN_COLOR_MAP),
+        (2, "sheen_roughness_map", group2::SHEEN_ROUGHNESS_MAP),
+        (
+            2,
+            "diffuse_transmission_map",
+            group2::DIFFUSE_TRANSMISSION_MAP,
+        ),
+        (
+            2,
+            "diffuse_transmission_color_map",
+            group2::DIFFUSE_TRANSMISSION_COLOR_MAP,
+        ),
         (3, "blended_reflections", blended::REFLECTIONS),
         (3, "blended_surface_depth", blended::SURFACE_DEPTH),
         (3, "blended_trace", blended::TRACE),

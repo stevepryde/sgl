@@ -139,6 +139,34 @@ pub struct Material {
     /// Iridescence thickness image index, sampled as linear data: its green
     /// channel mixes `iridescence_thickness` (`iridescenceThicknessTexture`).
     pub iridescence_thickness_texture: Option<usize>,
+    /// Linear colour of a sheen over the surface, each channel in `0..=1`
+    /// (`KHR_materials_sheen`'s `sheenColorFactor`): black none. Fabric and
+    /// cloth.
+    pub sheen_color: [f32; 3],
+    /// The sheen's perceptual roughness in `0..=1` (`sheenRoughnessFactor`).
+    pub sheen_roughness: f32,
+    /// Sheen colour image index, sampled as sRGB: its RGB multiplies
+    /// `sheen_color` (`sheenColorTexture`).
+    pub sheen_color_texture: Option<usize>,
+    /// Sheen roughness image index, sampled as linear data: its alpha
+    /// channel multiplies `sheen_roughness` (`sheenRoughnessTexture`).
+    pub sheen_roughness_texture: Option<usize>,
+    /// The share in `0..=1` of the light the base diffuses that passes
+    /// through to the surface's other side
+    /// (`KHR_materials_diffuse_transmission`'s `diffuseTransmissionFactor`):
+    /// 0 none. Leaves, paper, flags and lampshades.
+    pub diffuse_transmission: f32,
+    /// Linear colour of the light it passes through, each channel finite
+    /// and nonnegative (`diffuseTransmissionColorFactor`).
+    pub diffuse_transmission_color: [f32; 3],
+    /// Diffuse transmission image index, sampled as linear data: its alpha
+    /// channel multiplies `diffuse_transmission`
+    /// (`diffuseTransmissionTexture`).
+    pub diffuse_transmission_texture: Option<usize>,
+    /// Diffuse transmission colour image index, sampled as sRGB: its RGB
+    /// multiplies `diffuse_transmission_color`
+    /// (`diffuseTransmissionColorTexture`).
+    pub diffuse_transmission_color_texture: Option<usize>,
     /// KHR_materials_anisotropy strength in `0..=1`; zero preserves isotropic shading.
     pub anisotropy_strength: f32,
     /// Counter-clockwise direction rotation in tangent/bitangent space, in radians.
@@ -228,7 +256,7 @@ impl Material {
 
     /// Every image index it names, each field once: a new map's field
     /// fails to compile here until it is listed.
-    pub(crate) fn texture_indices(&self) -> [Option<usize>; 14] {
+    pub(crate) fn texture_indices(&self) -> [Option<usize>; 18] {
         let Self {
             name: _,
             visibility_group: _,
@@ -251,6 +279,14 @@ impl Material {
             iridescence_thickness: _,
             iridescence_texture,
             iridescence_thickness_texture,
+            sheen_color: _,
+            sheen_roughness: _,
+            sheen_color_texture,
+            sheen_roughness_texture,
+            diffuse_transmission: _,
+            diffuse_transmission_color: _,
+            diffuse_transmission_texture,
+            diffuse_transmission_color_texture,
             anisotropy_strength: _,
             anisotropy_rotation: _,
             anisotropy_texture,
@@ -292,6 +328,10 @@ impl Material {
             *iridescence_thickness_texture,
             *transmission_texture,
             *thickness_texture,
+            *sheen_color_texture,
+            *sheen_roughness_texture,
+            *diffuse_transmission_texture,
+            *diffuse_transmission_color_texture,
         ]
     }
 }
@@ -301,6 +341,7 @@ impl Default for Material {
     /// without one: unnamed, a white base, metallic and roughness 1, IOR
     /// 1.5, specular 1 untinted, no emission, clearcoat, iridescence (its
     /// film's IOR 1.3 and thickness 100 to 400 nm as glTF's defaults),
+    /// sheen, diffuse transmission (its colour white, as glTF's default),
     /// anisotropy, bump, transmission, thickness, attenuation or
     /// dispersion, no textures, normal, coat normal and occlusion scales 1,
     /// no normal layers, repeating, single-sided, lit and opaque, in visibility
@@ -330,6 +371,14 @@ impl Default for Material {
             iridescence_thickness: [100.0, 400.0],
             iridescence_texture: None,
             iridescence_thickness_texture: None,
+            sheen_color: [0.0; 3],
+            sheen_roughness: 0.0,
+            sheen_color_texture: None,
+            sheen_roughness_texture: None,
+            diffuse_transmission: 0.0,
+            diffuse_transmission_color: [1.0; 3],
+            diffuse_transmission_texture: None,
+            diffuse_transmission_color_texture: None,
             anisotropy_strength: 0.0,
             anisotropy_rotation: 0.0,
             anisotropy_texture: None,

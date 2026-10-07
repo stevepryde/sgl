@@ -30,6 +30,10 @@ pub(super) fn authored(material: &AuthoredMaterial, map: MaterialMap) -> Option<
         MaterialMap::IridescenceThickness => material.iridescence_thickness_texture,
         MaterialMap::Transmission => material.transmission_texture,
         MaterialMap::Thickness => material.thickness_texture,
+        MaterialMap::SheenColor => material.sheen_color_texture,
+        MaterialMap::SheenRoughness => material.sheen_roughness_texture,
+        MaterialMap::DiffuseTransmission => material.diffuse_transmission_texture,
+        MaterialMap::DiffuseTransmissionColor => material.diffuse_transmission_color_texture,
     }
 }
 
@@ -105,8 +109,9 @@ impl InEffect {
 
     /// The ray-source texture words: `word` of each map's image, zero (white)
     /// where none is in effect. The occlusion map is read from the
-    /// metallic-roughness map's word; the transmission and thickness maps
-    /// have none, since rays pass through a transmissive surface.
+    /// metallic-roughness map's word; the transmission map has none, since
+    /// rays pass through a transmissive surface, and the thickness map's is
+    /// read by a ray hit's diffusely transmitted lobe.
     pub fn ray_textures(&self, word: impl Fn(usize) -> u32) -> MaterialTextures {
         let mut textures = MaterialTextures::default();
         for map in MaterialMap::ALL {
@@ -114,7 +119,8 @@ impl InEffect {
             match map {
                 MaterialMap::Base => textures.base = image,
                 MaterialMap::MetallicRoughness => textures.metallic_roughness = image,
-                MaterialMap::Occlusion | MaterialMap::Transmission | MaterialMap::Thickness => {}
+                MaterialMap::Occlusion | MaterialMap::Transmission => {}
+                MaterialMap::Thickness => textures.thickness = image,
                 MaterialMap::Emission => textures.emission = image,
                 MaterialMap::Normal => textures.normal = image,
                 MaterialMap::Bump => textures.bump = image,
@@ -124,6 +130,12 @@ impl InEffect {
                 MaterialMap::CoatNormal => textures.coat_normal = image,
                 MaterialMap::Iridescence => textures.iridescence = image,
                 MaterialMap::IridescenceThickness => textures.iridescence_thickness = image,
+                MaterialMap::SheenColor => textures.sheen_color = image,
+                MaterialMap::SheenRoughness => textures.sheen_roughness = image,
+                MaterialMap::DiffuseTransmission => textures.diffuse_transmission = image,
+                MaterialMap::DiffuseTransmissionColor => {
+                    textures.diffuse_transmission_color = image
+                }
             }
         }
         textures

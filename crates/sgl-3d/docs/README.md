@@ -43,8 +43,8 @@ its rendering `settings::Settings`.
    at 48 or more sampled textures per stage, else `Basic`, where baked
    light is non-directional, dynamic GI is off
    (`Renderer::dynamic_gi_in_effect`), the anisotropy, clearcoat,
-   iridescence, transmission and thickness maps give way to their factors
-   and transmission is blended through unrefracted
+   iridescence, transmission, thickness, sheen and diffuse transmission maps
+   give way to their factors and transmission is blended through unrefracted
    ([features](features.md#platforms)).
 2. Load: `Scene::new` starts empty. Add content between frames and keep the
    identities it returns: `asset::load` (a file) or `asset::load_slice` (bytes,

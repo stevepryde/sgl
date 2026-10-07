@@ -69,6 +69,16 @@ pub(crate) struct LitConstants {
     /// (`MATERIAL_HAS_IRIDESCENCE`); the trade is a compile when the first
     /// filmed material is added or the last loses its film.
     pub films: bool,
+    /// Sheens (`sheens_enabled` in surface.wgsl), compiled in only while a
+    /// material has one, as Filament compiles its sheen only into a
+    /// material that has one (`MATERIAL_HAS_SHEEN_COLOR`).
+    pub sheens: bool,
+    /// Diffuse transmission (`diffuse_transmission_enabled` in
+    /// surface.wgsl): the transmitted lobe, its back-side shadows and
+    /// indirect light, compiled in only while a material passes diffuse
+    /// light through, as Bevy compiles it only into a material that does
+    /// (`STANDARD_MATERIAL_DIFFUSE_TRANSMISSION`).
+    pub diffuse_transmission: bool,
 }
 
 impl LitConstants {
@@ -78,14 +88,21 @@ impl LitConstants {
             rect_lights: scene.lights.holds_rect(),
             decals: !scene.decals.is_empty(),
             films: scene.materials.holds_films(),
+            sheens: scene.materials.holds_sheens(),
+            diffuse_transmission: scene.materials.holds_diffuse_transmission(),
         }
     }
 
-    pub fn constants(self) -> [(&'static str, f64); 3] {
+    pub fn constants(self) -> [(&'static str, f64); 5] {
         [
             ("rect_lights_enabled", f64::from(u8::from(self.rect_lights))),
             ("decals_enabled", f64::from(u8::from(self.decals))),
             ("films_enabled", f64::from(u8::from(self.films))),
+            ("sheens_enabled", f64::from(u8::from(self.sheens))),
+            (
+                "diffuse_transmission_enabled",
+                f64::from(u8::from(self.diffuse_transmission)),
+            ),
         ]
     }
 }

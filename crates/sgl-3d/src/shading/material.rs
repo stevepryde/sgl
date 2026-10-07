@@ -170,6 +170,14 @@ pub(crate) struct MaterialUniform {
     /// KHR_materials_dispersion's 20 over the Abbe number.
     pub dispersion: f32,
     pub volume_padding: u32,
+    /// KHR_materials_sheen's linear colour (0 none) and perceptual
+    /// roughness.
+    pub sheen: [f32; 3],
+    pub sheen_roughness: f32,
+    /// KHR_materials_diffuse_transmission's colour, and the share of the
+    /// light the base diffuses that it passes to its other side (0 none).
+    pub diffuse_transmission_color: [f32; 3],
+    pub diffuse_transmission: f32,
 }
 
 impl MaterialUniform {
@@ -238,6 +246,10 @@ impl MaterialUniform {
             },
             dispersion: values.dispersion,
             volume_padding: 0,
+            sheen: values.sheen_color,
+            sheen_roughness: values.sheen_roughness,
+            diffuse_transmission_color: values.diffuse_transmission_color,
+            diffuse_transmission: values.diffuse_transmission,
         }
     }
 

@@ -247,7 +247,7 @@ fn required_anisotropy_is_supported_without_disabling_core_validation() {
     std::fs::write(fixture.path(), serde_json::to_vec(&source).unwrap()).unwrap();
     assert!(load(&fixture.path()).is_err());
     source["accessors"][0]["bufferView"] = 0.into();
-    source["extensionsRequired"] = serde_json::json!(["KHR_materials_sheen"]);
+    source["extensionsRequired"] = serde_json::json!(["KHR_texture_transform"]);
     std::fs::write(fixture.path(), serde_json::to_vec(&source).unwrap()).unwrap();
     assert!(load(&fixture.path()).is_err());
 }
@@ -774,7 +774,12 @@ fn transmission_volume_and_dispersion_load_as_their_extensions_define() {
 fn read_textured_material(material: serde_json::Value) -> Result<Material> {
     let source = serde_json::json!({
         "asset": {"version": "2.0"},
-        "extensionsUsed": ["KHR_materials_clearcoat", "KHR_materials_iridescence"],
+        "extensionsUsed": [
+            "KHR_materials_clearcoat",
+            "KHR_materials_diffuse_transmission",
+            "KHR_materials_iridescence",
+            "KHR_materials_sheen"
+        ],
         "images": [{"uri": "a.png"}, {"uri": "b.png"}, {"uri": "c.png"}],
         "textures": [{"source": 2}, {"source": 1}, {"source": 0}],
         "materials": [material]
@@ -899,6 +904,124 @@ fn clearcoat_maps_and_iridescence_load_with_their_defaults() {
     }
 }
 
+// Defects: a sheen or diffuse transmission texture's index taken for its
+// image, or one map's texture read for another's; a KHR default misread
+// (the transmission colour white, the rest 0); or a map off TEXCOORD_0, an
+// unknown property, a value outside the schemas or either extension beside
+// KHR_materials_unlit accepted. The oracle is the extensions' schemas:
+// sheenColorFactor three numbers in 0..1, default black; sheenRoughnessFactor
+// in 0..1, default 0; diffuseTransmissionFactor in 0..1, default 0;
+// diffuseTransmissionColorFactor three numbers of at least 0, default white;
+// and KHR_materials_unlit, which takes the place of every lit model.
+#[test]
+fn sheen_and_diffuse_transmission_load_with_their_defaults() {
+    let extensions = |sheen: serde_json::Value, transmission: serde_json::Value| {
+        serde_json::json!({"extensions": {
+            "KHR_materials_sheen": sheen,
+            "KHR_materials_diffuse_transmission": transmission
+        }})
+    };
+    let empty = serde_json::json!({});
+    let plain = read_textured_material(extensions(empty.clone(), empty.clone())).unwrap();
+    assert_eq!(
+        (
+            plain.sheen_color,
+            plain.sheen_roughness,
+            plain.sheen_color_texture,
+            plain.sheen_roughness_texture
+        ),
+        ([0.; 3], 0., None, None)
+    );
+    assert_eq!(
+        (
+            plain.diffuse_transmission,
+            plain.diffuse_transmission_color,
+            plain.diffuse_transmission_texture,
+            plain.diffuse_transmission_color_texture
+        ),
+        (0., [1.; 3], None, None)
+    );
+    let authored = read_textured_material(extensions(
+        serde_json::json!({
+            "sheenColorFactor": [0.25, 0.5, 0.75], "sheenRoughnessFactor": 0.5,
+            "sheenColorTexture": {"index": 0}, "sheenRoughnessTexture": {"index": 1}
+        }),
+        serde_json::json!({
+            "diffuseTransmissionFactor": 0.75, "diffuseTransmissionColorFactor": [1.5, 0.5, 0.],
+            "diffuseTransmissionTexture": {"index": 2}, "diffuseTransmissionColorTexture": {"index": 1}
+        }),
+    ))
+    .unwrap();
+    assert_eq!(
+        (
+            authored.sheen_color,
+            authored.sheen_roughness,
+            authored.sheen_color_texture,
+            authored.sheen_roughness_texture
+        ),
+        ([0.25, 0.5, 0.75], 0.5, Some(2), Some(1))
+    );
+    assert_eq!(
+        (
+            authored.diffuse_transmission,
+            authored.diffuse_transmission_color,
+            authored.diffuse_transmission_texture,
+            authored.diffuse_transmission_color_texture
+        ),
+        (0.75, [1.5, 0.5, 0.], Some(0), Some(1))
+    );
+    for (sheen, transmission) in [
+        (
+            serde_json::json!({"sheenColorFactor": [1.5, 0., 0.]}),
+            empty.clone(),
+        ),
+        (
+            serde_json::json!({"sheenColorFactor": [0.5, 0.5]}),
+            empty.clone(),
+        ),
+        (
+            serde_json::json!({"sheenRoughnessFactor": -0.5}),
+            empty.clone(),
+        ),
+        (
+            serde_json::json!({"sheenColorTexture": {"index": 0, "texCoord": 1}}),
+            empty.clone(),
+        ),
+        (serde_json::json!({"sheenTint": 1}), empty.clone()),
+        (
+            empty.clone(),
+            serde_json::json!({"diffuseTransmissionFactor": 1.5}),
+        ),
+        (
+            empty.clone(),
+            serde_json::json!({"diffuseTransmissionColorFactor": [-0.5, 0., 0.]}),
+        ),
+        (
+            empty.clone(),
+            serde_json::json!({"diffuseTransmissionTexture": {"index": 0, "texCoord": 1}}),
+        ),
+        (
+            empty.clone(),
+            serde_json::json!({"diffuseTransmissionSpread": 1}),
+        ),
+    ] {
+        let label = format!("{sheen} {transmission}");
+        assert!(
+            read_textured_material(extensions(sheen, transmission)).is_err(),
+            "{label} loaded"
+        );
+    }
+    for unlit in [
+        serde_json::json!({"KHR_materials_unlit": {}, "KHR_materials_sheen": {}}),
+        serde_json::json!({"KHR_materials_unlit": {}, "KHR_materials_diffuse_transmission": {}}),
+    ] {
+        assert!(
+            read_textured_material(serde_json::json!({ "extensions": unlit })).is_err(),
+            "{unlit} loaded"
+        );
+    }
+}
+
 // Defects: a primitive without TEXCOORD_0 loads though its material samples
 // a map, which then reads one texel everywhere (the check covered the base,
 // metallic-roughness, occlusion and anisotropy maps alone). The oracle is
@@ -915,11 +1038,15 @@ fn a_primitive_without_texcoord_0_is_refused_for_any_map() {
         serde_json::json!({"extensions": {"EXT_materials_bump": {"bumpTexture": texture}}}),
         serde_json::json!({"extensions": {"KHR_materials_clearcoat": {"clearcoatNormalTexture": texture}}}),
         serde_json::json!({"extensions": {"KHR_materials_iridescence": {"iridescenceThicknessTexture": texture}}}),
+        serde_json::json!({"extensions": {"KHR_materials_sheen": {"sheenRoughnessTexture": texture}}}),
+        serde_json::json!({"extensions": {"KHR_materials_diffuse_transmission": {"diffuseTransmissionColorTexture": texture}}}),
     ];
     let used = [
         "EXT_materials_bump",
         "KHR_materials_clearcoat",
+        "KHR_materials_diffuse_transmission",
         "KHR_materials_iridescence",
+        "KHR_materials_sheen",
         "KHR_lights_punctual",
     ];
     for material in maps.into_iter().chain([serde_json::json!({})]) {

@@ -2091,7 +2091,7 @@ setting chooses it.
 | Tier | Sampled textures per stage | Lighting | Material maps |
 | --- | --- | --- | --- |
 | `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted | base, metallic-roughness (with packed occlusion), emission, normal, bump |
-| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission and thickness maps |
+| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission, thickness, sheen colour, sheen roughness, diffuse transmission and diffuse transmission colour maps |
 
 A Vulkan driver lands in either tier, by its `maxPerStageResources`.
 
@@ -2177,7 +2177,8 @@ UV0, metallic/roughness materials, the opaque, masked and blended alpha modes,
 normal and bump maps, an occlusion map packed in the red channel of the
 metallic-roughness image (ORM), `KHR_materials_clearcoat` with its maps,
 emissive strength, unlit materials, `KHR_materials_anisotropy`,
-`KHR_materials_iridescence`, and the `KHR_materials_ior` and
+`KHR_materials_iridescence`, `KHR_materials_sheen`,
+`KHR_materials_diffuse_transmission`, and the `KHR_materials_ior` and
 `KHR_materials_specular` factors. A primitive whose material has any map
 needs `TEXCOORD_0`.
 
@@ -2218,6 +2219,21 @@ direct light or emission, as three.js and Godot occlude a light map; with
 `Settings::ambient_occlusion` the camera's opaque surfaces take the lesser of
 it and the frame's ambient occlusion for their ambient light and environment
 specular, as Filament and Bevy do, while a bake keeps its own.
+
+A sheen (`sheen_color`, `sheen_roughness`; `KHR_materials_sheen`) is a soft
+layer for cloth and fabric, brightest toward grazing views: it dims the base
+beneath it by the light it takes itself and lies beneath any clearcoat;
+rectangle lights do not light it. Diffuse transmission
+(`diffuse_transmission`, `diffuse_transmission_color`;
+`KHR_materials_diffuse_transmission`) passes that share of the light the base
+diffuses through to the surface's other side, in that colour: leaves, paper,
+flags and lampshades lit from behind. The other side takes each light behind
+the surface under its own shadow, and its ambient light, which ambient
+occlusion does not darken; make such a material `double_sided` so both sides
+draw and cast. With `KHR_materials_volume`'s `thickness` the light passes
+through that far behind the surface (a candle, an ear), its shadow taken
+there, and the volume's attenuation colour and distance tint it over that
+thickness; without one the surface is thin.
 
 Shading follows one hybrid of references ([D-32](../../specs/decisions.md)):
 glTF 2.0 and its KHR extensions define what a material's values mean,

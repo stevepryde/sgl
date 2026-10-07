@@ -5,7 +5,11 @@ use super::super::asset::{Material, Result};
 use super::super::material::AlphaMode;
 use super::Ignored;
 
+mod diffuse_transmission;
+mod sheen;
 mod transmission;
+use diffuse_transmission::read_diffuse_transmission;
+use sheen::read_sheen;
 use transmission::{read_dispersion, read_transmission, read_volume};
 
 /// glTF material `index`, adding what SGL3D leaves out of it to `ignored`.
@@ -41,6 +45,8 @@ pub(super) fn read_material(
     };
     let clearcoat = read_clearcoat(&material, document)?;
     let iridescence = read_iridescence(&material, document)?;
+    let sheen = read_sheen(&material, document)?;
+    let diffuse = read_diffuse_transmission(&material, document)?;
     let (anisotropy_strength, anisotropy_rotation, anisotropy_texture) =
         read_anisotropy(&material, document)?;
     let ior = read_ior(&material)?;
@@ -105,6 +111,10 @@ pub(super) fn read_material(
         iridescence.thickness_texture.clone(),
         transmission.texture.clone(),
         volume.thickness_texture.clone(),
+        sheen.color_texture.clone(),
+        sheen.roughness_texture.clone(),
+        diffuse.texture.clone(),
+        diffuse.color_texture.clone(),
         // An occlusion map SGL3D samples, the metallic-roughness image on
         // TEXCOORD_0, takes its sampler; an ignored one constrains nothing.
         material
@@ -144,6 +154,14 @@ pub(super) fn read_material(
         iridescence_thickness: iridescence.thickness,
         iridescence_texture: iridescence.texture.map(|t| t.source().index()),
         iridescence_thickness_texture: iridescence.thickness_texture.map(|t| t.source().index()),
+        sheen_color: sheen.color,
+        sheen_roughness: sheen.roughness,
+        sheen_color_texture: sheen.color_texture.map(|t| t.source().index()),
+        sheen_roughness_texture: sheen.roughness_texture.map(|t| t.source().index()),
+        diffuse_transmission: diffuse.factor,
+        diffuse_transmission_color: diffuse.color,
+        diffuse_transmission_texture: diffuse.texture.map(|t| t.source().index()),
+        diffuse_transmission_color_texture: diffuse.color_texture.map(|t| t.source().index()),
         anisotropy_strength,
         anisotropy_rotation,
         anisotropy_texture: anisotropy_texture.map(|t| t.source().index()),
@@ -391,6 +409,30 @@ fn read_iridescence<'a>(
     iridescence.thickness_texture =
         extension_texture(value, "iridescenceThicknessTexture", document, &error)?;
     Ok(iridescence)
+}
+
+/// Property `key` of `value`, a number in `0..=1`; `default` where absent,
+/// none where it is not such a number.
+fn unit_factor(value: &serde_json::Value, key: &str, default: f32) -> Option<f32> {
+    value.get(key).map_or(Some(default), |number| {
+        number
+            .as_f64()
+            .map(|v| v as f32)
+            .filter(|v| (0.0..=1.0).contains(v))
+    })
+}
+
+/// `value` as a colour factor: three finite numbers from 0 to `most`.
+fn color_factor(value: &serde_json::Value, most: f32) -> Option<[f32; 3]> {
+    let channels = value.as_array().filter(|channels| channels.len() == 3)?;
+    let mut color = [0.; 3];
+    for (channel, value) in color.iter_mut().zip(channels) {
+        *channel = value
+            .as_f64()
+            .map(|v| v as f32)
+            .filter(|v| v.is_finite() && (0.0..=most).contains(v))?;
+    }
+    Some(color)
 }
 
 /// A material's occlusion map (glTF 2.0 `occlusionTexture`).

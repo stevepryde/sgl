@@ -34,17 +34,11 @@ override transmission_enabled:bool=true;
 fn transmission_eta(ior:f32)->f32 {
  return select(1./max(ior,1.),0.,ior==0.);
 }
-// The rotation-independent scale of `modelMatrix` on each axis, which takes
-// a volume's thickness, given in the mesh's units (KHR_materials_volume),
-// into the world's: the one owner of that scale, which every volume lobe
-// takes.
-fn transmission_model_scale(modelMatrix:mat4x4<f32>)->vec3<f32> {
- return vec3(length(modelMatrix[0].xyz),length(modelMatrix[1].xyz),length(modelMatrix[2].xyz));
-}
 fn getVolumeTransmissionRay(n:vec3<f32>,v:vec3<f32>,thickness:f32,ior:f32,modelMatrix:mat4x4<f32>)->vec3<f32> {
  // Direction of refracted light.
  let refractionVector=refract(-v,normalize(n),transmission_eta(ior));
- // Compute rotation-independent scaling of the model matrix.
+ // Compute rotation-independent scaling of the model matrix
+ // (transmission_model_scale, vertex.wgsl).
  let modelScale=transmission_model_scale(modelMatrix);
  // The thickness is specified in local space.
  return normalize(refractionVector)*thickness*modelScale;
@@ -60,12 +54,6 @@ fn applyIorToRoughness(roughness:f32,ior:f32)->f32 {
 fn getTransmissionSample(fragCoord:vec2<f32>,roughness:f32,ior:f32)->vec4<f32> {
  let lod=log2(transmission_frame_size().x)*applyIorToRoughness(roughness,ior);
  return transmission_frame_sample(fragCoord,lod);
-}
-// Beer-Lambert's transmittance over `transmissionDistance` metres of a
-// volume whose attenuation coefficient per metre is `attenuation`: 1 where
-// the attenuation distance is infinite, whose coefficient is 0.
-fn volumeAttenuation(transmissionDistance:f32,attenuation:vec3<f32>)->vec3<f32> {
- return exp(-attenuation*transmissionDistance);
 }
 // Where the refracted ray leaves the volume at `refractedRayExit`, on the
 // frame behind it: its UV.

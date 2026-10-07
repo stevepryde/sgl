@@ -96,6 +96,33 @@ pub(super) fn validate_transmission(values: &SurfaceMaterial) -> Result<(), Scen
     }
 }
 
+/// The sheen `values` may take (KHR_materials_sheen): a colour and a
+/// roughness in `0..=1`, as glTF bounds them.
+pub(super) fn validate_sheen(values: &SurfaceMaterial) -> Result<(), SceneError> {
+    let unit = |value: &f32| (0.0..=1.0).contains(value);
+    if values.sheen_color.iter().all(unit) && unit(&values.sheen_roughness) {
+        Ok(())
+    } else {
+        Err(SceneError::InvalidSheen)
+    }
+}
+
+/// The diffuse transmission `values` may take
+/// (KHR_materials_diffuse_transmission): a share in `0..=1` and a finite
+/// nonnegative colour, as its schema bounds them.
+pub(super) fn validate_diffuse_transmission(values: &SurfaceMaterial) -> Result<(), SceneError> {
+    if (0.0..=1.0).contains(&values.diffuse_transmission)
+        && values
+            .diffuse_transmission_color
+            .iter()
+            .all(|channel| channel.is_finite() && *channel >= 0.)
+    {
+        Ok(())
+    } else {
+        Err(SceneError::InvalidDiffuseTransmission)
+    }
+}
+
 /// Normal layers `values` may take on a material added with `maps` and
 /// `wrap`: they scroll its normal map, which must be there and repeat on both
 /// axes, at finite velocities and strengths, positive finite scales, and

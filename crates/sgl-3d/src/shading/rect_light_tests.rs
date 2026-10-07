@@ -180,7 +180,7 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
  reflectance.f90=1.;
  reflectance.multiscatter=vec3(1.25);
  reflectance.coat_fresnel=c.f.w;
- let light=scene_light_sample(index,c.p.xyz,c.n.xyz,c.n.xyz,vec2(0.),SHADOW_RECEIVER_CAMERA);
+ let light=scene_light_sample(index,c.p.xyz,c.n.xyz,c.n.xyz,vec2(0.),SHADOW_RECEIVER_CAMERA,false,c.p.xyz);
  result[id.x]=vec4(surface_direct_light(surface,reflectance,light),0.);
 }
 "#;

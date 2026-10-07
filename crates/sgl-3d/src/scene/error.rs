@@ -71,6 +71,11 @@ pub enum SceneError {
     /// attenuation distance is not positive, or an attenuation colour
     /// channel is outside 0..=1.
     InvalidTransmission,
+    /// A material's sheen colour or sheen roughness is outside 0..=1.
+    InvalidSheen,
+    /// A material's diffuse transmission is outside 0..=1, or its colour is
+    /// negative or not finite.
+    InvalidDiffuseTransmission,
     /// A material's normal layers have a velocity, scale or strength that is
     /// not finite, a scale that is not positive or a speed beyond 2^24
     /// repeats of the map per hour, or the material has no normal map that
@@ -206,6 +211,10 @@ impl std::fmt::Display for SceneError {
             }
             Self::InvalidTransmission => {
                 "transmission must be in 0..1 on a lit material, thickness and dispersion finite and nonnegative, attenuation distance positive and attenuation colour in 0..1"
+            }
+            Self::InvalidSheen => "sheen colour and sheen roughness must be in 0..1",
+            Self::InvalidDiffuseTransmission => {
+                "diffuse transmission must be in 0..1 and its colour finite and nonnegative"
             }
             Self::InvalidNormalLayers => {
                 "normal layers need finite velocities and strengths, positive finite scales, at most 2^24 repeats per hour and a normal map that repeats on both axes"

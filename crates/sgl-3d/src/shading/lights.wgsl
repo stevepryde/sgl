@@ -11,33 +11,51 @@
 // light the ray-traced shadow mask holds from the mask, every other
 // receiver from the maps. A point in the fog has no side, so a light
 // reaches it from any direction; its normals are zero, so its shadow takes
-// no normal offset.
-fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32)->LightSample {
- let unreached=LightSample(vec3(0.),vec3(0.),0.,0.,NO_RECT_LIGHT,0.);
+// no normal offset. A surface that `transmits` diffuse light to its other
+// side takes a light behind its normal there (a rectangle's on both sides),
+// its shadow looked up from the maps, which the mask does not hold, at its
+// transmitted lobe's point `back` (surface_transmitted_point), offset along
+// the reversed geometry normal, as Bevy 9d12036 shadows its transmitted
+// lobe (pbr_functions.wesl 494–513, 555–580); such a light reaches it where
+// either side sees it. A point or spot light behind its normal lights only
+// that other side: light_reach keeps such a light from a surface that
+// passes none through, so the front takes none of it either and looks up
+// no shadow for it.
+fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,transmits:bool,back:vec3<f32>)->LightSample {
+ let unreached=LightSample(vec3(0.),vec3(0.),0.,0.,0.,NO_RECT_LIGHT,0.);
  let light=lights[index];
- let reach=light_reach(light,position,normal,receiver==SHADOW_RECEIVER_MEDIUM);
+ let reach=light_reach(light,position,normal,receiver==SHADOW_RECEIVER_MEDIUM||transmits);
  if reach.attenuation<=0. {
   return unreached;
  }
- var visibility=1.;
+ let front=!transmits || reach.rect || dot(normal,reach.direction)>0.;
+ let behind=transmits && (reach.rect || dot(normal,reach.direction)<0.);
+ var visibility=select(0.,1.,front);
+ var transmitted=select(0.,1.,behind);
  // A probe hit looks up no map: its caller casts a visibility ray. The
  // camera's surfaces take a light the ray-traced shadow mask holds from it
  // (camera_shadow_mask, whose provider the program composes).
  if light.shadow_opacity>SHADOW_OPACITY_CUTOFF && receiver!=SHADOW_RECEIVER_PROBE_HIT {
-  var shadow=SHADOW_MASK_NO_SLOT;
-  if receiver==SHADOW_RECEIVER_CAMERA {
-   shadow=camera_shadow_mask(index,pixel);
+  if front {
+   var shadow=SHADOW_MASK_NO_SLOT;
+   if receiver==SHADOW_RECEIVER_CAMERA {
+    shadow=camera_shadow_mask(index,pixel);
+   }
+   if shadow<0. {
+    shadow=local_shadow_visibility(index,light.position,light.range,position,geometry_normal,pixel,receiver);
+   }
+   visibility=shadow_opacity_visibility(shadow,light.shadow_opacity);
   }
-  if shadow<0. {
-   shadow=local_shadow_visibility(index,light.position,light.range,position,geometry_normal,pixel,receiver);
+  if behind {
+   let shadow=local_shadow_visibility(index,light.position,light.range,back,-geometry_normal,pixel,receiver);
+   transmitted=shadow_opacity_visibility(shadow,light.shadow_opacity);
   }
-  visibility=shadow_opacity_visibility(shadow,light.shadow_opacity);
  }
- if visibility<=0. {
+ if visibility<=0. && transmitted<=0. {
   return unreached;
  }
  // A point or spot light's sphere over its distance; a rectangle has none.
  let to_light=light.position-position;
  let size=select(light.radius*inverseSqrt(dot(to_light,to_light)),0.,reach.rect);
- return LightSample(reach.direction,light.color*reach.attenuation,visibility,light.specular,select(NO_RECT_LIGHT,index,reach.rect),size);
+ return LightSample(reach.direction,light.color*reach.attenuation,visibility,transmitted,light.specular,select(NO_RECT_LIGHT,index,reach.rect),size);
 }

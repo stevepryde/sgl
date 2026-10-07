@@ -23,10 +23,10 @@ Vulkan driver lands in either, by its `maxPerStageResources`.
 `Renderer::binding_tier` reports it. On `Basic` baked light from a
 lightmap or irradiance atlas is non-directional, dynamic GI is off
 (`Renderer::dynamic_gi_in_effect`), a material's anisotropy, clearcoat,
-iridescence, transmission and thickness maps give way to their factors (a
-clearcoat normal map to the geometry normal), in raster and rays alike, and
-transmissive surfaces blend the light behind them through unrefracted. A
-probe captured on an
+iridescence, transmission, thickness, sheen and diffuse transmission maps
+give way to their factors (a clearcoat normal map to the geometry normal),
+in raster and rays alike, and transmissive surfaces blend the light behind
+them through unrefracted. A probe captured on an
 `Extended` device keeps what its maps and lights did there.
 [Binding tiers](../README.md#binding-tiers).
 
@@ -36,8 +36,10 @@ probe captured on an
   bump maps, an occlusion map packed in the metallic-roughness image's red
   channel (ORM), `KHR_materials_clearcoat` (its clearcoat, roughness and
   normal maps on the `Extended` binding tier), emission, unlit,
-  `KHR_materials_anisotropy` and `KHR_materials_iridescence` (a thin film
-  over the base, its maps on `Extended`), the `KHR_materials_ior` and
+  `KHR_materials_anisotropy`, `KHR_materials_iridescence` (a thin film
+  over the base, its maps on `Extended`), `KHR_materials_sheen` (cloth) and
+  `KHR_materials_diffuse_transmission` (leaves and paper lit from behind),
+  their maps on `Extended`, the `KHR_materials_ior` and
   `KHR_materials_specular` factors (a dielectric's F0: water's IOR 1.33
   gives 0.02), and `KHR_materials_transmission`, `KHR_materials_volume` and
   `KHR_materials_dispersion` (their maps on `Extended`). Every map lies on

@@ -175,6 +175,22 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MATERIAL_DISPERSION",
             material(offset_of!(MaterialUniform, dispersion)),
         ),
+        (
+            "SCENE_MATERIAL_SHEEN",
+            material(offset_of!(MaterialUniform, sheen)),
+        ),
+        (
+            "SCENE_MATERIAL_SHEEN_ROUGHNESS",
+            material(offset_of!(MaterialUniform, sheen_roughness)),
+        ),
+        (
+            "SCENE_MATERIAL_DIFFUSE_TRANSMISSION_COLOR",
+            material(offset_of!(MaterialUniform, diffuse_transmission_color)),
+        ),
+        (
+            "SCENE_MATERIAL_DIFFUSE_TRANSMISSION",
+            material(offset_of!(MaterialUniform, diffuse_transmission)),
+        ),
         ("SCENE_NORMAL_LAYER_WORDS", size_of::<NormalLayerUniform>()),
         (
             "SCENE_NORMAL_LAYER_CYCLES",
@@ -228,6 +244,26 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         (
             "SCENE_TEXTURE_IRIDESCENCE_THICKNESS",
             offset_of!(MaterialTextures, iridescence_thickness),
+        ),
+        (
+            "SCENE_TEXTURE_SHEEN_COLOR",
+            offset_of!(MaterialTextures, sheen_color),
+        ),
+        (
+            "SCENE_TEXTURE_SHEEN_ROUGHNESS",
+            offset_of!(MaterialTextures, sheen_roughness),
+        ),
+        (
+            "SCENE_TEXTURE_DIFFUSE_TRANSMISSION",
+            offset_of!(MaterialTextures, diffuse_transmission),
+        ),
+        (
+            "SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR",
+            offset_of!(MaterialTextures, diffuse_transmission_color),
+        ),
+        (
+            "SCENE_TEXTURE_THICKNESS",
+            offset_of!(MaterialTextures, thickness),
         ),
         ("SCENE_TEXTURES", size_of::<MaterialTextures>()),
     ];

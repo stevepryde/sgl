@@ -200,13 +200,24 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new((device, queue): (wgpu::Device, wgpu::Queue), size: [u32; 2]) -> Self {
-        let settings = Settings {
-            antialiasing: settings::Antialiasing::Off,
-            bloom: settings::Bloom::Off,
-            atmosphere: false,
-            ..Settings::default()
-        };
+    fn new(device: (wgpu::Device, wgpu::Queue), size: [u32; 2]) -> Self {
+        Self::with_settings(
+            device,
+            size,
+            Settings {
+                antialiasing: settings::Antialiasing::Off,
+                bloom: settings::Bloom::Off,
+                atmosphere: false,
+                ..Settings::default()
+            },
+        )
+    }
+
+    fn with_settings(
+        (device, queue): (wgpu::Device, wgpu::Queue),
+        size: [u32; 2],
+        settings: Settings,
+    ) -> Self {
         let renderer = Renderer::for_test(&device, &queue, size, &settings);
         let scene = Scene::new(&device, &queue);
         Self {
@@ -952,4 +963,302 @@ fn observe_shadow(
     bytemuck::cast_slice::<u8, f32>(&readback.get_mapped_range(..).unwrap())
         .try_into()
         .unwrap()
+}
+
+/// A double-sided leaf facing the camera, 3 m before it, that passes all
+/// the light it diffuses through to its other side.
+fn leaf() -> crate::asset::Asset {
+    let mut leaf = Fixture::white(quad(Vec3::new(0., 0., -3.), 2.));
+    let material = &mut leaf.materials[0];
+    material.double_sided = true;
+    material.diffuse_transmission = 1.;
+    material.diffuse_transmission_color = [1.; 3];
+    leaf
+}
+
+/// The leaf's lit colour at the centre of `fixture`'s frame, lit from behind
+/// by a light of `illuminance` shining along `direction` with or without its
+/// cascades, with or without `occluder`, behind the leaf, in the light's
+/// sight.
+fn lit_from_behind(
+    fixture: &mut Fixture,
+    occluder: crate::InstanceId,
+    direction: Vec3,
+    shadow: bool,
+    occluded: bool,
+    illuminance: f32,
+) -> f32 {
+    fixture.cast(occluder, occluded);
+    let light = DirectionalLight {
+        direction,
+        color: [1., 0., 0.],
+        illuminance,
+        shadow: shadow.then_some(two_cascades()),
+        ..Default::default()
+    };
+    let centre = [fixture.size[0] / 2, fixture.size[1] / 2];
+    fixture.observe(&frame(light), &[centre])[0]
+}
+
+// Plausible defects: a light behind a surface that passes diffuse light
+// through takes the shadow its own side takes (here the leaf's own, which
+// covers the side facing away from the light), none at all, or one offset
+// toward the surface's own side; or a light its own side sees none of is
+// dropped before the other side takes it, under the cascades or under the
+// ray-traced shadows' mask, which holds the camera surface's own side
+// alone. The oracle is geometric: a light shines on the back of a
+// double-sided leaf the camera faces; behind it, an occluder the camera does
+// not see covers the leaf from the light or is moved out of the light's
+// sight. The leaf takes the light through it as the unshadowed light gives
+// it where nothing covers its back, and none where the occluder does: from
+// the directional light, and from a point light, which the scene lights'
+// loop shades.
+#[test]
+fn a_leaf_lit_from_behind_takes_its_back_side_s_shadow() {
+    let mut fixtures = Vec::new();
+    if let Some(device) = test_support::device() {
+        fixtures.push(("cascades", Fixture::new(device, SIZE)));
+    }
+    if let Some(device) = test_support::ray_tracing_device(|limits| limits) {
+        let settings = Settings {
+            antialiasing: settings::Antialiasing::Off,
+            bloom: settings::Bloom::Off,
+            atmosphere: false,
+            hardware_ray_tracing: true,
+            ray_traced_shadows: true,
+            ..Settings::default()
+        };
+        fixtures.push((
+            "ray-traced shadows",
+            Fixture::with_settings(device, SIZE, settings),
+        ));
+    }
+    for (label, mut fixture) in fixtures {
+        fixture.place_asset(leaf(), true);
+        let mut occluder = Fixture::white(quad(Vec3::new(0., 0., -6.), 3.));
+        occluder.materials[0].double_sided = true;
+        let occluder = fixture.place_asset(occluder, false);
+        let dark = lit_from_behind(&mut fixture, occluder, Vec3::Z, false, false, 0.);
+        let unshadowed = lit_from_behind(&mut fixture, occluder, Vec3::Z, false, false, 1.);
+        let open = lit_from_behind(&mut fixture, occluder, Vec3::Z, true, false, 1.);
+        let covered = lit_from_behind(&mut fixture, occluder, Vec3::Z, true, true, 1.);
+        assert!(
+            unshadowed > dark + 0.01,
+            "{label}: the leaf lit through takes {unshadowed}, unlit {dark}"
+        );
+        assert!(
+            (open - unshadowed).abs() < 0.001,
+            "{label}: nothing covers the leaf's back: {open}, unshadowed {unshadowed}"
+        );
+        assert!(
+            (covered - dark).abs() < 0.001,
+            "{label}: the occluder covers the leaf's back: {covered}, unlit {dark}"
+        );
+        // A light behind the leaf at 70° from its normal, where the lookup's
+        // offset along the normal outweighs the depth offset toward the light
+        // in the leaf's own depth.
+        let grazing = Vec3::new(70f32.to_radians().sin(), 0., 70f32.to_radians().cos());
+        let unshadowed = lit_from_behind(&mut fixture, occluder, grazing, false, false, 1.);
+        let open = lit_from_behind(&mut fixture, occluder, grazing, true, false, 1.);
+        assert!(
+            unshadowed > dark + 0.01 && (open - unshadowed).abs() < 0.001,
+            "{label}: a grazing light behind the leaf: {open}, unshadowed {unshadowed}, unlit {dark}"
+        );
+        // A point light behind the occluder, through the scene lights' loop.
+        let (device, queue) = (fixture.device.clone(), fixture.queue.clone());
+        let point = |casts_shadow: bool, intensity: f32| crate::Light {
+            position: Vec3::new(0., 0., -9.),
+            color: [1., 0., 0.],
+            intensity,
+            range: 20.,
+            casts_shadow,
+            ..Default::default()
+        };
+        let light = fixture
+            .scene
+            .add_light(&device, &queue, point(false, 0.))
+            .unwrap();
+        let mut point_lit = |casts_shadow: bool, occluded: bool, intensity: f32| {
+            fixture
+                .scene
+                .set_light(&queue, light, point(casts_shadow, intensity))
+                .unwrap();
+            lit_from_behind(&mut fixture, occluder, Vec3::Z, false, occluded, 0.)
+        };
+        let unshadowed = point_lit(false, false, 50.);
+        let open = point_lit(true, false, 50.);
+        let covered = point_lit(true, true, 50.);
+        assert!(
+            unshadowed > dark + 0.01,
+            "{label}: the leaf lit through by a point light takes {unshadowed}, unlit {dark}"
+        );
+        assert!(
+            (open - unshadowed).abs() < 0.001,
+            "{label}: nothing covers the leaf's back from the point light: {open}, unshadowed {unshadowed}"
+        );
+        assert!(
+            (covered - dark).abs() < 0.001,
+            "{label}: the occluder covers the leaf's back from the point light: {covered}, unlit {dark}"
+        );
+    }
+}
+
+impl Fixture {
+    /// Adds `asset` at `pose` as a static instance the camera sees when
+    /// `visible`, the light always; its identities.
+    fn place_posed(
+        &mut self,
+        asset: crate::asset::Asset,
+        pose: Mat4,
+        visible: bool,
+    ) -> crate::AssetIds {
+        let (device, queue) = (&self.device, &self.queue);
+        let ids = self.scene.add_asset(device, queue, asset).unwrap();
+        let state = InstanceState {
+            model: ids.model,
+            pose,
+            visible,
+            capture_visible: true,
+        };
+        self.scene
+            .add_instance(device, queue, state, Mobility::Static)
+            .unwrap();
+        ids
+    }
+
+    /// Material `id`'s values with `change` made.
+    fn edit_material(
+        &mut self,
+        id: crate::MaterialId,
+        change: impl FnOnce(&mut crate::SurfaceMaterial),
+    ) {
+        let mut values = self.scene.material(id).unwrap();
+        change(&mut values);
+        self.scene.set_material(&self.queue, id, values).unwrap();
+    }
+
+    /// The lit colour's red, green and blue at `pixel` in a frame of `input`.
+    fn observe_rgb(&mut self, input: &FrameInput, pixel: [u32; 2]) -> [f32; 3] {
+        let (device, queue) = (&self.device, &self.queue);
+        let output = crate::view::targets::target(
+            device,
+            "shadow output",
+            self.size,
+            crate::shading::gbuffer::COLOR,
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        self.renderer.render(
+            device,
+            queue,
+            &mut encoder,
+            &mut self.scene,
+            input,
+            &self.settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        self.renderer.finish_frame(&mut self.scene);
+        let color = test_support::read(device, queue, self.renderer.targets().color.texture(), 8);
+        let at = ((pixel[1] * self.size[0] + pixel[0]) * 8) as usize;
+        [0, 2, 4].map(|channel| test_support::half(&color[at + channel..]))
+    }
+}
+
+/// A light shining along +Z onto the back of what faces the camera, with
+/// the cascades where `shadow`.
+fn from_behind(shadow: bool) -> FrameInput {
+    frame(DirectionalLight {
+        direction: Vec3::Z,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: shadow.then_some(two_cascades()),
+        ..Default::default()
+    })
+}
+
+// Plausible defects: a volume's thickness ignored, so a surface that passes
+// light through takes the light behind it at its own face, where the
+// volume's far side shadows it (Bevy 9d12036 places the transmitted lobe
+// the thickness behind the surface, pbr_functions.wesl 377–378); or the
+// thickness taken toward the surface's own side. The oracle is geometric: a
+// leaf facing the camera, 0.5 m before the far face of its slab, lit from
+// behind by a light with cascades. At thickness 0 the far face covers the
+// leaf's own point from the light, which then takes none of it; at the
+// slab's thickness the transmitted lobe lies on the far face and takes all
+// the light an unshadowed light gives.
+#[test]
+fn a_volume_passes_light_through_from_its_far_side() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    let ids = fixture.place_posed(leaf(), Mat4::IDENTITY, true);
+    let mut far = Fixture::white(quad(Vec3::new(0., 0., -3.5), 2.));
+    far.materials[0].double_sided = true;
+    fixture.place_posed(far, Mat4::IDENTITY, false);
+    let centre = [SIZE[0] / 2, SIZE[1] / 2];
+    let lit = |fixture: &mut Fixture, thickness: f32, shadow: bool, illuminance: f32| {
+        fixture.edit_material(ids.materials[0], |m| m.thickness = thickness);
+        let mut input = from_behind(shadow);
+        input.directional_lights[0].as_mut().unwrap().illuminance = illuminance;
+        fixture.observe_rgb(&input, centre)[0]
+    };
+    let dark = lit(&mut fixture, 0.5, true, 0.);
+    let unshadowed = lit(&mut fixture, 0.5, false, 1.);
+    let thin = lit(&mut fixture, 0., true, 1.);
+    let thick = lit(&mut fixture, 0.5, true, 1.);
+    assert!(unshadowed > dark + 0.01, "{unshadowed}, unlit {dark}");
+    assert!(
+        (thin - dark).abs() < 0.001,
+        "thickness 0: the slab's far face covers the leaf: {thin}, unlit {dark}"
+    );
+    assert!(
+        (thick - unshadowed).abs() < 0.001,
+        "the slab's thickness: the lobe lies on the far face: {thick}, unshadowed {unshadowed}"
+    );
+}
+
+// Plausible defects: light passed through a volume not attenuated over its
+// thickness, the thickness taken in the mesh's units, or scaled by the pose
+// along the normal alone, or per axis. The oracle is KHR_materials_volume's
+// Beer-Lambert law, the attenuation colour c over the attenuation distance
+// d, c^(x / d) on each channel, with x the thickness in the world as the
+// Khronos glTF Sample Renderer 0686eb2 takes it for diffuse transmission:
+// times the mean of the pose's axis scales (pbr.frag 174–177). A leaf posed
+// (1, 1, 4) at thickness 0.25 has x = 0.5 m; it passes c^0.5 of what the
+// same leaf passes without attenuation. The bound is binary16 storage.
+#[test]
+fn a_volume_attenuates_the_light_it_passes_through() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    let mut leaf = leaf();
+    for vertex in &mut leaf.meshes[0].vertices {
+        vertex.position[2] = 0.;
+    }
+    let pose =
+        Mat4::from_translation(Vec3::new(0., 0., -3.)) * Mat4::from_scale(Vec3::new(1., 1., 4.));
+    let ids = fixture.place_posed(leaf, pose, true);
+    let color = [0.5, 0.8, 1.];
+    let centre = [SIZE[0] / 2, SIZE[1] / 2];
+    let lit = |fixture: &mut Fixture, distance: f32| {
+        fixture.edit_material(ids.materials[0], |m| {
+            m.thickness = 0.25;
+            m.attenuation_color = color;
+            m.attenuation_distance = distance;
+        });
+        fixture.observe_rgb(&from_behind(false), centre)
+    };
+    let clear = lit(&mut fixture, f32::INFINITY);
+    let attenuated = lit(&mut fixture, 1.);
+    for channel in 0..3 {
+        let expected = clear[channel] * color[channel].powf(0.5);
+        assert!(
+            clear[channel] > 0.01
+                && (attenuated[channel] - expected).abs() <= 2e-3 * clear[channel],
+            "{attenuated:?} attenuated, {clear:?} clear, Beer-Lambert's {expected} on channel {channel}"
+        );
+    }
 }

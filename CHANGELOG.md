@@ -124,6 +124,22 @@ docs and specs the entry links.
 - `sgl-3d` `Scene::add_materials`/`set_material`: new
   `SceneError::InvalidTransmission` for values outside the extensions'
   bounds. Migration: exhaustive `SceneError` matches add it.
+- `sgl-3d` `KHR_materials_sheen`, left out before: a sheen layer for cloth,
+  through new `sheen_color` (`[0.; 3]`) and `sheen_roughness` (0) on
+  `asset::Material` and `SurfaceMaterial` and `sheen_color_texture` and
+  `sheen_roughness_texture` on `asset::Material`. Migration: exhaustive
+  material literals add the fields or take `..Default::default()`.
+- `sgl-3d` `KHR_materials_diffuse_transmission`, left out before: light
+  passed through leaves, paper and, with `thickness`, volumes such as wax,
+  through new
+  `diffuse_transmission` (0) and `diffuse_transmission_color` (`[1.; 3]`)
+  on `asset::Material` and `SurfaceMaterial` and
+  `diffuse_transmission_texture` and `diffuse_transmission_color_texture`
+  on `asset::Material`. Migration: as for the sheen.
+- `sgl-3d` sheen and diffuse transmission maps bind on the `Extended`
+  binding tier only; on `Basic` their factors apply alone. New
+  `SceneError::InvalidSheen` and `InvalidDiffuseTransmission` refuse values
+  outside glTF's ranges. No game-code change.
 
 ## 0.2.1 — 2026-10-07
 
