@@ -80,6 +80,14 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
  }
  return n;
 }
+// The coat's normal (Surface.coat_normal), as surface_coat_normal takes it,
+// on ray_map_frame where the hit has one.
+fn ray_coat_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
+ if normal_maps_enabled && (material.values.maps&MATERIAL_MAP_COAT_NORMAL)!=0u && ray_has_map_frame(hit,material) {
+  return normalize(ray_map_frame(hit,material)*material_coat_normal(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_COAT_NORMAL],hit.uv,material.wrap,false)));
+ }
+ return hit.normal;
+}
 fn ray_base_color(hit:SceneHit,material:SceneMaterial)->vec4<f32> {
  return scene_base_color(material,hit.uv,hit.color);
 }
@@ -122,9 +130,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  if material.values.coat>0. {
   s.coat=material_coat(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_CLEARCOAT],hit.uv,material.wrap,false));
   coat_roughness=material_coat_roughness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_COAT_ROUGHNESS],hit.uv,material.wrap,false));
-  if normal_maps_enabled && (material.values.maps&MATERIAL_MAP_COAT_NORMAL)!=0u && ray_has_map_frame(hit,material) {
-   s.coat_normal=normalize(ray_map_frame(hit,material)*material_coat_normal(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_COAT_NORMAL],hit.uv,material.wrap,false)));
-  }
+  s.coat_normal=ray_coat_normal(hit,material);
  }
  s.coat_roughness=clamp(coat_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
  s.iridescence_ior=material.values.iridescence_ior;

@@ -1,5 +1,6 @@
 //! The glTF loader against hand-built documents.
 use super::*;
+use glam::Vec3;
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
@@ -668,4 +669,179 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
         serde_json::json!({"specularColorTexture": {"index": 2}}),
     ));
     assert_eq!(ignored, [Ignored::SpecularMap { material: 0 }]);
+}
+
+/// `material` read from a document of images `a`, `b` and `c` and textures
+/// 0, 1 and 2 of images `c`, `b` and `a`.
+fn read_textured_material(material: serde_json::Value) -> Result<Material> {
+    let source = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "extensionsUsed": ["KHR_materials_clearcoat", "KHR_materials_iridescence"],
+        "images": [{"uri": "a.png"}, {"uri": "b.png"}, {"uri": "c.png"}],
+        "textures": [{"source": 2}, {"source": 1}, {"source": 0}],
+        "materials": [material]
+    });
+    let document = gltf::Gltf::from_slice(&serde_json::to_vec(&source).unwrap())
+        .unwrap()
+        .document;
+    read_material(
+        document.materials().next().unwrap(),
+        &document,
+        0,
+        &mut Vec::new(),
+    )
+}
+
+// Defects: a clearcoat or iridescence texture's index taken for its image
+// (glTF's texture -> image indirection lost), or one map's texture read for
+// another's; a KHR default misread; the clearcoat normal map's scale lost;
+// or a map off TEXCOORD_0, an unknown property or a value outside the
+// schema accepted. The oracle is the extensions' schemas: clearcoatFactor
+// and clearcoatRoughnessFactor in 0..1, default 0, clearcoatNormalTexture's
+// scale default 1; iridescenceFactor in 0..1, default 0, iridescenceIor at
+// least 1, default 1.3, iridescenceThicknessMinimum and Maximum at least 0,
+// default 100 and 400 nm, a minimum above the maximum allowed.
+#[test]
+fn clearcoat_maps_and_iridescence_load_with_their_defaults() {
+    let extensions = |clearcoat: serde_json::Value, iridescence: serde_json::Value| {
+        serde_json::json!({"extensions": {
+            "KHR_materials_clearcoat": clearcoat,
+            "KHR_materials_iridescence": iridescence
+        }})
+    };
+    let empty = serde_json::json!({});
+    let plain = read_textured_material(extensions(empty.clone(), empty.clone())).unwrap();
+    assert_eq!(
+        (
+            plain.clearcoat,
+            plain.coat_roughness,
+            plain.clearcoat_texture,
+            plain.coat_roughness_texture,
+            plain.coat_normal_texture,
+            plain.coat_normal_scale
+        ),
+        (0., 0., None, None, None, 1.)
+    );
+    assert_eq!(
+        (
+            plain.iridescence,
+            plain.iridescence_ior,
+            plain.iridescence_thickness,
+            plain.iridescence_texture,
+            plain.iridescence_thickness_texture
+        ),
+        (0., 1.3, [100., 400.], None, None)
+    );
+    let authored = read_textured_material(extensions(
+        serde_json::json!({
+            "clearcoatFactor": 0.5, "clearcoatRoughnessFactor": 0.25,
+            "clearcoatTexture": {"index": 0}, "clearcoatRoughnessTexture": {"index": 1},
+            "clearcoatNormalTexture": {"index": 2, "scale": 0.5}
+        }),
+        serde_json::json!({
+            "iridescenceFactor": 0.75, "iridescenceIor": 1.8,
+            "iridescenceThicknessMinimum": 500, "iridescenceThicknessMaximum": 50,
+            "iridescenceTexture": {"index": 1}, "iridescenceThicknessTexture": {"index": 0}
+        }),
+    ))
+    .unwrap();
+    assert_eq!(
+        (
+            authored.clearcoat,
+            authored.coat_roughness,
+            authored.clearcoat_texture,
+            authored.coat_roughness_texture,
+            authored.coat_normal_texture,
+            authored.coat_normal_scale
+        ),
+        (0.5, 0.25, Some(2), Some(1), Some(0), 0.5)
+    );
+    assert_eq!(
+        (
+            authored.iridescence,
+            authored.iridescence_ior,
+            authored.iridescence_thickness,
+            authored.iridescence_texture,
+            authored.iridescence_thickness_texture
+        ),
+        (0.75, 1.8, [500., 50.], Some(1), Some(2))
+    );
+    for (clearcoat, iridescence) in [
+        (serde_json::json!({"clearcoatFactor": 1.5}), empty.clone()),
+        (
+            serde_json::json!({"clearcoatTexture": {"index": 0, "texCoord": 1}}),
+            empty.clone(),
+        ),
+        (
+            serde_json::json!({"clearcoatNormalTexture": {"index": 3}}),
+            empty.clone(),
+        ),
+        (
+            serde_json::json!({"clearcoatNormalTexture": {"index": 0, "scale": "half"}}),
+            empty.clone(),
+        ),
+        (serde_json::json!({"clearcoatTint": 1}), empty.clone()),
+        (empty.clone(), serde_json::json!({"iridescenceFactor": 1.5})),
+        (empty.clone(), serde_json::json!({"iridescenceIor": 0.9})),
+        (
+            empty.clone(),
+            serde_json::json!({"iridescenceThicknessMinimum": -1}),
+        ),
+        (
+            empty.clone(),
+            serde_json::json!({"iridescenceThicknessTexture": {"index": 0, "texCoord": 1}}),
+        ),
+        (empty.clone(), serde_json::json!({"iridescenceSpread": 1})),
+    ] {
+        let label = format!("{clearcoat} {iridescence}");
+        assert!(
+            read_textured_material(extensions(clearcoat, iridescence)).is_err(),
+            "{label} loaded"
+        );
+    }
+}
+
+// Defects: a primitive without TEXCOORD_0 loads though its material samples
+// a map, which then reads one texel everywhere (the check covered the base,
+// metallic-roughness, occlusion and anisotropy maps alone). The oracle is
+// glTF's textureInfo: every map SGL3D samples lies on TEXCOORD_0, so a
+// primitive whose material has any map needs it; one with none loads.
+#[test]
+fn a_primitive_without_texcoord_0_is_refused_for_any_map() {
+    // A 1×1 PNG, embedded, so the image decodes without a file.
+    let image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNwC4gCAAHQAPElUIcnAAAAAElFTkSuQmCC";
+    let texture = serde_json::json!({"index": 0});
+    let maps = [
+        serde_json::json!({"emissiveTexture": texture}),
+        serde_json::json!({"normalTexture": texture}),
+        serde_json::json!({"extensions": {"EXT_materials_bump": {"bumpTexture": texture}}}),
+        serde_json::json!({"extensions": {"KHR_materials_clearcoat": {"clearcoatNormalTexture": texture}}}),
+        serde_json::json!({"extensions": {"KHR_materials_iridescence": {"iridescenceThicknessTexture": texture}}}),
+    ];
+    let used = [
+        "EXT_materials_bump",
+        "KHR_materials_clearcoat",
+        "KHR_materials_iridescence",
+        "KHR_lights_punctual",
+    ];
+    for material in maps.into_iter().chain([serde_json::json!({})]) {
+        let fixture = extension_fixture(serde_json::json!({}), &used, &[]);
+        let mut source: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(fixture.path()).unwrap()).unwrap();
+        source["images"] = serde_json::json!([{"uri": image}]);
+        source["textures"] = serde_json::json!([{"source": 0}]);
+        source["materials"][0] = material.clone();
+        std::fs::write(fixture.path(), serde_json::to_vec(&source).unwrap()).unwrap();
+        let loaded = load(&fixture.path());
+        if material == serde_json::json!({}) {
+            assert!(loaded.is_ok(), "an untextured primitive: {:?}", loaded.err());
+        } else {
+            assert!(
+                loaded
+                    .err()
+                    .is_some_and(|error| error.to_string().contains("TEXCOORD_0")),
+                "{material} loaded without TEXCOORD_0"
+            );
+        }
+    }
 }

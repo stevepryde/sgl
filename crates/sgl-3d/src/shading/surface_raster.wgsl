@@ -72,6 +72,15 @@ fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
  }
  return n;
 }
+// The coat's normal (Surface.coat_normal): its clearcoat normal map's on
+// the base map's frame (surface_map_frame), where the map is in effect and
+// the normal-map diagnostic switch is on, else the geometry normal.
+fn surface_coat_normal(i:Fragment,front:bool)->vec3<f32> {
+ if normal_maps_enabled && (material.maps&MATERIAL_MAP_COAT_NORMAL)!=0u {
+  return normalize(surface_map_frame(i,front)*material_coat_normal(material,material_coat_normal_texel(i.uv)));
+ }
+ return surface_geometry_normal(i,front);
+}
 // The anisotropy direction and strength around the mapped normal `n`.
 fn surface_anisotropy(i:Fragment,front:bool,n:vec3<f32>)->vec4<f32> {
  return pbr_resolve_anisotropy(n,surface_tangent_frame(i,front),material.anisotropy_strength,material.anisotropy_rotation,(material.maps&MATERIAL_MAP_ANISOTROPY)!=0u,material_anisotropy_texel(i.uv));
@@ -117,16 +126,13 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  s.specular=material.specular;
  s.roughness=surface_roughness(decaled.roughness,n,i);
  // The coat's and the film's maps are sampled only where their factor
- // leaves them anything to scale. Without a coat normal map, or with the
- // normal-map diagnostic switch off, the coat follows the geometry normal.
+ // leaves them anything to scale.
  var coat_roughness=material.coat_roughness;
  s.coat_normal=geometry_normal;
  if material.coat>0. {
   s.coat=material_coat(material,material_clearcoat_texel(i.uv));
   coat_roughness=material_coat_roughness(material,material_coat_roughness_texel(i.uv));
-  if normal_maps_enabled && (material.maps&MATERIAL_MAP_COAT_NORMAL)!=0u {
-   s.coat_normal=normalize(surface_map_frame(i,front)*material_coat_normal(material,material_coat_normal_texel(i.uv)));
-  }
+  s.coat_normal=surface_coat_normal(i,front);
  }
  s.coat_roughness=surface_roughness(coat_roughness,n,i);
  s.iridescence_ior=material.iridescence_ior;

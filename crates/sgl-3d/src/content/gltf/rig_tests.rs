@@ -1,7 +1,7 @@
 //! Skins, morph targets and clips imported from a hand-built document.
 use super::*;
 use crate::deformation::{ChannelValues, Interpolation};
-use glam::Quat;
+use glam::{Quat, Vec3};
 use serde_json::{Value, json};
 use wasm_bindgen_test::wasm_bindgen_test;
 

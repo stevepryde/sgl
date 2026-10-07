@@ -50,7 +50,7 @@ const XYZ_TO_REC709: [[f64; 3]; 3] = [
 /// over phase, the incoherent reflectance, is achromatic; the interference
 /// about it is integrated against the curves, normalised by Y's, and
 /// converted to Rec. 709 without white balance.
-pub(super) fn thin_film(film: f64, base: f64, thickness: f64, cos: f64) -> [f64; 3] {
+pub(crate) fn thin_film(film: f64, base: f64, thickness: f64, cos: f64) -> [f64; 3] {
     let cos_film = (1. - (1. - cos * cos) / (film * film)).sqrt();
     let interface = |a: f64, b: f64| ((a - b) / (a + b)).powi(2);
     let r12 = schlick(interface(film, 1.), cos);

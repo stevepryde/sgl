@@ -16,7 +16,7 @@ pub(crate) mod dynamic_gi;
 pub(crate) mod fog;
 pub(crate) mod gbuffer;
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod iridescence_tests;
+pub(crate) mod iridescence_tests;
 #[cfg(test)]
 pub(crate) mod layout_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
