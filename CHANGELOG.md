@@ -69,9 +69,15 @@ docs and specs the entry links.
   fill light a material as the environment's diffuse light does (they took
   1 − F0 and 1, and no multiple scattering on metals). No game-code change
   or re-bake.
-- `sgl-3d` the hemisphere fill's multiple-scattered specular is no longer
-  darkened by ambient occlusion or occlusion maps, as the environment's and
-  volumes' already were not (#249). No game-code change.
+- `sgl-3d` multiple-scattered specular from the environment, hemisphere fill
+  and volumes is darkened by `Settings::ambient_occlusion` and occlusion
+  maps as specular (was left undarkened), so rough metals darken in creases.
+  No game-code change.
+- `sgl-3d` a lightmap's, atlas chart's or ambient cube's multiple-scattered
+  specular takes the occlusion map as specular (was linearly), so occluded
+  rough metals are slightly brighter. No game-code change.
+- `sgl-3d` opaque surfaces' output alpha is 1 (was their base colour's
+  alpha), as glTF's OPAQUE and MASK modes define. No game-code change.
 
 ## 0.2.1 — 2026-10-07
 
