@@ -120,6 +120,9 @@ impl ProbePrefilter {
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_SRC;
+        // The box chain writes both as storage. The cube takes each resolved
+        // face by copy; the face target's COPY_DST is for the prefilter
+        // test, which writes its samples with `write_texture`.
         let reduced = usage | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_DST;
         let rendered_mip_count = (capture_size / face_size).ilog2() + 1;
         let rendered = image(

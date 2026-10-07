@@ -43,8 +43,10 @@ fn prefilter(@builtin(global_invocation_id) id:vec3<u32>) {
  let size=textureDimensions(filtered).x;
  if id.x>=size || id.y>=size || id.z>=6u {return;}
  let n=normalize(texel_direction(id.z,(vec2<f32>(id.xy)+0.5)/f32(size)));
- // A destination texel spans 2^level source texels: integrate that footprint
- // even for the sharp level, so thin emissive strips do not alias.
+ // A destination texel spans 2^level source texels. The captured cube is
+ // already each texel's box average (the capture resolves each face), so
+ // the sharp level reads it as is, and the footprint only floors the lod of
+ // rough levels 1-6.
  let footprint_lod=log2(f32(textureDimensions(captured,0).x)/f32(size));
  if level==0u {
   textureStore(filtered,vec2<i32>(id.xy),i32(id.z),vec4(radiance(n,footprint_lod),1.));

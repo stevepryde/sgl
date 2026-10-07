@@ -960,13 +960,13 @@ radiance and an emitter thinner than a texel keeps its energy rather than
 filling the texel; a capture holds about 80 MB of targets while it runs.
 It includes fixed emission and the scene's lights (baked ones only on
 surfaces without baked lighting), with their static casters' shadows from
-the local-light atlas, and excludes moving instances, effects and atmospheric post; the camera is
-unused. A capture runs outside a frame, after `finish_frame` and before the
-next `render`: it shares the renderer's shadow face views, cascade layers and
-local-light atlas with the frame. Like the frame, it draws
-only materials whose visibility group `input.visibility_mask` selects, so a
-caller can leave geometry out of a probe as a reflection probe's culling mask
-does.
+the local-light atlas, and excludes moving instances, effects and
+atmospheric post; the camera is unused. A capture runs outside a frame,
+after `finish_frame` and before the next `render`: it shares the renderer's
+shadow face views, cascade layers and local-light atlas with the frame.
+Like the frame, it draws only materials whose visibility group
+`input.visibility_mask` selects, so a caller can leave geometry out of a
+probe as a reflection probe's culling mask does.
 Captured surfaces take their environment specular from the installed
 collection, as source completion does at runtime, so capturing every probe
 again with the first pass installed bakes one more bounce (Unity's reflection
@@ -2148,7 +2148,8 @@ not supported, since SGL3D needs compute.
 - **No blocking readback.** `Renderer::capture_specular_probe` blocks for its
   readback, which WebGPU cannot: in the browser it fails with
   `ProbeError::Readback` before rendering. Capture natively and load the
-  baked probes. The `diagnostics` feature's `diagnostics::read` also blocks and is native-only.
+  baked probes. The `diagnostics` feature's `diagnostics::read` also blocks
+  and is native-only.
 
 `browser_smoke` (`examples/browser_smoke.rs`) is the browser lane's test and a
 minimal page integration: device creation; procedural content (a textured
