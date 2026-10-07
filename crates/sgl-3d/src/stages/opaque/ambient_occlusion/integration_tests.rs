@@ -68,11 +68,6 @@ fn brightness(bytes: &[u8]) -> f32 {
         .sum()
 }
 
-/// A grey box standing on a grey floor, seen from above at an angle: the
-/// scene, the box's material and a frame with an environment of constant
-/// linear radiance 0.25, a black backdrop and no light on. With `occlusion`,
-/// the material packs an occlusion map in its metallic-roughness image
-/// (ORM), red `occlusion` throughout.
 /// Makes `material` Lambertian (KHR_materials_specular's specular 0): under
 /// the hemisphere fill alone its lit colour is then all ambient diffuse,
 /// with none of the specular's multiple scattering, which ambient occlusion
@@ -83,6 +78,12 @@ fn lambertian(queue: &wgpu::Queue, scene: &mut Scene, material: MaterialId) {
     scene.set_material(queue, material, values).unwrap();
 }
 
+/// A grey box standing on a grey floor, seen from above at an angle: the
+/// scene, the box's material and a frame with an environment of constant
+/// linear radiance 0.25, a black backdrop and no light on. With `occlusion`,
+/// the material packs an occlusion map in its metallic-roughness image
+/// (ORM), red `occlusion` throughout, with full green and blue, so its
+/// roughness and metallic factors hold.
 fn box_on_floor(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -110,7 +111,7 @@ fn box_on_floor(
         world.images = vec![asset::Image::Rgba8(image::RgbaImage::from_pixel(
             4,
             4,
-            image::Rgba([red, 255, 0, 255]),
+            image::Rgba([red, 255, 255, 255]),
         ))];
         world.materials[0].mr_texture = Some(0);
         world.materials[0].occlusion_texture = Some(0);
@@ -255,7 +256,9 @@ fn gtao_primary_lighting_ownership_and_disable_restore() {
             off.composite, restored.composite,
             "Off failed to restore complete HDR ({layer})"
         );
-        if matches!(layer, "hemisphere" | "sky diffuse") {
+        // The metal's specular multiple scattering of the sky's diffuse light
+        // takes the frame's ambient occlusion too, as specular (#249).
+        if matches!(layer, "hemisphere" | "sky diffuse" | "metal multi") {
             let affected = off
                 .composite
                 .chunks_exact(8)

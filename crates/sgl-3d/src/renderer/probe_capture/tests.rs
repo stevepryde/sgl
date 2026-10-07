@@ -576,7 +576,7 @@ fn captured_floor<const N: usize>(
     floor.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
         4,
         4,
-        image::Rgba([red, 255, 0, 255]),
+        image::Rgba([red, 255, 255, 255]),
     ))];
     if metallic > 0. {
         floor.materials[0].base = [1.; 4];
