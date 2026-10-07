@@ -58,6 +58,14 @@ struct Surface {
  // it passes it in (SurfaceReflectance.transmitted).
  diffuse_transmission:f32,
  diffuse_transmission_color:vec3<f32>,
+ // Its volume's thickness in world metres (transmission_world_thickness),
+ // 0 for a thin wall, and its Beer-Lambert attenuation coefficient per
+ // metre (KHR_materials_volume), which a surface that transmits diffuse
+ // light takes: its transmitted lobe lies that far behind it along the
+ // reversed geometry normal (surface_transmitted_point) and is attenuated
+ // over it (SurfaceReflectance.transmitted). Set where it transmits.
+ volume_thickness:f32,
+ volume_attenuation:vec3<f32>,
  anisotropy:vec4<f32>,
  emission:vec3<f32>,
  environment_scale:f32,
@@ -265,7 +273,7 @@ fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
  // and the transmitted one alike (KHR README 260–288).
  let dielectric=(1.-surface.metallic)*(1.-surface.transmission);
  let diffuse=surface.base.rgb*dielectric*(1.-surface.diffuse_transmission);
- let transmitted=surface.diffuse_transmission_color*dielectric*surface.diffuse_transmission;
+ let transmitted=surface.diffuse_transmission_color*dielectric*surface.diffuse_transmission*surface_volume_transmittance(surface);
  let coat_fresnel=pbr_coat_fresnel(surface.coat_normal,surface.view,surface.coat);
  let sheen_albedo=surface_view_sheen_albedo(surface);
  return SurfaceReflectance(diffuse,transmitted,f0s,f0,surface_f90(surface),view_dfg,pbr_multiscatter_gain(f0,view_dfg),coat_fresnel,sheen_albedo,sheen_scaling(surface.sheen,sheen_albedo));
@@ -342,6 +350,23 @@ fn surface_direct_light(surface:Surface,reflectance:SurfaceReflectance,light:Lig
 // base whole.
 fn surface_sheen_dimming(reflectance:SurfaceReflectance,specular:f32)->f32 {
  return saturate(1.-specular*(1.-reflectance.sheen_scaling));
+}
+// Where a surface that transmits diffuse light takes it on its other side:
+// its volume's thickness behind it along the reversed geometry normal, the
+// point Bevy 9d12036 places its second Lambertian lobe at
+// (pbr_functions.wesl 377–378); the surface's own point for a thin wall.
+fn surface_transmitted_point(surface:Surface)->vec3<f32> {
+ return surface.position-surface.geometry_normal*surface.volume_thickness;
+}
+// What the volume of a surface that transmits diffuse light lets through
+// to its other side: Beer-Lambert's transmittance over its thickness
+// (volumeAttenuation), as the Khronos glTF Sample Renderer 0686eb2
+// attenuates its diffuse BTDF over the volume's mean-scaled thickness
+// (source/Renderer/shaders/pbr.frag 174–177, 199–201, 341–343), KHR
+// leaving the light inside the volume to KHR_materials_volume (README
+// 380–381). 1 for a thin wall or an unattenuating volume.
+fn surface_volume_transmittance(surface:Surface)->vec3<f32> {
+ return volumeAttenuation(surface.volume_thickness,surface.volume_attenuation);
 }
 // The mirror image of `direction` in the plane of the surface's normal: the
 // direction whose half vector with the view a light behind the surface
@@ -486,16 +511,18 @@ fn surface_rect_light_transmitted(surface:Surface,reflectance:SurfaceReflectance
 // surface at `position` with `normal` and `geometry_normal` (Surface),
 // shadowed when it has the frame's shadow cascades. A surface that
 // `transmits` diffuse light to its other side takes the light behind its
-// normal on that side, its shadow looked up there from the cascades
-// (directional_light_shadow), offset along the reversed geometry normal, as
-// Bevy 9d12036 shadows its transmitted lobe (pbr_functions.wesl 621–640).
-fn directional_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,context:ShadeContext,transmits:bool)->LightSample {
+// normal on that side, its shadow looked up from the cascades
+// (directional_light_shadow) at its transmitted lobe's point `back`
+// (surface_transmitted_point), offset along the reversed geometry normal,
+// as Bevy 9d12036 shadows its transmitted lobe (pbr_functions.wesl
+// 621–640).
+fn directional_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,context:ShadeContext,transmits:bool,back:vec3<f32>)->LightSample {
  let l=normalize(frame.directional_lights[index].direction_to_light);
  let radiance=frame.directional_lights[index].color*frame.directional_lights[index].illuminance;
  let shadow=directional_light_shadow(index,position,geometry_normal,context.pixel,context.receiver,true);
  var transmitted=0.;
  if transmits && dot(normal,l)<0. {
-  transmitted=directional_light_shadow(index,position,-geometry_normal,context.pixel,context.receiver,false);
+  transmitted=directional_light_shadow(index,back,-geometry_normal,context.pixel,context.receiver,false);
  }
  return LightSample(l,radiance,shadow,transmitted,1.,NO_RECT_LIGHT,frame.directional_lights[index].disc_radius);
 }
@@ -600,11 +627,12 @@ fn surface_irradiance(s:Surface,normal:vec3<f32>,coat_fresnel:f32,probe_hit:bool
 // rest of its image-based light (pbr.frag 276–280); SGL3D does not (D-32).
 fn surface_transmitted_ambient(s:Surface,reflectance:SurfaceReflectance,kept:vec3<f32>,base_share:f32,probe_hit:bool)->vec3<f32> {
  var back=s;
+ back.position=surface_transmitted_point(s);
  back.geometry_normal=-s.geometry_normal;
  back.view=-s.view;
  back.front=!s.front;
  let irradiance=surface_irradiance(back,-s.normal,reflectance.coat_fresnel,probe_hit);
- return s.diffuse_transmission_color*s.diffuse_transmission*kept*base_share*(irradiance.open+irradiance.baked);
+ return s.diffuse_transmission_color*s.diffuse_transmission*surface_volume_transmittance(s)*kept*base_share*(irradiance.open+irradiance.baked);
 }
 fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let base=s.base;
@@ -687,11 +715,14 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
   color+=surface_transmitted_ambient(s,reflectance,ibl.kept,base_share,probe_hit);
  }
  if !probe_hit {
+  // The transmitted lobe takes each light's shadow at its own point; the
+  // light's direction and fall-off are the surface's.
+  let back=surface_transmitted_point(s);
   if frame.directional_lights[0].illuminance>0. {
-   color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,n,s.geometry_normal,context,transmits));
+   color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,n,s.geometry_normal,context,transmits,back));
   }
   if frame.directional_lights[1].illuminance>0. {
-   color+=surface_direct_light(s,reflectance,directional_light_sample(1u,s.position,n,s.geometry_normal,context,transmits));
+   color+=surface_direct_light(s,reflectance,directional_light_sample(1u,s.position,n,s.geometry_normal,context,transmits,back));
   }
   // The scene lights that reach the surface: live ones, then baked ones
   // where no baked map already holds their light.
@@ -701,7 +732,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
    end+=lights.baked;
   }
   for (var at=lights.first;at<end;at++) {
-   let light=scene_light_sample(cluster_item(at),s.position,n,s.geometry_normal,context.pixel,context.receiver,transmits);
+   let light=scene_light_sample(cluster_item(at),s.position,n,s.geometry_normal,context.pixel,context.receiver,transmits,back);
    if light.visibility>0. || light.transmitted_visibility>0. {
     color+=surface_direct_light(s,reflectance,light);
    }

@@ -141,6 +141,45 @@ fn diffuse_transmission_conserves_a_white_furnace() {
     }
 }
 
+// Plausible defects: light passed through a volume unattenuated under
+// lights or under the other side's indirect light, or attenuated by
+// another law. The oracle is KHR_materials_volume's Beer-Lambert law: over
+// a thickness x of attenuation coefficient sigma, a surface that passes all
+// its diffuse light through passes exp(-sigma x) of what it passes across
+// no volume, channel by channel, under lights from behind and in a white
+// furnace alike (the Khronos glTF Sample Renderer 0686eb2 attenuates both,
+// pbr.frag 199–201, 341–343). The bound is f32 rounding and the
+// environment's storage.
+#[test]
+fn a_volume_attenuates_both_lobes_of_passed_light() {
+    let sigma = [-2. * 0.5f64.ln(), -2. * 0.8f64.ln(), 0.];
+    let case = |volume_thickness, attenuation| Layered {
+        view: view(0.7),
+        dielectric_f0: 0.,
+        transmission: 1.,
+        volume_thickness,
+        attenuation,
+        light_specular: 0.,
+        ..Layered::default()
+    };
+    let Some(observed) = observe_lit(&[case(0., [0.; 3]), case(0.5, sigma)]) else {
+        return;
+    };
+    let (clear, attenuated) = (observed[0], observed[1]);
+    let transmittance = DVec3::from_array(sigma.map(|s| (-s * 0.5f64).exp()));
+    for (label, clear, attenuated) in [
+        ("lights from behind", clear[1], attenuated[1]),
+        ("a white furnace", clear[2], attenuated[2]),
+    ] {
+        assert!(clear.min_element() > 0.1, "{label}: {clear:?}");
+        assert!(
+            (attenuated - clear * transmittance).abs().max_element() <= 2e-3 * clear.max_element(),
+            "{label}: {attenuated:?} attenuated, {clear:?} clear, Beer-Lambert's {:?}",
+            clear * transmittance
+        );
+    }
+}
+
 // Plausible defects: the other side's indirect light counted in the ambient
 // light occlusion occludes (Shaded.ambient, the G-buffer's ambient target),
 // so the front's ambient occlusion or material occlusion darkens light that
@@ -172,9 +211,14 @@ fn the_transmitted_lobe_s_ambient_light_takes_no_occlusion() {
 
 // Plausible defects: a dynamic GI probe ray's hit drops a light behind it,
 // as one its own side faces away from, so the light leaves pass through
-// never reaches the volume. The oracle is S3D-5: the hit shades the one
-// light it draws as every receiver's shading does, its transmitted lobe
-// seen from the other side (surface_direct_light), diffuse light alone.
+// never reaches the volume; or its visibility ray leaves the hit's own face
+// for a volume's transmitted lobe, which lies the thickness behind it. The
+// oracles: S3D-5, the hit shades the one light it draws as every
+// receiver's shading does, its transmitted lobe seen from the other side
+// (surface_direct_light), diffuse light alone; and geometry, a slab's far
+// face 0.5 m behind the hit covers it from the light, so at thickness 0 the
+// ray finds the face and the hit takes none of the light, and at the
+// slab's thickness the ray leaves from the face and finds nothing.
 #[test]
 fn a_probe_ray_s_hit_takes_the_light_behind_it_through() {
     let Some((device, queue)) = test_support::device() else {
@@ -183,12 +227,30 @@ fn a_probe_ray_s_hit_takes_the_light_behind_it_through() {
     let settings = super::lighting_model_tests::quiet_settings();
     let mut renderer = crate::renderer::Renderer::for_test(&device, &queue, [16, 16], &settings);
     let mut scene = Scene::new(&device, &queue);
+    let mut far = test_support::cube();
+    far.materials[0].double_sided = true;
+    far.meshes[0].vertices = [(-2., -2.), (2., -2.), (2., 2.), (-2., 2.)]
+        .map(|(x, y)| crate::asset::Vertex {
+            position: [x, y, -0.5],
+            normal: [0., 0., 1.],
+            uv: [0.; 2],
+            color: [1.; 4],
+            lightmap_uv: [0.; 2],
+            lightmap_bounds: [0., 0., 1., 1.],
+            tangent: [0.; 4],
+        })
+        .to_vec();
+    far.meshes[0].indices = vec![0, 1, 2, 0, 2, 3];
+    test_support::add_static(&device, &queue, &mut scene, far);
     let mut input = super::lighting_model_tests::dark_input();
     input.directional_lights[0] = Some(crate::DirectionalLight {
         direction: glam::Vec3::new(0.3, 0., 1.),
         color: [1.; 3],
         illuminance: 1.,
-        shadow: None,
+        shadow: Some(crate::DirectionalShadow {
+            distance: 10.,
+            cascades: 1,
+        }),
         ..Default::default()
     });
     let observation = format!(
@@ -201,8 +263,10 @@ fn a_probe_ray_s_hit_takes_the_light_behind_it_through() {
  s.lightmap_uv=vec2(-1.);
  let light=frame.directional_lights[0];
  let l=normalize(light.direction_to_light);
- output[0]=vec4(probe_hit_light(s,cluster_range(s.position,vec2(0.)),vec3(0.)),0.);
- output[1]=vec4(surface_direct_light(s,case_reflectance(s),LightSample(l,light.color*light.illuminance,0.,1.,0.,NO_RECT_LIGHT,0.)),0.);
+ output[0]=vec4(surface_direct_light(s,case_reflectance(s),LightSample(l,light.color*light.illuminance,0.,1.,0.,NO_RECT_LIGHT,0.)),0.);
+ output[1]=vec4(probe_hit_light(s,cluster_range(s.position,vec2(0.)),vec3(0.)),0.);
+ s.volume_thickness=.5;
+ output[2]=vec4(probe_hit_light(s,cluster_range(s.position,vec2(0.)),vec3(0.)),0.);
 }}
 "#,
         grid_wgsl()
@@ -215,13 +279,17 @@ fn a_probe_ray_s_hit_takes_the_light_behind_it_through() {
         &input,
         &settings,
         &observation,
-        2,
+        3,
     );
     let vector = |a: [f32; 4]| DVec3::new(a[0] as f64, a[1] as f64, a[2] as f64);
-    let (hit, receiver) = (vector(rows[0]), vector(rows[1]));
+    let (receiver, thin, thick) = (vector(rows[0]), vector(rows[1]), vector(rows[2]));
     assert!(receiver.min_element() > 0.01, "{receiver:?}");
     assert!(
-        (hit - receiver).abs().max_element() <= 1e-5 * receiver.max_element(),
-        "a probe ray's hit lit from behind: {hit:?}, a receiver {receiver:?}"
+        thin.max_element() < 1e-6,
+        "a probe ray's hit at thickness 0 behind the slab's far face: {thin:?}"
+    );
+    assert!(
+        (thick - receiver).abs().max_element() <= 1e-5 * receiver.max_element(),
+        "a probe ray's hit at the slab's thickness, lit from behind: {thick:?}, a receiver {receiver:?}"
     );
 }

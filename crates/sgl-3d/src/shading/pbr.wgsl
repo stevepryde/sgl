@@ -164,6 +164,15 @@ fn pbr_sized_light(direction:vec3<f32>,size:f32,reflected:vec3<f32>,view:vec3<f3
  let normalizationFactor=a/a_prime;
  return PbrSizedLight(l,normalizationFactor*normalizationFactor);
 }
+// Beer-Lambert's transmittance over `transmissionDistance` metres of a
+// volume whose attenuation coefficient per metre is `attenuation`: 1 where
+// the attenuation distance is infinite, whose coefficient is 0. three.js r185's
+// volumeAttenuation (2431a09f src/nodes/functions/PhysicalLightingModel.js;
+// MIT, stages/post/smaa/LICENSE-three.txt), which the refracted lobe
+// (transmission.wgsl) and the diffusely transmitted one (surface.wgsl) take.
+fn volumeAttenuation(transmissionDistance:f32,attenuation:vec3<f32>)->vec3<f32> {
+ return exp(-attenuation*transmissionDistance);
+}
 // The environment's single and multiple scattering, the diffuse weight of
 // a Lambertian of the base's colour beneath them, and the share of a
 // Lambertian's light the dielectric's scattering keeps, whatever its

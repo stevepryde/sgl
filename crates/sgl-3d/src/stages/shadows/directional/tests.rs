@@ -1102,3 +1102,161 @@ fn a_leaf_lit_from_behind_takes_its_back_side_s_shadow() {
         );
     }
 }
+
+impl Fixture {
+    /// Adds `asset` at `pose` as a static instance the camera sees when
+    /// `visible`, the light always; its identities.
+    fn place_posed(
+        &mut self,
+        asset: crate::asset::Asset,
+        pose: Mat4,
+        visible: bool,
+    ) -> crate::AssetIds {
+        let (device, queue) = (&self.device, &self.queue);
+        let ids = self.scene.add_asset(device, queue, asset).unwrap();
+        let state = InstanceState {
+            model: ids.model,
+            pose,
+            visible,
+            capture_visible: true,
+        };
+        self.scene
+            .add_instance(device, queue, state, Mobility::Static)
+            .unwrap();
+        ids
+    }
+
+    /// Material `id`'s values with `change` made.
+    fn edit_material(
+        &mut self,
+        id: crate::MaterialId,
+        change: impl FnOnce(&mut crate::SurfaceMaterial),
+    ) {
+        let mut values = self.scene.material(id).unwrap();
+        change(&mut values);
+        self.scene.set_material(&self.queue, id, values).unwrap();
+    }
+
+    /// The lit colour's red, green and blue at `pixel` in a frame of `input`.
+    fn observe_rgb(&mut self, input: &FrameInput, pixel: [u32; 2]) -> [f32; 3] {
+        let (device, queue) = (&self.device, &self.queue);
+        let output = crate::view::targets::target(
+            device,
+            "shadow output",
+            self.size,
+            crate::shading::gbuffer::COLOR,
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        self.renderer.render(
+            device,
+            queue,
+            &mut encoder,
+            &mut self.scene,
+            input,
+            &self.settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        self.renderer.finish_frame(&mut self.scene);
+        let color = test_support::read(device, queue, self.renderer.targets().color.texture(), 8);
+        let at = ((pixel[1] * self.size[0] + pixel[0]) * 8) as usize;
+        [0, 2, 4].map(|channel| test_support::half(&color[at + channel..]))
+    }
+}
+
+/// A light shining along +Z onto the back of what faces the camera, with
+/// the cascades where `shadow`.
+fn from_behind(shadow: bool) -> FrameInput {
+    frame(DirectionalLight {
+        direction: Vec3::Z,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: shadow.then_some(two_cascades()),
+        ..Default::default()
+    })
+}
+
+// Plausible defects: a volume's thickness ignored, so a surface that passes
+// light through takes the light behind it at its own face, where the
+// volume's far side shadows it (Bevy 9d12036 places the transmitted lobe
+// the thickness behind the surface, pbr_functions.wesl 377–378); or the
+// thickness taken toward the surface's own side. The oracle is geometric: a
+// leaf facing the camera, 0.5 m before the far face of its slab, lit from
+// behind by a light with cascades. At thickness 0 the far face covers the
+// leaf's own point from the light, which then takes none of it; at the
+// slab's thickness the transmitted lobe lies on the far face and takes all
+// the light an unshadowed light gives.
+#[test]
+fn a_volume_passes_light_through_from_its_far_side() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    let ids = fixture.place_posed(leaf(), Mat4::IDENTITY, true);
+    let mut far = Fixture::white(quad(Vec3::new(0., 0., -3.5), 2.));
+    far.materials[0].double_sided = true;
+    fixture.place_posed(far, Mat4::IDENTITY, false);
+    let centre = [SIZE[0] / 2, SIZE[1] / 2];
+    let mut lit = |fixture: &mut Fixture, thickness: f32, shadow: bool, illuminance: f32| {
+        fixture.edit_material(ids.materials[0], |m| m.thickness = thickness);
+        let mut input = from_behind(shadow);
+        input.directional_lights[0].as_mut().unwrap().illuminance = illuminance;
+        fixture.observe_rgb(&input, centre)[0]
+    };
+    let dark = lit(&mut fixture, 0.5, true, 0.);
+    let unshadowed = lit(&mut fixture, 0.5, false, 1.);
+    let thin = lit(&mut fixture, 0., true, 1.);
+    let thick = lit(&mut fixture, 0.5, true, 1.);
+    assert!(unshadowed > dark + 0.01, "{unshadowed}, unlit {dark}");
+    assert!(
+        (thin - dark).abs() < 0.001,
+        "thickness 0: the slab's far face covers the leaf: {thin}, unlit {dark}"
+    );
+    assert!(
+        (thick - unshadowed).abs() < 0.001,
+        "the slab's thickness: the lobe lies on the far face: {thick}, unshadowed {unshadowed}"
+    );
+}
+
+// Plausible defects: light passed through a volume not attenuated over its
+// thickness, the thickness taken in the mesh's units, or scaled by the pose
+// along the normal alone, or per axis. The oracle is KHR_materials_volume's
+// Beer-Lambert law, the attenuation colour c over the attenuation distance
+// d, c^(x / d) on each channel, with x the thickness in the world as the
+// Khronos glTF Sample Renderer 0686eb2 takes it for diffuse transmission:
+// times the mean of the pose's axis scales (pbr.frag 174–177). A leaf posed
+// (1, 1, 4) at thickness 0.25 has x = 0.5 m; it passes c^0.5 of what the
+// same leaf passes without attenuation. The bound is binary16 storage.
+#[test]
+fn a_volume_attenuates_the_light_it_passes_through() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    let mut leaf = leaf();
+    for vertex in &mut leaf.meshes[0].vertices {
+        vertex.position[2] = 0.;
+    }
+    let pose = Mat4::from_translation(Vec3::new(0., 0., -3.)) * Mat4::from_scale(Vec3::new(1., 1., 4.));
+    let ids = fixture.place_posed(leaf, pose, true);
+    let color = [0.5, 0.8, 1.];
+    let centre = [SIZE[0] / 2, SIZE[1] / 2];
+    let mut lit = |fixture: &mut Fixture, distance: f32| {
+        fixture.edit_material(ids.materials[0], |m| {
+            m.thickness = 0.25;
+            m.attenuation_color = color;
+            m.attenuation_distance = distance;
+        });
+        fixture.observe_rgb(&from_behind(false), centre)
+    };
+    let clear = lit(&mut fixture, f32::INFINITY);
+    let attenuated = lit(&mut fixture, 1.);
+    for channel in 0..3 {
+        let expected = clear[channel] * color[channel].powf(0.5);
+        assert!(
+            clear[channel] > 0.01 && (attenuated[channel] - expected).abs() <= 2e-3 * clear[channel],
+            "{attenuated:?} attenuated, {clear:?} clear, Beer-Lambert's {expected} on channel {channel}"
+        );
+    }
+}

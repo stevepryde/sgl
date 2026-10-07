@@ -13,11 +13,12 @@
 // reaches it from any direction; its normals are zero, so its shadow takes
 // no normal offset. A surface that `transmits` diffuse light to its other
 // side takes a light behind its normal there (a rectangle's on both sides),
-// its shadow looked up from the maps, which the mask does not hold, offset
-// along the reversed geometry normal, as Bevy 9d12036 shadows its
-// transmitted lobe (pbr_functions.wesl 494–513, 555–580); such a light
-// reaches it where either side sees it.
-fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,transmits:bool)->LightSample {
+// its shadow looked up from the maps, which the mask does not hold, at its
+// transmitted lobe's point `back` (surface_transmitted_point), offset along
+// the reversed geometry normal, as Bevy 9d12036 shadows its transmitted
+// lobe (pbr_functions.wesl 494–513, 555–580); such a light reaches it where
+// either side sees it.
+fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,transmits:bool,back:vec3<f32>)->LightSample {
  let unreached=LightSample(vec3(0.),vec3(0.),0.,0.,0.,NO_RECT_LIGHT,0.);
  let light=lights[index];
  let reach=light_reach(light,position,normal,receiver==SHADOW_RECEIVER_MEDIUM||transmits);
@@ -40,8 +41,8 @@ fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_nor
   }
   visibility=shadow_opacity_visibility(shadow,light.shadow_opacity);
   if behind {
-   let back=local_shadow_visibility(index,light.position,light.range,position,-geometry_normal,pixel,receiver);
-   transmitted=shadow_opacity_visibility(back,light.shadow_opacity);
+   let shadow=local_shadow_visibility(index,light.position,light.range,back,-geometry_normal,pixel,receiver);
+   transmitted=shadow_opacity_visibility(shadow,light.shadow_opacity);
   }
  }
  if visibility<=0. && transmitted<=0. {

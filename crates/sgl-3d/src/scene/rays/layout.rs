@@ -261,6 +261,10 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR",
             offset_of!(MaterialTextures, diffuse_transmission_color),
         ),
+        (
+            "SCENE_TEXTURE_THICKNESS",
+            offset_of!(MaterialTextures, thickness),
+        ),
         ("SCENE_TEXTURES", size_of::<MaterialTextures>()),
     ];
     // The BVH is declared beside the portable traversal that reads it.

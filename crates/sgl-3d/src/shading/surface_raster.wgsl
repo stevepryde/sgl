@@ -157,6 +157,9 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  if material.diffuse_transmission>0. {
   s.diffuse_transmission=material_diffuse_transmission(material,material_diffuse_transmission_texel(i.uv));
   s.diffuse_transmission_color=material_diffuse_transmission_color(material,material_diffuse_transmission_color_texel(i.uv));
+  // Its volume, which the transmitted lobe lies behind and crosses.
+  s.volume_thickness=transmission_world_thickness(surface_thickness(i),objects[object].model);
+  s.volume_attenuation=material.attenuation;
  }
  s.anisotropy=anisotropy;
  s.emission=emission;

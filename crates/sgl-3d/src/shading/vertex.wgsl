@@ -49,6 +49,23 @@ fn object_tangent(model:mat4x4<f32>,t:vec4<f32>,normal:vec3<f32>)->vec4<f32> {
  }
  return vec4(normalize(projected),handed);
 }
+// The rotation-independent scale of `model` on each axis, which takes a
+// volume's thickness, given in the mesh's units (KHR_materials_volume), into
+// the world's: the one owner of that scale, which every volume lobe takes,
+// the refracted one along its ray (transmission.wgsl) and the diffusely
+// transmitted one as one length (transmission_world_thickness).
+fn transmission_model_scale(model:mat4x4<f32>)->vec3<f32> {
+ return vec3(length(model[0].xyz),length(model[1].xyz),length(model[2].xyz));
+}
+// A volume's thickness `thickness`, in the mesh's units, as one world length
+// for an instance posed by `model`: times the mean of its axis scales
+// (transmission_model_scale), as the Khronos glTF Sample Renderer 0686eb2
+// scales it for diffuse transmission (source/Renderer/shaders/pbr.frag
+// 174–177).
+fn transmission_world_thickness(thickness:f32,model:mat4x4<f32>)->f32 {
+ let scale=transmission_model_scale(model);
+ return thickness*(scale.x+scale.y+scale.z)/3.;
+}
 // The index of the object record of the instance a fragment shows: its
 // source identity is that index plus one. Its fields are read where they are
 // used, so a stage loads only those.

@@ -233,7 +233,7 @@ fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f3
  if fog_energy<=FOG_ENERGY_CUTOFF {
   return vec3(0.);
  }
- let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false);
+ let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false,position);
  if sample.visibility<=0. {
   return vec3(0.);
  }

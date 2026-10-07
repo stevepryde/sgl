@@ -142,6 +142,8 @@ pub(crate) struct MaterialTextures {
     pub sheen_roughness: u32,
     pub diffuse_transmission: u32,
     pub diffuse_transmission_color: u32,
+    /// The volume's thickness map, which a ray hit's transmitted lobe takes.
+    pub thickness: u32,
 }
 
 /// Words of `T`.

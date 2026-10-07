@@ -590,6 +590,7 @@ pub(crate) static SURFACE_RAY: Module = Module {
         &BAKED_LIGHTING,
         &SURFACE,
         &LIGHT_SURFACE,
+        &VERTEX,
     ],
 };
 

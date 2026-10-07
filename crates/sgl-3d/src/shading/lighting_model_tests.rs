@@ -731,7 +731,7 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
                 &dark_input(),
                 rough,
                 mirror,
-                "scene_light_sample(0u,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAPTURE,false)",
+                "scene_light_sample(0u,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAPTURE,false,s.position)",
             );
             let angular = (radius / distance).asin();
             let expected =
@@ -771,7 +771,7 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
                 &input,
                 rough,
                 mirror,
-                "directional_light_sample(0u,s.position,s.normal,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection()),false)",
+                "directional_light_sample(0u,s.position,s.normal,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection()),false,s.position)",
             );
             let angular = 0.05f64;
             let expected = disc_reference(
@@ -804,9 +804,10 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
 /// `metallic`, a dielectric of F0 `dielectric_f0` and F90 1 (0 and 0 for a
 /// bare Lambertian), under a coat of strength `coat`, a sheen of colour
 /// `sheen` and perceptual roughness `sheen_rough`, passing `transmission`
-/// of its diffuse light to its other side in `transmission_color`, at
-/// material occlusion `occlusion`; its lights' specular lobes scaled by
-/// `light_specular`.
+/// of its diffuse light to its other side in `transmission_color` across a
+/// volume `volume_thickness` world metres thick of attenuation coefficient
+/// `attenuation` per metre, at material occlusion `occlusion`; its lights'
+/// specular lobes scaled by `light_specular`.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Layered {
     pub view: DVec3,
@@ -819,6 +820,8 @@ pub(super) struct Layered {
     pub sheen_rough: f64,
     pub transmission: f64,
     pub transmission_color: [f64; 3],
+    pub volume_thickness: f64,
+    pub attenuation: [f64; 3],
     pub occlusion: f64,
     pub light_specular: f64,
 }
@@ -836,6 +839,8 @@ impl Default for Layered {
             sheen_rough: 0.5,
             transmission: 0.,
             transmission_color: [1.; 3],
+            volume_thickness: 0.,
+            attenuation: [0.; 3],
             occlusion: 1.,
             light_specular: 1.,
         }
@@ -877,7 +882,7 @@ pub(super) fn observe_lit(cases: &[Layered]) -> Option<Vec<[DVec3; 3]>> {
         .iter()
         .map(|c| {
             format!(
-                "Layered({},{:?},{},{:?},{:?},{:?},{},{:?},{:?},{},{:?},{:?})",
+                "Layered({},{:?},{},{:?},{:?},{:?},{},{:?},{:?},{},{:?},{},{:?},{:?})",
                 v3(c.view.to_array()),
                 c.rough as f32,
                 v3(c.base),
@@ -888,6 +893,8 @@ pub(super) fn observe_lit(cases: &[Layered]) -> Option<Vec<[DVec3; 3]>> {
                 c.sheen_rough as f32,
                 c.transmission as f32,
                 v3(c.transmission_color),
+                c.volume_thickness as f32,
+                v3(c.attenuation),
                 c.occlusion as f32,
                 c.light_specular as f32,
             )
@@ -896,7 +903,7 @@ pub(super) fn observe_lit(cases: &[Layered]) -> Option<Vec<[DVec3; 3]>> {
     let count = cases.len();
     let observation = format!(
         r#"{}
-struct Layered {{ view:vec3<f32>,rough:f32,base:vec3<f32>,metallic:f32,dielectric_f0:f32,coat:f32,sheen:vec3<f32>,sheen_rough:f32,transmission:f32,transmission_color:vec3<f32>,occlusion:f32,light_specular:f32 }}
+struct Layered {{ view:vec3<f32>,rough:f32,base:vec3<f32>,metallic:f32,dielectric_f0:f32,coat:f32,sheen:vec3<f32>,sheen_rough:f32,transmission:f32,transmission_color:vec3<f32>,volume_thickness:f32,attenuation:vec3<f32>,occlusion:f32,light_specular:f32 }}
 @group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
 fn layered(c:Layered)->Surface {{
  var s=case_surface(c.view,c.rough,c.base,c.metallic);
@@ -908,6 +915,8 @@ fn layered(c:Layered)->Surface {{
  s.sheen_roughness=c.sheen_rough;
  s.diffuse_transmission=c.transmission;
  s.diffuse_transmission_color=c.transmission_color;
+ s.volume_thickness=c.volume_thickness;
+ s.volume_attenuation=c.attenuation;
  s.occlusion=c.occlusion;
  s.lightmap_uv=vec2(-1.);
  return s;
