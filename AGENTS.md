@@ -42,9 +42,8 @@ compatibility shims solely to avoid updating consumers.
   entries that changed the same symbol; retain older migration notes. Use
   Cargo-compatible semantic versioning: during `0.x`, incompatible changes
   advance the minor version, not just the patch version.
-- Games depend on every SGL crate with the same semver requirement (for
-  example, `"0.3.0"`), never an `=` pin, and commit `Cargo.lock`. During `0.x`
-  that takes only compatible `0.3.x` releases. Git consumers reference one full
+- Games depend on every SGL crate with the same version requirement (for
+  example, `"0.3.0"`) and commit `Cargo.lock`; Git consumers reference one full
   commit `rev`. Upgrade to a new minor version deliberately, applying all
   intervening migration notes and validating the game's affected workflows and
   targets.
@@ -99,9 +98,9 @@ compatibility shims solely to avoid updating consumers.
   member crates inherit them with `workspace = true` and select their own features
   and target conditions. Keep the diagnostics-only self dev-dependency path-only
   so Cargo omits it when packaging. Require wgpu, naga and the wasm-bindgen
-  family (`wasm-bindgen*`, `js-sys`, `web-sys`) as caret ranges, never `=`
-  pins, so a game can resolve their compatible fixes; `Cargo.lock` fixes what
-  SGL itself builds and tests with. Do not duplicate current dependency versions
+  family (`wasm-bindgen*`, `js-sys`, `web-sys`) as caret ranges so a game can
+  resolve their compatible fixes; `Cargo.lock` fixes what SGL itself builds
+  and tests with. Do not duplicate current dependency versions
   in prose; link to the workspace manifest and lockfile. Retain version numbers where
   they identify a release migration, a dependency example, or upstream provenance.
 - `crates/sgl-3d/docs/` is SGL3D's guide for agents building games: what it

@@ -67,8 +67,8 @@ SGL expects AI agents to keep games current. A new release may change APIs,
 behavior, or data formats; compatibility with old game code is not guaranteed
 across breaking releases.
 
-Give every SGL crate the game depends on the same semver requirement, never an
-`=` pin, and commit the game's `Cargo.lock`:
+Give every SGL crate the game depends on the same version requirement and commit
+the game's `Cargo.lock`:
 
 ```toml
 [dependencies]

@@ -244,9 +244,8 @@ Use the [current specs](README.md) for implementation and the
   library; minimizing consumer edits is not a reason to retain obsolete APIs
   or add compatibility shims. Every consumer-visible update carries actionable
   migration guidance in [CHANGELOG.md](../CHANGELOG.md). Games depend on SGL with
-  semver requirements, never `=` pins, commit `Cargo.lock`, and move to a new
-  minor version deliberately; Git consumers reference a commit `rev` (owner
-  direction, 2026-10-07).
+  ordinary version requirements, commit `Cargo.lock`, and move to a new minor
+  version deliberately; Git consumers reference a commit `rev`.
   Rationale: agents can migrate game code as the library improves; explicit
   upgrade instructions and opt-in dependency updates make that practical.
 
