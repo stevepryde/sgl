@@ -834,7 +834,11 @@ fn a_primitive_without_texcoord_0_is_refused_for_any_map() {
         std::fs::write(fixture.path(), serde_json::to_vec(&source).unwrap()).unwrap();
         let loaded = load(&fixture.path());
         if material == serde_json::json!({}) {
-            assert!(loaded.is_ok(), "an untextured primitive: {:?}", loaded.err());
+            assert!(
+                loaded.is_ok(),
+                "an untextured primitive: {:?}",
+                loaded.err()
+            );
         } else {
             assert!(
                 loaded

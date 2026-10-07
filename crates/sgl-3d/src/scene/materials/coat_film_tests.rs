@@ -99,7 +99,9 @@ fn clearcoat_and_iridescence_maps_scale_their_factors() {
     };
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
     if renderer.binding_tier() != BindingTier::Extended {
-        eprintln!("skipping: the device takes the Basic binding tier, which binds none of these maps");
+        eprintln!(
+            "skipping: the device takes the Basic binding tier, which binds none of these maps"
+        );
         return;
     }
     let mut frame = renderer.prepare_test_frame(&device, &queue, &mut scene, &input, &settings);

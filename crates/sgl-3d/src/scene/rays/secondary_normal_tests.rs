@@ -130,11 +130,7 @@ fn plane_asset(has_normal_map: bool) -> Asset {
                 let height = ((x + 2 * y) * 5) as u8;
                 image::Rgba([height, height, height, 255])
             })),
-            crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
-                1,
-                1,
-                image::Rgba(COAT_PIXEL),
-            )),
+            crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(1, 1, image::Rgba(COAT_PIXEL))),
         ],
         rig: Default::default(),
         ignored: Vec::new(),

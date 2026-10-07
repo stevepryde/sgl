@@ -350,7 +350,12 @@ fn read_iridescence<'a>(
                 .as_f64()
                 .map(|v| v as f32)
                 .filter(|v| v.is_finite() && *v >= least)
-                .ok_or_else(|| error(&format!("{key} must be a finite number of at least {least}")).into())
+                .ok_or_else(|| {
+                    error(&format!(
+                        "{key} must be a finite number of at least {least}"
+                    ))
+                    .into()
+                })
         })
     };
     iridescence.factor = number("iridescenceFactor", 0., 0.)?;

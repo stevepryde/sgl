@@ -491,12 +491,12 @@ impl Scene {
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod coat_film_tests;
 mod group;
 pub(crate) mod maps;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod normal_layer_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod coat_film_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tier_tests;
 mod validate;
