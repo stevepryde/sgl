@@ -666,6 +666,7 @@ fn a_capture_occludes_multiple_scattering_by_specular_occlusion() {
     };
     assert!(full > 1., "the metal floor must reflect: {full}");
     let kept = half_visible / full;
+    eprintln!("capture: keeps {kept} of its light at visibility 0.5");
     assert!(
         kept > 0.7 && kept <= 1.,
         "the capture keeps {kept} at visibility 0.5"

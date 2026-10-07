@@ -809,11 +809,13 @@ fn assert_specular_occlusion(name: &str, [full, half_visible, none]: &[Vec<f32>;
         lit > 300,
         "{name}: the metal must reflect, {lit} values lit"
     );
+    let mut kept_range = [f32::MAX, 0f32];
     for (index, ((&full, &half_visible), &none)) in
         full.iter().zip(half_visible).zip(none).enumerate()
     {
         if full > 0.01 {
             let kept = half_visible / full;
+            kept_range = [kept_range[0].min(kept), kept_range[1].max(kept)];
             assert!(
                 kept > 0.7 && kept <= 1. + 1. / 256.,
                 "{name}, value {index}: keeps {kept} of {full} at visibility 0.5"
@@ -824,6 +826,7 @@ fn assert_specular_occlusion(name: &str, [full, half_visible, none]: &[Vec<f32>;
             "{name}, value {index}: {none} of {full} at visibility 0"
         );
     }
+    eprintln!("{name}: keeps {kept_range:?} of its light at visibility 0.5");
 }
 
 // Defects: source completion occludes the camera's specular multiple
