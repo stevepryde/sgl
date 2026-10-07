@@ -62,9 +62,9 @@ docs and specs the entry links.
   fill light a material as the environment's diffuse light does (they took
   1 − F0 and 1, and no multiple scattering on metals). No game-code change
   or re-bake.
-- `sgl-3d` multiple-scattered specular from the environment, hemisphere
-  fill and volumes is not yet darkened by ambient occlusion or occlusion
-  maps (#249). No game-code change.
+- `sgl-3d` the hemisphere fill's multiple-scattered specular is no longer
+  darkened by ambient occlusion or occlusion maps, as the environment's and
+  volumes' already were not (#249). No game-code change.
 
 ## 0.2.1 — 2026-10-07
 

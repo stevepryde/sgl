@@ -351,7 +351,8 @@ Use the [current specs](README.md) for implementation and the
     integrals of GGX over the sphere, from roughness 0.045 to 0.5, sizes
     from the sun's to a fifth of the distance and light elevations from 0.2
     to 1.45 rad, the energy a smooth metal reflects is 0.80–1.02 of the
-    sphere's with the Jacobian, 0.84–7.3 with Karis's widening (about
+    sphere's with the Jacobian (and 0.50–0.98 of its radiance along the
+    mirror of a smooth surface), 0.84–7.3 with Karis's widening (about
     1 / cos of the elevation: 3.7 at 1.3 rad) and 0.51–6.0 with Bevy's full
     function, whose `specular_fix_remap` and solid-angle factor are not
     taken. The directional light's disc is a sphere at unit distance whose

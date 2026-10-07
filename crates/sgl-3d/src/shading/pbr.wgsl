@@ -131,24 +131,14 @@ fn pbr_multiscatter_gain(f0:vec3<f32>,dfg:vec2<f32>)->vec3<f32> {
 // sphere nearest the lobe's `reflected` ray, as Bevy's
 // compute_specular_layer_values_for_point_light finds it (361-401), and his
 // normalisation (alpha / alpha')² (eq. 14) of the distribution widened by
-// the light's cone (eq. 10: alpha' = alpha plus the light's angle in
-// half-vector space). Changed (D-32): that angle is the light's cone taken
-// into half-vector space by its Jacobian, dw_h = dw_l / (4 l.h) (Walter et
-// al. 2007, eq. 14), a cone of radius size / (2 sqrt(l.h)), where Karis's
-// eq. 10 takes its normal-incidence value size / 2. His widening reflected
-// 1/cos of a highlight's energy at a light cos from the normal (3.7 times it
-// at 1.3 rad, as Lagarde and de Rousiers 2014, 4.7.5, note it "doesn't
-// behave well at grazing angles"); with the Jacobian, against f64 integrals
-// of GGX over the sphere from roughness 0.045 to 0.5, sizes from the sun's
-// to a fifth of the distance and light elevations from 0.2 to 1.45 rad, it
-// reflects 0.80-1.02 of the sphere's energy and 0.61-0.98 of its radiance
-// along the mirror of a smooth surface. Bevy's specular_fix_remap
-// (628-631) and solid-angle factor (678-682) are not taken: they reflected
-// 0.51-5.97 over that range. The directional light's disc is a sphere at
-// unit distance; Bevy shades no disc, and Filament's sampleSunAreaLight
-// (surface_light_directional.fs 9-21) and Frostbite's sun take no
-// normalisation, which reflected 4-16 times the sun's energy on the
-// smoothest surface. A size of 0 is the light's own direction, whole.
+// the light's cone (eq. 10). Changed: the cone is taken into half-vector
+// space by its Jacobian, dw_h = dw_l / (4 l.h) (Walter et al. 2007, eq. 14),
+// a cone of radius size / (2 sqrt(l.h)) where Karis's eq. 10 takes its
+// normal-incidence value size / 2; Bevy's specular_fix_remap and
+// solid-angle factor are not taken; and the directional light's disc is a
+// sphere at unit distance. D-32 (specs/decisions.md) records the
+// measurements behind each. A size of 0 is the light's own direction,
+// whole.
 struct PbrSizedLight {
  direction:vec3<f32>,
  intensity:f32,
