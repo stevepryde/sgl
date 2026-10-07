@@ -658,11 +658,13 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
             scene
                 .set_instance_baked_irradiance(&queue, instance, cube)
                 .unwrap();
-            let eye_z = 3.;
+            // Far off, so raster's view toward the eye is the rays' -Z: a
+            // surface's indirect diffuse weight follows its N.V.
+            let eye_z = 1000.;
             let input = FrameInput::new(Camera {
                 eye: Vec3::Z * eye_z,
                 view: camera::rh::view::look_at_mat4(Vec3::Z * eye_z, Vec3::ZERO, Vec3::Y),
-                projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
+                projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 1010., 0.1),
             });
             let bytes = fused_lit_color(
                 (&device, &queue),
@@ -682,7 +684,7 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
 @group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
 @compute @workgroup_size(1) fn observe() {{
  let origin=vec3<f32>({x},{y},{eye_z});let direction=vec3(0.,0.,-1.);
- let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)),SCENE_SIDES_AS_RASTER);
+ let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,2.*{eye_z})),SCENE_SIDES_AS_RASTER);
  let hit=scene_decode_hit(raw,origin,direction);
  output[0]=vec4(shade_ray_hit(hit,-direction,SHADOW_RECEIVER_CAPTURE,vec3(0.)),select(0.,1.,hit.hit));
 }}
@@ -712,7 +714,11 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
                         (1. - top) / std::f32::consts::SQRT_2 + top,
                     )
                     .normalize();
-                    let expected = 0.96 * n.x.max(0.).powi(2) / std::f32::consts::PI;
+                    // The one rule's weight for a white dielectric, diffuse
+                    // plus multiple scattering: what its split sum's single
+                    // scattering (F0 0.04, F90 1) leaves.
+                    let weight = 1. - test_support::ggx_albedo(n.z as f64, 0.5, 0.04, 1.) as f32;
+                    let expected = weight * n.x.max(0.).powi(2) / std::f32::consts::PI;
                     assert!(
                         (raster - expected).abs() < 0.0003,
                         "bent-normal irradiance was flattened: {raster} vs {expected}"
@@ -810,11 +816,13 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
                     )
                     .unwrap();
             }
-            let eye_z = 3.;
+            // Far off, so raster's view toward the eye is the rays' -Z: a
+            // surface's indirect diffuse weight follows its N.V.
+            let eye_z = 1000.;
             let input = FrameInput::new(Camera {
                 eye: Vec3::Z * eye_z,
                 view: camera::rh::view::look_at_mat4(Vec3::Z * eye_z, Vec3::ZERO, Vec3::Y),
-                projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
+                projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 1010., 0.1),
             });
             let bytes = fused_lit_color(
                 (&device, &queue),
@@ -834,7 +842,7 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
 @group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
 @compute @workgroup_size(1) fn observe() {{
  let origin=vec3<f32>({x},{y},{eye_z});let direction=vec3(0.,0.,-1.);
- let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)),SCENE_SIDES_AS_RASTER);
+ let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,2.*{eye_z})),SCENE_SIDES_AS_RASTER);
  let hit=scene_decode_hit(raw,origin,direction);
  output[0]=vec4(shade_ray_hit(hit,-direction,SHADOW_RECEIVER_CAPTURE,vec3(0.)),select(0.,1.,hit.hit));
 }}
@@ -859,7 +867,11 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
                     + Vec3::from_slice(&lobe[..3])
                         .map(|v| 8. * v - 4.)
                         .dot(normal);
-                let expected = 0.96 * response / std::f32::consts::PI;
+                // The one rule's weight for a white dielectric, diffuse plus
+                // multiple scattering: what its split sum's single scattering
+                // (F0 0.04, F90 1) leaves at the normal's N.V.
+                let weight = 1. - test_support::ggx_albedo(normal.z as f64, 0.5, 0.04, 1.) as f32;
+                let expected = weight * response / std::f32::consts::PI;
                 assert!(
                     (raster - expected).abs() < 0.002,
                     "fixed bake ignored material normal: lightmapped={lightmapped}, x={x}: {raster} vs {expected}"
@@ -880,10 +892,8 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
 // 0.04 + 0.96 (1 - cos)^5 at the coat normal's cosine to the view. Plausible
 // defects: a term beneath the coat left whole, as baked diffuse was, or
 // dimmed at another cosine or weight, in raster or in a ray hit. The oracle
-// is that formula at the cosine each view's geometry gives. SGL3D's Fresnel
-// (Three.js 0.185.1's fit to Schlick's) is within 0.0025 of it at the cosines
-// tested (0.0036 at worst, near grazing) and binary16 colour puts each ratio
-// within 0.001; a term left whole is 0.04 off or more.
+// is that formula at the cosine each view's geometry gives. Binary16 colour
+// puts each ratio within 0.001 of it; a term left whole is 0.04 off or more.
 #[test]
 fn a_coat_dims_baked_diffuse_and_emission_by_its_fresnel() {
     let Some((device, queue)) = test_support::device() else {

@@ -114,8 +114,11 @@ fn pbr_split_sum(f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->vec3<f32> {
 // (surface_shading_lit.fs 268; specular_multiscatter, 331-344): the two
 // agree on a white metal, and this keeps direct and environment light alike
 // on coloured metals (D-32).
+// The energy single scattering misses is never below 0: the table's Monte
+// Carlo noise puts its sum a hair above 1 on the smoothest lobes, which
+// would take light from them.
 fn pbr_multiscatter_gain(f0:vec3<f32>,dfg:vec2<f32>)->vec3<f32> {
- let missing=1.-dfg.x-dfg.y;
+ let missing=max(1.-dfg.x-dfg.y,0.);
  let average=f0+(vec3(1.)-f0)*0.047619;
  return vec3(1.)/(vec3(1.)-missing*average);
 }

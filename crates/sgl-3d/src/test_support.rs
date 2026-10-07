@@ -330,6 +330,40 @@ pub(crate) fn observe_surface(
     bytemuck::cast_slice::<u32, [f32; 4]>(&read_words(device, queue, &output)).to_vec()
 }
 
+/// The directional albedo seen at cosine `nv` of GGX at perceptual roughness
+/// `rough` with height-correlated Smith visibility and Schlick's Fresnel,
+/// `f0` at normal and `f90` at grazing incidence: the single scattering the
+/// split sum stands for, integrated in f64 by importance sampling the GGX
+/// distribution of normals over a 2^16-point Hammersley set (within 1e-5 of
+/// a 2^20-point one).
+pub(crate) fn ggx_albedo(nv: f64, rough: f64, f0: f64, f90: f64) -> f64 {
+    use std::f64::consts::PI;
+    const SAMPLES: u32 = 1 << 16;
+    let a2 = rough.powi(4);
+    let view = glam::DVec3::new((1. - nv * nv).max(0.).sqrt(), 0., nv);
+    let mut sum = 0.;
+    for i in 0..SAMPLES {
+        let u = (i as f64 + 0.5) / SAMPLES as f64;
+        let v = i.reverse_bits() as f64 / 2f64.powi(32);
+        let cos_theta = ((1. - v) / (1. + (a2 - 1.) * v)).sqrt();
+        let sin_theta = (1. - cos_theta * cos_theta).sqrt();
+        let phi = 2. * PI * u;
+        let h = glam::DVec3::new(sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta);
+        let vh = view.dot(h);
+        let l = h * 2. * vh - view;
+        if l.z <= 0. || vh <= 0. {
+            continue;
+        }
+        let nl = l.z;
+        let visibility =
+            0.5 / (nl * (nv * nv * (1. - a2) + a2).sqrt() + nv * (nl * nl * (1. - a2) + a2).sqrt());
+        let fresnel = f0 + (f90 - f0) * (1. - vh).powi(5);
+        // f N.L / pdf, the pdf of l being D (n.h) / (4 v.h).
+        sum += fresnel * visibility * 4. * vh * nl / h.z;
+    }
+    sum / SAMPLES as f64
+}
+
 /// The words of `buffer`, a storage buffer that cannot be copied from, as
 /// a compute pass reads them.
 pub(crate) fn storage_words(
