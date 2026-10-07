@@ -457,7 +457,7 @@ pub(crate) static VERTEX: Module = Module {
 pub(crate) static GBUFFER: Module = Module {
     name: "gbuffer",
     source: include_str!("gbuffer.wgsl"),
-    deps: &[&SPECULAR_LOBES],
+    deps: &[&SPECULAR_LOBES, &LUMINANCE],
 };
 /// The full-screen triangle: each vertex's corner and clip position, for a
 /// vertex entry point of a pass's own.
