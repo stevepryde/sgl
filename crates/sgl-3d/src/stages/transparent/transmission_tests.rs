@@ -351,11 +351,12 @@ fn a_refracted_edge_lies_where_snells_law_puts_it() {
 // acfcbe65, KHR_materials_dispersion README 55-73, 126-135): the blue to red
 // IOR spread is (ior - 1) / V, red at ior minus half of it and blue at ior
 // plus half, red clamped to 1, and Snell's law for each. At dispersion 10 a
-// glass of IOR 1.5 refracts red at 1.375 and blue at 1.625; at 60 red falls
-// to 1, unbent, and blue to 2.25.
+// glass of IOR 1.5 refracts red at 1.375 and blue at 1.625; at 120 red falls
+// to 0, clamped to 1, unbent (not the record's 0, an infinite IOR), and blue
+// rises to 3.
 #[test]
 fn dispersion_refracts_each_channel_at_its_own_ior() {
-    for (dispersion, iors) in [(10., [1.375, 1.5, 1.625]), (60., [1., 1.5, 2.25])] {
+    for (dispersion, iors) in [(10., [1.375, 1.5, 1.625]), (120., [1., 1.5, 3.])] {
         let Some(edges) = edges(true, (1.5, 3., dispersion), iors) else {
             return;
         };

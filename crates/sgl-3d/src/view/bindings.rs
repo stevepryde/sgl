@@ -125,6 +125,7 @@ impl FrameBindings {
         dynamic_gi: Option<&wgpu::TextureView>,
     ) -> Self {
         let shadow = shading::bind::shadow(device);
+        let tier = lit.tier;
         let frame = crate::scene::buffer(
             device,
             "camera frame",
@@ -146,7 +147,7 @@ impl FrameBindings {
             unlit: shading::bind::unlit(device),
             shadow,
             scene: shading::bind::scene(device),
-            blended: shading::bind::blended(device, lit.tier),
+            blended: shading::bind::blended(device, tier),
             shadow_mask: shading::bind::shadow_mask(device),
             caster_positions: shading::bind::caster_positions(device),
             frame,

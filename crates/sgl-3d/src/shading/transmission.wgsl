@@ -17,12 +17,15 @@
 // attenuation_coefficient), and the record's IOR is 0 for an infinite one,
 // so no infinity reaches the shader; dispersion clamps each channel's IOR to
 // at least 1, as KHR_materials_dispersion advises (Khronos glTF acfcbe65,
-// README 135); and the result carries the share of the light behind the
+// README 135), so a refracted ray never meets total internal reflection,
+// whose refract is 0, a NaN once normalised, nor a channel's IOR of 0 the
+// record's infinite one; and the result carries the share of the light behind the
 // surface that its transmission passes (TransmittedLight), which the blend
 // takes where no copy holds the frame.
 
-// The reciprocal of the record's IOR `ior`, which refraction takes: 0 for
-// an infinite one (KHR_materials_ior's 0), whose rays leave along -n.
+// The reciprocal of the record's IOR `ior` (at least 1, or 0), which
+// refraction takes: 0 for an infinite one (KHR_materials_ior's 0), whose
+// rays leave along -n. The max keeps the branch select does not take finite.
 fn transmission_eta(ior:f32)->f32 {
  return select(1./max(ior,1.),0.,ior==0.);
 }
