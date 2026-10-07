@@ -233,7 +233,7 @@ fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f3
  if fog_energy<=FOG_ENERGY_CUTOFF {
   return vec3(0.);
  }
- let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM);
+ let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false);
  if sample.visibility<=0. {
   return vec3(0.);
  }
@@ -304,7 +304,7 @@ var<workgroup> fog_ambient_light:vec3<f32>;
     continue;
    }
    let toward=normalize(directional.direction_to_light);
-   let shadow=directional_light_shadow(index,position,vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM);
+   let shadow=directional_light_shadow(index,position,vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false);
    light+=directional.color*directional.illuminance*shadow*henyey_greenstein(dot(view_ray,toward),froxels.anisotropy)*directional.fog_energy;
   }
   light+=fog_ambient_light;

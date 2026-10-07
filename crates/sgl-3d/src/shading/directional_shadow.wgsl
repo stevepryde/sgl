@@ -168,14 +168,16 @@ fn directional_shadow_visibility(light_id:u32,position:vec3<f32>,normal:vec3<f32
 // light without the frame's cascades or at or below the opacity cutoff,
 // which looks up none. The camera's surfaces take it from the ray-traced
 // shadow mask where its slot holds the light (camera_shadow_mask), which
-// reaches beyond the cascades.
-fn directional_light_shadow(index:u32,position:vec3<f32>,normal:vec3<f32>,pixel:vec2<f32>,receiver:u32)->f32 {
+// reaches beyond the cascades, where `masked`: the mask holds the camera
+// surface's own side, so the other side of one that passes diffuse light
+// through takes the cascades.
+fn directional_light_shadow(index:u32,position:vec3<f32>,normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,masked:bool)->f32 {
  let light=frame.directional_lights[index];
  if (light.flags&DIRECTIONAL_LIGHT_SHADOW)==0u || light.shadow_opacity<=SHADOW_OPACITY_CUTOFF {
   return 1.;
  }
  var shadow=SHADOW_MASK_NO_SLOT;
- if receiver==SHADOW_RECEIVER_CAMERA {
+ if masked && receiver==SHADOW_RECEIVER_CAMERA {
   shadow=camera_shadow_mask(SHADOW_MASK_DIRECTIONAL,pixel);
  }
  if shadow<0. {

@@ -22,9 +22,10 @@ later, DX12, Chrome's upper tier), `Basic` below, down to WebGPU's default
 Vulkan driver lands in either, by its `maxPerStageResources`.
 `Renderer::binding_tier` reports it. On `Basic` baked light from a
 lightmap or irradiance atlas is non-directional, dynamic GI is off
-(`Renderer::dynamic_gi_in_effect`), and a material's anisotropy, clearcoat
-and iridescence maps give way to their factors (a clearcoat normal map to
-the geometry normal), in raster and rays alike. A probe captured on an
+(`Renderer::dynamic_gi_in_effect`), and a material's anisotropy, clearcoat,
+iridescence, sheen and diffuse transmission maps give way to their factors
+(a clearcoat normal map to the geometry normal), in raster and rays alike.
+A probe captured on an
 `Extended` device keeps what its maps and lights did there.
 [Binding tiers](../README.md#binding-tiers).
 
@@ -34,8 +35,10 @@ the geometry normal), in raster and rays alike. A probe captured on an
   bump maps, an occlusion map packed in the metallic-roughness image's red
   channel (ORM), `KHR_materials_clearcoat` (its clearcoat, roughness and
   normal maps on the `Extended` binding tier), emission, unlit,
-  `KHR_materials_anisotropy` and `KHR_materials_iridescence` (a thin film
-  over the base, its maps on `Extended`), and the `KHR_materials_ior` and
+  `KHR_materials_anisotropy`, `KHR_materials_iridescence` (a thin film
+  over the base, its maps on `Extended`), `KHR_materials_sheen` (cloth) and
+  `KHR_materials_diffuse_transmission` (leaves and paper lit from behind),
+  their maps on `Extended`, and the `KHR_materials_ior` and
   `KHR_materials_specular` factors (a dielectric's F0: water's IOR 1.33
   gives 0.02). Every map lies on `TEXCOORD_0`.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),

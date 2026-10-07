@@ -6,8 +6,10 @@
 //  octahedral coordinates.
 // material: coat perceptual roughness, base perceptual roughness, coat
 //  strength, and the base lobe's reflectance at grazing incidence (F90,
-//  surface_f90).
-// f0: specular reflectance at normal incidence; in alpha, one 8-bit code:
+//  surface_f90) as its environment lights it at the camera's view, beneath
+//  its sheen (surface_environment_lobe).
+// f0: the base lobe's specular reflectance at normal incidence, as F90
+//  holds it; in alpha, one 8-bit code:
 //  0 where nothing lit was drawn (unlit materials and the clear); on a lit
 //  surface, its material's occlusion in 126ths, plus 1, and 127 more where
 //  it takes the baked scene lights (takes_baked_lights in

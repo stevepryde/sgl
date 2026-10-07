@@ -92,8 +92,9 @@ struct Harness {
     /// them.
     settings: Settings,
     output: wgpu::TextureView,
-    /// Observers of the camera's view and of ray hits'.
-    observers: [wgpu::ComputePipeline; 2],
+    /// Observers of the camera's view and of ray hits', of a receiver's own
+    /// side, then of the other side of one that passes light through.
+    observers: [wgpu::ComputePipeline; 4],
 }
 
 /// Whose view an observation takes.
@@ -134,6 +135,9 @@ impl Harness {
                 format!(
                     r#"{}
 override camera:bool=true;
+// Whether it observes the visibility of the receiver's other side, which a
+// surface that passes diffuse light through takes the light behind it on.
+override transmits:bool=false;
 // Each query is a receiver and the light's index, then the receiver's
 // normal, or zero for one facing the light.
 @group(1) @binding(0) var<storage,read> queries:array<vec4<f32>>;
@@ -146,7 +150,8 @@ override camera:bool=true;
   if all(normal==vec3(0.)) {{
    normal=normalize(lights[index].position-receiver);
   }}
-  output[id.x]=scene_light_sample(index,receiver,normal,normal,vec2(0.),select(SHADOW_RECEIVER_CAPTURE,SHADOW_RECEIVER_CAMERA,camera)).visibility;
+  let sample=scene_light_sample(index,receiver,normal,normal,vec2(0.),select(SHADOW_RECEIVER_CAPTURE,SHADOW_RECEIVER_CAMERA,camera),transmits);
+  output[id.x]=select(sample.visibility,sample.transmitted_visibility,transmits);
  }}
 }}
 "#,
@@ -178,14 +183,14 @@ override camera:bool=true;
             bind_group_layouts: &[Some(renderer.test_lit_layout()), Some(&queries)],
             immediate_size: 0,
         });
-        let observers = [1., 0.].map(|camera| {
+        let observers = [(1., 0.), (0., 0.), (1., 1.), (0., 1.)].map(|(camera, transmits)| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("local shadow observer"),
                 layout: Some(&layout),
                 module: &shader,
                 entry_point: Some("observe"),
                 compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[("camera", camera)],
+                    constants: &[("camera", camera), ("transmits", transmits)],
                     ..Default::default()
                 },
                 cache: None,
@@ -227,6 +232,20 @@ override camera:bool=true;
     /// Light `light`'s visibility at `receivers` (positions and normals,
     /// zero for one facing the light) after the last frame, as `seen`.
     fn visibility(&self, light: LightId, receivers: &[(Vec3, Vec3)], seen: Seen) -> Vec<f32> {
+        self.side_visibility(light, receivers, seen, false)
+    }
+
+    /// Light `light`'s visibility at `receivers` (positions and normals)
+    /// after the last frame, as `seen`, on their own side, or, where
+    /// `transmitted`, on the other side of receivers that pass light
+    /// through.
+    fn side_visibility(
+        &self,
+        light: LightId,
+        receivers: &[(Vec3, Vec3)],
+        seen: Seen,
+        transmitted: bool,
+    ) -> Vec<f32> {
         use crate::content::identity::Identity;
         let index = f32::from_bits(light.index() as u32);
         let queries: Vec<_> = receivers
@@ -270,9 +289,10 @@ override camera:bool=true;
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
+            let side = 2 * usize::from(transmitted);
             let (observer, lit) = match seen {
-                Seen::Camera => (&self.observers[0], self.renderer.test_camera_lit()),
-                Seen::RayHit => (&self.observers[1], self.renderer.test_ray_hit_lit()),
+                Seen::Camera => (&self.observers[side], self.renderer.test_camera_lit()),
+                Seen::RayHit => (&self.observers[side + 1], self.renderer.test_ray_hit_lit()),
             };
             pass.set_pipeline(observer);
             pass.set_bind_group(0, lit, &[]);
@@ -1244,4 +1264,48 @@ fn shadow_records_follow_changes_and_dropped_frames() {
         true,
         "after the scene's lights outgrew the records",
     );
+}
+
+// Plausible defects: the light behind a surface that passes diffuse light
+// through takes the shadow its own side takes (here the surface's own: that
+// side faces away from the light), none at all, or one looked up offset
+// toward the receiver's own side; or the sample does not reach the receiver
+// because its own side sees none of the light. The oracle is geometric: a
+// point light shines on the back of a double-sided leaf, a square blocker
+// between them covering its middle. Behind the blocker the other side sees
+// none of the light; beside it, all of it, though the leaf's own side, which
+// faces away, sees none. Both views of the shadow see it.
+#[test]
+fn a_surface_passing_light_through_takes_its_other_side_s_shadow() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let leaf = plane(Vec3::new(0., 0., -1.), Vec3::X * 1.5, Vec3::Y * 1.5);
+    let (mut scene, blocker) = scene(&harness, vec![leaf]);
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    scene
+        .add_instance(
+            &device,
+            &queue,
+            at(blocker.model, Vec3::ZERO),
+            Mobility::Static,
+        )
+        .unwrap();
+    let light = scene
+        .add_light(&device, &queue, point(Vec3::new(0., 0., 1.), 4.))
+        .unwrap();
+    harness.frame(&mut scene, &input());
+    // The blocker's shadow covers |x| and |y| up to 0.5 m on the leaf.
+    let away = Vec3::NEG_Z;
+    let receivers = [
+        (Vec3::new(0., 0., -1.), away),
+        (Vec3::new(0.8, 0., -1.), away),
+    ];
+    for seen in [Seen::Camera, Seen::RayHit] {
+        let other = harness.side_visibility(light, &receivers, seen, true);
+        assert!(
+            other[0] < 0.01 && other[1] > 0.99,
+            "the leaf's other side behind and beside the blocker: {other:?}"
+        );
+    }
 }

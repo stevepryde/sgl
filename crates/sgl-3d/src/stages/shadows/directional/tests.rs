@@ -200,13 +200,24 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new((device, queue): (wgpu::Device, wgpu::Queue), size: [u32; 2]) -> Self {
-        let settings = Settings {
-            antialiasing: settings::Antialiasing::Off,
-            bloom: settings::Bloom::Off,
-            atmosphere: false,
-            ..Settings::default()
-        };
+    fn new(device: (wgpu::Device, wgpu::Queue), size: [u32; 2]) -> Self {
+        Self::with_settings(
+            device,
+            size,
+            Settings {
+                antialiasing: settings::Antialiasing::Off,
+                bloom: settings::Bloom::Off,
+                atmosphere: false,
+                ..Settings::default()
+            },
+        )
+    }
+
+    fn with_settings(
+        (device, queue): (wgpu::Device, wgpu::Queue),
+        size: [u32; 2],
+        settings: Settings,
+    ) -> Self {
         let renderer = Renderer::for_test(&device, &queue, size, &settings);
         let scene = Scene::new(&device, &queue);
         Self {
@@ -952,4 +963,93 @@ fn observe_shadow(
     bytemuck::cast_slice::<u8, f32>(&readback.get_mapped_range(..).unwrap())
         .try_into()
         .unwrap()
+}
+
+/// A double-sided leaf facing the camera, 3 m before it, that passes all
+/// the light it diffuses through to its other side.
+fn leaf() -> crate::asset::Asset {
+    let mut leaf = Fixture::white(quad(Vec3::new(0., 0., -3.), 2.));
+    let material = &mut leaf.materials[0];
+    material.double_sided = true;
+    material.diffuse_transmission = 1.;
+    material.diffuse_transmission_color = [1.; 3];
+    leaf
+}
+
+/// The leaf's lit colour at the centre of `fixture`'s frame, lit from behind
+/// by a light of `illuminance` shining along +Z with or without its
+/// cascades, with or without `occluder`, behind the leaf, in the light's
+/// sight.
+fn lit_from_behind(
+    fixture: &mut Fixture,
+    occluder: crate::InstanceId,
+    shadow: bool,
+    occluded: bool,
+    illuminance: f32,
+) -> f32 {
+    fixture.cast(occluder, occluded);
+    let light = DirectionalLight {
+        direction: Vec3::Z,
+        color: [1., 0., 0.],
+        illuminance,
+        shadow: shadow.then_some(two_cascades()),
+        ..Default::default()
+    };
+    let centre = [fixture.size[0] / 2, fixture.size[1] / 2];
+    fixture.observe(&frame(light), &[centre])[0]
+}
+
+// Plausible defects: a light behind a surface that passes diffuse light
+// through takes the shadow its own side takes (here the leaf's own, which
+// covers the side facing away from the light), none at all, or one offset
+// toward the surface's own side; or a light its own side sees none of is
+// dropped before the other side takes it, under the cascades or under the
+// ray-traced shadows' mask, which holds the camera surface's own side
+// alone. The oracle is geometric: a light shines on the back of a
+// double-sided leaf the camera faces; behind it, an occluder the camera does
+// not see covers the leaf from the light or is moved out of the light's
+// sight. The leaf takes the light through it as the unshadowed light gives
+// it where nothing covers its back, and none where the occluder does.
+#[test]
+fn a_leaf_lit_from_behind_takes_its_back_side_s_shadow() {
+    let mut fixtures = Vec::new();
+    if let Some(device) = test_support::device() {
+        fixtures.push(("cascades", Fixture::new(device, SIZE)));
+    }
+    if let Some(device) = test_support::ray_tracing_device(|limits| limits) {
+        let settings = Settings {
+            antialiasing: settings::Antialiasing::Off,
+            bloom: settings::Bloom::Off,
+            atmosphere: false,
+            hardware_ray_tracing: true,
+            ray_traced_shadows: true,
+            ..Settings::default()
+        };
+        fixtures.push((
+            "ray-traced shadows",
+            Fixture::with_settings(device, SIZE, settings),
+        ));
+    }
+    for (label, mut fixture) in fixtures {
+        fixture.place_asset(leaf(), true);
+        let mut occluder = Fixture::white(quad(Vec3::new(0., 0., -6.), 3.));
+        occluder.materials[0].double_sided = true;
+        let occluder = fixture.place_asset(occluder, false);
+        let dark = lit_from_behind(&mut fixture, occluder, false, false, 0.);
+        let unshadowed = lit_from_behind(&mut fixture, occluder, false, false, 1.);
+        let open = lit_from_behind(&mut fixture, occluder, true, false, 1.);
+        let covered = lit_from_behind(&mut fixture, occluder, true, true, 1.);
+        assert!(
+            unshadowed > dark + 0.01,
+            "{label}: the leaf lit through takes {unshadowed}, unlit {dark}"
+        );
+        assert!(
+            (open - unshadowed).abs() < 0.001,
+            "{label}: nothing covers the leaf's back: {open}, unshadowed {unshadowed}"
+        );
+        assert!(
+            (covered - dark).abs() < 0.001,
+            "{label}: the occluder covers the leaf's back: {covered}, unlit {dark}"
+        );
+    }
 }

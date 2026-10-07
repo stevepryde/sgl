@@ -16,8 +16,8 @@ use maps::{InEffect, authored, authored_maps};
 use std::collections::HashMap;
 use std::ops::Range;
 use validate::{
-    validate_alpha, validate_anisotropy, validate_iridescence, validate_normal_layers,
-    validate_reflectance,
+    validate_alpha, validate_anisotropy, validate_diffuse_transmission, validate_iridescence,
+    validate_normal_layers, validate_reflectance, validate_sheen,
 };
 
 pub(crate) struct Material {
@@ -203,6 +203,8 @@ impl Materials {
             validate_alpha(&values)?;
             validate_reflectance(&values)?;
             validate_iridescence(&values)?;
+            validate_sheen(&values)?;
+            validate_diffuse_transmission(&values)?;
             validate_normal_layers(&values, authored_maps(material), material.wrap)?;
         }
         Ok(())
@@ -374,6 +376,8 @@ impl Materials {
         validate_alpha(&values)?;
         validate_reflectance(&values)?;
         validate_iridescence(&values)?;
+        validate_sheen(&values)?;
+        validate_diffuse_transmission(&values)?;
         validate_normal_layers(&values, material.maps, material.bound.wrap)?;
         if material.values != values {
             if material.values.caster_values() != values.caster_values() {
@@ -510,6 +514,8 @@ mod group;
 pub(crate) mod maps;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod normal_layer_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod sheen_transmission_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tier_tests;
 mod validate;

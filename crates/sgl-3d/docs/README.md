@@ -42,8 +42,8 @@ its rendering `settings::Settings`.
    `Renderer::binding_tier` reports the device's binding tier: `Extended`
    at 48 or more sampled textures per stage, else `Basic`, where baked
    light is non-directional, dynamic GI is off
-   (`Renderer::dynamic_gi_in_effect`) and the anisotropy, clearcoat and
-   iridescence maps give way to their factors
+   (`Renderer::dynamic_gi_in_effect`) and the anisotropy, clearcoat,
+   iridescence, sheen and diffuse transmission maps give way to their factors
    ([features](features.md#platforms)).
 2. Load: `Scene::new` starts empty. Add content between frames and keep the
    identities it returns: `asset::load` (a file) or `asset::load_slice` (bytes,

@@ -45,9 +45,10 @@ struct LightReach {
 // How `light` reaches a receiver at `position` with shading normal
 // `normal`. It does not reach a receiver it is out of range of, outside
 // the cone of, or behind (a rectangle: not in front of its face); a point
-// in the fog (`medium`) has no side, so a light reaches it from any
-// direction.
-fn light_reach(light:Light,position:vec3<f32>,normal:vec3<f32>,medium:bool)->LightReach {
+// in the fog has no side, and a surface that passes diffuse light to its
+// other side takes light on both (`both_sides`), so a light reaches either
+// from any direction.
+fn light_reach(light:Light,position:vec3<f32>,normal:vec3<f32>,both_sides:bool)->LightReach {
  let unreached=LightReach(vec3(0.),0.,false);
  let to_light=light.position-position;
  let distance_square=dot(to_light,to_light);
@@ -65,7 +66,7 @@ fn light_reach(light:Light,position:vec3<f32>,normal:vec3<f32>,medium:bool)->Lig
   }
   return LightReach(direction,light_range_window(distance_square,light.inverse_square_range),true);
  }
- if !medium && dot(normal,direction)<=0. {
+ if !both_sides && dot(normal,direction)<=0. {
   return unreached;
  }
  let attenuation=light_distance_attenuation(distance_square,light.inverse_square_range)*light_angle_attenuation(light,direction);

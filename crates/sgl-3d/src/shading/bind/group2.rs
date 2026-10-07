@@ -15,19 +15,23 @@ pub(crate) const EMISSION_MAP: u32 = 4;
 pub(crate) const RELIEF_MAP: u32 = 5;
 pub(crate) const BAKED_MATERIAL: u32 = 7;
 pub(crate) const ANISOTROPY_MAP: u32 = 8;
-// Bindings 9 and 10 are #243's (transmission and thickness) and 16 to 19
-// #245's (sheen and diffuse transmission), reserved so the maps' changes
-// merge without renumbering.
+// Bindings 9 and 10 are #243's (transmission and thickness), reserved so the
+// maps' changes merge without renumbering.
 pub(crate) const CLEARCOAT_MAP: u32 = 11;
 pub(crate) const COAT_ROUGHNESS_MAP: u32 = 12;
 pub(crate) const COAT_NORMAL_MAP: u32 = 13;
 pub(crate) const IRIDESCENCE_MAP: u32 = 14;
 pub(crate) const IRIDESCENCE_THICKNESS_MAP: u32 = 15;
+pub(crate) const SHEEN_COLOR_MAP: u32 = 16;
+pub(crate) const SHEEN_ROUGHNESS_MAP: u32 = 17;
+pub(crate) const DIFFUSE_TRANSMISSION_MAP: u32 = 18;
+pub(crate) const DIFFUSE_TRANSMISSION_COLOR_MAP: u32 = 19;
 
 /// Which bindings SGL3D binds on a device, by its sampled textures per
 /// shader stage: `Basic` from S3D-1's floor up to 47, where the bindings
 /// of `Extended` alone (lit group 0's directionality and dynamic GI probes,
-/// and the anisotropy, clearcoat and iridescence maps) give way to their
+/// and the anisotropy, clearcoat, iridescence, sheen and diffuse
+/// transmission maps) give way to their
 /// fallbacks, and `Extended` from 48, with every binding. A device's tier
 /// is fixed;
 /// `Renderer::binding_tier` reports it.
@@ -63,7 +67,7 @@ pub(crate) struct MapBinding {
 }
 
 /// Group 2's map bindings: the one declaration of each one's tier.
-pub(crate) const MAP_BINDINGS: [MapBinding; 10] = [
+pub(crate) const MAP_BINDINGS: [MapBinding; 14] = [
     MapBinding {
         binding: BASE_MAP,
         colour: true,
@@ -114,6 +118,26 @@ pub(crate) const MAP_BINDINGS: [MapBinding; 10] = [
         colour: false,
         tier: BindingTier::Extended,
     },
+    MapBinding {
+        binding: SHEEN_COLOR_MAP,
+        colour: true,
+        tier: BindingTier::Extended,
+    },
+    MapBinding {
+        binding: SHEEN_ROUGHNESS_MAP,
+        colour: false,
+        tier: BindingTier::Extended,
+    },
+    MapBinding {
+        binding: DIFFUSE_TRANSMISSION_MAP,
+        colour: false,
+        tier: BindingTier::Extended,
+    },
+    MapBinding {
+        binding: DIFFUSE_TRANSMISSION_COLOR_MAP,
+        colour: true,
+        tier: BindingTier::Extended,
+    },
 ];
 
 /// The map bindings a device of `tier` binds.
@@ -140,10 +164,14 @@ pub(crate) enum MaterialMap {
     CoatNormal,
     Iridescence,
     IridescenceThickness,
+    SheenColor,
+    SheenRoughness,
+    DiffuseTransmission,
+    DiffuseTransmissionColor,
 }
 
 impl MaterialMap {
-    pub(crate) const ALL: [Self; 12] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::Base,
         Self::MetallicRoughness,
         Self::Occlusion,
@@ -156,6 +184,10 @@ impl MaterialMap {
         Self::CoatNormal,
         Self::Iridescence,
         Self::IridescenceThickness,
+        Self::SheenColor,
+        Self::SheenRoughness,
+        Self::DiffuseTransmission,
+        Self::DiffuseTransmissionColor,
     ];
 
     /// The map binding it fills.
@@ -171,6 +203,10 @@ impl MaterialMap {
             Self::CoatNormal => COAT_NORMAL_MAP,
             Self::Iridescence => IRIDESCENCE_MAP,
             Self::IridescenceThickness => IRIDESCENCE_THICKNESS_MAP,
+            Self::SheenColor => SHEEN_COLOR_MAP,
+            Self::SheenRoughness => SHEEN_ROUGHNESS_MAP,
+            Self::DiffuseTransmission => DIFFUSE_TRANSMISSION_MAP,
+            Self::DiffuseTransmissionColor => DIFFUSE_TRANSMISSION_COLOR_MAP,
         };
         MAP_BINDINGS
             .iter()

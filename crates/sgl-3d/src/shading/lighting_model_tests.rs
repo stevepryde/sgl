@@ -19,24 +19,24 @@ use std::f64::consts::{FRAC_PI_2, PI};
 /// A grid this fine integrates GGX's directional albedo to within 0.015% at
 /// perceptual roughness 0.25 and above (checked against a 2^18-sample
 /// Hammersley integral).
-const THETA_STEPS: usize = 512;
-const PHI_STEPS: usize = 1024;
-const THREADS: usize = 256;
+pub(super) const THETA_STEPS: usize = 512;
+pub(super) const PHI_STEPS: usize = 1024;
+pub(super) const THREADS: usize = 256;
 
 /// The solid angle of one grid cell at polar angle `theta`.
-fn cell(theta: f64) -> f64 {
+pub(super) fn cell(theta: f64) -> f64 {
     theta.sin() * (FRAC_PI_2 / THETA_STEPS as f64) * (2. * PI / PHI_STEPS as f64)
 }
 
 /// The grid's polar angle and azimuth at row `row` and column `column`.
-fn grid(row: usize, column: usize) -> (f64, f64) {
+pub(super) fn grid(row: usize, column: usize) -> (f64, f64) {
     (
         (row as f64 + 0.5) / THETA_STEPS as f64 * FRAC_PI_2,
         (column as f64 + 0.5) / PHI_STEPS as f64 * 2. * PI,
     )
 }
 
-fn polar(theta: f64, phi: f64) -> DVec3 {
+pub(super) fn polar(theta: f64, phi: f64) -> DVec3 {
     DVec3::new(
         theta.sin() * phi.cos(),
         theta.sin() * phi.sin(),
@@ -48,7 +48,7 @@ fn polar(theta: f64, phi: f64) -> DVec3 {
 /// facing +Z at the origin seen along `view` with perceptual roughness
 /// `rough`, base colour `base` and metallic `metallic`, a dielectric of F0
 /// 0.04 and F90 1 where it is not metal.
-fn grid_wgsl() -> String {
+pub(super) fn grid_wgsl() -> String {
     format!(
         r#"
 const THETA_STEPS:u32={THETA_STEPS}u;
@@ -129,7 +129,7 @@ struct Case {{ view:vec4<f32>,base:vec4<f32>,light:vec4<f32> }}
  for (var row=thread;row<THETA_STEPS;row+=THREADS) {{
   var ring=vec3(0.);
   for (var column=0u;column<PHI_STEPS;column++) {{
-   let light=LightSample(grid_direction(row,column),vec3(1.),1.,c.light.x,NO_RECT_LIGHT,0.);
+   let light=LightSample(grid_direction(row,column),vec3(1.),1.,1.,c.light.x,NO_RECT_LIGHT,0.);
    ring+=surface_direct_light(s,reflectance,light);
   }}
   result[group.x*THETA_STEPS+row]=vec4(ring,0.);
@@ -167,7 +167,7 @@ struct Case {{ view:vec4<f32>,base:vec4<f32>,light:vec4<f32> }}
 }
 
 /// The unit view at cosine `nv` to +Z, in the XZ plane.
-fn view(nv: f64) -> DVec3 {
+pub(super) fn view(nv: f64) -> DVec3 {
     DVec3::new((1. - nv * nv).sqrt(), 0., nv)
 }
 
@@ -175,7 +175,7 @@ fn view(nv: f64) -> DVec3 {
 /// `view` diffuses under unit lights from the whole hemisphere: glTF 2.0's
 /// dielectric BRDF (Appendix B, fresnel_mix of a Lambertian base under the
 /// specular layer, its Fresnel at v.h), integrated in f64.
-fn coupled_diffuse(view: DVec3) -> f64 {
+pub(super) fn coupled_diffuse(view: DVec3) -> f64 {
     let mut sum = 0.;
     for row in 0..THETA_STEPS {
         for column in 0..PHI_STEPS {
@@ -354,7 +354,7 @@ fn direct_light_and_the_environment_reflect_alike() {
 
 /// A camera at the origin looking down -Z, with no light, fill or
 /// environment, and baked lighting on.
-fn dark_input() -> FrameInput {
+pub(super) fn dark_input() -> FrameInput {
     let mut input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),
@@ -370,7 +370,7 @@ fn dark_input() -> FrameInput {
     input
 }
 
-fn quiet_settings() -> Settings {
+pub(super) fn quiet_settings() -> Settings {
     Settings {
         antialiasing: settings::Antialiasing::Off,
         bloom: settings::Bloom::Off,
@@ -731,7 +731,7 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
                 &dark_input(),
                 rough,
                 mirror,
-                "scene_light_sample(0u,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAPTURE)",
+                "scene_light_sample(0u,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAPTURE,false)",
             );
             let angular = (radius / distance).asin();
             let expected =
@@ -771,7 +771,7 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
                 &input,
                 rough,
                 mirror,
-                "directional_light_sample(0u,s.position,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection()))",
+                "directional_light_sample(0u,s.position,s.normal,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection()),false)",
             );
             let angular = 0.05f64;
             let expected = disc_reference(
@@ -797,4 +797,176 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
             );
         }
     }
+}
+
+/// A surface facing +Z at the origin for `observe_lit`: seen along `view` at
+/// perceptual roughness `rough`, of base colour `base` and metallic
+/// `metallic`, a dielectric of F0 `dielectric_f0` and F90 1 (0 and 0 for a
+/// bare Lambertian), under a coat of strength `coat`, a sheen of colour
+/// `sheen` and perceptual roughness `sheen_rough`, passing `transmission`
+/// of its diffuse light to its other side in `transmission_color`, at
+/// material occlusion `occlusion`; its lights' specular lobes scaled by
+/// `light_specular`.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Layered {
+    pub view: DVec3,
+    pub rough: f64,
+    pub base: [f64; 3],
+    pub metallic: f64,
+    pub dielectric_f0: f64,
+    pub coat: f64,
+    pub sheen: [f64; 3],
+    pub sheen_rough: f64,
+    pub transmission: f64,
+    pub transmission_color: [f64; 3],
+    pub occlusion: f64,
+    pub light_specular: f64,
+}
+
+impl Default for Layered {
+    fn default() -> Self {
+        Self {
+            view: DVec3::Z,
+            rough: 0.5,
+            base: [1.; 3],
+            metallic: 0.,
+            dielectric_f0: 0.04,
+            coat: 0.,
+            sheen: [0.; 3],
+            sheen_rough: 0.5,
+            transmission: 0.,
+            transmission_color: [1.; 3],
+            occlusion: 1.,
+            light_specular: 1.,
+        }
+    }
+}
+
+/// What each case reflects toward its view: under unit lights from every
+/// direction of the hemisphere above it and of the one below it, each
+/// integrated (the production surface_direct_light, summed by the GPU over
+/// each grid row and in f64 here), and under a uniform environment of
+/// radiance 1 all around, as a probe capture's surface takes it (the
+/// production shade_lit, its environment specular and material occlusion
+/// included), in that order.
+pub(super) fn observe_lit(cases: &[Layered]) -> Option<Vec<[DVec3; 3]>> {
+    let (device, queue) = test_support::device()?;
+    let settings = quiet_settings();
+    let mut renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let mut scene = Scene::new(&device, &queue);
+    let texel: Vec<u8> = [1f32; 4]
+        .iter()
+        .flat_map(|&value| test_support::to_half(value).to_le_bytes())
+        .collect();
+    let environment = scene
+        .add_environment(
+            &device,
+            &queue,
+            &test_support::environment([255; 4], &texel),
+        )
+        .unwrap();
+    let mut input = dark_input();
+    input.environment = Some(environment);
+    let v3 = |v: [f64; 3]| {
+        format!(
+            "vec3({:?},{:?},{:?})",
+            v[0] as f32, v[1] as f32, v[2] as f32
+        )
+    };
+    let surfaces: Vec<String> = cases
+        .iter()
+        .map(|c| {
+            format!(
+                "Layered({},{:?},{},{:?},{:?},{:?},{},{:?},{:?},{},{:?},{:?})",
+                v3(c.view.to_array()),
+                c.rough as f32,
+                v3(c.base),
+                c.metallic as f32,
+                c.dielectric_f0 as f32,
+                c.coat as f32,
+                v3(c.sheen),
+                c.sheen_rough as f32,
+                c.transmission as f32,
+                v3(c.transmission_color),
+                c.occlusion as f32,
+                c.light_specular as f32,
+            )
+        })
+        .collect();
+    let count = cases.len();
+    let observation = format!(
+        r#"{}
+struct Layered {{ view:vec3<f32>,rough:f32,base:vec3<f32>,metallic:f32,dielectric_f0:f32,coat:f32,sheen:vec3<f32>,sheen_rough:f32,transmission:f32,transmission_color:vec3<f32>,occlusion:f32,light_specular:f32 }}
+@group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
+fn layered(c:Layered)->Surface {{
+ var s=case_surface(c.view,c.rough,c.base,c.metallic);
+ s.dielectric_f0=vec3(c.dielectric_f0);
+ s.specular=select(0.,1.,c.dielectric_f0>0.);
+ s.coat=c.coat;
+ s.coat_roughness=.3;
+ s.sheen=c.sheen;
+ s.sheen_roughness=c.sheen_rough;
+ s.diffuse_transmission=c.transmission;
+ s.diffuse_transmission_color=c.transmission_color;
+ s.occlusion=c.occlusion;
+ s.lightmap_uv=vec2(-1.);
+ return s;
+}}
+@compute @workgroup_size({THREADS}) fn observe(@builtin(local_invocation_index) thread:u32) {{
+ var cases=array<Layered,{count}>({});
+ for (var index=0u;index<{count}u;index++) {{
+  let c=cases[index];
+  let s=layered(c);
+  let reflectance=case_reflectance(s);
+  for (var row=thread;row<THETA_STEPS;row+=THREADS) {{
+   var above=vec3(0.);
+   var below=vec3(0.);
+   for (var column=0u;column<PHI_STEPS;column++) {{
+    let l=grid_direction(row,column);
+    above+=surface_direct_light(s,reflectance,LightSample(l,vec3(1.),1.,1.,c.light_specular,NO_RECT_LIGHT,0.));
+    below+=surface_direct_light(s,reflectance,LightSample(vec3(l.xy,-l.z),vec3(1.),1.,1.,c.light_specular,NO_RECT_LIGHT,0.));
+   }}
+   output[(index*THETA_STEPS+row)*2u]=vec4(above,0.);
+   output[(index*THETA_STEPS+row)*2u+1u]=vec4(below,0.);
+  }}
+  if thread==0u {{
+   let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,true,true,cluster_range(s.position,vec2(0.)),untraced_reflection());
+   output[{count}u*THETA_STEPS*2u+index]=vec4(shade_lit(s,context).color,0.);
+  }}
+ }}
+}}
+"#,
+        grid_wgsl(),
+        surfaces.join(","),
+    );
+    let rows = test_support::observe_ray_hits(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        &observation,
+        count * (THETA_STEPS * 2 + 1),
+    );
+    let vector = |a: [f32; 4]| DVec3::new(a[0] as f64, a[1] as f64, a[2] as f64);
+    Some(
+        (0..count)
+            .map(|case| {
+                let side = |half: usize| {
+                    (0..THETA_STEPS)
+                        .map(|row| {
+                            vector(rows[(case * THETA_STEPS + row) * 2 + half])
+                                * cell(grid(row, 0).0)
+                        })
+                        .sum()
+                };
+                [
+                    side(0),
+                    side(1),
+                    vector(rows[count * THETA_STEPS * 2 + case]),
+                ]
+            })
+            .collect(),
+    )
 }

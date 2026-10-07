@@ -19,11 +19,14 @@ struct StableMaterial {
 }
 fn stable_material(s:Surface)->StableMaterial {
  // Preserve both lobes: the base follows normal/bump maps, the coat its
- // clearcoat normal map, else the geometry normal.
+ // clearcoat normal map, else the geometry normal. The base's F0 and F90
+ // are those its environment lights at the camera's view, beneath its
+ // sheen (surface_environment_lobe).
  var o:StableMaterial;
  o.normal=gbuffer_encode_normals(s.normal,s.coat_normal);
- o.f0=gbuffer_encode_f0(surface_f0(s),!s.unlit,takes_baked_lights(s.baked,s.lightmap_uv,s.moving),s.occlusion);
- o.material=gbuffer_encode_material(s.coat_roughness,s.roughness,s.coat,surface_f90(s));
+ let lobe=surface_environment_lobe(surface_f0(s),surface_f90(s),surface_sheen_scaling(s));
+ o.f0=gbuffer_encode_f0(lobe.f0,!s.unlit,takes_baked_lights(s.baked,s.lightmap_uv,s.moving),s.occlusion);
+ o.material=gbuffer_encode_material(s.coat_roughness,s.roughness,s.coat,lobe.f90);
  o.anisotropy=gbuffer_encode_anisotropy(s.anisotropy,s.environment_scale);
  return o;
 }

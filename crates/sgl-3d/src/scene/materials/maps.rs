@@ -28,6 +28,10 @@ pub(super) fn authored(material: &AuthoredMaterial, map: MaterialMap) -> Option<
         MaterialMap::CoatNormal => material.coat_normal_texture,
         MaterialMap::Iridescence => material.iridescence_texture,
         MaterialMap::IridescenceThickness => material.iridescence_thickness_texture,
+        MaterialMap::SheenColor => material.sheen_color_texture,
+        MaterialMap::SheenRoughness => material.sheen_roughness_texture,
+        MaterialMap::DiffuseTransmission => material.diffuse_transmission_texture,
+        MaterialMap::DiffuseTransmissionColor => material.diffuse_transmission_color_texture,
     }
 }
 
@@ -121,6 +125,12 @@ impl InEffect {
                 MaterialMap::CoatNormal => textures.coat_normal = image,
                 MaterialMap::Iridescence => textures.iridescence = image,
                 MaterialMap::IridescenceThickness => textures.iridescence_thickness = image,
+                MaterialMap::SheenColor => textures.sheen_color = image,
+                MaterialMap::SheenRoughness => textures.sheen_roughness = image,
+                MaterialMap::DiffuseTransmission => textures.diffuse_transmission = image,
+                MaterialMap::DiffuseTransmissionColor => {
+                    textures.diffuse_transmission_color = image
+                }
             }
         }
         textures

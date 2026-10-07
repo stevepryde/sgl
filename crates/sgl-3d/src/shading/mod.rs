@@ -12,6 +12,8 @@ pub(crate) mod clusters;
 pub(crate) mod culling;
 pub(crate) mod decals;
 pub(crate) mod deformation;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod diffuse_transmission_tests;
 pub(crate) mod dynamic_gi;
 pub(crate) mod fog;
 pub(crate) mod gbuffer;
@@ -41,6 +43,8 @@ pub(crate) use scene_rays::{SCENE_RAYS_PORTABLE, SCENE_RAYS_QUERY_OPAQUE};
 pub(crate) mod shadow_mask;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod shadow_normal_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod sheen_tests;
 pub(crate) mod srgb;
 pub(crate) mod uniforms;
 pub(crate) mod vertex;
@@ -210,6 +214,11 @@ pub(crate) static ANISOTROPY: Module = Module {
 pub(crate) static IRIDESCENCE: Module = Module {
     name: "iridescence",
     source: include_str!("iridescence.wgsl"),
+    deps: &[],
+};
+pub(crate) static SHEEN: Module = Module {
+    name: "sheen",
+    source: include_str!("sheen.wgsl"),
     deps: &[],
 };
 /// Lit group 0's lookup tables: their layers and the DFG table's lookup.
@@ -533,6 +542,7 @@ pub(crate) static SURFACE: Module = Module {
     deps: &[
         &ANISOTROPY,
         &IRIDESCENCE,
+        &SHEEN,
         &PBR,
         &DFG,
         &SPECULAR_LOBES,

@@ -164,10 +164,15 @@ fn pbr_sized_light(direction:vec3<f32>,size:f32,reflected:vec3<f32>,view:vec3<f3
  let normalizationFactor=a/a_prime;
  return PbrSizedLight(l,normalizationFactor*normalizationFactor);
 }
+// The environment's single and multiple scattering, the diffuse weight of
+// a Lambertian of the base's colour beneath them, and the share of a
+// Lambertian's light the dielectric's scattering keeps, whatever its
+// colour (the diffuse weight over the base).
 struct PbrIblWeights {
  single:vec3<f32>,
  multi:vec3<f32>,
- diffuse:vec3<f32>
+ diffuse:vec3<f32>,
+ kept:vec3<f32>,
 }
 fn pbr_hemisphere(n:vec3<f32>,upper:vec3<f32>,ground:vec3<f32>,intensity:f32)->vec3<f32> {
  return mix(ground,upper,n.y*.5+.5)*intensity;
@@ -192,9 +197,10 @@ fn pbr_ibl_weights(base:vec3<f32>,metallic:f32,dielectric_f0:vec3<f32>,metal_f0:
  let dielectric_multi=dielectric_single*(pbr_multiscatter_gain(dielectric_f0,dfg)-vec3(1.));
  let metal_single=pbr_split_sum(metal_f0,f90,dfg);
  let metal_multi=metal_single*(pbr_multiscatter_gain(metal_f0,dfg)-vec3(1.));
+ let kept=(1.-metallic)*(vec3(1.)-dielectric_single-dielectric_multi);
  return PbrIblWeights(mix(dielectric_single,metal_single,metallic),
   mix(dielectric_multi,metal_multi,metallic),
-  base*(1.-metallic)*(vec3(1.)-dielectric_single-dielectric_multi));
+  base*kept,kept);
 }
 
 // The base GGX lobe stretched along a KHR_materials_anisotropy axis

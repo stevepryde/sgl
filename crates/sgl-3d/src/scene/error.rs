@@ -66,6 +66,11 @@ pub enum SceneError {
     /// A material's iridescence is outside 0..=1, its film's IOR below 1 or
     /// not finite, or a film thickness negative or not finite.
     InvalidIridescence,
+    /// A material's sheen colour or sheen roughness is outside 0..=1.
+    InvalidSheen,
+    /// A material's diffuse transmission is outside 0..=1, or its colour is
+    /// negative or not finite.
+    InvalidDiffuseTransmission,
     /// A material's normal layers have a velocity, scale or strength that is
     /// not finite, a scale that is not positive or a speed beyond 2^24
     /// repeats of the map per hour, or the material has no normal map that
@@ -198,6 +203,10 @@ impl std::fmt::Display for SceneError {
             Self::InvalidOcclusion => "occlusion strength must be in 0..1",
             Self::InvalidIridescence => {
                 "iridescence must be in 0..1, its film IOR finite and at least 1 and its thicknesses finite and nonnegative"
+            }
+            Self::InvalidSheen => "sheen colour and sheen roughness must be in 0..1",
+            Self::InvalidDiffuseTransmission => {
+                "diffuse transmission must be in 0..1 and its colour finite and nonnegative"
             }
             Self::InvalidNormalLayers => {
                 "normal layers need finite velocities and strengths, positive finite scales, at most 2^24 repeats per hour and a normal map that repeats on both axes"

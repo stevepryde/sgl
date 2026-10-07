@@ -23,3 +23,17 @@ fn material_iridescence_texel(uv:vec2<f32>)->vec4<f32> {
 fn material_iridescence_thickness_texel(uv:vec2<f32>)->vec4<f32> {
  return textureSampleBias(iridescence_thickness_map,tex_sampler,uv,view.mip_bias);
 }
+// The sheen colour and roughness and the diffuse transmission and its
+// colour maps' texels at `uv`.
+fn material_sheen_color_texel(uv:vec2<f32>)->vec4<f32> {
+ return textureSampleBias(sheen_color_map,tex_sampler,uv,view.mip_bias);
+}
+fn material_sheen_roughness_texel(uv:vec2<f32>)->vec4<f32> {
+ return textureSampleBias(sheen_roughness_map,tex_sampler,uv,view.mip_bias);
+}
+fn material_diffuse_transmission_texel(uv:vec2<f32>)->vec4<f32> {
+ return textureSampleBias(diffuse_transmission_map,tex_sampler,uv,view.mip_bias);
+}
+fn material_diffuse_transmission_color_texel(uv:vec2<f32>)->vec4<f32> {
+ return textureSampleBias(diffuse_transmission_color_map,tex_sampler,uv,view.mip_bias);
+}

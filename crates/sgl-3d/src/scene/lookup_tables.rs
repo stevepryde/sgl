@@ -1,7 +1,8 @@
 //! Lit group 0's lookup tables, one texture (shading/lookup_tables.wgsl): a
 //! 64×64 RGBA16F array whose first two layers hold the linearly transformed
 //! cosines that fit GGX, which rectangle lights are shaded with, and whose
-//! third holds the 64×64 DFG table in red and green.
+//! third holds the 64×64 DFG table in red and green and the sheen lobe's
+//! directional albedo in blue.
 //! One texture holds both so lit group 0 and a material stay within the
 //! sampled textures a fragment stage may bind (S3D-1).
 
@@ -24,7 +25,10 @@ const DFG_LAYER: u32 = LTC_LAYERS;
 /// its zstd-compressed level decompressed, unchanged; Monte Carlo integrated,
 /// bevyengine/bevy#23737): one 64×64 RG16F layer (`dfg.rg16`) of the split
 /// sum's scale and bias over N·V across and perceptual roughness down, as
-/// Bevy samples it.
+/// Bevy samples it. Its blue channel is the sheen lobe's directional
+/// albedo at the same texels (`sheen_dfg.r16`, one 64×64 R16F layer),
+/// Filament ef1a133's cloth DFG term as `scripts/sheen-dfg.ts` generates it
+/// (`src/LICENSE-filament.txt`).
 pub(crate) fn lookup_tables(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
     let size = wgpu::Extent3d {
         width: LAYER,
@@ -42,10 +46,13 @@ pub(crate) fn lookup_tables(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu:
         view_formats: &[],
     });
     let mut texels = include_bytes!("ltc_ggx.rgba16").to_vec();
-    // Each RG16F texel's two halves, then zero blue and alpha.
-    for texel in include_bytes!("dfg.rg16").chunks_exact(4) {
+    // Each RG16F texel's two halves, the sheen albedo's half, then zero
+    // alpha.
+    let sheen = include_bytes!("sheen_dfg.r16").chunks_exact(2);
+    for (texel, sheen) in include_bytes!("dfg.rg16").chunks_exact(4).zip(sheen) {
         texels.extend_from_slice(texel);
-        texels.extend_from_slice(&[0; 4]);
+        texels.extend_from_slice(sheen);
+        texels.extend_from_slice(&[0; 2]);
     }
     crate::counters::write_texture(
         queue,

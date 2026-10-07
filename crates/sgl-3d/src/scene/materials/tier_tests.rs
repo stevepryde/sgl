@@ -14,7 +14,8 @@ const BASIC_SAMPLED_TEXTURES: u32 = 47;
 // the wrong one. The oracle is the same material added without that map on
 // the same device: on a device of 47 sampled textures a stage, the record
 // of a material with the Extended tier's maps (anisotropy, clearcoat,
-// clearcoat roughness and normal, iridescence and its thickness) holds the
+// clearcoat roughness and normal, iridescence and its thickness, sheen
+// colour and roughness, diffuse transmission and its colour) holds the
 // words of the same material without them, and that of a material with a normal and a bump map
 // the words of the material with the normal map alone.
 #[test]
@@ -59,6 +60,10 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
             coat_normal_texture: Some(1),
             iridescence_texture: Some(3),
             iridescence_thickness_texture: Some(3),
+            sheen_color_texture: Some(0),
+            sheen_roughness_texture: Some(3),
+            diffuse_transmission_texture: Some(3),
+            diffuse_transmission_color_texture: Some(0),
             ..plain.clone()
         },
         plain.clone(),

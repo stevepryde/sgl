@@ -134,6 +134,14 @@ pub(crate) struct MaterialUniform {
     pub iridescence_ior: f32,
     pub iridescence_thickness: [f32; 2],
     pub padding: [u32; 2],
+    /// KHR_materials_sheen's linear colour (0 none) and perceptual
+    /// roughness.
+    pub sheen: [f32; 3],
+    pub sheen_roughness: f32,
+    /// KHR_materials_diffuse_transmission's colour, and the share of the
+    /// light the base diffuses that it passes to its other side (0 none).
+    pub diffuse_transmission_color: [f32; 3],
+    pub diffuse_transmission: f32,
 }
 
 impl MaterialUniform {
@@ -189,6 +197,10 @@ impl MaterialUniform {
             iridescence_ior: values.iridescence_ior,
             iridescence_thickness: values.iridescence_thickness,
             padding: [0; 2],
+            sheen: values.sheen_color,
+            sheen_roughness: values.sheen_roughness,
+            diffuse_transmission_color: values.diffuse_transmission_color,
+            diffuse_transmission: values.diffuse_transmission,
         }
     }
 

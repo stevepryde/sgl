@@ -120,7 +120,7 @@ fn case_surface(c:Case)->Surface {
  // The view's DFG lookup fixed, and the case's F90.
  var reflectance=surface_reflectance(surface,vec2(.8,.025));
  reflectance.f90=c.l.w;
- let light=LightSample(c.l.xyz,vec3(1.),1.,1.,NO_RECT_LIGHT,0.);
+ let light=LightSample(c.l.xyz,vec3(1.),1.,0.,1.,NO_RECT_LIGHT,0.);
  result[id.x*4u]=vec4(pbr_anisotropic_specular(c.n.xyz,c.v.xyz,c.l.xyz,c.n.w,F0,c.l.w,axis),1.);
  result[id.x*4u+1u]=vec4(pbr_anisotropy_bent_normal(c.n.xyz,c.v.xyz,axis,c.n.w),1.);
  result[id.x*4u+2u]=vec4(surface_direct_light(surface,reflectance,light),reflectance.coat_fresnel);

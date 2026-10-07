@@ -107,6 +107,20 @@ pub struct SurfaceMaterial {
     /// The film's thinnest and thickest thickness in nanometres, each finite
     /// and nonnegative ([`Material::iridescence_thickness`]).
     pub iridescence_thickness: [f32; 2],
+    /// A sheen's linear colour, each channel in `0..=1`, which a sheen
+    /// colour map's RGB multiplies ([`Material::sheen_color`]): black none.
+    pub sheen_color: [f32; 3],
+    /// The sheen's perceptual roughness in `0..=1`, which a sheen roughness
+    /// map's alpha multiplies ([`Material::sheen_roughness`]).
+    pub sheen_roughness: f32,
+    /// The share in `0..=1` of the light the base diffuses that passes to
+    /// the surface's other side, which a diffuse transmission map's alpha
+    /// multiplies ([`Material::diffuse_transmission`]): 0 none.
+    pub diffuse_transmission: f32,
+    /// The linear colour of the light it passes through, each channel finite
+    /// and nonnegative, which a diffuse transmission colour map's RGB multiplies
+    /// ([`Material::diffuse_transmission_color`]).
+    pub diffuse_transmission_color: [f32; 3],
     /// Scale of the normal map's tangent-space X and Y.
     pub normal_scale: f32,
     /// Scrolling normals: the normal map drawn as two layers that move
@@ -174,6 +188,10 @@ impl SurfaceMaterial {
             iridescence: m.iridescence,
             iridescence_ior: m.iridescence_ior,
             iridescence_thickness: m.iridescence_thickness,
+            sheen_color: m.sheen_color,
+            sheen_roughness: m.sheen_roughness,
+            diffuse_transmission: m.diffuse_transmission,
+            diffuse_transmission_color: m.diffuse_transmission_color,
             normal_scale: m.normal_scale,
             normal_layers: m.normal_layers,
             bump_scale: m.bump_scale,
