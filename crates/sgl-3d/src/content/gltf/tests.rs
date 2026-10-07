@@ -730,22 +730,26 @@ fn transmission_volume_and_dispersion_load_as_their_extensions_define() {
         ),
         (2.5, [0.9, 0.5, 0.2], 0.33)
     );
+    // Each default, with the extensions present but empty, and absent.
     let defaults = serde_json::json!({
         "KHR_materials_transmission": {},
         "KHR_materials_volume": {},
         "KHR_materials_dispersion": {}
     });
-    let material = read(defaults, false).unwrap();
-    assert_eq!(
-        (
-            material.transmission,
-            material.thickness,
-            material.attenuation_distance,
-            material.attenuation_color,
-            material.dispersion
-        ),
-        (0., 0., f32::INFINITY, [1.; 3], 0.)
-    );
+    for extensions in [defaults, serde_json::json!({})] {
+        let material = read(extensions.clone(), false).unwrap();
+        assert_eq!(
+            (
+                material.transmission,
+                material.thickness,
+                material.attenuation_distance,
+                material.attenuation_color,
+                material.dispersion
+            ),
+            (0., 0., f32::INFINITY, [1.; 3], 0.),
+            "{extensions}"
+        );
+    }
     for refused in [
         serde_json::json!({"KHR_materials_transmission": {"transmissionFactor": 1.5}}),
         serde_json::json!({"KHR_materials_volume": {"thicknessFactor": -0.1}}),
