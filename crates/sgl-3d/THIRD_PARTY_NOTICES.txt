@@ -210,9 +210,11 @@ Filament, https://github.com/google/filament
 Revision ef1a133d6777299ad971a0f9612adf4aad281f46, LICENSE (Apache-2.0). SGL3D ports normalFiltering
 (shaders/src/surface_shading_lit.fs) and its material defaults into pbr.wgsl, and
 SpecularAO_Lagarde and gtaoMultiBounce (shaders/src/surface_ambient_occlusion.fs)
-with their desktop defaults into specular_lobes.wgsl, and AgxToneMapper
+with their desktop defaults into specular_lobes.wgsl, AgxToneMapper
 (filament/src/ToneMapper.cpp) with the sRGB and Rec. 2020 conversions
-(filament/src/ColorSpaceUtils.h) into tone_map.wgsl.
+(filament/src/ColorSpaceUtils.h) into tone_map.wgsl, and F_SchlickIridescence,
+iorToF0, f0ToIor, evaluateIridescenceSensitivity, F_Iridescence and
+F_IridescenceToF0 (shaders/src/surface_brdf.fs) into iridescence.wgsl.
 
 
                                  Apache License

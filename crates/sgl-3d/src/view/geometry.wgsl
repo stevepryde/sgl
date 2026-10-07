@@ -18,9 +18,10 @@ struct StableMaterial {
  anisotropy:vec4<f32>,
 }
 fn stable_material(s:Surface)->StableMaterial {
- // Preserve both lobes: the base follows normal/bump maps, the coat geometry.
+ // Preserve both lobes: the base follows normal/bump maps, the coat its
+ // clearcoat normal map, else the geometry normal.
  var o:StableMaterial;
- o.normal=gbuffer_encode_normals(s.normal,s.geometry_normal);
+ o.normal=gbuffer_encode_normals(s.normal,s.coat_normal);
  o.f0=gbuffer_encode_f0(surface_f0(s),!s.unlit,takes_baked_lights(s.baked,s.lightmap_uv,s.moving),s.occlusion);
  o.material=gbuffer_encode_material(s.coat_roughness,s.roughness,s.coat,surface_f90(s));
  o.anisotropy=gbuffer_encode_anisotropy(s.anisotropy,s.environment_scale);
@@ -260,12 +261,16 @@ fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
   let model=objects[fragment_object(i)].model;
   transmitted=getIBLVolumeRefraction(s.normal,s.view,s.roughness,s.base.rgb*(1.-s.metallic),surface_f0(s),surface_f90(s),s.position,model,material.ior,surface_thickness(i),material.attenuation,material.dispersion);
  }
- let through=s.transmission*(1.-pbr_coat_fresnel(s.geometry_normal,s.view,s.coat));
+ let through=s.transmission*(1.-pbr_coat_fresnel(s.coat_normal,s.view,s.coat));
  let own_share=coverage*(1.-through*transmitted.share);
  let keeps_specular=(material.flags&MATERIAL_KEEPS_SPECULAR)!=0u;
  if keeps_specular {
   s.base=vec4(s.base.rgb*coverage,s.base.a);
   s.emission*=coverage;
+  // A metal's iridescent F0, which raster_surface refit from its base
+  // before the coverage, takes it as the base does: its F0 mixes the two by
+  // the film's strength, linearly (surface_f0s).
+  s.film.metal*=coverage;
  }
  var shaded:Shaded;
  var own=own_share;
@@ -288,7 +293,7 @@ fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
 // surface that keeps its specular gives the pixel whatever its alpha.
 fn blended_reflectance(s:Surface)->f32 {
  let base=pbr_split_sum(surface_f0(s),surface_f90(s),surface_dfg(specular_nv(s.normal,s.view),s.roughness));
- let coat=pbr_coat_fresnel(s.geometry_normal,s.view,s.coat);
+ let coat=pbr_coat_fresnel(s.coat_normal,s.view,s.coat);
  return coat+(1.-coat)*(base.r+base.g+base.b)/3.;
 }
 @fragment fn blended_fs(i:Fragment,@builtin(front_facing) front:bool)->@location(0) vec4<f32> {

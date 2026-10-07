@@ -167,6 +167,7 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
  surface.position=c.p.xyz;
  surface.normal=c.n.xyz;
  surface.geometry_normal=c.n.xyz;
+ surface.coat_normal=c.n.xyz;
  surface.view=c.v.xyz;
  surface.roughness=c.n.w;
  surface.coat=c.f.z;

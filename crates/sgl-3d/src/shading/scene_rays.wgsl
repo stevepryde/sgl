@@ -22,7 +22,7 @@ struct SceneHit {
 }
 struct SceneMaterial {
  values:Material,
- textures:array<u32,6>, wrap:vec2<u32>, baked:u32,
+ textures:array<u32,SCENE_TEXTURES>, wrap:vec2<u32>, baked:u32,
 }
 fn scene_f32(at:u32)->f32 {
  return bitcast<f32>(scene_source[at]);
@@ -48,16 +48,19 @@ fn scene_material_values(at:u32)->Material {
  scene_f32(at+SCENE_MATERIAL_ALPHA_CUTOFF),scene_source[at+SCENE_MATERIAL_VISIBILITY_GROUP],scene_source[at+SCENE_MATERIAL_FLAGS],
  scene_f32(at+SCENE_MATERIAL_OCCLUSION_STRENGTH),scene_v3(at+SCENE_MATERIAL_SPECULAR_F0),scene_f32(at+SCENE_MATERIAL_SPECULAR),
  array<NormalLayer,2>(scene_normal_layer(layers),scene_normal_layer(layers+SCENE_NORMAL_LAYER_WORDS)),
- scene_source[at+SCENE_MATERIAL_MAPS],
+ scene_source[at+SCENE_MATERIAL_MAPS],scene_f32(at+SCENE_MATERIAL_COAT_NORMAL_SCALE),
+ scene_f32(at+SCENE_MATERIAL_IRIDESCENCE),scene_f32(at+SCENE_MATERIAL_IRIDESCENCE_IOR),scene_v2(at+SCENE_MATERIAL_IRIDESCENCE_THICKNESS),
  scene_v3(at+SCENE_MATERIAL_ATTENUATION),scene_f32(at+SCENE_MATERIAL_TRANSMISSION),
  scene_f32(at+SCENE_MATERIAL_THICKNESS),scene_f32(at+SCENE_MATERIAL_IOR),scene_f32(at+SCENE_MATERIAL_DISPERSION));
 }
 fn scene_material(at:u32)->SceneMaterial {
- let textures=at+SCENE_MATERIAL_TEXTURES;
+ let first=at+SCENE_MATERIAL_TEXTURES;
+ var textures:array<u32,SCENE_TEXTURES>;
+ for (var texture=0u;texture<SCENE_TEXTURES;texture++) {
+  textures[texture]=scene_source[first+texture];
+ }
  let wrap=at+SCENE_MATERIAL_WRAP;
- return SceneMaterial(scene_material_values(at),
- array<u32,6>(scene_source[textures],scene_source[textures+1u],scene_source[textures+2u],scene_source[textures+3u],scene_source[textures+4u],scene_source[textures+5u]),
- vec2(scene_source[wrap],scene_source[wrap+1u]),scene_source[at+SCENE_MATERIAL_BAKED]);
+ return SceneMaterial(scene_material_values(at),textures,vec2(scene_source[wrap],scene_source[wrap+1u]),scene_source[at+SCENE_MATERIAL_BAKED]);
 }
 fn scene_wrap_texel(p:i32,size:i32,mode:u32)->i32 {
  if mode==2u {

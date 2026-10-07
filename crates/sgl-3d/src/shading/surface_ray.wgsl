@@ -10,25 +10,44 @@ fn ray_tangent_frame(hit:SceneHit)->mat3x3<f32> {
  let frame=pbr_tangent_frame(hit.normal*side,hit.authored_tangent);
  return mat3x3(frame[0]*side,frame[1]*side,frame[2]*side);
 }
-fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
+// Whether the hit has a frame a normal map's texel can be taken on: an
+// authored tangent frame where its material is anisotropic, else a UV
+// differential frame of nonzero axes.
+fn ray_has_map_frame(hit:SceneHit,material:SceneMaterial)->bool {
+ return material.values.anisotropy_strength>0. || (dot(hit.tangent,hit.tangent)!=0. && dot(hit.bitangent,hit.bitangent)!=0.);
+}
+// The tangent frame a normal map's texel is taken on, the base's and the
+// coat's alike (surface_map_frame): the authored tangent frame where the
+// material is anisotropic, else the dual of the triangle's UV frame.
+fn ray_map_frame(hit:SceneHit,material:SceneMaterial)->mat3x3<f32> {
+ if material.values.anisotropy_strength>0. {
+  return ray_tangent_frame(hit);
+ }
  // scene_trace flips the interpolated normal of accepted two-sided backs.
  // dp/du and dp/dv come from actual triangle positions and UVs. Their dual
- // cotangent frame is the same surface gradient construction as surface_normal.
+ // cotangent frame is the same surface gradient construction as
+ // surface_map_frame. The dual UV frame must retain the signed UV
+ // Jacobian. Its orientation is measured against the authored geometric
+ // normal, not the back-flipped lighting normal. This is the glTF
+ // tangent.w / mirrored-UV handedness; n already reverses all three TBN
+ // columns for accepted back faces.
+ let n=hit.normal;
+ let du=hit.tangent;
+ let dv=hit.bitangent;
+ let orientation=sign(dot(cross(du,dv),hit.geometric_normal));
+ let tangent=cross(dv,n)*orientation;
+ let bitangent=cross(n,du)*orientation;
+ let scale=inverseSqrt(max(max(dot(tangent,tangent),dot(bitangent,bitangent)),0.0000001));
+ return mat3x3(tangent*scale,bitangent*scale,n);
+}
+fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
  var n=hit.normal;
  let du=hit.tangent;
  let dv=hit.bitangent;
- if material.values.anisotropy_strength<=0. && (dot(du,du)==0. || dot(dv,dv)==0.) {
+ if !ray_has_map_frame(hit,material) {
   return n;
  }
  if normal_maps_enabled && (material.values.maps&MATERIAL_MAP_NORMAL)!=0u {
-  // The dual UV frame must retain the signed UV Jacobian. Its orientation
-  // is measured against the authored geometric normal, not the back-flipped
-  // lighting normal. This is the glTF tangent.w / mirrored-UV handedness;
-  // n already reverses all three TBN columns for accepted back faces.
-  let orientation=sign(dot(cross(du,dv),hit.geometric_normal));
-  let tangent=cross(dv,n)*orientation;
-  let bitangent=cross(n,du)*orientation;
-  let scale=inverseSqrt(max(max(dot(tangent,tangent),dot(bitangent,bitangent)),0.0000001));
   let normal_map=material.textures[SCENE_TEXTURE_NORMAL];
   var mapped:vec3<f32>;
   if (material.values.flags&MATERIAL_NORMAL_LAYERS)!=0u {
@@ -39,11 +58,7 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
   } else {
    mapped=material_mapped_normal(material.values,scene_sample_texture(normal_map,hit.uv,material.wrap,false));
   }
-  if material.values.anisotropy_strength>0. {
-   n=normalize(ray_tangent_frame(hit)*mapped);
-  } else {
-   n=normalize(mat3x3(tangent*scale,bitangent*scale,n)*mapped);
-  }
+  n=normalize(ray_map_frame(hit,material)*mapped);
  }
  // MaterialNode.NORMAL selects normalMap OR ELSE bumpMap: a bump map is in
  // effect only without a normal map (scene::materials::maps), so its bit
@@ -64,6 +79,14 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
   n=normalize(abs(determinant)*n-sign(determinant)*(dhdu*a+dhdv*b));
  }
  return n;
+}
+// The coat's normal (Surface.coat_normal), as surface_coat_normal takes it,
+// on ray_map_frame where the hit has one.
+fn ray_coat_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
+ if normal_maps_enabled && (material.values.maps&MATERIAL_MAP_COAT_NORMAL)!=0u && ray_has_map_frame(hit,material) {
+  return normalize(ray_map_frame(hit,material)*material_coat_normal(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_COAT_NORMAL],hit.uv,material.wrap,false)));
+ }
+ return hit.normal;
 }
 fn ray_base_color(hit:SceneHit,material:SceneMaterial)->vec4<f32> {
  return scene_base_color(material,hit.uv,hit.color);
@@ -100,8 +123,16 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.dielectric_f0=material_dielectric_f0(material.values);
  s.specular=material.values.specular;
  s.roughness=clamp(decaled.roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
- s.coat=material.values.coat;
- s.coat_roughness=clamp(material.values.coat_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
+ // The coat's and the film's maps, as raster_surface takes them; a map
+ // not in effect reads white (texture word 0).
+ var coat_roughness=material.values.coat_roughness;
+ s.coat_normal=hit.normal;
+ if material.values.coat>0. {
+  s.coat=material_coat(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_CLEARCOAT],hit.uv,material.wrap,false));
+  coat_roughness=material_coat_roughness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_COAT_ROUGHNESS],hit.uv,material.wrap,false));
+  s.coat_normal=ray_coat_normal(hit,material);
+ }
+ s.coat_roughness=clamp(coat_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.values.environment_scale;
@@ -114,6 +145,11 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.lightmap_uv=hit.lightmap_uv;
  s.lightmap_bounds=hit.lightmap_bounds;
  s.baked_irradiance=objects[hit.instance_id].baked_irradiance;
+ if films_enabled && material.values.iridescence>0. {
+  let strength=material_iridescence(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE],hit.uv,material.wrap,false));
+  let thickness=material_iridescence_thickness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE_THICKNESS],hit.uv,material.wrap,false));
+  s.film=surface_film(s,strength,material.values.iridescence_ior,thickness);
+ }
  return s;
 }
 // Where a probe hit's visibility ray starts past the hit, and how far

@@ -962,6 +962,94 @@ fn alpha_cutoffs_outside_gltfs_bound_are_refused() {
     scene.set_material(&queue, material, values).unwrap();
 }
 
+// Plausible defects: a film outside KHR_materials_iridescence's schema (a
+// strength outside 0..1, an IOR below 1, a negative thickness, or any not
+// finite) accepted when it is added or edited, so the film's Fresnel turns
+// NaN or negative; a thinnest thickness above the thickest refused, which
+// the schema allows; or a refused edit applied anyway. The oracles are the
+// schema and the refusal's contract: nothing changes.
+#[test]
+fn iridescence_outside_khrs_bounds_is_refused() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let invalid: [fn(&mut crate::asset::Material); 5] = [
+        |m| m.iridescence = 1.5,
+        |m| m.iridescence = f32::NAN,
+        |m| m.iridescence_ior = 0.9,
+        |m| m.iridescence_thickness = [-1., 400.],
+        |m| m.iridescence_thickness = [100., f32::INFINITY],
+    ];
+    for change in invalid {
+        let mut asset = test_support::cube();
+        change(&mut asset.materials[0]);
+        assert!(matches!(
+            scene.add_asset(&device, &queue, asset),
+            Err(SceneError::InvalidIridescence)
+        ));
+    }
+    let mut reversed = test_support::cube();
+    reversed.materials[0].iridescence = 1.;
+    reversed.materials[0].iridescence_thickness = [600., 200.];
+    let material = scene
+        .add_asset(&device, &queue, reversed)
+        .unwrap()
+        .materials[0];
+    let before = scene.material(material).unwrap();
+    for change in invalid {
+        let mut authored = test_support::cube().materials[0].clone();
+        change(&mut authored);
+        let values = crate::SurfaceMaterial {
+            iridescence: authored.iridescence,
+            iridescence_ior: authored.iridescence_ior,
+            iridescence_thickness: authored.iridescence_thickness,
+            ..before
+        };
+        assert!(matches!(
+            scene.set_material(&queue, material, values),
+            Err(SceneError::InvalidIridescence)
+        ));
+        assert_eq!(scene.material(material).unwrap(), before);
+    }
+}
+
+// Plausible defects: a film added, edited in or out, or removed without the
+// scene's count following, so the lit pipelines compile the film out while
+// a material has one (`LitConstants::films`) or keep it after the last. The
+// oracle is the scene's materials: it holds a film exactly while one of
+// them has an iridescence above zero.
+#[test]
+fn the_scene_holds_a_film_while_a_material_has_one() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let plain = scene
+        .add_asset(&device, &queue, test_support::cube())
+        .unwrap();
+    assert!(!scene.materials.holds_films());
+    let mut filmed = test_support::cube();
+    filmed.materials[0].iridescence = 0.5;
+    let filmed = scene.add_asset(&device, &queue, filmed).unwrap();
+    assert!(scene.materials.holds_films(), "added with a film");
+    let material = filmed.materials[0];
+    let values = scene.material(material).unwrap();
+    let bare = crate::SurfaceMaterial {
+        iridescence: 0.,
+        ..values
+    };
+    scene.set_material(&queue, material, bare).unwrap();
+    assert!(!scene.materials.holds_films(), "edited out");
+    scene
+        .set_material(&queue, plain.materials[0], values)
+        .unwrap();
+    assert!(scene.materials.holds_films(), "edited in");
+    scene.remove_model(plain.model).unwrap();
+    scene.remove_material(plain.materials[0]).unwrap();
+    assert!(!scene.materials.holds_films(), "removed");
+}
+
 // Plausible defects: content another content uses is removed or replaced
 // under it, or replacing a model keeps levels of detail that name it. The
 // oracles are the refusals the spec requires, and the removals they allow once

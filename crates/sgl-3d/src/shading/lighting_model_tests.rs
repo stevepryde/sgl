@@ -63,6 +63,7 @@ fn case_surface(view:vec3<f32>,rough:f32,base:vec3<f32>,metallic:f32)->Surface {
  var s:Surface;
  s.normal=vec3(0.,0.,1.);
  s.geometry_normal=s.normal;
+ s.coat_normal=s.normal;
  s.view=view;
  s.roughness=rough;
  s.base=vec4(base,1.);
@@ -82,7 +83,9 @@ fn case_reflectance(s:Surface)->SurfaceReflectance {{
 }
 
 /// One furnace: a surface facing +Z seen along `view`, under unit lights from
-/// every direction of the hemisphere whose specular lobes `specular` scales.
+/// every direction of the hemisphere whose specular lobes `specular` scales,
+/// under an iridescent film of strength, IOR and thickness in nanometres
+/// `film`.
 #[derive(Clone, Copy, Debug)]
 struct Furnace {
     view: DVec3,
@@ -90,7 +93,10 @@ struct Furnace {
     base: [f64; 3],
     metallic: f64,
     specular: f64,
+    film: [f64; 3],
 }
+
+const NO_FILM: [f64; 3] = [0., 1.3, 0.];
 
 /// What each furnace's surface reflects: under its lights, integrated over
 /// the hemisphere (the production surface_direct_light, summed by the GPU
@@ -106,7 +112,7 @@ fn furnaces(cases: &[Furnace]) -> Option<Vec<(DVec3, DVec3)>> {
             [
                 c.view.as_vec3().extend(c.rough as f32).to_array(),
                 [c.base[0], c.base[1], c.base[2], c.metallic].map(|v| v as f32),
-                [c.specular as f32, 0., 0., 0.],
+                [c.specular, c.film[0], c.film[1], c.film[2]].map(|v| v as f32),
             ]
         })
         .collect();
@@ -117,7 +123,8 @@ struct Case {{ view:vec4<f32>,base:vec4<f32>,light:vec4<f32> }}
 @group(0) @binding(4) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size({THREADS}) fn observe(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) thread:u32) {{
  let c=cases[group.x];
- let s=case_surface(c.view.xyz,c.view.w,c.base.rgb,c.base.w);
+ var s=case_surface(c.view.xyz,c.view.w,c.base.rgb,c.base.w);
+ s.film=surface_film(s,c.light.y,c.light.z,c.light.w);
  let reflectance=case_reflectance(s);
  for (var row=thread;row<THETA_STEPS;row+=THREADS) {{
   var ring=vec3(0.);
@@ -130,7 +137,7 @@ struct Case {{ view:vec4<f32>,base:vec4<f32>,light:vec4<f32> }}
  if thread==0u {{
   let dfg=reflectance.view_dfg;
   let lobes=specular_lobes(s.normal,s.normal,s.view,reflectance.f0,reflectance.f90,s.roughness,dfg,0.,0.,vec4(0.),lookup_tables,environment_sampler);
-  let ibl=pbr_ibl_weights(s.base.rgb,s.metallic,s.dielectric_f0,reflectance.f90,dfg);
+  let ibl=surface_ibl_weights(s,reflectance);
   result[arrayLength(&cases)*THETA_STEPS+group.x]=vec4(lobes[0].response+ibl.multi+ibl.diffuse,0.);
  }}
 }}
@@ -206,6 +213,7 @@ fn a_white_furnace_conserves_energy_under_direct_light() {
                 base: [1.; 3],
                 metallic: 1.,
                 specular: 1.,
+                film: NO_FILM,
             });
         }
     }
@@ -217,6 +225,7 @@ fn a_white_furnace_conserves_energy_under_direct_light() {
             base: [1.; 3],
             metallic: 0.,
             specular: 0.,
+            film: NO_FILM,
         });
     }
     let Some(observed) = furnaces(&cases) else {
@@ -250,6 +259,48 @@ fn a_white_furnace_conserves_energy_under_direct_light() {
     );
 }
 
+// Plausible defects: a film's reflectance taken by the specular lobes but
+// not from the diffuse beneath them, under the environment (its diffuse
+// weight at the bare dielectric's F0) or under lights (coupled at the bare
+// dielectric's Fresnel); or the diffuse kept by the film's weakest channel,
+// or each channel's, in place of its strongest. The oracles: a film that
+// absorbs nothing over a white base reflects all a white environment gives
+// it; and under diffuse-only lights from the whole hemisphere a dielectric
+// under a film keeps 1 less the strongest channel of the film's Fresnel at
+// N.V (KHR_materials_iridescence's rgb_mix), the film the exact thin-film
+// sum (iridescence_tests::thin_film). The environment's bound is f32
+// rounding; the lights' is the thin film's (0.01) and the grid's.
+#[test]
+fn a_white_furnace_conserves_energy_under_a_film() {
+    let film = [1., 1.8, 400.];
+    let cases: Vec<Furnace> = [1., 0.7]
+        .into_iter()
+        .map(|nv| Furnace {
+            view: view(nv),
+            rough: 0.5,
+            base: [1.; 3],
+            metallic: 0.,
+            specular: 0.,
+            film,
+        })
+        .collect();
+    let Some(observed) = furnaces(&cases) else {
+        return;
+    };
+    for (case, (direct, environment)) in cases.iter().zip(&observed) {
+        assert!(
+            (*environment - DVec3::ONE).abs().max_element() <= 1e-4,
+            "white dielectric under a film {case:?}: reflects {environment:?} of a white environment"
+        );
+        let thin = super::iridescence_tests::thin_film(film[1], 1.5, film[2], case.view.z);
+        let kept = 1. - thin.into_iter().fold(0., f64::max);
+        assert!(
+            (*direct - DVec3::splat(kept)).abs().max_element() <= 0.011,
+            "white dielectric under a film and diffuse-only lights {case:?}: {direct:?}, rgb_mix {kept}"
+        );
+    }
+}
+
 // Plausible defects: direct light and the environment scatter a metal's
 // light by different models, so a rough metal is darker or brighter and
 // shifts hue under the sun against the sky (three.js r185's direct heuristic
@@ -276,6 +327,7 @@ fn direct_light_and_the_environment_reflect_alike() {
                     base,
                     metallic: 1.,
                     specular: 1.,
+                    film: NO_FILM,
                 });
             }
         }
@@ -485,6 +537,7 @@ fn one_rule_for_every_indirect_source() {
   var s=case_surface(view,select(.5,.6,gold),select(vec3(.5),vec3(1.,.766,.336),gold),select(0.,1.,gold));
   s.normal=vec3(0.,1.,0.);
   s.geometry_normal=s.normal;
+  s.coat_normal=s.normal;
   s.position=vec3({:?},{:?},{:?});
   s.baked={lightmapped};
   s.moving={moving};

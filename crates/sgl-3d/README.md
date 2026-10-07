@@ -2091,7 +2091,7 @@ setting chooses it.
 | Tier | Sampled textures per stage | Lighting | Material maps |
 | --- | --- | --- | --- |
 | `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted | base, metallic-roughness (with packed occlusion), emission, normal, bump |
-| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission | those and the anisotropy, transmission and thickness maps |
+| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission and thickness maps |
 
 A Vulkan driver lands in either tier, by its `maxPerStageResources`.
 
@@ -2175,9 +2175,19 @@ skins with four influences per vertex, morph targets, animation clips as data
 ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)),
 UV0, metallic/roughness materials, the opaque, masked and blended alpha modes,
 normal and bump maps, an occlusion map packed in the red channel of the
-metallic-roughness image (ORM), scalar clearcoat, emissive strength, unlit
-materials, `KHR_materials_anisotropy`, and the `KHR_materials_ior` and
-`KHR_materials_specular` factors.
+metallic-roughness image (ORM), `KHR_materials_clearcoat` with its maps,
+emissive strength, unlit materials, `KHR_materials_anisotropy`,
+`KHR_materials_iridescence`, and the `KHR_materials_ior` and
+`KHR_materials_specular` factors. A primitive whose material has any map
+needs `TEXCOORD_0`.
+
+A clearcoat normal map tilts the coat alone, on the base normal map's
+frame; without one the coat follows the geometry normal. An iridescent
+film (`iridescence`, its `iridescence_ior` and its thinnest and thickest
+`iridescence_thickness` in nanometres, which its thickness map mixes
+between) tints the base's specular reflectance by thin-film interference
+at the view, and dims the diffuse beneath it by its strongest channel, as
+`KHR_materials_iridescence` defines it.
 
 glTF 2.0 decides what an extension costs a load. A file that lists an
 extension in `extensionsRequired` that SGL3D does not support fails to load
@@ -2320,7 +2330,7 @@ RGBA16F target (8 bytes/pixel); fused rendering needs eight color attachments an
 The procedural example supports `--anisotropy 0.5` to exercise this path.
 
 Stable normal RGBA16F stores signed octahedral world-space base normals in RG and coat
-geometry normals in BA. Each pair uses Bevy's signed `[-1, 1]` octahedral
+normals (the clearcoat normal map's, else the geometry normal) in BA. Each pair uses Bevy's signed `[-1, 1]` octahedral
 coordinates and `gbuffer_octahedral_decode` (see `src/shading/gbuffer.wgsl`);
 there is no unsigned remapping, preserving binary16 precision around zero.
 Stable material RGBA16F stores coat roughness, base
@@ -2328,7 +2338,7 @@ roughness, coat strength and the base's grazing reflectance (F90). Metallic
 reflectance is already carried by F0 and F90; the material target does not
 duplicate metallic. The anisotropy RGBA16F stores the tangent in signed
 octahedral RG, its strength and the environment scale. The mapped base
-normal controls base environment/probe lighting; the geometry coat normal controls
+normal controls base environment/probe lighting; the coat normal controls
 coat lighting and the traced coat lobe, including when SSR is off.
 
 `environment::EnvironmentMap` holds a caller-selected panorama and its matching

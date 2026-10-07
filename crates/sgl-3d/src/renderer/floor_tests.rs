@@ -176,17 +176,18 @@ fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality
 /// A transmissive, dispersive blended receiver of screen-space reflections
 /// carrying the maps a material takes, each its own image: base,
 /// metallic-roughness with its occlusion packed, emission, anisotropy,
-/// transmission, thickness, and a normal map where `normal`, else a bump
-/// map, which a material takes only without a normal map; on a cube with
-/// authored tangents, which anisotropy needs. On the Extended tier the
-/// transparent stage copies the frame for it, binding its copy.
+/// clearcoat, clearcoat roughness and normal, iridescence and its
+/// thickness, transmission, thickness, and a normal map where `normal`,
+/// else a bump map, which a material takes only without a normal map; on a
+/// cube with authored tangents, which anisotropy needs. On the Extended
+/// tier the transparent stage copies the frame for it, binding its copy.
 fn glass(normal: bool) -> Asset {
     let mut glass = test_support::cube();
     for vertex in &mut glass.meshes[0].vertices {
         let tangent = Vec3::from_array(vertex.normal).any_orthonormal_vector();
         vertex.tangent = tangent.extend(1.).to_array();
     }
-    glass.images = (0..8)
+    glass.images = (0..13)
         .map(|_| Image::Rgba8(image::RgbaImage::from_pixel(4, 4, image::Rgba([200; 4]))))
         .collect();
     let material = &mut glass.materials[0];
@@ -207,11 +208,18 @@ fn glass(normal: bool) -> Asset {
     }
     material.anisotropy_texture = Some(5);
     material.anisotropy_strength = 0.5;
+    material.clearcoat = 0.5;
+    material.clearcoat_texture = Some(6);
+    material.coat_roughness_texture = Some(7);
+    material.coat_normal_texture = Some(8);
+    material.iridescence = 0.5;
+    material.iridescence_texture = Some(9);
+    material.iridescence_thickness_texture = Some(10);
     material.metallic = 0.;
     material.transmission = 1.;
-    material.transmission_texture = Some(6);
+    material.transmission_texture = Some(11);
     material.thickness = 0.2;
-    material.thickness_texture = Some(7);
+    material.thickness_texture = Some(12);
     material.attenuation_distance = 1.;
     material.attenuation_color = [0.8, 0.9, 1.];
     material.dispersion = 0.5;

@@ -22,9 +22,11 @@ later, DX12, Chrome's upper tier), `Basic` below, down to WebGPU's default
 Vulkan driver lands in either, by its `maxPerStageResources`.
 `Renderer::binding_tier` reports it. On `Basic` baked light from a
 lightmap or irradiance atlas is non-directional, dynamic GI is off
-(`Renderer::dynamic_gi_in_effect`), a material's anisotropy, transmission
-and thickness maps give way to their factors, in raster and rays alike,
-and transmissive surfaces blend the light behind them through unrefracted. A probe captured on an
+(`Renderer::dynamic_gi_in_effect`), a material's anisotropy, clearcoat,
+iridescence, transmission and thickness maps give way to their factors (a
+clearcoat normal map to the geometry normal), in raster and rays alike, and
+transmissive surfaces blend the light behind them through unrefracted. A
+probe captured on an
 `Extended` device keeps what its maps and lights did there.
 [Binding tiers](../README.md#binding-tiers).
 
@@ -32,12 +34,14 @@ and transmissive surfaces blend the light behind them through unrefracted. A pro
 
 - **glTF 2.0 meshes**: triangles with metallic/roughness, normal and
   bump maps, an occlusion map packed in the metallic-roughness image's red
-  channel (ORM), clearcoat, emission, unlit, `KHR_materials_anisotropy` (its
-  map on the `Extended` binding tier),
-  the `KHR_materials_ior` and `KHR_materials_specular` factors (a
-  dielectric's F0: water's IOR 1.33 gives 0.02), and
-  `KHR_materials_transmission`, `KHR_materials_volume` and
-  `KHR_materials_dispersion` (their maps on the `Extended` binding tier).
+  channel (ORM), `KHR_materials_clearcoat` (its clearcoat, roughness and
+  normal maps on the `Extended` binding tier), emission, unlit,
+  `KHR_materials_anisotropy` and `KHR_materials_iridescence` (a thin film
+  over the base, its maps on `Extended`), the `KHR_materials_ior` and
+  `KHR_materials_specular` factors (a dielectric's F0: water's IOR 1.33
+  gives 0.02), and `KHR_materials_transmission`, `KHR_materials_volume` and
+  `KHR_materials_dispersion` (their maps on `Extended`). Every map lies on
+  `TEXCOORD_0`.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
   `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
   emissive strength cap, images the game supplies, which are never decoded,

@@ -23,6 +23,11 @@ pub(super) fn authored(material: &AuthoredMaterial, map: MaterialMap) -> Option<
         MaterialMap::Normal => material.normal_texture,
         MaterialMap::Bump => material.bump_texture,
         MaterialMap::Anisotropy => material.anisotropy_texture,
+        MaterialMap::Clearcoat => material.clearcoat_texture,
+        MaterialMap::CoatRoughness => material.coat_roughness_texture,
+        MaterialMap::CoatNormal => material.coat_normal_texture,
+        MaterialMap::Iridescence => material.iridescence_texture,
+        MaterialMap::IridescenceThickness => material.iridescence_thickness_texture,
         MaterialMap::Transmission => material.transmission_texture,
         MaterialMap::Thickness => material.thickness_texture,
     }
@@ -114,6 +119,11 @@ impl InEffect {
                 MaterialMap::Normal => textures.normal = image,
                 MaterialMap::Bump => textures.bump = image,
                 MaterialMap::Anisotropy => textures.anisotropy = image,
+                MaterialMap::Clearcoat => textures.clearcoat = image,
+                MaterialMap::CoatRoughness => textures.coat_roughness = image,
+                MaterialMap::CoatNormal => textures.coat_normal = image,
+                MaterialMap::Iridescence => textures.iridescence = image,
+                MaterialMap::IridescenceThickness => textures.iridescence_thickness = image,
             }
         }
         textures

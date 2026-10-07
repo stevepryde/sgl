@@ -53,6 +53,24 @@ pub(super) fn validate_reflectance(values: &SurfaceMaterial) -> Result<(), Scene
     Ok(())
 }
 
+/// The thin film `values` may take (KHR_materials_iridescence): a strength
+/// in `0..=1`, a finite IOR of at least 1, and finite nonnegative
+/// thicknesses, the thinnest above the thickest allowed as glTF allows it.
+pub(super) fn validate_iridescence(values: &SurfaceMaterial) -> Result<(), SceneError> {
+    if (0.0..=1.0).contains(&values.iridescence)
+        && values.iridescence_ior.is_finite()
+        && values.iridescence_ior >= 1.
+        && values
+            .iridescence_thickness
+            .iter()
+            .all(|thickness| thickness.is_finite() && *thickness >= 0.)
+    {
+        Ok(())
+    } else {
+        Err(SceneError::InvalidIridescence)
+    }
+}
+
 /// The transmission and volume `values` may take, as KHR_materials_
 /// transmission, KHR_materials_volume and KHR_materials_dispersion bound
 /// them: a transmission in `0..=1`, and none on an unlit material, which

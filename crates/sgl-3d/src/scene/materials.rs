@@ -16,8 +16,8 @@ use maps::{InEffect, authored, authored_maps};
 use std::collections::HashMap;
 use std::ops::Range;
 use validate::{
-    validate_alpha, validate_anisotropy, validate_normal_layers, validate_reflectance,
-    validate_transmission,
+    validate_alpha, validate_anisotropy, validate_iridescence, validate_normal_layers,
+    validate_reflectance, validate_transmission,
 };
 
 pub(crate) struct Material {
@@ -93,11 +93,13 @@ pub(crate) struct Materials {
     pub casters: u64,
     /// How many of its materials are masked, how many blended and how many
     /// of those receive screen-space reflections, and how many opaque or
-    /// masked ones' surfaces move (`Material::surface_moves`).
+    /// masked ones' surfaces move (`Material::surface_moves`), and how many
+    /// have an iridescent film.
     masked: usize,
     blended: usize,
     receivers: usize,
     moving: usize,
+    films: usize,
     textures: Textures,
     groups: Groups,
 }
@@ -111,6 +113,7 @@ impl Materials {
             blended: 0,
             receivers: 0,
             moving: 0,
+            films: 0,
             textures: Textures::default(),
             groups: Groups::new(device, queue),
         }
@@ -137,12 +140,22 @@ impl Materials {
         self.moving > 0
     }
 
+    /// Whether a material has an iridescent film: the lit pipelines
+    /// evaluate films only while one does (`LitConstants::films`).
+    pub fn holds_films(&self) -> bool {
+        self.films > 0
+    }
+
     /// Counts `by` more materials of `values` whose surface `moves` or not:
-    /// a blended or transmissive one among the blended (and the receivers
-    /// where it is one), else a masked one among the masked and one whose
-    /// surface moves among the moving.
+    /// one with an iridescent film among the films; a blended or
+    /// transmissive one among the blended (and the receivers where it is
+    /// one), else a masked one among the masked and one whose surface moves
+    /// among the moving.
     fn count(&mut self, values: &SurfaceMaterial, moves: bool, by: isize) {
         let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
+        if values.iridescence > 0. {
+            add(&mut self.films);
+        }
         if values.blended() {
             add(&mut self.blended);
             if values.receives_screen_space_reflections() {
@@ -189,6 +202,7 @@ impl Materials {
             validate_anisotropy(&values, 0)?;
             validate_alpha(&values)?;
             validate_reflectance(&values)?;
+            validate_iridescence(&values)?;
             validate_transmission(&values)?;
             validate_normal_layers(&values, authored_maps(material), material.wrap)?;
         }
@@ -360,6 +374,7 @@ impl Materials {
         validate_anisotropy(&values, material.untangented)?;
         validate_alpha(&values)?;
         validate_reflectance(&values)?;
+        validate_iridescence(&values)?;
         validate_transmission(&values)?;
         validate_normal_layers(&values, material.maps, material.bound.wrap)?;
         if material.values != values {
@@ -394,8 +409,7 @@ impl Materials {
             return Err(SceneError::MaterialInUse);
         }
         let material = self.slots.remove(id).unwrap();
-        let (values, moves) = (material.values, material.surface_moves());
-        self.count(&values, moves, -1);
+        self.count(&material.values, material.surface_moves(), -1);
         rays.free(material.record);
         for texture in material.textures {
             self.textures.release(rays, texture);
@@ -493,6 +507,8 @@ impl Scene {
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod coat_film_tests;
 mod group;
 pub(crate) mod maps;
 #[cfg(all(test, not(target_arch = "wasm32")))]

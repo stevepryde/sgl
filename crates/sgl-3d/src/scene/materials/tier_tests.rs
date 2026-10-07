@@ -13,10 +13,11 @@ const BASIC_SAMPLED_TEXTURES: u32 = 47;
 // map beside a normal map stays in effect, so the relief binding may take
 // the wrong one. The oracle is the same material added without that map on
 // the same device: on a device of 47 sampled textures a stage, the record
-// of a material with anisotropy, transmission and thickness maps holds the
-// words of the same material without them, and that of a material with a
-// normal and a bump map the words of the material with the normal map
-// alone.
+// of a material with the Extended tier's maps (anisotropy, clearcoat,
+// clearcoat roughness and normal, iridescence and its thickness,
+// transmission and volume thickness) holds the words of the same material
+// without them, and that of a material with a normal and a bump map the
+// words of the material with the normal map alone.
 #[test]
 fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
     let Some(adapter) = test_support::adapter() else {
@@ -58,6 +59,11 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
     let materials = [
         crate::asset::Material {
             anisotropy_texture: Some(3),
+            clearcoat_texture: Some(3),
+            coat_roughness_texture: Some(3),
+            coat_normal_texture: Some(1),
+            iridescence_texture: Some(3),
+            iridescence_thickness_texture: Some(3),
             transmission_texture: Some(4),
             thickness_texture: Some(5),
             ..plain.clone()
@@ -81,10 +87,6 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
         let range = scene.materials.get(ids[index]).unwrap().record.clone();
         words[range.start as usize..range.end as usize].to_vec()
     };
-    assert_eq!(
-        record(0),
-        record(1),
-        "the anisotropy, transmission and thickness maps on Basic"
-    );
+    assert_eq!(record(0), record(1), "the Extended tier's maps on Basic");
     assert_eq!(record(2), record(3), "a bump map beside a normal map");
 }
