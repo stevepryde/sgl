@@ -31,7 +31,10 @@ fn fog_composite(color:vec3<f32>,fog:vec4<f32>)->vec3<f32> {
 // the light the fog scatters over the covered share alone, what lies behind
 // it already holding its own, as Filament ef1a133 fogs a transparent surface
 // (shaders/src/surface_main.fs 84, fogColor.rgb *= fragColor.a; Apache-2.0,
-// src/LICENSE-filament.txt).
+// src/LICENSE-filament.txt). Filament's fade mode adds its in-scatter whole
+// (83-84); a coverage-blended surface takes it over its covered share too,
+// which is Porter and Duff's over of the fogged surface, as SGL3D's straight
+// alpha blending composed it before.
 fn fog_composite_premultiplied(color:vec3<f32>,alpha:f32,fog:vec4<f32>)->vec3<f32> {
  return color*fog.a+fog.rgb*alpha;
 }

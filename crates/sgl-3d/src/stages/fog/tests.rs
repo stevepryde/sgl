@@ -960,6 +960,93 @@ fn a_blended_surface_is_fogged_at_its_depth() {
     }
 }
 
+// Defect: a coverage-blended surface adds the fog's in-scatter whole rather
+// than over its covered share, as Filament ef1a133's fade mode does
+// (shaders/src/surface_main.fs 83-84 scales it in the transparent mode
+// alone), or its colour is not scaled by its alpha. Porter and Duff's over
+// of the fogged surface is the oracle: at alpha 0.5 the frame is half the
+// surface fogged as at alpha 1 and half the frame behind it without the
+// surface, alpha (c T + I) + (1 - alpha) behind, in a medium that scatters
+// the hemisphere fill, so that I and the fogged sky behind are not zero.
+#[test]
+fn a_blended_surface_covers_its_fog_by_its_alpha() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let depth = 30.;
+    let mut quad = test_support::cube();
+    quad.meshes[0] = crate::asset::CpuMesh {
+        vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
+            .map(|(x, y)| crate::asset::Vertex {
+                tangent: [0.; 4],
+                lightmap_bounds: [0., 0., 1., 1.],
+                lightmap_uv: [0.; 2],
+                position: [x * 4., y * 4., -depth],
+                normal: [0., 0., 1.],
+                uv: [(x + 1.) / 2., (1. - y) / 2.],
+                color: [1.; 4],
+            })
+            .to_vec(),
+        indices: vec![0, 1, 2, 0, 2, 3],
+        material: 0,
+        deformation: Default::default(),
+    };
+    quad.materials[0].unlit = true;
+    quad.materials[0].base = [1., 0.6, 0.3, 1.];
+    quad.materials[0].alpha = crate::AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+        keeps_specular: false,
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let (ids, instance) = test_support::add_static(&device, &queue, &mut scene, quad);
+    let fog = Fog {
+        density: 0.02,
+        length: 60.,
+        ambient: 1.,
+        ..Fog::default()
+    };
+    let mut frame = input(fog);
+    frame.hemisphere_light = HemisphereLight {
+        sky_color: [0.4, 0.5, 0.7],
+        ground_color: [0.4, 0.5, 0.7],
+        intensity: 1.,
+    };
+    let mut centre = |alpha: Option<f32>| {
+        let mut values = scene.material(ids.materials[0]).unwrap();
+        values.base[3] = alpha.unwrap_or(1.);
+        scene
+            .set_material(&queue, ids.materials[0], values)
+            .unwrap();
+        let mut state = *scene.instance(instance).unwrap();
+        state.visible = alpha.is_some();
+        scene.set_instance(&queue, instance, state).unwrap();
+        let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
+        let composite = texels(&read(&device, &queue, &renderer.targets().composite));
+        composite[(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize]
+    };
+    let [whole, half, behind] = [Some(1.), Some(0.5), None].map(&mut centre);
+    let (ndc, _) = froxel_ray(&frame, [SIZE[0], SIZE[1], 1], [SIZE[0] / 2, SIZE[1] / 2], 0);
+    let transmittance = (-fog.density * depth * view_ray(&frame, ndc).length()).exp();
+    for channel in 0..3 {
+        let in_scatter = whole[channel] - [1., 0.6, 0.3][channel] * transmittance;
+        assert!(
+            in_scatter > 0.02 && behind[channel] > 0.02,
+            "channel {channel}: too little in-scatter ({in_scatter}) or fogged sky ({}) to tell \
+             a share of it",
+            behind[channel]
+        );
+        let expected = 0.5 * whole[channel] + 0.5 * behind[channel];
+        assert!(
+            (half[channel] - expected).abs() <= 5e-3 * expected + 1e-3,
+            "channel {channel}: {} at alpha 0.5, against Porter and Duff's over {expected} \
+             of {} at alpha 1 and {} behind",
+            half[channel],
+            whole[channel],
+            behind[channel]
+        );
+    }
+}
+
 // Defect: the sky ignores `Fog::sky_affect`, it reaches the surfaces too, or
 // it scales one part of the fog (its scattering or its transmittance) alone.
 // Godot's sky affect (b130438 sky.glsl) mixes the sky with the fogged sky:

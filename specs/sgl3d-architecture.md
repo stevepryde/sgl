@@ -808,7 +808,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   its diffuse and emitted light alone and its specular, coat and traced
   reflection keep their strength; any other is `fade`, glTF's coverage,
   which glTF `BLEND` loads (gltfio's mapping), all its light premultiplied
-  after shading; both fog the covered share alone (`frame_fog_premultiplied`).
+  after shading; both fog the covered share alone (`frame_fog_premultiplied`),
+  which in `fade` departs from Filament, whose fade adds its in-scatter
+  whole (`surface_main.fs` 83–84), and keeps SGL3D's coverage blend as it
+  was.
   The premultiplied state is the geometry `Blended` passes' alone: mist and
   additive effects keep their own blending. They cast no shadow
   and rays pass through them, as Godot leaves alpha-pass materials out of its

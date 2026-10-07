@@ -297,9 +297,13 @@ fn centre_colours(device: &wgpu::Device, queue: &wgpu::Queue, edits: &[Edit<'_>]
 // and emitted light, and a coverage-blended one a tenth of all of it. Each
 // case isolates one: a black base reflects alone, a white base with no
 // specular gives diffuse light alone, and a black base with no specular its
-// emission alone.
+// emission alone. A metal's reflectance is its base colour, which the
+// transparent mode premultiplies (Filament's metal F0 is the premultiplied
+// base, surface_shading_lit.fs 53, 79-90), so a metal reflects a
+// tenth at alpha 0.1 in both modes: a defect that premultiplies the diffuse
+// colour but not the metal's F0 fails it.
 #[test]
-fn keeps_specular_fades_diffuse_and_emission_alone() {
+fn keeps_specular_fades_all_but_dielectric_specular() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
@@ -319,10 +323,15 @@ fn keeps_specular_fades_diffuse_and_emission_alone() {
         values.specular = 0.;
         values.emission = [0.5; 3];
     };
-    let cases: [(&str, Edit<'_>, f32); 3] = [
+    let metal = |values: &mut crate::SurfaceMaterial| {
+        values.base = [0.9, 0.6, 0.3, values.base[3]];
+        values.metallic = 1.;
+    };
+    let cases: [(&str, Edit<'_>, f32); 4] = [
         ("specular", &specular_only, 1.),
         ("diffuse", &diffuse_only, 0.1),
         ("emission", &emission_only, 0.1),
+        ("metal", &metal, 0.1),
     ];
     for (name, light, kept) in cases {
         let at = move |alpha: f32, keeps: bool| {
