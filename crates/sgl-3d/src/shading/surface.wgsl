@@ -522,23 +522,31 @@ fn surface_rect_light_transmitted(surface:Surface,reflectance:SurfaceReflectance
  return reflectance.transmitted*coupling*ltc_integrate_quad(frame,identity)*(1.-reflectance.coat_fresnel);
 }
 // Directional light `index` (Frame.directional_lights) as it reaches a
-// surface at `position` with `normal` and `geometry_normal` (Surface),
-// shadowed when it has the frame's shadow cascades. A surface that
+// surface at `position` with `normal`, `coat_normal` and `geometry_normal`
+// (Surface), shadowed when it has the frame's shadow cascades. Where both
+// normals face farther from it than its disc's radius, no lobe of the
+// front takes it, as the ray-traced shadow trace's reach test holds
+// (traced_visible), its disc included (pbr_sized_light moves its
+// direction at most that far), so the front looks up no shadow. A surface that
 // `transmits` diffuse light to its other side takes the light behind its
 // normal on that side, its shadow looked up from the cascades
 // (directional_light_shadow) at its transmitted lobe's point `back`
 // (surface_transmitted_point), offset along the reversed geometry normal,
 // as Bevy 9d12036 shadows its transmitted lobe (pbr_functions.wesl
 // 621–640).
-fn directional_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,context:ShadeContext,transmits:bool,back:vec3<f32>)->LightSample {
+fn directional_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,coat_normal:vec3<f32>,geometry_normal:vec3<f32>,context:ShadeContext,transmits:bool,back:vec3<f32>)->LightSample {
  let l=normalize(frame.directional_lights[index].direction_to_light);
  let radiance=frame.directional_lights[index].color*frame.directional_lights[index].illuminance;
- let shadow=directional_light_shadow(index,position,geometry_normal,context.pixel,context.receiver,true);
+ let disc=frame.directional_lights[index].disc_radius;
+ var shadow=0.;
+ if dot(normal,l)>-disc || dot(coat_normal,l)>-disc {
+  shadow=directional_light_shadow(index,position,geometry_normal,context.pixel,context.receiver,true);
+ }
  var transmitted=0.;
  if transmits && dot(normal,l)<0. {
   transmitted=directional_light_shadow(index,back,-geometry_normal,context.pixel,context.receiver,false);
  }
- return LightSample(l,radiance,shadow,transmitted,1.,NO_RECT_LIGHT,frame.directional_lights[index].disc_radius);
+ return LightSample(l,radiance,shadow,transmitted,1.,NO_RECT_LIGHT,disc);
 }
 // A receiver's indirect diffuse light along `normal`, by the one
 // determination: its lightmap or irradiance atlas chart
@@ -733,10 +741,10 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
   // light's direction and fall-off are the surface's.
   let back=surface_transmitted_point(s);
   if frame.directional_lights[0].illuminance>0. {
-   color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,n,s.geometry_normal,context,transmits,back));
+   color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,n,coat_n,s.geometry_normal,context,transmits,back));
   }
   if frame.directional_lights[1].illuminance>0. {
-   color+=surface_direct_light(s,reflectance,directional_light_sample(1u,s.position,n,s.geometry_normal,context,transmits,back));
+   color+=surface_direct_light(s,reflectance,directional_light_sample(1u,s.position,n,coat_n,s.geometry_normal,context,transmits,back));
   }
   // The scene lights that reach the surface: live ones, then baked ones
   // where no baked map already holds their light.

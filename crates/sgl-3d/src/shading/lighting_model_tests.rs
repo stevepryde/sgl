@@ -771,7 +771,7 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
                 &input,
                 rough,
                 mirror,
-                "directional_light_sample(0u,s.position,s.normal,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection()),false,s.position)",
+                "directional_light_sample(0u,s.position,s.normal,s.coat_normal,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection()),false,s.position)",
             );
             let angular = 0.05f64;
             let expected = disc_reference(
@@ -797,6 +797,101 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
             );
         }
     }
+}
+
+// Plausible defects: the directional light's sample skips the front's
+// shadow lookup where a lobe still takes the light, so the front goes dark
+// there: where the coat's normal faces the light and the base's does not
+// (a test on the base normal alone), or within the disc's radius below the
+// base's horizon, where the sized light's representative point
+// (pbr_sized_light) lights the specular lobes (a test without the disc).
+// The oracle is the production lobes under the same light with full
+// visibility, the light the front takes before any shadow: skipping a
+// lookup must change none of it. Base normals sweep the sphere, each with
+// its coat normal tilted toward the light by 0, 0.4 and 0.9 rad, seen
+// between the two; under a disc of angular diameter 0.2 each surface
+// reflects what the full-visibility light gives it within f32 rounding.
+#[test]
+fn the_directional_light_s_front_skips_no_light_it_gives() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    const ROWS: usize = 128;
+    const COLUMNS: usize = 256;
+    let settings = quiet_settings();
+    let mut renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let mut scene = Scene::new(&device, &queue);
+    let mut input = dark_input();
+    input.directional_lights[0] = Some(DirectionalLight {
+        direction: -Vec3::new(0.3, 0.2, 0.93).normalize(),
+        illuminance: 1.,
+        angular_diameter: 0.2,
+        ..Default::default()
+    });
+    let observation = format!(
+        r#"{}
+@group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
+@compute @workgroup_size({ROWS}) fn observe(@builtin(local_invocation_index) row:u32) {{
+ let light=frame.directional_lights[0];
+ let l=normalize(light.direction_to_light);
+ var mismatched=0.;
+ var behind=0.;
+ var most=0.;
+ for (var column=0u;column<{COLUMNS}u;column++) {{
+  let theta=(f32(row)+.5)/f32({ROWS})*3.141592653589793;
+  let phi=(f32(column)+.5)/f32({COLUMNS})*6.283185307179586;
+  let n=vec3(sin(theta)*cos(phi),sin(theta)*sin(phi),cos(theta));
+  let across=l-n*dot(n,l);
+  let toward=select(n,normalize(across),dot(across,across)>1e-8);
+  for (var tilt=0u;tilt<3u;tilt++) {{
+   let angle=array<f32,3>(0.,.4,.9)[tilt];
+   let coat_normal=normalize(n*cos(angle)+toward*sin(angle));
+   var s=case_surface(normalize(n+coat_normal),.3,vec3(1.),0.);
+   s.normal=n;
+   s.geometry_normal=n;
+   s.coat_normal=coat_normal;
+   s.coat=1.;
+   s.coat_roughness=.3;
+   let reflectance=case_reflectance(s);
+   let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection());
+   let sampled=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,s.normal,s.coat_normal,s.geometry_normal,context,false,s.position));
+   let full=surface_direct_light(s,reflectance,LightSample(l,light.color*light.illuminance,1.,0.,1.,NO_RECT_LIGHT,light.disc_radius));
+   if any(abs(sampled-full)>full*1e-4+1e-12) {{
+    mismatched+=1.;
+   }}
+   if dot(n,l)<=0. && any(full>vec3(0.)) {{
+    behind+=1.;
+   }}
+   most=max(most,max(full.r,max(full.g,full.b)));
+  }}
+ }}
+ output[row]=vec4(mismatched,behind,most,0.);
+}}
+"#,
+        grid_wgsl(),
+    );
+    let rows = test_support::observe_ray_hits(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        &observation,
+        ROWS,
+    );
+    let total = |channel: usize| rows.iter().map(|row| row[channel] as f64).sum::<f64>();
+    let most = rows.iter().map(|row| row[2]).fold(0f32, f32::max);
+    eprintln!(
+        "{} surfaces take the light with the base normal turned away; brightest {most}",
+        total(1)
+    );
+    assert!(most > 0.1, "the light reflects {most} at most");
+    assert_eq!(
+        total(0),
+        0.,
+        "surfaces whose front reflects other than the full-visibility light gives"
+    );
 }
 
 /// A surface facing +Z at the origin for `observe_lit`: seen along `view` at
