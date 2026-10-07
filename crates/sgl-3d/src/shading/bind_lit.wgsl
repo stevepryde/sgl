@@ -1,6 +1,8 @@
 // Group 0 of lit scene geometry: view and frame data, lights, decals,
-// shadows, environment, probes, the irradiance volume's cells, the dynamic
-// GI volume's probes, lookup tables and the fog volume. Rust layout: shading::bind::lit.
+// shadows, environment, probes, baked diffuse, the irradiance volume's
+// cells, lookup tables and the fog volume, on every binding tier; the
+// Extended tier's own bindings are bind_lit_extended.wgsl's. Rust layout:
+// shading::bind::lit.
 @group(0) @binding(0) var<uniform> view:View;
 @group(0) @binding(1) var<uniform> frame:Frame;
 @group(0) @binding(2) var shadow_sampler:sampler_comparison;
@@ -32,16 +34,11 @@
 @group(0) @binding(16) var<storage,read> local_shadows:array<LocalShadow>;
 @group(0) @binding(17) var directional_shadow_map:texture_depth_2d_array;
 // Baked diffuse (baked_lighting.wgsl): the lightmap and the irradiance
-// atlas's front and back layers, each irradiance / PI with its
-// directionality, and the sampler that filters both.
+// atlas's front and back layers, each irradiance / PI, and the sampler
+// that filters both.
 @group(0) @binding(18) var static_lightmap:texture_2d_array<f32>;
-@group(0) @binding(19) var static_lightmap_direction:texture_2d_array<f32>;
 @group(0) @binding(20) var baked_sampler:sampler;
 @group(0) @binding(21) var static_irradiance_atlas:texture_2d_array<f32>;
-@group(0) @binding(26) var static_direction_atlas:texture_2d_array<f32>;
-// The dynamic GI volume's probes (dynamic_gi.wgsl), filtered through
-// `baked_sampler`; a stand-in in frames FRAME_DYNAMIC_GI leaves clear.
-@group(0) @binding(29) var dynamic_gi_probes:texture_2d<f32>;
 // The irradiance volume's cells (irradiance_volume.wgsl), filtered through
 // `baked_sampler`; a stand-in in frames FRAME_IRRADIANCE_VOLUME leaves clear.
 @group(0) @binding(30) var irradiance_volume:texture_3d<f32>;

@@ -6,11 +6,12 @@
 //! shadows run composes the shadow mask's provider (`shading::SHADOW_MASK`)
 //! and binds the mask at its group 3; every other pass composes the
 //! provider that holds no slot (`shading::SHADOW_MASK_NONE`). Every program
-//! composes the material-map provider of the device's binding tier
-//! (`shading::material_maps`), and every pipeline layout takes group 2's
-//! layout of that tier, fixed for the device, so no key holds it.
+//! composes the lit and material-map providers of the device's binding tier
+//! (`shading::lit_provider`, `shading::material_provider`), and every
+//! pipeline layout takes group 0's and group 2's layouts of that tier, fixed
+//! for the device, so no key holds it.
 use crate::Scene;
-use crate::shading::bind::BindingTier;
+use crate::shading::bind::{BindingTier, LitLayout};
 use crate::shading::{self, gbuffer};
 use crate::view::targets::{composition_targets, mask_targets};
 use std::collections::HashMap;
@@ -25,8 +26,8 @@ use pass::{attachments_fit, targets};
 pub(crate) use variant::{Alpha, Cull, Variant};
 
 /// Scene geometry's camera and probe-capture passes. A program composes it
-/// with one shadow-mask provider and one material-map provider
-/// (`geometry_program`).
+/// with one shadow-mask provider, one lit provider and one material-map
+/// provider (`geometry_program`).
 pub(crate) static GEOMETRY: shading::Module = shading::Module {
     name: "geometry",
     source: include_str!("geometry.wgsl"),
@@ -58,14 +59,19 @@ pub(crate) const RECEIVER_FS_ENTRY: &str = "receiver_fs";
 pub(crate) const FSR2_COMPOSITION_FS_ENTRY: &str = "fsr2_composition_fs";
 /// The geometry program on a device of `tier`: `GEOMETRY` with the shadow
 /// mask's provider where `shadow_mask`, else with the provider that holds
-/// no slot, and the tier's material-map provider.
+/// no slot, and the tier's lit and material-map providers.
 pub(crate) fn geometry_program(shadow_mask: bool, tier: BindingTier) -> String {
     let provider = if shadow_mask {
         &shading::SHADOW_MASK
     } else {
         &shading::SHADOW_MASK_NONE
     };
-    shading::compose(&[&GEOMETRY, provider, shading::material_maps(tier)])
+    shading::compose(&[
+        &GEOMETRY,
+        provider,
+        shading::lit_provider(tier),
+        shading::material_provider(tier),
+    ])
 }
 
 /// The directional and local-light shadow casters.
@@ -169,16 +175,18 @@ pub(crate) struct GeometryPipelines {
 
 impl GeometryPipelines {
     /// Creates every pipeline the frame and probe captures draw with for
-    /// `layers` on a device of binding tier `tier`, over group 0's `lit` and
-    /// `shadow` layouts, the scene's, a material's of that tier
-    /// (`shading::bind::material`), and the blended, shadow-mask and caster
-    /// positions group 3 layouts.
+    /// `layers`, over group 0's `lit` layout, on the device's binding tier,
+    /// whose providers every program composes, and `shadow` layout, the
+    /// scene's, a material's of that tier (`shading::bind::material`), and
+    /// the blended, shadow-mask and caster positions group 3 layouts.
     pub fn new(
         device: &wgpu::Device,
-        [lit, shadow, scene, blended, shadow_mask, positions]: [&wgpu::BindGroupLayout; 6],
+        lit: &LitLayout,
+        [shadow, scene, blended, shadow_mask, positions]: [&wgpu::BindGroupLayout; 5],
         layers: LayerConstants,
-        tier: BindingTier,
     ) -> Self {
+        let tier = lit.tier;
+        let lit = &lit.layout;
         let layout = |label, groups: &[&wgpu::BindGroupLayout]| {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),

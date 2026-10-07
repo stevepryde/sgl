@@ -1137,3 +1137,70 @@ fn compressed_static_atlas_shades_as_its_decoded_float_atlas_times_its_scale() {
     assert_ne!(expected, black, "the fixed atlas lights the cube");
     assert_eq!(compressed, expected);
 }
+
+// Plausible defects: a device of the Basic binding tier uploads a baked
+// map's directionality, which nothing there binds (a 4096² lightmap's lobes
+// are 64 MiB), or no longer validates it, so a content error depends on the
+// device. The oracle is the same map without directionality on the same
+// device: on a device of 47 sampled textures a stage, the highest S3D-1
+// gives `Basic`, installing a lightmap and an irradiance atlas with
+// directionality uploads the bytes installing them without it does, and
+// malformed directionality is still refused.
+#[test]
+fn a_basic_device_validates_but_uploads_no_baked_directionality() {
+    let Some(adapter) = crate::test_support::adapter() else {
+        return;
+    };
+    let mut limits = crate::graphics_device::limits(&adapter);
+    limits.max_sampled_textures_per_shader_stage = 47;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits: limits,
+        ..Default::default()
+    }))
+    .unwrap();
+    let (device, queue) = (&device, &queue);
+    let mut scene = Scene::new(device, queue);
+    let lobes = vec![[0.5, 0.5, 0.5, 0.75]; 16];
+    let lightmap = |directionality: Vec<[f32; 4]>| Lightmap {
+        size: [4, 4],
+        uv_scale_offset: [1., 1., 0., 0.],
+        irradiance: vec![[0.5; 3]; 16],
+        directionality,
+    };
+    let atlas = |directionality: Vec<[f32; 4]>| IrradianceAtlas {
+        size: [4, 4],
+        irradiance: vec![[0.5; 3]; 16],
+        back_irradiance: vec![[0.25; 3]; 16],
+        back_directionality: directionality.clone(),
+        directionality,
+    };
+    let uploaded = |scene: &mut Scene, install: &dyn Fn(&mut Scene)| {
+        let before = crate::counters::snapshot();
+        install(scene);
+        crate::counters::snapshot().since(&before).uploaded_bytes()
+    };
+    let set_lightmap = |map: Lightmap| {
+        move |scene: &mut Scene| scene.set_lightmap(device, queue, &map, &[]).unwrap()
+    };
+    let set_atlas = |map: IrradianceAtlas| {
+        move |scene: &mut Scene| {
+            scene
+                .set_static_irradiance_atlas(device, queue, &map)
+                .unwrap();
+        }
+    };
+    assert_eq!(
+        uploaded(&mut scene, &set_lightmap(lightmap(lobes.clone()))),
+        uploaded(&mut scene, &set_lightmap(lightmap(Vec::new()))),
+        "a lightmap's directionality"
+    );
+    assert_eq!(
+        uploaded(&mut scene, &set_atlas(atlas(lobes.clone()))),
+        uploaded(&mut scene, &set_atlas(atlas(Vec::new()))),
+        "an irradiance atlas's directionality"
+    );
+    assert!(matches!(
+        scene.set_lightmap(device, queue, &lightmap(vec![[2.; 4]; 16]), &[]),
+        Err(SceneError::InvalidDirectionality)
+    ));
+}

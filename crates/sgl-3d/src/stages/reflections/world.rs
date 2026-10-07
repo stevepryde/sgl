@@ -212,7 +212,7 @@ impl WorldReflections {
     /// `lit` and `scene` are group 0's lit layout and group 1's.
     pub fn new(
         device: &wgpu::Device,
-        lit: &wgpu::BindGroupLayout,
+        lit: &shading::bind::LitLayout,
         scene: &wgpu::BindGroupLayout,
         size: [u32; 2],
     ) -> Self {
@@ -273,7 +273,8 @@ impl WorldReflections {
                 "world-space reflection rays",
                 &TRACE,
                 &receivers,
-                [lit, scene],
+                lit,
+                scene,
             ),
             trace: HashMap::new(),
             classify: classify::Classify::new(device),

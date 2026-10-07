@@ -1,5 +1,6 @@
-//! A device at S3D-1's floor runs every pipeline a frame builds on the Basic
-//! binding tier, and a device at the Extended tier's threshold on that tier.
+//! A device at S3D-1's floor, WebGPU's default limits, runs every pipeline
+//! a frame builds on the Basic binding tier, and a device at the Extended
+//! tier's threshold on that tier.
 use crate::asset::{Asset, Image};
 use crate::graphics_device::BindingTier;
 use crate::renderer::Renderer;
@@ -11,36 +12,30 @@ use crate::{
 };
 use glam::{Mat4, Vec3};
 
-/// S3D-1's floor of sampled textures per shader stage.
-const SAMPLED_TEXTURES: u32 = 21;
 /// The sampled textures per shader stage from which S3D-1 gives a device
 /// the Extended binding tier.
 const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
-/// S3D-1's floor of storage buffers per shader stage, and wgpu's default of
-/// storage textures, which the stages that write the most bind (the
-/// world-space reflection classification, the ray-traced shadow trace,
-/// ambient occlusion's depth prefilter).
-const STORAGE_BUFFERS: u32 = 8;
-const STORAGE_TEXTURES: u32 = 4;
 
 // Plausible defects: a change binds another sampled texture, storage buffer
-// or storage texture to a stage (lit group 0 and group 1 hold the storage
-// buffers' floor already; a material; a stage's own group, such as a ray
-// list passed as a storage buffer beside them) past the floor S3D-1 states,
-// so a device that offers exactly that floor fails to create a pipeline
-// though the spec, the README and the docs promise it runs SGL3D; or the
-// device takes the wrong binding tier, or composes an Extended binding
-// below 48. The oracle is S3D-1's floor and wgpu's validation of every
-// pipeline layout against the device's limits: frames that build the
-// heaviest pipelines (blended receivers of screen-space reflections that
-// between them carry every material map, world-space reflections, dynamic GI's rays over
-// the irradiance volume, ambient occlusion, fog and TAA) on a device with
-// the adapter's limits but that floor raise no validation error, and the
-// device reports the Basic tier.
+// or storage texture to a stage, or writes more colour-attachment bytes in a
+// pass without a fallback, past WebGPU's default limits, the floor S3D-1
+// states, so a device that offers just those (a browser's default WebGPU
+// adapter, Chromium before 149) fails to create a pipeline though the spec,
+// the README and the docs promise it runs SGL3D; or the device takes the
+// wrong binding tier, composes an Extended binding below 48, or runs the
+// dynamic GI stage there. The oracle is wgpu's `Limits::default()`, which
+// wgpu sets to WebGPU's, and wgpu's validation of every pipeline layout
+// against the device's limits: frames that build the heaviest pipelines
+// (blended receivers of screen-space reflections that between them carry
+// every material map, world-space reflections, ambient occlusion, fog and
+// TAA, over an irradiance volume and a dynamic GI volume) on a device of
+// those limits and no optional feature raise no validation error, the
+// device reports the Basic tier, and dynamic GI is reported off.
 #[test]
-fn a_device_at_the_binding_floor_runs_every_pipeline() {
-    if let Some(tier) = heaviest_frame(SAMPLED_TEXTURES) {
+fn a_device_at_webgpus_default_limits_runs_every_pipeline() {
+    if let Some((tier, dynamic_gi)) = heaviest_frame(wgpu::Limits::default()) {
         assert_eq!(tier, BindingTier::Basic);
+        assert_eq!(dynamic_gi, DynamicGiQuality::Off);
     }
 }
 
@@ -48,34 +43,36 @@ fn a_device_at_the_binding_floor_runs_every_pipeline() {
 // `>=`, or from a threshold above 48, so a device S3D-1 gives every binding
 // takes the Basic tier; or the tier does not reach one of the scene and the
 // renderer, which then build group 2 to different layouts, so the draw of a
-// material binds a group its pipeline's layout does not take. The oracle is
-// S3D-1's threshold and wgpu's validation: on a device at exactly 48
-// sampled textures a stage the same frame raises no validation error and
-// the device reports the Extended tier.
+// material binds a group its pipeline's layout does not take; or dynamic GI
+// is reported off where it runs. The oracle is S3D-1's threshold and wgpu's
+// validation: on a device of WebGPU's default limits but exactly 48 sampled
+// textures a stage, as Chrome's upper tier offers, the same frame raises no
+// validation error, the device reports the Extended tier, and dynamic GI
+// runs at the setting.
 #[test]
 fn a_device_at_the_extended_threshold_binds_the_extended_tier() {
-    if let Some(tier) = heaviest_frame(EXTENDED_SAMPLED_TEXTURES) {
+    let limits = wgpu::Limits {
+        max_sampled_textures_per_shader_stage: EXTENDED_SAMPLED_TEXTURES,
+        ..wgpu::Limits::default()
+    };
+    if let Some((tier, dynamic_gi)) = heaviest_frame(limits) {
         assert_eq!(tier, BindingTier::Extended);
+        assert_eq!(dynamic_gi, DynamicGiQuality::High);
     }
 }
 
-/// The binding tier of a device with the adapter's limits but
-/// `sampled_textures` sampled textures and the floor's storage buffers and
-/// textures a stage, after it draws two frames of the heaviest pipelines
-/// with no validation error; none without a GPU, or where the adapter
-/// offers fewer sampled textures.
-fn heaviest_frame(sampled_textures: u32) -> Option<BindingTier> {
+/// The binding tier and the dynamic GI in effect of a device of `limits`
+/// and no optional feature, after it draws two frames of the heaviest
+/// pipelines with no validation error; none without a GPU, or where the
+/// adapter binds fewer sampled textures a stage.
+fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality)> {
     let adapter = test_support::adapter()?;
-    let mut limits = crate::graphics_device::limits(&adapter);
-    if limits.max_sampled_textures_per_shader_stage < sampled_textures {
-        eprintln!("skipping: the adapter binds fewer than {sampled_textures} sampled textures");
+    let sampled = limits.max_sampled_textures_per_shader_stage;
+    if adapter.limits().max_sampled_textures_per_shader_stage < sampled {
+        eprintln!("skipping: the adapter binds fewer than {sampled} sampled textures");
         return None;
     }
-    limits.max_sampled_textures_per_shader_stage = sampled_textures;
-    limits.max_storage_buffers_per_shader_stage = STORAGE_BUFFERS;
-    limits.max_storage_textures_per_shader_stage = STORAGE_TEXTURES;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_features: crate::graphics_device::features(&adapter),
         required_limits: limits,
         ..Default::default()
     }))
@@ -169,7 +166,10 @@ fn heaviest_frame(sampled_textures: u32) -> Option<BindingTier> {
     if let Some(error) = pollster::block_on(validation.pop()) {
         panic!("{error}");
     }
-    Some(renderer.binding_tier())
+    Some((
+        renderer.binding_tier(),
+        renderer.dynamic_gi_in_effect(&settings),
+    ))
 }
 
 /// A blended receiver of screen-space reflections carrying the maps a

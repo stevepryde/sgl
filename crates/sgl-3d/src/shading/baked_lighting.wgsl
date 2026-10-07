@@ -5,7 +5,8 @@
 // UV. Each holds irradiance / PI and an optional directional lobe, filtered
 // bilinearly by the hardware through `baked_sampler`, at mip 0 as Bevy's
 // `lightmap.wesl`, Godot's forward shaders and Wicked's `LightMapping` sample
-// their lightmaps.
+// their lightmaps. The lobes are read through the program's lit provider
+// (lit_extended.wgsl; on the Basic binding tier lit_basic.wgsl reads none).
 override baked_lighting_enabled:bool=true;
 // Constant+linear (L0/L1) irradiance polynomial relative to the baked value:
 // E(n)=color*max(a+w.n,0), evaluated as dot((w,a),(n,1)) as in Ramamoorthi and
@@ -16,10 +17,10 @@ fn directional_irradiance(color:vec3<f32>,direction:vec4<f32>,normal:vec3<f32>)-
  return color*max(dot(lobe,vec4(normalize(normal),1.)),0.);
 }
 // Layer `layer` of a baked map at `uv`: its irradiance times `scale`, shaped
-// by its lobe for `normal`. An all-zero lobe is a layer without one.
-fn baked_map_irradiance(irradiance_map:texture_2d_array<f32>,direction_map:texture_2d_array<f32>,uv:vec2<f32>,layer:i32,scale:f32,normal:vec3<f32>)->vec3<f32> {
+// by its lobe there, `direction`, for `normal`. An all-zero lobe is a layer
+// without one.
+fn baked_map_irradiance(irradiance_map:texture_2d_array<f32>,direction:vec4<f32>,uv:vec2<f32>,layer:i32,scale:f32,normal:vec3<f32>)->vec3<f32> {
  let color=textureSampleLevel(irradiance_map,baked_sampler,uv,layer,0.).rgb*scale;
- let direction=textureSampleLevel(direction_map,baked_sampler,uv,layer,0.);
  if all(direction==vec4(0.)) {
   return color;
  }
@@ -91,12 +92,13 @@ fn surface_fixed_irradiance(lightmapped:bool,uv:vec2<f32>,atlas_uv:vec2<f32>,bou
  if source==BAKED_LIGHTMAP {
   // The sampler clamps the chart's X and repeats its Y.
   let chart_uv=uv*frame.lightmap_chart.xy+frame.lightmap_chart.zw;
-  return baked_map_irradiance(static_lightmap,static_lightmap_direction,chart_uv,0,1.,normal);
+  return baked_map_irradiance(static_lightmap,baked_lightmap_direction(chart_uv,0),chart_uv,0,1.,normal);
  }
  if any(atlas_uv<bounds.xy) || any(atlas_uv>bounds.zw) {
   return vec3(0.);
  }
  let half_texel=vec2(0.5)/vec2<f32>(textureDimensions(static_irradiance_atlas));
  let bounded=clamp(atlas_uv,half_texel,vec2(1.)-half_texel);
- return baked_map_irradiance(static_irradiance_atlas,static_direction_atlas,bounded,select(1,0,front),frame.fixed_irradiance_scale,normal);
+ let layer=select(1,0,front);
+ return baked_map_irradiance(static_irradiance_atlas,baked_atlas_direction(bounded,layer),bounded,layer,frame.fixed_irradiance_scale,normal);
 }

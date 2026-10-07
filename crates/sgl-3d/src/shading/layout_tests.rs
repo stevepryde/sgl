@@ -375,10 +375,14 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
 
 /// The tracing stages' programs, and the tests' scene ray dispatch, on the
 /// path `form` takes (`ray_trace_root`), each with the pipeline constants
-/// it needs and its entry points.
+/// it needs and its entry points: the tracing stages' with the Extended
+/// binding tier's lit provider (`TracePaths`), and those that run on Basic
+/// too with its.
 fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
     use naga::ShaderStage::Compute;
     let root = super::ray_trace_root(form);
+    let extended = &super::tiers::LIT_EXTENDED;
+    let basic = &super::tiers::LIT_BASIC;
     let world = &crate::stages::reflections::world::TRACE;
     let gi = &crate::stages::dynamic_gi::pipelines::TRACE;
     let query = &crate::scene::rays::QUERY;
@@ -395,7 +399,19 @@ fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
                 "world_reflections_hardware",
                 "world_reflections_candidates",
             ),
-            compose(&[world, root]),
+            compose(&[world, root, extended]),
+            vec![(
+                Compute,
+                crate::stages::reflections::world::WORLD_TRACE_ENTRY,
+            )],
+        ),
+        (
+            label(
+                "world_reflections_basic",
+                "world_reflections_hardware_basic",
+                "world_reflections_candidates_basic",
+            ),
+            compose(&[world, root, basic]),
             vec![(
                 Compute,
                 crate::stages::reflections::world::WORLD_TRACE_ENTRY,
@@ -407,7 +423,7 @@ fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
                 "dynamic_gi_trace_hardware",
                 "dynamic_gi_trace_candidates",
             ),
-            compose(&[gi, root]),
+            compose(&[gi, root, extended]),
             vec![(Compute, crate::stages::dynamic_gi::pipelines::TRACE_ENTRY)],
         ),
         (
@@ -416,7 +432,16 @@ fn traced_programs(form: Option<super::RayQueryForm>) -> Vec<Program> {
                 "traced_shadows_trace_hardware",
                 "traced_shadows_trace_candidates",
             ),
-            compose(&[traced_shadows, root]),
+            compose(&[traced_shadows, root, extended]),
+            vec![(Compute, crate::stages::shadows::traced::TRACE_ENTRY)],
+        ),
+        (
+            label(
+                "traced_shadows_trace_basic",
+                "traced_shadows_trace_hardware_basic",
+                "traced_shadows_trace_candidates_basic",
+            ),
+            compose(&[traced_shadows, root, basic]),
             vec![(Compute, crate::stages::shadows::traced::TRACE_ENTRY)],
         ),
         (
@@ -1068,11 +1093,18 @@ fn rust_binding_names_match_wgsl_bindings() {
         entries.iter().map(|entry| entry.binding).collect()
     };
     let layouts = [
+        // Lit group 0 on each binding tier.
         (
             "bind_lit",
             &[&super::BIND_LIT][..],
             0,
-            numbers(&bind::lit_entries()),
+            numbers(&bind::lit_entries(bind::BindingTier::Basic)),
+        ),
+        (
+            "bind_lit_extended",
+            &[&super::tiers::BIND_LIT_EXTENDED][..],
+            0,
+            numbers(&bind::lit_entries(bind::BindingTier::Extended)),
         ),
         (
             "bind_unlit",
@@ -1101,7 +1133,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         ),
         (
             "bind_material_extended",
-            &[&super::material_maps::BIND_MATERIAL_EXTENDED],
+            &[&super::tiers::BIND_MATERIAL_EXTENDED],
             2,
             numbers(&group2::material_entries(bind::BindingTier::Extended)),
         ),

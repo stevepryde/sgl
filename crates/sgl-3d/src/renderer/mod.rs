@@ -20,7 +20,7 @@ mod floor_tests;
 mod size_tests;
 
 use crate::scene::rays::acceleration::RayTracingStats;
-use crate::settings::{Antialiasing, Settings};
+use crate::settings::{Antialiasing, DynamicGiQuality, Settings};
 use crate::shading::bind::BindingTier;
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
@@ -60,7 +60,8 @@ pub struct Renderer {
     cull: Cull,
     /// The camera's geometry statistics, read back without blocking.
     statistics: StatisticsReadback,
-    dynamic_gi: DynamicGi,
+    /// The dynamic GI stage, on the Extended binding tier alone.
+    dynamic_gi: Option<DynamicGi>,
     shadows: Shadows,
     traced_shadows: TracedShadows,
     fog: VolumetricFog,
@@ -139,23 +140,24 @@ impl Renderer {
         };
         let views = FrameViews::new(device);
         let shadows = Shadows::new(device, settings.shadow_quality);
-        let lit = crate::shading::bind::lit(device);
-        let fog = VolumetricFog::new(device, &lit);
+        let lit = crate::shading::bind::lit(device, BindingTier::of(&device.limits()));
+        let fog = VolumetricFog::new(device, &lit.layout);
         let scene_layout = crate::shading::bind::scene(device);
-        let dynamic_gi = DynamicGi::new(device, &lit, &scene_layout);
+        let dynamic_gi = (lit.tier == BindingTier::Extended)
+            .then(|| DynamicGi::new(device, &lit, &scene_layout));
         let bindings = FrameBindings::new(
             device,
             lit,
             &views,
             shadows.maps(),
             fog.volume(),
-            dynamic_gi.probes(),
+            dynamic_gi.as_ref().map(DynamicGi::probes),
         );
         let layers = LayerConstants::new(&settings.diagnostics_in_effect().disable);
         let pipelines = GeometryPipelines::new(
             device,
+            &bindings.lit,
             [
-                &bindings.lit,
                 &bindings.shadow,
                 &bindings.scene,
                 &bindings.blended,
@@ -163,7 +165,6 @@ impl Renderer {
                 &bindings.caster_positions,
             ],
             layers,
-            BindingTier::of(&device.limits()),
         );
         let targets = SharedTargets::new(device, render, false);
         // The form recorded for the device's backend
@@ -181,6 +182,7 @@ impl Renderer {
                 fused_supported: pipelines.fused_supported,
                 occlusion_supported: cull.occlusion_supported(),
                 ray_queries: ray_form.as_ref().map(|form| form.form()),
+                tier: pipelines.tier,
             },
         );
         Ok(Self {
@@ -300,7 +302,9 @@ impl Renderer {
             self.last_scene = Some(scene_id);
             scene.finish_frame();
             self.shadows.local.finish_frame();
-            self.dynamic_gi.finish_frame();
+            if let Some(dynamic_gi) = &mut self.dynamic_gi {
+                dynamic_gi.finish_frame();
+            }
             self.cull.finish_frame();
             self.statistics.submitted();
             #[cfg(feature = "diagnostics")]
@@ -330,11 +334,20 @@ impl Renderer {
     }
 
     /// The device's binding tier: `Extended` where it binds 48 or more
-    /// sampled textures per shader stage, else `Basic`, on which a
-    /// material's anisotropy map gives way to its factor. Fixed for the
-    /// device; `graphics_device::limits` requests the adapter's.
+    /// sampled textures per shader stage, else `Basic`, on which baked
+    /// light is non-directional, dynamic GI is off
+    /// (`dynamic_gi_in_effect`) and a material's anisotropy map gives way to
+    /// its factors. Fixed for the device; `graphics_device::limits` requests
+    /// the adapter's.
     pub fn binding_tier(&self) -> BindingTier {
         self.pipelines.tier
+    }
+
+    /// The dynamic GI quality that runs for `settings` where the scene holds
+    /// a volume: their choice on the Extended binding tier, `Off` on Basic.
+    /// The saved choice is unchanged.
+    pub fn dynamic_gi_in_effect(&self, settings: &Settings) -> DynamicGiQuality {
+        effective::dynamic_gi(settings, self.binding_tier())
     }
 
     /// Why FSR2 is not running on this device although it was chosen.
@@ -557,7 +570,9 @@ impl Renderer {
         &mut self,
         device: &wgpu::Device,
     ) -> Vec<crate::diagnostics::DynamicGiReport> {
-        self.dynamic_gi.take_reports(device)
+        self.dynamic_gi
+            .as_mut()
+            .map_or_else(Vec::new, |dynamic_gi| dynamic_gi.take_reports(device))
     }
 
     /// The numerical frame probe's reports of finished frames read back

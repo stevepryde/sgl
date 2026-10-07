@@ -1553,7 +1553,9 @@ shader, as Unreal's lightmap scale does, so a uniform source-power change needs
 no re-encode. Compress offline with a BC6H/BC7 encoder such as Intel's ISPC
 Texture Compressor; installing needs `wgpu::Features::TEXTURE_COMPRESSION_BC`.
 
-To retain normal/bump detail under baked lamps, populate `Lightmap::directionality`
+On a device of the `Extended` [binding tier](#binding-tiers), to retain
+normal/bump detail under baked lamps (`Basic` validates directionality but
+does not upload or read it), populate `Lightmap::directionality`
 and the atlas's `directionality` / `back_directionality` with one `[f32;4]` per
 texel holding a constant+linear irradiance lobe relative to the baked value: the
 shader returns `irradiance * max(a + dot(w, n), 0)` for the mapped world normal
@@ -1671,8 +1673,10 @@ scene.write_irradiance_cells(&queue, &region)?;
 A dynamic GI volume gives static and moving surfaces coloured bounce light
 from the frame's lights, the scene's lights, emitters and the sky, kept up
 by rays each frame without a bake: a port of Wicked Engine's DDGI (Majercik
-et al. 2019). The game places a lattice of probes over the part of its world it
-wants lit by bounced light:
+et al. 2019). It runs on a device of the `Extended`
+[binding tier](#binding-tiers); on `Basic`, `Settings::dynamic_gi` resolves
+to `Off` (`Renderer::dynamic_gi_in_effect`). The game places a lattice of
+probes over the part of its world it wants lit by bounced light:
 
 ```rust
 scene.set_dynamic_gi_volume(
@@ -2016,25 +2020,30 @@ Preserve the highest implemented fidelity as a selectable choice.
 
 ### Binding tiers
 
-What a material binds depends on the device's sampled textures per shader
-stage, which `graphics_device::limits` requests from the adapter, in two
-tiers ([Binding tiers](../../specs/sgl3d-architecture.md#designs-that-span-stages),
+What the lights and a material bind depends on the device's sampled
+textures per shader stage, which `graphics_device::limits` requests from the
+adapter, in two tiers ([Binding tiers](../../specs/sgl3d-architecture.md#designs-that-span-stages),
 [D-31](../../specs/decisions.md)). `Renderer::binding_tier` reports the
 device's `graphics_device::BindingTier`; it is fixed for the device and no
 setting chooses it.
 
-| Tier | Sampled textures per stage | Material maps |
-| --- | --- | --- |
-| `Basic` | S3D-1's floor (21) to 47: iOS GPUs older than Apple4 (23) | base, metallic-roughness (with packed occlusion), emission, normal, bump |
-| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's WebGPU | those and the anisotropy map |
+| Tier | Sampled textures per stage | Lighting | Material maps |
+| --- | --- | --- | --- |
+| `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI | base, metallic-roughness (with packed occlusion), emission, normal, bump |
+| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI | those and the anisotropy map |
 
 A Vulkan driver lands in either tier, by its `maxPerStageResources`.
 
+On `Basic`, `Settings::dynamic_gi` resolves to `Off`, which
+`Renderer::dynamic_gi_in_effect` reports without changing the saved
+choice, and the renderer builds no dynamic GI stage; a lightmap's or
+irradiance atlas's directionality is validated but neither uploaded nor
+read.
 A map a device does not bind gives way to its factors, as glTF defines a
 material without that texture, in raster, probe captures and ray hits
 alike; validation still reads every map, so content errors do not depend on
 the device. A probe or other bake captured on an `Extended` device keeps
-what its maps did there.
+what its maps and lights did there.
 
 ## Browser (WASM + WebGPU)
 
@@ -2046,11 +2055,11 @@ same `Scene`, `Renderer` and frame run on the page's WebGPU device, built for
 not supported, since SGL3D needs compute.
 
 - **Device.** Request it as natively, with `graphics_device::limits` (the
-  adapter's limits: 21 sampled textures and 8 storage buffers per stage are
-  the floor, S3D-1) and `graphics_device::features`. Desktop Chrome on Apple
-  silicon reports 48 sampled textures and 10 storage buffers from Chromium
-  149, the `Extended` [binding tier](#binding-tiers); Chromium 145 reported
-  16 and cannot run SGL3D. Render into an
+  adapter's limits; WebGPU's defaults are the floor, S3D-1) and
+  `graphics_device::features`. Desktop Chrome on Apple silicon reports 48
+  sampled textures and 10 storage buffers from Chromium 149, the `Extended`
+  [binding tier](#binding-tiers); an adapter at WebGPU's default 16, as
+  Chromium 145 reported, runs on `Basic`. Render into an
   offscreen texture or a canvas surface; the page owns the canvas.
 - **Optional features** degrade as on any device: without
   `DEPTH_CLIP_CONTROL` directional shadow casters emulate unclipped depth in

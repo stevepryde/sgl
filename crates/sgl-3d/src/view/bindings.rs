@@ -7,7 +7,7 @@ use super::FrameViews;
 use crate::EnvironmentId;
 use crate::scene::probes::UploadedProbes;
 use crate::shading;
-use crate::shading::bind::group0;
+use crate::shading::bind::{LitLayout, group0};
 use crate::{Scene, shading::uniforms::FrameUniform};
 use bytemuck::Zeroable;
 
@@ -58,8 +58,9 @@ struct SceneGroups {
     shadow_maps: [wgpu::TextureView; 3],
     /// The fog volume they bind.
     fog: wgpu::TextureView,
-    /// The dynamic GI volume's probes they bind.
-    dynamic_gi: wgpu::TextureView,
+    /// The dynamic GI volume's probes they bind, on the Extended binding
+    /// tier.
+    dynamic_gi: Option<wgpu::TextureView>,
     /// The camera's lit group, with the installed probes, which its
     /// blended surfaces sample: source completion adds opaque surfaces'
     /// probe specular from the G-buffer, but blended surfaces write none.
@@ -76,7 +77,8 @@ struct SceneGroups {
 }
 
 pub(crate) struct FrameBindings {
-    pub lit: wgpu::BindGroupLayout,
+    /// Lit group 0's layout, of the device's binding tier.
+    pub lit: LitLayout,
     pub unlit: wgpu::BindGroupLayout,
     pub shadow: wgpu::BindGroupLayout,
     /// Group 1's layout (`shading::bind::scene`).
@@ -100,9 +102,10 @@ pub(crate) struct FrameBindings {
     /// The fog volume every group 0 binds and its sampler, which the fog
     /// stage writes.
     fog: (wgpu::TextureView, wgpu::Sampler),
-    /// The dynamic GI volume's probes every lit group 0 binds, which the
-    /// dynamic GI stage writes.
-    dynamic_gi: wgpu::TextureView,
+    /// The dynamic GI volume's probes every lit group 0 binds on the
+    /// Extended binding tier, which the dynamic GI stage writes; none on
+    /// Basic, which has no such stage.
+    dynamic_gi: Option<wgpu::TextureView>,
     camera_view: wgpu::Buffer,
     cascades: [wgpu::BindGroup; super::cascades::MAX_SHADOW_CASCADES],
     groups: Option<SceneGroups>,
@@ -115,11 +118,11 @@ impl FrameBindings {
     /// groups 1 and 3.
     pub fn new(
         device: &wgpu::Device,
-        lit: wgpu::BindGroupLayout,
+        lit: LitLayout,
         views: &FrameViews,
         shadow_maps: ShadowMaps,
         fog: FogVolume<'_>,
-        dynamic_gi: &wgpu::TextureView,
+        dynamic_gi: Option<&wgpu::TextureView>,
     ) -> Self {
         let shadow = shading::bind::shadow(device);
         let frame = crate::scene::buffer(
@@ -150,7 +153,7 @@ impl FrameBindings {
             empty_probes: UploadedProbes::empty(device),
             shadow_maps,
             fog: (fog.view.clone(), fog.sampler.clone()),
-            dynamic_gi: dynamic_gi.clone(),
+            dynamic_gi: dynamic_gi.cloned(),
             camera_view: views.camera.buffer.clone(),
             cascades,
             groups: None,
@@ -171,11 +174,11 @@ impl FrameBindings {
         views: &FrameViews,
         shadows: ShadowMaps,
         fog: FogVolume<'_>,
-        dynamic_gi: &wgpu::TextureView,
+        dynamic_gi: Option<&wgpu::TextureView>,
     ) {
         self.shadow_maps = shadows;
         self.fog = (fog.view.clone(), fog.sampler.clone());
-        self.dynamic_gi = dynamic_gi.clone();
+        self.dynamic_gi = dynamic_gi.cloned();
         let environment = scene.environments.live(environment);
         let clusters = [
             views.clusters.buffer().clone(),
@@ -209,7 +212,7 @@ impl FrameBindings {
             probes,
             &clusters[0],
             self.local_shadows(),
-            &self.dynamic_gi,
+            self.dynamic_gi.as_ref(),
         );
         let ray_hit_lit = self.lit_group(
             device,
@@ -219,7 +222,7 @@ impl FrameBindings {
             probes,
             &clusters[1],
             self.static_local_shadows(&self.shadow_maps.local_records),
-            &self.dynamic_gi,
+            self.dynamic_gi.as_ref(),
         );
         let volume_lit = self.lit_group(
             device,
@@ -229,7 +232,7 @@ impl FrameBindings {
             probes,
             &clusters[2],
             self.static_local_shadows(&self.shadow_maps.local_records),
-            &self.dynamic_gi,
+            self.dynamic_gi.as_ref(),
         );
         let camera_unlit =
             self.unlit_group(device, scene, environment, &self.camera_view, &self.frame);
@@ -301,10 +304,11 @@ impl FrameBindings {
         }
     }
 
-    /// A lit group 0: `view` and `frame`, the scene's lighting, decals,
-    /// irradiance volume and `environment`, `probes`, the view's `clusters`,
-    /// the `local` shadows its lights take, the fog volume and the
-    /// `dynamic_gi` volume's probes.
+    /// A lit group 0 of the lit layout's binding tier: `view` and `frame`,
+    /// the scene's lighting, decals, irradiance volume and `environment`,
+    /// `probes`, the view's `clusters`, the `local` shadows its lights take,
+    /// the fog volume and the `dynamic_gi` volume's probes, of which it
+    /// binds those its tier binds (`group0::tier`).
     #[allow(clippy::too_many_arguments)]
     pub fn lit_group(
         &self,
@@ -315,7 +319,7 @@ impl FrameBindings {
         probes: &UploadedProbes,
         clusters: &wgpu::Buffer,
         local: LocalShadows<'_>,
-        dynamic_gi: &wgpu::TextureView,
+        dynamic_gi: Option<&wgpu::TextureView>,
     ) -> wgpu::BindGroup {
         let environments = &scene.environments;
         let baked = &scene.static_lighting;
@@ -324,72 +328,77 @@ impl FrameBindings {
             resource: wgpu::BindingResource::TextureView(view),
         };
         let [view_entry, frame_entry] = shading::bind::uniforms(view, frame);
+        let entries = [
+            view_entry,
+            frame_entry,
+            texture(group0::STATIC_IRRADIANCE_ATLAS, &baked.atlas.irradiance),
+            texture(group0::STATIC_DIRECTION_ATLAS, &baked.atlas.direction),
+            texture(group0::STATIC_LIGHTMAP, &baked.lightmap.irradiance),
+            texture(group0::STATIC_LIGHTMAP_DIRECTION, &baked.lightmap.direction),
+            wgpu::BindGroupEntry {
+                binding: group0::BAKED_SAMPLER,
+                resource: wgpu::BindingResource::Sampler(&baked.sampler),
+            },
+            texture(
+                group0::DIRECTIONAL_SHADOW_MAP,
+                &self.shadow_maps.directional,
+            ),
+            texture(group0::LOCAL_SHADOW_ATLAS, local.atlas),
+            wgpu::BindGroupEntry {
+                binding: group0::LOCAL_SHADOWS,
+                resource: local.records.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: group0::SHADOW_SAMPLER,
+                resource: wgpu::BindingResource::Sampler(&self.shadow_maps.sampler),
+            },
+            texture(
+                group0::ENVIRONMENT_MAP,
+                &environments.frame(environment).pmrem,
+            ),
+            wgpu::BindGroupEntry {
+                binding: group0::ENVIRONMENT_SAMPLER,
+                resource: wgpu::BindingResource::Sampler(&environments.sampler),
+            },
+            texture(group0::LOOKUP_TABLES, &scene.lookup_tables),
+            wgpu::BindGroupEntry {
+                binding: group0::LIGHTS,
+                resource: scene.lights.buffer().as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: group0::CLUSTERS,
+                resource: clusters.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: group0::DECALS,
+                resource: scene.decals.buffer().as_entire_binding(),
+            },
+            texture(group0::DECAL_ATLAS, &scene.decals.atlas.view),
+            wgpu::BindGroupEntry {
+                binding: group0::DECAL_SAMPLER,
+                resource: wgpu::BindingResource::Sampler(&scene.decals.sampler),
+            },
+            texture(group0::BAKED, &probes.view),
+            wgpu::BindGroupEntry {
+                binding: group0::COLLECTION,
+                resource: probes.metadata.as_entire_binding(),
+            },
+            texture(group0::FOG_VOLUME, &self.fog.0),
+            wgpu::BindGroupEntry {
+                binding: group0::FOG_SAMPLER,
+                resource: wgpu::BindingResource::Sampler(&self.fog.1),
+            },
+            texture(group0::IRRADIANCE_VOLUME, scene.irradiance_cells.view()),
+        ];
+        let entries: Vec<_> = entries
+            .into_iter()
+            .chain(dynamic_gi.map(|view| texture(group0::DYNAMIC_GI_PROBES, view)))
+            .filter(|entry| group0::tier(entry.binding) <= self.lit.tier)
+            .collect();
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene lighting and local environment"),
-            layout: &self.lit,
-            entries: &[
-                view_entry,
-                frame_entry,
-                texture(group0::STATIC_IRRADIANCE_ATLAS, &baked.atlas.irradiance),
-                texture(group0::STATIC_DIRECTION_ATLAS, &baked.atlas.direction),
-                texture(group0::STATIC_LIGHTMAP, &baked.lightmap.irradiance),
-                texture(group0::STATIC_LIGHTMAP_DIRECTION, &baked.lightmap.direction),
-                wgpu::BindGroupEntry {
-                    binding: group0::BAKED_SAMPLER,
-                    resource: wgpu::BindingResource::Sampler(&baked.sampler),
-                },
-                texture(
-                    group0::DIRECTIONAL_SHADOW_MAP,
-                    &self.shadow_maps.directional,
-                ),
-                texture(group0::LOCAL_SHADOW_ATLAS, local.atlas),
-                wgpu::BindGroupEntry {
-                    binding: group0::LOCAL_SHADOWS,
-                    resource: local.records.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: group0::SHADOW_SAMPLER,
-                    resource: wgpu::BindingResource::Sampler(&self.shadow_maps.sampler),
-                },
-                texture(
-                    group0::ENVIRONMENT_MAP,
-                    &environments.frame(environment).pmrem,
-                ),
-                wgpu::BindGroupEntry {
-                    binding: group0::ENVIRONMENT_SAMPLER,
-                    resource: wgpu::BindingResource::Sampler(&environments.sampler),
-                },
-                texture(group0::LOOKUP_TABLES, &scene.lookup_tables),
-                wgpu::BindGroupEntry {
-                    binding: group0::LIGHTS,
-                    resource: scene.lights.buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: group0::CLUSTERS,
-                    resource: clusters.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: group0::DECALS,
-                    resource: scene.decals.buffer().as_entire_binding(),
-                },
-                texture(group0::DECAL_ATLAS, &scene.decals.atlas.view),
-                wgpu::BindGroupEntry {
-                    binding: group0::DECAL_SAMPLER,
-                    resource: wgpu::BindingResource::Sampler(&scene.decals.sampler),
-                },
-                texture(group0::BAKED, &probes.view),
-                wgpu::BindGroupEntry {
-                    binding: group0::COLLECTION,
-                    resource: probes.metadata.as_entire_binding(),
-                },
-                texture(group0::FOG_VOLUME, &self.fog.0),
-                wgpu::BindGroupEntry {
-                    binding: group0::FOG_SAMPLER,
-                    resource: wgpu::BindingResource::Sampler(&self.fog.1),
-                },
-                texture(group0::DYNAMIC_GI_PROBES, dynamic_gi),
-                texture(group0::IRRADIANCE_VOLUME, scene.irradiance_cells.view()),
-            ],
+            layout: &self.lit.layout,
+            entries: &entries,
         })
     }
 

@@ -25,13 +25,14 @@ pub(crate) const RANK_ENTRY: &str = "rank";
 pub(crate) const THRESHOLD_ENTRY: &str = "threshold";
 pub(crate) const ALLOCATE_ENTRY: &str = "allocate";
 pub(crate) const PREPARE_TRACE_ENTRY: &str = "prepare_trace";
-/// The trace: the volume's lit group 0, the scene's group 1 and the stage's
-/// own group 3.
+/// The trace: the volume's lit group 0 of the Extended binding tier, whose
+/// probe texture it samples for the bounce, the scene's group 1 and the
+/// stage's own group 3.
 pub(crate) static TRACE: shading::Module = shading::Module {
     name: "dynamic_gi_trace",
     source: include_str!("trace.wgsl"),
     deps: &[
-        &shading::BIND_LIT,
+        &shading::tiers::BIND_LIT_EXTENDED,
         &shading::SURFACE_RAY,
         &shading::SHADOW_MASK_NONE,
         &COMMON,
@@ -79,7 +80,7 @@ impl Pipelines {
     pub fn new(
         device: &wgpu::Device,
         layouts: &Layouts,
-        lit: &wgpu::BindGroupLayout,
+        lit: &shading::bind::LitLayout,
         scene: &wgpu::BindGroupLayout,
     ) -> Self {
         let module = |label, root| {
@@ -154,7 +155,7 @@ impl Pipelines {
             SCROLL_ENTRY,
         );
         Self {
-            paths: TracePaths::new("dynamic GI rays", &TRACE, &layouts.trace, [lit, scene]),
+            paths: TracePaths::new("dynamic GI rays", &TRACE, &layouts.trace, lit, scene),
             trace: HashMap::new(),
             rank,
             threshold,
