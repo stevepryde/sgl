@@ -44,6 +44,27 @@
 //   it about the direction to its nearest point and fades it in over 10 cm
 //   in front of the face. Bounded by π, it needs no 1 m distance clamp,
 //   which Godot gives area lights against jitter flicker.
+// - A point or spot light's inverse square takes in its denominator the
+//   squared diagonal of the view-space box bounding the froxel the sample
+//   lies in (light_reach.wgsl), where Godot's omni and spot lights take
+//   1/max(d, 0.0001)^attenuation unbounded. One jittered sample of a froxel
+//   metres deep cannot integrate 1/d² across it: landing centimetres from
+//   a light, it takes thousands of times the froxel's light, and the
+//   history holds each spike, so the fog about a still light pulses with
+//   the jitter and a moving light leaves puffs behind it
+//   (stevepryde/sgl#262; Hillaire 2015 leaves "moving lights leave trails"
+//   open). This is Unreal's practice: its volumetric fog adds a bias the
+//   size of its voxel to the inverse-squared falloff's denominator, which
+//   "effectively removes the spike from inverse squared falloff that causes
+//   extreme aliasing" (r.VolumetricFog.InverseSquaredLightDistanceBiasScale,
+//   1 by default; practice only, no code). It agrees with the bounded
+//   falloff the MIT Unity VolumetricLighting sample gives its point lights
+//   in the fog (b5b0713, Assets/VolumetricFog/Shaders/
+//   InjectLightingAndDensity.compute PointLights, 1/(1 + 25 d²/range²)). A
+//   froxel far smaller than its distance to the light keeps the light's
+//   falloff; within about a froxel's diagonal of the light its fog falls
+//   short of the inverse square and holds steady, the more so where a long
+//   fog's slices are metres deep, as Unreal's bias trades it.
 // - The ambient is the frame's hemisphere fill and environment diffuse
 //   averaged over the sphere, which an isotropic phase scatters, where Godot
 //   samples its sky upward, at a mip chosen by the density, and along the
@@ -226,14 +247,15 @@ fn fog_volume_density(volume:FogVolumeRecord,position:vec3<f32>)->f32 {
  return density;
 }
 // What scene light `index` scatters toward the camera, along `view_ray`,
-// per unit of scattering at a point in the medium: none, without a shadow
-// lookup, at a fog energy Godot skips.
-fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f32>)->vec3<f32> {
+// per unit of scattering at a point in the medium of a froxel whose squared
+// diagonal is `froxel_square`: none, without a shadow lookup, at a fog
+// energy Godot skips.
+fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f32>,froxel_square:f32)->vec3<f32> {
  let fog_energy=lights[index].fog_energy;
  if fog_energy<=FOG_ENERGY_CUTOFF {
   return vec3(0.);
  }
- let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false,position);
+ let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false,position,froxel_square);
  if sample.visibility<=0. {
   return vec3(0.);
  }
@@ -308,10 +330,22 @@ var<workgroup> fog_ambient_light:vec3<f32>;
    light+=directional.color*directional.illuminance*shadow*henyey_greenstein(dot(view_ray,toward),froxels.anisotropy)*directional.fog_energy;
   }
   light+=fog_ambient_light;
+  // The squared diagonal of the froxel's bounding box in view space: its
+  // depth between its slice's ends, and across the frame, on each axis, the
+  // extent of its corners at both ends, which the frustum shears apart off
+  // its axis, so the bias is as large wherever the froxel lies on screen.
+  let z0=fog_slice_depth(f32(id.z)/size.z,froxels.length,froxels.detail_spread);
+  let z1=fog_slice_depth(f32(id.z+1u)/size.z,froxels.length,froxels.detail_spread);
+  let n0=froxel_ndc(vec2<f32>(id.xy)/size.xy)+froxels.projection.zw;
+  let n1=froxel_ndc(vec2<f32>(id.xy+vec2(1u))/size.xy)+froxels.projection.zw;
+  let high=max(max(n0*z0,n0*z1),max(n1*z0,n1*z1));
+  let low=min(min(n0*z0,n0*z1),min(n1*z0,n1*z1));
+  let lateral=(high-low)/froxels.projection.xy;
+  let froxel_square=dot(lateral,lateral)+(z1-z0)*(z1-z0);
   let range=cluster_range(position,pixel);
   let end=range.first+range.live+range.baked;
   for(var at=range.first;at<end;at++) {
-   light+=fog_scene_light(cluster_item(at),position,view_ray,pixel);
+   light+=fog_scene_light(cluster_item(at),position,view_ray,pixel,froxel_square);
   }
  }
  var froxel=vec4(light*albedo,density);

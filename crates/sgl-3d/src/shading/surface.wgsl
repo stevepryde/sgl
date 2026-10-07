@@ -754,7 +754,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
    end+=lights.baked;
   }
   for (var at=lights.first;at<end;at++) {
-   let light=scene_light_sample(cluster_item(at),s.position,n,s.geometry_normal,context.pixel,context.receiver,transmits,back);
+   let light=scene_light_sample(cluster_item(at),s.position,n,s.geometry_normal,context.pixel,context.receiver,transmits,back,0.);
    if light.visibility>0. || light.transmitted_visibility>0. {
     color+=surface_direct_light(s,reflectance,light);
    }

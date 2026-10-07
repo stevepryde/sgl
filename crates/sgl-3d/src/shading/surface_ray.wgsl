@@ -256,7 +256,7 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
   ray=directional_ray_direction(direction,light.disc_radius,random.yz);
  } else {
   let index=cluster_item(list.first+pick-directional_count);
-  sample=scene_light_sample(index,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT,transmits,back);
+  sample=scene_light_sample(index,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT,transmits,back,0.);
   if sample.visibility<=0. && sample.transmitted_visibility<=0. {
    return vec3(0.);
   }

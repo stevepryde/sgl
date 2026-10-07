@@ -362,7 +362,18 @@ Where it differs from Godot's fog, and why:
   ends at its occluder instead of fading over about 10 cm behind it. A
   rectangle scatters by its face's solid angle, which stays bounded near
   it, so it takes no distance clamp against flicker as Godot's area lights
-  do.
+  do. A point or spot light's inverse square takes the squared diagonal of
+  the froxel being lit in its denominator, as Unreal's volumetric fog biases
+  its inverse-squared falloff by its voxel size and as the MIT Unity
+  VolumetricLighting sample bounds its point lights' fog: one jittered sample
+  of a froxel metres deep cannot integrate the falloff, so a sample landing
+  centimetres from a light would take thousands of times the froxel's light
+  and the history would hold it, pulsing about a still light and leaving
+  puffs behind a moving one. A light's fog keeps its falloff where the
+  froxels are small beside their distance to it; within about a froxel's
+  diagonal of it, the fog falls short of the inverse square and holds steady,
+  the more so where a long fog's slices are metres deep. Surfaces keep the
+  physical falloff.
 - `ambient` scatters the mean of the hemisphere fill and environment
   diffuse over the sphere, which an isotropic medium scatters, where Godot
   samples its sky upward and along the view.

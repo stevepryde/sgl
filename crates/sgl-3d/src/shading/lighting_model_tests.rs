@@ -731,7 +731,7 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
                 &dark_input(),
                 rough,
                 mirror,
-                "scene_light_sample(0u,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAPTURE,false,s.position)",
+                "scene_light_sample(0u,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAPTURE,false,s.position,0.)",
             );
             let angular = (radius / distance).asin();
             let expected =

@@ -1085,7 +1085,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   each light scaled by its fog energy and skipped at or below 0.001
   (Godot's `volumetric_fog_energy` and cutoff) and its shadow taken at the
   light's shadow opacity, as surfaces take it (`shading::shadow_sampling`'s
-  one blend), and the ambient fill;
+  one blend), and the ambient fill; a point or spot light's inverse square
+  there takes the froxel's squared diagonal in its denominator, following
+  Unreal's volumetric fog practice, while surfaces keep the physical
+  falloff;
   blends it with its reprojection into the stage's last volume; filters
   each slice across x and y (`Settings::fog_filter`), leaving the volume the
   next frame reprojects unfiltered; and integrates each column along its
