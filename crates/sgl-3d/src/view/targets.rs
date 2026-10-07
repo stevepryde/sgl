@@ -64,8 +64,10 @@ pub(crate) fn composition_targets() -> [Option<wgpu::ColorTargetState>; 2] {
 /// The targets opaque writes and later stages read, at the render size.
 pub(crate) struct SharedTargets {
     pub color: wgpu::TextureView,
-    /// RGBA16F: the ambient diffuse within `color` before occlusion, which
-    /// source completion occludes (shading/gbuffer.wgsl).
+    /// RGBA16F: the ambient light within `color` before occlusion, its
+    /// diffuse share and multiple scattering together, `color`'s alpha
+    /// holding the multiple scattering's share, which source completion
+    /// occludes (shading/gbuffer.wgsl).
     pub ambient: wgpu::TextureView,
     pub source_id: wgpu::TextureView,
     pub depth: wgpu::TextureView,
@@ -128,7 +130,7 @@ impl SharedTargets {
         let depth = gbuffer_target("stable depth", gbuffer::DEPTH);
         Self {
             color: gbuffer_target("jittered HDR scene", gbuffer::COLOR),
-            ambient: gbuffer_target("jittered ambient diffuse", gbuffer::AMBIENT),
+            ambient: gbuffer_target("jittered ambient light", gbuffer::AMBIENT),
             source_id: gbuffer_target("stable lit primitive identity", gbuffer::SOURCE_ID),
             depth,
             normal: gbuffer_target("stable world normals", gbuffer::NORMAL),

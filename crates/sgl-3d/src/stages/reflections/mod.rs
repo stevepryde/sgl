@@ -1,4 +1,4 @@
-//! Reflections: ambient occlusion of opaque surfaces' ambient diffuse,
+//! Reflections: ambient occlusion of opaque surfaces' ambient light,
 //! environment and probe specular, the screen-space method, world-space
 //! rays, and their one composition.
 pub(crate) mod probe_culling;
@@ -26,7 +26,7 @@ static TEMPORAL_REPROJECTION: crate::shading::Module = crate::shading::Module {
 
 /// Reflections, in two operations with the transparent stage drawn between
 /// them. `complete` culls the probe collection per tile, takes the share of
-/// each receiver's ambient diffuse its ambient visibility hides out of the
+/// each receiver's ambient light its ambient visibility hides out of the
 /// opaque beauty, and adds its environment and probe specular, writing the
 /// composite and, while a screen-space method runs, the incident
 /// radiance. `resolve` runs the screen-space method over the surface and
@@ -39,7 +39,7 @@ static TEMPORAL_REPROJECTION: crate::shading::Module = crate::shading::Module {
 /// result there is the receiver's, which `resolve` returns for the blended
 /// draw. Another method returns the same and plugs in beside these.
 ///
-/// Reads: the G-buffer, colour, ambient diffuse, depth, motion and source
+/// Reads: the G-buffer, colour, ambient light, depth, motion and source
 /// identity, the surface (the surface depth and receiver layer), the
 /// reflection camera, the ambient visibility opaque passes on
 /// when ambient occlusion ran, the scene's
@@ -131,7 +131,7 @@ impl Reflections {
     }
 
     /// Probe culling and source completion: the opaque beauty with its
-    /// ambient diffuse occluded by `ambient_occlusion` (the opaque stage's
+    /// ambient light occluded by `ambient_occlusion` (the opaque stage's
     /// visibility, when it ran), and environment and probe specular occluded
     /// by it, into the composite and, while a screen-space method runs, the
     /// incident radiance.

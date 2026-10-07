@@ -1,4 +1,4 @@
-//! Source completion: ambient occlusion of opaque receivers' ambient diffuse,
+//! Source completion: ambient occlusion of opaque receivers' ambient light,
 //! and their environment and probe specular from the probes that tiled
 //! culling finds for each screen tile; and the composition that blends a
 //! screen-space method's reflections over it.
@@ -82,7 +82,8 @@ pub(crate) struct Inputs<'a> {
     pub frame_fog: Option<SourceFog>,
     pub camera: reflection_camera::Camera,
     pub scene: &'a wgpu::TextureView,
-    /// The ambient diffuse within `scene` before occlusion.
+    /// The ambient light within `scene` before occlusion, whose multiple
+    /// scattering's share `scene`'s alpha holds.
     pub ambient: &'a wgpu::TextureView,
     /// Complete opaque beauty.
     pub output: &'a wgpu::TextureView,
@@ -93,7 +94,7 @@ pub(crate) struct Inputs<'a> {
     /// Lit group 0's lookup tables, for the DFG table.
     pub lookup_tables: &'a wgpu::TextureView,
     /// Ambient visibility that, with each receiver's material occlusion,
-    /// occludes its ambient diffuse and environment and probe specular.
+    /// occludes its ambient light and environment and probe specular.
     pub ambient_occlusion: &'a wgpu::TextureView,
     pub environment: Environment<'a>,
 }

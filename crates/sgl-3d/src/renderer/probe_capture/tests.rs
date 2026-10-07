@@ -540,24 +540,22 @@ fn a_capture_shadows_scene_lights_from_static_layers_it_places() {
     );
 }
 
-// Defects: a probe capture's surfaces leave their material's occlusion off,
-// as the camera's opaque surfaces do while shading, leaving it to source
-// completion, which captures do not run. The oracle is glTF 2.0's
-// lerp(1, red, strength): a floor packing an occlusion map of red 64 in its
-// metallic-roughness image, lit by the hemisphere fill alone under a black
-// sky, so all its radiance is ambient diffuse, captures 64/255 of the
-// radiance it captures at strength 0.
-#[test]
-fn a_capture_occludes_ambient_diffuse_by_the_materials_occlusion() {
+/// A floor lit by the hemisphere fill alone under a black sky, packing an
+/// occlusion map of red `red` in its metallic-roughness image, white and
+/// `metallic` at perceptual `roughness`: the radiance a probe capture at
+/// the origin holds of it at each occlusion strength of `strengths`.
+fn captured_floor<const N: usize>(
+    red: u8,
+    metallic: f32,
+    roughness: f32,
+    strengths: [f32; N],
+) -> Option<[f32; N]> {
     use crate::asset::{CpuMesh, Image, Vertex};
     use crate::baked_specular_probe::SpecularProbeTexels;
     use crate::settings::Settings;
     use crate::{Camera, FrameInput, HemisphereLight, Scene};
     use glam::{Mat4, Vec3};
-    let Some((device, queue)) = crate::test_support::device() else {
-        return;
-    };
-    const RED: u8 = 64;
+    let (device, queue) = crate::test_support::device()?;
     let mut floor = crate::test_support::cube();
     floor.meshes = vec![CpuMesh {
         vertices: [[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]]
@@ -578,9 +576,13 @@ fn a_capture_occludes_ambient_diffuse_by_the_materials_occlusion() {
     floor.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
         4,
         4,
-        image::Rgba([RED, 255, 0, 255]),
+        image::Rgba([red, 255, 255, 255]),
     ))];
-    floor.materials[0].metallic = 0.;
+    if metallic > 0. {
+        floor.materials[0].base = [1.; 4];
+    }
+    floor.materials[0].metallic = metallic;
+    floor.materials[0].roughness = roughness;
     floor.materials[0].mr_texture = Some(0);
     floor.materials[0].occlusion_texture = Some(0);
     let mut scene = Scene::new(&device, &queue);
@@ -597,14 +599,22 @@ fn a_capture_occludes_ambient_diffuse_by_the_materials_occlusion() {
     };
     let settings = Settings::default();
     let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
-    let mut captured = |scene: &mut Scene, strength: f32| -> f32 {
+    Some(strengths.map(|strength| {
         let mut values = scene.material(ids.materials[0]).unwrap();
         values.occlusion_strength = strength;
         scene
             .set_material(&queue, ids.materials[0], values)
             .unwrap();
         let radiance = renderer
-            .capture_specular_probe(&device, &queue, scene, &input, &settings, Vec3::ZERO, 64)
+            .capture_specular_probe(
+                &device,
+                &queue,
+                &mut scene,
+                &input,
+                &settings,
+                Vec3::ZERO,
+                64,
+            )
             .unwrap();
         let SpecularProbeTexels::Rgba16Float(texels) = radiance.texels else {
             unreachable!("captures return RGBA16F")
@@ -617,12 +627,52 @@ fn a_capture_occludes_ambient_diffuse_by_the_materials_occlusion() {
                     .sum::<f32>()
             })
             .sum()
+    }))
+}
+
+// Defects: a probe capture's surfaces leave their material's occlusion off,
+// as the camera's opaque surfaces do while shading, leaving it to source
+// completion, which captures do not run. The oracle is glTF 2.0's
+// lerp(1, red, strength): a floor packing an occlusion map of red 64 in its
+// metallic-roughness image, lit by the hemisphere fill alone under a black
+// sky, so all its radiance is ambient diffuse, captures 64/255 of the
+// radiance it captures at strength 0.
+#[test]
+fn a_capture_occludes_ambient_diffuse_by_the_materials_occlusion() {
+    const RED: u8 = 64;
+    let Some([unoccluded, occluded]) = captured_floor(RED, 0., 0.35, [0., 1.]) else {
+        return;
     };
-    let unoccluded = captured(&mut scene, 0.);
-    let occluded = captured(&mut scene, 1.);
     let expected = unoccluded * f32::from(RED) / 255.;
     assert!(
         unoccluded > 1. && (occluded - expected).abs() <= expected * 0.01,
         "the capture holds {occluded} of the floor's {unoccluded}, expected {expected}"
+    );
+}
+
+// Defects: a probe capture's surfaces occlude their specular multiple
+// scattering by their material's occlusion linearly, as their diffuse
+// share, or not at all. The oracle is Filament's occlusion of
+// energy-compensated specular by its specular occlusion and multi-bounce
+// (Lagarde and de Rousiers 2014; Jimenez et al. 2016): a rough white metal
+// floor, whose light under the hemisphere fill is all multiple scattering,
+// packing an occlusion map of red 0, keeps more than 0.7 of it at strength
+// 0.5 (visibility 0.5, where the diffuse visibility keeps 0.5 and the
+// multi-bounce on F0 1 about 0.9) and none at strength 1.
+#[test]
+fn a_capture_occludes_multiple_scattering_by_specular_occlusion() {
+    let Some([full, half_visible, none]) = captured_floor(0, 1., 0.8, [0., 0.5, 1.]) else {
+        return;
+    };
+    assert!(full > 1., "the metal floor must reflect: {full}");
+    let kept = half_visible / full;
+    eprintln!("capture: keeps {kept} of its light at visibility 0.5");
+    assert!(
+        kept > 0.7 && kept <= 1.,
+        "the capture keeps {kept} at visibility 0.5"
+    );
+    assert!(
+        none <= full * 1e-3,
+        "the capture holds {none} of {full} at visibility 0"
     );
 }
