@@ -133,6 +133,11 @@ pub(crate) struct MaterialTextures {
     pub normal: u32,
     pub bump: u32,
     pub anisotropy: u32,
+    pub clearcoat: u32,
+    pub coat_roughness: u32,
+    pub coat_normal: u32,
+    pub iridescence: u32,
+    pub iridescence_thickness: u32,
 }
 
 /// Words of `T`.

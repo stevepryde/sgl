@@ -104,6 +104,7 @@ fn case_surface(c:Case)->Surface {
  surface.metallic=1.;
  surface.normal=c.n.xyz;
  surface.geometry_normal=c.n.xyz;
+ surface.coat_normal=c.n.xyz;
  surface.view=c.v.xyz;
  surface.roughness=c.n.w;
  surface.coat=c.t.w;

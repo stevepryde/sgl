@@ -19,8 +19,8 @@
 // sorted entity array; a light reaches the surface as the lit library's
 // light_reach says (range, cone, and the lit side of the shading normal; a
 // rectangle the half-space before its face), a directional light where
-// either the shading or the geometry normal faces it, since the coat
-// takes it along the geometry normal; a baked light casts no ray at a
+// either the base or the coat normal faces it, the normals the lighting
+// uses; a baked light casts no ray at a
 // receiver that takes no baked lights, which the lighting never gives
 // them (the slot table's baked bits, the G-buffer's F0 flag), its slot
 // holding 1 there wherever the light reaches (traced_visible), where
@@ -73,9 +73,12 @@ fn traced_directional_light()->u32 {
 }
 
 // Whether slot `key`'s light is unoccluded from the surface at `position`
-// with shading normal `normal` and geometry normal `geometry_normal`, along
-// a ray toward the point of the light `random` draws (light_surface.wgsl);
-// false where the light does not reach the surface. Where `untraced`, a
+// with base normal `normal` and coat normal `coat_normal` (G-buffer
+// normal.BA: the coat's mapped normal, else the geometry normal), along a
+// ray toward the point of the light `random` draws (light_surface.wgsl);
+// false where the light does not reach the surface. A directional light's
+// reach test covers the normals the lighting uses, base and coat: where
+// both face away, no lobe takes the light. Where `untraced`, a
 // baked light at a receiver that takes no baked lights, which the lighting
 // never gives it, no ray is cast and the light is unoccluded where it
 // reaches: a value no lighting at the pixel reads, chosen for the passes
@@ -86,7 +89,7 @@ fn traced_directional_light()->u32 {
 // receiver a few pixels across. The light's reach is kept, so a 1 never
 // stands where a light does not reach, whose lighting term is zero beside
 // it.
-fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,random:vec2<f32>)->bool {
+fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,coat_normal:vec3<f32>,random:vec2<f32>)->bool {
  if key==SHADOW_MASK_DIRECTIONAL {
   let index=traced_directional_light();
   if index>=2u {
@@ -94,7 +97,7 @@ fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,geom
   }
   let light=frame.directional_lights[index];
   let to_light=normalize(light.direction_to_light);
-  if dot(normal,to_light)<=0. && dot(geometry_normal,to_light)<=0. {
+  if dot(normal,to_light)<=0. && dot(coat_normal,to_light)<=0. {
    return false;
   }
   let direction=directional_ray_direction(to_light,light.disc_radius,random);
@@ -139,7 +142,7 @@ fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  let normals=textureLoad(traced_normal,pixel,0);
  let normal=gbuffer_base_normal(normals);
  textureStore(traced_half_normal,q,vec4(normal,0.));
- let geometry_normal=gbuffer_coat_normal(normals);
+ let coat_normal=gbuffer_coat_normal(normals);
  // One draw on every light a pixel and frame, where Wicked reads its blue
  // noise.
  let random=hash33_unit(vec3(q,traced.seed)).xy;
@@ -148,7 +151,7 @@ fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  let untraced=select(shadow_mask_slots.baked,0u,gbuffer_takes_baked_lights(f0));
  for (var slot=0u;slot<RT_SHADOW_LIGHTS;slot++) {
   let key=shadow_mask_slot_key(slot);
-  if key!=SHADOW_MASK_EMPTY && traced_visible(key,((untraced>>slot)&1u)!=0u,position,normal,geometry_normal,random) {
+  if key!=SHADOW_MASK_EMPTY && traced_visible(key,((untraced>>slot)&1u)!=0u,position,normal,coat_normal,random) {
    words=traced_store(words,slot,1.);
   }
  }

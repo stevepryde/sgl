@@ -85,6 +85,24 @@ docs and specs the entry links.
 - `sgl-3d` `DiagnosticTarget::Composite`'s alpha is 1 on opaque surfaces
   (was their base colour's alpha); the presented frame's is 1, as before.
   No game-code change.
+- `sgl-3d` `KHR_materials_clearcoat` textures: load error → loaded and
+  shaded on the `Extended` tier, the clearcoat normal map tilting the coat.
+  New `asset::Material::clearcoat_texture`, `coat_roughness_texture`,
+  `coat_normal_texture` (`None`), `coat_normal_scale` (1) and
+  `SurfaceMaterial::coat_normal_scale`. Migration: literals add them or
+  `..Default::default()`.
+- `sgl-3d` `KHR_materials_iridescence`: unsupported → a thin film. New
+  `asset::Material::iridescence` (0), `iridescence_ior` (1.3),
+  `iridescence_thickness` (`[100., 400.]`), `iridescence_texture`,
+  `iridescence_thickness_texture` (`None`), the first three on
+  `SurfaceMaterial`. Migration: as above.
+- `sgl-3d` `Scene::add_materials`/`set_material`: new
+  `SceneError::InvalidIridescence` for a film outside its bounds.
+  Migration: exhaustive `SceneError` matches add it.
+- `sgl-3d` `Basic` tier: clearcoat and iridescence maps fall back to their
+  factors, the clearcoat normal to the geometry normal. No game-code change.
+- `sgl-3d` glTF: a primitive without `TEXCOORD_0` whose material has an
+  emissive, normal or bump map loaded → refused. Migration: export UV0.
 
 ## 0.2.1 — 2026-10-07
 

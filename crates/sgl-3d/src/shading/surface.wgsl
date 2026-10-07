@@ -8,15 +8,21 @@
 override instance_emission_enabled:bool=true;
 override normal_maps_enabled:bool=true;
 override bump_maps_enabled:bool=true;
+// Whether the scene holds an iridescent film (LitConstants::films): where
+// it does not, surface_f0s compiles its evaluation out.
+override films_enabled:bool=true;
 struct Surface {
  position:vec3<f32>,
  // Unit direction toward the viewer: the camera for a fragment, back along
  // the ray for a hit.
  view:vec3<f32>,
- // The mapped base normal, and the geometry normal: the interpolated vertex
- // normal toward the side shaded, which the coat follows and along which a
- // shadow lookup offsets the receiver, never the mapped normal (normal or
- // bump map, decals, scrolling layers), so none of them moves a shadow.
+ // The mapped base normal, which the base lobes follow; the geometry
+ // normal: the interpolated vertex normal toward the side shaded, along
+ // which a shadow lookup offsets the receiver, never a mapped normal
+ // (normal or bump map, the coat's normal map, decals, scrolling layers),
+ // so none of them moves a shadow map's lookup; and the coat normal, which
+ // the coat follows: its clearcoat normal map's on the base map's frame,
+ // else the geometry normal (KHR_materials_clearcoat).
  // Filament ef1a133 offsets its spot and cascade shadows along this normal,
  // flipped to the side shaded (getWorldGeometricNormalVector(),
  // shading_geometricNormal in shaders/src/surface_shading_parameters.fs and
@@ -26,6 +32,7 @@ struct Surface {
  // which it flips only without tangents or a normal map.
  normal:vec3<f32>,
  geometry_normal:vec3<f32>,
+ coat_normal:vec3<f32>,
  base:vec4<f32>,
  metallic:f32,
  // The dielectric reflectance at normal incidence
@@ -38,6 +45,9 @@ struct Surface {
  roughness:f32,
  coat:f32,
  coat_roughness:f32,
+ // Its KHR_materials_iridescence film at the view (surface_film): none
+ // until its builder evaluates one.
+ film:SurfaceFilm,
  anisotropy:vec4<f32>,
  emission:vec3<f32>,
  environment_scale:f32,
@@ -127,12 +137,71 @@ fn probe_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32)->Environment
  let strength=frame.reflection_intensity;
  return collection_environment(world,direction,rough,1.,environment_map,environment_sampler,rotation,strength);
 }
+// A surface's KHR_materials_iridescence film at its view, which its
+// builder evaluates once (surface_film): the film's Fresnel at the view's
+// N.V (iridescence_fresnel) over the dielectric F0 (its specular strength
+// included, as Filament ef1a133's iridescentF0 takes pixel.f0) and over the
+// base, evaluated apart, as the Khronos glTF Sample Renderer (0686eb2
+// source/Renderer/shaders/pbr.frag 158–159) and three.js r185 (2431a09
+// PhysicalLightingModel.js 505–526) evaluate them, each refit to the F0
+// whose Schlick curve toward its own F90, the specular strength and 1,
+// passes through it there (iridescence_refit); and the share of diffuse
+// light the film over the dielectric leaves, KHR's rgb_mix: 1 less its
+// Fresnel's strongest channel (pbr.frag 385). Its strength is 0 where there
+// is none, the zero a Surface starts with.
+struct SurfaceFilm {
+ strength:f32,
+ dielectric:vec3<f32>,
+ metal:vec3<f32>,
+ diffuse:f32,
+}
+// The film of strength `strength`, IOR `ior` and `thickness` nanometres
+// over `surface`, whose normal, view, base, metallic, dielectric F0 and
+// specular strength are set. A film of no thickness is none, as the
+// Sample Renderer takes it (pbr.frag 161–163). Each film is evaluated only
+// where metallic leaves its F0 a share: a full metal reflects nothing of
+// the dielectric's, nor diffuses, and a dielectric nothing of the metal's.
+fn surface_film(surface:Surface,strength:f32,ior:f32,thickness:f32)->SurfaceFilm {
+ if !films_enabled || strength<=0. || thickness<=0. {
+  return SurfaceFilm();
+ }
+ var film=SurfaceFilm(strength,surface.dielectric_f0,surface.base.rgb,1.);
+ let nv=specular_nv(surface.normal,surface.view);
+ if surface.metallic<1. {
+  let dielectric=iridescence_fresnel(1.,ior,surface.dielectric_f0,thickness,nv);
+  film.dielectric=iridescence_refit(dielectric,nv,surface.specular);
+  film.diffuse=1.-max(dielectric.r,max(dielectric.g,dielectric.b));
+ }
+ if surface.metallic>0. {
+  let metal=iridescence_fresnel(1.,ior,surface.base.rgb,thickness,nv);
+  film.metal=iridescence_refit(metal,nv,1.);
+ }
+ return film;
+}
+// A surface's reflectance at normal incidence, its dielectric's and its
+// metal's, which metallic mixes (surface_f0), each mixed toward its film's
+// by the film's strength (Surface.film), as Filament's iridescentF0 mixes
+// it; and the film's strength and the diffuse share it leaves.
+struct SurfaceF0 {
+ dielectric:vec3<f32>,
+ metal:vec3<f32>,
+ film:f32,
+ film_diffuse:f32,
+}
+fn surface_f0s(surface:Surface)->SurfaceF0 {
+ let film=surface.film;
+ if film.strength<=0. {
+  return SurfaceF0(surface.dielectric_f0,surface.base.rgb,0.,1.);
+ }
+ return SurfaceF0(mix(surface.dielectric_f0,film.dielectric,film.strength),mix(surface.base.rgb,film.metal,film.strength),film.strength,film.diffuse);
+}
 // A surface's specular reflectance at normal incidence: its dielectric F0
 // mixed toward its base by metallic, as three.js 0.185.1's
-// specularColorBlended and KHR_materials_specular's F0. The G-buffer records
-// it (view/geometry.wgsl).
+// specularColorBlended and KHR_materials_specular's F0, each under its
+// film (surface_f0s). The G-buffer records it (view/geometry.wgsl).
 fn surface_f0(surface:Surface)->vec3<f32> {
- return mix(surface.dielectric_f0,surface.base.rgb,surface.metallic);
+ let f=surface_f0s(surface);
+ return mix(f.dielectric,f.metal,surface.metallic);
 }
 // A surface's specular reflectance at grazing incidence (F90): its specular
 // strength mixed toward 1 by metallic, as KHR_materials_specular defines it
@@ -145,13 +214,15 @@ fn surface_f90(surface:Surface)->f32 {
 }
 // What shade_lit derives once per surface for its direct lights, as
 // Filament's PixelParams: the diffuse colour, the specular reflectance at
-// normal and grazing incidence (surface_f0, surface_f90), the DFG
+// normal incidence, its dielectric's and metal's (surface_f0s) and mixed
+// (surface_f0), and at grazing incidence (surface_f90), the DFG
 // lookup at the view, the gain that restores the base lobe's multiply
 // scattered energy (pbr_multiscatter_gain, from that lookup), and the coat's
 // Fresnel toward the view, weighted by the coat (pbr_coat_fresnel), which
 // also attenuates shade_lit's ambient, environment, baked and emitted light.
 struct SurfaceReflectance {
  diffuse:vec3<f32>,
+ f0s:SurfaceF0,
  f0:vec3<f32>,
  f90:f32,
  view_dfg:vec2<f32>,
@@ -161,10 +232,19 @@ struct SurfaceReflectance {
 // `view_dfg` is the caller's surface_dfg lookup at the surface's N.V, which
 // its environment terms also use.
 fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
- let f0=surface_f0(surface);
+ let f0s=surface_f0s(surface);
+ let f0=mix(f0s.dielectric,f0s.metal,surface.metallic);
  let diffuse=surface.base.rgb*(1.-surface.metallic);
- let coat_fresnel=pbr_coat_fresnel(surface.geometry_normal,surface.view,surface.coat);
- return SurfaceReflectance(diffuse,f0,surface_f90(surface),view_dfg,pbr_multiscatter_gain(f0,view_dfg),coat_fresnel);
+ let coat_fresnel=pbr_coat_fresnel(surface.coat_normal,surface.view,surface.coat);
+ return SurfaceReflectance(diffuse,f0s,f0,surface_f90(surface),view_dfg,pbr_multiscatter_gain(f0,view_dfg),coat_fresnel);
+}
+// The weights every source of indirect irradiance takes and the
+// environment's multiple scattering (pbr_ibl_weights), at the surface's
+// dielectric and metal F0 under its film (surface_f0s), as three.js r185
+// (2431a09 PhysicalLightingModel.js 769–784) takes the film's: its diffuse
+// keeps what the dielectric does not scatter, channel by channel.
+fn surface_ibl_weights(surface:Surface,reflectance:SurfaceReflectance)->PbrIblWeights {
+ return pbr_ibl_weights(surface.base.rgb,surface.metallic,reflectance.f0s.dielectric,reflectance.f0s.metal,reflectance.f90,reflectance.view_dfg);
 }
 // The light one sample brings to a surface, as Filament's
 // surfaceShading(PixelParams, Light); a rectangle's integrated over its face
@@ -180,11 +260,14 @@ fn surface_direct_light(surface:Surface,reflectance:SurfaceReflectance,light:Lig
 // the specular layer by the layer's Fresnel at V.H (Appendix B,
 // fresnel_mix), as the Khronos glTF Sample Renderer shades each light
 // (0686eb2 source/Renderer/shaders/pbr.frag 314, 381), at the dielectric's
-// F0 and its F90, the specular strength (KHR_materials_specular). Filament,
-// Bevy and three.js leave diffuse light whole (D-32).
-fn surface_diffuse_coupling(surface:Surface,direction:vec3<f32>)->vec3<f32> {
+// F0 and its F90, the specular strength (KHR_materials_specular); under a
+// film, toward the film's share (SurfaceF0.film_diffuse) by its strength,
+// as the Sample Renderer mixes rgb_mix in (pbr.frag 385). Filament, Bevy
+// and three.js leave diffuse light whole (D-32).
+fn surface_diffuse_coupling(surface:Surface,reflectance:SurfaceReflectance,direction:vec3<f32>)->vec3<f32> {
  let h=normalize(surface.view+direction);
- return vec3(1.)-pbr_fresnel_schlick(clamp(dot(surface.view,h),0.,1.),surface.dielectric_f0,surface.specular);
+ let layer=vec3(1.)-pbr_fresnel_schlick(clamp(dot(surface.view,h),0.,1.),surface.dielectric_f0,surface.specular);
+ return mix(layer,vec3(reflectance.f0s.film_diffuse),reflectance.f0s.film);
 }
 // surface_direct_light's BRDF times the cosine, for a light toward
 // `light_direction` of size `size` (LightSample.size): the Lambertian
@@ -199,7 +282,7 @@ fn surface_diffuse_coupling(surface:Surface,direction:vec3<f32>)->vec3<f32> {
 // neither.
 fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_direction:vec3<f32>,size:f32,specular:f32)->vec3<f32> {
  let cosine=clamp(dot(surface.normal,light_direction),0.,1.);
- var base=reflectance.diffuse/3.14159265359*surface_diffuse_coupling(surface,light_direction)*cosine;
+ var base=reflectance.diffuse/3.14159265359*surface_diffuse_coupling(surface,reflectance,light_direction)*cosine;
  if specular>0. {
   var reflected=reflect(-surface.view,surface.normal);
   if surface.anisotropy.w>0. {
@@ -215,7 +298,7 @@ fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_dire
  }
  var coat=vec3(0.);
  if specular>0. {
-  let coat_normal=surface.geometry_normal;
+  let coat_normal=surface.coat_normal;
   let sized=pbr_sized_light(light_direction,size,reflect(-surface.view,coat_normal),surface.view,surface.coat_roughness);
   let coat_specular=pbr_ggx_specular(coat_normal,surface.view,sized.direction,surface.coat_roughness,vec3(.04),1.);
   let coat_cosine=clamp(dot(coat_normal,sized.direction),0.,1.);
@@ -245,10 +328,10 @@ fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,
  }
  var base=vec3(0.);
  var coat=vec3(0.);
- let diffuse=reflectance.diffuse*surface_diffuse_coupling(surface,center_direction);
+ let diffuse=reflectance.diffuse*surface_diffuse_coupling(surface,reflectance,center_direction);
  for (var lobe=0;lobe<lobes;lobe++) {
   let coat_lobe=lobe==2;
-  let n=select(surface.normal,surface.geometry_normal,coat_lobe);
+  let n=select(surface.normal,surface.coat_normal,coat_lobe);
   var inverse=mat3x3(vec3(1.,0.,0.),vec3(0.,1.,0.),vec3(0.,0.,1.));
   var weight=diffuse;
   if lobe>0 {
@@ -341,7 +424,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let base=s.base;
  let metallic=s.metallic;
  let n=s.normal;
- let coat_n=s.geometry_normal;
+ let coat_n=s.coat_normal;
  let rough=s.roughness;
  let coat=s.coat;
  let coat_rough=s.coat_roughness;
@@ -361,7 +444,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // convolution, the hemisphere fill over PI, the volumes and the baked
  // charts and cubes all hold irradiance / PI, already a lighting integral,
  // so neither a second PI nor a brightness fudge belongs here.
- let ibl=pbr_ibl_weights(base.rgb,metallic,s.dielectric_f0,reflectance.f90,dfg);
+ let ibl=surface_ibl_weights(s,reflectance);
  // A probe hit takes diffuse light alone: no multiscattered specular.
  let multi=select(ibl.multi,vec3(0.),probe_hit);
  let response=ibl.diffuse+multi;
