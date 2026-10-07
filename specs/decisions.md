@@ -342,15 +342,22 @@ Use the [current specs](README.md) for implementation and the
   - The DFG table is Bevy's 64 × 64 one. three.js's 16 × 16 holds no
     roughness above 0.969 or N·V below 0.031, so a white metal under direct
     light reflected only 0.89 of a white furnace at roughness 1; Bevy's
-    keeps it within 0.5% up to roughness 0.95 and within 3% at 1.
-  - Sized highlights take Karis's normalisation (α/α′)², with α′ = α + r/2d,
-    without Bevy's two hand-tuned additions (`specular_fix_remap` and its
-    solid-angle factor), which lost up to 40% of a highlight's energy at a
-    radius of a fifth of the distance, where Karis's alone stays within
-    ±16%. The directional light's disc is a sphere at unit distance whose
-    radius is the disc's: Bevy shades no sun disc, and Filament's, without
-    the normalisation, gave the sun on the smoothest water about five times
-    its energy.
+    keeps it within 0.5% up to roughness 0.95 (N·V from 0.05) and within 3%
+    at 1.
+  - Sized highlights take Karis's representative point and normalisation
+    (α/α′)², with the light's cone widening α taken into half-vector space
+    by its Jacobian 1 / (4 l·h) (Walter et al. 2007): α′ = α + r / (2d √(l·h)),
+    where Karis's α + r/2d holds at normal incidence only. Against f64
+    integrals of GGX over the sphere, from roughness 0.045 to 0.5, sizes
+    from the sun's to a fifth of the distance and light elevations from 0.2
+    to 1.45 rad, the energy a smooth metal reflects is 0.80–1.02 of the
+    sphere's with the Jacobian, 0.84–7.3 with Karis's widening (about
+    1 / cos of the elevation: 3.7 at 1.3 rad) and 0.51–6.0 with Bevy's full
+    function, whose `specular_fix_remap` and solid-angle factor are not
+    taken. The directional light's disc is a sphere at unit distance whose
+    radius is the disc's: Bevy shades no sun disc, and Filament's and
+    Frostbite's, without the normalisation, reflected 4–16 times the sun's
+    energy on the smoothest surface.
 
   Rationale: the three.js-derived direct-light multiple scattering lost
   energy (a rough white metal reflected 0.90, 0.84 and 0.72 of a white

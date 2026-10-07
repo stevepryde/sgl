@@ -56,10 +56,11 @@ fn pbr_fresnel_schlick(c:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {
  let x2=x*x;
  return f0+(vec3(f90)-f0)*(x2*x2*x);
 }
-// A coat's Fresnel toward the view, weighted by the coat, as Three.js 0.185.1
-// PhysicalLightingModel.finish evaluates it: at
-// clearcoatNormalView.dot(positionViewDirection).clamp() (to [0, 1]) with
-// F0 0.04 and F90 1. Callers dim the light beneath the coat by it.
+// A coat's Fresnel toward the view, weighted by the coat: Schlick's
+// (pbr_fresnel_schlick) at the coat normal's cosine to the view, with F0
+// 0.04 and F90 1, the cosine at which Three.js 0.185.1's
+// PhysicalLightingModel.finish takes it. Callers dim the light beneath the
+// coat by it.
 fn pbr_coat_fresnel(coat_normal:vec3<f32>,view:vec3<f32>,coat:f32)->f32 {
  let coat_view_cosine=clamp(dot(coat_normal,view),0.,1.);
  return coat*pbr_fresnel_schlick(coat_view_cosine,vec3(.04),1.).x;
@@ -123,26 +124,36 @@ fn pbr_multiscatter_gain(f0:vec3<f32>,dfg:vec2<f32>)->vec3<f32> {
  return vec3(1.)/(vec3(1.)-missing*average);
 }
 // A sized light as a specular lobe of perceptual roughness `rough` sees it,
-// toward unit `direction` from a sphere of radius `size` at unit distance
-// (a point or spot light's radius over its distance, a directional light's
-// disc radius): Karis's representative point (2013, "Real Shading in Unreal
-// Engine 4", 14-16), the point of the sphere nearest the lobe's `reflected`
-// ray, and his normalisation (alpha / alpha')², alpha' = alpha + size / 2,
-// which keeps the widened highlight's energy, as Bevy's
-// compute_specular_layer_values_for_point_light and point_light shade a
-// point light's radius (361-401, 663-668). Changed: the lobe keeps its own
-// roughness, without Bevy's specular_fix_remap toward alpha' (628-631) or
-// its solid-angle factor (678-682), hand-tuned additions that lost up to 40%
-// of a highlight's energy at a radius of a fifth of its distance where
-// Karis's alone stays within 16%; the directional light's disc is a sphere
-// at unit distance, which Bevy does not shade and Filament (sampleSunAreaLight,
-// surface_light_directional.fs 9-21) widens without the normalisation (D-32).
-// A size of 0 is the light's own direction, whole.
+// seen along `view`, toward unit `direction` from a sphere of radius `size`
+// at unit distance (a point or spot light's radius over its distance, a
+// directional light's disc radius): Karis's representative point (2013,
+// "Real Shading in Unreal Engine 4", 14-16, eq. 11), the point of the
+// sphere nearest the lobe's `reflected` ray, as Bevy's
+// compute_specular_layer_values_for_point_light finds it (361-401), and his
+// normalisation (alpha / alpha')² (eq. 14) of the distribution widened by
+// the light's cone (eq. 10: alpha' = alpha plus the light's angle in
+// half-vector space). Changed (D-32): that angle is the light's cone taken
+// into half-vector space by its Jacobian, dw_h = dw_l / (4 l.h) (Walter et
+// al. 2007, eq. 14), a cone of radius size / (2 sqrt(l.h)), where Karis's
+// eq. 10 takes its normal-incidence value size / 2. His widening reflected
+// 1/cos of a highlight's energy at a light cos from the normal (3.7 times it
+// at 1.3 rad, as Lagarde and de Rousiers 2014, 4.7.5, note it "doesn't
+// behave well at grazing angles"); with the Jacobian, against f64 integrals
+// of GGX over the sphere from roughness 0.045 to 0.5, sizes from the sun's
+// to a fifth of the distance and light elevations from 0.2 to 1.45 rad, it
+// reflects 0.80-1.02 of the sphere's energy and 0.61-0.98 of its radiance
+// along the mirror of a smooth surface. Bevy's specular_fix_remap
+// (628-631) and solid-angle factor (678-682) are not taken: they reflected
+// 0.51-5.97 over that range. The directional light's disc is a sphere at
+// unit distance; Bevy shades no disc, and Filament's sampleSunAreaLight
+// (surface_light_directional.fs 9-21) and Frostbite's sun take no
+// normalisation, which reflected 4-16 times the sun's energy on the
+// smoothest surface. A size of 0 is the light's own direction, whole.
 struct PbrSizedLight {
  direction:vec3<f32>,
  intensity:f32,
 }
-fn pbr_sized_light(direction:vec3<f32>,size:f32,reflected:vec3<f32>,rough:f32)->PbrSizedLight {
+fn pbr_sized_light(direction:vec3<f32>,size:f32,reflected:vec3<f32>,view:vec3<f32>,rough:f32)->PbrSizedLight {
  if size<=0. {
   return PbrSizedLight(direction,1.);
  }
@@ -151,10 +162,13 @@ fn pbr_sized_light(direction:vec3<f32>,size:f32,reflected:vec3<f32>,rough:f32)->
  let LtFdotR=max(.0001,dot(direction,reflected));
  let centerToRay=LtFdotR*reflected-direction;
  let closestPoint=direction+centerToRay*saturate(size*inverseSqrt(max(dot(centerToRay,centerToRay),1e-12)));
+ let l=normalize(closestPoint);
+ // The light's cone in half-vector space at the representative point.
+ let lh=max(dot(l,normalize(view+l)),.0001);
  let a=rough*rough;
- let a_prime=saturate(a+size/2.);
+ let a_prime=saturate(a+size/(2.*sqrt(lh)));
  let normalizationFactor=a/a_prime;
- return PbrSizedLight(normalize(closestPoint),normalizationFactor*normalizationFactor);
+ return PbrSizedLight(l,normalizationFactor*normalizationFactor);
 }
 struct PbrIblWeights {
  single:vec3<f32>,

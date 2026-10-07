@@ -627,7 +627,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   draw per pixel per frame from the hash world-space reflections took in
   place of Wicked's blue noise, a departure recorded there whose look the
   owner judges here too (RD-5); a radius of 0 is a hard shadow. Both fields
-  are content a light carries and only rays read. A ray toward a point or
+  are content a light carries, which rays read and which also size its
+  specular highlights ([Surface shading](#shared-contracts)). A ray toward a point or
   spot light or a rectangle ends its `TMin` short of the point it draws
   (`light_visibility_ray`, which the dynamic GI visibility ray shares with
   its own 0.001), where Wicked's ends at it (146, 178, 205): a point on a

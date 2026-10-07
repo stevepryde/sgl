@@ -408,8 +408,9 @@ what differs and take the rest with `..Default::default()`.
 
 A point or spot light's `radius` (metres) is the size of the sphere it
 shines from. Its specular highlights spread over the sphere's reflection
-(Karis's representative point, its energy kept), so a large bulb shows a
-broad highlight on a smooth surface; ray-traced shadows' rays and the
+(Karis's representative point, normalised so a smooth surface reflects
+within about 20% of the sphere's light at any angle to it), so a large bulb
+shows a broad highlight on a smooth surface; ray-traced shadows' rays and the
 dynamic GI volume's visibility rays end on it, so a larger light casts a
 softer shadow. Diffuse light and the shadow maps treat the light as a
 point. A directional light's `angular_diameter` (radians, the sun's

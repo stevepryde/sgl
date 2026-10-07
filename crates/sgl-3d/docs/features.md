@@ -166,8 +166,9 @@ SGL3D needs compute.
   Engine's 2.5 cm light radius and the sun's angular diameter, so a game
   sets only what differs (`..Default::default()`). A point or spot light's
   `radius` and the directional light's `angular_diameter` size their
-  highlights (Karis's representative point, energy kept): a large bulb or
-  the sun on water shows a broad highlight.
+  highlights (Karis's representative point, within about 20% of the light's
+  energy at any angle): a large bulb or the sun on water shows a broad
+  highlight.
   `LightShape::Rect` is a one-sided panel or strip whose face is integrated
   by linearly transformed cosines: soft light and stretched highlights
   nearby, a spot of the same intensity far away. It costs more per pixel

@@ -190,10 +190,10 @@ fn coupled_diffuse(view: DVec3) -> f64 {
 // it at N.V or N.L in place of V.H. The oracles are energy conservation: a
 // white metal with multiple scattering reflects all a white furnace gives it
 // (Heitz et al. 2016), and glTF's dielectric BRDF integrated in f64. The
-// metal's bound is the DFG table's accuracy: within 0.1% up to roughness
-// 0.95 (Bevy's 64 × 64 table against f64 integrals), 3% at roughness 1,
-// whose last texel holds roughness 0.992. The dielectric's is f32
-// accumulation.
+// metal's bound is the DFG table's accuracy: within 0.5% up to roughness
+// 0.95 at N.V from 0.05 (Bevy's 64 × 64 table against f64 integrals), 3% at
+// roughness 1, whose last texel holds roughness 0.992. The dielectric's is
+// f32 accumulation.
 #[test]
 fn a_white_furnace_conserves_energy_under_direct_light() {
     let views = [0.1, 0.3, 0.5, 0.7, 0.9, 1.];
@@ -621,17 +621,21 @@ fn reflected(view:vec3<f32>)->f32 {{
 
 // Plausible defects: a light's radius or the directional light's disc leaves
 // its highlight a point (a mirror-like surface then shows a sphere 8 to
-// 3600 times too bright at its centre), or widens it without Karis's
-// normalisation (7 to 4700 times the energy). The oracles are the sphere's
-// or disc's own light: along the mirror direction of its centre, the f64
-// integral of GGX over the directions it fills at its radiance (a sphere
-// of intensity I and radius r has radiance I / (π r²), a disc of
-// illuminance E and angular radius θ, E / (π sin² θ)), and in all, its
-// irradiance at the surface (I cos θ / d², exact for a sphere above the
-// horizon, and E cos θ), which a white metal reflects whole. Karis's
-// representative point is an approximation: against those integrals it
-// measured 0.70–1.41 along the mirror direction and 0.96–1.16 in energy
-// over these cases, so the bounds are a factor of 1.6 and ±25%.
+// 3600 times too bright at its centre), widens it without Karis's
+// normalisation (7 to 4700 times the energy), or widens it by its
+// normal-incidence angle alone, which reflects about 1/cos of the energy of
+// a light at an elevation from the normal (1.2 times it at 0.6 rad, 1.8 at
+// 1.0, 3.7 at 1.3). The oracles are the sphere's or disc's own light: along
+// the mirror direction of its centre, the f64 integral of GGX over the
+// directions it fills at its radiance (a sphere of intensity I and radius r
+// has radiance I / (π r²), a disc of illuminance E and angular radius θ,
+// E / (π sin² θ)), and in all, its irradiance at the surface (I cos θ / d²,
+// exact for a sphere above the horizon, and E cos θ), which a white metal
+// reflects whole. The representative point is an approximation: against
+// those integrals the shipped widening measured 0.61–0.98 along the mirror
+// direction and 0.87–0.98 in energy over these cases at elevations 0.6, 1.0
+// and 1.3 rad (f64), so the bounds are 0.55–1.1 and 0.8–1.1, which also
+// hold the multiple-scattering gain and f32.
 #[test]
 fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
     let Some((device, queue)) = test_support::device() else {
@@ -639,102 +643,105 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
     };
     let settings = quiet_settings();
     let mut renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
-    let elevation = 0.6f64;
-    let centre = DVec3::new(elevation.sin(), 0., elevation.cos());
-    let mirror = DVec3::new(-centre.x, 0., centre.z);
-    // (perceptual roughness, radius over distance)
-    for (rough, size) in [(0.045, 0.05), (0.1, 0.05), (0.1, 0.2), (0.25, 0.2)] {
-        let distance = 2.;
-        let radius = size * distance;
-        let mut scene = Scene::new(&device, &queue);
-        scene
-            .add_light(
-                &device,
-                &queue,
-                Light {
-                    position: (centre * distance).as_vec3(),
-                    shape: LightShape::Point {
-                        radius: radius as f32,
+    let within = |ratio: f64, low: f64, high: f64| (low..=high).contains(&ratio);
+    for elevation in [0.6f64, 1.0, 1.3] {
+        let centre = DVec3::new(elevation.sin(), 0., elevation.cos());
+        let mirror = DVec3::new(-centre.x, 0., centre.z);
+        // (perceptual roughness, radius over distance)
+        for (rough, size) in [(0.045, 0.05), (0.1, 0.05), (0.1, 0.2), (0.25, 0.2)] {
+            let distance = 2.;
+            let radius = size * distance;
+            let mut scene = Scene::new(&device, &queue);
+            scene
+                .add_light(
+                    &device,
+                    &queue,
+                    Light {
+                        position: (centre * distance).as_vec3(),
+                        shape: LightShape::Point {
+                            radius: radius as f32,
+                        },
+                        color: [1.; 3],
+                        intensity: 1.,
+                        range: 1000.,
+                        baked: false,
+                        specular: 1.,
+                        casts_shadow: false,
+                        ..Default::default()
                     },
-                    color: [1.; 3],
-                    intensity: 1.,
-                    range: 1000.,
-                    baked: false,
-                    specular: 1.,
-                    casts_shadow: false,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        let (peak, energy) = highlight(
-            (&device, &queue),
-            &mut renderer,
-            &mut scene,
-            &dark_input(),
-            rough,
-            mirror,
-            "scene_light_sample(0u,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAPTURE)",
-        );
-        let angular = (radius / distance).asin();
-        let expected = disc_reference(mirror, rough, centre, angular, 1. / (PI * radius * radius));
-        let irradiance = centre.z / (distance * distance);
-        eprintln!(
-            "sphere at roughness {rough}, radius/distance {size}: mirror {:.3} of the sphere's, energy {:.3}",
-            peak / expected,
-            energy / irradiance
-        );
-        // Where the sphere is wider than the lobe, a mirror-like surface
-        // shows it; on a rougher one the lobe blurs it and the energy alone
-        // is the oracle.
-        assert!(
-            rough > 0.1 || (peak / expected <= 1.6 && expected / peak <= 1.6),
-            "sphere at roughness {rough}, radius/distance {size}: {peak} along the mirror, the sphere gives {expected}"
-        );
-        assert!(
-            (energy / irradiance - 1.).abs() <= 0.25,
-            "sphere at roughness {rough}, radius/distance {size}: reflects {energy} of irradiance {irradiance}"
-        );
-    }
-    // The directional light's disc, at an angular radius of 0.05.
-    let mut scene = Scene::new(&device, &queue);
-    for rough in [0.045, 0.1] {
-        let mut input = dark_input();
-        input.directional_lights[0] = Some(DirectionalLight {
-            direction: -centre.as_vec3(),
-            illuminance: 1.,
-            angular_diameter: 0.1,
-            ..Default::default()
-        });
-        let (peak, energy) = highlight(
-            (&device, &queue),
-            &mut renderer,
-            &mut scene,
-            &input,
-            rough,
-            mirror,
-            "directional_light_sample(0u,s.position,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection()))",
-        );
-        let angular = 0.05f64;
-        let expected = disc_reference(
-            mirror,
-            rough,
-            centre,
-            angular,
-            1. / (PI * angular.sin().powi(2)),
-        );
-        eprintln!(
-            "disc at roughness {rough}: mirror {:.3} of the disc's, energy {:.3}",
-            peak / expected,
-            energy / centre.z
-        );
-        assert!(
-            peak / expected <= 1.6 && expected / peak <= 1.6,
-            "disc at roughness {rough}: {peak} along the mirror, the disc gives {expected}"
-        );
-        assert!(
-            (energy / centre.z - 1.).abs() <= 0.25,
-            "disc at roughness {rough}: reflects {energy} of irradiance {}",
-            centre.z
-        );
+                )
+                .unwrap();
+            let (peak, energy) = highlight(
+                (&device, &queue),
+                &mut renderer,
+                &mut scene,
+                &dark_input(),
+                rough,
+                mirror,
+                "scene_light_sample(0u,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAPTURE)",
+            );
+            let angular = (radius / distance).asin();
+            let expected =
+                disc_reference(mirror, rough, centre, angular, 1. / (PI * radius * radius));
+            let irradiance = centre.z / (distance * distance);
+            eprintln!(
+                "sphere at elevation {elevation}, roughness {rough}, radius/distance {size}: mirror {:.3} of the sphere's, energy {:.3}",
+                peak / expected,
+                energy / irradiance
+            );
+            // Where the sphere is wider than the lobe, a mirror-like surface
+            // shows it; on a rougher one the lobe blurs it and the energy
+            // alone is the oracle.
+            assert!(
+                rough > 0.1 || within(peak / expected, 0.55, 1.1),
+                "sphere at elevation {elevation}, roughness {rough}, radius/distance {size}: {peak} along the mirror, the sphere gives {expected}"
+            );
+            assert!(
+                within(energy / irradiance, 0.8, 1.1),
+                "sphere at elevation {elevation}, roughness {rough}, radius/distance {size}: reflects {energy} of irradiance {irradiance}"
+            );
+        }
+        // The directional light's disc, at an angular radius of 0.05.
+        let mut scene = Scene::new(&device, &queue);
+        for rough in [0.045, 0.1] {
+            let mut input = dark_input();
+            input.directional_lights[0] = Some(DirectionalLight {
+                direction: -centre.as_vec3(),
+                illuminance: 1.,
+                angular_diameter: 0.1,
+                ..Default::default()
+            });
+            let (peak, energy) = highlight(
+                (&device, &queue),
+                &mut renderer,
+                &mut scene,
+                &input,
+                rough,
+                mirror,
+                "directional_light_sample(0u,s.position,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection()))",
+            );
+            let angular = 0.05f64;
+            let expected = disc_reference(
+                mirror,
+                rough,
+                centre,
+                angular,
+                1. / (PI * angular.sin().powi(2)),
+            );
+            eprintln!(
+                "disc at elevation {elevation}, roughness {rough}: mirror {:.3} of the disc's, energy {:.3}",
+                peak / expected,
+                energy / centre.z
+            );
+            assert!(
+                within(peak / expected, 0.55, 1.1),
+                "disc at elevation {elevation}, roughness {rough}: {peak} along the mirror, the disc gives {expected}"
+            );
+            assert!(
+                within(energy / centre.z, 0.8, 1.1),
+                "disc at elevation {elevation}, roughness {rough}: reflects {energy} of irradiance {}",
+                centre.z
+            );
+        }
     }
 }

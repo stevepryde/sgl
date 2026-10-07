@@ -201,7 +201,7 @@ fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_dire
   if surface.anisotropy.w>0. {
    reflected=pbr_anisotropy_reflection(surface.normal,surface.view,surface.anisotropy,surface.roughness);
   }
-  let sized=pbr_sized_light(light_direction,size,reflected,surface.roughness);
+  let sized=pbr_sized_light(light_direction,size,reflected,surface.view,surface.roughness);
   let lobe=pbr_anisotropic_specular(surface.normal,surface.view,sized.direction,surface.roughness,reflectance.f0,reflectance.f90,surface.anisotropy);
   let lobe_cosine=clamp(dot(surface.normal,sized.direction),0.,1.);
   base+=lobe*reflectance.multiscatter*sized.intensity*lobe_cosine*specular;
@@ -212,7 +212,7 @@ fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_dire
  var coat=vec3(0.);
  if specular>0. {
   let coat_normal=surface.geometry_normal;
-  let sized=pbr_sized_light(light_direction,size,reflect(-surface.view,coat_normal),surface.coat_roughness);
+  let sized=pbr_sized_light(light_direction,size,reflect(-surface.view,coat_normal),surface.view,surface.coat_roughness);
   let coat_specular=pbr_ggx_specular(coat_normal,surface.view,sized.direction,surface.coat_roughness,vec3(.04),1.);
   let coat_cosine=clamp(dot(coat_normal,sized.direction),0.,1.);
   coat=surface.coat*coat_specular*sized.intensity*coat_cosine*specular;

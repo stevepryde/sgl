@@ -42,23 +42,29 @@ docs and specs the entry links.
   0..=1 (`SceneError::InvalidOcclusion`). Migration: exhaustive matches on
   `SceneError` add both variants.
 - `sgl-3d` direct light: rough metals keep their multiply scattered energy
-  under directional, point, spot and rectangle lights (they reflected less
-  than under an even sky, and coloured metals shifted hue);
-  environment specular reads a finer DFG table and ray hits shade down to
-  the raster's least roughness. No game-code change; lower any light
-  intensity raised to make up for dark metals.
+  under every light type (they were darker than under an even sky, and
+  coloured metals shifted hue). Migration: none; lower any light intensity
+  raised to make up for dark metals.
+- `sgl-3d` environment specular reads a finer DFG table, so rough
+  reflections change slightly. No game-code change.
+- `sgl-3d` ray hits shade down to perceptual roughness 0.045, as raster does
+  (was 0.0525). No game-code change.
+- `sgl-3d` Fresnel is Schlick's fifth power (was Epic's exp2 fit), so
+  highlights change slightly toward grazing. No game-code change.
 - `sgl-3d` direct light on dielectrics: diffuse keeps only what the
-  specular's Fresnel leaves (glTF's dielectric BRDF), slightly darker. No
-  game-code change.
+  specular's Fresnel leaves, slightly darker. No game-code change.
 - `sgl-3d` `LightShape::Point`/`Spot` `radius` and
   `DirectionalLight::angular_diameter` now also size specular highlights
   (they sized only ray ends), so the defaults widen highlights on smooth
-  surfaces. Migration: none; a radius or angular
-  diameter of 0 keeps a point's highlight and hardens ray-traced shadows.
+  surfaces. Migration: none; a radius or angular diameter of 0 keeps a
+  point's highlight and hardens ray-traced shadows.
 - `sgl-3d` lightmaps, irradiance atlases, ambient cubes and the hemisphere
-  fill light a material as the environment's diffuse light does (they
-  took 1 − F0 and 1, and no multiple scattering on metals). No game-code
-  change or re-bake.
+  fill light a material as the environment's diffuse light does (they took
+  1 − F0 and 1, and no multiple scattering on metals). No game-code change
+  or re-bake.
+- `sgl-3d` multiple-scattered specular from the environment, hemisphere
+  fill and volumes is not yet darkened by ambient occlusion or occlusion
+  maps (#249). No game-code change.
 
 ## 0.2.1 — 2026-10-07
 
