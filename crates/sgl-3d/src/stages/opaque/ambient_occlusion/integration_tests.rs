@@ -723,3 +723,155 @@ fn a_packed_occlusion_map_occludes_lightmapped_diffuse() {
         }
     }
 }
+
+/// The visibilities `occluded_metal` renders a material of red 0 at: its
+/// strengths 0, 0.5 and 1 give glTF's lerp(1, 0, strength) of 1, 0.5 and 0.
+const METAL_STRENGTHS: [f32; 3] = [0., 0.5, 1.];
+
+/// A rough white metal (roughness 0.8), whose indirect light is all
+/// specular multiple scattering, packing an occlusion map of red 0, lit by
+/// what `light` gives `input` and `scene` alone under a black sky: its
+/// composite at each of METAL_STRENGTHS, at ambient occlusion `quality`.
+fn occluded_metal(
+    light: impl Fn(&wgpu::Device, &wgpu::Queue, &mut Scene, MaterialId, &mut FrameInput),
+    quality: Quality,
+) -> Option<[Vec<f32>; 3]> {
+    let (device, queue) = test_support::device()?;
+    let (mut scene, material, mut input) = box_on_floor(&device, &queue, Some(0));
+    input.hemisphere_light = HemisphereLight {
+        sky_color: [0.; 3],
+        ground_color: [0.; 3],
+        intensity: 0.,
+    };
+    input.baked_lighting = false;
+    light(&device, &queue, &mut scene, material, &mut input);
+    let settings = Settings {
+        scene_resolution: settings::SceneResolution::Full,
+        antialiasing: settings::Antialiasing::Off,
+        screen_space_reflections: settings::ScreenSpaceReflections::Off,
+        atmosphere: false,
+        bloom: settings::Bloom::Off,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
+    Some(METAL_STRENGTHS.map(|strength| {
+        let mut values = scene.material(material).unwrap();
+        values.base = [1.; 4];
+        values.metallic = 1.;
+        values.roughness = 0.8;
+        values.occlusion_strength = strength;
+        scene.set_material(&queue, material, values).unwrap();
+        render(
+            &device,
+            &queue,
+            &mut scene,
+            &mut renderer,
+            &settings,
+            &input,
+            &output,
+            quality,
+        )
+        .composite
+        .chunks_exact(8)
+        .flat_map(|texel| (0..3).map(|c| half(&texel[c * 2..])))
+        .collect()
+    }))
+}
+
+/// Checks `occluded_metal`'s composites against specular occlusion: at
+/// visibility 0.5 the metal keeps more than 0.7 of its light, where its
+/// diffuse visibility would keep 0.5 and Filament's specular occlusion with
+/// GTAO's multi-bounce on F0 1 keeps about 0.9, and at visibility 0 it is
+/// black, as Lagarde's specular occlusion and its multi-bounce are 0 there.
+fn assert_specular_occlusion(name: &str, [full, half_visible, none]: &[Vec<f32>; 3]) {
+    let lit = full.iter().filter(|&&value| value > 0.01).count();
+    assert!(
+        lit > 300,
+        "{name}: the metal must reflect, {lit} values lit"
+    );
+    for (index, ((&full, &half_visible), &none)) in
+        full.iter().zip(half_visible).zip(none).enumerate()
+    {
+        if full > 0.01 {
+            let kept = half_visible / full;
+            assert!(
+                kept > 0.7 && kept <= 1. + 1. / 256.,
+                "{name}, value {index}: keeps {kept} of {full} at visibility 0.5"
+            );
+        }
+        assert!(
+            none <= full / 512. + 1e-5,
+            "{name}, value {index}: {none} of {full} at visibility 0"
+        );
+    }
+}
+
+// Defects: source completion occludes the camera's specular multiple
+// scattering by the diffuse visibility, or leaves it whole (it holds no
+// ambient diffuse share on a metal), or the lit pass records it nowhere.
+// The oracle is Filament's occlusion of energy-compensated specular by its
+// specular occlusion and multi-bounce (Lagarde and de Rousiers 2014;
+// Jimenez et al. 2016): a rough white metal under the hemisphere fill alone
+// keeps more than 0.7 of its light at visibility 0.5 (0.5 by the diffuse
+// visibility) and none at 0, with and without the frame's ambient
+// occlusion, which takes the lesser of the two.
+#[test]
+fn a_packed_occlusion_map_occludes_multiple_scattered_specular() {
+    let fill = |_: &wgpu::Device,
+                _: &wgpu::Queue,
+                _: &mut Scene,
+                _: MaterialId,
+                input: &mut FrameInput| {
+        input.hemisphere_light = HemisphereLight {
+            sky_color: [1.; 3],
+            ground_color: [1.; 3],
+            intensity: 1.,
+        };
+    };
+    let Some(off) = occluded_metal(fill, Quality::Off) else {
+        return;
+    };
+    assert_specular_occlusion("ambient occlusion off", &off);
+    // With the frame's ambient occlusion the metal is still black where its
+    // material hides all of its ambient light.
+    let medium = occluded_metal(fill, Quality::Medium).unwrap();
+    for (index, (&full, &none)) in medium[0].iter().zip(&medium[2]).enumerate() {
+        assert!(
+            none <= full / 512. + 1e-5,
+            "ambient occlusion Medium, value {index}: {none} of {full} at visibility 0"
+        );
+    }
+}
+
+// Defects: a lightmapped metal's specular multiple scattering takes its
+// material's occlusion linearly, as its diffuse share does, or not at all.
+// The oracle is as for the frame's ambient light (assert_specular_occlusion):
+// a rough white metal lit by a uniform lightmap alone.
+#[test]
+fn a_packed_occlusion_map_occludes_lightmapped_multiple_scattering() {
+    let lightmap = |device: &wgpu::Device,
+                    queue: &wgpu::Queue,
+                    scene: &mut Scene,
+                    material: MaterialId,
+                    input: &mut FrameInput| {
+        scene
+            .set_lightmap(
+                device,
+                queue,
+                &crate::static_lighting::Lightmap {
+                    size: [2, 2],
+                    uv_scale_offset: [1., 1., 0., 0.],
+                    irradiance: vec![[0.3; 3]; 4],
+                    directionality: vec![],
+                },
+                &[material],
+            )
+            .unwrap();
+        input.baked_lighting = true;
+    };
+    let Some(composites) = occluded_metal(lightmap, Quality::Off) else {
+        return;
+    };
+    assert_specular_occlusion("lightmap", &composites);
+}

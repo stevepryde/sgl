@@ -985,7 +985,12 @@ fn a_coat_dims_baked_diffuse_and_emission_by_its_fresnel() {
                     &settings,
                 );
                 let pixel = &bytes[(32 * 64 + 32) * 8..];
-                assert_eq!(test_support::half(&pixel[6..]), 1., "square not drawn");
+                // The clear is black; lit colour's alpha holds the multiple
+                // scattering's share of its ambient light, not coverage.
+                assert!(
+                    (0..3).any(|c| test_support::half(&pixel[c * 2..]) > 0.),
+                    "square not drawn"
+                );
                 let hit = observe(
                     &device,
                     &queue,
