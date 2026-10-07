@@ -59,7 +59,6 @@ const F0: DVec3 = DVec3::new(0.54, 0.49, 0.44);
 // the exact uploaded inputs.
 #[test]
 fn anisotropy_gpu_matches_independent_brdf() {
-    use wgpu::util::DeviceExt;
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
@@ -92,24 +91,17 @@ fn anisotropy_gpu_matches_independent_brdf() {
             }
         }
     }
-    // The surface library reads the lit bindings, so the program declares
-    // them; this entry point uses only its own two, at free group 0 slots.
-    let source = format!(
-        "{}\n{}",
-        crate::shading::compose(&[
-            &crate::shading::BIND_LIT,
-            &crate::shading::SURFACE,
-            &crate::shading::SHADOW_MASK_NONE,
-        ]),
-        r#"
+    let observation = r#"
 struct Case { n:vec4<f32>,v:vec4<f32>,l:vec4<f32>,t:vec4<f32> }
 @group(0) @binding(3) var<storage,read> cases:array<Case>;
 @group(0) @binding(4) var<storage,read_write> result:array<vec4<f32>>;
 const F0=vec3(.54,.49,.44);
-// A metal of the case's F0 and F90 with the case's coat at roughness 0.21,
-// its view's DFG lookup fixed: its direct light is its specular lobes alone.
+// A metal of base F0 with the case's coat at roughness 0.21: its direct
+// light is its specular lobes alone.
 fn case_surface(c:Case)->Surface {
  var surface:Surface;
+ surface.base=vec4(F0,1.);
+ surface.metallic=1.;
  surface.normal=c.n.xyz;
  surface.geometry_normal=c.n.xyz;
  surface.view=c.v.xyz;
@@ -124,9 +116,8 @@ fn case_surface(c:Case)->Surface {
  let c=cases[id.x];
  let axis=vec4(c.t.xyz,c.v.w);
  let surface=case_surface(c);
+ // The view's DFG lookup fixed, and the case's F90.
  var reflectance=surface_reflectance(surface,vec2(.8,.025));
- reflectance.diffuse=vec3(0.);
- reflectance.f0=F0;
  reflectance.f90=c.l.w;
  let light=LightSample(c.l.xyz,vec3(1.),1.,1.,NO_RECT_LIGHT,0.);
  result[id.x*4u]=vec4(pbr_anisotropic_specular(c.n.xyz,c.v.xyz,c.l.xyz,c.n.w,F0,c.l.w,axis),1.);
@@ -134,65 +125,17 @@ fn case_surface(c:Case)->Surface {
  result[id.x*4u+2u]=vec4(surface_direct_light(surface,reflectance,light),reflectance.coat_fresnel);
  result[id.x*4u+3u]=vec4(reflectance.multiscatter,0.);
 }
-"#
+"#;
+    let scene = crate::Scene::new(&device, &queue);
+    let rows = crate::test_support::observe_surface(
+        &device,
+        &queue,
+        &scene,
+        bytemuck::cast_slice(&cases),
+        observation,
+        (cases.len() as u32).div_ceil(64),
+        cases.len() * 4,
     );
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("anisotropy independent observations"),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None,
-        layout: None,
-        module: &shader,
-        entry_point: Some("observe"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: None,
-        contents: bytemuck::cast_slice(&cases),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let size = (cases.len() * 4 * 16) as u64;
-    let output = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: input.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: output.as_entire_binding(),
-            },
-        ],
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups((cases.len() as u32).div_ceil(64), 1, 1);
-    }
-    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, size);
-    queue.submit([encoder.finish()]);
-    readback.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let rows: Vec<[f32; 4]> =
-        bytemuck::cast_slice(&readback.get_mapped_range(..).unwrap()).to_vec();
     let vector = |a: [f32; 4]| DVec3::new(a[0] as f64, a[1] as f64, a[2] as f64);
     let mut worst = [0f64; 3];
     for (i, c) in cases.iter().enumerate() {

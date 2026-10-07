@@ -125,7 +125,6 @@ fn tilted(normal: DVec3, toward: DVec3, angle: f64) -> DVec3 {
 /// The light each receiver takes, through the production scene-light
 /// sample and direct light, with no shadow.
 fn observe(lights: &[Light], receivers: &[Receiver]) -> Option<Vec<f64>> {
-    use crate::shading::bind::group0;
     let (device, queue) = crate::test_support::device()?;
     let mut scene = Scene::new(&device, &queue);
     for light in lights {
@@ -142,14 +141,7 @@ fn observe(lights: &[Light], receivers: &[Receiver]) -> Option<Vec<f64>> {
             ]
         })
         .collect();
-    let source = format!(
-        "{}\n{}",
-        crate::shading::compose(&[
-            &crate::shading::BIND_LIT,
-            &crate::shading::SURFACE,
-            &crate::shading::SHADOW_MASK_NONE,
-        ]),
-        r#"
+    let observation = r#"
 struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
 @group(0) @binding(3) var<storage,read> cases:array<Case>;
 @group(0) @binding(4) var<storage,read_write> result:array<vec4<f32>>;
@@ -172,132 +164,16 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
  let light=scene_light_sample(index,c.p.xyz,c.n.xyz,c.n.xyz,vec2(0.),SHADOW_RECEIVER_CAMERA);
  result[id.x]=vec4(surface_direct_light(surface,reflectance,light),0.);
 }
-"#
-    );
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("rect light observations"),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None,
-        layout: None,
-        module: &shader,
-        entry_point: Some("observe"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let input = crate::scene::buffer(
+"#;
+    let rows = crate::test_support::observe_surface(
         &device,
-        "rect light cases",
+        &queue,
+        &scene,
         bytemuck::cast_slice(&cases),
-        wgpu::BufferUsages::STORAGE,
+        observation,
+        cases.len().div_ceil(64) as u32,
+        cases.len(),
     );
-    // No light has a shadow; the frame's values are zero.
-    let shadows = crate::scene::buffer(
-        &device,
-        "no local shadows",
-        bytemuck::bytes_of(&crate::shading::lights::LocalShadowRecord::NONE),
-        wgpu::BufferUsages::STORAGE,
-    );
-    let frame = crate::scene::buffer(
-        &device,
-        "zero frame",
-        bytemuck::bytes_of(
-            &<crate::shading::uniforms::FrameUniform as bytemuck::Zeroable>::zeroed(),
-        ),
-        wgpu::BufferUsages::UNIFORM,
-    );
-    let atlas = device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-    let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        compare: Some(wgpu::CompareFunction::GreaterEqual),
-        ..Default::default()
-    });
-    let size = (cases.len() * 16) as u64;
-    let output = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: input.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: output.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::LIGHTS,
-                resource: scene.lights.buffer().as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::LOOKUP_TABLES,
-                resource: wgpu::BindingResource::TextureView(&scene.lookup_tables),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::ENVIRONMENT_SAMPLER,
-                resource: wgpu::BindingResource::Sampler(&scene.environments.sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::FRAME,
-                resource: frame.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::LOCAL_SHADOWS,
-                resource: shadows.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::LOCAL_SHADOW_ATLAS,
-                resource: wgpu::BindingResource::TextureView(&atlas),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::SHADOW_SAMPLER,
-                resource: wgpu::BindingResource::Sampler(&shadow_sampler),
-            },
-        ],
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(cases.len().div_ceil(64) as u32, 1, 1);
-    }
-    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, size);
-    queue.submit([encoder.finish()]);
-    readback.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let rows: Vec<[f32; 4]> =
-        bytemuck::cast_slice(&readback.get_mapped_range(..).unwrap()).to_vec();
     Some(rows.iter().map(|row| row[0] as f64).collect())
 }
 
