@@ -1050,6 +1050,61 @@ fn the_scene_holds_a_film_while_a_material_has_one() {
     assert!(!scene.materials.holds_films(), "removed");
 }
 
+// Plausible defects: a sheen or a share of diffuse light passed through
+// added, edited in or out, or removed without the scene's count following,
+// so the lit pipelines compile the layer out while a material has it
+// (`LitConstants::sheens`, `LitConstants::diffuse_transmission`) or keep it
+// after the last. The oracle is the scene's materials: it holds each
+// exactly while one of them has a sheen colour or a diffuse transmission
+// above zero.
+#[test]
+fn the_scene_holds_a_sheen_or_diffuse_transmission_while_a_material_has_one() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    type Layer = (
+        fn(&mut crate::asset::Material),
+        fn(&mut crate::SurfaceMaterial),
+        fn(&crate::scene::materials::Materials) -> bool,
+    );
+    let layers: [Layer; 2] = [
+        (
+            |m| m.sheen_color = [0., 0.5, 0.],
+            |m| m.sheen_color = [0.; 3],
+            |m| m.holds_sheens(),
+        ),
+        (
+            |m| m.diffuse_transmission = 0.5,
+            |m| m.diffuse_transmission = 0.,
+            |m| m.holds_diffuse_transmission(),
+        ),
+    ];
+    for (add, strip, holds) in layers {
+        let mut scene = Scene::new(&device, &queue);
+        let plain = scene
+            .add_asset(&device, &queue, test_support::cube())
+            .unwrap();
+        assert!(!holds(&scene.materials));
+        let mut layered = test_support::cube();
+        add(&mut layered.materials[0]);
+        let layered = scene.add_asset(&device, &queue, layered).unwrap();
+        assert!(holds(&scene.materials), "added with the layer");
+        let material = layered.materials[0];
+        let values = scene.material(material).unwrap();
+        let mut bare = values;
+        strip(&mut bare);
+        scene.set_material(&queue, material, bare).unwrap();
+        assert!(!holds(&scene.materials), "edited out");
+        scene
+            .set_material(&queue, plain.materials[0], values)
+            .unwrap();
+        assert!(holds(&scene.materials), "edited in");
+        scene.remove_model(plain.model).unwrap();
+        scene.remove_material(plain.materials[0]).unwrap();
+        assert!(!holds(&scene.materials), "removed");
+    }
+}
+
 // Plausible defects: content another content uses is removed or replaced
 // under it, or replacing a model keeps levels of detail that name it. The
 // oracles are the refusals the spec requires, and the removals they allow once

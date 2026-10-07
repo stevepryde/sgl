@@ -100,6 +100,8 @@ pub(crate) struct Materials {
     receivers: usize,
     moving: usize,
     films: usize,
+    sheens: usize,
+    diffuse_transmission: usize,
     transmissive: usize,
     textures: Textures,
     groups: Groups,
@@ -115,6 +117,8 @@ impl Materials {
             receivers: 0,
             moving: 0,
             films: 0,
+            sheens: 0,
+            diffuse_transmission: 0,
             transmissive: 0,
             textures: Textures::default(),
             groups: Groups::new(device, queue),
@@ -148,6 +152,19 @@ impl Materials {
         self.films > 0
     }
 
+    /// Whether a material has a sheen: the lit pipelines evaluate sheens
+    /// only while one does (`LitConstants::sheens`).
+    pub fn holds_sheens(&self) -> bool {
+        self.sheens > 0
+    }
+
+    /// Whether a material passes diffuse light through: the lit pipelines
+    /// evaluate the transmitted lobe only while one does
+    /// (`LitConstants::diffuse_transmission`).
+    pub fn holds_diffuse_transmission(&self) -> bool {
+        self.diffuse_transmission > 0
+    }
+
     /// Whether a material is transmissive: the blended pipelines compile
     /// transmission in only while one is.
     pub fn holds_transmissive(&self) -> bool {
@@ -155,7 +172,9 @@ impl Materials {
     }
 
     /// Counts `by` more materials of `values` whose surface `moves` or not:
-    /// one with an iridescent film among the films; a blended or
+    /// one with an iridescent film among the films, one with a sheen among
+    /// the sheens, one that passes diffuse light through among those; a
+    /// blended or
     /// transmissive one among the blended (and the receivers where it is
     /// one), else a masked one among the masked and one whose surface moves
     /// among the moving.
@@ -163,6 +182,12 @@ impl Materials {
         let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
         if values.iridescence > 0. {
             add(&mut self.films);
+        }
+        if values.sheen_color.iter().any(|&channel| channel > 0.) {
+            add(&mut self.sheens);
+        }
+        if values.diffuse_transmission > 0. {
+            add(&mut self.diffuse_transmission);
         }
         if values.transmissive() {
             add(&mut self.transmissive);

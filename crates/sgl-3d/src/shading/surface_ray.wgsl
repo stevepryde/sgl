@@ -238,14 +238,14 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
  var opacity=0.;
  // Where the visibility ray leaves: the hit, or, toward a light behind a
  // hit that passes light through, its transmitted lobe's point.
- let transmits=s.diffuse_transmission>0.;
+ let transmits=surface_transmits(s);
  let back=surface_transmitted_point(s);
  var origin=s.position;
  if pick<directional_count {
   let light=frame.directional_lights[directional[pick]];
   direction=normalize(light.direction_to_light);
   let behind=dot(s.normal,direction)<=0.;
-  if behind && s.diffuse_transmission<=0. {
+  if behind && !transmits {
    return vec3(0.);
   }
   sample=LightSample(direction,light.color*light.illuminance,select(1.,0.,behind),select(0.,1.,behind),0.,NO_RECT_LIGHT,0.);

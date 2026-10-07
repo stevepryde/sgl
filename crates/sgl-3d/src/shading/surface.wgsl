@@ -11,6 +11,12 @@ override bump_maps_enabled:bool=true;
 // Whether the scene holds an iridescent film (LitConstants::films): where
 // it does not, surface_f0s compiles its evaluation out.
 override films_enabled:bool=true;
+// Whether the scene holds a sheen (LitConstants::sheens) and a material
+// that passes diffuse light through (LitConstants::diffuse_transmission):
+// where it does not, the sheen's layer, or the transmitted lobe with its
+// back-side shadows and indirect light, compiles out.
+override sheens_enabled:bool=true;
+override diffuse_transmission_enabled:bool=true;
 struct Surface {
  position:vec3<f32>,
  // Unit direction toward the viewer: the camera for a fragment, back along
@@ -273,7 +279,10 @@ fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
  // and the transmitted one alike (KHR README 260–288).
  let dielectric=(1.-surface.metallic)*(1.-surface.transmission);
  let diffuse=surface.base.rgb*dielectric*(1.-surface.diffuse_transmission);
- let transmitted=surface.diffuse_transmission_color*dielectric*surface.diffuse_transmission*surface_volume_transmittance(surface);
+ var transmitted=vec3(0.);
+ if surface_transmits(surface) {
+  transmitted=surface.diffuse_transmission_color*dielectric*surface.diffuse_transmission*surface_volume_transmittance(surface);
+ }
  let coat_fresnel=pbr_coat_fresnel(surface.coat_normal,surface.view,surface.coat);
  let sheen_albedo=surface_view_sheen_albedo(surface);
  return SurfaceReflectance(diffuse,transmitted,f0s,f0,surface_f90(surface),view_dfg,pbr_multiscatter_gain(f0,view_dfg),coat_fresnel,sheen_albedo,sheen_scaling(surface.sheen,sheen_albedo));
@@ -281,7 +290,7 @@ fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
 // A surface's sheen's directional albedo at its view (surface_sheen_albedo),
 // 0 without a sheen, whose table it does not read.
 fn surface_view_sheen_albedo(surface:Surface)->f32 {
- if !any(surface.sheen>vec3(0.)) {
+ if !sheens_enabled || !any(surface.sheen>vec3(0.)) {
   return 0.;
  }
  return surface_sheen_albedo(specular_nv(surface.normal,surface.view),surface.sheen_roughness);
@@ -350,6 +359,11 @@ fn surface_direct_light(surface:Surface,reflectance:SurfaceReflectance,light:Lig
 // base whole.
 fn surface_sheen_dimming(reflectance:SurfaceReflectance,specular:f32)->f32 {
  return saturate(1.-specular*(1.-reflectance.sheen_scaling));
+}
+// Whether a surface passes diffuse light to its other side, where the
+// pipeline compiles that in (diffuse_transmission_enabled).
+fn surface_transmits(surface:Surface)->bool {
+ return diffuse_transmission_enabled && surface.diffuse_transmission>0.;
 }
 // Where a surface that transmits diffuse light takes it on its other side:
 // its volume's thickness behind it along the reversed geometry normal, the
@@ -428,7 +442,7 @@ fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_dire
   let lobe_cosine=clamp(dot(surface.normal,sized.direction),0.,1.);
   base+=lobe*reflectance.multiscatter*sized.intensity*lobe_cosine*specular;
  }
- if any(surface.sheen>vec3(0.)) {
+ if sheens_enabled && any(surface.sheen>vec3(0.)) {
   let sheen=sheen_lobe(surface.sheen,surface.sheen_roughness,surface.normal,surface.view,light_direction);
   base=base*surface_sheen_dimming(reflectance,specular)+sheen*cosine*specular;
  }
@@ -710,7 +724,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  color+=(diffuse*s.occlusion+baked_multi)*irradiance.baked;
  // A surface that passes diffuse light to its other side takes that side's
  // indirect light too (surface_transmitted_ambient).
- let transmits=s.diffuse_transmission>0.;
+ let transmits=surface_transmits(s);
  if transmits {
   color+=surface_transmitted_ambient(s,reflectance,ibl.kept,base_share,probe_hit);
  }
