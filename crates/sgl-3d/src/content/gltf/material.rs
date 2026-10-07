@@ -99,11 +99,12 @@ pub(super) fn read_material(
         material.normal_texture().map(|t| t.texture()),
         bump_texture.clone(),
         anisotropy_texture.clone(),
-        // An occlusion map in the metallic-roughness image takes its sampler.
+        // An occlusion map SGL3D samples, the metallic-roughness image on
+        // TEXCOORD_0, takes its sampler; an ignored one constrains nothing.
         material
             .occlusion_texture()
             .map(|t| t.texture())
-            .filter(|t| Some(t.source().index()) == mr_image),
+            .filter(|_| occlusion.texture.is_some() && occlusion.texture == mr_image),
     ];
     let mut wrap = None;
     for texture in textures.into_iter().flatten() {

@@ -420,12 +420,15 @@ fn a_radius_outside_its_range_occludes_as_its_nearer_end() {
 // ignores its strength, applies only while ambient occlusion runs or only
 // while it does not, multiplies the frame's ambient occlusion rather than
 // taking the lesser of the two, or is left out of a blended surface's
-// forward shading. Under the hemisphere fill alone a receiver's lit colour
-// is all ambient diffuse, so its completed radiance is its unoccluded colour
-// times its visibility: glTF 2.0's lerp(1, red, strength), recorded to
-// 1/126, taken with XeGTAO's visibility read back from the frame as
-// Filament and Bevy take them, the lesser. A blended surface takes no
-// ambient occlusion: its radiance is the unoccluded one times glTF's alone.
+// forward shading; or the G-buffer's F0 code misreads it in either half,
+// receivers that take baked scene lights (128-254, without baked lighting)
+// and those an atlas chart lights (1-127, with a black atlas). Under the
+// hemisphere fill alone a receiver's lit colour is all ambient diffuse, so
+// its completed radiance is its unoccluded colour times its visibility:
+// glTF 2.0's lerp(1, red, strength), recorded to 1/126, taken with XeGTAO's
+// visibility read back from the frame as Filament and Bevy take them, the
+// lesser. A blended surface takes no ambient occlusion: its radiance is the
+// unoccluded one times glTF's alone.
 #[test]
 fn a_packed_occlusion_map_occludes_ambient_diffuse() {
     let Some((device, queue)) = test_support::device() else {
@@ -438,7 +441,6 @@ fn a_packed_occlusion_map_occludes_ambient_diffuse() {
         ground_color: [0.6, 0.8, 1.],
         intensity: 1.,
     };
-    input.baked_lighting = false;
     let settings = Settings {
         scene_resolution: settings::SceneResolution::Full,
         antialiasing: settings::Antialiasing::Off,
@@ -453,63 +455,83 @@ fn a_packed_occlusion_map_occludes_ambient_diffuse() {
         std::array::from_fn(|c| half(&bytes[pixel * 8 + c * 2..]))
     };
     let occlusion = |strength: f32| 1. + strength * (f32::from(RED) / 255. - 1.);
-    for strength in [1., 0.5] {
-        let mut values = scene.material(material).unwrap();
-        values.occlusion_strength = strength;
-        scene.set_material(&queue, material, values).unwrap();
-        for quality in [Quality::Off, Quality::Medium] {
-            let frame = render(
-                &device,
-                &queue,
-                &mut scene,
-                &mut renderer,
-                &settings,
-                &input,
-                &output,
-                quality,
-            );
-            let pixels = SIZE[0] as usize * SIZE[1] as usize;
-            let ambient: Vec<f32> =
-                match renderer.diagnostic_target(diagnostics::DiagnosticTarget::AmbientOcclusion) {
+    for charted in [false, true] {
+        input.baked_lighting = charted;
+        if charted {
+            let black = IrradianceAtlas {
+                size: [1, 1],
+                irradiance: vec![[0.; 3]],
+                back_irradiance: vec![[0.; 3]],
+                directionality: vec![],
+                back_directionality: vec![],
+            };
+            scene
+                .set_static_irradiance_atlas(&device, &queue, &black)
+                .unwrap();
+        }
+        for strength in [1., 0.5] {
+            let mut values = scene.material(material).unwrap();
+            values.occlusion_strength = strength;
+            scene.set_material(&queue, material, values).unwrap();
+            for quality in [Quality::Off, Quality::Medium] {
+                let frame = render(
+                    &device,
+                    &queue,
+                    &mut scene,
+                    &mut renderer,
+                    &settings,
+                    &input,
+                    &output,
+                    quality,
+                );
+                let pixels = SIZE[0] as usize * SIZE[1] as usize;
+                let ambient: Vec<f32> = match renderer
+                    .diagnostic_target(diagnostics::DiagnosticTarget::AmbientOcclusion)
+                {
                     Some(target) => read(&device, &queue, target.texture(), 4)
                         .chunks_exact(4)
                         .map(|texel| u32::from_le_bytes(texel.try_into().unwrap()) as f32 / 255.)
                         .collect(),
                     None => vec![1.; pixels],
                 };
-            let depth: Vec<f32> = frame.geometry[0]
-                .chunks_exact(4)
-                .map(|texel| f32::from_le_bytes(texel.try_into().unwrap()))
-                .collect();
-            let mut lit = 0;
-            let mut both = 0;
-            for pixel in (0..pixels).filter(|&pixel| depth[pixel] > 0.) {
-                let (color, composite) = (rgb(&frame.color, pixel), rgb(&frame.composite, pixel));
-                let visibility = occlusion(strength).min(ambient[pixel]);
-                lit += 1;
-                if ambient[pixel] < 0.9 {
-                    both += 1;
+                let depth: Vec<f32> = frame.geometry[0]
+                    .chunks_exact(4)
+                    .map(|texel| f32::from_le_bytes(texel.try_into().unwrap()))
+                    .collect();
+                let mut lit = 0;
+                let mut both = 0;
+                for pixel in (0..pixels).filter(|&pixel| depth[pixel] > 0.) {
+                    // The fixture covers the half of the F0 code it names.
+                    let code = frame.geometry[3][pixel * 4 + 3];
+                    assert_eq!(code >= 128, !charted, "pixel {pixel}: F0 code {code}");
+                    let (color, composite) =
+                        (rgb(&frame.color, pixel), rgb(&frame.composite, pixel));
+                    let visibility = occlusion(strength).min(ambient[pixel]);
+                    lit += 1;
+                    if ambient[pixel] < 0.9 {
+                        both += 1;
+                    }
+                    for c in 0..3 {
+                        let expected = color[c] * visibility;
+                        let tolerance = color[c] * 0.5 / 126. + expected / 512. + 1e-5;
+                        assert!(
+                            (composite[c] - expected).abs() <= tolerance,
+                            "charted {charted}, {quality:?}, strength {strength}, pixel {pixel} channel {c}: composite {} for colour {} at visibility {visibility}",
+                            composite[c],
+                            color[c]
+                        );
+                    }
                 }
-                for c in 0..3 {
-                    let expected = color[c] * visibility;
-                    let tolerance = color[c] * 0.5 / 126. + expected / 512. + 1e-5;
+                assert!(
+                    lit > 100,
+                    "the box and floor must cover the frame: {lit} pixels"
+                );
+                if quality == Quality::Medium {
                     assert!(
-                        (composite[c] - expected).abs() <= tolerance,
-                        "{quality:?}, strength {strength}, pixel {pixel} channel {c}: composite {} for colour {} at visibility {visibility}",
-                        composite[c],
-                        color[c]
+                        both >= 8,
+                        "the box must occlude the floor at its contact: {both} pixels"
                     );
                 }
-            }
-            assert!(
-                lit > 100,
-                "the box and floor must cover the frame: {lit} pixels"
-            );
-            if quality == Quality::Medium {
-                assert!(
-                    both >= 8,
-                    "the box must occlude the floor at its contact: {both} pixels"
-                );
             }
         }
     }
@@ -551,4 +573,67 @@ fn a_packed_occlusion_map_occludes_ambient_diffuse() {
             );
         }
     }
+}
+
+// Defects: source completion leaves a material's occlusion off the
+// environment specular it adds, occluding only the ambient diffuse. A
+// smooth white metal in a uniform environment, with no diffuse light, is
+// lit by its environment specular alone; Lagarde's specular occlusion at
+// visibility 0 is 0 for any lobe (Lagarde and de Rousiers 2014), so a
+// packed occlusion map of red 0 at full strength leaves it black, without
+// the frame's ambient occlusion, while at strength 0 it reflects.
+#[test]
+fn a_packed_occlusion_map_occludes_environment_specular() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let (mut scene, material, mut input) = box_on_floor(&device, &queue, Some(0));
+    input.reflection_environment = EnvironmentLight {
+        yaw: 0.,
+        intensity: 1.,
+    };
+    let settings = Settings {
+        scene_resolution: settings::SceneResolution::Full,
+        antialiasing: settings::Antialiasing::Off,
+        screen_space_reflections: settings::ScreenSpaceReflections::Off,
+        atmosphere: false,
+        bloom: settings::Bloom::Off,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
+    let mut composite = |strength: f32| -> Vec<f32> {
+        let mut values = scene.material(material).unwrap();
+        values.base = [1.; 4];
+        values.metallic = 1.;
+        values.roughness = 0.2;
+        values.occlusion_strength = strength;
+        scene.set_material(&queue, material, values).unwrap();
+        let frame = render(
+            &device,
+            &queue,
+            &mut scene,
+            &mut renderer,
+            &settings,
+            &input,
+            &output,
+            Quality::Off,
+        );
+        frame
+            .composite
+            .chunks_exact(8)
+            .flat_map(|texel| (0..3).map(|c| half(&texel[c * 2..])))
+            .collect()
+    };
+    let reflected = composite(0.);
+    assert!(
+        reflected.iter().filter(|&&value| value > 0.01).count() > 300,
+        "the metal must reflect its environment"
+    );
+    let occluded = composite(1.);
+    let brightest = occluded.iter().copied().fold(0., f32::max);
+    assert!(
+        brightest == 0.,
+        "a fully occluded metal reflected {brightest}"
+    );
 }

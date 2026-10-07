@@ -44,7 +44,7 @@ pub(super) fn validate_reflectance(values: &SurfaceMaterial) -> Result<(), Scene
             .iter()
             .all(|channel| channel.is_finite() && *channel >= 0.))
     {
-        return Err(SceneError::InvalidSpecular);
+        return Err(SceneError::InvalidReflectance);
     }
     if !(0.0..=1.0).contains(&values.occlusion_strength) {
         return Err(SceneError::InvalidOcclusion);

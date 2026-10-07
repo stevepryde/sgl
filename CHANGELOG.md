@@ -35,13 +35,15 @@ docs and specs the entry links.
   unsampled (`Ignored::SpecularMap`). Migration: exhaustive material
   literals add the fields or take `..Default::default()`.
 - `sgl-3d` shading: reflectance at grazing incidence now follows F0, so
-  surfaces with F0 under 0.02 (`specular` under 0.5, near-black metals) lose
-  grazing reflection with it; F0 0.02 and up looks as before. No game-code
-  change; look again at near-black metallic materials.
+  surfaces with F0 under 0.02 (near-black metals; with the new fields,
+  `specular` under 0.5 or an IOR under 1.333) lose grazing reflection with
+  it; F0 0.02 and up looks as before. No game-code change; look again at
+  near-black metallic materials.
 - `sgl-3d` `Scene::add_materials` and `set_material` refuse an IOR below 1,
   `specular` outside 0..=1 or a specular colour that is negative or not
-  finite (`SceneError::InvalidSpecular`), and `occlusion_strength` outside
-  0..=1 (`SceneError::InvalidOcclusion`).
+  finite (`SceneError::InvalidReflectance`), and `occlusion_strength` outside
+  0..=1 (`SceneError::InvalidOcclusion`). Migration: exhaustive matches on
+  `SceneError` add both variants.
 
 ## 0.2.1 — 2026-10-07
 

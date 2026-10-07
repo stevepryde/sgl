@@ -2082,10 +2082,12 @@ extension in `extensionsRequired` that SGL3D does not support fails to load
 with an asset-path error. One it lists only in `extensionsUsed` is left out,
 as glTF lets a loader do: a texture keeps its core image and a material its
 core values, and `Asset::ignored` lists it (`Ignored::Extension`). The list
-also names each material whose occlusion map SGL3D does not sample, one in an
-image of its own or on another UV set (`Ignored::OcclusionMap`, the image
-kept in `Material::occlusion_texture`), and whose specular textures it does
-not sample (`Ignored::SpecularMap`). To have occlusion drawn, pack it
+also names each material whose occlusion map SGL3D does not sample
+(`Ignored::OcclusionMap`): one in an image of its own on `TEXCOORD_0`,
+whose image stays in `Material::occlusion_texture`, or one on another UV
+set, which the load leaves out (`occlusion_texture` `None`). It names each
+material whose specular textures SGL3D does not sample
+(`Ignored::SpecularMap`). To have occlusion drawn, pack it
 into the metallic-roughness image's red channel on `TEXCOORD_0` in the
 export step. Other unsupported visible features return asset-path errors.
 
@@ -2094,13 +2096,21 @@ refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for
 water at 1.33, 0.17 for diamond at 2.42. `KHR_materials_specular` tints it
 (`specular_color`, at most 1 after the tint) and scales it (`specular`), as
 `asset::Material` and `SurfaceMaterial` hold them. Reflectance at grazing
-incidence follows F0, as Filament and Bevy derive it: 1 for any F0 of 0.02
-or more, falling to none with it, so `specular` 0 turns a dielectric's
-reflection off whole. The occlusion map's red channel, at
-`occlusion_strength` (glTF's lerp), occludes a surface's ambient diffuse and
-environment specular, never direct light or emission; with
-`Settings::ambient_occlusion` the camera's opaque surfaces take the lesser of
-it and the frame's ambient occlusion, as Filament and Bevy do.
+incidence (F90) follows F0, SGL3D's choice since the G-buffer holds F0
+alone: 1 for a mean F0 of 0.02 or more, falling to none with it, so
+`specular` 0 turns a dielectric's reflection off whole. It matches
+KHR_materials_specular, whose dielectric F90 is `specular`, at the defaults
+and at `specular` 0 and 1 from an IOR of about 1.333 up. A partial
+`specular` keeps up to twice KHR's grazing reflection (0.99 against 0.5 at
+`specular` 0.5), and a dielectric below that IOR or a near-black metal
+keeps less (ice at 1.31: 0.89); the architecture's Reflections passage
+gives the bounds. The occlusion map's red channel, at `occlusion_strength`
+(glTF's lerp), occludes a surface's ambient diffuse and environment
+specular, never direct light, emission or the diffuse light of a lightmap
+or atlas chart, as Bevy leaves its lightmaps (three.js and Godot occlude a
+light map too); with `Settings::ambient_occlusion` the camera's opaque
+surfaces take the lesser of it and the frame's ambient occlusion, as
+Filament and Bevy do.
 
 On the GPU the scene keeps each `asset::Vertex` (88 bytes) in 32, packed by
 `PreparedModel::new` after Godot's attribute compression: the position

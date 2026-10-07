@@ -607,8 +607,9 @@ fn used_extensions_are_listed_and_required_ones_honoured_or_refused() {
 // same image, through another texture) is taken for an image of its own,
 // or one in an image of its own, on another UV set or a specular texture is
 // left out without being listed in `Asset::ignored`; or its strength is
-// lost. The oracle is glTF 2.0's texture -> image indirection and the
-// authored values.
+// lost; or one SGL3D leaves out still constrains the material's wrapping.
+// The oracle is glTF 2.0's texture -> image indirection and the authored
+// values.
 #[test]
 fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
     let source = |occlusion: serde_json::Value, specular: serde_json::Value| {
@@ -616,7 +617,8 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
             "asset": {"version": "2.0"},
             "extensionsUsed": ["KHR_materials_specular"],
             "images": [{"uri": "orm.png"}, {"uri": "occlusion.png"}],
-            "textures": [{"source": 0}, {"source": 0}, {"source": 1}],
+            "samplers": [{"wrapS": 33071, "wrapT": 33071}],
+            "textures": [{"source": 0}, {"source": 0}, {"source": 1}, {"source": 0, "sampler": 0}],
             "materials": [{
                 "pbrMetallicRoughness": {"metallicRoughnessTexture": {"index": 0}},
                 "occlusionTexture": occlusion,
@@ -654,8 +656,9 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
     assert_eq!(separate.occlusion_texture, Some(1));
     assert!(!separate.packed_occlusion());
     assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
+    // Texture 3 clamps the metallic-roughness image the material repeats.
     let (second_set, ignored) = read(source(
-        serde_json::json!({"index": 0, "texCoord": 1}),
+        serde_json::json!({"index": 3, "texCoord": 1}),
         unlisted,
     ));
     assert_eq!(second_set.occlusion_texture, None);

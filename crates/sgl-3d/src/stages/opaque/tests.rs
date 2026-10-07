@@ -477,3 +477,117 @@ fn gbuffer_f0_is_fresnel_at_the_materials_ior() {
         [30., 0.5, 0.].map(|tint| (diamond * tint).min(1.) * 0.6),
     );
 }
+
+// Defects: a lobe still reflects toward a grazing reflectance (F90) of 1
+// where F0 is 0: direct light's Schlick Fresnel, the split-sum environment
+// response or its multiple scattering, or a rectangle light's Fresnel
+// weight. The oracle is KHR_materials_specular: at `specular` 0 a
+// dielectric's F0 and F90 are both 0, so it reflects as Lambert alone, and a
+// black one reflects nothing. A cube seen with two faces near grazing, lit
+// from behind by the sun, a rectangle light and a uniform environment, must
+// leave the frame black; at `specular` 1 the same frame is lit.
+#[test]
+fn a_dielectric_without_specular_reflects_as_lambert_alone() {
+    use crate::{DirectionalLight, EnvironmentLight, Light, LightShape};
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut asset = test_support::cube();
+    asset.materials[0].base = [0., 0., 0., 1.];
+    asset.materials[0].metallic = 0.;
+    asset.materials[0].roughness = 0.3;
+    asset.materials[0].specular = 0.;
+    let (ids, _) = test_support::add_static(&device, &queue, &mut scene, asset);
+    let environment = scene
+        .add_environment(
+            &device,
+            &queue,
+            &test_support::environment([255; 4], &0x3c00u16.to_le_bytes()),
+        )
+        .unwrap();
+    scene
+        .add_light(
+            &device,
+            &queue,
+            Light {
+                position: Vec3::new(0., 0.8, -1.5),
+                shape: LightShape::Rect {
+                    direction: Vec3::new(0., -0.3, 1.),
+                    width_axis: Vec3::X,
+                    width: 1.5,
+                    height: 0.5,
+                },
+                color: [1.; 3],
+                intensity: 20.,
+                range: 10.,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let settings = Settings {
+        antialiasing: Antialiasing::Off,
+        ambient_occlusion: AmbientOcclusionQuality::Off,
+        screen_space_reflections: crate::settings::ScreenSpaceReflections::Off,
+        atmosphere: false,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let output = crate::view::targets::target(&device, "lambert", SIZE, gbuffer::COLOR);
+    // The +Y and +X faces lie near grazing from here.
+    let eye = Vec3::new(0.25, 0.65, 3.);
+    let mut input = FrameInput::new(Camera {
+        view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
+        projection: perspective(0.8, 1., 0.1),
+        eye,
+    });
+    input.backdrop = Backdrop::Color([0.; 3]);
+    input.environment = Some(environment);
+    input.reflection_environment = EnvironmentLight {
+        yaw: 0.,
+        intensity: 1.,
+    };
+    // From behind the cube, toward the camera, over its top.
+    input.directional_lights[0] = Some(DirectionalLight {
+        direction: Vec3::new(-0.3, -0.4, 1.),
+        color: [1.; 3],
+        illuminance: 3.,
+        shadow: None,
+        ..Default::default()
+    });
+    let mut composite = |scene: &mut Scene| -> Vec<f32> {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(scene);
+        test_support::read(&device, &queue, renderer.targets().composite.texture(), 8)
+            .chunks_exact(8)
+            .flat_map(|texel| (0..3).map(|c| test_support::half(&texel[c * 2..])))
+            .collect()
+    };
+    let none = composite(&mut scene);
+    let brightest = none.iter().copied().fold(0., f32::max);
+    assert!(
+        brightest == 0.,
+        "a black dielectric without specular reflected {brightest}"
+    );
+    let mut values = scene.material(ids.materials[0]).unwrap();
+    values.specular = 1.;
+    scene
+        .set_material(&queue, ids.materials[0], values)
+        .unwrap();
+    let lit = composite(&mut scene);
+    assert!(
+        lit.iter().filter(|&&value| value > 0.01).count() > 300,
+        "the fixture must reflect light at specular 1"
+    );
+}

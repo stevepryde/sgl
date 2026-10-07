@@ -60,7 +60,7 @@ pub enum SceneError {
     /// A material's IOR is below 1 or NaN, its specular strength outside
     /// 0..=1, or a channel of its specular colour not finite and
     /// nonnegative.
-    InvalidSpecular,
+    InvalidReflectance,
     /// A material's occlusion strength is outside 0..=1.
     InvalidOcclusion,
     /// A material's normal layers have a velocity, scale or strength that is
@@ -189,7 +189,7 @@ impl std::fmt::Display for SceneError {
                 "anisotropy requires authored nonzero tangent frames on every mesh using this material"
             }
             Self::InvalidAlphaCutoff => "an alpha cutoff must be finite and nonnegative",
-            Self::InvalidSpecular => {
+            Self::InvalidReflectance => {
                 "IOR must be at least 1 (infinity allowed), specular in 0..1 and specular colour finite and nonnegative"
             }
             Self::InvalidOcclusion => "occlusion strength must be in 0..1",

@@ -118,7 +118,8 @@ pub struct Material {
     pub base_texture: Option<usize>,
     /// Metallic (blue) / roughness (green) image index, sampled as linear data.
     pub mr_texture: Option<usize>,
-    /// Occlusion image index (glTF's `occlusionTexture`): its red channel is
+    /// Occlusion image index (glTF's `occlusionTexture` on `TEXCOORD_0`;
+    /// the loader leaves out a map on another UV set): its red channel is
     /// the share of ambient light that reaches the surface, which occludes
     /// its ambient diffuse and environment specular. SGL3D samples it where
     /// it is `mr_texture`'s image (ORM packing: occlusion, roughness and

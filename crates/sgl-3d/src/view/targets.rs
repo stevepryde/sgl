@@ -137,7 +137,7 @@ impl SharedTargets {
                 gbuffer::ANISOTROPY,
             ),
             f0: gbuffer_target(
-                "stable material F0 and lit and baked-light flags",
+                "stable material F0, lit and baked-light flags and material occlusion",
                 gbuffer::F0,
             ),
             motion: gbuffer_target("stable rigid motion", gbuffer::MOTION),
