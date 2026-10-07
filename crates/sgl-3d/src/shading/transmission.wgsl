@@ -23,6 +23,11 @@
 // surface that its transmission passes (TransmittedLight), which the blend
 // takes where no copy holds the frame.
 
+// Whether a blended pipeline compiles transmission in: while the scene holds
+// a transmissive material (view::pipelines::PipelineKey), so that blended
+// surfaces pay nothing for it otherwise, as films_enabled spares lit
+// fragments a film.
+override transmission_enabled:bool=true;
 // The reciprocal of the record's IOR `ior` (at least 1, or 0), which
 // refraction takes: 0 for an infinite one (KHR_materials_ior's 0), whose
 // rays leave along -n. The max keeps the branch select does not take finite.

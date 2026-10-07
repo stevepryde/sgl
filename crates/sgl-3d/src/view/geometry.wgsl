@@ -251,18 +251,24 @@ fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
  let front=object_front_face(i,raster_front);
  let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
  var s=raster_surface(i,front,surface_base_color(i),surface_emission(i),context.clusters);
- if material_cut_out(material,s.base.a) {
-  discard;
- }
  let coverage=select(1.,s.base.a,(material.flags&MATERIAL_ALPHA_BLEND)!=0u);
+ // The light transmitted through it, times its share of the diffuse light
+ // under the coat, and the share of its pixel it shades itself: compiled in
+ // only while the scene holds a transmissive material (transmission_enabled).
  var transmitted=TransmittedLight(vec3(0.),0.);
- if (material.flags&MATERIAL_TRANSMISSIVE)!=0u {
+ var through=0.;
+ var own_share=coverage;
+ if transmission_enabled && (material.flags&MATERIAL_TRANSMISSIVE)!=0u {
+  // A masked material is drawn here only where it is transmissive.
+  if material_cut_out(material,s.base.a) {
+   discard;
+  }
   s.transmission=surface_transmission(i);
   let model=objects[fragment_object(i)].model;
   transmitted=getIBLVolumeRefraction(s.normal,s.view,s.roughness,s.base.rgb*(1.-s.metallic),surface_f0(s),surface_f90(s),s.position,model,material.ior,surface_thickness(i),material.attenuation,material.dispersion);
+  through=s.transmission*(1.-pbr_coat_fresnel(s.coat_normal,s.view,s.coat));
+  own_share=coverage*(1.-through*transmitted.share);
  }
- let through=s.transmission*(1.-pbr_coat_fresnel(s.coat_normal,s.view,s.coat));
- let own_share=coverage*(1.-through*transmitted.share);
  let keeps_specular=(material.flags&MATERIAL_KEEPS_SPECULAR)!=0u;
  if keeps_specular {
   s.base=vec4(s.base.rgb*coverage,s.base.a);

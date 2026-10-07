@@ -109,9 +109,11 @@ pub(crate) const SHADOW_MASKED_UNCLIPPED_FS_ENTRY: &str = "shadow_masked_unclipp
 
 /// Which alpha modes the scene's materials use beyond opaque, whether one
 /// is a receiver of screen-space reflections, whether an opaque or masked
-/// one's surface moves, and whether it holds a deforming model: the masked,
-/// blended, receiver, FSR2 composition and deformed pipelines are prepared
-/// once it holds such content.
+/// one's surface moves, whether it holds a deforming model, and whether a
+/// material is transmissive: the masked, blended, receiver, FSR2
+/// composition and deformed pipelines are prepared once it holds such
+/// content, and the blended ones compile transmission in while it holds a
+/// transmissive material.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Content {
     mask: bool,
@@ -119,6 +121,7 @@ struct Content {
     receivers: bool,
     moving: bool,
     deformed: bool,
+    transmissive: bool,
 }
 
 impl Content {
@@ -130,6 +133,7 @@ impl Content {
             receivers: scene.materials.holds_receivers(),
             moving: scene.materials.holds_moving_surfaces(),
             deformed: scene.models.holds_deforming(),
+            transmissive: scene.materials.holds_transmissive(),
         }
     }
 }
@@ -326,7 +330,13 @@ impl GeometryPipelines {
                             alpha,
                             deformed,
                         };
-                        let key = PipelineKey::new(pass, variant, layers, lit_constants);
+                        let key = PipelineKey::new(
+                            pass,
+                            variant,
+                            layers,
+                            lit_constants,
+                            self.content.transmissive,
+                        );
                         self.prepare(device, key);
                     }
                 }
@@ -344,7 +354,13 @@ impl GeometryPipelines {
 
     /// `pass`'s pipeline for `variant`.
     pub fn get(&self, pass: GeometryPass, variant: Variant) -> &wgpu::RenderPipeline {
-        let key = PipelineKey::new(pass, variant, self.layers, self.lit_constants);
+        let key = PipelineKey::new(
+            pass,
+            variant,
+            self.layers,
+            self.lit_constants,
+            self.content.transmissive,
+        );
         self.cache
             .get(&key)
             .unwrap_or_else(|| panic!("geometry pipeline {key:?} was not prepared"))

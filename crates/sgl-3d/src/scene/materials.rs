@@ -100,6 +100,7 @@ pub(crate) struct Materials {
     receivers: usize,
     moving: usize,
     films: usize,
+    transmissive: usize,
     textures: Textures,
     groups: Groups,
 }
@@ -114,6 +115,7 @@ impl Materials {
             receivers: 0,
             moving: 0,
             films: 0,
+            transmissive: 0,
             textures: Textures::default(),
             groups: Groups::new(device, queue),
         }
@@ -146,6 +148,12 @@ impl Materials {
         self.films > 0
     }
 
+    /// Whether a material is transmissive: the blended pipelines compile
+    /// transmission in only while one is.
+    pub fn holds_transmissive(&self) -> bool {
+        self.transmissive > 0
+    }
+
     /// Counts `by` more materials of `values` whose surface `moves` or not:
     /// one with an iridescent film among the films; a blended or
     /// transmissive one among the blended (and the receivers where it is
@@ -155,6 +163,9 @@ impl Materials {
         let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
         if values.iridescence > 0. {
             add(&mut self.films);
+        }
+        if values.transmissive() {
+            add(&mut self.transmissive);
         }
         if values.blended() {
             add(&mut self.blended);
