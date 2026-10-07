@@ -404,9 +404,10 @@ fn an_index_matched_surface_is_invisible_on_the_basic_tier() {
 
 // Plausible defects: the transparent stage copies the composed frame in
 // frames that show no transmissive material, a cost the issue rules out, or
-// does not copy it in one that does. The oracle is the requirement: a scene
-// whose only transmissive surface lies behind the camera allocates no copy
-// in its first frame, and the same scene seen the other way does.
+// does not copy it in one that does. The oracle is the requirement: a frame
+// that shows a blended surface but no transmissive one, which lies behind
+// the camera, allocates no copy, and the same scene seen the other way,
+// showing the transmissive surface, does.
 #[test]
 fn the_frame_is_copied_only_where_a_transmissive_surface_shows() {
     let Some((device, queue)) = test_support::device() else {
@@ -429,6 +430,27 @@ fn the_frame_is_copied_only_where_a_transmissive_surface_shows() {
         .model;
     let state = InstanceState {
         pose: Mat4::from_translation(-3. * Vec3::Z),
+        ..InstanceState::new(model)
+    };
+    scene
+        .add_instance(&device, &queue, state, Mobility::Static)
+        .unwrap();
+    // A coverage-blended pane 3 m behind the camera, seen from both sides.
+    let pane = Material {
+        alpha: crate::AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+            keeps_specular: false,
+        },
+        base: [0.5, 0.5, 0.5, 0.5],
+        double_sided: true,
+        ..Material::default()
+    };
+    let model = scene
+        .add_asset(&device, &queue, rectangle([-1., -1.], [1., 1.], pane))
+        .unwrap()
+        .model;
+    let state = InstanceState {
+        pose: Mat4::from_translation(3. * Vec3::Z),
         ..InstanceState::new(model)
     };
     scene
