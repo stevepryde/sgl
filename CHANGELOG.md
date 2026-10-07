@@ -15,11 +15,6 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- Game dependency guidance: give every SGL crate the same semver
-  requirement (`"0.3.0"`) and commit `Cargo.lock`, never an `=` pin; Git
-  consumers reference one commit `rev`. Migration: drop `=` from SGL
-  requirements.
-
 ## 0.3.0 — 2026-10-07
 
 - Move every SGL crate to `0.3.0` together. Breaking: update `Asset`,
