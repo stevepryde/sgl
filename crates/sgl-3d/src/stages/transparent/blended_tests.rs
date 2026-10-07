@@ -223,15 +223,14 @@ fn blended_surfaces_write_fsr2s_masks() {
     }
 }
 
+/// A change to a material's values.
+type Edit<'a> = &'a dyn Fn(&mut crate::SurfaceMaterial);
+
 /// The composed colour at the frame's centre after each of `edits` in turn:
 /// a blended square 3 m ahead facing the camera, lit along the view by a
 /// directional light, over nothing (no environment: black), with its
 /// material's values `edit` makes of the square's.
-fn centre_colours(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    edits: &[&dyn Fn(&mut crate::SurfaceMaterial)],
-) -> Vec<[f32; 3]> {
+fn centre_colours(device: &wgpu::Device, queue: &wgpu::Queue, edits: &[Edit<'_>]) -> Vec<[f32; 3]> {
     let settings = Settings {
         antialiasing: settings::Antialiasing::Off,
         bloom: settings::Bloom::Off,
@@ -320,7 +319,7 @@ fn keeps_specular_fades_diffuse_and_emission_alone() {
         values.specular = 0.;
         values.emission = [0.5; 3];
     };
-    let cases: [(&str, &dyn Fn(&mut crate::SurfaceMaterial), f32); 3] = [
+    let cases: [(&str, Edit<'_>, f32); 3] = [
         ("specular", &specular_only, 1.),
         ("diffuse", &diffuse_only, 0.1),
         ("emission", &emission_only, 0.1),
