@@ -23,8 +23,8 @@ Use only the crates your game needs, all at the same version:
 
 ```toml
 [dependencies]
-sgl-core = "0.2.1"
-sgl-2d = "0.2.1"
+sgl-core = "0.3.0"
+sgl-2d = "0.3.0"
 ```
 
 When changing SGL alongside a game, use a sibling checkout:
@@ -71,11 +71,11 @@ For stability, use exact requirements for every SGL crate the game depends on:
 
 ```toml
 [dependencies]
-sgl-core = "=0.2.1"
-sgl-2d = "=0.2.1"
+sgl-core = "=0.3.0"
+sgl-2d = "=0.3.0"
 ```
 
-The leading `=` is an exact pin; `"0.2.1"` permits compatible updates. Commit
+The leading `=` is an exact pin; `"0.3.0"` permits compatible updates. Commit
 the game's `Cargo.lock` as well to retain the resolved dependency graph.
 For Git dependencies, use the same full commit `rev` for all SGL crates.
 An exact pin keeps the game on its selected release until you choose to migrate.
