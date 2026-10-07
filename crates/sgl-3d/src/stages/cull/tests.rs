@@ -473,6 +473,7 @@ fn gpu_lists_hold_the_cpu_builders_instances_and_meshes() {
     ]);
     assets.materials[1].alpha = crate::AlphaMode::Blend {
         receives_screen_space_reflections: false,
+        keeps_specular: false,
     };
     assets.materials[2].visibility_group = 2;
     assets.materials[3].casts_directional_shadow = false;

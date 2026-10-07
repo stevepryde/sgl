@@ -98,10 +98,12 @@ the geometry normal), in raster and rays alike. A probe captured on an
   out below their cutoff in every view, shadow and ray; blended ones are lit,
   fogged and drawn back to front over the frame, writing no depth or motion
   unless marked to receive screen-space reflections, and casting no shadow.
+  Alpha fades all of a blended surface's light, or with `keeps_specular`
+  only its diffuse and emitted light, its reflections staying full (glass).
   [Alpha-masked and blended
   materials](../README.md#alpha-masked-and-blended-materials).
 - **Blended receivers** (`AlphaMode::Blend { receives_screen_space_reflections:
-  true }`): water or glass, with the normals the game animates, that
+  true, .. }`): water or glass, with the normals the game animates, that
   receives the frame's screen-space reflections where it is the nearest
   receiver, and that TAA, FSR2 and motion blur reproject by its own motion.
   No refraction; one reflecting layer per pixel. Animate water with scrolling

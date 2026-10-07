@@ -33,8 +33,8 @@ pub(crate) enum GeometryPass {
     CaptureShadow,
     /// A local-light shadow face's casters, indexed from the geometry slabs.
     LocalShadow,
-    /// Blended surfaces' lit colour over the beauty, tested against the
-    /// opaque depth without writing it, with the blended group 3
+    /// Blended surfaces' lit colour over the beauty, premultiplied by their
+    /// alpha, tested against the opaque depth without writing it, with the blended group 3
     /// (`shading::bind::blended`); with `fsr2_masks`, also FSR2's reactive
     /// and transparency-and-composition masks (`mask_targets`).
     Blended { fsr2_masks: bool },

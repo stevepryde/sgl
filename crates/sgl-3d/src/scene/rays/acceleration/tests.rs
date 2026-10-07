@@ -246,6 +246,7 @@ fn what_the_device_cannot_hold_is_left_out_and_counted() {
                 test_support::cube(),
                 crate::AlphaMode::Blend {
                     receives_screen_space_reflections: false,
+                    keeps_specular: false,
                 },
             ),
         )

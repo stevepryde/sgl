@@ -190,6 +190,7 @@ fn glass(normal: bool) -> Asset {
     let material = &mut glass.materials[0];
     material.alpha = AlphaMode::Blend {
         receives_screen_space_reflections: true,
+        keeps_specular: false,
     };
     material.base[3] = 0.5;
     material.base_texture = Some(0);

@@ -169,6 +169,7 @@ fn alpha_content(bc: bool) -> Result<Asset, String> {
     glass.double_sided = true;
     glass.alpha = AlphaMode::Blend {
         receives_screen_space_reflections: true,
+        keeps_specular: false,
     };
     Ok(Asset {
         meshes: vec![

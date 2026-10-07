@@ -4,7 +4,8 @@
 //! reflections over submerged rocks and a sunken block, between an opaque
 //! shoreline rising out of the water and posts standing in it, under a
 //! bright panel above the far shore. A second receiver sheet lies partly
-//! over the lake and a glass pane that does not receive stands in front.
+//! over the lake and a glass pane that does not receive, its reflections at
+//! full strength, stands in front.
 //!
 //! `cargo run --release -p sgl-3d --example water [-- --frames N] [--run NAME]...`
 //!
@@ -229,6 +230,7 @@ fn quad(origin: Vec3, u: Vec3, v: Vec3, material: usize) -> CpuMesh {
 fn world(marked: bool) -> Asset {
     let receiver = AlphaMode::Blend {
         receives_screen_space_reflections: marked,
+        keeps_specular: false,
     };
     let tilt = |angle: f32| Quat::from_rotation_z(angle.to_radians());
     let turn = |angle: f32| Quat::from_rotation_y(angle.to_radians());
@@ -329,6 +331,7 @@ fn world(marked: bool) -> Asset {
         double_sided: true,
         alpha: AlphaMode::Blend {
             receives_screen_space_reflections: false,
+            keeps_specular: true,
         },
         ..material("glass", [0.6, 0.8, 0.9, 0.25], 0.05)
     };
@@ -689,6 +692,7 @@ fn render(
         } else {
             AlphaMode::Blend {
                 receives_screen_space_reflections: run.marked,
+                keeps_specular: false,
             }
         },
         casts_directional_shadow: false,

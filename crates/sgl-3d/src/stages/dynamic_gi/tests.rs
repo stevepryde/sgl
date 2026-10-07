@@ -3065,6 +3065,7 @@ fn the_clock_changes_the_probes_inputs_only_where_a_surface_moves() {
     let opaque = AlphaMode::Opaque;
     let blend = AlphaMode::Blend {
         receives_screen_space_reflections: false,
+        keeps_specular: false,
     };
     // Each case's layers, whether its material is unlit, its alpha mode
     // and whether its surface moves.

@@ -14,11 +14,16 @@ pub(super) fn read_material(
 ) -> Result<Material> {
     let name = material.name().unwrap_or("unnamed/default");
     // glTF 2.0 (3.9.5): alphaCutoff applies only in MASK mode, defaults to
-    // 0.5 and must not be negative.
+    // 0.5 and must not be negative. BLEND's alpha is coverage, which fades
+    // the specular too (Khronos glTF acfcbe65,
+    // KHR_materials_transmission/README.md 58–61, 130), as Filament ef1a133's
+    // gltfio loads it as `fade` (libs/gltfio/src/JitShaderProvider.cpp
+    // 562–564).
     let alpha = match material.alpha_mode() {
         gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
         gltf::material::AlphaMode::Blend => AlphaMode::Blend {
             receives_screen_space_reflections: false,
+            keeps_specular: false,
         },
         gltf::material::AlphaMode::Mask => {
             let cutoff = material.alpha_cutoff().unwrap_or(0.5);

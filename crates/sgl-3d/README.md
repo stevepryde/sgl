@@ -1119,8 +1119,13 @@ map's.
   hits, where the portable ray traversal's nearest, any-hit and visibility
   queries pass through cut-out texels. Masked materials draw with their own
   pipelines, so opaque ones keep early depth testing.
-- `AlphaMode::Blend { receives_screen_space_reflections }` (glass, screens,
-  holograms, water) is blended with its alpha over what lies behind it. The
+- `AlphaMode::Blend { receives_screen_space_reflections, keeps_specular }`
+  (glass, screens, holograms, water) is blended with its alpha over what
+  lies behind it. With `keeps_specular: false`, as glTF `BLEND` loads, alpha
+  is coverage and fades all of the surface's light, Filament's `fade`; with
+  `true`, Filament's `transparent`, alpha fades only its diffuse and emitted
+  light, so its reflections and highlights keep their full strength, as
+  glass's do: a windscreen at alpha 0.1 reflects as brightly as at 1. The
   transparent stage draws blended surfaces back to front, sorted by the view
   depth of each mesh's bounds centre as Bevy's `Transparent3d` phase is, onto
   the composed frame and, while a screen-space reflection method traces it,

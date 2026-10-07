@@ -29,6 +29,7 @@ fn blended_draws_are_sorted_back_to_front_by_mesh_bounds_centre() {
     asset.materials.push(asset.materials[0].clone());
     asset.materials[0].alpha = AlphaMode::Blend {
         receives_screen_space_reflections: false,
+        keeps_specular: false,
     };
     // Two blended meshes whose bounds centres lie away from the model's
     // origin, and an opaque one at it.
@@ -167,6 +168,7 @@ fn culled_blended_draws_keep_each_instance_whole_and_back_to_front() {
     let mut asset = test_support::cube();
     asset.materials[0].alpha = AlphaMode::Blend {
         receives_screen_space_reflections: false,
+        keeps_specular: false,
     };
     asset.meshes = vec![test_support::leaf_clusters(&[
         Vec3::new(-2., 0., -10.),

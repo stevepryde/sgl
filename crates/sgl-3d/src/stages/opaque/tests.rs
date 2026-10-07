@@ -579,6 +579,7 @@ fn a_dielectric_without_specular_reflects_as_lambert_alone() {
         crate::AlphaMode::Opaque,
         crate::AlphaMode::Blend {
             receives_screen_space_reflections: false,
+            keeps_specular: false,
         },
     ] {
         let mut values = scene.material(ids.materials[0]).unwrap();
@@ -877,6 +878,7 @@ fn an_anisotropic_metal_completes_opaque_as_it_shades_blended() {
         let opaque = composite(AlphaMode::Opaque);
         let blended = composite(AlphaMode::Blend {
             receives_screen_space_reflections: false,
+            keeps_specular: false,
         });
         assert!(
             blended.iter().filter(|&&value| value > 0.05).count() > 1000,

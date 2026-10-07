@@ -844,6 +844,10 @@ fn rust_mirrors_match_wgsl_layouts() {
             "MATERIAL_EMITS_INTO_GI",
             super::material::MATERIAL_EMITS_INTO_GI,
         ),
+        (
+            "MATERIAL_KEEPS_SPECULAR",
+            super::material::MATERIAL_KEEPS_SPECULAR,
+        ),
     ]
     .into_iter()
     .chain(super::bind::group2::MaterialMap::ALL.map(|map| {

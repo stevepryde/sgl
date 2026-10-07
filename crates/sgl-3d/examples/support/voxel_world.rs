@@ -343,6 +343,7 @@ pub fn add_materials(
                 roughness: 0.05,
                 alpha: AlphaMode::Blend {
                     receives_screen_space_reflections: true,
+                    keeps_specular: false,
                 },
                 casts_directional_shadow: false,
                 ..Default::default()
