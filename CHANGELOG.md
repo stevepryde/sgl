@@ -113,14 +113,17 @@ docs and specs the entry links.
   `attenuation_distance`, `attenuation_color` and `dispersion` on
   `SurfaceMaterial` and `asset::Material` (with `transmission_texture` and
   `thickness_texture`), loaded from `KHR_materials_transmission`,
-  `KHR_materials_volume` and `KHR_materials_dispersion`, refract the frame
-  behind on `Extended` and blend it through on `Basic`. A transmissive
-  material draws with the blended surfaces whatever its alpha mode: no
-  shadow, and rays pass through it. glTF files using these extensions,
-  opaque before, now load transmissive. Invalid values are refused with the
-  new `SceneError::InvalidTransmission`. Migration: exhaustive material
-  literals take `..Default::default()` or the new fields; exhaustive
-  `SceneError` matches add the variant.
+  `KHR_materials_volume` and `KHR_materials_dispersion`, refract what lies
+  behind on `Extended` and blend it through on `Basic`. Migration:
+  exhaustive material literals take `..Default::default()` or the fields.
+- `sgl-3d` a transmissive material draws with the blended surfaces whatever
+  its alpha mode: it casts no shadow and rays pass through it. No game-code
+  change.
+- `sgl-3d` glTF files using those extensions, loaded opaque before, now load
+  transmissive. No game-code change.
+- `sgl-3d` `Scene::add_materials`/`set_material`: new
+  `SceneError::InvalidTransmission` for values outside the extensions'
+  bounds. Migration: exhaustive `SceneError` matches add it.
 
 ## 0.2.1 — 2026-10-07
 

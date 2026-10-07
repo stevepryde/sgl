@@ -188,12 +188,6 @@ impl Transparent {
         true
     }
 
-    /// The transmission copy, once a frame has made it.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn transmission_copy(&self) -> Option<&wgpu::TextureView> {
-        self.transmission.copy()
-    }
-
     /// Rebinds the depth the glow reads.
     pub fn resize(&mut self, device: &wgpu::Device, targets: &SharedTargets) {
         self.depth_group = self.effects.depth_group(device, &targets.depth);

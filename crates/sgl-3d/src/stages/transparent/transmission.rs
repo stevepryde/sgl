@@ -109,12 +109,6 @@ impl Transmission {
         }
     }
 
-    /// The copy, every level of it, once a frame has made it.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub fn copy(&self) -> Option<&wgpu::TextureView> {
-        self.levels.as_ref().map(|levels| &levels.view)
-    }
-
     /// Copies `composed` (the composed frame) into the copy's first level and
     /// builds its further levels, allocating the copy at its size first where
     /// it has none of that size. Returns the copy, every level of it.

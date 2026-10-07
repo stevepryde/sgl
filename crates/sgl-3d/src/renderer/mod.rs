@@ -452,13 +452,6 @@ impl Renderer {
         &self.targets
     }
 
-    /// The transparent stage's copy of the composed frame, once a frame
-    /// that shows a transmissive material has made it.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn transmission_copy(&self) -> Option<&wgpu::TextureView> {
-        self.transparent.transmission_copy()
-    }
-
     /// The fog's froxels the last frame wrote, the froxels it integrated
     /// and its integrated volume.
     #[cfg(all(test, not(target_arch = "wasm32")))]

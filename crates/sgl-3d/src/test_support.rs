@@ -718,7 +718,7 @@ pub(crate) fn ray_tracing_device(
 
 /// A device with the renderer's limits and the optional features `features`
 /// chooses for the adapter, or `None` after printing why.
-fn device_choosing(
+pub(crate) fn device_choosing(
     features: impl FnOnce(&wgpu::Adapter) -> wgpu::Features,
 ) -> Option<(wgpu::Device, wgpu::Queue)> {
     let adapter = adapter()?;

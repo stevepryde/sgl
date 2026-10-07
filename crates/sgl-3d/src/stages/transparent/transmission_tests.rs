@@ -156,22 +156,25 @@ fn floor_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 // Plausible defects: transmitted light not attenuated, attenuated by the
 // thickness without the instance's scale, by a wrong coefficient (inverted,
 // another logarithm), or a channel whose attenuation colour is 0 passing
-// light or turning into NaN; or, below the Extended tier, the blend passing
-// another share than the transmitted light carries. The oracle is
-// KHR_materials_volume's Beer-Lambert law (Khronos glTF acfcbe65, README
-// 148-168): after x metres a channel of attenuation colour c at attenuation
-// distance d passes c^(x / d) of white light. A glass of IOR 1 (no bend) and
-// thickness 0.25 posed at scale 2 is crossed over x = 0.5 m at normal
-// incidence, its attenuation colour (0.5, 0.25, 0) at d = 0.5 m, in front of
-// an unlit white backdrop: the frame behind it holds (0.5, 0.25, 0) where the
-// copy holds the frame (Extended), and on the Basic tier, which blends the
-// light behind it through unrefracted, their mean, 0.25, on every channel.
+// light or turning into NaN, even over a short path; or, below the Extended
+// tier, the blend passing another share than the transmitted light carries.
+// The oracle is KHR_materials_volume's Beer-Lambert law (Khronos glTF
+// acfcbe65, README 148-168): after x metres a channel of attenuation colour
+// c at attenuation distance d passes c^(x / d) of white light, none where c
+// is 0 and x is above 0. A glass of IOR 1 (no bend), posed at scale 2, of
+// attenuation colour (0.5, 0.25, 0), is crossed at normal incidence in
+// front of an unlit white backdrop: at thickness 0.25 (x = 0.5 m) and
+// d = 0.5 m, x / d = 1, and at thickness 0.25 and d = 10 m, x / d = 0.05,
+// where a zero channel taken as f32's least normal would still pass 0.013.
+// The frame behind it holds c^(x / d) on each channel where the copy holds
+// the frame (Extended), and on the Basic tier, which blends the light behind
+// it through unrefracted, their mean on every channel.
 #[test]
 fn transmitted_light_is_attenuated_by_beer_lambert() {
-    let colour = [0.5, 0.25, 0.];
-    let content = || {
+    let colour = [0.5f32, 0.25, 0.];
+    let content = |distance: f32| {
         let mut slab = glass(1., 0.25, 0.);
-        slab.attenuation_distance = 0.5;
+        slab.attenuation_distance = distance;
         slab.attenuation_color = colour;
         let pose =
             Mat4::from_scale_rotation_translation(Vec3::splat(2.), Quat::IDENTITY, -3. * Vec3::Z);
@@ -184,20 +187,24 @@ fn transmitted_light_is_attenuated_by_beer_lambert() {
     };
     let devices = [test_support::device(), floor_device()];
     for (device, queue) in devices.into_iter().flatten() {
-        let (tier, texels) = composed(&device, &queue, content());
-        let centre = texels[(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize];
-        let mean = colour.iter().sum::<f32>() / 3.;
-        let expected = match tier {
-            BindingTier::Extended => colour,
-            BindingTier::Basic => [mean; 3],
-        };
-        for channel in 0..3 {
-            assert!(
-                centre[channel].is_finite() && (centre[channel] - expected[channel]).abs() <= 5e-3,
-                "{tier:?}: channel {channel} passes {}, Beer-Lambert's {}",
-                centre[channel],
-                expected[channel]
-            );
+        for distance in [0.5, 10.] {
+            let (tier, texels) = composed(&device, &queue, content(distance));
+            let centre = texels[(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize];
+            let passed = colour.map(|c| c.powf(0.5 / distance));
+            let mean = passed.iter().sum::<f32>() / 3.;
+            let expected = match tier {
+                BindingTier::Extended => passed,
+                BindingTier::Basic => [mean; 3],
+            };
+            for channel in 0..3 {
+                assert!(
+                    centre[channel].is_finite()
+                        && (centre[channel] - expected[channel]).abs() <= 5e-3,
+                    "{tier:?}, d {distance}: channel {channel} passes {}, Beer-Lambert's {}",
+                    centre[channel],
+                    expected[channel]
+                );
+            }
         }
     }
 }
@@ -403,14 +410,24 @@ fn an_index_matched_surface_is_invisible_on_the_basic_tier() {
 }
 
 // Plausible defects: the transparent stage copies the composed frame in
-// frames that show no transmissive material, a cost the issue rules out, or
-// does not copy it in one that does. The oracle is the requirement: a frame
-// that shows a blended surface but no transmissive one, which lies behind
-// the camera, allocates no copy, and the same scene seen the other way,
-// showing the transmissive surface, does.
+// frames that show no transmissive material, a cost the issue rules out,
+// before the first that shows one or after it, once the copy is allocated;
+// or does not copy it in one that does. The oracle is the requirement,
+// observed in the GPU timings of the frames' passes: a frame that shows a
+// blended surface but no transmissive one, which lies behind the camera,
+// times no `transmission copy` pass, the same scene seen the other way,
+// showing the transmissive surface, times one, and the first view again
+// times none.
 #[test]
 fn the_frame_is_copied_only_where_a_transmissive_surface_shows() {
-    let Some((device, queue)) = test_support::device() else {
+    let Some((device, queue)) = test_support::device_choosing(|adapter| {
+        crate::graphics_device::features(adapter)
+            | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY)
+    }) else {
+        return;
+    };
+    let Some(mut timing) = crate::timing::GpuTiming::new(&device, &queue) else {
+        eprintln!("skipping: the adapter has no timestamp queries");
         return;
     };
     let settings = settings();
@@ -457,13 +474,16 @@ fn the_frame_is_copied_only_where_a_transmissive_surface_shows() {
         .add_instance(&device, &queue, state, Mobility::Static)
         .unwrap();
     let output = crate::view::targets::target(&device, "transmission", SIZE, gbuffer::COLOR);
+    // Whether a frame facing `facing` timed a `transmission copy` pass:
+    // its timings are read back once it completes, a resolve and a map
+    // later, within a few polls.
     let mut copied = |facing: Quat| {
-        let view = Mat4::from_quat(facing);
         let input = FrameInput::new(Camera {
-            view,
+            view: Mat4::from_quat(facing),
             projection: projection(),
             eye: Vec3::ZERO,
         });
+        let _ = timing.begin_frame(&device, &queue);
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             &device,
@@ -473,20 +493,34 @@ fn the_frame_is_copied_only_where_a_transmissive_surface_shows() {
             &input,
             &settings,
             &output,
-            None,
+            Some(&timing),
         );
         queue.submit([encoder.finish()]);
+        timing.submitted(&queue);
         renderer.finish_frame(&mut scene);
-        renderer.transmission_copy().is_some()
+        for _ in 0..8 {
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            if let Some(frame) = timing.begin_frame(&device, &queue).last() {
+                return frame
+                    .passes
+                    .iter()
+                    .any(|pass| pass.name == "transmission copy");
+            }
+        }
+        panic!("the frame's timings did not complete");
     };
-    assert!(
-        !copied(Quat::from_rotation_y(std::f32::consts::PI)),
-        "a frame that shows no transmissive surface copied the frame"
-    );
-    assert!(
-        copied(Quat::IDENTITY),
-        "a frame that shows a transmissive surface did not copy the frame"
-    );
+    let away = Quat::from_rotation_y(std::f32::consts::PI);
+    for (frame, facing, shows) in [
+        (1, away, false),
+        (2, Quat::IDENTITY, true),
+        (3, away, false),
+    ] {
+        assert_eq!(
+            copied(facing),
+            shows,
+            "frame {frame}, which shows a transmissive surface: {shows}"
+        );
+    }
 }
 
 // Plausible defects: a masked transmissive material, drawn with the blended
