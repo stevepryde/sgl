@@ -247,7 +247,7 @@ fn required_anisotropy_is_supported_without_disabling_core_validation() {
     std::fs::write(fixture.path(), serde_json::to_vec(&source).unwrap()).unwrap();
     assert!(load(&fixture.path()).is_err());
     source["accessors"][0]["bufferView"] = 0.into();
-    source["extensionsRequired"] = serde_json::json!(["KHR_materials_sheen"]);
+    source["extensionsRequired"] = serde_json::json!(["KHR_texture_transform"]);
     std::fs::write(fixture.path(), serde_json::to_vec(&source).unwrap()).unwrap();
     assert!(load(&fixture.path()).is_err());
 }
