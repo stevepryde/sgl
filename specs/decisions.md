@@ -313,26 +313,28 @@ Use the [current specs](README.md) for implementation and the
   of sampled textures per stage from 21 to 31 for new material maps: "Can
   we make it optional? Low minimum, raise ceiling?"; then "core should use
   16 texture slots so that it works on more devices" and "or a basic
-  option with 16 is fine too". A device takes one of two binding tiers by
-  its `max_sampled_textures_per_shader_stage`: `Basic` below 48, with a
-  basic look, and `Extended` at 48 or more, Dawn's upper tier, with every
-  binding ([Binding tiers](sgl3d-architecture.md#designs-that-span-stages)).
-  On `Basic` the anisotropy map and every material map added after it
-  give way to their factors, and the effective configuration reports the
-  tier. S3D-1's floor moves to WebGPU's default limits, 16 sampled
-  textures per stage among them, when lit group 0's bindings are tiered,
-  #241's second change (the lightmap's and irradiance atlas's
-  directionality and the dynamic GI volume's probes then binding on
-  `Extended` alone, each reported); until then it stays at 21, and `Basic`
-  covers 21 to 47.
-  Mobile is neither targeted nor excluded: "I don't currently support
-  mobile, though I don't want to explicitly not support it either". Mobile
-  GPUs take a tier by the same limit, and no mobile-specific work is done.
-  Rationale: two tiers, not three. Dawn offers 16 or 48, so the browser
-  never sits between them; wgpu 30's Metal on macOS and Apple6 and later
-  (96) and DX12 at resource binding tier 2 or above (which wgpu requires)
-  are far above 48. The devices between 21 and 47 are iOS GPUs older than
-  Apple4 (23) and Vulkan drivers whose shared per-stage resources land
-  there. A middle tier at 21 would keep today's look on those few at the
-  cost of a third layout, provider and boundary test, where AR-3 and AR-11
-  favour fewer variants and the owner accepts a basic look at the floor.
+  option with 16 is fine too". S3D-1's floor becomes WebGPU's default
+  limits, 16 sampled textures per stage among them, and a device takes
+  one of two binding tiers by its `max_sampled_textures_per_shader_stage`:
+  `Basic` below 48, with a basic look, and `Extended` at 48 or more,
+  Dawn's upper tier, with every binding
+  ([Binding tiers](sgl3d-architecture.md#designs-that-span-stages)),
+  reported by `Renderer::binding_tier`. Mobile is neither targeted nor
+  excluded: "I don't currently support mobile, though I don't want to
+  explicitly not support it either". Mobile GPUs take a tier by the same
+  limit, and no mobile-specific work is done.
+  Plan: #241's first change tiers group 2: on `Basic` the anisotropy map,
+  and every map #242–#245 add, gives way to its factor. Its second change
+  tiers lit group 0, stating the bindings `Basic` drops there and their
+  fallbacks, and moves S3D-1's floor to WebGPU's defaults; until then the
+  floor stays at 21, and `Basic` covers 21 to 47.
+  Rationale: two tiers, not three. Chrome's Dawn offers 16 or 48, so it
+  never sits between them; wgpu 30's Metal offers 96 on macOS and Apple6
+  and later and 72 on Apple4 and Apple5, and DX12 at resource binding tier
+  2 or above, which wgpu requires, is far above 48. The devices between 21
+  and 47 are iOS GPUs older than Apple4 (23 in wgpu 30) and Vulkan drivers
+  whose `maxPerStageResources`, which wgpu shares among several limits,
+  lands there. A middle tier at 21 would keep today's look on those few at
+  the cost of a third layout, provider and boundary test, where AR-3 and
+  AR-11 favour fewer variants and the owner accepts a basic look at the
+  floor.
