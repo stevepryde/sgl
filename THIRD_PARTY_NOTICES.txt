@@ -209,7 +209,9 @@ crates/sgl-3d/src/LICENSE-bevy.txt
 
 Bevy Engine, https://github.com/bevyengine/bevy
 Revision b56fc29d3016e641754765244b5ba3f9cc504671, LICENSE-MIT (Bevy is dual
-licensed MIT OR Apache-2.0; SGL3D uses it under the MIT terms below).
+licensed MIT OR Apache-2.0; SGL3D uses it under the MIT terms below). The DFG
+table SGL3D embeds (src/scene/dfg.rg16) is Bevy 9d12036's
+(crates/bevy_pbr/src/environment_map/dfg.ktx2).
 
 MIT License
 
