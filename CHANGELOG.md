@@ -3,8 +3,8 @@
 Migration guidance for agents maintaining games with SGL. Read all entries
 after the game's current version through its target version, in version order.
 `Unreleased` describes changes on Git that are not yet in a released version.
-See the [update workflow](docs/README.md#updating-a-game) for exact pins and
-validation in the consuming game.
+See the [update workflow](docs/README.md#updating-a-game) for dependency requirements
+and validation in the consuming game.
 
 One bullet per change: the crate and symbol, the old and new behaviour in a
 clause, and the migration in a line or a short code sample. Record changes
@@ -14,6 +14,11 @@ needed. Rationale, measurements and full API details belong in the package
 docs and specs the entry links.
 
 ## Unreleased
+
+- Game dependency guidance: give every SGL crate the same semver
+  requirement (`"0.3.0"`) and commit `Cargo.lock`, never an `=` pin; Git
+  consumers reference one commit `rev`. Migration: drop `=` from SGL
+  requirements.
 
 ## 0.3.0 — 2026-10-07
 
