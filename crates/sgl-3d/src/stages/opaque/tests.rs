@@ -485,7 +485,8 @@ fn gbuffer_f0_is_fresnel_at_the_materials_ior() {
 // dielectric's F0 and F90 are both 0, so it reflects as Lambert alone, and a
 // black one reflects nothing. A cube seen with two faces near grazing, lit
 // from behind by the sun, a rectangle light and a uniform environment, must
-// leave the frame black; at `specular` 1 the same frame is lit.
+// leave the frame black, opaque (its environment specular from source
+// completion) and blended (from lit shading); at `specular` 1 it is lit.
 #[test]
 fn a_dielectric_without_specular_reflects_as_lambert_alone() {
     use crate::{DirectionalLight, EnvironmentLight, Light, LightShape};
@@ -574,12 +575,24 @@ fn a_dielectric_without_specular_reflects_as_lambert_alone() {
             .flat_map(|texel| (0..3).map(|c| test_support::half(&texel[c * 2..])))
             .collect()
     };
-    let none = composite(&mut scene);
-    let brightest = none.iter().copied().fold(0., f32::max);
-    assert!(
-        brightest == 0.,
-        "a black dielectric without specular reflected {brightest}"
-    );
+    for alpha in [
+        crate::AlphaMode::Opaque,
+        crate::AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+        },
+    ] {
+        let mut values = scene.material(ids.materials[0]).unwrap();
+        values.alpha = alpha;
+        scene
+            .set_material(&queue, ids.materials[0], values)
+            .unwrap();
+        let none = composite(&mut scene);
+        let brightest = none.iter().copied().fold(0., f32::max);
+        assert!(
+            brightest == 0.,
+            "a black dielectric without specular reflected {brightest} ({alpha:?})"
+        );
+    }
     let mut values = scene.material(ids.materials[0]).unwrap();
     values.specular = 1.;
     scene
@@ -590,4 +603,161 @@ fn a_dielectric_without_specular_reflects_as_lambert_alone() {
         lit.iter().filter(|&&value| value > 0.01).count() > 300,
         "the fixture must reflect light at specular 1"
     );
+}
+
+// Defects: the G-buffer's grazing reflectance (F90) is derived from F0
+// rather than taken from the specular strength (a partial strength reads
+// near 1, a low-IOR dielectric below 1), ignores metallic, or mixes the
+// wrong way. The oracle is KHR_materials_specular: a dielectric's F90 is its
+// specular strength, whatever its IOR, mixed toward 1 by metallic.
+#[test]
+fn gbuffer_f90_is_the_specular_strength_mixed_toward_one_by_metallic() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut asset = test_support::cube();
+    asset.meshes = vec![square(-3., 2.)];
+    let (ids, _) = test_support::add_static(&device, &queue, &mut scene, asset);
+    let material = ids.materials[0];
+    let settings = Settings::default();
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: perspective(1., 1., 0.1),
+        eye: Vec3::ZERO,
+    });
+    // (IOR, specular, metallic, KHR's F90): partial strengths, a metal, a
+    // half metal and ice, whose F0 (0.018) is below water's.
+    for (ior, specular, metallic, expected) in [
+        (1.5, 0.25, 0., 0.25),
+        (1.5, 0.5, 0., 0.5),
+        (1.5, 0.25, 1., 1.),
+        (1.5, 0.5, 0.5, 0.75),
+        (1.31, 1., 0., 1.),
+    ] {
+        let mut values = scene.material(material).unwrap();
+        values.ior = ior;
+        values.specular = specular;
+        values.metallic = metallic;
+        scene.set_material(&queue, material, values).unwrap();
+        let mut frame = renderer.prepare_test_frame(&device, &queue, &mut scene, &input, &settings);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.encode_test_opaque(&device, &queue, &mut encoder, &scene, &mut frame, false);
+        queue.submit([encoder.finish()]);
+        let recorded =
+            test_support::read(&device, &queue, renderer.targets().material.texture(), 8);
+        let at = ((SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) * 8) as usize;
+        let f90 = test_support::half(&recorded[at + 6..]);
+        assert!(
+            (f90 - expected).abs() < 1e-3,
+            "IOR {ior}, specular {specular}, metallic {metallic}: F90 {f90}, expected {expected}"
+        );
+    }
+}
+
+// Defects: the environment scale, which the anisotropy target records
+// beside the anisotropy, is lost on its way to source completion: read from
+// another channel (the material target's F90, 1 for a metal), or left
+// unwritten by the anisotropy pass of a device that cannot write that
+// target with the G-buffer's others. The oracle is
+// `SurfaceMaterial::environment_scale`, a multiplier of the environment's
+// specular light: a smooth white metal lit by a uniform environment alone
+// completes at half scale to half its radiance at scale 1, on the smallest
+// attachment budget, whose anisotropy pass writes the scale, and on the
+// device's own.
+#[test]
+fn the_environment_scale_reaches_completion_on_every_attachment_budget() {
+    use crate::{EnvironmentLight, graphics_device};
+    let Some(adapter) = test_support::adapter() else {
+        return;
+    };
+    let largest = adapter.limits().max_color_attachment_bytes_per_sample;
+    for budget in [32, largest] {
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: graphics_device::features(&adapter),
+            required_limits: wgpu::Limits {
+                max_color_attachment_bytes_per_sample: budget,
+                ..graphics_device::limits(&adapter)
+            },
+            ..Default::default()
+        }))
+        .unwrap();
+        let mut scene = Scene::new(&device, &queue);
+        let mut asset = test_support::cube();
+        asset.materials[0].base = [1.; 4];
+        asset.materials[0].metallic = 1.;
+        asset.materials[0].roughness = 0.2;
+        let (ids, _) = test_support::add_static(&device, &queue, &mut scene, asset);
+        let environment = scene
+            .add_environment(
+                &device,
+                &queue,
+                &test_support::environment([255; 4], &0x3c00u16.to_le_bytes()),
+            )
+            .unwrap();
+        let settings = Settings {
+            antialiasing: Antialiasing::Off,
+            ambient_occlusion: AmbientOcclusionQuality::Off,
+            screen_space_reflections: crate::settings::ScreenSpaceReflections::Off,
+            atmosphere: false,
+            ..Settings::default()
+        };
+        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        assert_eq!(
+            renderer.test_anisotropy_inline(),
+            budget == largest && largest > 32,
+            "budget {budget} must take its own G-buffer form"
+        );
+        let output = crate::view::targets::target(&device, "scale", SIZE, gbuffer::COLOR);
+        let eye = Vec3::new(1.6, 1.2, 2.4);
+        let mut input = FrameInput::new(Camera {
+            view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
+            projection: perspective(0.9, 1., 0.1),
+            eye,
+        });
+        input.backdrop = Backdrop::Color([0.; 3]);
+        input.environment = Some(environment);
+        input.diffuse_environment.intensity = 0.;
+        input.reflection_environment = EnvironmentLight {
+            yaw: 0.,
+            intensity: 1.,
+        };
+        let mut composite = |scale: f32| -> Vec<f32> {
+            let mut values = scene.material(ids.materials[0]).unwrap();
+            values.environment_scale = scale;
+            scene
+                .set_material(&queue, ids.materials[0], values)
+                .unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+            test_support::read(&device, &queue, renderer.targets().composite.texture(), 8)
+                .chunks_exact(8)
+                .flat_map(|texel| (0..3).map(|c| test_support::half(&texel[c * 2..])))
+                .collect()
+        };
+        let whole = composite(1.);
+        assert!(
+            whole.iter().filter(|&&value| value > 0.05).count() > 300,
+            "budget {budget}: the metal must reflect its environment"
+        );
+        let half = composite(0.5);
+        for (channel, (&whole, &half)) in whole.iter().zip(&half).enumerate() {
+            assert!(
+                (half - whole / 2.).abs() <= whole / 512. + 1e-5,
+                "budget {budget}, channel {channel}: {half} at half scale for {whole}"
+            );
+        }
+    }
 }

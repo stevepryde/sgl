@@ -97,6 +97,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.base=vec4(decaled.base,base.a);
  s.metallic=decaled.metallic;
  s.dielectric_f0=material_dielectric_f0(material.values);
+ s.specular=material.values.specular;
  s.roughness=clamp(decaled.roughness,.0525,1.);
  s.coat=material.values.coat;
  s.coat_roughness=clamp(material.values.coat_roughness,.0525,1.);

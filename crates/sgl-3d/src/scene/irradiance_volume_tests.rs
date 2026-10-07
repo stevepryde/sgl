@@ -122,6 +122,7 @@ fn fixture_surface(position:vec3<f32>,normal:vec3<f32>,metal:bool,environment_sc
  s.base=select(vec4(.5,.5,.5,1.),vec4(1.),metal);
  s.metallic=select(0.,1.,metal);
  s.dielectric_f0=vec3(.04);
+ s.specular=1.;
  s.roughness=select(1.,.1,metal);
  s.environment_scale=environment_scale;
  s.occlusion=1.;

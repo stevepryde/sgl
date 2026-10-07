@@ -886,7 +886,8 @@ existing ownership. Probe captures and secondary rays do not consume
 camera-space AO. There are no substitute contact shadows. A material's
 occlusion map joins it: each opaque receiver takes the lesser of the two
 visibilities, as Filament and Bevy take them, and every other view its
-material's alone ([asset limits](#asset-and-environment-limits)).
+material's alone; baked diffuse takes the material's alone
+([asset limits](#asset-and-environment-limits)).
 
 The radius is clamped to 0.01–10000 m (XeGTAO's expected minimum and its
 settings' maximum); `Settings::ambient_occlusion`
@@ -2096,21 +2097,16 @@ refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for
 water at 1.33, 0.17 for diamond at 2.42. `KHR_materials_specular` tints it
 (`specular_color`, at most 1 after the tint) and scales it (`specular`), as
 `asset::Material` and `SurfaceMaterial` hold them. Reflectance at grazing
-incidence (F90) follows F0, SGL3D's choice since the G-buffer holds F0
-alone: 1 for a mean F0 of 0.02 or more, falling to none with it, so
-`specular` 0 turns a dielectric's reflection off whole. It matches
-KHR_materials_specular, whose dielectric F90 is `specular`, at the defaults
-and at `specular` 0 and 1 from an IOR of about 1.333 up. A partial
-`specular` keeps up to twice KHR's grazing reflection (0.99 against 0.5 at
-`specular` 0.5), and a dielectric below that IOR or a near-black metal
-keeps less (ice at 1.31: 0.89); the architecture's Reflections passage
-gives the bounds. The occlusion map's red channel, at `occlusion_strength`
-(glTF's lerp), occludes a surface's ambient diffuse and environment
-specular, never direct light, emission or the diffuse light of a lightmap
-or atlas chart, as Bevy leaves its lightmaps (three.js and Godot occlude a
-light map too); with `Settings::ambient_occlusion` the camera's opaque
-surfaces take the lesser of it and the frame's ambient occlusion, as
-Filament and Bevy do.
+incidence (F90) is `specular` mixed toward 1 by metallic, as
+KHR_materials_specular, Filament and three.js define it, so `specular` 0
+turns a dielectric's reflection off whole. The occlusion map's red channel,
+at `occlusion_strength` (glTF's lerp), occludes a surface's ambient diffuse,
+its lightmap or atlas chart's diffuse light and its environment specular,
+never direct light or emission, as three.js and Godot occlude a light map;
+with `Settings::ambient_occlusion` the camera's opaque surfaces take the
+lesser of it and the frame's ambient occlusion for their ambient diffuse
+and environment specular, as Filament and Bevy do, while a bake keeps its
+own.
 
 On the GPU the scene keeps each `asset::Vertex` (88 bytes) in 32, packed by
 `PreparedModel::new` after Godot's attribute compression: the position
@@ -2218,8 +2214,10 @@ geometry normals in BA. Each pair uses Bevy's signed `[-1, 1]` octahedral
 coordinates and `gbuffer_octahedral_decode` (see `src/shading/gbuffer.wgsl`);
 there is no unsigned remapping, preserving binary16 precision around zero.
 Stable material RGBA16F stores coat roughness, base
-roughness, coat strength and environment scale. Metallic reflectance is already
-carried by F0; the material target does not duplicate metallic. The mapped base
+roughness, coat strength and the base's grazing reflectance (F90). Metallic
+reflectance is already carried by F0 and F90; the material target does not
+duplicate metallic. The anisotropy RGBA16F stores the tangent in signed
+octahedral RG, its strength and the environment scale. The mapped base
 normal controls base environment/probe lighting; the geometry coat normal controls
 coat lighting and the traced coat lobe, including when SSR is off.
 

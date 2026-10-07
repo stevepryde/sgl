@@ -637,3 +637,77 @@ fn a_packed_occlusion_map_occludes_environment_specular() {
         "a fully occluded metal reflected {brightest}"
     );
 }
+
+// Defects: a material's occlusion leaves a lightmapped receiver's baked
+// diffuse whole, occludes it only in some views, or lets the frame's
+// ambient occlusion occlude it too. The oracle is glTF 2.0's occlusion of
+// indirect light, lerp(1, red, strength), which three.js and Godot apply to
+// a light map: lit by a uniform lightmap alone, a box and floor packing an
+// occlusion map of red 64 complete to 64/255 of their radiance at strength
+// 0, with ambient occlusion off and on, for a bake holds its own occlusion.
+#[test]
+fn a_packed_occlusion_map_occludes_lightmapped_diffuse() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    const RED: u8 = 64;
+    let (mut scene, material, mut input) = box_on_floor(&device, &queue, Some(RED));
+    scene
+        .set_lightmap(
+            &device,
+            &queue,
+            &crate::static_lighting::Lightmap {
+                size: [2, 2],
+                uv_scale_offset: [1., 1., 0., 0.],
+                irradiance: vec![[0.3, 0.2, 0.1]; 4],
+                directionality: vec![],
+            },
+            &[material],
+        )
+        .unwrap();
+    input.baked_lighting = true;
+    let settings = Settings {
+        scene_resolution: settings::SceneResolution::Full,
+        antialiasing: settings::Antialiasing::Off,
+        screen_space_reflections: settings::ScreenSpaceReflections::Off,
+        atmosphere: false,
+        bloom: settings::Bloom::Off,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
+    let mut composite = |strength: f32, quality| -> Vec<f32> {
+        let mut values = scene.material(material).unwrap();
+        values.occlusion_strength = strength;
+        scene.set_material(&queue, material, values).unwrap();
+        render(
+            &device,
+            &queue,
+            &mut scene,
+            &mut renderer,
+            &settings,
+            &input,
+            &output,
+            quality,
+        )
+        .composite
+        .chunks_exact(8)
+        .flat_map(|texel| (0..3).map(|c| half(&texel[c * 2..])))
+        .collect()
+    };
+    for quality in [Quality::Off, Quality::Medium] {
+        let unoccluded = composite(0., quality);
+        assert!(
+            unoccluded.iter().filter(|&&value| value > 0.01).count() > 300,
+            "the lightmap must light the box and floor"
+        );
+        let occluded = composite(1., quality);
+        for (channel, (&before, &after)) in unoccluded.iter().zip(&occluded).enumerate() {
+            let expected = before * f32::from(RED) / 255.;
+            assert!(
+                (after - expected).abs() <= before / 256. + 1e-5,
+                "{quality:?}, channel {channel}: {after} for {before} unoccluded"
+            );
+        }
+    }
+}

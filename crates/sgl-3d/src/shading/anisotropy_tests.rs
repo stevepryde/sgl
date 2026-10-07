@@ -144,7 +144,7 @@ fn observed_direct(c:Case,axis_strength:vec4<f32>)->vec3<f32> {
  var reflectance=surface_reflectance(surface,vec2(.8,.025));
  reflectance.diffuse=vec3(.12,.07,.02);
  reflectance.f0=vec3(.54,.49,.44);
- reflectance.f90=pbr_f90(reflectance.f0);
+ reflectance.f90=1.;
  return surface_direct_brdf(surface,reflectance,c.l.xyz,vec2(.73,.04),1.);
 }
 @compute @workgroup_size(64) fn observe(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -153,7 +153,7 @@ fn observed_direct(c:Case,axis_strength:vec4<f32>)->vec3<f32> {
  let f0=vec3(.54,.49,.44);let diffuse=vec3(.12,.07,.02);
  let axis=vec4(c.t.xyz,c.v.w);let zero_axis=vec4(c.t.xyz,0.);
  let dfg_v=vec2(.8,.025);let dfg_l=vec2(.73,.04);
- result[id.x*5u]=vec4(pbr_anisotropic_specular(n,v,l,c.n.w,f0,pbr_f90(f0),axis),1.);
+ result[id.x*5u]=vec4(pbr_anisotropic_specular(n,v,l,c.n.w,f0,1.,axis),1.);
  result[id.x*5u+1u]=vec4(observed_direct(c,zero_axis),1.);
  result[id.x*5u+2u]=vec4(historical_direct_three(n,v,l,diffuse,f0,c.n.w,c.l.w,c.t.w,dfg_v,dfg_l),1.);
  result[id.x*5u+3u]=vec4(pbr_anisotropy_bent_normal(n,v,axis,c.n.w),1.);

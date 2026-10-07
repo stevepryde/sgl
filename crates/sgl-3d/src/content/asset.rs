@@ -98,7 +98,8 @@ pub struct Material {
     pub ior: f32,
     /// Strength of the dielectric specular reflection in `0..=1`
     /// (`KHR_materials_specular`'s `specularFactor`): 1 as the IOR gives
-    /// it, 0 none.
+    /// it, 0 none. It scales the dielectric F0 and is its reflectance at
+    /// grazing incidence (F90), which metallic mixes toward 1.
     pub specular: f32,
     /// Linear tint of the dielectric F0, each channel finite and
     /// nonnegative (`KHR_materials_specular`'s `specularColorFactor`): the

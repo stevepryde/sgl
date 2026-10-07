@@ -30,8 +30,10 @@ struct Surface {
  metallic:f32,
  // The dielectric reflectance at normal incidence
  // (material_dielectric_f0), which metallic mixes toward the base
- // (surface_f0).
+ // (surface_f0), and at grazing incidence, the specular strength, which it
+ // mixes toward 1 (surface_f90).
  dielectric_f0:vec3<f32>,
+ specular:f32,
  // Perceptual roughness, already filtered or clamped by the builder.
  roughness:f32,
  coat:f32,
@@ -128,9 +130,18 @@ fn probe_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32)->Environment
 fn surface_f0(surface:Surface)->vec3<f32> {
  return mix(surface.dielectric_f0,surface.base.rgb,surface.metallic);
 }
+// A surface's specular reflectance at grazing incidence (F90): its specular
+// strength mixed toward 1 by metallic, as KHR_materials_specular defines it
+// (dielectric_f90 = specular), Filament ef1a133's specular-factor path
+// computes it (shaders/src/surface_shading_lit.fs, pixel.f90) and three.js
+// 0.185.1 does (MeshPhysicalNodeMaterial.setupSpecular, specularF90). The
+// G-buffer records it (view/geometry.wgsl).
+fn surface_f90(surface:Surface)->f32 {
+ return mix(surface.specular,1.,surface.metallic);
+}
 // What shade_lit derives once per surface for its direct lights, as
 // Filament's PixelParams: the diffuse colour, the specular reflectance at
-// normal and grazing incidence (surface_f0, and pbr_f90 of it), the DFG
+// normal and grazing incidence (surface_f0, surface_f90), the DFG
 // lookup at the view, and the coat's Fresnel toward the view, weighted by
 // the coat (pbr_coat_fresnel), which also attenuates shade_lit's ambient,
 // environment, baked and emitted light.
@@ -147,7 +158,7 @@ fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
  let f0=surface_f0(surface);
  let diffuse=surface.base.rgb*(1.-surface.metallic);
  let coat_fresnel=pbr_coat_fresnel(surface.geometry_normal,surface.view,surface.coat);
- return SurfaceReflectance(diffuse,f0,pbr_f90(f0),view_dfg,coat_fresnel);
+ return SurfaceReflectance(diffuse,f0,surface_f90(surface),view_dfg,coat_fresnel);
 }
 // The light one sample brings to a surface, as Filament's
 // surfaceShading(PixelParams, Light); a rectangle's integrated over its face
@@ -357,8 +368,14 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // adds lightmaps to the ambient light its clearcoat then attenuates
  // (scene_forward_clustered.glsl), and Filament ef1a133 dims all indirect
  // diffuse (surface_light_indirect.fs evaluateClearCoatIBL). Bevy 9d12036
- // adds its lightmap undimmed (pbr_functions.wesl).
- color+=indirect.baked*diffuse*(vec3(1.)-f0)*(1.-reflectance.coat_fresnel);
+ // adds its lightmap undimmed (pbr_functions.wesl). The material's
+ // occlusion occludes it in every view, the camera's included, as Three.js
+ // 0.185.1 occludes a light map by its AO map (setupLightMap's irradiance,
+ // PhysicalLightingModel.ambientOcclusion) and Godot b130438 its lightmaps
+ // by its AO (scene_forward_clustered.glsl ambient_light *= ao); the
+ // frame's ambient occlusion does not, for a bake holds its own (Bevy 9d12036
+ // likewise adds its lightmap unoccluded, pbr_functions.wesl).
+ color+=indirect.baked*diffuse*(vec3(1.)-f0)*(1.-reflectance.coat_fresnel)*s.occlusion;
  if !probe_hit {
   if frame.directional_lights[0].illuminance>0. {
    color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,s.geometry_normal,context));
@@ -381,7 +398,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
   }
  }
  if context.environment_specular {
-  let lobes=specular_lobes(n,coat_n,v,f0,rough,dfg,coat,coat_rough,s.anisotropy,lookup_tables,environment_sampler);
+  let lobes=specular_lobes(n,coat_n,v,f0,reflectance.f90,rough,dfg,coat,coat_rough,s.anisotropy,lookup_tables,environment_sampler);
   let traced=context.traced;
   for (var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
    if lobe==SPECULAR_COAT && coat<=0. {

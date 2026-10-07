@@ -35,12 +35,13 @@ struct ReflectionEnvironment {
 @group(0) @binding(13) var receiver_material:texture_2d<f32>;
 
 // A receiver's specular lobes (specular_lobes.wgsl) from its G-buffer at
-// `world`, seen from the camera.
+// `world`, seen from the camera; `anisotropy` is its anisotropy target's
+// texel (gbuffer_anisotropy).
 fn source_lobes(normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotropy:vec4<f32>,world:vec3<f32>,camera:SourceCamera)->array<SpecularLobe,2> {
  let view=normalize(camera.eye.xyz-world);
  let normal=gbuffer_base_normal(normals);
  let base_dfg=lookup_dfg(source_lookup_tables,env_sampler,specular_nv(normal,view),material.roughness);
- return specular_lobes(normal,gbuffer_coat_normal(normals),view,f0.rgb,material.roughness,base_dfg,material.coat,material.coat_roughness,anisotropy,source_lookup_tables,env_sampler);
+ return specular_lobes(normal,gbuffer_coat_normal(normals),view,f0.rgb,material.f90,material.roughness,base_dfg,material.coat,material.coat_roughness,gbuffer_anisotropy(anisotropy),source_lookup_tables,env_sampler);
 }
 // A lobe's environment and probe specular at `world` along `lobe`, occluded
 // (occlusion_environment): the probes' by the receiver's `visibility`
@@ -94,7 +95,7 @@ fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material
     if lobe==SPECULAR_COAT && material.coat<=0. {
      continue;
     }
-    let environment=source_occluded_environment(world,lobes[lobe],lobe==SPECULAR_COAT,material.environment_scale,source_probes(id),visibility,sky_visibility,f0.rgb)*lobes[lobe].response;
+    let environment=source_occluded_environment(world,lobes[lobe],lobe==SPECULAR_COAT,gbuffer_environment_scale(anisotropy),source_probes(id),visibility,sky_visibility,f0.rgb)*lobes[lobe].response;
     incident+=environment;
     if lobe!=traced_lobe || !specular_traces(lobes[lobe].roughness,traced) {
      incoming+=environment;
@@ -229,7 +230,8 @@ override incident_radiance_enabled:bool=true;
  let size=textureDimensions(source_depth);
  let world=source_world(z,id,size,source_camera);
  let material=gbuffer_material(textureLoad(receiver_material,p,0));
- let lobes=source_lobes(textureLoad(source_normal,p,0),material,f0,textureLoad(source_anisotropy,p,0),world,source_camera);
+ let anisotropy=textureLoad(source_anisotropy,p,0);
+ let lobes=source_lobes(textureLoad(source_normal,p,0),material,f0,anisotropy,world,source_camera);
  var reflected=vec4(0.);
  var world_hit=vec4(0.);
  if !under_receiver {
@@ -244,7 +246,7 @@ override incident_radiance_enabled:bool=true;
  let lobe=lobes[traced_lobe];
  if specular_traces(lobe.roughness,env.traced) {
   let sky_visibility=textureLoad(source_ambient,p,0).a;
-  let environment=source_occluded_environment(world,lobe,traced_lobe==SPECULAR_COAT,material.environment_scale,source_probes(id),visibility,sky_visibility,f0.rgb);
+  let environment=source_occluded_environment(world,lobe,traced_lobe==SPECULAR_COAT,gbuffer_environment_scale(anisotropy),source_probes(id),visibility,sky_visibility,f0.rgb);
   let fallback=world_hit.rgb+environment*(1.-world_hit.a);
   let fade=specular_trace_fade(lobe.roughness,sqrt(env.traced),env.fade);
   specular=specular_traced(lobe,reflected,fade,fallback);

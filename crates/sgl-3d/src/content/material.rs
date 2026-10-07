@@ -76,7 +76,8 @@ pub struct SurfaceMaterial {
     /// 0.02 ([`asset::Material::ior`](crate::asset::Material::ior)).
     pub ior: f32,
     /// Strength of the dielectric specular reflection in `0..=1`: 1 as the
-    /// IOR gives it, 0 none.
+    /// IOR gives it, 0 none. It scales the dielectric F0 and is its
+    /// reflectance at grazing incidence (F90), which metallic mixes toward 1.
     pub specular: f32,
     /// Linear tint of the dielectric F0, finite and nonnegative: the F0 is
     /// the IOR's times this, at most 1, times `specular`.

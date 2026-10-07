@@ -6,8 +6,8 @@
 // source completion and composition (stages/reflections/source.wgsl) and lit
 // shading (surface.wgsl: probe captures, ray hits and blended surfaces) call.
 // The response is Three.js 0.185.1's split-sum single scattering
-// (PhysicalLightingModel, BRDF_GGX_Multiscatter's single term), toward the
-// F90 the base's F0 gives (pbr_f90) and the coat's 1, the base beneath the
+// (PhysicalLightingModel, BRDF_GGX_Multiscatter's single term), the base's
+// toward its F90 (surface_f90) and the coat's toward 1, the base beneath the
 // coat's Fresnel and the coat weighted by its strength, as its finish
 // layers them; the base reflects along the KHR anisotropy bent normal
 // (anisotropy.wgsl), the coat along its normal's mirror direction, each bent
@@ -29,15 +29,16 @@ fn specular_nv(normal:vec3<f32>,view:vec3<f32>)->f32 {
  return max(dot(normal,view),0.);
 }
 // The base lobe and the coat's (no response without a coat) of a surface
-// seen along `view`. `base_dfg` is the DFG table at the base's
+// seen along `view`, its base reflecting `f0` at normal and `f90` at
+// grazing incidence. `base_dfg` is the DFG table at the base's
 // specular_nv and `roughness`, which the caller has read for its own terms;
 // the coat's is read from `tables`, filtered by `filtering`
 // (lookup_tables.wgsl), only on a coated surface.
-fn specular_lobes(normal:vec3<f32>,coat_normal:vec3<f32>,view:vec3<f32>,f0:vec3<f32>,roughness:f32,base_dfg:vec2<f32>,coat:f32,coat_roughness:f32,anisotropy:vec4<f32>,tables:texture_2d_array<f32>,filtering:sampler)->array<SpecularLobe,2> {
+fn specular_lobes(normal:vec3<f32>,coat_normal:vec3<f32>,view:vec3<f32>,f0:vec3<f32>,f90:f32,roughness:f32,base_dfg:vec2<f32>,coat:f32,coat_roughness:f32,anisotropy:vec4<f32>,tables:texture_2d_array<f32>,filtering:sampler)->array<SpecularLobe,2> {
  let nv=specular_nv(normal,view);
  let coat_nv=specular_nv(coat_normal,view);
  let coat_fresnel=pbr_coat_fresnel(coat_normal,view,coat);
- let base_response=pbr_three_single_scatter(f0,pbr_f90(f0),base_dfg)*(1.-coat_fresnel);
+ let base_response=pbr_three_single_scatter(f0,f90,base_dfg)*(1.-coat_fresnel);
  let base_direction=pbr_anisotropy_reflection(normal,view,anisotropy,roughness);
  var coat_dfg=vec2(0.);
  if coat>0. {

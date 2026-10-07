@@ -4,7 +4,8 @@
 // normal: RG the mapped base normal, BA the geometry coat normal, both signed
 //  [-1, 1] world-space octahedral coordinates.
 // material: coat perceptual roughness, base perceptual roughness, coat
-//  strength, environment scale.
+//  strength, and the base lobe's reflectance at grazing incidence (F90,
+//  surface_f90).
 // f0: specular reflectance at normal incidence; in alpha, one 8-bit code:
 //  0 where nothing lit was drawn (unlit materials and the clear); on a lit
 //  surface, its material's occlusion in 126ths, plus 1, and 127 more where
@@ -13,7 +14,10 @@
 //  (gbuffer_lit, gbuffer_takes_baked_lights, gbuffer_occlusion), as Godot
 //  b130438 packs a flag beside 7-bit roughness in one 8-bit channel, its
 //  halves apart (scene_forward_clustered.glsl, normal_roughness_output_buffer).
-// anisotropy: world tangent in xyz, strength in w.
+// anisotropy: RG the world anisotropy tangent, signed octahedral as normal
+//  holds one (0 without anisotropy), B its strength, A the environment
+//  scale, a material value the anisotropy pass of a device that cannot
+//  write this target with the others also writes (gbuffer_encode_anisotropy).
 // motion: current minus previous unjittered UV, +y down, at most two screens
 //  along its longer axis (gbuffer_encode_motion).
 // ambient: in rgb, the ambient diffuse radiance within lit colour (Shaded in
@@ -63,13 +67,35 @@ struct GBufferMaterial {
  coat_roughness:f32,
  roughness:f32,
  coat:f32,
- environment_scale:f32,
+ f90:f32,
 }
-fn gbuffer_encode_material(coat_roughness:f32,roughness:f32,coat:f32,environment_scale:f32)->vec4<f32> {
- return vec4(coat_roughness,roughness,coat,environment_scale);
+fn gbuffer_encode_material(coat_roughness:f32,roughness:f32,coat:f32,f90:f32)->vec4<f32> {
+ return vec4(coat_roughness,roughness,coat,f90);
 }
 fn gbuffer_material(packed:vec4<f32>)->GBufferMaterial {
  return GBufferMaterial(packed.x,packed.y,packed.z,packed.w);
+}
+// A surface's anisotropy, its world tangent and strength as Surface.anisotropy
+// holds them, and its environment scale. The tangent, a unit vector where
+// the strength is above 0, takes two channels, as the normals do, so the
+// environment scale has the fourth.
+fn gbuffer_encode_anisotropy(anisotropy:vec4<f32>,environment_scale:f32)->vec4<f32> {
+ var tangent=vec2(0.);
+ if anisotropy.w>0. {
+  tangent=gbuffer_octahedral_encode(anisotropy.xyz);
+ }
+ return vec4(tangent,anisotropy.w,environment_scale);
+}
+// The anisotropy `packed` records, its tangent and strength as
+// Surface.anisotropy holds them: zero without anisotropy.
+fn gbuffer_anisotropy(packed:vec4<f32>)->vec4<f32> {
+ if packed.z<=0. {
+  return vec4(0.);
+ }
+ return vec4(gbuffer_octahedral_decode(packed.xy),packed.z);
+}
+fn gbuffer_environment_scale(packed:vec4<f32>)->f32 {
+ return packed.w;
 }
 // The perceptual roughness of the lobe reflections trace
 // (specular_traced_lobe): the coat's on a coated receiver, else the base's.

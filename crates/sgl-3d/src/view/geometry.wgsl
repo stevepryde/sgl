@@ -22,8 +22,8 @@ fn stable_material(s:Surface)->StableMaterial {
  var o:StableMaterial;
  o.normal=gbuffer_encode_normals(s.normal,s.geometry_normal);
  o.f0=gbuffer_encode_f0(surface_f0(s),!s.unlit,takes_baked_lights(s.baked,s.lightmap_uv,s.moving),s.occlusion);
- o.material=gbuffer_encode_material(s.coat_roughness,s.roughness,s.coat,s.environment_scale);
- o.anisotropy=s.anisotropy;
+ o.material=gbuffer_encode_material(s.coat_roughness,s.roughness,s.coat,surface_f90(s));
+ o.anisotropy=gbuffer_encode_anisotropy(s.anisotropy,s.environment_scale);
  return o;
 }
 struct StableOutput {
@@ -78,8 +78,9 @@ fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
  return SceneOutput(s.color,s.motion);
 }
 
-// Devices with the original 32-byte material budget write orientation in a
-// second depth-equal material pass, retaining the complete anisotropic response.
+// Devices with the original 32-byte material budget write orientation and
+// the environment scale, a material value, in a second depth-equal material
+// pass, retaining the complete anisotropic response.
 struct LegacyStableOutput {
  @location(0) normal:vec4<f32>,
  @location(1) material:vec4<f32>,
@@ -101,7 +102,7 @@ struct LegacyStableOutput {
   anisotropy=surface_anisotropy(i,front,surface_normal(i,front));
  }
  material_alpha_discard(alpha);
- return anisotropy;
+ return gbuffer_encode_anisotropy(anisotropy,material.environment_scale);
 }
 
 // Nonindexed pulled vertices, with source identity carrying the primitive.

@@ -38,24 +38,6 @@ fn pbr_bump_normal(map:texture_2d<f32>,filtering:sampler,world:vec3<f32>,n:vec3<
  return normalize(abs(determinant)*n-sign(determinant)*(gradient.x*a+gradient.y*b));
 }
 
-// The reflectance at grazing incidence (F90) of a surface whose reflectance
-// at normal incidence is `f0`: 1 from a mean F0 of 0.0202 up, falling to 0
-// with it, so a small F0 (a specular strength under one half, a dielectric
-// below an IOR of about 1.333, a near-black metal) also takes the grazing
-// reflection away, a specular occlusion baked into F0. SGL3D's own choice,
-// since the G-buffer holds F0 alone (specs/sgl3d-architecture.md,
-// Reflections, bounds it): the expression is Bevy 9d12036's, which derives
-// F90 so for every material (crates/bevy_pbr/src/render/pbr_lighting.wesl
-// fresnel, light_probe/environment_map.wesl; MIT OR Apache-2.0, see
-// LICENSE-bevy.txt), and Filament ef1a133's for materials without specular
-// factors (shaders/src/surface_brdf.fs fresnel; Apache-2.0, see
-// LICENSE-filament.txt). KHR_materials_specular, Filament's specular-factor
-// path (surface_shading_lit.fs) and three.js 0.185.1, whose
-// PhysicalLightingModel SGL3D's BRDF follows (setupSpecular), take
-// F90 = mix(specular, 1, metallic) instead.
-fn pbr_f90(f0:vec3<f32>)->f32 {
- return saturate(dot(f0,vec3(50.*.33)));
-}
 // Three.js 0.185.1 PhysicalLightingModel / BRDF_GGX_Multiscatter: F_Schlick
 // with Epic's exponent, from `f0` toward `f90`.
 fn pbr_three_fresnel(c:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {

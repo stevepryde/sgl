@@ -23,22 +23,19 @@ docs and specs the entry links.
   load to see what was left out.
 - `sgl-3d` occlusion maps, a load error before: one packed in the
   metallic-roughness image's red channel on `TEXCOORD_0` (ORM) occludes
-  ambient diffuse and environment specular, taking the lesser of it and
-  `Settings::ambient_occlusion`'s visibility; one in its own image or on
-  another UV set loads unsampled (`Ignored::OcclusionMap`). New
+  ambient diffuse, lightmap and atlas diffuse and environment specular,
+  taking the lesser of it and `Settings::ambient_occlusion`'s visibility
+  where both apply; one in its own image or on another UV set loads
+  unsampled (`Ignored::OcclusionMap`). New
   `asset::Material::occlusion_texture` (`None`), `occlusion_strength` (1)
   and `SurfaceMaterial::occlusion_strength`.
 - `sgl-3d` `KHR_materials_ior` and `KHR_materials_specular`, a load error
-  before: their factors set a dielectric's F0 through new `ior` (1.5),
-  `specular` (1) and `specular_color` (`[1.; 3]`) on `asset::Material` and
-  `SurfaceMaterial`; the defaults keep F0 0.04. Specular textures load
-  unsampled (`Ignored::SpecularMap`). Migration: exhaustive material
-  literals add the fields or take `..Default::default()`.
-- `sgl-3d` shading: reflectance at grazing incidence now follows F0, so
-  surfaces with F0 under 0.02 (near-black metals; with the new fields,
-  `specular` under 0.5 or an IOR under 1.333) lose grazing reflection with
-  it; F0 0.02 and up looks as before. No game-code change; look again at
-  near-black metallic materials.
+  before: their factors set a dielectric's F0 and F90 through new `ior`
+  (1.5), `specular` (1) and `specular_color` (`[1.; 3]`) on
+  `asset::Material` and `SurfaceMaterial`; the defaults keep F0 0.04 and
+  F90 1. Specular textures load unsampled (`Ignored::SpecularMap`).
+  Migration: exhaustive material literals add the fields or take
+  `..Default::default()`.
 - `sgl-3d` `Scene::add_materials` and `set_material` refuse an IOR below 1,
   `specular` outside 0..=1 or a specular colour that is negative or not
   finite (`SceneError::InvalidReflectance`), and `occlusion_strength` outside

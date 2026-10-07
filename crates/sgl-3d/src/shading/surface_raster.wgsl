@@ -101,6 +101,7 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  s.base=vec4(decaled.base,base.a);
  s.metallic=decaled.metallic;
  s.dielectric_f0=material_dielectric_f0(material);
+ s.specular=material.specular;
  s.roughness=surface_roughness(decaled.roughness,n,i);
  s.coat=material.coat;
  s.coat_roughness=surface_roughness(material.coat_roughness,n,i);

@@ -1,7 +1,8 @@
 // Ambient occlusion of a receiver's ambient light: the visibility it takes,
 // and how that occludes its ambient diffuse and each specular lobe's
-// environment. Direct light, emission, baked light and multiscattering are
-// not occluded; glTF's occlusion is of indirect light. Screen-space and
+// environment. Direct light, emission and multiscattering are not occluded;
+// glTF's occlusion is of indirect light. Baked diffuse light takes the
+// material's occlusion alone, in lit shading (surface.wgsl). Screen-space and
 // world-space hits are visible surfaces and stay unoccluded, as in Filament.
 // Source completion occludes the camera's opaque surfaces
 // (stages/reflections/source.wgsl); lit shading (surface.wgsl) every other
