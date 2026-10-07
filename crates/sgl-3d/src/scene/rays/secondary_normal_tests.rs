@@ -6,13 +6,16 @@
 //! reversal; merely making raster and compute agree cannot satisfy the oracle.
 //! Authority: glTF2.0 sections 3.9.3/3.9.5 and material.normalTexture;
 //! Three185.1 TangentUtils.js and WGSLNodeBuilder.js (dFdy -> -dpdy).
-//! MaterialNode.js selects normalMap before bumpMap. A varying bump texture
-//! deliberately competes with the normal map, but must never alter this oracle,
-//! including when the diagnostic disables the selected normal-map stage.
+//! MaterialNode.js selects normalMap before bumpMap, a rule the scene's maps
+//! in effect own (`scene::materials::maps`, its `tier_tests`): the plane's
+//! varying bump texture shades only where the material has no normal map.
+//! With the diagnostic disabling the normal-map stage, a normal-mapped
+//! surface keeps its geometry normal.
 use super::tests::{Fixture, Pose};
 use super::*;
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
 use crate::scene::textures::upload as texture;
+use crate::shading::bind::group2::MaterialMap;
 use crate::shading::material::MaterialMaps;
 use crate::shading::{self, uniforms::ObjectUniform};
 use glam::{Mat4, Vec3};
@@ -116,9 +119,10 @@ fn authored_normal_map_axes_mirrored_uv_and_back_faces() {
     material_normal_oracle(true, true, false, false);
 }
 
-// The normal stage switched off must not fall through to the bump map.
+// The normal-map stage switched off leaves a normal-mapped surface its
+// geometry normal.
 #[test]
-fn disabled_normal_stage_preserves_normal_map_precedence() {
+fn disabled_normal_stage_keeps_the_geometry_normal() {
     material_normal_oracle(true, false, false, false);
 }
 
@@ -205,12 +209,19 @@ fn material_normal_oracle(
                     double_sided: true,
                     alpha: crate::AlphaMode::Opaque,
                 },
-                MaterialMaps::new(has_normal_map, true, false, false),
+                // A normal map, else the bump map, as the scene puts them in
+                // effect (`scene::materials::maps::InEffect`).
+                MaterialMaps::of([if has_normal_map {
+                    MaterialMap::Normal
+                } else {
+                    MaterialMap::Bump
+                }]),
             )),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let normal_map = texture(&device, &queue, &asset.images[0].texels(), false);
-        let bump_map = texture(&device, &queue, &asset.images[1].texels(), false);
+        // Group 2's relief binding holds the normal map, else the bump map.
+        let relief = usize::from(!has_normal_map);
+        let relief_map = texture(&device, &queue, &asset.images[relief].texels(), false);
         let constants = [
             ("normal_maps_enabled", f64::from(normal_maps_enabled)),
             ("fixture_axis", f64::from(observe_axis)),
@@ -231,6 +242,7 @@ fn material_normal_oracle(
                         &shading::BIND_MATERIAL,
                         &shading::SURFACE_RASTER,
                         &shading::SHADOW_MASK_NONE,
+                        &shading::material_maps::MATERIAL_MAPS_BASIC,
                     ]),
                     r#"
 override fixture_axis:bool=false;
@@ -360,11 +372,7 @@ override fixture_axis:bool=false;
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&normal_map),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&bump_map),
+                    resource: wgpu::BindingResource::TextureView(&relief_map),
                 },
             ],
         });

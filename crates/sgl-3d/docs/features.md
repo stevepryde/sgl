@@ -14,11 +14,23 @@ device has ray queries; elsewhere rays trace the software BVHs. WebGL2 is not a 
 SGL3D needs compute.
 [Browser](../README.md#browser-wasm--webgpu).
 
+A device takes a binding tier by its sampled textures per shader stage,
+which `graphics_device::limits` requests from the adapter:
+`BindingTier::Extended` at 48 or more (Metal on macOS and Apple4 and
+later, DX12, Chrome's WebGPU), `Basic` below (iOS GPUs older than Apple4,
+at 23); a Vulkan driver lands in either, by its `maxPerStageResources`.
+`Renderer::binding_tier` reports it.
+Every material map binds on both tiers but the anisotropy map, `Extended`
+alone: on `Basic` its anisotropy factors shade without it, in raster and
+rays alike. A probe captured on an `Extended` device keeps what its maps
+did there. [Binding tiers](../README.md#binding-tiers).
+
 ## Content
 
 - **glTF 2.0 meshes**: triangles with metallic/roughness, normal and
   bump maps, an occlusion map packed in the metallic-roughness image's red
-  channel (ORM), clearcoat, emission, unlit, `KHR_materials_anisotropy` and
+  channel (ORM), clearcoat, emission, unlit, `KHR_materials_anisotropy` (its
+  map on the `Extended` binding tier) and
   the `KHR_materials_ior` and `KHR_materials_specular` factors (a
   dielectric's F0: water's IOR 1.33 gives 0.02).
   `asset::load` (a file), `load_slice` (bytes; the browser's way),

@@ -23,7 +23,7 @@ This page is the detailed reference:
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
 - [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
-- [Settings and fallbacks](#settings-and-capability-fallback), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
+- [Settings and fallbacks](#settings-and-capability-fallback), [binding tiers](#binding-tiers), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
 
 ## Dependencies and data conventions
 
@@ -2006,6 +2006,28 @@ the full output size; `ThreeQuarter`/`Half` scale it. UI output is unaffected.
 FSR2 upscales to that scene size from its quality's render size.
 Preserve the highest implemented fidelity as a selectable choice.
 
+### Binding tiers
+
+What a material binds depends on the device's sampled textures per shader
+stage, which `graphics_device::limits` requests from the adapter, in two
+tiers ([Binding tiers](../../specs/sgl3d-architecture.md#designs-that-span-stages),
+[D-31](../../specs/decisions.md)). `Renderer::binding_tier` reports the
+device's `graphics_device::BindingTier`; it is fixed for the device and no
+setting chooses it.
+
+| Tier | Sampled textures per stage | Material maps |
+| --- | --- | --- |
+| `Basic` | S3D-1's floor (21) to 47: iOS GPUs older than Apple4 (23) | base, metallic-roughness (with packed occlusion), emission, normal, bump |
+| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's WebGPU | those and the anisotropy map |
+
+A Vulkan driver lands in either tier, by its `maxPerStageResources`.
+
+A map a device does not bind gives way to its factors, as glTF defines a
+material without that texture, in raster, probe captures and ray hits
+alike; validation still reads every map, so content errors do not depend on
+the device. A probe or other bake captured on an `Extended` device keeps
+what its maps did there.
+
 ## Browser (WASM + WebGPU)
 
 The browser is a first-class, maintained target ([D-20](../../specs/decisions.md),
@@ -2019,7 +2041,8 @@ not supported, since SGL3D needs compute.
   adapter's limits: 21 sampled textures and 8 storage buffers per stage are
   the floor, S3D-1) and `graphics_device::features`. Desktop Chrome on Apple
   silicon reports 48 sampled textures and 10 storage buffers from Chromium
-  149; Chromium 145 reported 16 and cannot run SGL3D. Render into an
+  149, the `Extended` [binding tier](#binding-tiers); Chromium 145 reported
+  16 and cannot run SGL3D. Render into an
   offscreen texture or a canvas surface; the page owns the canvas.
 - **Optional features** degrade as on any device: without
   `DEPTH_CLIP_CONTROL` directional shadow casters emulate unclipped depth in
@@ -2184,7 +2207,8 @@ with handedness +1 or -1, plus authored normals. Legacy meshes may leave the
 appended tangent at `[0.; 4]`. `Material::anisotropy_strength` is finite 0..=1;
 `anisotropy_rotation` is counter-clockwise radians; `anisotropy_texture` selects
 linear RG direction (remapped to -1..1) and B strength. No texture means +T and
-full texture strength. File and embedded glTF imports use the same rules.
+full texture strength, as on a device of the `Basic` [binding tier](#binding-tiers),
+which binds no anisotropy map. File and embedded glTF imports use the same rules.
 Active anisotropy requires authored tangents; automatic tangent generation is
 not implemented. Normal maps and anisotropy share that frame. Node and instance
 transforms preserve mirrored handedness, nonuniform scaling and shear.

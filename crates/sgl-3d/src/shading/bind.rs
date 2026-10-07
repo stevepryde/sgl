@@ -1,6 +1,7 @@
 //! Group-0 layouts, one per bind module (bind_*.wgsl), group 1's, group
-//! 2's, the blended pipelines' group 3 and the GPU-built cascades' casters'
-//! group 3, and the binding numbers they and the groups built for them use. The layout test checks every number
+//! 2's (`group2`, with the binding tiers), the blended pipelines' group 3
+//! and the GPU-built cascades' casters' group 3, and the binding numbers
+//! they and the groups built for them use. The layout test checks every number
 //! against naga's binding of the WGSL variable it is named after.
 
 /// Group 0's bindings, as bind_lit.wgsl, bind_unlit.wgsl and bind_shadow.wgsl
@@ -41,18 +42,10 @@ pub(crate) mod group1 {
     pub(crate) const SCENE_INSTANCES: u32 = 2;
 }
 
-/// Group 2's bindings, as bind_material.wgsl declares them.
-pub(crate) mod group2 {
-    pub(crate) const MATERIAL: u32 = 0;
-    pub(crate) const BASE_MAP: u32 = 1;
-    pub(crate) const MR_MAP: u32 = 2;
-    pub(crate) const TEX_SAMPLER: u32 = 3;
-    pub(crate) const EMISSION_MAP: u32 = 4;
-    pub(crate) const NORMAL_MAP: u32 = 5;
-    pub(crate) const BUMP_MAP: u32 = 6;
-    pub(crate) const BAKED_MATERIAL: u32 = 7;
-    pub(crate) const ANISOTROPY_MAP: u32 = 8;
-}
+/// Group 2's bindings and their tiers, the maps a material fills them with,
+/// and its layout.
+pub(crate) mod group2;
+pub(crate) use group2::{BindingTier, material};
 
 /// The scene's TLAS, which each tracing pass binds in its own group 3, as
 /// scene_rays_hardware.wgsl declares it.
@@ -477,48 +470,4 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
         BlendedTrace,
         [cutoff, fade, padding]
     )]
-}
-
-/// Group 2, a material: bind_material.wgsl's values, its maps and sampler,
-/// and its baked-lighting eligibility.
-pub(crate) fn material(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    layout(device, "material", &material_entries())
-}
-
-/// Group 2's entries.
-pub(crate) fn material_entries() -> Vec<wgpu::BindGroupLayoutEntry> {
-    use group2::*;
-    let uniform = |binding| wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    };
-    let mut entries = vec![uniform(MATERIAL)];
-    for binding in [
-        BASE_MAP,
-        MR_MAP,
-        EMISSION_MAP,
-        NORMAL_MAP,
-        BUMP_MAP,
-        ANISOTROPY_MAP,
-    ] {
-        entries.push(texture(
-            binding,
-            wgpu::TextureSampleType::Float { filterable: true },
-            wgpu::TextureViewDimension::D2,
-        ));
-    }
-    entries.push(wgpu::BindGroupLayoutEntry {
-        binding: TEX_SAMPLER,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-        count: None,
-    });
-    entries.push(uniform(BAKED_MATERIAL));
-    entries
 }

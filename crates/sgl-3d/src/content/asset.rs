@@ -113,7 +113,9 @@ pub struct Material {
     pub anisotropy_strength: f32,
     /// Counter-clockwise direction rotation in tangent/bitangent space, in radians.
     pub anisotropy_rotation: f32,
-    /// Linear image index: normalized remapped RG direction and B strength multiplier.
+    /// Linear image index: normalized remapped RG direction and B strength
+    /// multiplier. A device of the `Basic` binding tier binds no anisotropy
+    /// map and shades the factors alone (`Renderer::binding_tier`).
     pub anisotropy_texture: Option<usize>,
     /// Base color image index into [`Asset::images`], sampled as sRGB.
     pub base_texture: Option<usize>,

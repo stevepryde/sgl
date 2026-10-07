@@ -4,7 +4,7 @@
 use crate::FrameInput;
 use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, FogQuality, ReflectionMethod, RenderPreset,
-    ScreenSpaceReflections, Settings, ShadowQuality, WorldSpaceReflections,
+    SceneResolution, ScreenSpaceReflections, Settings, ShadowQuality, WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 use crate::stages::reflections::velvet;
@@ -38,6 +38,36 @@ pub(super) fn sizing(settings: &Settings) -> Sizing {
             .then_some(settings.fsr2_quality),
         bloom_targets: settings.preset == RenderPreset::High,
     }
+}
+
+/// The scene size for an output of `size` at `device_scale` physical
+/// pixels per logical pixel, under the preset and scene resolution.
+pub(super) fn scene_size(
+    size: [u32; 2],
+    preset: RenderPreset,
+    resolution: SceneResolution,
+    device_scale: f32,
+) -> [u32; 2] {
+    let scale = match resolution {
+        SceneResolution::Preset => {
+            let cap = if preset == RenderPreset::Low {
+                1.
+            } else {
+                1.75
+            };
+            (cap / device_scale.max(1.)).min(1.)
+        }
+        SceneResolution::Hd => (1280. / size[0].max(1) as f32)
+            .min(720. / size[1].max(1) as f32)
+            .min(1.),
+        SceneResolution::FullHd => (1920. / size[0].max(1) as f32)
+            .min(1080. / size[1].max(1) as f32)
+            .min(1.),
+        SceneResolution::Full => 1.,
+        SceneResolution::ThreeQuarter => 0.75,
+        SceneResolution::Half => 0.5,
+    };
+    size.map(|x| ((x as f32 * scale).floor() as u32).max(1))
 }
 
 /// The antialiasing that runs for `settings`: their choice resolved for the

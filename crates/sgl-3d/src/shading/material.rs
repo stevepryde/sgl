@@ -1,8 +1,9 @@
 //! Rust mirror of material.wgsl's `Material`: group 2's material values,
 //! which the scene's ray source also holds, packed from the typed
-//! [`SurfaceMaterial`] and the maps the material was added with; and the
+//! [`SurfaceMaterial`] and its maps in effect; and the
 //! period of material animation, by which the frame's time is reduced.
 use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
+use crate::shading::bind::group2::MaterialMap;
 
 /// The seconds after which material animation repeats exactly: an hour, the
 /// period at which Godot b130438 rolls its shader `TIME` over
@@ -27,31 +28,25 @@ pub(crate) fn animation_phase(seconds: f64) -> f32 {
 
 pub(crate) const MATERIAL_UNLIT: u32 = 1;
 pub(crate) const MATERIAL_DOUBLE_SIDED: u32 = 2;
-pub(crate) const MATERIAL_NORMAL_MAP: u32 = 4;
-pub(crate) const MATERIAL_BUMP_MAP: u32 = 8;
-pub(crate) const MATERIAL_ANISOTROPY_MAP: u32 = 16;
 pub(crate) const MATERIAL_ALPHA_MASK: u32 = 32;
 pub(crate) const MATERIAL_ALPHA_BLEND: u32 = 64;
 pub(crate) const MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS: u32 = 128;
 pub(crate) const MATERIAL_NORMAL_LAYERS: u32 = 256;
 pub(crate) const MATERIAL_EMITS_INTO_GI: u32 = 512;
-pub(crate) const MATERIAL_OCCLUSION_MAP: u32 = 1024;
 
-/// Which maps a material was added with, as `MATERIAL_*_MAP` bits:
-/// `occlusion` is an occlusion map in the red channel of its
-/// metallic-roughness map (`asset::Material::packed_occlusion`).
+/// A set of a material's maps, as the record's `maps` word holds them
+/// (`MaterialMap::bit`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MaterialMaps(pub u32);
 
 impl MaterialMaps {
-    pub fn new(normal: bool, bump: bool, anisotropy: bool, occlusion: bool) -> Self {
-        let bit = |on: bool, bit: u32| if on { bit } else { 0 };
-        Self(
-            bit(normal, MATERIAL_NORMAL_MAP)
-                | bit(bump, MATERIAL_BUMP_MAP)
-                | bit(anisotropy, MATERIAL_ANISOTROPY_MAP)
-                | bit(occlusion, MATERIAL_OCCLUSION_MAP),
-        )
+    /// The set of `maps`.
+    pub fn of(maps: impl IntoIterator<Item = MaterialMap>) -> Self {
+        Self(maps.into_iter().fold(0, |bits, map| bits | map.bit()))
+    }
+
+    pub fn contains(self, map: MaterialMap) -> bool {
+        self.0 & map.bit() != 0
     }
 }
 
@@ -119,7 +114,7 @@ pub(crate) struct MaterialUniform {
     pub alpha_cutoff: f32,
     pub visibility_group: u32,
     pub flags: u32,
-    /// glTF's `occlusionTexture.strength`, read with `MATERIAL_OCCLUSION_MAP`.
+    /// glTF's `occlusionTexture.strength`, read with `MATERIAL_MAP_OCCLUSION`.
     pub occlusion_strength: f32,
     /// The IOR's F0 times the specular colour, which the shaders clamp to 1
     /// and scale by `specular` (`material_dielectric_f0`).
@@ -127,10 +122,13 @@ pub(crate) struct MaterialUniform {
     pub specular: f32,
     /// With `MATERIAL_NORMAL_LAYERS`; zero otherwise.
     pub normal_layers: [NormalLayerUniform; 2],
+    /// Its maps in effect, `MATERIAL_MAP_*` bits (`MaterialMaps`).
+    pub maps: u32,
+    pub padding: [u32; 3],
 }
 
 impl MaterialUniform {
-    /// `values` with `maps`, as the shaders read them.
+    /// `values` with its maps in effect, `maps`, as the shaders read them.
     pub fn new(values: &SurfaceMaterial, maps: MaterialMaps) -> Self {
         let bit = |on: bool, bit: u32| if on { bit } else { 0 };
         let (alpha_cutoff, alpha) = match values.alpha {
@@ -165,7 +163,6 @@ impl MaterialUniform {
                 | bit(values.double_sided, MATERIAL_DOUBLE_SIDED)
                 | bit(values.normal_layers.is_some(), MATERIAL_NORMAL_LAYERS)
                 | bit(values.emits_into_gi, MATERIAL_EMITS_INTO_GI)
-                | maps.0
                 | alpha,
             occlusion_strength: values.occlusion_strength,
             specular_f0: values.specular_color.map(|tint| ior_f0(values.ior) * tint),
@@ -175,6 +172,8 @@ impl MaterialUniform {
                 .map_or([bytemuck::Zeroable::zeroed(); 2], |layers| {
                     layers.each_ref().map(NormalLayerUniform::new)
                 }),
+            maps: maps.0,
+            padding: [0; 3],
         }
     }
 

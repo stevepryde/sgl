@@ -1,8 +1,12 @@
 //! Device limits and features for the 3D renderer, native or WebGPU.
 
-/// Renderer limits sized to the selected adapter, the acceleration-structure
-/// limits among them, which `Limits::default()` leaves at zero and hardware
-/// ray tracing needs (`ray_tracing_features`). An adapter may report them
+pub use crate::shading::bind::group2::BindingTier;
+
+/// Renderer limits sized to the selected adapter: its sampled textures per
+/// shader stage, which choose the device's `BindingTier`
+/// (`Renderer::binding_tier`), and its acceleration-structure limits, which
+/// `Limits::default()` leaves at zero and hardware ray tracing needs
+/// (`ray_tracing_features`), among them. An adapter may report them
 /// whether or not it has the feature (Metal reports its maximums on every
 /// GPU); they take effect only on a device requested with it.
 pub fn limits(adapter: &wgpu::Adapter) -> wgpu::Limits {

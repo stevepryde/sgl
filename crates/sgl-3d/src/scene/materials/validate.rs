@@ -3,7 +3,8 @@
 use crate::asset;
 use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 use crate::scene::SceneError;
-use crate::shading::material::{MATERIAL_NORMAL_MAP, MAX_LAYER_CYCLES, MaterialMaps, layer_cycles};
+use crate::shading::bind::group2::MaterialMap;
+use crate::shading::material::{MAX_LAYER_CYCLES, MaterialMaps, layer_cycles};
 use gltf::texture::WrappingMode;
 
 /// Anisotropy `values` may take on meshes of which `untangented` lack
@@ -73,7 +74,7 @@ pub(super) fn validate_normal_layers(
                 .iter()
                 .all(|cycles| cycles.abs() <= MAX_LAYER_CYCLES)
     };
-    if maps.0 & MATERIAL_NORMAL_MAP != 0
+    if maps.contains(MaterialMap::Normal)
         && wrap == [WrappingMode::Repeat; 2]
         && layers.iter().all(valid)
     {

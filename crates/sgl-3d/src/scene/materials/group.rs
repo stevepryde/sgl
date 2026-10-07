@@ -1,25 +1,23 @@
 //! A material's raster group 2: its values and lightmap eligibility
-//! buffers, the views of its maps (white for those it does not have) and a
-//! sampler of their wrapping at the scene's anisotropic filtering.
+//! buffers, the views of its maps in effect (white for the rest of the map
+//! bindings the device's binding tier binds) and a sampler of their
+//! wrapping at the scene's anisotropic filtering.
+use super::maps::InEffect;
 use crate::scene::textures::{self, Textures};
-use crate::shading::bind::group2;
+use crate::shading::bind::{BindingTier, group2};
 use gltf::texture::WrappingMode;
 
-/// The maps group 2 binds, each a texture index or `None` for the white
-/// fallback, and their wrapping, which its sampler takes.
+/// What group 2 binds: the material's maps in effect, each a texture index,
+/// and their wrapping, which its sampler takes.
 pub(super) struct Bound {
-    pub base: Option<usize>,
-    pub emission: Option<usize>,
-    pub metallic_roughness: Option<usize>,
-    pub normal: Option<usize>,
-    pub bump: Option<usize>,
-    pub anisotropy: Option<usize>,
+    pub maps: InEffect,
     pub wrap: [WrappingMode; 2],
 }
 
-/// What every material's group 2 shares: its layout, the white fallback
-/// and the samplers' anisotropy.
+/// What every material's group 2 shares: the device's binding tier and its
+/// layout, the white fallback and the samplers' anisotropy.
 pub(super) struct Groups {
+    pub tier: BindingTier,
     layout: wgpu::BindGroupLayout,
     /// White, for maps a material does not have.
     fallback: wgpu::TextureView,
@@ -30,8 +28,10 @@ pub(super) struct Groups {
 impl Groups {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let white = image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4]));
+        let tier = BindingTier::of(&device.limits());
         Self {
-            layout: crate::shading::bind::material(device),
+            tier,
+            layout: crate::shading::bind::material(device, tier),
             fallback: textures::upload(device, queue, &white, false),
             anisotropy: crate::settings::AnisotropicFiltering::default().clamp(),
         }
@@ -77,33 +77,33 @@ impl Groups {
             anisotropy_clamp: self.anisotropy,
             ..Default::default()
         });
-        let entry = |binding, view| wgpu::BindGroupEntry {
-            binding,
-            resource: wgpu::BindingResource::TextureView(view),
-        };
+        let mut entries = vec![
+            wgpu::BindGroupEntry {
+                binding: group2::MATERIAL,
+                resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: group2::TEX_SAMPLER,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: group2::BAKED_MATERIAL,
+                resource: baked.as_entire_binding(),
+            },
+        ];
+        entries.extend(
+            group2::map_bindings(self.tier).map(|map| wgpu::BindGroupEntry {
+                binding: map.binding,
+                resource: wgpu::BindingResource::TextureView(view(
+                    bound.maps.bound(map.binding),
+                    map.colour,
+                )),
+            }),
+        );
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("retained material"),
             layout: &self.layout,
-            entries: &[
-                entry(group2::ANISOTROPY_MAP, view(bound.anisotropy, false)),
-                wgpu::BindGroupEntry {
-                    binding: group2::BAKED_MATERIAL,
-                    resource: baked.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: group2::MATERIAL,
-                    resource: buffer.as_entire_binding(),
-                },
-                entry(group2::BASE_MAP, view(bound.base, true)),
-                entry(group2::MR_MAP, view(bound.metallic_roughness, false)),
-                wgpu::BindGroupEntry {
-                    binding: group2::TEX_SAMPLER,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                entry(group2::EMISSION_MAP, view(bound.emission, true)),
-                entry(group2::NORMAL_MAP, view(bound.normal, false)),
-                entry(group2::BUMP_MAP, view(bound.bump, false)),
-            ],
+            entries: &entries,
         })
     }
 }

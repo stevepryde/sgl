@@ -11,7 +11,8 @@ struct NormalLayer {
 // A material's values as the GPU reads them: group 2's uniform
 // (bind_material.wgsl) and the first words of its record in the scene's ray
 // source (scene_rays.wgsl). Rust mirror: shading::material::MaterialUniform,
-// packed from the typed SurfaceMaterial. Flags are MATERIAL_* bits.
+// packed from the typed SurfaceMaterial. Flags are MATERIAL_* bits, and
+// its maps in effect MATERIAL_MAP_* bits in a word of their own.
 struct Material {
  base:vec4<f32>,
  emission:vec3<f32>,
@@ -27,21 +28,17 @@ struct Material {
  alpha_cutoff:f32,
  visibility_group:u32,
  flags:u32,
- // glTF's occlusionTexture.strength, with MATERIAL_OCCLUSION_MAP.
+ // glTF's occlusionTexture.strength, with MATERIAL_MAP_OCCLUSION.
  occlusion_strength:f32,
  // KHR_materials_ior's F0 times KHR_materials_specular's specular colour,
  // and its specular strength (material_dielectric_f0).
  specular_f0:vec3<f32>,
  specular:f32,
  normal_layers:array<NormalLayer,2>,
+ maps:u32,
 }
 const MATERIAL_UNLIT:u32=1u;
 const MATERIAL_DOUBLE_SIDED:u32=2u;
-// The maps it was added with: a normal map, a bump map (used only without a
-// normal map) and an anisotropy direction and strength map.
-const MATERIAL_NORMAL_MAP:u32=4u;
-const MATERIAL_BUMP_MAP:u32=8u;
-const MATERIAL_ANISOTROPY_MAP:u32=16u;
 // Its alpha mode: masked or blended; neither is opaque. A blended one may
 // receive the frame's screen-space reflections (AlphaMode::Blend).
 const MATERIAL_ALPHA_MASK:u32=32u;
@@ -52,15 +49,25 @@ const MATERIAL_NORMAL_LAYERS:u32=256u;
 // Global illumination gathers the light it gives off itself, its emission
 // and an unlit material's whole colour (SurfaceMaterial::emits_into_gi).
 const MATERIAL_EMITS_INTO_GI:u32=512u;
-// Its occlusion map is the red channel of its metallic-roughness map (ORM
-// packing).
-const MATERIAL_OCCLUSION_MAP:u32=1024u;
+// Its maps in effect (shading::bind::group2::MaterialMap::bit): those it
+// was added with whose binding the device binds, a bump map only without a
+// normal map, and an occlusion map in the red channel of its
+// metallic-roughness map (ORM packing). A map whose white texel is not its
+// neutral (the normal and bump maps, the anisotropy direction) is read only
+// with its bit, on the raster and ray paths alike.
+const MATERIAL_MAP_BASE:u32=1u;
+const MATERIAL_MAP_METALLIC_ROUGHNESS:u32=2u;
+const MATERIAL_MAP_OCCLUSION:u32=4u;
+const MATERIAL_MAP_EMISSION:u32=8u;
+const MATERIAL_MAP_NORMAL:u32=16u;
+const MATERIAL_MAP_BUMP:u32=32u;
+const MATERIAL_MAP_ANISOTROPY:u32=64u;
 // The share of ambient light that reaches a texel of material `m` whose
-// metallic-roughness map reads `mr`: with MATERIAL_OCCLUSION_MAP its red
+// metallic-roughness map reads `mr`: with MATERIAL_MAP_OCCLUSION its red
 // channel at occlusion_strength, as glTF 2.0 applies occlusionTexture
 // (lerp(1, occlusion, strength)); else all of it.
 fn material_occlusion(m:Material,mr:vec4<f32>)->f32 {
- if (m.flags&MATERIAL_OCCLUSION_MAP)==0u {
+ if (m.maps&MATERIAL_MAP_OCCLUSION)==0u {
   return 1.;
  }
  return mix(1.,mr.r,m.occlusion_strength);

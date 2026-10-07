@@ -34,10 +34,17 @@ settings SGL3D has today.
    sampled textures per shader stage (five above it). That rules out wgpu's
    GL and GLES backend, WebGL2 included, which lacks compute and whose
    wgpu-hal fixes `MAX_TEXTURE_SLOTS` at 16, and a WebGPU device left at the
-   default limits; Metal (31 or more, 128 on macOS and Apple6 and later),
-   desktop Vulkan and DX12 offer more, and so can WebGPU when the adapter's
-   limits are requested ([package README](../crates/sgl-3d/README.md#browser-wasm--webgpu)).
-   There is no downlevel path, and anything a device may lack beyond that is
+   default limits; WebGPU offers more when the adapter's limits are
+   requested ([package README](../crates/sgl-3d/README.md#browser-wasm--webgpu)).
+   Above that floor a device takes one of two binding tiers by its
+   `max_sampled_textures_per_shader_stage`
+   ([Binding tiers](sgl3d-architecture.md#designs-that-span-stages)):
+   Basic below 48, where a few bindings fall back as their features state,
+   and Extended at 48 or more, Dawn's upper tier, with every binding;
+   `Renderer::binding_tier` reports it, and [D-31](decisions.md) records
+   which devices offer which. Mobile GPUs are not targeted and not
+   excluded: they take a tier by the same limit. There is no downlevel
+   path, and anything a device may lack beyond that is
    optional under S3D-6 (`graphics_device::features` lists what SGL3D uses
    where the adapter has it). What the browser cannot do is an input, not a
    platform fork: the game passes bytes rather than paths and the frame
