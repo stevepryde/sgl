@@ -67,23 +67,23 @@ SGL expects AI agents to keep games current. A new release may change APIs,
 behavior, or data formats; compatibility with old game code is not guaranteed
 across breaking releases.
 
-For stability, use exact requirements for every SGL crate the game depends on:
+Give every SGL crate the game depends on the same semver requirement, never an
+`=` pin, and commit the game's `Cargo.lock`:
 
 ```toml
 [dependencies]
-sgl-core = "=0.3.0"
-sgl-2d = "=0.3.0"
+sgl-core = "0.3.0"
+sgl-2d = "0.3.0"
 ```
 
-The leading `=` is an exact pin; `"0.3.0"` permits compatible updates. Commit
-the game's `Cargo.lock` as well to retain the resolved dependency graph.
+During `0.x`, `"0.3.0"` accepts compatible `0.3.x` releases but never `0.4`,
+which may break APIs; `Cargo.lock` keeps the resolved graph until you update.
 For Git dependencies, use the same full commit `rev` for all SGL crates.
-An exact pin keeps the game on its selected release until you choose to migrate.
 
 1. Identify the game's current version or Git revision and the target release.
 2. Read every intervening entry in [CHANGELOG.md](../CHANGELOG.md), including
    `Unreleased` only when targeting an unreleased Git revision.
-3. Update the dependency pins together, apply the listed code and data
+3. Update the SGL requirements (or Git `rev`) together, apply the listed code and data
    migrations, and consult the target version's package guides and examples.
    Regenerate baked content only when a documented input or format change
    requires it.

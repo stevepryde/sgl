@@ -11,7 +11,7 @@ to the original games or a maintainer's machine.
 - Changing SGL: [contribution workflow](CONTRIBUTING.md),
   [architecture](specs/architecture.md), and the owning contract in the
   [spec index](specs/README.md). Load only the relevant detail.
-- Updating a game: read [CHANGELOG.md](CHANGELOG.md) from the game's pinned
+- Updating a game: read [CHANGELOG.md](CHANGELOG.md) from the game's current
   version through the target version, then follow the affected package guides.
 - Validating a change: `bun scripts/tasks.ts check` is the required check;
   setup and target requirements are in [Contributing](CONTRIBUTING.md#setup).
@@ -42,10 +42,12 @@ compatibility shims solely to avoid updating consumers.
   entries that changed the same symbol; retain older migration notes. Use
   Cargo-compatible semantic versioning: during `0.x`, incompatible changes
   advance the minor version, not just the patch version.
-- Games needing stability should pin every direct SGL dependency to an exact
-  version (for example, `=0.3.0`) and commit `Cargo.lock`. Git consumers should
-  pin a full commit `rev`. Upgrade deliberately, applying all intervening
-  migration notes and validating the game's affected workflows and targets.
+- Games depend on every SGL crate with the same semver requirement (for
+  example, `"0.3.0"`), never an `=` pin, and commit `Cargo.lock`. During `0.x`
+  that takes only compatible `0.3.x` releases. Git consumers reference one full
+  commit `rev`. Upgrade to a new minor version deliberately, applying all
+  intervening migration notes and validating the game's affected workflows and
+  targets.
 
 ## Licence notices and distribution
 
@@ -101,7 +103,7 @@ compatibility shims solely to avoid updating consumers.
   pins, so a game can resolve their compatible fixes; `Cargo.lock` fixes what
   SGL itself builds and tests with. Do not duplicate current dependency versions
   in prose; link to the workspace manifest and lockfile. Retain version numbers where
-  they identify a release migration, an exact-pin example, or upstream provenance.
+  they identify a release migration, a dependency example, or upstream provenance.
 - `crates/sgl-3d/docs/` is SGL3D's guide for agents building games: what it
   contains, its features, and every setting a game can choose. Update
   it in the same change whenever a feature, setting, value, default, preset

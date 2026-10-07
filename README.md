@@ -69,9 +69,10 @@ changes to game code; we prioritize improving the library over preserving old
 APIs. Every consumer-facing update carries [changelog and migration notes](CHANGELOG.md)
 that agents can follow.
 
-For a game that needs stability, pin an exact version such as
-`sgl-3d = "=0.3.0"` and commit `Cargo.lock` (or pin a full Git commit `rev`).
-Upgrade deliberately using the [agent update workflow](docs/README.md#updating-a-game).
+Depend on SGL with ordinary semver requirements such as `sgl-3d = "0.3.0"`
+and commit `Cargo.lock` (or reference a full Git commit `rev`). A new minor
+version may break APIs during `0.x`, so move to one deliberately using the
+[agent update workflow](docs/README.md#updating-a-game).
 
 ## Try it
 
