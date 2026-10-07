@@ -669,3 +669,96 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
     ));
     assert_eq!(ignored, [Ignored::SpecularMap { material: 0 }]);
 }
+
+// Defects: the loader misreads KHR_materials_transmission,
+// KHR_materials_volume or KHR_materials_dispersion (a channel or texture
+// swapped, a texture's image not resolved through its texture), takes
+// other defaults than the extensions define, or loads a value they rule
+// out. The oracle is the extensions' schemas (Khronos glTF acfcbe65:
+// transmissionFactor in 0..1, default 0; thicknessFactor nonnegative,
+// default 0; attenuationDistance positive, default infinity;
+// attenuationColor in 0..1, default white; dispersion nonnegative, default
+// 0) and the authored values.
+#[test]
+fn transmission_volume_and_dispersion_load_as_their_extensions_define() {
+    let read = |extensions: serde_json::Value, unlit: bool| {
+        let mut extensions = extensions;
+        if unlit {
+            extensions["KHR_materials_unlit"] = serde_json::json!({});
+        }
+        let document = serde_json::json!({
+            "asset": {"version": "2.0"},
+            "images": [{"uri": "transmission.png"}, {"uri": "thickness.png"}],
+            "textures": [{"source": 0}, {"source": 1}, {"source": 1}],
+            "materials": [{"extensions": extensions}]
+        });
+        let document = gltf::Gltf::from_slice(&serde_json::to_vec(&document).unwrap())
+            .unwrap()
+            .document;
+        read_material(
+            document.materials().next().unwrap(),
+            &document,
+            0,
+            &mut Vec::new(),
+        )
+    };
+    let authored = serde_json::json!({
+        "KHR_materials_transmission": {"transmissionFactor": 0.8, "transmissionTexture": {"index": 0}},
+        "KHR_materials_volume": {
+            "thicknessFactor": 0.3,
+            "thicknessTexture": {"index": 2},
+            "attenuationDistance": 2.5,
+            "attenuationColor": [0.9, 0.5, 0.2]
+        },
+        "KHR_materials_dispersion": {"dispersion": 0.33}
+    });
+    let material = read(authored, false).unwrap();
+    assert_eq!(
+        (
+            material.transmission,
+            material.transmission_texture,
+            material.thickness,
+            material.thickness_texture,
+        ),
+        (0.8, Some(0), 0.3, Some(1))
+    );
+    assert_eq!(
+        (
+            material.attenuation_distance,
+            material.attenuation_color,
+            material.dispersion
+        ),
+        (2.5, [0.9, 0.5, 0.2], 0.33)
+    );
+    let defaults = serde_json::json!({
+        "KHR_materials_transmission": {},
+        "KHR_materials_volume": {},
+        "KHR_materials_dispersion": {}
+    });
+    let material = read(defaults, false).unwrap();
+    assert_eq!(
+        (
+            material.transmission,
+            material.thickness,
+            material.attenuation_distance,
+            material.attenuation_color,
+            material.dispersion
+        ),
+        (0., 0., f32::INFINITY, [1.; 3], 0.)
+    );
+    for refused in [
+        serde_json::json!({"KHR_materials_transmission": {"transmissionFactor": 1.5}}),
+        serde_json::json!({"KHR_materials_volume": {"thicknessFactor": -0.1}}),
+        serde_json::json!({"KHR_materials_volume": {"attenuationDistance": 0}}),
+        serde_json::json!({"KHR_materials_volume": {"attenuationColor": [1.0, 1.2, 0.5]}}),
+        serde_json::json!({"KHR_materials_volume": {"thicknessTexture": {"index": 1, "texCoord": 1}}}),
+        serde_json::json!({"KHR_materials_dispersion": {"dispersion": -1}}),
+    ] {
+        assert!(read(refused.clone(), false).is_err(), "{refused} loaded");
+    }
+    let unlit = serde_json::json!({"KHR_materials_transmission": {"transmissionFactor": 1.0}});
+    assert!(
+        read(unlit, true).is_err(),
+        "an unlit material took transmission"
+    );
+}

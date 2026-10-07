@@ -383,6 +383,17 @@ impl DrawList {
             .any(|batch| execute::receives(scene, batch))
     }
 
+    /// Whether it draws a transmissive material, which samples the
+    /// transparent stage's copy of the composed frame.
+    pub fn holds_transmissive(&self, scene: &Scene) -> bool {
+        self.batches.iter().any(|batch| {
+            scene
+                .drawn_material(batch.key.material)
+                .values
+                .transmissive()
+        })
+    }
+
     /// The instances `batch` draws, in draw order.
     #[cfg(any(test, feature = "diagnostics"))]
     fn instances_of(&self, batch: &DrawBatch) -> &[DrawInstance] {

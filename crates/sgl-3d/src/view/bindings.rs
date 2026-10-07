@@ -146,7 +146,7 @@ impl FrameBindings {
             unlit: shading::bind::unlit(device),
             shadow,
             scene: shading::bind::scene(device),
-            blended: shading::bind::blended(device),
+            blended: shading::bind::blended(device, lit.tier),
             shadow_mask: shading::bind::shadow_mask(device),
             caster_positions: shading::bind::caster_positions(device),
             frame,

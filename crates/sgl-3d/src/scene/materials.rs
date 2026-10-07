@@ -15,7 +15,10 @@ use group::{Bound, Groups};
 use maps::{InEffect, authored, authored_maps};
 use std::collections::HashMap;
 use std::ops::Range;
-use validate::{validate_alpha, validate_anisotropy, validate_normal_layers, validate_reflectance};
+use validate::{
+    validate_alpha, validate_anisotropy, validate_normal_layers, validate_reflectance,
+    validate_transmission,
+};
 
 pub(crate) struct Material {
     pub values: SurfaceMaterial,
@@ -134,25 +137,24 @@ impl Materials {
         self.moving > 0
     }
 
-    /// Counts `by` more materials of alpha mode `alpha` whose surface
-    /// `moves` or not.
-    fn count(&mut self, alpha: AlphaMode, moves: bool, by: isize) {
+    /// Counts `by` more materials of `values` whose surface `moves` or not:
+    /// a blended or transmissive one among the blended (and the receivers
+    /// where it is one), else a masked one among the masked and one whose
+    /// surface moves among the moving.
+    fn count(&mut self, values: &SurfaceMaterial, moves: bool, by: isize) {
         let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
-        if moves && !matches!(alpha, AlphaMode::Blend { .. }) {
+        if values.blended() {
+            add(&mut self.blended);
+            if values.receives_screen_space_reflections() {
+                add(&mut self.receivers);
+            }
+            return;
+        }
+        if moves {
             add(&mut self.moving);
         }
-        match alpha {
-            AlphaMode::Opaque => {}
-            AlphaMode::Mask { .. } => add(&mut self.masked),
-            AlphaMode::Blend {
-                receives_screen_space_reflections,
-                ..
-            } => {
-                add(&mut self.blended);
-                if receives_screen_space_reflections {
-                    add(&mut self.receivers);
-                }
-            }
+        if matches!(values.alpha, AlphaMode::Mask { .. }) {
+            add(&mut self.masked);
         }
     }
 
@@ -187,6 +189,7 @@ impl Materials {
             validate_anisotropy(&values, 0)?;
             validate_alpha(&values)?;
             validate_reflectance(&values)?;
+            validate_transmission(&values)?;
             validate_normal_layers(&values, authored_maps(material), material.wrap)?;
         }
         Ok(())
@@ -305,7 +308,7 @@ impl Materials {
         for &texture in &distinct {
             self.textures.use_texture(texture);
         }
-        self.count(values.alpha, uniform.surface_moves(), 1);
+        self.count(&values, uniform.surface_moves(), 1);
         Ok(self.slots.insert(Material {
             values,
             maps: authored_maps(material),
@@ -357,18 +360,19 @@ impl Materials {
         validate_anisotropy(&values, material.untangented)?;
         validate_alpha(&values)?;
         validate_reflectance(&values)?;
+        validate_transmission(&values)?;
         validate_normal_layers(&values, material.maps, material.bound.wrap)?;
         if material.values != values {
             if material.values.caster_values() != values.caster_values() {
                 self.casters = super::next_generation();
             }
-            let old = (material.values.alpha, material.surface_moves());
+            let old = (material.values, material.surface_moves());
             material.values = values;
             let uniform = material.uniform();
             crate::counters::write_buffer(queue, &material.buffer, 0, bytemuck::bytes_of(&uniform));
             rays.write_material(queue, material.word(), &uniform);
-            self.count(old.0, old.1, -1);
-            self.count(values.alpha, uniform.surface_moves(), 1);
+            self.count(&old.0, old.1, -1);
+            self.count(&values, uniform.surface_moves(), 1);
         }
         Ok(())
     }
@@ -390,7 +394,8 @@ impl Materials {
             return Err(SceneError::MaterialInUse);
         }
         let material = self.slots.remove(id).unwrap();
-        self.count(material.values.alpha, material.surface_moves(), -1);
+        let (values, moves) = (material.values, material.surface_moves());
+        self.count(&values, moves, -1);
         rays.free(material.record);
         for texture in material.textures {
             self.textures.release(rays, texture);
@@ -435,13 +440,14 @@ impl Scene {
         id: MaterialId,
         values: SurfaceMaterial,
     ) -> Result<(), SceneError> {
-        let alpha = self.materials.get(id)?.values.alpha;
-        if self.materials.get(id)?.values != values {
+        let old = self.materials.get(id)?.values;
+        if old != values {
             self.edited();
         }
-        // Blended meshes have no draw candidates: a material that becomes or
-        // stops being blended adds or removes its users' instances' ones.
-        let blending = matches!(alpha, AlphaMode::Blend { .. }) != values.blended();
+        // Blended and transmissive meshes have no draw candidates: a
+        // material that becomes or stops being either adds or removes its
+        // users' instances' ones.
+        let blending = old.blended() != values.blended();
         let users: Vec<ModelId> = self.materials.get(id)?.users.keys().copied().collect();
         if blending {
             // Each user model's instances, in the order they are placed
@@ -469,7 +475,7 @@ impl Scene {
             }
         }
         self.materials.set(queue, &self.rays, id, values)?;
-        if std::mem::discriminant(&alpha) != std::mem::discriminant(&values.alpha) {
+        if blending || std::mem::discriminant(&old.alpha) != std::mem::discriminant(&values.alpha) {
             self.models.classify_users(id, &self.materials);
         }
         if blending {

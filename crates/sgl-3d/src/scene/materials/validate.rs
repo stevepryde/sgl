@@ -53,6 +53,31 @@ pub(super) fn validate_reflectance(values: &SurfaceMaterial) -> Result<(), Scene
     Ok(())
 }
 
+/// The transmission and volume `values` may take, as KHR_materials_
+/// transmission, KHR_materials_volume and KHR_materials_dispersion bound
+/// them: a transmission in `0..=1`, and none on an unlit material, which
+/// takes no light; a finite nonnegative thickness and dispersion; a positive
+/// attenuation distance, infinity included; and an attenuation colour in
+/// `0..=1`.
+pub(super) fn validate_transmission(values: &SurfaceMaterial) -> Result<(), SceneError> {
+    let unit = |value: f32| (0.0..=1.0).contains(&value);
+    let nonnegative = |value: f32| value.is_finite() && value >= 0.;
+    if unit(values.transmission)
+        && !(values.unlit && values.transmission > 0.)
+        && nonnegative(values.thickness)
+        && nonnegative(values.dispersion)
+        && values.attenuation_distance > 0.
+        && values
+            .attenuation_color
+            .iter()
+            .all(|&channel| unit(channel))
+    {
+        Ok(())
+    } else {
+        Err(SceneError::InvalidTransmission)
+    }
+}
+
 /// Normal layers `values` may take on a material added with `maps` and
 /// `wrap`: they scroll its normal map, which must be there and repeat on both
 /// axes, at finite velocities and strengths, positive finite scales, and

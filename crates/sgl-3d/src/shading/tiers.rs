@@ -1,8 +1,8 @@
-//! The WGSL modules of the binding tiers: lit group 0's and group 2's
-//! bindings of the Extended tier, and each group's two providers, of which a
-//! program composes the one of the device's tier (`lit_provider`,
-//! `material_provider`).
-use super::{BIND_LIT, BIND_MATERIAL, DYNAMIC_GI_SAMPLE, Module, bind::BindingTier};
+//! The WGSL modules of the binding tiers: lit group 0's, group 2's and the
+//! blended group 3's bindings of the Extended tier, and each group's two
+//! providers, of which a program composes the one of the device's tier
+//! (`lit_provider`, `material_provider`, `transmission_provider`).
+use super::{BIND_BLENDED, BIND_LIT, BIND_MATERIAL, DYNAMIC_GI_SAMPLE, Module, bind::BindingTier};
 
 /// Lit group 0's bindings of the Extended binding tier alone.
 pub(crate) static BIND_LIT_EXTENDED: Module = Module {
@@ -58,5 +58,35 @@ pub(crate) fn material_provider(tier: BindingTier) -> &'static Module {
     match tier {
         BindingTier::Basic => &MATERIAL_MAPS_BASIC,
         BindingTier::Extended => &MATERIAL_MAPS_EXTENDED,
+    }
+}
+
+/// The blended pipelines' group 3 bindings of the Extended binding tier
+/// alone: the transparent stage's copy of the composed frame.
+pub(crate) static BIND_BLENDED_EXTENDED: Module = Module {
+    name: "bind_blended_extended",
+    source: include_str!("bind_blended_extended.wgsl"),
+    deps: &[&BIND_BLENDED],
+};
+/// The transmission provider of the Extended binding tier: the frame behind
+/// a transmissive surface from the copy, bicubically filtered.
+pub(crate) static TRANSMISSION_EXTENDED: Module = Module {
+    name: "transmission_extended",
+    source: include_str!("transmission_extended.wgsl"),
+    deps: &[&BIND_BLENDED_EXTENDED, &BIND_LIT],
+};
+/// The transmission provider of the Basic binding tier: no copy, so the
+/// blend passes the light behind a transmissive surface.
+pub(crate) static TRANSMISSION_BASIC: Module = Module {
+    name: "transmission_basic",
+    source: include_str!("transmission_basic.wgsl"),
+    deps: &[],
+};
+/// The transmission provider a program that composes `TRANSMISSION`
+/// composes on a device of `tier`.
+pub(crate) fn transmission_provider(tier: BindingTier) -> &'static Module {
+    match tier {
+        BindingTier::Basic => &TRANSMISSION_BASIC,
+        BindingTier::Extended => &TRANSMISSION_EXTENDED,
     }
 }

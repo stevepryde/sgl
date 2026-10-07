@@ -139,6 +139,26 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MATERIAL_MAPS",
             material(offset_of!(MaterialUniform, maps)),
         ),
+        (
+            "SCENE_MATERIAL_ATTENUATION",
+            material(offset_of!(MaterialUniform, attenuation)),
+        ),
+        (
+            "SCENE_MATERIAL_TRANSMISSION",
+            material(offset_of!(MaterialUniform, transmission)),
+        ),
+        (
+            "SCENE_MATERIAL_THICKNESS",
+            material(offset_of!(MaterialUniform, thickness)),
+        ),
+        (
+            "SCENE_MATERIAL_IOR",
+            material(offset_of!(MaterialUniform, ior)),
+        ),
+        (
+            "SCENE_MATERIAL_DISPERSION",
+            material(offset_of!(MaterialUniform, dispersion)),
+        ),
         ("SCENE_NORMAL_LAYER_WORDS", size_of::<NormalLayerUniform>()),
         (
             "SCENE_NORMAL_LAYER_CYCLES",

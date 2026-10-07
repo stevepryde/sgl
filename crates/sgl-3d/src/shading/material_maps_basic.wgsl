@@ -7,3 +7,11 @@
 fn material_anisotropy_texel(uv:vec2<f32>)->vec3<f32> {
  return vec3(1.);
 }
+// The transmission map's texel at `uv`.
+fn material_transmission_texel(uv:vec2<f32>)->vec4<f32> {
+ return vec4(1.);
+}
+// The thickness map's texel at `uv`.
+fn material_thickness_texel(uv:vec2<f32>)->vec4<f32> {
+ return vec4(1.);
+}

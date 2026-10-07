@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 31] = [
+    let roots: [&'static super::Module; 32] = [
         &crate::shading::PACKED_VERTEX,
         &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
@@ -48,6 +48,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::transparent::mist::MIST,
         &crate::stages::fog::VOLUMETRIC_FOG,
         &crate::stages::transparent::heat::HEAT,
+        &crate::stages::transparent::transmission::COPY,
         &crate::stages::opaque::ambient_occlusion::XE_GTAO,
         &crate::view::post_fx::INPUTS,
         &crate::stages::reflections::source::COMPLETION,
@@ -140,7 +141,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::stages::post::{bloom, inputs, smaa, tone_map};
     use crate::stages::reflections::{probe_culling, source, velvet, world};
     use crate::stages::shadows::{local, traced, traced::denoise};
-    use crate::stages::transparent::{effects, heat, mist};
+    use crate::stages::transparent::{effects, heat, mist, transmission};
     use crate::stages::{deform, exposure, fog, motion_blur, probe_prefilter};
     use crate::view::{pipelines as view, post_fx};
     let geometry = vec![
@@ -205,6 +206,14 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             ],
         ),
         (heat::HEAT.name, vec![heat::VS_ENTRY, heat::FS_ENTRY]),
+        (
+            transmission::COPY.name,
+            vec![
+                FULLSCREEN_VS_ENTRY,
+                transmission::COPY_FS_ENTRY,
+                transmission::DOWNSAMPLE_FS_ENTRY,
+            ],
+        ),
         (
             ao::XE_GTAO.name,
             vec![
@@ -717,6 +726,11 @@ fn rust_mirrors_match_wgsl_layouts() {
                 specular,
                 normal_layers,
                 maps,
+                attenuation,
+                transmission,
+                thickness,
+                ior,
+                dispersion,
             ]
         ),
         mirror!(
@@ -844,6 +858,10 @@ fn rust_mirrors_match_wgsl_layouts() {
             "MATERIAL_KEEPS_SPECULAR",
             super::material::MATERIAL_KEEPS_SPECULAR,
         ),
+        (
+            "MATERIAL_TRANSMISSIVE",
+            super::material::MATERIAL_TRANSMISSIVE,
+        ),
     ]
     .into_iter()
     .chain(super::bind::group2::MaterialMap::ALL.map(|map| {
@@ -856,6 +874,8 @@ fn rust_mirrors_match_wgsl_layouts() {
             Normal => "MATERIAL_MAP_NORMAL",
             Bump => "MATERIAL_MAP_BUMP",
             Anisotropy => "MATERIAL_MAP_ANISOTROPY",
+            Transmission => "MATERIAL_MAP_TRANSMISSION",
+            Thickness => "MATERIAL_MAP_THICKNESS",
         };
         (name, map.bit())
     })) {
@@ -1085,9 +1105,12 @@ fn rust_binding_names_match_wgsl_bindings() {
         (2, "relief_map", group2::RELIEF_MAP),
         (2, "baked_material", group2::BAKED_MATERIAL),
         (2, "anisotropy_map", group2::ANISOTROPY_MAP),
+        (2, "transmission_map", group2::TRANSMISSION_MAP),
+        (2, "thickness_map", group2::THICKNESS_MAP),
         (3, "blended_reflections", blended::REFLECTIONS),
         (3, "blended_surface_depth", blended::SURFACE_DEPTH),
         (3, "blended_trace", blended::TRACE),
+        (3, "blended_transmission", blended::TRANSMISSION),
         (3, "caster_positions", caster::POSITIONS),
         (3, "scene_tlas", hardware::SCENE_TLAS),
         (3, "shadow_mask", shadow_mask::MASK),
@@ -1141,11 +1164,18 @@ fn rust_binding_names_match_wgsl_bindings() {
             2,
             numbers(&group2::material_entries(bind::BindingTier::Extended)),
         ),
+        // The blended group 3 on each binding tier.
         (
             "bind_blended",
             &[&super::BIND_BLENDED],
             3,
-            numbers(&bind::blended_entries()),
+            numbers(&bind::blended_entries(bind::BindingTier::Basic)),
+        ),
+        (
+            "bind_blended_extended",
+            &[&super::tiers::BIND_BLENDED_EXTENDED],
+            3,
+            numbers(&bind::blended_entries(bind::BindingTier::Extended)),
         ),
         (
             "bind_caster_positions",

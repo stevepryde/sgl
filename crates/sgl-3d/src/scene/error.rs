@@ -63,6 +63,11 @@ pub enum SceneError {
     InvalidReflectance,
     /// A material's occlusion strength is outside 0..=1.
     InvalidOcclusion,
+    /// A material's transmission is outside 0..=1 or set on an unlit
+    /// material, its thickness or dispersion is negative or not finite, its
+    /// attenuation distance is not positive, or an attenuation colour
+    /// channel is outside 0..=1.
+    InvalidTransmission,
     /// A material's normal layers have a velocity, scale or strength that is
     /// not finite, a scale that is not positive or a speed beyond 2^24
     /// repeats of the map per hour, or the material has no normal map that
@@ -193,6 +198,9 @@ impl std::fmt::Display for SceneError {
                 "IOR must be at least 1 (infinity allowed), specular in 0..1 and specular colour finite and nonnegative"
             }
             Self::InvalidOcclusion => "occlusion strength must be in 0..1",
+            Self::InvalidTransmission => {
+                "transmission must be in 0..1 on a lit material, thickness and dispersion finite and nonnegative, attenuation distance positive and attenuation colour in 0..1"
+            }
             Self::InvalidNormalLayers => {
                 "normal layers need finite velocities and strengths, positive finite scales, at most 2^24 repeats per hour and a normal map that repeats on both axes"
             }

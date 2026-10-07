@@ -48,7 +48,9 @@ fn scene_material_values(at:u32)->Material {
  scene_f32(at+SCENE_MATERIAL_ALPHA_CUTOFF),scene_source[at+SCENE_MATERIAL_VISIBILITY_GROUP],scene_source[at+SCENE_MATERIAL_FLAGS],
  scene_f32(at+SCENE_MATERIAL_OCCLUSION_STRENGTH),scene_v3(at+SCENE_MATERIAL_SPECULAR_F0),scene_f32(at+SCENE_MATERIAL_SPECULAR),
  array<NormalLayer,2>(scene_normal_layer(layers),scene_normal_layer(layers+SCENE_NORMAL_LAYER_WORDS)),
- scene_source[at+SCENE_MATERIAL_MAPS]);
+ scene_source[at+SCENE_MATERIAL_MAPS],
+ scene_v3(at+SCENE_MATERIAL_ATTENUATION),scene_f32(at+SCENE_MATERIAL_TRANSMISSION),
+ scene_f32(at+SCENE_MATERIAL_THICKNESS),scene_f32(at+SCENE_MATERIAL_IOR),scene_f32(at+SCENE_MATERIAL_DISPERSION));
 }
 fn scene_material(at:u32)->SceneMaterial {
  let textures=at+SCENE_MATERIAL_TEXTURES;

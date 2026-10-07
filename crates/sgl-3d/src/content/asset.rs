@@ -148,6 +148,31 @@ pub struct Material {
     pub bump_texture: Option<usize>,
     /// Bump height multiplier.
     pub bump_scale: f32,
+    /// The share of the light behind the surface that passes through it,
+    /// refracted, in `0..=1` (`KHR_materials_transmission`'s
+    /// `transmissionFactor`); see
+    /// [`SurfaceMaterial::transmission`](crate::SurfaceMaterial::transmission).
+    pub transmission: f32,
+    /// Transmission image index: its red channel multiplies `transmission`,
+    /// sampled as linear data. A device of the `Basic` binding tier binds
+    /// none and takes the factor alone.
+    pub transmission_texture: Option<usize>,
+    /// The thickness of the volume beneath the surface in the mesh's units,
+    /// 0 for a thin wall (`KHR_materials_volume`'s `thicknessFactor`).
+    pub thickness: f32,
+    /// Thickness image index: its green channel multiplies `thickness`,
+    /// sampled as linear data; `Basic` takes the factor alone.
+    pub thickness_texture: Option<usize>,
+    /// The distance in metres light travels in the volume before it takes
+    /// `attenuation_color`, positive or `f32::INFINITY` for none
+    /// (`KHR_materials_volume`).
+    pub attenuation_distance: f32,
+    /// The linear colour white light turns into at `attenuation_distance`,
+    /// each channel in `0..=1`.
+    pub attenuation_color: [f32; 3],
+    /// How far transmitted light's colours spread, 20 over the Abbe number,
+    /// nonnegative (`KHR_materials_dispersion`): 0 none.
+    pub dispersion: f32,
     /// U and V wrapping shared by all texture channels of this material.
     pub wrap: [WrappingMode; 2],
     /// Whether both sides of each triangle are rendered.
@@ -175,8 +200,9 @@ impl Material {
 impl Default for Material {
     /// glTF 2.0's default material, which the loader gives a primitive
     /// without one: unnamed, a white base, metallic and roughness 1, IOR
-    /// 1.5, specular 1 untinted, no emission, clearcoat, anisotropy, bump or
-    /// textures, normal scale and occlusion strength 1, no normal layers,
+    /// 1.5, specular 1 untinted, no emission, clearcoat, anisotropy, bump,
+    /// transmission, thickness, attenuation or dispersion, no textures,
+    /// normal scale and occlusion strength 1, no normal layers,
     /// repeating, single-sided, lit and opaque, in visibility
     /// group 0, casting directional shadows and emitting into global
     /// illumination. Set what differs and take the rest with
@@ -208,6 +234,13 @@ impl Default for Material {
             normal_layers: None,
             bump_texture: None,
             bump_scale: 0.0,
+            transmission: 0.0,
+            transmission_texture: None,
+            thickness: 0.0,
+            thickness_texture: None,
+            attenuation_distance: f32::INFINITY,
+            attenuation_color: [1.0; 3],
+            dispersion: 0.0,
             wrap: [WrappingMode::Repeat; 2],
             double_sided: false,
             unlit: false,

@@ -1144,6 +1144,62 @@ map's.
 `Scene::set_material` changes a material's alpha mode like its other values.
 The `offscreen` example's `--alpha` shows both modes.
 
+### Transmissive glass and water
+
+A material with `transmission` above 0 (`KHR_materials_transmission`, which
+the glTF loader reads with `KHR_materials_volume` and
+`KHR_materials_dispersion`) lets the light behind it through, refracted:
+glass, water, clear plastic. Its values, on `asset::Material` and
+`SurfaceMaterial`:
+
+- `transmission` (0..=1): the share of its diffuse light the transmitted
+  light replaces; `asset::Material::transmission_texture`'s red channel
+  multiplies it.
+- `thickness`: the depth of the volume beneath the surface in the mesh's
+  units, which the instance's scale scales; 0 is a thin wall, which bends
+  nothing; `thickness_texture`'s green channel multiplies it. A volume
+  draws its front faces alone.
+- `attenuation_distance` (metres, positive, `f32::INFINITY` for none) and
+  `attenuation_color` (linear, 0..=1): white light takes the colour after
+  that distance through the volume (Beer-Lambert).
+- `ior`: its refraction too (1.33 water, 1.5 glass); its roughness blurs
+  what it shows.
+- `dispersion` (20 over the Abbe number: 0.33 crown glass, 0.36 water):
+  each colour channel refracts at its own IOR.
+
+```rust,ignore
+let glass = SurfaceMaterial {
+    base: [0.95, 1.0, 1.0, 1.0],
+    metallic: 0.0,
+    roughness: 0.02,
+    ior: 1.5,
+    transmission: 1.0,
+    thickness: 0.01,
+    ..SurfaceMaterial::default()
+};
+```
+
+A transmissive material is drawn with the blended surfaces whatever its
+alpha mode, its alpha still covering as the mode says (whole when
+`Opaque`). Like them, and unlike three.js and Bevy, it writes no depth or
+G-buffer, takes no ambient occlusion and casts no shadow (no coloured
+shadows), rays pass through it (reflections and global illumination see
+what lies behind it) and probe captures leave it out. Moving glass has no
+motion vectors unless it is a `Blend` receiver of screen-space
+reflections, which writes depth and motion. What it shows through it is
+the opaque frame behind it (surfaces, sky and their reflections), not other
+blended or transmissive surfaces behind it. Give glass its own material: a
+transmission map's zeros do not make the rest of a material opaque. Decals
+change its diffuse colour, which tints what it transmits. Water seen from
+below shows nothing, as only its front faces draw.
+
+The transparent stage copies the composed frame, with its mips, in each
+frame that shows a transmissive material, on a device of the `Extended`
+[binding tier](#binding-tiers) (timing group `transmission copy`). On
+`Basic`, and in what screen-space reflections see of it, a transmissive
+surface blends the light behind it through unrefracted and unblurred,
+dimmed as the refracted light would be.
+
 ### Blended receivers
 
 A blended material marked `receives_screen_space_reflections: true` is a
@@ -2034,8 +2090,8 @@ setting chooses it.
 
 | Tier | Sampled textures per stage | Lighting | Material maps |
 | --- | --- | --- | --- |
-| `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI | base, metallic-roughness (with packed occlusion), emission, normal, bump |
-| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI | those and the anisotropy map |
+| `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted | base, metallic-roughness (with packed occlusion), emission, normal, bump |
+| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission | those and the anisotropy, transmission and thickness maps |
 
 A Vulkan driver lands in either tier, by its `maxPerStageResources`.
 

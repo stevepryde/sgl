@@ -26,8 +26,8 @@ use pass::{attachments_fit, targets};
 pub(crate) use variant::{Alpha, Cull, Variant};
 
 /// Scene geometry's camera and probe-capture passes. A program composes it
-/// with one shadow-mask provider, one lit provider and one material-map
-/// provider (`geometry_program`).
+/// with one shadow-mask provider, one lit provider, one material-map
+/// provider and one transmission provider (`geometry_program`).
 pub(crate) static GEOMETRY: shading::Module = shading::Module {
     name: "geometry",
     source: include_str!("geometry.wgsl"),
@@ -42,6 +42,7 @@ pub(crate) static GEOMETRY: shading::Module = shading::Module {
         &shading::SURFACE,
         &shading::SURFACE_RASTER,
         &shading::FRAME_FOG,
+        &shading::TRANSMISSION,
     ],
 };
 /// The entry points the geometry passes' pipelines are created with, from
@@ -59,7 +60,7 @@ pub(crate) const RECEIVER_FS_ENTRY: &str = "receiver_fs";
 pub(crate) const FSR2_COMPOSITION_FS_ENTRY: &str = "fsr2_composition_fs";
 /// The geometry program on a device of `tier`: `GEOMETRY` with the shadow
 /// mask's provider where `shadow_mask`, else with the provider that holds
-/// no slot, and the tier's lit and material-map providers.
+/// no slot, and the tier's lit, material-map and transmission providers.
 pub(crate) fn geometry_program(shadow_mask: bool, tier: BindingTier) -> String {
     let provider = if shadow_mask {
         &shading::SHADOW_MASK
@@ -71,6 +72,7 @@ pub(crate) fn geometry_program(shadow_mask: bool, tier: BindingTier) -> String {
         provider,
         shading::lit_provider(tier),
         shading::material_provider(tier),
+        shading::transmission_provider(tier),
     ])
 }
 

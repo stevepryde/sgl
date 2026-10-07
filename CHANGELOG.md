@@ -91,6 +91,18 @@ docs and specs the entry links.
   `BLEND` loads it. Migration: `Blend { receives_screen_space_reflections:
   r }` becomes `Blend { receives_screen_space_reflections: r,
   keeps_specular: false }`; patterns match `Blend { .. }`.
+- `sgl-3d` transmission: new `transmission`, `thickness`,
+  `attenuation_distance`, `attenuation_color` and `dispersion` on
+  `SurfaceMaterial` and `asset::Material` (with `transmission_texture` and
+  `thickness_texture`), loaded from `KHR_materials_transmission`,
+  `KHR_materials_volume` and `KHR_materials_dispersion`, refract the frame
+  behind on `Extended` and blend it through on `Basic`. A transmissive
+  material draws with the blended surfaces whatever its alpha mode: no
+  shadow, and rays pass through it. glTF files using these extensions,
+  opaque before, now load transmissive. Invalid values are refused with the
+  new `SceneError::InvalidTransmission`. Migration: exhaustive material
+  literals take `..Default::default()` or the new fields; exhaustive
+  `SceneError` matches add the variant.
 
 ## 0.2.1 — 2026-10-07
 
