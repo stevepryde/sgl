@@ -977,19 +977,20 @@ fn leaf() -> crate::asset::Asset {
 }
 
 /// The leaf's lit colour at the centre of `fixture`'s frame, lit from behind
-/// by a light of `illuminance` shining along +Z with or without its
+/// by a light of `illuminance` shining along `direction` with or without its
 /// cascades, with or without `occluder`, behind the leaf, in the light's
 /// sight.
 fn lit_from_behind(
     fixture: &mut Fixture,
     occluder: crate::InstanceId,
+    direction: Vec3,
     shadow: bool,
     occluded: bool,
     illuminance: f32,
 ) -> f32 {
     fixture.cast(occluder, occluded);
     let light = DirectionalLight {
-        direction: Vec3::Z,
+        direction,
         color: [1., 0., 0.],
         illuminance,
         shadow: shadow.then_some(two_cascades()),
@@ -1037,10 +1038,10 @@ fn a_leaf_lit_from_behind_takes_its_back_side_s_shadow() {
         let mut occluder = Fixture::white(quad(Vec3::new(0., 0., -6.), 3.));
         occluder.materials[0].double_sided = true;
         let occluder = fixture.place_asset(occluder, false);
-        let dark = lit_from_behind(&mut fixture, occluder, false, false, 0.);
-        let unshadowed = lit_from_behind(&mut fixture, occluder, false, false, 1.);
-        let open = lit_from_behind(&mut fixture, occluder, true, false, 1.);
-        let covered = lit_from_behind(&mut fixture, occluder, true, true, 1.);
+        let dark = lit_from_behind(&mut fixture, occluder, Vec3::Z, false, false, 0.);
+        let unshadowed = lit_from_behind(&mut fixture, occluder, Vec3::Z, false, false, 1.);
+        let open = lit_from_behind(&mut fixture, occluder, Vec3::Z, true, false, 1.);
+        let covered = lit_from_behind(&mut fixture, occluder, Vec3::Z, true, true, 1.);
         assert!(
             unshadowed > dark + 0.01,
             "{label}: the leaf lit through takes {unshadowed}, unlit {dark}"
@@ -1052,6 +1053,16 @@ fn a_leaf_lit_from_behind_takes_its_back_side_s_shadow() {
         assert!(
             (covered - dark).abs() < 0.001,
             "{label}: the occluder covers the leaf's back: {covered}, unlit {dark}"
+        );
+        // A light behind the leaf at 70° from its normal, where the lookup's
+        // offset along the normal outweighs the depth offset toward the light
+        // in the leaf's own depth.
+        let grazing = Vec3::new(70f32.to_radians().sin(), 0., 70f32.to_radians().cos());
+        let unshadowed = lit_from_behind(&mut fixture, occluder, grazing, false, false, 1.);
+        let open = lit_from_behind(&mut fixture, occluder, grazing, true, false, 1.);
+        assert!(
+            unshadowed > dark + 0.01 && (open - unshadowed).abs() < 0.001,
+            "{label}: a grazing light behind the leaf: {open}, unshadowed {unshadowed}, unlit {dark}"
         );
         // A point light behind the occluder, through the scene lights' loop.
         let (device, queue) = (fixture.device.clone(), fixture.queue.clone());
@@ -1072,7 +1083,7 @@ fn a_leaf_lit_from_behind_takes_its_back_side_s_shadow() {
                 .scene
                 .set_light(&queue, light, point(casts_shadow, intensity))
                 .unwrap();
-            lit_from_behind(&mut fixture, occluder, false, occluded, 0.)
+            lit_from_behind(&mut fixture, occluder, Vec3::Z, false, occluded, 0.)
         };
         let unshadowed = point_lit(false, false, 50.);
         let open = point_lit(true, false, 50.);
