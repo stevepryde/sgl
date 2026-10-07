@@ -97,6 +97,7 @@ fn glass() -> Asset {
     glass.materials[0].base = [0.2, 0.9, 0.3, 0.4];
     glass.materials[0].alpha = AlphaMode::Blend {
         receives_screen_space_reflections: false,
+        keeps_specular: false,
     };
     glass
 }

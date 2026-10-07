@@ -78,6 +78,12 @@ docs and specs the entry links.
 - `sgl-3d` the hemisphere fill's multiple-scattered specular is no longer
   darkened by ambient occlusion or occlusion maps, as the environment's and
   volumes' already were not (#249). No game-code change.
+- `sgl-3d` `AlphaMode::Blend` gains `keeps_specular`: `true` fades only
+  diffuse and emitted light by alpha, keeping reflections and highlights
+  at full strength (glass); `false` is the previous behaviour, and glTF
+  `BLEND` loads it. Migration: `Blend { receives_screen_space_reflections:
+  r }` becomes `Blend { receives_screen_space_reflections: r,
+  keeps_specular: false }`; patterns match `Blend { .. }`.
 
 ## 0.2.1 — 2026-10-07
 

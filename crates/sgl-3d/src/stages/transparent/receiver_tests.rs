@@ -70,6 +70,7 @@ fn middle_row(
         roughness: 0.05,
         alpha: AlphaMode::Blend {
             receives_screen_space_reflections: true,
+            keeps_specular: false,
         },
         ..Default::default()
     };
@@ -262,6 +263,7 @@ fn reflection_column(
         roughness: 0.05,
         alpha: AlphaMode::Blend {
             receives_screen_space_reflections: receives,
+            keeps_specular: false,
         },
         ..Default::default()
     };
@@ -384,6 +386,7 @@ fn a_receiver_writes_its_motion_and_the_surface_depth_not_the_opaque_depth() {
         roughness: 0.05,
         alpha: AlphaMode::Blend {
             receives_screen_space_reflections: true,
+            keeps_specular: false,
         },
         ..Default::default()
     };

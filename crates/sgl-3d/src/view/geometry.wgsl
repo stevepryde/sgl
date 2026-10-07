@@ -204,19 +204,34 @@ fn blended_traced_reflection(i:Fragment)->TracedReflection {
 // as Bevy 9d12036's forward transparent pass shades and fogs each fragment
 // (crates/bevy_pbr/src/render/pbr.wesl) and Godot b130438's samples its
 // volumetric fog (scene_forward_clustered.glsl), and blended with their
-// alpha.
+// alpha, premultiplied, as Filament ef1a133 blends both its transparent
+// modes (docs_src/src_markdeep/Filament.md.html, Transparency; Apache-2.0,
+// src/LICENSE-filament.txt): with MATERIAL_KEEPS_SPECULAR, Filament's
+// transparent mode, its base colour and emission premultiplied before
+// shading, so alpha fades its diffuse and emitted light alone, as gltfio
+// premultiplies a blended material's base (libs/gltfio/src/
+// JitShaderProvider.cpp 177–181) and Filament its emission
+// (shaders/src/surface_shading_lit.fs 349–358); else Filament's fade, all
+// of its light premultiplied after shading (surface_shading_lit.fs 340–346).
 fn blended_color(i:Fragment,raster_front:bool)->vec4<f32> {
  let front=object_front_face(i,raster_front);
  let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
- let s=raster_surface(i,front,surface_base_color(i),surface_emission(i),context.clusters);
+ var s=raster_surface(i,front,surface_base_color(i),surface_emission(i),context.clusters);
+ let alpha=s.base.a;
+ let keeps_specular=(material.flags&MATERIAL_KEEPS_SPECULAR)!=0u;
+ if keeps_specular {
+  s.base=vec4(s.base.rgb*alpha,alpha);
+  s.emission*=alpha;
+ }
  var shaded:Shaded;
  if s.unlit {
   shaded=shade_unlit(s);
  } else {
   shaded=shade_lit(s,context);
  }
+ let premultiplied=select(shaded.color*alpha,shaded.color,keeps_specular);
  // A fragment's position w is one over its view depth.
- return vec4(frame_fog(shaded.color,i.clip.xy,1./i.clip.w),s.base.a);
+ return vec4(frame_fog_premultiplied(premultiplied,alpha,i.clip.xy,1./i.clip.w),alpha);
 }
 @fragment fn blended_fs(i:Fragment,@builtin(front_facing) front:bool)->@location(0) vec4<f32> {
  return blended_color(i,front);

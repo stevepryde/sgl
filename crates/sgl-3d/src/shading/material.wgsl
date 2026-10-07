@@ -49,6 +49,11 @@ const MATERIAL_NORMAL_LAYERS:u32=256u;
 // Global illumination gathers the light it gives off itself, its emission
 // and an unlit material's whole colour (SurfaceMaterial::emits_into_gi).
 const MATERIAL_EMITS_INTO_GI:u32=512u;
+// A blended material whose alpha fades its diffuse and emitted light alone,
+// its specular keeping full strength (AlphaMode::Blend's keeps_specular):
+// Filament's transparent blending, where without it alpha fades all of its
+// light, Filament's fade (view/geometry.wgsl, blended_color).
+const MATERIAL_KEEPS_SPECULAR:u32=1024u;
 // Its maps in effect (shading::bind::group2::MaterialMap::bit): those it
 // was added with whose binding the device binds, a bump map only without a
 // normal map, and an occlusion map in the red channel of its

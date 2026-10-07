@@ -14,14 +14,19 @@ pub enum AlphaMode {
     /// every view, shadow and ray (glTF `MASK` and its `alphaCutoff`).
     Mask { cutoff: f32 },
     /// Blended over what lies behind it, sorted back to front by each mesh's
-    /// bounds centre (glTF `BLEND`, which loads unmarked). It casts no
-    /// shadow, and rays pass through it. Unmarked, it writes no depth or
-    /// motion. Marked `receives_screen_space_reflections`, it is the surface
-    /// the frame's screen-space reflections trace and its temporal effects
-    /// reproject at the pixels where it is the nearest receiver: water or
-    /// glass that reflects the scene in front of it.
+    /// bounds centre (glTF `BLEND`, which loads with both fields false). It
+    /// casts no shadow, and rays pass through it. Unmarked, it writes no
+    /// depth or motion. Marked `receives_screen_space_reflections`, it is the
+    /// surface the frame's screen-space reflections trace and its temporal
+    /// effects reproject at the pixels where it is the nearest receiver:
+    /// water or glass that reflects the scene in front of it.
     Blend {
         receives_screen_space_reflections: bool,
+        /// Whether alpha fades only its diffuse and emitted light, its
+        /// reflections and highlights keeping their full strength, as glass
+        /// does (Filament's `transparent` blending). False fades all of its
+        /// light, glTF's alpha as coverage (Filament's `fade`).
+        keeps_specular: bool,
     },
 }
 
@@ -179,7 +184,8 @@ impl SurfaceMaterial {
         matches!(
             self.alpha,
             AlphaMode::Blend {
-                receives_screen_space_reflections: true
+                receives_screen_space_reflections: true,
+                ..
             }
         )
     }

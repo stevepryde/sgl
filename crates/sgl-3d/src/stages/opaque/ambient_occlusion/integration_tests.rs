@@ -553,6 +553,7 @@ fn a_packed_occlusion_map_occludes_ambient_diffuse() {
         values.occlusion_strength = strength;
         values.alpha = AlphaMode::Blend {
             receives_screen_space_reflections: false,
+            keeps_specular: false,
         };
         scene.set_material(&queue, material, values).unwrap();
         render(

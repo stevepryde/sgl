@@ -301,6 +301,7 @@ fn rays_pass_through_cut_out_texels_and_blended_surfaces() {
     blended.materials[0].base = [0.75, 0., 0., 0.5];
     blended.materials[0].alpha = AlphaMode::Blend {
         receives_screen_space_reflections: false,
+        keeps_specular: false,
     };
     for (asset, x) in [(floor, 0.), (masked, 0.), (blended, 4.)] {
         let model = scene.add_asset(&device, &queue, asset).unwrap().model;

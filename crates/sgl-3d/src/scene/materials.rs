@@ -146,6 +146,7 @@ impl Materials {
             AlphaMode::Mask { .. } => add(&mut self.masked),
             AlphaMode::Blend {
                 receives_screen_space_reflections,
+                ..
             } => {
                 add(&mut self.blended);
                 if receives_screen_space_reflections {

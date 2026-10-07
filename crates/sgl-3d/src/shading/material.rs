@@ -33,6 +33,7 @@ pub(crate) const MATERIAL_ALPHA_BLEND: u32 = 64;
 pub(crate) const MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS: u32 = 128;
 pub(crate) const MATERIAL_NORMAL_LAYERS: u32 = 256;
 pub(crate) const MATERIAL_EMITS_INTO_GI: u32 = 512;
+pub(crate) const MATERIAL_KEEPS_SPECULAR: u32 = 1024;
 
 /// A set of a material's maps, as the record's `maps` word holds them
 /// (`MaterialMap::bit`).
@@ -136,13 +137,15 @@ impl MaterialUniform {
             AlphaMode::Mask { cutoff } => (cutoff, MATERIAL_ALPHA_MASK),
             AlphaMode::Blend {
                 receives_screen_space_reflections,
+                keeps_specular,
             } => (
                 0.,
                 MATERIAL_ALPHA_BLEND
                     | bit(
                         receives_screen_space_reflections,
                         MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS,
-                    ),
+                    )
+                    | bit(keeps_specular, MATERIAL_KEEPS_SPECULAR),
             ),
         };
         Self {

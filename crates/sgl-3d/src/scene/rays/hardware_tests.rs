@@ -86,6 +86,7 @@ fn blended() -> Material {
     material(
         AlphaMode::Blend {
             receives_screen_space_reflections: false,
+            keeps_specular: false,
         },
         false,
         0,

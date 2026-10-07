@@ -7,9 +7,10 @@
 //! source intensities (the post's emission and its light). `--anisotropy 0.5` demonstrates authored tangent transport
 //! and Enhanced reflections on the moving cube. `--alpha` adds a masked grate,
 //! whose cut-out texels the sun's shadow passes through, and two overlapping
-//! blended glass panes. The grate's base map is `grate.ktx2`, a BC7 mip chain
-//! as a game's export step writes one (written by the `export_grate`
-//! example); it needs `wgpu::Features::TEXTURE_COMPRESSION_BC`.
+//! blended glass panes that keep their reflections' full strength. The
+//! grate's base map is `grate.ktx2`, a BC7 mip chain as a game's export step
+//! writes one (written by the `export_grate` example); it needs
+//! `wgpu::Features::TEXTURE_COMPRESSION_BC`.
 //! `--decals` projects painted hazard stripes, rough and matte, onto the
 //! ground in front of the cube. `--motion-blur` blurs the moving cube along
 //! its motion, `MotionBlur::Full` over the default shutter.
@@ -191,6 +192,7 @@ fn alpha_content() -> Result<Asset, Box<dyn Error>> {
         double_sided: true,
         alpha: AlphaMode::Blend {
             receives_screen_space_reflections: false,
+            keeps_specular: true,
         },
         ..material(base, [0.; 3], 0., 0.05)
     };

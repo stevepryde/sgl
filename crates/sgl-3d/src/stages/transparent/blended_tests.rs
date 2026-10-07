@@ -52,6 +52,7 @@ fn frames(device: &wgpu::Device, queue: &wgpu::Queue, shown: bool) -> [Vec<u8>; 
     values.base = [0.2, 0.9, 0.3, 0.5];
     values.alpha = AlphaMode::Blend {
         receives_screen_space_reflections: false,
+        keeps_specular: false,
     };
     scene
         .set_material(queue, glass.materials[0], values)
@@ -165,6 +166,7 @@ fn blended_surfaces_write_fsr2s_masks() {
         glass.materials[0].base = [0.2, 0.9, 0.3, alpha];
         glass.materials[0].alpha = AlphaMode::Blend {
             receives_screen_space_reflections: false,
+            keeps_specular: false,
         };
         let model = scene.add_asset(&device, &queue, glass).unwrap().model;
         let state = InstanceState {
@@ -217,6 +219,136 @@ fn blended_surfaces_write_fsr2s_masks() {
                 (actual - expected).abs() <= 1. / 255.,
                 "column {column}: {name} mask {actual}, expected {expected}"
             );
+        }
+    }
+}
+
+/// The composed colour at the frame's centre after each of `edits` in turn:
+/// a blended square 3 m ahead facing the camera, lit along the view by a
+/// directional light, over nothing (no environment: black), with its
+/// material's values `edit` makes of the square's.
+fn centre_colours(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    edits: &[&dyn Fn(&mut crate::SurfaceMaterial)],
+) -> Vec<[f32; 3]> {
+    let settings = Settings {
+        antialiasing: settings::Antialiasing::Off,
+        bloom: settings::Bloom::Off,
+        atmosphere: false,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut scene = Scene::new(device, queue);
+    let (glass, _) = test_support::add_static(device, queue, &mut scene, square(-3., 0.5));
+    let authored = scene.material(glass.materials[0]).unwrap();
+    let mut input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: crate::perspective(1., 1., 0.1),
+        eye: Vec3::ZERO,
+    });
+    input.directional_lights[0] = Some(DirectionalLight {
+        direction: Vec3::NEG_Z,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: None,
+        ..Default::default()
+    });
+    let output = crate::view::targets::target(device, "blended colours", SIZE, gbuffer::COLOR);
+    let centre = ((SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) * 8) as usize;
+    edits
+        .iter()
+        .map(|edit| {
+            let mut values = authored;
+            values.roughness = 0.3;
+            values.metallic = 0.;
+            edit(&mut values);
+            scene
+                .set_material(queue, glass.materials[0], values)
+                .unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                device,
+                queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+            let composed =
+                test_support::read(device, queue, renderer.targets().composite.texture(), 8);
+            [0, 1, 2].map(|channel| test_support::half(&composed[centre + channel * 2..]))
+        })
+        .collect()
+}
+
+// Plausible defects: alpha fading a material that keeps its specular
+// (straight-alpha blending, or its colour premultiplied after shading
+// rather than its base colour and emission before); its diffuse or emitted
+// light not faded; a coverage-blended material's light not faded under
+// premultiplied blending. The oracle is Filament's definition of its two
+// blend modes (ef1a133 docs_src/src_markdeep/Materials.md.html 1686–1691:
+// in `transparent` the alpha applies to diffuse lighting alone, in `fade`
+// to specular too): over black, a surface that keeps its specular reflects
+// at alpha 0.1 what it reflects at alpha 1 and gives a tenth of its diffuse
+// and emitted light, and a coverage-blended one a tenth of all of it. Each
+// case isolates one: a black base reflects alone, a white base with no
+// specular gives diffuse light alone, and a black base with no specular its
+// emission alone.
+#[test]
+fn keeps_specular_fades_diffuse_and_emission_alone() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let blend = |keeps_specular| AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+        keeps_specular,
+    };
+    let specular_only = |values: &mut crate::SurfaceMaterial| {
+        values.base = [0., 0., 0., values.base[3]];
+    };
+    let diffuse_only = |values: &mut crate::SurfaceMaterial| {
+        values.base = [1., 1., 1., values.base[3]];
+        values.specular = 0.;
+    };
+    let emission_only = |values: &mut crate::SurfaceMaterial| {
+        values.base = [0., 0., 0., values.base[3]];
+        values.specular = 0.;
+        values.emission = [0.5; 3];
+    };
+    let cases: [(&str, &dyn Fn(&mut crate::SurfaceMaterial), f32); 3] = [
+        ("specular", &specular_only, 1.),
+        ("diffuse", &diffuse_only, 0.1),
+        ("emission", &emission_only, 0.1),
+    ];
+    for (name, light, kept) in cases {
+        let at = move |alpha: f32, keeps: bool| {
+            move |values: &mut crate::SurfaceMaterial| {
+                values.base[3] = alpha;
+                values.alpha = blend(keeps);
+                light(values);
+            }
+        };
+        let (whole, keeps, fades) = (at(1., true), at(0.1, true), at(0.1, false));
+        let colours = centre_colours(&device, &queue, &[&whole, &keeps, &fades]);
+        let [whole, keeps, fades] = [0, 1, 2].map(|i| colours[i]);
+        assert!(
+            whole.iter().all(|&value| value > 0.01),
+            "{name}: the case gives no light to compare: {whole:?}"
+        );
+        for (mode, actual, share) in [("keeps specular", keeps, kept), ("fades", fades, 0.1)] {
+            for channel in 0..3 {
+                let expected = whole[channel] * share;
+                assert!(
+                    (actual[channel] - expected).abs() <= expected * 5e-3 + 1e-4,
+                    "{name}, {mode}: channel {channel} is {}, expected {expected}",
+                    actual[channel]
+                );
+            }
         }
     }
 }

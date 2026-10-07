@@ -422,9 +422,14 @@ impl GeometryPipelines {
         };
         let unclipped_depth = matches!(key.pass, DirectionalShadow | PairedShadow | CaptureShadow)
             && self.unclipped_depth;
-        // Blended surfaces blend over the beauty with their alpha, as Bevy's
-        // `BLEND_ALPHA` pipelines do (crates/bevy_pbr/src/render/mesh.rs).
-        let blend = matches!(key.pass, Blended { .. }).then_some(wgpu::BlendState::ALPHA_BLENDING);
+        // Blended surfaces blend over the beauty premultiplied, their colour
+        // carrying its alpha (blended_color in geometry.wgsl), as Filament
+        // ef1a133 blends both its transparent and fade modes (One,
+        // OneMinusSrcAlpha; docs_src/src_markdeep/Filament.md.html,
+        // Transparency) and Bevy 9d12036 its `Premultiplied` materials
+        // (crates/bevy_pbr/src/render/mesh.rs 3534–3541).
+        let blend = matches!(key.pass, Blended { .. })
+            .then_some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING);
         let mut targets: Vec<_> = targets(key.pass, self.anisotropy_inline)
             .into_iter()
             .map(|format| {

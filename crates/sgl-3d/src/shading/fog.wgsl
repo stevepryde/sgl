@@ -24,7 +24,16 @@ fn fog_volume_coordinate(uv:vec2<f32>,view_depth:f32,inverse_length:f32,inverse_
 // `color` seen through `fog`: the light the fog scatters toward the camera
 // (rgb) and its transmittance (a).
 fn fog_composite(color:vec3<f32>,fog:vec4<f32>)->vec3<f32> {
- return color*fog.a+fog.rgb;
+ return fog_composite_premultiplied(color,1.,fog);
+}
+// fog_composite of `color` premultiplied by a coverage of `alpha`, as a
+// blended surface draws it over what lies behind (premultiplied blending):
+// the light the fog scatters over the covered share alone, what lies behind
+// it already holding its own, as Filament ef1a133 fogs a transparent surface
+// (shaders/src/surface_main.fs 84, fogColor.rgb *= fragColor.a; Apache-2.0,
+// src/LICENSE-filament.txt).
+fn fog_composite_premultiplied(color:vec3<f32>,alpha:f32,fog:vec4<f32>)->vec3<f32> {
+ return color*fog.a+fog.rgb*alpha;
 }
 // A fog volume (content::transient::FogVolume; Rust mirror
 // shading::fog::FogVolumeRecord): a box's frame from the world, its half
