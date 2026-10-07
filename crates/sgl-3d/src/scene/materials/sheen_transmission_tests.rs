@@ -140,8 +140,11 @@ fn input() -> FrameInput {
 // maps and again with their products already in the factors; the base
 // reflectance the G-buffer records beneath the sheen (F90, the dielectric's
 // 1 dimmed by the sheen's albedo at the view) and the light a light behind
-// the square passes through to the camera must agree within binary16. A
-// ray hit's surface takes the products themselves.
+// the square passes through to the camera must agree: within binary16 for
+// F90, and within 1% for the light, whose colour map the GPU decodes from
+// sRGB in hardware, which WebGPU does not specify bit for bit (0.4% on the
+// darkest channel here, code 51); each defect named moves a value by 40% or
+// more. A ray hit's surface takes the products themselves.
 #[test]
 fn sheen_and_diffuse_transmission_maps_scale_their_factors() {
     let Some((device, queue)) = test_support::device() else {
@@ -179,20 +182,20 @@ fn sheen_and_diffuse_transmission_maps_scale_their_factors() {
             .collect();
         observed.push((f90, lit, scene, renderer));
     }
-    let (mapped, products) = (&observed[0], &observed[1]);
+    let (mapped, factored) = (&observed[0], &observed[1]);
     assert!(
-        mapped.0 < 0.98 && (mapped.0 - products.0).abs() <= 2e-3,
-        "the base beneath the sheen: F90 {} with the maps, {} with their products",
+        mapped.0 < 0.98 && (mapped.0 - factored.0).abs() <= 2e-3,
+        "the base beneath the sheen: F90 {} with the maps, {} with the products in the factors",
         mapped.0,
-        products.0
+        factored.0
     );
     for channel in 0..3 {
         assert!(
-            products.1[channel] > 0.001
-                && (mapped.1[channel] - products.1[channel]).abs() <= 2e-3 * products.1[channel],
-            "light passed through: {:?} with the maps, {:?} with their products",
+            factored.1[channel] > 0.001
+                && (mapped.1[channel] - factored.1[channel]).abs() <= 0.01 * factored.1[channel],
+            "light passed through: {:?} with the maps, {:?} with the products in the factors",
             mapped.1,
-            products.1
+            factored.1
         );
     }
 

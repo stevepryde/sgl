@@ -1009,7 +1009,9 @@ fn lit_from_behind(
 // double-sided leaf the camera faces; behind it, an occluder the camera does
 // not see covers the leaf from the light or is moved out of the light's
 // sight. The leaf takes the light through it as the unshadowed light gives
-// it where nothing covers its back, and none where the occluder does.
+// it where nothing covers its back, and none where the occluder does: from
+// the directional light, and from a point light, which the scene lights'
+// loop shades.
 #[test]
 fn a_leaf_lit_from_behind_takes_its_back_side_s_shadow() {
     let mut fixtures = Vec::new();
@@ -1050,6 +1052,42 @@ fn a_leaf_lit_from_behind_takes_its_back_side_s_shadow() {
         assert!(
             (covered - dark).abs() < 0.001,
             "{label}: the occluder covers the leaf's back: {covered}, unlit {dark}"
+        );
+        // A point light behind the occluder, through the scene lights' loop.
+        let (device, queue) = (fixture.device.clone(), fixture.queue.clone());
+        let point = |casts_shadow: bool, intensity: f32| crate::Light {
+            position: Vec3::new(0., 0., -9.),
+            color: [1., 0., 0.],
+            intensity,
+            range: 20.,
+            casts_shadow,
+            ..Default::default()
+        };
+        let light = fixture
+            .scene
+            .add_light(&device, &queue, point(false, 0.))
+            .unwrap();
+        let mut point_lit = |casts_shadow: bool, occluded: bool, intensity: f32| {
+            fixture
+                .scene
+                .set_light(&queue, light, point(casts_shadow, intensity))
+                .unwrap();
+            lit_from_behind(&mut fixture, occluder, false, occluded, 0.)
+        };
+        let unshadowed = point_lit(false, false, 50.);
+        let open = point_lit(true, false, 50.);
+        let covered = point_lit(true, true, 50.);
+        assert!(
+            unshadowed > dark + 0.01,
+            "{label}: the leaf lit through by a point light takes {unshadowed}, unlit {dark}"
+        );
+        assert!(
+            (open - unshadowed).abs() < 0.001,
+            "{label}: nothing covers the leaf's back from the point light: {open}, unshadowed {unshadowed}"
+        );
+        assert!(
+            (covered - dark).abs() < 0.001,
+            "{label}: the occluder covers the leaf's back from the point light: {covered}, unlit {dark}"
         );
     }
 }
