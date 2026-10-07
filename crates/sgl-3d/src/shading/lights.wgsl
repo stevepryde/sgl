@@ -20,11 +20,13 @@
 // either side sees it. A point or spot light behind its normal lights only
 // that other side: light_reach keeps such a light from a surface that
 // passes none through, so the front takes none of it either and looks up
-// no shadow for it.
-fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,transmits:bool,back:vec3<f32>)->LightSample {
+// no shadow for it. `distance_bias_square` raises a point or spot light's
+// inverse-square denominator (light_reach): the fog passes its froxel's,
+// every surface 0.
+fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,transmits:bool,back:vec3<f32>,distance_bias_square:f32)->LightSample {
  let unreached=LightSample(vec3(0.),vec3(0.),0.,0.,0.,NO_RECT_LIGHT,0.);
  let light=lights[index];
- let reach=light_reach(light,position,normal,receiver==SHADOW_RECEIVER_MEDIUM||transmits);
+ let reach=light_reach(light,position,normal,receiver==SHADOW_RECEIVER_MEDIUM||transmits,distance_bias_square);
  if reach.attenuation<=0. {
   return unreached;
  }

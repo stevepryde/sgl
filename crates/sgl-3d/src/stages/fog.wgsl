@@ -44,6 +44,27 @@
 //   it about the direction to its nearest point and fades it in over 10 cm
 //   in front of the face. Bounded by π, it needs no 1 m distance clamp,
 //   which Godot gives area lights against jitter flicker.
+// - A point or spot light's inverse square takes the squared diagonal of
+//   the froxel the sample lies in, corner to corner, in its denominator
+//   (light_reach.wgsl), where Godot's omni and spot lights take
+//   1/max(d, 0.0001)^attenuation unbounded. One jittered sample of a froxel
+//   metres deep cannot integrate 1/d² across it: landing centimetres from
+//   a light, it takes thousands of times the froxel's light, and the
+//   history holds each spike, so the fog about a still light pulses with
+//   the jitter and a moving light leaves puffs behind it
+//   (stevepryde/sgl#262; Hillaire 2015 leaves "moving lights leave trails"
+//   open). This is Unreal's practice: its volumetric fog adds a bias the
+//   size of its voxel to the inverse-squared falloff's denominator, which
+//   "effectively removes the spike from inverse squared falloff that causes
+//   extreme aliasing" (r.VolumetricFog.InverseSquaredLightDistanceBiasScale,
+//   1 by default; practice only, no code). It agrees with the bounded
+//   falloff the MIT Unity VolumetricLighting sample gives its point lights
+//   in the fog (b5b0713, Assets/VolumetricFog/Shaders/
+//   InjectLightingAndDensity.compute PointLights, 1/(1 + 25 d²/range²)). A
+//   froxel far smaller than its distance to the light keeps the light's
+//   falloff; near the camera, where a long fog's slices are metres deep, a
+//   light's fog spreads over its froxels instead of peaking at the sample
+//   nearest it.
 // - The ambient is the frame's hemisphere fill and environment diffuse
 //   averaged over the sphere, which an isotropic phase scatters, where Godot
 //   samples its sky upward, at a mip chosen by the density, and along the
@@ -226,14 +247,15 @@ fn fog_volume_density(volume:FogVolumeRecord,position:vec3<f32>)->f32 {
  return density;
 }
 // What scene light `index` scatters toward the camera, along `view_ray`,
-// per unit of scattering at a point in the medium: none, without a shadow
-// lookup, at a fog energy Godot skips.
-fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f32>)->vec3<f32> {
+// per unit of scattering at a point in the medium of a froxel whose squared
+// diagonal is `froxel_square`: none, without a shadow lookup, at a fog
+// energy Godot skips.
+fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f32>,froxel_square:f32)->vec3<f32> {
  let fog_energy=lights[index].fog_energy;
  if fog_energy<=FOG_ENERGY_CUTOFF {
   return vec3(0.);
  }
- let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false,position);
+ let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false,position,froxel_square);
  if sample.visibility<=0. {
   return vec3(0.);
  }
@@ -308,10 +330,13 @@ var<workgroup> fog_ambient_light:vec3<f32>;
    light+=directional.color*directional.illuminance*shadow*henyey_greenstein(dot(view_ray,toward),froxels.anisotropy)*directional.fog_energy;
   }
   light+=fog_ambient_light;
+  // The froxel's diagonal, from its first corner to its last, squared.
+  let diagonal=froxel_world((vec3<f32>(id)+vec3(1.))/size)-froxel_world(vec3<f32>(id)/size);
+  let froxel_square=dot(diagonal,diagonal);
   let range=cluster_range(position,pixel);
   let end=range.first+range.live+range.baked;
   for(var at=range.first;at<end;at++) {
-   light+=fog_scene_light(cluster_item(at),position,view_ray,pixel);
+   light+=fog_scene_light(cluster_item(at),position,view_ray,pixel,froxel_square);
   }
  }
  var froxel=vec4(light*albedo,density);

@@ -107,7 +107,7 @@ fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,coat
   return false;
  }
  let light=lights[key];
- if light_reach(light,position,normal,false).attenuation<=0. {
+ if light_reach(light,position,normal,false,0.).attenuation<=0. {
   return false;
  }
  if untraced {

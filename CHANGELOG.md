@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` volumetric fog: a point or spot light's inverse square in the
+  fog now adds the froxel's squared diagonal to its denominator, so a light
+  near the camera no longer pulses with the fog's jitter or leaves puffs
+  behind it as it moves; its fog spreads over the froxels nearest it. Surfaces
+  are unchanged. No game-code changes needed.
+
 ## 0.3.0 — 2026-10-07
 
 - Move every SGL crate to `0.3.0` together. Breaking: update `Asset`,

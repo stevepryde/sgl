@@ -24,9 +24,12 @@ fn light_range_window(distance_square:f32,inverse_square_range:f32)->f32 {
  return smooth_factor*smooth_factor;
 }
 // The range window over the inverse square of the distance, taken as at
-// least one centimetre.
-fn light_distance_attenuation(distance_square:f32,inverse_square_range:f32)->f32 {
- return light_range_window(distance_square,inverse_square_range)/max(distance_square,.0001);
+// least one centimetre, `bias_square` added to its denominator: a point of
+// the volumetric fog takes its froxel's squared diagonal there, so that its
+// one sample of the froxel cannot spike near the light (fog.wgsl), and a
+// surface takes 0, the physical falloff.
+fn light_distance_attenuation(distance_square:f32,inverse_square_range:f32,bias_square:f32)->f32 {
+ return light_range_window(distance_square,inverse_square_range)/max(distance_square+bias_square,.0001);
 }
 // A spot light's cone at the unit direction from the receiver toward it.
 fn light_angle_attenuation(light:Light,to_light:vec3<f32>)->f32 {
@@ -47,8 +50,10 @@ struct LightReach {
 // the cone of, or behind (a rectangle: not in front of its face); a point
 // in the fog has no side, and a surface that passes diffuse light to its
 // other side takes light on both (`both_sides`), so a light reaches either
-// from any direction.
-fn light_reach(light:Light,position:vec3<f32>,normal:vec3<f32>,both_sides:bool)->LightReach {
+// from any direction. A point or spot light's inverse square takes
+// `distance_bias_square` in its denominator (light_distance_attenuation);
+// a rectangle's light, bounded near its face, takes none.
+fn light_reach(light:Light,position:vec3<f32>,normal:vec3<f32>,both_sides:bool,distance_bias_square:f32)->LightReach {
  let unreached=LightReach(vec3(0.),0.,false);
  let to_light=light.position-position;
  let distance_square=dot(to_light,to_light);
@@ -69,6 +74,6 @@ fn light_reach(light:Light,position:vec3<f32>,normal:vec3<f32>,both_sides:bool)-
  if !both_sides && dot(normal,direction)<=0. {
   return unreached;
  }
- let attenuation=light_distance_attenuation(distance_square,light.inverse_square_range)*light_angle_attenuation(light,direction);
+ let attenuation=light_distance_attenuation(distance_square,light.inverse_square_range,distance_bias_square)*light_angle_attenuation(light,direction);
  return LightReach(direction,attenuation,false);
 }

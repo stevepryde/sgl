@@ -163,7 +163,7 @@ override other_side:bool=false;
   if all(normal==vec3(0.)) {{
    normal=normalize(lights[index].position-receiver);
   }}
-  let sample=scene_light_sample(index,receiver,normal,normal,vec2(0.),select(SHADOW_RECEIVER_CAPTURE,SHADOW_RECEIVER_CAMERA,camera),transmits,receiver);
+  let sample=scene_light_sample(index,receiver,normal,normal,vec2(0.),select(SHADOW_RECEIVER_CAPTURE,SHADOW_RECEIVER_CAMERA,camera),transmits,receiver,0.);
   output[id.x]=select(sample.visibility,sample.transmitted_visibility,other_side);
  }}
 }}
