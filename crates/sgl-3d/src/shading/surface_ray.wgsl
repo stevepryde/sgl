@@ -133,12 +133,6 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
   s.coat_normal=ray_coat_normal(hit,material);
  }
  s.coat_roughness=clamp(coat_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
- s.iridescence_ior=material.values.iridescence_ior;
- s.iridescence_thickness=material.values.iridescence_thickness.y;
- if material.values.iridescence>0. {
-  s.iridescence=material_iridescence(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE],hit.uv,material.wrap,false));
-  s.iridescence_thickness=material_iridescence_thickness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE_THICKNESS],hit.uv,material.wrap,false));
- }
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.values.environment_scale;
@@ -151,6 +145,11 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.lightmap_uv=hit.lightmap_uv;
  s.lightmap_bounds=hit.lightmap_bounds;
  s.baked_irradiance=objects[hit.instance_id].baked_irradiance;
+ if material.values.iridescence>0. {
+  let strength=material_iridescence(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE],hit.uv,material.wrap,false));
+  let thickness=material_iridescence_thickness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE_THICKNESS],hit.uv,material.wrap,false));
+  s.film=surface_film(s,strength,material.values.iridescence_ior,thickness);
+ }
  return s;
 }
 // Where a probe hit's visibility ray starts past the hit, and how far

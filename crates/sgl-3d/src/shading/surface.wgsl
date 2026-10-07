@@ -45,11 +45,9 @@ struct Surface {
  roughness:f32,
  coat:f32,
  coat_roughness:f32,
- // KHR_materials_iridescence's film over the base: its strength (0 none),
- // its IOR and its thickness in nanometres (surface_f0s).
- iridescence:f32,
- iridescence_ior:f32,
- iridescence_thickness:f32,
+ // Its KHR_materials_iridescence film at the view (surface_film): none
+ // until its builder evaluates one.
+ film:SurfaceFilm,
  anisotropy:vec4<f32>,
  emission:vec3<f32>,
  environment_scale:f32,
@@ -139,42 +137,64 @@ fn probe_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32)->Environment
  let strength=frame.reflection_intensity;
  return collection_environment(world,direction,rough,1.,environment_map,environment_sampler,rotation,strength);
 }
-// A surface's reflectance at normal incidence, its dielectric's and its
-// metal's, which metallic mixes (surface_f0), under its iridescent film
-// where it has one: the film's Fresnel at the view's N.V
-// (iridescence_fresnel) over each, the dielectric F0 (its specular strength
-// included, as Filament ef1a133's iridescentF0 takes pixel.f0) and the base,
-// evaluated apart, as the Khronos glTF Sample Renderer (0686eb2
+// A surface's KHR_materials_iridescence film at its view, which its
+// builder evaluates once (surface_film): the film's Fresnel at the view's
+// N.V (iridescence_fresnel) over the dielectric F0 (its specular strength
+// included, as Filament ef1a133's iridescentF0 takes pixel.f0) and over the
+// base, evaluated apart, as the Khronos glTF Sample Renderer (0686eb2
 // source/Renderer/shaders/pbr.frag 158–159) and three.js r185 (2431a09
-// PhysicalLightingModel.js 505–526) evaluate them; each refit to the F0
+// PhysicalLightingModel.js 505–526) evaluate them, each refit to the F0
 // whose Schlick curve toward its own F90, the specular strength and 1,
-// passes through it there (iridescence_refit), and mixed toward it by the
-// film's strength, as Filament's iridescentF0. A film of no thickness is
-// none, as the Sample Renderer takes it (pbr.frag 161–163).
+// passes through it there (iridescence_refit); and the share of diffuse
+// light the film over the dielectric leaves, KHR's rgb_mix: 1 less its
+// Fresnel's strongest channel (pbr.frag 385). Its strength is 0 where there
+// is none, the zero a Surface starts with.
+struct SurfaceFilm {
+ strength:f32,
+ dielectric:vec3<f32>,
+ metal:vec3<f32>,
+ diffuse:f32,
+}
+// The film of strength `strength`, IOR `ior` and `thickness` nanometres
+// over `surface`, whose normal, view, base, metallic, dielectric F0 and
+// specular strength are set. A film of no thickness is none, as the
+// Sample Renderer takes it (pbr.frag 161–163). Each film is evaluated only
+// where metallic leaves its F0 a share: a full metal reflects nothing of
+// the dielectric's, nor diffuses, and a dielectric nothing of the metal's.
+fn surface_film(surface:Surface,strength:f32,ior:f32,thickness:f32)->SurfaceFilm {
+ var film=SurfaceFilm(0.,surface.dielectric_f0,surface.base.rgb,1.);
+ if !films_enabled || strength<=0. || thickness<=0. {
+  return film;
+ }
+ film.strength=strength;
+ let nv=specular_nv(surface.normal,surface.view);
+ if surface.metallic<1. {
+  let dielectric=iridescence_fresnel(1.,ior,surface.dielectric_f0,thickness,nv);
+  film.dielectric=iridescence_refit(dielectric,nv,surface.specular);
+  film.diffuse=1.-max(dielectric.r,max(dielectric.g,dielectric.b));
+ }
+ if surface.metallic>0. {
+  let metal=iridescence_fresnel(1.,ior,surface.base.rgb,thickness,nv);
+  film.metal=iridescence_refit(metal,nv,1.);
+ }
+ return film;
+}
+// A surface's reflectance at normal incidence, its dielectric's and its
+// metal's, which metallic mixes (surface_f0), each mixed toward its film's
+// by the film's strength (Surface.film), as Filament's iridescentF0 mixes
+// it; and the film's strength and the diffuse share it leaves.
 struct SurfaceF0 {
  dielectric:vec3<f32>,
  metal:vec3<f32>,
- // The film's strength, 0 where there is none, and the share of diffuse
- // light the film over the dielectric leaves at the view: KHR's rgb_mix,
- // 1 less its Fresnel's strongest channel (pbr.frag 385).
  film:f32,
  film_diffuse:f32,
 }
 fn surface_f0s(surface:Surface)->SurfaceF0 {
- var f=SurfaceF0(surface.dielectric_f0,surface.base.rgb,0.,1.);
- if !films_enabled || surface.iridescence<=0. || surface.iridescence_thickness<=0. {
-  return f;
+ let film=surface.film;
+ if film.strength<=0. {
+  return SurfaceF0(surface.dielectric_f0,surface.base.rgb,0.,1.);
  }
- let nv=specular_nv(surface.normal,surface.view);
- let ior=surface.iridescence_ior;
- let thickness=surface.iridescence_thickness;
- let dielectric=iridescence_fresnel(1.,ior,surface.dielectric_f0,thickness,nv);
- let metal=iridescence_fresnel(1.,ior,surface.base.rgb,thickness,nv);
- f.dielectric=mix(surface.dielectric_f0,iridescence_refit(dielectric,nv,surface.specular),surface.iridescence);
- f.metal=mix(surface.base.rgb,iridescence_refit(metal,nv,1.),surface.iridescence);
- f.film=surface.iridescence;
- f.film_diffuse=1.-max(dielectric.r,max(dielectric.g,dielectric.b));
- return f;
+ return SurfaceF0(mix(surface.dielectric_f0,film.dielectric,film.strength),mix(surface.base.rgb,film.metal,film.strength),film.strength,film.diffuse);
 }
 // A surface's specular reflectance at normal incidence: its dielectric F0
 // mixed toward its base by metallic, as three.js 0.185.1's

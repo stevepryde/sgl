@@ -135,12 +135,6 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
   s.coat_normal=surface_coat_normal(i,front);
  }
  s.coat_roughness=surface_roughness(coat_roughness,n,i);
- s.iridescence_ior=material.iridescence_ior;
- s.iridescence_thickness=material.iridescence_thickness.y;
- if material.iridescence>0. {
-  s.iridescence=material_iridescence(material,material_iridescence_texel(i.uv));
-  s.iridescence_thickness=material_iridescence_thickness(material,material_iridescence_thickness_texel(i.uv));
- }
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.environment_scale;
@@ -153,6 +147,11 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  s.lightmap_uv=i.lightmap_uv;
  s.lightmap_bounds=i.lightmap_bounds;
  s.baked_irradiance=objects[object].baked_irradiance;
+ if material.iridescence>0. {
+  let strength=material_iridescence(material,material_iridescence_texel(i.uv));
+  let thickness=material_iridescence_thickness(material,material_iridescence_thickness_texel(i.uv));
+  s.film=surface_film(s,strength,material.iridescence_ior,thickness);
+ }
  return s;
 }
 // The view's pixel and the cluster that holds the fragment. A probe

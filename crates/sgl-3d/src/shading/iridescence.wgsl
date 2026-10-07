@@ -15,7 +15,7 @@
 // F_IridescenceToF0 takes 1, so the base lobe's Schlick, at its own F90,
 // passes through the film's Fresnel at the view; the film's strength mixes
 // and the Khronos glTF Sample Renderer's zero-thickness rule are the
-// caller's (surface_f0s).
+// caller's (surface_film, surface_f0s).
 fn iridescence_pow5(x:f32)->f32 {
  let x2=x*x;
  return x2*x2*x;

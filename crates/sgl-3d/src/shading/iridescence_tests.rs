@@ -91,8 +91,9 @@ struct Case {
 }
 
 /// What the base lobe's Fresnel gives each case at the view's mirror
-/// direction: pbr_fresnel_schlick at N.V of surface_f0 toward surface_f90,
-/// the reflectance the specular lobes and the G-buffer's F0 and F90 carry.
+/// direction under the film its builders evaluate (surface_film):
+/// pbr_fresnel_schlick at N.V of surface_f0 toward surface_f90, the
+/// reflectance the specular lobes and the G-buffer's F0 and F90 carry.
 fn observed(cases: &[Case]) -> Option<Vec<[f64; 3]>> {
     let (device, queue) = test_support::device()?;
     let scene = Scene::new(&device, &queue);
@@ -114,9 +115,7 @@ fn observed(cases: &[Case]) -> Option<Vec<[f64; 3]>> {
  s.base=vec4(1.);
  s.dielectric_f0=vec3(.04);
  s.specular=1.;
- s.iridescence=c.x;
- s.iridescence_ior=c.y;
- s.iridescence_thickness=c.z;
+ s.film=surface_film(s,c.x,c.y,c.z);
  result[id.x]=vec4(pbr_fresnel_schlick(c.w,surface_f0(s),surface_f90(s)),0.);
 }
 "#;

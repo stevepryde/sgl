@@ -124,9 +124,7 @@ struct Case {{ view:vec4<f32>,base:vec4<f32>,light:vec4<f32> }}
 @compute @workgroup_size({THREADS}) fn observe(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) thread:u32) {{
  let c=cases[group.x];
  var s=case_surface(c.view.xyz,c.view.w,c.base.rgb,c.base.w);
- s.iridescence=c.light.y;
- s.iridescence_ior=c.light.z;
- s.iridescence_thickness=c.light.w;
+ s.film=surface_film(s,c.light.y,c.light.z,c.light.w);
  let reflectance=case_reflectance(s);
  for (var row=thread;row<THETA_STEPS;row+=THREADS) {{
   var ring=vec3(0.);
