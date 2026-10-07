@@ -183,8 +183,11 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
 
     let mut pipelines = GeometryPipelines::new(
         &device,
+        &crate::shading::bind::lit(
+            &device,
+            crate::shading::bind::BindingTier::of(&device.limits()),
+        ),
         [
-            &crate::shading::bind::lit(&device),
             &crate::shading::bind::shadow(&device),
             &crate::shading::bind::scene(&device),
             &crate::shading::bind::blended(&device),
@@ -192,7 +195,6 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
             &crate::shading::bind::caster_positions(&device),
         ],
         LayerConstants::ALL,
-        crate::shading::bind::BindingTier::of(&device.limits()),
     );
     pipelines.specialise(&device, LayerConstants::ALL, &scene, false);
     let frame = crate::scene::buffer(

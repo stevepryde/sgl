@@ -1,12 +1,16 @@
-//! Group-0 layouts, one per bind module (bind_*.wgsl), group 1's, group
-//! 2's (`group2`, with the binding tiers), the blended pipelines' group 3
+//! Group-0 layouts, one per bind module (bind_*.wgsl), the lit one by
+//! binding tier, group 1's, group 2's (`group2`, with its binding tiers),
+//! the blended pipelines' group 3
 //! and the GPU-built cascades' casters' group 3, and the binding numbers
 //! they and the groups built for them use. The layout test checks every number
 //! against naga's binding of the WGSL variable it is named after.
 
-/// Group 0's bindings, as bind_lit.wgsl, bind_unlit.wgsl and bind_shadow.wgsl
-/// declare them.
+/// Group 0's bindings, as bind_lit.wgsl, bind_lit_extended.wgsl,
+/// bind_unlit.wgsl and bind_shadow.wgsl declare them, and the binding tier
+/// each takes.
 pub(crate) mod group0 {
+    use super::BindingTier;
+
     pub(crate) const VIEW: u32 = 0;
     pub(crate) const FRAME: u32 = 1;
     pub(crate) const SHADOW_SAMPLER: u32 = 2;
@@ -33,6 +37,20 @@ pub(crate) mod group0 {
     pub(crate) const FOG_SAMPLER: u32 = 28;
     pub(crate) const DYNAMIC_GI_PROBES: u32 = 29;
     pub(crate) const IRRADIANCE_VOLUME: u32 = 30;
+
+    /// The least binding tier that binds `binding`, the one declaration of
+    /// each one's: the lightmap's and the irradiance atlas's
+    /// directionality and the dynamic GI volume's probes are `Extended`'s
+    /// alone, which fall back to non-directional baked light and to no
+    /// dynamic GI below it.
+    pub(crate) fn tier(binding: u32) -> BindingTier {
+        match binding {
+            STATIC_LIGHTMAP_DIRECTION | STATIC_DIRECTION_ATLAS | DYNAMIC_GI_PROBES => {
+                BindingTier::Extended
+            }
+            _ => BindingTier::Basic,
+        }
+    }
 }
 
 /// Group 1's bindings, as bind_scene.wgsl and scene_rays.wgsl declare them.
@@ -270,11 +288,12 @@ fn fog() -> [wgpu::BindGroupLayoutEntry; 2] {
     ]
 }
 
-/// bind_lit.wgsl's entries.
-pub(crate) fn lit_entries() -> Vec<wgpu::BindGroupLayoutEntry> {
+/// bind_lit.wgsl's entries, and bind_lit_extended.wgsl's on a device of
+/// the `Extended` binding tier (`group0::tier`).
+pub(crate) fn lit_entries(tier: BindingTier) -> Vec<wgpu::BindGroupLayoutEntry> {
     entries()
         .into_iter()
-        .filter(|entry| entry.binding != BACKDROP_MAP)
+        .filter(|entry| entry.binding != BACKDROP_MAP && group0::tier(entry.binding) <= tier)
         .collect()
 }
 
@@ -307,9 +326,21 @@ fn layout(
     })
 }
 
-/// bind_lit.wgsl.
-pub(crate) fn lit(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    layout(device, "lit frame", &lit_entries())
+/// Lit group 0's layout and the binding tier it is of, whose lit provider
+/// every program that binds it and composes `SURFACE` composes
+/// (`shading::lit_provider`).
+pub(crate) struct LitLayout {
+    pub layout: wgpu::BindGroupLayout,
+    pub tier: BindingTier,
+}
+
+/// bind_lit.wgsl, with bind_lit_extended.wgsl on a device of the
+/// `Extended` binding tier.
+pub(crate) fn lit(device: &wgpu::Device, tier: BindingTier) -> LitLayout {
+    LitLayout {
+        layout: layout(device, "lit frame", &lit_entries(tier)),
+        tier,
+    }
 }
 
 /// bind_unlit.wgsl.

@@ -232,7 +232,7 @@ impl TracedShadows {
     /// targets are made in the first frame it runs.
     pub fn new(
         device: &wgpu::Device,
-        lit: &wgpu::BindGroupLayout,
+        lit: &shading::bind::LitLayout,
         scene: &wgpu::BindGroupLayout,
     ) -> Self {
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
@@ -280,7 +280,7 @@ impl TracedShadows {
             )
         };
         Self {
-            paths: TracePaths::new("ray-traced shadow rays", &TRACE, &entries, [lit, scene]),
+            paths: TracePaths::new("ray-traced shadow rays", &TRACE, &entries, lit, scene),
             trace: HashMap::new(),
             temporal: Pass::new(device, &TEMPORAL, TEMPORAL_ENTRY, &[]),
             upsample: Pass::new(device, &UPSAMPLE, UPSAMPLE_ENTRY, &[]),

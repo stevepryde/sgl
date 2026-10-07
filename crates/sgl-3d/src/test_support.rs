@@ -184,6 +184,7 @@ pub(crate) fn observe_surface(
             &crate::shading::BIND_LIT,
             &crate::shading::SURFACE,
             &crate::shading::SHADOW_MASK_NONE,
+            &crate::shading::tiers::LIT_BASIC,
         ]),
         observation
     );

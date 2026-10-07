@@ -70,11 +70,13 @@ impl Renderer {
         self.shadows.resize(device, settings.shadow_quality);
         self.bindings.shadow_maps = self.shadows.maps();
         // The volume the committed probes light, and those probes: what the
-        // last submitted frame left, never a fresher frame's abandoned ones.
+        // last submitted frame left, never a fresher frame's abandoned ones,
+        // while dynamic GI is in effect.
         let dynamic_gi = self
             .dynamic_gi
-            .lights(scene)
-            .filter(|_| settings.dynamic_gi.rays().is_some());
+            .as_ref()
+            .and_then(|dynamic_gi| dynamic_gi.lights(scene))
+            .filter(|_| self.dynamic_gi_in_effect(settings).rays().is_some());
         let mut views = self.prepare.capture(
             device,
             queue,
@@ -125,7 +127,11 @@ impl Renderer {
                 probes,
                 views.clusters.buffer(),
                 self.bindings.static_local_shadows(&local_records),
-                dynamic_gi.map_or(self.dynamic_gi.stand_in(), |(_, probes)| probes),
+                dynamic_gi.map(|(_, probes)| probes).or_else(|| {
+                    self.dynamic_gi
+                        .as_ref()
+                        .map(crate::stages::dynamic_gi::DynamicGi::stand_in)
+                }),
             );
             let sky =
                 self.bindings

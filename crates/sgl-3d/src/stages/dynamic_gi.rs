@@ -125,10 +125,12 @@ enum Rendered {
 }
 
 impl DynamicGi {
-    /// `lit` and `scene` are group 0's lit layout and group 1's.
+    /// `lit` and `scene` are group 0's lit layout and group 1's. The stage
+    /// runs on the Extended binding tier alone, whose lit group 0 binds its
+    /// probes; on Basic it builds no trace.
     pub fn new(
         device: &wgpu::Device,
-        lit: &wgpu::BindGroupLayout,
+        lit: &crate::shading::bind::LitLayout,
         scene: &wgpu::BindGroupLayout,
     ) -> Self {
         let layouts = Layouts::new(device);
@@ -160,7 +162,7 @@ impl DynamicGi {
             #[cfg(feature = "diagnostics")]
             observer: None,
             #[cfg(feature = "diagnostics")]
-            trace_groups: [lit.clone(), scene.clone()],
+            trace_groups: [lit.layout.clone(), scene.clone()],
             #[cfg(feature = "diagnostics")]
             finished: 0,
         }
