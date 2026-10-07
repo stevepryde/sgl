@@ -313,15 +313,18 @@ Use the [current specs](README.md) for implementation and the
   of sampled textures per stage from 21 to 31 for new material maps: "Can
   we make it optional? Low minimum, raise ceiling?"; then "core should use
   16 texture slots so that it works on more devices" and "or a basic
-  option with 16 is fine too". S3D-1's floor becomes WebGPU's default
-  limits, 16 sampled textures per stage among them, superseding its 21.
-  A device takes one of two binding tiers by its
-  `max_sampled_textures_per_shader_stage`: `Basic` below 48, with a basic
-  look (lit group 0's lightmap and irradiance atlas directionality and the
-  dynamic GI volume, the anisotropy map and every map added after it fall
-  back as their features state, and the effective configuration reports
-  it), and `Extended` at 48 or more, Dawn's upper tier, with every binding
-  ([Binding tiers](sgl3d-architecture.md#designs-that-span-stages)).
+  option with 16 is fine too". A device takes one of two binding tiers by
+  its `max_sampled_textures_per_shader_stage`: `Basic` below 48, with a
+  basic look, and `Extended` at 48 or more, Dawn's upper tier, with every
+  binding ([Binding tiers](sgl3d-architecture.md#designs-that-span-stages)).
+  On `Basic` the anisotropy map and every material map added after it
+  give way to their factors, and the effective configuration reports the
+  tier. S3D-1's floor moves to WebGPU's default limits, 16 sampled
+  textures per stage among them, when lit group 0's bindings are tiered,
+  #241's second change (the lightmap's and irradiance atlas's
+  directionality and the dynamic GI volume's probes then binding on
+  `Extended` alone, each reported); until then it stays at 21, and `Basic`
+  covers 21 to 47.
   Mobile is neither targeted nor excluded: "I don't currently support
   mobile, though I don't want to explicitly not support it either". Mobile
   GPUs take a tier by the same limit, and no mobile-specific work is done.
