@@ -22,6 +22,8 @@ mod lighting_model_tests;
 pub(crate) mod lights;
 pub(crate) mod lod;
 pub(crate) mod material;
+pub(crate) mod material_maps;
+pub(crate) use material_maps::material_maps;
 // Wired into the ray source and its readers with #135's prepared models.
 pub(crate) mod packed_vertex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -538,7 +540,8 @@ pub(crate) static SURFACE: Module = Module {
     ],
 };
 /// A rasterized fragment's `Surface`. Reads `view`, `object` and the
-/// material.
+/// material, and the Extended tier's maps through the material-map provider
+/// the program composes (`material_maps`).
 pub(crate) static SURFACE_RASTER: Module = Module {
     name: "surface_raster",
     source: include_str!("surface_raster.wgsl"),

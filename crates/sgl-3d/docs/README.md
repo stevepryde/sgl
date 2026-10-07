@@ -39,6 +39,9 @@ its rendering `settings::Settings`.
    ([hardware ray tracing](../README.md#hardware-ray-tracing)).
    In the browser the device is the page's WebGPU one, requested the same way;
    it needs 21 sampled textures per stage (Chromium 149 and later).
+   `Renderer::binding_tier` reports the device's binding tier: `Extended`
+   at 48 or more, else `Basic`, where the anisotropy map gives way to its
+   factors ([features](features.md#platforms)).
 2. Load: `Scene::new` starts empty. Add content between frames and keep the
    identities it returns: `asset::load` (a file) or `asset::load_slice` (bytes,
    as a browser fetches them; `Asset::ignored` lists what the file uses

@@ -20,7 +20,8 @@ mod floor_tests;
 mod size_tests;
 
 use crate::scene::rays::acceleration::RayTracingStats;
-use crate::settings::{Antialiasing, RenderPreset, SceneResolution, Settings};
+use crate::settings::{Antialiasing, Settings};
+use crate::shading::bind::BindingTier;
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
     antialiasing, cull::Cull, deform::Deform, dynamic_gi::DynamicGi, exposure::Exposure,
@@ -108,35 +109,6 @@ impl std::error::Error for RendererError {
     }
 }
 
-/// The scene size for an output of `size`.
-fn scene_size(
-    size: [u32; 2],
-    preset: RenderPreset,
-    resolution: SceneResolution,
-    device_scale: f32,
-) -> [u32; 2] {
-    let scale = match resolution {
-        SceneResolution::Preset => {
-            let cap = if preset == RenderPreset::Low {
-                1.
-            } else {
-                1.75
-            };
-            (cap / device_scale.max(1.)).min(1.)
-        }
-        SceneResolution::Hd => (1280. / size[0].max(1) as f32)
-            .min(720. / size[1].max(1) as f32)
-            .min(1.),
-        SceneResolution::FullHd => (1920. / size[0].max(1) as f32)
-            .min(1080. / size[1].max(1) as f32)
-            .min(1.),
-        SceneResolution::Full => 1.,
-        SceneResolution::ThreeQuarter => 0.75,
-        SceneResolution::Half => 0.5,
-    };
-    size.map(|x| ((x as f32 * scale).floor() as u32).max(1))
-}
-
 impl Renderer {
     /// A renderer presenting to `output_format` at `output_size` physical
     /// pixels, for a window of `device_scale` physical pixels per logical
@@ -151,7 +123,7 @@ impl Renderer {
         device_scale: f32,
         settings: &Settings,
     ) -> Result<Self, RendererError> {
-        let scene = scene_size(
+        let scene = effective::scene_size(
             output_size,
             settings.preset,
             settings.scene_resolution,
@@ -186,12 +158,12 @@ impl Renderer {
                 &bindings.lit,
                 &bindings.shadow,
                 &bindings.scene,
-                &bindings.material,
                 &bindings.blended,
                 &bindings.shadow_mask,
                 &bindings.caster_positions,
             ],
             layers,
+            BindingTier::of(&device.limits()),
         );
         let targets = SharedTargets::new(device, render, false);
         // The form recorded for the device's backend
@@ -263,7 +235,7 @@ impl Renderer {
         device_scale: f32,
         settings: &Settings,
     ) {
-        let scene = scene_size(
+        let scene = effective::scene_size(
             output_size,
             settings.preset,
             settings.scene_resolution,
@@ -355,6 +327,14 @@ impl Renderer {
     /// `fsr2_error`, or awaiting `resize`). The saved choice is unchanged.
     pub fn antialiasing_in_effect(&self, settings: &Settings) -> Antialiasing {
         effective::antialiasing(settings, self.antialiasing.fsr2_running())
+    }
+
+    /// The device's binding tier: `Extended` where it binds 48 or more
+    /// sampled textures per shader stage, else `Basic`, on which a
+    /// material's anisotropy map gives way to its factor. Fixed for the
+    /// device; `graphics_device::limits` requests the adapter's.
+    pub fn binding_tier(&self) -> BindingTier {
+        self.pipelines.tier
     }
 
     /// Why FSR2 is not running on this device although it was chosen.

@@ -5,7 +5,9 @@
 // by the geometry normal's variance. Every geometry pass evaluates materials
 // through these, so the G-buffer, split lighting and the fused pass share
 // their equations. Reads `view`, `frame`, the fragment's object record, the
-// material and the decal bindings.
+// material and the decal bindings, and a map of the Extended binding tier
+// through the program's material-map provider (material_maps_basic.wgsl,
+// material_maps_extended.wgsl).
 fn surface_tangent_frame(i:Fragment,front:bool)->mat3x3<f32> {
  let f=pbr_tangent_frame(normalize(i.normal),i.tangent);
  let side=select(-1.,1.,front);
@@ -25,7 +27,7 @@ fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
  let dy=dpdy(i.world);
  let uv_dx=dpdx(i.uv);
  let uv_dy=dpdy(i.uv);
- if normal_maps_enabled && (material.flags&MATERIAL_NORMAL_MAP)!=0u {
+ if normal_maps_enabled && (material.maps&MATERIAL_MAP_NORMAL)!=0u {
   // Three185.1 TangentUtils uses GLSL dFdy; its WebGPU builder lowers that
   // to -dpdy. Negate BOTH world and UV Y derivatives, then reverse the
   // tangent/bitangent on accepted backs (normal already carries face).
@@ -37,11 +39,11 @@ fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
   var mapped:vec3<f32>;
   if (material.flags&MATERIAL_NORMAL_LAYERS)!=0u {
    let phase=frame.animation_phase;
-   let first=textureSampleBias(normal_map,tex_sampler,material_normal_layer_uv(material.normal_layers[0],i.uv,phase),view.mip_bias);
-   let second=textureSampleBias(normal_map,tex_sampler,material_normal_layer_uv(material.normal_layers[1],i.uv,phase),view.mip_bias);
+   let first=textureSampleBias(relief_map,tex_sampler,material_normal_layer_uv(material.normal_layers[0],i.uv,phase),view.mip_bias);
+   let second=textureSampleBias(relief_map,tex_sampler,material_normal_layer_uv(material.normal_layers[1],i.uv,phase),view.mip_bias);
    mapped=material_layered_normal(material,first,second);
   } else {
-   mapped=material_mapped_normal(material,textureSampleBias(normal_map,tex_sampler,i.uv,view.mip_bias));
+   mapped=material_mapped_normal(material,textureSampleBias(relief_map,tex_sampler,i.uv,view.mip_bias));
   }
   if material.anisotropy_strength>0. {
    n=normalize(surface_tangent_frame(i,front)*mapped);
@@ -49,19 +51,20 @@ fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
    n=normalize(mat3x3(tangent*scale,bitangent*scale,n)*mapped);
   }
  }
- // Three185.1 MaterialNode.NORMAL selects normalMap OR ELSE bumpMap.
- // Diagnostic stage disabling must not select the material's unused bump map.
- if (material.flags&MATERIAL_NORMAL_MAP)==0u && bump_maps_enabled && (material.flags&MATERIAL_BUMP_MAP)!=0u {
+ // Three185.1 MaterialNode.NORMAL selects normalMap OR ELSE bumpMap: a bump
+ // map is in effect only without a normal map (scene::materials::maps), so
+ // its bit alone selects it, with the normal-map stage disabled too.
+ if bump_maps_enabled && (material.maps&MATERIAL_MAP_BUMP)!=0u {
   // Three185.1 BumpMapNode: forward samples along GLSL screen derivatives,
   // with normalized position derivatives so authored bump does not scale
   // with world-space pixel size. WebGPU lowers GLSL dFdy to -dpdy.
-  n=pbr_bump_normal(bump_map,tex_sampler,i.world,n,i.uv,material.bump_scale,face);
+  n=pbr_bump_normal(relief_map,tex_sampler,i.world,n,i.uv,material.bump_scale,face);
  }
  return n;
 }
 // The anisotropy direction and strength around the mapped normal `n`.
 fn surface_anisotropy(i:Fragment,front:bool,n:vec3<f32>)->vec4<f32> {
- return pbr_resolve_anisotropy(n,surface_tangent_frame(i,front),material.anisotropy_strength,material.anisotropy_rotation,(material.flags&MATERIAL_ANISOTROPY_MAP)!=0u,textureSampleBias(anisotropy_map,tex_sampler,i.uv,view.mip_bias).rgb);
+ return pbr_resolve_anisotropy(n,surface_tangent_frame(i,front),material.anisotropy_strength,material.anisotropy_rotation,(material.maps&MATERIAL_MAP_ANISOTROPY)!=0u,material_anisotropy_texel(i.uv));
 }
 fn surface_base_color(i:Fragment)->vec4<f32> {
  return material_base_color(i.uv,i.color);

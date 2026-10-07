@@ -45,31 +45,21 @@ impl Fixture {
                 .iter()
                 .map(|image| rays.add_image(device, queue, image).unwrap().start)
                 .collect();
-            let image = |index: Option<usize>| index.map_or(0, |index| images[index]);
             let words: Vec<_> = asset
                 .materials
                 .iter()
                 .map(|m| {
+                    // Every map in effect, as on a device of the Extended
+                    // binding tier.
+                    let maps = crate::scene::materials::maps::InEffect::of(
+                        m,
+                        crate::shading::bind::BindingTier::Extended,
+                    );
                     rays.add_material(
                         device,
                         queue,
-                        &MaterialUniform::new(
-                            &crate::SurfaceMaterial::authored(m),
-                            crate::shading::material::MaterialMaps::new(
-                                m.normal_texture.is_some(),
-                                m.bump_texture.is_some(),
-                                m.anisotropy_texture.is_some(),
-                                m.packed_occlusion(),
-                            ),
-                        ),
-                        MaterialTextures {
-                            base: image(m.base_texture),
-                            metallic_roughness: image(m.mr_texture),
-                            emission: image(m.emissive_texture),
-                            normal: image(m.normal_texture),
-                            bump: image(m.bump_texture),
-                            anisotropy: image(m.anisotropy_texture),
-                        },
+                        &MaterialUniform::new(&crate::SurfaceMaterial::authored(m), maps.maps()),
+                        maps.ray_textures(|index| images[index]),
                         m.wrap,
                     )
                     .unwrap()

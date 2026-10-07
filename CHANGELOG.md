@@ -41,6 +41,13 @@ docs and specs the entry links.
   finite (`SceneError::InvalidReflectance`), and `occlusion_strength` outside
   0..=1 (`SceneError::InvalidOcclusion`). Migration: exhaustive matches on
   `SceneError` add both variants.
+- `sgl-3d` binding tiers: a device with 48 or more sampled textures per
+  shader stage takes `BindingTier::Extended`, any other `Basic`, reported by
+  the new `Renderer::binding_tier()` (`graphics_device::BindingTier`). On
+  `Basic`, devices with 21 to 47 (iOS GPUs older than Apple4, some Vulkan
+  drivers), a material's anisotropy map gives way to its anisotropy
+  factors, where it shaded before. No game-code change is needed; Metal on
+  macOS, DX12 and Chrome's WebGPU take `Extended`.
 - `sgl-3d` direct light: rough metals keep their multiply scattered energy
   under every light type (they were darker than under an even sky, and
   coloured metals shifted hue). Migration: none; lower any light intensity

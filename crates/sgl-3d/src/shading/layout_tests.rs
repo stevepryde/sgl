@@ -82,15 +82,19 @@ fn programs() -> Vec<(&'static str, String)> {
         )
         .map(|root| (root.name, compose(&[root])))
         .collect();
-    // The geometry program with each shadow-mask provider: exactly one,
-    // the mask's for the lighting pass while ray-traced shadows run.
-    programs.extend([
-        ("geometry", crate::view::pipelines::geometry_program(false)),
-        (
-            "geometry_shadow_mask",
-            crate::view::pipelines::geometry_program(true),
-        ),
-    ]);
+    // The geometry program with each shadow-mask provider (exactly one, the
+    // mask's for the lighting pass while ray-traced shadows run) and each
+    // binding tier's material-map provider.
+    {
+        use crate::shading::bind::BindingTier::{Basic, Extended};
+        use crate::view::pipelines::geometry_program;
+        programs.extend([
+            ("geometry", geometry_program(false, Extended)),
+            ("geometry_basic", geometry_program(false, Basic)),
+            ("geometry_shadow_mask", geometry_program(true, Extended)),
+            ("geometry_shadow_mask_basic", geometry_program(true, Basic)),
+        ]);
+    }
     // The tracing stages' programs on each path their rays take, with the
     // portable function set or a hardware form's query module as root
     // (`ray_trace_root`); the hardware module's `enable` directive must
@@ -154,7 +158,9 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     ];
     let mut entries = vec![
         (view::GEOMETRY.name, geometry.clone()),
-        ("geometry_shadow_mask", geometry),
+        ("geometry_basic", geometry.clone()),
+        ("geometry_shadow_mask", geometry.clone()),
+        ("geometry_shadow_mask_basic", geometry),
         (
             view::CASTER.name,
             vec![
@@ -685,6 +691,7 @@ fn rust_mirrors_match_wgsl_layouts() {
                 specular_f0,
                 specular,
                 normal_layers,
+                maps,
             ]
         ),
         mirror!(
@@ -791,12 +798,6 @@ fn rust_mirrors_match_wgsl_layouts() {
             "MATERIAL_DOUBLE_SIDED",
             super::material::MATERIAL_DOUBLE_SIDED,
         ),
-        ("MATERIAL_NORMAL_MAP", super::material::MATERIAL_NORMAL_MAP),
-        ("MATERIAL_BUMP_MAP", super::material::MATERIAL_BUMP_MAP),
-        (
-            "MATERIAL_ANISOTROPY_MAP",
-            super::material::MATERIAL_ANISOTROPY_MAP,
-        ),
         ("MATERIAL_ALPHA_MASK", super::material::MATERIAL_ALPHA_MASK),
         (
             "MATERIAL_ALPHA_BLEND",
@@ -814,7 +815,21 @@ fn rust_mirrors_match_wgsl_layouts() {
             "MATERIAL_EMITS_INTO_GI",
             super::material::MATERIAL_EMITS_INTO_GI,
         ),
-    ] {
+    ]
+    .into_iter()
+    .chain(super::bind::group2::MaterialMap::ALL.map(|map| {
+        use super::bind::group2::MaterialMap::*;
+        let name = match map {
+            Base => "MATERIAL_MAP_BASE",
+            MetallicRoughness => "MATERIAL_MAP_METALLIC_ROUGHNESS",
+            Occlusion => "MATERIAL_MAP_OCCLUSION",
+            Emission => "MATERIAL_MAP_EMISSION",
+            Normal => "MATERIAL_MAP_NORMAL",
+            Bump => "MATERIAL_MAP_BUMP",
+            Anisotropy => "MATERIAL_MAP_ANISOTROPY",
+        };
+        (name, map.bit())
+    })) {
         assert_eq!(
             wgsl_constant(&uniforms, name),
             Some(naga::Literal::U32(value)),
@@ -1038,8 +1053,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         (2, "mr_map", group2::MR_MAP),
         (2, "tex_sampler", group2::TEX_SAMPLER),
         (2, "emission_map", group2::EMISSION_MAP),
-        (2, "normal_map", group2::NORMAL_MAP),
-        (2, "bump_map", group2::BUMP_MAP),
+        (2, "relief_map", group2::RELIEF_MAP),
         (2, "baked_material", group2::BAKED_MATERIAL),
         (2, "anisotropy_map", group2::ANISOTROPY_MAP),
         (3, "blended_reflections", blended::REFLECTIONS),
@@ -1078,11 +1092,18 @@ fn rust_binding_names_match_wgsl_bindings() {
             1,
             numbers(&bind::scene_entries()),
         ),
+        // Group 2 on each binding tier.
         (
             "bind_material",
             &[&super::BIND_MATERIAL],
             2,
-            numbers(&bind::material_entries()),
+            numbers(&group2::material_entries(bind::BindingTier::Basic)),
+        ),
+        (
+            "bind_material_extended",
+            &[&super::material_maps::BIND_MATERIAL_EXTENDED],
+            2,
+            numbers(&group2::material_entries(bind::BindingTier::Extended)),
         ),
         (
             "bind_blended",
