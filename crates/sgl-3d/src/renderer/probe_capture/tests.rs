@@ -539,3 +539,90 @@ fn a_capture_shadows_scene_lights_from_static_layers_it_places() {
         "the floor below the capture is {shadowed} under the occluder and {lit} without"
     );
 }
+
+// Defects: a probe capture's surfaces leave their material's occlusion off,
+// as the camera's opaque surfaces do while shading, leaving it to source
+// completion, which captures do not run. The oracle is glTF 2.0's
+// lerp(1, red, strength): a floor packing an occlusion map of red 64 in its
+// metallic-roughness image, lit by the hemisphere fill alone under a black
+// sky, so all its radiance is ambient diffuse, captures 64/255 of the
+// radiance it captures at strength 0.
+#[test]
+fn a_capture_occludes_ambient_diffuse_by_the_materials_occlusion() {
+    use crate::asset::{CpuMesh, Image, Vertex};
+    use crate::baked_specular_probe::SpecularProbeTexels;
+    use crate::settings::Settings;
+    use crate::{Camera, FrameInput, HemisphereLight, Scene};
+    use glam::{Mat4, Vec3};
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    const RED: u8 = 64;
+    let mut floor = crate::test_support::cube();
+    floor.meshes = vec![CpuMesh {
+        vertices: [[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]]
+            .map(|[x, z]| Vertex {
+                tangent: [0.; 4],
+                lightmap_uv: [0.; 2],
+                lightmap_bounds: [0., 0., 1., 1.],
+                position: [x, -1., z],
+                normal: [0., 1., 0.],
+                uv: [0.5; 2],
+                color: [1.; 4],
+            })
+            .to_vec(),
+        indices: vec![0, 2, 1, 0, 3, 2],
+        material: 0,
+        deformation: Default::default(),
+    }];
+    floor.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
+        4,
+        4,
+        image::Rgba([RED, 255, 0, 255]),
+    ))];
+    floor.materials[0].metallic = 0.;
+    floor.materials[0].mr_texture = Some(0);
+    floor.materials[0].occlusion_texture = Some(0);
+    let mut scene = Scene::new(&device, &queue);
+    let (ids, _) = crate::test_support::add_static(&device, &queue, &mut scene, floor);
+    let mut input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: Mat4::IDENTITY,
+        eye: Vec3::ZERO,
+    });
+    input.hemisphere_light = HemisphereLight {
+        sky_color: [1.; 3],
+        ground_color: [1.; 3],
+        intensity: 1.,
+    };
+    let settings = Settings::default();
+    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut captured = |scene: &mut Scene, strength: f32| -> f32 {
+        let mut values = scene.material(ids.materials[0]).unwrap();
+        values.occlusion_strength = strength;
+        scene
+            .set_material(&queue, ids.materials[0], values)
+            .unwrap();
+        let radiance = renderer
+            .capture_specular_probe(&device, &queue, scene, &input, &settings, Vec3::ZERO, 64)
+            .unwrap();
+        let SpecularProbeTexels::Rgba16Float(texels) = radiance.texels else {
+            unreachable!("captures return RGBA16F")
+        };
+        texels
+            .chunks_exact(4)
+            .map(|texel| {
+                (0..3)
+                    .map(|c| crate::test_support::half(&texel[c].to_le_bytes()))
+                    .sum::<f32>()
+            })
+            .sum()
+    };
+    let unoccluded = captured(&mut scene, 0.);
+    let occluded = captured(&mut scene, 1.);
+    let expected = unoccluded * f32::from(RED) / 255.;
+    assert!(
+        unoccluded > 1. && (occluded - expected).abs() <= expected * 0.01,
+        "the capture holds {occluded} of the floor's {unoccluded}, expected {expected}"
+    );
+}

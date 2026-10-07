@@ -8,11 +8,13 @@ pub(crate) const COLOR: TextureFormat = TextureFormat::Rgba16Float;
 pub(crate) const AMBIENT: TextureFormat = TextureFormat::Rgba16Float;
 /// Signed octahedral base and coat normals.
 pub(crate) const NORMAL: TextureFormat = TextureFormat::Rgba16Float;
-/// Coat and base roughness, coat strength and environment scale.
+/// Coat and base roughness, coat strength and the base's F90.
 pub(crate) const MATERIAL: TextureFormat = TextureFormat::Rgba16Float;
-/// F0, with whether the surface is lit and takes baked scene lights.
+/// F0, with whether the surface is lit and takes baked scene lights and its
+/// material occlusion, one 8-bit code (`gbuffer_encode_f0`).
 pub(crate) const F0: TextureFormat = TextureFormat::Rgba8Unorm;
-/// World anisotropy tangent and strength.
+/// World anisotropy tangent, signed octahedral, its strength and the
+/// environment scale.
 pub(crate) const ANISOTROPY: TextureFormat = TextureFormat::Rgba16Float;
 /// Current minus previous unjittered UV.
 pub(crate) const MOTION: TextureFormat = TextureFormat::Rg16Float;

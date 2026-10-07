@@ -681,6 +681,9 @@ fn rust_mirrors_match_wgsl_layouts() {
                 alpha_cutoff,
                 visibility_group,
                 flags,
+                occlusion_strength,
+                specular_f0,
+                specular,
                 normal_layers,
             ]
         ),

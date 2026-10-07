@@ -89,7 +89,7 @@ impl Reflections {
         size: [u32; 2],
         first_frame: &Effective,
     ) -> Self {
-        let variant = source_variant(first_frame, first_frame.ambient_occlusion.is_some());
+        let variant = source_variant(first_frame);
         Self {
             source: source::ReflectionSource::new(device, size, variant),
             environment_parameters: source::environment_uniform(device, 0., 1.),
@@ -161,10 +161,8 @@ impl Reflections {
             .scene
             .specular_probes()
             .unwrap_or(&ctx.bindings.empty_probes);
-        self.source.use_variant(
-            ctx.device,
-            source_variant(ctx.effective, ambient_occlusion.is_some()),
-        );
+        self.source
+            .use_variant(ctx.device, source_variant(ctx.effective));
         let visibility = ambient_occlusion.unwrap_or(&self.full_visibility).clone();
         let fog = ctx.bindings.fog();
         let inputs = source_inputs(ctx, probes, fog, &self.environment_parameters, &visibility);
@@ -296,14 +294,12 @@ impl Reflections {
     }
 }
 
-/// What source completion is built for under `effective`, occluding ambient
-/// diffuse while `ambient_occlusion`'s visibility is bound.
-fn source_variant(effective: &Effective, ambient_occlusion: bool) -> source::Variant {
+/// What source completion is built for under `effective`.
+fn source_variant(effective: &Effective) -> source::Variant {
     source::Variant {
         environment: effective.source_environment,
         // Only the method reads it; world-space rays run only with one.
         incident: effective.screen_space.is_some(),
-        diffuse_occlusion: ambient_occlusion,
     }
 }
 

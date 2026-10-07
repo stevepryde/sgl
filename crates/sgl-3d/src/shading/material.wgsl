@@ -27,6 +27,12 @@ struct Material {
  alpha_cutoff:f32,
  visibility_group:u32,
  flags:u32,
+ // glTF's occlusionTexture.strength, with MATERIAL_OCCLUSION_MAP.
+ occlusion_strength:f32,
+ // KHR_materials_ior's F0 times KHR_materials_specular's specular colour,
+ // and its specular strength (material_dielectric_f0).
+ specular_f0:vec3<f32>,
+ specular:f32,
  normal_layers:array<NormalLayer,2>,
 }
 const MATERIAL_UNLIT:u32=1u;
@@ -46,6 +52,26 @@ const MATERIAL_NORMAL_LAYERS:u32=256u;
 // Global illumination gathers the light it gives off itself, its emission
 // and an unlit material's whole colour (SurfaceMaterial::emits_into_gi).
 const MATERIAL_EMITS_INTO_GI:u32=512u;
+// Its occlusion map is the red channel of its metallic-roughness map (ORM
+// packing).
+const MATERIAL_OCCLUSION_MAP:u32=1024u;
+// The share of ambient light that reaches a texel of material `m` whose
+// metallic-roughness map reads `mr`: with MATERIAL_OCCLUSION_MAP its red
+// channel at occlusion_strength, as glTF 2.0 applies occlusionTexture
+// (lerp(1, occlusion, strength)); else all of it.
+fn material_occlusion(m:Material,mr:vec4<f32>)->f32 {
+ if (m.flags&MATERIAL_OCCLUSION_MAP)==0u {
+  return 1.;
+ }
+ return mix(1.,mr.r,m.occlusion_strength);
+}
+// Material `m`'s dielectric reflectance at normal incidence: the IOR's F0
+// tinted by its specular colour, at most 1, times its specular strength, as
+// KHR_materials_specular defines it and three.js 0.185.1 takes it
+// (MeshPhysicalNodeMaterial.setupSpecular's specularColor).
+fn material_dielectric_f0(m:Material)->vec3<f32> {
+ return min(m.specular_f0,vec3(1.))*m.specular;
+}
 // The tangent-space normal of material `m`'s normal map texel `texel`: its X
 // and Y scaled by normal_scale, as glTF's normalTexture.scale scales them.
 fn material_mapped_normal(m:Material,texel:vec4<f32>)->vec3<f32> {

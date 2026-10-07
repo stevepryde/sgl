@@ -41,7 +41,8 @@ its rendering `settings::Settings`.
    it needs 21 sampled textures per stage (Chromium 149 and later).
 2. Load: `Scene::new` starts empty. Add content between frames and keep the
    identities it returns: `asset::load` (a file) or `asset::load_slice` (bytes,
-   as a browser fetches them) into
+   as a browser fetches them; `Asset::ignored` lists what the file uses
+   that SGL3D leaves out) into
    `Scene::add_asset`, instances with `add_instance` (static or moving),
    point, spot and rectangle lights with `add_light`, decals with
    `add_decal_image` and `add_decal`, environments with

@@ -13,7 +13,7 @@ use crate::shading::material::{MaterialMaps, MaterialUniform};
 use group::{Bound, Groups};
 use std::collections::HashMap;
 use std::ops::Range;
-use validate::{validate_alpha, validate_anisotropy, validate_normal_layers};
+use validate::{validate_alpha, validate_anisotropy, validate_normal_layers, validate_reflectance};
 
 pub(crate) struct Material {
     pub values: SurfaceMaterial,
@@ -116,6 +116,7 @@ fn authored_maps(material: &AuthoredMaterial) -> MaterialMaps {
         material.normal_texture.is_some(),
         material.bump_texture.is_some(),
         material.anisotropy_texture.is_some(),
+        material.packed_occlusion(),
     )
 }
 
@@ -204,6 +205,7 @@ impl Materials {
             let values = SurfaceMaterial::authored(material);
             validate_anisotropy(&values, 0)?;
             validate_alpha(&values)?;
+            validate_reflectance(&values)?;
             validate_normal_layers(&values, authored_maps(material), material.wrap)?;
         }
         Ok(())
@@ -390,6 +392,7 @@ impl Materials {
         let material = self.slots.get_mut(id).ok_or(SceneError::UnknownMaterial)?;
         validate_anisotropy(&values, material.untangented)?;
         validate_alpha(&values)?;
+        validate_reflectance(&values)?;
         validate_normal_layers(&values, material.maps, material.bound.wrap)?;
         if material.values != values {
             if material.values.caster_values() != values.caster_values() {
