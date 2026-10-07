@@ -34,6 +34,28 @@ pub(crate) const MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS: u32 = 128;
 pub(crate) const MATERIAL_NORMAL_LAYERS: u32 = 256;
 pub(crate) const MATERIAL_EMITS_INTO_GI: u32 = 512;
 pub(crate) const MATERIAL_KEEPS_SPECULAR: u32 = 1024;
+pub(crate) const MATERIAL_TRANSMISSIVE: u32 = 2048;
+
+/// The attenuation coefficient the record holds for a channel that turns
+/// white light black at any distance (`attenuation_coefficient`): large and
+/// finite, so any positive path through the volume passes nothing, as
+/// Beer-Lambert's law with an attenuation colour of 0 does, and none passes
+/// all of it, with no infinity or NaN in the shader.
+pub(crate) const OPAQUE_ATTENUATION: f32 = 1e30;
+
+/// Beer-Lambert's attenuation coefficient per metre of a channel that white
+/// light turns `color` in after `distance` metres, -ln(color) / distance
+/// (KHR_materials_volume, Khronos glTF acfcbe65, README 148-168): 0 at an
+/// infinite distance, at most `OPAQUE_ATTENUATION`.
+pub(crate) fn attenuation_coefficient(color: f32, distance: f32) -> f32 {
+    if distance.is_infinite() {
+        return 0.;
+    }
+    if color <= 0. {
+        return OPAQUE_ATTENUATION;
+    }
+    (-color.ln() / distance).min(OPAQUE_ATTENUATION)
+}
 
 /// A set of a material's maps, as the record's `maps` word holds them
 /// (`MaterialMap::bit`).
@@ -134,6 +156,20 @@ pub(crate) struct MaterialUniform {
     pub iridescence_ior: f32,
     pub iridescence_thickness: [f32; 2],
     pub padding: [u32; 2],
+    /// Beer-Lambert's attenuation coefficient per metre on each channel
+    /// (`attenuation_coefficient`).
+    pub attenuation: [f32; 3],
+    /// KHR_materials_transmission's factor, with `MATERIAL_TRANSMISSIVE`.
+    pub transmission: f32,
+    /// The volume's thickness in the mesh's units, 0 for a thin wall.
+    pub thickness: f32,
+    /// The IOR as KHR_materials_ior writes it, 0 for an infinite one, which
+    /// refraction alone reads: the shaders never derive F0 from it, which
+    /// `specular_f0` holds.
+    pub ior: f32,
+    /// KHR_materials_dispersion's 20 over the Abbe number.
+    pub dispersion: f32,
+    pub volume_padding: u32,
     /// KHR_materials_sheen's linear colour (0 none) and perceptual
     /// roughness.
     pub sheen: [f32; 3],
@@ -182,6 +218,7 @@ impl MaterialUniform {
                 | bit(values.double_sided, MATERIAL_DOUBLE_SIDED)
                 | bit(values.normal_layers.is_some(), MATERIAL_NORMAL_LAYERS)
                 | bit(values.emits_into_gi, MATERIAL_EMITS_INTO_GI)
+                | bit(values.transmissive(), MATERIAL_TRANSMISSIVE)
                 | alpha,
             occlusion_strength: values.occlusion_strength,
             specular_f0: values.specular_color.map(|tint| ior_f0(values.ior) * tint),
@@ -197,6 +234,18 @@ impl MaterialUniform {
             iridescence_ior: values.iridescence_ior,
             iridescence_thickness: values.iridescence_thickness,
             padding: [0; 2],
+            attenuation: values
+                .attenuation_color
+                .map(|color| attenuation_coefficient(color, values.attenuation_distance)),
+            transmission: values.transmission,
+            thickness: values.thickness,
+            ior: if values.ior.is_finite() {
+                values.ior
+            } else {
+                0.
+            },
+            dispersion: values.dispersion,
+            volume_padding: 0,
             sheen: values.sheen_color,
             sheen_roughness: values.sheen_roughness,
             diffuse_transmission_color: values.diffuse_transmission_color,

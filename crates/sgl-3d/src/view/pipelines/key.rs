@@ -96,17 +96,24 @@ pub(crate) struct PipelineKey {
     pub(super) variant: Variant,
     layers: LayerConstants,
     lit: LitConstants,
+    /// A blended pass's transmission (`transmission_enabled` in
+    /// transmission.wgsl), compiled in only while the scene holds a
+    /// transmissive material, so blended surfaces pay nothing for it
+    /// otherwise, as `films` does for films.
+    transmission: bool,
 }
 
 impl PipelineKey {
     /// Casters take no layer or lit constants; indexed casters read the
     /// positions they are given, deformed or not, and pulled ones pull a
-    /// deforming instance's deformed positions.
+    /// deforming instance's deformed positions. Only the blended passes
+    /// take `transmission`.
     pub fn new(
         pass: GeometryPass,
         variant: Variant,
         layers: LayerConstants,
         lit: LitConstants,
+        transmission: bool,
     ) -> Self {
         let caster = pass.caster();
         Self {
@@ -117,12 +124,14 @@ impl PipelineKey {
             },
             layers: if caster { LayerConstants::ALL } else { layers },
             lit: if caster { LitConstants::default() } else { lit },
+            transmission: transmission && matches!(pass, GeometryPass::Blended { .. }),
         }
     }
 
     /// The pipeline constants: a masked material's discard (`alpha_mask`,
     /// material_raster.wgsl), for the pulled passes deformed vertices, and
-    /// for the camera and probe passes the layers and the lit constants.
+    /// for the camera and probe passes the layers and the lit constants,
+    /// and for the blended passes whether transmission is compiled in.
     pub(super) fn constants(self) -> Vec<(&'static str, f64)> {
         let masked = (
             "alpha_mask",
@@ -142,6 +151,12 @@ impl PipelineKey {
         }
         if self.pass.pulled() {
             constants.push(deformed);
+        }
+        if matches!(self.pass, GeometryPass::Blended { .. }) {
+            constants.push((
+                "transmission_enabled",
+                f64::from(u8::from(self.transmission)),
+            ));
         }
         constants
     }

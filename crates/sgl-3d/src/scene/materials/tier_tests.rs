@@ -14,10 +14,11 @@ const BASIC_SAMPLED_TEXTURES: u32 = 47;
 // the wrong one. The oracle is the same material added without that map on
 // the same device: on a device of 47 sampled textures a stage, the record
 // of a material with the Extended tier's maps (anisotropy, clearcoat,
-// clearcoat roughness and normal, iridescence and its thickness, sheen
-// colour and roughness, diffuse transmission and its colour) holds the
-// words of the same material without them, and that of a material with a normal and a bump map
-// the words of the material with the normal map alone.
+// clearcoat roughness and normal, iridescence and its thickness,
+// transmission and volume thickness, sheen colour and roughness, diffuse
+// transmission and its colour) holds the words of the same material
+// without them, and that of a material with a normal and a bump map the
+// words of the material with the normal map alone.
 #[test]
 fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
     let Some(adapter) = test_support::adapter() else {
@@ -43,6 +44,8 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
         [128, 128, 255, 255],
         [60; 4],
         [255, 128, 0, 255],
+        [128, 0, 0, 255],
+        [0, 128, 0, 255],
     ]
     .map(|texel| Image::Rgba8(image::RgbaImage::from_pixel(4, 4, image::Rgba(texel))))
     .into();
@@ -50,6 +53,8 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
         base_texture: Some(0),
         anisotropy_strength: 0.5,
         bump_scale: 1.,
+        transmission: 0.5,
+        thickness: 0.1,
         ..test_support::cube().materials[0].clone()
     };
     let materials = [
@@ -60,6 +65,8 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
             coat_normal_texture: Some(1),
             iridescence_texture: Some(3),
             iridescence_thickness_texture: Some(3),
+            transmission_texture: Some(4),
+            thickness_texture: Some(5),
             sheen_color_texture: Some(0),
             sheen_roughness_texture: Some(3),
             diffuse_transmission_texture: Some(3),

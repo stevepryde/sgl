@@ -1,6 +1,6 @@
 //! What a draw batch's material and instance require of the pipeline that
 //! draws it: the faces it culls, the alpha mode and deformed vertices.
-use crate::content::material::AlphaMode;
+use crate::content::material::{AlphaMode, SurfaceMaterial};
 
 /// Hardware face culling, which each draw batch chooses from its
 /// population, material side and pose.
@@ -47,20 +47,25 @@ impl Cull {
     }
 }
 
-/// What a material's alpha mode requires of the pipelines that draw it.
+/// What a material's alpha mode, or its transmission, requires of the
+/// pipelines that draw it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Alpha {
     Opaque,
     /// Fragments discard the texels the material cuts out (`alpha_mask`),
     /// in every opaque pass and caster.
     Mask,
-    /// Only `GeometryPass::Blended` draws it.
+    /// Only `GeometryPass::Blended` draws it: a blended or transmissive
+    /// material (`SurfaceMaterial::blended`).
     Blend,
 }
 
 impl Alpha {
-    pub fn of(mode: AlphaMode) -> Self {
-        match mode {
+    pub fn of(material: &SurfaceMaterial) -> Self {
+        if material.blended() {
+            return Self::Blend;
+        }
+        match material.alpha {
             AlphaMode::Opaque => Self::Opaque,
             AlphaMode::Mask { .. } => Self::Mask,
             AlphaMode::Blend { .. } => Self::Blend,

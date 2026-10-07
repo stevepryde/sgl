@@ -236,6 +236,25 @@ pub(crate) fn target_with_usage(
         .create_view(&Default::default())
 }
 
+/// What `held` holds, made by `make` where it holds nothing or a texture
+/// (`texture` of it) of another size than `size`: a stage's snapshot of the
+/// frame at the render size, allocated in the first frame that needs it and
+/// again after a resize (heat distortion's, the transmission copy).
+pub(crate) fn hold<T>(
+    held: &mut Option<T>,
+    texture: impl Fn(&T) -> &wgpu::Texture,
+    size: wgpu::Extent3d,
+    make: impl FnOnce() -> T,
+) -> &T {
+    if held
+        .as_ref()
+        .is_none_or(|kept| texture(kept).size() != size)
+    {
+        *held = Some(make());
+    }
+    held.as_ref().unwrap()
+}
+
 /// `view` as a colour attachment cleared to transparent black and stored.
 pub(crate) fn attachment(view: &wgpu::TextureView) -> Option<wgpu::RenderPassColorAttachment<'_>> {
     Some(wgpu::RenderPassColorAttachment {

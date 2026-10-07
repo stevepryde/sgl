@@ -61,15 +61,20 @@ fn object_front_face(i:Fragment,front:bool)->bool {
  let mirrored=dot(model[0].xyz,cross(model[1].xyz,model[2].xyz))<0.;
  return front!=mirrored;
 }
-// The view's jitter offsets clip xy by 2 * jitter * w. Motion is measured
-// from `previous_position` at the instance's previous pose, both from the
-// object record at index `object`.
+// Where raster draws the world point `world`: its clip position, which
+// the view's jitter offsets in xy by 2 * jitter * w. The transmitted light's
+// exit point projects through it too (transmission.wgsl).
+fn scene_raster_clip(world:vec4<f32>)->vec4<f32> {
+ let clip=scene_clip_position(world,view.view,view.projection);
+ return vec4(clip.xy+2.*view.jitter*clip.w,clip.zw);
+}
+// Motion is measured from `previous_position` at the instance's previous
+// pose, both from the object record at index `object`.
 fn vertex(object:u32,v:Vertex,previous_position:vec3<f32>)->Fragment {
  var o:Fragment;
  let model=objects[object].model;
  let p=model*vec4(v.position,1);
- o.clip=scene_clip_position(p,view.view,view.projection);
- o.clip=vec4(o.clip.xy+2.*view.jitter*o.clip.w,o.clip.zw);
+ o.clip=scene_raster_clip(p);
  o.world=p.xyz;
  o.normal=object_normal(model,v.normal);
  o.tangent=object_tangent(model,v.tangent,v.normal);

@@ -126,16 +126,19 @@ fn check(options: LoadOptions<'_>) -> Result<()> {
 
 /// The glTF extensions SGL3D honours: a file may require any of them. The
 /// loader reads each itself, from the extension's values.
-const SUPPORTED_EXTENSIONS: [&str; 10] = [
+const SUPPORTED_EXTENSIONS: [&str; 13] = [
     "KHR_materials_anisotropy",
     "KHR_materials_clearcoat",
     "KHR_materials_diffuse_transmission",
+    "KHR_materials_dispersion",
     "KHR_materials_emissive_strength",
     "KHR_materials_ior",
     "KHR_materials_iridescence",
     "KHR_materials_sheen",
     "KHR_materials_specular",
+    "KHR_materials_transmission",
     "KHR_materials_unlit",
+    "KHR_materials_volume",
     "EXT_materials_bump",
 ];
 

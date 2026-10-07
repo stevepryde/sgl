@@ -69,8 +69,9 @@ struct SceneCandidate {
 // record is at `mesh`, of instance `index`: not the receiver's own triangle
 // (a surface-origin straight ray cannot re-intersect it; the caller
 // supplies the raster identity, not a distance epsilon), in a visible
-// group, and not blended (rays pass through blended surfaces, which write
-// no depth and cast no shadow).
+// group, and neither blended nor transmissive (rays pass through the
+// surfaces the transparent stage draws, which write no depth and cast no
+// shadow).
 fn scene_accepts_triangle(index:u32,mesh:u32,primitive_id:u32,receiver:vec2<u32>)->bool {
  if receiver.x!=0u && receiver.x==index+1u && receiver.y==scene_source[mesh+SCENE_MESH_INDICES]+primitive_id*3u {
   return false;
@@ -80,7 +81,7 @@ fn scene_accepts_triangle(index:u32,mesh:u32,primitive_id:u32,receiver:vec2<u32>
  if (group&scene_source[SCENE_HEADER_VISIBILITY_MASK])!=group {
   return false;
  }
- return (scene_source[material+SCENE_MATERIAL_FLAGS]&MATERIAL_ALPHA_BLEND)==0u;
+ return (scene_source[material+SCENE_MATERIAL_FLAGS]&(MATERIAL_ALPHA_BLEND|MATERIAL_TRANSMISSIVE))==0u;
 }
 
 // The rest of the predicate, for `candidate` on the mesh whose record is at

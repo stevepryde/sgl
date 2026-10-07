@@ -27,7 +27,7 @@ pub(crate) mod lights;
 pub(crate) mod lod;
 pub(crate) mod material;
 pub(crate) mod tiers;
-pub(crate) use tiers::{lit_provider, material_provider};
+pub(crate) use tiers::{lit_provider, material_provider, transmission_provider};
 // Wired into the ray source and its readers with #135's prepared models.
 pub(crate) mod packed_vertex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -557,6 +557,16 @@ pub(crate) static SURFACE: Module = Module {
         &LIGHTS,
         &DECALS,
     ],
+};
+/// Light transmitted through a surface from the frame behind it, across its
+/// volume and spread by dispersion (three.js r185's getIBLVolumeRefraction),
+/// from the transmission provider the program composes
+/// (`transmission_provider`). Reads `view`, the object records and the DFG
+/// table.
+pub(crate) static TRANSMISSION: Module = Module {
+    name: "transmission",
+    source: include_str!("transmission.wgsl"),
+    deps: &[&VERTEX, &PBR, &DFG, &SPECULAR_LOBES],
 };
 /// A rasterized fragment's `Surface`. Reads `view`, `object` and the
 /// material, and the Extended tier's maps through the material-map provider

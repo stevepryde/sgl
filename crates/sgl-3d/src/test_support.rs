@@ -574,6 +574,13 @@ pub(crate) fn cube() -> crate::asset::Asset {
             normal_layers: None,
             bump_texture: None,
             bump_scale: 0.,
+            transmission: 0.,
+            transmission_texture: None,
+            thickness: 0.,
+            thickness_texture: None,
+            attenuation_distance: f32::INFINITY,
+            attenuation_color: [1.; 3],
+            dispersion: 0.,
             wrap: [gltf::texture::WrappingMode::Repeat; 2],
             double_sided: true,
             unlit: false,
@@ -719,7 +726,7 @@ pub(crate) fn ray_tracing_device(
 
 /// A device with the renderer's limits and the optional features `features`
 /// chooses for the adapter, or `None` after printing why.
-fn device_choosing(
+pub(crate) fn device_choosing(
     features: impl FnOnce(&wgpu::Adapter) -> wgpu::Features,
 ) -> Option<(wgpu::Device, wgpu::Queue)> {
     let adapter = adapter()?;

@@ -248,9 +248,11 @@ current capabilities and limits.
   and [shadows](../crates/sgl-3d/README.md#local-light-shadows).
 - **Image (6):** tone mapping, exposure, colour grading, and bloom.
   See [image controls](../crates/sgl-3d/README.md#exposure-bloom-and-colour-grading).
-- **Content:** alpha-masked and blended materials (17), skinned meshes and
-  morph targets (18), instanced draws (19), compressed material textures (20),
-  and decals (21). See [content support and limits](../crates/sgl-3d/docs/features.md#content).
+- **Content:** alpha-masked and blended materials (17), transmissive glass
+  and water (refraction, volume attenuation and dispersion,
+  [#243](https://github.com/stevepryde/sgl/issues/243)), skinned meshes and
+  morph targets (18), instanced draws (19), compressed material textures
+  (20), and decals (21). See [content support and limits](../crates/sgl-3d/docs/features.md#content).
 - **Effects:** motion blur (9) and volumetric fog with light shafts (10).
   See [motion blur](../crates/sgl-3d/README.md#motion-blur) and
   [fog](../crates/sgl-3d/README.md#volumetric-fog).

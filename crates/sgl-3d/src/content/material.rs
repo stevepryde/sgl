@@ -131,6 +131,37 @@ pub struct SurfaceMaterial {
     pub normal_layers: Option<[NormalLayer; 2]>,
     /// Bump height multiplier.
     pub bump_scale: f32,
+    /// The share of the light behind the surface that passes through it,
+    /// refracted, in `0..=1` (`KHR_materials_transmission`), in place of
+    /// that share of its diffuse light: glass, water, clear plastic. A
+    /// material with any transmission is drawn with the blended surfaces
+    /// whatever its alpha mode (its alpha still covers as the mode says): it
+    /// writes no depth, G-buffer or motion unless it is a `Blend` receiver
+    /// of screen-space reflections, takes no ambient occlusion and casts no
+    /// shadow, rays pass through it and probe captures leave it out, and
+    /// what it shows through it is the opaque frame behind it, blurred by
+    /// its roughness, not other blended or transmissive surfaces. Give glass
+    /// its own material: a transmission map's zeros do not make the rest of
+    /// the material opaque. On a device of the `Basic` binding tier, and
+    /// in what screen-space reflections see of it, the light behind it
+    /// passes unrefracted and unblurred, dimmed as the refracted light is.
+    pub transmission: f32,
+    /// The thickness of the volume beneath the surface, in the mesh's units
+    /// (the instance's scale applies), which the transmitted light crosses
+    /// (`KHR_materials_volume`): 0 is a thin wall, which bends no light; a
+    /// thicker one is a closed volume, whose back faces are not drawn.
+    pub thickness: f32,
+    /// The distance in metres light travels through the volume before white
+    /// light takes `attenuation_color` (Beer-Lambert), positive, or
+    /// `f32::INFINITY` for no attenuation.
+    pub attenuation_distance: f32,
+    /// The linear colour white light turns into at `attenuation_distance`,
+    /// each channel in `0..=1`.
+    pub attenuation_color: [f32; 3],
+    /// How far transmitted light's colours spread, as 20 over the Abbe
+    /// number, nonnegative (`KHR_materials_dispersion`): 0 none, 0.33 crown
+    /// glass, 2 an exaggerated prism.
+    pub dispersion: f32,
     /// Anisotropy strength in `0..=1`; zero is isotropic.
     pub anisotropy_strength: f32,
     /// Counter-clockwise tangent-space rotation of the anisotropy direction,
@@ -195,6 +226,11 @@ impl SurfaceMaterial {
             normal_scale: m.normal_scale,
             normal_layers: m.normal_layers,
             bump_scale: m.bump_scale,
+            transmission: m.transmission,
+            thickness: m.thickness,
+            attenuation_distance: m.attenuation_distance,
+            attenuation_color: m.attenuation_color,
+            dispersion: m.dispersion,
             anisotropy_strength: m.anisotropy_strength,
             anisotropy_rotation: m.anisotropy_rotation,
             environment_scale: 1.,
@@ -207,9 +243,21 @@ impl SurfaceMaterial {
     }
 
     /// Whether the material is drawn by the transparent stage rather than
-    /// with opaque surfaces.
+    /// with opaque surfaces: blended, or transmissive whatever its alpha
+    /// mode. This is the population every view, cache and ray takes it by.
     pub(crate) fn blended(&self) -> bool {
-        matches!(self.alpha, AlphaMode::Blend { .. })
+        matches!(self.alpha, AlphaMode::Blend { .. }) || self.transmissive()
+    }
+
+    /// Whether light behind it passes through it, refracted.
+    pub(crate) fn transmissive(&self) -> bool {
+        self.transmission > 0.
+    }
+
+    /// Whether it bounds a volume, whose back faces are not drawn
+    /// (`KHR_materials_volume`: `doubleSided` does not apply to a volume).
+    pub(crate) fn volume(&self) -> bool {
+        self.transmissive() && self.thickness > 0.
     }
 
     /// Whether the material is a blended receiver of screen-space
@@ -224,13 +272,20 @@ impl SurfaceMaterial {
         )
     }
 
-    /// What its shadow casters depend on: its side, its visibility group
-    /// and, for a masked material, its cutoff and base alpha.
-    pub(crate) fn caster_values(&self) -> (bool, u32, AlphaMode, f32) {
+    /// What its shadow casters depend on: its side, its visibility group,
+    /// whether it is drawn blended (and casts nothing) and, for a masked
+    /// material, its cutoff and base alpha.
+    pub(crate) fn caster_values(&self) -> (bool, u32, AlphaMode, bool, f32) {
         let alpha = match self.alpha {
             AlphaMode::Mask { .. } => self.base[3],
             _ => 1.,
         };
-        (self.double_sided, self.visibility_group, self.alpha, alpha)
+        (
+            self.double_sided,
+            self.visibility_group,
+            self.alpha,
+            self.blended(),
+            alpha,
+        )
     }
 }

@@ -26,9 +26,10 @@ const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
 // dynamic GI stage there. The oracle is wgpu's `Limits::default()`, which
 // wgpu sets to WebGPU's, and wgpu's validation of every pipeline layout
 // against the device's limits: frames that build the heaviest pipelines
-// (blended receivers of screen-space reflections that between them carry
-// every material map, world-space reflections, ambient occlusion, fog and
-// TAA, over an irradiance volume and a dynamic GI volume) on a device of
+// (transmissive, dispersive blended receivers of screen-space reflections
+// that between them carry every material map, world-space reflections,
+// ambient occlusion, fog and TAA, over an irradiance volume and a dynamic
+// GI volume) on a device of
 // those limits and no optional feature raise no validation error, the
 // device reports the Basic tier, and dynamic GI is reported off.
 #[test]
@@ -172,20 +173,22 @@ fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality
     ))
 }
 
-/// A blended receiver of screen-space reflections carrying the maps a
-/// material takes, each its own image: base, metallic-roughness with its
-/// occlusion packed, emission, anisotropy, clearcoat, clearcoat roughness
-/// and normal, iridescence and its thickness, sheen colour and roughness,
-/// diffuse transmission and its colour, and a normal map where
-/// `normal`, else a bump map, which a material takes only without a normal
-/// map; on a cube with authored tangents, which anisotropy needs.
+/// A transmissive, dispersive blended receiver of screen-space reflections
+/// carrying the maps a material takes, each its own image: base,
+/// metallic-roughness with its occlusion packed, emission, anisotropy,
+/// clearcoat, clearcoat roughness and normal, iridescence and its
+/// thickness, transmission, thickness, sheen colour and roughness, diffuse
+/// transmission and its colour, and a normal map where `normal`, else a
+/// bump map, which a material takes only without a normal map; on a cube
+/// with authored tangents, which anisotropy needs. On the Extended tier the
+/// transparent stage copies the frame for it, binding its copy.
 fn glass(normal: bool) -> Asset {
     let mut glass = test_support::cube();
     for vertex in &mut glass.meshes[0].vertices {
         let tangent = Vec3::from_array(vertex.normal).any_orthonormal_vector();
         vertex.tangent = tangent.extend(1.).to_array();
     }
-    glass.images = (0..15)
+    glass.images = (0..17)
         .map(|_| Image::Rgba8(image::RgbaImage::from_pixel(4, 4, image::Rgba([200; 4]))))
         .collect();
     let material = &mut glass.materials[0];
@@ -213,11 +216,19 @@ fn glass(normal: bool) -> Asset {
     material.iridescence = 0.5;
     material.iridescence_texture = Some(9);
     material.iridescence_thickness_texture = Some(10);
+    material.metallic = 0.;
+    material.transmission = 1.;
+    material.transmission_texture = Some(11);
+    material.thickness = 0.2;
+    material.thickness_texture = Some(12);
+    material.attenuation_distance = 1.;
+    material.attenuation_color = [0.8, 0.9, 1.];
+    material.dispersion = 0.5;
     material.sheen_color = [0.5; 3];
-    material.sheen_color_texture = Some(11);
-    material.sheen_roughness_texture = Some(12);
+    material.sheen_color_texture = Some(13);
+    material.sheen_roughness_texture = Some(14);
     material.diffuse_transmission = 0.5;
-    material.diffuse_transmission_texture = Some(13);
+    material.diffuse_transmission_texture = Some(15);
     material.diffuse_transmission_color_texture = Some(14);
     glass
 }

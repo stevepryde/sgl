@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use validate::{
     validate_alpha, validate_anisotropy, validate_diffuse_transmission, validate_iridescence,
-    validate_normal_layers, validate_reflectance, validate_sheen,
+    validate_normal_layers, validate_reflectance, validate_sheen, validate_transmission,
 };
 
 pub(crate) struct Material {
@@ -100,6 +100,7 @@ pub(crate) struct Materials {
     receivers: usize,
     moving: usize,
     films: usize,
+    transmissive: usize,
     textures: Textures,
     groups: Groups,
 }
@@ -114,6 +115,7 @@ impl Materials {
             receivers: 0,
             moving: 0,
             films: 0,
+            transmissive: 0,
             textures: Textures::default(),
             groups: Groups::new(device, queue),
         }
@@ -146,28 +148,37 @@ impl Materials {
         self.films > 0
     }
 
-    /// Counts `by` more materials of `values` whose surface `moves` or not.
+    /// Whether a material is transmissive: the blended pipelines compile
+    /// transmission in only while one is.
+    pub fn holds_transmissive(&self) -> bool {
+        self.transmissive > 0
+    }
+
+    /// Counts `by` more materials of `values` whose surface `moves` or not:
+    /// one with an iridescent film among the films; a blended or
+    /// transmissive one among the blended (and the receivers where it is
+    /// one), else a masked one among the masked and one whose surface moves
+    /// among the moving.
     fn count(&mut self, values: &SurfaceMaterial, moves: bool, by: isize) {
         let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
-        let alpha = values.alpha;
-        if moves && !matches!(alpha, AlphaMode::Blend { .. }) {
-            add(&mut self.moving);
-        }
         if values.iridescence > 0. {
             add(&mut self.films);
         }
-        match alpha {
-            AlphaMode::Opaque => {}
-            AlphaMode::Mask { .. } => add(&mut self.masked),
-            AlphaMode::Blend {
-                receives_screen_space_reflections,
-                ..
-            } => {
-                add(&mut self.blended);
-                if receives_screen_space_reflections {
-                    add(&mut self.receivers);
-                }
+        if values.transmissive() {
+            add(&mut self.transmissive);
+        }
+        if values.blended() {
+            add(&mut self.blended);
+            if values.receives_screen_space_reflections() {
+                add(&mut self.receivers);
             }
+            return;
+        }
+        if moves {
+            add(&mut self.moving);
+        }
+        if matches!(values.alpha, AlphaMode::Mask { .. }) {
+            add(&mut self.masked);
         }
     }
 
@@ -203,6 +214,7 @@ impl Materials {
             validate_alpha(&values)?;
             validate_reflectance(&values)?;
             validate_iridescence(&values)?;
+            validate_transmission(&values)?;
             validate_sheen(&values)?;
             validate_diffuse_transmission(&values)?;
             validate_normal_layers(&values, authored_maps(material), material.wrap)?;
@@ -376,6 +388,7 @@ impl Materials {
         validate_alpha(&values)?;
         validate_reflectance(&values)?;
         validate_iridescence(&values)?;
+        validate_transmission(&values)?;
         validate_sheen(&values)?;
         validate_diffuse_transmission(&values)?;
         validate_normal_layers(&values, material.maps, material.bound.wrap)?;
@@ -456,13 +469,14 @@ impl Scene {
         id: MaterialId,
         values: SurfaceMaterial,
     ) -> Result<(), SceneError> {
-        let alpha = self.materials.get(id)?.values.alpha;
-        if self.materials.get(id)?.values != values {
+        let old = self.materials.get(id)?.values;
+        if old != values {
             self.edited();
         }
-        // Blended meshes have no draw candidates: a material that becomes or
-        // stops being blended adds or removes its users' instances' ones.
-        let blending = matches!(alpha, AlphaMode::Blend { .. }) != values.blended();
+        // Blended and transmissive meshes have no draw candidates: a
+        // material that becomes or stops being either adds or removes its
+        // users' instances' ones.
+        let blending = old.blended() != values.blended();
         let users: Vec<ModelId> = self.materials.get(id)?.users.keys().copied().collect();
         if blending {
             // Each user model's instances, in the order they are placed
@@ -490,7 +504,7 @@ impl Scene {
             }
         }
         self.materials.set(queue, &self.rays, id, values)?;
-        if std::mem::discriminant(&alpha) != std::mem::discriminant(&values.alpha) {
+        if blending || std::mem::discriminant(&old.alpha) != std::mem::discriminant(&values.alpha) {
             self.models.classify_users(id, &self.materials);
         }
         if blending {

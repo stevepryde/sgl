@@ -1,22 +1,22 @@
 //! Ray classes (the architecture's Hardware ray tracing, *Portable
 //! coverage*): what rays see of each model, from the alpha modes of its
-//! meshes that have triangles, which decides whether a hardware query's
+//! meshes that have triangles (a transmissive one is drawn blended), which decides whether a hardware query's
 //! committed hit can judge it, and which of its meshes are masked, whose
 //! BLAS geometries the candidate form builds without `OPAQUE`. The scene
 //! keeps both for each model and recomputes them for a material's users,
-//! through the material's use list, when its alpha mode changes, a cost
-//! proportional to its users.
+//! through the material's use list, when its alpha mode or whether it is
+//! drawn blended changes, a cost proportional to its users.
 use super::materials::Materials;
 use super::models::{Model, Models};
 use crate::content::identity::MaterialId;
-use crate::content::material::AlphaMode;
+use crate::content::material::{AlphaMode, SurfaceMaterial};
 use crate::shading::RayQueryForm;
 
 /// What rays see of a model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RayClass {
-    /// Nothing a ray stops at: every mesh with triangles is blended, or it
-    /// has none. Rays pass through it.
+    /// Nothing a ray stops at: every mesh with triangles is blended or
+    /// transmissive, or it has none. Rays pass through it.
     None,
     /// A masked mesh, whose cut-out texels a committed hit cannot judge
     /// cheaply: under the baseline form its instances that do not deform are
@@ -40,15 +40,14 @@ impl RayClass {
         }
     }
 
-    /// The class of a model whose meshes with triangles have `alphas`.
-    pub fn of(alphas: impl Iterator<Item = AlphaMode>) -> Self {
+    /// The class of a model whose meshes with triangles have `materials`.
+    pub fn of<'a>(materials: impl Iterator<Item = &'a SurfaceMaterial>) -> Self {
         let mut class = Self::None;
-        for alpha in alphas {
-            match alpha {
-                AlphaMode::Mask { .. } => return Self::Masked,
-                AlphaMode::Opaque => class = Self::Opaque,
-                AlphaMode::Blend { .. } => {}
+        for values in materials.filter(|values| !values.blended()) {
+            if matches!(values.alpha, AlphaMode::Mask { .. }) {
+                return Self::Masked;
             }
+            class = Self::Opaque;
         }
         class
     }
@@ -62,11 +61,10 @@ impl RayClass {
                 .zip(&model.ray_meshes)
                 .filter(|(_, words)| words.index_count >= 3)
                 .map(|(mesh, _)| {
-                    materials
+                    &materials
                         .get(mesh.material)
                         .expect("a mesh's material lives")
                         .values
-                        .alpha
                 }),
         )
     }
@@ -81,7 +79,7 @@ fn masked_meshes(model: &Model, materials: &Materials) -> Vec<bool> {
             let material = materials
                 .get(mesh.material)
                 .expect("a mesh's material lives");
-            matches!(material.values.alpha, AlphaMode::Mask { .. })
+            !material.values.blended() && matches!(material.values.alpha, AlphaMode::Mask { .. })
         })
         .collect()
 }
@@ -94,7 +92,7 @@ pub(crate) fn classify(model: &mut Model, materials: &Materials) {
 
 impl Models {
     /// Recomputes the ray class and the masked meshes of every model that
-    /// uses `material`, whose alpha mode changed.
+    /// uses `material`, whose alpha mode or population changed.
     pub fn classify_users(&mut self, material: MaterialId, materials: &Materials) {
         let users = &materials.get(material).expect("a live material").users;
         for &id in users.keys() {

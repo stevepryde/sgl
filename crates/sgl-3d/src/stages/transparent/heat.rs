@@ -5,7 +5,7 @@ use crate::content::transient::HeatDistortion;
 use crate::scene::transient::Transient;
 use crate::shading::gbuffer::COLOR as HDR;
 use crate::shading::vertex::{VertexLayout, vertex_layout};
-use crate::view::targets::{attachment, target};
+use crate::view::targets::{attachment, hold, target};
 
 pub(crate) static HEAT: crate::shading::Module = crate::shading::Module {
     name: "heat_distortion",
@@ -126,14 +126,12 @@ impl Heat {
             return;
         }
         let size = [color.texture().width(), color.texture().height()];
-        if self
-            .source
-            .as_ref()
-            .is_none_or(|s| s.texture().size() != color.texture().size())
-        {
-            self.source = Some(target(device, "immutable heat source", size, HDR));
-        }
-        let source = self.source.as_ref().unwrap();
+        let source = hold(
+            &mut self.source,
+            wgpu::TextureView::texture,
+            color.texture().size(),
+            || target(device, "immutable heat source", size, HDR),
+        );
         crate::counters::write_buffer(queue, &self.matrix, 0, bytemuck::bytes_of(matrix));
         encoder.copy_texture_to_texture(
             color.texture().as_image_copy(),
