@@ -240,12 +240,12 @@ pub(crate) fn target_with_usage(
 /// (`texture` of it) of another size than `size`: a stage's snapshot of the
 /// frame at the render size, allocated in the first frame that needs it and
 /// again after a resize (heat distortion's, the transmission copy).
-pub(crate) fn hold<'a, T>(
-    held: &'a mut Option<T>,
+pub(crate) fn hold<T>(
+    held: &mut Option<T>,
     texture: impl Fn(&T) -> &wgpu::Texture,
     size: wgpu::Extent3d,
     make: impl FnOnce() -> T,
-) -> &'a T {
+) -> &T {
     if held
         .as_ref()
         .is_none_or(|kept| texture(kept).size() != size)
