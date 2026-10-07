@@ -43,7 +43,7 @@ fn polar(theta: f64, phi: f64) -> DVec3 {
 /// WGSL constants and helpers the integrals share: the grid, and a surface
 /// facing +Z at the origin seen along `view` with perceptual roughness
 /// `rough`, base colour `base` and metallic `metallic`, a dielectric of F0
-/// 0.04 where it is not metal.
+/// 0.04 and F90 1 where it is not metal.
 fn grid_wgsl() -> String {
     format!(
         r#"
@@ -64,6 +64,7 @@ fn case_surface(view:vec3<f32>,rough:f32,base:vec3<f32>,metallic:f32)->Surface {
  s.base=vec4(base,1.);
  s.metallic=metallic;
  s.dielectric_f0=vec3(.04);
+ s.specular=1.;
  s.environment_scale=1.;
  s.occlusion=1.;
  s.front=true;
