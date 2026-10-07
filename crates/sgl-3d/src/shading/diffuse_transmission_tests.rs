@@ -141,6 +141,49 @@ fn diffuse_transmission_conserves_a_white_furnace() {
     }
 }
 
+// Plausible defects: the other side's indirect light escapes the layers
+// above the base, undimmed by the sheen's scaling or untouched by the
+// coat's Fresnel, which a surface with one of these layers alone does not
+// show. The oracle is energy conservation, both laws together: light passed
+// through moves from one side to the other (above), and a white sheen keeps
+// a white base's furnace whole beneath a coat (sheen_tests), so a coated
+// white surface with a white sheen that passes diffuse light through
+// reflects a white furnace about both sides as the coated surface does
+// with neither (KHR_materials_sheen README 71, 147–153). The bound is the
+// sheen furnace's, the environment's storage and filtering.
+#[test]
+fn a_sheen_and_passed_light_keep_a_coat_s_white_furnace() {
+    let layers = [([0.; 3], 0.), ([1.; 3], 0.5), ([1.; 3], 1.)];
+    let mut cases = Vec::new();
+    for nv in [0.3, 0.7, 1.] {
+        for (sheen, transmission) in layers {
+            cases.push(Layered {
+                view: view(nv),
+                coat: 1.,
+                sheen,
+                sheen_rough: 0.5,
+                transmission,
+                ..Layered::default()
+            });
+        }
+    }
+    let Some(observed) = observe_lit(&cases) else {
+        return;
+    };
+    for (cases, observed) in cases
+        .chunks(layers.len())
+        .zip(observed.chunks(layers.len()))
+    {
+        let bare = observed[0][2];
+        for (case, [_, _, environment]) in cases.iter().zip(observed).skip(1) {
+            assert!(
+                (*environment - bare).abs().max_element() <= 0.005 * bare.max_element(),
+                "{case:?}: reflects {environment:?} of a white furnace, {bare:?} beneath the coat alone"
+            );
+        }
+    }
+}
+
 // Plausible defects: light passed through a volume unattenuated under
 // lights or under the other side's indirect light, or attenuated by
 // another law. The oracle is KHR_materials_volume's Beer-Lambert law: over
