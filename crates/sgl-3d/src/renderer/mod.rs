@@ -21,6 +21,7 @@ mod size_tests;
 
 use crate::scene::rays::acceleration::RayTracingStats;
 use crate::settings::{Antialiasing, RenderPreset, SceneResolution, Settings};
+use crate::shading::bind::BindingTier;
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
     antialiasing, cull::Cull, deform::Deform, dynamic_gi::DynamicGi, exposure::Exposure,
@@ -171,9 +172,11 @@ impl Renderer {
         let fog = VolumetricFog::new(device, &lit);
         let scene_layout = crate::shading::bind::scene(device);
         let dynamic_gi = DynamicGi::new(device, &lit, &scene_layout);
+        let tier = BindingTier::of(&device.limits());
         let bindings = FrameBindings::new(
             device,
             lit,
+            tier,
             &views,
             shadows.maps(),
             fog.volume(),
@@ -192,6 +195,7 @@ impl Renderer {
                 &bindings.caster_positions,
             ],
             layers,
+            tier,
         );
         let targets = SharedTargets::new(device, render, false);
         // The form recorded for the device's backend
@@ -355,6 +359,14 @@ impl Renderer {
     /// `fsr2_error`, or awaiting `resize`). The saved choice is unchanged.
     pub fn antialiasing_in_effect(&self, settings: &Settings) -> Antialiasing {
         effective::antialiasing(settings, self.antialiasing.fsr2_running())
+    }
+
+    /// The device's binding tier: `Extended` where it binds 48 or more
+    /// sampled textures per shader stage, else `Basic`, on which a
+    /// material's anisotropy map gives way to its factor. Fixed for the
+    /// device; `graphics_device::limits` requests the adapter's.
+    pub fn binding_tier(&self) -> BindingTier {
+        self.pipelines.tier
     }
 
     /// Why FSR2 is not running on this device although it was chosen.

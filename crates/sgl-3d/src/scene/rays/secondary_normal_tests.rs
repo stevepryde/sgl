@@ -13,6 +13,7 @@ use super::tests::{Fixture, Pose};
 use super::*;
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
 use crate::scene::textures::upload as texture;
+use crate::shading::bind::group2::MaterialMap;
 use crate::shading::material::MaterialMaps;
 use crate::shading::{self, uniforms::ObjectUniform};
 use glam::{Mat4, Vec3};
@@ -205,12 +206,19 @@ fn material_normal_oracle(
                     double_sided: true,
                     alpha: crate::AlphaMode::Opaque,
                 },
-                MaterialMaps::new(has_normal_map, true, false, false),
+                // A normal map, else the bump map, as the scene puts them in
+                // effect (`scene::materials::maps::InEffect`).
+                MaterialMaps::of([if has_normal_map {
+                    MaterialMap::Normal
+                } else {
+                    MaterialMap::Bump
+                }]),
             )),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let normal_map = texture(&device, &queue, &asset.images[0].texels(), false);
-        let bump_map = texture(&device, &queue, &asset.images[1].texels(), false);
+        // Group 2's relief binding holds the normal map, else the bump map.
+        let relief = usize::from(!has_normal_map);
+        let relief_map = texture(&device, &queue, &asset.images[relief].texels(), false);
         let constants = [
             ("normal_maps_enabled", f64::from(normal_maps_enabled)),
             ("fixture_axis", f64::from(observe_axis)),
@@ -231,6 +239,7 @@ fn material_normal_oracle(
                         &shading::BIND_MATERIAL,
                         &shading::SURFACE_RASTER,
                         &shading::SHADOW_MASK_NONE,
+                        &shading::MATERIAL_MAPS_BASIC,
                     ]),
                     r#"
 override fixture_axis:bool=false;
@@ -360,11 +369,7 @@ override fixture_axis:bool=false;
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&normal_map),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&bump_map),
+                    resource: wgpu::BindingResource::TextureView(&relief_map),
                 },
             ],
         });

@@ -2,26 +2,28 @@
 //! lightmap eligibility) and record in the ray source, with the `Scene`
 //! operations that add, read, edit and remove them.
 use super::candidates::CandidateMesh;
-use super::rays::{MaterialTextures, SceneRays};
+use super::rays::SceneRays;
 use super::slots::Slots;
 use super::textures::{self, Textures};
 use super::{Scene, SceneError, buffer};
 use crate::asset::{Image, Material as AuthoredMaterial};
 use crate::content::identity::{MaterialId, ModelId};
 use crate::content::material::{AlphaMode, SurfaceMaterial};
+use crate::shading::bind::group2::MaterialMap;
 use crate::shading::material::{MaterialMaps, MaterialUniform};
 use group::{Bound, Groups};
+use maps::{InEffect, authored, authored_maps};
 use std::collections::HashMap;
 use std::ops::Range;
 use validate::{validate_alpha, validate_anisotropy, validate_normal_layers, validate_reflectance};
 
 pub(crate) struct Material {
     pub values: SurfaceMaterial,
-    /// The maps it was added with.
+    /// The maps it was added with, which validation reads.
     maps: MaterialMaps,
     /// Group 2.
     pub group: wgpu::BindGroup,
-    /// What group 2 binds besides its buffers.
+    /// What group 2 binds besides its buffers: its maps in effect.
     bound: Bound,
     buffer: wgpu::Buffer,
     /// Lightmap eligibility, group 2's `baked_material`.
@@ -54,9 +56,9 @@ impl Material {
         })
     }
 
-    /// Its values as the shaders read them.
+    /// Its values as the shaders read them, with its maps in effect.
     fn uniform(&self) -> MaterialUniform {
-        MaterialUniform::new(&self.values, self.maps)
+        MaterialUniform::new(&self.values, self.bound.maps.maps())
     }
 
     /// Whether its shading changes with the frame's time where its geometry
@@ -95,29 +97,6 @@ pub(crate) struct Materials {
     moving: usize,
     textures: Textures,
     groups: Groups,
-}
-
-/// A material's maps: each one's index into the images added with it, and
-/// whether it is sampled as sRGB colour rather than linear data.
-fn maps(material: &AuthoredMaterial) -> [(Option<usize>, bool); 6] {
-    [
-        (material.base_texture, true),
-        (material.emissive_texture, true),
-        (material.mr_texture, false),
-        (material.normal_texture, false),
-        (material.bump_texture, false),
-        (material.anisotropy_texture, false),
-    ]
-}
-
-/// The maps `material` is added with.
-fn authored_maps(material: &AuthoredMaterial) -> MaterialMaps {
-    MaterialMaps::new(
-        material.normal_texture.is_some(),
-        material.bump_texture.is_some(),
-        material.anisotropy_texture.is_some(),
-        material.packed_occlusion(),
-    )
 }
 
 impl Materials {
@@ -190,15 +169,16 @@ impl Materials {
         self.slots.get_mut(id).ok_or(SceneError::UnknownMaterial)
     }
 
-    /// Validates `materials` and the images they use, without uploading.
+    /// Validates `materials` and the images they were authored with, on
+    /// every binding tier alike, without uploading.
     fn validate(
         device: &wgpu::Device,
         materials: &[AuthoredMaterial],
         images: &[Image],
     ) -> Result<(), SceneError> {
         for material in materials {
-            for (index, _) in maps(material) {
-                if let Some(index) = index {
+            for map in MaterialMap::ALL {
+                if let Some(index) = authored(material, map) {
                     textures::validate(device, images.get(index).ok_or(SceneError::MissingImage)?)?;
                 }
             }
@@ -222,14 +202,15 @@ impl Materials {
         images: &[Image],
     ) -> Result<Vec<MaterialId>, SceneError> {
         Self::validate(device, materials, images)?;
-        // How each image is sampled: as colour, as data.
+        let in_effect: Vec<_> = materials
+            .iter()
+            .map(|material| InEffect::of(material, self.groups.tier))
+            .collect();
+        // How each image a map in effect samples is sampled: as colour, as
+        // data.
         let mut uses = vec![[false; 2]; images.len()];
-        for material in materials {
-            for (index, colour) in maps(material) {
-                if let Some(index) = index {
-                    uses[index][usize::from(!colour)] = true;
-                }
-            }
+        for (index, colour) in in_effect.iter().flat_map(InEffect::images) {
+            uses[index][usize::from(!colour)] = true;
         }
         for (image, &use_as) in images.iter().zip(&uses) {
             textures::validate_uses(device, image, use_as)?;
@@ -240,7 +221,7 @@ impl Materials {
             device,
             queue,
             rays,
-            (materials, images),
+            (materials, &in_effect, images),
             &uses,
             (&mut uploaded, &mut added),
         );
@@ -258,13 +239,13 @@ impl Materials {
     }
 
     /// Uploads the used images into `uploaded`, then adds each material
-    /// into `added`, stopping at the first failure.
+    /// with its maps in effect into `added`, stopping at the first failure.
     fn upload(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         rays: &mut SceneRays,
-        (materials, images): (&[AuthoredMaterial], &[Image]),
+        (materials, in_effect, images): (&[AuthoredMaterial], &[InEffect], &[Image]),
         uses: &[[bool; 2]],
         (uploaded, added): (&mut [Option<usize>], &mut Vec<MaterialId>),
     ) -> Result<(), SceneError> {
@@ -273,39 +254,29 @@ impl Materials {
                 uploaded[index] = Some(self.textures.add(device, queue, rays, image, use_as)?);
             }
         }
-        for material in materials {
-            added.push(self.add_one(device, queue, rays, material, uploaded)?);
+        for (material, &maps) in materials.iter().zip(in_effect) {
+            let maps = maps.map(|index| uploaded[index].expect("a map in effect is uploaded"));
+            added.push(self.add_one(device, queue, rays, material, maps)?);
         }
         Ok(())
     }
 
+    /// Adds `material` with `maps`, its maps in effect as texture indices.
     fn add_one(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         rays: &mut SceneRays,
         material: &AuthoredMaterial,
-        uploaded: &[Option<usize>],
+        maps: InEffect,
     ) -> Result<MaterialId, SceneError> {
-        let texture = |index: Option<usize>| index.map(|index| uploaded[index].unwrap());
-        let ray_word = |index: Option<usize>| {
-            texture(index).map_or(0, |texture| self.textures.get(texture).ray.start)
-        };
         let values = SurfaceMaterial::authored(material);
-        let map_bits = authored_maps(material);
-        let uniform = MaterialUniform::new(&values, map_bits);
+        let uniform = MaterialUniform::new(&values, maps.maps());
         let record = rays.add_material(
             device,
             queue,
             &uniform,
-            MaterialTextures {
-                base: ray_word(material.base_texture),
-                metallic_roughness: ray_word(material.mr_texture),
-                emission: ray_word(material.emissive_texture),
-                normal: ray_word(material.normal_texture),
-                bump: ray_word(material.bump_texture),
-                anisotropy: ray_word(material.anisotropy_texture),
-            },
+            maps.ray_textures(|texture| self.textures.get(texture).ray.start),
             material.wrap,
         )?;
         let values_buffer = buffer(
@@ -321,21 +292,13 @@ impl Materials {
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         let bound = Bound {
-            base: texture(material.base_texture),
-            emission: texture(material.emissive_texture),
-            metallic_roughness: texture(material.mr_texture),
-            normal: texture(material.normal_texture),
-            bump: texture(material.bump_texture),
-            anisotropy: texture(material.anisotropy_texture),
+            maps,
             wrap: material.wrap,
         };
         let group = self
             .groups
             .group(device, &self.textures, &bound, &values_buffer, &baked);
-        let mut distinct: Vec<usize> = maps(material)
-            .into_iter()
-            .filter_map(|(index, _)| texture(index))
-            .collect();
+        let mut distinct: Vec<usize> = maps.images().map(|(texture, _)| texture).collect();
         distinct.sort_unstable();
         distinct.dedup();
         for &texture in &distinct {
@@ -344,7 +307,7 @@ impl Materials {
         self.count(values.alpha, uniform.surface_moves(), 1);
         Ok(self.slots.insert(Material {
             values,
-            maps: map_bits,
+            maps: authored_maps(material),
             group,
             bound,
             buffer: values_buffer,
@@ -524,6 +487,9 @@ impl Scene {
 }
 
 mod group;
+pub(crate) mod maps;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod normal_layer_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tier_tests;
 mod validate;

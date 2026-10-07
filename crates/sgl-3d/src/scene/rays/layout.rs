@@ -135,6 +135,10 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MATERIAL_NORMAL_LAYERS",
             material(offset_of!(MaterialUniform, normal_layers)),
         ),
+        (
+            "SCENE_MATERIAL_MAPS",
+            material(offset_of!(MaterialUniform, maps)),
+        ),
         ("SCENE_NORMAL_LAYER_WORDS", size_of::<NormalLayerUniform>()),
         (
             "SCENE_NORMAL_LAYER_CYCLES",

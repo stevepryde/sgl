@@ -20,7 +20,7 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
  if material.values.anisotropy_strength<=0. && (dot(du,du)==0. || dot(dv,dv)==0.) {
   return n;
  }
- if normal_maps_enabled && (material.values.flags&MATERIAL_NORMAL_MAP)!=0u {
+ if normal_maps_enabled && (material.values.maps&MATERIAL_MAP_NORMAL)!=0u {
   // The dual UV frame must retain the signed UV Jacobian. Its orientation
   // is measured against the authored geometric normal, not the back-flipped
   // lighting normal. This is the glTF tangent.w / mirrored-UV handedness;
@@ -47,7 +47,7 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
  }
  // Preserve MaterialNode.NORMAL's authored-map precedence even when the
  // diagnostic disables normal-map evaluation; the bump map remains unselected.
- if (material.values.flags&MATERIAL_NORMAL_MAP)==0u && bump_maps_enabled && (material.values.flags&MATERIAL_BUMP_MAP)!=0u {
+ if (material.values.maps&MATERIAL_MAP_NORMAL)==0u && bump_maps_enabled && (material.values.maps&MATERIAL_MAP_BUMP)!=0u {
   // One authored texel on each UV axis gives the bump surface gradient;
   // this is not a fabricated screen-space dpdx/dpdy in a compute invocation.
   let step=1./vec2<f32>(scene_texture_size(material.textures[SCENE_TEXTURE_BUMP]));
@@ -87,7 +87,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  let n=decaled.normal;
  var anisotropy=vec4(0.);
  if material.values.anisotropy_strength>0. {
-  anisotropy=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),material.values.anisotropy_strength,material.values.anisotropy_rotation,(material.values.flags&MATERIAL_ANISOTROPY_MAP)!=0u,scene_sample_texture(material.textures[SCENE_TEXTURE_ANISOTROPY],hit.uv,material.wrap,false).rgb);
+  anisotropy=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),material.values.anisotropy_strength,material.values.anisotropy_rotation,(material.values.maps&MATERIAL_MAP_ANISOTROPY)!=0u,scene_sample_texture(material.textures[SCENE_TEXTURE_ANISOTROPY],hit.uv,material.wrap,false).rgb);
  }
  var s:Surface;
  s.position=hit.position;

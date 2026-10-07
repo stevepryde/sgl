@@ -1,4 +1,7 @@
-//! A device at S3D-1's floor runs every pipeline a frame builds.
+//! A device at S3D-1's floor runs every pipeline a frame builds on the Basic
+//! binding tier, and a device at the Extended tier's threshold on that tier.
+use crate::asset::{Asset, Image};
+use crate::graphics_device::BindingTier;
 use crate::renderer::Renderer;
 use crate::settings::{self, DynamicGiQuality, Settings};
 use crate::shading::gbuffer;
@@ -10,6 +13,9 @@ use glam::{Mat4, Vec3};
 
 /// S3D-1's floor of sampled textures per shader stage.
 const SAMPLED_TEXTURES: u32 = 21;
+/// The sampled textures per shader stage from which S3D-1 gives a device
+/// the Extended binding tier.
+const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
 /// S3D-1's floor of storage buffers per shader stage, and wgpu's default of
 /// storage textures, which the stages that write the most bind (the
 /// world-space reflection classification, the ray-traced shadow trace,
@@ -17,25 +23,55 @@ const SAMPLED_TEXTURES: u32 = 21;
 const STORAGE_BUFFERS: u32 = 8;
 const STORAGE_TEXTURES: u32 = 4;
 
-// Plausible defect: a change binds another sampled texture, storage buffer
+// Plausible defects: a change binds another sampled texture, storage buffer
 // or storage texture to a stage (lit group 0 and group 1 hold the storage
 // buffers' floor already; a material; a stage's own group, such as a ray
-// list passed as a storage buffer beside them) past the floor S3D-1 states, so
-// a device that offers exactly that floor fails to create a pipeline though
-// the spec, the README and the docs promise it runs SGL3D. The oracle is
-// S3D-1's floor and wgpu's validation of every pipeline layout against the
-// device's limits: frames that build the heaviest pipelines (blended
-// receivers of screen-space reflections, world-space reflections, dynamic
-// GI's rays over the irradiance volume, ambient occlusion, fog and TAA) on a
-// device with the adapter's limits but that floor raise no validation
-// error.
+// list passed as a storage buffer beside them) past the floor S3D-1 states,
+// so a device that offers exactly that floor fails to create a pipeline
+// though the spec, the README and the docs promise it runs SGL3D; or the
+// device takes the wrong binding tier, or composes an Extended binding
+// below 48. The oracle is S3D-1's floor and wgpu's validation of every
+// pipeline layout against the device's limits: frames that build the
+// heaviest pipelines (blended receivers of screen-space reflections that
+// carry every material map, world-space reflections, dynamic GI's rays over
+// the irradiance volume, ambient occlusion, fog and TAA) on a device with
+// the adapter's limits but that floor raise no validation error, and the
+// device reports the Basic tier.
 #[test]
 fn a_device_at_the_binding_floor_runs_every_pipeline() {
-    let Some(adapter) = test_support::adapter() else {
-        return;
-    };
+    if let Some(tier) = heaviest_frame(SAMPLED_TEXTURES) {
+        assert_eq!(tier, BindingTier::Basic);
+    }
+}
+
+// Plausible defects: the tier is chosen from the wrong limit, with `>` for
+// `>=`, or from a threshold above 48, so a device S3D-1 gives every binding
+// takes the Basic tier; or the tier does not reach one of the scene and the
+// renderer, which then build group 2 to different layouts, so the draw of a
+// material binds a group its pipeline's layout does not take. The oracle is
+// S3D-1's threshold and wgpu's validation: on a device at exactly 48
+// sampled textures a stage the same frame raises no validation error and
+// the device reports the Extended tier.
+#[test]
+fn a_device_at_the_extended_threshold_binds_the_extended_tier() {
+    if let Some(tier) = heaviest_frame(EXTENDED_SAMPLED_TEXTURES) {
+        assert_eq!(tier, BindingTier::Extended);
+    }
+}
+
+/// The binding tier of a device with the adapter's limits but
+/// `sampled_textures` sampled textures and the floor's storage buffers and
+/// textures a stage, after it draws two frames of the heaviest pipelines
+/// with no validation error; none without a GPU, or where the adapter
+/// offers fewer sampled textures.
+fn heaviest_frame(sampled_textures: u32) -> Option<BindingTier> {
+    let adapter = test_support::adapter()?;
     let mut limits = crate::graphics_device::limits(&adapter);
-    limits.max_sampled_textures_per_shader_stage = SAMPLED_TEXTURES;
+    if limits.max_sampled_textures_per_shader_stage < sampled_textures {
+        eprintln!("skipping: the adapter binds fewer than {sampled_textures} sampled textures");
+        return None;
+    }
+    limits.max_sampled_textures_per_shader_stage = sampled_textures;
     limits.max_storage_buffers_per_shader_stage = STORAGE_BUFFERS;
     limits.max_storage_textures_per_shader_stage = STORAGE_TEXTURES;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -60,12 +96,7 @@ fn a_device_at_the_binding_floor_runs_every_pipeline() {
     let wall = scene
         .add_asset(&device, &queue, test_support::cube())
         .unwrap();
-    let mut glass = test_support::cube();
-    glass.materials[0].alpha = AlphaMode::Blend {
-        receives_screen_space_reflections: true,
-    };
-    glass.materials[0].base[3] = 0.5;
-    let glass = scene.add_asset(&device, &queue, glass).unwrap();
+    let glass = scene.add_asset(&device, &queue, every_map_glass()).unwrap();
     for (model, z, mobility) in [
         (wall.model, -4., Mobility::Static),
         (glass.model, -2., Mobility::Moving),
@@ -128,4 +159,35 @@ fn a_device_at_the_binding_floor_runs_every_pipeline() {
     if let Some(error) = pollster::block_on(validation.pop()) {
         panic!("{error}");
     }
+    Some(renderer.binding_tier())
+}
+
+/// A blended receiver of screen-space reflections carrying every map a
+/// material takes, each its own image: base, metallic-roughness with its
+/// occlusion packed, emission, normal, bump and anisotropy, on a cube with
+/// authored tangents, which anisotropy needs.
+fn every_map_glass() -> Asset {
+    let mut glass = test_support::cube();
+    for vertex in &mut glass.meshes[0].vertices {
+        let tangent = Vec3::from_array(vertex.normal).any_orthonormal_vector();
+        vertex.tangent = tangent.extend(1.).to_array();
+    }
+    glass.images = (0..6)
+        .map(|_| Image::Rgba8(image::RgbaImage::from_pixel(4, 4, image::Rgba([200; 4]))))
+        .collect();
+    let material = &mut glass.materials[0];
+    material.alpha = AlphaMode::Blend {
+        receives_screen_space_reflections: true,
+    };
+    material.base[3] = 0.5;
+    material.base_texture = Some(0);
+    material.mr_texture = Some(1);
+    material.occlusion_texture = Some(1);
+    material.emissive_texture = Some(2);
+    material.normal_texture = Some(3);
+    material.bump_texture = Some(4);
+    material.bump_scale = 1.;
+    material.anisotropy_texture = Some(5);
+    material.anisotropy_strength = 0.5;
+    glass
 }

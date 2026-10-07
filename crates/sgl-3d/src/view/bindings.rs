@@ -80,7 +80,8 @@ pub(crate) struct FrameBindings {
     pub shadow: wgpu::BindGroupLayout,
     /// Group 1's layout (`shading::bind::scene`).
     pub scene: wgpu::BindGroupLayout,
-    /// Group 2's layout (`shading::bind::material`).
+    /// Group 2's layout of the device's binding tier
+    /// (`shading::bind::material`).
     pub material: wgpu::BindGroupLayout,
     /// The blended pipelines' group 3 (`shading::bind::blended`), which the
     /// transparent stage binds.
@@ -112,10 +113,12 @@ pub(crate) struct FrameBindings {
 impl FrameBindings {
     /// Group 0 for `views` over the lit layout `lit`
     /// (`shading::bind::lit`), binding `shadow_maps`, `fog` and the
-    /// `dynamic_gi` probes until a frame refreshes them.
+    /// `dynamic_gi` probes until a frame refreshes them, and the other
+    /// groups' layouts, group 2's of binding tier `tier`.
     pub fn new(
         device: &wgpu::Device,
         lit: wgpu::BindGroupLayout,
+        tier: shading::bind::BindingTier,
         views: &FrameViews,
         shadow_maps: ShadowMaps,
         fog: FogVolume<'_>,
@@ -143,7 +146,7 @@ impl FrameBindings {
             unlit: shading::bind::unlit(device),
             shadow,
             scene: shading::bind::scene(device),
-            material: shading::bind::material(device),
+            material: shading::bind::material(device, tier),
             blended: shading::bind::blended(device),
             shadow_mask: shading::bind::shadow_mask(device),
             caster_positions: shading::bind::caster_positions(device),
