@@ -14,7 +14,7 @@ pub(crate) enum GeometryPass {
     /// Anisotropy over the G-buffer's depth, on devices whose attachment
     /// budget leaves it out of `GBuffer`.
     GBufferAnisotropy,
-    /// Lit colour, its ambient diffuse, motion and source identity over the
+    /// Lit colour, its ambient light, motion and source identity over the
     /// G-buffer's depth; with `shadow_mask`, the camera's surfaces take the
     /// lights the ray-traced shadow mask holds from it, bound at group 3
     /// (`shading::bind::shadow_mask`).

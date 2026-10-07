@@ -290,8 +290,10 @@ Environment and probe specular always apply. On top of them:
 ## Image quality and post-processing
 
 - **Ambient occlusion**: XeGTAO after opaque shading, which occludes ambient
-  diffuse and environment and probe reflections; turning it on draws no
-  geometry again. [Ambient occlusion](../README.md#ambient-occlusion).
+  light (its diffuse share, and the specular multiple scattering a rough
+  metal reflects most of) and environment and probe reflections; turning it
+  on draws no geometry again.
+  [Ambient occlusion](../README.md#ambient-occlusion).
 - **Antialiasing**: SGL's DiligentFX-derived TAA in `sgl-post-fx`, SMAA at
   SMAA 2.8's Low, Medium, High or Ultra preset, or AMD FSR2, which also
   upscales, with RCAS sharpening the game can turn off or set.

@@ -1,5 +1,5 @@
 // Source completion: each opaque receiver's ambient occlusion of its ambient
-// diffuse, and its environment and probe specular, which the forward pass
+// light, and its environment and probe specular, which the forward pass
 // excludes, as probe captures do; and the composition that blends a
 // screen-space method's reflections over it.
 
@@ -75,21 +75,35 @@ struct CompletedSource {
  color:vec4<f32>,
  incident:vec4<f32>,
 }
-// A screen-space method's traced lobe takes no environment specular here; the
-// method's composition adds it by confidence. Incident radiance includes both
-// lobes so another receiver sees the fully lit source, independently of tracing.
-// `visibility` is the receiver's (source_visibility) and `sky_visibility`
-// the irradiance volume's a(n) at it, which the ambient target's alpha holds
-// (shading/gbuffer.wgsl).
-fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotropy:vec4<f32>,z:f32,id:vec2<u32>,size:vec2<u32>,camera:SourceCamera,traced:f32,visibility:f32,sky_visibility:f32)->CompletedSource {
- var incoming=incoming_value;
- var incident=incoming_value;
+// A lit receiver's ambient light (gbuffer_ambient) loses what its
+// `visibility` (source_visibility) hides: its diffuse share linearly, its
+// multiple scattering by its base lobe's specular occlusion
+// (occlusion_ambient). A screen-space method's traced lobe takes no
+// environment specular here; the method's composition adds it by
+// confidence. Incident radiance includes both lobes so another receiver
+// sees the fully lit source, independently of tracing. The ambient light's
+// `sky_visibility` is the irradiance volume's a(n) at it. An opaque
+// receiver's alpha is 1, as glTF's OPAQUE and MASK modes ignore its
+// material's, where lit colour's alpha held its multiple scattering's share;
+// the sky keeps `alpha`.
+fn complete_source(scene:vec3<f32>,alpha:f32,ambient:GBufferAmbient,normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotropy:vec4<f32>,z:f32,id:vec2<u32>,size:vec2<u32>,camera:SourceCamera,traced:f32,visibility:f32)->CompletedSource {
+ var incoming=scene;
+ var incident=scene;
+ let sky_visibility=ambient.sky_visibility;
+ var completed_alpha=alpha;
  // The sky lies beyond the fog volume.
  var view_depth=3.4e38;
  if z>0. {
+  completed_alpha=1.;
   let world=source_world(z,id,size,camera);
   if gbuffer_lit(f0) {
    let lobes=source_lobes(normals,material,f0,anisotropy,world,camera);
+   if visibility<1. {
+    let base=lobes[SPECULAR_BASE];
+    let multi_occlusion=occlusion_multiscatter(base.nv,base.roughness,visibility,f0.rgb);
+    incoming=occlusion_ambient(incoming,ambient.diffuse,ambient.multi,visibility,multi_occlusion);
+    incident=incoming;
+   }
    let traced_lobe=specular_traced_lobe(material.coat);
    for(var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
     if lobe==SPECULAR_COAT && material.coat<=0. {
@@ -112,7 +126,7 @@ fn complete_source(incoming_value:vec3<f32>,alpha:f32,normals:vec4<f32>,material
   // (src/LICENSE-godot.txt), as one mix of the fog with no fog.
   fog=mix(vec4(0.,0.,0.,1.),fog,camera.fog.z);
  }
- return CompletedSource(vec4(fog_composite(incoming,fog),alpha),vec4(fog_composite(incident,fog),alpha));
+ return CompletedSource(vec4(fog_composite(incoming,fog),completed_alpha),vec4(fog_composite(incident,fog),completed_alpha));
 }
 
 @group(0) @binding(0) var source_scene:texture_2d<f32>;
@@ -156,10 +170,11 @@ fn source_visibility(id:vec2<u32>,f0:vec4<f32>)->f32 {
  return occlusion_visibility(gbuffer_occlusion(f0),source_ambient_visibility(id));
 }
 @group(0) @binding(14) var incident_output:texture_storage_2d<rgba16float,write>;
-// The ambient diffuse within source_scene before occlusion, and in alpha the
-// irradiance volume's sky visibility (shading/gbuffer.wgsl). Completion takes
-// the share of each lit receiver's ambient diffuse that its visibility hides
-// out of the beauty (occlusion_diffuse), before adding specular.
+// The ambient light within source_scene before occlusion, and in alpha the
+// irradiance volume's sky visibility; source_scene's alpha holds its
+// multiple scattering's share (shading/gbuffer.wgsl). Completion takes what
+// each lit receiver's visibility hides out of the beauty
+// (complete_source), before adding specular.
 @group(0) @binding(24) var source_ambient:texture_2d<f32>;
 // False writes only the composite: no screen-space method runs to read the
 // incident radiance, and incident_output is a stand-in (reflections/source.rs).
@@ -176,24 +191,19 @@ override incident_radiance_enabled:bool=true;
  }
  let p=vec2<i32>(id.xy);
  let c=textureLoad(source_scene,p,0);
- var incoming=max(vec3(0.),c.rgb);
  let z=textureLoad(source_depth,p,0);
  let f0=textureLoad(source_f0,p,0);
  var normals=vec4(0.);
  var material=gbuffer_material(vec4(0.));
+ var ambient=GBufferAmbient(vec3(0.),vec3(0.),1.);
  var visibility=1.;
- var sky_visibility=1.;
  if z>0. && gbuffer_lit(f0) {
   normals=textureLoad(source_normal,p,0);
   material=gbuffer_material(textureLoad(receiver_material,p,0));
-  let ambient=textureLoad(source_ambient,p,0);
-  sky_visibility=ambient.a;
+  ambient=gbuffer_ambient(textureLoad(source_ambient,p,0),c.a);
   visibility=source_visibility(id.xy,f0);
-  if visibility<1. {
-   incoming=occlusion_diffuse(incoming,ambient.rgb,visibility);
-  }
  }
- let completed=complete_source(incoming,c.a,normals,material,f0,textureLoad(source_anisotropy,p,0),z,id.xy,textureDimensions(source_output),source_camera,env.traced,visibility,sky_visibility);
+ let completed=complete_source(max(vec3(0.),c.rgb),c.a,ambient,normals,material,f0,textureLoad(source_anisotropy,p,0),z,id.xy,textureDimensions(source_output),source_camera,env.traced,visibility);
  textureStore(source_output,p,completed.color);
  if incident_radiance_enabled {
   textureStore(incident_output,p,completed.incident);
@@ -245,7 +255,7 @@ override incident_radiance_enabled:bool=true;
  let traced_lobe=specular_traced_lobe(material.coat);
  let lobe=lobes[traced_lobe];
  if specular_traces(lobe.roughness,env.traced) {
-  let sky_visibility=textureLoad(source_ambient,p,0).a;
+  let sky_visibility=gbuffer_sky_visibility(textureLoad(source_ambient,p,0));
   let environment=source_occluded_environment(world,lobe,traced_lobe==SPECULAR_COAT,gbuffer_environment_scale(anisotropy),source_probes(id),visibility,sky_visibility,f0.rgb);
   let fallback=world_hit.rgb+environment*(1.-world_hit.a);
   let fade=specular_trace_fade(lobe.roughness,sqrt(env.traced),env.fade);
