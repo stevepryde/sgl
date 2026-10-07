@@ -8,6 +8,9 @@
 override instance_emission_enabled:bool=true;
 override normal_maps_enabled:bool=true;
 override bump_maps_enabled:bool=true;
+// Whether the scene holds an iridescent film (LitConstants::films): where
+// it does not, surface_f0s compiles its evaluation out.
+override films_enabled:bool=true;
 struct Surface {
  position:vec3<f32>,
  // Unit direction toward the viewer: the camera for a fragment, back along
@@ -159,7 +162,7 @@ struct SurfaceF0 {
 }
 fn surface_f0s(surface:Surface)->SurfaceF0 {
  var f=SurfaceF0(surface.dielectric_f0,surface.base.rgb,0.,1.);
- if surface.iridescence<=0. || surface.iridescence_thickness<=0. {
+ if !films_enabled || surface.iridescence<=0. || surface.iridescence_thickness<=0. {
   return f;
  }
  let nv=specular_nv(surface.normal,surface.view);

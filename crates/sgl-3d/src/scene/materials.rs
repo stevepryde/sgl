@@ -93,11 +93,13 @@ pub(crate) struct Materials {
     pub casters: u64,
     /// How many of its materials are masked, how many blended and how many
     /// of those receive screen-space reflections, and how many opaque or
-    /// masked ones' surfaces move (`Material::surface_moves`).
+    /// masked ones' surfaces move (`Material::surface_moves`), and how many
+    /// have an iridescent film.
     masked: usize,
     blended: usize,
     receivers: usize,
     moving: usize,
+    films: usize,
     textures: Textures,
     groups: Groups,
 }
@@ -111,6 +113,7 @@ impl Materials {
             blended: 0,
             receivers: 0,
             moving: 0,
+            films: 0,
             textures: Textures::default(),
             groups: Groups::new(device, queue),
         }
@@ -137,12 +140,21 @@ impl Materials {
         self.moving > 0
     }
 
-    /// Counts `by` more materials of alpha mode `alpha` whose surface
-    /// `moves` or not.
-    fn count(&mut self, alpha: AlphaMode, moves: bool, by: isize) {
+    /// Whether a material has an iridescent film: the lit pipelines
+    /// evaluate films only while one does (`LitConstants::films`).
+    pub fn holds_films(&self) -> bool {
+        self.films > 0
+    }
+
+    /// Counts `by` more materials of `values` whose surface `moves` or not.
+    fn count(&mut self, values: &SurfaceMaterial, moves: bool, by: isize) {
         let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
+        let alpha = values.alpha;
         if moves && !matches!(alpha, AlphaMode::Blend { .. }) {
             add(&mut self.moving);
+        }
+        if values.iridescence > 0. {
+            add(&mut self.films);
         }
         match alpha {
             AlphaMode::Opaque => {}
@@ -308,7 +320,7 @@ impl Materials {
         for &texture in &distinct {
             self.textures.use_texture(texture);
         }
-        self.count(values.alpha, uniform.surface_moves(), 1);
+        self.count(&values, uniform.surface_moves(), 1);
         Ok(self.slots.insert(Material {
             values,
             maps: authored_maps(material),
@@ -366,13 +378,13 @@ impl Materials {
             if material.values.caster_values() != values.caster_values() {
                 self.casters = super::next_generation();
             }
-            let old = (material.values.alpha, material.surface_moves());
+            let old = (material.values, material.surface_moves());
             material.values = values;
             let uniform = material.uniform();
             crate::counters::write_buffer(queue, &material.buffer, 0, bytemuck::bytes_of(&uniform));
             rays.write_material(queue, material.word(), &uniform);
-            self.count(old.0, old.1, -1);
-            self.count(values.alpha, uniform.surface_moves(), 1);
+            self.count(&old.0, old.1, -1);
+            self.count(&values, uniform.surface_moves(), 1);
         }
         Ok(())
     }
@@ -394,7 +406,7 @@ impl Materials {
             return Err(SceneError::MaterialInUse);
         }
         let material = self.slots.remove(id).unwrap();
-        self.count(material.values.alpha, material.surface_moves(), -1);
+        self.count(&material.values, material.surface_moves(), -1);
         rays.free(material.record);
         for texture in material.textures {
             self.textures.release(rays, texture);
