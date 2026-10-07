@@ -70,7 +70,7 @@ APIs. Every consumer-facing update carries [changelog and migration notes](CHANG
 that agents can follow.
 
 For a game that needs stability, pin an exact version such as
-`sgl-3d = "=0.2.1"` and commit `Cargo.lock` (or pin a full Git commit `rev`).
+`sgl-3d = "=0.3.0"` and commit `Cargo.lock` (or pin a full Git commit `rev`).
 Upgrade deliberately using the [agent update workflow](docs/README.md#updating-a-game).
 
 ## Try it

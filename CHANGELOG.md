@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.3.0 — 2026-10-07
+
+- Move every SGL crate to `0.3.0` together. Breaking: update `Asset`,
+  material and `AlphaMode::Blend` literals and exhaustive `SceneError`
+  matches as the entries below say.
 - `sgl-3d` glTF loading: an unsupported extension listed only in
   `extensionsUsed` (an anisotropy texture's extensions included) no longer
   fails the load; it is left out and listed in the new `Asset::ignored`

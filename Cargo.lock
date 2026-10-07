@@ -2126,7 +2126,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-2d"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "fontdue",
@@ -2150,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-3d"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bcdec_rs",
  "bytemuck",
@@ -2179,7 +2179,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "fastrand",
@@ -2190,7 +2190,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-direct-game"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "console_error_panic_hook",
  "sgl-2d",
@@ -2201,7 +2201,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-input"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "block2 0.6.2",
  "gilrs",
@@ -2212,7 +2212,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-net"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "getrandom 0.4.3",
@@ -2228,7 +2228,7 @@ dependencies = [
 
 [[package]]
 name = "sgl-post-fx"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "pollster",
