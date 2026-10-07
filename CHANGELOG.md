@@ -85,30 +85,24 @@ docs and specs the entry links.
 - `sgl-3d` `DiagnosticTarget::Composite`'s alpha is 1 on opaque surfaces
   (was their base colour's alpha); the presented frame's is 1, as before.
   No game-code change.
-- `sgl-3d` `KHR_materials_clearcoat` maps, a load error before: the
-  clearcoat, clearcoat roughness and clearcoat normal maps load and shade
-  on the `Extended` binding tier; a clearcoat normal map tilts the coat on
-  the base map's frame (the coat followed the geometry normal only). New
-  `asset::Material::clearcoat_texture`, `coat_roughness_texture`,
-  `coat_normal_texture` (`None`) and `coat_normal_scale` (1), and
-  `SurfaceMaterial::coat_normal_scale`. Migration: exhaustive material
-  literals add the fields or take `..Default::default()`.
-- `sgl-3d` `KHR_materials_iridescence`, a load error when required and left
-  out when used before: a thin film over the base tints its specular and
-  dims its diffuse. New `asset::Material::iridescence` (0),
-  `iridescence_ior` (1.3), `iridescence_thickness` (`[100., 400.]` nm),
-  `iridescence_texture` and `iridescence_thickness_texture` (`None`), and
-  the first three on `SurfaceMaterial`. Migration: as above.
-- `sgl-3d` `Scene::add_materials` and `set_material` refuse an iridescence
-  outside 0..=1, a film IOR below 1 or a negative thickness, any not
-  finite (new `SceneError::InvalidIridescence`). Migration: exhaustive
-  `SceneError` matches add the variant.
-- `sgl-3d` on the `Basic` binding tier the clearcoat and iridescence maps
-  give way to their factors, the clearcoat normal map to the geometry
-  normal. No game-code change.
-- `sgl-3d` glTF loading refuses a primitive without `TEXCOORD_0` whose
-  material has an emissive, normal or bump map (it loaded and read one
-  texel). Migration: export UV0 for such meshes.
+- `sgl-3d` `KHR_materials_clearcoat` textures: load error → loaded and
+  shaded on the `Extended` tier, the clearcoat normal map tilting the coat.
+  New `asset::Material::clearcoat_texture`, `coat_roughness_texture`,
+  `coat_normal_texture` (`None`), `coat_normal_scale` (1) and
+  `SurfaceMaterial::coat_normal_scale`. Migration: literals add them or
+  `..Default::default()`.
+- `sgl-3d` `KHR_materials_iridescence`: unsupported → a thin film. New
+  `asset::Material::iridescence` (0), `iridescence_ior` (1.3),
+  `iridescence_thickness` (`[100., 400.]`), `iridescence_texture`,
+  `iridescence_thickness_texture` (`None`), the first three on
+  `SurfaceMaterial`. Migration: as above.
+- `sgl-3d` `Scene::add_materials`/`set_material`: new
+  `SceneError::InvalidIridescence` for a film outside its bounds.
+  Migration: exhaustive `SceneError` matches add it.
+- `sgl-3d` `Basic` tier: clearcoat and iridescence maps fall back to their
+  factors, the clearcoat normal to the geometry normal. No game-code change.
+- `sgl-3d` glTF: a primitive without `TEXCOORD_0` whose material has an
+  emissive, normal or bump map loaded → refused. Migration: export UV0.
 
 ## 0.2.1 — 2026-10-07
 

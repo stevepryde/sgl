@@ -40,14 +40,19 @@ fn flat(texel: [u8; 4]) -> Image {
 
 // Plausible defects: a map read from another channel (three.js's node path
 // takes clearcoat roughness from red) or another map's binding, its factor
-// dropped, or one path (raster or ray hit) leaving a map out; the film's
-// strength or thickness map ignored, or its thickness not mixed from the
-// thinnest to the thickest. The oracle is KHR_materials_clearcoat's and
+// dropped, or one path (raster or ray hit) leaving a map out; the coat's
+// normal not reaching the surface or the G-buffer's normal.BA (the geometry
+// normal written there, or the base normal), or not framed by the UVs; the
+// film's strength or thickness map ignored, or its thickness not mixed from
+// the thinnest to the thickest. The oracle is KHR_materials_clearcoat's and
 // KHR_materials_iridescence's definitions: clearcoat is the factor times the
 // clearcoat map's red channel, its roughness the factor times the roughness
 // map's green, the film's strength the factor times the iridescence map's
 // red and its thickness the thinnest mixed toward the thickest by the
-// thickness map's green; at normal incidence the F0 the G-buffer records
+// thickness map's green; the coat's normal is the clearcoat normal map's
+// texel, its X and Y at its scale, on the square's tangent frame (+U along
+// +X, +V along -Y, the normal +Z: glTF's textureInfo axes), while the base
+// keeps the geometry normal; at normal incidence the F0 the G-buffer records
 // (and a ray hit's surface_f0) is the film's reflectance, the exact
 // thin-film sum within its bound (iridescence_tests). Each map's other
 // channels are zero, so another channel or map reads something else.
@@ -60,12 +65,14 @@ fn clearcoat_and_iridescence_maps_scale_their_factors() {
     let mut asset = test_support::cube();
     asset.meshes = vec![square()];
     // Clearcoat 153/255 = 0.6 in red; its roughness 51/255 = 0.2 in green;
-    // the film's strength 1 in red; its thickness 102/255 = 0.4 in green.
+    // the film's strength 1 in red; its thickness 102/255 = 0.4 in green;
+    // a clearcoat normal texel.
     asset.images = vec![
         flat([153, 0, 0, 255]),
         flat([0, 51, 0, 255]),
         flat([255, 0, 0, 255]),
         flat([0, 102, 0, 255]),
+        flat([64, 192, 220, 255]),
     ];
     let material = &mut asset.materials[0];
     material.base = [1.; 4];
@@ -80,9 +87,13 @@ fn clearcoat_and_iridescence_maps_scale_their_factors() {
     material.iridescence_thickness = [200., 700.];
     material.iridescence_texture = Some(2);
     material.iridescence_thickness_texture = Some(3);
+    material.coat_normal_texture = Some(4);
+    material.coat_normal_scale = 0.5;
     test_support::add_static(&device, &queue, &mut scene, asset);
     let coat = 0.5 * 0.6;
     let coat_roughness = 0.8 * 0.2;
+    let tangent = Vec3::new(64., 192., 220.) / 255. * 2. - Vec3::ONE;
+    let coat_normal = Vec3::new(tangent.x * 0.5, -tangent.y * 0.5, tangent.z).normalize();
     let film = thin_film(1.8, 1.5, 200. + 0.4 * 500., 1.);
 
     let projection = perspective(1., 1., 0.1);
@@ -118,6 +129,18 @@ fn clearcoat_and_iridescence_maps_scale_their_factors() {
         queue.submit([encoder.finish()]);
         let targets = renderer.targets();
         let materials = test_support::read(&device, &queue, targets.material.texture(), 8);
+        let normals = test_support::read(&device, &queue, targets.normal.texture(), 8);
+        let [base_x, base_y, coat_x, coat_y] =
+            [0, 2, 4, 6].map(|byte| test_support::half(&normals[at * 8 + byte..]));
+        let [expected_base, expected_coat] = [Vec3::Z, coat_normal].map(test_support::octahedral);
+        assert!(
+            (coat_x - expected_coat[0]).abs() < 3e-3
+                && (coat_y - expected_coat[1]).abs() < 3e-3
+                && (base_x - expected_base[0]).abs() < 3e-3
+                && (base_y - expected_base[1]).abs() < 3e-3,
+            "fused {fused}: normal.RGBA {:?}, expected base {expected_base:?} and coat {expected_coat:?}",
+            [base_x, base_y, coat_x, coat_y]
+        );
         let f0 = test_support::read(&device, &queue, targets.f0.texture(), 4);
         let recorded_coat_roughness = test_support::half(&materials[at * 8..]);
         let recorded_coat = test_support::half(&materials[at * 8 + 4..]);
@@ -151,6 +174,7 @@ fn clearcoat_and_iridescence_maps_scale_their_factors() {
  let s=ray_surface(hit,material,ray_base_color(hit,material),vec3(0.),vec3(0.,0.,1.),cluster_range(hit.position,vec2(0.)));
  output[0]=vec4(s.coat,s.coat_roughness,0.,0.);
  output[1]=vec4(surface_f0(s),0.);
+ output[2]=vec4(s.coat_normal,0.);
 }
 "#;
     let observed = test_support::observe_ray_hits(
@@ -161,12 +185,17 @@ fn clearcoat_and_iridescence_maps_scale_their_factors() {
         &input,
         &settings,
         observation,
-        2,
+        3,
     );
     let [hit_coat, hit_coat_roughness, ..] = observed[0];
     assert!(
         (hit_coat - coat).abs() < 1e-3 && (hit_coat_roughness - coat_roughness).abs() < 1e-3,
         "ray hit: coat {hit_coat} at roughness {hit_coat_roughness}, expected {coat} at {coat_roughness}"
+    );
+    let hit_coat_normal = Vec3::from_slice(&observed[2][..3]);
+    assert!(
+        hit_coat_normal.distance(coat_normal) < 2e-3,
+        "ray hit: coat normal {hit_coat_normal}, expected {coat_normal}"
     );
     for channel in 0..3 {
         assert!(
