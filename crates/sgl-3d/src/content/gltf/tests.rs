@@ -758,6 +758,7 @@ fn transmission_volume_and_dispersion_load_as_their_extensions_define() {
         serde_json::json!({"KHR_materials_volume": {"attenuationColor": [1.0, 1.2, 0.5]}}),
         serde_json::json!({"KHR_materials_volume": {"thicknessTexture": {"index": 1, "texCoord": 1}}}),
         serde_json::json!({"KHR_materials_dispersion": {"dispersion": -1}}),
+        serde_json::json!({"KHR_materials_volume": {"thicknessScale": 1}}),
     ] {
         assert!(read(refused.clone(), false).is_err(), "{refused} loaded");
     }

@@ -29,11 +29,18 @@
 fn transmission_eta(ior:f32)->f32 {
  return select(1./max(ior,1.),0.,ior==0.);
 }
+// The rotation-independent scale of `modelMatrix` on each axis, which takes
+// a volume's thickness, given in the mesh's units (KHR_materials_volume),
+// into the world's: the one owner of that scale, which every volume lobe
+// takes.
+fn transmission_model_scale(modelMatrix:mat4x4<f32>)->vec3<f32> {
+ return vec3(length(modelMatrix[0].xyz),length(modelMatrix[1].xyz),length(modelMatrix[2].xyz));
+}
 fn getVolumeTransmissionRay(n:vec3<f32>,v:vec3<f32>,thickness:f32,ior:f32,modelMatrix:mat4x4<f32>)->vec3<f32> {
  // Direction of refracted light.
  let refractionVector=refract(-v,normalize(n),transmission_eta(ior));
  // Compute rotation-independent scaling of the model matrix.
- let modelScale=vec3(length(modelMatrix[0].xyz),length(modelMatrix[1].xyz),length(modelMatrix[2].xyz));
+ let modelScale=transmission_model_scale(modelMatrix);
  // The thickness is specified in local space.
  return normalize(refractionVector)*thickness*modelScale;
 }
