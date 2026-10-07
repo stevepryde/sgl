@@ -676,3 +676,127 @@ fn a_capture_occludes_multiple_scattering_by_specular_occlusion() {
         "the capture holds {none} of {full} at visibility 0"
     );
 }
+
+/// The solid angle, seen from the origin, of the rectangle `[x0, x1]` x
+/// `[y0, y1]` in a plane at unit distance: the signed sum of its corners'
+/// quadrant areas, atan(x y / sqrt(1 + x^2 + y^2)) (Filament's
+/// `sphereQuadrantArea`). A cube texel's solid angle is the same over its
+/// corners on the face.
+fn rectangle_solid_angle([x0, x1]: [f64; 2], [y0, y1]: [f64; 2]) -> f64 {
+    let quadrant = |x: f64, y: f64| (x * y / (1. + x * x + y * y).sqrt()).atan();
+    quadrant(x1, y1) - quadrant(x0, y1) - quadrant(x1, y0) + quadrant(x0, y0)
+}
+
+// Defect: a probe face stores the sample at each texel's centre, so an
+// emitter thinner than a texel is stored either not at all or across the
+// whole texel at full radiance (#263). The oracle is geometric: an emissive
+// strip 0.6 texels wide and 8 tall at face size 128, facing the probe at
+// unit distance off the texel and sample grids, holds radiance L over its
+// analytic solid angle, so mip 0 must store L times that angle, summed as
+// each texel's radiance times its solid angle, less what the probe stores
+// with the strip dark. Each face renders at 2048 texels a side
+// (sgl3d-architecture.md, "A probe capture"), so each edge errs by at most
+// half a sample, 1/2048 of the face's half-width: the stored energy lies
+// between the strip shrunk and grown by that much on every side, about
+// +-10 %, with 1 % more for half precision and the uniform box's equal
+// weights within a texel. One sample per texel stores the strip 0 or 1
+// texel wide, 0 or 1.67 times its energy.
+#[test]
+fn a_capture_stores_a_sub_texel_emitter_at_its_solid_angle() {
+    use crate::asset::{CpuMesh, Vertex};
+    use crate::settings::Settings;
+    use crate::{Camera, FrameInput, Scene};
+    use glam::Mat4;
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    const FACE_SIZE: u32 = 128;
+    const RADIANCE: f32 = 4.;
+    // The face's half-width is 1 at unit distance.
+    let texel = 2. / f64::from(FACE_SIZE);
+    let x = [0.0213, 0.0213 + 0.6 * texel];
+    let y = [-0.0517, -0.0517 + 8. * texel];
+    let mut strip = crate::test_support::cube();
+    strip.meshes = vec![CpuMesh {
+        vertices: [[x[0], y[0]], [x[1], y[0]], [x[1], y[1]], [x[0], y[1]]]
+            .map(|[x, y]| Vertex {
+                tangent: [0.; 4],
+                lightmap_uv: [0.; 2],
+                lightmap_bounds: [0., 0., 1., 1.],
+                position: [x as f32, y as f32, -1.],
+                normal: [0., 0., 1.],
+                uv: [0.5; 2],
+                color: [1.; 4],
+            })
+            .to_vec(),
+        indices: vec![0, 1, 2, 0, 2, 3],
+        material: 0,
+        deformation: Default::default(),
+    }];
+    let material = &mut strip.materials[0];
+    material.base = [0., 0., 0., 1.];
+    material.metallic = 0.;
+    material.roughness = 1.;
+    material.double_sided = true;
+    let mut scene = Scene::new(&device, &queue);
+    let (ids, _) = crate::test_support::add_static(&device, &queue, &mut scene, strip);
+    let input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: Mat4::IDENTITY,
+        eye: Vec3::ZERO,
+    });
+    let settings = Settings::default();
+    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    // Each channel's stored energy, sum of radiance x solid angle over mip 0.
+    let mut energy = |emission: f32| -> [f64; 3] {
+        let mut values = scene.material(ids.materials[0]).unwrap();
+        values.emission = [emission; 3];
+        scene
+            .set_material(&queue, ids.materials[0], values)
+            .unwrap();
+        let radiance = renderer
+            .capture_specular_probe(
+                &device,
+                &queue,
+                &mut scene,
+                &input,
+                &settings,
+                Vec3::ZERO,
+                FACE_SIZE,
+            )
+            .unwrap();
+        let SpecularProbeTexels::Rgba16Float(texels) = radiance.texels else {
+            unreachable!("captures return RGBA16F")
+        };
+        let size = FACE_SIZE as usize;
+        let mut sums = [0.; 3];
+        for (index, texel) in texels[..6 * size * size * 4].chunks_exact(4).enumerate() {
+            let (column, row) = ((index % size) as f64, (index / size % size) as f64);
+            let solid_angle = rectangle_solid_angle(
+                [-1. + column * texel, -1. + (column + 1.) * texel],
+                [-1. + row * texel, -1. + (row + 1.) * texel],
+            );
+            for (sum, value) in sums.iter_mut().zip(texel) {
+                *sum += f64::from(crate::test_support::half(&value.to_le_bytes())) * solid_angle;
+            }
+        }
+        sums
+    };
+    let dark = energy(0.);
+    let lit = energy(RADIANCE);
+    let half_sample = 1. / 2048.;
+    let bound = |grow: f64| {
+        f64::from(RADIANCE)
+            * rectangle_solid_angle([x[0] - grow, x[1] + grow], [y[0] - grow, y[1] + grow])
+    };
+    let (least, most) = (bound(-half_sample) * 0.99, bound(half_sample) * 1.01);
+    for c in 0..3 {
+        let stored = lit[c] - dark[c];
+        assert!(
+            (least..=most).contains(&stored),
+            "channel {c}: the probe stores {stored} sr of the strip's radiance, \
+             expected {least}..{most} (exactly {})",
+            bound(0.)
+        );
+    }
+}

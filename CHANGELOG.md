@@ -15,6 +15,14 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Renderer::capture_specular_probe`: mip 0 held the one sample at
+  each texel's centre, so a sub-texel emitter was stored at whole-texel
+  energy or not at all; now each face renders at 2048 texels a side (or
+  `face_size`, if larger) and is box-averaged to `face_size`. Captures take
+  longer and use more memory, and fail in the browser before rendering. No
+  game-code changes; re-export baked specular probes to pick it up; old exports
+  still load.
+
 ## 0.3.0 — 2026-10-07
 
 - Move every SGL crate to `0.3.0` together. Breaking: update `Asset`,

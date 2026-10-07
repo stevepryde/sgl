@@ -953,7 +953,11 @@ For offline authoring, install the static instances' fixed-light atlases, then
 `renderer.capture_specular_probe(&device, &queue, &mut scene, &input, &settings,
 center, face_size)?` renders six faces of the static capture-visible instances
 and the reflection sky of `input`'s environment with `input`'s lights, and
-GGX-prefilters them with filtered importance sampling. It includes fixed
+GGX-prefilters them with filtered importance sampling. Each face renders at
+2048 texels a side (or `face_size`, if larger) in its own submission and is
+box-averaged to `face_size`, so mip 0 holds each texel's area-averaged
+radiance and an emitter thinner than a texel keeps its energy rather than
+filling the texel; a capture holds about 80 MB of targets while it runs. It includes fixed
 emission and the scene's lights (baked ones only on surfaces without baked
 lighting), with their static casters' shadows from the local-light atlas,
 and excludes moving instances, effects and atmospheric post; the camera is
@@ -2143,7 +2147,7 @@ not supported, since SGL3D needs compute.
   `FrameInput::frame_time_ms`; SGL3D reads no clock.
 - **No blocking readback.** `Renderer::capture_specular_probe` blocks for its
   readback, which WebGPU cannot: in the browser it fails with
-  `ProbeError::Readback`. Capture natively and load the baked probes. The
+  `ProbeError::Readback` before rendering. Capture natively and load the baked probes. The
   `diagnostics` feature's `diagnostics::read` also blocks and is native-only.
 
 `browser_smoke` (`examples/browser_smoke.rs`) is the browser lane's test and a
