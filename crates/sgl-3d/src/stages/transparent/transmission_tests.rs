@@ -488,3 +488,43 @@ fn the_frame_is_copied_only_where_a_transmissive_surface_shows() {
         "a frame that shows a transmissive surface did not copy the frame"
     );
 }
+
+// Plausible defects: a masked transmissive material, drawn with the blended
+// surfaces, keeps the texels it cuts out, or cuts out others. The oracle is
+// glTF's MASK: a texel below the cutoff is not the surface. A grey glass of
+// IOR 1, its base map's left half cut out (`test_support::masked`), in front
+// of a white backdrop, passes the backdrop whole on its left (no surface)
+// and its grey diffuse colour's share on its right, 0.5 of it.
+#[test]
+fn a_masked_transmissive_surface_cuts_out_its_texels() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut pane = glass(1., 0., 0.);
+    pane.base = [0.5, 0.5, 0.5, 1.];
+    let pane = test_support::masked(rectangle([-1., -1.], [1., 1.], pane), 0.5);
+    let content = vec![
+        (pane, Mat4::from_translation(-3. * Vec3::Z)),
+        (
+            rectangle([-40., -40.], [40., 40.], unlit(1.)),
+            Mat4::from_translation(-8. * Vec3::Z),
+        ),
+    ];
+    let (tier, texels) = composed(&device, &queue, content);
+    if tier == BindingTier::Basic {
+        eprintln!("skipping: the Basic tier blends transmission through");
+        return;
+    }
+    // The pane spans 1 m either side of the middle at 3 m, about 39 texels
+    // (64 / 3 × cot(0.5)); columns 54 and 74 lie a quarter of a metre either
+    // side of the middle, on its cut-out and its kept half.
+    let row = (SIZE[1] / 2) as usize;
+    let at = |column: usize| texels[row * SIZE[0] as usize + column][0];
+    for (column, expected) in [(54, 1.), (74, 0.5)] {
+        let value = at(column);
+        assert!(
+            (value - expected).abs() <= 5e-3,
+            "column {column}: {value} passes, expected {expected}"
+        );
+    }
+}
