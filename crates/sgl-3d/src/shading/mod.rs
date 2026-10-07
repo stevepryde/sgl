@@ -464,7 +464,7 @@ pub(crate) static VERTEX: Module = Module {
 pub(crate) static GBUFFER: Module = Module {
     name: "gbuffer",
     source: include_str!("gbuffer.wgsl"),
-    deps: &[&SPECULAR_LOBES],
+    deps: &[&SPECULAR_LOBES, &LUMINANCE],
 };
 /// The full-screen triangle: each vertex's corner and clip position, for a
 /// vertex entry point of a pass's own.
@@ -515,7 +515,7 @@ pub(crate) static SPECULAR_LOBES: Module = Module {
     source: include_str!("specular_lobes.wgsl"),
     deps: &[&PBR, &ANISOTROPY, &LOOKUP_TABLES],
 };
-/// Ambient occlusion of a receiver's ambient diffuse and environment
+/// Ambient occlusion of a receiver's ambient light and environment
 /// specular, by the lesser of its material's occlusion and the frame's
 /// ambient occlusion: one owner for source completion, composition and lit
 /// shading.

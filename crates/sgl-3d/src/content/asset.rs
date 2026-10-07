@@ -154,7 +154,7 @@ pub struct Material {
     /// Occlusion image index (glTF's `occlusionTexture` on `TEXCOORD_0`;
     /// the loader leaves out a map on another UV set): its red channel is
     /// the share of ambient light that reaches the surface, which occludes
-    /// its ambient diffuse, its baked diffuse (lightmap, atlas chart or
+    /// its ambient light, its baked light (lightmap, atlas chart or
     /// ambient cube) and its environment specular. SGL3D samples it where
     /// it is `mr_texture`'s image (ORM packing: occlusion, roughness and
     /// metallic in red, green and blue), and not yet from an image of its

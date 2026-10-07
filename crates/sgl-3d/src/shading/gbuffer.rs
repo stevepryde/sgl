@@ -1,10 +1,12 @@
 //! The G-buffer's target formats; `gbuffer.wgsl` owns their encodings.
 use wgpu::TextureFormat;
 
-/// Lit colour, linear HDR.
+/// Lit colour, linear HDR; at a lit pixel its alpha holds the multiple
+/// scattering's share of the ambient light, which source completion reads.
 pub(crate) const COLOR: TextureFormat = TextureFormat::Rgba16Float;
-/// Unoccluded ambient diffuse radiance, linear HDR, and the irradiance
-/// volume's sky visibility.
+/// Unoccluded ambient light (its diffuse share and the specular multiple
+/// scattering it carries), linear HDR, and the irradiance volume's sky
+/// visibility.
 pub(crate) const AMBIENT: TextureFormat = TextureFormat::Rgba16Float;
 /// Signed octahedral base and coat normals.
 pub(crate) const NORMAL: TextureFormat = TextureFormat::Rgba16Float;

@@ -876,22 +876,23 @@ full scene resolution with current-frame spatial denoising. The consumer persist
 this choice and includes it in complete Low/High preset bundles. Enabled AO adds
 no geometry pass: it adds XeGTAO's depth mip, visibility and denoise passes
 after opaque shading, over its depth and normals, and reflection source
-completion's read of the ambient diffuse. Measure that complete cost.
+completion's read of the ambient light. Measure that complete cost.
 
 Sky diffuse and surviving hemisphere fill are attenuated. Opaque shading
-records that ambient diffuse beside its unoccluded colour, and reflection
-source completion takes the share the visibility hides out of the colour,
-never below zero, before adding specular. Environment and
-baked-probe specular (including SSR's fallback where its rays miss) takes
-Filament's desktop specular occlusion: Lagarde's specular AO from the
-visibility, with GTAO multi-bounce on the base lobe's F0, so bright metals keep
-most of their reflection. Screen-space reflection hits, direct light, emission,
-baked direct/bounced irradiance and environment multiscattering retain their
-existing ownership. Probe captures and secondary rays do not consume
-camera-space AO. There are no substitute contact shadows. A material's
-occlusion map joins it: each opaque receiver takes the lesser of the two
-visibilities, as Filament and Bevy take them, and every other view its
-material's alone; baked diffuse takes the material's alone
+records that ambient light beside its unoccluded colour, and reflection source
+completion takes the share the visibility hides out of the colour, never below
+zero, before adding specular: its diffuse share linearly, and the specular
+multiple scattering it carries, most of a rough metal's ambient light, by the
+base lobe's specular occlusion. Environment and baked-probe specular
+(including SSR's fallback where its rays miss) takes Filament's desktop
+specular occlusion: Lagarde's specular AO from the visibility, with GTAO
+multi-bounce on the base lobe's F0, so bright metals keep most of their
+reflection. Screen-space reflection hits, direct light, emission and baked
+direct/bounced irradiance retain their existing ownership. Probe captures and
+secondary rays do not consume camera-space AO. There are no substitute contact
+shadows. A material's occlusion map joins it: each opaque receiver takes the
+lesser of the two visibilities, as Filament and Bevy take them, and every
+other view its material's alone; baked diffuse takes the material's alone
 ([asset limits](#asset-and-environment-limits)).
 
 The radius is clamped to 0.01–10000 m (XeGTAO's expected minimum and its
@@ -2132,21 +2133,20 @@ into the metallic-roughness image's red channel on `TEXCOORD_0` in the
 export step. Other unsupported visible features return asset-path errors.
 
 A dielectric's reflectance at normal incidence (F0) follows its index of
-refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for
-water at 1.33, 0.17 for diamond at 2.42. `KHR_materials_specular` tints it
+refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for water
+at 1.33, 0.17 for diamond at 2.42. `KHR_materials_specular` tints it
 (`specular_color`, at most 1 after the tint) and scales it (`specular`), as
 `asset::Material` and `SurfaceMaterial` hold them. Reflectance at grazing
 incidence (F90) is `specular` mixed toward 1 by metallic, as
-KHR_materials_specular, Filament and three.js define it, so `specular` 0
-turns a dielectric's reflection off whole. The occlusion map's red channel,
-at `occlusion_strength` (glTF's lerp), occludes a surface's ambient diffuse,
-the baked diffuse light of its lightmap, atlas chart or ambient cube and
-its environment specular, never direct light or emission, as three.js and
-Godot occlude a light map;
-with `Settings::ambient_occlusion` the camera's opaque surfaces take the
-lesser of it and the frame's ambient occlusion for their ambient diffuse
-and environment specular, as Filament and Bevy do, while a bake keeps its
-own.
+KHR_materials_specular, Filament and three.js define it, so `specular` 0 turns
+a dielectric's reflection off whole. The occlusion map's red channel, at
+`occlusion_strength` (glTF's lerp), occludes a surface's ambient light, the
+baked light of its lightmap, atlas chart or ambient cube (their specular
+multiple scattering by specular occlusion) and its environment specular, never
+direct light or emission, as three.js and Godot occlude a light map; with
+`Settings::ambient_occlusion` the camera's opaque surfaces take the lesser of
+it and the frame's ambient occlusion for their ambient light and environment
+specular, as Filament and Bevy do, while a bake keeps its own.
 
 Shading follows one hybrid of references ([D-32](../../specs/decisions.md)):
 glTF 2.0 and its KHR extensions define what a material's values mean,

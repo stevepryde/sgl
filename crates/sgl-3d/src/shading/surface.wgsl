@@ -80,7 +80,7 @@ struct ShadeContext {
  // from the G-buffer. Probe captures and ray hits run no source completion,
  // so they add it from what completion uses.
  environment_specular:bool,
- // Whether shade_lit occludes the surface's ambient diffuse and environment
+ // Whether shade_lit occludes the surface's ambient light and environment
  // specular by its material's occlusion (Surface.occlusion): every view but
  // the camera's opaque surfaces, whose source completion occludes them by
  // the lesser of it and the frame's ambient occlusion (occlusion.wgsl).
@@ -94,17 +94,21 @@ struct ShadeContext {
  // else untraced_reflection().
  traced:TracedReflection,
 }
-// A shaded surface's outgoing radiance, the ambient diffuse within it
-// (environment diffuse and hemisphere fill, or a volume's irradiance in
-// their place, not multiscattering) before any occlusion, and the
-// irradiance volume's sky visibility a(n) at it, 1 where the volume does not
-// light it. Source completion occludes the main view's ambient diffuse by
-// its visibility and its sky specular by a(n) too (shading/gbuffer.wgsl,
-// occlusion.wgsl); every other view's radiance holds its ambient diffuse
-// occluded by its material's occlusion alone (ShadeContext.material_occlusion).
+// A shaded surface's outgoing radiance; the ambient light within it before
+// any occlusion, from the environment's diffuse light and the hemisphere
+// fill, or a volume's irradiance in their place: its diffuse share
+// (`ambient`) and the specular multiple scattering it carries (`multi`);
+// and the irradiance volume's sky visibility a(n) at it, 1 where the volume
+// does not light it. Source completion occludes the main view's ambient
+// light by its visibility, the diffuse share linearly and the multiple
+// scattering by its specular occlusion (occlusion_ambient), and its sky
+// specular by a(n) too (shading/gbuffer.wgsl, occlusion.wgsl); every other
+// view's radiance holds its ambient light occluded so by its material's
+// occlusion alone (ShadeContext.material_occlusion).
 struct Shaded {
  color:vec3<f32>,
  ambient:vec3<f32>,
+ multi:vec3<f32>,
  sky_visibility:f32,
 }
 // A surface described by its base color and emission alone.
@@ -116,7 +120,7 @@ fn unlit_surface(base:vec4<f32>,emission:vec3<f32>)->Surface {
  return s;
 }
 fn shade_unlit(s:Surface)->Shaded {
- return Shaded(s.base.rgb+s.emission,vec3(0.),1.);
+ return Shaded(s.base.rgb+s.emission,vec3(0.),vec3(0.),1.);
 }
 // The environment specular source completion adds at runtime, for views
 // without it (probe captures and ray hits): the installed baked probes, then
@@ -420,7 +424,8 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // so neither a second PI nor a brightness fudge belongs here.
  let ibl=surface_ibl_weights(s,reflectance);
  // A probe hit takes diffuse light alone: no multiscattered specular.
- let response=ibl.diffuse+select(ibl.multi,vec3(0.),probe_hit);
+ let multi=select(ibl.multi,vec3(0.),probe_hit);
+ let response=ibl.diffuse+multi;
  let indirect=surface_indirect_diffuse(s,n,probe_hit);
  let fallback=indirect.ambient*(1.-reflectance.coat_fresnel);
  let environment=diffuse_environment(n)*s.environment_scale*fallback;
@@ -429,10 +434,11 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let ground=frame.hemisphere_ground_color;
  let hemisphere=pbr_hemisphere(n,sky,ground,hemisphere_intensity)/3.14159265359*fallback;
  var color=response*(environment+hemisphere);
- // The ambient diffuse that ambient occlusion weights: the diffuse
- // environment and hemisphere terms, or the volumes' irradiance in their
- // place; multiscattering stays apart from it.
+ // The ambient light that ambient occlusion occludes: the environment's and
+ // hemisphere fill's, or the volumes' irradiance in their place, its
+ // diffuse share and its multiple scattering apart (occlusion_ambient).
  var ambient=ibl.diffuse*(environment+hemisphere);
+ var ambient_multi=multi*(environment+hemisphere);
  // A probe hit takes the dynamic GI volume's last frame damped, as Wicked's
  // bounce is. Neither volume's irradiance takes environment_scale.
  let dynamic_gi=indirect.dynamic_gi;
@@ -440,6 +446,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let irradiance=(indirect.field+dynamic_gi.rgb*dynamic_gi.a*bounce)*(1.-reflectance.coat_fresnel);
  color+=response*irradiance;
  ambient+=ibl.diffuse*irradiance;
+ ambient_multi+=multi*irradiance;
  // Baked diffuse lies beneath the coat as live light does: Three.js 0.185.1's
  // node path adds a light map to the irradiance its finish dims
  // (NodeMaterial.setupLightMap, PhysicalLightingModel.finish), Godot b130438
@@ -452,8 +459,11 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // PhysicalLightingModel.ambientOcclusion) and Godot b130438 its lightmaps
  // by its AO (scene_forward_clustered.glsl ambient_light *= ao); the
  // frame's ambient occlusion does not, for a bake holds its own (Bevy 9d12036
- // likewise adds its lightmap unoccluded, pbr_functions.wesl).
- color+=response*indirect.baked*(1.-reflectance.coat_fresnel)*s.occlusion;
+ // likewise adds its lightmap unoccluded, pbr_functions.wesl): its diffuse
+ // share linearly, its multiple scattering by its specular occlusion
+ // (occlusion_multiscatter), as every view's ambient light.
+ let baked_multi=multi*occlusion_multiscatter(specular_nv(n,v),rough,s.occlusion,f0);
+ color+=(ibl.diffuse*s.occlusion+baked_multi)*indirect.baked*(1.-reflectance.coat_fresnel);
  if !probe_hit {
   if frame.directional_lights[0].illuminance>0. {
    color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,s.geometry_normal,context));
@@ -507,7 +517,8 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // emission after the coat instead.
  color+=emission*(1.-reflectance.coat_fresnel);
  if visibility<1. {
-  color=occlusion_diffuse(color,ambient,visibility);
+  let multi_occlusion=occlusion_multiscatter(specular_nv(n,v),rough,visibility,f0);
+  color=occlusion_ambient(color,ambient,ambient_multi,visibility,multi_occlusion);
  }
- return Shaded(color,ambient,indirect.sky_visibility);
+ return Shaded(color,ambient,ambient_multi,indirect.sky_visibility);
 }

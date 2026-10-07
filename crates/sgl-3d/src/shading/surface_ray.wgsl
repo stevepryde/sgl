@@ -246,7 +246,8 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
 }
 // Radiance leaving a ray hit toward `outgoing` as `receiver`, a world-space
 // reflection ray's hit (SHADOW_RECEIVER_CAPTURE) or a dynamic GI probe
-// ray's (SHADOW_RECEIVER_PROBE_HIT), its ambient diffuse unoccluded. An
+// ray's (SHADOW_RECEIVER_PROBE_HIT), its ambient light unoccluded by the
+// frame's ambient occlusion. An
 // offscreen hit has no camera pixel or view depth: a reflection ray's hit
 // takes the directional shadow's first cascade that holds it, with the
 // fixed filter, and its environment specular from the installed probes and

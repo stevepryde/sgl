@@ -3,8 +3,9 @@
 //! depth and normals. Where the device has the colour attachments for it, the
 //! G-buffer and lighting are one fused pass; otherwise a G-buffer pass and a
 //! lighting pass at its depth write the same targets. Lit colour keeps its
-//! ambient diffuse whole and records it apart, for source completion to
-//! occlude by this stage's visibility.
+//! ambient light whole and records it apart, with the multiple scattering's
+//! share of it in its alpha, for source completion to occlude by this
+//! stage's visibility.
 //!
 //! The renderer encodes it in the stage order's named parts: the G-buffer
 //! (`encode_gbuffer`), per phase of the camera's draw list, which leaves
@@ -24,7 +25,7 @@
 //! groups, the geometry pipelines, the ray-traced shadow mask and slot table
 //! while they run; for a probe capture face (`encode_capture`), the
 //! capture's draw list and the face's groups.
-//! Writes: the shared G-buffer, colour, ambient diffuse, source identity and
+//! Writes: the shared G-buffer, colour, ambient light, source identity and
 //! depth; its own ambient occlusion targets.
 //! Honours: ambient occlusion (quality and radius), the fused form (device
 //! capability, diagnostics), the diagnostics layers compiled into the
@@ -294,7 +295,7 @@ impl Opaque {
     ) {
         let targets = ctx.targets;
         // The sky writes color and motion; opaque geometry then writes color,
-        // ambient diffuse and identity together once, and its motion over the
+        // ambient light and identity together once, and its motion over the
         // sky's.
         {
             let mut motion = attachment(&targets.motion);

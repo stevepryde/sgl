@@ -21,11 +21,16 @@
 //  write this target with the others also writes (gbuffer_encode_anisotropy).
 // motion: current minus previous unjittered UV, +y down, at most two screens
 //  along its longer axis (gbuffer_encode_motion).
-// ambient: in rgb, the ambient diffuse radiance within lit colour (Shaded in
-//  surface.wgsl) before occlusion; source completion subtracts the share its
-//  ambient visibility hides. Zero where nothing lit was drawn. In alpha, the
-//  irradiance volume's sky visibility a(n) at a lit pixel, 1 where no volume
-//  lights it, which completion's occlusion of the sky's specular reads.
+// ambient: in rgb, the ambient light within lit colour (Shaded in
+//  surface.wgsl) before occlusion, its diffuse share and the specular
+//  multiple scattering it carries together; lit colour's alpha holds the
+//  multiple scattering's share of it (gbuffer_encode_ambient,
+//  gbuffer_multiscatter_share, gbuffer_ambient), which source completion
+//  reads before writing alpha 1, and completion takes from lit colour what
+//  its occlusion hides (occlusion_ambient). Zero where nothing lit was
+//  drawn. In alpha, the irradiance volume's sky visibility a(n) at a lit
+//  pixel, 1 where no volume lights it, which completion's occlusion of the
+//  sky's specular reads.
 // receiver (the Surface contract, specs/sgl3d-architecture.md): where a
 //  blended receiver is the surface, RG its traced lobe's normal as `normal`
 //  holds one and B that lobe's perceptual roughness. Read only under a
@@ -196,4 +201,38 @@ fn gbuffer_encode_motion(current_clip:vec4<f32>,previous_clip:vec4<f32>)->vec2<f
   return vec2(GBUFFER_MOTION_LIMIT,0.);
  }
  return scaled/longest*GBUFFER_MOTION_LIMIT;
+}
+
+// The ambient target's texel for a lit pixel whose ambient light holds the
+// diffuse share `diffuse` and the specular multiple scattering `multi`, and
+// whose irradiance volume sky visibility is `sky_visibility`.
+fn gbuffer_encode_ambient(diffuse:vec3<f32>,multi:vec3<f32>,sky_visibility:f32)->vec4<f32> {
+ return vec4(max(diffuse,vec3(0.))+max(multi,vec3(0.)),sky_visibility);
+}
+// The multiple scattering's share of that ambient light, by luminance, which
+// lit colour's alpha holds: 0 where it holds none.
+fn gbuffer_multiscatter_share(diffuse:vec3<f32>,multi:vec3<f32>)->f32 {
+ let total=luminance(max(diffuse,vec3(0.))+max(multi,vec3(0.)));
+ if total<=0. {
+  return 0.;
+ }
+ return saturate(luminance(max(multi,vec3(0.)))/total);
+}
+// A lit pixel's ambient light from its ambient texel `ambient` and its
+// multiple scattering's `share` (lit colour's alpha): the diffuse share and
+// the multiple scattering, each of the light's colour, exact where either is
+// none, and the sky visibility.
+struct GBufferAmbient {
+ diffuse:vec3<f32>,
+ multi:vec3<f32>,
+ sky_visibility:f32,
+}
+fn gbuffer_ambient(ambient:vec4<f32>,share:f32)->GBufferAmbient {
+ let light=max(ambient.rgb,vec3(0.));
+ let multi=light*saturate(share);
+ return GBufferAmbient(light-multi,multi,gbuffer_sky_visibility(ambient));
+}
+// The irradiance volume's sky visibility a(n) an ambient texel holds.
+fn gbuffer_sky_visibility(ambient:vec4<f32>)->f32 {
+ return ambient.a;
 }

@@ -1,6 +1,6 @@
 // Scene geometry's camera and probe-capture passes, all over pulled vertices
 // (source_vs): the G-buffer (stable_fs and its fallbacks), lit color with
-// motion (fs), lit color with its ambient diffuse, motion and exact primitive
+// motion (fs), lit color with its ambient light, motion and exact primitive
 // identity (source_fs), the G-buffer and source_fs's outputs at once
 // (fused_opaque_fs), blended receivers as the surface (receiver_fs),
 // blended surfaces' colour (blended_fs) and FSR2's transparency and
@@ -48,13 +48,20 @@ fn stable_raster_surface(i:Fragment,front:bool)->Surface {
  material_alpha_discard(s.base.a);
  return stable_surface(i,s);
 }
-// A lit raster fragment: color with the surface's alpha, the ambient diffuse
-// within it with the irradiance volume's sky visibility (shading/gbuffer.wgsl)
-// and motion.
+// A lit raster fragment: its shading, the surface's alpha and motion.
 struct ShadedFragment {
- color:vec4<f32>,
- ambient:vec4<f32>,
+ shaded:Shaded,
+ alpha:f32,
  motion:vec2<f32>,
+}
+// A camera view's lit colour and ambient target texel for `shaded`: its
+// ambient light, and the multiple scattering's share of it in lit colour's
+// alpha, which source completion reads (shading/gbuffer.wgsl).
+fn camera_color(shaded:Shaded)->vec4<f32> {
+ return vec4(shaded.color,gbuffer_multiscatter_share(shaded.ambient,shaded.multi));
+}
+fn camera_ambient(shaded:Shaded)->vec4<f32> {
+ return gbuffer_encode_ambient(shaded.ambient,shaded.multi,shaded.sky_visibility);
 }
 fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
  let front=object_front_face(i,raster_front);
@@ -71,12 +78,13 @@ fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
   material_alpha_discard(base.a);
   shaded=shade_lit(s,context);
  }
- return ShadedFragment(vec4(shaded.color,base.a),vec4(shaded.ambient,shaded.sky_visibility),gbuffer_encode_motion(i.current_clip,i.previous_clip));
+ return ShadedFragment(shaded,base.a,gbuffer_encode_motion(i.current_clip,i.previous_clip));
 }
-// Probe captures, which keep the ambient diffuse in color.
+// Probe captures, which keep their ambient light, occluded by their
+// material's occlusion, in color.
 @fragment fn fs(i:Fragment,@builtin(front_facing) front:bool)->SceneOutput {
  let s=shade_surface(i,front);
- return SceneOutput(s.color,s.motion);
+ return SceneOutput(vec4(s.shaded.color,s.alpha),s.motion);
 }
 
 // Devices with the original 32-byte material budget write orientation and
@@ -134,7 +142,7 @@ struct SourceOutput {
 }
 @fragment fn source_fs(i:Fragment,@builtin(front_facing) front:bool)->SourceOutput {
  let s=shade_surface(i,front);
- return SourceOutput(s.color,s.ambient,s.motion,i.source_id);
+ return SourceOutput(camera_color(s.shaded),camera_ambient(s.shaded),s.motion,i.source_id);
 }
 
 // One depth owner writes both the stable inputs and their primary source.
@@ -160,7 +168,7 @@ struct FusedOpaqueOutput {
  } else {
   shaded=shade_lit(s,context);
  }
- return FusedOpaqueOutput(stable.normal,stable.material,stable.motion,stable.f0,vec4(shaded.color,s.base.a),vec4(shaded.ambient,shaded.sky_visibility),i.source_id,stable.anisotropy);
+ return FusedOpaqueOutput(stable.normal,stable.material,stable.motion,stable.f0,camera_color(shaded),camera_ambient(shaded),i.source_id,stable.anisotropy);
 }
 
 // The receiver pass (stages/transparent): a blended receiver of screen-space
