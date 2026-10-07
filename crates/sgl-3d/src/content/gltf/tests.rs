@@ -194,7 +194,13 @@ fn anisotropy_import_resolves_texture_image_and_rejects_unsupported_inputs() {
     let document = gltf::Gltf::from_slice(&serde_json::to_vec(&source).unwrap())
         .unwrap()
         .document;
-    let material = read_material(document.materials().next().unwrap(), &document).unwrap();
+    let material = read_material(
+        document.materials().next().unwrap(),
+        &document,
+        0,
+        &mut Vec::new(),
+    )
+    .unwrap();
     assert_eq!(material.anisotropy_texture, Some(0));
     assert!((material.anisotropy_rotation + 1.25).abs() < 1e-6);
     assert!((material.anisotropy_strength - 0.7).abs() < 1e-6);
@@ -205,13 +211,20 @@ fn anisotropy_import_resolves_texture_image_and_rejects_unsupported_inputs() {
         serde_json::json!({"anisotropyRotation":"bad"}),
         serde_json::json!({"anisotropyTexture":{"index":4}}),
         serde_json::json!({"anisotropyTexture":{"index":0,"texCoord":1}}),
-        serde_json::json!({"anisotropyTexture":{"index":0,"extensions":{"KHR_texture_transform":{"rotation":1.0}}}}),
     ] {
         source["materials"][0]["extensions"]["KHR_materials_anisotropy"] = extension;
         let document = gltf::Gltf::from_slice(&serde_json::to_vec(&source).unwrap())
             .unwrap()
             .document;
-        assert!(read_material(document.materials().next().unwrap(), &document).is_err());
+        assert!(
+            read_material(
+                document.materials().next().unwrap(),
+                &document,
+                0,
+                &mut Vec::new()
+            )
+            .is_err()
+        );
     }
 }
 
@@ -521,4 +534,138 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
     .unwrap();
     assert_eq!(texels(&embedded.images[2]), [70, 80, 90, 255]);
     assert!(load_slice(&fixture.embedded()).is_err());
+}
+
+/// A triangle drawn with a material of `extensions`, in a document that
+/// lists `used` and `required` and holds a light, as `KHR_lights_punctual`
+/// adds one where a file uses it.
+fn extension_fixture(extensions: serde_json::Value, used: &[&str], required: &[&str]) -> Fixture {
+    let document = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "extensionsUsed": used,
+        "extensionsRequired": required,
+        "extensions": {"KHR_lights_punctual": {"lights": [{"type": "point"}]}},
+        "buffers": [{"uri": "fixture.bin", "byteLength": 72}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 36}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0]},
+            {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"}
+        ],
+        "materials": [{"extensions": extensions}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1}, "material": 0}]}],
+        "nodes": [{"mesh": 0, "extensions": {"KHR_lights_punctual": {"light": 0}}}],
+        "scenes": [{"nodes": [0]}], "scene": 0
+    });
+    let values = [
+        0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 1., 0., 0., 1.,
+    ];
+    Fixture::new(&serde_json::to_vec(&document).unwrap(), &values)
+}
+
+// Defects: the loader refuses a file for an extension it only lists as
+// used, drops one without listing it in `Asset::ignored`, loads a file that
+// requires an extension SGL3D does not support, refuses one that requires a
+// material extension SGL3D supports but the gltf crate's validation does
+// not know (KHR_materials_ior and KHR_materials_specular), or misreads
+// their factors. The oracle is glTF 2.0 5.17 (a loader may ignore an
+// extension a file uses without requiring it; it must not load a file that
+// requires one it does not support), KHR_materials_ior (an ior of 0 stands
+// for an infinite one) and the authored values.
+#[test]
+fn used_extensions_are_listed_and_required_ones_honoured_or_refused() {
+    let material = serde_json::json!({
+        "KHR_materials_ior": {"ior": 1.33},
+        "KHR_materials_specular": {"specularFactor": 0.5, "specularColorFactor": [1.0, 0.5, 2.0]}
+    });
+    let ours = ["KHR_materials_ior", "KHR_materials_specular"];
+    let used = [&ours[..], &["KHR_lights_punctual"]].concat();
+    let asset = load(&extension_fixture(material.clone(), &used, &[]).path()).unwrap();
+    assert_eq!(
+        asset.ignored,
+        [Ignored::Extension("KHR_lights_punctual".into())]
+    );
+    let loaded = &asset.materials[0];
+    assert_eq!(
+        (loaded.ior, loaded.specular, loaded.specular_color),
+        (1.33, 0.5, [1.0, 0.5, 2.0])
+    );
+    let asset = load(&extension_fixture(material.clone(), &used, &ours).path()).unwrap();
+    assert_eq!(asset.materials[0].ior, 1.33, "required, and supported");
+    let refused = load(&extension_fixture(material, &used, &["KHR_lights_punctual"]).path());
+    assert!(
+        refused
+            .err()
+            .is_some_and(|error| error.to_string().contains("KHR_lights_punctual")),
+        "a file that requires an unsupported extension loaded"
+    );
+    let infinite = serde_json::json!({"KHR_materials_ior": {"ior": 0}});
+    let asset = load(&extension_fixture(infinite, &ours[..1], &[]).path()).unwrap();
+    assert_eq!(asset.materials[0].ior, f32::INFINITY);
+}
+
+// Defects: an occlusion map packed in the metallic-roughness image (the
+// same image, through another texture) is taken for an image of its own,
+// or one in an image of its own, on another UV set or a specular texture is
+// left out without being listed in `Asset::ignored`; or its strength is
+// lost; or one SGL3D leaves out still constrains the material's wrapping.
+// The oracle is glTF 2.0's texture -> image indirection and the authored
+// values.
+#[test]
+fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
+    let source = |occlusion: serde_json::Value, specular: serde_json::Value| {
+        serde_json::json!({
+            "asset": {"version": "2.0"},
+            "extensionsUsed": ["KHR_materials_specular"],
+            "images": [{"uri": "orm.png"}, {"uri": "occlusion.png"}],
+            "samplers": [{"wrapS": 33071, "wrapT": 33071}],
+            "textures": [{"source": 0}, {"source": 0}, {"source": 1}, {"source": 0, "sampler": 0}],
+            "materials": [{
+                "pbrMetallicRoughness": {"metallicRoughnessTexture": {"index": 0}},
+                "occlusionTexture": occlusion,
+                "extensions": {"KHR_materials_specular": specular}
+            }]
+        })
+    };
+    let read = |document: serde_json::Value| {
+        let document = gltf::Gltf::from_slice(&serde_json::to_vec(&document).unwrap())
+            .unwrap()
+            .document;
+        let mut ignored = Vec::new();
+        let material = read_material(
+            document.materials().next().unwrap(),
+            &document,
+            0,
+            &mut ignored,
+        )
+        .unwrap();
+        (material, ignored)
+    };
+    let unlisted = serde_json::json!({});
+    // Texture 1 is another texture of the metallic-roughness image.
+    let (packed, ignored) = read(source(
+        serde_json::json!({"index": 1, "strength": 0.6}),
+        unlisted.clone(),
+    ));
+    assert_eq!(
+        (packed.occlusion_texture, packed.occlusion_strength),
+        (Some(0), 0.6)
+    );
+    assert!(packed.packed_occlusion());
+    assert!(ignored.is_empty());
+    let (separate, ignored) = read(source(serde_json::json!({"index": 2}), unlisted.clone()));
+    assert_eq!(separate.occlusion_texture, Some(1));
+    assert!(!separate.packed_occlusion());
+    assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
+    // Texture 3 clamps the metallic-roughness image the material repeats.
+    let (second_set, ignored) = read(source(
+        serde_json::json!({"index": 3, "texCoord": 1}),
+        unlisted,
+    ));
+    assert_eq!(second_set.occlusion_texture, None);
+    assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
+    let (_, ignored) = read(source(
+        serde_json::json!({"index": 0}),
+        serde_json::json!({"specularColorTexture": {"index": 2}}),
+    ));
+    assert_eq!(ignored, [Ignored::SpecularMap { material: 0 }]);
 }

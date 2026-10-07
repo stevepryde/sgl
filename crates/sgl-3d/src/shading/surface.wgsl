@@ -28,6 +28,12 @@ struct Surface {
  geometry_normal:vec3<f32>,
  base:vec4<f32>,
  metallic:f32,
+ // The dielectric reflectance at normal incidence
+ // (material_dielectric_f0), which metallic mixes toward the base
+ // (surface_f0), and at grazing incidence, the specular strength, which it
+ // mixes toward 1 (surface_f90).
+ dielectric_f0:vec3<f32>,
+ specular:f32,
  // Perceptual roughness, already filtered or clamped by the builder.
  roughness:f32,
  coat:f32,
@@ -35,6 +41,9 @@ struct Surface {
  anisotropy:vec4<f32>,
  emission:vec3<f32>,
  environment_scale:f32,
+ // The share of ambient light its material lets reach it
+ // (material_occlusion; occlusion.wgsl).
+ occlusion:f32,
  unlit:bool,
  front:bool,
  // A moving instance's: it takes its ambient cube, not baked charts.
@@ -62,6 +71,11 @@ struct ShadeContext {
  // from the G-buffer. Probe captures and ray hits run no source completion,
  // so they add it from what completion uses.
  environment_specular:bool,
+ // Whether shade_lit occludes the surface's ambient diffuse and environment
+ // specular by its material's occlusion (Surface.occlusion): every view but
+ // the camera's opaque surfaces, whose source completion occludes them by
+ // the lesser of it and the frame's ambient occlusion (occlusion.wgsl).
+ material_occlusion:bool,
  // The lights and decals that reach the surface: the cluster that holds
  // it (clusters.wgsl), looked up once for its decals and its lights.
  clusters:ClusterRange,
@@ -73,11 +87,12 @@ struct ShadeContext {
 }
 // A shaded surface's outgoing radiance, the ambient diffuse within it
 // (environment diffuse and hemisphere fill, or a volume's irradiance in
-// their place, not multiscattering) before occlusion, and the irradiance
-// volume's sky visibility a(n) at it, 1 where the volume does not light it.
-// Source completion occludes the main view's ambient diffuse by its ambient
-// visibility and its sky specular by a(n) too (shading/gbuffer.wgsl); probe
-// captures and ray hits keep their ambient diffuse whole.
+// their place, not multiscattering) before any occlusion, and the
+// irradiance volume's sky visibility a(n) at it, 1 where the volume does not
+// light it. Source completion occludes the main view's ambient diffuse by
+// its visibility and its sky specular by a(n) too (shading/gbuffer.wgsl,
+// occlusion.wgsl); every other view's radiance holds its ambient diffuse
+// occluded by its material's occlusion alone (ShadeContext.material_occlusion).
 struct Shaded {
  color:vec3<f32>,
  ambient:vec3<f32>,
@@ -108,24 +123,42 @@ fn probe_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32)->Environment
  let strength=frame.reflection_intensity;
  return collection_environment(world,direction,rough,1.,environment_map,environment_sampler,rotation,strength);
 }
+// A surface's specular reflectance at normal incidence: its dielectric F0
+// mixed toward its base by metallic, as three.js 0.185.1's
+// specularColorBlended and KHR_materials_specular's F0. The G-buffer records
+// it (view/geometry.wgsl).
+fn surface_f0(surface:Surface)->vec3<f32> {
+ return mix(surface.dielectric_f0,surface.base.rgb,surface.metallic);
+}
+// A surface's specular reflectance at grazing incidence (F90): its specular
+// strength mixed toward 1 by metallic, as KHR_materials_specular defines it
+// (dielectric_f90 = specular), Filament ef1a133's specular-factor path
+// computes it (shaders/src/surface_shading_lit.fs, pixel.f90) and three.js
+// 0.185.1 does (MeshPhysicalNodeMaterial.setupSpecular, specularF90). The
+// G-buffer records it (view/geometry.wgsl).
+fn surface_f90(surface:Surface)->f32 {
+ return mix(surface.specular,1.,surface.metallic);
+}
 // What shade_lit derives once per surface for its direct lights, as
 // Filament's PixelParams: the diffuse colour, the specular reflectance at
-// normal incidence, the DFG lookup at the view, and the coat's Fresnel toward
-// the view, weighted by the coat (pbr_coat_fresnel), which also attenuates
-// shade_lit's ambient, environment, baked and emitted light.
+// normal and grazing incidence (surface_f0, surface_f90), the DFG
+// lookup at the view, and the coat's Fresnel toward the view, weighted by
+// the coat (pbr_coat_fresnel), which also attenuates shade_lit's ambient,
+// environment, baked and emitted light.
 struct SurfaceReflectance {
  diffuse:vec3<f32>,
  f0:vec3<f32>,
+ f90:f32,
  view_dfg:vec2<f32>,
  coat_fresnel:f32,
 }
 // `view_dfg` is the caller's surface_dfg lookup at the surface's N.V, which
 // its environment terms also use.
 fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
- let f0=mix(vec3(0.04),surface.base.rgb,surface.metallic);
+ let f0=surface_f0(surface);
  let diffuse=surface.base.rgb*(1.-surface.metallic);
  let coat_fresnel=pbr_coat_fresnel(surface.geometry_normal,surface.view,surface.coat);
- return SurfaceReflectance(diffuse,f0,view_dfg,coat_fresnel);
+ return SurfaceReflectance(diffuse,f0,surface_f90(surface),view_dfg,coat_fresnel);
 }
 // The light one sample brings to a surface, as Filament's
 // surfaceShading(PixelParams, Light); a rectangle's integrated over its face
@@ -154,14 +187,15 @@ fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_dire
  var base=reflectance.diffuse/3.14159265359;
  if specular>0. {
   let f0=reflectance.f0;
+  let f90=reflectance.f90;
   let view_dfg=reflectance.view_dfg;
   let view_missing=1.-view_dfg.x-view_dfg.y;
   let light_missing=1.-light_dfg.x-light_dfg.y;
   let average_fresnel=f0+(vec3(1.)-f0)*.047619;
-  let scattered=pbr_three_single_scatter(f0,view_dfg)*pbr_three_single_scatter(f0,light_dfg)*average_fresnel;
+  let scattered=pbr_three_single_scatter(f0,f90,view_dfg)*pbr_three_single_scatter(f0,f90,light_dfg)*average_fresnel;
   let denominator=vec3(1.)-view_missing*light_missing*average_fresnel*average_fresnel+vec3(.000001);
   let multiple_scattering=scattered/denominator*view_missing*light_missing;
-  let base_specular=pbr_anisotropic_specular(surface.normal,surface.view,light_direction,surface.roughness,f0,surface.anisotropy);
+  let base_specular=pbr_anisotropic_specular(surface.normal,surface.view,light_direction,surface.roughness,f0,f90,surface.anisotropy);
   base=base+base_specular*specular+multiple_scattering*specular;
  }
  if surface.coat<=0. {
@@ -170,7 +204,7 @@ fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_dire
  var coat=vec3(0.);
  if specular>0. {
   let coat_cosine=clamp(dot(surface.geometry_normal,light_direction),0.,1.);
-  let coat_specular=pbr_three_specular(surface.geometry_normal,surface.view,light_direction,surface.coat_roughness,vec3(.04));
+  let coat_specular=pbr_three_specular(surface.geometry_normal,surface.view,light_direction,surface.coat_roughness,vec3(.04),1.);
   coat=surface.coat*coat_specular*coat_cosine*specular;
  }
  return base*(1.-reflectance.coat_fresnel)*cosine+coat;
@@ -203,7 +237,7 @@ fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,
   if lobe>0 {
    let fit=rect_light_fit(select(surface.roughness,surface.coat_roughness,coat_lobe),max(dot(n,surface.view),0.));
    inverse=fit.inverse;
-   weight=rect_light_specular_weight(fit,select(reflectance.f0,vec3(.04),coat_lobe))*specular;
+   weight=rect_light_specular_weight(fit,select(reflectance.f0,vec3(.04),coat_lobe),select(reflectance.f90,1.,coat_lobe))*specular;
   }
   let value=weight*ltc_integrate_quad(rect_light_frame(n,surface.view,center,rect.half_width,half_height),inverse);
   if coat_lobe {
@@ -300,9 +334,12 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let f0=reflectance.f0;
  let diffuse=reflectance.diffuse;
  let probe_hit=context.receiver==SHADOW_RECEIVER_PROBE_HIT;
+ // What the material's occlusion lets reach the surface, where this view
+ // occludes by it (ShadeContext.material_occlusion).
+ let visibility=select(1.,s.occlusion,context.material_occlusion);
  // The retained cosine convolution stores irradiance / PI. It is already
  // a lighting integral, so neither a second PI nor a brightness fudge belongs here.
- let ibl=pbr_ibl_weights(base.rgb,metallic,dfg);
+ let ibl=pbr_ibl_weights(base.rgb,metallic,s.dielectric_f0,reflectance.f90,dfg);
  // A probe hit takes diffuse light alone: no multiscattered specular.
  let multi=select(ibl.multi,vec3(0.),probe_hit);
  let indirect=surface_indirect_diffuse(s,n,probe_hit);
@@ -331,8 +368,14 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // adds lightmaps to the ambient light its clearcoat then attenuates
  // (scene_forward_clustered.glsl), and Filament ef1a133 dims all indirect
  // diffuse (surface_light_indirect.fs evaluateClearCoatIBL). Bevy 9d12036
- // adds its lightmap undimmed (pbr_functions.wesl).
- color+=indirect.baked*diffuse*(vec3(1.)-f0)*(1.-reflectance.coat_fresnel);
+ // adds its lightmap undimmed (pbr_functions.wesl). The material's
+ // occlusion occludes it in every view, the camera's included, as Three.js
+ // 0.185.1 occludes a light map by its AO map (setupLightMap's irradiance,
+ // PhysicalLightingModel.ambientOcclusion) and Godot b130438 its lightmaps
+ // by its AO (scene_forward_clustered.glsl ambient_light *= ao); the
+ // frame's ambient occlusion does not, for a bake holds its own (Bevy 9d12036
+ // likewise adds its lightmap unoccluded, pbr_functions.wesl).
+ color+=indirect.baked*diffuse*(vec3(1.)-f0)*(1.-reflectance.coat_fresnel)*s.occlusion;
  if !probe_hit {
   if frame.directional_lights[0].illuminance>0. {
    color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,s.geometry_normal,context));
@@ -355,20 +398,18 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
   }
  }
  if context.environment_specular {
-  let lobes=specular_lobes(n,coat_n,v,f0,rough,dfg,coat,coat_rough,s.anisotropy,lookup_tables,environment_sampler);
+  let lobes=specular_lobes(n,coat_n,v,f0,reflectance.f90,rough,dfg,coat,coat_rough,s.anisotropy,lookup_tables,environment_sampler);
   let traced=context.traced;
   for (var lobe=SPECULAR_BASE;lobe<=SPECULAR_COAT;lobe++) {
    if lobe==SPECULAR_COAT && coat<=0. {
     continue;
    }
-   // The irradiance volume's sky visibility occludes the sky's share alone
-   // (specular_occlusion).
+   // The material's occlusion occludes the probes' and the sky's shares,
+   // the irradiance volume's sky visibility the sky's alone
+   // (occlusion_environment).
    let resolved=probe_environment(s.position,lobes[lobe].direction,lobes[lobe].roughness);
-   var sky=resolved.sky;
-   if indirect.sky_visibility<1. {
-    sky*=specular_occlusion(lobes[lobe],lobe==SPECULAR_COAT,indirect.sky_visibility,f0);
-   }
-   let environment=(resolved.probes+sky)*s.environment_scale;
+   let occluded=occlusion_environment(lobes[lobe],lobe==SPECULAR_COAT,resolved.probes,resolved.sky,visibility,indirect.sky_visibility,f0);
+   let environment=occluded*s.environment_scale;
    if lobe==specular_traced_lobe(coat) && specular_traces(lobes[lobe].roughness,traced.cutoff*traced.cutoff) {
     let fade=specular_trace_fade(lobes[lobe].roughness,traced.cutoff,traced.fade);
     color+=specular_traced(lobes[lobe],traced.reflected,fade,environment);
@@ -387,5 +428,8 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // evaluateMaterial) and Godot b130438 (scene_forward_clustered.glsl) add
  // emission after the coat instead.
  color+=emission*(1.-reflectance.coat_fresnel);
+ if visibility<1. {
+  color=occlusion_diffuse(color,ambient,visibility);
+ }
  return Shaded(color,ambient,indirect.sky_visibility);
 }

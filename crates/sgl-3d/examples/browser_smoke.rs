@@ -142,6 +142,7 @@ fn world() -> Asset {
             image::Rgba([200, 200, 200, 255]),
         ))],
         rig: Default::default(),
+        ignored: Vec::new(),
     }
 }
 
@@ -177,6 +178,7 @@ fn alpha_content(bc: bool) -> Result<Asset, String> {
         materials: vec![bars, glass],
         images: vec![image],
         rig: Default::default(),
+        ignored: Vec::new(),
     })
 }
 
@@ -239,6 +241,7 @@ fn baked_box() -> Asset {
         materials: vec![material([0.5, 0.5, 0.6, 1.], 0., 0.6)],
         images: Vec::new(),
         rig: Default::default(),
+        ignored: Vec::new(),
     }
 }
 
@@ -329,6 +332,7 @@ fn deforming() -> Asset {
             morph_weights: vec![MorphWeight { node: 0, rest: 0. }],
             clips: Vec::new(),
         },
+        ignored: Vec::new(),
     }
 }
 

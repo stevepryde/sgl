@@ -76,10 +76,15 @@ fn material(base: [f32; 4], metallic: f32, roughness: f32) -> Material {
         emissive: [0.; 3],
         metallic,
         roughness,
+        ior: 1.5,
+        specular: 1.,
+        specular_color: [1.; 3],
         clearcoat: 0.,
         coat_roughness: 0.,
         base_texture: None,
         mr_texture: None,
+        occlusion_texture: None,
+        occlusion_strength: 1.,
         emissive_texture: None,
         normal_texture: None,
         normal_scale: 1.,
@@ -123,6 +128,7 @@ fn world(floor: Material, panel: f32) -> Asset {
         materials: vec![floor],
         images: Vec::new(),
         rig: Default::default(),
+        ignored: Vec::new(),
     };
     if panel > 0. {
         let mut glow = material([panel, panel, panel, 1.], 0., 1.);
@@ -554,6 +560,7 @@ fn world_space_reflections_find_a_moving_objects_hidden_underside() {
         materials: vec![black],
         images: Vec::new(),
         rig: Default::default(),
+        ignored: Vec::new(),
     };
     let Some(mut frames) = Frames::with_models(
         world(smooth_metal(), 0.),

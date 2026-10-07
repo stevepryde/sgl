@@ -96,12 +96,15 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.geometry_normal=hit.normal;
  s.base=vec4(decaled.base,base.a);
  s.metallic=decaled.metallic;
+ s.dielectric_f0=material_dielectric_f0(material.values);
+ s.specular=material.values.specular;
  s.roughness=clamp(decaled.roughness,.0525,1.);
  s.coat=material.values.coat;
  s.coat_roughness=clamp(material.values.coat_roughness,.0525,1.);
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.values.environment_scale;
+ s.occlusion=material_occlusion(material.values,mr);
  s.unlit=unlit;
  s.front=hit.front_face;
  s.moving=(hit.instance_flags&OBJECT_STATIC)==0u;
@@ -249,7 +252,7 @@ fn shade_ray_hit(hit:SceneHit,outgoing:vec3<f32>,receiver:u32,random:vec3<f32>)-
  if unlit {
   return shade_unlit(unlit_surface(base,emission)).color;
  }
- let context=ShadeContext(vec2(0.),receiver,!probe_hit,cluster_range(hit.position,vec2(0.)),untraced_reflection());
+ let context=ShadeContext(vec2(0.),receiver,!probe_hit,true,cluster_range(hit.position,vec2(0.)),untraced_reflection());
  let s=ray_surface(hit,material,base,emission,outgoing,context.clusters);
  var color=shade_lit(s,context).color;
  if probe_hit {

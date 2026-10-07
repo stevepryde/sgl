@@ -12,7 +12,6 @@ use wgpu::util::DeviceExt;
 const ENVIRONMENT: Variant = Variant {
     environment: true,
     incident: false,
-    diffuse_occlusion: false,
 };
 
 /// Full ambient visibility, which `Scene` binds while ambient occlusion is off.
@@ -189,12 +188,13 @@ fn source_environment_blends_overlapping_probes_and_the_sky_by_influence() {
             })
         };
         let scene = color("unlit black", [0.; 4], false);
-        let zero = color("zero", [0.; 4], false);
         // No ambient diffuse, and no irradiance volume: its sky visibility 1.
         let ambient = color("no ambient, open sky", [0., 0., 0., 1.], false);
         let normal = color("toward camera", [0.; 4], false);
         let f0 = color("mirror metal", [1., 1., 1., 1.], false);
         let material = color("smooth metal", [1., 0., 0., 1.], false);
+        // Isotropic, at environment scale 1.
+        let anisotropy = color("isotropic", [0., 0., 0., 1.], false);
         let sky = color("green sky", [0., 2., 0., 1.], true);
         let fog = no_fog(&device);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -300,7 +300,7 @@ fn source_environment_blends_overlapping_probes_and_the_sky_by_influence() {
                     ambient: &ambient,
                     output: &output,
                     normal: &normal,
-                    anisotropy: &zero,
+                    anisotropy: &anisotropy,
                     f0: &f0,
                     depth: &depth_view,
                     lookup_tables: &lookup_tables,

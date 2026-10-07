@@ -506,6 +506,15 @@ pub(crate) static SPECULAR_LOBES: Module = Module {
     source: include_str!("specular_lobes.wgsl"),
     deps: &[&PBR, &ANISOTROPY, &LOOKUP_TABLES],
 };
+/// Ambient occlusion of a receiver's ambient diffuse and environment
+/// specular, by the lesser of its material's occlusion and the frame's
+/// ambient occlusion: one owner for source completion, composition and lit
+/// shading.
+pub(crate) static OCCLUSION: Module = Module {
+    name: "occlusion",
+    source: include_str!("occlusion.wgsl"),
+    deps: &[&SPECULAR_LOBES],
+};
 /// One `Surface` and its shading for every view. Reads the lit bindings.
 pub(crate) static SURFACE: Module = Module {
     name: "surface",
@@ -515,6 +524,7 @@ pub(crate) static SURFACE: Module = Module {
         &PBR,
         &DFG,
         &SPECULAR_LOBES,
+        &OCCLUSION,
         &LIGHT_SAMPLE,
         &RECT_LIGHT,
         &ENVIRONMENT,

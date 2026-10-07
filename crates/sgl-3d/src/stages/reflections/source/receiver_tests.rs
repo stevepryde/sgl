@@ -61,6 +61,8 @@ fn opaque_surfaces_under_a_receiver_keep_their_environment_specular_once() {
     // An almost smooth (0.05) white metal facing the camera, lit.
     let normal = texture([0.; 4]);
     let material = texture([1., 0.05, 0., 1.]);
+    // Isotropic, at environment scale 1.
+    let anisotropy = texture([0., 0., 0., 1.]);
     let f0 = crate::view::targets::target(
         &device,
         "white metal F0",
@@ -109,7 +111,6 @@ fn opaque_surfaces_under_a_receiver_keep_their_environment_specular_once() {
         Variant {
             environment: true,
             incident: true,
-            diffuse_occlusion: false,
         },
     );
     let output = ReflectionSource::target(&device, size, "complete opaque beauty");
@@ -133,7 +134,7 @@ fn opaque_surfaces_under_a_receiver_keep_their_environment_specular_once() {
             ambient: &ambient,
             output: &output,
             normal: &normal,
-            anisotropy: &black,
+            anisotropy: &anisotropy,
             f0: &f0,
             depth: &opaque_depth,
             lookup_tables: &lookup_tables,

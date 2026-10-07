@@ -120,6 +120,18 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             material(offset_of!(MaterialUniform, flags)),
         ),
         (
+            "SCENE_MATERIAL_OCCLUSION_STRENGTH",
+            material(offset_of!(MaterialUniform, occlusion_strength)),
+        ),
+        (
+            "SCENE_MATERIAL_SPECULAR_F0",
+            material(offset_of!(MaterialUniform, specular_f0)),
+        ),
+        (
+            "SCENE_MATERIAL_SPECULAR",
+            material(offset_of!(MaterialUniform, specular)),
+        ),
+        (
             "SCENE_MATERIAL_NORMAL_LAYERS",
             material(offset_of!(MaterialUniform, normal_layers)),
         ),

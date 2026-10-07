@@ -35,20 +35,33 @@ pub(crate) const MATERIAL_ALPHA_BLEND: u32 = 64;
 pub(crate) const MATERIAL_RECEIVES_SCREEN_SPACE_REFLECTIONS: u32 = 128;
 pub(crate) const MATERIAL_NORMAL_LAYERS: u32 = 256;
 pub(crate) const MATERIAL_EMITS_INTO_GI: u32 = 512;
+pub(crate) const MATERIAL_OCCLUSION_MAP: u32 = 1024;
 
-/// Which maps a material was added with, as `MATERIAL_*_MAP` bits.
+/// Which maps a material was added with, as `MATERIAL_*_MAP` bits:
+/// `occlusion` is an occlusion map in the red channel of its
+/// metallic-roughness map (`asset::Material::packed_occlusion`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MaterialMaps(pub u32);
 
 impl MaterialMaps {
-    pub fn new(normal: bool, bump: bool, anisotropy: bool) -> Self {
+    pub fn new(normal: bool, bump: bool, anisotropy: bool, occlusion: bool) -> Self {
         let bit = |on: bool, bit: u32| if on { bit } else { 0 };
         Self(
             bit(normal, MATERIAL_NORMAL_MAP)
                 | bit(bump, MATERIAL_BUMP_MAP)
-                | bit(anisotropy, MATERIAL_ANISOTROPY_MAP),
+                | bit(anisotropy, MATERIAL_ANISOTROPY_MAP)
+                | bit(occlusion, MATERIAL_OCCLUSION_MAP),
         )
     }
+}
+
+/// The reflectance at normal incidence of a dielectric of index of
+/// refraction `ior` seen from air, ((ior − 1) / (ior + 1))², as
+/// KHR_materials_ior and Fresnel's equations give it, written so that an
+/// infinite IOR gives 1.
+fn ior_f0(ior: f32) -> f32 {
+    let r = 1. - 2. / (ior + 1.);
+    r * r
 }
 
 /// One normal layer as the shaders read it (`NormalLayer` in
@@ -106,7 +119,12 @@ pub(crate) struct MaterialUniform {
     pub alpha_cutoff: f32,
     pub visibility_group: u32,
     pub flags: u32,
-    pub padding: u32,
+    /// glTF's `occlusionTexture.strength`, read with `MATERIAL_OCCLUSION_MAP`.
+    pub occlusion_strength: f32,
+    /// The IOR's F0 times the specular colour, which the shaders clamp to 1
+    /// and scale by `specular` (`material_dielectric_f0`).
+    pub specular_f0: [f32; 3],
+    pub specular: f32,
     /// With `MATERIAL_NORMAL_LAYERS`; zero otherwise.
     pub normal_layers: [NormalLayerUniform; 2],
 }
@@ -149,7 +167,9 @@ impl MaterialUniform {
                 | bit(values.emits_into_gi, MATERIAL_EMITS_INTO_GI)
                 | maps.0
                 | alpha,
-            padding: 0,
+            occlusion_strength: values.occlusion_strength,
+            specular_f0: values.specular_color.map(|tint| ior_f0(values.ior) * tint),
+            specular: values.specular,
             normal_layers: values
                 .normal_layers
                 .map_or([bytemuck::Zeroable::zeroed(); 2], |layers| {
