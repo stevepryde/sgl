@@ -170,19 +170,12 @@ pub(crate) struct GeometryPipelines {
 impl GeometryPipelines {
     /// Creates every pipeline the frame and probe captures draw with for
     /// `layers` on a device of binding tier `tier`, over group 0's `lit` and
-    /// `shadow` layouts, the scene's and a material's of that tier, and the
-    /// blended, shadow-mask and caster positions group 3 layouts.
+    /// `shadow` layouts, the scene's, a material's of that tier
+    /// (`shading::bind::material`), and the blended, shadow-mask and caster
+    /// positions group 3 layouts.
     pub fn new(
         device: &wgpu::Device,
-        [
-            lit,
-            shadow,
-            scene,
-            material,
-            blended,
-            shadow_mask,
-            positions,
-        ]: [&wgpu::BindGroupLayout; 7],
+        [lit, shadow, scene, blended, shadow_mask, positions]: [&wgpu::BindGroupLayout; 6],
         layers: LayerConstants,
         tier: BindingTier,
     ) -> Self {
@@ -194,6 +187,7 @@ impl GeometryPipelines {
             })
         };
         let limits = device.limits();
+        let material = &shading::bind::material(device, tier);
         let mut pipelines = Self {
             lit: layout("lit scene geometry", &[lit, scene, material]),
             blended: layout("blended scene geometry", &[lit, scene, material, blended]),

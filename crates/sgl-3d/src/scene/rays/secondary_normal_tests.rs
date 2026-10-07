@@ -6,9 +6,11 @@
 //! reversal; merely making raster and compute agree cannot satisfy the oracle.
 //! Authority: glTF2.0 sections 3.9.3/3.9.5 and material.normalTexture;
 //! Three185.1 TangentUtils.js and WGSLNodeBuilder.js (dFdy -> -dpdy).
-//! MaterialNode.js selects normalMap before bumpMap. A varying bump texture
-//! deliberately competes with the normal map, but must never alter this oracle,
-//! including when the diagnostic disables the selected normal-map stage.
+//! MaterialNode.js selects normalMap before bumpMap, a rule the scene's maps
+//! in effect own (`scene::materials::maps`, its `tier_tests`): the plane's
+//! varying bump texture shades only where the material has no normal map.
+//! With the diagnostic disabling the normal-map stage, a normal-mapped
+//! surface keeps its geometry normal.
 use super::tests::{Fixture, Pose};
 use super::*;
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
@@ -117,9 +119,10 @@ fn authored_normal_map_axes_mirrored_uv_and_back_faces() {
     material_normal_oracle(true, true, false, false);
 }
 
-// The normal stage switched off must not fall through to the bump map.
+// The normal-map stage switched off leaves a normal-mapped surface its
+// geometry normal.
 #[test]
-fn disabled_normal_stage_preserves_normal_map_precedence() {
+fn disabled_normal_stage_keeps_the_geometry_normal() {
     material_normal_oracle(true, false, false, false);
 }
 
@@ -239,7 +242,7 @@ fn material_normal_oracle(
                         &shading::BIND_MATERIAL,
                         &shading::SURFACE_RASTER,
                         &shading::SHADOW_MASK_NONE,
-                        &shading::MATERIAL_MAPS_BASIC,
+                        &shading::material_maps::MATERIAL_MAPS_BASIC,
                     ]),
                     r#"
 override fixture_axis:bool=false;

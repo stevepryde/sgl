@@ -45,9 +45,10 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
    n=normalize(mat3x3(tangent*scale,bitangent*scale,n)*mapped);
   }
  }
- // Preserve MaterialNode.NORMAL's authored-map precedence even when the
- // diagnostic disables normal-map evaluation; the bump map remains unselected.
- if (material.values.maps&MATERIAL_MAP_NORMAL)==0u && bump_maps_enabled && (material.values.maps&MATERIAL_MAP_BUMP)!=0u {
+ // MaterialNode.NORMAL selects normalMap OR ELSE bumpMap: a bump map is in
+ // effect only without a normal map (scene::materials::maps), so its bit
+ // alone selects it, with the normal-map stage disabled too.
+ if bump_maps_enabled && (material.values.maps&MATERIAL_MAP_BUMP)!=0u {
   // One authored texel on each UV axis gives the bump surface gradient;
   // this is not a fabricated screen-space dpdx/dpdy in a compute invocation.
   let step=1./vec2<f32>(scene_texture_size(material.textures[SCENE_TEXTURE_BUMP]));

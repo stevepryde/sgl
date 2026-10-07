@@ -16,8 +16,10 @@ SGL3D needs compute.
 
 A device takes a binding tier by its sampled textures per shader stage,
 which `graphics_device::limits` requests from the adapter:
-`BindingTier::Extended` at 48 or more (desktop GPUs, Chrome's WebGPU),
-`Basic` below (older iOS GPUs at 23), reported by `Renderer::binding_tier`.
+`BindingTier::Extended` at 48 or more (Metal on macOS and Apple4 and
+later, DX12, Chrome's WebGPU), `Basic` below (iOS GPUs older than Apple4,
+at 23); a Vulkan driver lands in either, by its `maxPerStageResources`.
+`Renderer::binding_tier` reports it.
 Every material map binds on both tiers but the anisotropy map, `Extended`
 alone: on `Basic` its anisotropy factors shade without it, in raster and
 rays alike. A probe captured on an `Extended` device keeps what its maps

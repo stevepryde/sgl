@@ -33,7 +33,7 @@ const STORAGE_TEXTURES: u32 = 4;
 // below 48. The oracle is S3D-1's floor and wgpu's validation of every
 // pipeline layout against the device's limits: frames that build the
 // heaviest pipelines (blended receivers of screen-space reflections that
-// carry every material map, world-space reflections, dynamic GI's rays over
+// between them carry every material map, world-space reflections, dynamic GI's rays over
 // the irradiance volume, ambient occlusion, fog and TAA) on a device with
 // the adapter's limits but that floor raise no validation error, and the
 // device reports the Basic tier.
@@ -96,17 +96,27 @@ fn heaviest_frame(sampled_textures: u32) -> Option<BindingTier> {
     let wall = scene
         .add_asset(&device, &queue, test_support::cube())
         .unwrap();
-    let glass = scene.add_asset(&device, &queue, every_map_glass()).unwrap();
-    for (model, z, mobility) in [
-        (wall.model, -4., Mobility::Static),
-        (glass.model, -2., Mobility::Moving),
+    let normal_glass = scene.add_asset(&device, &queue, glass(true)).unwrap();
+    let bump_glass = scene.add_asset(&device, &queue, glass(false)).unwrap();
+    for (model, at, mobility) in [
+        (wall.model, Vec3::new(0.3, 0., -4.), Mobility::Static),
+        (
+            normal_glass.model,
+            Vec3::new(0.3, 0., -2.),
+            Mobility::Moving,
+        ),
+        (
+            bump_glass.model,
+            Vec3::new(-0.5, 0., -2.5),
+            Mobility::Moving,
+        ),
     ] {
         scene
             .add_instance(
                 &device,
                 &queue,
                 InstanceState {
-                    pose: Mat4::from_translation(Vec3::new(0.3, 0., z)),
+                    pose: Mat4::from_translation(at),
                     ..InstanceState::new(model)
                 },
                 mobility,
@@ -162,11 +172,12 @@ fn heaviest_frame(sampled_textures: u32) -> Option<BindingTier> {
     Some(renderer.binding_tier())
 }
 
-/// A blended receiver of screen-space reflections carrying every map a
+/// A blended receiver of screen-space reflections carrying the maps a
 /// material takes, each its own image: base, metallic-roughness with its
-/// occlusion packed, emission, normal, bump and anisotropy, on a cube with
-/// authored tangents, which anisotropy needs.
-fn every_map_glass() -> Asset {
+/// occlusion packed, emission, anisotropy, and a normal map where `normal`,
+/// else a bump map, which a material takes only without a normal map; on a
+/// cube with authored tangents, which anisotropy needs.
+fn glass(normal: bool) -> Asset {
     let mut glass = test_support::cube();
     for vertex in &mut glass.meshes[0].vertices {
         let tangent = Vec3::from_array(vertex.normal).any_orthonormal_vector();
@@ -184,9 +195,12 @@ fn every_map_glass() -> Asset {
     material.mr_texture = Some(1);
     material.occlusion_texture = Some(1);
     material.emissive_texture = Some(2);
-    material.normal_texture = Some(3);
-    material.bump_texture = Some(4);
-    material.bump_scale = 1.;
+    if normal {
+        material.normal_texture = Some(3);
+    } else {
+        material.bump_texture = Some(4);
+        material.bump_scale = 1.;
+    }
     material.anisotropy_texture = Some(5);
     material.anisotropy_strength = 0.5;
     glass

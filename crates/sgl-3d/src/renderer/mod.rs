@@ -20,7 +20,7 @@ mod floor_tests;
 mod size_tests;
 
 use crate::scene::rays::acceleration::RayTracingStats;
-use crate::settings::{Antialiasing, RenderPreset, SceneResolution, Settings};
+use crate::settings::{Antialiasing, Settings};
 use crate::shading::bind::BindingTier;
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
@@ -109,35 +109,6 @@ impl std::error::Error for RendererError {
     }
 }
 
-/// The scene size for an output of `size`.
-fn scene_size(
-    size: [u32; 2],
-    preset: RenderPreset,
-    resolution: SceneResolution,
-    device_scale: f32,
-) -> [u32; 2] {
-    let scale = match resolution {
-        SceneResolution::Preset => {
-            let cap = if preset == RenderPreset::Low {
-                1.
-            } else {
-                1.75
-            };
-            (cap / device_scale.max(1.)).min(1.)
-        }
-        SceneResolution::Hd => (1280. / size[0].max(1) as f32)
-            .min(720. / size[1].max(1) as f32)
-            .min(1.),
-        SceneResolution::FullHd => (1920. / size[0].max(1) as f32)
-            .min(1080. / size[1].max(1) as f32)
-            .min(1.),
-        SceneResolution::Full => 1.,
-        SceneResolution::ThreeQuarter => 0.75,
-        SceneResolution::Half => 0.5,
-    };
-    size.map(|x| ((x as f32 * scale).floor() as u32).max(1))
-}
-
 impl Renderer {
     /// A renderer presenting to `output_format` at `output_size` physical
     /// pixels, for a window of `device_scale` physical pixels per logical
@@ -152,7 +123,7 @@ impl Renderer {
         device_scale: f32,
         settings: &Settings,
     ) -> Result<Self, RendererError> {
-        let scene = scene_size(
+        let scene = effective::scene_size(
             output_size,
             settings.preset,
             settings.scene_resolution,
@@ -172,11 +143,9 @@ impl Renderer {
         let fog = VolumetricFog::new(device, &lit);
         let scene_layout = crate::shading::bind::scene(device);
         let dynamic_gi = DynamicGi::new(device, &lit, &scene_layout);
-        let tier = BindingTier::of(&device.limits());
         let bindings = FrameBindings::new(
             device,
             lit,
-            tier,
             &views,
             shadows.maps(),
             fog.volume(),
@@ -189,13 +158,12 @@ impl Renderer {
                 &bindings.lit,
                 &bindings.shadow,
                 &bindings.scene,
-                &bindings.material,
                 &bindings.blended,
                 &bindings.shadow_mask,
                 &bindings.caster_positions,
             ],
             layers,
-            tier,
+            BindingTier::of(&device.limits()),
         );
         let targets = SharedTargets::new(device, render, false);
         // The form recorded for the device's backend
@@ -267,7 +235,7 @@ impl Renderer {
         device_scale: f32,
         settings: &Settings,
     ) {
-        let scene = scene_size(
+        let scene = effective::scene_size(
             output_size,
             settings.preset,
             settings.scene_resolution,

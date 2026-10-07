@@ -2242,11 +2242,11 @@ code; it does not redeclare a struct, binding or function another module owns.
   ([Material records](#shared-contracts)); the authored image index and
   the ray-source texture word are read through exhaustive matches on it,
   so a new map compiles only once every owner takes it. The normal and
-  bump maps fill one binding, `relief_map`, on both tiers: shading takes
-  a bump map only where the material has no normal map (three.js r185's
-  `MaterialNode.NORMAL`; `surface_raster.wgsl`, `surface_ray.wgsl`), so
-  the binding holds the normal map, else the bump map; the ray source
-  keeps a word for each. The occlusion map fills the metallic-roughness
+  bump maps fill one binding, `relief_map`, on both tiers: a bump map
+  shades only where the material has no normal map (three.js r185's
+  `MaterialNode.NORMAL`), a rule the maps in effect own, so the binding
+  holds the normal map, else the bump map, and shading selects the bump
+  map by its bit alone; the ray source keeps a word for each. The occlusion map fills the metallic-roughness
   binding, whose red channel holds it where it is that map's image (ORM
   packing), and is read from that map's ray-source word; it has no
   binding of its own yet. The layout builder and the group builder iterate
@@ -2316,12 +2316,13 @@ code; it does not redeclare a struct, binding or function another module owns.
   ray hits shade what raster does (S3D-5); its binding in
   `bind_material_extended.wgsl`; its sampling function in both material
   providers, called from `SURFACE_RASTER`; and the map on the ceiling
-  test's material.
+  test's materials.
   **Tests.** Each writes its limits as its own literals, from S3D-1. The
   floor test runs every pipeline on a device at S3D-1's floor and asserts
   `Basic`: it catches a misselection, or an `Extended` binding composed
   below 48. The ceiling test runs them on a device at exactly 48, asserts
-  `Extended` and draws a blended receiver carrying every map: it catches
+  `Extended` and draws blended receivers that between them carry every
+  map (a bump map apart from the normal map): it catches
   the wrong limit field, `>` for `>=`, a higher threshold, or the tier
   not reaching one of `Scene` and `Renderer`, which shows as incompatible
   group-2 layouts at the draw. The fallback test runs on a device at 47,

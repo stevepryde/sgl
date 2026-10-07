@@ -1101,7 +1101,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         ),
         (
             "bind_material_extended",
-            &[&super::BIND_MATERIAL_EXTENDED],
+            &[&super::material_maps::BIND_MATERIAL_EXTENDED],
             2,
             numbers(&group2::material_entries(bind::BindingTier::Extended)),
         ),

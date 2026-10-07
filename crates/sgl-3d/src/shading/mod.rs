@@ -20,6 +20,8 @@ pub(crate) mod layout_tests;
 pub(crate) mod lights;
 pub(crate) mod lod;
 pub(crate) mod material;
+pub(crate) mod material_maps;
+pub(crate) use material_maps::material_maps;
 // Wired into the ray source and its readers with #135's prepared models.
 pub(crate) mod packed_vertex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -171,34 +173,6 @@ pub(crate) static MATERIAL_RASTER: Module = Module {
     source: include_str!("material_raster.wgsl"),
     deps: &[&BIND_MATERIAL],
 };
-/// Group 2's maps of the Extended binding tier alone.
-pub(crate) static BIND_MATERIAL_EXTENDED: Module = Module {
-    name: "bind_material_extended",
-    source: include_str!("bind_material_extended.wgsl"),
-    deps: &[&BIND_MATERIAL],
-};
-/// The material-map provider of the Extended binding tier: samples its
-/// maps. A program that composes `SURFACE_RASTER` composes it or
-/// `MATERIAL_MAPS_BASIC`, exactly one (`material_maps`).
-pub(crate) static MATERIAL_MAPS_EXTENDED: Module = Module {
-    name: "material_maps_extended",
-    source: include_str!("material_maps_extended.wgsl"),
-    deps: &[&BIND_MATERIAL_EXTENDED],
-};
-/// The material-map provider of the Basic binding tier: each Extended map
-/// reads white.
-pub(crate) static MATERIAL_MAPS_BASIC: Module = Module {
-    name: "material_maps_basic",
-    source: include_str!("material_maps_basic.wgsl"),
-    deps: &[],
-};
-/// The material-map provider a program composes on a device of `tier`.
-pub(crate) fn material_maps(tier: bind::BindingTier) -> &'static Module {
-    match tier {
-        bind::BindingTier::Basic => &MATERIAL_MAPS_BASIC,
-        bind::BindingTier::Extended => &MATERIAL_MAPS_EXTENDED,
-    }
-}
 /// Rec. 709 luminance of linear RGB, for SGL3D's own shaders; ports keep
 /// their upstream helpers.
 pub(crate) static LUMINANCE: Module = Module {

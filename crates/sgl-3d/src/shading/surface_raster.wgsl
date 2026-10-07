@@ -51,9 +51,10 @@ fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
    n=normalize(mat3x3(tangent*scale,bitangent*scale,n)*mapped);
   }
  }
- // Three185.1 MaterialNode.NORMAL selects normalMap OR ELSE bumpMap.
- // Diagnostic stage disabling must not select the material's unused bump map.
- if (material.maps&MATERIAL_MAP_NORMAL)==0u && bump_maps_enabled && (material.maps&MATERIAL_MAP_BUMP)!=0u {
+ // Three185.1 MaterialNode.NORMAL selects normalMap OR ELSE bumpMap: a bump
+ // map is in effect only without a normal map (scene::materials::maps), so
+ // its bit alone selects it, with the normal-map stage disabled too.
+ if bump_maps_enabled && (material.maps&MATERIAL_MAP_BUMP)!=0u {
   // Three185.1 BumpMapNode: forward samples along GLSL screen derivatives,
   // with normalized position derivatives so authored bump does not scale
   // with world-space pixel size. WebGPU lowers GLSL dFdy to -dpdy.
