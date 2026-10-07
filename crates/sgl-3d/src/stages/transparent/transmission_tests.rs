@@ -500,7 +500,7 @@ fn the_frame_is_copied_only_where_a_transmissive_surface_shows() {
         renderer.finish_frame(&mut scene);
         for _ in 0..8 {
             device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-            if let Some(frame) = timing.begin_frame(&device, &queue).last() {
+            if let Some(frame) = timing.begin_frame(&device, &queue).next_back() {
                 return frame
                     .passes
                     .iter()
