@@ -44,9 +44,9 @@
 //   it about the direction to its nearest point and fades it in over 10 cm
 //   in front of the face. Bounded by π, it needs no 1 m distance clamp,
 //   which Godot gives area lights against jitter flicker.
-// - A point or spot light's inverse square takes the squared diagonal of
-//   the froxel the sample lies in, corner to corner, in its denominator
-//   (light_reach.wgsl), where Godot's omni and spot lights take
+// - A point or spot light's inverse square takes in its denominator the
+//   squared diagonal of the view-space box bounding the froxel the sample
+//   lies in (light_reach.wgsl), where Godot's omni and spot lights take
 //   1/max(d, 0.0001)^attenuation unbounded. One jittered sample of a froxel
 //   metres deep cannot integrate 1/d² across it: landing centimetres from
 //   a light, it takes thousands of times the froxel's light, and the
@@ -330,9 +330,18 @@ var<workgroup> fog_ambient_light:vec3<f32>;
    light+=directional.color*directional.illuminance*shadow*henyey_greenstein(dot(view_ray,toward),froxels.anisotropy)*directional.fog_energy;
   }
   light+=fog_ambient_light;
-  // The froxel's diagonal, from its first corner to its last, squared.
-  let diagonal=froxel_world((vec3<f32>(id)+vec3(1.))/size)-froxel_world(vec3<f32>(id)/size);
-  let froxel_square=dot(diagonal,diagonal);
+  // The squared diagonal of the froxel's bounding box in view space: its
+  // depth between its slice's ends, and across the frame, on each axis, the
+  // extent of its corners at both ends, which the frustum shears apart off
+  // its axis, so the bias is as large wherever the froxel lies on screen.
+  let z0=fog_slice_depth(f32(id.z)/size.z,froxels.length,froxels.detail_spread);
+  let z1=fog_slice_depth(f32(id.z+1u)/size.z,froxels.length,froxels.detail_spread);
+  let n0=froxel_ndc(vec2<f32>(id.xy)/size.xy)+froxels.projection.zw;
+  let n1=froxel_ndc(vec2<f32>(id.xy+vec2(1u))/size.xy)+froxels.projection.zw;
+  let high=max(max(n0*z0,n0*z1),max(n1*z0,n1*z1));
+  let low=min(min(n0*z0,n0*z1),min(n1*z0,n1*z1));
+  let lateral=(high-low)/froxels.projection.xy;
+  let froxel_square=dot(lateral,lateral)+(z1-z0)*(z1-z0);
   let range=cluster_range(position,pixel);
   let end=range.first+range.live+range.baked;
   for(var at=range.first;at<end;at++) {

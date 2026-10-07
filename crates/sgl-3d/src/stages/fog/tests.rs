@@ -365,13 +365,15 @@ fn point_light_scattering_matches_a_single_scattering_integral() {
 // for frames, so the fog about a still light pulses with the 16-frame jitter
 // cycle (and a moving light leaves puffs behind it). A still scene's fog
 // must hold still: once the history has settled, the froxel holding the
-// light changes by at most a quarter over a whole jitter cycle. The bound
-// follows from the froxel's size, not from a measurement: with the light at
-// its centre, every jittered sample lies within half the froxel's diagonal
-// b of the light, so with b² added to the inverse square's denominator, as
-// the medium takes it, each sample's 1/(d² + b²) lies between 1/(1.25 b²)
-// and 1/b², a quarter apart at most, and so does any history mix of them.
-// Unbiased, 1/d² ranges a thousandfold between the samples.
+// light changes by at most a quarter over a whole jitter cycle, on the
+// view's axis and at the frame's corners, where the frustum shears a froxel
+// half a metre across. The bound follows from the froxel's geometry, not from a
+// measurement: with the light at the centre of the froxel's bounding box in
+// view space, every jittered sample lies within half the box's diagonal b of
+// it, so with b² added to the inverse square's denominator, as the medium
+// takes it, each sample's 1/(d² + b²) lies between 1/(1.25 b²) and 1/b², a
+// quarter apart at most, and so does any history mix of them. Unbiased, 1/d²
+// ranges a thousandfold between the samples.
 #[test]
 fn a_still_point_light_holds_its_froxel_steady_over_the_jitter_cycle() {
     let Some((device, queue)) = test_support::device() else {
@@ -386,68 +388,160 @@ fn a_still_point_light_holds_its_froxel_steady_over_the_jitter_cycle() {
     };
     let frame = input(fog);
     let size = froxels(QUALITY, SIZE);
-    // The froxel about 4 m out on the view's axis, its slice 0.6 m deep and
-    // its column about 5 cm across, with the light at its centre.
-    let index = [size[0] / 2, size[1] / 2, 12];
-    let mut scene = Scene::new(&device, &queue);
-    scene
-        .add_light(
-            &device,
-            &queue,
-            Light {
-                position: froxel_center(&frame, size, index),
-                shape: LightShape::Point {
-                    radius: LightShape::DEFAULT_RADIUS,
-                },
-                color: [1.; 3],
-                intensity: 10.,
-                range: 25.,
-                baked: false,
-                specular: 1.,
-                casts_shadow: false,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
-    let output = crate::view::targets::target(&device, "fog frames", SIZE, gbuffer::COLOR);
-    let at = ((index[2] * size[1] + index[1]) * size[0] + index[0]) as usize;
-    let mut light = Vec::new();
-    // Three jitter cycles: two for the history to settle, the third read.
-    for frame_index in 0..48 {
-        let mut input = frame;
-        input.camera_cut = frame_index == 0;
-        let mut encoder = device.create_command_encoder(&Default::default());
-        renderer.render(
-            &device,
-            &queue,
-            &mut encoder,
-            &mut scene,
-            &input,
-            &settings,
-            &output,
-            None,
-        );
-        queue.submit([encoder.finish()]);
-        renderer.finish_frame(&mut scene);
-        if frame_index >= 32 {
-            light.push(texels(&read(&device, &queue, renderer.fog_volumes()[0]))[at][0]);
+    // A froxel's corner at unit coordinates `unit` of the volume, in view
+    // space (the camera's view is the identity), from the frame's geometry.
+    let corner = |unit: Vec3| {
+        let ndc = Vec2::new(unit.x * 2. - 1., 1. - unit.y * 2.);
+        view_ray(&frame, ndc) * fog.length * unit.z.powf(crate::shading::fog::DETAIL_SPREAD)
+    };
+    // Froxels about 4 m out, their slices 0.6 m deep and their columns about
+    // 5 cm across: on the view's axis, and at the frame's top-left and
+    // bottom-right corners.
+    for column in [
+        [size[0] / 2, size[1] / 2],
+        [1, 1],
+        [size[0] - 2, size[1] - 2],
+    ] {
+        let index = [column[0], column[1], 12];
+        let (mut low, mut high) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for offset in 0..8u32 {
+            let unit = Vec3::new(
+                (index[0] + (offset & 1)) as f32 / size[0] as f32,
+                (index[1] + (offset >> 1 & 1)) as f32 / size[1] as f32,
+                (index[2] + (offset >> 2)) as f32 / size[2] as f32,
+            );
+            let p = corner(unit);
+            low = low.min(p);
+            high = high.max(p);
         }
+        let mut scene = Scene::new(&device, &queue);
+        scene
+            .add_light(
+                &device,
+                &queue,
+                Light {
+                    position: (low + high) * 0.5,
+                    shape: LightShape::Point {
+                        radius: LightShape::DEFAULT_RADIUS,
+                    },
+                    color: [1.; 3],
+                    intensity: 10.,
+                    range: 25.,
+                    baked: false,
+                    specular: 1.,
+                    casts_shadow: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let settings = settings(true);
+        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let output = crate::view::targets::target(&device, "fog frames", SIZE, gbuffer::COLOR);
+        let at = ((index[2] * size[1] + index[1]) * size[0] + index[0]) as usize;
+        let mut light = Vec::new();
+        // Three jitter cycles: two for the history to settle, the third read.
+        for frame_index in 0..48 {
+            let mut input = frame;
+            input.camera_cut = frame_index == 0;
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+            if frame_index >= 32 {
+                light.push(texels(&read(&device, &queue, renderer.fog_volumes()[0]))[at][0]);
+            }
+        }
+        let (least, most) = light
+            .iter()
+            .fold((f32::MAX, 0f32), |(least, most), &value| {
+                (least.min(value), most.max(value))
+            });
+        assert!(
+            least > 1e-3,
+            "froxel {index:?}, holding the light, is unlit: {light:?}"
+        );
+        assert!(
+            most <= 1.25 * least,
+            "froxel {index:?}, holding a still light, ranged {least} to {most} over a jitter cycle: {light:?}"
+        );
     }
-    let (least, most) = light
-        .iter()
-        .fold((f32::MAX, 0f32), |(least, most), &value| {
-            (least.min(value), most.max(value))
-        });
-    assert!(
-        least > 1e-3,
-        "the froxel holding the light is unlit: {light:?}"
-    );
-    assert!(
-        most <= 1.25 * least,
-        "the froxel holding a still light ranged {least} to {most} over a jitter cycle: {light:?}"
-    );
+}
+
+// Defect: the medium's bias of a light's inverse square depends on where
+// the froxel lies on screen, as one oblique corner-to-corner vector of a
+// froxel the frustum shears does: such a measure differs between a froxel
+// and its mirror image across the view's axis, so a light near the camera
+// would hold different fog on either side of the screen. The camera's
+// projection is symmetric, so a light and its mirror image each lit in the
+// froxel holding it must hold the same light there, at every corner of the
+// frame, within the half-float volume's rounding.
+#[test]
+fn a_light_holds_the_same_fog_on_either_side_of_the_screen() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let fog = Fog {
+        density: 0.05,
+        anisotropy: 0.,
+        length: 100.,
+        ..Fog::default()
+    };
+    let frame = input(fog);
+    let size = froxels(QUALITY, SIZE);
+    // The light a centimetre toward the camera from the centre of froxel
+    // `index`, alone (a light exactly at a sample has no direction and
+    // lights nothing there); the froxel's light on the first frame, which
+    // samples froxel centres.
+    let held = |index: [u32; 3]| {
+        let mut scene = Scene::new(&device, &queue);
+        scene
+            .add_light(
+                &device,
+                &queue,
+                Light {
+                    position: {
+                        let center = froxel_center(&frame, size, index);
+                        center - center.normalize() * 0.01
+                    },
+                    shape: LightShape::Point {
+                        radius: LightShape::DEFAULT_RADIUS,
+                    },
+                    color: [1.; 3],
+                    intensity: 10.,
+                    range: 25.,
+                    baked: false,
+                    specular: 1.,
+                    casts_shadow: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
+        let at = ((index[2] * size[1] + index[1]) * size[0] + index[0]) as usize;
+        texels(&read(&device, &queue, renderer.fog_volumes()[0]))[at][0]
+    };
+    for (column, slice) in [([1, 1], 12), ([size[0] - 2, 1], 12), ([3, 5], 20)] {
+        let index = [column[0], column[1], slice];
+        let mirror = [size[0] - 1 - column[0], size[1] - 1 - column[1], slice];
+        let (light, mirrored) = (held(index), held(mirror));
+        assert!(
+            light > 1e-3,
+            "froxel {index:?}, holding the light, is unlit"
+        );
+        assert!(
+            (light - mirrored).abs() <= 4e-3 * light,
+            "froxel {index:?} holds {light} of a light at its centre, its mirror image {mirror:?} {mirrored}"
+        );
+    }
 }
 
 // Defect: the medium's bias of a light's inverse square reaches froxels far

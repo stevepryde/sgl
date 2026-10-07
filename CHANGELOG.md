@@ -16,12 +16,9 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` volumetric fog: a point or spot light's inverse square in the
-  fog now adds the froxel's squared diagonal to its denominator, so a light
-  near the camera no longer pulses with the fog's jitter or leaves puffs
-  behind it as it moves; its fog within about a froxel of it is dimmer than
-  before, most where `Fog::length` makes slices deep. Surfaces are
-  unchanged. No game-code changes needed; raise the light's `fog_energy` if
-  its halo now looks too faint.
+  fog now adds the froxel's squared diagonal, so near lights no longer pulse
+  or leave puffs, and their near fog is dimmer. Raise the light's
+  `fog_energy` if its halo looks too faint; surfaces are unchanged.
 - `sgl-3d` `Renderer::capture_specular_probe`: mip 0 held the one sample at
   each texel's centre, so a sub-texel emitter was stored at whole-texel
   energy or not at all; now each face renders at 2048 texels a side (or
