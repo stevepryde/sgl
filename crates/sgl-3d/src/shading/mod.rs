@@ -20,8 +20,8 @@ pub(crate) mod layout_tests;
 pub(crate) mod lights;
 pub(crate) mod lod;
 pub(crate) mod material;
-pub(crate) mod material_maps;
-pub(crate) use material_maps::material_maps;
+pub(crate) mod tiers;
+pub(crate) use tiers::{lit_provider, material_provider};
 // Wired into the ray source and its readers with #135's prepared models.
 pub(crate) mod packed_vertex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -515,7 +515,9 @@ pub(crate) static OCCLUSION: Module = Module {
     source: include_str!("occlusion.wgsl"),
     deps: &[&SPECULAR_LOBES],
 };
-/// One `Surface` and its shading for every view. Reads the lit bindings.
+/// One `Surface` and its shading for every view. Reads the lit bindings, and
+/// the Extended tier's through the lit provider the program composes
+/// (`lit_provider`).
 pub(crate) static SURFACE: Module = Module {
     name: "surface",
     source: include_str!("surface.wgsl"),
@@ -531,7 +533,6 @@ pub(crate) static SURFACE: Module = Module {
         &PROBE_GRID,
         &BAKED_LIGHTING,
         &IRRADIANCE_VOLUME,
-        &DYNAMIC_GI_SAMPLE,
         &DIRECTIONAL_SHADOW,
         &LIGHTS,
         &DECALS,
@@ -539,7 +540,7 @@ pub(crate) static SURFACE: Module = Module {
 };
 /// A rasterized fragment's `Surface`. Reads `view`, `object` and the
 /// material, and the Extended tier's maps through the material-map provider
-/// the program composes (`material_maps`).
+/// the program composes (`material_provider`).
 pub(crate) static SURFACE_RASTER: Module = Module {
     name: "surface_raster",
     source: include_str!("surface_raster.wgsl"),
@@ -562,10 +563,10 @@ pub(crate) static SURFACE_RAY: Module = Module {
     ],
 };
 
-/// The lit shading library with scene ray queries, for compute fixtures:
-/// group 0 is the lit layout, group 1 the scene's object records and ray
-/// buffers. A fixture appends its entry point and its own bindings at group
-/// 3.
+/// The lit shading library with scene ray queries, for compute fixtures on
+/// a device of the Extended binding tier: group 0 is the lit layout, group
+/// 1 the scene's object records and ray buffers. A fixture appends its entry
+/// point and its own bindings at group 3.
 #[cfg(test)]
 pub(crate) fn lit_compute_library() -> String {
     compose(&[
@@ -573,5 +574,6 @@ pub(crate) fn lit_compute_library() -> String {
         &SURFACE_RAY,
         &SHADOW_MASK_NONE,
         &SCENE_RAYS_PORTABLE,
+        &tiers::LIT_EXTENDED,
     ])
 }

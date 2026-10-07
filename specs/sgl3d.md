@@ -27,15 +27,18 @@ settings SGL3D has today.
    region) is a pure step the game runs where it chooses ([architecture](sgl3d-architecture.md#scene-content)). SGL3D consumes ordinary
    Rust render data on a caller-owned wgpu device and queue: native (Metal,
    Vulkan, DX12) or the browser's WebGPU, requested with the adapter's limits
-   (`graphics_device::limits`). The device must support compute shaders,
-   indirect dispatch and draw (`DownlevelFlags::INDIRECT_EXECUTION`, which
-   the dynamic GI volume's dispatches and the GPU draw lists use), eight
-   storage buffers per shader stage (wgpu's default limit) and 21
-   sampled textures per shader stage (five above it). That rules out wgpu's
-   GL and GLES backend, WebGL2 included, which lacks compute and whose
-   wgpu-hal fixes `MAX_TEXTURE_SLOTS` at 16, and a WebGPU device left at the
-   default limits; WebGPU offers more when the adapter's limits are
-   requested ([package README](../crates/sgl-3d/README.md#browser-wasm--webgpu)).
+   (`graphics_device::limits`). The device must offer WebGPU's core feature
+   level at its default limits (`wgpu::Limits::default()`, which wgpu sets
+   to WebGPU's: 16 sampled textures, eight storage buffers and four storage
+   textures per shader stage among them): compute shaders, indirect
+   dispatch and draw (`DownlevelFlags::INDIRECT_EXECUTION`, which the
+   dynamic GI volume's dispatches and the GPU draw lists use), storage
+   buffers in vertex and fragment stages and cube-array textures. That
+   rules out WebGPU's compatibility mode, which lacks those storage buffers
+   and cube arrays, and wgpu's GL and GLES backend: WebGL2 lacks compute,
+   and native GL is not a target. WebGPU offers more than its defaults when
+   the adapter's limits are requested
+   ([package README](../crates/sgl-3d/README.md#browser-wasm--webgpu)).
    Above that floor a device takes one of two binding tiers by its
    `max_sampled_textures_per_shader_stage`
    ([Binding tiers](sgl3d-architecture.md#designs-that-span-stages)):

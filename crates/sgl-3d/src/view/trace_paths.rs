@@ -1,8 +1,9 @@
 //! A tracing stage's programs for the paths a frame's rays take (the
 //! architecture's Hardware ray tracing, *Bindings and composition*): its
 //! shader composed with the portable function set, or with the query
-//! module of the hardware form in effect (`shading::ray_trace_root`), each
-//! with its pipeline layout and its group 3, the stage's own bindings and,
+//! module of the hardware form in effect (`shading::ray_trace_root`), and
+//! with the lit provider of the device's binding tier
+//! (`shading::lit_provider`), each with its pipeline layout and its group 3, the stage's own bindings and,
 //! on the hardware path, the scene's TLAS at the one entry
 //! `shading::bind::tlas_entry` declares. A path's program is made when a
 //! frame first takes it. The candidate form's programs and pipelines are
@@ -10,6 +11,7 @@
 //! baseline form for good (`DeviceRayForm`).
 use super::cached_group::CachedGroup;
 use super::frame::HardwareRays;
+use crate::shading::bind::{BindingTier, LitLayout};
 use crate::shading::{self, Module, RayQueryForm};
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -61,6 +63,8 @@ pub(crate) struct TracePath {
 pub(crate) struct TracePaths {
     label: &'static str,
     root: &'static Module,
+    /// The device's binding tier, whose lit provider each program composes.
+    tier: BindingTier,
     /// The stage's group 3 bindings.
     entries: Vec<wgpu::BindGroupLayoutEntry>,
     /// Its groups 0 and 1: the lit layout and the scene's.
@@ -93,18 +97,21 @@ fn scoped<T>(device: &wgpu::Device, create: impl FnOnce() -> T) -> (T, Option<St
 
 impl TracePaths {
     /// The programs of the stage whose shader's root is `root`, which binds
-    /// `lit` at group 0, `scene` at group 1 and `entries` at group 3.
+    /// `lit` at group 0, `scene` at group 1 and `entries` at group 3, and
+    /// composes the lit provider of `lit`'s binding tier.
     pub fn new(
         label: &'static str,
         root: &'static Module,
         entries: &[wgpu::BindGroupLayoutEntry],
-        [lit, scene]: [&wgpu::BindGroupLayout; 2],
+        lit: &LitLayout,
+        scene: &wgpu::BindGroupLayout,
     ) -> Self {
         Self {
             label,
             root,
+            tier: lit.tier,
             entries: entries.to_vec(),
-            layouts: [lit.clone(), scene.clone()],
+            layouts: [lit.layout.clone(), scene.clone()],
             paths: Vec::new(),
         }
     }
@@ -132,7 +139,12 @@ impl TracePaths {
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(self.label),
                     source: wgpu::ShaderSource::Wgsl(
-                        shading::compose(&[self.root, shading::ray_trace_root(form)]).into(),
+                        shading::compose(&[
+                            self.root,
+                            shading::ray_trace_root(form),
+                            shading::lit_provider(self.tier),
+                        ])
+                        .into(),
                     ),
                 });
                 self.paths.push((
@@ -219,7 +231,7 @@ impl TracePaths {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::{DeviceRayForm, TracePath, TracePaths};
+    use super::{BindingTier, DeviceRayForm, TracePath, TracePaths};
     use crate::shading::{Module, RayQueryForm};
     use crate::test_support;
     use crate::view::frame::HardwareRays;
@@ -262,7 +274,8 @@ mod tests {
             device_form: &device_form,
         });
         let scene = crate::shading::bind::scene(&device);
-        let mut paths = TracePaths::new("trace paths test", &TRACE_ONE, &[], [&scene, &scene]);
+        let lit = crate::shading::bind::lit(&device, BindingTier::Basic);
+        let mut paths = TracePaths::new("trace paths test", &TRACE_ONE, &[], &lit, &scene);
         let mut pipelines = HashMap::new();
         // The first pipeline asked for fails; every later one is valid.
         let made = Cell::new(0);

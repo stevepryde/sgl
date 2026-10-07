@@ -77,6 +77,7 @@ pub(super) fn render(
             fused_supported: pipelines.fused_supported,
             occlusion_supported: cull.occlusion_supported(),
             ray_queries: ray_form.as_ref().map(|form| form.form()),
+            tier: pipelines.tier,
         },
     );
     pipelines.specialise(

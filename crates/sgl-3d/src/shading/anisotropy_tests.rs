@@ -124,6 +124,7 @@ fn anisotropy_gpu_matches_independent_brdf_and_historical_zero() {
                 &crate::shading::BIND_LIT,
                 &crate::shading::SURFACE,
                 &crate::shading::SHADOW_MASK_NONE,
+                &crate::shading::tiers::LIT_BASIC,
             ]),
             HISTORICAL,
             r#"

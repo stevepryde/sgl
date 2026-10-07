@@ -92,6 +92,7 @@ impl Renderer {
                 fused_supported: self.pipelines.fused_supported,
                 occlusion_supported: self.cull.occlusion_supported(),
                 ray_queries: self.ray_form.as_ref().map(|form| form.form()),
+                tier: self.pipelines.tier,
             },
         );
         self.pipelines.specialise(
@@ -313,7 +314,7 @@ impl Renderer {
     }
 
     pub(crate) fn test_lit_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.bindings.lit
+        &self.bindings.lit.layout
     }
 
     /// What each phase of the last frame appended to the camera's sets: the

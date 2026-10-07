@@ -48,6 +48,12 @@ docs and specs the entry links.
   drivers), a material's anisotropy map gives way to its anisotropy
   factors, where it shaded before. No game-code change is needed; Metal on
   macOS, DX12 and Chrome's WebGPU take `Extended`.
+- `sgl-3d` device floor: WebGPU's default limits (16 sampled textures per
+  stage), down from 21, so a browser's default WebGPU adapter runs SGL3D,
+  on `Basic`. On `Basic` baked light from a lightmap or irradiance atlas is
+  non-directional and `Settings::dynamic_gi` resolves to `Off`, reported by
+  the new `Renderer::dynamic_gi_in_effect(&settings)`; devices with 21 to
+  47 lose both, where they ran before. No game-code change is needed.
 
 ## 0.2.1 — 2026-10-07
 

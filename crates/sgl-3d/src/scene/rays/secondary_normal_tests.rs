@@ -242,7 +242,8 @@ fn material_normal_oracle(
                         &shading::BIND_MATERIAL,
                         &shading::SURFACE_RASTER,
                         &shading::SHADOW_MASK_NONE,
-                        &shading::material_maps::MATERIAL_MAPS_BASIC,
+                        &shading::tiers::MATERIAL_MAPS_BASIC,
+                        &shading::tiers::LIT_BASIC,
                     ]),
                     r#"
 override fixture_axis:bool=false;

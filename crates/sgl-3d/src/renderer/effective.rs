@@ -3,10 +3,12 @@
 //! choices at `Renderer::resize`.
 use crate::FrameInput;
 use crate::settings::{
-    AmbientOcclusionQuality, Antialiasing, FogQuality, ReflectionMethod, RenderPreset,
-    SceneResolution, ScreenSpaceReflections, Settings, ShadowQuality, WorldSpaceReflections,
+    AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, FogQuality, ReflectionMethod,
+    RenderPreset, SceneResolution, ScreenSpaceReflections, Settings, ShadowQuality,
+    WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
+use crate::shading::bind::BindingTier;
 use crate::stages::reflections::velvet;
 use crate::view::effective::{
     AmbientOcclusion, Effective, HardwareRayTracing, ScreenSpace, ShadowFilter, Sizing,
@@ -156,6 +158,18 @@ pub(super) struct Device {
     /// It traces rays in hardware, in this form
     /// (`scene::rays::acceleration::supported`, `DeviceRayForm::form`).
     pub ray_queries: Option<RayQueryForm>,
+    /// Its binding tier, `Extended` alone binding the dynamic GI volume's
+    /// probes.
+    pub tier: BindingTier,
+}
+
+/// `Settings::dynamic_gi` on a device of `tier`: the setting on the
+/// Extended binding tier, else `Off`. The saved choice is unchanged.
+pub(super) fn dynamic_gi(settings: &Settings, tier: BindingTier) -> DynamicGiQuality {
+    match tier {
+        BindingTier::Extended => settings.dynamic_gi,
+        BindingTier::Basic => DynamicGiQuality::Off,
+    }
 }
 
 /// What a frame's scene holds that its effective configuration follows.
@@ -205,6 +219,7 @@ pub(super) fn resolve(
         fused_supported,
         occlusion_supported,
         ray_queries,
+        tier,
     } = device;
     let low = settings.low();
     let diagnostics = settings.diagnostics_in_effect();
@@ -301,8 +316,7 @@ pub(super) fn resolve(
             p[3][3] == 0. && p[2][3] == -1.,
         ),
         fog_filter: settings.fog_filter,
-        dynamic_gi: settings
-            .dynamic_gi
+        dynamic_gi: dynamic_gi(settings, tier)
             .rays()
             .filter(|_| content.dynamic_gi_volume),
         bloom: settings.bloom.enabled(low) && !disable.bloom,

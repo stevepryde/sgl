@@ -17,13 +17,15 @@ SGL3D needs compute.
 A device takes a binding tier by its sampled textures per shader stage,
 which `graphics_device::limits` requests from the adapter:
 `BindingTier::Extended` at 48 or more (Metal on macOS and Apple4 and
-later, DX12, Chrome's WebGPU), `Basic` below (iOS GPUs older than Apple4,
-at 23); a Vulkan driver lands in either, by its `maxPerStageResources`.
-`Renderer::binding_tier` reports it.
-Every material map binds on both tiers but the anisotropy map, `Extended`
-alone: on `Basic` its anisotropy factors shade without it, in raster and
-rays alike. A probe captured on an `Extended` device keeps what its maps
-did there. [Binding tiers](../README.md#binding-tiers).
+later, DX12, Chrome's upper tier), `Basic` below, down to WebGPU's default
+16 (a browser's default adapter, iOS GPUs older than Apple4 at 23); a
+Vulkan driver lands in either, by its `maxPerStageResources`.
+`Renderer::binding_tier` reports it. On `Basic` baked light from a
+lightmap or irradiance atlas is non-directional, dynamic GI is off
+(`Renderer::dynamic_gi_in_effect`), and a material's anisotropy map gives
+way to its factors, in raster and rays alike. A probe captured on an
+`Extended` device keeps what its maps and lights did there.
+[Binding tiers](../README.md#binding-tiers).
 
 ## Content
 
@@ -199,7 +201,8 @@ did there. [Binding tiers](../README.md#binding-tiers).
   materials of static instances (`Scene::set_lightmap`) and a static
   irradiance atlas, BC6H/BC7-compressed for shipping
   (`set_compressed_static_irradiance_atlas`), both textures with optional
-  directionality that the hardware filters, and ambient cubes for moving
+  directionality that the hardware filters (on the `Extended` binding tier;
+  `Basic` reads none), and ambient cubes for moving
   instances (`set_instance_baked_irradiance`). A fixture in the bake can also
   be a baked scene light, which lights moving instances live; its light then
   stays out of their ambient cubes.
@@ -215,8 +218,9 @@ did there. [Binding tiers](../README.md#binding-tiers).
   which its sky visibility lets through; the visibility darkens the sky's
   share of their environment specular too.
   [Irradiance volume](../README.md#irradiance-volume).
-- **Dynamic diffuse GI**: a volume of probes the game places
-  (`Scene::set_dynamic_gi_volume`, `DynamicGiVolume`), kept up by rays
+- **Dynamic diffuse GI** (on the `Extended` binding tier): a volume of
+  probes the game places (`Scene::set_dynamic_gi_volume`,
+  `DynamicGiVolume`), kept up by rays
   through the scene (Wicked Engine's DDGI), near probes every frame and far
   ones in turn, within a per-frame budget of rays: coloured bounce light
   from the frame's and the scene's lights, emitters and the sky, shadowed

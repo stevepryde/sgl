@@ -408,7 +408,7 @@ Each has one definition, which every producer and consumer uses.
 | --- | --- |
 | Conventions | Units, axes, depth and colour are S3D-3. |
 | View and frame data | `View`, one per view (matrices, previous matrices, jitter, eye, viewport), and `Frame`, one per frame (time, the material animation's phase, the directional lights with the shadowed light's cascades, the hemisphere fill, the environment's diffuse lighting, reflection sky and backdrop, the fog volume's slicing and whether the frame has fog, mist, the visibility mask, the scene's baked-lighting constants: the atlas scale and the lightmap's chart transform, the irradiance volume's placement and whether it lights the frame, and the dynamic GI volume's placement, its scroll and whether it lights the frame), declared with their flag bits in `shading::uniforms`. Named fields; flags are integers with named bits. The renderer packs `Frame` from `FrameInput`'s typed values; no GPU layout is public. The phase is where `FrameInput::elapsed_seconds`, a double, falls within the hour over which material animation repeats exactly, reduced on the CPU, so the GPU's `f32` keeps its precision however long a session runs; Godot rolls its shader time over and Bevy wraps its time at the same hour, each with a jump, which the period's whole repeats avoid ([Material records](#shared-contracts)). |
-| Bind groups | For pipelines that draw scene geometry through the shading library. Group 0 has three layouts: lit (view and frame data, lights, decals and the atlas their images are packed in, clusters, shadows, environment, probes, the irradiance volume's cells, the dynamic GI volume's probe texture, lookup tables and the fog volume), unlit (view and frame data, the frame's environment with its backdrop and the fog volume, for the sky, additive effects and mist) and shadow (view and frame data). The fog volume and its sampler are visible to fragment stages only. A view that renders into one of those binds a neutral stand-in for it; ray hits bind the lit layout with their light and decal lists, the local-light atlas's static layers and, as probe captures do, the installed probes; the dynamic GI probe rays' hits bind it with the volume's lists. Group 1: the object records, one storage buffer bound whole that geometry passes read, and the geometry buffers ray queries read. Group 2: material. Group 3: the stage's own, or a group the scene lends (a GPU-built cascade's casters: their set's positions slab's, which `scene::geometry` builds over `shading::bind::caster_positions`). Ports, full-screen passes, the deform stage and the cull stage lay out their own. Four groups is the limit. Lit group 0 and group 1 bind 8 storage buffers to a fragment stage, wgpu's default limit and S3D-1's floor: `graphics_device::limits` requests the adapter's `max_storage_buffers_per_shader_stage`, and the change that adds another states the floor it needs in S3D-1 or folds two buffers into one (the probe collection holds its world grid; the decals' indices share the clusters' lists). Sampled textures follow the binding tiers ([Binding tiers](#designs-that-span-stages)): Basic below 48 sampled textures a stage and Extended at 48 or more, where group 2's map bindings each have a tier. Lit group 0, the irradiance volume's cell texture and the dynamic GI volume's probe texture among it, binds 13 sampled textures to a fragment stage, a material's map bindings 4 on Basic and 5 on Extended, and the blended pipelines' group 3 (the screen-space method's result and the surface depth) two more: 19 on Basic, within the floor of 21 S3D-1 states, and 20 of the 48 on Extended. A compute stage sees lit group 0's twelve, the fog volume not among them: the world-space trace binds 18 to its compute stage (lit group 0's twelve, the receivers' depth, normals, material and F0, their source identities and its ray list) and 3 storage textures (its targets), and its classification, a pass of its own, 4 storage textures (the trace's targets and the ray list), wgpu's default `max_storage_textures_per_shader_stage`, and 1 storage buffer (the rays' count); the dynamic GI trace binds 13 (lit group 0's twelve, the irradiance volume's cells, which its hits sample, and the probe texture it samples for the bounce among them, and its ray list), and the ray-traced shadow trace 15 (lit group 0's twelve and the G-buffer's depth, normals and F0). `graphics_device::limits` requests the adapter's, and the change that adds another states the floor it needs in S3D-1 or the tier that binds it, with its fallback below that tier, or folds two textures into one (one lookup-table texture holds the rectangle lights' fit and the DFG table; one texture holds the dynamic GI volume's irradiance maps, depth maps and probe data). A stage whose passes bind lit group 0 and group 1 passes its own per-ray or per-probe data as textures, not storage buffers, as the dynamic GI stage does and the world-space reflection trace does (its ray list a texture, its count copied into its parameters); the floor test holds a device to S3D-1's floor of sampled textures and storage buffers and wgpu's default of storage textures, and the ceiling test one to exactly 48 sampled textures a stage. The ray-traced shadow trace writes four storage textures (its visibility words, linear depth, the denoiser's tile masks and its normals), wgpu's default `max_storage_textures_per_shader_stage`; the hardware path it needs is native-only. Ambient occlusion's depth prefilter writes four too (mips 0–3 of its depth pyramid; mip 4 takes a dispatch of its own). The hardware path's TLAS is bound only by the passes that trace through it, in each tracing stage's group 3 at the one entry `scene_rays_hardware.wgsl` declares and `shading::bind::tlas_entry` builds (COMPUTE visible: every pass that traces is a compute pass), lent by the renderer from the scene as the ray-hit group is; group 1 is unchanged ([Hardware ray tracing](#designs-that-span-stages)). The opaque stage's lighting pass, in its two-pass form while ray-traced shadows run, binds the ray-traced shadow stage's mask and slot table at its group 3 (`bind_shadow_mask.wgsl`), one sampled texture more, 18 on Basic and 19 on Extended; the fused pass and every other lit composition bind none ([Ray-traced shadows](#designs-that-span-stages)). On Metal, wgpu 30 caps a stage's buffers of every kind (storage, uniform, vertex) and acceleration structures together at 29 (`max_buffers_and_acceleration_structures_per_shader_stage`, checked when a pipeline layout is created), down from 31 per kind in wgpu 29; `graphics_device::limits` requests the adapter's value, and SGL3D's largest stage binds about 15. |
+| Bind groups | For pipelines that draw scene geometry through the shading library. Group 0 has three layouts: lit (view and frame data, lights, decals and the atlas their images are packed in, clusters, shadows, environment, probes, the irradiance volume's cells, the dynamic GI volume's probe texture, lookup tables and the fog volume), unlit (view and frame data, the frame's environment with its backdrop and the fog volume, for the sky, additive effects and mist) and shadow (view and frame data). The fog volume and its sampler are visible to fragment stages only. A view that renders into one of those binds a neutral stand-in for it; ray hits bind the lit layout with their light and decal lists, the local-light atlas's static layers and, as probe captures do, the installed probes; the dynamic GI probe rays' hits bind it with the volume's lists. Group 1: the object records, one storage buffer bound whole that geometry passes read, and the geometry buffers ray queries read. Group 2: material. Group 3: the stage's own, or a group the scene lends (a GPU-built cascade's casters: their set's positions slab's, which `scene::geometry` builds over `shading::bind::caster_positions`). Ports, full-screen passes, the deform stage and the cull stage lay out their own. Four groups is the limit. Lit group 0 and group 1 bind 8 storage buffers to a fragment stage, wgpu's default limit and S3D-1's floor: `graphics_device::limits` requests the adapter's `max_storage_buffers_per_shader_stage`, and the change that adds another states the floor it needs in S3D-1 or folds two buffers into one (the probe collection holds its world grid; the decals' indices share the clusters' lists). Sampled textures follow the binding tiers ([Binding tiers](#designs-that-span-stages)): Basic below 48 sampled textures a stage and Extended at 48 or more, where lit group 0's bindings and group 2's map bindings each have a tier. Lit group 0 binds 13 sampled textures to a fragment stage on Extended (the irradiance volume's cells, the dynamic GI volume's probes and the lightmap's and irradiance atlas's directionality among them) and 10 on Basic, a material's map bindings 5 and 4, and the blended pipelines' group 3 (the screen-space method's result and the surface depth) two more: 20 of the 48 on Extended, and 16 on Basic, S3D-1's floor, so a binding Basic gains displaces another. A compute stage sees lit group 0's twelve on Extended and nine on Basic, the fog volume not among them: the world-space trace binds 18 and 15 to its compute stage (with the receivers' depth, normals, material and F0, their source identities and its ray list) and 3 storage textures (its targets), and its classification, a pass of its own, 4 storage textures (the trace's targets and the ray list), wgpu's default `max_storage_textures_per_shader_stage`, and 1 storage buffer (the rays' count); the dynamic GI trace, on Extended alone, binds 13 (lit group 0's twelve, the irradiance volume's cells, which its hits sample, and the probe texture it samples for the bounce among them, and its ray list), and the ray-traced shadow trace 15 and 12 (lit group 0's and the G-buffer's depth, normals and F0). `graphics_device::limits` requests the adapter's, and the change that adds another states the tier that binds it, with its fallback below that tier, or folds two textures into one (one lookup-table texture holds the rectangle lights' fit and the DFG table; one texture holds the dynamic GI volume's irradiance maps, depth maps and probe data). A stage whose passes bind lit group 0 and group 1 passes its own per-ray or per-probe data as textures, not storage buffers, as the dynamic GI stage does and the world-space reflection trace does (its ray list a texture, its count copied into its parameters); the floor test holds a device to S3D-1's floor, WebGPU's default limits, and the ceiling test one to them but exactly 48 sampled textures a stage. The ray-traced shadow trace writes four storage textures (its visibility words, linear depth, the denoiser's tile masks and its normals), wgpu's default `max_storage_textures_per_shader_stage`; the hardware path it needs is native-only. Ambient occlusion's depth prefilter writes four too (mips 0–3 of its depth pyramid; mip 4 takes a dispatch of its own). The hardware path's TLAS is bound only by the passes that trace through it, in each tracing stage's group 3 at the one entry `scene_rays_hardware.wgsl` declares and `shading::bind::tlas_entry` builds (COMPUTE visible: every pass that traces is a compute pass), lent by the renderer from the scene as the ray-hit group is; group 1 is unchanged ([Hardware ray tracing](#designs-that-span-stages)). The opaque stage's lighting pass, in its two-pass form while ray-traced shadows run, binds the ray-traced shadow stage's mask and slot table at its group 3 (`bind_shadow_mask.wgsl`), one sampled texture more, 15 on Basic and 19 on Extended; the fused pass and every other lit composition bind none ([Ray-traced shadows](#designs-that-span-stages)). On Metal, wgpu 30 caps a stage's buffers of every kind (storage, uniform, vertex) and acceleration structures together at 29 (`max_buffers_and_acceleration_structures_per_shader_stage`, checked when a pipeline layout is created), down from 31 per kind in wgpu 29; `graphics_device::limits` requests the adapter's value, and SGL3D's largest stage binds about 15. |
 | Layout mirroring | A struct shared between Rust and WGSL is declared once in each, side by side in `shading`. A test compares the Rust layout with naga's layout of the composed WGSL. A vertex buffer's layout is derived once from the Rust type it holds, and a test compares it with naga's inputs of the vertex entry points that read it. |
 | Vertex encoding | A game gives vertices as `asset::Vertex`, 88 bytes of `f32`; the ray source keeps each in eight words (32 bytes), packed where its model is prepared ([Prepared geometry](#scene-content)). Everything but the position follows Godot's attribute compression (b130438 `servers/rendering/rendering_server.cpp`, `_surface_set_data` and `_get_axis_angle` under `ARRAY_FLAG_COMPRESS_ATTRIBUTES`; decoded by `_unpack_vertex_attributes`, `oct_to_vec3` and `axis_angle_to_tbn` in `forward_clustered/scene_forward_clustered.glsl`), extended to SGL3D's attributes. Its layout and its encoding have one owner in each language, `shading::packed_vertex` and `packed_vertex.wgsl`, side by side (AR-2): the layout test ties the struct, and a round trip on the GPU against independent expectations ties the encoder to the decoder. A vertex holds its position as three `f32` (words 0–2); its normal and tangent as the axis and angle of the rotation whose matrix rows are (tangent, bitangent, normal), as Godot's `Basis` holds the frame in `_get_axis_angle` and `axis_angle_to_tbn` reconstructs its rows, with bitangent = normal × tangent and the handedness carried by the angle's half: the axis octahedral in two 16-bit unorms (`Vector3::octahedron_encode`; word 3) and the angle a 16-bit unorm, Godot's encoding (low half of word 4); its lightmap chart as a 16-bit index into its mesh's table of distinct chart bounds (high half of word 4), since a chart's bounds repeat on every vertex of it; its UV as two 16-bit unorms across its mesh's UV rectangle (word 5); its colour as RGBA8, the colour sRGB-encoded and the alpha linear, clamped to 0..1 as glTF's `COLOR_0` is (word 6); and its lightmap UV as two 16-bit unorms, a negative one packed as (0, 0), which means unassigned alike (word 7). Each element is a whole number of words, as the geometry buffers' allocator requires ([Raster geometry](#shared-contracts)). The frame is made orthonormal before it is encoded: the tangent is projected onto the normal's plane and normalised, as `pbr_tangent_frame` does at shading; a tangent that vanishes under the projection, or whose handedness is not ±1, is absent (`asset::tangent_frames`), and an absent one takes a unit tangent in the normal's plane, Duff et al.'s orthonormal vector (2017, glam's `any_orthonormal_vector`), with handedness +1, which nothing reads, since anisotropy needs authored tangents; Godot's arbitrary tangent (`rendering_server.cpp`, its no-tangent branch) vanishes for a normal along (1, 1, −1). Godot's glTF importer instead leaves a mesh uncompressed when a tangent is not perpendicular to its normal (`modules/gltf/gltf_document.cpp` 1829–1843), and takes the axis and angle from `Basis::get_axis_angle`, which assumes a rotation and loses precision approaching its singularities at 0° and 180°; SGL3D takes them from the frame's unit quaternion, conditioned alike at every angle, and decodes with `axis_angle_to_tbn`. A normal that is zero or not finite has no frame, and its mesh is refused with the typed error, as a position that is not finite is; so is a mesh with more than 65 536 distinct chart bounds, the error naming the mesh's index. Each mesh keeps its own chart table, as it keeps its own UV rectangle, so a model names any number of charts across its meshes, and a chart two meshes name is stored in each, 16 bytes a mesh: one table a model (#136's) refused Hyperdrive's courses, which name over 100 000 charts across their meshes, one a triangle, and at most 18 432 in a mesh (#182); a model-wide table that stores each chart once, each mesh indexing it from its own start, would save only those 16 bytes a shared chart and would need every chart a mesh names to lie within 65 536 entries of that mesh's start; and a wider index would grow the vertex or take its bits from the angle or the lightmap UV. Positions are SGL3D's departure from Godot, which packs them as 16-bit unorms within each surface's box and splits nothing: they stay `f32`, as Bevy keeps them (9d12036 `crates/bevy_mesh/src/mesh.rs`, `ATTRIBUTE_POSITION` as `Float32x3`), because on Hyperdrive's content a 16-bit grid errs by up to 6.25 cm across its 4.5 km environment and 7.8 mm across its 650 m course, tilting its 2 m tunnel panels by about 0.45° against the 0.05° its reflection test holds (#136's review). The ray source therefore keeps exact positions for intersection and for what the scene builds over them, the casters' vertex buffers keep their `f32` positions, and the hardware path (#23) builds its BLAS from them. Every 16-bit and 8-bit value is rounded to the nearest step, where Godot's casts truncate (`(uint16_t)CLAMP(v * 65535, 0, 65535)`), an RD-2 improvement: truncation errs by up to a whole step, which puts a normal or tangent 0.0146° off and a UV, colour or lightmap UV a full step off. Tolerances, which the round trip holds: a normal or tangent within 0.01°; a UV within its rectangle's extent over 131 070 per axis, so a mesh tiled across many repeats loses precision with its extent; a colour within half an 8-bit step of its sRGB encoding; a lightmap UV within 1/131 070. Every reader decodes through `packed_vertex.wgsl`: the pulled raster passes (G-buffer, lighting, receiver, blended and probe capture faces) and the GPU-built cascades' pulled casters, a masked material's UV and colour and the positions of a mesh without slab positions ([GPU draw lists](#designs-that-span-stages)); a masked caster's UV and colour; the deform stage's rest normal and tangent, which need nothing of the mesh, so its dispatch is unchanged; the portable traversal's leaf test, for a cut-out's UV and colour; and hit decoding for world-space reflections and dynamic GI probe rays and their visibility rays. A mesh's record in the ray source carries its UV rectangle, the word where its own chart table starts, its bounds, and its section table, each leaf of its range hierarchy's bounds, mesh-relative first index and triangle count, with a bit of the count's word (`SECTION_PAIRED`) where its triangles pair, in the model's range, which the GPU draw lists cull by ([GPU draw lists](#designs-that-span-stages)). Deformed vertices, which the deform stage writes each frame, and morph targets' displacements stay `f32`. |
 | G-buffer | What the opaque stage records for later stages, including the ambient diffuse within lit colour before occlusion. F0 (`F0`, Rgba8Unorm) records the surface's reflectance at normal incidence, its dielectric F0 mixed toward its base by metallic (`surface_f0`), in rgb, and in alpha one 8-bit code `gbuffer_encode_f0` alone writes: 0 where nothing lit was drawn; on a lit surface, 1 plus its material's occlusion in 126ths (1–127), plus 127 more where it takes the baked scene lights (128–254), as the lighting pass decides it (`takes_baked_lights`), decoded at the midpoints between the two halves and the 0 (`gbuffer_lit`, `gbuffer_takes_baked_lights`, `gbuffer_occlusion`), as Godot b130438 packs a flag beside 7-bit roughness in one 8-bit channel (`scene_forward_clustered.glsl`, `normal_roughness_output_buffer`). The ray-traced shadow trace reads the flags ([Ray-traced shadows](#designs-that-span-stages)) and source completion the occlusion. The material target (`MATERIAL`, Rgba16Float) records the coat's and the base's perceptual roughness, the coat's strength and the base's reflectance at grazing incidence, F90 (`surface_f90`). The anisotropy target (`ANISOTROPY`, Rgba16Float) records the world anisotropy tangent in two signed octahedral channels, as the normals are (0 without anisotropy), its strength, and the material's environment scale, a material value that a device which cannot write the anisotropy target with the others writes in its anisotropy pass (`gbuffer_encode_anisotropy`, `gbuffer_anisotropy`, `gbuffer_environment_scale`), so the per-pixel F90 needs no surface evaluated in that pass. Its depth, normals, roughness, F0, anisotropy and source identity are the opaque surface's for the whole frame; its motion is the surface's ([Surface](#shared-contracts)), since nothing reads the opaque surface's motion once the receivers have drawn theirs. One WGSL module defines its targets and encodings with `encode` and `decode`, the receiver layer's included; a port converts at its adapter. The ambient target (`AMBIENT`, Rgba16Float) carries in its alpha the irradiance volume's sky visibility a(n) at the pixel, 1 where no volume lights it, which completion's occlusion of the sky's specular reads ([Irradiance volume](#designs-that-span-stages)). |
@@ -423,7 +423,7 @@ Each has one definition, which every producer and consumer uses.
 | Geometry pipelines | One cache keyed by pass and by what the material and instance require (face culling; the alpha mode: opaque, masked or blended; and for pulled passes whether the instance deforms), not a field per variant, and by the lit constants: whether the scene holds a rectangle light and whether it holds a decal, one value (`LitConstants`) that the world-space reflection trace's pipelines are keyed by too. A masked material's pipelines discard the texels it cuts out, so opaque ones keep early depth; masked, blended, receiver and deformed pipelines are prepared once the scene holds such content, and the FSR2 composition pipelines (`GeometryPass::Fsr2Composition`, opaque and masked) once it holds an opaque or masked material whose shading moves. The lit constants specialise the lit passes and the world-space reflection trace, so a scene without rectangle lights or decals pays nothing for their shading: they shade rectangles (`rect_lights_enabled`) only while the scene holds one, as Godot specialises its clustered pass on `cluster_has_area_light`, and apply decals (`decals_enabled`) only while it holds one. A pipeline that traces (the world-space trace, the dynamic GI trace, the ray-traced shadow trace) is keyed by the ray form in effect too (portable, hardware baseline or hardware candidates) and composes the portable module, or the shared hardware module with that form's query module ([Hardware ray tracing](#designs-that-span-stages)); the world-space trace is keyed by its reach as well, a pipeline constant (`world_reach_all`) choosing between `Moving`'s pair of functions and `All`'s one. The lit shading library asks one function, `camera_shadow_mask`, for the mask's visibility of a light at the camera's pixel, and two provider modules define it: `shadow_mask.wgsl`, which reads the ray-traced shadow stage's mask and slot table at group 3 and which only the opaque stage's two-pass lighting pipeline composes, and `shadow_mask_none.wgsl`, which reports no slot and which every other lit composition (the fused pass, captures, blended surfaces, ray hits, the fog) composes; a program composes exactly one, which the layout test's validation of every composed program holds. |
 | Sizes | Render size up to antialiasing, scene size after it, output size at presentation. Defined once by the renderer. |
 | History | A stage owns its history. The receiver pass keeps none: the surface is rebuilt in every frame it runs. The renderer issues one reset for `FrameInput::camera_cut`, a `Renderer::resize` that changed the targets, or a different `Scene`. Content edits, lighting changes and material animation restart no history: each history rejects what changed by reprojection and clamping, as its upstream does (FSR2 takes a blended surface's changing shading from the reactive and composition masks blended surfaces write, and an opaque or masked surface's moving normal layers from the transparency and composition mask the transparent stage marks over it); the scene's change tracking rebuilds bindings and instance motion and reports static edits to caches of static content ([Scene content](#scene-content)), nothing more. Camera history is the renderer's (S3D-4): the last submitted camera's unjittered view and projection, from which the `View`'s previous matrices come, and the jitter that frame applied; a stage reprojects through them, with the jitter where it reprojects what was rasterized jittered, and keeps no camera of its own. The frame's history carries the scene's render origin, its summed moves as a value ([Scene content](#scene-content)). Each holder of state retained in the render frame records the origin that state is expressed in and, where the frame's differs, translates the state by the difference and records the frame's origin with it: the renderer its camera history, committed at `finish_frame` as that history is, as Filament keeps its antialiasing history in the user's world across its origin snaps; a stage what it retains (a shadow face's light and the poses of the moving casters it drew), committed as that state is. Repeating the step is idempotent, so an abandoned frame, which commits nothing, translates nothing twice: the next frame compares the same origins. What a stage keeps in screen space (colour, depth, motion, confidence, the fog's volume) needs nothing, and nothing restarts; a reset records the frame's origin with the new history. The dynamic GI stage's probe state is world-space history about each probe's centre and takes no renderer reset: the stage keys it on the scene identity and the lattice the volume it sees in prepare lies on, restarting when either differs (a scroll keeps the probes that stay, clearing those that enter) and after frames in which it did not run; the placement a frame scrolled to is committed with it. The ray-traced shadow stage's history (its temporal mask pair, and the denoiser's moments and filter history for the slots it denoises) is screen space, reset by the renderer's one reset, after a frame in which the stage did not run and when `Settings::ray_traced_shadow_quality` changes; a slot whose light changed restarts alone, through the slot table's restart bit, and a move of the render origin touches none of it. The cull stage's history is the camera's depth pyramid, its own last executed build, so it holds the last submitted frame's; the next frame's early phase reads it through the camera history's previous matrices and jitter and the object records' previous poses, and a reset frame, or one whose last submitted frame built none, reads none and culls by frustum alone; a mismatch costs time, not a surface, since the late phase tests again ([GPU draw lists](#designs-that-span-stages)). |
-| Settings | The renderer resolves requested settings into one effective configuration per frame. Stages read only that, and report why a choice could not run. `Settings::dynamic_gi` (`DynamicGiQuality`: `Off`, `Low`, `High`; `High` by default) is the dynamic GI volume's quality tier: the most rays a probe traces a frame, Wicked's 256 at High; the volume's placement is content, and everything else about it is SGL3D's (S3D-6). `Settings::hardware_ray_tracing` (`bool`, `false`: off by default and in every preset, the game opts in, the owner's decision, [D-28](decisions.md)) traces every scene ray through the device's acceleration structures where it has ray queries, else through the portable BVHs; `Settings::ray_traced_shadows` (`bool`, `false`: off by default and in every preset, as hardware ray tracing is, [D-28](decisions.md)) gives the camera's opaque surfaces ray-traced shadows while hardware ray tracing is in effect, reported by `Renderer::ray_traced_shadows_in_effect`, the maps shadowing them without it ([D-30](decisions.md)), and `Settings::ray_traced_shadow_quality` (`RayTracedShadowQuality`: `Preset`, `Low`, `High`; `Preset` by default, Low on `RenderPreset::Low` and High on `RenderPreset::High`, the two tiers) is how much of them the denoiser filters while they run, and nothing else, the owner's decision ([D-29](decisions.md)): High the directional light's and those of the local lights in slots 1 to 3, Low the directional light's alone in fewer passes; `Settings::world_space_reflections` (`WorldSpaceReflections`: `Off`, `Moving`, `All`; `Off`, and no preset turns it on) is what world-space rays fill the screen-space method's misses with, `All` meant for the hardware path and allowed on the portable one ([Reflections](#designs-that-span-stages)). `Renderer::ray_tracing_in_effect` and `ray_tracing_error` report the hardware path as `antialiasing_in_effect` and `fsr2_error` report FSR2 ([Hardware ray tracing](#designs-that-span-stages), [Ray-traced shadows](#designs-that-span-stages)). `Settings::occlusion_culling` (a `bool`, off by default, as Bevy's `OcclusionCulling` is opt-in, until a net saving measured on the consumer's routes records otherwise) runs the two-phase occlusion test in the opaque stage's two-pass form with its pyramids, a cost that pays only where a frame submits much hidden geometry, which the game knows: on Apple's tile-based GPUs, which discard hidden fragments before shading them, #24's oracle found a saving in a large open view and none on a walk or in a cave, and the real culling cost 0.2–0.5 ms a frame natively on Metal on all three while saving 0.9–1.4 ms in Chrome over a large window seen from the ground; off, the GPU-built views draw everything their frustums hold. Which views build their lists on the GPU is SGL3D's ([GPU draw lists](#designs-that-span-stages)). |
+| Settings | The renderer resolves requested settings into one effective configuration per frame. Stages read only that, and report why a choice could not run. `Settings::dynamic_gi` (`DynamicGiQuality`: `Off`, `Low`, `High`; `High` by default) is the dynamic GI volume's quality tier: the most rays a probe traces a frame, Wicked's 256 at High; the volume's placement is content, and everything else about it is SGL3D's (S3D-6); it resolves to `Off` on a device of the Basic binding tier, reported by `Renderer::dynamic_gi_in_effect` ([Binding tiers](#designs-that-span-stages)). `Settings::hardware_ray_tracing` (`bool`, `false`: off by default and in every preset, the game opts in, the owner's decision, [D-28](decisions.md)) traces every scene ray through the device's acceleration structures where it has ray queries, else through the portable BVHs; `Settings::ray_traced_shadows` (`bool`, `false`: off by default and in every preset, as hardware ray tracing is, [D-28](decisions.md)) gives the camera's opaque surfaces ray-traced shadows while hardware ray tracing is in effect, reported by `Renderer::ray_traced_shadows_in_effect`, the maps shadowing them without it ([D-30](decisions.md)), and `Settings::ray_traced_shadow_quality` (`RayTracedShadowQuality`: `Preset`, `Low`, `High`; `Preset` by default, Low on `RenderPreset::Low` and High on `RenderPreset::High`, the two tiers) is how much of them the denoiser filters while they run, and nothing else, the owner's decision ([D-29](decisions.md)): High the directional light's and those of the local lights in slots 1 to 3, Low the directional light's alone in fewer passes; `Settings::world_space_reflections` (`WorldSpaceReflections`: `Off`, `Moving`, `All`; `Off`, and no preset turns it on) is what world-space rays fill the screen-space method's misses with, `All` meant for the hardware path and allowed on the portable one ([Reflections](#designs-that-span-stages)). `Renderer::ray_tracing_in_effect` and `ray_tracing_error` report the hardware path as `antialiasing_in_effect` and `fsr2_error` report FSR2 ([Hardware ray tracing](#designs-that-span-stages), [Ray-traced shadows](#designs-that-span-stages)). `Settings::occlusion_culling` (a `bool`, off by default, as Bevy's `OcclusionCulling` is opt-in, until a net saving measured on the consumer's routes records otherwise) runs the two-phase occlusion test in the opaque stage's two-pass form with its pyramids, a cost that pays only where a frame submits much hidden geometry, which the game knows: on Apple's tile-based GPUs, which discard hidden fragments before shading them, #24's oracle found a saving in a large open view and none on a walk or in a cave, and the real culling cost 0.2–0.5 ms a frame natively on Metal on all three while saving 0.9–1.4 ms in Chrome over a large window seen from the ground; off, the GPU-built views draw everything their frustums hold. Which views build their lists on the GPU is SGL3D's ([GPU draw lists](#designs-that-span-stages)). |
 | Timing | Every pass belongs to its stage's timing group. |
 | Diagnostics | Behind the `diagnostics` feature. Switches are `Settings::diagnostics`, resolved into the effective configuration, never environment variables; observations return to the game, and the library writes no files. Every layer writes to the GPU, creates buffers (with contents or without; creating or growing a geometry slab or the ray source counts as a creation, and its copy as a growth), prepares and places models and builds instance BVHs through `counters`, a leaf module that counts them on the calling thread with the feature (`diagnostics::counters`) and passes straight through without it; `Scene::diagnostic_resources` and `Renderer::diagnostic_draws` report the buffers content holds (the candidates, chains and sets among them) and each view's draws as encoded; the hardware path's BLAS builds, compactions and TLAS builds count through `counters` too, and `diagnostic_resources` reports the BLASes it holds and their triangles: wgpu 30 reports no acceleration structure's size. `geometry_stats_for_model` reads back each candidate's visible sections under this feature. The `culling` layer makes both builders submit every level-selected draw, the GPU's cull accepting every candidate and section. `Renderer::diagnostic_view_times` reports the CPU time each camera and cascade list took to build and to record. `Diagnostics::dynamic_gi` observes the dynamic GI stage: an observed frame traces through the trace's portable program with its BVH walks counted (`ray_observation_enabled`), a pass sums them, and `Renderer::take_dynamic_gi_reports` returns each observed frame's probes, rays, visits, budget stride and what kept the volume awake, numbered by the frames the renderer finished before it, read back without blocking; at most 8 readbacks wait, and the next report counts the observed frames skipped past them. Off, the stage runs its plain trace program and counts nothing. |
 
@@ -1155,7 +1155,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   by rays through the scene's ray source each frame within a budget: a
   port of Wicked Engine's DDGI (`ddgi_rayallocationCS`, `ddgi_raytraceCS`,
   `ddgi_updateCS`, `ddgi_updateCS_depth`, `ShaderInterop_DDGI.h`, after
-  Majercik et al. 2019 and 2021). Each probe's irradiance is the bordered octahedral colour map
+  Majercik et al. 2019 and 2021). It runs on the Extended binding tier
+  alone, whose lit group 0 binds its probes; on Basic,
+  `Settings::dynamic_gi` resolves to `Off`
+  ([Binding tiers](#designs-that-span-stages)). Each probe's irradiance is the bordered octahedral colour map
   Wicked stored before it moved to spherical harmonics (revision 95e357f:
   `DDGI_COLOR_TEXELS`, `DDGI_COLOR_BORDER_OFFSETS`, `ddgi_probe_color_uv`,
   six by six texels and a border, as Godot's SDFGI probes are), its depth
@@ -2211,103 +2214,126 @@ code; it does not redeclare a struct, binding or function another module owns.
   of shadow passes still a TODO at 2058), so it is SGL3D's design, not a
   port; #192 found its pyramids would cost more than the cascades'
   whole regression on the examples' routes (Cascade cost, above).
-- **Binding tiers.** What a material binds depends on the device's
-  sampled textures per stage, in two tiers ([D-31](decisions.md)): a low
-  minimum at S3D-1's floor and a raised ceiling.
+- **Binding tiers.** What lit group 0 and a material bind depends on the
+  device's sampled textures per stage, in two tiers ([D-31](decisions.md)):
+  a low minimum at S3D-1's floor, WebGPU's default limits, and a raised
+  ceiling.
   **Selection.** One tier per device, `shading::bind::BindingTier`
   (`Basic`, `Extended`), which `graphics_device` re-exports: `Extended`
   where the device's `max_sampled_textures_per_shader_stage` is 48 or
-  more, Dawn's upper tier, else `Basic` (S3D-1's floor to 47). The scene
-  and the renderer each read it from their device's limits, the only
-  limits they see, through one crate-private function beside group 2's
-  layout, and `Renderer::binding_tier` reports it, the one report of it.
-  It is no setting (S3D-6): what a material binds is content and the
-  device's capacity, not a trade-off. It is a stage specialised (AR-3):
-  one stage order and one program per pass, writing the same targets
-  under the same contract, the tier choosing which bindings exist and
-  which provider modules a program composes. Bevy 9d12036 chooses its
-  light-probe layout from the device's limits at runtime
-  (`binding_arrays_are_usable`, `light_probe/mod.rs` 773–795) and gates
-  its extra material textures behind cargo features for the same limit
-  (`bevy_pbr/Cargo.toml` 14–19); one SGL3D build serves native and the
-  browser, so the tier is chosen when the device is.
-  **The tier table.** Group 2's map bindings are one table in
-  `shading::bind`, beside group 2's layout: each binding's number,
-  whether it is sampled as sRGB colour, and its tier. The anisotropy map's
-  binding is `Extended`, as every map #242–#245 add will be; the rest are
-  `Basic`. `MaterialMap` (`Base`, `MetallicRoughness`, `Occlusion`,
-  `Emission`, `Normal`, `Bump`, `Anisotropy`, with `ALL`) names the maps a material is
-  authored with: each fills one map binding, whose tier is its own, and
-  owns one bit in the record's `maps` word
-  ([Material records](#shared-contracts)); the authored image index and
-  the ray-source texture word are read through exhaustive matches on it,
-  so a new map compiles only once every owner takes it. The normal and
-  bump maps fill one binding, `relief_map`, on both tiers: a bump map
-  shades only where the material has no normal map (three.js r185's
-  `MaterialNode.NORMAL`), a rule the maps in effect own, so the binding
-  holds the normal map, else the bump map, and shading selects the bump
-  map by its bit alone; the ray source keeps a word for each. The occlusion map fills the metallic-roughness
-  binding, whose red channel holds it where it is that map's image (ORM
-  packing), and is read from that map's ray-source word; it has no
-  binding of its own yet. The layout builder and the group builder iterate
-  the bindings and filter them by tier, so `relief_map` is bound once and
-  a layout and the groups bound to it never disagree. Only group 2's
-  bindings have a tier; another group gains the field with its first
-  tiered binding (lit group 0 in #241's second change, the blended group
-  3 with #243's copy of the opaque frame), and with it a layout-test row
-  for each tier.
+  more, Dawn's upper tier, else `Basic` (16 to 47). The scene and the
+  renderer each read it from their device's limits, the only limits they
+  see, through one crate-private function beside group 2's layout, and
+  `Renderer::binding_tier` reports it, the one report of it; the renderer
+  holds it with lit group 0's layout (`shading::bind::LitLayout`), so
+  every pipeline and program built over that layout takes its tier from
+  it. It is no setting (S3D-6): what the lights and a material bind is
+  content and the device's capacity, not a trade-off. It is a stage
+  specialised (AR-3): one stage order and one program per pass, writing
+  the same targets under the same contract, the tier choosing which
+  bindings exist and which provider modules a program composes. Bevy
+  9d12036 chooses its light-probe layout from the device's limits at
+  runtime (`binding_arrays_are_usable`, `light_probe/mod.rs` 773–795) and
+  gates its extra material textures behind cargo features for the same
+  limit (`bevy_pbr/Cargo.toml` 14–19); one SGL3D build serves native and
+  the browser, so the tier is chosen when the device is.
+  **The tier table.** Each tiered binding's tier is declared once, beside
+  its number in `shading::bind`; the layout builder and the group builder
+  both filter by it, so a layout and the groups bound to it never
+  disagree. Lit group 0's bindings are `Basic` but the lightmap's and
+  the irradiance atlas's directionality and the dynamic GI volume's probe
+  texture (`group0::tier`). Group 2's map bindings are one table beside
+  group 2's layout: each binding's number, whether it is sampled as sRGB
+  colour, and its tier. The anisotropy map's binding is `Extended`, as
+  every map #242–#245 add will be; the rest are `Basic`. `MaterialMap`
+  (`Base`, `MetallicRoughness`, `Occlusion`, `Emission`, `Normal`,
+  `Bump`, `Anisotropy`, with `ALL`) names the maps a material is authored
+  with: each fills one map binding, whose tier is its own, and owns one
+  bit in the record's `maps` word ([Material records](#shared-contracts));
+  the authored image index and the ray-source texture word are read
+  through exhaustive matches on it, so a new map compiles only once every
+  owner takes it. The normal and bump maps fill one binding, `relief_map`,
+  on both tiers: a bump map shades only where the material has no normal
+  map (three.js r185's `MaterialNode.NORMAL`), a rule the maps in effect
+  own, so the binding holds the normal map, else the bump map, and
+  shading selects the bump map by its bit alone; the ray source keeps a
+  word for each. The occlusion map fills the metallic-roughness binding,
+  whose red channel holds it where it is that map's image (ORM packing),
+  and is read from that map's ray-source word; it has no binding of its
+  own yet. The builders iterate the bindings, so `relief_map` is bound
+  once. The blended group 3 gains the field with its first tiered binding
+  (#243's copy of the opaque frame), and with it a layout-test row for
+  each tier.
   **Maps in effect.** Validation reads the maps as authored, every index
   and image, and a material keeps its authored maps for `set_material`'s
   checks, so a content error never depends on the device. One list per
   material, computed once as it is added, holds its maps in effect: those
   authored whose binding's tier the device has, less a bump map beside a
   normal map (never shaded) and an occlusion map in an image other than
-  the metallic-roughness map's (not yet sampled). It alone decides which images are uploaded,
-  what group 2 binds (white for the rest), the ray-source texture words
-  (zero, which a ray reads as white) and the record's `maps` bits, so
-  raster, probe captures and ray hits all shade a dropped map's factor
-  alone (S3D-5), as glTF defines a material without that texture.
-  **Fallbacks and reports.** On `Basic` the anisotropy map, and every map
-  #242–#245 add, gives way to its factor; `Renderer::binding_tier`
-  reports the tier, and the package docs list each map's. `Basic` keeps
-  the base, metallic-roughness (with packed occlusion), emission, normal
-  and bump maps in four map bindings. Probe captures and other bakes are content: one taken on an
-  `Extended` device carries what its maps did there, which a `Basic`
-  device's own shading lacks, and nothing checks it.
+  the metallic-roughness map's (not yet sampled). It alone decides which
+  images are uploaded, what group 2 binds (white for the rest), the
+  ray-source texture words (zero, which a ray reads as white) and the
+  record's `maps` bits, so raster, probe captures and ray hits all shade a
+  dropped map's factor alone (S3D-5), as glTF defines a material without
+  that texture.
+  **Fallbacks and reports.** On `Basic`: baked light from the lightmap and
+  the irradiance atlas is non-directional, the all-zero lobe
+  `baked_map_irradiance` already reads as a layer without one;
+  `Settings::dynamic_gi` resolves to `Off`, the stage traces nothing and
+  `Renderer::dynamic_gi_in_effect` reports it, the saved choice unchanged
+  (S3D-6); and the anisotropy map, and every map #242–#245 add, gives way
+  to its factor. `Renderer::binding_tier` reports the tier, and the
+  package docs list what each binds. `Basic` keeps the shadows, fog,
+  decals, specular probes, lightmaps and the irradiance atlas, the
+  irradiance volume, every reflection method, and the base,
+  metallic-roughness (with packed occlusion), emission, normal and bump
+  maps in four map bindings. Probe captures and other bakes are content:
+  one taken on an `Extended` device carries what its maps and lights did
+  there, which a `Basic` device's own shading lacks, and nothing checks
+  it.
   **Providers.** WGSL names a binding only where its tier is in effect:
   wgpu checks the bindings an entry point reaches before override
   constants apply, so a binding under any branch must be in the layout,
-  and the tier is a choice of composition, not a constant. Group 2
-  declares its `Basic` bindings in `bind_material.wgsl` and its
-  `Extended` ones in `bind_material_extended.wgsl`; two provider modules,
-  composed roots as the shadow-mask pair is (a program composes exactly
-  one), define the same functions: `material_maps_extended.wgsl` samples
-  the bindings and `material_maps_basic.wgsl` returns white, the texel
-  an absent map reads. The geometry program takes the renderer's tier
-  (`geometry_program(shadow_mask, tier)`). A map beyond `Basic`'s is
+  and the tier is a choice of composition, not a constant. Each tiered
+  group declares its `Basic` bindings in its bind module (`bind_lit.wgsl`,
+  `bind_material.wgsl`) and its `Extended` ones in a module of their own
+  (`bind_lit_extended.wgsl`, `bind_material_extended.wgsl`); two provider
+  modules a group, composed roots as the shadow-mask pair is (a program
+  composes exactly one), define the same functions. `lit_extended.wgsl`
+  reads the baked maps' lobes and, through `dynamic_gi_sample.wgsl`, the
+  dynamic GI volume's irradiance; `lit_basic.wgsl` returns the all-zero
+  lobe and a volume that lights nothing. `material_maps_extended.wgsl`
+  samples the Extended maps and `material_maps_basic.wgsl` returns white,
+  the texel an absent map reads. One function a group chooses a program's
+  provider for the tier (`shading::lit_provider`,
+  `shading::material_provider`): every program that composes `SURFACE`
+  composes the lit one, the geometry program
+  (`geometry_program(shadow_mask, tier)`) and the tracing stages' programs
+  (`TracePaths`, over the lit layout and its tier) among them, and the
+  geometry program the material one too. The dynamic GI trace binds the
+  probes itself and runs on `Extended` alone. A map beyond `Basic`'s is
   sampled from `SURFACE_RASTER` alone, never `MATERIAL_RASTER`, which the
   casters compose with `Basic`'s bindings. White is the neutral of a
   multiplicative map; a map whose white texel is not its neutral (a
   normal-type map, the anisotropy direction) is gated by its bit on both
   the raster and ray paths, which the factor-alone fallback depends on.
-  Another group that gains a tiered binding follows the same pattern: an
-  `Extended` bind module, two providers, and every program root composing
-  the group taking the renderer's tier through one function. The layout
-  test checks each tier's group-2 layout against its composed bind
-  modules and validates every composed program.
+  The layout test checks each tier's lit group 0 and group 2 layouts
+  against their composed bind modules and validates every composed
+  program, the geometry program and the world-space and ray-traced shadow
+  traces on each tier.
   **Pipelines.** The tier is fixed for a device (S3D-4: a new device is a
   new `Scene` and `Renderer`), so every pipeline a renderer builds shares
-  it: its five group-2 pipeline layouts and its programs are built for the
-  tier once, and no pipeline key holds it. A per-material choice of
-  layout, as #138's texture-array materials would be, keys pipelines as
-  `Variant` does; an array map counts one sampled texture, as a 2D map
-  does, so the tiers hold.
+  it: its lit group 0 layout, its five group-2 pipeline layouts and its
+  programs are built for the tier once, and no pipeline key holds it. A
+  per-material choice of layout, as #138's texture-array materials would
+  be, keys pipelines as `Variant` does; an array map counts one sampled
+  texture, as a 2D map does, so the tiers hold.
   **Budgets.** wgpu sums a stage's sampled textures over a pipeline
   layout's groups, and the [Bind groups](#shared-contracts) row counts
-  each layout on each tier. `Basic`'s layouts stay within S3D-1's floor
-  and `Extended`'s within 48, which the floor and ceiling tests hold; with
-  #242–#245's fourteen maps and #243's copy, `Extended`'s blended layout
-  binds 35.
+  each layout on each tier. `Basic`'s layouts stay within S3D-1's floor,
+  its blended layout at it, and `Extended`'s within 48, which the floor
+  and ceiling tests hold; with #242–#245's fourteen maps and #243's copy,
+  `Extended`'s blended layout binds 35.
   **Adding a map** (the recipe #242–#245 follow): its binding in the
   table (the next free group-2 number, its colour and tier) and a
   `MaterialMap` variant with its bit; its `asset::Material` field and the
@@ -2317,26 +2343,40 @@ code; it does not redeclare a struct, binding or function another module owns.
   `bind_material_extended.wgsl`; its sampling function in both material
   providers, called from `SURFACE_RASTER`; and the map on the ceiling
   test's materials.
-  **Tests.** Each writes its limits as its own literals, from S3D-1. The
-  floor test runs every pipeline on a device at S3D-1's floor and asserts
-  `Basic`: it catches a misselection, or an `Extended` binding composed
-  below 48. The ceiling test runs them on a device at exactly 48, asserts
-  `Extended` and draws blended receivers that between them carry every
-  map (a bump map apart from the normal map): it catches
-  the wrong limit field, `>` for `>=`, a higher threshold, or the tier
-  not reaching one of `Scene` and `Renderer`, which shows as incompatible
-  group-2 layouts at the draw. The fallback test runs on a device at 47,
-  the highest `Basic` limit: a material added with an `Extended` map
-  writes the ray-source words and `maps` bits of the same material
-  without it, and one added with a normal and a bump map writes those of
-  the material with the normal map alone; it catches a ray word or `maps`
-  bit not dropped, a threshold below 48, and both relief maps kept in
-  effect.
-  **Not taken**, each for a reason: a ceiling of 31, which no backend
-  offers as a tier and which would hold ten new maps against #242–#245's
-  fourteen; repacking a material's images at load, which costs time and
-  memory and needs matching sizes and UVs; and bindless binding arrays, a
-  native specialisation of their own that nothing needs yet.
+  **Tests.** Each writes its limits as its own literals, from S3D-1, or
+  takes `wgpu::Limits::default()`, which wgpu sets to WebGPU's. The floor
+  test runs every pipeline on a device of WebGPU's default limits and no
+  optional feature and asserts `Basic` and dynamic GI off: it catches a
+  binding, storage buffer, storage texture or attachment byte past the
+  floor, a misselection, or an `Extended` binding composed below 48. The
+  ceiling test runs them on a device of those limits but exactly 48
+  sampled textures a stage, as Chrome's upper tier offers, asserts
+  `Extended` and dynamic GI at the setting, and draws blended receivers
+  that between them carry every map (a bump map apart from the normal
+  map): it catches the wrong limit field, `>` for `>=`, a higher
+  threshold, or the tier not reaching one of `Scene` and `Renderer`,
+  which shows as incompatible group-2 layouts at the draw. The fallback
+  test runs on a device at 47, the highest `Basic` limit: a material
+  added with an `Extended` map writes the ray-source words and `maps` bits
+  of the same material without it, and one added with a normal and a bump
+  map writes those of the material with the normal map alone; it catches
+  a ray word or `maps` bit not dropped, a threshold below 48, and both
+  relief maps kept in effect.
+  **Not taken**, each for a reason: a third tier at 21 that kept today's
+  look on devices with 21 to 47 ([D-31](decisions.md)); a ceiling of 31,
+  which no backend offers as a tier and which would hold ten new maps
+  against #242–#245's fourteen; packing the lightmap's directionality
+  with its irradiance (RGBA8 or BC7 against RGBA16F or BC6H,
+  `scene/static_lighting.rs`) or the lightmap with the irradiance atlas
+  (their pages' sizes differ); the directional cascades in the
+  local-light atlas, as Wicked Engine draws them, a larger rework than
+  `Basic` needs, at the atlas's resolution; dropping on `Basic` the
+  irradiance volume, the game's authored content, the emission map, or
+  the blended surfaces' screen-space reflections, each more visible than
+  dynamic GI, an optional quality setting already; repacking a material's
+  images at load, which costs time and memory and needs matching sizes
+  and UVs; and bindless binding arrays, a native specialisation of their
+  own that nothing needs yet.
 
 ## Rules
 

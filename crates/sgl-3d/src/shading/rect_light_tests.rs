@@ -148,6 +148,7 @@ fn observe(lights: &[Light], receivers: &[Receiver]) -> Option<Vec<f64>> {
             &crate::shading::BIND_LIT,
             &crate::shading::SURFACE,
             &crate::shading::SHADOW_MASK_NONE,
+            &crate::shading::tiers::LIT_BASIC,
         ]),
         r#"
 struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }

@@ -323,11 +323,11 @@ Use the [current specs](README.md) for implementation and the
   excluded: "I don't currently support mobile, though I don't want to
   explicitly not support it either". Mobile GPUs take a tier by the same
   limit, and no mobile-specific work is done.
-  Plan: #241's first change tiers group 2: on `Basic` the anisotropy map,
-  and every map #242–#245 add, gives way to its factor. Its second change
-  tiers lit group 0, stating the bindings `Basic` drops there and their
-  fallbacks, and moves S3D-1's floor to WebGPU's defaults; until then the
-  floor stays at 21, and `Basic` covers 21 to 47.
+  Plan: #241's first change (#251) tiered group 2: on `Basic` the
+  anisotropy map, and every map #242–#245 add, gives way to its factor.
+  Its second change (#246) tiered lit group 0, `Basic` dropping the
+  lightmap's and irradiance atlas's directionality and dynamic GI, each
+  reported, and moved S3D-1's floor to WebGPU's defaults.
   Rationale: two tiers, not three. Chrome's Dawn offers 16 or 48, so it
   never sits between them; wgpu 30's Metal offers 96 on macOS and Apple6
   and later and 72 on Apple4 and Apple5, and DX12 at resource binding tier
