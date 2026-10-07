@@ -299,9 +299,11 @@ fn centre_colours(device: &wgpu::Device, queue: &wgpu::Queue, edits: &[Edit<'_>]
 // specular gives diffuse light alone, and a black base with no specular its
 // emission alone. A metal's reflectance is its base colour, which the
 // transparent mode premultiplies (Filament's metal F0 is the premultiplied
-// base, surface_shading_lit.fs 53, 79-90), so a metal reflects a
-// tenth at alpha 0.1 in both modes: a defect that premultiplies the diffuse
-// colour but not the metal's F0 fails it.
+// base, surface_shading_lit.fs 53, 79-90), so a metal reflects about a
+// tenth at alpha 0.1 in both modes: within a few per cent, as its multiple
+// scattering (Fdez-Aguera's gain) and the Fresnel toward its F90 are not
+// linear in F0, where a defect that premultiplies the diffuse colour but
+// not the metal's F0 reflects ten times as much.
 #[test]
 fn keeps_specular_fades_all_but_dielectric_specular() {
     let Some((device, queue)) = test_support::device() else {
@@ -327,13 +329,15 @@ fn keeps_specular_fades_all_but_dielectric_specular() {
         values.base = [0.9, 0.6, 0.3, values.base[3]];
         values.metallic = 1.;
     };
-    let cases: [(&str, Edit<'_>, f32); 4] = [
-        ("specular", &specular_only, 1.),
-        ("diffuse", &diffuse_only, 0.1),
-        ("emission", &emission_only, 0.1),
-        ("metal", &metal, 0.1),
+    // Each case's share kept under keep and its relative tolerance: f16's
+    // rounding, or the metal's few per cent.
+    let cases: [(&str, Edit<'_>, f32, f32); 4] = [
+        ("specular", &specular_only, 1., 5e-3),
+        ("diffuse", &diffuse_only, 0.1, 5e-3),
+        ("emission", &emission_only, 0.1, 5e-3),
+        ("metal", &metal, 0.1, 0.05),
     ];
-    for (name, light, kept) in cases {
+    for (name, light, kept, tolerance) in cases {
         let at = move |alpha: f32, keeps: bool| {
             move |values: &mut crate::SurfaceMaterial| {
                 values.base[3] = alpha;
@@ -348,11 +352,15 @@ fn keeps_specular_fades_all_but_dielectric_specular() {
             whole.iter().all(|&value| value > 0.01),
             "{name}: the case gives no light to compare: {whole:?}"
         );
-        for (mode, actual, share) in [("keeps specular", keeps, kept), ("fades", fades, 0.1)] {
+        let keep_tolerance = tolerance;
+        for (mode, actual, share, tolerance) in [
+            ("keeps specular", keeps, kept, keep_tolerance),
+            ("fades", fades, 0.1, 5e-3),
+        ] {
             for channel in 0..3 {
                 let expected = whole[channel] * share;
                 assert!(
-                    (actual[channel] - expected).abs() <= expected * 5e-3 + 1e-4,
+                    (actual[channel] - expected).abs() <= expected * tolerance + 1e-4,
                     "{name}, {mode}: channel {channel} is {}, expected {expected}",
                     actual[channel]
                 );
