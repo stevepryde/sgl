@@ -159,14 +159,17 @@ fn case_surface(c:Case)->Surface {
         );
         let bent_error = vector(rows[4 * i + 1]).distance(bent_normal(n, v, t, rough, strength));
         worst[1] = worst[1].max(bent_error / 2e-5);
-        assert!(bent_error < 2e-5, "bent normal, case {i}: error={bent_error}");
+        assert!(
+            bent_error < 2e-5,
+            "bent normal, case {i}: error={bent_error}"
+        );
         // The coat: KHR_materials_clearcoat's isotropic GGX layer of F0 0.04
         // and F90 1, over the base dimmed by its Fresnel toward the view.
         let coat_fresnel = rows[4 * i + 2][3] as f64;
         let gain = vector(rows[4 * i + 3]);
         let coat_lobe = specular([n, v, l, t], 0.21, 0., DVec3::splat(0.04), 1.);
-        let expected = (expected * gain * (1. - coat_fresnel) + coat_lobe * coat)
-            * n.dot(l).clamp(0., 1.);
+        let expected =
+            (expected * gain * (1. - coat_fresnel) + coat_lobe * coat) * n.dot(l).clamp(0., 1.);
         let actual = vector(rows[4 * i + 2]);
         let error = ((actual - expected).abs() / bound(expected)).max_element();
         worst[2] = worst[2].max(error);

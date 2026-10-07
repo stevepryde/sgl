@@ -17,9 +17,9 @@ pub(crate) mod fog;
 pub(crate) mod gbuffer;
 #[cfg(test)]
 pub(crate) mod layout_tests;
-pub(crate) mod lights;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod lighting_model_tests;
+pub(crate) mod lights;
 pub(crate) mod lod;
 pub(crate) mod material;
 // Wired into the ray source and its readers with #135's prepared models.

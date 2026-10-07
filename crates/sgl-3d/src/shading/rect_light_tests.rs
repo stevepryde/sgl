@@ -114,8 +114,10 @@ fn reference(light: &Light, receiver: &Receiver, steps: usize) -> f64 {
             // layer's Fresnel at V.H, its F0 the receiver's and F90 1.
             let h = (receiver.view + l).normalize();
             let coupling = 1.
-                - (receiver.f0 + (1. - receiver.f0) * (1. - receiver.view.dot(h)).clamp(0., 1.).powi(5));
-            let base = receiver.diffuse / PI * nl * coupling + ggx(receiver.rough, receiver.f0, l) * GAIN;
+                - (receiver.f0
+                    + (1. - receiver.f0) * (1. - receiver.view.dot(h)).clamp(0., 1.).powi(5));
+            let base =
+                receiver.diffuse / PI * nl * coupling + ggx(receiver.rough, receiver.f0, l) * GAIN;
             let layered = if receiver.coat > 0. {
                 base * (1. - receiver.coat_fresnel)
                     + receiver.coat * ggx(receiver.coat_rough, 0.04, l)

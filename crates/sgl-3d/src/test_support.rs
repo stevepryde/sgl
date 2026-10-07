@@ -223,7 +223,10 @@ pub(crate) fn observe_surface(
             group0::ENVIRONMENT_SAMPLER,
             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
         ),
-        (group0::LOCAL_SHADOW_ATLAS, array(wgpu::TextureSampleType::Depth)),
+        (
+            group0::LOCAL_SHADOW_ATLAS,
+            array(wgpu::TextureSampleType::Depth),
+        ),
         (
             group0::SHADOW_SAMPLER,
             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),

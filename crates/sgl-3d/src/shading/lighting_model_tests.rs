@@ -37,7 +37,11 @@ fn grid(row: usize, column: usize) -> (f64, f64) {
 }
 
 fn polar(theta: f64, phi: f64) -> DVec3 {
-    DVec3::new(theta.sin() * phi.cos(), theta.sin() * phi.sin(), theta.cos())
+    DVec3::new(
+        theta.sin() * phi.cos(),
+        theta.sin() * phi.sin(),
+        theta.cos(),
+    )
 }
 
 /// WGSL constants and helpers the integrals share: the grid, and a surface
@@ -410,25 +414,52 @@ fn one_rule_for_every_indirect_source() {
         };
         64
     ];
-    let region = crate::PreparedIrradianceRegion::new(volume.origin, volume.cells, &cells)
-        .unwrap();
+    let region = crate::PreparedIrradianceRegion::new(volume.origin, volume.cells, &cells).unwrap();
     scene.write_irradiance_cells(&queue, &region).unwrap();
     let texel: Vec<u8> = [IRRADIANCE, IRRADIANCE, IRRADIANCE, 1.]
         .iter()
         .flat_map(|&value| test_support::to_half(value).to_le_bytes())
         .collect();
     let environment = scene
-        .add_environment(&device, &queue, &test_support::environment([255; 4], &texel))
+        .add_environment(
+            &device,
+            &queue,
+            &test_support::environment([255; 4], &texel),
+        )
         .unwrap();
     // Each source: what the frame lights and how the receiver takes it.
     // (name, environment, hemisphere fill, receiver position, lightmapped,
     // charted, moving)
     let sources = [
         ("environment", true, false, Vec3::ZERO, false, false, false),
-        ("hemisphere fill", false, true, Vec3::ZERO, false, false, false),
-        ("irradiance volume", false, false, Vec3::new(0., 0., 10.), false, false, false),
+        (
+            "hemisphere fill",
+            false,
+            true,
+            Vec3::ZERO,
+            false,
+            false,
+            false,
+        ),
+        (
+            "irradiance volume",
+            false,
+            false,
+            Vec3::new(0., 0., 10.),
+            false,
+            false,
+            false,
+        ),
         ("lightmap", false, false, Vec3::ZERO, true, false, false),
-        ("irradiance atlas", false, false, Vec3::ZERO, false, true, false),
+        (
+            "irradiance atlas",
+            false,
+            false,
+            Vec3::ZERO,
+            false,
+            true,
+            false,
+        ),
         ("ambient cube", false, false, Vec3::ZERO, false, false, true),
     ];
     let mut observed = Vec::new();
@@ -515,8 +546,8 @@ fn disc_reference(view: DVec3, rough: f64, centre: DVec3, radius: f64, radiance:
         let theta = (i as f64 + 0.5) / steps as f64 * radius;
         for j in 0..steps {
             let phi = (j as f64 + 0.5) / steps as f64 * 2. * PI;
-            let l = centre * theta.cos()
-                + (tangent * phi.cos() + bitangent * phi.sin()) * theta.sin();
+            let l =
+                centre * theta.cos() + (tangent * phi.cos() + bitangent * phi.sin()) * theta.sin();
             let (nl, nv) = (l.z, view.z);
             if nl <= 0. {
                 continue;
@@ -684,7 +715,13 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
             "directional_light_sample(0u,s.position,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection()))",
         );
         let angular = 0.05f64;
-        let expected = disc_reference(mirror, rough, centre, angular, 1. / (PI * angular.sin().powi(2)));
+        let expected = disc_reference(
+            mirror,
+            rough,
+            centre,
+            angular,
+            1. / (PI * angular.sin().powi(2)),
+        );
         eprintln!(
             "disc at roughness {rough}: mirror {:.3} of the disc's, energy {:.3}",
             peak / expected,
