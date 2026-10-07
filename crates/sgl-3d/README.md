@@ -1553,7 +1553,8 @@ no re-encode. Compress offline with a BC6H/BC7 encoder such as Intel's ISPC
 Texture Compressor; installing needs `wgpu::Features::TEXTURE_COMPRESSION_BC`.
 
 On a device of the `Extended` [binding tier](#binding-tiers), to retain
-normal/bump detail under baked lamps, populate `Lightmap::directionality`
+normal/bump detail under baked lamps (`Basic` validates directionality but
+does not upload or read it), populate `Lightmap::directionality`
 and the atlas's `directionality` / `back_directionality` with one `[f32;4]` per
 texel holding a constant+linear irradiance lobe relative to the baked value: the
 shader returns `irradiance * max(a + dot(w, n), 0)` for the mapped world normal
@@ -2034,7 +2035,9 @@ A Vulkan driver lands in either tier, by its `maxPerStageResources`.
 
 On `Basic`, `Settings::dynamic_gi` resolves to `Off`, which
 `Renderer::dynamic_gi_in_effect` reports without changing the saved
-choice, and a lightmap's or irradiance atlas's directionality is not read.
+choice, and the renderer builds no dynamic GI stage; a lightmap's or
+irradiance atlas's directionality is validated but neither uploaded nor
+read.
 A map a device does not bind gives way to its factors, as glTF defines a
 material without that texture, in raster, probe captures and ray hits
 alike; validation still reads every map, so content errors do not depend on

@@ -161,7 +161,9 @@ pub(super) fn render(
     // Every list the frame draws is built.
     views.instances.upload(device, queue);
     fog.prepare(device, effective.fog, sizes.render);
-    dynamic_gi.prepare(device, scene, &effective);
+    if let Some(dynamic_gi) = dynamic_gi.as_mut() {
+        dynamic_gi.prepare(device, scene, &effective);
+    }
     // The ray-traced shadows run where the frame's rays trace in hardware
     // and its slots hold a light: the directional light with cascades and
     // the local lights the atlas placed.
@@ -178,7 +180,9 @@ pub(super) fn render(
         views,
         shadows.maps(),
         fog.volume(),
-        dynamic_gi.probes(),
+        dynamic_gi
+            .as_ref()
+            .map(crate::stages::dynamic_gi::DynamicGi::probes),
     );
     let mut ctx = FrameContext {
         device,
@@ -210,7 +214,9 @@ pub(super) fn render(
     prepare.encode_acceleration_structures(&mut ctx);
     cull.encode_early(&mut ctx);
     // First after prepare: every pass that shades reads the probes.
-    dynamic_gi.encode(&mut ctx);
+    if let Some(dynamic_gi) = dynamic_gi.as_mut() {
+        dynamic_gi.encode(&mut ctx);
+    }
     // The stage order's: the local-light atlas, then the directional cascades.
     shadows.encode_local(&mut ctx);
     shadows.encode_directional(&mut ctx);

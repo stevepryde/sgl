@@ -58,8 +58,9 @@ struct SceneGroups {
     shadow_maps: [wgpu::TextureView; 3],
     /// The fog volume they bind.
     fog: wgpu::TextureView,
-    /// The dynamic GI volume's probes they bind.
-    dynamic_gi: wgpu::TextureView,
+    /// The dynamic GI volume's probes they bind, on the Extended binding
+    /// tier.
+    dynamic_gi: Option<wgpu::TextureView>,
     /// The camera's lit group, with the installed probes, which its
     /// blended surfaces sample: source completion adds opaque surfaces'
     /// probe specular from the G-buffer, but blended surfaces write none.
@@ -102,8 +103,9 @@ pub(crate) struct FrameBindings {
     /// stage writes.
     fog: (wgpu::TextureView, wgpu::Sampler),
     /// The dynamic GI volume's probes every lit group 0 binds on the
-    /// Extended binding tier, which the dynamic GI stage writes.
-    dynamic_gi: wgpu::TextureView,
+    /// Extended binding tier, which the dynamic GI stage writes; none on
+    /// Basic, which has no such stage.
+    dynamic_gi: Option<wgpu::TextureView>,
     camera_view: wgpu::Buffer,
     cascades: [wgpu::BindGroup; super::cascades::MAX_SHADOW_CASCADES],
     groups: Option<SceneGroups>,
@@ -120,7 +122,7 @@ impl FrameBindings {
         views: &FrameViews,
         shadow_maps: ShadowMaps,
         fog: FogVolume<'_>,
-        dynamic_gi: &wgpu::TextureView,
+        dynamic_gi: Option<&wgpu::TextureView>,
     ) -> Self {
         let shadow = shading::bind::shadow(device);
         let frame = crate::scene::buffer(
@@ -151,7 +153,7 @@ impl FrameBindings {
             empty_probes: UploadedProbes::empty(device),
             shadow_maps,
             fog: (fog.view.clone(), fog.sampler.clone()),
-            dynamic_gi: dynamic_gi.clone(),
+            dynamic_gi: dynamic_gi.cloned(),
             camera_view: views.camera.buffer.clone(),
             cascades,
             groups: None,
@@ -172,11 +174,11 @@ impl FrameBindings {
         views: &FrameViews,
         shadows: ShadowMaps,
         fog: FogVolume<'_>,
-        dynamic_gi: &wgpu::TextureView,
+        dynamic_gi: Option<&wgpu::TextureView>,
     ) {
         self.shadow_maps = shadows;
         self.fog = (fog.view.clone(), fog.sampler.clone());
-        self.dynamic_gi = dynamic_gi.clone();
+        self.dynamic_gi = dynamic_gi.cloned();
         let environment = scene.environments.live(environment);
         let clusters = [
             views.clusters.buffer().clone(),
@@ -210,7 +212,7 @@ impl FrameBindings {
             probes,
             &clusters[0],
             self.local_shadows(),
-            &self.dynamic_gi,
+            self.dynamic_gi.as_ref(),
         );
         let ray_hit_lit = self.lit_group(
             device,
@@ -220,7 +222,7 @@ impl FrameBindings {
             probes,
             &clusters[1],
             self.static_local_shadows(&self.shadow_maps.local_records),
-            &self.dynamic_gi,
+            self.dynamic_gi.as_ref(),
         );
         let volume_lit = self.lit_group(
             device,
@@ -230,7 +232,7 @@ impl FrameBindings {
             probes,
             &clusters[2],
             self.static_local_shadows(&self.shadow_maps.local_records),
-            &self.dynamic_gi,
+            self.dynamic_gi.as_ref(),
         );
         let camera_unlit =
             self.unlit_group(device, scene, environment, &self.camera_view, &self.frame);
@@ -317,7 +319,7 @@ impl FrameBindings {
         probes: &UploadedProbes,
         clusters: &wgpu::Buffer,
         local: LocalShadows<'_>,
-        dynamic_gi: &wgpu::TextureView,
+        dynamic_gi: Option<&wgpu::TextureView>,
     ) -> wgpu::BindGroup {
         let environments = &scene.environments;
         let baked = &scene.static_lighting;
@@ -386,11 +388,11 @@ impl FrameBindings {
                 binding: group0::FOG_SAMPLER,
                 resource: wgpu::BindingResource::Sampler(&self.fog.1),
             },
-            texture(group0::DYNAMIC_GI_PROBES, dynamic_gi),
             texture(group0::IRRADIANCE_VOLUME, scene.irradiance_cells.view()),
         ];
         let entries: Vec<_> = entries
             .into_iter()
+            .chain(dynamic_gi.map(|view| texture(group0::DYNAMIC_GI_PROBES, view)))
             .filter(|entry| group0::tier(entry.binding) <= self.lit.tier)
             .collect();
         device.create_bind_group(&wgpu::BindGroupDescriptor {

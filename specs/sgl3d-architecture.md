@@ -1157,8 +1157,8 @@ code; it does not redeclare a struct, binding or function another module owns.
   port of Wicked Engine's DDGI (`ddgi_rayallocationCS`, `ddgi_raytraceCS`,
   `ddgi_updateCS`, `ddgi_updateCS_depth`, `ShaderInterop_DDGI.h`, after
   Majercik et al. 2019 and 2021). It runs on the Extended binding tier
-  alone, whose lit group 0 binds its probes; on Basic,
-  `Settings::dynamic_gi` resolves to `Off`
+  alone, whose lit group 0 binds its probes; on Basic the renderer builds
+  none of it and `Settings::dynamic_gi` resolves to `Off`
   ([Binding tiers](#designs-that-span-stages)). Each probe's irradiance is the bordered octahedral colour map
   Wicked stored before it moved to spherical harmonics (revision 95e357f:
   `DDGI_COLOR_TEXELS`, `DDGI_COLOR_BORDER_OFFSETS`, `ddgi_probe_color_uv`,
@@ -2279,8 +2279,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   that texture.
   **Fallbacks and reports.** On `Basic`: baked light from the lightmap and
   the irradiance atlas is non-directional, the all-zero lobe
-  `baked_map_irradiance` already reads as a layer without one;
-  `Settings::dynamic_gi` resolves to `Off`, the stage traces nothing and
+  `baked_map_irradiance` already reads as a layer without one, and the
+  scene validates a map's directionality but uploads that sentinel in its
+  place (`static_lighting`, by its binding's tier); `Settings::dynamic_gi`
+  resolves to `Off`, the renderer builds no dynamic GI stage and
   `Renderer::dynamic_gi_in_effect` reports it, the saved choice unchanged
   (S3D-6); and the anisotropy map, and every map #242–#245 add, gives way
   to its factor. `Renderer::binding_tier` reports the tier, and the

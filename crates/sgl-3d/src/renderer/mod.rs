@@ -60,7 +60,8 @@ pub struct Renderer {
     cull: Cull,
     /// The camera's geometry statistics, read back without blocking.
     statistics: StatisticsReadback,
-    dynamic_gi: DynamicGi,
+    /// The dynamic GI stage, on the Extended binding tier alone.
+    dynamic_gi: Option<DynamicGi>,
     shadows: Shadows,
     traced_shadows: TracedShadows,
     fog: VolumetricFog,
@@ -142,14 +143,15 @@ impl Renderer {
         let lit = crate::shading::bind::lit(device, BindingTier::of(&device.limits()));
         let fog = VolumetricFog::new(device, &lit.layout);
         let scene_layout = crate::shading::bind::scene(device);
-        let dynamic_gi = DynamicGi::new(device, &lit, &scene_layout);
+        let dynamic_gi = (lit.tier == BindingTier::Extended)
+            .then(|| DynamicGi::new(device, &lit, &scene_layout));
         let bindings = FrameBindings::new(
             device,
             lit,
             &views,
             shadows.maps(),
             fog.volume(),
-            dynamic_gi.probes(),
+            dynamic_gi.as_ref().map(DynamicGi::probes),
         );
         let layers = LayerConstants::new(&settings.diagnostics_in_effect().disable);
         let pipelines = GeometryPipelines::new(
@@ -300,7 +302,9 @@ impl Renderer {
             self.last_scene = Some(scene_id);
             scene.finish_frame();
             self.shadows.local.finish_frame();
-            self.dynamic_gi.finish_frame();
+            if let Some(dynamic_gi) = &mut self.dynamic_gi {
+                dynamic_gi.finish_frame();
+            }
             self.cull.finish_frame();
             self.statistics.submitted();
             #[cfg(feature = "diagnostics")]
@@ -566,7 +570,9 @@ impl Renderer {
         &mut self,
         device: &wgpu::Device,
     ) -> Vec<crate::diagnostics::DynamicGiReport> {
-        self.dynamic_gi.take_reports(device)
+        self.dynamic_gi
+            .as_mut()
+            .map_or_else(Vec::new, |dynamic_gi| dynamic_gi.take_reports(device))
     }
 
     /// The numerical frame probe's reports of finished frames read back

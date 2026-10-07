@@ -4,6 +4,7 @@
 //! cubes are in their object records (`instances`).
 use super::{Scene, SceneError};
 use crate::content::identity::MaterialId;
+use crate::shading::bind::{BindingTier, group0};
 use crate::static_lighting::{
     CompressedIrradianceAtlas, IrradianceAtlas, Lightmap, irradiance_half, lobe_rgba8,
     valid_directionality,
@@ -60,6 +61,13 @@ fn layers(
     })
 }
 
+/// Whether `device` binds lit group 0's directionality `binding`
+/// (`group0::tier`): a device that does not takes the all-zero sentinel in
+/// place of a map's directionality, which nothing would read.
+fn binds_directionality(device: &wgpu::Device, binding: u32) -> bool {
+    group0::tier(binding) <= BindingTier::of(&device.limits())
+}
+
 /// All-zero RGBA8 layers, the shader's sentinel for absent directionality.
 fn absent_directionality(
     device: &wgpu::Device,
@@ -84,11 +92,12 @@ type LinearLayer<'a> = (&'a [[f32; 3]], &'a [[f32; 4]]);
 impl BakedMap {
     /// RGBA16F irradiance and RGBA8Unorm directionality layers of `size`
     /// from linear values; each layer's irradiance already holds one texel
-    /// per pixel of `size`.
+    /// per pixel of `size`. The directionality is uploaded where the device
+    /// binds lit group 0's `direction_binding`, and validated either way.
     fn linear(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        size: [u32; 2],
+        (size, direction_binding): ([u32; 2], u32),
         maps: &[LinearLayer],
     ) -> Result<Self, SceneError> {
         let count = size[0] as usize * size[1] as usize;
@@ -113,7 +122,9 @@ impl BakedMap {
         let layer_count = maps.len() as u32;
         // All-zero is the internal absent-layer sentinel. Authored neutral lobes
         // use [.5; 4]; never manufacture a full map when every layer is absent.
-        let direction = if maps.iter().any(|(_, layer)| !layer.is_empty()) {
+        let direction = if binds_directionality(device, direction_binding)
+            && maps.iter().any(|(_, layer)| !layer.is_empty())
+        {
             let mut directions = Vec::with_capacity(count * maps.len() * 4);
             for (_, layer) in maps {
                 if layer.is_empty() {
@@ -165,7 +176,7 @@ impl BakedMap {
         Self::linear(
             device,
             queue,
-            atlas.size,
+            (atlas.size, group0::STATIC_DIRECTION_ATLAS),
             &[
                 (&atlas.irradiance, &atlas.directionality),
                 (&atlas.back_irradiance, &atlas.back_directionality),
@@ -210,7 +221,9 @@ impl BakedMap {
                 2,
                 &atlas.irradiance,
             ),
-            direction: if atlas.directionality.is_empty() {
+            direction: if atlas.directionality.is_empty()
+                || !binds_directionality(device, group0::STATIC_DIRECTION_ATLAS)
+            {
                 absent_directionality(device, queue, 2)
             } else {
                 layers(
@@ -238,7 +251,7 @@ impl BakedMap {
         Self::linear(
             device,
             queue,
-            map.size,
+            (map.size, group0::STATIC_LIGHTMAP_DIRECTION),
             &[(&map.irradiance, &map.directionality)],
         )
     }
@@ -266,11 +279,22 @@ impl StaticLighting {
     pub fn empty(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let black = [[0.; 3]];
         Self {
-            atlas: BakedMap::linear(device, queue, [1, 1], &[(&black, &[]), (&black, &[])])
-                .unwrap(),
+            atlas: BakedMap::linear(
+                device,
+                queue,
+                ([1, 1], group0::STATIC_DIRECTION_ATLAS),
+                &[(&black, &[]), (&black, &[])],
+            )
+            .unwrap(),
             atlas_scale: 1.,
             atlas_installed: false,
-            lightmap: BakedMap::linear(device, queue, [1, 1], &[(&black, &[])]).unwrap(),
+            lightmap: BakedMap::linear(
+                device,
+                queue,
+                ([1, 1], group0::STATIC_LIGHTMAP_DIRECTION),
+                &[(&black, &[])],
+            )
+            .unwrap(),
             lightmap_chart: [0.; 4],
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("baked diffuse: X clamps, Y repeats"),

@@ -129,7 +129,9 @@ impl Renderer {
         );
         self.views.instances.upload(device, queue);
         self.fog.prepare(device, effective.fog, self.sizes.render);
-        self.dynamic_gi.prepare(device, scene, &effective);
+        if let Some(dynamic_gi) = self.dynamic_gi.as_mut() {
+            dynamic_gi.prepare(device, scene, &effective);
+        }
         self.cull_test_views(device, queue, scene);
         let slot_lights = crate::stages::shadows::traced::slots::SlotLights::of(
             &input,
@@ -146,7 +148,9 @@ impl Renderer {
             &self.views,
             self.shadows.maps(),
             self.fog.volume(),
-            self.dynamic_gi.probes(),
+            self.dynamic_gi
+                .as_ref()
+                .map(crate::stages::dynamic_gi::DynamicGi::probes),
         );
         TestFrame {
             effective,
@@ -310,7 +314,9 @@ impl Renderer {
     }
 
     pub(crate) fn test_dynamic_gi(&self) -> &crate::stages::dynamic_gi::DynamicGi {
-        &self.dynamic_gi
+        self.dynamic_gi
+            .as_ref()
+            .expect("the dynamic GI stage, on the Extended binding tier")
     }
 
     pub(crate) fn test_lit_layout(&self) -> &wgpu::BindGroupLayout {
