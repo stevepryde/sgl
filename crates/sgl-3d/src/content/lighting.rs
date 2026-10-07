@@ -35,11 +35,12 @@ pub struct DirectionalLight {
     /// negative or non-finite value draws none.
     pub shadow_opacity: f32,
     /// The angle the light's disc spans in the sky, in radians: the sun's,
-    /// about 0.00925 (0.53°), is the default. Only rays see it, ray-traced
-    /// shadows' and the dynamic GI volume's visibility rays: each ray
-    /// toward the light leaves in a direction within the disc, so the
-    /// shadow softens with the distance from its caster; 0 casts a hard
-    /// shadow. Clamped to 0..=π/2 (NaN as 0).
+    /// about 0.00925 (0.53°), is the default. Its specular highlights spread
+    /// over the disc's reflection, so the sun on water shows a disc, and
+    /// ray-traced shadows' and the dynamic GI volume's visibility rays each
+    /// leave toward the light in a direction within the disc, so the shadow
+    /// softens with the distance from its caster; 0 is a point's highlight
+    /// and a hard shadow. Clamped to 0..=π/2 (NaN as 0).
     pub angular_diameter: f32,
 }
 

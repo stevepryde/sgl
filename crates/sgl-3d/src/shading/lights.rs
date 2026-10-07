@@ -33,8 +33,8 @@ pub(crate) struct LightRecord {
     pub shadow_opacity: f32,
     /// `LIGHT_*` bits.
     pub flags: u32,
-    /// A point or spot light's radius in metres, which only rays see
-    /// (`LightShape`); zero for a rectangle.
+    /// A point or spot light's radius in metres, which sizes its highlights
+    /// and its rays' ends (`LightShape`); zero for a rectangle.
     pub radius: f32,
     /// WGSL rounds `Light` up to its 16-byte alignment.
     pub padding: f32,

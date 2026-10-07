@@ -5,11 +5,10 @@
 // (occlusion.wgsl occludes a lobe's environment), which
 // source completion and composition (stages/reflections/source.wgsl) and lit
 // shading (surface.wgsl: probe captures, ray hits and blended surfaces) call.
-// The response is Three.js 0.185.1's split-sum single scattering
-// (PhysicalLightingModel, BRDF_GGX_Multiscatter's single term), the base's
+// The response is the split sum's single scattering (pbr_split_sum), the base's
 // toward its F90 (surface_f90) and the coat's toward 1, the base beneath the
-// coat's Fresnel and the coat weighted by its strength, as its finish
-// layers them; the base reflects along the KHR anisotropy bent normal
+// coat's Fresnel and the coat weighted by its strength, as three.js
+// 0.185.1's PhysicalLightingModel.finish layers them; the base reflects along the KHR anisotropy bent normal
 // (anisotropy.wgsl), the coat along its normal's mirror direction, each bent
 // toward its normal with roughness.
 struct SpecularLobe {
@@ -38,13 +37,13 @@ fn specular_lobes(normal:vec3<f32>,coat_normal:vec3<f32>,view:vec3<f32>,f0:vec3<
  let nv=specular_nv(normal,view);
  let coat_nv=specular_nv(coat_normal,view);
  let coat_fresnel=pbr_coat_fresnel(coat_normal,view,coat);
- let base_response=pbr_three_single_scatter(f0,f90,base_dfg)*(1.-coat_fresnel);
+ let base_response=pbr_split_sum(f0,f90,base_dfg)*(1.-coat_fresnel);
  let base_direction=pbr_anisotropy_reflection(normal,view,anisotropy,roughness);
  var coat_dfg=vec2(0.);
  if coat>0. {
   coat_dfg=lookup_dfg(tables,filtering,coat_nv,coat_roughness);
  }
- let coat_response=pbr_three_single_scatter(vec3(.04),1.,coat_dfg)*coat;
+ let coat_response=pbr_split_sum(vec3(.04),1.,coat_dfg)*coat;
  let coat_mirror=reflect(-view,coat_normal);
  let coat_direction=normalize(mix(coat_mirror,coat_normal,pow(coat_roughness,4.)));
  return array(SpecularLobe(base_response,base_direction,roughness,nv),SpecularLobe(coat_response,coat_direction,coat_roughness,coat_nv));

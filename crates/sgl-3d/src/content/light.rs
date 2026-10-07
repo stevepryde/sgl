@@ -6,12 +6,14 @@ use glam::Vec3;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LightShape {
     /// Every direction alike. `radius` (metres, nonnegative) is the size
-    /// of the sphere it shines from, which only rays see: a ray-traced
-    /// shadow's rays, and the dynamic GI volume's visibility rays, end just
-    /// short of a point of it, so a larger light casts a softer shadow and
-    /// 0 a hard one, as Wicked Engine's `LightComponent::radius`
-    /// (`LightShape::DEFAULT_RADIUS`). Shading and the shadow maps treat
-    /// the light as a point.
+    /// of the sphere it shines from: its specular highlights spread over the
+    /// sphere's reflection (Karis's representative point, as Bevy's point
+    /// lights), and a ray-traced shadow's rays, and the dynamic GI volume's
+    /// visibility rays, end just short of a point of it, so a larger light
+    /// casts a broader highlight and a softer shadow and 0 a point's, as
+    /// Wicked Engine's `LightComponent::radius`
+    /// (`LightShape::DEFAULT_RADIUS`). Diffuse light and the shadow maps
+    /// treat the light as a point.
     Point { radius: f32 },
     /// A cone around `direction` (toward where it shines; any nonzero
     /// length): full intensity within `inner_angle` of it, none beyond
