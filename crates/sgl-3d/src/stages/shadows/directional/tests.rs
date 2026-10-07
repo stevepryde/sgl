@@ -1198,7 +1198,7 @@ fn a_volume_passes_light_through_from_its_far_side() {
     far.materials[0].double_sided = true;
     fixture.place_posed(far, Mat4::IDENTITY, false);
     let centre = [SIZE[0] / 2, SIZE[1] / 2];
-    let mut lit = |fixture: &mut Fixture, thickness: f32, shadow: bool, illuminance: f32| {
+    let lit = |fixture: &mut Fixture, thickness: f32, shadow: bool, illuminance: f32| {
         fixture.edit_material(ids.materials[0], |m| m.thickness = thickness);
         let mut input = from_behind(shadow);
         input.directional_lights[0].as_mut().unwrap().illuminance = illuminance;
@@ -1238,11 +1238,12 @@ fn a_volume_attenuates_the_light_it_passes_through() {
     for vertex in &mut leaf.meshes[0].vertices {
         vertex.position[2] = 0.;
     }
-    let pose = Mat4::from_translation(Vec3::new(0., 0., -3.)) * Mat4::from_scale(Vec3::new(1., 1., 4.));
+    let pose =
+        Mat4::from_translation(Vec3::new(0., 0., -3.)) * Mat4::from_scale(Vec3::new(1., 1., 4.));
     let ids = fixture.place_posed(leaf, pose, true);
     let color = [0.5, 0.8, 1.];
     let centre = [SIZE[0] / 2, SIZE[1] / 2];
-    let mut lit = |fixture: &mut Fixture, distance: f32| {
+    let lit = |fixture: &mut Fixture, distance: f32| {
         fixture.edit_material(ids.materials[0], |m| {
             m.thickness = 0.25;
             m.attenuation_color = color;
@@ -1255,7 +1256,8 @@ fn a_volume_attenuates_the_light_it_passes_through() {
     for channel in 0..3 {
         let expected = clear[channel] * color[channel].powf(0.5);
         assert!(
-            clear[channel] > 0.01 && (attenuated[channel] - expected).abs() <= 2e-3 * clear[channel],
+            clear[channel] > 0.01
+                && (attenuated[channel] - expected).abs() <= 2e-3 * clear[channel],
             "{attenuated:?} attenuated, {clear:?} clear, Beer-Lambert's {expected} on channel {channel}"
         );
     }

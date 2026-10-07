@@ -2230,8 +2230,10 @@ diffuses through to the surface's other side, in that colour: leaves, paper,
 flags and lampshades lit from behind. The other side takes each light behind
 the surface under its own shadow, and its ambient light, which ambient
 occlusion does not darken; make such a material `double_sided` so both sides
-draw and cast. Surfaces are thin: the light passes through at the surface
-itself.
+draw and cast. With `KHR_materials_volume`'s `thickness` the light passes
+through that far behind the surface (a candle, an ear), its shadow taken
+there, and the volume's attenuation colour and distance tint it over that
+thickness; without one the surface is thin.
 
 Shading follows one hybrid of references ([D-32](../../specs/decisions.md)):
 glTF 2.0 and its KHR extensions define what a material's values mean,

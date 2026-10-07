@@ -130,7 +130,8 @@ docs and specs the entry links.
   `sheen_roughness_texture` on `asset::Material`. Migration: exhaustive
   material literals add the fields or take `..Default::default()`.
 - `sgl-3d` `KHR_materials_diffuse_transmission`, left out before: light
-  passed through thin surfaces such as leaves, through new
+  passed through leaves, paper and, with `thickness`, volumes such as wax,
+  through new
   `diffuse_transmission` (0) and `diffuse_transmission_color` (`[1.; 3]`)
   on `asset::Material` and `SurfaceMaterial` and
   `diffuse_transmission_texture` and `diffuse_transmission_color_texture`

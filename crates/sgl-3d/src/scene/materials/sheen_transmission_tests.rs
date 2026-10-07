@@ -50,6 +50,8 @@ const SHEEN_TEXEL: [u8; 4] = [153, 51, 102, 255];
 const SHEEN_ROUGHNESS_TEXEL: [u8; 4] = [0, 0, 0, 230];
 const TRANSMISSION_TEXEL: [u8; 4] = [0, 0, 0, 153];
 const TRANSMISSION_COLOR_TEXEL: [u8; 4] = [204, 102, 51, 255];
+const THICKNESS_TEXEL: [u8; 4] = [0, 102, 0, 255];
+const THICKNESS: f32 = 0.5;
 const SHEEN: [f32; 3] = [0.9, 0.8, 0.7];
 const SHEEN_ROUGHNESS: f32 = 1.;
 const TRANSMISSION: f32 = 0.9;
@@ -71,6 +73,7 @@ fn square_asset(mapped: bool) -> Asset {
             flat(SHEEN_ROUGHNESS_TEXEL),
             flat(TRANSMISSION_TEXEL),
             flat(TRANSMISSION_COLOR_TEXEL),
+            flat(THICKNESS_TEXEL),
         ];
         material.sheen_color = SHEEN;
         material.sheen_roughness = SHEEN_ROUGHNESS;
@@ -80,6 +83,8 @@ fn square_asset(mapped: bool) -> Asset {
         material.diffuse_transmission_color = TRANSMISSION_COLOR;
         material.diffuse_transmission_texture = Some(2);
         material.diffuse_transmission_color_texture = Some(3);
+        material.thickness = THICKNESS;
+        material.thickness_texture = Some(4);
     } else {
         let (sheen, transmission) = products();
         material.sheen_color = sheen.0;
@@ -144,7 +149,9 @@ fn input() -> FrameInput {
 // F90, and within 1% for the light, whose colour map the GPU decodes from
 // sRGB in hardware, which WebGPU does not specify bit for bit (0.4% on the
 // darkest channel here, code 51); each defect named moves a value by 40% or
-// more. A ray hit's surface takes the products themselves.
+// more. A ray hit's surface takes the products themselves, its volume's
+// thickness too, KHR_materials_volume's factor times its map's green
+// channel, which a ray hit reads through its own texture word.
 #[test]
 fn sheen_and_diffuse_transmission_maps_scale_their_factors() {
     let Some((device, queue)) = test_support::device() else {
@@ -211,6 +218,7 @@ fn sheen_and_diffuse_transmission_maps_scale_their_factors() {
  let s=ray_surface(hit,material,ray_base_color(hit,material),vec3(0.),vec3(0.,0.,1.),cluster_range(hit.position,vec2(0.)));
  output[0]=vec4(s.sheen,s.sheen_roughness);
  output[1]=vec4(s.diffuse_transmission_color,s.diffuse_transmission);
+ output[2]=vec4(s.volume_thickness,0.,0.,0.);
 }
 "#;
     let hit = test_support::observe_ray_hits(
@@ -221,7 +229,7 @@ fn sheen_and_diffuse_transmission_maps_scale_their_factors() {
         &input,
         &settings,
         observation,
-        2,
+        3,
     );
     let expected = [
         [sheen[0], sheen[1], sheen[2], sheen_roughness],
@@ -232,6 +240,14 @@ fn sheen_and_diffuse_transmission_maps_scale_their_factors() {
             transmission,
         ],
     ];
+    // The volume's thickness, KHR_materials_volume's factor times its map's
+    // green channel, at the square's unscaled pose.
+    let thickness = THICKNESS * f32::from(THICKNESS_TEXEL[1]) / 255.;
+    assert!(
+        (hit[2][0] - thickness).abs() <= 1e-3,
+        "ray hit: volume thickness {}, the map's product {thickness}",
+        hit[2][0]
+    );
     for (observed, expected) in hit.iter().zip(expected) {
         for channel in 0..4 {
             assert!(

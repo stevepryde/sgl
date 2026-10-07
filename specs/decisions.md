@@ -440,7 +440,11 @@ Use the [current specs](README.md) for implementation and the
     holds one side's light, so one without directionality, and every
     lightmap on the Basic binding tier, gives the back side the front's;
     and the ray-traced shadows' mask holds the camera surface's own side,
-    so the back side takes the maps. Surfaces are thin until
-    KHR_materials_volume's thickness and attenuation arrive (#243): the
-    back side is the surface's own point.
+    so the back side takes the maps. With KHR_materials_volume the back
+    lobe lies the volume's thickness behind the surface, as Bevy places it,
+    the thickness in world metres the mean of the pose's axis scales, as
+    the Khronos sample renderer takes it for diffuse transmission, and is
+    attenuated over it by Beer-Lambert's law, as that renderer attenuates
+    it; each light's direction and fall-off stay the surface's, where Bevy
+    takes them at the back lobe's point.
 
