@@ -178,7 +178,11 @@ way to its factors, in raster and rays alike. A probe captured on an
   (Godot's; 1 by default). `Light::default()` and
   `DirectionalLight::default()` are Godot's light defaults, with Wicked
   Engine's 2.5 cm light radius and the sun's angular diameter, so a game
-  sets only what differs (`..Default::default()`).
+  sets only what differs (`..Default::default()`). A point or spot light's
+  `radius` and the directional light's `angular_diameter` size their
+  highlights (Karis's representative point, within about 20% of the light's
+  energy at any angle): a large bulb or the sun on water shows a broad
+  highlight.
   `LightShape::Rect` is a one-sided panel or strip whose face is integrated
   by linearly transformed cosines: soft light and stretched highlights
   nearby, a spot of the same intensity far away. It costs more per pixel
@@ -205,7 +209,8 @@ way to its factors, in raster and rays alike. A probe captured on an
   `Basic` reads none), and ambient cubes for moving
   instances (`set_instance_baked_irradiance`). A fixture in the bake can also
   be a baked scene light, which lights moving instances live; its light then
-  stays out of their ambient cubes.
+  stays out of their ambient cubes. Every indirect source (the environment,
+  the hemisphere fill, these and both volumes) lights a material alike.
 - **Irradiance volume**: diffuse light the game computes over a lattice of
   cells (`Scene::set_irradiance_volume`, `IrradianceVolume`; a port of
   Bevy's irradiance volume), such as a voxel world's propagated sky and

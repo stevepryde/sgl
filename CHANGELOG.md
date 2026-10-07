@@ -54,6 +54,30 @@ docs and specs the entry links.
   non-directional and `Settings::dynamic_gi` resolves to `Off`, reported by
   the new `Renderer::dynamic_gi_in_effect(&settings)`; devices with 21 to
   47 lose both, where they ran before. No game-code change is needed.
+- `sgl-3d` direct light: rough metals keep their multiply scattered energy
+  under every light type (they were darker than under an even sky, and
+  coloured metals shifted hue). Migration: none; lower any light intensity
+  raised to make up for dark metals.
+- `sgl-3d` environment specular reads a finer DFG table, so rough
+  reflections change slightly. No game-code change.
+- `sgl-3d` ray hits shade down to perceptual roughness 0.045, as raster does
+  (was 0.0525). No game-code change.
+- `sgl-3d` Fresnel is Schlick's fifth power (was Epic's exp2 fit), so
+  highlights change slightly toward grazing. No game-code change.
+- `sgl-3d` direct light on dielectrics: diffuse keeps only what the
+  specular's Fresnel leaves, slightly darker. No game-code change.
+- `sgl-3d` `LightShape::Point`/`Spot` `radius` and
+  `DirectionalLight::angular_diameter` now also size specular highlights
+  (they sized only ray ends), so the defaults widen highlights on smooth
+  surfaces. Migration: none; a radius or angular diameter of 0 keeps a
+  point's highlight and hardens ray-traced shadows.
+- `sgl-3d` lightmaps, irradiance atlases, ambient cubes and the hemisphere
+  fill light a material as the environment's diffuse light does (they took
+  1 − F0 and 1, and no multiple scattering on metals). No game-code change
+  or re-bake.
+- `sgl-3d` the hemisphere fill's multiple-scattered specular is no longer
+  darkened by ambient occlusion or occlusion maps, as the environment's and
+  volumes' already were not (#249). No game-code change.
 
 ## 0.2.1 — 2026-10-07
 

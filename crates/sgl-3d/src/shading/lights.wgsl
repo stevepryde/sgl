@@ -13,7 +13,7 @@
 // reaches it from any direction; its normals are zero, so its shadow takes
 // no normal offset.
 fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32)->LightSample {
- let unreached=LightSample(vec3(0.),vec3(0.),0.,0.,NO_RECT_LIGHT);
+ let unreached=LightSample(vec3(0.),vec3(0.),0.,0.,NO_RECT_LIGHT,0.);
  let light=lights[index];
  let reach=light_reach(light,position,normal,receiver==SHADOW_RECEIVER_MEDIUM);
  if reach.attenuation<=0. {
@@ -36,5 +36,8 @@ fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_nor
  if visibility<=0. {
   return unreached;
  }
- return LightSample(reach.direction,light.color*reach.attenuation,visibility,light.specular,select(NO_RECT_LIGHT,index,reach.rect));
+ // A point or spot light's sphere over its distance; a rectangle has none.
+ let to_light=light.position-position;
+ let size=select(light.radius*inverseSqrt(dot(to_light,to_light)),0.,reach.rect);
+ return LightSample(reach.direction,light.color*reach.attenuation,visibility,light.specular,select(NO_RECT_LIGHT,index,reach.rect),size);
 }

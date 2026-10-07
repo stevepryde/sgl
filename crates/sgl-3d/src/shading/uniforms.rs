@@ -71,7 +71,7 @@ pub(crate) struct DirectionalLightUniform {
     /// How dark its shadow is, 0..=1.
     pub shadow_opacity: f32,
     /// The tangent of half its angular diameter: the radius of its disc at
-    /// unit distance, which only rays see.
+    /// unit distance, which sizes its highlights and its rays.
     pub disc_radius: f32,
     /// WGSL rounds `DirectionalLight` up to its 16-byte alignment.
     pub padding: f32,

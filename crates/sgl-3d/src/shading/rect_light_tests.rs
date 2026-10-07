@@ -2,11 +2,13 @@
 //! the production light a surface takes from a scene light
 //! (`scene_light_sample` and `surface_direct_light`, from the scene's light
 //! record and the LTC table on the GPU, unshadowed) against a midpoint
-//! quadrature, in f64, of Lambert diffuse and GGX with height-correlated
-//! Smith masking and Schlick Fresnel (the BRDF selfshadow/ltc_code fits),
-//! layered under a coat as `surface_direct_brdf` layers it, over the
-//! rectangle the light's description gives and faded by its range window.
-//! It uses no LTC table, fitted matrix or edge formula.
+//! quadrature, in f64, of Lambert diffuse coupled to the specular by glTF's
+//! dielectric Fresnel at V.H and GGX with height-correlated Smith masking
+//! and Schlick Fresnel (the BRDF selfshadow/ltc_code fits), the base lobe
+//! scaled by the surface's multiple-scattering gain, layered under a coat as
+//! `surface_direct_brdf` layers it, over the rectangle the light's
+//! description gives and faded by its range window. It uses no LTC table,
+//! fitted matrix or edge formula.
 use crate::{Light, LightShape, Scene};
 use glam::{DVec3, Vec3};
 use std::f64::consts::PI;
@@ -28,6 +30,11 @@ struct Receiver {
     coat_rough: f64,
     coat_fresnel: f64,
 }
+
+/// The multiple-scattering gain the observation gives each surface's base
+/// lobe (SurfaceReflectance.multiscatter), so that one the rectangle drops
+/// shows.
+const GAIN: f64 = 1.25;
 
 /// The rectangle `light` describes: its centre, unit normal, and half
 /// extents along two unit axes in its plane.
@@ -103,7 +110,14 @@ fn reference(light: &Light, receiver: &Receiver, steps: usize) -> f64 {
                 continue;
             }
             let solid_angle = emitted * (area / (steps * steps) as f64) / distance2;
-            let base = receiver.diffuse / PI * nl + ggx(receiver.rough, receiver.f0, l);
+            // glTF's dielectric BRDF: the diffuse base under the specular
+            // layer's Fresnel at V.H, its F0 the receiver's and F90 1.
+            let h = (receiver.view + l).normalize();
+            let coupling = 1.
+                - (receiver.f0
+                    + (1. - receiver.f0) * (1. - receiver.view.dot(h)).clamp(0., 1.).powi(5));
+            let base =
+                receiver.diffuse / PI * nl * coupling + ggx(receiver.rough, receiver.f0, l) * GAIN;
             let layered = if receiver.coat > 0. {
                 base * (1. - receiver.coat_fresnel)
                     + receiver.coat * ggx(receiver.coat_rough, 0.04, l)
@@ -125,7 +139,6 @@ fn tilted(normal: DVec3, toward: DVec3, angle: f64) -> DVec3 {
 /// The light each receiver takes, through the production scene-light
 /// sample and direct light, with no shadow.
 fn observe(lights: &[Light], receivers: &[Receiver]) -> Option<Vec<f64>> {
-    use crate::shading::bind::group0;
     let (device, queue) = crate::test_support::device()?;
     let mut scene = Scene::new(&device, &queue);
     for light in lights {
@@ -142,15 +155,7 @@ fn observe(lights: &[Light], receivers: &[Receiver]) -> Option<Vec<f64>> {
             ]
         })
         .collect();
-    let source = format!(
-        "{}\n{}",
-        crate::shading::compose(&[
-            &crate::shading::BIND_LIT,
-            &crate::shading::SURFACE,
-            &crate::shading::SHADOW_MASK_NONE,
-            &crate::shading::tiers::LIT_BASIC,
-        ]),
-        r#"
+    let observation = r#"
 struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
 @group(0) @binding(3) var<storage,read> cases:array<Case>;
 @group(0) @binding(4) var<storage,read_write> result:array<vec4<f32>>;
@@ -166,140 +171,27 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
  surface.roughness=c.n.w;
  surface.coat=c.f.z;
  surface.coat_roughness=c.v.w;
+ surface.dielectric_f0=vec3(c.f.x);
+ surface.specular=1.;
  var reflectance:SurfaceReflectance;
  reflectance.diffuse=vec3(c.f.y);
  reflectance.f0=vec3(c.f.x);
  reflectance.f90=1.;
+ reflectance.multiscatter=vec3(1.25);
  reflectance.coat_fresnel=c.f.w;
  let light=scene_light_sample(index,c.p.xyz,c.n.xyz,c.n.xyz,vec2(0.),SHADOW_RECEIVER_CAMERA);
  result[id.x]=vec4(surface_direct_light(surface,reflectance,light),0.);
 }
-"#
-    );
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("rect light observations"),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: None,
-        layout: None,
-        module: &shader,
-        entry_point: Some("observe"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let input = crate::scene::buffer(
+"#;
+    let rows = crate::test_support::observe_surface(
         &device,
-        "rect light cases",
+        &queue,
+        &scene,
         bytemuck::cast_slice(&cases),
-        wgpu::BufferUsages::STORAGE,
+        observation,
+        cases.len().div_ceil(64) as u32,
+        cases.len(),
     );
-    // No light has a shadow; the frame's values are zero.
-    let shadows = crate::scene::buffer(
-        &device,
-        "no local shadows",
-        bytemuck::bytes_of(&crate::shading::lights::LocalShadowRecord::NONE),
-        wgpu::BufferUsages::STORAGE,
-    );
-    let frame = crate::scene::buffer(
-        &device,
-        "zero frame",
-        bytemuck::bytes_of(
-            &<crate::shading::uniforms::FrameUniform as bytemuck::Zeroable>::zeroed(),
-        ),
-        wgpu::BufferUsages::UNIFORM,
-    );
-    let atlas = device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: None,
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-    let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        compare: Some(wgpu::CompareFunction::GreaterEqual),
-        ..Default::default()
-    });
-    let size = (cases.len() * 16) as u64;
-    let output = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: input.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: output.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::LIGHTS,
-                resource: scene.lights.buffer().as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::LOOKUP_TABLES,
-                resource: wgpu::BindingResource::TextureView(&scene.lookup_tables),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::ENVIRONMENT_SAMPLER,
-                resource: wgpu::BindingResource::Sampler(&scene.environments.sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::FRAME,
-                resource: frame.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::LOCAL_SHADOWS,
-                resource: shadows.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::LOCAL_SHADOW_ATLAS,
-                resource: wgpu::BindingResource::TextureView(&atlas),
-            },
-            wgpu::BindGroupEntry {
-                binding: group0::SHADOW_SAMPLER,
-                resource: wgpu::BindingResource::Sampler(&shadow_sampler),
-            },
-        ],
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(cases.len().div_ceil(64) as u32, 1, 1);
-    }
-    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, size);
-    queue.submit([encoder.finish()]);
-    readback.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let rows: Vec<[f32; 4]> =
-        bytemuck::cast_slice(&readback.get_mapped_range(..).unwrap()).to_vec();
     Some(rows.iter().map(|row| row[0] as f64).collect())
 }
 

@@ -36,8 +36,8 @@ struct DirectionalLight {
  // (shadow_sampling.wgsl's shadow_opacity_visibility).
  shadow_opacity:f32,
  // The tangent of half its angular diameter (DirectionalLight's
- // angular_diameter): the radius of its disc at unit distance, which only
- // rays see.
+ // angular_diameter): the radius of its disc at unit distance, which sizes
+ // its highlights (pbr_sized_light) and its rays.
  disc_radius:f32,
 }
 // DirectionalLight.flags: the light has the frame's shadow cascades.

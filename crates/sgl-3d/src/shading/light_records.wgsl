@@ -34,9 +34,10 @@ struct Light {
  shadow_opacity:f32,
  // LIGHT_* bits.
  flags:u32,
- // A point or spot light's radius in metres, which only rays see: a ray
- // toward the light ends at a point of its sphere (LightShape's radius);
- // zero for a rectangle, whose rays end on its face.
+ // A point or spot light's radius in metres (LightShape's radius): its
+ // highlights spread over its sphere (pbr_sized_light), and a ray toward the
+ // light ends at a point of it; zero for a rectangle, whose rays end on its
+ // face.
  radius:f32,
 }
 // A rectangle's half height along its height's axis: its width's axis

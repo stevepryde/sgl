@@ -142,14 +142,16 @@ fn surface_f90(surface:Surface)->f32 {
 // What shade_lit derives once per surface for its direct lights, as
 // Filament's PixelParams: the diffuse colour, the specular reflectance at
 // normal and grazing incidence (surface_f0, surface_f90), the DFG
-// lookup at the view, and the coat's Fresnel toward the view, weighted by
-// the coat (pbr_coat_fresnel), which also attenuates shade_lit's ambient,
-// environment, baked and emitted light.
+// lookup at the view, the gain that restores the base lobe's multiply
+// scattered energy (pbr_multiscatter_gain, from that lookup), and the coat's
+// Fresnel toward the view, weighted by the coat (pbr_coat_fresnel), which
+// also attenuates shade_lit's ambient, environment, baked and emitted light.
 struct SurfaceReflectance {
  diffuse:vec3<f32>,
  f0:vec3<f32>,
  f90:f32,
  view_dfg:vec2<f32>,
+ multiscatter:vec3<f32>,
  coat_fresnel:f32,
 }
 // `view_dfg` is the caller's surface_dfg lookup at the surface's N.V, which
@@ -158,67 +160,77 @@ fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
  let f0=surface_f0(surface);
  let diffuse=surface.base.rgb*(1.-surface.metallic);
  let coat_fresnel=pbr_coat_fresnel(surface.geometry_normal,surface.view,surface.coat);
- return SurfaceReflectance(diffuse,f0,surface_f90(surface),view_dfg,coat_fresnel);
+ return SurfaceReflectance(diffuse,f0,surface_f90(surface),view_dfg,pbr_multiscatter_gain(f0,view_dfg),coat_fresnel);
 }
 // The light one sample brings to a surface, as Filament's
 // surfaceShading(PixelParams, Light); a rectangle's integrated over its face
 // (surface_rect_light).
 fn surface_direct_light(surface:Surface,reflectance:SurfaceReflectance,light:LightSample)->vec3<f32> {
  if light.rect!=NO_RECT_LIGHT {
-  return surface_rect_light(surface,reflectance,lights[light.rect],light.specular)*light.radiance*light.visibility;
+  return surface_rect_light(surface,reflectance,lights[light.rect],light.direction,light.specular)*light.radiance*light.visibility;
  }
- // Only the specular lobes read the light direction's DFG lookup.
- var light_dfg=vec2(0.);
- if light.specular>0. {
-  let light_cosine=max(dot(surface.normal,light.direction),0.);
-  light_dfg=surface_dfg(light_cosine,surface.roughness);
- }
- return surface_direct_brdf(surface,reflectance,light.direction,light_dfg,light.specular)*light.radiance*light.visibility;
+ return surface_direct_brdf(surface,reflectance,light.direction,light.size,light.specular)*light.radiance*light.visibility;
 }
-// surface_direct_light's BRDF times the cosine at the light, for the light
-// direction's DFG lookup. Three.js 0.185.1 PhysicalLightingModel.direct:
-// BRDF_Lambert, BRDF_GGX_Multiscatter over the view and light DFG lookups,
-// and the clearcoat lobe, layered over the base as its finish does. The base
-// specular lobe is pbr_anisotropic_specular. `specular` scales the specular
-// lobes, base and coat, as Godot's light_compute applies light_specular; a
-// diffuse-only light (0) evaluates neither.
-fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_direction:vec3<f32>,light_dfg:vec2<f32>,specular:f32)->vec3<f32> {
+// The share of its diffuse light a dielectric keeps under a light toward
+// `direction`: glTF 2.0's dielectric BRDF mixes the Lambertian base under
+// the specular layer by the layer's Fresnel at V.H (Appendix B,
+// fresnel_mix), as the Khronos glTF Sample Renderer shades each light
+// (0686eb2 source/Renderer/shaders/pbr.frag 314, 381), at the dielectric's
+// F0 and its F90, the specular strength (KHR_materials_specular). Filament,
+// Bevy and three.js leave diffuse light whole (D-32).
+fn surface_diffuse_coupling(surface:Surface,direction:vec3<f32>)->vec3<f32> {
+ let h=normalize(surface.view+direction);
+ return vec3(1.)-pbr_fresnel_schlick(clamp(dot(surface.view,h),0.,1.),surface.dielectric_f0,surface.specular);
+}
+// surface_direct_light's BRDF times the cosine, for a light toward
+// `light_direction` of size `size` (LightSample.size): the Lambertian
+// diffuse coupled to the specular (surface_diffuse_coupling), the base
+// specular lobe (pbr_anisotropic_specular) with its multiple scattering
+// (SurfaceReflectance.multiscatter), and the clearcoat lobe, layered over
+// the base as KHR_materials_clearcoat and three.js's finish layer it. A
+// sized light's specular lobes take its representative point
+// (pbr_sized_light) and the cosine there; its diffuse light takes its
+// centre. `specular` scales the specular lobes, base and coat, as Godot's
+// light_compute applies light_specular; a diffuse-only light (0) evaluates
+// neither.
+fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_direction:vec3<f32>,size:f32,specular:f32)->vec3<f32> {
  let cosine=clamp(dot(surface.normal,light_direction),0.,1.);
- var base=reflectance.diffuse/3.14159265359;
+ var base=reflectance.diffuse/3.14159265359*surface_diffuse_coupling(surface,light_direction)*cosine;
  if specular>0. {
-  let f0=reflectance.f0;
-  let f90=reflectance.f90;
-  let view_dfg=reflectance.view_dfg;
-  let view_missing=1.-view_dfg.x-view_dfg.y;
-  let light_missing=1.-light_dfg.x-light_dfg.y;
-  let average_fresnel=f0+(vec3(1.)-f0)*.047619;
-  let scattered=pbr_three_single_scatter(f0,f90,view_dfg)*pbr_three_single_scatter(f0,f90,light_dfg)*average_fresnel;
-  let denominator=vec3(1.)-view_missing*light_missing*average_fresnel*average_fresnel+vec3(.000001);
-  let multiple_scattering=scattered/denominator*view_missing*light_missing;
-  let base_specular=pbr_anisotropic_specular(surface.normal,surface.view,light_direction,surface.roughness,f0,f90,surface.anisotropy);
-  base=base+base_specular*specular+multiple_scattering*specular;
+  var reflected=reflect(-surface.view,surface.normal);
+  if surface.anisotropy.w>0. {
+   reflected=pbr_anisotropy_reflection(surface.normal,surface.view,surface.anisotropy,surface.roughness);
+  }
+  let sized=pbr_sized_light(light_direction,size,reflected,surface.view,surface.roughness);
+  let lobe=pbr_anisotropic_specular(surface.normal,surface.view,sized.direction,surface.roughness,reflectance.f0,reflectance.f90,surface.anisotropy);
+  let lobe_cosine=clamp(dot(surface.normal,sized.direction),0.,1.);
+  base+=lobe*reflectance.multiscatter*sized.intensity*lobe_cosine*specular;
  }
  if surface.coat<=0. {
-  return base*cosine;
+  return base;
  }
  var coat=vec3(0.);
  if specular>0. {
-  let coat_cosine=clamp(dot(surface.geometry_normal,light_direction),0.,1.);
-  let coat_specular=pbr_three_specular(surface.geometry_normal,surface.view,light_direction,surface.coat_roughness,vec3(.04),1.);
-  coat=surface.coat*coat_specular*coat_cosine*specular;
+  let coat_normal=surface.geometry_normal;
+  let sized=pbr_sized_light(light_direction,size,reflect(-surface.view,coat_normal),surface.view,surface.coat_roughness);
+  let coat_specular=pbr_ggx_specular(coat_normal,surface.view,sized.direction,surface.coat_roughness,vec3(.04),1.);
+  let coat_cosine=clamp(dot(coat_normal,sized.direction),0.,1.);
+  coat=surface.coat*coat_specular*sized.intensity*coat_cosine*specular;
  }
- return base*(1.-reflectance.coat_fresnel)*cosine+coat;
+ return base*(1.-reflectance.coat_fresnel)+coat;
 }
 // What rectangle `rect`'s face brings to a surface per unit of its luminance:
 // Bevy 9d12036's rect_light (crates/bevy_pbr/src/render/pbr_lighting.wesl,
 // MIT OR Apache-2.0, src/LICENSE-bevy.txt), its lobes layered as
 // surface_direct_brdf layers a punctual light's. Lambertian diffuse is the
-// face's form factor; the base GGX lobe and the coat's integrate the fit at
-// their roughness and N.V (rect_light.wgsl), weighted by its magnitude and
-// Fresnel, without the multiscattering a punctual light adds, as Bevy's.
-// `specular` scales the base and coat lobes, and a diffuse-only light (0)
-// evaluates neither; the coat's Fresnel toward the view takes from the base.
-fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,specular:f32)->vec3<f32> {
+// face's form factor, coupled to the specular toward the face's centre,
+// `center_direction` (surface_diffuse_coupling); the base GGX lobe and the
+// coat's integrate the fit at their roughness and N.V (rect_light.wgsl),
+// weighted by its magnitude and Fresnel, the base with its multiple
+// scattering as a punctual light's, where Bevy's takes none. `specular`
+// scales the base and coat lobes, and a diffuse-only light (0) evaluates
+// neither; the coat's Fresnel toward the view takes from the base.
+fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,center_direction:vec3<f32>,specular:f32)->vec3<f32> {
  let center=rect.position-surface.position;
  let half_height=light_rect_half_height(rect);
  // Lobes in turn: diffuse, then with specular the base GGX lobe, then a
@@ -229,15 +241,17 @@ fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,
  }
  var base=vec3(0.);
  var coat=vec3(0.);
+ let diffuse=reflectance.diffuse*surface_diffuse_coupling(surface,center_direction);
  for (var lobe=0;lobe<lobes;lobe++) {
   let coat_lobe=lobe==2;
   let n=select(surface.normal,surface.geometry_normal,coat_lobe);
   var inverse=mat3x3(vec3(1.,0.,0.),vec3(0.,1.,0.),vec3(0.,0.,1.));
-  var weight=reflectance.diffuse;
+  var weight=diffuse;
   if lobe>0 {
    let fit=rect_light_fit(select(surface.roughness,surface.coat_roughness,coat_lobe),max(dot(n,surface.view),0.));
    inverse=fit.inverse;
-   weight=rect_light_specular_weight(fit,select(reflectance.f0,vec3(.04),coat_lobe),select(reflectance.f90,1.,coat_lobe))*specular;
+   let scattering=select(reflectance.multiscatter,vec3(1.),coat_lobe);
+   weight=rect_light_specular_weight(fit,select(reflectance.f0,vec3(.04),coat_lobe),select(reflectance.f90,1.,coat_lobe))*scattering*specular;
   }
   let value=weight*ltc_integrate_quad(rect_light_frame(n,surface.view,center,rect.half_width,half_height),inverse);
   if coat_lobe {
@@ -258,7 +272,7 @@ fn directional_light_sample(index:u32,position:vec3<f32>,geometry_normal:vec3<f3
  let l=normalize(frame.directional_lights[index].direction_to_light);
  let radiance=frame.directional_lights[index].color*frame.directional_lights[index].illuminance;
  let shadow=directional_light_shadow(index,position,geometry_normal,context.pixel,context.receiver);
- return LightSample(l,radiance,shadow,1.,NO_RECT_LIGHT);
+ return LightSample(l,radiance,shadow,1.,NO_RECT_LIGHT,frame.directional_lights[index].disc_radius);
 }
 // A receiver's indirect diffuse light along `normal`, by the one
 // determination: its lightmap or irradiance atlas chart
@@ -332,35 +346,38 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let dfg=surface_dfg(specular_nv(n,v),rough);
  let reflectance=surface_reflectance(s,dfg);
  let f0=reflectance.f0;
- let diffuse=reflectance.diffuse;
  let probe_hit=context.receiver==SHADOW_RECEIVER_PROBE_HIT;
  // What the material's occlusion lets reach the surface, where this view
  // occludes by it (ShadeContext.material_occlusion).
  let visibility=select(1.,s.occlusion,context.material_occlusion);
- // The retained cosine convolution stores irradiance / PI. It is already
- // a lighting integral, so neither a second PI nor a brightness fudge belongs here.
+ // Every source of indirect irradiance lights the surface by one rule
+ // (D-32): its irradiance / PI times the environment's diffuse weight and
+ // multiple scattering (pbr_ibl_weights), three.js 0.185.1's
+ // PhysicalLightingModel.indirect for its environment. The retained cosine
+ // convolution, the hemisphere fill over PI, the volumes and the baked
+ // charts and cubes all hold irradiance / PI, already a lighting integral,
+ // so neither a second PI nor a brightness fudge belongs here.
  let ibl=pbr_ibl_weights(base.rgb,metallic,s.dielectric_f0,reflectance.f90,dfg);
  // A probe hit takes diffuse light alone: no multiscattered specular.
- let multi=select(ibl.multi,vec3(0.),probe_hit);
+ let response=ibl.diffuse+select(ibl.multi,vec3(0.),probe_hit);
  let indirect=surface_indirect_diffuse(s,n,probe_hit);
  let fallback=indirect.ambient*(1.-reflectance.coat_fresnel);
  let environment=diffuse_environment(n)*s.environment_scale*fallback;
- var color=(ibl.diffuse+multi)*environment;
  let sky=frame.hemisphere_sky_color;
  let hemisphere_intensity=frame.hemisphere_intensity;
  let ground=frame.hemisphere_ground_color;
- let hemisphere=diffuse/3.14159265359*pbr_hemisphere(n,sky,ground,hemisphere_intensity)*fallback;
- color+=hemisphere;
+ let hemisphere=pbr_hemisphere(n,sky,ground,hemisphere_intensity)/3.14159265359*fallback;
+ var color=response*(environment+hemisphere);
  // The ambient diffuse that ambient occlusion weights: the diffuse
  // environment and hemisphere terms, or the volumes' irradiance in their
  // place; multiscattering stays apart from it.
- var ambient=ibl.diffuse*environment+hemisphere;
+ var ambient=ibl.diffuse*(environment+hemisphere);
  // A probe hit takes the dynamic GI volume's last frame damped, as Wicked's
  // bounce is. Neither volume's irradiance takes environment_scale.
  let dynamic_gi=indirect.dynamic_gi;
  let bounce=select(1.,DYNAMIC_GI_BOUNCE,probe_hit);
  let irradiance=(indirect.field+dynamic_gi.rgb*dynamic_gi.a*bounce)*(1.-reflectance.coat_fresnel);
- color+=(ibl.diffuse+multi)*irradiance;
+ color+=response*irradiance;
  ambient+=ibl.diffuse*irradiance;
  // Baked diffuse lies beneath the coat as live light does: Three.js 0.185.1's
  // node path adds a light map to the irradiance its finish dims
@@ -375,7 +392,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // by its AO (scene_forward_clustered.glsl ambient_light *= ao); the
  // frame's ambient occlusion does not, for a bake holds its own (Bevy 9d12036
  // likewise adds its lightmap unoccluded, pbr_functions.wesl).
- color+=indirect.baked*diffuse*(vec3(1.)-f0)*(1.-reflectance.coat_fresnel)*s.occlusion;
+ color+=response*indirect.baked*(1.-reflectance.coat_fresnel)*s.occlusion;
  if !probe_hit {
   if frame.directional_lights[0].illuminance>0. {
    color+=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,s.geometry_normal,context));

@@ -338,3 +338,62 @@ Use the [current specs](README.md) for implementation and the
   the cost of a third layout, provider and boundary test, where AR-3 and
   AR-11 favour fewer variants and the owner accepts a basic look at the
   floor.
+
+- **D-32** Owner decision, 2026-10-07 (#248): SGL3D's lighting model is a
+  defined hybrid of references, chosen after comparing its shading with
+  three.js r185, Filament ef1a133, Bevy 9d12036, Godot b130438, Wicked
+  4323a33 and the Khronos glTF Sample Renderer:
+  - material meaning (F0, F90, layering order and extension semantics)
+    follows glTF 2.0 and its KHR extensions, with Khronos's sample renderer
+    as the reference;
+  - core shading maths and energy treatment follow Filament, ported from
+    Bevy's WGSL where Bevy follows Filament;
+  - an extension lobe that Filament lacks, or defines differently from KHR,
+    follows three.js r185;
+  - rectangle lights follow Bevy and ltc_code.
+
+  Every indirect irradiance source (the environment's diffuse light, the
+  hemisphere fill, lightmaps, irradiance atlas charts, ambient cubes and
+  both volumes) lights a surface by one rule. Two additions follow the same
+  references: glTF's diffuse coupling, which dims a dielectric's diffuse
+  under each light by the Fresnel its specular takes, and sized highlights,
+  Karis's representative point for a point or spot light's radius and the
+  directional light's disc.
+
+  Three departures from those references, each measured against f64
+  integrals:
+  - Direct light's multiple scattering takes the environment's own gain,
+    Fdez-Agüera's 1 / (1 − F_avg (1 − E)) as three.js's
+    computeMultiscattering and Khronos's getIBLGGXFresnel apply it, in place
+    of Filament's 1 + F0 (1 / E − 1), so direct and environment light agree
+    on every channel. The two are equal for a white metal; on coloured rough
+    metals Filament's factor reflected up to 19% more than Kulla and Conty's
+    (iron at roughness 1, gold's blue up to 16%), where Fdez-Agüera's stays
+    within −6% to +4%.
+  - The DFG table is Bevy's 64 × 64 one. three.js's 16 × 16 holds no
+    roughness above 0.969 or N·V below 0.031, so a white metal under direct
+    light reflected only 0.89 of a white furnace at roughness 1; Bevy's
+    keeps it within 0.5% up to roughness 0.95 (N·V from 0.05) and within 3%
+    at 1.
+  - Sized highlights take Karis's representative point and normalisation
+    (α/α′)², with the light's cone widening α taken into half-vector space
+    by its Jacobian 1 / (4 l·h) (Walter et al. 2007): α′ = α + r / (2d √(l·h)),
+    where Karis's α + r/2d holds at normal incidence only. Against f64
+    integrals of GGX over the sphere, from roughness 0.045 to 0.5, sizes
+    from the sun's to a fifth of the distance and light elevations from 0.2
+    to 1.45 rad, the energy a smooth metal reflects is 0.80–1.02 of the
+    sphere's with the Jacobian (and 0.50–0.98 of its radiance along the
+    mirror of a smooth surface), 0.84–7.3 with Karis's widening (about
+    1 / cos of the elevation: 3.7 at 1.3 rad) and 0.51–6.0 with Bevy's full
+    function, whose `specular_fix_remap` and solid-angle factor are not
+    taken. The directional light's disc is a sphere at unit distance whose
+    radius is the disc's: Bevy shades no sun disc, and Filament's and
+    Frostbite's, without the normalisation, reflected 4–16 times the sun's
+    energy on the smoothest surface.
+
+  Rationale: the three.js-derived direct-light multiple scattering lost
+  energy (a rough white metal reflected 0.90, 0.84 and 0.72 of a white
+  furnace at roughness 0.5, 0.75 and 1.0) and disagreed with the
+  environment's, and indirect diffuse was weighted by its source; one named
+  reference per concern fixes them at their cause (S3D-5) and tells later
+  changes which engine to port from.

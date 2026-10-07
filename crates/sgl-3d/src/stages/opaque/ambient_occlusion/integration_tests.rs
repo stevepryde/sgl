@@ -73,6 +73,16 @@ fn brightness(bytes: &[u8]) -> f32 {
 /// linear radiance 0.25, a black backdrop and no light on. With `occlusion`,
 /// the material packs an occlusion map in its metallic-roughness image
 /// (ORM), red `occlusion` throughout.
+/// Makes `material` Lambertian (KHR_materials_specular's specular 0): under
+/// the hemisphere fill alone its lit colour is then all ambient diffuse,
+/// with none of the specular's multiple scattering, which ambient occlusion
+/// does not weight.
+fn lambertian(queue: &wgpu::Queue, scene: &mut Scene, material: MaterialId) {
+    let mut values = scene.material(material).unwrap();
+    values.specular = 0.;
+    scene.set_material(queue, material, values).unwrap();
+}
+
 fn box_on_floor(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -288,7 +298,8 @@ fn completion_occludes_ambient_diffuse_by_the_frames_visibility() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
-    let (mut scene, _, mut input) = box_on_floor(&device, &queue, None);
+    let (mut scene, material, mut input) = box_on_floor(&device, &queue, None);
+    lambertian(&queue, &mut scene, material);
     input.hemisphere_light = HemisphereLight {
         sky_color: [1., 0.8, 0.6],
         ground_color: [0.6, 0.8, 1.],
@@ -436,6 +447,7 @@ fn a_packed_occlusion_map_occludes_ambient_diffuse() {
     };
     const RED: u8 = 64;
     let (mut scene, material, mut input) = box_on_floor(&device, &queue, Some(RED));
+    lambertian(&queue, &mut scene, material);
     input.hemisphere_light = HemisphereLight {
         sky_color: [1., 0.8, 0.6],
         ground_color: [0.6, 0.8, 1.],

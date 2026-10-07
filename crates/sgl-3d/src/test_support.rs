@@ -163,6 +163,208 @@ pub(crate) fn observe_ray_hits(
     bytemuck::cast_slice::<u32, [f32; 4]>(&words).to_vec()
 }
 
+/// Runs `observation`, WGSL after the surface library that reads its cases
+/// at group 0 binding 3 and writes its `outputs` vectors at binding 4, from
+/// its entry point `observe` over `workgroups` workgroups, under lit group
+/// 0's `scene` lights, lookup tables and environment sampler, a zeroed frame
+/// and no shadows, and reads the vectors back.
+pub(crate) fn observe_surface(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &crate::Scene,
+    cases: &[u8],
+    observation: &str,
+    workgroups: u32,
+    outputs: usize,
+) -> Vec<[f32; 4]> {
+    use crate::shading::bind::group0;
+    let source = format!(
+        "{}\n{}",
+        crate::shading::compose(&[
+            &crate::shading::BIND_LIT,
+            &crate::shading::SURFACE,
+            &crate::shading::SHADOW_MASK_NONE,
+            &crate::shading::tiers::LIT_BASIC,
+        ]),
+        observation
+    );
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("surface observations"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let storage = |read_only| wgpu::BindingType::Buffer {
+        ty: wgpu::BufferBindingType::Storage { read_only },
+        has_dynamic_offset: false,
+        min_binding_size: None,
+    };
+    let array = |sample_type| wgpu::BindingType::Texture {
+        sample_type,
+        view_dimension: wgpu::TextureViewDimension::D2Array,
+        multisampled: false,
+    };
+    // Every binding an observation may read, whether or not it does.
+    let entries = [
+        (3, storage(true)),
+        (4, storage(false)),
+        (group0::LIGHTS, storage(true)),
+        (group0::LOCAL_SHADOWS, storage(true)),
+        (
+            group0::FRAME,
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+        ),
+        (
+            group0::LOOKUP_TABLES,
+            array(wgpu::TextureSampleType::Float { filterable: true }),
+        ),
+        (
+            group0::ENVIRONMENT_SAMPLER,
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        ),
+        (
+            group0::LOCAL_SHADOW_ATLAS,
+            array(wgpu::TextureSampleType::Depth),
+        ),
+        (
+            group0::SHADOW_SAMPLER,
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+        ),
+    ];
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("surface observations"),
+        entries: &entries.map(|(binding, ty)| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty,
+            count: None,
+        }),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: Some(
+            &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            }),
+        ),
+        module: &shader,
+        entry_point: Some("observe"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let input = crate::scene::buffer(device, "observed cases", cases, wgpu::BufferUsages::STORAGE);
+    let output = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (outputs * 16) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let shadows = crate::scene::buffer(
+        device,
+        "no local shadows",
+        bytemuck::bytes_of(&crate::shading::lights::LocalShadowRecord::NONE),
+        wgpu::BufferUsages::STORAGE,
+    );
+    let frame = crate::scene::buffer(
+        device,
+        "zero frame",
+        bytemuck::bytes_of(
+            &<crate::shading::uniforms::FrameUniform as bytemuck::Zeroable>::zeroed(),
+        ),
+        wgpu::BufferUsages::UNIFORM,
+    );
+    let atlas = device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+    let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        compare: Some(wgpu::CompareFunction::GreaterEqual),
+        ..Default::default()
+    });
+    let resources = [
+        input.as_entire_binding(),
+        output.as_entire_binding(),
+        scene.lights.buffer().as_entire_binding(),
+        shadows.as_entire_binding(),
+        frame.as_entire_binding(),
+        wgpu::BindingResource::TextureView(&scene.lookup_tables),
+        wgpu::BindingResource::Sampler(&scene.environments.sampler),
+        wgpu::BindingResource::TextureView(&atlas),
+        wgpu::BindingResource::Sampler(&shadow_sampler),
+    ];
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &layout,
+        entries: &entries
+            .iter()
+            .zip(resources)
+            .map(|(&(binding, _), resource)| wgpu::BindGroupEntry { binding, resource })
+            .collect::<Vec<_>>(),
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(workgroups, 1, 1);
+    }
+    queue.submit([encoder.finish()]);
+    bytemuck::cast_slice::<u32, [f32; 4]>(&read_words(device, queue, &output)).to_vec()
+}
+
+/// The directional albedo seen at cosine `nv` of GGX at perceptual roughness
+/// `rough` with height-correlated Smith visibility and Schlick's Fresnel,
+/// `f0` at normal and `f90` at grazing incidence: the single scattering the
+/// split sum stands for, integrated in f64 by importance sampling the GGX
+/// distribution of normals over a 2^16-point Hammersley set (within 1e-5 of
+/// a 2^20-point one).
+pub(crate) fn ggx_albedo(nv: f64, rough: f64, f0: f64, f90: f64) -> f64 {
+    use std::f64::consts::PI;
+    const SAMPLES: u32 = 1 << 16;
+    let a2 = rough.powi(4);
+    let view = glam::DVec3::new((1. - nv * nv).max(0.).sqrt(), 0., nv);
+    let mut sum = 0.;
+    for i in 0..SAMPLES {
+        let u = (i as f64 + 0.5) / SAMPLES as f64;
+        let v = i.reverse_bits() as f64 / 2f64.powi(32);
+        let cos_theta = ((1. - v) / (1. + (a2 - 1.) * v)).sqrt();
+        let sin_theta = (1. - cos_theta * cos_theta).sqrt();
+        let phi = 2. * PI * u;
+        let h = glam::DVec3::new(sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta);
+        let vh = view.dot(h);
+        let l = h * 2. * vh - view;
+        if l.z <= 0. || vh <= 0. {
+            continue;
+        }
+        let nl = l.z;
+        let visibility =
+            0.5 / (nl * (nv * nv * (1. - a2) + a2).sqrt() + nv * (nl * nl * (1. - a2) + a2).sqrt());
+        let fresnel = f0 + (f90 - f0) * (1. - vh).powi(5);
+        // f N.L / pdf, the pdf of l being D (n.h) / (4 v.h).
+        sum += fresnel * visibility * 4. * vh * nl / h.z;
+    }
+    sum / SAMPLES as f64
+}
+
 /// The words of `buffer`, a storage buffer that cannot be copied from, as
 /// a compute pass reads them.
 pub(crate) fn storage_words(
