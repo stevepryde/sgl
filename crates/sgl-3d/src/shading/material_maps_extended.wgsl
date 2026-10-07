@@ -23,3 +23,11 @@ fn material_iridescence_texel(uv:vec2<f32>)->vec4<f32> {
 fn material_iridescence_thickness_texel(uv:vec2<f32>)->vec4<f32> {
  return textureSampleBias(iridescence_thickness_map,tex_sampler,uv,view.mip_bias);
 }
+// The transmission map's texel at `uv`.
+fn material_transmission_texel(uv:vec2<f32>)->vec4<f32> {
+ return textureSampleBias(transmission_map,tex_sampler,uv,view.mip_bias);
+}
+// The thickness map's texel at `uv`.
+fn material_thickness_texel(uv:vec2<f32>)->vec4<f32> {
+ return textureSampleBias(thickness_map,tex_sampler,uv,view.mip_bias);
+}

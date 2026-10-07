@@ -91,11 +91,26 @@ pub(crate) mod caster {
     pub(crate) const POSITIONS: u32 = 0;
 }
 
-/// The blended pipelines' group 3, as bind_blended.wgsl declares it.
+/// The blended pipelines' group 3, as bind_blended.wgsl and
+/// bind_blended_extended.wgsl declare it, and the binding tier each takes.
 pub(crate) mod blended {
+    use super::BindingTier;
+
     pub(crate) const REFLECTIONS: u32 = 0;
     pub(crate) const SURFACE_DEPTH: u32 = 1;
     pub(crate) const TRACE: u32 = 2;
+    pub(crate) const TRANSMISSION: u32 = 3;
+
+    /// The least binding tier that binds `binding`, the one declaration of
+    /// each one's: the transparent stage's copy of the composed frame is
+    /// `Extended`'s alone, below which transmitted light is blended through
+    /// unrefracted.
+    pub(crate) fn tier(binding: u32) -> BindingTier {
+        match binding {
+            TRANSMISSION => BindingTier::Extended,
+            _ => BindingTier::Basic,
+        }
+    }
 }
 
 /// The opaque stage's lighting pass's group 3 while ray-traced shadows run,
@@ -107,7 +122,8 @@ pub(crate) mod shadow_mask {
 }
 
 /// The screen-space method's cutoff and fade the blended draw composes its
-/// result with; matches `BlendedTrace` in bind_blended.wgsl.
+/// result with, and whether the transmission copy holds the frame; matches
+/// `BlendedTrace` in bind_blended.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct BlendedTrace {
@@ -116,7 +132,9 @@ pub(crate) struct BlendedTrace {
     pub cutoff: f32,
     /// The width of its fade below the cutoff.
     pub fade: f32,
-    pub padding: [f32; 2],
+    /// 1 where the transmission copy holds this frame's composed frame.
+    pub transmission: u32,
+    pub padding: f32,
 }
 
 use group0::*;
@@ -424,14 +442,16 @@ pub(crate) fn caster_positions_entries() -> [wgpu::BindGroupLayoutEntry; 1] {
     }]
 }
 
-/// The blended pipelines' group 3: bind_blended.wgsl's screen-space
-/// method's result, surface depth and trace.
-pub(crate) fn blended(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    layout(device, "blended reflections", &blended_entries())
+/// The blended pipelines' group 3 on a device of `tier`: bind_blended.wgsl's
+/// screen-space method's result, surface depth and trace, and on
+/// `Extended` bind_blended_extended.wgsl's transmission copy.
+pub(crate) fn blended(device: &wgpu::Device, tier: BindingTier) -> wgpu::BindGroupLayout {
+    layout(device, "blended reflections", &blended_entries(tier))
 }
 
-/// Group 3's entries for the blended pipelines.
-pub(crate) fn blended_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
+/// Group 3's entries for the blended pipelines on a device of `tier`
+/// (`blended::tier`).
+pub(crate) fn blended_entries(tier: BindingTier) -> Vec<wgpu::BindGroupLayoutEntry> {
     let texture = |binding, sample_type| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -458,7 +478,14 @@ pub(crate) fn blended_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
             },
             count: None,
         },
+        texture(
+            blended::TRANSMISSION,
+            wgpu::TextureSampleType::Float { filterable: true },
+        ),
     ]
+    .into_iter()
+    .filter(|entry| blended::tier(entry.binding) <= tier)
+    .collect()
 }
 
 /// The lighting pass's group 3 while ray-traced shadows run:
@@ -499,6 +526,6 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
         "geometry",
         "BlendedTrace",
         BlendedTrace,
-        [cutoff, fade, padding]
+        [cutoff, fade, transmission, padding]
     )]
 }

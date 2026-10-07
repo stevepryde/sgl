@@ -181,16 +181,14 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
     Cull::new(&device).encode(&device, &mut encoder, &scene, &views, None);
     queue.submit([encoder.finish()]);
 
+    let tier = crate::shading::bind::BindingTier::of(&device.limits());
     let mut pipelines = GeometryPipelines::new(
         &device,
-        &crate::shading::bind::lit(
-            &device,
-            crate::shading::bind::BindingTier::of(&device.limits()),
-        ),
+        &crate::shading::bind::lit(&device, tier),
         [
             &crate::shading::bind::shadow(&device),
             &crate::shading::bind::scene(&device),
-            &crate::shading::bind::blended(&device),
+            &crate::shading::bind::blended(&device, tier),
             &crate::shading::bind::shadow_mask(&device),
             &crate::shading::bind::caster_positions(&device),
         ],

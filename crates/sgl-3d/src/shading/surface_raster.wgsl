@@ -95,6 +95,15 @@ fn surface_emission(i:Fragment)->vec3<f32> {
  }
  return emission;
 }
+// A fragment's transmission and its volume's thickness
+// (material_transmission, material_thickness): their factors on the Basic
+// binding tier, which binds neither map.
+fn surface_transmission(i:Fragment)->f32 {
+ return material_transmission(material,material_transmission_texel(i.uv));
+}
+fn surface_thickness(i:Fragment)->f32 {
+ return material_thickness(material,material_thickness_texel(i.uv));
+}
 // Its decals are those of `clusters`, the cluster that holds it.
 fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,clusters:ClusterRange)->Surface {
  let object=fragment_object(i);

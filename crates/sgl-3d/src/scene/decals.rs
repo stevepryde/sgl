@@ -65,6 +65,10 @@ impl Decals {
             atlas: DecalAtlas::empty(device, queue),
             pending: None,
             stale: false,
+            // Lit group 0's one trilinear clamp-to-edge sampler, which the
+            // blended draws' transmission also filters the transparent
+            // stage's copy of the frame through (transmission_extended.wgsl):
+            // keep it trilinear and clamped to the edge.
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("decal atlas"),
                 mag_filter: wgpu::FilterMode::Linear,

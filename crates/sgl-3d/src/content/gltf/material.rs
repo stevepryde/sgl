@@ -5,6 +5,9 @@ use super::super::asset::{Material, Result};
 use super::super::material::AlphaMode;
 use super::Ignored;
 
+mod transmission;
+use transmission::{read_dispersion, read_transmission, read_volume};
+
 /// glTF material `index`, adding what SGL3D leaves out of it to `ignored`.
 pub(super) fn read_material(
     material: gltf::Material<'_>,
@@ -41,6 +44,9 @@ pub(super) fn read_material(
     let (anisotropy_strength, anisotropy_rotation, anisotropy_texture) =
         read_anisotropy(&material, document)?;
     let ior = read_ior(&material)?;
+    let transmission = read_transmission(&material, document)?;
+    let volume = read_volume(&material, document)?;
+    let dispersion = read_dispersion(&material)?;
     let (specular, specular_color) = read_specular(&material, index, ignored)?;
     let pbr = material.pbr_metallic_roughness();
     let mr_image = pbr
@@ -97,6 +103,8 @@ pub(super) fn read_material(
         clearcoat.normal_texture.clone(),
         iridescence.texture.clone(),
         iridescence.thickness_texture.clone(),
+        transmission.texture.clone(),
+        volume.thickness_texture.clone(),
         // An occlusion map SGL3D samples, the metallic-roughness image on
         // TEXCOORD_0, takes its sampler; an ignored one constrains nothing.
         material
@@ -155,6 +163,13 @@ pub(super) fn read_material(
             .map(|b| scalar(b, "bumpFactor"))
             .transpose()?
             .unwrap_or(0.0),
+        transmission: transmission.factor,
+        transmission_texture: transmission.texture.map(|t| t.source().index()),
+        thickness: volume.thickness,
+        thickness_texture: volume.thickness_texture.map(|t| t.source().index()),
+        attenuation_distance: volume.attenuation_distance,
+        attenuation_color: volume.attenuation_color,
+        dispersion,
         wrap: wrap.unwrap_or([WrappingMode::Repeat; 2]),
         double_sided: material.double_sided(),
         unlit: material.unlit(),

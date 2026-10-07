@@ -22,9 +22,11 @@ later, DX12, Chrome's upper tier), `Basic` below, down to WebGPU's default
 Vulkan driver lands in either, by its `maxPerStageResources`.
 `Renderer::binding_tier` reports it. On `Basic` baked light from a
 lightmap or irradiance atlas is non-directional, dynamic GI is off
-(`Renderer::dynamic_gi_in_effect`), and a material's anisotropy, clearcoat
-and iridescence maps give way to their factors (a clearcoat normal map to
-the geometry normal), in raster and rays alike. A probe captured on an
+(`Renderer::dynamic_gi_in_effect`), a material's anisotropy, clearcoat,
+iridescence, transmission and thickness maps give way to their factors (a
+clearcoat normal map to the geometry normal), in raster and rays alike, and
+transmissive surfaces blend the light behind them through unrefracted. A
+probe captured on an
 `Extended` device keeps what its maps and lights did there.
 [Binding tiers](../README.md#binding-tiers).
 
@@ -35,9 +37,11 @@ the geometry normal), in raster and rays alike. A probe captured on an
   channel (ORM), `KHR_materials_clearcoat` (its clearcoat, roughness and
   normal maps on the `Extended` binding tier), emission, unlit,
   `KHR_materials_anisotropy` and `KHR_materials_iridescence` (a thin film
-  over the base, its maps on `Extended`), and the `KHR_materials_ior` and
+  over the base, its maps on `Extended`), the `KHR_materials_ior` and
   `KHR_materials_specular` factors (a dielectric's F0: water's IOR 1.33
-  gives 0.02). Every map lies on `TEXCOORD_0`.
+  gives 0.02), and `KHR_materials_transmission`, `KHR_materials_volume` and
+  `KHR_materials_dispersion` (their maps on `Extended`). Every map lies on
+  `TEXCOORD_0`.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
   `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
   emissive strength cap, images the game supplies, which are never decoded,
@@ -102,11 +106,25 @@ the geometry normal), in raster and rays alike. A probe captured on an
   only its diffuse and emitted light, its reflections staying full (glass).
   [Alpha-masked and blended
   materials](../README.md#alpha-masked-and-blended-materials).
+- **Transmissive glass and water** (`SurfaceMaterial::transmission`,
+  `thickness`, `attenuation_distance`, `attenuation_color`, `dispersion`;
+  the IOR refracts): the light behind the surface passes through it,
+  refracted, blurred by its roughness, tinted by its colour and by
+  Beer-Lambert's attenuation across its thickness, each colour refracted
+  apart by its dispersion; its reflections stay full. Drawn with the
+  blended surfaces whatever its alpha mode, so it casts no shadow, takes no
+  ambient occlusion, rays pass through it and probe captures leave it out;
+  it shows the opaque frame behind it, not other blended or transmissive
+  surfaces; a volume draws its front faces alone (water is not seen from
+  below); decals tint it. Give glass its own material. On `Extended` the
+  frame is copied each frame that shows one; on `Basic`, and in what
+  screen-space reflections see of it, the light behind blends through
+  unrefracted. [Transmissive glass and water](../README.md#transmissive-glass-and-water).
 - **Blended receivers** (`AlphaMode::Blend { receives_screen_space_reflections:
   true, .. }`): water or glass, with the normals the game animates, that
   receives the frame's screen-space reflections where it is the nearest
   receiver, and that TAA, FSR2 and motion blur reproject by its own motion.
-  No refraction; one reflecting layer per pixel. Animate water with scrolling
+  One reflecting layer per pixel; a transmissive receiver refracts too. Animate water with scrolling
   normal layers; a mesh replaced every frame with `Scene::set_model` is
   prepared again, ray BVH included, every frame. [Blended receivers](../README.md#blended-receivers).
 - **Scrolling normal layers** (`asset::Material::normal_layers`,

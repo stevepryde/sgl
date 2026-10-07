@@ -19,8 +19,12 @@
 //! layers existed: a 128×128 grid whose normals follow a sum of sines,
 //! replaced every frame with `Scene::set_model`. `fsr2-opaque` is `fsr2`
 //! with the lake opaque, whose moving layers mark FSR2's transparency and
-//! composition mask. Every 30th frame and the last of each run are written
-//! to `target/water-example/<run>/` for the owner to judge.
+//! composition mask. `transmission` is `after` with the lake transmissive,
+//! a volume of water that tints and refracts the bed through its waves, and
+//! the glass pane transmissive, and `transmission-fsr2` is `fsr2` so; their
+//! frames add the transparent stage's copy of the composed frame
+//! (`transmission copy`). Every 30th frame and the last of each run are
+//! written to `target/water-example/<run>/` for the owner to judge.
 use sgl_3d::glam::{Quat, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameInput, InstanceState,
@@ -76,6 +80,8 @@ struct Run {
     waves: Waves,
     /// A resize a third of the way through and a camera cut at two thirds.
     resize_and_cut: bool,
+    /// The lake and the glass pane transmit the light behind them.
+    transmissive: bool,
 }
 
 fn runs() -> Vec<Run> {
@@ -95,6 +101,7 @@ fn runs() -> Vec<Run> {
         orbit: true,
         waves: Waves::Material,
         resize_and_cut: false,
+        transmissive: false,
     };
     let with = |change: fn(&mut Settings)| {
         let mut settings = base;
@@ -152,6 +159,14 @@ fn runs() -> Vec<Run> {
         Run {
             resize_and_cut: true,
             ..run("resize-and-cut", base)
+        },
+        Run {
+            transmissive: true,
+            ..run("transmission", blurred)
+        },
+        Run {
+            transmissive: true,
+            ..run("transmission-fsr2", fsr2)
         },
     ]
 }
@@ -227,7 +242,7 @@ fn quad(origin: Vec3, u: Vec3, v: Vec3, material: usize) -> CpuMesh {
 
 /// The lake's surroundings, the second sheet and the glass pane; the lake
 /// itself is its own model. Materials 6 and 7 receive when `marked`.
-fn world(marked: bool) -> Asset {
+fn world(marked: bool, transmissive: bool) -> Asset {
     let receiver = AlphaMode::Blend {
         receives_screen_space_reflections: marked,
         keeps_specular: false,
@@ -327,13 +342,22 @@ fn world(marked: bool) -> Asset {
         alpha: receiver,
         ..material("sheet", [0.05, 0.08, 0.1, 0.5], 0.08)
     };
-    let glass = Material {
-        double_sided: true,
-        alpha: AlphaMode::Blend {
-            receives_screen_space_reflections: false,
-            keeps_specular: true,
-        },
-        ..material("glass", [0.6, 0.8, 0.9, 0.25], 0.05)
+    let glass = if transmissive {
+        // Thin, clear glass: it transmits all of what lies behind it, tinted.
+        Material {
+            double_sided: true,
+            transmission: 1.,
+            ..material("glass", [0.85, 0.95, 1., 1.], 0.05)
+        }
+    } else {
+        Material {
+            double_sided: true,
+            alpha: AlphaMode::Blend {
+                receives_screen_space_reflections: false,
+                keeps_specular: true,
+            },
+            ..material("glass", [0.6, 0.8, 0.9, 0.25], 0.05)
+        }
     };
     Asset {
         meshes,
@@ -655,6 +679,7 @@ impl Times {
             "Godot SSR",
             "world reflection",
             "reflection composition",
+            "transmission copy",
             "blended",
             "TAA",
             "FSR2 composition",
@@ -678,7 +703,7 @@ fn render(
     let directory = directory.join(run.name);
     std::fs::create_dir_all(&directory)?;
     let mut scene = Scene::new(device, queue);
-    let world = scene.add_asset(device, queue, world(run.marked))?;
+    let world = scene.add_asset(device, queue, world(run.marked, run.transmissive))?;
     scene.add_instance(
         device,
         queue,
@@ -697,6 +722,21 @@ fn render(
         },
         casts_directional_shadow: false,
         ..material("water", [0.02, 0.05, 0.06, 0.6], 0.04)
+    };
+    // Water as a volume: it refracts at IOR 1.33 across 2 m of depth and
+    // turns white light blue-green over 3 m, covering its pixels whole.
+    let water = if run.transmissive {
+        Material {
+            base: [1.; 4],
+            ior: 1.33,
+            transmission: 1.,
+            thickness: 2.,
+            attenuation_distance: 3.,
+            attenuation_color: [0.45, 0.8, 0.75],
+            ..water
+        }
+    } else {
+        water
     };
     let (water, images) = if mesh {
         (water, Vec::new())

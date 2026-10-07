@@ -1,10 +1,11 @@
-//! Transparent: blended receivers as the surface, blended and additive
-//! surfaces, mist and distortion.
+//! Transparent: blended receivers as the surface, the transmission copy,
+//! blended, transmissive and additive surfaces, mist and distortion.
 pub(crate) mod effects;
 pub(crate) mod heat;
 pub(crate) mod mist;
+pub(crate) mod transmission;
 
-use crate::shading::bind::{self, BlendedTrace};
+use crate::shading::bind::{self, BindingTier, BlendedTrace};
 use crate::view::cached_group::CachedGroup;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::GeometryPass;
@@ -28,10 +29,15 @@ pub(crate) enum Beauty<'a> {
 
 /// Transparent: the receiver pass (`encode_receivers`), which draws the
 /// blended receivers of screen-space reflections as the surface; then
-/// blended surfaces, back to front, and additive glow and ground mist, drawn
-/// (`encode`) into the reflections' incident radiance while they trace it
-/// and onto the composite, each fogged from the frame's fog volume where it
-/// lies, then heat distortion (`encode_heat`). While FSR2 runs and the scene
+/// blended surfaces, transmissive ones among them, back to front, and
+/// additive glow and ground mist, drawn (`encode`) into the reflections'
+/// incident radiance while they trace it and onto the composite, each
+/// fogged from the frame's fog volume where it lies, then heat distortion
+/// (`encode_heat`). On a device of the Extended binding tier, in a frame
+/// whose blended list holds a transmissive material, the draw onto the
+/// composite first copies it with its mips (`transmission`), which the
+/// transmissive surfaces sample; elsewhere, and in the draw into the
+/// incident radiance, they blend the light behind them through. While FSR2 runs and the scene
 /// holds an opaque or masked material whose shading moves where its
 /// geometry stands still (`Material::surface_moves`: its normal layers), the
 /// draw onto the composite first marks those surfaces in FSR2's
@@ -47,19 +53,20 @@ pub(crate) enum Beauty<'a> {
 /// by every draw but the receiver pass, never written), the surface depth
 /// and the screen-space method's result (receivers that are the surface),
 /// the scene's transient geometry (glow, heat and mist), the beauty it draws
-/// onto.
+/// onto (the composite copied for transmission).
 /// Writes: the surface depth, the receiver layer and the G-buffer's motion
-/// (the receiver pass); that beauty in place; FSR2's masks while FSR2 runs;
-/// the completed scene in place (heat) through its own snapshot of it.
+/// (the receiver pass); its transmission copy; that beauty in place; FSR2's
+/// masks while FSR2 runs; the completed scene in place (heat) through its
+/// own snapshot of it.
 /// Blended surfaces write no other depth, motion or G-buffer.
 /// Honours: the receiver pass (the effective configuration's), atmosphere
 /// (mist), heat distortion, FSR2 (its masks), the effects and atmosphere
 /// diagnostics layers.
 /// Timing groups: `receivers`, `FSR2 composition` (the moving opaque
-/// surfaces' mask), `blended` (blended surfaces, both draws), `transparent`
-/// (glow and mist, both draws), `heat distortion`.
-/// History: none; the receiver pass rebuilds the surface every frame it
-/// runs.
+/// surfaces' mask), `transmission copy`, `blended` (blended surfaces, both
+/// draws), `transparent` (glow and mist, both draws), `heat distortion`.
+/// History: none; the receiver pass rebuilds the surface and the copy is
+/// made again every frame they run.
 pub(crate) struct Transparent {
     effects: effects::Effects,
     mist: mist::Mist,
@@ -67,11 +74,16 @@ pub(crate) struct Transparent {
     /// The depth soft glow reads.
     depth_group: wgpu::BindGroup,
     /// No screen-space result, which the blended draws bind while none
-    /// composes: 1×1, zero.
+    /// composes, and no transmission copy, which they bind on the Extended
+    /// binding tier while none holds the frame: 1×1, zero.
     no_reflections: wgpu::TextureView,
     /// The blended group 3 of the draw into the incident radiance, which
     /// composes nothing, and of the draw onto the composite.
     blended: [BlendedGroup; 2],
+    /// The copy of the composed frame transmissive surfaces sample.
+    transmission: transmission::Transmission,
+    /// The device's binding tier, which binds the copy on `Extended`.
+    tier: BindingTier,
 }
 
 /// A blended draw's group 3 (`shading::bind::blended`), kept while it binds
@@ -85,12 +97,14 @@ struct BlendedGroup {
 
 impl Transparent {
     /// The stage over `unlit` group 0 for its effects and mist and `blended`
-    /// group 3 (`shading::bind::blended`) for its blended draws.
+    /// group 3 (`shading::bind::blended`) of the device's binding `tier` for
+    /// its blended draws.
     pub fn new(
         device: &wgpu::Device,
         unlit: &wgpu::BindGroupLayout,
         blended: &wgpu::BindGroupLayout,
         targets: &SharedTargets,
+        tier: BindingTier,
     ) -> Self {
         let effects = effects::Effects::new(device, unlit);
         let group = |label| BlendedGroup {
@@ -121,6 +135,8 @@ impl Transparent {
                 group("blended incident trace"),
                 group("blended composite trace"),
             ],
+            transmission: transmission::Transmission::new(device),
+            tier,
         }
     }
 
@@ -198,11 +214,22 @@ impl Transparent {
         }
         let blended = !ctx.views.blended.is_empty();
         if blended {
+            // The copy of the composed frame, before anything is drawn onto
+            // it, where a transmissive surface shows.
+            let copy = (trace == 1
+                && self.tier == BindingTier::Extended
+                && ctx.views.blended.holds_transmissive(ctx.scene))
+            .then(|| {
+                self.transmission
+                    .encode(ctx.device, ctx.encoder, &targets.composite, ctx.timing)
+                    .clone()
+            });
             let group = Self::blended_group(
                 ctx,
                 &mut self.blended[trace],
                 &self.no_reflections,
-                reflections,
+                (reflections, copy.as_ref()),
+                self.tier,
             );
             Self::encode_blended(ctx, beauty, fsr2_masks, moving.is_some(), group);
         }
@@ -255,19 +282,23 @@ impl Transparent {
 
     /// A blended draw's group 3 `blended`: the screen-space method's
     /// `reflections` with its cutoff and fade where the draw composes them,
-    /// else `no_reflections` and no trace, and the frame's surface depth.
+    /// else `no_reflections` and no trace, and the frame's surface depth;
+    /// on a device of `tier` `Extended`, the transmission `copy` where it
+    /// holds the frame, else `no_reflections` in its place.
     fn blended_group<'a>(
         ctx: &FrameContext<'_>,
         blended: &'a mut BlendedGroup,
         no_reflections: &wgpu::TextureView,
-        reflections: Option<&wgpu::TextureView>,
+        (reflections, copy): (Option<&wgpu::TextureView>, Option<&wgpu::TextureView>),
+        tier: BindingTier,
     ) -> &'a wgpu::BindGroup {
         let traced = ctx.effective.screen_space.zip(reflections);
-        let values = traced.map_or_else(BlendedTrace::default, |(ssr, _)| BlendedTrace {
+        let mut values = traced.map_or_else(BlendedTrace::default, |(ssr, _)| BlendedTrace {
             cutoff: ssr.cutoff,
             fade: ssr.fade,
-            padding: [0.; 2],
+            ..BlendedTrace::default()
         });
+        values.transmission = u32::from(copy.is_some());
         if blended.written != Some(values) {
             crate::counters::write_buffer(
                 ctx.queue,
@@ -279,15 +310,20 @@ impl Transparent {
         }
         let reflections = traced.map_or(no_reflections, |(_, view)| view);
         let texture = wgpu::BindingResource::TextureView;
-        blended.group.get(
-            ctx.device,
-            "blended reflections",
-            &[
-                (bind::blended::REFLECTIONS, texture(reflections)),
-                (bind::blended::SURFACE_DEPTH, texture(ctx.surface.depth)),
-                (bind::blended::TRACE, blended.trace.as_entire_binding()),
-            ],
-        )
+        let mut entries = vec![
+            (bind::blended::REFLECTIONS, texture(reflections)),
+            (bind::blended::SURFACE_DEPTH, texture(ctx.surface.depth)),
+            (bind::blended::TRACE, blended.trace.as_entire_binding()),
+        ];
+        if bind::blended::tier(bind::blended::TRANSMISSION) <= tier {
+            entries.push((
+                bind::blended::TRANSMISSION,
+                texture(copy.unwrap_or(no_reflections)),
+            ));
+        }
+        blended
+            .group
+            .get(ctx.device, "blended reflections", &entries)
     }
 
     /// FSR2's `masks`, cleared, with the camera's opaque and masked
@@ -388,6 +424,8 @@ mod composition_tests;
 mod effects_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod receiver_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod transmission_tests;
 
 /// `target`, keeping what it holds when `load`.
 fn loaded(

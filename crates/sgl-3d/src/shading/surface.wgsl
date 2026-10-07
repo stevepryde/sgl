@@ -54,6 +54,11 @@ struct Surface {
  // The share of ambient light its material lets reach it
  // (material_occlusion; occlusion.wgsl).
  occlusion:f32,
+ // The share of its diffuse light that light transmitted through it from
+ // behind replaces (KHR_materials_transmission; transmission.wgsl), which
+ // only the camera's blended draw sets: every other view shows no
+ // transmissive surface, so it is 0 there.
+ transmission:f32,
  unlit:bool,
  front:bool,
  // A moving instance's: it takes its ambient cube, not baked charts.
@@ -234,7 +239,7 @@ struct SurfaceReflectance {
 fn surface_reflectance(surface:Surface,view_dfg:vec2<f32>)->SurfaceReflectance {
  let f0s=surface_f0s(surface);
  let f0=mix(f0s.dielectric,f0s.metal,surface.metallic);
- let diffuse=surface.base.rgb*(1.-surface.metallic);
+ let diffuse=surface.base.rgb*(1.-surface.metallic)*(1.-surface.transmission);
  let coat_fresnel=pbr_coat_fresnel(surface.coat_normal,surface.view,surface.coat);
  return SurfaceReflectance(diffuse,f0s,f0,surface_f90(surface),view_dfg,pbr_multiscatter_gain(f0,view_dfg),coat_fresnel);
 }
@@ -444,7 +449,11 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // convolution, the hemisphere fill over PI, the volumes and the baked
  // charts and cubes all hold irradiance / PI, already a lighting integral,
  // so neither a second PI nor a brightness fudge belongs here.
- let ibl=surface_ibl_weights(s,reflectance);
+ var ibl=surface_ibl_weights(s,reflectance);
+ // Transmitted light takes the share of the diffuse light its transmission
+ // gives it, as three.js r185 mixes the total diffuse toward its backdrop
+ // (src/nodes/lighting/LightsNode.js 399-405; transmission.wgsl).
+ ibl.diffuse*=1.-s.transmission;
  // A probe hit takes diffuse light alone: no multiscattered specular.
  let multi=select(ibl.multi,vec3(0.),probe_hit);
  let response=ibl.diffuse+multi;

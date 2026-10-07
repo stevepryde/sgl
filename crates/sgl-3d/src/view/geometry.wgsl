@@ -222,48 +222,109 @@ fn blended_traced_reflection(i:Fragment)->TracedReflection {
 // JitShaderProvider.cpp 177–181) and Filament its emission
 // (shaders/src/surface_shading_lit.fs 349–358); else Filament's fade, all
 // of its light premultiplied after shading (surface_shading_lit.fs 340–346).
-fn blended_color(i:Fragment,raster_front:bool)->vec4<f32> {
+//
+// A transmissive material (MATERIAL_TRANSMISSIVE), whatever its alpha mode,
+// gives the share of its diffuse light its transmission takes to the light
+// transmitted through it from the frame behind it (transmission.wgsl), as
+// three.js r185 mixes its total diffuse toward its backdrop
+// (src/nodes/lighting/LightsNode.js 399-405, commit 2431a09f, MIT,
+// stages/post/smaa/LICENSE-three.txt), under the coat as that diffuse light
+// is. Its coverage is its alpha where it is blended, else whole, a masked
+// one's cut-out texels discarded. Where the transparent stage's copy holds
+// the frame, the transmitted light joins after the surface's fog, the copy
+// already fogged to its depth as the blend's destination is, and the
+// fragment covers its pixel by its coverage; where none does (the Basic
+// binding tier, or the draw into the reflection input), the blend passes
+// the light behind it unrefracted: the fragment covers its pixel by its own
+// share, its coverage less the share its transmission passes.
+struct BlendedColor {
+ // Premultiplied colour and the share of the pixel it covers.
+ color:vec4<f32>,
+ // The share of the pixel's light it gives itself, where the frame behind
+ // it is lit alike: its own share and, where it keeps its specular, the
+ // reflection its alpha does not fade (FSR2's reactive mask).
+ own:f32,
+ // Its coverage (FSR2's transparency and composition mask).
+ coverage:f32,
+}
+fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
  let front=object_front_face(i,raster_front);
  let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
  var s=raster_surface(i,front,surface_base_color(i),surface_emission(i),context.clusters);
- let alpha=s.base.a;
+ let coverage=select(1.,s.base.a,(material.flags&MATERIAL_ALPHA_BLEND)!=0u);
+ // The light transmitted through it, times its share of the diffuse light
+ // under the coat, and the share of its pixel it shades itself: compiled in
+ // only while the scene holds a transmissive material (transmission_enabled).
+ var transmitted=TransmittedLight(vec3(0.),0.);
+ var through=0.;
+ var own_share=coverage;
+ if transmission_enabled && (material.flags&MATERIAL_TRANSMISSIVE)!=0u {
+  // A masked material is drawn here only where it is transmissive.
+  if material_cut_out(material,s.base.a) {
+   discard;
+  }
+  s.transmission=surface_transmission(i);
+  let model=objects[fragment_object(i)].model;
+  transmitted=getIBLVolumeRefraction(s.normal,s.view,s.roughness,s.base.rgb*(1.-s.metallic),surface_f0(s),surface_f90(s),s.position,model,material.ior,surface_thickness(i),material.attenuation,material.dispersion);
+  through=s.transmission*(1.-pbr_coat_fresnel(s.coat_normal,s.view,s.coat));
+  own_share=coverage*(1.-through*transmitted.share);
+ }
  let keeps_specular=(material.flags&MATERIAL_KEEPS_SPECULAR)!=0u;
  if keeps_specular {
-  s.base=vec4(s.base.rgb*alpha,alpha);
-  s.emission*=alpha;
+  s.base=vec4(s.base.rgb*coverage,s.base.a);
+  s.emission*=coverage;
   // A metal's iridescent F0, which raster_surface refit from its base
-  // before the alpha, takes it as the base does: its F0 mixes the two by
+  // before the coverage, takes it as the base does: its F0 mixes the two by
   // the film's strength, linearly (surface_f0s).
-  s.film.metal*=alpha;
+  s.film.metal*=coverage;
  }
  var shaded:Shaded;
+ var own=own_share;
  if s.unlit {
   shaded=shade_unlit(s);
  } else {
   shaded=shade_lit(s,context);
+  if keeps_specular {
+   own=1.-(1.-own_share)*(1.-blended_reflectance(s));
+  }
  }
- let premultiplied=select(shaded.color*alpha,shaded.color,keeps_specular);
+ let premultiplied=select(shaded.color*coverage,shaded.color,keeps_specular);
+ let held=transmission_frame_held();
  // A fragment's position w is one over its view depth.
- return vec4(frame_fog_premultiplied(premultiplied,alpha,i.clip.xy,1./i.clip.w),alpha);
+ let color=frame_fog_premultiplied(premultiplied,own_share,i.clip.xy,1./i.clip.w)+transmitted.light*through*coverage;
+ return BlendedColor(vec4(color,select(own_share,coverage,held)),own,coverage);
+}
+// The mean share of the light along its view a surface reflects, its coat
+// over its base, as their split-sum Fresnel gives it: what a blended
+// surface that keeps its specular gives the pixel whatever its alpha.
+fn blended_reflectance(s:Surface)->f32 {
+ let base=pbr_split_sum(surface_f0(s),surface_f90(s),surface_dfg(specular_nv(s.normal,s.view),s.roughness));
+ let coat=pbr_coat_fresnel(s.coat_normal,s.view,s.coat);
+ return coat+(1.-coat)*(base.r+base.g+base.b)/3.;
 }
 @fragment fn blended_fs(i:Fragment,@builtin(front_facing) front:bool)->@location(0) vec4<f32> {
- return blended_color(i,front);
+ return blended_color(i,front).color;
 }
 // FSR2's masks (view::targets::mask_targets): AMD's FSR documentation
 // (FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt,
-// docs/techniques/super-resolution-upscaler.md, "Reactive mask") asks that
-// alpha-blended surfaces write their alpha as reactivity, clamped to 0.9,
-// and AMD's FSR sample writes a translucent surface's alpha as its
-// transparency and composition
-// (framework/rendermodules/translucency/shaders/translucencyps.hlsl).
+// docs/techniques/super-resolution-upscaler.md 131-132, 172, "Reactive
+// mask") asks that alpha-blended surfaces, which write no motion, write
+// their alpha as reactivity, clamped to 0.9: the share of the pixel's light
+// their motion vectors do not describe. A blended surface writes the share
+// of the pixel's light it gives itself (BlendedColor.own), its alpha
+// unless it is transmissive or keeps its specular. AMD's FSR sample writes
+// a translucent surface's alpha as its transparency and composition
+// (framework/rendermodules/translucency/shaders/translucencyps.hlsl); a
+// blended surface writes its coverage, the whole of a transmissive one's
+// pixel, whose refracted light follows no motion vector.
 struct BlendedFsr2Masked {
  @location(0) color:vec4<f32>,
  @location(1) reactive:f32,
  @location(2) composition:f32,
 }
 @fragment fn blended_fsr2_masked_fs(i:Fragment,@builtin(front_facing) front:bool)->BlendedFsr2Masked {
- let color=blended_color(i,front);
- return BlendedFsr2Masked(color,min(color.a,.9),color.a);
+ let blended=blended_color(i,front);
+ return BlendedFsr2Masked(blended.color,min(blended.own,.9),blended.coverage);
 }
 // FSR2's transparency and composition mask over an opaque or masked
 // surface whose shading moves where its geometry stands still (its

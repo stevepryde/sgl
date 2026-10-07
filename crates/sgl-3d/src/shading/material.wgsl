@@ -43,6 +43,20 @@ struct Material {
  iridescence:f32,
  iridescence_ior:f32,
  iridescence_thickness:vec2<f32>,
+ // KHR_materials_volume's Beer-Lambert attenuation coefficient per metre on
+ // each channel, -ln(attenuation colour) / attenuation distance, finite
+ // (shading::material::attenuation_coefficient), and
+ // KHR_materials_transmission's factor, with MATERIAL_TRANSMISSIVE
+ // (transmission.wgsl).
+ attenuation:vec3<f32>,
+ transmission:f32,
+ // Its volume's thickness in the mesh's units, 0 for a thin wall; its IOR as
+ // KHR_materials_ior writes it, 0 for an infinite one, which refraction
+ // alone reads (F0 is specular_f0's); and KHR_materials_dispersion's 20 over
+ // the Abbe number.
+ thickness:f32,
+ ior:f32,
+ dispersion:f32,
 }
 const MATERIAL_UNLIT:u32=1u;
 const MATERIAL_DOUBLE_SIDED:u32=2u;
@@ -61,6 +75,9 @@ const MATERIAL_EMITS_INTO_GI:u32=512u;
 // Filament's transparent blending, where without it alpha fades all of its
 // light, Filament's fade (view/geometry.wgsl, blended_color).
 const MATERIAL_KEEPS_SPECULAR:u32=1024u;
+// A transmissive material (SurfaceMaterial::transmission above 0), drawn
+// with the blended surfaces whatever its alpha mode, which rays pass through.
+const MATERIAL_TRANSMISSIVE:u32=2048u;
 // Its maps in effect (shading::bind::group2::MaterialMap::bit): those it
 // was added with whose binding the device binds, a bump map only without a
 // normal map, and an occlusion map in the red channel of its
@@ -80,6 +97,8 @@ const MATERIAL_MAP_COAT_ROUGHNESS:u32=256u;
 const MATERIAL_MAP_COAT_NORMAL:u32=512u;
 const MATERIAL_MAP_IRIDESCENCE:u32=1024u;
 const MATERIAL_MAP_IRIDESCENCE_THICKNESS:u32=2048u;
+const MATERIAL_MAP_TRANSMISSION:u32=4096u;
+const MATERIAL_MAP_THICKNESS:u32=8192u;
 // The share of ambient light that reaches a texel of material `m` whose
 // metallic-roughness map reads `mr`: with MATERIAL_MAP_OCCLUSION its red
 // channel at occlusion_strength, as glTF 2.0 applies occlusionTexture
@@ -89,6 +108,19 @@ fn material_occlusion(m:Material,mr:vec4<f32>)->f32 {
   return 1.;
  }
  return mix(1.,mr.r,m.occlusion_strength);
+}
+// Material `m`'s transmission and its volume's thickness at texels
+// `transmission` and `thickness` of its transmission and thickness maps:
+// KHR_materials_transmission's factor times the first's red channel, and
+// KHR_materials_volume's times the second's green, as three.js r185 reads
+// them (src/nodes/accessors/MaterialNode.js, TRANSMISSION and THICKNESS;
+// commit 2431a09f, MIT, stages/post/smaa/LICENSE-three.txt). White, which an
+// absent map reads, is each one's neutral.
+fn material_transmission(m:Material,transmission:vec4<f32>)->f32 {
+ return m.transmission*transmission.r;
+}
+fn material_thickness(m:Material,thickness:vec4<f32>)->f32 {
+ return m.thickness*thickness.g;
 }
 // Material `m`'s dielectric reflectance at normal incidence: the IOR's F0
 // tinted by its specular colour, at most 1, times its specular strength, as

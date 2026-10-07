@@ -142,14 +142,21 @@ pub(crate) fn moving_caster_reaches(
 /// removal. Every shadow kind culls as the camera does, so a single-sided
 /// material casts from its front faces: Bevy's shadow pipelines specialize
 /// the material's own cull mode, and its shadow bias assumes those casters.
+/// A transmissive volume draws its front faces alone, whatever its side, as
+/// KHR_materials_volume says `doubleSided` does not apply to a volume
+/// boundary (Khronos glTF acfcbe65, README 112).
 pub(crate) fn camera_variant(
     material: &SurfaceMaterial,
     mirrored: bool,
     deformed: bool,
 ) -> Variant {
     Variant {
-        cull: Cull::of(Cull::Back, material.double_sided, mirrored),
-        alpha: Alpha::of(material.alpha),
+        cull: Cull::of(
+            Cull::Back,
+            material.double_sided && !material.volume(),
+            mirrored,
+        ),
+        alpha: Alpha::of(material),
         deformed,
     }
 }
@@ -181,7 +188,7 @@ impl Population<'_> {
         match self {
             Self::ProbeFace => Variant {
                 cull: Cull::None,
-                alpha: Alpha::of(material.alpha),
+                alpha: Alpha::of(material),
                 deformed,
             },
             Self::Blended { .. } | Self::CaptureShadow | Self::LocalShadow { .. } => {

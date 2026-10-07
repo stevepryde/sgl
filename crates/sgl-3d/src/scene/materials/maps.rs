@@ -28,6 +28,8 @@ pub(super) fn authored(material: &AuthoredMaterial, map: MaterialMap) -> Option<
         MaterialMap::CoatNormal => material.coat_normal_texture,
         MaterialMap::Iridescence => material.iridescence_texture,
         MaterialMap::IridescenceThickness => material.iridescence_thickness_texture,
+        MaterialMap::Transmission => material.transmission_texture,
+        MaterialMap::Thickness => material.thickness_texture,
     }
 }
 
@@ -103,7 +105,8 @@ impl InEffect {
 
     /// The ray-source texture words: `word` of each map's image, zero (white)
     /// where none is in effect. The occlusion map is read from the
-    /// metallic-roughness map's word.
+    /// metallic-roughness map's word; the transmission and thickness maps
+    /// have none, since rays pass through a transmissive surface.
     pub fn ray_textures(&self, word: impl Fn(usize) -> u32) -> MaterialTextures {
         let mut textures = MaterialTextures::default();
         for map in MaterialMap::ALL {
@@ -111,7 +114,7 @@ impl InEffect {
             match map {
                 MaterialMap::Base => textures.base = image,
                 MaterialMap::MetallicRoughness => textures.metallic_roughness = image,
-                MaterialMap::Occlusion => {}
+                MaterialMap::Occlusion | MaterialMap::Transmission | MaterialMap::Thickness => {}
                 MaterialMap::Emission => textures.emission = image,
                 MaterialMap::Normal => textures.normal = image,
                 MaterialMap::Bump => textures.bump = image,
