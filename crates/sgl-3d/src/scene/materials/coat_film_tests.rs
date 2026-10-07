@@ -140,7 +140,10 @@ fn clearcoat_and_iridescence_maps_scale_their_factors() {
     let observation = r#"
 @group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
 @compute @workgroup_size(1) fn observe() {
- let ray=SceneRay(vec4(0.,0.,0.,0.),vec4(0.,0.,-1.,100.));
+ // A ray built field by field: naga's pipeline-constant pass refuses a
+ // constant SceneRay constructor (ExpressionAlreadyInScope).
+ var ray:SceneRay;
+ ray.direction=vec4(0.,0.,-1.,100.);
  let hit=scene_decode_hit(scene_trace_nearest(ray,SCENE_SIDES_AS_RASTER),ray.origin.xyz,ray.direction.xyz);
  let material=scene_material(hit.material_word);
  let s=ray_surface(hit,material,ray_base_color(hit,material),vec3(0.),vec3(0.,0.,1.),cluster_range(hit.position,vec2(0.)));
