@@ -43,8 +43,10 @@ fn prefilter(@builtin(global_invocation_id) id:vec3<u32>) {
  let size=textureDimensions(filtered).x;
  if id.x>=size || id.y>=size || id.z>=6u {return;}
  let n=normalize(texel_direction(id.z,(vec2<f32>(id.xy)+0.5)/f32(size)));
- // A destination texel spans 2^level source texels: integrate that footprint
- // even for the sharp level, so thin emissive strips do not alias.
+ // A destination texel spans 2^level source texels. The captured cube is
+ // already each texel's box average (the capture resolves each face), so
+ // the sharp level reads it as is, and the footprint only floors the lod of
+ // rough levels 1-6.
  let footprint_lod=log2(f32(textureDimensions(captured,0).x)/f32(size));
  if level==0u {
   textureStore(filtered,vec2<i32>(id.xy),i32(id.z),vec4(radiance(n,footprint_lod),1.));
@@ -74,12 +76,15 @@ fn prefilter(@builtin(global_invocation_id) id:vec3<u32>) {
  textureStore(filtered,vec2<i32>(id.xy),i32(id.z),vec4(total/max(weight,0.0001),1.));
 }
 
+// One level of a uniform box mip chain: each texel the mean of the 2x2 it
+// covers in the level above, over every layer (a capture face's chain down
+// to the face size, then the cube's).
 @group(0) @binding(3) var previous_mip:texture_2d_array<f32>;
 @group(0) @binding(4) var next_mip:texture_storage_2d_array<rgba16float,write>;
 @compute @workgroup_size(8,8,1)
 fn mip_reduce(@builtin(global_invocation_id) id:vec3<u32>) {
  let size=textureDimensions(next_mip);
- if id.x>=size.x || id.y>=size.y || id.z>=6u {return;}
+ if id.x>=size.x || id.y>=size.y || id.z>=textureNumLayers(next_mip) {return;}
  let p=vec2<i32>(id.xy)*2;
  let color=textureLoad(previous_mip,p,i32(id.z),0)+textureLoad(previous_mip,p+vec2(1,0),i32(id.z),0)
           +textureLoad(previous_mip,p+vec2(0,1),i32(id.z),0)+textureLoad(previous_mip,p+vec2(1,1),i32(id.z),0);

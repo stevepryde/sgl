@@ -390,7 +390,24 @@ Stages run in one order, written in one place in `renderer`:
 
 A new feature takes a place in this list by editing it here. A probe capture
 is a `Renderer` operation that runs prepare, shadows and opaque over its own
-views.
+views. Each face renders at 2048 texels a side, or the probe's face size if
+larger, in its own submission, and the probe prefilter averages it to the
+face size with a uniform box before the solid-angle mips and the GGX levels,
+so the probe's mip 0 holds each texel's area-averaged radiance (#263). This
+follows Unreal's supersampled reflection captures
+(`r.ReflectionCaptureSupersampleFactor`, practice) and Filament cmgen's
+area-averaged base level and box mips; Godot renders its probes at their
+size with MSAA off. Decision: a fixed angular resolution, not Unreal's fixed
+factor, since a thin emitter's stored energy errs by the angular sample
+spacing whatever the face size; not MSAA (Wicked's optional 8x, HDRP's frame
+settings), which needs a multisampled copy of every pipeline, shades once
+per texel and, at WebGPU's 4 samples, still stores a thin strip at a
+quarter of a texel. An emitter's width is still quantised to whole samples,
+1/2048 of a face's width: unbiased over its positions, and a strip w samples
+wide is stored, when caught, at no more than ceil(w)/w of its energy. The
+uniform box weighs a texel's samples equally where their solid angles differ
+by under 1 %. A browser cannot block for the readback, so a capture there
+fails before rendering.
 
 A stage is one module with one struct. It owns its private pipelines, bind
 groups, targets and history, and offers the renderer the same few operations:

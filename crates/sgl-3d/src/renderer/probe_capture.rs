@@ -6,7 +6,7 @@ use super::Renderer;
 use crate::baked_specular_probe::{ProbeError, SpecularProbeRadiance, SpecularProbeTexels};
 use crate::scene::probes::validate_face_size;
 use crate::settings::Settings;
-use crate::stages::probe_prefilter::ProbePrefilter;
+use crate::stages::probe_prefilter::{ProbePrefilter, capture_size};
 use crate::view::pipelines::LayerConstants;
 use crate::{FrameInput, Scene};
 use glam::Vec3;
@@ -32,7 +32,10 @@ impl Renderer {
     /// shadow cache, so the next frame draws every shadow again. This blocks
     /// for GPU readback; it is for asset authoring, never a runtime loop.
     /// WebGPU cannot block, so in a browser it fails with
-    /// `ProbeError::Readback`: bake natively and load the result.
+    /// `ProbeError::Readback` before rendering: bake natively and load the
+    /// result. Each face renders at 2048 texels a side, or `face_size` if
+    /// larger, and is averaged to `face_size` (`stages::probe_prefilter`),
+    /// one face per submission.
     #[allow(clippy::too_many_arguments)]
     pub fn capture_specular_probe(
         &mut self,
@@ -44,6 +47,11 @@ impl Renderer {
         center: Vec3,
         face_size: u32,
     ) -> Result<SpecularProbeRadiance, ProbeError> {
+        if cfg!(target_arch = "wasm32") {
+            return Err(ProbeError::Readback(
+                "WebGPU cannot block for a capture's readback; capture natively".into(),
+            ));
+        }
         if !center.is_finite() {
             return Err(ProbeError::InvalidProbe("coordinates must be finite"));
         }
@@ -61,7 +69,7 @@ impl Renderer {
             scene,
             false,
         );
-        let prefilter = ProbePrefilter::new(device, face_size);
+        let prefilter = ProbePrefilter::new(device, face_size, capture_size(face_size));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("author static specular probe"),
         });
@@ -118,7 +126,10 @@ impl Renderer {
         let probes = scene
             .specular_probes()
             .unwrap_or(&self.bindings.empty_probes);
-        for (index, view) in views.faces.iter().enumerate() {
+        // Each face renders at the capture size and is averaged into the
+        // cube in its own submission, so no command buffer holds the GPU for
+        // the whole capture.
+        for (index, view) in (0..).zip(&views.faces) {
             let lit = self.bindings.lit_group(
                 device,
                 scene,
@@ -141,10 +152,18 @@ impl Renderer {
                 scene,
                 &self.pipelines,
                 (&views.list, &views.instances),
-                &prefilter.face(index),
+                &prefilter.face(),
                 &sky,
                 &lit,
             );
+            prefilter.resolve_face(device, &mut encoder, index);
+            let face = std::mem::replace(
+                &mut encoder,
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("author static specular probe"),
+                }),
+            );
+            queue.submit([face.finish()]);
         }
         prefilter.encode(device, &mut encoder);
         let rgba16 = prefilter.read(device, queue, encoder)?;
