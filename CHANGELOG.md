@@ -41,6 +41,24 @@ docs and specs the entry links.
   finite (`SceneError::InvalidReflectance`), and `occlusion_strength` outside
   0..=1 (`SceneError::InvalidOcclusion`). Migration: exhaustive matches on
   `SceneError` add both variants.
+- `sgl-3d` direct light: rough metals keep their multiply scattered energy
+  under directional, point, spot and rectangle lights (they reflected less
+  than under an even sky, and coloured metals shifted hue);
+  environment specular reads a finer DFG table and ray hits shade down to
+  the raster's least roughness. No game-code change; lower any light
+  intensity raised to make up for dark metals.
+- `sgl-3d` direct light on dielectrics: diffuse keeps only what the
+  specular's Fresnel leaves (glTF's dielectric BRDF), slightly darker. No
+  game-code change.
+- `sgl-3d` `LightShape::Point`/`Spot` `radius` and
+  `DirectionalLight::angular_diameter` now also size specular highlights
+  (they sized only ray ends), so the defaults widen highlights on smooth
+  surfaces. Migration: none; a radius or angular
+  diameter of 0 keeps a point's highlight and hardens ray-traced shadows.
+- `sgl-3d` lightmaps, irradiance atlases, ambient cubes and the hemisphere
+  fill light a material as the environment's diffuse light does (they
+  took 1 − F0 and 1, and no multiple scattering on metals). No game-code
+  change or re-bake.
 
 ## 0.2.1 — 2026-10-07
 

@@ -143,7 +143,8 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   part of the view. Timing groups
   `directional shadow cascade 0` to `3`, nearest first.
 - `hemisphere_light` is Three.js's `HemisphereLight`: diffuse irradiance
-  blended from `ground_color` facing down to `sky_color` facing up.
+  blended from `ground_color` facing down to `sky_color` facing up, which
+  lights a surface as the environment's diffuse light does.
 - The frame environment lights each lobe through its own `EnvironmentLight`
   (yaw and intensity, by default unturned at intensity 1, as Three.js's
   scene environment): `diffuse_environment` the diffuse lobe, and
@@ -388,7 +389,7 @@ let lamp = scene.add_light(&device, &queue, Light {
         direction: Vec3::NEG_Y,
         inner_angle: 0.3,
         outer_angle: 0.9,
-        radius: LightShape::DEFAULT_RADIUS, // metres, which only rays see
+        radius: LightShape::DEFAULT_RADIUS, // metres: highlight and ray size
     },
     color: [1., 0.9, 0.8], // linear RGB
     intensity: 40.,        // candela
@@ -406,11 +407,14 @@ with Wicked Engine's radius of 2.5 cm (`LightShape::DEFAULT_RADIUS`). Set
 what differs and take the rest with `..Default::default()`.
 
 A point or spot light's `radius` (metres) is the size of the sphere it
-shines from, which only rays see: ray-traced shadows' rays and the
+shines from. Its specular highlights spread over the sphere's reflection
+(Karis's representative point, its energy kept), so a large bulb shows a
+broad highlight on a smooth surface; ray-traced shadows' rays and the
 dynamic GI volume's visibility rays end on it, so a larger light casts a
-softer shadow. Shading and the shadow maps treat the light as a point. A
-directional light's `angular_diameter` (radians, the sun's 0.00925, 0.53°,
-by default) does the same for the directional light's rays.
+softer shadow. Diffuse light and the shadow maps treat the light as a
+point. A directional light's `angular_diameter` (radians, the sun's
+0.00925, 0.53°, by default) does the same for its highlights and rays: the
+sun on water shows a disc.
 
 - Light falls off with the inverse square of distance and fades smoothly to
   nothing at `range`, Filament's punctual lights as Bevy shades them. A spot
@@ -1517,8 +1521,10 @@ the eligibility belongs to each material, so a material added later is not
 lightmapped. The caller must regenerate it when the static scene, source
 radiance, UV chart, or caster visibility changes.
 
-This opt-in application extension supplies Lambertian diffuse with constant
-`1-F0` surface transmission. On a coated material the coat's Fresnel toward
+This opt-in application extension supplies Lambertian diffuse irradiance,
+which a material reflects as it reflects the environment's: what its
+specular does not scatter, plus its multiple scattering, the one rule every
+indirect source follows. On a coated material the coat's Fresnel toward
 the view dims it, and the irradiance atlas's and a moving instance's
 ambient cube's light, as it dims the material's live light and emission
 (KHR_materials_clearcoat layers the coat over the whole base).
@@ -2108,6 +2114,15 @@ with `Settings::ambient_occlusion` the camera's opaque surfaces take the
 lesser of it and the frame's ambient occlusion for their ambient diffuse
 and environment specular, as Filament and Bevy do, while a bake keeps its
 own.
+
+Shading follows one hybrid of references ([D-32](../../specs/decisions.md)):
+glTF 2.0 and its KHR extensions define what a material's values mean,
+Filament's maths (as Bevy ports it) the BRDF, and three.js r185 what
+Filament lacks. Every specular lobe takes its multiple scattering under
+direct light as under the environment (Fdez-Agüera's gain), so a rough metal
+reflects as much under the sun as under an even sky of the same light, and
+a dielectric's diffuse under each light keeps what its specular's Fresnel
+leaves (glTF's dielectric BRDF).
 
 On the GPU the scene keeps each `asset::Vertex` (88 bytes) in 32, packed by
 `PreparedModel::new` after Godot's attribute compression: the position

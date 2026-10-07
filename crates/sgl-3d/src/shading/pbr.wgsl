@@ -1,9 +1,17 @@
-// GGX / height-correlated Smith, with Schlick Fresnel. Perceptual roughness
-// is squared exactly once to obtain the microfacet distribution's alpha.
-// References and the integration convention are in docs/native-pbr.md.
-fn pbr_fresnel(c:f32,f0:vec3<f32>)->vec3<f32> {
- return f0+(vec3(1.)-f0)*pow(clamp(1.-c,0.,1.),5.);
-}
+// SGL3D's BRDF, by the references D-32 names (specs/decisions.md): glTF 2.0
+// and its KHR extensions for what a material's values mean, Filament's
+// shading maths and energy treatment as Bevy's WGSL ports them, three.js
+// r185 for what Filament lacks. GGX with height-correlated Smith visibility
+// and Schlick's Fresnel; perceptual roughness is squared once to give the
+// distribution's alpha. Bevy 9d12036 crates/bevy_pbr/src/render/
+// pbr_lighting.wesl, MIT OR Apache-2.0 (LICENSE-bevy.txt); Filament ef1a133
+// shaders/src, Apache-2.0 (LICENSE-filament.txt); three.js r185
+// src/nodes/functions, MIT (stages/post/smaa/LICENSE-three.txt). Modified:
+// translated to WGSL.
+// The least perceptual roughness a surface shades at: Filament's desktop
+// MIN_PERCEPTUAL_ROUGHNESS (surface_material.fs), at raster fragments and ray
+// hits alike.
+const PBR_MIN_PERCEPTUAL_ROUGHNESS:f32=.045;
 // Geometric specular antialiasing (Kaplanyan 2016; Tokuyoshi and Kaplanyan
 // 2019). Ported from Filament ef1a133 shaders/src/surface_shading_lit.fs
 // normalFiltering with its material defaults (variance 0.15, threshold 0.2,
@@ -13,7 +21,7 @@ fn pbr_fresnel(c:f32,f0:vec3<f32>)->vec3<f32> {
 // The filtered roughness is what the G-buffer holds, as in Filament, HDRP and
 // Unreal.
 fn pbr_filtered_roughness(rough:f32,geometry_normal:vec3<f32>)->f32 {
- let perceptual=clamp(rough,0.045,1.);
+ let perceptual=clamp(rough,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
  let du=dpdx(geometry_normal);
  let dv=dpdy(geometry_normal);
  let variance=0.15*(dot(du,du)+dot(dv,dv));
@@ -38,11 +46,15 @@ fn pbr_bump_normal(map:texture_2d<f32>,filtering:sampler,world:vec3<f32>,n:vec3<
  return normalize(abs(determinant)*n-sign(determinant)*(gradient.x*a+gradient.y*b));
 }
 
-// Three.js 0.185.1 PhysicalLightingModel / BRDF_GGX_Multiscatter: F_Schlick
-// with Epic's exponent, from `f0` toward `f90`.
-fn pbr_three_fresnel(c:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {
- let f=exp2((-5.55473*c-6.98316)*c);
- return f0*(1.-f)+vec3(f90*f);
+// Schlick's Fresnel at cosine `c` from `f0` at normal incidence toward `f90`
+// at grazing: Bevy's F_Schlick_vec (306-309), as Filament's F_Schlick
+// (surface_brdf.fs) and the Khronos glTF Sample Renderer's F_Schlick
+// (0686eb2 source/Renderer/shaders/brdf.glsl 30-36, whose multiplications
+// this takes in place of pow) evaluate it; the DFG table integrates it.
+fn pbr_fresnel_schlick(c:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {
+ let x=clamp(1.-c,0.,1.);
+ let x2=x*x;
+ return f0+(vec3(f90)-f0)*(x2*x2*x);
 }
 // A coat's Fresnel toward the view, weighted by the coat, as Three.js 0.185.1
 // PhysicalLightingModel.finish evaluates it: at
@@ -50,30 +62,96 @@ fn pbr_three_fresnel(c:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {
 // F0 0.04 and F90 1. Callers dim the light beneath the coat by it.
 fn pbr_coat_fresnel(coat_normal:vec3<f32>,view:vec3<f32>,coat:f32)->f32 {
  let coat_view_cosine=clamp(dot(coat_normal,view),0.,1.);
- return coat*pbr_three_fresnel(coat_view_cosine,vec3(.04),1.).x;
+ return coat*pbr_fresnel_schlick(coat_view_cosine,vec3(.04),1.).x;
 }
-fn pbr_three_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,r:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {
+// Bevy's D_GGX (146-152): Walter et al. 2007's GGX distribution at alpha
+// `roughness`.
+fn D_GGX(roughness:f32,NdotH:f32)->f32 {
+ let oneMinusNdotHSquared=1.-NdotH*NdotH;
+ let a=NdotH*roughness;
+ let k=roughness/(oneMinusNdotHSquared+a*a);
+ let d=k*k*(1./3.14159265359);
+ return d;
+}
+// Bevy's V_SmithGGXCorrelated (185-191): height-correlated Smith visibility
+// at alpha `roughness`. Changed: the denominator is at least 1e-6, as
+// three.js's BRDF_GGX keeps it, so a light and view both at the horizon give
+// zero, not infinity.
+fn V_SmithGGXCorrelated(roughness:f32,NdotV:f32,NdotL:f32)->f32 {
+ let a2=roughness*roughness;
+ let lambdaV=NdotL*sqrt((NdotV-a2*NdotV)*NdotV+a2);
+ let lambdaL=NdotV*sqrt((NdotL-a2*NdotL)*NdotL+a2);
+ let v=0.5/max(lambdaV+lambdaL,.000001);
+ return v;
+}
+// The isotropic GGX lobe of `n`, `v` and `l` at perceptual roughness `r`,
+// reflecting `f0` at normal and `f90` at grazing incidence: Bevy's specular
+// (405-427) without its multiple scattering, which the caller applies
+// (pbr_multiscatter_gain).
+fn pbr_ggx_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,r:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {
  let nv=clamp(dot(n,v),0.,1.);
  let nl=clamp(dot(n,l),0.,1.);
  let h=normalize(v+l);
  let nh=clamp(dot(n,h),0.,1.);
  let vh=clamp(dot(v,h),0.,1.);
- let a2=pow(r,4.);
- let denominator=1.-nh*nh*(1.-a2);
- let distribution=a2/(denominator*denominator*3.14159265359);
- let visibility=0.5/max(nl*sqrt(a2+(1.-a2)*nv*nv)+nv*sqrt(a2+(1.-a2)*nl*nl),0.000001);
- return pbr_three_fresnel(vh,f0,f90)*visibility*distribution;
+ let alpha=r*r;
+ return pbr_fresnel_schlick(vh,f0,f90)*D_GGX(alpha,nh)*V_SmithGGXCorrelated(alpha,nv,nl);
 }
-// Three.js 0.185.1's split-sum single scattering (EnvironmentBRDF,
-// computeMultiscattering's FssEss): specularColor * fab.x + specularF90 * fab.y.
-fn pbr_three_single_scatter(f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->vec3<f32> {
+// The split sum's single scattering from the DFG table's scale and bias
+// `dfg`, toward `f90` at grazing: Bevy's EnvBRDFApprox (542-544), three.js's
+// EnvironmentBRDF.
+fn pbr_split_sum(f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->vec3<f32> {
  return f0*dfg.x+vec3(f90*dfg.y);
 }
-fn pbr_three_multi_scatter(f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->vec3<f32> {
- let single=pbr_three_single_scatter(f0,f90,dfg);
+// The gain that restores the energy a GGX lobe's single scattering loses to
+// multiple scattering, from its DFG lookup `dfg` at the view: Fdez-Agüera
+// 2019 ("A Multiple-Scattering Microfacet Model for Real-Time Image Based
+// Lighting", JCGT 8(1)), F_ss E_ss + F_ms E_ms = F_ss E_ss / (1 - F_avg
+// E_ms), as three.js's computeMultiscattering (PhysicalLightingModel.js
+// 570-590) and Khronos's getIBLGGXFresnel (ibl.glsl 26-43) apply it to the
+// environment. Every lobe that scatters takes it, under direct light too,
+// where Filament and Bevy scale the lobe by 1 + F0 (1/E - 1)
+// (surface_shading_lit.fs 268; specular_multiscatter, 331-344): the two
+// agree on a white metal, and this keeps direct and environment light alike
+// on coloured metals (D-32).
+fn pbr_multiscatter_gain(f0:vec3<f32>,dfg:vec2<f32>)->vec3<f32> {
  let missing=1.-dfg.x-dfg.y;
  let average=f0+(vec3(1.)-f0)*0.047619;
- return single*average/(vec3(1.)-missing*average)*missing;
+ return vec3(1.)/(vec3(1.)-missing*average);
+}
+// A sized light as a specular lobe of perceptual roughness `rough` sees it,
+// toward unit `direction` from a sphere of radius `size` at unit distance
+// (a point or spot light's radius over its distance, a directional light's
+// disc radius): Karis's representative point (2013, "Real Shading in Unreal
+// Engine 4", 14-16), the point of the sphere nearest the lobe's `reflected`
+// ray, and his normalisation (alpha / alpha')², alpha' = alpha + size / 2,
+// which keeps the widened highlight's energy, as Bevy's
+// compute_specular_layer_values_for_point_light and point_light shade a
+// point light's radius (361-401, 663-668). Changed: the lobe keeps its own
+// roughness, without Bevy's specular_fix_remap toward alpha' (628-631) or
+// its solid-angle factor (678-682), hand-tuned additions that lost up to 40%
+// of a highlight's energy at a radius of a fifth of its distance where
+// Karis's alone stays within 16%; the directional light's disc is a sphere
+// at unit distance, which Bevy does not shade and Filament (sampleSunAreaLight,
+// surface_light_directional.fs 9-21) widens without the normalisation (D-32).
+// A size of 0 is the light's own direction, whole.
+struct PbrSizedLight {
+ direction:vec3<f32>,
+ intensity:f32,
+}
+fn pbr_sized_light(direction:vec3<f32>,size:f32,reflected:vec3<f32>,rough:f32)->PbrSizedLight {
+ if size<=0. {
+  return PbrSizedLight(direction,1.);
+ }
+ // Bevy's LtFdotR, kept positive (bevyengine/bevy#13318), and the vector
+ // from the sphere's centre to the nearest point of the ray.
+ let LtFdotR=max(.0001,dot(direction,reflected));
+ let centerToRay=LtFdotR*reflected-direction;
+ let closestPoint=direction+centerToRay*saturate(size*inverseSqrt(max(dot(centerToRay,centerToRay),1e-12)));
+ let a=rough*rough;
+ let a_prime=saturate(a+size/2.);
+ let normalizationFactor=a/a_prime;
+ return PbrSizedLight(normalize(closestPoint),normalizationFactor*normalizationFactor);
 }
 struct PbrIblWeights {
  single:vec3<f32>,
@@ -93,22 +171,31 @@ fn pbr_hemisphere_radiance(direction:vec3<f32>,upper:vec3<f32>,ground:vec3<f32>,
 }
 // Three.js 0.185.1 PhysicalLightingModel.indirect: the dielectric's
 // scattering at `dielectric_f0` and the metal's at `base`, each toward the
-// surface's `f90`, mixed by metallic; the diffuse keeps what the dielectric
-// does not scatter.
+// surface's `f90`, mixed by metallic, its multiple scattering the gain's
+// share (pbr_multiscatter_gain); the diffuse keeps what the dielectric does
+// not scatter. Every source of irradiance a surface takes is weighted by
+// diffuse plus multi alike (D-32).
 fn pbr_ibl_weights(base:vec3<f32>,metallic:f32,dielectric_f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->PbrIblWeights {
- let dielectric_single=pbr_three_single_scatter(dielectric_f0,f90,dfg);
- let dielectric_multi=pbr_three_multi_scatter(dielectric_f0,f90,dfg);
- return PbrIblWeights(mix(dielectric_single,pbr_three_single_scatter(base,f90,dfg),metallic),
-  mix(dielectric_multi,pbr_three_multi_scatter(base,f90,dfg),metallic),
+ let dielectric_single=pbr_split_sum(dielectric_f0,f90,dfg);
+ let dielectric_multi=dielectric_single*(pbr_multiscatter_gain(dielectric_f0,dfg)-vec3(1.));
+ let metal_single=pbr_split_sum(base,f90,dfg);
+ let metal_multi=metal_single*(pbr_multiscatter_gain(base,dfg)-vec3(1.));
+ return PbrIblWeights(mix(dielectric_single,metal_single,metallic),
+  mix(dielectric_multi,metal_multi,metallic),
   base*(1.-metallic)*(vec3(1.)-dielectric_single-dielectric_multi));
 }
 
-// KHR directional roughness and GGX distribution; correlated Smith visibility
-// retains Three's denominator floor, without the illustrative KHR upper clamp.
-// Fresnel, diffuse and isotropic DFG compensation retain the existing model.
+// The base GGX lobe stretched along a KHR_materials_anisotropy axis
+// (acfcbe65e40c53d6d3aa55a7299982bf2c01c75d): its directional roughness
+// alpha_t = mix(alpha_b, 1, strength²), alpha_b = roughness², and its
+// distribution and height-correlated Smith visibility, as Bevy's
+// D_GGX_anisotropic and V_GGX_anisotropic (170-176, 194-208) evaluate them,
+// without KHR's illustrative clamp of the visibility to 1 so the lobe meets
+// the isotropic one as the strength falls to 0; at strength 0 it is that one.
+// The multiple scattering is the caller's (pbr_multiscatter_gain).
 fn pbr_anisotropic_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,rough:f32,f0:vec3<f32>,f90:f32,axis_strength:vec4<f32>)->vec3<f32> {
  if axis_strength.w<=0. {
-  return pbr_three_specular(n,v,l,rough,f0,f90);
+  return pbr_ggx_specular(n,v,l,rough,f0,f90);
  }
  let t=axis_strength.xyz;
  let b=normalize(cross(n,t));
@@ -122,5 +209,5 @@ fn pbr_anisotropic_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,rough:f32,f0:vec
  let distribution=at*ab*w2*w2/3.14159265359;
  let gv=nl*length(vec3(at*dot(t,v),ab*dot(b,v),nv));
  let gl=nv*length(vec3(at*dot(t,l),ab*dot(b,l),nl));
- return pbr_three_fresnel(clamp(dot(v,h),0.,1.),f0,f90)*distribution*(0.5/max(gv+gl,.000001));
+ return pbr_fresnel_schlick(clamp(dot(v,h),0.,1.),f0,f90)*distribution*(0.5/max(gv+gl,.000001));
 }

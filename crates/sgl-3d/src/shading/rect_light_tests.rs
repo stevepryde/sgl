@@ -2,11 +2,13 @@
 //! the production light a surface takes from a scene light
 //! (`scene_light_sample` and `surface_direct_light`, from the scene's light
 //! record and the LTC table on the GPU, unshadowed) against a midpoint
-//! quadrature, in f64, of Lambert diffuse and GGX with height-correlated
-//! Smith masking and Schlick Fresnel (the BRDF selfshadow/ltc_code fits),
-//! layered under a coat as `surface_direct_brdf` layers it, over the
-//! rectangle the light's description gives and faded by its range window.
-//! It uses no LTC table, fitted matrix or edge formula.
+//! quadrature, in f64, of Lambert diffuse coupled to the specular by glTF's
+//! dielectric Fresnel at V.H and GGX with height-correlated Smith masking
+//! and Schlick Fresnel (the BRDF selfshadow/ltc_code fits), the base lobe
+//! scaled by the surface's multiple-scattering gain, layered under a coat as
+//! `surface_direct_brdf` layers it, over the rectangle the light's
+//! description gives and faded by its range window. It uses no LTC table,
+//! fitted matrix or edge formula.
 use crate::{Light, LightShape, Scene};
 use glam::{DVec3, Vec3};
 use std::f64::consts::PI;
@@ -28,6 +30,11 @@ struct Receiver {
     coat_rough: f64,
     coat_fresnel: f64,
 }
+
+/// The multiple-scattering gain the observation gives each surface's base
+/// lobe (SurfaceReflectance.multiscatter), so that one the rectangle drops
+/// shows.
+const GAIN: f64 = 1.25;
 
 /// The rectangle `light` describes: its centre, unit normal, and half
 /// extents along two unit axes in its plane.
@@ -103,7 +110,12 @@ fn reference(light: &Light, receiver: &Receiver, steps: usize) -> f64 {
                 continue;
             }
             let solid_angle = emitted * (area / (steps * steps) as f64) / distance2;
-            let base = receiver.diffuse / PI * nl + ggx(receiver.rough, receiver.f0, l);
+            // glTF's dielectric BRDF: the diffuse base under the specular
+            // layer's Fresnel at V.H, its F0 the receiver's and F90 1.
+            let h = (receiver.view + l).normalize();
+            let coupling = 1.
+                - (receiver.f0 + (1. - receiver.f0) * (1. - receiver.view.dot(h)).clamp(0., 1.).powi(5));
+            let base = receiver.diffuse / PI * nl * coupling + ggx(receiver.rough, receiver.f0, l) * GAIN;
             let layered = if receiver.coat > 0. {
                 base * (1. - receiver.coat_fresnel)
                     + receiver.coat * ggx(receiver.coat_rough, 0.04, l)
@@ -157,10 +169,13 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
  surface.roughness=c.n.w;
  surface.coat=c.f.z;
  surface.coat_roughness=c.v.w;
+ surface.dielectric_f0=vec3(c.f.x);
+ surface.specular=1.;
  var reflectance:SurfaceReflectance;
  reflectance.diffuse=vec3(c.f.y);
  reflectance.f0=vec3(c.f.x);
  reflectance.f90=1.;
+ reflectance.multiscatter=vec3(1.25);
  reflectance.coat_fresnel=c.f.w;
  let light=scene_light_sample(index,c.p.xyz,c.n.xyz,c.n.xyz,vec2(0.),SHADOW_RECEIVER_CAMERA);
  result[id.x]=vec4(surface_direct_light(surface,reflectance,light),0.);

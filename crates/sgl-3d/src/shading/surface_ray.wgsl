@@ -98,9 +98,9 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.metallic=decaled.metallic;
  s.dielectric_f0=material_dielectric_f0(material.values);
  s.specular=material.values.specular;
- s.roughness=clamp(decaled.roughness,.0525,1.);
+ s.roughness=clamp(decaled.roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
  s.coat=material.values.coat;
- s.coat_roughness=clamp(material.values.coat_roughness,.0525,1.);
+ s.coat_roughness=clamp(material.values.coat_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.values.environment_scale;
@@ -185,7 +185,7 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
   if dot(s.normal,direction)<=0. {
    return vec3(0.);
   }
-  sample=LightSample(direction,light.color*light.illuminance,1.,0.,NO_RECT_LIGHT);
+  sample=LightSample(direction,light.color*light.illuminance,1.,0.,NO_RECT_LIGHT,0.);
   // The light with the frame's cascades is the one directional light
   // that casts a shadow. Its visibility ray leaves within its disc.
   opacity=select(0.,light.shadow_opacity,(light.flags&DIRECTIONAL_LIGHT_SHADOW)!=0u);
