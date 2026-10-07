@@ -51,10 +51,15 @@ fn material(base: [f32; 4], metallic: f32, roughness: f32) -> Material {
         emissive: [0.; 3],
         metallic,
         roughness,
+        ior: 1.5,
+        specular: 1.,
+        specular_color: [1.; 3],
         clearcoat: 0.,
         coat_roughness: 0.,
         base_texture: None,
         mr_texture: None,
+        occlusion_texture: None,
+        occlusion_strength: 1.,
         emissive_texture: None,
         normal_texture: None,
         normal_scale: 1.,
@@ -183,6 +188,7 @@ impl Frames {
             materials: vec![mirror],
             images: vec![],
             rig: Default::default(),
+            ignored: Vec::new(),
         };
         if let Some(z) = wall_z {
             world.materials.push(material([0.1, 0.1, 0.1, 1.], 0., 1.));
@@ -204,6 +210,7 @@ impl Frames {
             materials: vec![offscreen_model],
             images: vec![],
             rig: Default::default(),
+            ignored: Vec::new(),
         };
         let offscreen_model = scene
             .add_asset(&device, &queue, offscreen_model)

@@ -15,6 +15,34 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF loading: an unsupported extension listed only in
+  `extensionsUsed` (an anisotropy texture's extensions included) no longer
+  fails the load; it is left out and listed in the new `Asset::ignored`
+  (`asset::Ignored`). Only unsupported `extensionsRequired` fail. Migration:
+  `Asset` literals add `ignored: Vec::new()`; read `asset.ignored` after a
+  load to see what was left out.
+- `sgl-3d` occlusion maps, a load error before: one packed in the
+  metallic-roughness image's red channel on `TEXCOORD_0` (ORM) occludes
+  ambient diffuse and environment specular, taking the lesser of it and
+  `Settings::ambient_occlusion`'s visibility; one in its own image or on
+  another UV set loads unsampled (`Ignored::OcclusionMap`). New
+  `asset::Material::occlusion_texture` (`None`), `occlusion_strength` (1)
+  and `SurfaceMaterial::occlusion_strength`.
+- `sgl-3d` `KHR_materials_ior` and `KHR_materials_specular`, a load error
+  before: their factors set a dielectric's F0 through new `ior` (1.5),
+  `specular` (1) and `specular_color` (`[1.; 3]`) on `asset::Material` and
+  `SurfaceMaterial`; the defaults keep F0 0.04. Specular textures load
+  unsampled (`Ignored::SpecularMap`). Migration: exhaustive material
+  literals add the fields or take `..Default::default()`.
+- `sgl-3d` shading: reflectance at grazing incidence now follows F0, so
+  surfaces with F0 under 0.02 (`specular` under 0.5, near-black metals) lose
+  grazing reflection with it; F0 0.02 and up looks as before. No game-code
+  change; look again at near-black metallic materials.
+- `sgl-3d` `Scene::add_materials` and `set_material` refuse an IOR below 1,
+  `specular` outside 0..=1 or a specular colour that is negative or not
+  finite (`SceneError::InvalidSpecular`), and `occlusion_strength` outside
+  0..=1 (`SceneError::InvalidOcclusion`).
+
 ## 0.2.1 — 2026-10-07
 
 - Move every SGL crate to `0.2.1` together; no API changes and no game-code

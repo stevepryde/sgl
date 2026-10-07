@@ -101,7 +101,6 @@ fn incident_environment_is_complete_without_doubling_primary() {
             Variant {
                 environment: true,
                 incident: true,
-                diffuse_occlusion: false,
             },
         );
         let output = ReflectionSource::target(&device, size, "complete opaque beauty");

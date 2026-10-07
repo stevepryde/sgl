@@ -1,14 +1,15 @@
 // A surface's specular lobes as its environment, probes and reflections
 // light them: the base and, on a coated surface, the coat. The one owner of
-// each lobe's response and direction, of its specular occlusion, of the
-// lobe a screen-space method traces and of the formula that composes the
-// method's result into it, which
+// each lobe's response and direction, of the lobe a screen-space method
+// traces and of the formula that composes the method's result into it
+// (occlusion.wgsl occludes a lobe's environment), which
 // source completion and composition (stages/reflections/source.wgsl) and lit
 // shading (surface.wgsl: probe captures, ray hits and blended surfaces) call.
 // The response is Three.js 0.185.1's split-sum single scattering
-// (PhysicalLightingModel, BRDF_GGX_Multiscatter's single term), the base
-// beneath the coat's Fresnel and the coat weighted by its strength, as its
-// finish layers them; the base reflects along the KHR anisotropy bent normal
+// (PhysicalLightingModel, BRDF_GGX_Multiscatter's single term), toward the
+// F90 the base's F0 gives (pbr_f90) and the coat's 1, the base beneath the
+// coat's Fresnel and the coat weighted by its strength, as its finish
+// layers them; the base reflects along the KHR anisotropy bent normal
 // (anisotropy.wgsl), the coat along its normal's mirror direction, each bent
 // toward its normal with roughness.
 struct SpecularLobe {
@@ -36,41 +37,16 @@ fn specular_lobes(normal:vec3<f32>,coat_normal:vec3<f32>,view:vec3<f32>,f0:vec3<
  let nv=specular_nv(normal,view);
  let coat_nv=specular_nv(coat_normal,view);
  let coat_fresnel=pbr_coat_fresnel(coat_normal,view,coat);
- let base_response=pbr_three_single_scatter(f0,base_dfg)*(1.-coat_fresnel);
+ let base_response=pbr_three_single_scatter(f0,pbr_f90(f0),base_dfg)*(1.-coat_fresnel);
  let base_direction=pbr_anisotropy_reflection(normal,view,anisotropy,roughness);
  var coat_dfg=vec2(0.);
  if coat>0. {
   coat_dfg=lookup_dfg(tables,filtering,coat_nv,coat_roughness);
  }
- let coat_response=pbr_three_single_scatter(vec3(.04),coat_dfg)*coat;
+ let coat_response=pbr_three_single_scatter(vec3(.04),1.,coat_dfg)*coat;
  let coat_mirror=reflect(-view,coat_normal);
  let coat_direction=normalize(mix(coat_mirror,coat_normal,pow(coat_roughness,4.)));
  return array(SpecularLobe(base_response,base_direction,roughness,nv),SpecularLobe(coat_response,coat_direction,coat_roughness,coat_nv));
-}
-// Specular occlusion of a lobe's environment specular by the receiver's
-// `visibility` of it, as Filament's desktop default evaluates it (ef1a133
-// shaders/src/surface_ambient_occlusion.fs SpecularAO_Lagarde and
-// gtaoMultiBounce, applied as surface_light_indirect.fs evaluateIBL and
-// evaluateClearCoatIBL do; Apache-2.0, see LICENSE-filament.txt. Modified:
-// translated to WGSL). Lagarde and de Rousiers 2014, "Moving Frostbite to
-// PBR", with GTAO's multi-bounce on the base lobe's F0 (Jimenez et al.
-// 2016). Source completion occludes a lobe's probe specular by the
-// receiver's ambient visibility, and its sky specular by that times the
-// irradiance volume's sky visibility a(n) (irradiance_volume.wgsl), as
-// Frostbite's sky visibility and Unreal's baked sky occlusion occlude their
-// sky light and not reflection captures; lit shading (surface.wgsl), which
-// has no ambient occlusion, its sky specular by a(n) alone. Screen-space and
-// world-space hits are visible surfaces and stay unoccluded, as in Filament.
-fn specular_occlusion(lobe:SpecularLobe,coat:bool,visibility:f32,f0:vec3<f32>)->vec3<f32> {
- let alpha=lobe.roughness*lobe.roughness;
- let ao=clamp(pow(lobe.nv+visibility,exp2(-16.*alpha-1.))-1.+visibility,0.,1.);
- if coat {
-  return vec3(ao);
- }
- let a=2.0404*f0-vec3(.3324);
- let b=-4.7951*f0+vec3(.6417);
- let c=2.7552*f0+vec3(.6903);
- return max(vec3(ao),((ao*a+b)*ao+c)*ao);
 }
 // The lobe a screen-space method traces: the coat of a coated surface, else
 // the base. The G-buffer's traced normal and roughness

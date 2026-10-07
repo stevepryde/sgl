@@ -12,7 +12,6 @@ use wgpu::util::DeviceExt;
 const ENVIRONMENT: Variant = Variant {
     environment: true,
     incident: false,
-    diffuse_occlusion: false,
 };
 
 /// Full ambient visibility, which `Scene` binds while ambient occlusion is off.

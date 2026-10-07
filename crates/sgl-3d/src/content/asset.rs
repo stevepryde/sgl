@@ -4,10 +4,13 @@
 //! corrected, and primitives are batched by material, skin and morphed node;
 //! skins, morph targets, the node hierarchy and animation clips are imported
 //! as plain data (`deformation`). The default scene (or first scene)
-//! is loaded. Unsupported visible features return an error containing the asset
-//! path instead of producing a partial model. Opaque, masked and blended alpha
-//! modes are supported. Supported material extensions are
-//! scalar clearcoat, anisotropy with authored tangents, emissive strength, unlit, and bump mapping.
+//! is loaded. An extension the file requires that SGL3D does not support,
+//! and other unsupported visible features, return an error containing the
+//! asset path instead of producing a partial model; an unsupported extension
+//! the file only uses is left out and listed in [`Asset::ignored`]. Opaque,
+//! masked and blended alpha modes are supported. Supported material
+//! extensions are scalar clearcoat, anisotropy with authored tangents,
+//! emissive strength, unlit, bump mapping, IOR and specular factors.
 use std::error::Error;
 
 use glam::Vec3;
@@ -15,7 +18,7 @@ use gltf::texture::WrappingMode;
 
 use super::deformation::{MeshDeformation, Rig};
 pub use super::gltf::{
-    GltfImage, ImageSource, LoadOptions, load, load_slice, load_slice_with_options,
+    GltfImage, Ignored, ImageSource, LoadOptions, load, load_slice, load_slice_with_options,
     load_with_options,
 };
 pub use super::images::{CompressedFormat, CompressedImage, Image};
@@ -88,6 +91,19 @@ pub struct Material {
     pub metallic: f32,
     /// Perceptual roughness factor in `0..=1`.
     pub roughness: f32,
+    /// Index of refraction (`KHR_materials_ior`): at least 1, or
+    /// `f32::INFINITY` (glTF's `ior` 0). It sets the dielectric F0,
+    /// ((ior − 1) / (ior + 1))²: 0.04 at glTF's default 1.5, 0.02 for water
+    /// at 1.33.
+    pub ior: f32,
+    /// Strength of the dielectric specular reflection in `0..=1`
+    /// (`KHR_materials_specular`'s `specularFactor`): 1 as the IOR gives
+    /// it, 0 none.
+    pub specular: f32,
+    /// Linear tint of the dielectric F0, each channel finite and
+    /// nonnegative (`KHR_materials_specular`'s `specularColorFactor`): the
+    /// F0 is the IOR's times this, at most 1, times `specular`.
+    pub specular_color: [f32; 3],
     /// Scalar clearcoat intensity.
     pub clearcoat: f32,
     /// Clearcoat perceptual roughness.
@@ -102,6 +118,16 @@ pub struct Material {
     pub base_texture: Option<usize>,
     /// Metallic (blue) / roughness (green) image index, sampled as linear data.
     pub mr_texture: Option<usize>,
+    /// Occlusion image index (glTF's `occlusionTexture`): its red channel is
+    /// the share of ambient light that reaches the surface, which occludes
+    /// its ambient diffuse and environment specular. SGL3D samples it where
+    /// it is `mr_texture`'s image (ORM packing: occlusion, roughness and
+    /// metallic in red, green and blue), and not yet from an image of its
+    /// own.
+    pub occlusion_texture: Option<usize>,
+    /// How much of the occlusion map applies, in `0..=1` (glTF's
+    /// `occlusionTexture.strength`): 1 as authored, 0 none.
+    pub occlusion_strength: f32,
     /// Emissive image index, sampled as sRGB.
     pub emissive_texture: Option<usize>,
     /// Tangent-space normal image index, sampled as linear data.
@@ -133,11 +159,20 @@ pub struct Material {
     pub alpha: AlphaMode,
 }
 
+impl Material {
+    /// Whether its occlusion map is the red channel of its metallic-roughness
+    /// image (ORM packing), the one place SGL3D samples occlusion from.
+    pub(crate) fn packed_occlusion(&self) -> bool {
+        self.occlusion_texture.is_some() && self.occlusion_texture == self.mr_texture
+    }
+}
+
 impl Default for Material {
     /// glTF 2.0's default material, which the loader gives a primitive
-    /// without one: unnamed, a white base, metallic and roughness 1, no
-    /// emission, clearcoat, anisotropy, bump or textures, normal scale 1, no
-    /// normal layers, repeating, single-sided, lit and opaque, in visibility
+    /// without one: unnamed, a white base, metallic and roughness 1, IOR
+    /// 1.5, specular 1 untinted, no emission, clearcoat, anisotropy, bump or
+    /// textures, normal scale and occlusion strength 1, no normal layers,
+    /// repeating, single-sided, lit and opaque, in visibility
     /// group 0, casting directional shadows and emitting into global
     /// illumination. Set what differs and take the rest with
     /// `..Default::default()`.
@@ -150,6 +185,9 @@ impl Default for Material {
             emissive: [0.0; 3],
             metallic: 1.0,
             roughness: 1.0,
+            ior: 1.5,
+            specular: 1.0,
+            specular_color: [1.0; 3],
             clearcoat: 0.0,
             coat_roughness: 0.0,
             anisotropy_strength: 0.0,
@@ -157,6 +195,8 @@ impl Default for Material {
             anisotropy_texture: None,
             base_texture: None,
             mr_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: 1.0,
             emissive_texture: None,
             normal_texture: None,
             normal_scale: 1.0,
@@ -187,6 +227,9 @@ pub struct Asset {
     /// What poses its deforming meshes, and its animation clips; empty when
     /// nothing deforms.
     pub rig: Rig,
+    /// What a glTF load left unrendered, which the file did not require
+    /// (glTF lets a loader leave it out); empty for content built in code.
+    pub ignored: Vec<Ignored>,
 }
 
 /// Whether every vertex carries a finite, nonzero authored tangent frame with
@@ -218,5 +261,6 @@ pub fn empty() -> Asset {
         materials: Vec::new(),
         images: Vec::new(),
         rig: Rig::default(),
+        ignored: Vec::new(),
     }
 }

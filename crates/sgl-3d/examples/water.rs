@@ -350,6 +350,7 @@ fn world(marked: bool) -> Asset {
         ],
         images: Vec::new(),
         rig: Default::default(),
+        ignored: Vec::new(),
     }
 }
 

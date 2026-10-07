@@ -21,7 +21,7 @@ fn stable_material(s:Surface)->StableMaterial {
  // Preserve both lobes: the base follows normal/bump maps, the coat geometry.
  var o:StableMaterial;
  o.normal=gbuffer_encode_normals(s.normal,s.geometry_normal);
- o.f0=gbuffer_encode_f0(mix(vec3(0.04),s.base.rgb,s.metallic),!s.unlit,takes_baked_lights(s.baked,s.lightmap_uv,s.moving));
+ o.f0=gbuffer_encode_f0(surface_f0(s),!s.unlit,takes_baked_lights(s.baked,s.lightmap_uv,s.moving),s.occlusion);
  o.material=gbuffer_encode_material(s.coat_roughness,s.roughness,s.coat,s.environment_scale);
  o.anisotropy=s.anisotropy;
  return o;
@@ -206,7 +206,7 @@ fn blended_traced_reflection(i:Fragment)->TracedReflection {
 // alpha.
 fn blended_color(i:Fragment,raster_front:bool)->vec4<f32> {
  let front=object_front_face(i,raster_front);
- let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
+ let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
  let s=raster_surface(i,front,surface_base_color(i),surface_emission(i),context.clusters);
  var shaded:Shaded;
  if s.unlit {

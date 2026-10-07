@@ -121,8 +121,10 @@ fn fixture_surface(position:vec3<f32>,normal:vec3<f32>,metal:bool,environment_sc
  s.geometry_normal=normal;
  s.base=select(vec4(.5,.5,.5,1.),vec4(1.),metal);
  s.metallic=select(0.,1.,metal);
+ s.dielectric_f0=vec3(.04);
  s.roughness=select(1.,.1,metal);
  s.environment_scale=environment_scale;
+ s.occlusion=1.;
  s.front=true;
  for (var face=0u;face<6u;face++) {
   s.baked_irradiance[face]=vec4(.25);
@@ -130,7 +132,7 @@ fn fixture_surface(position:vec3<f32>,normal:vec3<f32>,metal:bool,environment_sc
  return s;
 }
 fn fixture_shaded(s:Surface,receiver:u32,environment_specular:bool)->Shaded {
- let context=ShadeContext(vec2(0.),receiver,environment_specular,cluster_range(s.position,vec2(0.)),untraced_reflection());
+ let context=ShadeContext(vec2(0.),receiver,environment_specular,true,cluster_range(s.position,vec2(0.)),untraced_reflection());
  return shade_lit(s,context);
 }
 "#;

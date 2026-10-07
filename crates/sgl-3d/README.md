@@ -883,7 +883,10 @@ visibility, with GTAO multi-bounce on the base lobe's F0, so bright metals keep
 most of their reflection. Screen-space reflection hits, direct light, emission,
 baked direct/bounced irradiance and environment multiscattering retain their
 existing ownership. Probe captures and secondary rays do not consume
-camera-space AO. There are no substitute contact shadows.
+camera-space AO. There are no substitute contact shadows. A material's
+occlusion map joins it: each opaque receiver takes the lesser of the two
+visibilities, as Filament and Bevy take them, and every other view its
+material's alone ([asset limits](#asset-and-environment-limits)).
 
 The radius is clamped to 0.01–10000 m (XeGTAO's expected minimum and its
 settings' maximum); `Settings::ambient_occlusion`
@@ -2069,11 +2072,35 @@ The loader supports glTF triangle meshes, baked rigid node transforms,
 skins with four influences per vertex, morph targets, animation clips as data
 ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)),
 UV0, metallic/roughness materials, the opaque, masked and blended alpha modes,
-normal and bump maps, scalar clearcoat, emissive strength, unlit materials, and
-`KHR_materials_anisotropy`. Unsupported visible features return
-asset-path errors. Occlusion textures and unimplemented material extensions
-require a separate implementation or an explicit game-side export
-adaptation.
+normal and bump maps, an occlusion map packed in the red channel of the
+metallic-roughness image (ORM), scalar clearcoat, emissive strength, unlit
+materials, `KHR_materials_anisotropy`, and the `KHR_materials_ior` and
+`KHR_materials_specular` factors.
+
+glTF 2.0 decides what an extension costs a load. A file that lists an
+extension in `extensionsRequired` that SGL3D does not support fails to load
+with an asset-path error. One it lists only in `extensionsUsed` is left out,
+as glTF lets a loader do: a texture keeps its core image and a material its
+core values, and `Asset::ignored` lists it (`Ignored::Extension`). The list
+also names each material whose occlusion map SGL3D does not sample, one in an
+image of its own or on another UV set (`Ignored::OcclusionMap`, the image
+kept in `Material::occlusion_texture`), and whose specular textures it does
+not sample (`Ignored::SpecularMap`). To have occlusion drawn, pack it
+into the metallic-roughness image's red channel on `TEXCOORD_0` in the
+export step. Other unsupported visible features return asset-path errors.
+
+A dielectric's reflectance at normal incidence (F0) follows its index of
+refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for
+water at 1.33, 0.17 for diamond at 2.42. `KHR_materials_specular` tints it
+(`specular_color`, at most 1 after the tint) and scales it (`specular`), as
+`asset::Material` and `SurfaceMaterial` hold them. Reflectance at grazing
+incidence follows F0, as Filament and Bevy derive it: 1 for any F0 of 0.02
+or more, falling to none with it, so `specular` 0 turns a dielectric's
+reflection off whole. The occlusion map's red channel, at
+`occlusion_strength` (glTF's lerp), occludes a surface's ambient diffuse and
+environment specular, never direct light or emission; with
+`Settings::ambient_occlusion` the camera's opaque surfaces take the lesser of
+it and the frame's ambient occlusion, as Filament and Bevy do.
 
 On the GPU the scene keeps each `asset::Vertex` (88 bytes) in 32, packed by
 `PreparedModel::new` after Godot's attribute compression: the position

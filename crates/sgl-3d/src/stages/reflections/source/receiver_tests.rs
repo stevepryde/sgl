@@ -109,7 +109,6 @@ fn opaque_surfaces_under_a_receiver_keep_their_environment_specular_once() {
         Variant {
             environment: true,
             incident: true,
-            diffuse_occlusion: false,
         },
     );
     let output = ReflectionSource::target(&device, size, "complete opaque beauty");

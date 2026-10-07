@@ -103,6 +103,7 @@ fn asset(meshes: Vec<CpuMesh>, materials: Vec<Material>) -> Asset {
         materials,
         images: Vec::new(),
         rig: Default::default(),
+        ignored: Vec::new(),
     }
 }
 

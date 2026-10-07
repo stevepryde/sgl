@@ -412,3 +412,68 @@ fn an_orthographic_camera_records_finite_motion() {
         assert!(m.is_finite(), "motion {m} at {pixel} is not finite");
     }
 }
+
+/// Fresnel's equations: the reflectance of unpolarised light arriving at
+/// cosine `cos_i` through a medium of index `n1` onto one of index `n2`, the
+/// mean of its s- and p-polarised reflectances.
+fn fresnel(n1: f64, n2: f64, cos_i: f64) -> f64 {
+    let sin_t = n1 / n2 * (1. - cos_i * cos_i).sqrt();
+    let cos_t = (1. - sin_t * sin_t).sqrt();
+    let s = (n1 * cos_i - n2 * cos_t) / (n1 * cos_i + n2 * cos_t);
+    let p = (n1 * cos_t - n2 * cos_i) / (n1 * cos_t + n2 * cos_i);
+    (s * s + p * p) / 2.
+}
+
+// Defects: the G-buffer's F0 ignores a dielectric's IOR (0.04 whatever it
+// is), its specular colour or its specular strength, clamps after the
+// strength rather than before it, or an edit of them does not reach the
+// record the G-buffer pass reads. The oracle is Fresnel's equations at
+// normal incidence from air for the IOR, tinted, clamped and scaled as
+// KHR_materials_specular defines: min(F0 * colour, 1) * specular.
+#[test]
+fn gbuffer_f0_is_fresnel_at_the_materials_ior() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut asset = test_support::cube();
+    asset.meshes = vec![square(-3., 2.)];
+    asset.materials[0].metallic = 0.;
+    asset.materials[0].ior = 1.33;
+    let (ids, _) = test_support::add_static(&device, &queue, &mut scene, asset);
+    let material = ids.materials[0];
+    let settings = Settings::default();
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: perspective(1., 1., 0.1),
+        eye: Vec3::ZERO,
+    });
+    let mut check = |scene: &mut Scene, expected: [f64; 3]| {
+        let mut frame = renderer.prepare_test_frame(&device, &queue, scene, &input, &settings);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.encode_test_opaque(&device, &queue, &mut encoder, scene, &mut frame, false);
+        queue.submit([encoder.finish()]);
+        let f0 = test_support::read(&device, &queue, renderer.targets().f0.texture(), 4);
+        let at = ((SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) * 4) as usize;
+        for (channel, expected) in expected.into_iter().enumerate() {
+            let recorded = f64::from(f0[at + channel]);
+            assert!(
+                (recorded - expected * 255.).abs() <= 0.6,
+                "channel {channel}: F0 {recorded}/255, expected {expected}"
+            );
+        }
+    };
+    // Water: 0.020, half the default's 0.04.
+    check(&mut scene, [fresnel(1., 1.33, 1.); 3]);
+    let mut values = scene.material(material).unwrap();
+    values.ior = 2.42;
+    values.specular_color = [30., 0.5, 0.];
+    values.specular = 0.6;
+    scene.set_material(&queue, material, values).unwrap();
+    let diamond = fresnel(1., 2.42, 1.);
+    check(
+        &mut scene,
+        [30., 0.5, 0.].map(|tint| (diamond * tint).min(1.) * 0.6),
+    );
+}

@@ -38,10 +38,26 @@ fn pbr_bump_normal(map:texture_2d<f32>,filtering:sampler,world:vec3<f32>,n:vec3<
  return normalize(abs(determinant)*n-sign(determinant)*(gradient.x*a+gradient.y*b));
 }
 
-// Three.js 0.185.1 PhysicalLightingModel / BRDF_GGX_Multiscatter.
-fn pbr_three_fresnel(c:f32,f0:vec3<f32>)->vec3<f32> {
+// The reflectance at grazing incidence of a surface whose reflectance at
+// normal incidence is `f0`: 1 for any F0 of 0.02 or more, which every real
+// material has, falling to 0 with F0 below it, so an F0 under 0.02 (a
+// specular strength under one half, a near-black metal) also takes the
+// grazing reflection away, a specular occlusion baked into F0. Filament
+// ef1a133 derives it so for its Fresnel (shaders/src/surface_brdf.fs
+// fresnel, Apache-2.0, see LICENSE-filament.txt) and Bevy 9d12036 for its
+// Fresnel and environment's specular occlusion
+// (crates/bevy_pbr/src/render/pbr_lighting.wesl fresnel,
+// light_probe/environment_map.wesl; MIT OR Apache-2.0, see
+// LICENSE-bevy.txt). Three.js's PhysicalLightingModel, which SGL3D's BRDF
+// follows, takes F90 as an input.
+fn pbr_f90(f0:vec3<f32>)->f32 {
+ return saturate(dot(f0,vec3(50.*.33)));
+}
+// Three.js 0.185.1 PhysicalLightingModel / BRDF_GGX_Multiscatter: F_Schlick
+// with Epic's exponent, from `f0` toward `f90`.
+fn pbr_three_fresnel(c:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {
  let f=exp2((-5.55473*c-6.98316)*c);
- return f0*(1.-f)+vec3(f);
+ return f0*(1.-f)+vec3(f90*f);
 }
 // A coat's Fresnel toward the view, weighted by the coat, as Three.js 0.185.1
 // PhysicalLightingModel.finish evaluates it: at
@@ -49,9 +65,9 @@ fn pbr_three_fresnel(c:f32,f0:vec3<f32>)->vec3<f32> {
 // F0 0.04 and F90 1. Callers dim the light beneath the coat by it.
 fn pbr_coat_fresnel(coat_normal:vec3<f32>,view:vec3<f32>,coat:f32)->f32 {
  let coat_view_cosine=clamp(dot(coat_normal,view),0.,1.);
- return coat*pbr_three_fresnel(coat_view_cosine,vec3(.04)).x;
+ return coat*pbr_three_fresnel(coat_view_cosine,vec3(.04),1.).x;
 }
-fn pbr_three_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,r:f32,f0:vec3<f32>)->vec3<f32> {
+fn pbr_three_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,r:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {
  let nv=clamp(dot(n,v),0.,1.);
  let nl=clamp(dot(n,l),0.,1.);
  let h=normalize(v+l);
@@ -61,13 +77,15 @@ fn pbr_three_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,r:f32,f0:vec3<f32>)->v
  let denominator=1.-nh*nh*(1.-a2);
  let distribution=a2/(denominator*denominator*3.14159265359);
  let visibility=0.5/max(nl*sqrt(a2+(1.-a2)*nv*nv)+nv*sqrt(a2+(1.-a2)*nl*nl),0.000001);
- return pbr_three_fresnel(vh,f0)*visibility*distribution;
+ return pbr_three_fresnel(vh,f0,f90)*visibility*distribution;
 }
-fn pbr_three_single_scatter(f0:vec3<f32>,dfg:vec2<f32>)->vec3<f32> {
- return f0*dfg.x+vec3(dfg.y);
+// Three.js 0.185.1's split-sum single scattering (EnvironmentBRDF,
+// computeMultiscattering's FssEss): specularColor * fab.x + specularF90 * fab.y.
+fn pbr_three_single_scatter(f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->vec3<f32> {
+ return f0*dfg.x+vec3(f90*dfg.y);
 }
-fn pbr_three_multi_scatter(f0:vec3<f32>,dfg:vec2<f32>)->vec3<f32> {
- let single=pbr_three_single_scatter(f0,dfg);
+fn pbr_three_multi_scatter(f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->vec3<f32> {
+ let single=pbr_three_single_scatter(f0,f90,dfg);
  let missing=1.-dfg.x-dfg.y;
  let average=f0+(vec3(1.)-f0)*0.047619;
  return single*average/(vec3(1.)-missing*average)*missing;
@@ -88,20 +106,24 @@ fn pbr_hemisphere(n:vec3<f32>,upper:vec3<f32>,ground:vec3<f32>,intensity:f32)->v
 fn pbr_hemisphere_radiance(direction:vec3<f32>,upper:vec3<f32>,ground:vec3<f32>,intensity:f32)->vec3<f32> {
  return select(ground,upper,direction.y>=0.)*intensity/3.14159265359;
 }
-fn pbr_ibl_weights(base:vec3<f32>,metallic:f32,dfg:vec2<f32>)->PbrIblWeights {
- let dielectric_single=pbr_three_single_scatter(vec3(.04),dfg);
- let dielectric_multi=pbr_three_multi_scatter(vec3(.04),dfg);
- return PbrIblWeights(mix(dielectric_single,pbr_three_single_scatter(base,dfg),metallic),
-  mix(dielectric_multi,pbr_three_multi_scatter(base,dfg),metallic),
+// Three.js 0.185.1 PhysicalLightingModel.indirect: the dielectric's
+// scattering at `dielectric_f0` and the metal's at `base`, each toward the
+// surface's `f90`, mixed by metallic; the diffuse keeps what the dielectric
+// does not scatter.
+fn pbr_ibl_weights(base:vec3<f32>,metallic:f32,dielectric_f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->PbrIblWeights {
+ let dielectric_single=pbr_three_single_scatter(dielectric_f0,f90,dfg);
+ let dielectric_multi=pbr_three_multi_scatter(dielectric_f0,f90,dfg);
+ return PbrIblWeights(mix(dielectric_single,pbr_three_single_scatter(base,f90,dfg),metallic),
+  mix(dielectric_multi,pbr_three_multi_scatter(base,f90,dfg),metallic),
   base*(1.-metallic)*(vec3(1.)-dielectric_single-dielectric_multi));
 }
 
 // KHR directional roughness and GGX distribution; correlated Smith visibility
 // retains Three's denominator floor, without the illustrative KHR upper clamp.
 // Fresnel, diffuse and isotropic DFG compensation retain the existing model.
-fn pbr_anisotropic_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,rough:f32,f0:vec3<f32>,axis_strength:vec4<f32>)->vec3<f32> {
+fn pbr_anisotropic_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,rough:f32,f0:vec3<f32>,f90:f32,axis_strength:vec4<f32>)->vec3<f32> {
  if axis_strength.w<=0. {
-  return pbr_three_specular(n,v,l,rough,f0);
+  return pbr_three_specular(n,v,l,rough,f0,f90);
  }
  let t=axis_strength.xyz;
  let b=normalize(cross(n,t));
@@ -115,5 +137,5 @@ fn pbr_anisotropic_specular(n:vec3<f32>,v:vec3<f32>,l:vec3<f32>,rough:f32,f0:vec
  let distribution=at*ab*w2*w2/3.14159265359;
  let gv=nl*length(vec3(at*dot(t,v),ab*dot(b,v),nv));
  let gl=nv*length(vec3(at*dot(t,l),ab*dot(b,l),nl));
- return pbr_three_fresnel(clamp(dot(v,h),0.,1.),f0)*distribution*(0.5/max(gv+gl,.000001));
+ return pbr_three_fresnel(clamp(dot(v,h),0.,1.),f0,f90)*distribution*(0.5/max(gv+gl,.000001));
 }

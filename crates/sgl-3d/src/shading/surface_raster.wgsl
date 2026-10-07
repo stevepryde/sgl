@@ -100,12 +100,14 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  s.geometry_normal=geometry_normal;
  s.base=vec4(decaled.base,base.a);
  s.metallic=decaled.metallic;
+ s.dielectric_f0=material_dielectric_f0(material);
  s.roughness=surface_roughness(decaled.roughness,n,i);
  s.coat=material.coat;
  s.coat_roughness=surface_roughness(material.coat_roughness,n,i);
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.environment_scale;
+ s.occlusion=material_occlusion(material,mr);
  s.unlit=unlit;
  s.front=front;
  s.moving=(objects[object].flags&OBJECT_STATIC)==0u;
@@ -117,8 +119,9 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  return s;
 }
 // The view's pixel and the cluster that holds the fragment. A probe
-// capture is not the frame's camera and adds its own environment specular.
+// capture is not the frame's camera: it adds its own environment specular
+// and occludes by its material's occlusion itself.
 fn raster_context(i:Fragment)->ShadeContext {
  let capture=(view.flags&VIEW_PROBE_CAPTURE)!=0u;
- return ShadeContext(i.clip.xy,select(SHADOW_RECEIVER_CAMERA,SHADOW_RECEIVER_CAPTURE,capture),capture,cluster_range(i.world,i.clip.xy),untraced_reflection());
+ return ShadeContext(i.clip.xy,select(SHADOW_RECEIVER_CAMERA,SHADOW_RECEIVER_CAPTURE,capture),capture,capture,cluster_range(i.world,i.clip.xy),untraced_reflection());
 }

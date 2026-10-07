@@ -3,10 +3,14 @@ use gltf::texture::WrappingMode;
 
 use super::super::asset::{Material, Result};
 use super::super::material::AlphaMode;
+use super::Ignored;
 
+/// glTF material `index`, adding what SGL3D leaves out of it to `ignored`.
 pub(super) fn read_material(
     material: gltf::Material<'_>,
     document: &gltf::Document,
+    index: usize,
+    ignored: &mut Vec<Ignored>,
 ) -> Result<Material> {
     let name = material.name().unwrap_or("unnamed/default");
     // glTF 2.0 (3.9.5): alphaCutoff applies only in MASK mode, defaults to
@@ -27,9 +31,6 @@ pub(super) fn read_material(
             AlphaMode::Mask { cutoff }
         }
     };
-    if material.occlusion_texture().is_some() {
-        return Err(format!("material {name}: occlusion textures are not yet supported").into());
-    }
     let mut clearcoat = 0.0;
     let mut coat_roughness = 0.0;
     if let Some(coat) = material.extension_value("KHR_materials_clearcoat") {
@@ -46,7 +47,13 @@ pub(super) fn read_material(
     }
     let (anisotropy_strength, anisotropy_rotation, anisotropy_texture) =
         read_anisotropy(&material, document)?;
+    let ior = read_ior(&material)?;
+    let (specular, specular_color) = read_specular(&material, index, ignored)?;
     let pbr = material.pbr_metallic_roughness();
+    let mr_image = pbr
+        .metallic_roughness_texture()
+        .map(|info| info.texture().source().index());
+    let occlusion = read_occlusion(&material, mr_image, index, ignored)?;
     let texture_index = |info: gltf::texture::Info<'_>| -> Result<usize> {
         if info.tex_coord() != 0 {
             return Err(format!(
@@ -92,6 +99,11 @@ pub(super) fn read_material(
         material.normal_texture().map(|t| t.texture()),
         bump_texture.clone(),
         anisotropy_texture.clone(),
+        // An occlusion map in the metallic-roughness image takes its sampler.
+        material
+            .occlusion_texture()
+            .map(|t| t.texture())
+            .filter(|t| Some(t.source().index()) == mr_image),
     ];
     let mut wrap = None;
     for texture in textures.into_iter().flatten() {
@@ -111,6 +123,9 @@ pub(super) fn read_material(
         emissive: material.emissive_factor().map(|v| v * strength),
         metallic: pbr.metallic_factor(),
         roughness: pbr.roughness_factor(),
+        ior,
+        specular,
+        specular_color,
         clearcoat,
         coat_roughness,
         anisotropy_strength,
@@ -121,6 +136,8 @@ pub(super) fn read_material(
             .metallic_roughness_texture()
             .map(texture_index)
             .transpose()?,
+        occlusion_texture: occlusion.texture,
+        occlusion_strength: occlusion.strength,
         emissive_texture: material.emissive_texture().map(texture_index).transpose()?,
         normal_texture,
         normal_scale: material.normal_texture().map_or(1.0, |t| t.scale()),
@@ -187,12 +204,6 @@ fn read_anisotropy<'a>(
             if info.get("texCoord").is_some_and(|v| v.as_u64() != Some(0)) {
                 return Err(error("texture requires TEXCOORD_0; export UV0").into());
             }
-            if info.get("extensions").is_some() {
-                return Err(error(
-                    "texture extensions are unsupported; bake the texture transform into UV0",
-                )
-                .into());
-            }
             let index = info
                 .get("index")
                 .and_then(|v| v.as_u64())
@@ -205,6 +216,101 @@ fn read_anisotropy<'a>(
         })
         .transpose()?;
     Ok((strength as f32, rotation as f32, texture))
+}
+
+/// A material's occlusion map (glTF 2.0 `occlusionTexture`).
+struct Occlusion {
+    /// Its image, where it lies on `TEXCOORD_0`.
+    texture: Option<usize>,
+    /// glTF's `strength`, in `0..=1`; 1 without a map.
+    strength: f32,
+}
+
+/// Material `index`'s occlusion map, where the image of its metallic-roughness
+/// map is `mr_image`. SGL3D samples it where it is that image (ORM packing);
+/// another image is kept but listed in `ignored`, and a map on another UV
+/// set, which SGL3D has no material input for, is left out and listed.
+fn read_occlusion(
+    material: &gltf::Material<'_>,
+    mr_image: Option<usize>,
+    index: usize,
+    ignored: &mut Vec<Ignored>,
+) -> Result<Occlusion> {
+    let Some(occlusion) = material.occlusion_texture() else {
+        return Ok(Occlusion {
+            texture: None,
+            strength: 1.,
+        });
+    };
+    let strength = occlusion.strength();
+    if !(0.0..=1.0).contains(&strength) {
+        let name = material.name().unwrap_or("unnamed/default");
+        return Err(format!("material {name}: occlusionTexture.strength must be in 0..1").into());
+    }
+    let image = occlusion.texture().source().index();
+    let texture = (occlusion.tex_coord() == 0).then_some(image);
+    if texture.is_none() || texture != mr_image {
+        ignored.push(Ignored::OcclusionMap { material: index });
+    }
+    Ok(Occlusion { texture, strength })
+}
+
+// Authority: Khronos glTF KHR_materials_ior/README.md: ior defaults to 1.5,
+// and is at least 1 or 0, which stands for an infinite IOR.
+fn read_ior(material: &gltf::Material<'_>) -> Result<f32> {
+    let ior = material
+        .extension_value("KHR_materials_ior")
+        .and_then(|value| value.get("ior"))
+        .map_or(Some(1.5), serde_json::Value::as_f64);
+    match ior {
+        Some(0.) => Ok(f32::INFINITY),
+        Some(ior) if ior >= 1. && (ior as f32).is_finite() => Ok(ior as f32),
+        _ => {
+            let name = material.name().unwrap_or("unnamed/default");
+            Err(format!("material {name}: ior must be 0 or a number of at least 1").into())
+        }
+    }
+}
+
+// Authority: Khronos glTF KHR_materials_specular/README.md: specularFactor
+// in 0..1, default 1; specularColorFactor linear RGB, nonnegative, default
+// white. Its textures are listed in `ignored`.
+fn read_specular(
+    material: &gltf::Material<'_>,
+    index: usize,
+    ignored: &mut Vec<Ignored>,
+) -> Result<(f32, [f32; 3])> {
+    let Some(value) = material.extension_value("KHR_materials_specular") else {
+        return Ok((1., [1.; 3]));
+    };
+    let name = material.name().unwrap_or("unnamed/default");
+    let error = |message: &str| format!("material {name}: specular {message}");
+    let factor = value
+        .get("specularFactor")
+        .map_or(Some(1.), |v| v.as_f64().filter(|v| (0.0..=1.0).contains(v)));
+    let factor = factor.ok_or_else(|| error("specularFactor must be a number in 0..1"))?;
+    let color = match value.get("specularColorFactor") {
+        None => [1.; 3],
+        Some(color) => color
+            .as_array()
+            .filter(|channels| channels.len() == 3)
+            .and_then(|channels| {
+                let channels: Option<Vec<f32>> = channels
+                    .iter()
+                    .map(|v| {
+                        v.as_f64()
+                            .map(|v| v as f32)
+                            .filter(|v| v.is_finite() && *v >= 0.)
+                    })
+                    .collect();
+                channels.map(|c| [c[0], c[1], c[2]])
+            })
+            .ok_or_else(|| error("specularColorFactor must be three finite nonnegative numbers"))?,
+    };
+    if value.get("specularTexture").is_some() || value.get("specularColorTexture").is_some() {
+        ignored.push(Ignored::SpecularMap { material: index });
+    }
+    Ok((factor as f32, color))
 }
 
 fn scalar(value: &serde_json::Value, key: &str) -> Result<f32> {

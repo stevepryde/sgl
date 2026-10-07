@@ -32,6 +32,26 @@ pub(super) fn validate_alpha(values: &SurfaceMaterial) -> Result<(), SceneError>
     }
 }
 
+/// The dielectric reflectance and occlusion `values` may take: an IOR of at
+/// least 1, infinity included (KHR_materials_ior; F0 is defined for none
+/// below), a specular strength and an occlusion strength in `0..=1`, as glTF
+/// bounds them, and a finite nonnegative specular colour.
+pub(super) fn validate_reflectance(values: &SurfaceMaterial) -> Result<(), SceneError> {
+    if !(values.ior >= 1.
+        && (0.0..=1.0).contains(&values.specular)
+        && values
+            .specular_color
+            .iter()
+            .all(|channel| channel.is_finite() && *channel >= 0.))
+    {
+        return Err(SceneError::InvalidSpecular);
+    }
+    if !(0.0..=1.0).contains(&values.occlusion_strength) {
+        return Err(SceneError::InvalidOcclusion);
+    }
+    Ok(())
+}
+
 /// Normal layers `values` may take on a material added with `maps` and
 /// `wrap`: they scroll its normal map, which must be there and repeat on both
 /// axes, at finite velocities and strengths, positive finite scales, and

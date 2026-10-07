@@ -70,8 +70,14 @@ fn brightness(bytes: &[u8]) -> f32 {
 
 /// A grey box standing on a grey floor, seen from above at an angle: the
 /// scene, the box's material and a frame with an environment of constant
-/// linear radiance 0.25, a black backdrop and no light on.
-fn box_on_floor(device: &wgpu::Device, queue: &wgpu::Queue) -> (Scene, MaterialId, FrameInput) {
+/// linear radiance 0.25, a black backdrop and no light on. With `occlusion`,
+/// the material packs an occlusion map in its metallic-roughness image
+/// (ORM), red `occlusion` throughout.
+fn box_on_floor(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    occlusion: Option<u8>,
+) -> (Scene, MaterialId, FrameInput) {
     let mut world = test_support::cube();
     let mut floor = world.meshes[0].clone();
     for v in &mut floor.vertices {
@@ -90,6 +96,15 @@ fn box_on_floor(device: &wgpu::Device, queue: &wgpu::Queue) -> (Scene, MaterialI
     world.materials[0].base = [0.5, 0.5, 0.5, 1.];
     world.materials[0].metallic = 0.;
     world.materials[0].roughness = 0.7;
+    if let Some(red) = occlusion {
+        world.images = vec![asset::Image::Rgba8(image::RgbaImage::from_pixel(
+            4,
+            4,
+            image::Rgba([red, 255, 0, 255]),
+        ))];
+        world.materials[0].mr_texture = Some(0);
+        world.materials[0].occlusion_texture = Some(0);
+    }
     let mut scene = Scene::new(device, queue);
     let (world, _) = test_support::add_static(device, queue, &mut scene, world);
     let environment = scene
@@ -122,7 +137,7 @@ fn gtao_primary_lighting_ownership_and_disable_restore() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
-    let (mut scene, material, mut input) = box_on_floor(&device, &queue);
+    let (mut scene, material, mut input) = box_on_floor(&device, &queue, None);
     let settings = Settings {
         scene_resolution: settings::SceneResolution::Full,
         atmosphere: false,
@@ -273,7 +288,7 @@ fn completion_occludes_ambient_diffuse_by_the_frames_visibility() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
-    let (mut scene, _, mut input) = box_on_floor(&device, &queue);
+    let (mut scene, _, mut input) = box_on_floor(&device, &queue, None);
     input.hemisphere_light = HemisphereLight {
         sky_color: [1., 0.8, 0.6],
         ground_color: [0.6, 0.8, 1.],
@@ -359,7 +374,7 @@ fn a_radius_outside_its_range_occludes_as_its_nearer_end() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
-    let (mut scene, _, mut input) = box_on_floor(&device, &queue);
+    let (mut scene, _, mut input) = box_on_floor(&device, &queue, None);
     let settings = Settings {
         scene_resolution: settings::SceneResolution::Full,
         antialiasing: settings::Antialiasing::Off,
@@ -398,4 +413,142 @@ fn a_radius_outside_its_range_occludes_as_its_nearer_end() {
         visibility(f32::INFINITY) == visibility(10000.),
         "an infinite radius occluded otherwise than 10000 m"
     );
+}
+
+// Defects: a material's occlusion map, packed in the red channel of its
+// metallic-roughness image, is not applied, is read from another channel,
+// ignores its strength, applies only while ambient occlusion runs or only
+// while it does not, multiplies the frame's ambient occlusion rather than
+// taking the lesser of the two, or is left out of a blended surface's
+// forward shading. Under the hemisphere fill alone a receiver's lit colour
+// is all ambient diffuse, so its completed radiance is its unoccluded colour
+// times its visibility: glTF 2.0's lerp(1, red, strength), recorded to
+// 1/126, taken with XeGTAO's visibility read back from the frame as
+// Filament and Bevy take them, the lesser. A blended surface takes no
+// ambient occlusion: its radiance is the unoccluded one times glTF's alone.
+#[test]
+fn a_packed_occlusion_map_occludes_ambient_diffuse() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    const RED: u8 = 64;
+    let (mut scene, material, mut input) = box_on_floor(&device, &queue, Some(RED));
+    input.hemisphere_light = HemisphereLight {
+        sky_color: [1., 0.8, 0.6],
+        ground_color: [0.6, 0.8, 1.],
+        intensity: 1.,
+    };
+    input.baked_lighting = false;
+    let settings = Settings {
+        scene_resolution: settings::SceneResolution::Full,
+        antialiasing: settings::Antialiasing::Off,
+        screen_space_reflections: settings::ScreenSpaceReflections::Off,
+        atmosphere: false,
+        bloom: settings::Bloom::Off,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
+    let rgb = |bytes: &[u8], pixel: usize| -> [f32; 3] {
+        std::array::from_fn(|c| half(&bytes[pixel * 8 + c * 2..]))
+    };
+    let occlusion = |strength: f32| 1. + strength * (f32::from(RED) / 255. - 1.);
+    for strength in [1., 0.5] {
+        let mut values = scene.material(material).unwrap();
+        values.occlusion_strength = strength;
+        scene.set_material(&queue, material, values).unwrap();
+        for quality in [Quality::Off, Quality::Medium] {
+            let frame = render(
+                &device,
+                &queue,
+                &mut scene,
+                &mut renderer,
+                &settings,
+                &input,
+                &output,
+                quality,
+            );
+            let pixels = SIZE[0] as usize * SIZE[1] as usize;
+            let ambient: Vec<f32> =
+                match renderer.diagnostic_target(diagnostics::DiagnosticTarget::AmbientOcclusion) {
+                    Some(target) => read(&device, &queue, target.texture(), 4)
+                        .chunks_exact(4)
+                        .map(|texel| u32::from_le_bytes(texel.try_into().unwrap()) as f32 / 255.)
+                        .collect(),
+                    None => vec![1.; pixels],
+                };
+            let depth: Vec<f32> = frame.geometry[0]
+                .chunks_exact(4)
+                .map(|texel| f32::from_le_bytes(texel.try_into().unwrap()))
+                .collect();
+            let mut lit = 0;
+            let mut both = 0;
+            for pixel in (0..pixels).filter(|&pixel| depth[pixel] > 0.) {
+                let (color, composite) = (rgb(&frame.color, pixel), rgb(&frame.composite, pixel));
+                let visibility = occlusion(strength).min(ambient[pixel]);
+                lit += 1;
+                if ambient[pixel] < 0.9 {
+                    both += 1;
+                }
+                for c in 0..3 {
+                    let expected = color[c] * visibility;
+                    let tolerance = color[c] * 0.5 / 126. + expected / 512. + 1e-5;
+                    assert!(
+                        (composite[c] - expected).abs() <= tolerance,
+                        "{quality:?}, strength {strength}, pixel {pixel} channel {c}: composite {} for colour {} at visibility {visibility}",
+                        composite[c],
+                        color[c]
+                    );
+                }
+            }
+            assert!(
+                lit > 100,
+                "the box and floor must cover the frame: {lit} pixels"
+            );
+            if quality == Quality::Medium {
+                assert!(
+                    both >= 8,
+                    "the box must occlude the floor at its contact: {both} pixels"
+                );
+            }
+        }
+    }
+    // Forward shading: the surfaces blended, at strength 0 and then 1.
+    let mut blended = |strength: f32| {
+        let mut values = scene.material(material).unwrap();
+        values.occlusion_strength = strength;
+        values.alpha = AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+        };
+        scene.set_material(&queue, material, values).unwrap();
+        render(
+            &device,
+            &queue,
+            &mut scene,
+            &mut renderer,
+            &settings,
+            &input,
+            &output,
+            Quality::Off,
+        )
+        .composite
+    };
+    let unoccluded = blended(0.);
+    let occluded = blended(1.);
+    assert!(
+        brightness(&unoccluded) > 1.,
+        "the blended surfaces must be lit"
+    );
+    for pixel in 0..SIZE[0] as usize * SIZE[1] as usize {
+        let (before, after) = (rgb(&unoccluded, pixel), rgb(&occluded, pixel));
+        for c in 0..3 {
+            let expected = before[c] * occlusion(1.);
+            assert!(
+                (after[c] - expected).abs() <= before[c] / 256. + 1e-5,
+                "blended pixel {pixel} channel {c}: {} for {} unoccluded",
+                after[c],
+                before[c]
+            );
+        }
+    }
 }

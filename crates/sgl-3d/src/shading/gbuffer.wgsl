@@ -5,11 +5,14 @@
 //  [-1, 1] world-space octahedral coordinates.
 // material: coat perceptual roughness, base perceptual roughness, coat
 //  strength, environment scale.
-// f0: specular reflectance at normal incidence; in alpha, 0 where nothing
-//  lit was drawn (unlit materials and the clear), 0.5 on a lit surface that
-//  takes no baked scene lights and 1 on one that takes them
-//  (takes_baked_lights in baked_lighting.wgsl), decoded at the midpoints
-//  (gbuffer_lit, gbuffer_takes_baked_lights).
+// f0: specular reflectance at normal incidence; in alpha, one 8-bit code:
+//  0 where nothing lit was drawn (unlit materials and the clear); on a lit
+//  surface, its material's occlusion in 126ths, plus 1, and 127 more where
+//  it takes the baked scene lights (takes_baked_lights in
+//  baked_lighting.wgsl): 1-127 and 128-254, decoded at the midpoints
+//  (gbuffer_lit, gbuffer_takes_baked_lights, gbuffer_occlusion), as Godot
+//  b130438 packs a flag beside 7-bit roughness in one 8-bit channel, its
+//  halves apart (scene_forward_clustered.glsl, normal_roughness_output_buffer).
 // anisotropy: world tangent in xyz, strength in w.
 // motion: current minus previous unjittered UV, +y down, at most two screens
 //  along its longer axis (gbuffer_encode_motion).
@@ -108,20 +111,33 @@ fn gbuffer_surface_lobe(surface_depth:f32,opaque_depth:f32,receiver:vec4<f32>,no
  return gbuffer_traced_lobe(normals,material,f0);
 }
 
-// F0 and its flags: whether the surface is `lit`, and whether it takes the
-// baked scene lights (`takes_baked`), which the ray-traced shadow trace
-// reads to cast no ray toward a baked light at a receiver that never takes
-// it. An unlit surface records 0 whatever it would take.
-fn gbuffer_encode_f0(f0:vec3<f32>,lit:bool,takes_baked:bool)->vec4<f32> {
- return vec4(f0,select(0.,select(.5,1.,takes_baked),lit));
+// F0 with whether the surface is `lit`, whether it takes the baked scene
+// lights (`takes_baked`), which the ray-traced shadow trace reads to cast no
+// ray toward a baked light at a receiver that never takes it, and its
+// material's `occlusion` (material_occlusion), which source completion
+// takes with the frame's ambient occlusion. An unlit surface records 0
+// whatever it would take.
+const GBUFFER_OCCLUSION_STEPS:f32=126.;
+fn gbuffer_encode_f0(f0:vec3<f32>,lit:bool,takes_baked:bool,occlusion:f32)->vec4<f32> {
+ var code=0.;
+ if lit {
+  code=1.+round(saturate(occlusion)*GBUFFER_OCCLUSION_STEPS)+select(0.,127.,takes_baked);
+ }
+ return vec4(f0,code/255.);
 }
 fn gbuffer_lit(packed:vec4<f32>)->bool {
- return packed.a>=.25;
+ return packed.a*255.>=.5;
 }
 // Whether a lit surface takes baked scene lights (Light::baked), as the
 // lighting pass decides it for the surface's fragment.
 fn gbuffer_takes_baked_lights(packed:vec4<f32>)->bool {
- return packed.a>=.75;
+ return packed.a*255.>=127.5;
+}
+// A lit surface's material occlusion, to 1/126.
+fn gbuffer_occlusion(packed:vec4<f32>)->f32 {
+ let code=round(packed.a*255.);
+ let steps=code-select(1.,128.,gbuffer_takes_baked_lights(packed));
+ return saturate(steps/GBUFFER_OCCLUSION_STEPS);
 }
 
 // The motion of a point from its unjittered clip positions in this frame and

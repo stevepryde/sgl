@@ -17,6 +17,7 @@ pub(crate) static COMPLETION: shading::Module = shading::Module {
         &shading::GBUFFER,
         &shading::PROBE_SAMPLING,
         &shading::SPECULAR_LOBES,
+        &shading::OCCLUSION,
         &shading::PROBE_COLLECTION,
         &shading::FULLSCREEN_VS,
         &shading::FOG,
@@ -91,8 +92,8 @@ pub(crate) struct Inputs<'a> {
     pub depth: &'a wgpu::TextureView,
     /// Lit group 0's lookup tables, for the DFG table.
     pub lookup_tables: &'a wgpu::TextureView,
-    /// Ambient visibility that occludes environment and probe specular,
-    /// and ambient diffuse in the `diffuse_occlusion` variant.
+    /// Ambient visibility that, with each receiver's material occlusion,
+    /// occludes its ambient diffuse and environment and probe specular.
     pub ambient_occlusion: &'a wgpu::TextureView,
     pub environment: Environment<'a>,
 }
@@ -152,9 +153,6 @@ pub(crate) struct Variant {
     /// Completion writes the incident radiance, which only a screen-space
     /// method reads.
     pub incident: bool,
-    /// Completion occludes receivers' ambient diffuse by the ambient
-    /// visibility: while ambient occlusion runs.
-    pub diffuse_occlusion: bool,
 }
 
 /// Source completion and screen-space composition compiled for one variant,
@@ -181,10 +179,6 @@ fn completion(device: &wgpu::Device, variant: Variant) -> Completion {
         (
             "incident_radiance_enabled",
             f64::from(u8::from(variant.incident)),
-        ),
-        (
-            "diffuse_occlusion_enabled",
-            f64::from(u8::from(variant.diffuse_occlusion)),
         ),
     ];
     let compilation_options = || wgpu::PipelineCompilationOptions {
