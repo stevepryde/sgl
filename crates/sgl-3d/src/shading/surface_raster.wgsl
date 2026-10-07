@@ -147,7 +147,7 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  s.lightmap_uv=i.lightmap_uv;
  s.lightmap_bounds=i.lightmap_bounds;
  s.baked_irradiance=objects[object].baked_irradiance;
- if material.iridescence>0. {
+ if films_enabled && material.iridescence>0. {
   let strength=material_iridescence(material,material_iridescence_texel(i.uv));
   let thickness=material_iridescence_thickness(material,material_iridescence_thickness_texel(i.uv));
   s.film=surface_film(s,strength,material.iridescence_ior,thickness);

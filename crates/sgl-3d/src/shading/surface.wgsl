@@ -162,11 +162,10 @@ struct SurfaceFilm {
 // where metallic leaves its F0 a share: a full metal reflects nothing of
 // the dielectric's, nor diffuses, and a dielectric nothing of the metal's.
 fn surface_film(surface:Surface,strength:f32,ior:f32,thickness:f32)->SurfaceFilm {
- var film=SurfaceFilm(0.,surface.dielectric_f0,surface.base.rgb,1.);
  if !films_enabled || strength<=0. || thickness<=0. {
-  return film;
+  return SurfaceFilm();
  }
- film.strength=strength;
+ var film=SurfaceFilm(strength,surface.dielectric_f0,surface.base.rgb,1.);
  let nv=specular_nv(surface.normal,surface.view);
  if surface.metallic<1. {
   let dielectric=iridescence_fresnel(1.,ior,surface.dielectric_f0,thickness,nv);

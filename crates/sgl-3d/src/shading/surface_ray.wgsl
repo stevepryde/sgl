@@ -145,7 +145,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.lightmap_uv=hit.lightmap_uv;
  s.lightmap_bounds=hit.lightmap_bounds;
  s.baked_irradiance=objects[hit.instance_id].baked_irradiance;
- if material.values.iridescence>0. {
+ if films_enabled && material.values.iridescence>0. {
   let strength=material_iridescence(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE],hit.uv,material.wrap,false));
   let thickness=material_iridescence_thickness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE_THICKNESS],hit.uv,material.wrap,false));
   s.film=surface_film(s,strength,material.values.iridescence_ior,thickness);
