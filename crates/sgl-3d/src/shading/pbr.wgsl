@@ -163,8 +163,12 @@ fn pbr_sized_light(direction:vec3<f32>,size:f32,reflected:vec3<f32>,view:vec3<f3
  let centerToRay=LtFdotR*reflected-direction;
  let closestPoint=direction+centerToRay*saturate(size*inverseSqrt(max(dot(centerToRay,centerToRay),1e-12)));
  let l=normalize(closestPoint);
- // The light's cone in half-vector space at the representative point.
- let lh=max(dot(l,normalize(view+l)),.0001);
+ // The light's cone in half-vector space at the representative point, l.h
+ // of unit l and view, sqrt((1 + v.l) / 2), with no half vector to
+ // normalise. It is 0 only for a light straight behind the view, at
+ // grazing, where the Jacobian is unbounded: the floor keeps alpha' finite,
+ // and saturate holds it at 1, the widest lobe, there.
+ let lh=sqrt(max((1.+dot(view,l))*.5,1e-8));
  let a=rough*rough;
  let a_prime=saturate(a+size/(2.*sqrt(lh)));
  let normalizationFactor=a/a_prime;
