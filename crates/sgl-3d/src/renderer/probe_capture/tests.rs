@@ -713,9 +713,9 @@ fn a_capture_stores_a_sub_texel_emitter_at_its_solid_angle() {
     const FACE_SIZE: u32 = 128;
     const RADIANCE: f32 = 4.;
     // The face's half-width is 1 at unit distance.
-    let texel = 2. / f64::from(FACE_SIZE);
-    let x = [0.0213, 0.0213 + 0.6 * texel];
-    let y = [-0.0517, -0.0517 + 8. * texel];
+    let texel_width = 2. / f64::from(FACE_SIZE);
+    let x = [0.0213, 0.0213 + 0.6 * texel_width];
+    let y = [-0.0517, -0.0517 + 8. * texel_width];
     let mut strip = crate::test_support::cube();
     strip.meshes = vec![CpuMesh {
         vertices: [[x[0], y[0]], [x[1], y[0]], [x[1], y[1]], [x[0], y[1]]]
@@ -773,8 +773,11 @@ fn a_capture_stores_a_sub_texel_emitter_at_its_solid_angle() {
         for (index, texel) in texels[..6 * size * size * 4].chunks_exact(4).enumerate() {
             let (column, row) = ((index % size) as f64, (index / size % size) as f64);
             let solid_angle = rectangle_solid_angle(
-                [-1. + column * texel, -1. + (column + 1.) * texel],
-                [-1. + row * texel, -1. + (row + 1.) * texel],
+                [
+                    -1. + column * texel_width,
+                    -1. + (column + 1.) * texel_width,
+                ],
+                [-1. + row * texel_width, -1. + (row + 1.) * texel_width],
             );
             for (sum, value) in sums.iter_mut().zip(texel) {
                 *sum += f64::from(crate::test_support::half(&value.to_le_bytes())) * solid_angle;
@@ -792,10 +795,14 @@ fn a_capture_stores_a_sub_texel_emitter_at_its_solid_angle() {
     let (least, most) = (bound(-half_sample) * 0.99, bound(half_sample) * 1.01);
     for c in 0..3 {
         let stored = lit[c] - dark[c];
+        eprintln!(
+            "capture: channel {c} stores {} of the strip's energy",
+            stored / bound(0.)
+        );
         assert!(
             (least..=most).contains(&stored),
-            "channel {c}: the probe stores {stored} sr of the strip's radiance, \
-             expected {least}..{most} (exactly {})",
+            "channel {c}: the probe stores energy {stored}, expected {least}..{most} \
+             (exactly {})",
             bound(0.)
         );
     }

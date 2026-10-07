@@ -120,7 +120,7 @@ impl ProbePrefilter {
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_SRC;
-        let reduced = usage | wgpu::TextureUsages::STORAGE_BINDING;
+        let reduced = usage | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_DST;
         let rendered_mip_count = (capture_size / face_size).ilog2() + 1;
         let rendered = image(
             device,
@@ -138,7 +138,7 @@ impl ProbePrefilter {
             6,
             mip_count,
             crate::shading::gbuffer::COLOR,
-            reduced | wgpu::TextureUsages::COPY_DST,
+            reduced,
             "specular probe capture cube",
         );
         let auxiliary = |format, label| {
