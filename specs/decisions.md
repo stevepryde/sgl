@@ -307,3 +307,30 @@ Use the [current specs](README.md) for implementation and the
   Rationale: almost no games use hardware ray tracing, so no feature may
   depend on it; a software path too slow to use adds nothing over the
   fallback a feature already has.
+
+- **D-32** Owner decision, 2026-10-07 (#248): SGL3D's lighting model is a
+  defined hybrid of references, chosen after comparing its shading with
+  three.js r185, Filament ef1a133, Bevy 9d12036, Godot b130438, Wicked
+  4323a33 and the Khronos glTF Sample Renderer:
+  - material meaning (F0, F90, layering order and extension semantics)
+    follows glTF 2.0 and its KHR extensions, with Khronos's sample renderer
+    as the reference;
+  - core shading maths and energy treatment follow Filament, ported from
+    Bevy's WGSL where Bevy follows Filament;
+  - an extension lobe that Filament lacks, or defines differently from KHR,
+    follows three.js r185;
+  - rectangle lights follow Bevy and ltc_code.
+
+  Every indirect irradiance source (the environment's diffuse light, the
+  hemisphere fill, lightmaps, irradiance atlas charts, ambient cubes and
+  both volumes) lights a surface by one rule. Two additions follow the same
+  references: glTF's diffuse coupling, which dims a dielectric's diffuse
+  under each light by the Fresnel its specular takes, and sized highlights,
+  Karis's representative point for a point or spot light's radius and the
+  directional light's disc.
+  Rationale: the three.js-derived direct-light multiple scattering lost
+  energy (a rough white metal reflected 0.90, 0.84 and 0.72 of a white
+  furnace at roughness 0.5, 0.75 and 1.0) and disagreed with the
+  environment's, and indirect diffuse was weighted by its source; one named
+  reference per concern fixes them at their cause (S3D-5) and tells later
+  changes which engine to port from.

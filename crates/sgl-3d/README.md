@@ -2168,10 +2168,9 @@ mesh without tangent frames drawn with an anisotropic material, returns a
 Directional, point and spot lights and secondary hit shading use anisotropic GGX;
 rectangle lights use the isotropic GGX fit, as Bevy's do. The base
 lobe in environment and connected probes uses the KHR bent-normal approximation;
-clearcoat and screen-space rays remain isotropic. Existing isotropic DFG compensation
-and reflection filters remain approximations: narrow reflected lights can have
-large errors. [Equations and measured limits](ANISOTROPY.md)
-separate shader conformance from content fidelity. Receiver transport adds one
+clearcoat and screen-space rays remain isotropic. The isotropic multiple-scattering
+gain and reflection filters remain approximations: narrow reflected lights can
+have large errors. Receiver transport adds one
 RGBA16F target (8 bytes/pixel); fused rendering needs eight color attachments and
 64 attachment-budget bytes, with separate material rendering on lower limits.
 The procedural example supports `--anisotropy 0.5` to exercise this path.
