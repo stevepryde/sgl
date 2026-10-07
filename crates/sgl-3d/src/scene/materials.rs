@@ -15,7 +15,10 @@ use group::{Bound, Groups};
 use maps::{InEffect, authored, authored_maps};
 use std::collections::HashMap;
 use std::ops::Range;
-use validate::{validate_alpha, validate_anisotropy, validate_normal_layers, validate_reflectance};
+use validate::{
+    validate_alpha, validate_anisotropy, validate_iridescence, validate_normal_layers,
+    validate_reflectance,
+};
 
 pub(crate) struct Material {
     pub values: SurfaceMaterial,
@@ -186,6 +189,7 @@ impl Materials {
             validate_anisotropy(&values, 0)?;
             validate_alpha(&values)?;
             validate_reflectance(&values)?;
+            validate_iridescence(&values)?;
             validate_normal_layers(&values, authored_maps(material), material.wrap)?;
         }
         Ok(())
@@ -356,6 +360,7 @@ impl Materials {
         validate_anisotropy(&values, material.untangented)?;
         validate_alpha(&values)?;
         validate_reflectance(&values)?;
+        validate_iridescence(&values)?;
         validate_normal_layers(&values, material.maps, material.bound.wrap)?;
         if material.values != values {
             if material.values.caster_values() != values.caster_values() {

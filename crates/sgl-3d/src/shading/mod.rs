@@ -15,6 +15,8 @@ pub(crate) mod deformation;
 pub(crate) mod dynamic_gi;
 pub(crate) mod fog;
 pub(crate) mod gbuffer;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod iridescence_tests;
 #[cfg(test)]
 pub(crate) mod layout_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -203,6 +205,11 @@ pub(crate) static PACKED_VERTEX: Module = Module {
 pub(crate) static ANISOTROPY: Module = Module {
     name: "anisotropy",
     source: include_str!("anisotropy.wgsl"),
+    deps: &[],
+};
+pub(crate) static IRIDESCENCE: Module = Module {
+    name: "iridescence",
+    source: include_str!("iridescence.wgsl"),
     deps: &[],
 };
 /// Lit group 0's lookup tables: their layers and the DFG table's lookup.
@@ -525,6 +532,7 @@ pub(crate) static SURFACE: Module = Module {
     source: include_str!("surface.wgsl"),
     deps: &[
         &ANISOTROPY,
+        &IRIDESCENCE,
         &PBR,
         &DFG,
         &SPECULAR_LOBES,

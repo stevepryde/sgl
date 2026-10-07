@@ -105,10 +105,40 @@ pub struct Material {
     /// nonnegative (`KHR_materials_specular`'s `specularColorFactor`): the
     /// F0 is the IOR's times this, at most 1, times `specular`.
     pub specular_color: [f32; 3],
-    /// Scalar clearcoat intensity.
+    /// Clearcoat intensity (`KHR_materials_clearcoat`'s `clearcoatFactor`).
     pub clearcoat: f32,
-    /// Clearcoat perceptual roughness.
+    /// Clearcoat perceptual roughness (`clearcoatRoughnessFactor`).
     pub coat_roughness: f32,
+    /// Clearcoat image index, sampled as linear data: its red channel
+    /// multiplies `clearcoat` (`clearcoatTexture`).
+    pub clearcoat_texture: Option<usize>,
+    /// Clearcoat roughness image index, sampled as linear data: its green
+    /// channel multiplies `coat_roughness` (`clearcoatRoughnessTexture`).
+    pub coat_roughness_texture: Option<usize>,
+    /// Tangent-space clearcoat normal image index, sampled as linear data
+    /// (`clearcoatNormalTexture`): the coat's normal, on the base normal
+    /// map's tangent frame. Without it the coat follows the geometry
+    /// normal, whatever the base's normal map does.
+    pub coat_normal_texture: Option<usize>,
+    /// Scale applied to the clearcoat normal map's tangent-space X and Y
+    /// components (`clearcoatNormalTexture.scale`).
+    pub coat_normal_scale: f32,
+    /// Strength of a thin film over the surface in `0..=1`
+    /// (`KHR_materials_iridescence`'s `iridescenceFactor`): 0 none.
+    pub iridescence: f32,
+    /// The film's index of refraction, at least 1 (`iridescenceIor`).
+    pub iridescence_ior: f32,
+    /// The film's thinnest and thickest thickness in nanometres
+    /// (`iridescenceThicknessMinimum`, `iridescenceThicknessMaximum`), each
+    /// finite and nonnegative: the thickness map's green channel mixes from
+    /// the first to the second, and without the map the film is the second.
+    pub iridescence_thickness: [f32; 2],
+    /// Iridescence image index, sampled as linear data: its red channel
+    /// multiplies `iridescence` (`iridescenceTexture`).
+    pub iridescence_texture: Option<usize>,
+    /// Iridescence thickness image index, sampled as linear data: its green
+    /// channel mixes `iridescence_thickness` (`iridescenceThicknessTexture`).
+    pub iridescence_thickness_texture: Option<usize>,
     /// KHR_materials_anisotropy strength in `0..=1`; zero preserves isotropic shading.
     pub anisotropy_strength: f32,
     /// Counter-clockwise direction rotation in tangent/bitangent space, in radians.
@@ -170,13 +200,75 @@ impl Material {
     pub(crate) fn packed_occlusion(&self) -> bool {
         self.occlusion_texture.is_some() && self.occlusion_texture == self.mr_texture
     }
+
+    /// Every image index it names, each field once: a new map's field
+    /// fails to compile here until it is listed.
+    pub(crate) fn texture_indices(&self) -> [Option<usize>; 12] {
+        let Self {
+            name: _,
+            visibility_group: _,
+            casts_directional_shadow: _,
+            base: _,
+            emissive: _,
+            metallic: _,
+            roughness: _,
+            ior: _,
+            specular: _,
+            specular_color: _,
+            clearcoat: _,
+            coat_roughness: _,
+            clearcoat_texture,
+            coat_roughness_texture,
+            coat_normal_texture,
+            coat_normal_scale: _,
+            iridescence: _,
+            iridescence_ior: _,
+            iridescence_thickness: _,
+            iridescence_texture,
+            iridescence_thickness_texture,
+            anisotropy_strength: _,
+            anisotropy_rotation: _,
+            anisotropy_texture,
+            base_texture,
+            mr_texture,
+            occlusion_texture,
+            occlusion_strength: _,
+            emissive_texture,
+            normal_texture,
+            normal_scale: _,
+            normal_layers: _,
+            bump_texture,
+            bump_scale: _,
+            wrap: _,
+            double_sided: _,
+            unlit: _,
+            emits_into_gi: _,
+            alpha: _,
+        } = self;
+        [
+            *base_texture,
+            *mr_texture,
+            *occlusion_texture,
+            *emissive_texture,
+            *normal_texture,
+            *bump_texture,
+            *anisotropy_texture,
+            *clearcoat_texture,
+            *coat_roughness_texture,
+            *coat_normal_texture,
+            *iridescence_texture,
+            *iridescence_thickness_texture,
+        ]
+    }
 }
 
 impl Default for Material {
     /// glTF 2.0's default material, which the loader gives a primitive
     /// without one: unnamed, a white base, metallic and roughness 1, IOR
-    /// 1.5, specular 1 untinted, no emission, clearcoat, anisotropy, bump or
-    /// textures, normal scale and occlusion strength 1, no normal layers,
+    /// 1.5, specular 1 untinted, no emission, clearcoat, iridescence (its
+    /// film's IOR 1.3 and thickness 100 to 400 nm as glTF's defaults),
+    /// anisotropy, bump or textures, normal, coat normal and occlusion
+    /// scales 1, no normal layers,
     /// repeating, single-sided, lit and opaque, in visibility
     /// group 0, casting directional shadows and emitting into global
     /// illumination. Set what differs and take the rest with
@@ -195,6 +287,15 @@ impl Default for Material {
             specular_color: [1.0; 3],
             clearcoat: 0.0,
             coat_roughness: 0.0,
+            clearcoat_texture: None,
+            coat_roughness_texture: None,
+            coat_normal_texture: None,
+            coat_normal_scale: 1.0,
+            iridescence: 0.0,
+            iridescence_ior: 1.3,
+            iridescence_thickness: [100.0, 400.0],
+            iridescence_texture: None,
+            iridescence_thickness_texture: None,
             anisotropy_strength: 0.0,
             anisotropy_rotation: 0.0,
             anisotropy_texture: None,

@@ -36,6 +36,13 @@ struct Material {
  specular:f32,
  normal_layers:array<NormalLayer,2>,
  maps:u32,
+ // glTF's clearcoatNormalTexture.scale, with MATERIAL_MAP_COAT_NORMAL.
+ coat_normal_scale:f32,
+ // KHR_materials_iridescence's film: its strength (0 none), IOR and
+ // thinnest and thickest thickness in nanometres.
+ iridescence:f32,
+ iridescence_ior:f32,
+ iridescence_thickness:vec2<f32>,
 }
 const MATERIAL_UNLIT:u32=1u;
 const MATERIAL_DOUBLE_SIDED:u32=2u;
@@ -53,8 +60,9 @@ const MATERIAL_EMITS_INTO_GI:u32=512u;
 // was added with whose binding the device binds, a bump map only without a
 // normal map, and an occlusion map in the red channel of its
 // metallic-roughness map (ORM packing). A map whose white texel is not its
-// neutral (the normal and bump maps, the anisotropy direction) is read only
-// with its bit, on the raster and ray paths alike.
+// neutral (the normal, bump and clearcoat normal maps, the anisotropy
+// direction) is read only with its bit, on the raster and ray paths alike;
+// every other map's white texel leaves its factor alone.
 const MATERIAL_MAP_BASE:u32=1u;
 const MATERIAL_MAP_METALLIC_ROUGHNESS:u32=2u;
 const MATERIAL_MAP_OCCLUSION:u32=4u;
@@ -62,6 +70,11 @@ const MATERIAL_MAP_EMISSION:u32=8u;
 const MATERIAL_MAP_NORMAL:u32=16u;
 const MATERIAL_MAP_BUMP:u32=32u;
 const MATERIAL_MAP_ANISOTROPY:u32=64u;
+const MATERIAL_MAP_CLEARCOAT:u32=128u;
+const MATERIAL_MAP_COAT_ROUGHNESS:u32=256u;
+const MATERIAL_MAP_COAT_NORMAL:u32=512u;
+const MATERIAL_MAP_IRIDESCENCE:u32=1024u;
+const MATERIAL_MAP_IRIDESCENCE_THICKNESS:u32=2048u;
 // The share of ambient light that reaches a texel of material `m` whose
 // metallic-roughness map reads `mr`: with MATERIAL_MAP_OCCLUSION its red
 // channel at occlusion_strength, as glTF 2.0 applies occlusionTexture
@@ -84,6 +97,42 @@ fn material_dielectric_f0(m:Material)->vec3<f32> {
 fn material_mapped_normal(m:Material,texel:vec4<f32>)->vec3<f32> {
  let mapped=texel.xyz*2.-vec3(1.);
  return vec3(mapped.xy*m.normal_scale,mapped.z);
+}
+// Material `m`'s clearcoat at a texel whose clearcoat map reads `texel`
+// (white without one): its factor times the red channel, as
+// KHR_materials_clearcoat defines clearcoatTexture and the Khronos glTF
+// Sample Renderer 0686eb2 reads it (source/Renderer/shaders/
+// material_info.glsl 379–382).
+fn material_coat(m:Material,texel:vec4<f32>)->f32 {
+ return m.coat*texel.r;
+}
+// Material `m`'s clearcoat perceptual roughness at a texel whose clearcoat
+// roughness map reads `texel`: its factor times the green channel
+// (clearcoatRoughnessTexture; material_info.glsl 384–387, and three.js
+// 2431a09's lights_physical_fragment, which reads .y).
+fn material_coat_roughness(m:Material,texel:vec4<f32>)->f32 {
+ return m.coat_roughness*texel.g;
+}
+// The tangent-space normal of material `m`'s clearcoat normal map texel
+// `texel`: its X and Y scaled by coat_normal_scale, normalised, as the
+// Khronos sample renderer builds it (material_info.glsl 200–202) before its
+// TBN, the base normal map's tangent frame about the geometry normal.
+fn material_coat_normal(m:Material,texel:vec4<f32>)->vec3<f32> {
+ let mapped=texel.xyz*2.-vec3(1.);
+ return normalize(vec3(mapped.xy*m.coat_normal_scale,mapped.z));
+}
+// Material `m`'s film strength at a texel whose iridescence map reads
+// `texel`: its factor times the red channel (iridescenceTexture;
+// material_info.glsl 323–325).
+fn material_iridescence(m:Material,texel:vec4<f32>)->f32 {
+ return m.iridescence*texel.r;
+}
+// Material `m`'s film thickness in nanometres at a texel whose iridescence
+// thickness map reads `texel`: the green channel mixed from the thinnest to
+// the thickest, the thickest without a map, whose white texel reads 1
+// (iridescenceThicknessTexture; material_info.glsl 321, 327–330).
+fn material_iridescence_thickness(m:Material,texel:vec4<f32>)->f32 {
+ return mix(m.iridescence_thickness.x,m.iridescence_thickness.y,texel.g);
 }
 // Where normal layer `layer` samples its material's normal map at material
 // UV `uv` at the frame's animation phase `phase` (Frame.animation_phase):

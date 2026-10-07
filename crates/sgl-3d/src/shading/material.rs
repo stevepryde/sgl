@@ -124,7 +124,15 @@ pub(crate) struct MaterialUniform {
     pub normal_layers: [NormalLayerUniform; 2],
     /// Its maps in effect, `MATERIAL_MAP_*` bits (`MaterialMaps`).
     pub maps: u32,
-    pub padding: [u32; 3],
+    /// glTF's `clearcoatNormalTexture.scale`, read with
+    /// `MATERIAL_MAP_COAT_NORMAL`.
+    pub coat_normal_scale: f32,
+    /// KHR_materials_iridescence's film: its strength (0 none), IOR and
+    /// thinnest and thickest thickness in nanometres.
+    pub iridescence: f32,
+    pub iridescence_ior: f32,
+    pub iridescence_thickness: [f32; 2],
+    pub padding: [u32; 2],
 }
 
 impl MaterialUniform {
@@ -173,7 +181,11 @@ impl MaterialUniform {
                     layers.each_ref().map(NormalLayerUniform::new)
                 }),
             maps: maps.0,
-            padding: [0; 3],
+            coat_normal_scale: values.coat_normal_scale,
+            iridescence: values.iridescence,
+            iridescence_ior: values.iridescence_ior,
+            iridescence_thickness: values.iridescence_thickness,
+            padding: [0; 2],
         }
     }
 

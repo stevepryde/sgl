@@ -20,22 +20,36 @@ fn surface_roughness(rough:f32,n:vec3<f32>,i:Fragment)->f32 {
 fn surface_geometry_normal(i:Fragment,front:bool)->vec3<f32> {
  return normalize(i.normal)*select(-1.0,1.0,front);
 }
-fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
+// The tangent frame a normal map's texel is taken on, the base's and the
+// coat's alike, as KHR_materials_clearcoat takes the coat's on the base's
+// (the Khronos glTF Sample Renderer 0686eb2's NormalInfo t and b,
+// material_info.glsl 196–207): the authored tangent frame where the
+// material is anisotropic, else three.js r185's derivative cotangent frame
+// (TangentUtils), its axes scaled alike.
+fn surface_map_frame(i:Fragment,front:bool)->mat3x3<f32> {
+ if material.anisotropy_strength>0. {
+  return surface_tangent_frame(i,front);
+ }
  let face=select(-1.0,1.0,front);
- var n=surface_geometry_normal(i,front);
+ let n=surface_geometry_normal(i,front);
  let dx=dpdx(i.world);
  let dy=dpdy(i.world);
  let uv_dx=dpdx(i.uv);
  let uv_dy=dpdy(i.uv);
+ // Three185.1 TangentUtils uses GLSL dFdy; its WebGPU builder lowers that
+ // to -dpdy. Negate BOTH world and UV Y derivatives, then reverse the
+ // tangent/bitangent on accepted backs (normal already carries face).
+ let a=cross(-dy,n);
+ let b=cross(n,dx);
+ let tangent=(a*uv_dx.x-b*uv_dy.x)*face;
+ let bitangent=(a*uv_dx.y-b*uv_dy.y)*face;
+ let scale=inverseSqrt(max(max(dot(tangent,tangent),dot(bitangent,bitangent)),0.0000001));
+ return mat3x3(tangent*scale,bitangent*scale,n);
+}
+fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
+ let face=select(-1.0,1.0,front);
+ var n=surface_geometry_normal(i,front);
  if normal_maps_enabled && (material.maps&MATERIAL_MAP_NORMAL)!=0u {
-  // Three185.1 TangentUtils uses GLSL dFdy; its WebGPU builder lowers that
-  // to -dpdy. Negate BOTH world and UV Y derivatives, then reverse the
-  // tangent/bitangent on accepted backs (normal already carries face).
-  let a=cross(-dy,n);
-  let b=cross(n,dx);
-  let tangent=(a*uv_dx.x-b*uv_dy.x)*face;
-  let bitangent=(a*uv_dx.y-b*uv_dy.y)*face;
-  let scale=inverseSqrt(max(max(dot(tangent,tangent),dot(bitangent,bitangent)),0.0000001));
   var mapped:vec3<f32>;
   if (material.flags&MATERIAL_NORMAL_LAYERS)!=0u {
    let phase=frame.animation_phase;
@@ -45,11 +59,7 @@ fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
   } else {
    mapped=material_mapped_normal(material,textureSampleBias(relief_map,tex_sampler,i.uv,view.mip_bias));
   }
-  if material.anisotropy_strength>0. {
-   n=normalize(surface_tangent_frame(i,front)*mapped);
-  } else {
-   n=normalize(mat3x3(tangent*scale,bitangent*scale,n)*mapped);
-  }
+  n=normalize(surface_map_frame(i,front)*mapped);
  }
  // Three185.1 MaterialNode.NORMAL selects normalMap OR ELSE bumpMap: a bump
  // map is in effect only without a normal map (scene::materials::maps), so
@@ -106,8 +116,25 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  s.dielectric_f0=material_dielectric_f0(material);
  s.specular=material.specular;
  s.roughness=surface_roughness(decaled.roughness,n,i);
- s.coat=material.coat;
- s.coat_roughness=surface_roughness(material.coat_roughness,n,i);
+ // The coat's and the film's maps are sampled only where their factor
+ // leaves them anything to scale. Without a coat normal map, or with the
+ // normal-map diagnostic switch off, the coat follows the geometry normal.
+ var coat_roughness=material.coat_roughness;
+ s.coat_normal=geometry_normal;
+ if material.coat>0. {
+  s.coat=material_coat(material,material_clearcoat_texel(i.uv));
+  coat_roughness=material_coat_roughness(material,material_coat_roughness_texel(i.uv));
+  if normal_maps_enabled && (material.maps&MATERIAL_MAP_COAT_NORMAL)!=0u {
+   s.coat_normal=normalize(surface_map_frame(i,front)*material_coat_normal(material,material_coat_normal_texel(i.uv)));
+  }
+ }
+ s.coat_roughness=surface_roughness(coat_roughness,n,i);
+ s.iridescence_ior=material.iridescence_ior;
+ s.iridescence_thickness=material.iridescence_thickness.y;
+ if material.iridescence>0. {
+  s.iridescence=material_iridescence(material,material_iridescence_texel(i.uv));
+  s.iridescence_thickness=material_iridescence_thickness(material,material_iridescence_thickness_texel(i.uv));
+ }
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.environment_scale;

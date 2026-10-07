@@ -31,20 +31,8 @@ pub(super) fn read_material(
             AlphaMode::Mask { cutoff }
         }
     };
-    let mut clearcoat = 0.0;
-    let mut coat_roughness = 0.0;
-    if let Some(coat) = material.extension_value("KHR_materials_clearcoat") {
-        let object = coat
-            .as_object()
-            .ok_or("clearcoat extension must be an object")?;
-        for key in object.keys() {
-            if !matches!(key.as_str(), "clearcoatFactor" | "clearcoatRoughnessFactor") {
-                return Err(format!("material {name}: unsupported clearcoat property {key}; only scalar clearcoat is supported").into());
-            }
-        }
-        clearcoat = scalar(coat, "clearcoatFactor")?;
-        coat_roughness = scalar(coat, "clearcoatRoughnessFactor")?;
-    }
+    let clearcoat = read_clearcoat(&material, document)?;
+    let iridescence = read_iridescence(&material, document)?;
     let (anisotropy_strength, anisotropy_rotation, anisotropy_texture) =
         read_anisotropy(&material, document)?;
     let ior = read_ior(&material)?;
@@ -99,6 +87,11 @@ pub(super) fn read_material(
         material.normal_texture().map(|t| t.texture()),
         bump_texture.clone(),
         anisotropy_texture.clone(),
+        clearcoat.texture.clone(),
+        clearcoat.roughness_texture.clone(),
+        clearcoat.normal_texture.clone(),
+        iridescence.texture.clone(),
+        iridescence.thickness_texture.clone(),
         // An occlusion map SGL3D samples, the metallic-roughness image on
         // TEXCOORD_0, takes its sampler; an ignored one constrains nothing.
         material
@@ -127,8 +120,17 @@ pub(super) fn read_material(
         ior,
         specular,
         specular_color,
-        clearcoat,
-        coat_roughness,
+        clearcoat: clearcoat.factor,
+        coat_roughness: clearcoat.roughness,
+        clearcoat_texture: clearcoat.texture.map(|t| t.source().index()),
+        coat_roughness_texture: clearcoat.roughness_texture.map(|t| t.source().index()),
+        coat_normal_texture: clearcoat.normal_texture.map(|t| t.source().index()),
+        coat_normal_scale: clearcoat.normal_scale,
+        iridescence: iridescence.factor,
+        iridescence_ior: iridescence.ior,
+        iridescence_thickness: iridescence.thickness,
+        iridescence_texture: iridescence.texture.map(|t| t.source().index()),
+        iridescence_thickness_texture: iridescence.thickness_texture.map(|t| t.source().index()),
         anisotropy_strength,
         anisotropy_rotation,
         anisotropy_texture: anisotropy_texture.map(|t| t.source().index()),
@@ -196,27 +198,174 @@ fn read_anisotropy<'a>(
         return Err(error("anisotropyStrength must be in 0..1").into());
     }
     let rotation = number("anisotropyRotation", 0.0)?;
-    let texture = value
-        .get("anisotropyTexture")
-        .map(|info| -> Result<_> {
-            let info = info
-                .as_object()
-                .ok_or_else(|| error("texture must be an object"))?;
-            if info.get("texCoord").is_some_and(|v| v.as_u64() != Some(0)) {
-                return Err(error("texture requires TEXCOORD_0; export UV0").into());
-            }
-            let index = info
-                .get("index")
-                .and_then(|v| v.as_u64())
-                .and_then(|v| usize::try_from(v).ok())
-                .ok_or_else(|| error("texture index must be a nonnegative integer"))?;
-            document
-                .textures()
-                .nth(index)
-                .ok_or_else(|| error("texture index out of range").into())
-        })
-        .transpose()?;
+    let texture = extension_texture(value, "anisotropyTexture", document, &error)?;
     Ok((strength as f32, rotation as f32, texture))
+}
+
+/// Extension property `key` of `value`, a glTF textureInfo: its texture,
+/// which must lie on TEXCOORD_0. `error` words a refusal.
+fn extension_texture<'a>(
+    value: &serde_json::Value,
+    key: &str,
+    document: &'a gltf::Document,
+    error: &dyn Fn(&str) -> String,
+) -> Result<Option<gltf::Texture<'a>>> {
+    let Some(info) = value.get(key) else {
+        return Ok(None);
+    };
+    let info = info
+        .as_object()
+        .ok_or_else(|| error(&format!("{key} must be an object")))?;
+    if info.get("texCoord").is_some_and(|v| v.as_u64() != Some(0)) {
+        return Err(error(&format!("{key} requires TEXCOORD_0; export UV0")).into());
+    }
+    let index = info
+        .get("index")
+        .and_then(|v| v.as_u64())
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| error(&format!("{key} index must be a nonnegative integer")))?;
+    document
+        .textures()
+        .nth(index)
+        .map(Some)
+        .ok_or_else(|| error(&format!("{key} index out of range")).into())
+}
+
+/// A material's clearcoat layer (KHR_materials_clearcoat).
+struct Clearcoat<'a> {
+    factor: f32,
+    roughness: f32,
+    texture: Option<gltf::Texture<'a>>,
+    roughness_texture: Option<gltf::Texture<'a>>,
+    normal_texture: Option<gltf::Texture<'a>>,
+    normal_scale: f32,
+}
+
+// Authority: Khronos glTF KHR_materials_clearcoat/README.md and schema:
+// clearcoatFactor and clearcoatRoughnessFactor in 0..1, default 0; its
+// three textureInfos, clearcoatNormalTexture's scale defaulting to 1.
+fn read_clearcoat<'a>(
+    material: &gltf::Material<'a>,
+    document: &'a gltf::Document,
+) -> Result<Clearcoat<'a>> {
+    let mut clearcoat = Clearcoat {
+        factor: 0.,
+        roughness: 0.,
+        texture: None,
+        roughness_texture: None,
+        normal_texture: None,
+        normal_scale: 1.,
+    };
+    let Some(value) = material.extension_value("KHR_materials_clearcoat") else {
+        return Ok(clearcoat);
+    };
+    let name = material.name().unwrap_or("unnamed/default");
+    let error = |message: &str| format!("material {name}: clearcoat {message}");
+    let object = value
+        .as_object()
+        .ok_or_else(|| error("extension must be an object"))?;
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "clearcoatFactor"
+                | "clearcoatRoughnessFactor"
+                | "clearcoatTexture"
+                | "clearcoatRoughnessTexture"
+                | "clearcoatNormalTexture"
+                | "extras"
+        ) {
+            return Err(error(&format!("unsupported property {key}")).into());
+        }
+    }
+    clearcoat.factor = scalar(value, "clearcoatFactor")?;
+    clearcoat.roughness = scalar(value, "clearcoatRoughnessFactor")?;
+    clearcoat.texture = extension_texture(value, "clearcoatTexture", document, &error)?;
+    clearcoat.roughness_texture =
+        extension_texture(value, "clearcoatRoughnessTexture", document, &error)?;
+    clearcoat.normal_texture =
+        extension_texture(value, "clearcoatNormalTexture", document, &error)?;
+    if let Some(scale) = value
+        .get("clearcoatNormalTexture")
+        .and_then(|info| info.get("scale"))
+    {
+        clearcoat.normal_scale = scale
+            .as_f64()
+            .map(|v| v as f32)
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| error("clearcoatNormalTexture.scale must be a finite number"))?;
+    }
+    Ok(clearcoat)
+}
+
+/// A material's thin film (KHR_materials_iridescence).
+struct Iridescence<'a> {
+    factor: f32,
+    ior: f32,
+    /// Its thinnest and thickest, in nanometres.
+    thickness: [f32; 2],
+    texture: Option<gltf::Texture<'a>>,
+    thickness_texture: Option<gltf::Texture<'a>>,
+}
+
+// Authority: Khronos glTF KHR_materials_iridescence/README.md and schema:
+// iridescenceFactor in 0..1, default 0; iridescenceIor at least 1, default
+// 1.3; iridescenceThicknessMinimum and Maximum nonnegative nanometres,
+// default 100 and 400; iridescenceTexture and iridescenceThicknessTexture.
+fn read_iridescence<'a>(
+    material: &gltf::Material<'a>,
+    document: &'a gltf::Document,
+) -> Result<Iridescence<'a>> {
+    let mut iridescence = Iridescence {
+        factor: 0.,
+        ior: 1.3,
+        thickness: [100., 400.],
+        texture: None,
+        thickness_texture: None,
+    };
+    let Some(value) = material.extension_value("KHR_materials_iridescence") else {
+        return Ok(iridescence);
+    };
+    let name = material.name().unwrap_or("unnamed/default");
+    let error = |message: &str| format!("material {name}: iridescence {message}");
+    let object = value
+        .as_object()
+        .ok_or_else(|| error("extension must be an object"))?;
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "iridescenceFactor"
+                | "iridescenceTexture"
+                | "iridescenceIor"
+                | "iridescenceThicknessMinimum"
+                | "iridescenceThicknessMaximum"
+                | "iridescenceThicknessTexture"
+                | "extras"
+        ) {
+            return Err(error(&format!("unsupported property {key}")).into());
+        }
+    }
+    let number = |key: &str, default: f32, least: f32| -> Result<f32> {
+        value.get(key).map_or(Ok(default), |number| {
+            number
+                .as_f64()
+                .map(|v| v as f32)
+                .filter(|v| v.is_finite() && *v >= least)
+                .ok_or_else(|| error(&format!("{key} must be a finite number of at least {least}")).into())
+        })
+    };
+    iridescence.factor = number("iridescenceFactor", 0., 0.)?;
+    if iridescence.factor > 1. {
+        return Err(error("iridescenceFactor must be in 0..1").into());
+    }
+    iridescence.ior = number("iridescenceIor", 1.3, 1.)?;
+    iridescence.thickness = [
+        number("iridescenceThicknessMinimum", 100., 0.)?,
+        number("iridescenceThicknessMaximum", 400., 0.)?,
+    ];
+    iridescence.texture = extension_texture(value, "iridescenceTexture", document, &error)?;
+    iridescence.thickness_texture =
+        extension_texture(value, "iridescenceThicknessTexture", document, &error)?;
+    Ok(iridescence)
 }
 
 /// A material's occlusion map (glTF 2.0 `occlusionTexture`).
