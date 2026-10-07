@@ -207,6 +207,7 @@ fn alpha_content() -> Result<Asset, Box<dyn Error>> {
         ],
         images: vec![Image::Compressed(grate)],
         rig: Default::default(),
+        ignored: Vec::new(),
     })
 }
 
@@ -340,12 +341,14 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         ],
         images: Vec::new(),
         rig: Default::default(),
+        ignored: Vec::new(),
     };
     let mut cube = Asset {
         meshes: vec![cuboid(Vec3::ZERO, Vec3::splat(1.6), 0)],
         materials: vec![material([0.7, 0.18, 0.05, 1.], [0.; 3], 0.25, 0.27)],
         images: Vec::new(),
         rig: Default::default(),
+        ignored: Vec::new(),
     };
     cube.materials[0].anisotropy_strength = options.anisotropy;
     cube.materials[0].anisotropy_rotation = std::f32::consts::FRAC_PI_4;

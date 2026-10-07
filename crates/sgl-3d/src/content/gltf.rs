@@ -127,14 +127,55 @@ fn check(options: LoadOptions<'_>) -> Result<()> {
     Ok(())
 }
 
-// The gltf crate exposes generic extension values but does not recognize required
-// KHR_materials_anisotropy. Remove only that declaration for its core validation;
-// all structural validation and every other required extension remain enforced.
+/// The glTF extensions SGL3D honours: a file may require any of them. The
+/// loader reads each itself, from the extension's values.
+const SUPPORTED_EXTENSIONS: [&str; 7] = [
+    "KHR_materials_anisotropy",
+    "KHR_materials_clearcoat",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_ior",
+    "KHR_materials_specular",
+    "KHR_materials_unlit",
+    "EXT_materials_bump",
+];
+
+/// Something in a glTF that SGL3D does not render and the file does not
+/// require, which glTF lets a loader leave out (glTF 2.0 5.17.1): the load
+/// lists it in [`Asset::ignored`] and renders the rest. What the file
+/// requires is never left out: a load fails on it instead.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Ignored {
+    /// An extension the file lists in `extensionsUsed` but not in
+    /// `extensionsRequired`, which SGL3D does not support. What it adds is
+    /// left out: a texture takes its core source, a material its core
+    /// values.
+    Extension(String),
+    /// Material `material`'s occlusion map (an index into
+    /// [`Asset::materials`]): SGL3D samples occlusion only from the red
+    /// channel of the material's metallic-roughness image on `TEXCOORD_0`
+    /// (ORM packing), not yet from an image of its own.
+    OcclusionMap { material: usize },
+    /// Material `material`'s `KHR_materials_specular` specular or specular
+    /// colour texture: SGL3D takes the extension's factors alone so far.
+    SpecularMap { material: usize },
+}
+
+/// The document in `bytes`, validated, and its buffers. glTF 2.0 5.17.2: a
+/// file that requires an extension SGL3D does not support fails to load.
+/// The gltf crate's validation knows none of the material extensions SGL3D
+/// reads itself, so once every required one is known to be supported the
+/// list is cleared for it; all its structural validation remains.
 fn import(bytes: &[u8], base: Option<&Path>) -> Result<(gltf::Document, Vec<gltf::buffer::Data>)> {
     let gltf::Gltf { document, blob } = gltf::Gltf::from_slice_without_validation(bytes)?;
     let mut root = document.into_json();
-    root.extensions_required
-        .retain(|extension| extension != "KHR_materials_anisotropy");
+    if let Some(extension) = root
+        .extensions_required
+        .iter()
+        .find(|extension| !SUPPORTED_EXTENSIONS.contains(&extension.as_str()))
+    {
+        return Err(format!("the file requires glTF extension {extension}, which SGL3D does not support; bake it into the export or add renderer support").into());
+    }
+    root.extensions_required.clear();
     let document = gltf::Document::from_json(root)?;
     let buffers = gltf::import_buffers(&document, base, blob)?;
     Ok((document, buffers))
@@ -227,18 +268,12 @@ fn decode(
     base: Option<&Path>,
     options: LoadOptions<'_>,
 ) -> Result<Asset> {
-    for extension in document.extensions_used() {
-        if !matches!(
-            extension,
-            "KHR_materials_clearcoat"
-                | "KHR_materials_emissive_strength"
-                | "KHR_materials_unlit"
-                | "KHR_materials_anisotropy"
-                | "EXT_materials_bump"
-        ) {
-            return Err(format!("unsupported glTF extension {extension}; bake it into the static export or add renderer support").into());
-        }
-    }
+    // What the file uses but does not require (import refused the rest).
+    let mut ignored: Vec<Ignored> = document
+        .extensions_used()
+        .filter(|extension| !SUPPORTED_EXTENSIONS.contains(extension))
+        .map(|extension| Ignored::Extension(extension.to_owned()))
+        .collect();
     for texture in document.textures() {
         let sampler = texture.sampler();
         if !matches!(sampler.mag_filter(), None | Some(MagFilter::Linear))
@@ -252,9 +287,10 @@ fn decode(
     }
     let mut materials = document
         .materials()
-        .map(|material| {
+        .enumerate()
+        .map(|(index, material)| {
             let strength = material.emissive_strength().unwrap_or(1.0);
-            let mut result = read_material(material, &document)?;
+            let mut result = read_material(material, &document, index, &mut ignored)?;
             if let Some(cap) = options.emissive_strength_cap
                 && strength > cap
             {
@@ -293,6 +329,7 @@ fn decode(
         materials,
         images,
         rig: rigging.rig,
+        ignored,
     })
 }
 
@@ -455,6 +492,7 @@ fn read_node(
                 .map(|uv| uv.into_f32().collect::<Vec<_>>());
             let textured = material.base_texture.is_some()
                 || material.mr_texture.is_some()
+                || material.occlusion_texture.is_some()
                 || material.anisotropy_texture.is_some();
             if textured && uvs.is_none() {
                 return Err(format!("{label}: textured primitive is missing TEXCOORD_0").into());

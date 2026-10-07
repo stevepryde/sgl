@@ -340,10 +340,15 @@ pub(crate) fn cube() -> crate::asset::Asset {
             emissive: [0.; 3],
             metallic: 0.55,
             roughness: 0.35,
+            ior: 1.5,
+            specular: 1.,
+            specular_color: [1.; 3],
             clearcoat: 0.,
             coat_roughness: 0.,
             base_texture: None,
             mr_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: 1.,
             emissive_texture: None,
             normal_texture: None,
             normal_scale: 1.,
@@ -358,6 +363,7 @@ pub(crate) fn cube() -> crate::asset::Asset {
         }],
         images: vec![],
         rig: Default::default(),
+        ignored: Vec::new(),
     }
 }
 

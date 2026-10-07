@@ -17,14 +17,20 @@ SGL3D needs compute.
 ## Content
 
 - **glTF 2.0 meshes**: triangles with metallic/roughness, normal and
-  bump maps, clearcoat, emission, unlit and `KHR_materials_anisotropy`.
+  bump maps, an occlusion map packed in the metallic-roughness image's red
+  channel (ORM), clearcoat, emission, unlit, `KHR_materials_anisotropy` and
+  the `KHR_materials_ior` and `KHR_materials_specular` factors (a
+  dielectric's F0: water's IOR 1.33 gives 0.02).
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
   `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
   emissive strength cap, images the game supplies, which are never decoded,
   and a selection of mesh nodes for named rigid parts), or a
   procedural `asset::Asset` (`asset::Material::default()` is glTF's default
-  material). Unsupported features return errors rather than
-  partial models. [Limits](../README.md#asset-and-environment-limits).
+  material). A file that requires an extension SGL3D does not support fails
+  to load; one it only uses is left out and listed in `Asset::ignored`,
+  with occlusion maps in an image of their own and specular textures, which
+  SGL3D does not sample yet. Other unsupported features return errors rather
+  than partial models. [Limits](../README.md#asset-and-environment-limits).
 - **Compressed material textures**: a material image is decoded RGBA8, whose
   mips SGL3D filters when it is added, or a BC7 mip chain uploaded as stored
   (`asset::Image::Compressed`, read from KTX2 with
@@ -342,5 +348,6 @@ directional cascades cull by frustum alone. Compressed images
 are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
 not provided.
 
-Also not provided: occlusion textures, tangent generation, runtime probe
-capture, order-independent transparency and refraction.
+Also not provided: occlusion maps in an image of their own, specular
+textures, tangent generation, runtime probe capture, order-independent
+transparency and refraction.

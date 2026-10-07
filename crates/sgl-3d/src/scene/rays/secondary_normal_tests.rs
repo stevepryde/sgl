@@ -76,10 +76,15 @@ fn plane_asset(has_normal_map: bool) -> Asset {
             emissive: [0.; 3],
             metallic: 0.,
             roughness: 0.5,
+            ior: 1.5,
+            specular: 1.,
+            specular_color: [1.; 3],
             clearcoat: 0.,
             coat_roughness: 0.,
             base_texture: None,
             mr_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: 1.,
             emissive_texture: None,
             normal_texture: has_normal_map.then_some(0),
             normal_scale: 1.,
@@ -102,6 +107,7 @@ fn plane_asset(has_normal_map: bool) -> Asset {
             })),
         ],
         rig: Default::default(),
+        ignored: Vec::new(),
     }
 }
 
@@ -181,6 +187,10 @@ fn material_normal_oracle(
                     emission: [0.; 3],
                     metallic: 0.,
                     roughness: 0.5,
+                    ior: 1.5,
+                    specular: 1.,
+                    specular_color: [1.; 3],
+                    occlusion_strength: 1.,
                     clearcoat: 0.,
                     coat_roughness: 0.,
                     normal_scale: 1.,
@@ -195,7 +205,7 @@ fn material_normal_oracle(
                     double_sided: true,
                     alpha: crate::AlphaMode::Opaque,
                 },
-                MaterialMaps::new(has_normal_map, true, false),
+                MaterialMaps::new(has_normal_map, true, false, false),
             )),
             usage: wgpu::BufferUsages::UNIFORM,
         });

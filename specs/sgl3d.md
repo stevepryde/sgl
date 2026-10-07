@@ -56,8 +56,11 @@ settings SGL3D has today.
    materials, instances, environment maps, lights, decals and atmosphere
    inputs, and
    never identifies a game's content by a hardcoded name or path. The glTF
-   loader reports unsupported visible features with the asset path rather
-   than silently returning a partial model; file and embedded-byte imports share
+   loader refuses a file that requires an extension SGL3D does not support
+   and reports other unsupported visible features with the asset path
+   rather than silently returning a partial model; what a file uses without
+   requiring it and SGL3D does not render is left out, as glTF lets a
+   loader do, and listed with the asset (`Asset::ignored`); file and embedded-byte imports share
    one decoder, which decodes each image the game does not supply and never
    reads one it does. Explicit node selection preserves ancestor transforms and rejects
    an empty selection. Games keep authored sources, export recipes and gameplay RON.

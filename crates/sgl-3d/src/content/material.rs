@@ -71,6 +71,21 @@ pub struct SurfaceMaterial {
     pub metallic: f32,
     /// Perceptual roughness in `0..=1`.
     pub roughness: f32,
+    /// Index of refraction, at least 1 or `f32::INFINITY`, which sets the
+    /// dielectric F0, ((ior − 1) / (ior + 1))²: 1.5 gives 0.04, water's 1.33
+    /// 0.02 ([`asset::Material::ior`](crate::asset::Material::ior)).
+    pub ior: f32,
+    /// Strength of the dielectric specular reflection in `0..=1`: 1 as the
+    /// IOR gives it, 0 none. It scales the dielectric F0 and is its
+    /// reflectance at grazing incidence (F90), which metallic mixes toward 1.
+    pub specular: f32,
+    /// Linear tint of the dielectric F0, finite and nonnegative: the F0 is
+    /// the IOR's times this, at most 1, times `specular`.
+    pub specular_color: [f32; 3],
+    /// How much of the material's occlusion map applies, in `0..=1`; nothing
+    /// without one
+    /// ([`asset::Material::occlusion_texture`](crate::asset::Material::occlusion_texture)).
+    pub occlusion_strength: f32,
     /// Scalar clearcoat intensity.
     pub clearcoat: f32,
     /// Clearcoat perceptual roughness.
@@ -132,6 +147,10 @@ impl SurfaceMaterial {
             emission: m.emissive,
             metallic: m.metallic,
             roughness: m.roughness,
+            ior: m.ior,
+            specular: m.specular,
+            specular_color: m.specular_color,
+            occlusion_strength: m.occlusion_strength,
             clearcoat: m.clearcoat,
             coat_roughness: m.coat_roughness,
             normal_scale: m.normal_scale,

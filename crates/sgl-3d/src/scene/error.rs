@@ -57,6 +57,12 @@ pub enum SceneError {
     MissingAnisotropyTangents,
     /// A masked material's alpha cutoff is not finite and nonnegative.
     InvalidAlphaCutoff,
+    /// A material's IOR is below 1 or NaN, its specular strength outside
+    /// 0..=1, or a channel of its specular colour not finite and
+    /// nonnegative.
+    InvalidReflectance,
+    /// A material's occlusion strength is outside 0..=1.
+    InvalidOcclusion,
     /// A material's normal layers have a velocity, scale or strength that is
     /// not finite, a scale that is not positive or a speed beyond 2^24
     /// repeats of the map per hour, or the material has no normal map that
@@ -183,6 +189,10 @@ impl std::fmt::Display for SceneError {
                 "anisotropy requires authored nonzero tangent frames on every mesh using this material"
             }
             Self::InvalidAlphaCutoff => "an alpha cutoff must be finite and nonnegative",
+            Self::InvalidReflectance => {
+                "IOR must be at least 1 (infinity allowed), specular in 0..1 and specular colour finite and nonnegative"
+            }
+            Self::InvalidOcclusion => "occlusion strength must be in 0..1",
             Self::InvalidNormalLayers => {
                 "normal layers need finite velocities and strengths, positive finite scales, at most 2^24 repeats per hour and a normal map that repeats on both axes"
             }

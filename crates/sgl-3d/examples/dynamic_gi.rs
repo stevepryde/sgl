@@ -220,6 +220,7 @@ fn room() -> Asset {
         ],
         images: Vec::new(),
         rig: Default::default(),
+        ignored: Vec::new(),
     }
 }
 
@@ -229,6 +230,7 @@ fn moving_box(base: [f32; 3]) -> Asset {
         materials: vec![material(base, 0.5)],
         images: Vec::new(),
         rig: Default::default(),
+        ignored: Vec::new(),
     }
 }
 

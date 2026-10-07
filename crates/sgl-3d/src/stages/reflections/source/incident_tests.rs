@@ -74,6 +74,8 @@ fn incident_environment_is_complete_without_doubling_primary() {
         let ambient = color("no ambient, open sky", [0., 0., 0., 1.], false);
         let normal = color("toward camera", [0.; 4], false);
         let f0 = color("metal source", [1., 1., 1., 1.], false);
+        // Isotropic, at environment scale 1.
+        let anisotropy = color("isotropic", [0., 0., 0., 1.], false);
         let sky = color("uniform HDR sky", [2., 2., 2., 1.], true);
         let fog = no_fog(&device);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -101,7 +103,6 @@ fn incident_environment_is_complete_without_doubling_primary() {
             Variant {
                 environment: true,
                 incident: true,
-                diffuse_occlusion: false,
             },
         );
         let output = ReflectionSource::target(&device, size, "complete opaque beauty");
@@ -173,7 +174,7 @@ fn incident_environment_is_complete_without_doubling_primary() {
                         ambient: &ambient,
                         output: &output,
                         normal: &normal,
-                        anisotropy: &zero,
+                        anisotropy: &anisotropy,
                         f0: &f0,
                         depth: &depth_view,
                         lookup_tables: &lookup_tables,

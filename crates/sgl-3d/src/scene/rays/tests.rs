@@ -59,6 +59,7 @@ impl Fixture {
                                 m.normal_texture.is_some(),
                                 m.bump_texture.is_some(),
                                 m.anisotropy_texture.is_some(),
+                                m.packed_occlusion(),
                             ),
                         ),
                         MaterialTextures {
@@ -208,10 +209,15 @@ fn material(double_sided: bool) -> Material {
         emissive: [2., 3., 4.],
         metallic: 0.3,
         roughness: 0.4,
+        ior: 1.5,
+        specular: 1.,
+        specular_color: [1.; 3],
         clearcoat: 0.5,
         coat_roughness: 0.6,
         base_texture: Some(0),
         mr_texture: None,
+        occlusion_texture: None,
+        occlusion_strength: 1.,
         emissive_texture: None,
         normal_texture: None,
         normal_scale: 1.,
@@ -240,6 +246,7 @@ pub(super) fn asset(meshes: Vec<CpuMesh>, two_sided: bool) -> Asset {
             .unwrap(),
         )],
         rig: Default::default(),
+        ignored: Vec::new(),
     }
 }
 

@@ -29,10 +29,11 @@ fn rect_light_fit(rough:f32,nv:f32)->RectLightFit {
  let inverse=mat3x3(vec3(t1.x,0.,t1.y),vec3(0.,1.,0.),vec3(t1.z,0.,t1.w));
  return RectLightFit(inverse,t2.xy);
 }
-// The fit's specular reflectance for reflectance `f0`: its magnitude and
-// Fresnel weights.
-fn rect_light_specular_weight(fit:RectLightFit,f0:vec3<f32>)->vec3<f32> {
- return f0*fit.weights.x+(vec3(1.)-f0)*fit.weights.y;
+// The fit's specular reflectance for reflectance `f0` at normal and `f90`
+// at grazing incidence: its magnitude and Fresnel weights, Schlick's
+// f0 + (f90 - f0) (1 - v.h)^5 integrated (Bevy's and ltc_code's take F90 1).
+fn rect_light_specular_weight(fit:RectLightFit,f0:vec3<f32>,f90:f32)->vec3<f32> {
+ return f0*fit.weights.x+(vec3(f90)-f0)*fit.weights.y;
 }
 // One edge's vector form factor on the unit sphere: Eq. 11 with the
 // polynomial fit of Hill and Heitz's 2016 talk, with its 1 / 2π.

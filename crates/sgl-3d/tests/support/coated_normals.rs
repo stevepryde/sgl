@@ -149,6 +149,7 @@ fn stable_normal_attachment_preserves_authored_directions() {
         materials: vec![material([0.5; 4], 0., 0.5)],
         images: vec![],
         rig: Default::default(),
+        ignored: Vec::new(),
     };
     let Some(mut frames) = Frames::new(asset, environment(0.), false, [EXTENT; 2]) else {
         return;

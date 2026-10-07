@@ -71,9 +71,10 @@ pub(crate) struct SharedTargets {
     pub depth: wgpu::TextureView,
     /// RGBA16F: signed octahedral world-space base normal in RG and coat normal in BA.
     pub normal: wgpu::TextureView,
-    /// RGBA16F: coat roughness, base roughness, coat strength, environment scale.
+    /// RGBA16F: coat roughness, base roughness, coat strength, base F90.
     pub material: wgpu::TextureView,
-    /// Resolved world anisotropy tangent in XYZ and strength in W.
+    /// Resolved world anisotropy tangent, signed octahedral in RG, its
+    /// strength in B and the environment scale in A.
     pub anisotropy: wgpu::TextureView,
     pub f0: wgpu::TextureView,
     pub motion: wgpu::TextureView,
@@ -131,13 +132,16 @@ impl SharedTargets {
             source_id: gbuffer_target("stable lit primitive identity", gbuffer::SOURCE_ID),
             depth,
             normal: gbuffer_target("stable world normals", gbuffer::NORMAL),
-            material: gbuffer_target("stable coat and base roughness", gbuffer::MATERIAL),
+            material: gbuffer_target(
+                "stable coat and base roughness, coat strength and F90",
+                gbuffer::MATERIAL,
+            ),
             anisotropy: gbuffer_target(
-                "stable world anisotropy tangent and strength",
+                "stable world anisotropy tangent and strength and environment scale",
                 gbuffer::ANISOTROPY,
             ),
             f0: gbuffer_target(
-                "stable material F0 and lit and baked-light flags",
+                "stable material F0, lit and baked-light flags and material occlusion",
                 gbuffer::F0,
             ),
             motion: gbuffer_target("stable rigid motion", gbuffer::MOTION),
