@@ -303,7 +303,9 @@ fn centre_colours(device: &wgpu::Device, queue: &wgpu::Queue, edits: &[Edit<'_>]
 // tenth at alpha 0.1 in both modes: within a few per cent, as its multiple
 // scattering (Fdez-Aguera's gain) and the Fresnel toward its F90 are not
 // linear in F0, where a defect that premultiplies the diffuse colour but
-// not the metal's F0 reflects ten times as much.
+// not the metal's F0 reflects ten times as much. So does a metal under a
+// full iridescent film (KHR_materials_iridescence), whose F0 is the film's
+// refit over its base.
 #[test]
 fn keeps_specular_fades_all_but_dielectric_specular() {
     let Some((device, queue)) = test_support::device() else {
@@ -329,13 +331,18 @@ fn keeps_specular_fades_all_but_dielectric_specular() {
         values.base = [0.9, 0.6, 0.3, values.base[3]];
         values.metallic = 1.;
     };
+    let filmed_metal = |values: &mut crate::SurfaceMaterial| {
+        metal(values);
+        values.iridescence = 1.;
+    };
     // Each case's share kept under keep and its relative tolerance: f16's
     // rounding, or the metal's few per cent.
-    let cases: [(&str, Edit<'_>, f32, f32); 4] = [
+    let cases: [(&str, Edit<'_>, f32, f32); 5] = [
         ("specular", &specular_only, 1., 5e-3),
         ("diffuse", &diffuse_only, 0.1, 5e-3),
         ("emission", &emission_only, 0.1, 5e-3),
         ("metal", &metal, 0.1, 0.05),
+        ("filmed metal", &filmed_metal, 0.1, 0.05),
     ];
     for (name, light, kept, tolerance) in cases {
         let at = move |alpha: f32, keeps: bool| {

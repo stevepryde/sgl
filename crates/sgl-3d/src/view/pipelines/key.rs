@@ -63,6 +63,12 @@ pub(crate) struct LitConstants {
     /// specialises on them; the trade is a compile when the first decal is
     /// added or the last removed.
     pub decals: bool,
+    /// Iridescent films (`films_enabled` in surface.wgsl), whose evaluation
+    /// costs every lit fragment occupancy where it is compiled in, as
+    /// Filament compiles it only into a material that has one
+    /// (`MATERIAL_HAS_IRIDESCENCE`); the trade is a compile when the first
+    /// filmed material is added or the last loses its film.
+    pub films: bool,
 }
 
 impl LitConstants {
@@ -71,13 +77,15 @@ impl LitConstants {
         Self {
             rect_lights: scene.lights.holds_rect(),
             decals: !scene.decals.is_empty(),
+            films: scene.materials.holds_films(),
         }
     }
 
-    pub fn constants(self) -> [(&'static str, f64); 2] {
+    pub fn constants(self) -> [(&'static str, f64); 3] {
         [
             ("rect_lights_enabled", f64::from(u8::from(self.rect_lights))),
             ("decals_enabled", f64::from(u8::from(self.decals))),
+            ("films_enabled", f64::from(u8::from(self.films))),
         ]
     }
 }

@@ -139,6 +139,22 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MATERIAL_MAPS",
             material(offset_of!(MaterialUniform, maps)),
         ),
+        (
+            "SCENE_MATERIAL_COAT_NORMAL_SCALE",
+            material(offset_of!(MaterialUniform, coat_normal_scale)),
+        ),
+        (
+            "SCENE_MATERIAL_IRIDESCENCE",
+            material(offset_of!(MaterialUniform, iridescence)),
+        ),
+        (
+            "SCENE_MATERIAL_IRIDESCENCE_IOR",
+            material(offset_of!(MaterialUniform, iridescence_ior)),
+        ),
+        (
+            "SCENE_MATERIAL_IRIDESCENCE_THICKNESS",
+            material(offset_of!(MaterialUniform, iridescence_thickness)),
+        ),
         ("SCENE_NORMAL_LAYER_WORDS", size_of::<NormalLayerUniform>()),
         (
             "SCENE_NORMAL_LAYER_CYCLES",
@@ -173,6 +189,27 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_TEXTURE_ANISOTROPY",
             offset_of!(MaterialTextures, anisotropy),
         ),
+        (
+            "SCENE_TEXTURE_CLEARCOAT",
+            offset_of!(MaterialTextures, clearcoat),
+        ),
+        (
+            "SCENE_TEXTURE_COAT_ROUGHNESS",
+            offset_of!(MaterialTextures, coat_roughness),
+        ),
+        (
+            "SCENE_TEXTURE_COAT_NORMAL",
+            offset_of!(MaterialTextures, coat_normal),
+        ),
+        (
+            "SCENE_TEXTURE_IRIDESCENCE",
+            offset_of!(MaterialTextures, iridescence),
+        ),
+        (
+            "SCENE_TEXTURE_IRIDESCENCE_THICKNESS",
+            offset_of!(MaterialTextures, iridescence_thickness),
+        ),
+        ("SCENE_TEXTURES", size_of::<MaterialTextures>()),
     ];
     // The BVH is declared beside the portable traversal that reads it.
     source

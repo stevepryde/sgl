@@ -717,6 +717,10 @@ fn rust_mirrors_match_wgsl_layouts() {
                 specular,
                 normal_layers,
                 maps,
+                coat_normal_scale,
+                iridescence,
+                iridescence_ior,
+                iridescence_thickness,
             ]
         ),
         mirror!(
@@ -856,6 +860,11 @@ fn rust_mirrors_match_wgsl_layouts() {
             Normal => "MATERIAL_MAP_NORMAL",
             Bump => "MATERIAL_MAP_BUMP",
             Anisotropy => "MATERIAL_MAP_ANISOTROPY",
+            Clearcoat => "MATERIAL_MAP_CLEARCOAT",
+            CoatRoughness => "MATERIAL_MAP_COAT_ROUGHNESS",
+            CoatNormal => "MATERIAL_MAP_COAT_NORMAL",
+            Iridescence => "MATERIAL_MAP_IRIDESCENCE",
+            IridescenceThickness => "MATERIAL_MAP_IRIDESCENCE_THICKNESS",
         };
         (name, map.bit())
     })) {
@@ -1085,6 +1094,15 @@ fn rust_binding_names_match_wgsl_bindings() {
         (2, "relief_map", group2::RELIEF_MAP),
         (2, "baked_material", group2::BAKED_MATERIAL),
         (2, "anisotropy_map", group2::ANISOTROPY_MAP),
+        (2, "clearcoat_map", group2::CLEARCOAT_MAP),
+        (2, "coat_roughness_map", group2::COAT_ROUGHNESS_MAP),
+        (2, "coat_normal_map", group2::COAT_NORMAL_MAP),
+        (2, "iridescence_map", group2::IRIDESCENCE_MAP),
+        (
+            2,
+            "iridescence_thickness_map",
+            group2::IRIDESCENCE_THICKNESS_MAP,
+        ),
         (3, "blended_reflections", blended::REFLECTIONS),
         (3, "blended_surface_depth", blended::SURFACE_DEPTH),
         (3, "blended_trace", blended::TRACE),

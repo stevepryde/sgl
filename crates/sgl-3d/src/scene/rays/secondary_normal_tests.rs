@@ -10,7 +10,10 @@
 //! in effect own (`scene::materials::maps`, its `tier_tests`): the plane's
 //! varying bump texture shades only where the material has no normal map.
 //! With the diagnostic disabling the normal-map stage, a normal-mapped
-//! surface keeps its geometry normal.
+//! surface keeps its geometry normal. A clearcoat normal map, beside the base
+//! one, takes the base map's frame (KHR_materials_clearcoat; the Khronos glTF
+//! Sample Renderer 0686eb2 material_info.glsl 196–207): texture [64,192,220]
+//! decodes to [-127,129,185], its X and Y at scale 0.5.
 use super::tests::{Fixture, Pose};
 use super::*;
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
@@ -23,6 +26,16 @@ use wgpu::util::DeviceExt;
 
 const CENTERS: [f32; 4] = [-3., -1., 1., 3.];
 const PIXEL: [u8; 4] = [204, 153, 230, 255];
+const COAT_PIXEL: [u8; 4] = [64, 192, 220, 255];
+
+/// What a fixture observes: the base normal, the anisotropy axis about it,
+/// or the coat's normal.
+#[derive(Clone, Copy, PartialEq)]
+enum Observe {
+    Base = 0,
+    Axis = 1,
+    Coat = 2,
+}
 
 /// A bind group of `buffer` at binding 0.
 fn group(
@@ -84,6 +97,15 @@ fn plane_asset(has_normal_map: bool) -> Asset {
             specular_color: [1.; 3],
             clearcoat: 0.,
             coat_roughness: 0.,
+            clearcoat_texture: None,
+            coat_roughness_texture: None,
+            coat_normal_texture: None,
+            coat_normal_scale: 1.,
+            iridescence: 0.,
+            iridescence_ior: 1.3,
+            iridescence_thickness: [100., 400.],
+            iridescence_texture: None,
+            iridescence_thickness_texture: None,
             base_texture: None,
             mr_texture: None,
             occlusion_texture: None,
@@ -108,6 +130,7 @@ fn plane_asset(has_normal_map: bool) -> Asset {
                 let height = ((x + 2 * y) * 5) as u8;
                 image::Rgba([height, height, height, 255])
             })),
+            crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(1, 1, image::Rgba(COAT_PIXEL))),
         ],
         rig: Default::default(),
         ignored: Vec::new(),
@@ -116,35 +139,47 @@ fn plane_asset(has_normal_map: bool) -> Asset {
 
 #[test]
 fn authored_normal_map_axes_mirrored_uv_and_back_faces() {
-    material_normal_oracle(true, true, false, false);
+    material_normal_oracle(true, true, false, Observe::Base);
 }
 
 // The normal-map stage switched off leaves a normal-mapped surface its
 // geometry normal.
 #[test]
 fn disabled_normal_stage_keeps_the_geometry_normal() {
-    material_normal_oracle(true, false, false, false);
+    material_normal_oracle(true, false, false, Observe::Base);
+    material_normal_oracle(true, false, false, Observe::Coat);
 }
 
 // A bump map alone: the affine height's slope in both UV axes, per pixel in
 // raster and per metre in secondary rays, under mirrored UVs and back faces.
 #[test]
 fn affine_bump_height_axes_mirrored_uv_and_back_faces() {
-    material_normal_oracle(false, true, false, false);
+    material_normal_oracle(false, true, false, Observe::Base);
 }
 
 #[test]
 fn anisotropic_authored_frames_mirrored_shear_and_back_faces() {
-    material_normal_oracle(true, true, true, false);
-    material_normal_oracle(true, true, true, true);
+    material_normal_oracle(true, true, true, Observe::Base);
+    material_normal_oracle(true, true, true, Observe::Axis);
+}
+
+// The coat's normal map on the base map's frame, the derivative frame and,
+// on an anisotropic material, the authored one, under mirrored UVs and back
+// faces, beside a base normal map it must not follow.
+#[test]
+fn coat_normal_map_takes_the_base_maps_frame() {
+    material_normal_oracle(true, true, false, Observe::Coat);
+    material_normal_oracle(true, true, true, Observe::Coat);
 }
 
 fn material_normal_oracle(
     has_normal_map: bool,
     normal_maps_enabled: bool,
     authored: bool,
-    observe_axis: bool,
+    observe: Observe,
 ) {
+    let observe_axis = observe == Observe::Axis;
+    let coat = observe == Observe::Coat;
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
@@ -157,6 +192,11 @@ fn material_normal_oracle(
         } else {
             Mat4::IDENTITY
         };
+        if coat {
+            asset.materials[0].clearcoat = 1.;
+            asset.materials[0].coat_normal_texture = Some(2);
+            asset.materials[0].coat_normal_scale = 0.5;
+        }
         if authored {
             asset.materials[0].anisotropy_strength = 0.6;
             asset.materials[0].anisotropy_rotation = std::f32::consts::FRAC_PI_4;
@@ -195,8 +235,12 @@ fn material_normal_oracle(
                     specular: 1.,
                     specular_color: [1.; 3],
                     occlusion_strength: 1.,
-                    clearcoat: 0.,
+                    clearcoat: if coat { 1. } else { 0. },
                     coat_roughness: 0.,
+                    coat_normal_scale: 0.5,
+                    iridescence: 0.,
+                    iridescence_ior: 1.3,
+                    iridescence_thickness: [100., 400.],
                     normal_scale: 1.,
                     normal_layers: None,
                     bump_scale: 1.,
@@ -211,20 +255,25 @@ fn material_normal_oracle(
                 },
                 // A normal map, else the bump map, as the scene puts them in
                 // effect (`scene::materials::maps::InEffect`).
-                MaterialMaps::of([if has_normal_map {
-                    MaterialMap::Normal
-                } else {
-                    MaterialMap::Bump
-                }]),
+                MaterialMaps::of(
+                    [if has_normal_map {
+                        MaterialMap::Normal
+                    } else {
+                        MaterialMap::Bump
+                    }]
+                    .into_iter()
+                    .chain(coat.then_some(MaterialMap::CoatNormal)),
+                ),
             )),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         // Group 2's relief binding holds the normal map, else the bump map.
         let relief = usize::from(!has_normal_map);
         let relief_map = texture(&device, &queue, &asset.images[relief].texels(), false);
+        let coat_normal_map = texture(&device, &queue, &asset.images[2].texels(), false);
         let constants = [
             ("normal_maps_enabled", f64::from(normal_maps_enabled)),
-            ("fixture_axis", f64::from(observe_axis)),
+            ("fixture_observe", observe as u32 as f64),
         ];
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
@@ -242,11 +291,11 @@ fn material_normal_oracle(
                         &shading::BIND_MATERIAL,
                         &shading::SURFACE_RASTER,
                         &shading::SHADOW_MASK_NONE,
-                        &shading::tiers::MATERIAL_MAPS_BASIC,
+                        &shading::tiers::MATERIAL_MAPS_EXTENDED,
                         &shading::tiers::LIT_BASIC,
                     ]),
                     r#"
-override fixture_axis:bool=false;
+override fixture_observe:u32=0u;
 @vertex fn fixture_vs(v:Vertex)->Fragment {
  var o:Fragment;
  o.clip=vec4((v.color.x+(v.position.x-v.color.x)*v.color.y)/4.,v.position.y,0.,1.);
@@ -255,8 +304,9 @@ override fixture_axis:bool=false;
  return o;
 }
 @fragment fn fixture_fs(i:Fragment,@builtin(front_facing) front:bool)->@location(0) vec4<f32> {
+ if fixture_observe==2u {return vec4(surface_coat_normal(i,front),select(-1.,1.,front));}
  let n=surface_normal(i,front);
- if fixture_axis {return pbr_resolve_anisotropy(n,surface_tangent_frame(i,front),material.anisotropy_strength,material.anisotropy_rotation,false,vec3(1.,.5,1.));}
+ if fixture_observe==1u {return pbr_resolve_anisotropy(n,surface_tangent_frame(i,front),material.anisotropy_strength,material.anisotropy_rotation,false,vec3(1.,.5,1.));}
  return vec4(n,select(-1.,1.,front));
 }
 "#
@@ -375,6 +425,10 @@ override fixture_axis:bool=false;
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&relief_map),
                 },
+                wgpu::BindGroupEntry {
+                    binding: shading::bind::group2::COAT_NORMAL_MAP,
+                    resource: wgpu::BindingResource::TextureView(&coat_normal_map),
+                },
             ],
         });
         let output = device.create_texture(&wgpu::TextureDescriptor {
@@ -452,11 +506,12 @@ override fixture_axis:bool=false;
 @group(3) @binding(0) var<storage,read> fixture_rays:array<SceneRay>;
 @group(3) @binding(1) var<storage,read> fixture_hits:array<RawSceneHit>;
 @group(3) @binding(2) var<storage,read_write> fixture_normals:array<vec4<f32>>;
-override fixture_axis:bool=false;
+override fixture_observe:u32=0u;
 @compute @workgroup_size(4) fn fixture_compute(@builtin(global_invocation_id) id:vec3<u32>) {
  let ray=fixture_rays[id.x];let hit=scene_decode_hit(fixture_hits[id.x],ray.origin.xyz,ray.direction.xyz);
  let m=scene_material(hit.material_word);let n=ray_normal(hit,m);
- if fixture_axis {fixture_normals[id.x]=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),m.values.anisotropy_strength,m.values.anisotropy_rotation,false,vec3(1.,.5,1.));}
+ if fixture_observe==1u {fixture_normals[id.x]=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),m.values.anisotropy_strength,m.values.anisotropy_rotation,false,vec3(1.,.5,1.));}
+ else if fixture_observe==2u {fixture_normals[id.x]=vec4(ray_coat_normal(hit,m),select(-1.,1.,hit.front_face));}
  else {fixture_normals[id.x]=vec4(n,select(-1.,1.,hit.front_face));}
 }
 "#).into()),
@@ -571,6 +626,13 @@ override fixture_axis:bool=false;
         for case in 0..4 {
             // Khronos texture channel mapping plus the independently authored
             // plane axes above. No ray/shader frame math is copied into this oracle.
+            // The tangent-space texel: the coat's, its X and Y at its scale,
+            // else the base normal map's.
+            let texel = if coat {
+                Vec3::new(-127. * 0.5, 129. * 0.5, 185.)
+            } else {
+                Vec3::new(153., 51., 205.)
+            };
             let front_normal = |texels_per_step: f32| {
                 if !has_normal_map {
                     // Height rises 5/255 and 10/255 per texel along U and V, so
@@ -584,7 +646,12 @@ override fixture_axis:bool=false;
                     )
                     .normalize()
                 } else if normal_maps_enabled {
-                    Vec3::new(if case % 2 == 0 { 153. } else { -153. }, 51., 205.).normalize()
+                    Vec3::new(
+                        if case % 2 == 0 { texel.x } else { -texel.x },
+                        texel.y,
+                        texel.z,
+                    )
+                    .normalize()
                 } else {
                     Vec3::Z
                 }
@@ -604,7 +671,7 @@ override fixture_axis:bool=false;
                     let t =
                         Vec3::new(-2., 1., 0.4).normalize() * if case % 2 == 0 { 1. } else { -1. };
                     let b = n.cross(t) * if case % 2 == 0 { -1. } else { 1. };
-                    let mapped = (t * 153. + b * 51. + n * 205.).normalize() * side;
+                    let mapped = (t * texel.x + b * texel.y + n * texel.z).normalize() * side;
                     if observe_axis {
                         let direction = (t + b) * side;
                         (direction - mapped * direction.dot(mapped)).normalize()

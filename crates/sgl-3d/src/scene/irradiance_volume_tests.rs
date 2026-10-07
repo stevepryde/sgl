@@ -119,6 +119,7 @@ fn fixture_surface(position:vec3<f32>,normal:vec3<f32>,metal:bool,environment_sc
  s.view=normal;
  s.normal=normal;
  s.geometry_normal=normal;
+ s.coat_normal=normal;
  s.base=select(vec4(.5,.5,.5,1.),vec4(1.),metal);
  s.metallic=select(0.,1.,metal);
  s.dielectric_f0=vec3(.04);

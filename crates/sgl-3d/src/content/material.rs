@@ -91,10 +91,22 @@ pub struct SurfaceMaterial {
     /// without one
     /// ([`asset::Material::occlusion_texture`](crate::asset::Material::occlusion_texture)).
     pub occlusion_strength: f32,
-    /// Scalar clearcoat intensity.
+    /// Clearcoat intensity, which a clearcoat map's red channel multiplies.
     pub clearcoat: f32,
-    /// Clearcoat perceptual roughness.
+    /// Clearcoat perceptual roughness, which a clearcoat roughness map's
+    /// green channel multiplies.
     pub coat_roughness: f32,
+    /// Scale applied to the clearcoat normal map's tangent-space X and Y
+    /// components ([`Material::coat_normal_scale`]).
+    pub coat_normal_scale: f32,
+    /// A thin film's strength in `0..=1`, which an iridescence map's red
+    /// channel multiplies ([`Material::iridescence`]).
+    pub iridescence: f32,
+    /// The film's index of refraction, at least 1.
+    pub iridescence_ior: f32,
+    /// The film's thinnest and thickest thickness in nanometres, each finite
+    /// and nonnegative ([`Material::iridescence_thickness`]).
+    pub iridescence_thickness: [f32; 2],
     /// Scale of the normal map's tangent-space X and Y.
     pub normal_scale: f32,
     /// Scrolling normals: the normal map drawn as two layers that move
@@ -158,6 +170,10 @@ impl SurfaceMaterial {
             occlusion_strength: m.occlusion_strength,
             clearcoat: m.clearcoat,
             coat_roughness: m.coat_roughness,
+            coat_normal_scale: m.coat_normal_scale,
+            iridescence: m.iridescence,
+            iridescence_ior: m.iridescence_ior,
+            iridescence_thickness: m.iridescence_thickness,
             normal_scale: m.normal_scale,
             normal_layers: m.normal_layers,
             bump_scale: m.bump_scale,

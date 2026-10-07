@@ -181,16 +181,17 @@ fn pbr_hemisphere_radiance(direction:vec3<f32>,upper:vec3<f32>,ground:vec3<f32>,
  return select(ground,upper,direction.y>=0.)*intensity/3.14159265359;
 }
 // Three.js 0.185.1 PhysicalLightingModel.indirect: the dielectric's
-// scattering at `dielectric_f0` and the metal's at `base`, each toward the
+// scattering at `dielectric_f0` and the metal's at `metal_f0` (the base,
+// or the film's refit of it: computeMultiscattering's Fr), each toward the
 // surface's `f90`, mixed by metallic, its multiple scattering the gain's
 // share (pbr_multiscatter_gain); the diffuse keeps what the dielectric does
 // not scatter. Every source of irradiance a surface takes is weighted by
 // diffuse plus multi alike (D-32).
-fn pbr_ibl_weights(base:vec3<f32>,metallic:f32,dielectric_f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->PbrIblWeights {
+fn pbr_ibl_weights(base:vec3<f32>,metallic:f32,dielectric_f0:vec3<f32>,metal_f0:vec3<f32>,f90:f32,dfg:vec2<f32>)->PbrIblWeights {
  let dielectric_single=pbr_split_sum(dielectric_f0,f90,dfg);
  let dielectric_multi=dielectric_single*(pbr_multiscatter_gain(dielectric_f0,dfg)-vec3(1.));
- let metal_single=pbr_split_sum(base,f90,dfg);
- let metal_multi=metal_single*(pbr_multiscatter_gain(base,dfg)-vec3(1.));
+ let metal_single=pbr_split_sum(metal_f0,f90,dfg);
+ let metal_multi=metal_single*(pbr_multiscatter_gain(metal_f0,dfg)-vec3(1.));
  return PbrIblWeights(mix(dielectric_single,metal_single,metallic),
   mix(dielectric_multi,metal_multi,metallic),
   base*(1.-metallic)*(vec3(1.)-dielectric_single-dielectric_multi));
