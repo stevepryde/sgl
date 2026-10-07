@@ -1,6 +1,6 @@
 // Scene geometry's camera and probe-capture passes, all over pulled vertices
 // (source_vs): the G-buffer (stable_fs and its fallbacks), lit color with
-// motion (fs), lit color with its ambient diffuse, motion and exact primitive
+// motion (fs), lit color with its ambient light, motion and exact primitive
 // identity (source_fs), the G-buffer and source_fs's outputs at once
 // (fused_opaque_fs), blended receivers as the surface (receiver_fs),
 // blended surfaces' colour (blended_fs) and FSR2's transparency and
@@ -79,7 +79,8 @@ fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
  }
  return ShadedFragment(shaded,base.a,gbuffer_encode_motion(i.current_clip,i.previous_clip));
 }
-// Probe captures, which keep the ambient diffuse in color.
+// Probe captures, which keep their ambient light, occluded by their
+// material's occlusion, in color.
 @fragment fn fs(i:Fragment,@builtin(front_facing) front:bool)->SceneOutput {
  let s=shade_surface(i,front);
  return SceneOutput(vec4(s.shaded.color,s.alpha),s.motion);

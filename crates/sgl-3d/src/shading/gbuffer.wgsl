@@ -229,5 +229,9 @@ struct GBufferAmbient {
 fn gbuffer_ambient(ambient:vec4<f32>,share:f32)->GBufferAmbient {
  let light=max(ambient.rgb,vec3(0.));
  let multi=light*saturate(share);
- return GBufferAmbient(light-multi,multi,ambient.a);
+ return GBufferAmbient(light-multi,multi,gbuffer_sky_visibility(ambient));
+}
+// The irradiance volume's sky visibility a(n) an ambient texel holds.
+fn gbuffer_sky_visibility(ambient:vec4<f32>)->f32 {
+ return ambient.a;
 }

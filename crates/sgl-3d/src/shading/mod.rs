@@ -508,7 +508,7 @@ pub(crate) static SPECULAR_LOBES: Module = Module {
     source: include_str!("specular_lobes.wgsl"),
     deps: &[&PBR, &ANISOTROPY, &LOOKUP_TABLES],
 };
-/// Ambient occlusion of a receiver's ambient diffuse and environment
+/// Ambient occlusion of a receiver's ambient light and environment
 /// specular, by the lesser of its material's occlusion and the frame's
 /// ambient occlusion: one owner for source completion, composition and lit
 /// shading.

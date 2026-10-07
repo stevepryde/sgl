@@ -82,8 +82,9 @@ docs and specs the entry links.
 - `sgl-3d` a lightmap's, atlas chart's or ambient cube's multiple-scattered
   specular takes the occlusion map as specular (was linearly), so occluded
   rough metals are slightly brighter. No game-code change.
-- `sgl-3d` opaque surfaces' output alpha is 1 (was their base colour's
-  alpha), as glTF's OPAQUE and MASK modes define. No game-code change.
+- `sgl-3d` `DiagnosticTarget::Composite`'s alpha is 1 on opaque surfaces
+  (was their base colour's alpha); the presented frame's is 1, as before.
+  No game-code change.
 
 ## 0.2.1 — 2026-10-07
 

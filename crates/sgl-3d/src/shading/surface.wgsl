@@ -71,7 +71,7 @@ struct ShadeContext {
  // from the G-buffer. Probe captures and ray hits run no source completion,
  // so they add it from what completion uses.
  environment_specular:bool,
- // Whether shade_lit occludes the surface's ambient diffuse and environment
+ // Whether shade_lit occludes the surface's ambient light and environment
  // specular by its material's occlusion (Surface.occlusion): every view but
  // the camera's opaque surfaces, whose source completion occludes them by
  // the lesser of it and the frame's ambient occlusion (occlusion.wgsl).

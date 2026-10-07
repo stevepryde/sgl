@@ -91,8 +91,7 @@ way to its factors, in raster and rays alike. A probe captured on an
   renders near the origin. Motion, shadow caches and histories carry across
   the move; nothing redraws and no history restarts.
   [Lifecycle](../README.md#retained-scene-and-frame-lifecycle).
-- **Alpha modes** (`AlphaMode`, glTF `alphaMode`): opaque and masked
-  surfaces output alpha 1; masked materials are cut
+- **Alpha modes** (`AlphaMode`, glTF `alphaMode`): masked materials are cut
   out below their cutoff in every view, shadow and ray; blended ones are lit,
   fogged and drawn back to front over the frame, writing no depth or motion
   unless marked to receive screen-space reflections, and casting no shadow.
@@ -292,8 +291,9 @@ Environment and probe specular always apply. On top of them:
 
 - **Ambient occlusion**: XeGTAO after opaque shading, which occludes ambient
   light (its diffuse share, and the specular multiple scattering a rough
-  metal reflects most of) and environment and probe reflections; turning it on draws no
-  geometry again. [Ambient occlusion](../README.md#ambient-occlusion).
+  metal reflects most of) and environment and probe reflections; turning it
+  on draws no geometry again.
+  [Ambient occlusion](../README.md#ambient-occlusion).
 - **Antialiasing**: SGL's DiligentFX-derived TAA in `sgl-post-fx`, SMAA at
   SMAA 2.8's Low, Medium, High or Ultra preset, or AMD FSR2, which also
   upscales, with RCAS sharpening the game can turn off or set.

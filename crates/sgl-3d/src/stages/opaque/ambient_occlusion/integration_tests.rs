@@ -259,10 +259,19 @@ fn gtao_primary_lighting_ownership_and_disable_restore() {
         if layer == "metal multi" {
             // The metal's specular multiple scattering of the sky's diffuse
             // light takes the frame's ambient occlusion too, as specular: it
-            // darkens, never brightens.
-            assert_ne!(
-                off.composite, on.composite,
-                "AO left the metal's multiple scattering whole"
+            // darkens near the contact, never brightens. Its multiple
+            // scattering is about a tenth of the sky's radiance 0.25 at
+            // roughness 0.7, and its specular occlusion near the contact
+            // takes a few hundredths of that.
+            let affected = off
+                .composite
+                .chunks_exact(8)
+                .zip(on.composite.chunks_exact(8))
+                .filter(|(before, after)| half(before) - half(after) > 0.001)
+                .count();
+            assert!(
+                affected >= 8,
+                "AO left the metal's multiple scattering whole: {affected} texels darker"
             );
             for (before, after) in off
                 .composite

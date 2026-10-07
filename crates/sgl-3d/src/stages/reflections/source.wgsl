@@ -255,7 +255,7 @@ override incident_radiance_enabled:bool=true;
  let traced_lobe=specular_traced_lobe(material.coat);
  let lobe=lobes[traced_lobe];
  if specular_traces(lobe.roughness,env.traced) {
-  let sky_visibility=textureLoad(source_ambient,p,0).a;
+  let sky_visibility=gbuffer_sky_visibility(textureLoad(source_ambient,p,0));
   let environment=source_occluded_environment(world,lobe,traced_lobe==SPECULAR_COAT,gbuffer_environment_scale(anisotropy),source_probes(id),visibility,sky_visibility,f0.rgb);
   let fallback=world_hit.rgb+environment*(1.-world_hit.a);
   let fade=specular_trace_fade(lobe.roughness,sqrt(env.traced),env.fade);
