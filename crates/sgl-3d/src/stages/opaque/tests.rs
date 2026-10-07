@@ -656,6 +656,21 @@ fn gbuffer_f90_is_the_specular_strength_mixed_toward_one_by_metallic() {
     }
 }
 
+/// A device with the renderer's limits but `budget` colour attachment bytes
+/// per sample: at 32, the G-buffer pass cannot write the anisotropy target,
+/// which a pass of its own then writes.
+fn device_at_budget(adapter: &wgpu::Adapter, budget: u32) -> (wgpu::Device, wgpu::Queue) {
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: crate::graphics_device::features(adapter),
+        required_limits: wgpu::Limits {
+            max_color_attachment_bytes_per_sample: budget,
+            ..crate::graphics_device::limits(adapter)
+        },
+        ..Default::default()
+    }))
+    .unwrap()
+}
+
 // Defects: the environment scale, which the anisotropy target records
 // beside the anisotropy, is lost on its way to source completion: read from
 // another channel (the material target's F90, 1 for a metal), or left
@@ -668,21 +683,13 @@ fn gbuffer_f90_is_the_specular_strength_mixed_toward_one_by_metallic() {
 // device's own.
 #[test]
 fn the_environment_scale_reaches_completion_on_every_attachment_budget() {
-    use crate::{EnvironmentLight, graphics_device};
+    use crate::EnvironmentLight;
     let Some(adapter) = test_support::adapter() else {
         return;
     };
     let largest = adapter.limits().max_color_attachment_bytes_per_sample;
     for budget in [32, largest] {
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: graphics_device::features(&adapter),
-            required_limits: wgpu::Limits {
-                max_color_attachment_bytes_per_sample: budget,
-                ..graphics_device::limits(&adapter)
-            },
-            ..Default::default()
-        }))
-        .unwrap();
+        let (device, queue) = device_at_budget(&adapter, budget);
         let mut scene = Scene::new(&device, &queue);
         let mut asset = test_support::cube();
         asset.materials[0].base = [1.; 4];
@@ -759,5 +766,130 @@ fn the_environment_scale_reaches_completion_on_every_attachment_budget() {
                 "budget {budget}, channel {channel}: {half} at half scale for {whole}"
             );
         }
+    }
+}
+
+// Defects: the anisotropy target's encoding loses the anisotropy on its way
+// to source completion: its strength read from another channel (the
+// environment scale's, as the layout before it held the strength), the
+// octahedral tangent's channels swapped, or the anisotropy pass of a device
+// that cannot write the target with the G-buffer's others writing it
+// otherwise. A blended surface takes its environment specular in lit
+// shading from the surface it evaluates, never through the G-buffer, so it
+// is an independent observation of the same anisotropic lobe: a smooth
+// anisotropic white metal sphere, its tangents along its longitude, in an
+// environment that varies with direction, completes opaque as it shades
+// blended, at the smallest attachment budget and at the device's own.
+#[test]
+fn an_anisotropic_metal_completes_opaque_as_it_shades_blended() {
+    use crate::{AlphaMode, EnvironmentLight};
+    let Some(adapter) = test_support::adapter() else {
+        return;
+    };
+    // An environment whose radiance varies along each atlas row, with a
+    // period that is not a face's 16 texels.
+    let radiance: Vec<u8> = (0..12)
+        .flat_map(|texel| {
+            let value = 0.5 + 0.4 * (texel as f32 * std::f32::consts::TAU / 12.).sin();
+            [value, value * 0.8, value * 0.6, 1.]
+                .into_iter()
+                .flat_map(|channel| test_support::to_half(channel).to_le_bytes())
+        })
+        .collect();
+    let largest = adapter.limits().max_color_attachment_bytes_per_sample;
+    for budget in [32, largest] {
+        let (device, queue) = device_at_budget(&adapter, budget);
+        let mut asset = sphere();
+        for vertex in &mut asset.meshes[0].vertices {
+            // The longitude direction, d position / d theta.
+            let [x, _, z] = vertex.normal;
+            let tangent = Vec3::new(-z, 0., x).try_normalize().unwrap_or(Vec3::X);
+            vertex.tangent = [tangent.x, tangent.y, tangent.z, 1.];
+        }
+        let material = &mut asset.materials[0];
+        material.base = [1.; 4];
+        material.metallic = 1.;
+        material.roughness = 0.3;
+        material.anisotropy_strength = 0.4;
+        // Single-sided: a blended closed mesh drawn from both sides would
+        // show its back faces where they are drawn after its front.
+        material.double_sided = false;
+        let mut scene = Scene::new(&device, &queue);
+        let (ids, _) = test_support::add_static(&device, &queue, &mut scene, asset);
+        let environment = scene
+            .add_environment(
+                &device,
+                &queue,
+                &test_support::environment([255; 4], &radiance),
+            )
+            .unwrap();
+        let settings = Settings {
+            antialiasing: Antialiasing::Off,
+            ambient_occlusion: AmbientOcclusionQuality::Off,
+            screen_space_reflections: crate::settings::ScreenSpaceReflections::Off,
+            atmosphere: false,
+            ..Settings::default()
+        };
+        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        assert_eq!(
+            renderer.test_anisotropy_inline(),
+            budget == largest && largest > 32,
+            "budget {budget} must take its own G-buffer form"
+        );
+        let output = crate::view::targets::target(&device, "anisotropy", SIZE, gbuffer::COLOR);
+        let eye = Vec3::new(0.4, 0.3, 2.6);
+        let mut input = FrameInput::new(Camera {
+            view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
+            projection: perspective(1., 1., 0.1),
+            eye,
+        });
+        input.backdrop = Backdrop::Color([0.; 3]);
+        input.environment = Some(environment);
+        input.diffuse_environment.intensity = 0.;
+        input.reflection_environment = EnvironmentLight {
+            yaw: 0.,
+            intensity: 1.,
+        };
+        let mut composite = |alpha: AlphaMode| -> Vec<f32> {
+            let mut values = scene.material(ids.materials[0]).unwrap();
+            values.alpha = alpha;
+            scene
+                .set_material(&queue, ids.materials[0], values)
+                .unwrap();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+            test_support::read(&device, &queue, renderer.targets().composite.texture(), 8)
+                .chunks_exact(8)
+                .flat_map(|texel| (0..3).map(|c| test_support::half(&texel[c * 2..])))
+                .collect()
+        };
+        let opaque = composite(AlphaMode::Opaque);
+        let blended = composite(AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+        });
+        assert!(
+            blended.iter().filter(|&&value| value > 0.05).count() > 1000,
+            "budget {budget}: the sphere must reflect its environment"
+        );
+        let worst = opaque
+            .iter()
+            .zip(&blended)
+            .map(|(&opaque, &blended)| (opaque - blended).abs() / blended.max(0.05))
+            .fold(0., f32::max);
+        assert!(
+            worst <= 0.02,
+            "budget {budget}: opaque and blended differ by {worst} of the blended radiance"
+        );
     }
 }

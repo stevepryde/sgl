@@ -761,9 +761,9 @@ code; it does not redeclare a struct, binding or function another module owns.
   which the G-buffer's F0 records ([G-buffer](#shared-contracts)), as
   Filament ef1a133 (`surface_light_indirect.fs` evaluateIBL), Bevy 9d12036
   (`deferred_lighting.wesl`) and Godot b130438 take `min(ao, ssao)`; a
-  frame without ambient occlusion takes the material's alone. The diffuse
-  light of a lightmap or atlas chart, which the pass adds apart from the
-  ambient diffuse, the material's occlusion occludes in the pass itself, in
+  frame without ambient occlusion takes the material's alone. The baked
+  diffuse light of a lightmap, an atlas chart or a moving instance's
+  ambient cube, which the pass adds apart from the ambient diffuse, the material's occlusion occludes in the pass itself, in
   every view, as three.js 0.185.1 (`NodeMaterial.setupLightMap`,
   `PhysicalLightingModel.ambientOcclusion`) and Godot b130438
   (`scene_forward_clustered.glsl`) occlude a light map by the occlusion map;
@@ -884,9 +884,10 @@ code; it does not redeclare a struct, binding or function another module owns.
   Every lobe's response takes the reflectance at grazing incidence (F90)
   KHR_materials_specular defines, the specular strength mixed toward 1 by
   metallic (`surface_f90`), as Filament ef1a133's specular-factor path
-  (`surface_shading_lit.fs` 81–92) and three.js 0.185.1
-  (`MeshPhysicalNodeMaterial.setupSpecular`) take it, as do direct and
-  rectangle lights; the G-buffer's material target records it for
+  defines it (`surface_shading_lit.fs` 81–92) and three.js 0.185.1
+  (`MeshPhysicalNodeMaterial.setupSpecular`) applies it to its environment,
+  multiple-scattering and rectangle-light terms (`PhysicalLightingModel`);
+  direct and rectangle lights take it too; the G-buffer's material target records it for
   completion and composition ([G-buffer](#shared-contracts)). The coat's is
   1.
   World-space rays reach what `Settings::world_space_reflections` says:

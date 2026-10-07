@@ -23,10 +23,10 @@ docs and specs the entry links.
   load to see what was left out.
 - `sgl-3d` occlusion maps, a load error before: one packed in the
   metallic-roughness image's red channel on `TEXCOORD_0` (ORM) occludes
-  ambient diffuse, lightmap and atlas diffuse and environment specular,
-  taking the lesser of it and `Settings::ambient_occlusion`'s visibility
-  where both apply; one in its own image or on another UV set loads
-  unsampled (`Ignored::OcclusionMap`). New
+  ambient diffuse, lightmap, atlas and ambient-cube diffuse and environment
+  specular, taking the lesser of it and `Settings::ambient_occlusion`'s
+  visibility where both apply; one in its own image or on another UV set
+  loads unsampled (`Ignored::OcclusionMap`). New
   `asset::Material::occlusion_texture` (`None`), `occlusion_strength` (1)
   and `SurfaceMaterial::occlusion_strength`.
 - `sgl-3d` `KHR_materials_ior` and `KHR_materials_specular`, a load error

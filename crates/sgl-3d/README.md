@@ -2101,8 +2101,9 @@ incidence (F90) is `specular` mixed toward 1 by metallic, as
 KHR_materials_specular, Filament and three.js define it, so `specular` 0
 turns a dielectric's reflection off whole. The occlusion map's red channel,
 at `occlusion_strength` (glTF's lerp), occludes a surface's ambient diffuse,
-its lightmap or atlas chart's diffuse light and its environment specular,
-never direct light or emission, as three.js and Godot occlude a light map;
+the baked diffuse light of its lightmap, atlas chart or ambient cube and
+its environment specular, never direct light or emission, as three.js and
+Godot occlude a light map;
 with `Settings::ambient_occlusion` the camera's opaque surfaces take the
 lesser of it and the frame's ambient occlusion for their ambient diffuse
 and environment specular, as Filament and Bevy do, while a bake keeps its
