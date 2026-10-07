@@ -5,7 +5,11 @@ use super::super::asset::{Material, Result};
 use super::super::material::AlphaMode;
 use super::Ignored;
 
+mod diffuse_transmission;
+mod sheen;
 mod transmission;
+use diffuse_transmission::read_diffuse_transmission;
+use sheen::read_sheen;
 use transmission::{read_dispersion, read_transmission, read_volume};
 
 /// glTF material `index`, adding what SGL3D leaves out of it to `ignored`.
@@ -405,122 +409,6 @@ fn read_iridescence<'a>(
     iridescence.thickness_texture =
         extension_texture(value, "iridescenceThicknessTexture", document, &error)?;
     Ok(iridescence)
-}
-
-/// A material's sheen (KHR_materials_sheen).
-struct Sheen<'a> {
-    color: [f32; 3],
-    roughness: f32,
-    color_texture: Option<gltf::Texture<'a>>,
-    roughness_texture: Option<gltf::Texture<'a>>,
-}
-
-// Authority: Khronos glTF acfcbe65e40c53d6d3aa55a7299982bf2c01c75d,
-// KHR_materials_sheen/README.md and schema: sheenColorFactor three numbers
-// in 0..1, default black; sheenRoughnessFactor in 0..1, default 0;
-// sheenColorTexture and sheenRoughnessTexture.
-fn read_sheen<'a>(
-    material: &gltf::Material<'a>,
-    document: &'a gltf::Document,
-) -> Result<Sheen<'a>> {
-    let mut sheen = Sheen {
-        color: [0.; 3],
-        roughness: 0.,
-        color_texture: None,
-        roughness_texture: None,
-    };
-    let Some(value) = material.extension_value("KHR_materials_sheen") else {
-        return Ok(sheen);
-    };
-    let name = material.name().unwrap_or("unnamed/default");
-    let error = |message: &str| format!("material {name}: sheen {message}");
-    let object = value
-        .as_object()
-        .ok_or_else(|| error("extension must be an object"))?;
-    for key in object.keys() {
-        if !matches!(
-            key.as_str(),
-            "sheenColorFactor"
-                | "sheenColorTexture"
-                | "sheenRoughnessFactor"
-                | "sheenRoughnessTexture"
-                | "extras"
-        ) {
-            return Err(error(&format!("unsupported property {key}")).into());
-        }
-    }
-    if material.unlit() {
-        return Err(error("cannot be combined with KHR_materials_unlit").into());
-    }
-    if let Some(color) = value.get("sheenColorFactor") {
-        sheen.color = color_factor(color, 1.)
-            .ok_or_else(|| error("sheenColorFactor must be three numbers in 0..1"))?;
-    }
-    sheen.roughness = unit_factor(value, "sheenRoughnessFactor", 0.)
-        .ok_or_else(|| error("sheenRoughnessFactor must be a number in 0..1"))?;
-    sheen.color_texture = extension_texture(value, "sheenColorTexture", document, &error)?;
-    sheen.roughness_texture = extension_texture(value, "sheenRoughnessTexture", document, &error)?;
-    Ok(sheen)
-}
-
-/// A material's diffuse transmission (KHR_materials_diffuse_transmission).
-struct DiffuseTransmission<'a> {
-    factor: f32,
-    color: [f32; 3],
-    texture: Option<gltf::Texture<'a>>,
-    color_texture: Option<gltf::Texture<'a>>,
-}
-
-// Authority: Khronos glTF acfcbe65e40c53d6d3aa55a7299982bf2c01c75d,
-// KHR_materials_diffuse_transmission/README.md and schema:
-// diffuseTransmissionFactor in 0..1, default 0;
-// diffuseTransmissionColorFactor three nonnegative numbers, default white;
-// diffuseTransmissionTexture and diffuseTransmissionColorTexture.
-fn read_diffuse_transmission<'a>(
-    material: &gltf::Material<'a>,
-    document: &'a gltf::Document,
-) -> Result<DiffuseTransmission<'a>> {
-    let mut transmission = DiffuseTransmission {
-        factor: 0.,
-        color: [1.; 3],
-        texture: None,
-        color_texture: None,
-    };
-    let Some(value) = material.extension_value("KHR_materials_diffuse_transmission") else {
-        return Ok(transmission);
-    };
-    let name = material.name().unwrap_or("unnamed/default");
-    let error = |message: &str| format!("material {name}: diffuse transmission {message}");
-    let object = value
-        .as_object()
-        .ok_or_else(|| error("extension must be an object"))?;
-    for key in object.keys() {
-        if !matches!(
-            key.as_str(),
-            "diffuseTransmissionFactor"
-                | "diffuseTransmissionTexture"
-                | "diffuseTransmissionColorFactor"
-                | "diffuseTransmissionColorTexture"
-                | "extras"
-        ) {
-            return Err(error(&format!("unsupported property {key}")).into());
-        }
-    }
-    if material.unlit() {
-        return Err(error("cannot be combined with KHR_materials_unlit").into());
-    }
-    transmission.factor = unit_factor(value, "diffuseTransmissionFactor", 0.)
-        .ok_or_else(|| error("diffuseTransmissionFactor must be a number in 0..1"))?;
-    if let Some(color) = value.get("diffuseTransmissionColorFactor") {
-        transmission.color = color_factor(color, f32::INFINITY).ok_or_else(|| {
-            error("diffuseTransmissionColorFactor must be three finite nonnegative numbers")
-        })?;
-    }
-    transmission.texture =
-        extension_texture(value, "diffuseTransmissionTexture", document, &error)?;
-    transmission.color_texture =
-        extension_texture(value, "diffuseTransmissionColorTexture", document, &error)?;
-    Ok(transmission)
 }
 
 /// Property `key` of `value`, a number in `0..=1`; `default` where absent,

@@ -83,7 +83,7 @@
     "prefix": "Spartan Engine, https://github.com/PanosK92/SpartanEngine\nRevision a8338d0609b85dc32f3732a5c27fb4463816a3b9, LICENSE.txt. Godot's\nservers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl (revision\nb13043816a0f234985030ec035363a005bc86c32) is based on Spartan Engine's TAA at\nthis revision and carries this notice; the DiligentFX port adds its\nmotion-difference rejection, speed-scaled variance box and history clip to\nTAA_ComputeTemporalAccumulation.wgsl (PROVENANCE.md DFX-14).\n\n"
   },
   {
-    "component": "Three.js (SMAA and mist noise)",
+    "component": "Three.js (SMAA, mist noise and shading ports)",
     "path": "crates/sgl-3d/src/stages/post/smaa/LICENSE-three.txt",
     "url": "https://raw.githubusercontent.com/mrdoob/three.js/2431a09f46f34c560bc8e44b33be0e567723d5b9/LICENSE"
   },
