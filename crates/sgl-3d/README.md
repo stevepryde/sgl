@@ -370,8 +370,10 @@ Where it differs from Godot's fog, and why:
   centimetres from a light would take thousands of times the froxel's light
   and the history would hold it, pulsing about a still light and leaving
   puffs behind a moving one. A light's fog keeps its falloff where the
-  froxels are small beside their distance to it and spreads over them where
-  they are not; surfaces keep the physical falloff.
+  froxels are small beside their distance to it; within about a froxel's
+  diagonal of it, the fog falls short of the inverse square and holds steady,
+  the more so where a long fog's slices are metres deep. Surfaces keep the
+  physical falloff.
 - `ambient` scatters the mean of the hemisphere fill and environment
   diffuse over the sphere, which an isotropic medium scatters, where Godot
   samples its sky upward and along the view.

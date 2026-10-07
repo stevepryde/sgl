@@ -62,9 +62,9 @@
 //   in the fog (b5b0713, Assets/VolumetricFog/Shaders/
 //   InjectLightingAndDensity.compute PointLights, 1/(1 + 25 d²/range²)). A
 //   froxel far smaller than its distance to the light keeps the light's
-//   falloff; near the camera, where a long fog's slices are metres deep, a
-//   light's fog spreads over its froxels instead of peaking at the sample
-//   nearest it.
+//   falloff; within about a froxel's diagonal of the light its fog falls
+//   short of the inverse square and holds steady, the more so where a long
+//   fog's slices are metres deep, as Unreal's bias trades it.
 // - The ambient is the frame's hemisphere fill and environment diffuse
 //   averaged over the sphere, which an isotropic phase scatters, where Godot
 //   samples its sky upward, at a mip chosen by the density, and along the
