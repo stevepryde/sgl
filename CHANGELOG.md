@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.3.0 — 2026-10-08
+
+- Move every SGL crate to `0.3.0` together. Breaking: update `Asset`,
+  material and `AlphaMode::Blend` literals and exhaustive `SceneError`
+  matches as the entries below say.
 - `sgl-3d` volumetric fog: a point or spot light's inverse square in the
   fog now adds the froxel's squared diagonal, so near lights no longer pulse
   or leave puffs, and their near fog is dimmer. Raise the light's
@@ -26,12 +31,6 @@ docs and specs the entry links.
   longer and use more memory, and fail in the browser before rendering. No
   game-code changes; re-export baked specular probes to pick it up; old
   exports still load.
-
-## 0.3.0 — 2026-10-07
-
-- Move every SGL crate to `0.3.0` together. Breaking: update `Asset`,
-  material and `AlphaMode::Blend` literals and exhaustive `SceneError`
-  matches as the entries below say.
 - `sgl-3d` glTF loading: an unsupported extension listed only in
   `extensionsUsed` (an anisotropy texture's extensions included) no longer
   fails the load; it is left out and listed in the new `Asset::ignored`
