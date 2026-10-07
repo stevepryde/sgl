@@ -70,8 +70,8 @@ fn brightness(bytes: &[u8]) -> f32 {
 
 /// Makes `material` Lambertian (KHR_materials_specular's specular 0): under
 /// the hemisphere fill alone its lit colour is then all ambient diffuse,
-/// with none of the specular's multiple scattering, which ambient occlusion
-/// does not weight.
+/// which ambient occlusion weights linearly, with none of the specular's
+/// multiple scattering, which it weights as specular.
 fn lambertian(queue: &wgpu::Queue, scene: &mut Scene, material: MaterialId) {
     let mut values = scene.material(material).unwrap();
     values.specular = 0.;
@@ -256,9 +256,25 @@ fn gtao_primary_lighting_ownership_and_disable_restore() {
             off.composite, restored.composite,
             "Off failed to restore complete HDR ({layer})"
         );
-        // The metal's specular multiple scattering of the sky's diffuse light
-        // takes the frame's ambient occlusion too, as specular (#249).
-        if matches!(layer, "hemisphere" | "sky diffuse" | "metal multi") {
+        if layer == "metal multi" {
+            // The metal's specular multiple scattering of the sky's diffuse
+            // light takes the frame's ambient occlusion too, as specular: it
+            // darkens, never brightens.
+            assert_ne!(
+                off.composite, on.composite,
+                "AO left the metal's multiple scattering whole"
+            );
+            for (before, after) in off
+                .composite
+                .chunks_exact(8)
+                .zip(on.composite.chunks_exact(8))
+            {
+                assert!(
+                    half(after) <= half(before) + 0.001,
+                    "AO created energy in {layer}"
+                );
+            }
+        } else if matches!(layer, "hemisphere" | "sky diffuse") {
             let affected = off
                 .composite
                 .chunks_exact(8)
