@@ -328,6 +328,30 @@ Use the [current specs](README.md) for implementation and the
   under each light by the Fresnel its specular takes, and sized highlights,
   Karis's representative point for a point or spot light's radius and the
   directional light's disc.
+
+  Three departures from those references, each measured against f64
+  integrals:
+  - Direct light's multiple scattering takes the environment's own gain,
+    Fdez-Agüera's 1 / (1 − F_avg (1 − E)) as three.js's
+    computeMultiscattering and Khronos's getIBLGGXFresnel apply it, in place
+    of Filament's 1 + F0 (1 / E − 1), so direct and environment light agree
+    on every channel. The two are equal for a white metal; on coloured rough
+    metals Filament's factor reflected up to 19% more than Kulla and Conty's
+    (iron at roughness 1, gold's blue up to 16%), where Fdez-Agüera's stays
+    within −6% to +4%.
+  - The DFG table is Bevy's 64 × 64 one. three.js's 16 × 16 holds no
+    roughness above 0.969 or N·V below 0.031, so a white metal under direct
+    light reflected only 0.89 of a white furnace at roughness 1; Bevy's
+    keeps it within 0.5% up to roughness 0.95 and within 3% at 1.
+  - Sized highlights take Karis's normalisation (α/α′)², with α′ = α + r/2d,
+    without Bevy's two hand-tuned additions (`specular_fix_remap` and its
+    solid-angle factor), which lost up to 40% of a highlight's energy at a
+    radius of a fifth of the distance, where Karis's alone stays within
+    ±16%. The directional light's disc is a sphere at unit distance whose
+    radius is the disc's: Bevy shades no sun disc, and Filament's, without
+    the normalisation, gave the sun on the smoothest water about five times
+    its energy.
+
   Rationale: the three.js-derived direct-light multiple scattering lost
   energy (a rough white metal reflected 0.90, 0.84 and 0.72 of a white
   furnace at roughness 0.5, 0.75 and 1.0) and disagreed with the
