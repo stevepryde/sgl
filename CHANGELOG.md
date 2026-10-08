@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- Docs: SGL has no physics engine; the [consumer guide](docs/README.md#physics)
+  now recommends Rapier for rigid-body dynamics and `sgl_core::collision` or
+  the game's own rules for arcade movement. No game-code changes needed.
+
 ## 0.3.0 — 2026-10-08
 
 - Move every SGL crate to `0.3.0` together. Breaking: update `Asset`,

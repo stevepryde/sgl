@@ -85,7 +85,8 @@ compatibility shims solely to avoid updating consumers.
   canvas and event loop. `sgl-2d` renders 2D games and the HUD and UI over a
   3D scene. See `specs/sgl3d.md` and
   `docs/3d-development.md`. Do not add a second gameplay scripting language, an
-  ECS, a layer process, or compatibility-lock machinery.
+  ECS, a physics engine (games use Rapier or their own, D-33), a layer
+  process, or compatibility-lock machinery.
 - Baked and generated assets (lightmaps, probe captures, other bakes) are
   content, refreshed only by explicitly running their export commands when their
   inputs or format change. Never add fingerprints, source or lockfile hashing,

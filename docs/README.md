@@ -13,6 +13,7 @@ reference do not need to be in every prompt.
 | Build a 2D game | [sgl-2d](../crates/sgl-2d/README.md) | [Minimal window and sprite](../examples/direct-game/src/main.rs) |
 | Add a HUD, menu, or editing tool | [sgl-2d UI](../crates/sgl-2d/README.md#ui-and-huds), [tool composition](../specs/client.md#tool-composition) | [Tool UI](../crates/sgl-2d/examples/tool_ui.rs) |
 | Add fixed-step simulation, collision, or deterministic helpers | [sgl-core](../crates/sgl-core/README.md) | [Public modules](../crates/sgl-core/src/lib.rs) |
+| Add rigid-body physics | [Physics](#physics) | [Rapier user guide](https://rapier.rs/docs/) |
 | Add multiplayer transport | [sgl-net](../crates/sgl-net/README.md) | [Transport API](../crates/sgl-net/src/lib.rs) |
 | Add controller support | [sgl-input](../crates/sgl-input/README.md) | [Controller example](../crates/sgl-input/examples/controllers.rs) |
 | Work directly with GPU post-effects | [sgl-post-fx](../crates/sgl-post-fx/README.md) | [SGL3D integration](../crates/sgl-3d/src/view/post_fx.rs) |
@@ -52,6 +53,23 @@ Use `sgl_3d::glam` for 3D math and `sgl_core::math` for shared 2D math.
 Both re-export the same workspace glam types, so matching vectors and matrices
 can be passed directly between packages. See [3D conventions](3d-development.md)
 before sharing a GPU device or composing 2D UI over a 3D frame.
+
+## Physics
+
+SGL has no physics engine; physics belongs to the game.
+
+- For rigid bodies, joints, vehicles or ragdolls, add [Rapier](https://rapier.rs)
+  (`rapier3d` or `rapier2d`) to the game. Its vectors and rotations are glam
+  types, so they pass to and from `sgl_3d::glam` and `sgl_core::math` directly.
+  In 3D, use metres and gravity along -Y to match SGL3D. Enable its
+  `enhanced-determinism` feature when targets or a server and its clients must
+  simulate identically.
+- For arcade movement, use [`sgl_core::collision`](../crates/sgl-core/README.md)
+  or the game's own rules.
+
+Step physics inside the game's fixed-step loop, with Rapier's
+`IntegrationParameters::dt` set to `FixedClock::fixed_dt`, and copy the
+resulting poses to instances or sprites when presenting.
 
 ## Distributing a game
 

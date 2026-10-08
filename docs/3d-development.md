@@ -52,7 +52,8 @@ Each rendered frame, update retained instances, call `Renderer::resize` and
 rendered poses for motion and reflections, and `finish_frame` advances that
 history once the frame is submitted. History restarts itself on
 `FrameInput::camera_cut`, a resize that changes the targets and a different
-scene. Do not advance simulation from the renderer.
+scene. Do not advance simulation from the renderer. For rigid bodies, see
+[Physics](README.md#physics).
 
 Persist `settings::Settings` inside the game's own settings record. Keep an
 explicit value separate from `Preset` and resolve it without rewriting the saved
