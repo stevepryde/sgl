@@ -63,10 +63,13 @@ the game is.
   multiplayer games, are better with custom arcade physics: movement rules
   written for the game's feel, which stay tunable, cheap, deterministic, and
   easy to predict and roll back over the network. A rigid-body solver's
-  emergent behaviour fights designed handling. In 2D, build on
-  [`sgl_core::collision`](../crates/sgl-core/README.md). In 3D, write the
-  response in the game; [parry3d](https://parry.rs) provides ray, shape-cast
-  and contact queries without a solver.
+  emergent behaviour fights designed handling. Collide against the game's own
+  world model, such as a track spline, road, voxel grid or boxes, not its
+  render meshes. In 2D, [`sgl_core::collision`](../crates/sgl-core/README.md)
+  sweeps and slides boxes. SGL3D's ray queries serve rendering only; keep
+  gameplay queries in the simulation, which a headless server runs without a
+  GPU. A query library such as [parry3d](https://parry.rs) suits a game that
+  must collide with arbitrary meshes.
 - Use a rigid-body engine only when simulated physics is the game: stacking,
   destruction, physics puzzles or sandboxes. Add [Rapier](https://rapier.rs)
   (`rapier3d` or `rapier2d`). Its vectors and rotations, like parry's, are
