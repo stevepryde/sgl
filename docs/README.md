@@ -13,7 +13,7 @@ reference do not need to be in every prompt.
 | Build a 2D game | [sgl-2d](../crates/sgl-2d/README.md) | [Minimal window and sprite](../examples/direct-game/src/main.rs) |
 | Add a HUD, menu, or editing tool | [sgl-2d UI](../crates/sgl-2d/README.md#ui-and-huds), [tool composition](../specs/client.md#tool-composition) | [Tool UI](../crates/sgl-2d/examples/tool_ui.rs) |
 | Add fixed-step simulation, collision, or deterministic helpers | [sgl-core](../crates/sgl-core/README.md) | [Public modules](../crates/sgl-core/src/lib.rs) |
-| Add rigid-body physics | [Physics](#physics) | [Rapier user guide](https://rapier.rs/docs/) |
+| Choose a game's physics | [Physics](#physics) | [Arcade collision](../crates/sgl-core/src/collision.rs) |
 | Add multiplayer transport | [sgl-net](../crates/sgl-net/README.md) | [Transport API](../crates/sgl-net/src/lib.rs) |
 | Add controller support | [sgl-input](../crates/sgl-input/README.md) | [Controller example](../crates/sgl-input/examples/controllers.rs) |
 | Work directly with GPU post-effects | [sgl-post-fx](../crates/sgl-post-fx/README.md) | [SGL3D integration](../crates/sgl-3d/src/view/post_fx.rs) |
@@ -56,20 +56,28 @@ before sharing a GPU device or composing 2D UI over a 3D frame.
 
 ## Physics
 
-SGL has no physics engine; physics belongs to the game.
+SGL has no physics engine. Physics belongs to the game; choose it by what
+the game is.
 
-- For rigid bodies, joints, vehicles or ragdolls, add [Rapier](https://rapier.rs)
-  (`rapier3d` or `rapier2d`) to the game. Its vectors and rotations are glam
-  types, so they pass to and from `sgl_3d::glam` and `sgl_core::math` directly.
-  In 3D, use metres and gravity along -Y to match SGL3D. Enable its
-  `enhanced-determinism` feature when targets or a server and its clients must
-  simulate identically.
-- For arcade movement, use [`sgl_core::collision`](../crates/sgl-core/README.md)
-  or the game's own rules.
+- Most games, including driving, platformers and shooters, and especially
+  multiplayer games, are better with custom arcade physics: movement rules
+  written for the game's feel, which stay tunable, cheap, deterministic, and
+  easy to predict and roll back over the network. A rigid-body solver's
+  emergent behaviour fights designed handling. In 2D, build on
+  [`sgl_core::collision`](../crates/sgl-core/README.md). In 3D, write the
+  response in the game; [parry3d](https://parry.rs) provides ray, shape-cast
+  and contact queries without a solver.
+- Use a rigid-body engine only when simulated physics is the game: stacking,
+  destruction, physics puzzles or sandboxes. Add [Rapier](https://rapier.rs)
+  (`rapier3d` or `rapier2d`). Its vectors and rotations, like parry's, are
+  glam types, so they pass to and from `sgl_3d::glam` and `sgl_core::math`
+  directly. In 3D, use metres and gravity along -Y to match SGL3D. Enable its
+  `enhanced-determinism` feature when targets or a server and its clients
+  must simulate identically.
 
-Step physics inside the game's fixed-step loop, with Rapier's
-`IntegrationParameters::dt` set to `FixedClock::fixed_dt`, and copy the
-resulting poses to instances or sprites when presenting.
+Step physics inside the game's fixed-step loop (set Rapier's
+`IntegrationParameters::dt` to `FixedClock::fixed_dt`) and copy the resulting
+poses to instances or sprites when presenting.
 
 ## Distributing a game
 

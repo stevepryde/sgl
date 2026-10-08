@@ -16,8 +16,9 @@ docs and specs the entry links.
 ## Unreleased
 
 - Docs: SGL has no physics engine; the [consumer guide](docs/README.md#physics)
-  now recommends Rapier for rigid-body dynamics and `sgl_core::collision` or
-  the game's own rules for arcade movement. No game-code changes needed.
+  recommends custom arcade physics for most games (`sgl_core::collision` in
+  2D) and Rapier only where simulated physics is the game. No game-code
+  changes needed.
 
 ## 0.3.0 — 2026-10-08
 

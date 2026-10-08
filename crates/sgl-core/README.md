@@ -30,8 +30,9 @@ the game's replay or persistence requirements.
 
 Collision units and the up axis belong to the game. Supply them through
 `CollisionConfig`; SGL does not choose a world scale or entity layout.
-`collision` moves bodies the game drives; it has no forces, mass or rotation.
-For rigid-body dynamics, see [Physics](../../docs/README.md#physics).
+`collision` is 2D arcade physics: it moves bodies the game drives, with no
+forces, mass or rotation. See [Physics](../../docs/README.md#physics) to
+choose a game's physics.
 
 Read the [core contract](../../specs/core.md) before changing deterministic
 behavior. [Parity fixtures](tests/parity.rs) and [property tests](tests/properties.rs)

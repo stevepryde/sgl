@@ -449,7 +449,11 @@ Use the [current specs](README.md) for implementation and the
     it; each light's direction and fall-off stay the surface's, where Bevy
     takes them at the back lobe's point.
 
-- **D-33** Owner direction, 2026-10-08: SGL has no physics engine. Games
-  that need rigid-body dynamics use Rapier as their own dependency; arcade
-  games use `sgl_core::collision` or their own rules, as the game chooses.
-  SGL builds physics only where it brings a significant benefit over Rapier.
+- **D-33** Owner direction, 2026-10-08: SGL has no physics engine; games
+  choose their physics. Most games, and especially multiplayer ones, use
+  custom arcade physics, in 2D on `sgl_core::collision`; a rigid-body engine
+  (Rapier, as the game's own dependency) is for games whose play is simulated
+  physics. SGL builds physics only where it brings a significant benefit.
+  Rationale: Rapier made the owner's driving game handle worse than arcade
+  rules; designed handling, prediction and rollback come easier from rules
+  written for the game.
