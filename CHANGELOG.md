@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.4.0 — 2026-10-09
+
+- Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`
+  games, `FixedClock` callers, `Settings` literals and exhaustive
+  `SceneError` matches as the entries below say.
 - `sgl-net` `SendError::ReliableOverflow` → `SendError::WouldBlock`: a full
   reliable queue no longer disconnects the peer on any transport; the send is
   refused whole and may be retried. `Delivery::ReliableOrdered` →
@@ -40,118 +45,72 @@ docs and specs the entry links.
   defaults 4,096 → 12,288 messages and 4 → 24 MiB.
   Migration: rename the fields and constants; one-lane games change nothing
   else; others pick `Lane::new(n)` and set `config.reliable.lanes[n].weight`.
+- `sgl-net` `MAX_RELIABLE_MESSAGE_BYTES` (64 KiB) →
+  `ReliableConfig::max_message_bytes` (default
+  `DEFAULT_RELIABLE_MESSAGE_BYTES`, 64 KiB; at most
+  `RELIABLE_MESSAGE_BYTES_LIMIT`, 16 MiB); both ends must set the same cap,
+  and `global_reliable_{outbound,inbound}_bytes` must be at least it. A lane
+  holding no reliable bytes admits one message of any size up to the cap.
+  Migration: use the constant or the configured value; delete game-side
+  segmentation.
 - `sgl-net` `Delivery::Unreliable(Lane)` (new): messages of at most
-  `MAX_UNRELIABLE_BYTES` (1168) sent once, never retransmitted, unordered,
-  delivered at most once; a full send queue (`LaneConfig::unreliable_messages`
-  / `unreliable_bytes`) refuses with `WouldBlock` and the sender never drops
-  an accepted one; a receiver that is not polled drops its oldest unpolled
-  unreliable messages, as a full UDP socket buffer does, while reliable
-  overflow still closes the peer. Migration: exhaustive `Delivery` matches
-  add an arm.
-- `sgl-net` wire version 2 on UDP and WebSocket: old and new builds cannot
-  connect, so rebuild servers and clients together and change the WebSocket
-  subprotocol. `udp::MAX_RELIABLE_FRAGMENT_BYTES` 1168 → 1150; WebSocket
-  frames carry at most `WEBSOCKET_FRAGMENT_BYTES` (16 KiB), so
-  `MAX_WEBSOCKET_FRAME_BYTES` is 16,406 and an oversized frame is
-  `ProtocolViolation` (was `Transport`). `Envelope` borrows its payload and
-  gains `fragment: Fragment`, `encode_envelope(magic, &envelope)`, and
+  `MAX_UNRELIABLE_BYTES` (1168) sent once, unordered, delivered at most
+  once; a full send queue refuses with `WouldBlock`, and a receiver that is
+  not polled drops its oldest unpolled ones. Migration: exhaustive
+  `Delivery` matches add an arm.
+- `sgl-net` wire format: UDP version 3 and WebSocket envelope version 2;
+  old and new builds cannot connect, so rebuild servers and clients
+  together and change the WebSocket subprotocol.
+  `udp::MAX_RELIABLE_FRAGMENT_BYTES` 1168 → 1150; WebSocket frames carry at
+  most `WEBSOCKET_FRAGMENT_BYTES` (16 KiB), so `MAX_WEBSOCKET_FRAME_BYTES`
+  is 16,406 and an oversized frame is `ProtocolViolation` (was
+  `Transport`). `Envelope` borrows its payload and gains
+  `fragment: Fragment`, `encode_envelope(magic, &envelope)`, and
   `EnvelopeError` gains `InvalidLane`, `InvalidFlags` and `InvalidTotal`.
-  `SimulatedConfig` gains `lane_loss_per_10k` (removes a lane's items from
-  a datagram, dropping one left with none). Migration: add
+  `SimulatedConfig` gains `lane_loss_per_10k`. Migration: add
   `lane_loss_per_10k: [0; RELIABLE_LANES]` or `..Default::default()` to
   `SimulatedConfig` literals; direct envelope users pass an `Envelope`.
-- `sgl-net` `MAX_RELIABLE_MESSAGE_BYTES` (64 KiB) → `ReliableConfig::max_message_bytes`
-  (default `DEFAULT_RELIABLE_MESSAGE_BYTES`, 64 KiB; at most
-  `RELIABLE_MESSAGE_BYTES_LIMIT`, 16 MiB; else
-  `ReliableConfigError::InvalidMessageBytes`); both ends must set the same
-  cap. A lane holding no reliable bytes now admits one message of any size
-  up to the cap and `capacity` reports the cap there; lane byte bounds may
-  be as small as 1 (were at least 64 KiB); a lane's inbound queue holds one
-  message larger than `inbound_bytes` beside smaller ones;
-  `EndpointConfig::global_reliable_{outbound,inbound}_bytes` must be at
-  least the cap. Migration: use `DEFAULT_RELIABLE_MESSAGE_BYTES` or the
-  configured value; add `max_message_bytes` (or `..ReliableConfig::DEFAULT`)
-  to `ReliableConfig` literals; delete game-side segmentation.
-- `sgl-net` native WebSocket: a receiver whose lane is full stops reading
-  until `poll` makes room, so the sender gets `WouldBlock` (was disconnected
-  with `InboundOverflow`); the stall does not count toward `timeout_ms`. No
-  game-code changes needed; browser receivers still close on overflow, so
-  size their `inbound_*` bounds for one poll interval.
-- `sgl-net` UDP: a lane past its `inbound_*` bounds or
-  `EndpointConfig::global_reliable_inbound_messages` holds its next message
-  unacknowledged until `poll` makes room, so the sender gets `WouldBlock`
-  (was disconnected with `InboundOverflow`); `ThreadedUdpServer` holds while
-  its caller has not polled, and a held fragment never times the sender
-  out while keepalives arrive. Wire version 3 (held bit, 32 fragments in
-  flight per lane): rebuild servers and clients together. No game-code
-  changes needed; threaded servers need not size `inbound_*` for their
-  poll interval.
-- `sgl-net` UDP: a flush packs reliable fragments, unreliable messages,
-  latest state and acknowledgements into datagrams of up to
-  `MAX_DATAGRAM_BYTES` (was one item per datagram), so
-  `max_packets_per_peer_flush` bounds datagrams, not messages, and latest
-  state leads every flush (was a reserved datagram); a lane acknowledges an
-  arrival in the next two flushes, so an idle receiver sends one more
-  acknowledgement datagram per burst. The wire format is unchanged. No
-  game-code changes needed.
+- `sgl-net` native WebSocket and UDP receivers: a lane past its `inbound_*`
+  bounds (on UDP, or `EndpointConfig::global_reliable_inbound_messages`)
+  stops taking messages until `poll` makes room, so the sender gets
+  `WouldBlock` (was disconnected with `InboundOverflow`), and the stall
+  times neither end out. No game-code changes needed; browser receivers
+  still close on overflow, so size their `inbound_*` bounds for one poll
+  interval.
+- `sgl-net` UDP: a flush packs messages, latest state and acknowledgements
+  into shared datagrams (was one item per datagram), so
+  `max_packets_per_peer_flush` bounds datagrams, not messages. No game-code
+  changes needed.
 - `sgl-net` WebSocket: flushed latest state leaves ahead of lane frames
-  flushed after it (was behind every released lane frame, so a lane kept
-  busy with bulk data starved it), and a newer `send` after a flush no
-  longer withholds the flushed state. No game-code changes needed.
+  flushed after it (was behind every released reliable frame), and a newer
+  `send` no longer withholds it. No game-code changes needed.
 - `sgl-core` `FixedClock`: accumulates exact `Duration` time (was `f32`
   seconds): `begin_frame` takes the frame's `Duration`, the `fixed_dt` field
-  is now the `fixed_dt()` method beside the exact `fixed_step()`, and the new
-  `dropped_dt: Duration` reports unsimulated time. New opt-in
-  `with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })` runs
-  several steps per frame to follow elapsed time; `with_hz` and `new` keep
-  their one-step render-paced cadence. Migration: pass the frame's elapsed
-  `Duration` from `Instant` (`now.duration_since(last)`) and call `fixed_dt()`.
+  is now the `fixed_dt()` method beside `fixed_step()`, and `dropped_dt`
+  reports unsimulated time. New opt-in `with_catch_up(hz, CatchUp { .. })`
+  runs several steps per frame; `with_hz` and `new` keep one step per
+  frame. Migration: pass `now.duration_since(last)` and call `fixed_dt()`.
 - `sgl-2d` `SpritePass::upload`: a handle already uploaded now has its pixels
   replaced (was ignored), and `SpritePass::replace` is public, so glyph pages
-  from `TextRenderer::end_frame` update the existing pass. No game-code
-  changes required; optionally drop a `SpritePass` rebuild and re-upload of
-  retained textures and upload only the handles `end_frame` returns. Games
-  that call `upload` for unchanged textures every frame should upload only
-  on change.
-- `sgl-2d` `SpritePass::draw_stats` (new, `SpriteDrawStats` /
-  `ChannelDrawStats`): per-channel draw calls and instances encoded for the
-  latest `prepare`. No game-code changes needed.
-- `sgl-3d` `Scene::add_shader` (new, `ShaderSource`, `ShaderId`,
-  `shader::ShaderError`): a game's WGSL `material_vertex`,
-  `material_surface` and `ShaderParams`, validated when added and run in
-  every raster pass; `remove_shader`, `shader_parameters_layout`,
-  `set_shader_parameters`, `set_instance_shader_data` and
-  `instance_shader_data` go with it
+  from `TextRenderer::end_frame` update the existing pass. New
+  `SpritePass::draw_stats` reports per-channel draws. No game-code changes
+  required; games that upload unchanged textures every frame should upload
+  only on change.
+- `sgl-3d` programmable surfaces (new): `Scene::add_shader` takes a game's
+  WGSL `material_vertex`, `material_surface` and `ShaderParams`, used by
+  `SurfaceMaterial::shader` (`None` by default), with per-vertex data from
+  `PreparedModel::with_shader_data`; blended materials may read
+  `scene_volume_path`
   ([Programmable surfaces](crates/sgl-3d/README.md#programmable-surfaces)).
-  No game-code changes needed.
-- `sgl-3d` `SurfaceMaterial::shader` (new,
-  `MaterialShader { shader, displacement_bound }`, `None` by default), set
-  through `Scene::set_material`; `asset::Material` is unchanged. No
-  game-code changes needed.
-- `sgl-3d` `PreparedModel::with_shader_data` (new): meshes with per-vertex
-  data for their material's shader; `PreparedModel::new` is unchanged. No
-  game-code changes needed.
-- `sgl-3d` `SceneError`: new `UnknownShader`, `ShaderInUse`,
+  Exhaustive `SceneError` matches add `UnknownShader`, `ShaderInUse`,
   `ShaderParameters`, `Shader`, `InvalidDisplacementBound` and
-  `ShaderDataLength` variants; an exhaustive match adds arms.
-- `sgl-3d` shader contract: new `scene_volume_path(ctx) -> VolumePath`
-  (`length`, `bound`) and `VOLUME_NONE`, `VOLUME_EXIT`, `VOLUME_OPAQUE`,
-  `VOLUME_HIDDEN`, `VOLUME_ENTRY`, `VOLUME_EYE`: a blended draw's view-ray
-  length inside the volume its material bounds
-  ([Programmable surfaces](crates/sgl-3d/README.md#programmable-surfaces)).
-  These names are now reserved: a game module that declares `VolumePath`,
-  `scene_volume_path`, a `VOLUME_` constant, or the providers' helpers
-  `scene_along_ray`, `scene_exit_ahead`, `SCENE_VOLUME_SAME_FACE` or
-  `volume_exit_layer` renames it.
-- `sgl-3d` `Settings::volume_paths` (new, `bool`, on by default) and
-  `Renderer::volume_paths_in_effect` (new): the volume layers drawn for
-  materials whose shader reads `scene_volume_path`; saved settings without
-  the field load with it on. A `Settings` literal without `..` adds
-  `volume_paths: true`.
-- Docs: SGL has no physics engine; the [consumer guide](docs/README.md#physics)
-  recommends custom arcade physics for most games (`sgl_core::collision` in
-  2D) and Rapier only where simulated physics is the game. No game-code
-  changes needed.
+  `ShaderDataLength`.
+- `sgl-3d` `Settings::volume_paths` (new, on by default; saved settings
+  without it load on) and `Renderer::volume_paths_in_effect`. Migration: a
+  `Settings` literal without `..` adds `volume_paths: true`.
+- Docs: the [consumer guide](docs/README.md#physics) recommends custom
+  arcade physics for most games and Rapier only where simulated physics is
+  the game. No game-code changes needed.
 
 ## 0.3.0 — 2026-10-08
 

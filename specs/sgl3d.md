@@ -331,8 +331,7 @@ current capabilities and limits.
 Remaining work, in the existing roadmap order:
 
 1. **DLSS and MetalFX upscaling (12,
-   [#22](https://github.com/stevepryde/sgl/issues/22)),** planned for
-   `0.3.0`. Current antialiasing choices are TAA, SMAA, and FSR2; FSR2
+   [#22](https://github.com/stevepryde/sgl/issues/22)).** Current antialiasing choices are TAA, SMAA, and FSR2; FSR2
    requires native device features and falls back to TAA in the browser.
 
 This is a planned capability, not an API a game can depend on yet. Implement
