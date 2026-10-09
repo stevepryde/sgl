@@ -607,19 +607,29 @@ impl ServerIo for NativeWebSocketServer {
         let mut events = Vec::with_capacity(self.max_events_per_poll);
         let mut remove = Vec::new();
         let mut wake = false;
-        for conn in &connections {
-            let peer = registry
-                .get(conn)
-                .expect("connection key came from registry");
-            peer.shared.advance(now_ms);
-        }
+        // Only a close made before the drain is reported. The worker can
+        // close a peer between two of its events, after this poll popped
+        // messages the close would have purged; that close waits for the
+        // next poll, so no poll returns a peer's messages beside its
+        // `ProtocolViolation`.
+        let closed: Vec<bool> = connections
+            .iter()
+            .map(|conn| {
+                let shared = &registry
+                    .get(conn)
+                    .expect("connection key came from registry")
+                    .shared;
+                shared.advance(now_ms);
+                lock(&shared.state).terminal().is_some()
+            })
+            .collect();
 
         // Drain in rounds so every active peer gets one turn before any peer
         // gets a second. Rotate the starting peer between polls as well.
         let mut progressed = true;
         while events.len() < self.max_events_per_poll && progressed {
             progressed = false;
-            for &conn in &connections {
+            for (&conn, &closed) in connections.iter().zip(&closed) {
                 if events.len() >= self.max_events_per_poll {
                     break;
                 }
@@ -635,6 +645,7 @@ impl ServerIo for NativeWebSocketServer {
                             payload,
                         })
                     } else if let Some(reason) = state.terminal()
+                        && closed
                         && !peer.disconnected_announced
                     {
                         peer.disconnected_announced = true;
