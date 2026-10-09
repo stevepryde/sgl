@@ -1,8 +1,8 @@
 //! Fixed-step clock with render interpolation.
 //!
 //! The loop accumulates caller-supplied frame time as an exact [`Duration`]
-//! and runs the fixed-step simulation in constant steps of `1/hz` seconds,
-//! rounded once to whole nanoseconds. A clock picks one of two policies:
+//! and runs the fixed-step simulation in constant steps of `1/hz` seconds
+//! rounded to the nearest nanosecond. A clock picks one of two policies:
 //!
 //! - **Render-paced** ([`FixedClock::with_hz`], the default): the per-frame
 //!   delta fed into the accumulator is **clamped** to one fixed step, so the
@@ -53,7 +53,8 @@ pub struct CatchUp {
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct FixedClock {
-    /// Constant simulation step: `1 / hz` seconds in whole nanoseconds.
+    /// Constant simulation step: `1 / hz` seconds rounded to the nearest
+    /// nanosecond.
     fixed_step: Duration,
     /// Unconsumed supplied time carried between frames.
     accumulator: Duration,

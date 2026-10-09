@@ -83,7 +83,7 @@ docs and specs the entry links.
   `with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })` runs
   several steps per frame to follow elapsed time; `with_hz` and `new` keep
   their one-step render-paced cadence. Migration: pass the frame's elapsed
-  `Duration` (or `Duration::from_secs_f32(dt)`) and call `fixed_dt()`.
+  `Duration` from `Instant` (`now.duration_since(last)`) and call `fixed_dt()`.
 - `sgl-2d` `SpritePass::upload`: a handle already uploaded now has its pixels
   replaced (was ignored), and `SpritePass::replace` is public, so glyph pages
   from `TextRenderer::end_frame` update the existing pass. No game-code
