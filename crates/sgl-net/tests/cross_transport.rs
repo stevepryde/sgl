@@ -180,7 +180,8 @@ fn run(mut pair: Pair) -> Trace {
         pair.client.send(Delivery::LatestState, &[b'L', i]).unwrap();
     }
     let mut newest = None;
-    pair.settle(&mut |s, _| {
+    let mut waited = 0;
+    pair.drive(&mut |client, _, s, _| {
         for event in s {
             if let ServerEvent::Message {
                 delivery: Delivery::LatestState,
@@ -191,7 +192,11 @@ fn run(mut pair: Pair) -> Trace {
                 newest = Some(payload.clone());
             }
         }
-        newest.as_deref() == Some(&[b'L', 49][..])
+        let landed = newest.as_deref() == Some(&[b'L', 49][..]);
+        if !landed && reoffer(&mut waited) {
+            client.send(Delivery::LatestState, &[b'L', 49]).unwrap();
+        }
+        landed
     });
     trace.server.push(Observed::LatestSettled(newest.unwrap()));
 
@@ -234,7 +239,8 @@ fn run(mut pair: Pair) -> Trace {
     }
     let mut received = Vec::new();
     let mut newest = None;
-    pair.settle(&mut |_, c| {
+    let mut waited = 0;
+    pair.drive(&mut |_, server, _, c| {
         for event in c {
             match event {
                 ClientEvent::Message {
@@ -247,6 +253,11 @@ fn run(mut pair: Pair) -> Trace {
                 } => newest = Some(payload.clone()),
                 _ => {}
             }
+        }
+        if newest.as_deref() != Some(&[b'S', 9][..]) && reoffer(&mut waited) {
+            server
+                .send(conn, Delivery::LatestState, &[b'S', 9])
+                .unwrap();
         }
         received.len() >= back.len() && newest.as_deref() == Some(&[b'S', 9][..])
     });
@@ -303,6 +314,19 @@ fn run(mut pair: Pair) -> Trace {
 enum Direction {
     ClientToServer,
     ServerToClient,
+}
+
+/// Ticks a latest-state phase waits before offering the newest value again.
+/// Latest state is never retransmitted, so a lossy network may drop it; a
+/// game would offer it again. Each offer waits longer than any pair's round
+/// trip, so an offer made right after a flush never displaces one a
+/// transport's worker has not written yet.
+const LATEST_REOFFER_TICKS: u32 = 32;
+
+/// Whether this tick offers the newest latest-state value again.
+fn reoffer(waited: &mut u32) -> bool {
+    *waited += 1;
+    waited.is_multiple_of(LATEST_REOFFER_TICKS)
 }
 
 /// Messages in the saturation phase: more than any transport's per-peer

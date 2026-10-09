@@ -30,7 +30,8 @@ to `memory_duplex_with`; both ends use the same one. Lanes share the
 connection by weighted round robin, so every busy lane progresses: with
 `config.reliable.lanes[0].weight = 8` and lane 1 at 1, lane 0 sends eight
 fragments for each bulk fragment, and at most one bulk fragment goes before
-a waiting lane-0 fragment.
+a waiting lane-0 fragment. Weights count messages and fragments, not bytes:
+give a lane of many small messages the weight its rate needs beside bulk.
 
 A full lane refuses a send with `SendError::WouldBlock`: nothing was queued,
 the connection is fine and other lanes still admit, so keep the message and
@@ -66,11 +67,11 @@ polling. A receiver that is not polled drops its oldest unpolled unreliable
 messages, as a full UDP socket buffer does, while reliable ones wait. A
 full unreliable queue refuses `send` with `WouldBlock` like a full
 reliable lane, and a lane's unreliable messages take turns with its
-reliable fragments. On UDP each reliable fragment and each unreliable
-message takes its own datagram, so a peer sends at most
-`max_packets_per_peer_flush` of them per flush (one fewer while latest state
-is pending). `Delivery::LatestState` coalesces
-snapshots so the newest state wins.
+reliable fragments. On UDP small messages, fragments, latest state and
+acknowledgements share datagrams of up to `MAX_DATAGRAM_BYTES`, so a flush
+of `max_packets_per_peer_flush` datagrams carries hundreds of small
+messages. `Delivery::LatestState` coalesces snapshots so the newest state
+wins; on UDP it goes out in every flush, however busy the lanes.
 The same encoded payload can cross UDP, WebSocket, or memory. Payload caps
 are public constants and lane bounds `ReliableConfig` values in the
 [transport API](src/lib.rs). Connection IDs identify a connection inside a

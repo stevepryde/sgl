@@ -10,10 +10,6 @@ pub struct Latest {
 }
 
 impl Latest {
-    pub const fn has_queued(&self) -> bool {
-        self.queued.is_some()
-    }
-
     pub fn replace(&mut self, payload: &[u8]) {
         self.queued = Some(payload.to_vec());
     }
@@ -105,11 +101,9 @@ mod properties {
                 for payload in burst {
                     sender.replace(payload);
                 }
-                prop_assert!(sender.has_queued());
                 let (sequence, payload) = sender.take().expect("queued");
                 prop_assert_eq!(usize::from(sequence), i);
                 prop_assert_eq!(&payload, burst.last().unwrap());
-                prop_assert!(!sender.has_queued());
                 prop_assert!(sender.take().is_none());
             }
             Ok(())

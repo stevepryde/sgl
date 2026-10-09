@@ -1,5 +1,6 @@
 //! Seeded virtual datagram network for deterministic loss/latency tests.
 
+use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
@@ -36,9 +37,10 @@ pub struct SimulatedConfig {
     pub reorder_extra_ms: u64,
     /// Hard bound for datagrams retained by the whole virtual network.
     pub max_in_flight_datagrams: usize,
-    /// Extra drop probability, in parts per 10,000, for a datagram that
-    /// carries a reliable or unreliable item of each lane, on top of
-    /// `loss_per_10k`.
+    /// Extra loss probability for each lane's items, in parts per 10,000, on
+    /// top of `loss_per_10k`: one draw per lane whose reliable or unreliable
+    /// items a datagram carries, a loss removing that lane's items from it.
+    /// A datagram left with no items is dropped.
     pub lane_loss_per_10k: [u32; RELIABLE_LANES],
 }
 
@@ -110,37 +112,76 @@ impl Network {
         self.random() % 10_000 < u64::from(per_10k)
     }
 
-    /// Whether the per-lane loss drops a datagram: one draw for each lane
-    /// with loss configured whose item it carries.
-    fn lane_loss(&mut self, bytes: &[u8]) -> bool {
+    /// Applies the per-lane loss: one draw for each lane with loss
+    /// configured whose items the datagram carries, each loss removing that
+    /// lane's items. `None` drops a datagram left with no items.
+    fn lane_loss<'a>(&mut self, bytes: &'a [u8]) -> Option<Cow<'a, [u8]>> {
         let loss = self.config.lane_loss_per_10k;
         if loss == [0; RELIABLE_LANES] || bytes.len() < 3 {
-            return false;
+            return Some(Cow::Borrowed(bytes));
         }
         let magic = [bytes[0], bytes[1], bytes[2]];
-        let Some(Parsed::Payload { items, .. }) = packet::parse(bytes, magic) else {
-            return false;
+        let Some(Parsed::Payload {
+            nonces,
+            acks,
+            items,
+        }) = packet::parse(bytes, magic)
+        else {
+            return Some(Cow::Borrowed(bytes));
         };
-        let mut lanes = [false; RELIABLE_LANES];
-        for item in items {
-            if let Item::Reliable { lane, .. } | Item::Unreliable { lane, .. } = item {
-                lanes[lane.index()] = true;
+        let items: Vec<_> = items.collect();
+        let lane_of = |item: &Item<'_>| match item {
+            Item::Reliable { lane, .. } | Item::Unreliable { lane, .. } => Some(lane.index()),
+            Item::Latest { .. } => None,
+        };
+        let mut dropped = [false; RELIABLE_LANES];
+        for lane in items.iter().filter_map(lane_of) {
+            dropped[lane] = true;
+        }
+        for (dropped, loss) in dropped.iter_mut().zip(loss) {
+            *dropped = *dropped && loss > 0 && self.chance(loss);
+        }
+        if !dropped.contains(&true) {
+            return Some(Cow::Borrowed(bytes));
+        }
+        let mut kept = items
+            .into_iter()
+            .filter(|item| lane_of(item).is_none_or(|lane| !dropped[lane]))
+            .peekable();
+        kept.peek()?;
+        let mut rewritten = Vec::with_capacity(bytes.len());
+        packet::begin_payload(&mut rewritten, magic, nonces, &acks);
+        for item in kept {
+            match item {
+                Item::Reliable {
+                    lane,
+                    sequence,
+                    fragment,
+                    payload,
+                } => packet::push_reliable(&mut rewritten, lane, sequence, fragment, payload),
+                Item::Unreliable {
+                    lane,
+                    sequence,
+                    payload,
+                } => packet::push_unreliable(&mut rewritten, lane, sequence, payload),
+                Item::Latest { sequence, payload } => {
+                    packet::push_latest(&mut rewritten, sequence, payload);
+                }
             }
         }
-        lanes
-            .iter()
-            .zip(loss)
-            .any(|(&carried, loss)| carried && loss > 0 && self.chance(loss))
+        Some(Cow::Owned(rewritten))
     }
 
     fn schedule(&mut self, source: SocketAddr, destination: SocketAddr, bytes: &[u8], now_ms: u64) {
         if bytes.len() > super::MAX_DATAGRAM_BYTES
             || self.datagrams.len() >= self.config.max_in_flight_datagrams
             || self.chance(self.config.loss_per_10k)
-            || self.lane_loss(bytes)
         {
             return;
         }
+        let Some(bytes) = self.lane_loss(bytes) else {
+            return;
+        };
         let copies = 1 + usize::from(self.chance(self.config.duplicate_per_10k));
         for _ in 0..copies {
             if self.datagrams.len() >= self.config.max_in_flight_datagrams {
@@ -651,5 +692,72 @@ mod tests {
         .unwrap();
         transport.send(second, b"bounded duplicate", 0);
         assert_eq!(transport.network.lock().unwrap().datagrams.len(), 1);
+    }
+
+    /// Defect: one lane's loss taking the other lanes' items packed beside
+    /// its own, or sparing its own. Oracle: the `lane_loss_per_10k`
+    /// contract — with certain loss on lane 1, a datagram carrying lanes 0
+    /// and 1 and latest state arrives with only lane 0's item and the
+    /// state, and one carrying only lane 1's item is dropped.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn lane_loss_removes_that_lanes_items_and_keeps_the_rest() {
+        let (first, second) = (address(1), address(2));
+        let mut lane_loss_per_10k = [0; RELIABLE_LANES];
+        lane_loss_per_10k[1] = 10_000;
+        let (mut sender, mut receiver) = pair(
+            first,
+            second,
+            SimulatedConfig {
+                one_way_latency_ms: 0,
+                jitter_ms: 0,
+                loss_per_10k: 0,
+                duplicate_per_10k: 0,
+                reorder_per_10k: 0,
+                reorder_extra_ms: 0,
+                max_in_flight_datagrams: 16,
+                lane_loss_per_10k,
+            },
+            5,
+        )
+        .unwrap();
+        let magic = *b"SIM";
+        let nonces = packet::Nonces {
+            client: 1,
+            server: 2,
+        };
+        let lane = |index| crate::Lane::new(index).unwrap();
+        let whole = crate::lanes::Fragment::Whole;
+        let mut mixed = Vec::new();
+        packet::begin_payload(&mut mixed, magic, nonces, &[None; RELIABLE_LANES]);
+        packet::push_reliable(&mut mixed, lane(1), 0, whole, b"lost");
+        packet::push_latest(&mut mixed, 3, b"state");
+        packet::push_unreliable(&mut mixed, lane(0), 4, b"kept");
+        packet::push_unreliable(&mut mixed, lane(1), 5, b"lost too");
+        let mut alone = Vec::new();
+        packet::begin_payload(&mut alone, magic, nonces, &[None; RELIABLE_LANES]);
+        packet::push_reliable(&mut alone, lane(1), 1, whole, b"lost");
+        sender.send(second, &mixed, 0);
+        sender.send(second, &alone, 0);
+
+        let mut buffer = [0; super::super::MAX_DATAGRAM_BYTES + 1];
+        let (length, _) = receiver.receive(&mut buffer, 0).expect("the mix arrives");
+        let Some(Parsed::Payload { items, .. }) = packet::parse(&buffer[..length], magic) else {
+            panic!("a payload datagram");
+        };
+        assert_eq!(
+            items.collect::<Vec<_>>(),
+            [
+                Item::Latest {
+                    sequence: 3,
+                    payload: b"state",
+                },
+                Item::Unreliable {
+                    lane: lane(0),
+                    sequence: 4,
+                    payload: b"kept",
+                },
+            ]
+        );
+        assert!(receiver.receive(&mut buffer, 0).is_none(), "lane 1 alone");
     }
 }

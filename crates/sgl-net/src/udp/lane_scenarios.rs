@@ -1,9 +1,10 @@
 //! Lanes over the seeded virtual network (netcode.md 14, #268, #269): a
 //! small realtime message every tick on lane 0, reliable or unreliable,
 //! while lane 1 streams reliable messages (60 KiB, or 4 MiB) as fast as it
-//! is admitted. Every bound asserted here comes from the network's
-//! parameters, the tick, and deficit round robin's gap bound, never from
-//! the scheduler's state.
+//! is admitted, and many small messages on every lane sharing datagrams.
+//! Every bound asserted here comes from the network's parameters, the tick,
+//! deficit round robin's gap bound and the datagram layout, never from the
+//! scheduler's state.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -14,7 +15,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 use super::packet::{self, Item, Parsed};
 use super::simulated::{SimulatedConfig, SimulatedNetwork, SimulatedTransport};
-use super::{DatagramTransport, Endpoint, EndpointConfig, EndpointEvent};
+use super::{DatagramTransport, Endpoint, EndpointConfig, EndpointEvent, MAX_DATAGRAM_BYTES};
 use crate::{Delivery, Lane, RELIABLE_LANES};
 
 const TICK_MS: u64 = 16;
@@ -413,7 +414,7 @@ fn realtime_beside_4_mib_messages_keeps_the_scheduling_bound() {
 /// Defect: a lost bulk fragment delaying another lane — one sequence space,
 /// window or reassembly shared by every lane, so lane 0 waits for lane 1's
 /// retransmissions. Oracle: per-lane independence (netcode.md 10): with
-/// half of the bulk lane's datagrams dropped and lane 0's never, every
+/// half of the bulk lane's items dropped and lane 0's never, every
 /// realtime message arrives within `one_way + jitter` of the flush after
 /// its `send`, to poll granularity, and the bulk lane still completes
 /// exactly and in order.
@@ -544,4 +545,224 @@ fn unreliable_over_a_lossy_network_is_at_most_once() {
         "an unreliable message delivered twice"
     );
     assert!(delivered.iter().all(|&index| index < sent));
+}
+
+/// Every datagram a transport sent, with when.
+type Wire = Rc<RefCell<Vec<(u64, Vec<u8>)>>>;
+
+/// The client's datagram transport, recording every datagram it sends.
+struct Recorder {
+    inner: SimulatedTransport,
+    sent: Wire,
+}
+
+impl DatagramTransport for Recorder {
+    fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) {
+        self.sent.borrow_mut().push((now_ms, payload.to_vec()));
+        self.inner.send(destination, payload, now_ms);
+    }
+
+    fn receive(&mut self, output: &mut [u8], now_ms: u64) -> Option<(usize, SocketAddr)> {
+        self.inner.receive(output, now_ms)
+    }
+}
+
+/// Bytes `item` takes on the wire (netcode.md 12): a 5-byte header, the
+/// 4-byte total a first fragment of several declares, and the payload.
+fn wire_len(item: &Item<'_>) -> usize {
+    match item {
+        Item::Reliable {
+            fragment, payload, ..
+        } => 5 + payload.len() + if fragment.total().is_some() { 4 } else { 0 },
+        Item::Unreliable { payload, .. } | Item::Latest { payload, .. } => 5 + payload.len(),
+    }
+}
+
+/// Message `index` of `lane`: the lane and index, then filler that differs
+/// per message.
+fn small_message(lane: usize, index: u32, len: usize) -> Vec<u8> {
+    let seed = index.to_le_bytes()[0];
+    let mut payload: Vec<u8> = (0..len).map(|at| seed ^ at.to_le_bytes()[0]).collect();
+    payload[0] = u8::try_from(lane).expect("few lanes");
+    payload[1..5].copy_from_slice(&index.to_le_bytes());
+    payload
+}
+
+/// Defect: packing that loses, repeats or reorders a lane's messages when
+/// several lanes, latest state and fragments of a longer message share
+/// datagrams, closes a datagram while the next item still fits, or passes
+/// the datagram limit. Oracle: the lane contract (netcode.md 10) and the
+/// datagram layout (12) — over 10 % loss, 5 % duplication and 10 %
+/// reordering, three 24-byte reliable messages per tick on lanes 0 to 2, a
+/// 3,000-byte one every fourth tick on lane 3, thirty 16-byte unreliable
+/// ones on lane 2 and a latest state arrive reliable exactly once and in
+/// order per lane, unreliable at most once, and latest only newer; and on
+/// the wire each datagram but the last of a flush leaves less room than
+/// the next one's first item takes.
+#[wasm_bindgen_test(unsupported = test)]
+#[allow(clippy::cast_possible_truncation, clippy::too_many_lines)]
+fn small_messages_on_every_lane_share_datagrams_and_arrive_exactly() {
+    const SMALL_LANES: usize = 3;
+    const LONG_LANE: usize = 3;
+    let lane = |index: usize| Lane::new(index as u8).expect("lane exists");
+    let network = SimulatedNetwork::new(
+        SimulatedConfig {
+            one_way_latency_ms: 30,
+            jitter_ms: 5,
+            loss_per_10k: 1_000,
+            duplicate_per_10k: 500,
+            reorder_per_10k: 1_000,
+            reorder_extra_ms: 20,
+            max_in_flight_datagrams: 4_096,
+            lane_loss_per_10k: [0; RELIABLE_LANES],
+        },
+        61,
+    )
+    .expect("valid network");
+    let config = EndpointConfig::new(MAGIC);
+    let mut server =
+        Endpoint::server(network.transport(SERVER), config.clone(), [61; 32]).expect("server");
+    let wire: Wire = Rc::default();
+    let recorder = Recorder {
+        inner: network.transport(CLIENT),
+        sent: Rc::clone(&wire),
+    };
+    let mut client = Endpoint::client(recorder, config).expect("client");
+    let peer = client.start_connect(SERVER, 0, 7).expect("connect");
+
+    let mut now = 0;
+    let (mut server_up, mut client_up) = (false, false);
+    while !(server_up && client_up) {
+        now += TICK_MS;
+        server_up |= server
+            .poll(now)
+            .iter()
+            .any(|event| matches!(event, EndpointEvent::Connected { .. }));
+        client_up |= client
+            .poll(now)
+            .contains(&EndpointEvent::Connected { peer });
+        server.flush(now);
+        client.flush(now);
+        assert!(now < 5_000, "never connected");
+    }
+    wire.borrow_mut().clear();
+
+    let message_len = |lane: usize| if lane == LONG_LANE { 3_000 } else { 24 };
+    let until = now + 4_000;
+    let mut queued: [Vec<u32>; RELIABLE_LANES] = Default::default();
+    let mut sent = [0u32; RELIABLE_LANES];
+    let mut delivered: [Vec<u32>; RELIABLE_LANES] = Default::default();
+    let (mut unreliable_sent, mut unreliable) = (0u32, Vec::new());
+    let (mut tick, mut latest) = (0u32, Vec::new());
+    loop {
+        now += TICK_MS;
+        for event in server.poll(now) {
+            let EndpointEvent::Message {
+                delivery, payload, ..
+            } = event
+            else {
+                panic!("unexpected {event:?}");
+            };
+            let index = index_of(&payload[1..]);
+            match delivery {
+                Delivery::Reliable(got) => {
+                    let lane = got.index();
+                    assert_eq!(payload, small_message(lane, index, message_len(lane)));
+                    delivered[lane].push(index);
+                }
+                Delivery::Unreliable(got) => {
+                    assert_eq!((got, payload), (lane(2), small_message(9, index, 16)));
+                    unreliable.push(index);
+                }
+                Delivery::LatestState => latest.push(index),
+            }
+        }
+        client.poll(now);
+        if now < until {
+            for (index, queue) in queued.iter_mut().enumerate().take(SMALL_LANES) {
+                queue.extend(sent[index]..sent[index] + 3);
+                sent[index] += 3;
+            }
+            if tick.is_multiple_of(4) {
+                queued[LONG_LANE].push(sent[LONG_LANE]);
+                sent[LONG_LANE] += 1;
+            }
+            for _ in 0..30 {
+                client
+                    .send(
+                        peer,
+                        Delivery::Unreliable(lane(2)),
+                        &small_message(9, unreliable_sent, 16),
+                    )
+                    .expect("thirty a tick fit the unreliable queue");
+                unreliable_sent += 1;
+            }
+            client
+                .send(peer, Delivery::LatestState, &small_message(8, tick, 32))
+                .expect("latest state is never refused");
+            tick += 1;
+        }
+        // A refused message waits for a later tick, in order.
+        for (index, queue) in queued.iter_mut().enumerate() {
+            let accepted = queue
+                .iter()
+                .take_while(|&&message| {
+                    client
+                        .send(
+                            peer,
+                            Delivery::Reliable(lane(index)),
+                            &small_message(index, message, message_len(index)),
+                        )
+                        .is_ok()
+                })
+                .count();
+            queue.drain(..accepted);
+        }
+        client.flush(now);
+        server.flush(now);
+        let drained =
+            (0..RELIABLE_LANES).all(|index| delivered[index].len() == sent[index] as usize);
+        if now >= until + 2_000 && drained {
+            break;
+        }
+        assert!(
+            now < until + 60_000,
+            "never drained: {delivered:?} of {sent:?}"
+        );
+    }
+
+    for (index, got) in delivered.iter().enumerate() {
+        assert_eq!(*got, (0..sent[index]).collect::<Vec<_>>(), "lane {index}");
+    }
+    let before = unreliable.len();
+    unreliable.sort_unstable();
+    unreliable.dedup();
+    assert_eq!(unreliable.len(), before, "an unreliable message twice");
+    assert!(unreliable.iter().all(|&index| index < unreliable_sent));
+    assert!(
+        latest.windows(2).all(|pair| pair[0] < pair[1]),
+        "{latest:?}"
+    );
+
+    // The client receives no lane data, so its datagrams carry no
+    // acknowledgements and an item's room is the datagram's own.
+    for pair in wire.borrow().windows(2) {
+        let [(at, datagram), (next_at, next)] = pair else {
+            unreachable!("windows of two");
+        };
+        assert!(datagram.len() <= MAX_DATAGRAM_BYTES);
+        let Some(Parsed::Payload { mut items, .. }) = packet::parse(next, MAGIC) else {
+            continue;
+        };
+        if let Some(first) = items.next()
+            && at == next_at
+        {
+            assert!(
+                datagram.len() + wire_len(&first) > MAX_DATAGRAM_BYTES,
+                "at {at}: a {}-byte datagram closed before a {}-byte item",
+                datagram.len(),
+                wire_len(&first)
+            );
+        }
+    }
 }

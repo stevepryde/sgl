@@ -17,6 +17,10 @@ use crate::lanes::{Fragment, FramingViolation, Reassembly};
 
 /// Fragments in flight per lane; the receiver buffers the same span.
 pub const WINDOW: u16 = 32;
+/// Flushes that carry a lane's acknowledgement after a fragment arrives: the
+/// next and the one after, so one lost acknowledgement does not leave a
+/// sender whose whole window rode one datagram waiting for its timeout.
+pub const ACK_FLUSHES: u8 = 2;
 
 /// A received fragment waiting for the gap before it, or for room.
 #[derive(Debug)]
@@ -70,7 +74,8 @@ pub struct Reliable {
     reassembly: Reassembly,
     max_message_bytes: usize,
     received: bool,
-    pub ack_dirty: bool,
+    /// Flushes that must still carry this lane's acknowledgement.
+    pub acks_owed: u8,
 }
 
 impl Reliable {
@@ -92,7 +97,7 @@ impl Reliable {
             reassembly: Reassembly::default(),
             max_message_bytes,
             received: false,
-            ack_dirty: false,
+            acks_owed: 0,
         }
     }
 
@@ -138,15 +143,23 @@ impl Reliable {
                 .is_none_or(|first| sequence::diff(self.next_sequence, first.sequence) < WINDOW)
     }
 
-    /// Moves the next fragment into the window, if it fits.
-    pub fn admit(&mut self) -> Option<u16> {
+    /// The fragment [`Self::admit`] moves into the window next and the
+    /// range of its message it carries, if the window admits it.
+    pub fn upcoming(&self) -> Option<(Fragment, usize, usize)> {
         if !self.window_open() {
             return None;
         }
         let (message, start) = self.next_fragment;
         let len = self.message(message).len();
         let (fragment, end) = Fragment::at(len, start, self.fragment_bytes, TOTAL_LEN);
-        self.next_fragment = if end == len {
+        Some((fragment, start, end))
+    }
+
+    /// Moves the next fragment into the window, if it fits.
+    pub fn admit(&mut self) -> Option<u16> {
+        let (fragment, start, end) = self.upcoming()?;
+        let message = self.next_fragment.0;
+        self.next_fragment = if matches!(fragment, Fragment::Whole | Fragment::Last) {
             (message + 1, 0)
         } else {
             (message, end)
@@ -281,7 +294,7 @@ impl Reliable {
         admit: &mut impl FnMut(usize) -> bool,
         output: &mut Vec<Vec<u8>>,
     ) -> Result<(), FramingViolation> {
-        self.ack_dirty = true;
+        self.acks_owed = ACK_FLUSHES;
         self.received = true;
         if fragment
             .total()
@@ -328,7 +341,7 @@ impl Reliable {
                 .expect("the front slot is buffered");
             self.buffered_bytes -= slot.bytes.len();
             self.receive_next = self.receive_next.wrapping_add(1);
-            self.ack_dirty = true;
+            self.acks_owed = ACK_FLUSHES;
             output.extend(self.reassembly.push(
                 slot.fragment,
                 &slot.bytes,

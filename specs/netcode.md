@@ -127,10 +127,17 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     `max_reliable_transmissions`, nor samples its round trip; its window of
     `WINDOW` (32) fragments starts at the oldest fragment before which
     everything is acknowledged, so it never reaches past the receiver's,
-    which buffers the same span from `next`. An
-    acknowledgement that does not fit beside a latest-state or unreliable item
-    stays owed and rides the acknowledgement datagram of the same flush when
-    the per-peer datagram budget allows, or the next flush. Each item's tag
+    which buffers the same span from `next`. Any number of items fill the
+    rest of the datagram. Every payload datagram carries the
+    acknowledgement of each lane that has received anything, where it fits,
+    and a lane acknowledges each change to its receive state (an arrival,
+    or a held fragment consumed) in the next two flushes, in a payload
+    datagram or else an acknowledgement datagram, so one lost
+    acknowledgement does not stall a sender whose whole window rode one
+    datagram until its retransmission timeout. An acknowledgement that does
+    not fit beside a latest-state or unreliable item stays owed and rides a
+    later datagram of the same flush when the per-peer datagram budget
+    allows, or the next flush. Each item's tag
     carries its kind, FIRST and MORE flags and lane, and the first fragment of
     a longer message its total length. Item kinds are 0 reliable, 1 latest
     state and 2 unreliable (3 is reserved); an unreliable item carries no
@@ -138,7 +145,7 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     the receiver uses only to drop duplicates within a 1,024-message window
     (one reordered behind more than that counts as lost). Reliable fragments
     carry at most `MAX_RELIABLE_FRAGMENT_BYTES` (1150, four fewer on a first
-    fragment), so every reliable datagram also carries every lane's
+    fragment), so a reliable fragment always fits beside every lane's
     acknowledgement; latest state and unreliable messages carry at most 1168
     beside one. A datagram with the reserved item kind, a lane past
     `RELIABLE_LANES`, latest state or an unreliable message with fragment
@@ -178,24 +185,28 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     version changes. Browser reconnect follows `ReconnectPolicy` with
     bounded attempts and delay, driven by `poll(now_ms)`.
 14. Lanes share a connection by deficit round robin over the lanes with
-    sendable work. Each lane's quantum is `LaneConfig::weight` fragments
-    (`1..=MAX_LANE_WEIGHT`, default 1), and each fragment counts once since it
-    takes one datagram or frame: a backlogged lane sends `weight` fragments
-    per round, every backlogged lane makes progress, and between two fragments
-    of a lane the other lanes send at most the sum of their weights. There is
-    no strict priority. A lane's unreliable messages share its quantum with
-    its reliable work, each message counting as one fragment. Within a lane,
-    due UDP retransmissions go first; otherwise a new reliable fragment and an
-    unreliable message take turns, so neither waits behind more than one of
-    the other (plus, on UDP, the lane's due retransmissions, at most `WINDOW`
-    per retransmission timeout). An unsent UDP unreliable message waits
-    for a later flush. Each reliable fragment and each unreliable message
-    currently takes its own UDP datagram, so a peer sends at most
-    `max_packets_per_peer_flush` of them per flush, one fewer while latest
-    state is pending; packing small items into shared datagrams is a
-    follow-up. Latest state keeps its reserved UDP datagram per flush; the
-    memory transport, whose messages cross whole, returns lanes interleaved by
-    the same weights.
+    sendable work. Each lane's quantum is `LaneConfig::weight` items
+    (`1..=MAX_LANE_WEIGHT`, default 1), an item being a reliable fragment or
+    an unreliable message, each counting once whatever its size: a
+    backlogged lane sends `weight` items per round, every backlogged lane
+    makes progress, and between two items of a lane the other lanes send at
+    most the sum of their weights. Weights share items, not bytes, so a lane
+    of small messages that competes with bulk for a binding datagram budget
+    needs a weight for its message rate. There is no strict priority. A
+    lane's unreliable messages share its quantum with its reliable work.
+    Within a lane, due UDP retransmissions go first; otherwise a new
+    reliable fragment and an unreliable message take turns, so neither waits
+    behind more than one of the other (plus, on UDP, the lane's due
+    retransmissions, at most `WINDOW` per retransmission timeout).
+    A UDP flush packs payload datagrams in that order: the latest state
+    queued before the flush first, then lane items while the next fits
+    beside the acknowledgement of every lane that has received anything; an
+    item that does not fit starts the next datagram, so small items share
+    datagrams and packing keeps the schedule and its bound. A peer sends at
+    most `max_packets_per_peer_flush` datagrams per flush; an item left over
+    is neither taken nor charged and waits, unsent unreliable messages
+    included, for a later flush. The memory transport, whose messages cross
+    whole, returns lanes interleaved by the same weights.
 15. A reliable message longer than one UDP item or WebSocket frame is
     fragmented as it is sent, each fragment a range of the queued message,
     so the sender holds every message once; the first fragment declares the
@@ -228,6 +239,8 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
   retained message lands exactly once.
 - A realtime lane keeps its scheduling bound while another lane streams bulk
   data, and on UDP a dropped bulk fragment delays no other lane.
+- On UDP small messages of every class share datagrams up to the limit,
+  and every lane stays exact and in order over a lossy network.
 - A 4 MiB message crosses every transport within the configured memory,
   through a lane whose byte allowance is smaller, while a realtime lane
   keeps its scheduling bound.

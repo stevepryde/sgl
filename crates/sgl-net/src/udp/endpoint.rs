@@ -33,6 +33,8 @@ pub struct EndpointConfig {
     pub keepalive_ms: u64,
     pub handshake_retry_ms: u64,
     pub max_datagrams_per_poll: usize,
+    /// Datagrams sent to one peer per flush, each packing as many items as
+    /// fit.
     pub max_packets_per_peer_flush: usize,
     pub challenge_responses_per_poll: usize,
     pub challenge_prefix_burst: u16,
@@ -713,21 +715,11 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
 
         let max_packets = self.config.max_packets_per_peer_flush;
-        // Reserve one datagram for newest-wins state whenever it is pending.
-        let reliable_budget = if self
-            .peers
-            .get(&id)
-            .is_some_and(|peer| peer.latest.has_queued() && !peer.is_closing())
-        {
-            max_packets.saturating_sub(1)
-        } else {
-            max_packets
-        };
-        let packet_count = self.flush_reliable_packets(id, now_ms, reliable_budget);
-        if self.peers.get(&id).is_some_and(Peer::is_closing) {
-            return;
+        let packet_count = self.flush_payloads(id, now_ms, max_packets);
+        if !self.peers[&id].is_closing() {
+            self.flush_acks_and_keepalive(id, now_ms, packet_count, max_packets);
         }
-        self.flush_latest_and_keepalive(id, now_ms, packet_count, max_packets);
+        self.peers.get_mut(&id).expect("peer exists").end_flush();
     }
 
     fn flush_handshake_peer(&mut self, id: u64, now_ms: u64) {
@@ -754,53 +746,73 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
     }
 
-    /// Sends up to `budget` lane datagrams, one item each — a reliable
-    /// fragment or an unreliable message — choosing the lane of every one by
-    /// deficit round robin; within a lane a due retransmission goes first.
-    fn flush_reliable_packets(&mut self, id: u64, now_ms: u64, budget: usize) -> usize {
+    /// Sends up to `budget` payload datagrams, packing items into each in
+    /// order while the next fits beside every acknowledgement the peer
+    /// carries: the pending latest state first, then lane items, the lane of
+    /// each chosen by deficit round robin and, within a lane, a due
+    /// retransmission first (netcode.md 12, 14). An item that does not fit
+    /// starts the next datagram, beside the acknowledgements that fit when
+    /// it is too large for all of them; one left when the budget is spent
+    /// is neither taken nor charged and waits for a later flush.
+    fn flush_payloads(&mut self, id: u64, now_ms: u64, budget: usize) -> usize {
+        let peer = self.peers.get_mut(&id).expect("peer exists");
+        let max_transmissions = if peer.is_closing() {
+            self.config.close_retransmits.saturating_add(1)
+        } else {
+            self.config.max_reliable_transmissions
+        };
+        let rto_ms = peer.rto_ms();
+        // Every lane that has received anything acknowledges in every
+        // datagram, so the room beside them is the same all flush.
+        let room = packet::DATAGRAM_BYTES
+            - packet::BASE_HEADER_LEN
+            - packet::acks_len(&peer.acks(packet::ALL_ACKS_LEN));
+        let mut latest = peer.latest.take();
+        let mut items = Vec::new();
         let mut packet_count = 0;
         while packet_count < budget {
-            let peer = self.peers.get_mut(&id).expect("peer exists");
-            let max_transmissions = if peer.is_closing() {
-                self.config.close_retransmits.saturating_add(1)
-            } else {
-                self.config.max_reliable_transmissions
-            };
-            let rto_ms = peer.rto_ms();
-            let mut scheduler = peer.scheduler.clone();
-            let Some(index) =
-                scheduler.next(|lane| peer.sendable(lane, now_ms, rto_ms, max_transmissions))
-            else {
+            let mut used = latest
+                .as_ref()
+                .map_or(0, |(_, payload)| packet::item_len(payload.len()));
+            loop {
+                let mut scheduler = peer.scheduler.clone();
+                let Some(index) = scheduler
+                    .next(|lane| peer.peek(lane, now_ms, rto_ms, max_transmissions).is_some())
+                else {
+                    break;
+                };
+                let (next, len) = peer
+                    .peek(index, now_ms, rto_ms, max_transmissions)
+                    .expect("the scheduler picked a sendable lane");
+                if used > 0 && used + len > room {
+                    break;
+                }
+                peer.scheduler = scheduler;
+                items.push((index, peer.take(index, next, now_ms)));
+                used += len;
+            }
+            if used == 0 {
                 break;
-            };
-            peer.scheduler = scheduler;
-            let lane = lane_at(index);
-            let outgoing = peer
-                .next_outgoing(index, now_ms, rto_ms, max_transmissions)
-                .expect("the scheduler picked a sendable lane");
-            let acks = match &outgoing {
-                Outgoing::Reliable(sequence) => {
-                    let acks = peer.acks(packet::ALL_ACKS_LEN);
-                    let (fragment, bytes) = peer.reliable[index]
-                        .fragment(*sequence)
-                        .expect("a sent fragment is in flight");
-                    packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
-                    packet::push_reliable(&mut self.scratch, lane, *sequence, fragment, bytes);
-                    peer.reliable[index].mark_sent(*sequence, now_ms);
-                    acks
+            }
+            let acks = peer.acks(packet::DATAGRAM_BYTES - packet::BASE_HEADER_LEN - used);
+            packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
+            if let Some((sequence, payload)) = latest.take() {
+                packet::push_latest(&mut self.scratch, sequence, &payload);
+            }
+            for (index, outgoing) in items.drain(..) {
+                let lane = lane_at(index);
+                match outgoing {
+                    Outgoing::Reliable(sequence) => {
+                        let (fragment, bytes) = peer.reliable[index]
+                            .fragment(sequence)
+                            .expect("a sent fragment is in flight");
+                        packet::push_reliable(&mut self.scratch, lane, sequence, fragment, bytes);
+                    }
+                    Outgoing::Unreliable(sequence, payload) => {
+                        packet::push_unreliable(&mut self.scratch, lane, sequence, &payload);
+                    }
                 }
-                Outgoing::Unreliable(sequence, payload) => {
-                    let acks = peer.acks(
-                        packet::DATAGRAM_BYTES
-                            - packet::BASE_HEADER_LEN
-                            - packet::ITEM_HEADER_LEN
-                            - payload.len(),
-                    );
-                    packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
-                    packet::push_unreliable(&mut self.scratch, lane, *sequence, payload);
-                    acks
-                }
-            };
+            }
             self.transport.send(peer.addr, &self.scratch, now_ms);
             peer.sent_acks(&acks);
             peer.last_send_ms = now_ms;
@@ -809,32 +821,15 @@ impl<T: DatagramTransport> Endpoint<T> {
         packet_count
     }
 
-    fn flush_latest_and_keepalive(
+    /// Sends the acknowledgements no payload datagram had room for, or a
+    /// keepalive when nothing else went out, within the budget.
+    fn flush_acks_and_keepalive(
         &mut self,
         id: u64,
         now_ms: u64,
-        mut packet_count: usize,
+        packet_count: usize,
         max_packets: usize,
     ) {
-        if packet_count < max_packets {
-            let peer = self.peers.get_mut(&id).expect("peer exists");
-            if let Some((sequence, payload)) = peer.latest.take() {
-                // As many lanes' acknowledgements as fit beside the state;
-                // the rest ride the acknowledgement datagram below.
-                let room = packet::DATAGRAM_BYTES
-                    - packet::BASE_HEADER_LEN
-                    - packet::ITEM_HEADER_LEN
-                    - payload.len();
-                let acks = peer.acks(room);
-                packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
-                packet::push_latest(&mut self.scratch, sequence, &payload);
-                self.transport.send(peer.addr, &self.scratch, now_ms);
-                peer.sent_acks(&acks);
-                peer.last_send_ms = now_ms;
-                packet_count += 1;
-            }
-        }
-
         let peer = self.peers.get_mut(&id).expect("peer exists");
         let keepalive = peer.ack_dirty()
             || (packet_count == 0
@@ -1567,6 +1562,20 @@ mod tests {
             panic!("expected a control datagram");
         };
         (kind, nonces)
+    }
+
+    /// Every item `endpoint` put on the wire, in order.
+    fn wire_items(endpoint: &Endpoint<RecordingTransport>) -> Vec<Item<'_>> {
+        endpoint
+            .transport
+            .sent
+            .iter()
+            .filter_map(|datagram| match packet::parse(&datagram.bytes, MAGIC)? {
+                Parsed::Payload { items, .. } => Some(items),
+                Parsed::Control { .. } => None,
+            })
+            .flatten()
+            .collect()
     }
 
     fn reliable_payload(datagram: &SentDatagram) -> Option<Vec<u8>> {
@@ -2799,14 +2808,8 @@ mod tests {
                 .unwrap();
         }
         server.flush(3);
-        let order: Vec<bool> = server
-            .transport
-            .sent
+        let order: Vec<bool> = wire_items(&server)
             .iter()
-            .filter_map(|datagram| match packet::parse(&datagram.bytes, MAGIC)? {
-                Parsed::Payload { mut items, .. } => items.next(),
-                Parsed::Control { .. } => None,
-            })
             .map(|item| matches!(item, Item::Unreliable { .. }))
             .collect();
         assert_eq!(order.iter().filter(|&&unreliable| unreliable).count(), 4);
@@ -2927,5 +2930,202 @@ mod tests {
                 reason: DisconnectReason::ProtocolViolation,
             }]
         );
+    }
+
+    /// Defect: items sent one per datagram, a datagram closed while the next
+    /// item still fits, an item lost or repeated by packing, an owed
+    /// acknowledgement left out, or a datagram past the limit. Oracle: the
+    /// version-3 layout (netcode.md 12) — a 21-byte header (magic 3, version
+    /// 1, kind 1, two 8-byte nonces), 6 bytes per acknowledgement and 5 per
+    /// item header — so 30 reliable and 90 unreliable twenty-byte messages
+    /// (the reliable ones within the lane's window) and a 40-byte latest
+    /// state beside two lanes' acknowledgements fill ceil(3,045 / 1,167) = 3
+    /// datagrams of at most 1,200 bytes; items this small leave less than
+    /// one item's slack in each.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_flush_packs_small_items_into_as_few_datagrams_as_fit() {
+        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
+        // The peer sends on lanes 0 and 3, so every datagram back carries
+        // both acknowledgements.
+        let mut bytes = Vec::new();
+        packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+        for index in [0, 3] {
+            packet::push_reliable(&mut bytes, lane(index), 0, Fragment::Whole, b"in");
+        }
+        server
+            .transport
+            .received
+            .push_back(ReceivedDatagram { source, bytes });
+        assert_eq!(server.poll(2).len(), 2);
+
+        server.send(1, Delivery::LatestState, &[9; 40]).unwrap();
+        for index in 0..90u8 {
+            if index < 30 {
+                server
+                    .send(1, Delivery::Reliable(lane(0)), &[index; 20])
+                    .unwrap();
+            }
+            server
+                .send(1, Delivery::Unreliable(lane(1)), &[index; 20])
+                .unwrap();
+        }
+        server.flush(3);
+
+        let (header, ack, item): (usize, usize, usize) = (21, 6, 5);
+        let total = item + 40 + 120 * (item + 20);
+        let room = 1_200 - header - 2 * ack;
+        assert_eq!(server.transport.sent.len(), total.div_ceil(room));
+        let (mut reliable, mut unreliable, mut latest) = (Vec::new(), Vec::new(), 0);
+        for datagram in &server.transport.sent {
+            assert!(datagram.bytes.len() <= 1_200);
+            let Some(Parsed::Payload { acks, items, .. }) = packet::parse(&datagram.bytes, MAGIC)
+            else {
+                panic!("expected payload datagrams");
+            };
+            assert!(acks[0].is_some() && acks[3].is_some(), "{acks:?}");
+            for item in items {
+                match item {
+                    Item::Reliable {
+                        lane: got,
+                        fragment: Fragment::Whole,
+                        payload,
+                        ..
+                    } if got == lane(0) => reliable.push(payload[0]),
+                    Item::Unreliable {
+                        lane: got, payload, ..
+                    } if got == lane(1) => unreliable.push(payload[0]),
+                    Item::Latest { payload, .. } if payload == [9; 40] => latest += 1,
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+        }
+        reliable.sort_unstable();
+        unreliable.sort_unstable();
+        assert_eq!(
+            (reliable, unreliable, latest),
+            ((0..30).collect(), (0..90).collect(), 1)
+        );
+    }
+
+    /// Defect: newest-wins state starved behind a lane backlog that takes
+    /// the whole datagram budget. Oracle: netcode.md 14 — the state queued
+    /// before a flush goes out in it — with a budget of two datagrams and a
+    /// reliable backlog of eight full fragments.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn latest_state_goes_out_in_every_flush_however_full_the_lanes() {
+        let (mut server, _, _) = connected_server(EndpointConfig {
+            max_packets_per_peer_flush: 2,
+            ..EndpointConfig::default()
+        });
+        server
+            .send(
+                1,
+                Delivery::RELIABLE_ORDERED,
+                &[1; 8 * packet::MAX_RELIABLE_ITEM_PAYLOAD],
+            )
+            .unwrap();
+        for tick in 0..3u8 {
+            server.send(1, Delivery::LatestState, &[tick; 600]).unwrap();
+            server.transport.sent.clear();
+            server.flush(10 + u64::from(tick));
+            assert_eq!(server.transport.sent.len(), 2);
+            let latest: Vec<u8> = wire_items(&server)
+                .into_iter()
+                .filter_map(|item| match item {
+                    Item::Latest { payload, .. } => Some(payload[0]),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(latest, [tick]);
+        }
+    }
+
+    /// Defect: packing that sends a fragment twice in one flush (one taken
+    /// but not yet marked sent still counting as due), puts a lane's new
+    /// fragments before its due retransmissions, or retransmits before the
+    /// timeout. Oracle: netcode.md 14 (within a lane due retransmissions go
+    /// first) and the 200 ms retransmission timeout a lane uses before any
+    /// round trip is measured: nothing goes at 209 ms, and at 210 ms the
+    /// three fragments sent at 10 ms go again, oldest first, before the
+    /// three queued since, each once.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn due_retransmissions_lead_their_lane_and_go_once_per_flush() {
+        let (mut server, _, _) = connected_server(EndpointConfig::default());
+        let sequences = |server: &Endpoint<RecordingTransport>| -> Vec<u16> {
+            wire_items(server)
+                .into_iter()
+                .filter_map(|item| match item {
+                    Item::Reliable { sequence, .. } => Some(sequence),
+                    _ => None,
+                })
+                .collect()
+        };
+        for index in 0..3u8 {
+            server
+                .send(1, Delivery::RELIABLE_ORDERED, &[index])
+                .unwrap();
+        }
+        server.flush(10);
+        assert_eq!(sequences(&server), [0, 1, 2]);
+        for index in 3..6u8 {
+            server
+                .send(1, Delivery::RELIABLE_ORDERED, &[index])
+                .unwrap();
+        }
+        server.transport.sent.clear();
+        server.flush(209);
+        // The three new fragments went at 209 ms; none was due yet.
+        assert_eq!(sequences(&server), [3, 4, 5]);
+        for index in 6..9u8 {
+            server
+                .send(1, Delivery::RELIABLE_ORDERED, &[index])
+                .unwrap();
+        }
+        server.transport.sent.clear();
+        server.flush(210);
+        assert_eq!(sequences(&server), [0, 1, 2, 6, 7, 8]);
+    }
+
+    /// Defect: an arrival acknowledged once only, so a peer whose whole
+    /// window rode one datagram waits for its retransmission timeout when
+    /// that acknowledgement is lost, or one acknowledged in every flush for
+    /// ever. Oracle: netcode.md 12 — a lane acknowledges an arrival in the
+    /// next two flushes — on a server with nothing else to send.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn an_arrival_is_acknowledged_in_the_next_two_flushes() {
+        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
+        let mut bytes = Vec::new();
+        packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+        packet::push_reliable(&mut bytes, lane(2), 0, Fragment::Whole, b"x");
+        server
+            .transport
+            .received
+            .push_back(ReceivedDatagram { source, bytes });
+        assert_eq!(server.poll(2).len(), 1);
+        let mut acknowledged = Vec::new();
+        for now in 3..7 {
+            server.transport.sent.clear();
+            server.flush(now);
+            acknowledged.push(
+                server
+                    .transport
+                    .sent
+                    .iter()
+                    .filter(|datagram| {
+                        matches!(
+                            packet::parse(&datagram.bytes, MAGIC),
+                            Some(Parsed::Payload { acks, .. })
+                                if acks[2]
+                                    == Some(packet::Ack {
+                                        next: 1,
+                                        bits: 0,
+                                        held: false,
+                                    })
+                        )
+                    })
+                    .count(),
+            );
+        }
+        assert_eq!(acknowledged, [1, 1, 0, 0]);
     }
 }

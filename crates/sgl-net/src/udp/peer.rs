@@ -1,13 +1,25 @@
 use std::net::SocketAddr;
 
 use super::latest::Latest;
-use super::packet::{ACK_LEN, Acks, MAX_RELIABLE_ITEM_PAYLOAD, Nonces};
+use super::packet::{self, ACK_LEN, Acks, MAX_RELIABLE_ITEM_PAYLOAD, Nonces};
 use super::reliable::Reliable;
 use super::unreliable::Unreliable;
 use crate::lanes::{InboundUsage, LaneScheduler};
 use crate::{RELIABLE_LANES, ReliableConfig, RttEstimate, RttEstimator};
 
-/// What one lane sends in one datagram.
+/// The item a lane sends next, chosen before it is taken so the endpoint
+/// can first check that it fits the datagram being packed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Next {
+    /// A due retransmission of the in-flight fragment with this sequence.
+    Retransmit(u16),
+    /// The lane's oldest queued unreliable message.
+    Unreliable,
+    /// The lane's next new reliable fragment.
+    Fragment,
+}
+
+/// A lane item taken for the datagram being packed.
 pub enum Outgoing {
     /// The in-flight reliable fragment with this sequence.
     Reliable(u16),
@@ -36,10 +48,12 @@ pub struct Peer {
     pub reliable: [Reliable; RELIABLE_LANES],
     /// Each lane's unreliable queue and duplicate filter.
     pub unreliable: [Unreliable; RELIABLE_LANES],
-    /// Per lane: whether its next fresh datagram goes to an unreliable
-    /// message rather than a new reliable fragment, when it has both.
+    /// Per lane: whether its next fresh item is an unreliable message rather
+    /// than a new reliable fragment, when it has both.
     unreliable_turn: [bool; RELIABLE_LANES],
-    /// Shares this peer's datagrams between its lanes.
+    /// Lanes whose acknowledgement went out in the current flush.
+    acked: [bool; RELIABLE_LANES],
+    /// Shares this peer's items between its lanes.
     pub scheduler: LaneScheduler,
     /// Completed reliable messages per lane that the caller still holds
     /// (those of the current poll, and any it reported holding from earlier
@@ -71,6 +85,7 @@ impl Peer {
             }),
             unreliable: Default::default(),
             unreliable_turn: [false; RELIABLE_LANES],
+            acked: [false; RELIABLE_LANES],
             scheduler: LaneScheduler::new(reliable),
             delivered: [InboundUsage::default(); RELIABLE_LANES],
             latest: Latest::default(),
@@ -128,41 +143,62 @@ impl Peer {
             && self.unreliable.iter().all(Unreliable::is_empty)
     }
 
-    /// Whether `lane` has a datagram to send now.
-    pub fn sendable(&self, lane: usize, now_ms: u64, rto_ms: u64, max_transmissions: u8) -> bool {
-        let reliable = &self.reliable[lane];
-        !self.unreliable[lane].is_empty()
-            || reliable.window_open()
-            || reliable
-                .first_due(now_ms, rto_ms, max_transmissions)
-                .is_some()
-    }
-
-    /// The datagram `lane` sends next: a due retransmission first; else a
-    /// new reliable fragment and an unreliable message take turns, so
-    /// neither waits behind more than one of the other.
-    pub fn next_outgoing(
-        &mut self,
+    /// The item `lane` sends next and its encoded length, without taking
+    /// it: a due retransmission first; else a new reliable fragment and an
+    /// unreliable message take turns, so neither waits behind more than one
+    /// of the other. `None` while the lane has nothing to send.
+    pub fn peek(
+        &self,
         lane: usize,
         now_ms: u64,
         rto_ms: u64,
         max_transmissions: u8,
-    ) -> Option<Outgoing> {
-        let reliable = &mut self.reliable[lane];
+    ) -> Option<(Next, usize)> {
+        let reliable = &self.reliable[lane];
         if let Some(sequence) = reliable.first_due(now_ms, rto_ms, max_transmissions) {
-            return Some(Outgoing::Reliable(sequence));
+            let (fragment, bytes) = reliable
+                .fragment(sequence)
+                .expect("a due fragment is in flight");
+            let len = packet::reliable_item_len(fragment, bytes.len());
+            return Some((Next::Retransmit(sequence), len));
         }
-        let unreliable = &mut self.unreliable[lane];
-        let turn = &mut self.unreliable_turn[lane];
-        if (*turn || !reliable.window_open())
-            && let Some((sequence, payload)) = unreliable.pop()
+        let fresh = reliable.upcoming();
+        if (self.unreliable_turn[lane] || fresh.is_none())
+            && let Some(len) = self.unreliable[lane].front_len()
         {
-            *turn = false;
-            return Some(Outgoing::Unreliable(sequence, payload));
+            return Some((Next::Unreliable, packet::item_len(len)));
         }
-        let sequence = reliable.admit()?;
-        *turn = !unreliable.is_empty();
-        Some(Outgoing::Reliable(sequence))
+        let (fragment, start, end) = fresh?;
+        Some((
+            Next::Fragment,
+            packet::reliable_item_len(fragment, end - start),
+        ))
+    }
+
+    /// Takes the item [`Self::peek`] chose for `lane`; a reliable fragment
+    /// counts as transmitted at `now_ms`.
+    pub fn take(&mut self, lane: usize, next: Next, now_ms: u64) -> Outgoing {
+        match next {
+            Next::Retransmit(sequence) => {
+                self.reliable[lane].mark_sent(sequence, now_ms);
+                Outgoing::Reliable(sequence)
+            }
+            Next::Unreliable => {
+                self.unreliable_turn[lane] = false;
+                let (sequence, payload) = self.unreliable[lane]
+                    .pop()
+                    .expect("peeked a queued message");
+                Outgoing::Unreliable(sequence, payload)
+            }
+            Next::Fragment => {
+                let sequence = self.reliable[lane]
+                    .admit()
+                    .expect("peeked a fragment the window admits");
+                self.reliable[lane].mark_sent(sequence, now_ms);
+                self.unreliable_turn[lane] = !self.unreliable[lane].is_empty();
+                Outgoing::Reliable(sequence)
+            }
+        }
     }
 
     pub fn retry_exhausted(&self, now_ms: u64, maximum: u8) -> bool {
@@ -172,9 +208,14 @@ impl Peer {
             .any(|lane| lane.retry_exhausted(now_ms, rto_ms, maximum))
     }
 
-    /// Whether a lane owes the peer an acknowledgement.
+    /// Whether `lane` owes the peer an acknowledgement in this flush.
+    fn owes_ack(&self, lane: usize) -> bool {
+        self.reliable[lane].acks_owed > 0 && !self.acked[lane]
+    }
+
+    /// Whether a lane owes the peer an acknowledgement in this flush.
     pub fn ack_dirty(&self) -> bool {
-        self.reliable.iter().any(|lane| lane.ack_dirty)
+        (0..RELIABLE_LANES).any(|lane| self.owes_ack(lane))
     }
 
     /// The acknowledgements that fit in `room` bytes: every lane owing one
@@ -183,9 +224,14 @@ impl Peer {
     pub fn acks(&self, room: usize) -> Acks {
         let mut acks = [None; RELIABLE_LANES];
         let mut entries = room / ACK_LEN;
-        for dirty in [true, false] {
-            for (lane, ack) in self.reliable.iter().zip(&mut acks) {
-                if entries > 0 && ack.is_none() && lane.has_received() && lane.ack_dirty == dirty {
+        for owed in [true, false] {
+            for (index, ack) in acks.iter_mut().enumerate() {
+                let lane = &self.reliable[index];
+                if entries > 0
+                    && ack.is_none()
+                    && lane.has_received()
+                    && self.owes_ack(index) == owed
+                {
                     *ack = Some(lane.ack());
                     entries -= 1;
                 }
@@ -194,11 +240,20 @@ impl Peer {
         acks
     }
 
-    /// Records that `acks` went out: those lanes owe nothing more.
+    /// Records that `acks` went out: those lanes owe nothing more in this
+    /// flush.
     pub fn sent_acks(&mut self, acks: &Acks) {
-        for (lane, ack) in self.reliable.iter_mut().zip(acks) {
-            if ack.is_some() {
-                lane.ack_dirty = false;
+        for (acked, ack) in self.acked.iter_mut().zip(acks) {
+            *acked |= ack.is_some();
+        }
+    }
+
+    /// Ends a flush: each lane whose acknowledgement went out owes one flush
+    /// fewer.
+    pub fn end_flush(&mut self) {
+        for (lane, acked) in self.reliable.iter_mut().zip(&mut self.acked) {
+            if std::mem::take(acked) {
+                lane.acks_owed = lane.acks_owed.saturating_sub(1);
             }
         }
     }

@@ -39,6 +39,11 @@ impl Unreliable {
         self.queue.push_back(payload.to_vec());
     }
 
+    /// The length of the next message to send.
+    pub fn front_len(&self) -> Option<usize> {
+        self.queue.front().map(Vec::len)
+    }
+
     /// The next message to send, with its sequence. It is sent once.
     pub fn pop(&mut self) -> Option<(u16, Vec<u8>)> {
         let payload = self.queue.pop_front()?;
