@@ -12,7 +12,8 @@ impl DrawList {
     /// Issues this list's draws in `pass`, whose group 0 the caller bound,
     /// with the uploaded draw instances it was built into, and returns how
     /// many it issued: of a blended list, only its receivers' for the
-    /// `Receivers` pass. The only place scene geometry is drawn: it binds
+    /// `Receivers` pass, and only those whose material's shader reads its
+    /// volume path for the volume layers' passes. The only place scene geometry is drawn: it binds
     /// the scene's group 1 and the draw instances once, and each batch's
     /// pipeline, material and, for an indexed pass, the geometry buffers
     /// when they change. An indexed draw draws its mesh's own index range
@@ -41,8 +42,10 @@ impl DrawList {
         let mut index_slab = None;
         let mut first_index = 0;
         let receivers = kind == GeometryPass::Receivers;
+        let volumes = kind.volume();
         for (batch, range) in self.calls() {
-            if receivers && !receives(scene, batch) {
+            if (receivers && !receives(scene, batch)) || (volumes && !measures_volume(scene, batch))
+            {
                 continue;
             }
             let key = batch.key;
@@ -141,4 +144,19 @@ pub(super) fn receives(scene: &Scene, batch: &DrawBatch) -> bool {
         .drawn_material(batch.key.material)
         .values
         .receives_screen_space_reflections()
+}
+
+/// Whether `batch` draws a material whose shader reads its volume path
+/// (`scene_volume_path`), whose meshes the volume layers draw.
+pub(super) fn measures_volume(scene: &Scene, batch: &DrawBatch) -> bool {
+    scene
+        .drawn_material(batch.key.material)
+        .values
+        .shader
+        .is_some_and(|shader| {
+            scene
+                .shaders
+                .get(shader.shader)
+                .is_ok_and(|shader| shader.reads_volume_path)
+        })
 }

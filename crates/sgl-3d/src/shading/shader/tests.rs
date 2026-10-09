@@ -12,8 +12,8 @@ use wasm_bindgen_test::wasm_bindgen_test;
 /// A game's module that reads every part of the contract: its parameters
 /// in both functions, the vertex's data and the instance's, the time,
 /// phase and evaluation it is, `custom` through to the surface, the scene
-/// depth functions, a derivative in the surface function and a counted
-/// loop in a helper.
+/// depth functions and the volume path with its bounds, a derivative in the
+/// surface function and a counted loop in a helper.
 pub(crate) const FIXTURE: &str = r#"
 struct ShaderParams {
  amplitude:f32,
@@ -39,7 +39,9 @@ fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->Mate
 fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
  var out=s;
  let scale=(ctx.model_scale.x+ctx.model_scale.y+ctx.model_scale.z)/3.;
- out.thickness=min(scene_depth_behind(ctx)/scale,8.);
+ let path=scene_volume_path(ctx);
+ let measured=path.bound==VOLUME_EXIT || path.bound==VOLUME_ENTRY || path.bound==VOLUME_EYE;
+ out.thickness=min(select(scene_depth_behind(ctx),path.length,measured)/scale,8.);
  out.base_color=vec4(s.base_color.rgb*vec3(params.tint,1.),s.base_color.a*select(0.5,1.,scene_depth_available()));
  out.roughness=clamp(s.roughness+abs(dpdx(ctx.position.x)),0.,1.);
  out.emission=s.emission*ctx.custom.w+vec3(0.,min(scene_depth(ctx.pixel),1.)*0.,ctx.time*0.);
@@ -290,16 +292,23 @@ fn the_contract_is_held_to() {
 // scene depth is the surface function's, which may call the same helper.
 #[wasm_bindgen_test(unsupported = test)]
 fn scene_depth_is_the_surface_functions() {
-    let helper = "fn depth_at(pixel:vec2<f32>)->f32 { return scene_depth(pixel); }";
+    let helper = "fn depth_at(pixel:vec2<f32>)->f32 { return scene_depth(pixel); }\nfn path_of(ctx:SurfaceContext)->f32 { return scene_volume_path(ctx).length; }";
     let module = |vertex: &str, surface: &str| {
         format!(
             "{PARAMS}{helper}\nfn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {{\n var out=v;\n {vertex}\n return out;\n}}\nfn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {{\n var out=s;\n {surface}\n return out;\n}}"
         )
     };
-    validated(&module("", "out.thickness=depth_at(ctx.pixel);"))
-        .unwrap_or_else(|error| panic!("{error}"));
+    validated(&module(
+        "",
+        "out.thickness=depth_at(ctx.pixel)+path_of(ctx);",
+    ))
+    .unwrap_or_else(|error| panic!("{error}"));
     for (vertex, function) in [
         ("out.position.y+=depth_at(vec2(0.));", "depth_at"),
+        (
+            "var surface:SurfaceContext; out.position.y+=path_of(surface);",
+            "path_of",
+        ),
         (
             "if scene_depth_available() { out.position.y+=1.; }",
             "material_vertex",
@@ -312,6 +321,35 @@ fn scene_depth_is_the_surface_functions() {
             },
             "{vertex}"
         );
+    }
+}
+
+// Plausible defects: a shader that reads its volume path through a helper
+// not recorded as reading it, so its materials' meshes are never drawn into
+// the volume layers and it measures nothing; or one that only declares a
+// helper that would read it, or reads none, recorded as reading it, so its
+// meshes cost three depth passes for nothing. The oracle is the contract:
+// reading it means `material_surface` reaching `scene_volume_path`, itself
+// or through a function it calls.
+#[wasm_bindgen_test(unsupported = test)]
+fn reading_the_volume_path_is_recorded() {
+    let module = |helpers: &str, surface: &str| {
+        format!(
+            "{PARAMS}{helpers}\nfn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {{ return v; }}\nfn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {{\n var out=s;\n {surface}\n return out;\n}}"
+        )
+    };
+    let helpers = "fn measured(ctx:SurfaceContext)->f32 { return scene_volume_path(ctx).length; }\nfn through(ctx:SurfaceContext)->f32 { return measured(ctx)*2.; }";
+    for (surface, reads) in [
+        ("out.thickness=through(ctx);", true),
+        (
+            "if scene_volume_path(ctx).bound==VOLUME_EXIT { out.thickness=1.; }",
+            true,
+        ),
+        ("out.thickness=scene_depth_behind(ctx);", false),
+        ("", false),
+    ] {
+        let shader = validated(&module(helpers, surface)).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(shader.reads_volume_path, reads, "{surface}");
     }
 }
 

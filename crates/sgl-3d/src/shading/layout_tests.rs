@@ -185,6 +185,9 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         view::BLENDED_FSR2_MASKED_FS_ENTRY,
         view::RECEIVER_FS_ENTRY,
         view::FSR2_COMPOSITION_FS_ENTRY,
+        view::VOLUME_ENTRY_FS_ENTRY,
+        view::VOLUME_EXIT_FS_ENTRY,
+        view::VOLUME_SECOND_EXIT_FS_ENTRY,
     ];
     let caster = vec![
         view::SHADOW_VS_ENTRY,
@@ -1197,6 +1200,9 @@ fn rust_binding_names_match_wgsl_bindings() {
         (3, "blended_trace", blended::TRACE),
         (3, "blended_transmission", blended::TRANSMISSION),
         (3, "blended_scene_depth", blended::SCENE_DEPTH),
+        (3, "blended_volume_entry", blended::VOLUME_ENTRY),
+        (3, "blended_volume_exit", blended::VOLUME_EXIT),
+        (3, "blended_volume_second_exit", blended::VOLUME_SECOND_EXIT),
         (3, "caster_positions", caster::POSITIONS),
         (3, "scene_tlas", hardware::SCENE_TLAS),
         (3, "shadow_mask", shadow_mask::MASK),

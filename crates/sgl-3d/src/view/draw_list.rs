@@ -390,6 +390,14 @@ impl DrawList {
             .any(|batch| execute::receives(scene, batch))
     }
 
+    /// Whether it draws a material whose shader reads its volume path,
+    /// whose meshes the volume layers' passes draw.
+    pub fn holds_volumes(&self, scene: &Scene) -> bool {
+        self.batches
+            .iter()
+            .any(|batch| execute::measures_volume(scene, batch))
+    }
+
     /// Whether it draws a transmissive material, which samples the
     /// transparent stage's copy of the composed frame.
     pub fn holds_transmissive(&self, scene: &Scene) -> bool {

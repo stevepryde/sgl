@@ -1,7 +1,7 @@
 //! What keys a geometry pipeline besides its pass and variant: the
 //! diagnostics layers and the lit constants compiled into it, and the
 //! constants each key sets.
-use super::{Alpha, GeometryPass, Variant};
+use super::{Alpha, Cull, GeometryPass, Variant};
 use crate::Scene;
 use crate::content::identity::ShaderId;
 use crate::settings::DisabledLayers;
@@ -125,10 +125,11 @@ pub(crate) struct PipelineKey {
 }
 
 impl PipelineKey {
-    /// Casters take no layer or lit constants; indexed casters read the
-    /// positions they are given, deformed or not, and pulled ones pull a
-    /// deforming instance's deformed positions. Only the blended passes
-    /// take `transmission`.
+    /// Casters and the volume layers take no layer or lit constants, and
+    /// the volume layers cull no face, whatever the batch's side and pose;
+    /// indexed casters read the positions they are given, deformed or not,
+    /// and pulled ones pull a deforming instance's deformed positions. Only
+    /// the blended passes take `transmission`.
     pub fn new(
         pass: GeometryPass,
         variant: Variant,
@@ -136,16 +137,29 @@ impl PipelineKey {
         (layers, lit): (LayerConstants, LitConstants),
         transmission: bool,
     ) -> Self {
-        let caster = pass.caster();
+        let constant = pass.caster() || pass.volume();
         Self {
             pass,
             shader,
             variant: Variant {
                 deformed: variant.deformed && pass.pulled(),
+                cull: if pass.volume() {
+                    Cull::None
+                } else {
+                    variant.cull
+                },
                 ..variant
             },
-            layers: if caster { LayerConstants::ALL } else { layers },
-            lit: if caster { LitConstants::default() } else { lit },
+            layers: if constant {
+                LayerConstants::ALL
+            } else {
+                layers
+            },
+            lit: if constant {
+                LitConstants::default()
+            } else {
+                lit
+            },
             transmission: transmission && matches!(pass, GeometryPass::Blended { .. }),
         }
     }
@@ -154,7 +168,8 @@ impl PipelineKey {
     /// material_raster.wgsl), for the pulled passes deformed vertices, and
     /// for the camera and probe passes the layers and the lit constants and
     /// whether they write motion (`motion_vertices`, material_shader.wgsl:
-    /// not the blended draws or FSR2's composition mask), and for the
+    /// not the blended draws, FSR2's composition mask or the volume
+    /// layers), and for the
     /// blended passes whether transmission is compiled in.
     pub(super) fn constants(self) -> Vec<(&'static str, f64)> {
         let masked = (
@@ -172,7 +187,7 @@ impl PipelineKey {
             let motion = !matches!(
                 self.pass,
                 GeometryPass::Blended { .. } | GeometryPass::Fsr2Composition
-            );
+            ) && !self.pass.volume();
             constants.push(("motion_vertices", f64::from(u8::from(motion))));
         }
         if !self.pass.caster() || self.variant.alpha == Alpha::Mask {

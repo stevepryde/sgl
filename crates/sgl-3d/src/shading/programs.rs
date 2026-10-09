@@ -108,6 +108,11 @@ pub(crate) const BLENDED_FS_ENTRY: &str = "blended_fs";
 pub(crate) const BLENDED_FSR2_MASKED_FS_ENTRY: &str = "blended_fsr2_masked_fs";
 pub(crate) const RECEIVER_FS_ENTRY: &str = "receiver_fs";
 pub(crate) const FSR2_COMPOSITION_FS_ENTRY: &str = "fsr2_composition_fs";
+/// The volume layers' fragments, each keeping one side
+/// (`view::pipelines::GeometryPass::VolumeEntry` and its siblings).
+pub(crate) const VOLUME_ENTRY_FS_ENTRY: &str = "volume_entry_fs";
+pub(crate) const VOLUME_EXIT_FS_ENTRY: &str = "volume_exit_fs";
+pub(crate) const VOLUME_SECOND_EXIT_FS_ENTRY: &str = "volume_second_exit_fs";
 
 /// The geometry program of `form` on a device of `tier` with `shader`:
 /// `GEOMETRY` with the shadow mask's provider for `ShadowMask`, else with

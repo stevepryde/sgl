@@ -16,11 +16,11 @@ use crate::{
 };
 use glam::{DVec3, DVec4, Mat4, Vec3};
 
-const SIZE: [u32; 2] = [32, 32];
+pub(super) const SIZE: [u32; 2] = [32, 32];
 
 /// Settings that leave the frame's targets as the geometry wrote them: no
 /// antialiasing (no jitter), bloom, ambient occlusion or atmosphere.
-fn settings() -> Settings {
+pub(super) fn settings() -> Settings {
     Settings {
         antialiasing: settings::Antialiasing::Off,
         bloom: settings::Bloom::Off,
@@ -42,21 +42,21 @@ fn receiving() -> Settings {
 
 /// A renderer whose frames are rendered, submitted and finished as a
 /// game's are, and its scene.
-struct Harness {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    renderer: Renderer,
-    settings: Settings,
-    output: wgpu::TextureView,
-    scene: Scene,
+pub(super) struct Harness {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub renderer: Renderer,
+    pub settings: Settings,
+    pub output: wgpu::TextureView,
+    pub scene: Scene,
 }
 
 impl Harness {
-    fn new(settings: Settings) -> Option<Self> {
+    pub fn new(settings: Settings) -> Option<Self> {
         Some(Self::on(test_support::device()?, settings))
     }
 
-    fn on((device, queue): (wgpu::Device, wgpu::Queue), settings: Settings) -> Self {
+    pub fn on((device, queue): (wgpu::Device, wgpu::Queue), settings: Settings) -> Self {
         let renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
         let output = crate::view::targets::target(
             &device,
@@ -76,7 +76,7 @@ impl Harness {
     }
 
     /// Renders, submits and finishes a frame of `input`.
-    fn frame(&mut self, input: &FrameInput) {
+    pub fn frame(&mut self, input: &FrameInput) {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         self.renderer.render(
             &self.device,
@@ -123,7 +123,7 @@ impl Harness {
     }
 
     /// The composite's texels, HDR before exposure and tone mapping.
-    fn composite(&self) -> Vec<[f32; 4]> {
+    pub fn composite(&self) -> Vec<[f32; 4]> {
         let texels = read(
             &self.device,
             &self.queue,
@@ -137,7 +137,7 @@ impl Harness {
     }
 
     /// A material of `values`, with its identity.
-    fn material(&mut self, values: asset::Material) -> MaterialId {
+    pub fn material(&mut self, values: asset::Material) -> MaterialId {
         let (device, queue) = (&self.device, &self.queue);
         self.scene
             .add_materials(device, queue, &[values], &[])
@@ -146,7 +146,7 @@ impl Harness {
 
     /// A material of `values` drawn through `shader`, whose vertices move
     /// at most `bound`, with its identity.
-    fn shaded(
+    pub fn shaded(
         &mut self,
         values: asset::Material,
         shader: crate::ShaderId,
@@ -160,7 +160,7 @@ impl Harness {
     /// A static instance of `mesh`'s quad drawn with `material`, its
     /// vertices carrying `data` (none where empty), with `instance` its
     /// shader data.
-    fn place(
+    pub fn place(
         &mut self,
         (vertices, data): (Vec<Vertex>, Vec<[f32; 4]>),
         material: MaterialId,
@@ -204,7 +204,7 @@ fn ground(x: [f32; 2], z: [f32; 2], slope: f32) -> (Vec<Vertex>, Vec<[f32; 4]>) 
 }
 
 /// A quad in the plane z = `z` over `x` and `y`, facing +Z.
-fn wall(x: [f32; 2], y: [f32; 2], z: f32) -> (Vec<Vertex>, Vec<[f32; 4]>) {
+pub(super) fn wall(x: [f32; 2], y: [f32; 2], z: f32) -> (Vec<Vertex>, Vec<[f32; 4]>) {
     let corners = [(x[0], y[0]), (x[1], y[0]), (x[1], y[1]), (x[0], y[1])];
     let vertices = corners
         .map(|(x, y)| Vertex {
@@ -250,7 +250,7 @@ fn looking_down() -> Camera {
 }
 
 /// A frame of `camera` at `time`, with a black backdrop.
-fn frame(camera: Camera, time: f64) -> FrameInput {
+pub(super) fn frame(camera: Camera, time: f64) -> FrameInput {
     let mut input = FrameInput::new(camera);
     input.elapsed_seconds = time;
     input.backdrop = crate::Backdrop::Color([0.; 3]);
@@ -260,7 +260,7 @@ fn frame(camera: Camera, time: f64) -> FrameInput {
 
 /// The ray of `camera` through the centre of pixel `pixel`: its origin on
 /// the near plane and its direction, in f64.
-fn ray(camera: &Camera, [x, y]: [u32; 2]) -> (DVec3, DVec3) {
+pub(super) fn ray(camera: &Camera, [x, y]: [u32; 2]) -> (DVec3, DVec3) {
     let clip_from_world = (camera.projection * camera.view).as_dmat4();
     let world_from_clip = clip_from_world.inverse();
     let ndc_x = (f64::from(x) + 0.5) / f64::from(SIZE[0]) * 2. - 1.;
@@ -290,7 +290,7 @@ fn project(camera: &Camera, point: DVec3) -> (f64, [f64; 2]) {
     )
 }
 
-fn texel<T: Copy>(texels: &[T], [x, y]: [u32; 2]) -> T {
+pub(super) fn texel<T: Copy>(texels: &[T], [x, y]: [u32; 2]) -> T {
     texels[(y * SIZE[0] + x) as usize]
 }
 

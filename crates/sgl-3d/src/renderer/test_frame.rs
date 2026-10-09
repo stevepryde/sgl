@@ -245,8 +245,8 @@ impl Renderer {
         );
     }
 
-    /// The transparent stage's glow and mist into `beauty`, over the
-    /// renderer's depth target.
+    /// The transparent stage's volume layers, then its blended surfaces,
+    /// glow and mist into `beauty`, over the renderer's depth target.
     pub(crate) fn encode_test_transparent(
         &mut self,
         device: &wgpu::Device,
@@ -257,6 +257,7 @@ impl Renderer {
         beauty: &wgpu::TextureView,
     ) {
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
+        self.transparent.encode_volumes(&mut ctx);
         self.transparent.encode(
             &mut ctx,
             crate::stages::transparent::Beauty::Incident(beauty),
@@ -264,7 +265,8 @@ impl Renderer {
     }
 
     /// The receiver pass of `frame`, after its opaque stage, then the
-    /// blended draw onto the composite, as `render` encodes them, composing
+    /// volume layers and the blended draw onto the composite, as `render`
+    /// encodes them, composing
     /// `reflections` as the screen-space method's result.
     pub(crate) fn encode_test_receivers(
         &mut self,
@@ -278,6 +280,7 @@ impl Renderer {
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
         let drew = self.transparent.encode_receivers(&mut ctx);
         ctx.surface = self.targets.surface(drew);
+        self.transparent.encode_volumes(&mut ctx);
         self.transparent.encode(
             &mut ctx,
             crate::stages::transparent::Beauty::Composite { reflections },

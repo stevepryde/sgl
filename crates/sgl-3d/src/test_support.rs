@@ -789,6 +789,44 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
 }
 "#;
 
+/// A game's shader that reads its volume path, for fixtures: it moves every
+/// vertex along its parameters' `direction` by their `lift`; its surface
+/// function, through a helper of its own, writes its volume path's length,
+/// its bound and whether the fragment is the material's front into its
+/// emission's red, green and blue, and shows its front fragments where its
+/// instance's data's x is positive and its back fragments where its y is,
+/// the others hidden (alpha 0), so either side can be read alone.
+pub(crate) const VOLUME_SHADER: &str = r#"
+struct ShaderParams {
+ direction:vec3<f32>,
+ lift:f32,
+}
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {
+ var out=v;
+ out.position+=params.direction*params.lift;
+ return out;
+}
+fn volume_measured(ctx:SurfaceContext)->VolumePath {
+ return scene_volume_path(ctx);
+}
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
+ var out=s;
+ let path=volume_measured(ctx);
+ let shown=select(ctx.instance.y,ctx.instance.x,ctx.front)>0.;
+ out.base_color=vec4(0.,0.,0.,select(0.,1.,shown));
+ out.emission=vec3(path.length,f32(path.bound),select(0.,1.,ctx.front));
+ return out;
+}
+"#;
+
+/// `VOLUME_SHADER`'s `ShaderParams`, mirrored.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct VolumeShaderParams {
+    pub direction: [f32; 3],
+    pub lift: f32,
+}
+
 /// `TEST_SHADER`'s `ShaderParams`, mirrored.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]

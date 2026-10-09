@@ -12,3 +12,6 @@ fn scene_depth(pixel:vec2<f32>)->f32 {
 fn scene_depth_behind(ctx:SurfaceContext)->f32 {
  return 0.;
 }
+fn scene_volume_path(ctx:SurfaceContext)->VolumePath {
+ return VolumePath(0.,VOLUME_NONE);
+}

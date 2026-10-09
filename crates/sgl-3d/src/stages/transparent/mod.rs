@@ -1,9 +1,11 @@
-//! Transparent: blended receivers as the surface, the transmission copy,
-//! blended, transmissive and additive surfaces, mist and distortion.
+//! Transparent: blended receivers as the surface, the volume layers, the
+//! transmission copy, blended, transmissive and additive surfaces, mist and
+//! distortion.
 pub(crate) mod effects;
 pub(crate) mod heat;
 pub(crate) mod mist;
 pub(crate) mod transmission;
+pub(crate) mod volumes;
 
 use crate::shading::bind::{self, BindingTier, BlendedTrace};
 use crate::view::cached_group::CachedGroup;
@@ -28,12 +30,14 @@ pub(crate) enum Beauty<'a> {
 }
 
 /// Transparent: the receiver pass (`encode_receivers`), which draws the
-/// blended receivers of screen-space reflections as the surface; then
-/// blended surfaces, transmissive ones among them, back to front, and
-/// additive glow and ground mist, drawn (`encode`) into the reflections'
-/// incident radiance while they trace it and onto the composite, each
-/// fogged from the frame's fog volume where it lies, then heat distortion
-/// (`encode_heat`). On a device of the Extended binding tier, in a frame
+/// blended receivers of screen-space reflections as the surface; the volume
+/// layers (`encode_volumes`), while volume paths are in effect, of the
+/// blended materials whose shader reads its volume path, which both blended
+/// draws read; then blended surfaces, transmissive ones among them, back to
+/// front, and additive glow and ground mist, drawn (`encode`) into the
+/// reflections' incident radiance while they trace it and onto the
+/// composite, each fogged from the frame's fog volume where it lies, then
+/// heat distortion (`encode_heat`). On a device of the Extended binding tier, in a frame
 /// whose blended list holds a transmissive material, the draw onto the
 /// composite first copies it with its mips (`transmission`), which the
 /// transmissive surfaces sample; elsewhere, and in the draw into the
@@ -53,20 +57,24 @@ pub(crate) enum Beauty<'a> {
 /// by every draw but the receiver pass, never written), the surface depth
 /// and the screen-space method's result (receivers that are the surface),
 /// the scene's transient geometry (glow, heat and mist), the beauty it draws
-/// onto (the composite copied for transmission).
+/// onto (the composite copied for transmission), its volume layers (the
+/// blended draws, and the second exit layer's pass the exit layer).
 /// Writes: the surface depth, the receiver layer and the G-buffer's motion
-/// (the receiver pass); its transmission copy; that beauty in place; FSR2's
-/// masks while FSR2 runs; the completed scene in place (heat) through its
-/// own snapshot of it.
+/// (the receiver pass); its volume layers (copies of the opaque depth with
+/// the volumes' faces drawn over them); its transmission copy; that beauty
+/// in place; FSR2's masks while FSR2 runs; the completed scene in place
+/// (heat) through its own snapshot of it.
 /// Blended surfaces write no other depth, motion or G-buffer.
-/// Honours: the receiver pass (the effective configuration's), atmosphere
-/// (mist), heat distortion, FSR2 (its masks), the effects and atmosphere
-/// diagnostics layers.
-/// Timing groups: `receivers`, `FSR2 composition` (the moving opaque
-/// surfaces' mask), `transmission copy`, `blended` (blended surfaces, both
-/// draws), `transparent` (glow and mist, both draws), `heat distortion`.
-/// History: none; the receiver pass rebuilds the surface and the copy is
-/// made again every frame they run.
+/// Honours: the receiver pass and volume paths (the effective
+/// configuration's), atmosphere (mist), heat distortion, FSR2 (its masks),
+/// the effects and atmosphere diagnostics layers.
+/// Timing groups: `receivers`, `volume layers`, `FSR2 composition` (the
+/// moving opaque surfaces' mask), `transmission copy`, `blended` (blended
+/// surfaces, both draws), `transparent` (glow and mist, both draws), `heat
+/// distortion`.
+/// History: none; the receiver pass rebuilds the surface, the volume layers
+/// are drawn from the frame's geometry and the copy is made again every
+/// frame they run.
 pub(crate) struct Transparent {
     effects: effects::Effects,
     mist: mist::Mist,
@@ -82,6 +90,8 @@ pub(crate) struct Transparent {
     blended: [BlendedGroup; 2],
     /// The copy of the composed frame transmissive surfaces sample.
     transmission: transmission::Transmission,
+    /// The volume layers a game's shader measures its volume path from.
+    volumes: volumes::Volumes,
     /// The device's binding tier, which binds the copy on `Extended`.
     tier: BindingTier,
 }
@@ -136,6 +146,7 @@ impl Transparent {
                 group("blended composite trace"),
             ],
             transmission: transmission::Transmission::new(device),
+            volumes: volumes::Volumes::new(device, blended),
             tier,
         }
     }
@@ -188,6 +199,27 @@ impl Transparent {
         true
     }
 
+    /// The Receivers and volume layers step's second part, after the
+    /// receivers: when the effective
+    /// configuration has volume paths and the camera's blended list holds a
+    /// material whose shader reads its volume path, copies the opaque depth
+    /// into each volume layer and draws those materials' batches over it
+    /// (`volumes`), which this frame's blended draws then bind; otherwise
+    /// they bind the opaque depth in their place. Returns whether it drew.
+    /// Without volume paths it frees the layers, and the blended groups
+    /// that bound them let go of them.
+    pub fn encode_volumes(&mut self, ctx: &mut FrameContext<'_>) -> bool {
+        if !ctx.effective.volume_paths {
+            if self.volumes.release() {
+                for blended in &mut self.blended {
+                    blended.group.forget();
+                }
+            }
+            return false;
+        }
+        self.volumes.encode(ctx, &self.no_reflections)
+    }
+
     /// Rebinds the depth the glow reads.
     pub fn resize(&mut self, device: &wgpu::Device, targets: &SharedTargets) {
         self.depth_group = self.effects.depth_group(device, &targets.depth);
@@ -228,7 +260,7 @@ impl Transparent {
                 ctx,
                 &mut self.blended[trace],
                 &self.no_reflections,
-                (reflections, copy.as_ref()),
+                (reflections, copy.as_ref(), self.volumes.held()),
                 self.tier,
             );
             Self::encode_blended(ctx, beauty, fsr2_masks, moving.is_some(), group);
@@ -284,13 +316,18 @@ impl Transparent {
     /// `reflections` with its cutoff and fade where the draw composes them,
     /// else `no_reflections` and no trace, and the frame's surface depth;
     /// on a device of `tier` `Extended`, the transmission `copy` where it
-    /// holds the frame, else `no_reflections` in its place, and the opaque
-    /// depth.
+    /// holds the frame, else `no_reflections` in its place, the opaque
+    /// depth, and the volume layers where they hold the frame (`volumes`),
+    /// else the opaque depth in their place.
     fn blended_group<'a>(
         ctx: &FrameContext<'_>,
         blended: &'a mut BlendedGroup,
         no_reflections: &wgpu::TextureView,
-        (reflections, copy): (Option<&wgpu::TextureView>, Option<&wgpu::TextureView>),
+        (reflections, copy, volumes): (
+            Option<&wgpu::TextureView>,
+            Option<&wgpu::TextureView>,
+            Option<&volumes::Layers>,
+        ),
         tier: BindingTier,
     ) -> &'a wgpu::BindGroup {
         let traced = ctx.effective.screen_space.zip(reflections);
@@ -300,6 +337,7 @@ impl Transparent {
             ..BlendedTrace::default()
         });
         values.transmission = u32::from(copy.is_some());
+        values.volumes = u32::from(volumes.is_some());
         if blended.written != Some(values) {
             crate::counters::write_buffer(
                 ctx.queue,
@@ -326,6 +364,21 @@ impl Transparent {
         // samples it: a game's shader's scene depth (shader_scene_depth.wgsl).
         if bind::blended::tier(bind::blended::SCENE_DEPTH) <= tier {
             entries.push((bind::blended::SCENE_DEPTH, texture(&ctx.targets.depth)));
+        }
+        // The volume layers a game's shader measures its path from
+        // (shader_scene_depth.wgsl's scene_volume_path).
+        if bind::blended::tier(bind::blended::VOLUME_ENTRY) <= tier {
+            let layer = |held: fn(&volumes::Layers) -> &wgpu::TextureView| {
+                texture(volumes.map_or(&ctx.targets.depth, held))
+            };
+            entries.extend([
+                (bind::blended::VOLUME_ENTRY, layer(|layers| &layers.entry)),
+                (bind::blended::VOLUME_EXIT, layer(|layers| &layers.exit)),
+                (
+                    bind::blended::VOLUME_SECOND_EXIT,
+                    layer(|layers| &layers.second_exit),
+                ),
+            ]);
         }
         blended
             .group

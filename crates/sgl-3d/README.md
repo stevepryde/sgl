@@ -1287,7 +1287,8 @@ once added (`SurfaceMaterial::shader`:
 composes the module into its own programs and calls the functions from
 every pass that rasterises the material, so colour, depth, shadows, the reflections' surface,
 temporal antialiasing and motion blur see one surface: water's waves,
-vegetation in the wind, glass whose thickness varies across it. The
+vegetation in the wind, glass whose thickness varies across it or that
+absorbs over the length of each view ray inside it. The
 equations are the game's; SGL3D ships none ([D-35](../../specs/decisions.md)).
 A shader is content: it changes what a surface is, never how SGL3D renders
 it, and nothing about it is a setting.
@@ -1302,8 +1303,10 @@ over the contract SGL3D declares, `shading/shader_contract.wgsl`, verbatim:
 // `struct ShaderParams`, `material_vertex` and `material_surface` over these
 // structs, and from material_surface may call the scene depth functions its
 // program's provider declares (shader_scene_depth_none.wgsl,
-// shader_scene_depth.wgsl); nothing else SGL3D declares is the contract. SGL3D's own programs compose
-// shader_default.wgsl in its place, whose functions return their argument.
+// shader_scene_depth.wgsl): scene_depth_available, scene_depth,
+// scene_depth_behind and scene_volume_path; nothing else SGL3D declares is
+// the contract. SGL3D's own programs compose shader_default.wgsl in its
+// place, whose functions return their argument.
 // The pattern is Filament ef1a133's materialVertex() and material()
 // (shaders/src/surface_main.vs, surface_main.fs,
 // surface_material_inputs.vs and .fs) and Godot b130438's vertex() and
@@ -1391,6 +1394,43 @@ struct SurfaceContext {
 }
 // What scene_depth returns at the sky.
 const SCENE_DEPTH_FAR:f32=1e30;
+// What scene_volume_path returns: the `length` in metres along the
+// fragment's view ray inside the volume its material bounds, at most
+// SCENE_DEPTH_FAR and never negative, and its `bound`, one of the VOLUME_*
+// constants, which says what ends the path away from the fragment. SGL3D
+// measures it in the camera's blended draws on the Extended binding tier
+// while Settings::volume_paths is on, from depth layers of the meshes of
+// the blended materials whose shader calls scene_volume_path, each a closed
+// mesh around its volume: the nearest front faces, the nearest back faces
+// and the nearest back faces behind those, at each pixel in front of the
+// opaque surface.
+struct VolumePath {
+ length:f32,
+ bound:u32,
+}
+// No path is measured (every other pass, the Basic binding tier, the
+// setting off): length 0. The shader takes its own fallback, such as
+// scene_depth_behind or an authored thickness.
+const VOLUME_NONE:u32=0u;
+// At a front fragment, where the view ray enters: the path ends at the
+// nearest back face behind the fragment, where the ray leaves.
+const VOLUME_EXIT:u32=1u;
+// At a front fragment: the path ends at the opaque surface, with no back
+// face between (the volume meets the opaque surface, or is open).
+const VOLUME_OPAQUE:u32=2u;
+// Where another volume's faces hide the fragment's own segment: at a front
+// fragment behind two back faces, which leave its own exit unmeasured, the
+// length is to the opaque surface; at a back fragment behind another back
+// face, which hides where its segment starts, the length is from the eye.
+// Either is an upper bound.
+const VOLUME_HIDDEN:u32=3u;
+// At a back fragment, seen from inside where the ray leaves: the path
+// starts at the nearest front face in front of it, where the ray entered,
+// where no other back face lies between.
+const VOLUME_ENTRY:u32=4u;
+// At a back fragment with no front face in front of it (the camera is
+// inside, or the near plane cut the entry): the path starts at the eye.
+const VOLUME_EYE:u32=5u;
 ```
 
 Beside the contract, a program declares the scene depth functions, which
@@ -1409,6 +1449,10 @@ fn scene_depth(pixel:vec2<f32>)->f32
 // The metres along the fragment's view ray to the opaque surface behind
 // it, 0 where it is in front or unavailable.
 fn scene_depth_behind(ctx:SurfaceContext)->f32
+// The metres of the fragment's view ray inside the volume its material
+// bounds, and what ends it (a VOLUME_* constant): VOLUME_NONE and 0
+// where the volume layers are not held.
+fn scene_volume_path(ctx:SurfaceContext)->VolumePath
 
 // Defined by the game's module. A function that changes nothing returns
 // its argument.
@@ -1452,6 +1496,51 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
   return 0. Water's column behind a fragment (`scene_depth_behind`) gives
   depth-dependent absorption and a fade into the shore. Scene colour is
   never sampled: refraction stays SGL3D's.
+- **Volume paths.** A blended or transmissive material whose
+  `material_surface` reaches `scene_volume_path` bounds a volume: SGL3D
+  draws its meshes, as their vertex function places them, into three depth
+  layers each frame (the nearest entry face, the nearest exit face and the
+  next exit behind it), and the function returns the length in metres
+  along the view ray inside the volume (`VolumePath::length`, at most
+  `SCENE_DEPTH_FAR`) and what ends it (`VolumePath::bound`). At an entry
+  fragment (`ctx.front`): `VOLUME_EXIT`, to the volume's exit;
+  `VOLUME_OPAQUE`, to the opaque surface, where no exit lies between (an
+  opaque object inside, or an open volume); `VOLUME_HIDDEN`, a third
+  crossing whose exit is unmeasured, the opaque bound as its length. At an
+  exit fragment: `VOLUME_ENTRY`, from the nearest entry in front, with no
+  other exit between; `VOLUME_EYE`, from the eye (the camera is inside, or
+  the near plane cut the entry); `VOLUME_HIDDEN`, behind another exit,
+  which hides where its segment starts, the eye's distance as its
+  length. `VOLUME_NONE`, length 0, in every other pass, on the `Basic`
+  tier and with `Settings::volume_paths` off
+  (`Renderer::volume_paths_in_effect`). Use it so:
+  - absorb over it: set `thickness` to the length divided by the
+    instance's scale (`ctx.model_scale`; exact under a uniform scale), the
+    mesh's units the transmission refracts and absorbs over, or supply
+    `thickness` from the game's own data; take an authored thickness where
+    the bound is `VOLUME_NONE` or `VOLUME_HIDDEN`;
+  - never fade coverage by it: entry and exit meet at a finite volume's
+    silhouette, where the path is 0, so it would erase the surface and its
+    reflection there; fade into a shore by `scene_depth_behind`;
+  - a double-sided volume draws both its entry and exit faces, each
+    transmitting the opaque frame behind it, so absorb at one: at entry
+    faces, and at exit faces only for `VOLUME_EYE`, giving an exit face
+    behind an entry (`VOLUME_ENTRY`) no coverage under `AlphaMode::Blend`;
+    an exit face at `VOLUME_HIDDEN` keeps its coverage with the authored
+    thickness.
+
+  The layers follow the deformed surface and are drawn on the frame's
+  jittered lattice; they keep no history. The path follows the view ray,
+  not the refracted one; a volume inside another (ice in water) starts or
+  ends the outer one's path at its faces; an opaque object inside a
+  volume, seen from inside it, has no blended face in front of it and is
+  not absorbed (cover it with the game's own effect, such as a fog volume
+  while the camera is inside); a masked cut-out still bounds; rays and
+  probe captures see no layers. Cost: in frames whose blended list holds
+  such a material, three copies of the opaque depth and three depth passes
+  over those materials' meshes (timing group `volume layers`); three
+  render-size depth targets, held from the first such frame until the
+  setting is off; other frames and materials pay nothing.
 - **Time and anchoring.** `ctx.phase` is the exact long-session clock: a
   motion with a whole number of cycles per hour repeats exactly, as normal
   layers do; `ctx.time` is `f32` and loses precision over long sessions.
@@ -1507,8 +1596,8 @@ not the module's to read); a module-scope `var`, a binding, an `override`
 or an entry point (the module declares `const`, `struct`, `alias` and `fn`);
 a missing or mis-signed function or `ShaderParams`; `discard` (coverage is
 `base_color.a`); a derivative in `material_vertex` or any other program
-error; a scene depth function called by `material_vertex` or a function it
-calls (`ShaderError::SceneDepthInVertex`: scene depth is the surface
+error; a scene depth function (`scene_volume_path` among them) called by
+`material_vertex` or a function it calls (`ShaderError::SceneDepthInVertex`: scene depth is the surface
 function's); a derivative (`dpdx`, `dpdy`, `fwidth`), or a call of a function
 that takes one, within an `if`, a `switch` or a loop (the right of `&&` and
 `||` among them) or after a `return` within one, since WGSL allows
@@ -1553,11 +1642,17 @@ period, with the column behind the water tinting and fading it, and
 compares the same waves as morph targets (`--morph`); the [shaders
 example](examples/shaders.rs) bends masked grass and tree cards in the wind
 (`support/wind.wgsl`) under cascades and a spot light, and gives a glass pane
-a thickness that varies across it (`support/glass.wgsl`):
+a thickness that varies across it (`support/glass.wgsl`); the [volumes
+example](examples/volumes.rs) absorbs over the volume path in closed glass
+(`support/volume_glass.wgsl`): a thin slab before a near and a far wall, a
+block with an opaque object inside seen from outside and inside, a
+wobbling blob and two boxes one behind the other, with `--volume-paths
+off` for the authored thickness:
 
 ```sh
 cargo run --release -p sgl-3d --example water -- --chunks 100 --run velvet
 cargo run --release -p sgl-3d --example shaders
+cargo run --release -p sgl-3d --example volumes
 ```
 
 ## Skinned meshes and morph targets
@@ -2392,8 +2487,8 @@ setting chooses it.
 
 | Tier | Sampled textures per stage | Lighting | Material maps |
 | --- | --- | --- | --- |
-| `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted; no scene depth for a shader | base, metallic-roughness (with packed occlusion), emission, normal, bump |
-| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission; scene depth for a blended shader | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission, thickness, sheen colour, sheen roughness, diffuse transmission and diffuse transmission colour maps |
+| `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted; no scene depth or volume path for a shader | base, metallic-roughness (with packed occlusion), emission, normal, bump |
+| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission; scene depth and volume paths for a blended shader | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission, thickness, sheen colour, sheen roughness, diffuse transmission and diffuse transmission colour maps |
 
 A Vulkan driver lands in either tier, by its `maxPerStageResources`.
 

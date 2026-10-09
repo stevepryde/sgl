@@ -22,7 +22,8 @@ later, DX12, Chrome's upper tier), `Basic` below, down to WebGPU's default
 Vulkan driver lands in either, by its `maxPerStageResources`.
 `Renderer::binding_tier` reports it. On `Basic` baked light from a
 lightmap or irradiance atlas is non-directional, dynamic GI is off
-(`Renderer::dynamic_gi_in_effect`), a material's anisotropy, clearcoat,
+(`Renderer::dynamic_gi_in_effect`), so are volume paths
+(`Renderer::volume_paths_in_effect`), a material's anisotropy, clearcoat,
 iridescence, transmission, thickness, sheen and diffuse transmission maps
 give way to their factors (a clearcoat normal map to the geometry normal),
 in raster and rays alike, and transmissive surfaces blend the light behind
@@ -145,8 +146,14 @@ them through unrefracted. A probe captured on an
   lighting, receivers, blended draws, FSR2's composition pass, captures,
   cascades and local-light faces), with motion and culling that follow
   them: waves on static water chunks, wind on vegetation, glass of varying
-  thickness, with no per-frame upload. SGL3D ships no water, wind or glass.
-  [Programmable surfaces](../README.md#programmable-surfaces).
+  thickness, with no per-frame upload. On `Extended`, a blended draw's
+  surface function reads the opaque depth behind it (`scene_depth_behind`)
+  and, for a material that bounds a volume, the length of its view ray
+  inside that volume and what ends it (`scene_volume_path`: to the exit,
+  an opaque object inside, or from the eye inside it), measured each frame
+  from depth layers of its deformed geometry (`Settings::volume_paths`),
+  for absorption by finite glass or liquid. SGL3D ships no water, wind or
+  glass. [Programmable surfaces](../README.md#programmable-surfaces).
 - **Decals**: boxes that project the game's images onto the lit surfaces
   inside them, changing base colour and, with their maps, normal, roughness
   and metallic before lighting, so reflections and SSR see them
