@@ -5,6 +5,8 @@
 
 mod cookie;
 mod endpoint;
+#[cfg(test)]
+mod lane_scenarios;
 mod latest;
 mod packet;
 mod peer;
@@ -30,7 +32,9 @@ pub use threaded::{ThreadedUdpConfig, ThreadedUdpServer};
 
 /// Maximum bytes in one UDP datagram.
 pub const MAX_DATAGRAM_BYTES: usize = packet::DATAGRAM_BYTES;
-/// Maximum bytes in one reliable fragment. Larger messages are fragmented.
-pub const MAX_RELIABLE_FRAGMENT_BYTES: usize = packet::MAX_ITEM_PAYLOAD;
-/// Latest state is intentionally capped by the shared transport contract.
-pub const MAX_LATEST_PAYLOAD_BYTES: usize = crate::MAX_LATEST_STATE_BYTES;
+/// Maximum bytes in one reliable fragment; the first fragment of a longer
+/// message carries four fewer. Larger messages are fragmented.
+pub const MAX_RELIABLE_FRAGMENT_BYTES: usize = packet::MAX_RELIABLE_ITEM_PAYLOAD;
+/// Latest state is intentionally capped by the shared transport contract
+/// ([`MAX_LATEST_STATE_BYTES`](crate::MAX_LATEST_STATE_BYTES)).
+pub const MAX_LATEST_PAYLOAD_BYTES: usize = packet::MAX_LATEST_ITEM_PAYLOAD;

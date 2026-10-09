@@ -4,6 +4,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use super::DatagramTransport;
+use super::packet::{self, Item, Parsed};
+use crate::RELIABLE_LANES;
 
 const MAX_SIMULATED_DELAY_MS: u64 = 120_000;
 const MAX_SIMULATED_DATAGRAMS: usize = 65_536;
@@ -34,6 +36,9 @@ pub struct SimulatedConfig {
     pub reorder_extra_ms: u64,
     /// Hard bound for datagrams retained by the whole virtual network.
     pub max_in_flight_datagrams: usize,
+    /// Extra drop probability, in parts per 10,000, for a datagram that
+    /// carries a reliable item of each lane, on top of `loss_per_10k`.
+    pub lane_loss_per_10k: [u32; RELIABLE_LANES],
 }
 
 impl Default for SimulatedConfig {
@@ -46,6 +51,7 @@ impl Default for SimulatedConfig {
             reorder_per_10k: 1_000,
             reorder_extra_ms: 40,
             max_in_flight_datagrams: 4_096,
+            lane_loss_per_10k: [0; RELIABLE_LANES],
         }
     }
 }
@@ -62,6 +68,7 @@ impl SimulatedConfig {
             || self.loss_per_10k > 10_000
             || self.duplicate_per_10k > 10_000
             || self.reorder_per_10k > 10_000
+            || self.lane_loss_per_10k.iter().any(|&loss| loss > 10_000)
             || !(1..=MAX_SIMULATED_DATAGRAMS).contains(&self.max_in_flight_datagrams)
             || jitter_width.is_none()
         {
@@ -102,10 +109,34 @@ impl Network {
         self.random() % 10_000 < u64::from(per_10k)
     }
 
+    /// Whether the per-lane loss drops a datagram: one draw for each lane
+    /// with loss configured whose reliable item it carries.
+    fn lane_loss(&mut self, bytes: &[u8]) -> bool {
+        let loss = self.config.lane_loss_per_10k;
+        if loss == [0; RELIABLE_LANES] || bytes.len() < 3 {
+            return false;
+        }
+        let magic = [bytes[0], bytes[1], bytes[2]];
+        let Some(Parsed::Payload { items, .. }) = packet::parse(bytes, magic) else {
+            return false;
+        };
+        let mut lanes = [false; RELIABLE_LANES];
+        for item in items {
+            if let Item::Reliable { lane, .. } = item {
+                lanes[lane.index()] = true;
+            }
+        }
+        lanes
+            .iter()
+            .zip(loss)
+            .any(|(&carried, loss)| carried && loss > 0 && self.chance(loss))
+    }
+
     fn schedule(&mut self, source: SocketAddr, destination: SocketAddr, bytes: &[u8], now_ms: u64) {
         if bytes.len() > super::MAX_DATAGRAM_BYTES
             || self.datagrams.len() >= self.config.max_in_flight_datagrams
             || self.chance(self.config.loss_per_10k)
+            || self.lane_loss(bytes)
         {
             return;
         }
@@ -252,6 +283,7 @@ mod tests {
                 reorder_per_10k: 0,
                 reorder_extra_ms: 0,
                 max_in_flight_datagrams: 256,
+                lane_loss_per_10k: [0; RELIABLE_LANES],
             },
             21,
         )
@@ -309,6 +341,7 @@ mod tests {
             reorder_per_10k: 0,
             reorder_extra_ms: 0,
             max_in_flight_datagrams: 256,
+            lane_loss_per_10k: [0; RELIABLE_LANES],
         };
         let (server_transport, client_transport) =
             pair(server_addr, client_addr, network_config, 22).unwrap();
@@ -434,6 +467,7 @@ mod tests {
                 reorder_per_10k: 0,
                 reorder_extra_ms: 0,
                 max_in_flight_datagrams: 256,
+                lane_loss_per_10k: [0; RELIABLE_LANES],
             },
             9,
         )
@@ -490,6 +524,7 @@ mod tests {
             reorder_per_10k: 0,
             reorder_extra_ms: 0,
             max_in_flight_datagrams: 512,
+            lane_loss_per_10k: [0; RELIABLE_LANES],
         };
         let (server_transport, client_transport) =
             pair(server_addr, client_addr, config, 77).unwrap();
@@ -582,6 +617,10 @@ mod tests {
                 max_in_flight_datagrams: 0,
                 ..SimulatedConfig::default()
             },
+            SimulatedConfig {
+                lane_loss_per_10k: [0, 0, 10_001, 0],
+                ..SimulatedConfig::default()
+            },
         ] {
             assert!(matches!(
                 pair(first, second, config, 1),
@@ -600,6 +639,7 @@ mod tests {
                 reorder_per_10k: 0,
                 reorder_extra_ms: 0,
                 max_in_flight_datagrams: 1,
+                lane_loss_per_10k: [0; RELIABLE_LANES],
             },
             2,
         )

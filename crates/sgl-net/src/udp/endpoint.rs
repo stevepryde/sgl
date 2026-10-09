@@ -2,10 +2,14 @@ use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
 
 use super::cookie::{ChallengeLimiter, ConfirmReplayCache, CookieKey};
-use super::packet::{self, Ack, Item, Kind, Nonces, Parsed};
+use super::packet::{self, Acks, Item, Kind, Nonces, Parsed};
 use super::peer::{CloseGrace, Handshake, Peer};
 use super::transport::DatagramTransport;
-use crate::{Delivery, DenyReason, DisconnectReason, Lane, ReliableCapacity, SendError};
+use crate::{
+    DEFAULT_LANE_INBOUND_BYTES, DEFAULT_LANE_INBOUND_MESSAGES, DEFAULT_LANE_OUTBOUND_BYTES,
+    DEFAULT_LANE_OUTBOUND_MESSAGES, Delivery, DenyReason, DisconnectReason, Lane,
+    MAX_RELIABLE_MESSAGE_BYTES, RELIABLE_LANES, ReliableCapacity, ReliableConfig, SendError,
+};
 
 const MAX_CONFIG_PEERS: usize = 256;
 const MAX_CONFIG_DATAGRAMS_PER_POLL: usize = 4_096;
@@ -14,8 +18,10 @@ const MAX_CONFIG_CHALLENGES_PER_POLL: usize = 256;
 const MAX_CONFIG_PREFIX_BURST: u16 = 64;
 const MAX_CONFIG_INTERVAL_MS: u64 = 120_000;
 const MAX_CONFIG_CLOSE_RETRANSMITS: u8 = 8;
-const MAX_GLOBAL_RELIABLE_ITEMS: usize = 65_536;
-const MAX_GLOBAL_RELIABLE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_GLOBAL_RELIABLE_MESSAGES: usize = 1 << 20;
+const MAX_GLOBAL_RELIABLE_BYTES: usize = 1 << 30;
+const DEFAULT_PEERS: usize = 24;
+const DEFAULT_LANES: usize = DEFAULT_PEERS * RELIABLE_LANES;
 
 #[derive(Debug, Clone)]
 pub struct EndpointConfig {
@@ -33,9 +39,18 @@ pub struct EndpointConfig {
     pub close_grace_ms: u64,
     pub close_retransmits: u8,
     pub max_reliable_transmissions: u8,
-    pub global_reliable_outbound_items: usize,
+    /// Every peer's reliable lanes: weights and per-lane bounds.
+    pub reliable: ReliableConfig,
+    /// Reliable messages held for every peer until acknowledged, across
+    /// lanes. A send past it is refused with `WouldBlock`.
+    pub global_reliable_outbound_messages: usize,
+    /// Reliable bytes held for every peer until acknowledged.
     pub global_reliable_outbound_bytes: usize,
-    pub global_reliable_inbound_items: usize,
+    /// Completed reliable messages from every peer in one poll.
+    pub global_reliable_inbound_messages: usize,
+    /// Inbound reliable bytes across peers: fragments awaiting reassembly
+    /// plus completed messages in one poll. The peer that exceeds it is
+    /// disconnected with `InboundOverflow`.
     pub global_reliable_inbound_bytes: usize,
 }
 
@@ -57,10 +72,13 @@ impl EndpointConfig {
             close_grace_ms: 1_000,
             close_retransmits: 2,
             max_reliable_transmissions: 12,
-            global_reliable_outbound_items: 4_096,
-            global_reliable_outbound_bytes: 4 * 1024 * 1024,
-            global_reliable_inbound_items: 4_096,
-            global_reliable_inbound_bytes: 4 * 1024 * 1024,
+            reliable: ReliableConfig::DEFAULT,
+            // Sized so the shared ceilings do not bind before every lane of
+            // the default peer count is full.
+            global_reliable_outbound_messages: DEFAULT_LANES * DEFAULT_LANE_OUTBOUND_MESSAGES,
+            global_reliable_outbound_bytes: DEFAULT_LANES * DEFAULT_LANE_OUTBOUND_BYTES,
+            global_reliable_inbound_messages: DEFAULT_LANES * DEFAULT_LANE_INBOUND_MESSAGES,
+            global_reliable_inbound_bytes: DEFAULT_LANES * DEFAULT_LANE_INBOUND_BYTES,
         }
     }
 }
@@ -121,113 +139,66 @@ pub enum EndpointEvent {
     },
 }
 
-fn reliable_event_usage(events: &[EndpointEvent]) -> (usize, usize) {
-    events.iter().fold((0, 0), |(items, bytes), event| {
-        if let EndpointEvent::Message {
-            delivery: Delivery::Reliable(_),
-            payload,
-            ..
-        } = event
-        {
-            (items.saturating_add(1), bytes.saturating_add(payload.len()))
-        } else {
-            (items, bytes)
-        }
-    })
-}
-
-fn peer_reliable_event_usage(events: &[EndpointEvent], peer: u64) -> (usize, usize) {
-    events.iter().fold((0, 0), |(items, bytes), event| {
-        if let EndpointEvent::Message {
-            peer: event_peer,
-            delivery: Delivery::Reliable(_),
-            payload,
-        } = event
-            && *event_peer == peer
-        {
-            (items.saturating_add(1), bytes.saturating_add(payload.len()))
-        } else {
-            (items, bytes)
-        }
-    })
-}
-
-#[derive(Clone, Copy)]
-struct InboundLimits {
-    global_items: usize,
+/// What one payload datagram may add to this side's inbound reliable state.
+struct InboundLimits<'a> {
+    reliable: &'a ReliableConfig,
+    global_messages: usize,
     global_bytes: usize,
 }
 
-#[derive(Clone, Copy)]
-struct InboundUsage {
-    retained_items: usize,
-    retained_bytes: usize,
-    delivered_items: usize,
-    delivered_bytes: usize,
-    peer_delivered_items: usize,
-    peer_delivered_bytes: usize,
-}
-
 struct StagedPayload {
-    reliable: Vec<Vec<u8>>,
+    reliable: Vec<(Lane, Vec<u8>)>,
     latest: Option<Vec<u8>>,
+    /// Completed messages and bytes across peers in this poll, with this
+    /// datagram's.
+    delivered: (usize, usize),
+    /// This peer's per-lane completed messages and bytes in this poll.
+    peer_delivered: [(usize, usize); RELIABLE_LANES],
 }
 
+/// Applies one datagram's items to `peer`, keeping `retained` (inbound bytes
+/// retained across peers) current. Nothing it completes is delivered unless
+/// every item is accepted.
 fn receive_payload_items(
     peer: &mut Peer,
     items: packet::ItemIter<'_>,
-    mut usage: InboundUsage,
-    limits: InboundLimits,
+    retained: &mut usize,
+    mut delivered: (usize, usize),
+    limits: &InboundLimits<'_>,
 ) -> Result<StagedPayload, DisconnectReason> {
     let mut staged_reliable = Vec::new();
     let mut staged_latest = None;
+    let mut peer_delivered = peer.delivered;
     for item in items {
         match item {
             Item::Reliable {
+                lane,
                 sequence,
-                more,
+                fragment,
                 payload,
             } => {
-                let before_items = peer.reliable.inbound_items();
-                let before_bytes = peer.reliable.inbound_bytes();
+                let state = &mut peer.reliable[lane.index()];
+                let before = state.retained_bytes();
                 let mut messages = Vec::new();
-                peer.reliable
-                    .receive(sequence, more, payload, &mut messages)
-                    .map_err(|()| DisconnectReason::InboundOverflow)?;
-                usage.retained_items = usage
-                    .retained_items
-                    .saturating_sub(before_items)
-                    .saturating_add(peer.reliable.inbound_items());
-                usage.retained_bytes = usage
-                    .retained_bytes
-                    .saturating_sub(before_bytes)
-                    .saturating_add(peer.reliable.inbound_bytes());
-                let message_items = messages.len();
-                let message_bytes = messages.iter().map(Vec::len).sum::<usize>();
-                usage.delivered_items = usage.delivered_items.saturating_add(message_items);
-                usage.delivered_bytes = usage.delivered_bytes.saturating_add(message_bytes);
-                usage.peer_delivered_items =
-                    usage.peer_delivered_items.saturating_add(message_items);
-                usage.peer_delivered_bytes =
-                    usage.peer_delivered_bytes.saturating_add(message_bytes);
-                let exceeded = usage.retained_items.saturating_add(usage.delivered_items)
-                    > limits.global_items
-                    || usage.retained_bytes.saturating_add(usage.delivered_bytes)
-                        > limits.global_bytes
-                    || peer
-                        .reliable
-                        .inbound_items()
-                        .saturating_add(usage.peer_delivered_items)
-                        > crate::RELIABLE_INBOUND_MESSAGES
-                    || peer
-                        .reliable
-                        .inbound_bytes()
-                        .saturating_add(usage.peer_delivered_bytes)
-                        > crate::RELIABLE_INBOUND_BYTES;
-                if exceeded {
+                let received = state.receive(sequence, fragment, payload, &mut messages);
+                *retained = *retained - before + state.retained_bytes();
+                received.map_err(|_| DisconnectReason::ProtocolViolation)?;
+                let bounds = &limits.reliable.lanes[lane.index()];
+                for message in messages {
+                    let lane_delivered = &mut peer_delivered[lane.index()];
+                    *lane_delivered = (lane_delivered.0 + 1, lane_delivered.1 + message.len());
+                    delivered = (delivered.0 + 1, delivered.1 + message.len());
+                    if lane_delivered.0 > bounds.inbound_messages
+                        || lane_delivered.1 > bounds.inbound_bytes
+                        || delivered.0 > limits.global_messages
+                    {
+                        return Err(DisconnectReason::InboundOverflow);
+                    }
+                    staged_reliable.push((lane, message));
+                }
+                if retained.saturating_add(delivered.1) > limits.global_bytes {
                     return Err(DisconnectReason::InboundOverflow);
                 }
-                staged_reliable.extend(messages);
             }
             Item::Latest { sequence, payload } => {
                 if payload.len() > crate::MAX_LATEST_STATE_BYTES {
@@ -242,6 +213,8 @@ fn receive_payload_items(
     Ok(StagedPayload {
         reliable: staged_reliable,
         latest: staged_latest,
+        delivered,
+        peer_delivered,
     })
 }
 
@@ -261,6 +234,13 @@ pub struct Endpoint<T: DatagramTransport> {
     remaining_challenges: usize,
     now_ms: u64,
     accepting_connections: bool,
+    /// Reliable messages and bytes held for every peer until acknowledged.
+    outbound: (usize, usize),
+    /// Inbound reliable bytes retained across peers (out-of-order fragments
+    /// and partial messages).
+    inbound_retained: usize,
+    /// Completed reliable messages and bytes delivered in the current poll.
+    poll_delivered: (usize, usize),
 }
 
 impl<T: DatagramTransport> Endpoint<T> {
@@ -310,9 +290,12 @@ impl<T: DatagramTransport> Endpoint<T> {
             || config.close_grace_ms > MAX_CONFIG_INTERVAL_MS
             || !(1..=MAX_CONFIG_CLOSE_RETRANSMITS).contains(&config.close_retransmits)
             || !(1..=64).contains(&config.max_reliable_transmissions)
-            || !(1..=MAX_GLOBAL_RELIABLE_ITEMS).contains(&config.global_reliable_outbound_items)
+            || config.reliable.validate().is_err()
+            || !(1..=MAX_GLOBAL_RELIABLE_MESSAGES)
+                .contains(&config.global_reliable_outbound_messages)
             || !(1..=MAX_GLOBAL_RELIABLE_BYTES).contains(&config.global_reliable_outbound_bytes)
-            || !(1..=MAX_GLOBAL_RELIABLE_ITEMS).contains(&config.global_reliable_inbound_items)
+            || !(1..=MAX_GLOBAL_RELIABLE_MESSAGES)
+                .contains(&config.global_reliable_inbound_messages)
             || !(1..=MAX_GLOBAL_RELIABLE_BYTES).contains(&config.global_reliable_inbound_bytes)
         {
             return Err(EndpointError::InvalidConfig);
@@ -334,6 +317,9 @@ impl<T: DatagramTransport> Endpoint<T> {
             remaining_challenges,
             now_ms: 0,
             accepting_connections: true,
+            outbound: (0, 0),
+            inbound_retained: 0,
+            poll_delivered: (0, 0),
         })
     }
 
@@ -386,6 +372,7 @@ impl<T: DatagramTransport> Endpoint<T> {
             },
             Handshake::ClientRequest,
             now_ms,
+            &self.config.reliable,
         );
         self.routes.insert((server, client_nonce), id);
         self.peers.insert(id, peer);
@@ -411,93 +398,79 @@ impl<T: DatagramTransport> Endpoint<T> {
     /// global ceiling returns [`SendError::WouldBlock`] and leaves every
     /// peer connected.
     pub fn send(&mut self, peer: u64, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
-        if self.peers.get(&peer).is_none_or(Peer::is_closing) {
+        let Some(state) = self
+            .peers
+            .get_mut(&peer)
+            .filter(|state| !state.is_closing())
+        else {
             return Err(if self.role == EndpointRole::Client {
                 SendError::Disconnected
             } else {
                 SendError::UnknownConnection
             });
-        }
+        };
         match delivery {
-            Delivery::Reliable(_) => {
-                if payload.len() > crate::MAX_RELIABLE_MESSAGE_BYTES {
+            Delivery::Reliable(lane) => {
+                if payload.len() > MAX_RELIABLE_MESSAGE_BYTES {
                     return Err(SendError::PayloadTooLarge);
                 }
-                let fragments = payload.len().max(1).div_ceil(packet::MAX_ITEM_PAYLOAD);
-                let items: usize = self
-                    .peers
-                    .values()
-                    .map(|state| state.reliable.outbound_items())
-                    .sum();
-                let bytes: usize = self
-                    .peers
-                    .values()
-                    .map(|state| state.reliable.outbound_bytes())
-                    .sum();
-                if items
-                    .checked_add(fragments)
-                    .is_none_or(|total| total > self.config.global_reliable_outbound_items)
-                    || bytes
-                        .checked_add(payload.len())
-                        .is_none_or(|total| total > self.config.global_reliable_outbound_bytes)
+                let bounds = &self.config.reliable.lanes[lane.index()];
+                let state = &mut state.reliable[lane.index()];
+                let (messages, bytes) = state.held();
+                if messages >= bounds.outbound_messages
+                    || bytes + payload.len() > bounds.outbound_bytes
+                    || self.outbound.0 >= self.config.global_reliable_outbound_messages
+                    || self.outbound.1 + payload.len() > self.config.global_reliable_outbound_bytes
                 {
                     return Err(SendError::WouldBlock);
                 }
-                let state = self.peers.get_mut(&peer).expect("checked peer exists");
-                state
-                    .reliable
-                    .enqueue(payload, packet::MAX_ITEM_PAYLOAD)
-                    .map_err(|()| SendError::WouldBlock)
+                state.enqueue(payload, packet::MAX_RELIABLE_ITEM_PAYLOAD);
+                self.outbound = (self.outbound.0 + 1, self.outbound.1 + payload.len());
+                Ok(())
             }
             Delivery::LatestState => {
                 if payload.len() > crate::MAX_LATEST_STATE_BYTES {
                     return Err(SendError::PayloadTooLarge);
                 }
-                let state = self.peers.get_mut(&peer).expect("checked peer exists");
                 state.latest.replace(payload);
                 Ok(())
             }
         }
     }
 
-    /// What `lane` of `peer` admits now: the peer's own message, fragment and
-    /// byte allowances and the endpoint's global outbound ceilings, whichever
+    /// What `lane` of `peer` admits now: the lane's own message and byte
+    /// allowances and the endpoint's global outbound ceilings, whichever
     /// binds first. All zeros for an unknown or closing peer.
     #[must_use]
-    pub fn capacity(&self, peer: u64, _lane: Lane) -> ReliableCapacity {
+    pub fn capacity(&self, peer: u64, lane: Lane) -> ReliableCapacity {
         let Some(state) = self.peers.get(&peer).filter(|state| !state.is_closing()) else {
             return ReliableCapacity::default();
         };
-        let (global_items, global_bytes) =
-            self.peers
-                .values()
-                .fold((0_usize, 0_usize), |(items, bytes), state| {
-                    (
-                        items.saturating_add(state.reliable.outbound_items()),
-                        bytes.saturating_add(state.reliable.outbound_bytes()),
-                    )
-                });
-        let (messages, fragments, bytes) = state.reliable.outbound_allowance();
-        let fragments = fragments.min(
-            self.config
-                .global_reliable_outbound_items
-                .saturating_sub(global_items),
-        );
-        let bytes = bytes
-            .min(
+        let bounds = &self.config.reliable.lanes[lane.index()];
+        let (messages, bytes) = state.reliable[lane.index()].held();
+        ReliableCapacity::remaining(
+            bounds.outbound_messages.saturating_sub(messages).min(
+                self.config
+                    .global_reliable_outbound_messages
+                    .saturating_sub(self.outbound.0),
+            ),
+            bounds.outbound_bytes.saturating_sub(bytes).min(
                 self.config
                     .global_reliable_outbound_bytes
-                    .saturating_sub(global_bytes),
-            )
-            .min(fragments.saturating_mul(packet::MAX_ITEM_PAYLOAD));
-        // Every message takes at least one fragment.
-        ReliableCapacity::remaining(messages.min(fragments), bytes)
+                    .saturating_sub(self.outbound.1),
+            ),
+        )
     }
 
     pub fn poll(&mut self, now_ms: u64) -> Vec<EndpointEvent> {
         self.now_ms = self.now_ms.max(now_ms);
         let now_ms = self.now_ms;
         self.remaining_challenges = self.config.challenge_responses_per_poll;
+        // Messages from earlier polls are the caller's now.
+        self.poll_delivered = (0, 0);
+        for peer in self.peers.values_mut() {
+            peer.delivered = [(0, 0); RELIABLE_LANES];
+        }
         let mut events: Vec<_> = self.pending_events.drain(..).collect();
         let mut buffer = std::mem::take(&mut self.receive_buffer);
         for _ in 0..self.config.max_datagrams_per_poll {
@@ -574,11 +547,7 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
 
         let retry_exhausted = self.peers.get(&id).is_some_and(|peer| {
-            peer.reliable.retry_exhausted(
-                now_ms,
-                peer.rto_ms(),
-                self.config.max_reliable_transmissions,
-            )
+            peer.retry_exhausted(now_ms, self.config.max_reliable_transmissions)
         });
         if retry_exhausted {
             self.drop_peer(id, DisconnectReason::TimedOut, true);
@@ -627,44 +596,44 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
     }
 
+    /// Sends up to `budget` reliable datagrams, one fragment each, choosing
+    /// the lane of every fragment by deficit round robin; within a lane a
+    /// due retransmission goes before a new fragment.
     fn flush_reliable_packets(&mut self, id: u64, now_ms: u64, budget: usize) -> usize {
         let mut packet_count = 0;
         while packet_count < budget {
-            let sequence = {
-                let peer = self.peers.get_mut(&id).expect("peer exists");
-                let mut due = Vec::new();
-                if peer.is_closing() {
-                    let max_transmissions = self.config.close_retransmits.saturating_add(1);
-                    peer.reliable
-                        .due_bounded(now_ms, peer.rto_ms(), max_transmissions, &mut due);
-                } else {
-                    peer.reliable.due_bounded(
-                        now_ms,
-                        peer.rto_ms(),
-                        self.config.max_reliable_transmissions,
-                        &mut due,
-                    );
-                }
-                due.into_iter().next().or_else(|| peer.reliable.admit())
-            };
-            let Some(sequence) = sequence else { break };
-            let (addr, nonces, ack, more, bytes) = {
-                let peer = &self.peers[&id];
-                let slot = peer.reliable.slot(sequence).expect("admitted slot exists");
-                (
-                    peer.addr,
-                    peer.nonces,
-                    peer.reliable.ack(),
-                    slot.more,
-                    slot.bytes.clone(),
-                )
-            };
-            packet::begin_payload(&mut self.scratch, self.config.magic, nonces, ack);
-            packet::push_reliable(&mut self.scratch, sequence, more, &bytes);
-            self.transport.send(addr, &self.scratch, now_ms);
             let peer = self.peers.get_mut(&id).expect("peer exists");
-            peer.reliable.mark_sent(sequence, now_ms);
-            peer.reliable.ack_dirty = false;
+            let max_transmissions = if peer.is_closing() {
+                self.config.close_retransmits.saturating_add(1)
+            } else {
+                self.config.max_reliable_transmissions
+            };
+            let rto_ms = peer.rto_ms();
+            let reliable = &peer.reliable;
+            let Some(lane) = peer
+                .scheduler
+                .next(|lane| reliable[lane].sendable(now_ms, rto_ms, max_transmissions))
+            else {
+                break;
+            };
+            let sequence = peer.reliable[lane]
+                .next_sendable(now_ms, rto_ms, max_transmissions)
+                .expect("the scheduler picked a sendable lane");
+            let acks = peer.acks(packet::ALL_ACKS_LEN);
+            let slot = peer.reliable[lane]
+                .slot(sequence)
+                .expect("a sent fragment is in flight");
+            packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
+            packet::push_reliable(
+                &mut self.scratch,
+                Lane::new(u8::try_from(lane).expect("lane index fits")).expect("valid lane"),
+                sequence,
+                slot.fragment,
+                &slot.bytes,
+            );
+            self.transport.send(peer.addr, &self.scratch, now_ms);
+            peer.reliable[lane].mark_sent(sequence, now_ms);
+            peer.sent_acks(&acks);
             peer.last_send_ms = now_ms;
             packet_count += 1;
         }
@@ -679,40 +648,33 @@ impl<T: DatagramTransport> Endpoint<T> {
         max_packets: usize,
     ) {
         if packet_count < max_packets {
-            let latest = self.peers.get_mut(&id).and_then(|peer| peer.latest.take());
-            if let Some((sequence, payload)) = latest {
-                let peer = &self.peers[&id];
-                packet::begin_payload(
-                    &mut self.scratch,
-                    self.config.magic,
-                    peer.nonces,
-                    peer.reliable.ack(),
-                );
+            let peer = self.peers.get_mut(&id).expect("peer exists");
+            if let Some((sequence, payload)) = peer.latest.take() {
+                // As many lanes' acknowledgements as fit beside the state;
+                // the rest ride the acknowledgement datagram below.
+                let room = packet::DATAGRAM_BYTES
+                    - packet::BASE_HEADER_LEN
+                    - packet::ITEM_HEADER_LEN
+                    - payload.len();
+                let acks = peer.acks(room);
+                packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
                 packet::push_latest(&mut self.scratch, sequence, &payload);
                 self.transport.send(peer.addr, &self.scratch, now_ms);
-                let peer = self.peers.get_mut(&id).expect("peer exists");
-                peer.reliable.ack_dirty = false;
+                peer.sent_acks(&acks);
                 peer.last_send_ms = now_ms;
                 packet_count += 1;
             }
         }
 
-        let keepalive = self.peers.get(&id).is_some_and(|peer| {
-            peer.reliable.ack_dirty
-                || (packet_count == 0
-                    && now_ms.saturating_sub(peer.last_send_ms) >= self.config.keepalive_ms)
-        });
+        let peer = self.peers.get_mut(&id).expect("peer exists");
+        let keepalive = peer.ack_dirty()
+            || (packet_count == 0
+                && now_ms.saturating_sub(peer.last_send_ms) >= self.config.keepalive_ms);
         if keepalive && packet_count < max_packets {
-            let peer = &self.peers[&id];
-            packet::begin_payload(
-                &mut self.scratch,
-                self.config.magic,
-                peer.nonces,
-                peer.reliable.ack(),
-            );
+            let acks = peer.acks(packet::ALL_ACKS_LEN);
+            packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
             self.transport.send(peer.addr, &self.scratch, now_ms);
-            let peer = self.peers.get_mut(&id).expect("peer exists");
-            peer.reliable.ack_dirty = false;
+            peer.sent_acks(&acks);
             peer.last_send_ms = now_ms;
         }
     }
@@ -736,8 +698,12 @@ impl<T: DatagramTransport> Endpoint<T> {
             Parsed::Control { kind, nonces } => {
                 self.handle_control(kind, nonces, source, now_ms, events);
             }
-            Parsed::Payload { nonces, ack, items } => {
-                self.handle_payload(nonces, ack, items, source, now_ms, events);
+            Parsed::Payload {
+                nonces,
+                acks,
+                items,
+            } => {
+                self.handle_payload(nonces, &acks, items, source, now_ms, events);
             }
         }
     }
@@ -899,7 +865,13 @@ impl<T: DatagramTransport> Endpoint<T> {
             self.send_control(source, Kind::ConnectDeny, nonces, now_ms);
             return;
         };
-        let mut peer = Peer::new(source, nonces, Handshake::Connected, now_ms);
+        let mut peer = Peer::new(
+            source,
+            nonces,
+            Handshake::Connected,
+            now_ms,
+            &self.config.reliable,
+        );
         peer.verified_cookie_epoch = Some(cookie_epoch);
         self.routes.insert((source, nonces.client), id);
         self.peers.insert(id, peer);
@@ -912,7 +884,7 @@ impl<T: DatagramTransport> Endpoint<T> {
     fn handle_payload(
         &mut self,
         nonces: Nonces,
-        ack: Ack,
+        acks: &Acks,
         items: packet::ItemIter<'_>,
         source: SocketAddr,
         now_ms: u64,
@@ -921,44 +893,39 @@ impl<T: DatagramTransport> Endpoint<T> {
         let Some(id) = self.match_peer(source, nonces) else {
             return;
         };
-        if self.peers[&id].handshake != Handshake::Connected {
+        let peer = self.peers.get_mut(&id).expect("matched peer exists");
+        if peer.handshake != Handshake::Connected {
             return;
         }
-        let retained_items: usize = self
-            .peers
-            .values()
-            .map(|state| state.reliable.inbound_items())
-            .sum();
-        let retained_bytes: usize = self
-            .peers
-            .values()
-            .map(|state| state.reliable.inbound_bytes())
-            .sum();
-        let (delivered_items, delivered_bytes) = reliable_event_usage(events);
-        let (peer_delivered_items, peer_delivered_bytes) = peer_reliable_event_usage(events, id);
-        let usage = InboundUsage {
-            retained_items,
-            retained_bytes,
-            delivered_items,
-            delivered_bytes,
-            peer_delivered_items,
-            peer_delivered_bytes,
-        };
+        peer.last_receive_ms = now_ms;
+        let held = peer.held();
+        let mut samples = Vec::new();
+        for (lane, ack) in peer.reliable.iter_mut().zip(acks) {
+            if let Some(ack) = ack {
+                lane.acknowledge(*ack, now_ms, &mut samples);
+            }
+        }
+        let still_held = peer.held();
+        self.outbound = (
+            self.outbound.0 - (held.0 - still_held.0),
+            self.outbound.1 - (held.1 - still_held.1),
+        );
+        peer.update_rtt(&samples);
+        if peer.is_closing() {
+            return;
+        }
         let limits = InboundLimits {
-            global_items: self.config.global_reliable_inbound_items,
+            reliable: &self.config.reliable,
+            global_messages: self.config.global_reliable_inbound_messages,
             global_bytes: self.config.global_reliable_inbound_bytes,
         };
-        let staged = {
-            let peer = self.peers.get_mut(&id).expect("matched peer exists");
-            peer.last_receive_ms = now_ms;
-            let mut samples = Vec::new();
-            peer.reliable.acknowledge(ack, now_ms, &mut samples);
-            peer.update_rtt(&samples);
-            if peer.is_closing() {
-                return;
-            }
-            receive_payload_items(peer, items, usage, limits)
-        };
+        let staged = receive_payload_items(
+            peer,
+            items,
+            &mut self.inbound_retained,
+            self.poll_delivered,
+            &limits,
+        );
         let staged = match staged {
             Ok(staged) => staged,
             Err(reason) => {
@@ -966,13 +933,15 @@ impl<T: DatagramTransport> Endpoint<T> {
                 return;
             }
         };
+        peer.delivered = staged.peer_delivered;
+        self.poll_delivered = staged.delivered;
         events.extend(
             staged
                 .reliable
                 .into_iter()
-                .map(|payload| EndpointEvent::Message {
+                .map(|(lane, payload)| EndpointEvent::Message {
                     peer: id,
-                    delivery: Delivery::RELIABLE_ORDERED,
+                    delivery: Delivery::Reliable(lane),
                     payload,
                 }),
         );
@@ -1029,7 +998,7 @@ impl<T: DatagramTransport> Endpoint<T> {
             .iter()
             .filter_map(|(&id, peer)| {
                 let grace = peer.close_grace?;
-                (peer.reliable.outbound_is_idle() || now_ms >= grace.deadline_ms).then_some(id)
+                (peer.outbound_is_idle() || now_ms >= grace.deadline_ms).then_some(id)
             })
             .collect();
         for id in finished {
@@ -1048,6 +1017,9 @@ impl<T: DatagramTransport> Endpoint<T> {
 
     fn remove_peer(&mut self, id: u64) -> Option<Peer> {
         let peer = self.peers.remove(&id)?;
+        let held = peer.held();
+        self.outbound = (self.outbound.0 - held.0, self.outbound.1 - held.1);
+        self.inbound_retained -= peer.retained_bytes();
         self.routes.remove(&(peer.addr, peer.nonces.client));
         if self.role == EndpointRole::Server && peer.verified_cookie_epoch.is_some() {
             self.confirm_replays
@@ -1058,6 +1030,7 @@ impl<T: DatagramTransport> Endpoint<T> {
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -1108,9 +1081,9 @@ mod tests {
         );
     }
 
-    /// #254: inbound reliable allowances admit exactly the cap in one poll
-    /// and refuse one more, for the per-peer message cap and the global
-    /// item cap alike.
+    /// #254, #268: inbound reliable allowances admit exactly the cap in one
+    /// poll and refuse one more, for a lane's message cap and the global
+    /// message cap alike.
     #[wasm_bindgen_test(unsupported = test)]
     fn inbound_reliable_caps_admit_exactly_the_cap() {
         fn items(
@@ -1120,16 +1093,16 @@ mod tests {
             count: u16,
         ) {
             let mut bytes = Vec::new();
-            packet::begin_payload(&mut bytes, MAGIC, nonces, Ack { next: 0, bits: 0 });
+            packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
             for sequence in 0..count {
-                packet::push_reliable(&mut bytes, sequence, false, b"m");
+                packet::push_reliable(&mut bytes, lane(3), sequence, Fragment::Whole, b"m");
             }
             server
                 .transport
                 .received
                 .push_back(ReceivedDatagram { source, bytes });
         }
-        let per_peer = u16::try_from(crate::RELIABLE_INBOUND_MESSAGES).unwrap();
+        let per_peer = u16::try_from(crate::DEFAULT_LANE_INBOUND_MESSAGES).unwrap();
         let (mut server, source, nonces) = connected_server(EndpointConfig::default());
         items(&mut server, source, nonces, per_peer);
         let events = server.poll(2);
@@ -1156,7 +1129,7 @@ mod tests {
         );
 
         let global = EndpointConfig {
-            global_reliable_inbound_items: 3,
+            global_reliable_inbound_messages: 3,
             ..EndpointConfig::default()
         };
         let (mut server, source, nonces) = connected_server(global.clone());
@@ -1168,13 +1141,13 @@ mod tests {
         assert_eq!(server.peer_count(), 0);
     }
 
-    /// #254, #267: the global outbound allowance admits exactly its item and
-    /// byte caps and refuses the next send with `WouldBlock` without touching
-    /// the peer.
+    /// #254, #267: the global outbound allowance admits exactly its message
+    /// and byte caps and refuses the next send with `WouldBlock` without
+    /// touching the peer.
     #[wasm_bindgen_test(unsupported = test)]
     fn outbound_global_caps_admit_exactly_the_cap() {
         let (mut server, _, _) = connected_server(EndpointConfig {
-            global_reliable_outbound_items: 2,
+            global_reliable_outbound_messages: 2,
             ..EndpointConfig::default()
         });
         assert_eq!(server.send(1, Delivery::RELIABLE_ORDERED, b"a"), Ok(()));
@@ -1227,7 +1200,7 @@ mod tests {
             max_packets_per_peer_flush: 2,
             ..EndpointConfig::default()
         });
-        let big = vec![7u8; packet::MAX_ITEM_PAYLOAD];
+        let big = vec![7u8; packet::MAX_RELIABLE_ITEM_PAYLOAD];
         for _ in 0..3 {
             server.send(1, Delivery::RELIABLE_ORDERED, &big).unwrap();
         }
@@ -1238,8 +1211,20 @@ mod tests {
     }
 
     use super::*;
+    use crate::lanes::Fragment;
 
     const MAGIC: [u8; 3] = *b"TST";
+
+    fn lane(index: u8) -> Lane {
+        Lane::new(index).expect("test lanes exist")
+    }
+
+    /// A payload datagram acknowledging `next` on lane 0 only.
+    fn lane0_ack(next: u16) -> packet::Acks {
+        let mut acks = [None; RELIABLE_LANES];
+        acks[0] = Some(packet::Ack { next, bits: 0 });
+        acks
+    }
 
     #[derive(Debug)]
     struct ReceivedDatagram {
@@ -1269,10 +1254,14 @@ mod tests {
             length
         }
 
-        fn receive_ack(&mut self, source: SocketAddr, nonces: Nonces, next: u16) {
+        fn receive_acks(&mut self, source: SocketAddr, nonces: Nonces, acks: &packet::Acks) {
             let mut bytes = Vec::new();
-            packet::begin_payload(&mut bytes, MAGIC, nonces, Ack { next, bits: 0 });
+            packet::begin_payload(&mut bytes, MAGIC, nonces, acks);
             self.received.push_back(ReceivedDatagram { source, bytes });
+        }
+
+        fn receive_ack(&mut self, source: SocketAddr, nonces: Nonces, next: u16) {
+            self.receive_acks(source, nonces, &lane0_ack(next));
         }
     }
 
@@ -1826,7 +1815,7 @@ mod tests {
         let (mut server, source, nonces) = connected_server(EndpointConfig::default());
         for sequence in 0..100_u16 {
             let mut bytes = Vec::new();
-            packet::begin_payload(&mut bytes, MAGIC, nonces, Ack { next: 0, bits: 0 });
+            packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
             packet::push_latest(&mut bytes, sequence, &sequence.to_le_bytes());
             server
                 .transport
@@ -1848,9 +1837,9 @@ mod tests {
     fn complete_zero_length_messages_count_toward_per_peer_inbound_cap() {
         let (mut server, source, nonces) = connected_server(EndpointConfig::default());
         let mut bytes = Vec::new();
-        packet::begin_payload(&mut bytes, MAGIC, nonces, Ack { next: 0, bits: 0 });
-        for sequence in 0..=u16::try_from(crate::RELIABLE_INBOUND_MESSAGES).unwrap() {
-            packet::push_reliable(&mut bytes, sequence, false, b"");
+        packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+        for sequence in 0..=u16::try_from(crate::DEFAULT_LANE_INBOUND_MESSAGES).unwrap() {
+            packet::push_reliable(&mut bytes, Lane::DEFAULT, sequence, Fragment::Whole, b"");
         }
         assert!(bytes.len() <= packet::DATAGRAM_BYTES);
         server
@@ -1869,40 +1858,29 @@ mod tests {
         );
     }
 
+    /// #268: fragments that break the reassembly table — here a
+    /// continuation with no first fragment, buffered behind a whole message
+    /// on another lane in the same datagram — close the peer as a protocol
+    /// violation and deliver nothing from that datagram.
     #[wasm_bindgen_test(unsupported = test)]
-    fn zero_byte_continuations_across_polls_consume_the_fragment_cap() {
+    fn a_continuation_without_a_first_fragment_is_a_protocol_violation() {
         let (mut server, source, nonces) = connected_server(EndpointConfig::default());
-        for sequence in 0..u16::try_from(crate::RELIABLE_INBOUND_MESSAGES).unwrap() {
-            let mut bytes = Vec::new();
-            packet::begin_payload(&mut bytes, MAGIC, nonces, Ack { next: 0, bits: 0 });
-            packet::push_reliable(&mut bytes, sequence, true, b"");
-            server
-                .transport
-                .received
-                .push_back(ReceivedDatagram { source, bytes });
-            assert!(server.poll(u64::from(sequence) + 2).is_empty());
-            assert_eq!(server.peer_count(), 1);
-        }
+        let mut bytes = Vec::new();
+        packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+        packet::push_reliable(&mut bytes, lane(0), 0, Fragment::Whole, b"must-not-deliver");
+        packet::push_reliable(&mut bytes, lane(2), 0, Fragment::Middle, b"orphan");
+        server
+            .transport
+            .received
+            .push_back(ReceivedDatagram { source, bytes });
 
-        let mut overflow = Vec::new();
-        packet::begin_payload(&mut overflow, MAGIC, nonces, Ack { next: 0, bits: 0 });
-        packet::push_reliable(
-            &mut overflow,
-            u16::try_from(crate::RELIABLE_INBOUND_MESSAGES).unwrap(),
-            true,
-            b"",
-        );
-        server.transport.received.push_back(ReceivedDatagram {
-            source,
-            bytes: overflow,
-        });
-        assert!(server.poll(200).is_empty());
+        assert!(server.poll(2).is_empty());
         assert_eq!(server.peer_count(), 0);
         assert_eq!(
-            server.poll(201),
+            server.poll(3),
             vec![EndpointEvent::Disconnected {
                 peer: 1,
-                reason: DisconnectReason::InboundOverflow,
+                reason: DisconnectReason::ProtocolViolation,
             }]
         );
     }
@@ -1955,19 +1933,27 @@ mod tests {
         assert_eq!(server.peer_count(), 0);
     }
 
-    /// #267: a full per-peer allowance, or a global ceiling a multi-fragment
-    /// message cannot fit, refuses the send with `WouldBlock`; the peer stays
-    /// connected, nothing is announced, and its queued messages still go out.
+    /// #267, #268: a full lane refuses the send with `WouldBlock`; the peer
+    /// stays connected, nothing is announced, its queued messages still go
+    /// out, and every other lane still admits — the lane bounds of
+    /// netcode.md 11 are per lane. A global ceiling refuses every lane.
     #[wasm_bindgen_test(unsupported = test)]
-    fn per_peer_and_global_outbound_saturation_refuses_without_disconnecting() {
+    fn a_full_lane_refuses_alone_and_a_global_ceiling_refuses_every_lane() {
         let (mut server, _, _) = connected_server(EndpointConfig::default());
-        for _ in 0..crate::RELIABLE_OUTBOUND_MESSAGES {
+        for _ in 0..crate::DEFAULT_LANE_OUTBOUND_MESSAGES {
             server.send(1, Delivery::RELIABLE_ORDERED, b"").unwrap();
         }
         assert_eq!(
             server.send(1, Delivery::RELIABLE_ORDERED, b"refused"),
             Err(SendError::WouldBlock)
         );
+        assert_eq!(server.capacity(1, Lane::DEFAULT).messages, 0);
+        for index in 1..RELIABLE_LANES as u8 {
+            assert!(server.capacity(1, lane(index)).messages > 0);
+            server
+                .send(1, Delivery::Reliable(lane(index)), b"other lane")
+                .expect("a full lane leaves the others admitting");
+        }
         assert_eq!(server.peer_count(), 1);
         assert!(server.poll(2).is_empty(), "no disconnect is announced");
         server.flush(3);
@@ -1981,28 +1967,21 @@ mod tests {
         );
 
         let config = EndpointConfig {
-            global_reliable_outbound_items: 1,
+            global_reliable_outbound_messages: 1,
             ..EndpointConfig::default()
         };
         let (mut server, _, _) = connected_server(config);
-        assert_eq!(
-            server.send(
-                1,
-                Delivery::RELIABLE_ORDERED,
-                &vec![7; packet::MAX_ITEM_PAYLOAD + 1]
-            ),
-            Err(SendError::WouldBlock)
-        );
+        let long = vec![7; 3 * packet::MAX_RELIABLE_ITEM_PAYLOAD];
+        server
+            .send(1, Delivery::RELIABLE_ORDERED, &long)
+            .expect("a multi-fragment message is one message");
+        for index in 0..RELIABLE_LANES as u8 {
+            assert_eq!(
+                server.send(1, Delivery::Reliable(lane(index)), b"x"),
+                Err(SendError::WouldBlock)
+            );
+        }
         assert_eq!(server.peer_count(), 1);
-        assert_eq!(
-            server.send(
-                1,
-                Delivery::RELIABLE_ORDERED,
-                &[7; packet::MAX_ITEM_PAYLOAD]
-            ),
-            Ok(()),
-            "a one-fragment message still fits"
-        );
     }
 
     /// #267: a global ceiling filled by one peer's backlog refuses another
@@ -2011,7 +1990,7 @@ mod tests {
     #[wasm_bindgen_test(unsupported = test)]
     fn global_outbound_saturation_closes_no_peer_and_recovers_after_acks() {
         let config = EndpointConfig {
-            global_reliable_outbound_items: 4,
+            global_reliable_outbound_messages: 4,
             ..EndpointConfig::default()
         };
         let (mut server, source, nonces) = connected_server(config);
@@ -2042,49 +2021,55 @@ mod tests {
             .expect("the acknowledged backlog returned the allowance");
     }
 
-    /// The highest reliable sequence sent to `destination`, read off the wire.
+    /// Acknowledgements of every reliable fragment sent to `destination`,
+    /// per lane, read off the wire.
     #[cfg(not(target_arch = "wasm32"))]
-    fn highest_reliable_sequence(
+    fn ack_everything_sent(
         endpoint: &Endpoint<RecordingTransport>,
         destination: SocketAddr,
-    ) -> Option<u16> {
-        endpoint
-            .transport
-            .sent
-            .iter()
-            .filter(|datagram| datagram.destination == destination)
-            .filter_map(|datagram| match packet::parse(&datagram.bytes, MAGIC)? {
-                Parsed::Payload { items, .. } => items
-                    .filter_map(|item| match item {
-                        Item::Reliable { sequence, .. } => Some(sequence),
-                        Item::Latest { .. } => None,
-                    })
-                    .max(),
-                Parsed::Control { .. } => None,
-            })
-            .max()
+    ) -> packet::Acks {
+        let mut acks = [None; RELIABLE_LANES];
+        for datagram in &endpoint.transport.sent {
+            if datagram.destination != destination {
+                continue;
+            }
+            let Some(Parsed::Payload { items, .. }) = packet::parse(&datagram.bytes, MAGIC) else {
+                continue;
+            };
+            for item in items {
+                if let Item::Reliable { lane, sequence, .. } = item {
+                    let next = sequence.wrapping_add(1);
+                    let ack: &mut Option<packet::Ack> = &mut acks[lane.index()];
+                    if ack.is_none_or(|ack| super::super::sequence::newer(next, ack.next)) {
+                        *ack = Some(packet::Ack { next, bits: 0 });
+                    }
+                }
+            }
+        }
+        acks
     }
 
-    /// Defect (#267): a capacity report that disagrees with admission (a
-    /// forgotten fragment or global bound, an off-by-one at a cap), or a
-    /// refused send that still closes a peer. Oracle: `send`, the atomic
-    /// admission path, over random sends, flushes and wire-derived acks on
-    /// two peers sharing small global ceilings: the send succeeds exactly
-    /// when the capacity read just before it says the payload fits, and a
-    /// refusal is `WouldBlock` with both peers still connected.
+    /// Defect (#267, #268): a capacity report that disagrees with admission
+    /// (a forgotten lane or global bound, a maintained counter that drifts
+    /// from what is held, an off-by-one at a cap), or a refused send that
+    /// still closes a peer. Oracle: `send`, the atomic admission path, over
+    /// random sends on random lanes, flushes and wire-derived acks on two
+    /// peers sharing small global ceilings: the send succeeds exactly when
+    /// the capacity read just before it says the payload fits, and a refusal
+    /// is `WouldBlock` with both peers still connected.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn capacity_predicts_admission_across_peer_and_global_bounds() {
+    fn capacity_predicts_admission_across_lane_and_global_bounds() {
         use crate::proptest_support::check;
         use proptest::prelude::*;
 
         #[derive(Clone, Debug)]
         enum Op {
-            Send(u64, usize),
+            Send(u64, u8, usize),
             Flush,
             Ack(u64),
         }
-        let fragment = packet::MAX_ITEM_PAYLOAD;
+        let fragment = packet::MAX_RELIABLE_ITEM_PAYLOAD;
         let length = prop_oneof![
             Just(0),
             Just(1),
@@ -2094,18 +2079,19 @@ mod tests {
             0..=crate::MAX_RELIABLE_MESSAGE_BYTES,
         ];
         let op = prop_oneof![
-            6 => (1..=2_u64, length).prop_map(|(peer, len)| Op::Send(peer, len)),
+            6 => (1..=2_u64, 0..RELIABLE_LANES as u8, length)
+                .prop_map(|(peer, lane, len)| Op::Send(peer, lane, len)),
             2 => Just(Op::Flush),
             1 => (1..=2_u64).prop_map(Op::Ack),
         ];
         let strategy = (
             1..=300_usize,
-            1..=400_000_usize,
+            1..=1_200_000_usize,
             prop::collection::vec(op, 1..300),
         );
-        check(strategy, |(items, bytes, ops)| {
+        check(strategy, |(messages, bytes, ops)| {
             let config = EndpointConfig {
-                global_reliable_outbound_items: items,
+                global_reliable_outbound_messages: messages,
                 global_reliable_outbound_bytes: bytes,
                 ..EndpointConfig::default()
             };
@@ -2119,10 +2105,11 @@ mod tests {
             let mut now = 3;
             for op in ops {
                 match op {
-                    Op::Send(peer, len) => {
-                        let capacity = server.capacity(peer, Lane::DEFAULT);
+                    Op::Send(peer, index, len) => {
+                        let capacity = server.capacity(peer, lane(index));
                         let fits = capacity.messages >= 1 && capacity.bytes >= len;
-                        let result = server.send(peer, Delivery::RELIABLE_ORDERED, &vec![3; len]);
+                        let result =
+                            server.send(peer, Delivery::Reliable(lane(index)), &vec![3; len]);
                         prop_assert_eq!(result.is_ok(), fits, "{:?} for {} bytes", capacity, len);
                         if result.is_err() {
                             prop_assert_eq!(result, Err(SendError::WouldBlock));
@@ -2139,11 +2126,8 @@ mod tests {
                         } else {
                             (second_source, second_nonces)
                         };
-                        if let Some(highest) = highest_reliable_sequence(&server, source) {
-                            server
-                                .transport
-                                .receive_ack(source, nonces, highest.wrapping_add(1));
-                        }
+                        let acks = ack_everything_sent(&server, source);
+                        server.transport.receive_acks(source, nonces, &acks);
                         now += 1;
                         prop_assert!(server.poll(now).is_empty());
                     }
@@ -2161,8 +2145,14 @@ mod tests {
         };
         let (mut server, source, nonces) = connected_server(config);
         let mut bytes = Vec::new();
-        packet::begin_payload(&mut bytes, MAGIC, nonces, Ack { next: 0, bits: 0 });
-        packet::push_reliable(&mut bytes, 0, true, b"ab");
+        packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+        packet::push_reliable(
+            &mut bytes,
+            Lane::DEFAULT,
+            0,
+            Fragment::First { total: 3 },
+            b"ab",
+        );
         server
             .transport
             .received
@@ -2179,48 +2169,107 @@ mod tests {
         );
     }
 
+    /// #268: a first fragment declaring more than the message cap closes
+    /// the peer as a protocol violation when it arrives, before anything is
+    /// buffered, and a run of fragments overrunning its declared total does
+    /// too; neither delivers anything.
     #[wasm_bindgen_test(unsupported = test)]
-    fn over_cap_reassembly_cleans_peer_without_partial_delivery() {
-        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
-        for sequence in 0..56_u16 {
+    fn over_cap_or_overrun_totals_close_the_peer_without_delivery() {
+        let over_cap = u32::try_from(crate::MAX_RELIABLE_MESSAGE_BYTES + 1).unwrap();
+        let overrun: [(Fragment, &[u8]); 3] = [
+            (Fragment::First { total: 4 }, b"ab"),
+            (Fragment::Middle, b"c"),
+            (Fragment::Middle, b"d"),
+        ];
+        for fragments in [
+            &[(Fragment::First { total: over_cap }, b"ab".as_slice())][..],
+            &overrun,
+        ] {
+            let (mut server, source, nonces) = connected_server(EndpointConfig::default());
             let mut bytes = Vec::new();
-            packet::begin_payload(&mut bytes, MAGIC, nonces, Ack { next: 0, bits: 0 });
-            packet::push_reliable(
-                &mut bytes,
-                sequence,
-                true,
-                &vec![0; packet::MAX_ITEM_PAYLOAD],
-            );
+            packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+            packet::push_reliable(&mut bytes, lane(1), 0, Fragment::Whole, b"must-not-deliver");
+            for (sequence, (fragment, payload)) in (0..).zip(fragments) {
+                packet::push_reliable(&mut bytes, lane(2), sequence, *fragment, payload);
+            }
             server
                 .transport
                 .received
                 .push_back(ReceivedDatagram { source, bytes });
+
+            assert!(server.poll(4).is_empty());
+            assert_eq!(server.peer_count(), 0);
+            assert_eq!(
+                server.inbound_retained, 0,
+                "the peer's partial bytes went with it"
+            );
+            assert_eq!(
+                server.poll(5),
+                vec![EndpointEvent::Disconnected {
+                    peer: 1,
+                    reason: DisconnectReason::ProtocolViolation,
+                }]
+            );
         }
+    }
+
+    /// #268 (netcode.md 12): a maximal latest-state datagram has room for
+    /// one lane's acknowledgement; the other lanes that owe one get it in
+    /// the acknowledgement datagram of the same flush, and no datagram
+    /// exceeds `MAX_DATAGRAM_BYTES`.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn acks_that_do_not_fit_beside_latest_state_follow_in_the_same_flush() {
+        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
         let mut bytes = Vec::new();
-        packet::begin_payload(&mut bytes, MAGIC, nonces, Ack { next: 0, bits: 0 });
-        packet::push_reliable(&mut bytes, 56, false, &[0; 200]);
+        packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+        for index in [0, 1, 3] {
+            packet::push_reliable(&mut bytes, lane(index), 0, Fragment::Whole, &[index]);
+        }
         server
             .transport
             .received
             .push_back(ReceivedDatagram { source, bytes });
-
-        assert!(server.poll(4).is_empty());
-        assert_eq!(server.peer_count(), 0);
-        assert_eq!(
-            server.poll(5),
-            vec![EndpointEvent::Disconnected {
-                peer: 1,
-                reason: DisconnectReason::InboundOverflow,
-            }]
-        );
+        assert_eq!(server.poll(2).len(), 3);
+        server
+            .send(
+                1,
+                Delivery::LatestState,
+                &[9; crate::MAX_LATEST_STATE_BYTES],
+            )
+            .unwrap();
+        server.flush(3);
+        let mut acked = [false; RELIABLE_LANES];
+        let mut latest = 0;
+        for datagram in &server.transport.sent {
+            assert!(datagram.bytes.len() <= packet::DATAGRAM_BYTES);
+            let Some(Parsed::Payload { acks, items, .. }) = packet::parse(&datagram.bytes, MAGIC)
+            else {
+                panic!("expected payload datagrams");
+            };
+            for (lane, ack) in acks.iter().enumerate() {
+                if let Some(ack) = ack {
+                    assert_eq!(*ack, packet::Ack { next: 1, bits: 0 }, "lane {lane}");
+                    acked[lane] = true;
+                }
+            }
+            latest += items.count();
+        }
+        assert_eq!(latest, 1, "the state went out once");
+        assert_eq!(acked, [true, true, false, true]);
     }
 
     #[wasm_bindgen_test(unsupported = test)]
     fn malformed_item_suffix_disconnects_without_delivering_valid_prefix() {
         let (mut server, source, nonces) = connected_server(EndpointConfig::default());
         let mut bytes = Vec::new();
-        packet::begin_payload(&mut bytes, MAGIC, nonces, Ack { next: 0, bits: 0 });
-        packet::push_reliable(&mut bytes, 0, false, b"must-not-deliver");
+        packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+        packet::push_reliable(
+            &mut bytes,
+            Lane::DEFAULT,
+            0,
+            Fragment::Whole,
+            b"must-not-deliver",
+        );
         bytes.extend_from_slice(&[99, 0, 0, 0, 0]);
         server
             .transport

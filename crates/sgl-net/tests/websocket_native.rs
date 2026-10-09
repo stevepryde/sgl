@@ -5,13 +5,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use sgl_net::websocket::{
-    ENVELOPE_HEADER_LEN, ENVELOPE_VERSION, GAME_PATH, NativeWebSocketClient,
-    NativeWebSocketClientConfig, NativeWebSocketServer, NativeWebSocketServerConfig, OriginPolicy,
-    WebSocketIdentity, encode_envelope,
+    ENVELOPE_HEADER_LEN, ENVELOPE_VERSION, Envelope, Fragment, GAME_PATH,
+    MAX_WEBSOCKET_FRAME_BYTES, NativeWebSocketClient, NativeWebSocketClientConfig,
+    NativeWebSocketServer, NativeWebSocketServerConfig, OriginPolicy, WebSocketIdentity,
+    encode_envelope,
 };
 use sgl_net::{
-    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES,
-    RELIABLE_OUTBOUND_MESSAGES, SendError, ServerEvent, ServerIo,
+    ClientEvent, ClientIo, ConnectionId, DEFAULT_LANE_OUTBOUND_MESSAGES, Delivery,
+    DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, SendError, ServerEvent, ServerIo,
 };
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::HeaderValue;
@@ -30,6 +31,17 @@ fn server(max_connections: usize) -> NativeWebSocketServer {
         .with_origin_policy(OriginPolicy::exact([ORIGIN_VALUE.to_owned()]).unwrap());
     config.max_connections = max_connections;
     NativeWebSocketServer::bind(config).unwrap()
+}
+
+/// One whole-message frame.
+fn frame(delivery: Delivery, sequence: u64, payload: &[u8]) -> Vec<u8> {
+    let envelope = Envelope {
+        delivery,
+        sequence,
+        fragment: Fragment::Whole,
+        payload,
+    };
+    encode_envelope(*b"TST", &envelope).unwrap()
 }
 
 fn url(server: &NativeWebSocketServer) -> String {
@@ -158,12 +170,12 @@ fn a_saturated_lane_would_block_and_delivers_everything_after_the_drain() {
     second.poll(0);
 
     let message = |index: usize| index.to_le_bytes().to_vec();
-    for index in 0..RELIABLE_OUTBOUND_MESSAGES {
+    for index in 0..DEFAULT_LANE_OUTBOUND_MESSAGES {
         server
             .send(first_conn, Delivery::RELIABLE_ORDERED, &message(index))
             .unwrap();
     }
-    let retained = message(RELIABLE_OUTBOUND_MESSAGES);
+    let retained = message(DEFAULT_LANE_OUTBOUND_MESSAGES);
     assert_eq!(
         server.send(first_conn, Delivery::RELIABLE_ORDERED, &retained),
         Err(SendError::WouldBlock)
@@ -197,11 +209,11 @@ fn a_saturated_lane_would_block_and_delivers_everything_after_the_drain() {
             retried = true;
             server.flush(0);
         }
-        (received.len() > RELIABLE_OUTBOUND_MESSAGES).then_some(())
+        (received.len() > DEFAULT_LANE_OUTBOUND_MESSAGES).then_some(())
     });
     assert_eq!(
         received,
-        (0..=RELIABLE_OUTBOUND_MESSAGES)
+        (0..=DEFAULT_LANE_OUTBOUND_MESSAGES)
             .map(message)
             .collect::<Vec<_>>()
     );
@@ -294,7 +306,7 @@ fn text_malformed_oversize_wrong_class_and_stale_frames_fail_closed() {
     let mut oversized = Vec::with_capacity(ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES + 1);
     oversized.extend_from_slice(b"TST");
     oversized.push(ENVELOPE_VERSION);
-    oversized.push(1);
+    oversized.extend_from_slice(&[1, 0]);
     oversized.extend_from_slice(&1_u64.to_be_bytes());
     oversized.extend_from_slice(
         &u32::try_from(MAX_LATEST_STATE_BYTES + 1)
@@ -304,29 +316,30 @@ fn text_malformed_oversize_wrong_class_and_stale_frames_fail_closed() {
     oversized.resize(ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES + 1, 0);
     assert_protocol_disconnect(vec![Message::Binary(oversized.into())]);
 
-    let mut wrong_class =
-        encode_envelope(*b"TST", Delivery::RELIABLE_ORDERED, 0, b"queued").unwrap();
-    wrong_class[5..13].copy_from_slice(&1_u64.to_be_bytes());
+    let mut wrong_class = frame(Delivery::RELIABLE_ORDERED, 0, b"queued");
+    wrong_class[6..14].copy_from_slice(&1_u64.to_be_bytes());
     assert_protocol_disconnect(vec![
-        Message::Binary(
-            encode_envelope(*b"TST", Delivery::RELIABLE_ORDERED, 0, b"must be purged")
-                .unwrap()
-                .into(),
-        ),
+        Message::Binary(frame(Delivery::RELIABLE_ORDERED, 0, b"must be purged").into()),
         Message::Binary(wrong_class.into()),
     ]);
 
     assert_protocol_disconnect(vec![
-        Message::Binary(
-            encode_envelope(*b"TST", Delivery::LatestState, 2, b"new")
-                .unwrap()
-                .into(),
-        ),
-        Message::Binary(
-            encode_envelope(*b"TST", Delivery::LatestState, 1, b"stale")
-                .unwrap()
-                .into(),
-        ),
+        Message::Binary(frame(Delivery::LatestState, 2, b"new").into()),
+        Message::Binary(frame(Delivery::LatestState, 1, b"stale").into()),
+    ]);
+
+    // Past the frame cap the socket itself refuses the frame (#268).
+    assert_protocol_disconnect(vec![Message::Binary(
+        vec![0; MAX_WEBSOCKET_FRAME_BYTES + 1].into(),
+    )]);
+
+    // A fragment the reassembly table refuses (#268): a last fragment with
+    // no first, after a whole message that must not be delivered.
+    let mut orphan = frame(Delivery::Reliable(Lane::new(1).unwrap()), 0, b"orphan");
+    orphan[4] = 0;
+    assert_protocol_disconnect(vec![
+        Message::Binary(frame(Delivery::RELIABLE_ORDERED, 0, b"must be purged").into()),
+        Message::Binary(orphan.into()),
     ]);
 }
 
@@ -480,8 +493,7 @@ fn native_client_delivers_a_frame_that_came_with_the_upgrade_response() {
                     .then(|| value.trim().to_owned())
             })
             .unwrap();
-        let envelope =
-            encode_envelope(*b"TST", Delivery::RELIABLE_ORDERED, 0, b"with the upgrade").unwrap();
+        let envelope = frame(Delivery::RELIABLE_ORDERED, 0, b"with the upgrade");
         let mut reply = format!(
             "HTTP/1.1 101 Switching Protocols\r\n\
              Connection: Upgrade\r\n\

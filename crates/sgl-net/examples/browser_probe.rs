@@ -6,10 +6,11 @@
 //!
 //! Each scenario returns `Err(detail)` instead of panicking so the whole
 //! report reaches the page. Assertions are what a browser game observes:
-//! connection, echoed bytes, coalesced latest state, a saturated lane that
-//! refuses and then drains without losing the connection, a
-//! server-initiated close with its bounded reconnect, a rejected
-//! subprotocol, and a clean local disconnect.
+//! connection, echoed bytes, lanes echoed whole and in their own order
+//! (long messages fragmented and reassembled on both sides), coalesced
+//! latest state, a saturated lane that refuses and then drains without
+//! losing the connection, a server-initiated close with its bounded
+//! reconnect, a rejected subprotocol, and a clean local disconnect.
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -162,6 +163,67 @@ async fn reliable_binary_payloads_echo_in_order() -> Result<(), String> {
     Ok(())
 }
 
+/// Message `index` of the lanes scenario on `lane`: short on lane 0, three
+/// WebSocket fragments on lane 1, one byte past a fragment on lane 3.
+fn lane_message(lane: Lane, index: u8) -> Vec<u8> {
+    let len = match lane.index() {
+        0 => 10,
+        1 => 40_000,
+        _ => 16 * 1024 + 1,
+    };
+    let mut payload: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+    payload[..3].copy_from_slice(&[b'L', lane.index() as u8, index]);
+    payload
+}
+
+/// Defect: browser fragmentation or reassembly that splits, joins or
+/// reorders a long message, or a frame tagged with the wrong lane. Oracle:
+/// the fixture echoes each message on the lane it arrived on, so every
+/// lane's echoes are what was sent on it, in order.
+async fn lanes_echo_whole_and_in_their_own_order() -> Result<(), String> {
+    let mut driver = Driver::connect(config()).await?;
+    let lanes = [0, 1, 3].map(|index| Lane::new(index).expect("lane exists"));
+    for index in 0..4 {
+        for lane in lanes {
+            driver
+                .client
+                .send(Delivery::Reliable(lane), &lane_message(lane, index))
+                .map_err(|e| format!("send: {e:?}"))?;
+        }
+    }
+    let want = 4 * lanes.len();
+    driver
+        .settle(|events| {
+            events
+                .iter()
+                .filter(|e| {
+                    matches!(
+                        e,
+                        ClientEvent::Message {
+                            delivery: Delivery::Reliable(_),
+                            ..
+                        }
+                    )
+                })
+                .count()
+                >= want
+        })
+        .await?;
+    for lane in lanes {
+        let got = driver.payloads(Delivery::Reliable(lane));
+        let sent: Vec<_> = (0..4).map(|index| lane_message(lane, index)).collect();
+        ensure!(
+            got == sent,
+            "lane {} echoed {:?}",
+            lane.index(),
+            got.iter()
+                .map(|p| (p.len(), p.get(..3).map(<[u8]>::to_vec)))
+                .collect::<Vec<_>>()
+        );
+    }
+    Ok(())
+}
+
 /// Defect: latest-state frames sent one per value instead of coalesced, or
 /// the newest value lost. Oracle: the newest value arrives and values never
 /// go backwards.
@@ -206,8 +268,9 @@ fn sink(index: u32) -> Vec<u8> {
 /// the connection instead of refusing. Oracle: with the watermark at one
 /// frame, sends flushed in one browser task leave `bufferedAmount` above it
 /// so the lane fills and refuses with `WouldBlock`; the connection stays up,
-/// and the fixture receives every accepted message and then the retried
-/// one, in order (it answers `sink?` with its count and order check).
+/// and the fixture receives every accepted message (each paced out as four
+/// fragments) and then the retried one, in order (it answers `sink?` with
+/// its count and order check).
 async fn a_saturated_reliable_lane_refuses_then_drains_in_order() -> Result<(), String> {
     let mut config = config();
     config.reliable_buffered_bytes = MAX_WEBSOCKET_FRAME_BYTES;
@@ -369,6 +432,11 @@ pub async fn run() -> String {
         &mut report,
         "reliable_binary_payloads_echo_in_order",
         reliable_binary_payloads_echo_in_order().await,
+    );
+    record(
+        &mut report,
+        "lanes_echo_whole_and_in_their_own_order",
+        lanes_echo_whole_and_in_their_own_order().await,
     );
     record(
         &mut report,

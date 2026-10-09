@@ -1,40 +1,62 @@
-use crate::{Delivery, MAX_LATEST_STATE_BYTES, MAX_RELIABLE_MESSAGE_BYTES};
+use crate::lanes::Fragment;
+use crate::{Delivery, Lane, MAX_LATEST_STATE_BYTES};
 
 /// Frozen WebSocket envelope version.
-pub const ENVELOPE_VERSION: u8 = 1;
-/// Number of bytes before the opaque payload.
-pub const ENVELOPE_HEADER_LEN: usize = 17;
+pub const ENVELOPE_VERSION: u8 = 2;
+/// Number of bytes before the opaque payload, or before the declared total
+/// of a first fragment.
+pub const ENVELOPE_HEADER_LEN: usize = 18;
+/// The declared total a multi-fragment message's first frame carries.
+pub const ENVELOPE_TOTAL_LEN: usize = 4;
+/// Most reliable payload bytes one frame carries; longer messages are
+/// fragmented so lanes interleave on the stream.
+pub const WEBSOCKET_FRAGMENT_BYTES: usize = 16 * 1024;
 
-const RELIABLE_CLASS: u8 = 0;
-const LATEST_CLASS: u8 = 1;
+const RELIABLE_KIND: u8 = 0;
+const LATEST_KIND: u8 = 1;
+const KIND_BITS: u8 = 0b11;
+const FIRST: u8 = 1 << 2;
+const MORE: u8 = 1 << 3;
+const FLAG_BITS: u8 = KIND_BITS | FIRST | MORE;
 
-/// A decoded WebSocket application envelope.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Envelope {
-    /// Delivery semantics carried by this frame.
+/// One WebSocket application frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Envelope<'a> {
+    /// Delivery semantics carried by this frame, including its lane.
     pub delivery: Delivery,
     /// Zero for reliable frames and nonzero for latest-state frames.
     pub sequence: u64,
+    /// Where the payload sits in its reliable message; always
+    /// [`Fragment::Whole`] for latest state.
+    pub fragment: Fragment,
     /// Opaque transport payload.
-    pub payload: Vec<u8>,
+    pub payload: &'a [u8],
 }
 
 /// Why a binary WebSocket application frame was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvelopeError {
-    /// The frame is shorter than the fixed header.
+    /// The frame is shorter than its header.
     Truncated,
     /// The three-byte magic did not match the caller-supplied identity.
     BadMagic,
     /// The single supported version does not match.
     UnsupportedVersion,
-    /// The delivery-class byte is unknown.
+    /// The delivery kind is unknown.
     UnknownDelivery,
     /// Reliable used a nonzero sequence or latest-state used zero.
     InvalidSequence,
+    /// A reliable lane past [`RELIABLE_LANES`](crate::RELIABLE_LANES), or
+    /// latest state on a lane other than zero.
+    InvalidLane,
+    /// Reserved flag bits are set, or latest state carries fragment flags.
+    InvalidFlags,
+    /// A first fragment's declared total is not larger than the fragment.
+    InvalidTotal,
     /// The declared payload length does not equal the frame remainder.
     LengthMismatch,
-    /// The payload exceeds the selected delivery class's shared cap.
+    /// The payload exceeds its frame's cap: [`WEBSOCKET_FRAGMENT_BYTES`]
+    /// for reliable, [`MAX_LATEST_STATE_BYTES`] for latest state.
     TooLarge,
 }
 
@@ -46,37 +68,57 @@ impl std::fmt::Display for EnvelopeError {
 
 impl std::error::Error for EnvelopeError {}
 
-/// Encodes one envelope. Callers must supply a nonzero sequence for latest state.
-pub fn encode_envelope(
-    magic: [u8; 3],
-    delivery: Delivery,
-    sequence: u64,
-    payload: &[u8],
-) -> Result<Vec<u8>, EnvelopeError> {
-    let (class, sequence, cap) = match delivery {
-        // One reliable lane exists, so the wire needs no lane field yet.
-        Delivery::Reliable(_) if sequence == 0 => (RELIABLE_CLASS, 0, MAX_RELIABLE_MESSAGE_BYTES),
-        Delivery::LatestState if sequence != 0 => (LATEST_CLASS, sequence, MAX_LATEST_STATE_BYTES),
+/// Encodes one frame: magic, version, flags, lane, big-endian sequence and
+/// length, the declared total on a first fragment, then the payload.
+pub fn encode_envelope(magic: [u8; 3], envelope: &Envelope<'_>) -> Result<Vec<u8>, EnvelopeError> {
+    let Envelope {
+        delivery,
+        sequence,
+        fragment,
+        payload,
+    } = *envelope;
+    let (kind, lane, cap) = match delivery {
+        Delivery::Reliable(lane) if sequence == 0 => {
+            (RELIABLE_KIND, lane, WEBSOCKET_FRAGMENT_BYTES)
+        }
+        Delivery::LatestState if sequence != 0 => {
+            (LATEST_KIND, Lane::DEFAULT, MAX_LATEST_STATE_BYTES)
+        }
         Delivery::Reliable(_) | Delivery::LatestState => {
             return Err(EnvelopeError::InvalidSequence);
         }
     };
-    if payload.len() > cap || payload.len() > u32::MAX as usize {
+    let (first, more) = match delivery {
+        Delivery::Reliable(_) => fragment.flags(),
+        Delivery::LatestState if fragment == Fragment::Whole => (false, false),
+        Delivery::LatestState => return Err(EnvelopeError::InvalidFlags),
+    };
+    if payload.len() > cap {
         return Err(EnvelopeError::TooLarge);
     }
     let length = u32::try_from(payload.len()).map_err(|_| EnvelopeError::TooLarge)?;
-    let mut output = Vec::with_capacity(ENVELOPE_HEADER_LEN + payload.len());
+    if fragment.total().is_some_and(|total| total <= length) {
+        return Err(EnvelopeError::InvalidTotal);
+    }
+    let mut output = Vec::with_capacity(ENVELOPE_HEADER_LEN + ENVELOPE_TOTAL_LEN + payload.len());
     output.extend_from_slice(&magic);
     output.push(ENVELOPE_VERSION);
-    output.push(class);
+    output.push(kind | if first { FIRST } else { 0 } | if more { MORE } else { 0 });
+    output.push(u8::try_from(lane.index()).expect("lanes fit a byte"));
     output.extend_from_slice(&sequence.to_be_bytes());
     output.extend_from_slice(&length.to_be_bytes());
+    if let Some(total) = fragment.total() {
+        output.extend_from_slice(&total.to_be_bytes());
+    }
     output.extend_from_slice(payload);
     Ok(output)
 }
 
-/// Decodes one complete binary message and applies the delivery-class cap.
-pub fn decode_envelope(magic: [u8; 3], bytes: &[u8]) -> Result<Envelope, EnvelopeError> {
+/// Decodes one complete binary frame and applies its rules: known kind and
+/// lane, the sequence rule, fragment flags only on reliable frames, the
+/// per-frame payload cap, and a declared total larger than the first
+/// fragment.
+pub fn decode_envelope(magic: [u8; 3], bytes: &[u8]) -> Result<Envelope<'_>, EnvelopeError> {
     if bytes.len() < ENVELOPE_HEADER_LEN {
         return Err(EnvelopeError::Truncated);
     }
@@ -86,25 +128,53 @@ pub fn decode_envelope(magic: [u8; 3], bytes: &[u8]) -> Result<Envelope, Envelop
     if bytes[3] != ENVELOPE_VERSION {
         return Err(EnvelopeError::UnsupportedVersion);
     }
-    let class = bytes[4];
-    let sequence = u64::from_be_bytes(bytes[5..13].try_into().expect("fixed-width sequence"));
-    let length = u32::from_be_bytes(bytes[13..17].try_into().expect("fixed-width length")) as usize;
-    let (delivery, cap) = match class {
-        RELIABLE_CLASS if sequence == 0 => (Delivery::RELIABLE_ORDERED, MAX_RELIABLE_MESSAGE_BYTES),
-        LATEST_CLASS if sequence != 0 => (Delivery::LatestState, MAX_LATEST_STATE_BYTES),
-        RELIABLE_CLASS | LATEST_CLASS => return Err(EnvelopeError::InvalidSequence),
+    let flags = bytes[4];
+    if flags & !FLAG_BITS != 0 {
+        return Err(EnvelopeError::InvalidFlags);
+    }
+    let (first, more) = (flags & FIRST != 0, flags & MORE != 0);
+    let sequence = u64::from_be_bytes(bytes[6..14].try_into().expect("fixed-width sequence"));
+    let length = u32::from_be_bytes(bytes[14..18].try_into().expect("fixed-width length"));
+    let (delivery, cap) = match flags & KIND_BITS {
+        RELIABLE_KIND => {
+            let lane = Lane::new(bytes[5]).ok_or(EnvelopeError::InvalidLane)?;
+            (Delivery::Reliable(lane), WEBSOCKET_FRAGMENT_BYTES)
+        }
+        LATEST_KIND if bytes[5] != 0 => return Err(EnvelopeError::InvalidLane),
+        LATEST_KIND if first || more => return Err(EnvelopeError::InvalidFlags),
+        LATEST_KIND => (Delivery::LatestState, MAX_LATEST_STATE_BYTES),
         _ => return Err(EnvelopeError::UnknownDelivery),
     };
-    if length > cap {
+    if (delivery == Delivery::LatestState) == (sequence == 0) {
+        return Err(EnvelopeError::InvalidSequence);
+    }
+    if length as usize > cap {
         return Err(EnvelopeError::TooLarge);
     }
-    if bytes.len() != ENVELOPE_HEADER_LEN.saturating_add(length) {
+    let (header, total) = if first && more {
+        let end = ENVELOPE_HEADER_LEN + ENVELOPE_TOTAL_LEN;
+        let total = bytes
+            .get(ENVELOPE_HEADER_LEN..end)
+            .ok_or(EnvelopeError::Truncated)?;
+        let total = u32::from_be_bytes(total.try_into().expect("fixed-width total"));
+        if total <= length {
+            return Err(EnvelopeError::InvalidTotal);
+        }
+        (end, total)
+    } else {
+        (ENVELOPE_HEADER_LEN, 0)
+    };
+    if bytes.len() != header + length as usize {
         return Err(EnvelopeError::LengthMismatch);
     }
     Ok(Envelope {
         delivery,
         sequence,
-        payload: bytes[ENVELOPE_HEADER_LEN..].to_vec(),
+        fragment: match delivery {
+            Delivery::Reliable(_) => Fragment::from_flags(first, more, total),
+            Delivery::LatestState => Fragment::Whole,
+        },
+        payload: &bytes[header..],
     })
 }
 
@@ -115,71 +185,54 @@ mod tests {
 
     const MAGIC: [u8; 3] = *b"TST";
 
-    #[wasm_bindgen_test(unsupported = test)]
-    fn frozen_header_round_trips_both_delivery_classes() {
-        let reliable = encode_envelope(MAGIC, Delivery::RELIABLE_ORDERED, 0, b"event").unwrap();
-        assert_eq!(&reliable[..5], b"TST\x01\x00");
-        assert_eq!(reliable.len(), ENVELOPE_HEADER_LEN + 5);
-        assert_eq!(decode_envelope(MAGIC, &reliable).unwrap().sequence, 0);
-
-        let latest = encode_envelope(MAGIC, Delivery::LatestState, 7, b"state").unwrap();
-        assert_eq!(&latest[5..13], &7_u64.to_be_bytes());
-        assert_eq!(
-            decode_envelope(MAGIC, &latest).unwrap().delivery,
-            Delivery::LatestState
-        );
+    fn reliable(lane: u8, fragment: Fragment, payload: &[u8]) -> Envelope<'_> {
+        Envelope {
+            delivery: Delivery::Reliable(Lane::new(lane).unwrap()),
+            sequence: 0,
+            fragment,
+            payload,
+        }
     }
 
+    /// The frozen version-2 layout of netcode.md 13: flags then lane after
+    /// the version, big-endian sequence and length, and the declared total
+    /// only on a first fragment.
     #[wasm_bindgen_test(unsupported = test)]
-    fn malformed_wrong_class_and_oversized_frames_are_rejected() {
-        let valid = encode_envelope(MAGIC, Delivery::LatestState, 1, b"state").unwrap();
+    fn frozen_header_round_trips_every_frame_shape() {
+        let whole = encode_envelope(MAGIC, &reliable(2, Fragment::Whole, b"event")).unwrap();
+        assert_eq!(whole[..18], *b"TST\x02\x04\x02\0\0\0\0\0\0\0\0\0\0\0\x05");
+        assert_eq!(whole.len(), ENVELOPE_HEADER_LEN + 5);
+
+        let first = encode_envelope(
+            MAGIC,
+            &reliable(1, Fragment::First { total: 70_000 }, b"ab"),
+        )
+        .unwrap();
+        assert_eq!(first[4..6], [0x0c, 1]);
+        assert_eq!(first[18..22], 70_000_u32.to_be_bytes());
+        assert_eq!(first.len(), ENVELOPE_HEADER_LEN + ENVELOPE_TOTAL_LEN + 2);
         assert_eq!(
-            decode_envelope(MAGIC, &valid[..16]),
-            Err(EnvelopeError::Truncated)
+            decode_envelope(MAGIC, &first).unwrap(),
+            reliable(1, Fragment::First { total: 70_000 }, b"ab")
         );
 
-        let mut bad_magic = valid.clone();
-        bad_magic[0] = b'X';
-        assert_eq!(
-            decode_envelope(MAGIC, &bad_magic),
-            Err(EnvelopeError::BadMagic)
-        );
-        let mut bad_version = valid.clone();
-        bad_version[3] = 2;
-        assert_eq!(
-            decode_envelope(MAGIC, &bad_version),
-            Err(EnvelopeError::UnsupportedVersion)
-        );
-        let mut bad_class = valid.clone();
-        bad_class[4] = 9;
-        assert_eq!(
-            decode_envelope(MAGIC, &bad_class),
-            Err(EnvelopeError::UnknownDelivery)
-        );
-        let mut zero_latest = valid.clone();
-        zero_latest[5..13].copy_from_slice(&0_u64.to_be_bytes());
-        assert_eq!(
-            decode_envelope(MAGIC, &zero_latest),
-            Err(EnvelopeError::InvalidSequence)
-        );
-        let mut wrong_length = valid;
-        wrong_length[13..17].copy_from_slice(&999_u32.to_be_bytes());
-        assert_eq!(
-            decode_envelope(MAGIC, &wrong_length),
-            Err(EnvelopeError::LengthMismatch)
-        );
-
-        let oversized = vec![0; MAX_LATEST_STATE_BYTES + 1];
-        assert_eq!(
-            encode_envelope(MAGIC, Delivery::LatestState, 1, &oversized),
-            Err(EnvelopeError::TooLarge)
-        );
+        let latest = Envelope {
+            delivery: Delivery::LatestState,
+            sequence: 7,
+            fragment: Fragment::Whole,
+            payload: b"state",
+        };
+        let encoded = encode_envelope(MAGIC, &latest).unwrap();
+        assert_eq!(encoded[4..14], [1, 0, 0, 0, 0, 0, 0, 0, 0, 7]);
+        assert_eq!(decode_envelope(MAGIC, &encoded).unwrap(), latest);
     }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::cast_possible_truncation)]
 mod properties {
     use super::*;
+    use crate::RELIABLE_LANES;
     use crate::proptest_support::{bytes, check};
     use proptest::prelude::*;
 
@@ -187,9 +240,44 @@ mod properties {
 
     fn delivery() -> impl Strategy<Value = Delivery> {
         prop_oneof![
-            Just(Delivery::RELIABLE_ORDERED),
+            (0..RELIABLE_LANES).prop_map(|lane| Delivery::Reliable(Lane::new(lane as u8).unwrap())),
             Just(Delivery::LatestState)
         ]
+    }
+
+    fn fragment() -> impl Strategy<Value = Fragment> {
+        prop_oneof![
+            Just(Fragment::Whole),
+            any::<u32>().prop_map(|total| Fragment::First { total }),
+            Just(Fragment::Middle),
+            Just(Fragment::Last),
+        ]
+    }
+
+    /// A valid frame for `delivery` with `payload`.
+    fn valid(
+        delivery: Delivery,
+        sequence: u64,
+        fragment: Fragment,
+        payload: &[u8],
+    ) -> Envelope<'_> {
+        let fragment = match (delivery, fragment) {
+            (Delivery::LatestState, _) => Fragment::Whole,
+            (_, Fragment::First { total }) => Fragment::First {
+                total: (total % 100_000).max(payload.len() as u32 + 1),
+            },
+            (_, fragment) => fragment,
+        };
+        Envelope {
+            delivery,
+            sequence: if delivery == Delivery::LatestState {
+                sequence.max(1)
+            } else {
+                0
+            },
+            fragment,
+            payload,
+        }
     }
 
     /// Defect: an out-of-bounds slice or an overflowing length sum on a
@@ -211,33 +299,44 @@ mod properties {
         });
     }
 
-    /// Defect: the encoder and decoder disagreeing on a field's width or
-    /// byte order, or the class/sequence rule (reliable = 0, latest ≠ 0)
-    /// enforced on one side only. Oracle: encode then decode is the
-    /// identity for every valid combination and both sides refuse the
-    /// invalid ones the same way.
+    /// Defect: the encoder and decoder disagreeing on a field's width, byte
+    /// order or position (lane, flags, total), or a rule (reliable sequence
+    /// zero, latest nonzero and unfragmented, a total above the fragment)
+    /// enforced on one side only. Oracle: encode then decode is the identity
+    /// for every valid frame, and the encoder refuses exactly the invalid
+    /// ones.
     #[test]
-    fn envelopes_round_trip_and_both_sides_enforce_the_sequence_rule() {
+    fn envelopes_round_trip_and_the_encoder_enforces_every_rule() {
         check(
-            (delivery(), any::<u64>(), bytes(300)),
-            |(delivery, sequence, payload)| {
-                let valid = match delivery {
-                    Delivery::Reliable(_) => sequence == 0,
-                    Delivery::LatestState => sequence != 0,
+            (delivery(), any::<u64>(), fragment(), bytes(300)),
+            |(delivery, sequence, fragment, payload)| {
+                let envelope = Envelope {
+                    delivery,
+                    sequence,
+                    fragment,
+                    payload: &payload,
                 };
-                match encode_envelope(MAGIC, delivery, sequence, &payload) {
+                let expected = match delivery {
+                    _ if (delivery == Delivery::LatestState) == (sequence == 0) => {
+                        Err(EnvelopeError::InvalidSequence)
+                    }
+                    Delivery::LatestState if fragment != Fragment::Whole => {
+                        Err(EnvelopeError::InvalidFlags)
+                    }
+                    _ if fragment
+                        .total()
+                        .is_some_and(|total| total as usize <= payload.len()) =>
+                    {
+                        Err(EnvelopeError::InvalidTotal)
+                    }
+                    _ => Ok(()),
+                };
+                match encode_envelope(MAGIC, &envelope) {
                     Ok(frame) => {
-                        prop_assert!(valid);
-                        prop_assert_eq!(frame.len(), ENVELOPE_HEADER_LEN + payload.len());
-                        let decoded = decode_envelope(MAGIC, &frame).expect("own frame decodes");
-                        prop_assert_eq!(decoded.delivery, delivery);
-                        prop_assert_eq!(decoded.sequence, sequence);
-                        prop_assert_eq!(decoded.payload, payload);
+                        prop_assert_eq!(expected, Ok(()));
+                        prop_assert_eq!(decode_envelope(MAGIC, &frame), Ok(envelope));
                     }
-                    Err(error) => {
-                        prop_assert!(!valid);
-                        prop_assert_eq!(error, EnvelopeError::InvalidSequence);
-                    }
+                    Err(error) => prop_assert_eq!(expected, Err(error)),
                 }
                 Ok(())
             },
@@ -245,57 +344,90 @@ mod properties {
     }
 
     /// Defect: a decoder that trusts the declared length over the frame
-    /// size, accepts an unknown class, or lets a latest-state frame past
-    /// the reliable cap. Oracle: each single corruption of a valid frame
-    /// is refused with its own reason.
+    /// size, accepts an unknown kind, reserved flags, a lane that does not
+    /// exist, fragment flags or a lane on latest state, a total not above
+    /// its fragment, or a payload past its frame cap. Oracle: each single
+    /// corruption of a valid frame is refused with its own reason
+    /// (netcode.md 13).
     #[test]
     fn single_corruptions_of_a_valid_frame_are_refused_with_the_right_reason() {
-        let strategy = (delivery(), 1u64.., bytes(300), 1usize..4, 2u8..);
-        check(strategy, |(delivery, sequence, payload, extra, class)| {
-            let sequence = if delivery == Delivery::RELIABLE_ORDERED {
-                0
-            } else {
-                sequence
-            };
-            let frame = encode_envelope(MAGIC, delivery, sequence, &payload).unwrap();
+        let strategy = (
+            delivery(),
+            1u64..,
+            fragment(),
+            bytes(300),
+            1usize..4,
+            2u8..4,
+            4u8..=255,
+            1u8..16,
+        );
+        check(
+            strategy,
+            |(delivery, sequence, fragment, payload, extra, kind, lane, reserved)| {
+                let envelope = valid(delivery, sequence, fragment, &payload);
+                let frame = encode_envelope(MAGIC, &envelope).unwrap();
+                let decode = |bytes: &[u8]| decode_envelope(MAGIC, bytes).map(|_| ());
 
-            let mut longer = frame.clone();
-            longer.extend(std::iter::repeat_n(0, extra));
-            prop_assert_eq!(
-                decode_envelope(MAGIC, &longer),
-                Err(EnvelopeError::LengthMismatch)
-            );
-            if !payload.is_empty() {
-                let shorter = &frame[..frame.len() - 1];
-                prop_assert_eq!(
-                    decode_envelope(MAGIC, shorter),
-                    Err(EnvelopeError::LengthMismatch)
-                );
-            }
+                let mut longer = frame.clone();
+                longer.extend(std::iter::repeat_n(0, extra));
+                prop_assert_eq!(decode(&longer), Err(EnvelopeError::LengthMismatch));
+                if !payload.is_empty() {
+                    prop_assert_eq!(
+                        decode(&frame[..frame.len() - 1]),
+                        Err(EnvelopeError::LengthMismatch)
+                    );
+                }
 
-            let mut unknown = frame.clone();
-            unknown[4] = class;
-            prop_assert_eq!(
-                decode_envelope(MAGIC, &unknown),
-                Err(EnvelopeError::UnknownDelivery)
-            );
+                let mut unknown = frame.clone();
+                unknown[4] = (unknown[4] & !KIND_BITS) | kind;
+                prop_assert_eq!(decode(&unknown), Err(EnvelopeError::UnknownDelivery));
 
-            let mut swapped = frame.clone();
-            swapped[4] ^= 1;
-            prop_assert_eq!(
-                decode_envelope(MAGIC, &swapped),
-                Err(EnvelopeError::InvalidSequence)
-            );
+                let mut flagged = frame.clone();
+                flagged[4] |= reserved << 4;
+                prop_assert_eq!(decode(&flagged), Err(EnvelopeError::InvalidFlags));
 
-            let mut huge = frame;
-            let cap = match delivery {
-                Delivery::Reliable(_) => MAX_RELIABLE_MESSAGE_BYTES,
-                Delivery::LatestState => MAX_LATEST_STATE_BYTES,
-            };
-            huge[13..17].copy_from_slice(&u32::try_from(cap + 1).unwrap().to_be_bytes());
-            prop_assert_eq!(decode_envelope(MAGIC, &huge), Err(EnvelopeError::TooLarge));
-            Ok(())
-        });
+                let mut laned = frame.clone();
+                laned[5] = match delivery {
+                    Delivery::Reliable(_) => lane,
+                    Delivery::LatestState => lane - 3,
+                };
+                prop_assert_eq!(decode(&laned), Err(EnvelopeError::InvalidLane));
+
+                let mut huge = frame.clone();
+                let cap = match delivery {
+                    Delivery::Reliable(_) => WEBSOCKET_FRAGMENT_BYTES,
+                    Delivery::LatestState => MAX_LATEST_STATE_BYTES,
+                };
+                huge[14..18].copy_from_slice(&u32::try_from(cap + 1).unwrap().to_be_bytes());
+                prop_assert_eq!(decode(&huge), Err(EnvelopeError::TooLarge));
+
+                match envelope.fragment {
+                    Fragment::First { .. } => {
+                        let mut short_total = frame.clone();
+                        short_total[18..22]
+                            .copy_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+                        prop_assert_eq!(decode(&short_total), Err(EnvelopeError::InvalidTotal));
+                    }
+                    // Latest with fragment flags; reliable as the other kind
+                    // keeps its sequence, which the other kind forbids.
+                    _ if delivery == Delivery::LatestState => {
+                        let mut fragmented = frame.clone();
+                        fragmented[4] |= FIRST;
+                        prop_assert_eq!(decode(&fragmented), Err(EnvelopeError::InvalidFlags));
+                        let mut swapped = frame.clone();
+                        swapped[4] ^= LATEST_KIND;
+                        prop_assert_eq!(decode(&swapped), Err(EnvelopeError::InvalidSequence));
+                    }
+                    Fragment::Whole | Fragment::Middle | Fragment::Last => {
+                        let mut swapped = frame.clone();
+                        swapped[4] = LATEST_KIND;
+                        swapped[5] = 0;
+                        prop_assert_eq!(decode(&swapped), Err(EnvelopeError::InvalidSequence));
+                    }
+                }
+                Ok(())
+            },
+        );
     }
 
     /// Defect: the payload cap enforced after allocation or off by one.
@@ -303,13 +435,17 @@ mod properties {
     #[test]
     fn payload_caps_are_exact() {
         check(delivery(), |delivery| {
-            let (sequence, cap) = match delivery {
-                Delivery::Reliable(_) => (0, MAX_RELIABLE_MESSAGE_BYTES),
-                Delivery::LatestState => (1, MAX_LATEST_STATE_BYTES),
+            let cap = match delivery {
+                Delivery::Reliable(_) => WEBSOCKET_FRAGMENT_BYTES,
+                Delivery::LatestState => MAX_LATEST_STATE_BYTES,
             };
-            prop_assert!(encode_envelope(MAGIC, delivery, sequence, &vec![0; cap]).is_ok());
+            let full = vec![0; cap];
+            prop_assert!(
+                encode_envelope(MAGIC, &valid(delivery, 1, Fragment::Whole, &full)).is_ok()
+            );
+            let over = vec![0; cap + 1];
             prop_assert_eq!(
-                encode_envelope(MAGIC, delivery, sequence, &vec![0; cap + 1]),
+                encode_envelope(MAGIC, &valid(delivery, 1, Fragment::Whole, &over)),
                 Err(EnvelopeError::TooLarge)
             );
             Ok(())
