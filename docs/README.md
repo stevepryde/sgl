@@ -80,7 +80,7 @@ the game is.
   must simulate identically.
 
 Step physics inside the game's fixed-step loop (set Rapier's
-`IntegrationParameters::dt` to `FixedClock::fixed_dt`) and copy the resulting
+`IntegrationParameters::dt` to `FixedClock::fixed_dt()`) and copy the resulting
 poses to instances or sprites when presenting.
 
 ## Distributing a game
