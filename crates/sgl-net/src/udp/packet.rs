@@ -1,10 +1,12 @@
-//! Bounds-checked UDP datagram codec, version 2. The three-byte magic is
+//! Bounds-checked UDP datagram codec, version 3. The three-byte magic is
 //! caller-supplied.
 //!
 //! ```text
 //! 0 magic[3]  3 version  4 kind (low nibble) | lane ack mask (high nibble,
 //! Payload only)  5 client nonce u64 LE  13 server nonce u64 LE
 //! Payload: one { next u16 LE, bits u32 LE } per mask bit, in lane order,
+//! bits 0..30: fragment next + 1 + bit arrived; bit 31 HELD: fragment next
+//! arrived and waits for the receiver's caller to make room,
 //! then items:
 //! tag u8 | sequence u16 LE | length u16 LE | [total u32 LE iff FIRST and
 //! MORE] | payload
@@ -20,7 +22,7 @@ use crate::lanes::Fragment;
 use crate::{Lane, RELIABLE_LANES};
 
 pub const DATAGRAM_BYTES: usize = 1200;
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
 pub const BASE_HEADER_LEN: usize = 3 + 1 + 1 + 8 + 8;
 /// One lane's acknowledgement entry.
 pub const ACK_LEN: usize = 2 + 4;
@@ -78,11 +80,19 @@ pub struct Nonces {
     pub server: u64,
 }
 
+/// A lane's receive state: every fragment before `next` consumed, the
+/// later ones marked in `bits` buffered, and whether `next` is held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ack {
     pub next: u16,
+    /// Bit `i` (below 31): fragment `next + 1 + i` arrived.
     pub bits: u32,
+    /// Fragment `next` arrived, and the receiver holds it until its caller
+    /// makes room for the message it completes.
+    pub held: bool,
 }
+
+const HELD: u32 = 1 << 31;
 
 /// The acknowledgements a payload datagram carries, by lane.
 pub type Acks = [Option<Ack>; RELIABLE_LANES];
@@ -142,7 +152,8 @@ pub fn begin_payload(output: &mut Vec<u8>, magic: [u8; 3], nonces: Nonces, acks:
     header(output, magic, Kind::Payload as u8 | mask << 4, nonces);
     for ack in acks.iter().flatten() {
         output.extend_from_slice(&ack.next.to_le_bytes());
-        output.extend_from_slice(&ack.bits.to_le_bytes());
+        let bits = ack.bits | if ack.held { HELD } else { 0 };
+        output.extend_from_slice(&bits.to_le_bytes());
     }
 }
 
@@ -241,9 +252,11 @@ pub fn parse(bytes: &[u8], magic: [u8; 3]) -> Option<Parsed<'_>> {
     for (lane, ack) in acks.iter_mut().enumerate() {
         if mask & 1 << lane != 0 {
             let entry = take(&mut rest, ACK_LEN)?;
+            let bits = u32::from_le_bytes([entry[2], entry[3], entry[4], entry[5]]);
             *ack = Some(Ack {
                 next: u16::from_le_bytes([entry[0], entry[1]]),
-                bits: u32::from_le_bytes([entry[2], entry[3], entry[4], entry[5]]),
+                bits: bits & !HELD,
+                held: bits & HELD != 0,
             });
         }
     }
@@ -300,7 +313,11 @@ mod tests {
             client: 1,
             server: 2,
         };
-        let all = [Some(Ack { next: 1, bits: 2 }); RELIABLE_LANES];
+        let all = [Some(Ack {
+            next: 1,
+            bits: 2,
+            held: true,
+        }); RELIABLE_LANES];
         let lane = Lane::new(3).unwrap();
         let mut bytes = Vec::new();
         begin_payload(&mut bytes, MAGIC, nonces, &all);
@@ -322,7 +339,11 @@ mod tests {
         );
         assert_eq!(bytes.len(), DATAGRAM_BYTES);
         let mut one = [None; RELIABLE_LANES];
-        one[2] = Some(Ack { next: 5, bits: 6 });
+        one[2] = Some(Ack {
+            next: 5,
+            bits: 6,
+            held: false,
+        });
         begin_payload(&mut bytes, MAGIC, nonces, &one);
         push_latest(&mut bytes, 4, &[2; crate::MAX_LATEST_STATE_BYTES]);
         assert_eq!(bytes.len(), DATAGRAM_BYTES);
@@ -458,7 +479,11 @@ mod properties {
 
     fn acks() -> impl Strategy<Value = Acks> {
         prop::array::uniform4(prop::option::of(
-            (any::<u16>(), any::<u32>()).prop_map(|(next, bits)| Ack { next, bits }),
+            (any::<u16>(), 0..HELD, any::<bool>()).prop_map(|(next, bits, held)| Ack {
+                next,
+                bits: bits & !HELD,
+                held,
+            }),
         ))
     }
 

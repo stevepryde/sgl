@@ -547,3 +547,24 @@ Use the [current specs](README.md) for implementation and the
   slower than UDP, never weaker. The browser API has no read backpressure,
   and a receiver-advertised window would change the wire format, so a
   browser game sizes its inbound bounds instead.
+- **D-37** Decision, 2026-10-09: UDP receivers pace a sender instead of
+  closing it. A lane that cannot take its next completed message (its
+  inbound bounds, or the endpoint's per-poll global message ceiling) keeps
+  the fragment that would complete it at the front of its receive window,
+  unconsumed and unacknowledged, and reports it held, so the sender's
+  window closes and its `send` returns `WouldBlock`. The threaded server
+  polls its endpoint within the room its ingress has left, so its worker
+  no longer acknowledges past what the caller can hold. The six-byte
+  acknowledgement is kept: the window shrinks from 33 fragments in flight
+  to `WINDOW` (32), and the freed bit 31 says HELD (UDP version 3). A held
+  fragment is neither resent, counted toward retry exhaustion nor timed
+  for RTT, and keepalives decide liveness meanwhile, as TCP keeps a
+  connection open while a receiver answers its zero-window probes
+  (RFC 9293 §3.8.6.1) and QUIC blocks a sender by flow control without
+  loss recovery (RFC 9000 §4). The sender's window starts at the
+  cumulative acknowledgement, as TCP's SND.UNA does, since a fragment the
+  receiver buffered out of order may become the one it holds. Rationale: a
+  transport may be slower, never weaker, and a healthy peer is not closed
+  for local saturation (D-36's WebSocket read backpressure); on UDP
+  `InboundOverflow` now means only the endpoint's global inbound byte
+  ceiling.

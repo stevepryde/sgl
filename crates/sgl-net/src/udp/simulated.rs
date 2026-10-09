@@ -427,16 +427,20 @@ mod tests {
                 }
             }
             if connected {
-                // 125 reliable messages/s is above expected gameplay event
-                // volume while remaining below this small protocol's bounded
-                // 33-fragment flight-window capacity at 100 ms RTT.
+                // Up to 125 reliable messages/s, above expected gameplay
+                // event volume. Loss can stall the window long enough to
+                // fill the lane, which then refuses with `WouldBlock`
+                // (netcode.md 11): the message is retried next tick.
                 for _ in 0..2 {
                     if sent >= 1_000 {
                         break;
                     }
-                    client
-                        .send(client_peer, Delivery::RELIABLE_ORDERED, &sent.to_le_bytes())
-                        .unwrap();
+                    match client.send(client_peer, Delivery::RELIABLE_ORDERED, &sent.to_le_bytes())
+                    {
+                        Ok(()) => {}
+                        Err(crate::SendError::WouldBlock) => break,
+                        Err(error) => panic!("refused with {error:?}"),
+                    }
                     client
                         .send(client_peer, Delivery::LatestState, &sent.to_le_bytes())
                         .unwrap();

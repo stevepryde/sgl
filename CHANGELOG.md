@@ -76,6 +76,15 @@ docs and specs the entry links.
   with `InboundOverflow`); the stall does not count toward `timeout_ms`. No
   game-code changes needed; browser receivers still close on overflow, so
   size their `inbound_*` bounds for one poll interval.
+- `sgl-net` UDP: a lane past its `inbound_*` bounds or
+  `EndpointConfig::global_reliable_inbound_messages` holds its next message
+  unacknowledged until `poll` makes room, so the sender gets `WouldBlock`
+  (was disconnected with `InboundOverflow`); `ThreadedUdpServer` holds while
+  its caller has not polled, and a held fragment never times the sender
+  out while keepalives arrive. Wire version 3 (held bit, 32 fragments in
+  flight per lane): rebuild servers and clients together. No game-code
+  changes needed; threaded servers need not size `inbound_*` for their
+  poll interval.
 - `sgl-core` `FixedClock`: new opt-in `FixedClock::with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })`
   runs several steps per frame to follow elapsed time, and the new
   `dropped_dt` field reports unsimulated time; `with_hz` and `new` keep

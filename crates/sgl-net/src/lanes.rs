@@ -44,11 +44,11 @@ pub struct LaneConfig {
     /// holds at most the larger of the two.
     pub outbound_bytes: usize,
     /// Completed messages from the peer not yet returned by `poll`,
-    /// `1..=LANE_QUEUE_MESSAGES_LIMIT`. A peer that exceeds it is
-    /// disconnected with
-    /// [`DisconnectReason::InboundOverflow`](crate::DisconnectReason::InboundOverflow),
-    /// except on native WebSocket, which stops reading until `poll` makes
-    /// room.
+    /// `1..=LANE_QUEUE_MESSAGES_LIMIT`. Past it the receiver slows the peer
+    /// until `poll` makes room: UDP holds the lane's next message,
+    /// unacknowledged, and native WebSocket stops reading. The browser
+    /// cannot, so there a peer that exceeds it is disconnected with
+    /// [`DisconnectReason::InboundOverflow`](crate::DisconnectReason::InboundOverflow).
     pub inbound_messages: usize,
     /// Bytes of completed messages not yet returned by `poll`,
     /// `1..=LANE_QUEUE_BYTES_LIMIT`. Beside them the lane holds at most one
@@ -60,8 +60,7 @@ pub struct LaneConfig {
     /// on the sending side until sent, where a full queue refuses `send`
     /// with `WouldBlock`; on the receiving side until `poll` returns them,
     /// where a receiver that is not polled drops its oldest unpolled
-    /// unreliable messages, as a full UDP socket buffer does. Reliable
-    /// overflow still closes the peer.
+    /// unreliable messages, as a full UDP socket buffer does.
     pub unreliable_messages: usize,
     /// Unreliable bytes queued for the lane, with the same two meanings,
     /// from [`MAX_UNRELIABLE_BYTES`] to `LANE_QUEUE_BYTES_LIMIT`.

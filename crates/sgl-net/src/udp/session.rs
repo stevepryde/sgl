@@ -34,29 +34,35 @@ impl<T: DatagramTransport> ServerEndpoint<T> {
     }
 }
 
+/// A server endpoint's events as session events; denials concern clients
+/// only.
+pub(crate) fn server_events(events: Vec<EndpointEvent>) -> Vec<ServerEvent> {
+    events
+        .into_iter()
+        .filter_map(|event| match event {
+            EndpointEvent::Connected { peer } => {
+                ConnectionId::from_raw(peer).map(|conn| ServerEvent::Connected { conn })
+            }
+            EndpointEvent::Message {
+                peer,
+                delivery,
+                payload,
+            } => ConnectionId::from_raw(peer).map(|conn| ServerEvent::Message {
+                conn,
+                delivery,
+                payload,
+            }),
+            EndpointEvent::Disconnected { peer, reason } => {
+                ConnectionId::from_raw(peer).map(|conn| ServerEvent::Disconnected { conn, reason })
+            }
+            EndpointEvent::Denied { .. } => None,
+        })
+        .collect()
+}
+
 impl<T: DatagramTransport> ServerIo for ServerEndpoint<T> {
     fn poll(&mut self, now_ms: u64) -> Vec<ServerEvent> {
-        self.endpoint
-            .poll(now_ms)
-            .into_iter()
-            .filter_map(|event| match event {
-                EndpointEvent::Connected { peer } => {
-                    ConnectionId::from_raw(peer).map(|conn| ServerEvent::Connected { conn })
-                }
-                EndpointEvent::Message {
-                    peer,
-                    delivery,
-                    payload,
-                } => ConnectionId::from_raw(peer).map(|conn| ServerEvent::Message {
-                    conn,
-                    delivery,
-                    payload,
-                }),
-                EndpointEvent::Disconnected { peer, reason } => ConnectionId::from_raw(peer)
-                    .map(|conn| ServerEvent::Disconnected { conn, reason }),
-                EndpointEvent::Denied { .. } => None,
-            })
-            .collect()
+        server_events(self.endpoint.poll(now_ms))
     }
 
     fn send(

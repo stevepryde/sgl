@@ -36,8 +36,11 @@ A full lane refuses a send with `SendError::WouldBlock`: nothing was queued,
 the connection is fine and other lanes still admit, so keep the message and
 retry after a later `flush` and `poll` (the [crate docs](src/lib.rs) show the
 loop); `capacity(lane)` reports what the lane admits now. Dropping a refused
-message loses it. A peer that floods this side's inbound bounds is
-disconnected with `DisconnectReason::InboundOverflow`.
+message loses it. A peer that sends faster than this side polls is slowed,
+not disconnected: once a lane's inbound bounds are full, UDP holds the
+lane's next message unacknowledged until `poll` makes room, so the peer's
+`send` returns `WouldBlock`; the threaded UDP server does the same while
+its caller has not polled.
 
 Reliable messages may be as large as `ReliableConfig::max_message_bytes`
 (default 64 KiB, up to `RELIABLE_MESSAGE_BYTES_LIMIT`, 16 MiB); set the same
@@ -52,16 +55,17 @@ ones, so a bulk lane keeps small allowances; on UDP the endpoint's
 WebSocket receiver that polls slowly stops reading instead of overflowing,
 which makes the sender's `send` return `WouldBlock`; the browser cannot, so
 a browser game sizes each lane's inbound bounds for what arrives between
-two polls.
+two polls, and a peer that sends more is disconnected with
+`DisconnectReason::InboundOverflow`.
 `Delivery::Unreliable(lane)` sends independent best-effort messages of at
 most `MAX_UNRELIABLE_BYTES`: each is sent once, never retransmitted or
 fragmented, delivered at most once, in no promised order. The sender never
 drops an accepted message; on UDP the network may lose one, while on
 WebSocket and in memory all arrive, in send order, while the receiver keeps
 polling. A receiver that is not polled drops its oldest unpolled unreliable
-messages, as a full UDP socket buffer does; reliable overflow still closes
-the peer. A full unreliable queue refuses `send` with `WouldBlock` like a
-full reliable lane, and a lane's unreliable messages take turns with its
+messages, as a full UDP socket buffer does, while reliable ones wait. A
+full unreliable queue refuses `send` with `WouldBlock` like a full
+reliable lane, and a lane's unreliable messages take turns with its
 reliable fragments. On UDP each reliable fragment and each unreliable
 message takes its own datagram, so a peer sends at most
 `max_packets_per_peer_flush` of them per flush (one fewer while latest state

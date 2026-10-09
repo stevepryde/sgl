@@ -41,8 +41,9 @@ pub struct Peer {
     unreliable_turn: [bool; RELIABLE_LANES],
     /// Shares this peer's datagrams between its lanes.
     pub scheduler: LaneScheduler,
-    /// Completed reliable messages per lane in the current poll, against
-    /// the lane's inbound bounds.
+    /// Completed reliable messages per lane that the caller still holds
+    /// (those of the current poll, and any it reported holding from earlier
+    /// ones), against the lane's inbound bounds.
     pub delivered: [InboundUsage; RELIABLE_LANES],
     pub latest: Latest,
     pub last_receive_ms: u64,

@@ -11,12 +11,16 @@
 //! most twice: once here and once in the endpoint, each within the lane's
 //! bounds.
 //!
-//! Inbound has no such backpressure: the worker polls and acknowledges on
-//! its own clock, whether or not the caller has polled, so a lane's ingress
-//! bounds (`inbound_messages`, `inbound_bytes`) are its inbound budget per
-//! caller poll. A threaded game sizes them for its poll interval, as a
-//! browser game does; a peer that sends more between two polls is closed
-//! with `InboundOverflow`.
+//! Inbound is paced the same way. The worker polls its endpoint within the
+//! room each lane's ingress has left under `inbound_messages` and
+//! `inbound_bytes`, so a lane whose ingress is full holds its next message
+//! in the endpoint's window: the endpoint stops acknowledging that lane and
+//! reports it held, the peer's window closes and its `send` eventually
+//! returns `WouldBlock`, and the lane resumes once the caller's `poll`
+//! drains the ingress. A held fragment is neither retransmitted nor counted
+//! toward the peer's retry limit, and both ends keep exchanging keepalives,
+//! so a healthy peer is slowed, never disconnected, however late the caller
+//! polls.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -26,7 +30,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use super::{EndpointConfig, UdpServer};
+use super::session::server_events;
+use super::{DatagramTransport, Endpoint, EndpointConfig, UdpServer};
 use crate::lanes::InboundUsage;
 use crate::{
     ConnectionId, Delivery, DisconnectReason, Lane, RELIABLE_LANES, ReliableCapacity,
@@ -46,6 +51,38 @@ impl Default for ThreadedUdpConfig {
         Self {
             poll_interval: Duration::from_millis(2),
         }
+    }
+}
+
+/// The server a worker drives: one whose poll delivers on each lane only
+/// what fits beside the messages its ingress still holds.
+trait WorkerEndpoint: ServerIo {
+    /// [`ServerIo::poll`] with `holding(conn, lane)` still waiting for the
+    /// caller.
+    fn poll_within(
+        &mut self,
+        now_ms: u64,
+        holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
+    ) -> Vec<ServerEvent>;
+}
+
+fn endpoint_poll_within<T: DatagramTransport>(
+    endpoint: &mut Endpoint<T>,
+    now_ms: u64,
+    holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
+) -> Vec<ServerEvent> {
+    server_events(endpoint.poll_within(now_ms, |peer, lane| {
+        ConnectionId::from_raw(peer).map_or_else(InboundUsage::default, |conn| holding(conn, lane))
+    }))
+}
+
+impl WorkerEndpoint for UdpServer {
+    fn poll_within(
+        &mut self,
+        now_ms: u64,
+        holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
+    ) -> Vec<ServerEvent> {
+        endpoint_poll_within(self.endpoint_mut(), now_ms, holding)
     }
 }
 
@@ -182,13 +219,24 @@ impl IngressHub {
         }
     }
 
-    /// Queues one received message. The worker acknowledges on its own
-    /// clock, so the lane's inbound bounds are the budget per caller poll: a
-    /// reliable message past them (netcode.md 11: one message may exceed the
-    /// byte bound) is `InboundOverflow`, closing the peer; an unreliable one
-    /// makes room by dropping the lane's oldest unpolled unreliable
-    /// messages, as a full UDP socket buffer would, and only one larger than
-    /// the whole queue (which the endpoint's cap rules out) is refused.
+    /// Each live peer's reliable messages waiting for the caller, per lane:
+    /// what the worker's next endpoint poll delivers beside.
+    fn holding(&self) -> BTreeMap<ConnectionId, [InboundUsage; RELIABLE_LANES]> {
+        let state = self.state.lock().expect("UDP ingress hub poisoned");
+        state
+            .peers
+            .iter()
+            .map(|(&conn, peer)| (conn, peer.reliable_usage))
+            .collect()
+    }
+
+    /// Queues one received message. A reliable one fits its lane's inbound
+    /// bounds: the endpoint delivered it within the room [`Self::holding`]
+    /// reported, and only the caller's drain has changed the queue since.
+    /// An unreliable one makes room by dropping the lane's oldest unpolled
+    /// unreliable messages, as a full UDP socket buffer would, and only one
+    /// larger than the whole queue (which the endpoint's cap rules out) is
+    /// refused.
     fn message(
         &self,
         conn: ConnectionId,
@@ -203,9 +251,10 @@ impl IngressHub {
             Delivery::Reliable(lane) => {
                 let bounds = &self.reliable.lanes[lane.index()];
                 let usage = &mut peer.reliable_usage[lane.index()];
-                if !usage.admits(payload.len(), bounds) {
-                    return Err(DisconnectReason::InboundOverflow);
-                }
+                debug_assert!(
+                    usage.admits(payload.len(), bounds),
+                    "the endpoint delivered past the ingress's room"
+                );
                 usage.add(payload.len(), bounds);
                 peer.reliable[lane.index()].push(payload);
             }
@@ -485,10 +534,9 @@ impl CommandQueue {
 
 /// Simulation-side handle for the UDP worker.
 ///
-/// The worker acknowledges received data on its own clock, so each lane's
-/// `inbound_messages` and `inbound_bytes` must hold what a peer can send
-/// between two calls to [`ServerIo::poll`]; a peer that sends more is
-/// disconnected with `InboundOverflow`.
+/// Each lane's `inbound_messages` and `inbound_bytes` bound what waits for
+/// [`ServerIo::poll`]; a peer that sends more between two polls is slowed
+/// until the poll makes room, not disconnected.
 pub struct ThreadedUdpServer {
     local_addr: SocketAddr,
     commands: Arc<CommandQueue>,
@@ -612,16 +660,22 @@ fn run_worker(
 }
 
 /// One worker turn at `now_ms`: surface the endpoint's events into the
-/// ingress queues, apply the simulation's queued commands to the endpoint,
-/// then flush. The thread calls this on its own clock; tests drive it on
-/// theirs over any [`ServerIo`].
-fn worker_tick<S: ServerIo>(
+/// ingress queues, within the room they have left, apply the simulation's
+/// queued commands to the endpoint, then flush. The thread calls this on
+/// its own clock; tests drive it on theirs.
+fn worker_tick<S: WorkerEndpoint>(
     endpoint: &mut S,
     commands: &CommandQueue,
     ingress: &IngressHub,
     now_ms: u64,
 ) {
-    for event in endpoint.poll(now_ms) {
+    let holding = ingress.holding();
+    let holding = |conn: ConnectionId, lane: Lane| {
+        holding
+            .get(&conn)
+            .map_or_else(InboundUsage::default, |usage| usage[lane.index()])
+    };
+    for event in endpoint.poll_within(now_ms, &holding) {
         match event {
             ServerEvent::Connected { conn } => {
                 commands.connected(conn);
@@ -657,6 +711,8 @@ fn worker_tick<S: ServerIo>(
 mod tests {
     use super::*;
     use crate::memory::{SOLO_CONNECTION, memory_duplex};
+    use crate::udp::simulated::{SimulatedConfig, SimulatedNetwork};
+    use crate::udp::{ClientEndpoint, ServerEndpoint};
     use crate::{ClientEvent, ClientIo};
 
     fn payloads(events: &[ClientEvent], wanted: Delivery) -> Vec<Vec<u8>> {
@@ -748,17 +804,10 @@ mod tests {
     }
 
     /// Unreliable messages past a lane's ingress allowance shed the oldest
-    /// unpolled ones and the peer stays; a peer that fills its reliable
-    /// ingress allowance is disconnected at the endpoint and reported as
-    /// `InboundOverflow`, its buffered ingress discarded with it
-    /// (`IngressHub::disconnected`), so the simulation sees no half-delivered
-    /// stream, and the peer itself observes the disconnect.
+    /// unpolled ones and the peer stays.
     #[test]
-    fn worker_tick_disconnects_a_peer_that_overflows_ingress() {
-        let config = lanes(|lane| {
-            lane.inbound_messages = 2;
-            lane.unreliable_messages = 2;
-        });
+    fn worker_tick_sheds_unpolled_unreliable_ingress_and_keeps_the_peer() {
+        let config = lanes(|lane| lane.unreliable_messages = 2);
         let commands = CommandQueue::new(&config);
         let ingress = IngressHub::new(&config);
         let (mut client, mut server) = memory_duplex();
@@ -766,7 +815,6 @@ mod tests {
             matches!(&client.poll(0)[..], [ClientEvent::Connected]),
             "the memory client is connected from the start"
         );
-        // Unreliable messages past the bound shed the oldest: no disconnect.
         for payload in [b"u1", b"u2", b"u3", b"u4"] {
             client.send(Delivery::Unreliable(lane(1)), payload).unwrap();
         }
@@ -789,33 +837,35 @@ mod tests {
             })
             .collect();
         assert_eq!(unreliable, [b"u3".to_vec(), b"u4".to_vec()]);
-
-        // Reliable messages past the bound close the peer.
-        for payload in [b"m1", b"m2", b"m3"] {
-            client.send(Delivery::RELIABLE_ORDERED, payload).unwrap();
-        }
-        client.flush(1);
-        worker_tick(&mut server, &commands, &ingress, 1);
-        let events = ingress.drain();
         assert!(
-            matches!(
-                &events[..],
-                [ServerEvent::Disconnected { conn: gone, reason: DisconnectReason::InboundOverflow }]
-                    if *gone == SOLO_CONNECTION
-            ),
-            "{events:?}"
-        );
-        assert!(
-            ingress.drain().is_empty(),
-            "nothing lingers for a dropped peer"
-        );
-        assert!(
-            client
+            !client
                 .poll(1)
                 .iter()
                 .any(|event| matches!(event, ClientEvent::Disconnected { .. })),
-            "the overflowing peer must be told"
+            "the peer stays"
         );
+    }
+
+    impl<T: DatagramTransport> WorkerEndpoint for ServerEndpoint<T> {
+        fn poll_within(
+            &mut self,
+            now_ms: u64,
+            holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
+        ) -> Vec<ServerEvent> {
+            endpoint_poll_within(self.endpoint_mut(), now_ms, holding)
+        }
+    }
+
+    /// The memory transport delivers whole messages with no window to
+    /// hold, so these tests keep within the ingress bounds.
+    impl WorkerEndpoint for crate::MemoryServerIo {
+        fn poll_within(
+            &mut self,
+            now_ms: u64,
+            _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
+        ) -> Vec<ServerEvent> {
+            self.poll(now_ms)
+        }
     }
 
     fn cid(raw: u64) -> ConnectionId {
@@ -836,6 +886,16 @@ mod tests {
         inner: crate::MemoryServerIo,
         per_tick: usize,
         admitted: usize,
+    }
+
+    impl WorkerEndpoint for Throttled {
+        fn poll_within(
+            &mut self,
+            now_ms: u64,
+            _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
+        ) -> Vec<ServerEvent> {
+            self.poll(now_ms)
+        }
     }
 
     impl ServerIo for Throttled {
@@ -962,6 +1022,16 @@ mod tests {
         received: BTreeMap<(ConnectionId, Lane), Vec<u32>>,
     }
 
+    impl WorkerEndpoint for SharedCeiling {
+        fn poll_within(
+            &mut self,
+            now_ms: u64,
+            _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
+        ) -> Vec<ServerEvent> {
+            self.poll(now_ms)
+        }
+    }
+
     impl ServerIo for SharedCeiling {
         fn poll(&mut self, _now_ms: u64) -> Vec<ServerEvent> {
             self.admitted = 0;
@@ -1063,20 +1133,12 @@ mod tests {
     /// Defect (#269): the threaded server refusing, or never moving, a
     /// message larger than its lane's byte allowance (a cap other than the
     /// configured one, admission without the one-message rule, a worker
-    /// waiting for room the endpoint never reports); or its ingress closing
-    /// a peer whose large message is followed by a smaller one before the
-    /// caller polls, or keeping a polled message's allowance. Oracle: the
-    /// one-message rules of netcode.md 11 — a 1 MiB message through a 64 KiB
-    /// lane arrives intact; ingress bounded at 4 KiB and two messages holds
-    /// a 10 KiB message beside a 4 KiB one in either order, again after each
-    /// drain, but not two 10 KiB messages.
+    /// waiting for room the endpoint never reports). Oracle: the one-message
+    /// rule of netcode.md 11 — a 1 MiB message through a 64 KiB lane arrives
+    /// intact.
     #[test]
-    fn messages_past_the_lane_allowances_cross_the_worker_and_ingress() {
-        let mut config = lanes(|lane| {
-            lane.outbound_bytes = 64 * 1024;
-            lane.inbound_bytes = 4 * 1024;
-            lane.inbound_messages = 2;
-        });
+    fn a_message_past_the_lane_allowance_crosses_the_worker() {
+        let mut config = lanes(|lane| lane.outbound_bytes = 64 * 1024);
         config.max_message_bytes = 1 << 20;
         let commands = CommandQueue::new(&config);
         let ingress = IngressHub::new(&config);
@@ -1101,36 +1163,187 @@ mod tests {
             received.extend(payloads(&client.poll(tick), Delivery::Reliable(lane(1))));
         }
         assert!(received == [large], "the message crossed whole, once");
+    }
 
-        let hub = IngressHub::new(&config);
-        let peer = cid(5);
-        hub.connected(peer);
-        let (big, small) = (vec![1; 10 * 1024], vec![2; 4 * 1024]);
-        for pair in [[&big, &small], [&small, &big]] {
-            for payload in pair {
+    /// Client `tag`'s `len`-byte message `index`: tagged and indexed, the
+    /// rest seeded bytes so a misplaced fragment cannot match.
+    fn paced_message(tag: u8, index: u32, len: usize) -> Vec<u8> {
+        let mut state = u64::from(index) << 8 | u64::from(tag) | 1 << 40;
+        let mut payload: Vec<u8> = (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state.to_le_bytes()[0]
+            })
+            .collect();
+        payload[0] = tag;
+        payload[1..5].copy_from_slice(&index.to_le_bytes());
+        payload
+    }
+
+    /// Defect: a threaded server that disconnects a healthy sender because
+    /// its caller polls slowly — its ingress overflowing, the sender
+    /// exhausting its retries on a held fragment, or either end timing out
+    /// while the caller stalls — or that loses, duplicates or reorders
+    /// messages while pacing, or holds one peer back for another's full
+    /// ingress. Oracle: netcode.md 11 (a receiver that polls slowly makes
+    /// the sender slower, not disconnected; other connections are never
+    /// affected). Over in-order and lossy seeded networks, to a server
+    /// whose caller polls every 100 ms and once not at all for 3 s (longer
+    /// than the 1 s timeout and a five-transmission retry budget), one
+    /// client sends 60 messages as fast as `send` admits, every third
+    /// larger than the lane's 4 KiB inbound bound, and another sends five
+    /// small ones 200 ms apart during the stall, one more than its lane
+    /// holds, so its last waits as the newest fragment, which the sender
+    /// would otherwise retransmit until it gave up. The fast sender is
+    /// refused with `WouldBlock`; nobody is disconnected; every message
+    /// arrives once, in order; and the first poll after the stall finds
+    /// the quiet client's first four messages, not held back by the fast
+    /// client.
+    #[test]
+    fn a_slowly_polled_server_paces_a_fast_sender_without_disconnecting_it() {
+        let in_order = SimulatedConfig {
+            one_way_latency_ms: 20,
+            jitter_ms: 0,
+            loss_per_10k: 0,
+            duplicate_per_10k: 0,
+            reorder_per_10k: 0,
+            ..SimulatedConfig::default()
+        };
+        let lossy = SimulatedConfig {
+            one_way_latency_ms: 20,
+            jitter_ms: 5,
+            loss_per_10k: 200,
+            duplicate_per_10k: 100,
+            reorder_per_10k: 500,
+            reorder_extra_ms: 20,
+            ..SimulatedConfig::default()
+        };
+        for network in [in_order, lossy] {
+            pace_a_fast_sender(network);
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn pace_a_fast_sender(network: SimulatedConfig) {
+        const TICK_MS: u64 = 2;
+        const POLL_MS: u64 = 100;
+        const STALL_MS: std::ops::Range<u64> = 1_000..4_000;
+        const MESSAGES: u32 = 60;
+        const QUIET_MESSAGES: u32 = 5;
+        const QUIET_GAP_MS: u64 = 200;
+        let paced = lane(1);
+        let server_addr = SocketAddr::from(([10, 0, 0, 1], 7_000));
+        let mut config = EndpointConfig {
+            timeout_ms: 1_000,
+            keepalive_ms: 100,
+            max_reliable_transmissions: 5,
+            ..EndpointConfig::new(*b"PCD")
+        };
+        let bounds = &mut config.reliable.lanes[paced.index()];
+        bounds.inbound_messages = 4;
+        bounds.inbound_bytes = 4 * 1024;
+        bounds.outbound_bytes = 32 * 1024;
+        let network = SimulatedNetwork::new(network, 0x7417).unwrap();
+        let mut server =
+            ServerEndpoint::new(network.transport(server_addr), config.clone(), [7; 32]).unwrap();
+        let commands = CommandQueue::new(&config.reliable);
+        let ingress = IngressHub::new(&config.reliable);
+        let mut clients: Vec<_> = [(b'F', 2), (b'Q', 3)]
+            .into_iter()
+            .map(|(tag, host)| {
+                let addr = SocketAddr::from(([10, 0, 0, host], 40_000));
+                let client = ClientEndpoint::connect(
+                    network.transport(addr),
+                    server_addr,
+                    config.clone(),
+                    0,
+                    u64::from(tag),
+                )
+                .unwrap();
+                (tag, client, false)
+            })
+            .collect();
+
+        let mut received: BTreeMap<u8, Vec<Vec<u8>>> = BTreeMap::new();
+        let quiet_messages: Vec<_> = (0..QUIET_MESSAGES)
+            .map(|index| paced_message(b'Q', index, 200))
+            .collect();
+        // Every third larger than the lane's inbound byte bound.
+        let fast_message =
+            |index| paced_message(b'F', index, [10 * 1024, 200, 200][index as usize % 3]);
+        let (mut next, mut refused, mut quiet_sent) = (0, 0, 0);
+        let mut now = 0;
+        while received.get(&b'F').map_or(0, Vec::len) < MESSAGES as usize
+            || received.get(&b'Q').map_or(0, Vec::len) < quiet_messages.len()
+        {
+            now += TICK_MS;
+            assert!(
+                now < 60_000,
+                "stalled with {:?} received",
+                received.values().map(Vec::len).collect::<Vec<_>>()
+            );
+            for (tag, client, connected) in &mut clients {
+                for event in client.poll(now) {
+                    match event {
+                        ClientEvent::Connected => *connected = true,
+                        other => panic!("client {}: {other:?} at {now}", *tag as char),
+                    }
+                }
+            }
+            let [(_, fast, fast_connected), (_, quiet, quiet_connected)] = &mut clients[..] else {
+                unreachable!()
+            };
+            while *fast_connected && next < MESSAGES {
+                match fast.send(Delivery::Reliable(paced), &fast_message(next)) {
+                    Ok(()) => next += 1,
+                    Err(SendError::WouldBlock) => {
+                        refused += 1;
+                        break;
+                    }
+                    Err(error) => panic!("refused with {error:?}"),
+                }
+            }
+            if let Some(message) = quiet_messages.get(quiet_sent)
+                && now == STALL_MS.start + QUIET_GAP_MS * quiet_sent as u64
+            {
+                assert!(*quiet_connected, "connected before the stall");
+                quiet.send(Delivery::Reliable(paced), message).unwrap();
+                quiet_sent += 1;
+            }
+            fast.flush(now);
+            quiet.flush(now);
+            worker_tick(&mut server, &commands, &ingress, now);
+
+            if now % POLL_MS != 0 || STALL_MS.contains(&now) {
+                continue;
+            }
+            for event in ingress.drain() {
+                match event {
+                    ServerEvent::Connected { .. } => {}
+                    ServerEvent::Message {
+                        delivery, payload, ..
+                    } if delivery == Delivery::Reliable(paced) => {
+                        received.entry(payload[0]).or_default().push(payload);
+                    }
+                    other => panic!("server: {other:?} at {now}"),
+                }
+            }
+            if now == STALL_MS.end {
                 assert_eq!(
-                    hub.message(peer, Delivery::RELIABLE_ORDERED, payload.clone()),
-                    Ok(())
+                    received.get(&b'Q').map_or(0, Vec::len),
+                    4,
+                    "the quiet client's own room"
                 );
             }
-            let drained: Vec<_> = hub
-                .drain()
-                .into_iter()
-                .filter_map(|event| match event {
-                    ServerEvent::Message { payload, .. } => Some(payload),
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(drained, pair.map(Vec::clone));
         }
+        assert!(refused > 0, "the sender was never paced");
         assert_eq!(
-            hub.message(peer, Delivery::RELIABLE_ORDERED, big.clone()),
-            Ok(())
+            received[&b'F'],
+            (0..MESSAGES).map(fast_message).collect::<Vec<_>>()
         );
-        assert_eq!(
-            hub.message(peer, Delivery::RELIABLE_ORDERED, big),
-            Err(DisconnectReason::InboundOverflow)
-        );
+        assert_eq!(received[&b'Q'], quiet_messages);
     }
 
     /// Defect: a peer's full allowance refusing another peer, or a refusal
@@ -1263,42 +1476,11 @@ mod tests {
         )));
     }
 
-    #[test]
-    fn ingress_reliable_overflow_isolated_to_noisy_peer() {
-        let hub = IngressHub::new(&lanes(|lane| lane.inbound_messages = 1));
-        let noisy = cid(4);
-        let healthy = cid(5);
-        hub.connected(noisy);
-        hub.connected(healthy);
-        assert_eq!(
-            hub.message(noisy, Delivery::RELIABLE_ORDERED, b"first".to_vec()),
-            Ok(())
-        );
-        assert_eq!(
-            hub.message(noisy, Delivery::RELIABLE_ORDERED, b"overflow".to_vec()),
-            Err(DisconnectReason::InboundOverflow)
-        );
-        assert_eq!(
-            hub.message(healthy, Delivery::RELIABLE_ORDERED, b"healthy".to_vec()),
-            Ok(())
-        );
-
-        assert!(hub.drain().iter().any(|event| matches!(
-            event,
-            ServerEvent::Message {
-                conn,
-                payload,
-                ..
-            } if *conn == healthy && payload == b"healthy"
-        )));
-    }
-
     /// Defect (design §12 review): an unpolled receiver closing the peer for
     /// unreliable traffic, dropping the newest instead of the oldest, or
     /// letting the queue's byte count drift as it sheds. Oracle: the
     /// UDP-socket rule — past either bound, the oldest unpolled unreliable
-    /// messages go and the newest that fit arrive in order — while reliable
-    /// overflow still closes the peer.
+    /// messages go and the newest that fit arrive in order.
     #[test]
     fn ingress_sheds_the_oldest_unreliable_messages_and_keeps_the_peer() {
         let peer = cid(6);
@@ -1346,17 +1528,6 @@ mod tests {
         assert_eq!(
             hub.message(peer, Delivery::Unreliable(lane(2)), vec![0; 1_169]),
             Err(DisconnectReason::ProtocolViolation)
-        );
-
-        let hub = IngressHub::new(&lanes(|lane| lane.inbound_messages = 1));
-        hub.connected(peer);
-        assert_eq!(
-            hub.message(peer, Delivery::RELIABLE_ORDERED, b"one".to_vec()),
-            Ok(())
-        );
-        assert_eq!(
-            hub.message(peer, Delivery::RELIABLE_ORDERED, b"two".to_vec()),
-            Err(DisconnectReason::InboundOverflow)
         );
     }
 }

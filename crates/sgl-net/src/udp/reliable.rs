@@ -1,7 +1,13 @@
-//! One reliable lane: a bounded 33-slot selective-repeat ARQ with its own
-//! sequence space, and in-order reassembly. Outbound messages are kept
-//! whole until acknowledged; each fragment in flight is a range of its
+//! One reliable lane: a bounded `WINDOW`-fragment selective-repeat ARQ with
+//! its own sequence space, and in-order reassembly. Outbound messages are
+//! kept whole until acknowledged; each fragment in flight is a range of its
 //! message, so outbound memory is the held messages' bytes.
+//!
+//! Receive flow control: the receiver consumes a fragment only when the
+//! message it completes fits the room its caller gives it. Otherwise the
+//! fragment waits in the window, the window stops advancing, and the
+//! acknowledgement reports the fragment held, so the sender neither
+//! retransmits it nor counts it toward retry exhaustion.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -9,9 +15,10 @@ use super::packet::{Ack, TOTAL_LEN};
 use super::sequence;
 use crate::lanes::{Fragment, FramingViolation, Reassembly};
 
+/// Fragments in flight per lane; the receiver buffers the same span.
 pub const WINDOW: u16 = 32;
 
-/// A received fragment waiting, out of order, for the gap before it.
+/// A received fragment waiting for the gap before it, or for room.
 #[derive(Debug)]
 pub struct Slot {
     pub fragment: Fragment,
@@ -28,7 +35,11 @@ struct InFlight {
     fragment: Fragment,
     sent_at: Option<u64>,
     transmissions: u8,
+    /// Arrived: before the peer's `next`, or marked in its bits. It stays
+    /// in the window until `next` passes it, since the peer may yet hold it.
     acknowledged: bool,
+    /// The peer has it and holds it until its caller makes room.
+    peer_holds: bool,
 }
 
 impl InFlight {
@@ -124,7 +135,7 @@ impl Reliable {
             && self
                 .in_flight
                 .front()
-                .is_none_or(|first| sequence::diff(self.next_sequence, first.sequence) <= WINDOW)
+                .is_none_or(|first| sequence::diff(self.next_sequence, first.sequence) < WINDOW)
     }
 
     /// Moves the next fragment into the window, if it fits.
@@ -151,14 +162,17 @@ impl Reliable {
             sent_at: None,
             transmissions: 0,
             acknowledged: false,
+            peer_holds: false,
         });
         Some(sequence)
     }
 
-    /// The oldest in-flight fragment due for (re)transmission.
+    /// The oldest in-flight fragment due for (re)transmission. A fragment
+    /// the peer holds is not: it has arrived.
     pub fn first_due(&self, now_ms: u64, rto_ms: u64, max_transmissions: u8) -> Option<u16> {
         self.in_flight.iter().find_map(|item| {
             (!item.acknowledged
+                && !item.peer_holds
                 && item.transmissions < max_transmissions
                 && item
                     .sent_at
@@ -167,9 +181,13 @@ impl Reliable {
         })
     }
 
+    /// Whether a fragment went unacknowledged through `maximum`
+    /// transmissions. One the peer holds waits for the peer's caller, not
+    /// the network, so it never counts.
     pub fn retry_exhausted(&self, now_ms: u64, rto_ms: u64, maximum: u8) -> bool {
         self.in_flight.iter().any(|item| {
             !item.acknowledged
+                && !item.peer_holds
                 && item.transmissions >= maximum
                 && item
                     .sent_at
@@ -200,28 +218,42 @@ impl Reliable {
         }
     }
 
+    /// Applies the peer's acknowledgement: fragments before `next` and those
+    /// its bits mark have arrived and are not sent again, and those before
+    /// `next` leave the window. The window follows `next`, the front of the
+    /// peer's own window, so it never reaches past it: a fragment the peer
+    /// buffered out of order may later be the one it holds.
     pub fn acknowledge(&mut self, ack: Ack, now_ms: u64, rtt_samples: &mut Vec<u64>) {
         if sequence::newer(ack.next, self.next_sequence) {
             return;
         }
         for item in &mut self.in_flight {
-            let received = sequence::newer(ack.next, item.sequence) || {
-                let distance = sequence::diff(item.sequence, ack.next);
-                (1..=WINDOW).contains(&distance) && ack.bits & (1_u32 << (distance - 1)) != 0
-            };
-            if !item.acknowledged && received {
+            let distance = sequence::diff(item.sequence, ack.next);
+            let received = sequence::newer(ack.next, item.sequence)
+                || ((1..WINDOW).contains(&distance) && ack.bits & (1_u32 << (distance - 1)) != 0);
+            if received && !item.acknowledged {
                 item.acknowledged = true;
+                // A held fragment's acknowledgement waited on the peer's
+                // caller, so it measures no round trip.
                 if item.transmissions == 1
+                    && !item.peer_holds
                     && let Some(sent_at) = item.sent_at
                 {
                     rtt_samples.push(now_ms.saturating_sub(sent_at));
                 }
+            } else if ack.held && distance == 0 {
+                // Arrival is final: a later acknowledgement that predates
+                // the hold does not undo it.
+                item.peer_holds = true;
             }
         }
         // Fragments leave the window in sequence order, which is message
         // order, so a message's last fragment leaves after all its others
         // and the message is then the oldest held.
-        while let Some(item) = self.in_flight.pop_front_if(|item| item.acknowledged) {
+        while let Some(item) = self
+            .in_flight
+            .pop_front_if(|item| sequence::newer(ack.next, item.sequence))
+        {
             self.held_bytes -= item.end - item.start;
             if item.ends_message() {
                 self.held_messages -= 1;
@@ -236,15 +268,17 @@ impl Reliable {
         self.messages.is_empty() && self.in_flight.is_empty()
     }
 
-    /// Applies one received fragment. Fragments ahead of the next expected
-    /// sequence wait, within the window, for the gap to fill; the messages
-    /// this one completes in order are appended to `output`. A first
-    /// fragment declaring more than the message cap is refused on arrival.
+    /// Applies one received fragment: one in the window (the next expected
+    /// sequence and the `WINDOW - 1` after it) is buffered once, then the
+    /// window is consumed as far as `admit` allows ([`Self::consume`]). A
+    /// first fragment declaring more than the message cap is refused on
+    /// arrival.
     pub fn receive(
         &mut self,
         sequence: u16,
         fragment: Fragment,
         payload: &[u8],
+        admit: &mut impl FnMut(usize) -> bool,
         output: &mut Vec<Vec<u8>>,
     ) -> Result<(), FramingViolation> {
         self.ack_dirty = true;
@@ -255,16 +289,7 @@ impl Reliable {
         {
             return Err(FramingViolation);
         }
-        if sequence == self.receive_next {
-            self.deliver(fragment, payload, output)?;
-            self.receive_next = self.receive_next.wrapping_add(1);
-            while let Some(slot) = self.receive_buffer.remove(&self.receive_next) {
-                self.buffered_bytes -= slot.bytes.len();
-                self.deliver(slot.fragment, &slot.bytes, output)?;
-                self.receive_next = self.receive_next.wrapping_add(1);
-            }
-        } else if sequence::newer(sequence, self.receive_next)
-            && sequence::diff(sequence, self.receive_next) <= WINDOW
+        if sequence::diff(sequence, self.receive_next) < WINDOW
             && !self.receive_buffer.contains_key(&sequence)
         {
             self.buffered_bytes += payload.len();
@@ -276,23 +301,44 @@ impl Reliable {
                 },
             );
         }
-        Ok(())
+        self.consume(admit, output)
     }
 
-    fn deliver(
+    /// Consumes buffered fragments in sequence order up to the first gap,
+    /// appending the messages they complete to `output`. A fragment that
+    /// would complete a message `admit` refuses stays at the front of the
+    /// window, held, until a later call admits it; `admit` counts what it
+    /// accepts.
+    pub fn consume(
         &mut self,
-        fragment: Fragment,
-        payload: &[u8],
+        admit: &mut impl FnMut(usize) -> bool,
         output: &mut Vec<Vec<u8>>,
     ) -> Result<(), FramingViolation> {
-        output.extend(
-            self.reassembly
-                .push(fragment, payload, self.max_message_bytes)?,
-        );
+        while let Some(slot) = self.receive_buffer.get(&self.receive_next) {
+            if self
+                .reassembly
+                .completes(slot.fragment, slot.bytes.len())
+                .is_some_and(|len| !admit(len))
+            {
+                break;
+            }
+            let slot = self
+                .receive_buffer
+                .remove(&self.receive_next)
+                .expect("the front slot is buffered");
+            self.buffered_bytes -= slot.bytes.len();
+            self.receive_next = self.receive_next.wrapping_add(1);
+            self.ack_dirty = true;
+            output.extend(self.reassembly.push(
+                slot.fragment,
+                &slot.bytes,
+                self.max_message_bytes,
+            )?);
+        }
         Ok(())
     }
 
-    /// Inbound bytes retained: out-of-order fragments and the message being
+    /// Inbound bytes retained: buffered fragments and the message being
     /// assembled.
     pub fn retained_bytes(&self) -> usize {
         self.buffered_bytes + self.reassembly.retained_bytes()
@@ -306,7 +352,7 @@ impl Reliable {
 
     pub fn ack(&self) -> Ack {
         let mut bits = 0_u32;
-        for offset in 0..WINDOW {
+        for offset in 0..WINDOW - 1 {
             if self
                 .receive_buffer
                 .contains_key(&self.receive_next.wrapping_add(1 + offset))
@@ -317,6 +363,8 @@ impl Reliable {
         Ack {
             next: self.receive_next,
             bits,
+            // Buffered at the front of the window only while refused.
+            held: self.receive_buffer.contains_key(&self.receive_next),
         }
     }
 }
@@ -330,28 +378,33 @@ mod tests {
         Reliable::new(64 * 1024, 100)
     }
 
-    /// #254: a stale fragment (already delivered in order) is dropped, a
-    /// fragment exactly one window ahead is buffered, and one beyond the
-    /// window is ignored.
+    /// The caller takes everything.
+    fn all(_: usize) -> bool {
+        true
+    }
+
+    /// #254: a stale fragment (already delivered in order) is dropped, the
+    /// window's last fragment is buffered, and one beyond the window is
+    /// ignored.
     #[wasm_bindgen_test(unsupported = test)]
     fn receive_gates_stale_windowed_and_beyond_window_fragments() {
         let mut lane = lane();
         let mut out = Vec::new();
-        lane.receive(0, Fragment::Whole, b"first", &mut out)
+        lane.receive(0, Fragment::Whole, b"first", &mut all, &mut out)
             .unwrap();
         assert_eq!(out, vec![b"first".to_vec()]);
-        lane.receive(0, Fragment::Whole, b"first", &mut out)
+        lane.receive(0, Fragment::Whole, b"first", &mut all, &mut out)
             .unwrap();
         assert_eq!(out.len(), 1, "a duplicate is not delivered again");
         assert_eq!(lane.retained_bytes(), 0, "nor retained");
-        lane.receive(1 + WINDOW, Fragment::Whole, b"edge", &mut out)
+        lane.receive(WINDOW, Fragment::Whole, b"edge", &mut all, &mut out)
             .unwrap();
         assert_eq!(
             lane.retained_bytes(),
             4,
-            "exactly one window ahead is buffered"
+            "the window's last fragment is buffered"
         );
-        lane.receive(2 + WINDOW, Fragment::Whole, b"beyond", &mut out)
+        lane.receive(1 + WINDOW, Fragment::Whole, b"beyond", &mut all, &mut out)
             .unwrap();
         assert_eq!(lane.retained_bytes(), 4, "beyond the window is ignored");
         assert_eq!(out.len(), 1);
@@ -364,11 +417,11 @@ mod tests {
         let mut lane = Reliable::new(100, 100);
         let mut out = Vec::new();
         assert_eq!(
-            lane.receive(5, Fragment::First { total: 101 }, b"ab", &mut out),
+            lane.receive(5, Fragment::First { total: 101 }, b"ab", &mut all, &mut out),
             Err(FramingViolation)
         );
         assert_eq!(lane.retained_bytes(), 0);
-        lane.receive(5, Fragment::First { total: 100 }, b"ab", &mut out)
+        lane.receive(5, Fragment::First { total: 100 }, b"ab", &mut all, &mut out)
             .unwrap();
         assert_eq!(lane.retained_bytes(), 2);
     }
@@ -390,6 +443,7 @@ mod tests {
             Ack {
                 next: 0,
                 bits: 1 << 1,
+                held: false,
             },
             40,
             &mut samples,
@@ -397,10 +451,84 @@ mod tests {
         assert_eq!(samples, vec![30]);
         assert_eq!(reliable.held(), (3, 10));
 
-        reliable.acknowledge(Ack { next: 3, bits: 0 }, 60, &mut samples);
+        reliable.acknowledge(
+            Ack {
+                next: 3,
+                bits: 0,
+                held: false,
+            },
+            60,
+            &mut samples,
+        );
         assert_eq!(samples, vec![30, 50]);
         assert!(reliable.outbound_is_idle());
         assert_eq!(reliable.held(), (0, 0));
+    }
+
+    /// Defect: a receiver whose caller has no room delivering anyway or
+    /// dropping the fragment, an acknowledgement that advances past it or
+    /// hides that it arrived, a sender that keeps retransmitting a held
+    /// fragment, counts it toward its retry limit (so a stalled receiver
+    /// times a healthy sender out), lets a reordered older acknowledgement
+    /// undo the hold, or samples the hold as round-trip time. Oracle:
+    /// netcode.md 12 and 15 on held fragments — with no room the message
+    /// waits, `next` stays put and is reported held while later fragments
+    /// are acknowledged as usual; the sender sends nothing more and is not
+    /// exhausted at a limit of one transmission however long the hold
+    /// lasts; once room returns both messages arrive once, in order, and
+    /// only the promptly acknowledged fragment yields an RTT sample.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_refused_message_holds_the_window_without_exhausting_the_sender() {
+        let (mut sender, mut receiver) = (lane(), lane());
+        for payload in [b"first".as_slice(), b"second"] {
+            sender.enqueue(payload);
+        }
+        let mut out = Vec::new();
+        for sequence in [0, 1] {
+            assert_eq!(sender.next_sendable(0, 100, 1), Some(sequence));
+            sender.mark_sent(sequence, 0);
+            let (fragment, bytes) = sender.fragment(sequence).unwrap();
+            receiver
+                .receive(sequence, fragment, bytes, &mut |_| false, &mut out)
+                .unwrap();
+        }
+        assert!(out.is_empty(), "no room, no delivery");
+        let held = receiver.ack();
+        assert_eq!(
+            held,
+            Ack {
+                next: 0,
+                bits: 1,
+                held: true,
+            }
+        );
+        let mut samples = Vec::new();
+        sender.acknowledge(held, 10, &mut samples);
+        let stale = Ack {
+            next: 0,
+            bits: 0,
+            held: false,
+        };
+        sender.acknowledge(stale, 11, &mut samples);
+        for now_ms in [200, 5_000, 60_000] {
+            assert_eq!(sender.next_sendable(now_ms, 100, 1), None, "at {now_ms}");
+            assert!(!sender.retry_exhausted(now_ms, 100, 1), "at {now_ms}");
+        }
+
+        receiver.consume(&mut all, &mut out).unwrap();
+        assert_eq!(out, vec![b"first".to_vec(), b"second".to_vec()]);
+        let released = receiver.ack();
+        assert_eq!(
+            released,
+            Ack {
+                next: 2,
+                bits: 0,
+                held: false,
+            }
+        );
+        sender.acknowledge(released, 60_010, &mut samples);
+        assert!(sender.outbound_is_idle());
+        assert_eq!(samples, vec![10], "only the second fragment's round trip");
     }
 
     #[wasm_bindgen_test(unsupported = test)]
@@ -416,16 +544,30 @@ mod tests {
         for sequence in [u16::MAX - 1, u16::MAX, 0] {
             reliable.mark_sent(sequence, 0);
         }
-        reliable.acknowledge(Ack { next: 1, bits: 0 }, 1, &mut Vec::new());
+        reliable.acknowledge(
+            Ack {
+                next: 1,
+                bits: 0,
+                held: false,
+            },
+            1,
+            &mut Vec::new(),
+        );
         assert!(reliable.outbound_is_idle());
 
         reliable.receive_next = u16::MAX;
         let mut delivered = Vec::new();
         reliable
-            .receive(0, Fragment::Whole, b"after", &mut delivered)
+            .receive(0, Fragment::Whole, b"after", &mut all, &mut delivered)
             .unwrap();
         reliable
-            .receive(u16::MAX, Fragment::Whole, b"before", &mut delivered)
+            .receive(
+                u16::MAX,
+                Fragment::Whole,
+                b"before",
+                &mut all,
+                &mut delivered,
+            )
             .unwrap();
         assert_eq!(delivered, vec![b"before".to_vec(), b"after".to_vec()]);
     }
@@ -443,28 +585,33 @@ mod properties {
 
     #[derive(Debug, Clone)]
     struct Round {
-        enqueue: Option<Vec<u8>>,
+        /// Messages queued this round, enough to keep the window full.
+        enqueue: Vec<Vec<u8>>,
         drop_mask: u64,
         duplicate_mask: u64,
         reverse: bool,
         drop_ack: bool,
+        /// Messages the receiver's caller takes this round; `None` for all.
+        room: Option<u8>,
     }
 
     fn round() -> impl Strategy<Value = Round> {
         (
-            prop::option::of(bytes(3 * FRAGMENT)),
+            prop::collection::vec(bytes(3 * FRAGMENT), 0..4),
             any::<u64>(),
             any::<u64>(),
             any::<bool>(),
             prop::bool::weighted(0.3),
+            prop::option::of(0..3_u8),
         )
             .prop_map(
-                |(enqueue, drop_mask, duplicate_mask, reverse, drop_ack)| Round {
+                |(enqueue, drop_mask, duplicate_mask, reverse, drop_ack, room)| Round {
                     enqueue,
                     drop_mask,
                     duplicate_mask,
                     reverse,
                     drop_ack,
+                    room,
                 },
             )
     }
@@ -487,12 +634,17 @@ mod properties {
 
     /// Defect: a window or ack-bitmap off-by-one, a reassembly that splices
     /// fragments from different messages, a retransmit path that delivers a
-    /// duplicate, or held-message accounting that never returns the
-    /// allowance. Oracle: whatever the channel drops, duplicates or
-    /// reorders, the receiver's output is always a prefix of the sent
-    /// messages, at most `WINDOW + 1` fragments are ever in flight and they
-    /// span at most one window, and once the channel is clean every message
-    /// arrives and the sender goes idle holding nothing.
+    /// duplicate, a hold that loses, duplicates or never releases a
+    /// fragment, a sender window that slides past a held fragment it saw
+    /// selectively acknowledged, or held-message accounting that never
+    /// returns the allowance. Oracle: whatever the channel drops,
+    /// duplicates or reorders, and however little the receiver's caller
+    /// takes each round, the receiver's output is always a prefix of the
+    /// sent messages, at most `WINDOW` fragments are ever in flight, they
+    /// span less than a window and none lies past the receiver's window
+    /// (where it would be dropped), and once the channel is clean and the
+    /// caller takes everything, every message arrives and the sender goes
+    /// idle holding nothing.
     #[test]
     fn reliable_lane_delivers_exactly_once_in_order_over_a_hostile_channel() {
         check(prop::collection::vec(round(), 1..60), |rounds| {
@@ -504,43 +656,60 @@ mod properties {
             let mut delivered = Vec::new();
             let mut now_ms = 0;
 
-            let deliver = |lane: &mut Reliable, datagram: &Datagram, out: &mut Vec<Vec<u8>>| {
-                lane.receive(datagram.0, datagram.1, &datagram.2, out)
-                    .expect("the sender only sends valid fragments");
-            };
-
             for round in &rounds {
-                if let Some(message) = &round.enqueue
-                    && sender.held().0 < 64
-                {
-                    sender.enqueue(message);
-                    sent.push(message.clone());
+                let mut room = round.room;
+                let mut admit = |_: usize| match &mut room {
+                    None => true,
+                    Some(0) => false,
+                    Some(left) => {
+                        *left -= 1;
+                        true
+                    }
+                };
+                receiver
+                    .consume(&mut admit, &mut delivered)
+                    .expect("the sender only sends valid fragments");
+                for message in &round.enqueue {
+                    if sender.held().0 < 64 {
+                        sender.enqueue(message);
+                        sent.push(message.clone());
+                    }
                 }
                 let mut wire = transmit(&mut sender, now_ms);
                 prop_assert!(
-                    wire.len() <= usize::from(WINDOW) + 1,
+                    wire.len() <= usize::from(WINDOW),
                     "{} fragments in flight",
                     wire.len()
                 );
+                for (sequence, _, _) in &wire {
+                    let ahead = sequence::diff(*sequence, receiver.receive_next);
+                    prop_assert!(
+                        !(WINDOW..0x8000).contains(&ahead),
+                        "{sequence} is past the receiver's window at {}",
+                        receiver.receive_next
+                    );
+                }
                 for (first, _, _) in &wire {
                     for (second, _, _) in &wire {
                         prop_assert!(
-                            sequence::diff(*first, *second) <= WINDOW
-                                || sequence::diff(*second, *first) <= WINDOW
+                            sequence::diff(*first, *second) < WINDOW
+                                || sequence::diff(*second, *first) < WINDOW
                         );
                     }
                 }
                 if round.reverse {
                     wire.reverse();
                 }
-                for (i, datagram) in wire.iter().enumerate() {
+                for (i, (sequence, fragment, bytes)) in wire.iter().enumerate() {
                     let bit = 1u64 << (i % 64);
                     if round.drop_mask & bit != 0 {
                         continue;
                     }
-                    deliver(&mut receiver, datagram, &mut delivered);
-                    if round.duplicate_mask & bit != 0 {
-                        deliver(&mut receiver, datagram, &mut delivered);
+                    let copies = 1 + usize::from(round.duplicate_mask & bit != 0);
+                    for _ in 0..copies {
+                        receiver
+                            .receive(*sequence, *fragment, bytes, &mut admit, &mut delivered)
+                            .expect("the sender only sends valid fragments");
                     }
                 }
                 if !round.drop_ack {
@@ -554,17 +723,23 @@ mod properties {
                 now_ms += 50;
             }
 
-            // A clean channel: everything outstanding must land.
+            // A clean channel and a caller that takes everything: whatever
+            // is outstanding must land.
             for _ in 0..600 {
+                receiver
+                    .consume(&mut |_| true, &mut delivered)
+                    .expect("the sender only sends valid fragments");
+                let mut samples = Vec::new();
+                sender.acknowledge(receiver.ack(), now_ms, &mut samples);
                 if sender.outbound_is_idle() {
                     break;
                 }
                 now_ms += RTO_MS;
-                for datagram in transmit(&mut sender, now_ms) {
-                    deliver(&mut receiver, &datagram, &mut delivered);
+                for (sequence, fragment, bytes) in transmit(&mut sender, now_ms) {
+                    receiver
+                        .receive(sequence, fragment, &bytes, &mut |_| true, &mut delivered)
+                        .expect("the sender only sends valid fragments");
                 }
-                let mut samples = Vec::new();
-                sender.acknowledge(receiver.ack(), now_ms, &mut samples);
             }
             prop_assert!(sender.outbound_is_idle(), "sender never drained");
             prop_assert_eq!(sender.held(), (0, 0));

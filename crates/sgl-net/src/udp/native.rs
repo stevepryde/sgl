@@ -3,6 +3,7 @@
 use std::io;
 use std::net::SocketAddr;
 
+use super::session::server_events;
 use super::{DatagramTransport, Endpoint, EndpointConfig, EndpointEvent};
 use crate::{
     ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, ReliableCapacity,
@@ -64,31 +65,15 @@ impl UdpServer {
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.endpoint.transport().local_addr()
     }
+
+    pub(crate) const fn endpoint_mut(&mut self) -> &mut Endpoint<UdpSocketTransport> {
+        &mut self.endpoint
+    }
 }
 
 impl ServerIo for UdpServer {
     fn poll(&mut self, now_ms: u64) -> Vec<ServerEvent> {
-        self.endpoint
-            .poll(now_ms)
-            .into_iter()
-            .filter_map(|event| match event {
-                EndpointEvent::Connected { peer } => {
-                    ConnectionId::from_raw(peer).map(|conn| ServerEvent::Connected { conn })
-                }
-                EndpointEvent::Message {
-                    peer,
-                    delivery,
-                    payload,
-                } => ConnectionId::from_raw(peer).map(|conn| ServerEvent::Message {
-                    conn,
-                    delivery,
-                    payload,
-                }),
-                EndpointEvent::Disconnected { peer, reason } => ConnectionId::from_raw(peer)
-                    .map(|conn| ServerEvent::Disconnected { conn, reason }),
-                EndpointEvent::Denied { .. } => None,
-            })
-            .collect()
+        server_events(self.endpoint.poll(now_ms))
     }
 
     fn send(
