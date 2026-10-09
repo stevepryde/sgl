@@ -23,7 +23,6 @@ pub use super::gltf::{
 };
 pub use super::images::{CompressedFormat, CompressedImage, Image};
 use super::material::{AlphaMode, NormalLayer};
-use super::shader::MaterialShader;
 
 /// A loader failure, including the source asset path for file loads.
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -246,11 +245,6 @@ pub struct Material {
     pub emits_into_gi: bool,
     /// How the base alpha is used: opaque, masked or blended.
     pub alpha: AlphaMode,
-    /// The game's shader its surfaces are evaluated through, with what
-    /// culling allows for it
-    /// ([`SurfaceMaterial::shader`](crate::SurfaceMaterial::shader)); none
-    /// by default and from glTF.
-    pub shader: Option<MaterialShader>,
 }
 
 impl Material {
@@ -318,7 +312,6 @@ impl Material {
             unlit: _,
             emits_into_gi: _,
             alpha: _,
-            shader: _,
         } = self;
         [
             *base_texture,
@@ -351,8 +344,7 @@ impl Default for Material {
     /// sheen, diffuse transmission (its colour white, as glTF's default),
     /// anisotropy, bump, transmission, thickness, attenuation or
     /// dispersion, no textures, normal, coat normal and occlusion scales 1,
-    /// no normal layers, repeating, single-sided, lit and opaque, without a
-    /// shader, in visibility
+    /// no normal layers, repeating, single-sided, lit and opaque, in visibility
     /// group 0, casting directional shadows and emitting into global
     /// illumination. Set what differs and take the rest with
     /// `..Default::default()`.
@@ -412,7 +404,6 @@ impl Default for Material {
             unlit: false,
             emits_into_gi: true,
             alpha: AlphaMode::Opaque,
-            shader: None,
         }
     }
 }

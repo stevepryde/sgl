@@ -9,7 +9,7 @@
 use crate::asset::{self, Vertex};
 use crate::renderer::Renderer;
 use crate::settings::{self, Settings};
-use crate::test_support::{self, TestShaderParams, add_test_shader, read, set_test_params, shaded};
+use crate::test_support::{self, TestShaderParams, add_test_shader, read, set_test_params};
 use crate::{
     AlphaMode, Camera, FrameInput, InstanceId, InstanceState, MaterialId, MaterialShader, Mobility,
     ModelMesh, PreparedModel, Scene, SceneError, ShaderSource,
@@ -144,6 +144,19 @@ impl Harness {
             .unwrap_or_else(|error| panic!("{error}"))[0]
     }
 
+    /// A material of `values` drawn through `shader`, whose vertices move
+    /// at most `bound`, with its identity.
+    fn shaded(
+        &mut self,
+        values: asset::Material,
+        shader: crate::ShaderId,
+        bound: f32,
+    ) -> MaterialId {
+        let material = self.material(values);
+        test_support::set_shader(&mut self.scene, &self.queue, material, (shader, bound));
+        material
+    }
+
     /// A static instance of `mesh`'s quad drawn with `material`, its
     /// vertices carrying `data` (none where empty), with `instance` its
     /// shader data.
@@ -205,29 +218,24 @@ fn wall(x: [f32; 2], y: [f32; 2], z: f32) -> (Vec<Vertex>, Vec<[f32; 4]>) {
     (vertices, Vec::new())
 }
 
-/// A double-sided lit white material through `shader`'s vertices moved at
-/// most `bound`.
-fn opaque(shader: crate::ShaderId, bound: f32) -> asset::Material {
-    shaded(
-        asset::Material {
-            base: [0.8, 0.8, 0.8, 1.],
-            metallic: 0.,
-            double_sided: true,
-            ..Default::default()
-        },
-        shader,
-        bound,
-    )
+/// A double-sided lit white material.
+fn opaque() -> asset::Material {
+    asset::Material {
+        base: [0.8, 0.8, 0.8, 1.],
+        metallic: 0.,
+        double_sided: true,
+        ..Default::default()
+    }
 }
 
-/// A blended receiver of screen-space reflections through `shader`.
-fn receiver(shader: crate::ShaderId, bound: f32) -> asset::Material {
+/// A blended receiver of screen-space reflections.
+fn receiver() -> asset::Material {
     asset::Material {
         alpha: AlphaMode::Blend {
             receives_screen_space_reflections: true,
             keeps_specular: true,
         },
-        ..opaque(shader, bound)
+        ..opaque()
     }
 }
 
@@ -321,12 +329,8 @@ fn the_vertex_function_places_the_surface_in_every_camera_pass() {
     for (kind, receives) in [("opaque", false), ("receiver", true)] {
         harness.scene = Scene::new(&harness.device, &harness.queue);
         let shader = add_test_shader(&mut harness.scene);
-        let values = if receives {
-            receiver(shader, 2.)
-        } else {
-            opaque(shader, 2.)
-        };
-        let material = harness.material(values);
+        let values = if receives { receiver() } else { opaque() };
+        let material = harness.shaded(values, shader, 2.);
         set_test_params(&mut harness.scene, &harness.queue, material, params);
         for (x, instance) in halves {
             harness.place(ground(x, [-8., 8.], 0.1), material, [instance, 0., 0., 0.]);
@@ -373,7 +377,7 @@ fn motion_follows_the_shaders_time_and_parameters() {
         return;
     };
     let shader = add_test_shader(&mut harness.scene);
-    let material = harness.material(opaque(shader, 2.));
+    let material = harness.shaded(opaque(), shader, 2.);
     let instance = harness.place(ground([-8., 8.], [-8., 8.], 0.), material, [0.; 4]);
     let camera = looking_down();
     let waving = TestShaderParams {
@@ -444,7 +448,7 @@ fn a_render_origin_move_moves_no_surface() {
         return;
     };
     let shader = add_test_shader(&mut harness.scene);
-    let material = harness.material(opaque(shader, 4.));
+    let material = harness.shaded(opaque(), shader, 4.);
     set_test_params(
         &mut harness.scene,
         &harness.queue,
@@ -507,8 +511,8 @@ fn culling_grows_the_bounds_by_the_displacement_bound() {
         lift: 12.,
         ..Default::default()
     };
-    let walls = [opaque(shader, 0.), receiver(shader, 0.)].map(|values| {
-        let material = harness.material(values);
+    let walls = [opaque(), receiver()].map(|values| {
+        let material = harness.shaded(values, shader, 0.);
         set_test_params(&mut harness.scene, &harness.queue, material, params);
         material
     });
@@ -586,7 +590,7 @@ fn blended_shaders_read_the_opaque_depth_behind_them_on_the_extended_tier() {
         };
         let ground_material = harness.material(black.clone());
         harness.place(ground([-8., 8.], [-8., 8.], 0.), ground_material, [0.; 4]);
-        let glass = harness.material(shaded(
+        let glass = harness.shaded(
             asset::Material {
                 alpha: AlphaMode::Blend {
                     receives_screen_space_reflections: false,
@@ -596,7 +600,7 @@ fn blended_shaders_read_the_opaque_depth_behind_them_on_the_extended_tier() {
             },
             shader,
             1.,
-        ));
+        );
         set_test_params(
             &mut harness.scene,
             &harness.queue,
@@ -641,7 +645,7 @@ fn an_added_instance_reads_no_removed_instances_data() {
         return;
     };
     let shader = add_test_shader(&mut harness.scene);
-    let material = harness.material(opaque(shader, 2.));
+    let material = harness.shaded(opaque(), shader, 2.);
     set_test_params(
         &mut harness.scene,
         &harness.queue,
@@ -685,7 +689,7 @@ fn the_surface_function_reads_this_frames_instance_data() {
         return;
     };
     let shader = add_test_shader(&mut harness.scene);
-    let material = harness.material(shaded(
+    let material = harness.shaded(
         asset::Material {
             base: [0., 0., 0., 1.],
             unlit: true,
@@ -694,7 +698,7 @@ fn the_surface_function_reads_this_frames_instance_data() {
         },
         shader,
         0.,
-    ));
+    );
     let instance = harness.place(
         ground([-8., 8.], [-8., 8.], 0.),
         material,
@@ -775,7 +779,7 @@ fn shader_lifetimes_and_parameter_blocks_are_held_to() {
     };
     let (device, queue) = (harness.device.clone(), harness.queue.clone());
     let shader = add_test_shader(&mut harness.scene);
-    let named = harness.material(opaque(shader, 1.));
+    let named = harness.shaded(opaque(), shader, 1.);
     let plain = harness.material(asset::Material::default());
     let scene = &mut harness.scene;
     assert!(matches!(
@@ -799,8 +803,13 @@ fn shader_lifetimes_and_parameter_blocks_are_held_to() {
     // Another scene's identity, and an ended one.
     let mut other = Scene::new(&device, &queue);
     let foreign = add_test_shader(&mut other);
+    let mut foreign_values = scene.material(plain).unwrap();
+    foreign_values.shader = Some(MaterialShader {
+        shader: foreign,
+        displacement_bound: 1.,
+    });
     assert!(matches!(
-        scene.add_materials(&device, &queue, &[opaque(foreign, 1.)], &[]),
+        scene.set_material(&queue, plain, foreign_values),
         Err(SceneError::UnknownShader)
     ));
     let mut values = scene.material(named).unwrap();

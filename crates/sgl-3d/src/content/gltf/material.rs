@@ -195,8 +195,6 @@ pub(super) fn read_material(
         // is the game's.
         emits_into_gi: true,
         alpha,
-        // A shader is the game's content, never a file's.
-        shader: None,
     })
 }
 

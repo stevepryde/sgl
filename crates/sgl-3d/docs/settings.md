@@ -109,7 +109,7 @@ is done (its algorithm and internal parameters) is SGL3D's.
   for a fixture a scene light stands for. Content, not a setting.
 - A material's shader and what its functions read: `SurfaceMaterial::shader`
   (`MaterialShader`: the shader and its `displacement_bound`, none by
-  default), its parameter block (`Scene::set_shader_parameters`, zeros by
+  default, set through `Scene::set_material`), its parameter block (`Scene::set_shader_parameters`, zeros by
   default), an instance's shader data (`Scene::set_instance_shader_data`,
   zero by default) and a mesh's per-vertex data
   (`PreparedModel::with_shader_data`). Content, not settings: a shader

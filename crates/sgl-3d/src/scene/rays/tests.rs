@@ -246,7 +246,6 @@ fn material(double_sided: bool) -> Material {
         unlit: false,
         emits_into_gi: true,
         alpha: crate::AlphaMode::Opaque,
-        shader: None,
     }
 }
 pub(super) fn asset(meshes: Vec<CpuMesh>, two_sided: bool) -> Asset {

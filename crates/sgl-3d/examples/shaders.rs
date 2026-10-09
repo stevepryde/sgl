@@ -21,7 +21,7 @@ use sgl_3d::glam::{Mat4, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight,
     InstanceState, Light, LightShape, MaterialId, MaterialShader, Mobility, ModelMesh,
-    PreparedModel, Renderer, Scene, ShaderSource,
+    PreparedModel, Renderer, Scene, ShaderSource, SurfaceMaterial,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
     settings::{Antialiasing, Settings},
     timing::GpuTiming,
@@ -121,15 +121,21 @@ fn leaf(color: [u8; 3]) -> Image {
     }))
 }
 
-/// A material drawn through `shader`, moving its vertices at most `bound`.
-fn shaded(material: Material, shader: sgl_3d::ShaderId, bound: f32) -> Material {
-    Material {
-        shader: Some(MaterialShader {
-            shader,
-            displacement_bound: bound,
-        }),
-        ..material
-    }
+/// Draws `material` through `shader`, moving its vertices at most `bound`:
+/// a material names its shader once added, through `Scene::set_material`.
+fn set_shader(
+    scene: &mut Scene,
+    queue: &wgpu::Queue,
+    material: MaterialId,
+    (shader, bound): (sgl_3d::ShaderId, f32),
+) -> Result<(), Box<dyn Error>> {
+    let values = scene.material(material)?;
+    let shader = Some(MaterialShader {
+        shader,
+        displacement_bound: bound,
+    });
+    scene.set_material(queue, material, SurfaceMaterial { shader, ..values })?;
+    Ok(())
 }
 
 /// A shader of the example's `wgsl`, and its `ShaderParams` checked to be
@@ -239,30 +245,29 @@ fn build(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Scene, Box<dyn Er
         device,
         queue,
         &[
-            shaded(leaf_material("grass", 0), wind, WIND[2]),
-            shaded(leaf_material("canopy", 1), wind, CANOPY_WIND[2]),
-            shaded(
-                Material {
-                    name: "tinted glass".into(),
-                    base: [1.; 4],
-                    metallic: 0.,
-                    roughness: 0.05,
-                    ior: 1.5,
-                    transmission: 1.,
-                    // The shader replaces this constant slab with each
-                    // fragment's thickness.
-                    thickness: 0.1,
-                    double_sided: true,
-                    casts_directional_shadow: false,
-                    ..Default::default()
-                },
-                glass,
-                0.,
-            ),
+            leaf_material("grass", 0),
+            leaf_material("canopy", 1),
+            Material {
+                name: "tinted glass".into(),
+                base: [1.; 4],
+                metallic: 0.,
+                roughness: 0.05,
+                ior: 1.5,
+                transmission: 1.,
+                // The shader replaces this constant slab with each
+                // fragment's thickness.
+                thickness: 0.1,
+                double_sided: true,
+                casts_directional_shadow: false,
+                ..Default::default()
+            },
         ],
         &[leaf([70, 140, 50]), leaf([40, 110, 45])],
     )?;
     let [grass, canopy, pane] = [materials[0], materials[1], materials[2]];
+    set_shader(&mut scene, queue, grass, (wind, WIND[2]))?;
+    set_shader(&mut scene, queue, canopy, (wind, CANOPY_WIND[2]))?;
+    set_shader(&mut scene, queue, pane, (glass, 0.))?;
     scene.set_shader_parameters(queue, grass, bytemuck::bytes_of(&WIND))?;
     scene.set_shader_parameters(queue, canopy, bytemuck::bytes_of(&CANOPY_WIND))?;
     // White light turns (0.3, 0.7, 0.5) across 10 cm of glass.

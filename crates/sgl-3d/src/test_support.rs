@@ -586,7 +586,6 @@ pub(crate) fn cube() -> crate::asset::Asset {
             unlit: false,
             emits_into_gi: true,
             alpha: crate::AlphaMode::Opaque,
-            shader: None,
         }],
         images: vec![],
         rig: Default::default(),
@@ -812,19 +811,28 @@ pub(crate) fn add_test_shader(scene: &mut crate::Scene) -> crate::ShaderId {
         .unwrap_or_else(|error| panic!("{error}"))
 }
 
-/// `material` drawn through `shader`, whose vertices move at most `bound`.
-pub(crate) fn shaded(
-    material: crate::asset::Material,
-    shader: crate::ShaderId,
-    bound: f32,
-) -> crate::asset::Material {
-    crate::asset::Material {
-        shader: Some(crate::MaterialShader {
-            shader,
-            displacement_bound: bound,
-        }),
-        ..material
-    }
+/// Draws `material` through `shader`, whose vertices move at most `bound`,
+/// as a game names a material's shader: `Scene::set_material`.
+pub(crate) fn set_shader(
+    scene: &mut crate::Scene,
+    queue: &wgpu::Queue,
+    material: crate::MaterialId,
+    (shader, bound): (crate::ShaderId, f32),
+) {
+    let values = scene.material(material).unwrap();
+    scene
+        .set_material(
+            queue,
+            material,
+            crate::SurfaceMaterial {
+                shader: Some(crate::MaterialShader {
+                    shader,
+                    displacement_bound: bound,
+                }),
+                ..values
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
 }
 
 /// Sets `material`'s `TEST_SHADER` parameters.

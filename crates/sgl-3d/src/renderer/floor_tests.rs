@@ -97,23 +97,13 @@ fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality
     // draws, which take the scene depth on Extended.
     let shader = test_support::add_test_shader(&mut scene);
     let mut wall = test_support::cube();
-    let material = wall.materials.remove(0);
-    wall.materials.push(test_support::shaded(
-        crate::asset::Material {
-            alpha: AlphaMode::Mask { cutoff: 0.5 },
-            ..material
-        },
-        shader,
-        0.,
-    ));
+    wall.materials[0].alpha = AlphaMode::Mask { cutoff: 0.5 };
     let wall = scene.add_asset(&device, &queue, wall).unwrap();
     let normal_glass = scene.add_asset(&device, &queue, glass(true)).unwrap();
-    let mut bump_glass = glass(false);
-    let material = bump_glass.materials.remove(0);
-    bump_glass
-        .materials
-        .push(test_support::shaded(material, shader, 0.));
-    let bump_glass = scene.add_asset(&device, &queue, bump_glass).unwrap();
+    let bump_glass = scene.add_asset(&device, &queue, glass(false)).unwrap();
+    for material in [wall.materials[0], bump_glass.materials[0]] {
+        test_support::set_shader(&mut scene, &queue, material, (shader, 0.));
+    }
     for (model, at, mobility) in [
         (wall.model, Vec3::new(0.3, 0., -4.), Mobility::Static),
         (

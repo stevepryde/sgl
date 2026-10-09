@@ -106,7 +106,7 @@ impl ProgramSet {
     }
 
     /// How many modules it holds.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn modules(&self) -> usize {
         [
             &self.geometry,

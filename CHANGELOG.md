@@ -81,10 +81,10 @@ docs and specs the entry links.
   `instance_shader_data` go with it
   ([Programmable surfaces](crates/sgl-3d/README.md#programmable-surfaces)).
   No game-code changes needed.
-- `sgl-3d` `SurfaceMaterial::shader` and `asset::Material::shader` (new,
-  `MaterialShader { shader, displacement_bound }`, `None` by default):
-  builders with `..Default::default()` keep compiling; a full struct
-  literal adds `shader: None`.
+- `sgl-3d` `SurfaceMaterial::shader` (new,
+  `MaterialShader { shader, displacement_bound }`, `None` by default), set
+  through `Scene::set_material`; `asset::Material` is unchanged. No
+  game-code changes needed.
 - `sgl-3d` `PreparedModel::with_shader_data` (new): meshes with per-vertex
   data for their material's shader; `PreparedModel::new` is unchanged. No
   game-code changes needed.

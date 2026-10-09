@@ -1432,11 +1432,8 @@ fn shaded_blocker(
     if masked {
         blocker.materials[0].alpha = crate::AlphaMode::Mask { cutoff: 0.5 };
     }
-    let material = blocker.materials.remove(0);
-    blocker
-        .materials
-        .push(test_support::shaded(material, shader, 1.));
     let ids = scene.add_asset(device, queue, blocker).unwrap();
+    test_support::set_shader(&mut scene, queue, ids.materials[0], (shader, 1.));
     test_support::set_test_params(&mut scene, queue, ids.materials[0], params);
     scene
         .add_instance(device, queue, at(ids.model, Vec3::ZERO), mobility)

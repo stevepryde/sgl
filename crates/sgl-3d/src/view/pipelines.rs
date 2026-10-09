@@ -363,7 +363,7 @@ impl GeometryPipelines {
     }
 
     /// The shader modules and pipelines it holds for game shaders.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn shader_programs(&self) -> (usize, usize) {
         (
             self.shader_programs.values().map(ProgramSet::modules).sum(),

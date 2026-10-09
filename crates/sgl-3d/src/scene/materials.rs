@@ -316,7 +316,6 @@ impl Materials {
     /// every binding tier alike, without uploading.
     fn validate(
         device: &wgpu::Device,
-        shaders: &Shaders,
         materials: &[AuthoredMaterial],
         images: &[Image],
     ) -> Result<(), SceneError> {
@@ -335,22 +334,22 @@ impl Materials {
             validate_sheen(&values)?;
             validate_diffuse_transmission(&values)?;
             validate_normal_layers(&values, authored_maps(material), material.wrap)?;
-            validate_shader(&values, shaders)?;
         }
         Ok(())
     }
 
     /// Adds `materials`, whose texture indices index `images`, sharing the
-    /// textures they use. On failure nothing remains added.
+    /// textures they use. On failure nothing remains added. An added
+    /// material has no shader: a game names one with `set`.
     pub fn add(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        (rays, shaders): (&mut SceneRays, &Shaders),
+        rays: &mut SceneRays,
         materials: &[AuthoredMaterial],
         images: &[Image],
     ) -> Result<Vec<MaterialId>, SceneError> {
-        Self::validate(device, shaders, materials, images)?;
+        Self::validate(device, materials, images)?;
         let in_effect: Vec<_> = materials
             .iter()
             .map(|material| InEffect::of(material, self.groups.tier))
@@ -369,7 +368,7 @@ impl Materials {
         let result = self.upload(
             device,
             queue,
-            (rays, shaders),
+            rays,
             (materials, &in_effect, images),
             &uses,
             (&mut uploaded, &mut added),
@@ -393,7 +392,7 @@ impl Materials {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        (rays, shaders): (&mut SceneRays, &Shaders),
+        rays: &mut SceneRays,
         (materials, in_effect, images): (&[AuthoredMaterial], &[InEffect], &[Image]),
         uses: &[[bool; 2]],
         (uploaded, added): (&mut [Option<usize>], &mut Vec<MaterialId>),
@@ -405,7 +404,7 @@ impl Materials {
         }
         for (material, &maps) in materials.iter().zip(in_effect) {
             let maps = maps.map(|index| uploaded[index].expect("a map in effect is uploaded"));
-            added.push(self.add_one(device, queue, (rays, shaders), material, maps)?);
+            added.push(self.add_one(device, queue, rays, material, maps)?);
         }
         Ok(())
     }
@@ -415,7 +414,7 @@ impl Materials {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        (rays, shaders): (&mut SceneRays, &Shaders),
+        rays: &mut SceneRays,
         material: &AuthoredMaterial,
         maps: InEffect,
     ) -> Result<MaterialId, SceneError> {
@@ -444,13 +443,12 @@ impl Materials {
             maps,
             wrap: material.wrap,
         };
-        let params = params_block(device, shaders, &values);
         let group = self.groups.group(
             device,
             &self.textures,
             &bound,
             [&values_buffer, &baked],
-            params.as_ref(),
+            None,
         );
         let mut distinct: Vec<usize> = maps.images().map(|(texture, _)| texture).collect();
         distinct.sort_unstable();
@@ -471,7 +469,7 @@ impl Materials {
             record,
             users: HashMap::new(),
             untangented: 0,
-            params,
+            params: None,
         }))
     }
 
@@ -590,21 +588,12 @@ impl Scene {
         images: &[Image],
     ) -> Result<Vec<MaterialId>, SceneError> {
         self.edited();
-        let ids = self.materials.add(
-            device,
-            queue,
-            (&mut self.rays, &self.shaders),
-            materials,
-            images,
-        );
+        let ids = self
+            .materials
+            .add(device, queue, &mut self.rays, materials, images);
         // A failure after the source grew still leaves it grown.
         self.refresh_scene_group(device);
-        let ids = ids?;
-        for &id in &ids {
-            let shader = self.materials.get(id)?.values.shader;
-            self.shaders.count(shader.map(|shader| shader.shader), 1);
-        }
-        Ok(ids)
+        ids
     }
 
     /// A material's current values.

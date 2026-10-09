@@ -136,7 +136,6 @@ fn plane_asset(has_normal_map: bool) -> Asset {
             unlit: false,
             emits_into_gi: true,
             alpha: crate::AlphaMode::Opaque,
-            shader: None,
         }],
         images: vec![
             crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(1, 1, image::Rgba(PIXEL))),

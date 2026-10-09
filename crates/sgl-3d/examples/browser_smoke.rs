@@ -31,7 +31,7 @@ use sgl_3d::{
     DynamicGiVolume, EnvironmentId, Fog, FogVolume, FrameInput, HemisphereLight, InstanceId,
     InstanceState, IrradianceCell, IrradianceVolume, Light, LightShape, MaterialShader, Mist,
     Mobility, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene, ShaderSource,
-    SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels,
+    SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, SurfaceMaterial,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     deformation::{
         Influence, Joint, MeshDeformation, MorphDelta, MorphTarget, MorphWeight, Node, Rig,
@@ -382,15 +382,24 @@ fn add_glass(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene) -> R
         thickness: 0.1,
         double_sided: true,
         casts_directional_shadow: false,
-        shader: Some(MaterialShader {
-            shader,
-            displacement_bound: 0.,
-        }),
         ..Default::default()
     };
     let glass = scene
         .add_materials(device, queue, &[glass], &[])
         .map_err(|e| format!("add_materials: {e}"))?[0];
+    // A material names its shader once added.
+    let values = SurfaceMaterial {
+        shader: Some(MaterialShader {
+            shader,
+            displacement_bound: 0.,
+        }),
+        ..scene
+            .material(glass)
+            .map_err(|e| format!("material: {e}"))?
+    };
+    scene
+        .set_material(queue, glass, values)
+        .map_err(|e| format!("set_material: {e}"))?;
     let tint = [0.4f32, 0.8, 0.6, 1.].map(|color| -color.ln() / 0.1);
     scene
         .set_shader_parameters(queue, glass, bytemuck::bytes_of(&tint))

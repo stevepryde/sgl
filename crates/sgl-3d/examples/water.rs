@@ -31,7 +31,7 @@ use sgl_3d::glam::{Mat4, Quat, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameInput, InstanceId,
     InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh, MotionBlurParameters,
-    NormalLayer, PreparedModel, Renderer, Scene, ShaderSource,
+    NormalLayer, PreparedModel, Renderer, Scene, ShaderSource, SurfaceMaterial,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
     deformation::{MeshDeformation, MorphDelta, MorphTarget},
     environment::{EnvironmentMap, PmremAtlas},
@@ -986,13 +986,18 @@ fn render(
                 normal_layers: Some(water_layers()),
                 // The shader replaces this constant slab with the column.
                 thickness: 1.,
+                ..water
+            };
+            let water = scene.add_materials(device, queue, &[water], &[wave_map()])?[0];
+            // A material names its shader once added.
+            let values = SurfaceMaterial {
                 shader: Some(MaterialShader {
                     shader,
                     displacement_bound: displacement_bound(),
                 }),
-                ..water
+                ..scene.material(water)?
             };
-            let water = scene.add_materials(device, queue, &[water], &[wave_map()])?[0];
+            scene.set_material(queue, water, values)?;
             scene.set_shader_parameters(queue, water, bytemuck::bytes_of(&water_params()))?;
             let placed = place_chunks((device, queue), &mut scene, water, options.chunks, false)?;
             chunks = Some(placed);

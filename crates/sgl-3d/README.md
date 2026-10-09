@@ -1281,10 +1281,11 @@ cargo run --release -p sgl-3d --example water
 
 A game gives a material its own vertex and surface functions in WGSL: one
 module added to the scene (`Scene::add_shader`), which a material names
-(`SurfaceMaterial::shader`, `asset::Material::shader`:
-`MaterialShader { shader, displacement_bound }`). SGL3D composes the module
-into its own programs and calls the functions from every pass that
-rasterises the material, so colour, depth, shadows, the reflections' surface,
+once added (`SurfaceMaterial::shader`:
+`MaterialShader { shader, displacement_bound }`, through
+`Scene::set_material`; an authored `asset::Material` has none). SGL3D
+composes the module into its own programs and calls the functions from
+every pass that rasterises the material, so colour, depth, shadows, the reflections' surface,
 temporal antialiasing and motion blur see one surface: water's waves,
 vegetation in the wind, glass whose thickness varies across it. The
 equations are the game's; SGL3D ships none ([D-35](../../specs/decisions.md)).
@@ -1439,6 +1440,9 @@ The Rust side:
   returns its `ShaderId`; `remove_shader` refuses one a material names
   (`SceneError::ShaderInUse`); an ended or another scene's identity is
   `SceneError::UnknownShader`, as is a material that names one.
+  `scene.set_material(queue, id, SurfaceMaterial { shader: Some(..),
+  ..scene.material(id)? })` names a shader after `add_materials` or
+  `add_asset`.
 - `Scene::shader_parameters_layout(id)` is naga's uniform layout of
   `ShaderParams` (`shader::ShaderParamsLayout`: its size and each member's
   name, offset and size) for the game's `#[repr(C)]` mirror to check itself

@@ -1277,11 +1277,8 @@ fn place_shaded(
     let shader = test_support::add_test_shader(&mut fixture.scene);
     let mut asset = Fixture::white(mesh);
     asset.materials[0].alpha = alpha;
-    let material = asset.materials.remove(0);
-    asset
-        .materials
-        .push(test_support::shaded(material, shader, bound));
     let ids = fixture.scene.add_asset(device, queue, asset).unwrap();
+    test_support::set_shader(&mut fixture.scene, queue, ids.materials[0], (shader, bound));
     test_support::set_test_params(&mut fixture.scene, queue, ids.materials[0], params);
     let state = InstanceState {
         visible: false,
