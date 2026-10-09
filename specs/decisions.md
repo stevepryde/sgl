@@ -604,27 +604,37 @@ Use the [current specs](README.md) for implementation and the
   released, so the queue holds at most one state more than the lanes have
   queued generations.
 - **D-41** Decision, 2026-10-09 (#283): a game's blended volume measures its
-  optical path from two depth layers SGL3D draws of the volumes whose shader
-  reads it, the nearest entry face and the nearest exit face at each pixel
-  in front of the opaque surface, each over a copy of the opaque depth, read
-  through `scene_volume_path` on the Extended tier behind
-  `Settings::volume_paths` (on by default; it costs only frames that draw
-  such a volume: two depth passes over its meshes and two render-size depth
-  targets). The reference engines take a volume's thickness from its
-  material (KHR_materials_volume's factor and map, which glTF has
-  rasterisers bake and ray tracers replace by the traced distance, and which
-  Bevy 9d12036, Filament ef1a133 and three.js r185 read; Godot has none) or
-  measure water below a plane (Wicked 4323a33 `oceanSurfacePS.hlsl`), which
-  a finite volume is not; the opaque depth behind a surface (#272) bounds
-  the path only from above. The layers are Wyman's back-face depth (*An
-  Approximate Image-Space Approach for Interactive Refraction*, SIGGRAPH
-  2005), with a front-face layer added so a face seen from inside measures
-  from its entry or the eye. Nearest-face layers need only the depth test;
-  summing signed depths along the ray in one pass would count volumes the
-  nearest hides and needs 32-bit float blending, optional on WebGPU.
-  Rationale: rasterised volumes get the distance a ray tracer measures at
-  their nearest crossing, following their deformed geometry, and materials
-  that do not read it pay nothing. Limits: a ray's second crossing behind
-  the nearest exit is bounded by the opaque surface, the path follows the
-  view ray rather than the refracted one, and rays and probe captures have
-  no layers.
+  optical path from three depth layers SGL3D draws of the volumes whose
+  shader reads it, each over a copy of the opaque depth: the nearest entry
+  face, the nearest exit face and the nearest exit behind it at each pixel;
+  `scene_volume_path` returns the length along the view ray and what bounds
+  it, on the Extended tier behind `Settings::volume_paths` (on by default;
+  it costs only frames that draw such a volume: three depth passes over its
+  meshes and three render-size depth targets). The reference engines take a
+  volume's thickness from its material (KHR_materials_volume's factor and
+  map, which glTF has rasterisers bake and ray tracers replace by the traced
+  distance; Bevy 9d12036, Filament ef1a133 and three.js r185 read it; Godot
+  b130438 has none) or measure water below a plane (Wicked 4323a33
+  `oceanSurfacePS.hlsl`), which a finite volume is not; the opaque depth
+  behind a surface (#272) bounds the path only from above. The exit layer is
+  the back-face depth of Wyman's refraction (*An Approximate Image-Space
+  Approach for Interactive Refraction*, SIGGRAPH 2005), whose view-ray term
+  the path is, as Oliveira and Brauwers apply it to deforming meshes
+  (*Real-Time Refraction Through Deformable Objects*, I3D 2007); SGL3D adds
+  the entry layer, so a face seen from inside measures from its entry or the
+  eye, and one depth peel of the exits (Everitt, *Interactive
+  Order-Independent Transparency*, NVIDIA 2001), so a volume behind
+  another's far side, or a concave volume's second part, measures its own
+  exit; a third crossing is reported unmeasured (`VOLUME_HIDDEN`) rather
+  than given the opaque bound unmarked. Nearest-face layers need only the
+  depth test, where summing signed depths along the ray would count volumes
+  the nearest hides and need 32-bit float blending, optional on WebGPU. The
+  passes keep a side by discarding the other in a fragment entry, not by
+  culling: a double-sided material's batch holds mirrored and unmirrored
+  instances, whose sides only the object record's pose tells
+  (`object_front`). Rationale: rasterised volumes get the distance a ray
+  tracer measures at their first two crossings, following their deformed
+  geometry, and materials that do not read it pay nothing. Limits: the path
+  follows the view ray, not the refracted one; a nested volume (ice in
+  water) ends the outer volume's path at its own faces; a masked cut-out
+  still bounds; rays and probe captures have no layers.

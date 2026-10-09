@@ -267,7 +267,7 @@ current capabilities and limits.
   culling grown by a displacement bound and the opaque depth behind a
   blended surface on the Extended tier, and, behind `Settings::volume_paths`,
   the length of a blended volume's view ray inside it, measured from its
-  nearest entry and exit faces
+  nearest entry and exit faces and the next exit
   ([#283](https://github.com/stevepryde/sgl/issues/283), D-41), as the
   architecture designs them
   ([Programmable surfaces](sgl3d-architecture.md#designs-that-span-stages));
