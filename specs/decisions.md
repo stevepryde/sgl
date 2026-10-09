@@ -603,3 +603,28 @@ Use the [current specs](README.md) for implementation and the
   generation; one with nothing flushed after it is dropped when the next is
   released, so the queue holds at most one state more than the lanes have
   queued generations.
+- **D-41** Decision, 2026-10-09 (#283): a game's blended volume measures its
+  optical path from two depth layers SGL3D draws of the volumes whose shader
+  reads it, the nearest entry face and the nearest exit face at each pixel
+  in front of the opaque surface, each over a copy of the opaque depth, read
+  through `scene_volume_path` on the Extended tier behind
+  `Settings::volume_paths` (on by default; it costs only frames that draw
+  such a volume: two depth passes over its meshes and two render-size depth
+  targets). The reference engines take a volume's thickness from its
+  material (KHR_materials_volume's factor and map, which glTF has
+  rasterisers bake and ray tracers replace by the traced distance, and which
+  Bevy 9d12036, Filament ef1a133 and three.js r185 read; Godot has none) or
+  measure water below a plane (Wicked 4323a33 `oceanSurfacePS.hlsl`), which
+  a finite volume is not; the opaque depth behind a surface (#272) bounds
+  the path only from above. The layers are Wyman's back-face depth (*An
+  Approximate Image-Space Approach for Interactive Refraction*, SIGGRAPH
+  2005), with a front-face layer added so a face seen from inside measures
+  from its entry or the eye. Nearest-face layers need only the depth test;
+  summing signed depths along the ray in one pass would count volumes the
+  nearest hides and needs 32-bit float blending, optional on WebGPU.
+  Rationale: rasterised volumes get the distance a ray tracer measures at
+  their nearest crossing, following their deformed geometry, and materials
+  that do not read it pay nothing. Limits: a ray's second crossing behind
+  the nearest exit is bounded by the opaque surface, the path follows the
+  view ray rather than the refracted one, and rays and probe captures have
+  no layers.

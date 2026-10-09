@@ -265,7 +265,11 @@ current capabilities and limits.
   a game's WGSL vertex and surface functions, composed into SGL3D's own
   programs and run in every raster pass, with motion from two evaluations,
   culling grown by a displacement bound and the opaque depth behind a
-  blended surface on the Extended tier, as the architecture designs them
+  blended surface on the Extended tier, and, behind `Settings::volume_paths`,
+  the length of a blended volume's view ray inside it, measured from its
+  nearest entry and exit faces
+  ([#283](https://github.com/stevepryde/sgl/issues/283), D-41), as the
+  architecture designs them
   ([Programmable surfaces](sgl3d-architecture.md#designs-that-span-stages));
   rays, bakes and static shadow layers see the rest geometry. See
   [programmable surfaces](../crates/sgl-3d/README.md#programmable-surfaces).
