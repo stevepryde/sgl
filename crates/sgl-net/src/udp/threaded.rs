@@ -2,6 +2,13 @@
 //!
 //! The worker owns [`UdpServer`] and its socket. The simulation interacts only
 //! with bounded queues, matching the WebSocket worker ownership model.
+//!
+//! The command queue is the only admission point the caller sees: `send`
+//! refuses with [`SendError::WouldBlock`] once a peer's reliable allowance is
+//! full, and the worker moves a message to the endpoint only when the
+//! endpoint reports room for it, so a refusal never ends a connection. A
+//! peer's reliable traffic is therefore buffered at most twice: once here
+//! and once in the endpoint.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -12,7 +19,10 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::{EndpointConfig, UdpServer};
-use crate::{ConnectionId, Delivery, DisconnectReason, SendError, ServerEvent, ServerIo};
+use crate::{
+    ConnectionId, Delivery, DisconnectReason, Lane, ReliableCapacity, SendError, ServerEvent,
+    ServerIo,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ThreadedUdpConfig {
@@ -33,18 +43,15 @@ impl Default for ThreadedUdpConfig {
     }
 }
 
-enum Command {
-    Send(ConnectionId, Delivery, Vec<u8>),
-    Disconnect(ConnectionId),
-    StopAdmission,
-}
-
 struct CommandState {
+    /// Connections the worker has announced and not yet seen end.
+    live: BTreeSet<ConnectionId>,
     peers: BTreeMap<ConnectionId, PeerCommands>,
     disconnects: BTreeSet<ConnectionId>,
     stop_admission: bool,
 }
 
+#[derive(Default)]
 struct PeerCommands {
     reliable: VecDeque<Vec<u8>>,
     reliable_bytes: usize,
@@ -125,7 +132,7 @@ impl IngressHub {
             return true;
         };
         match delivery {
-            Delivery::ReliableOrdered => {
+            Delivery::Reliable(_) => {
                 if peer.reliable.len() >= self.max_reliable_messages
                     || peer.reliable_bytes.saturating_add(payload.len()) > self.max_reliable_bytes
                 {
@@ -152,7 +159,7 @@ impl IngressHub {
                 peer.reliable_bytes -= payload.len();
                 output.push(ServerEvent::Message {
                     conn,
-                    delivery: Delivery::ReliableOrdered,
+                    delivery: Delivery::RELIABLE_ORDERED,
                     payload,
                 });
             }
@@ -172,6 +179,7 @@ impl CommandQueue {
     fn new(config: &ThreadedUdpConfig) -> Self {
         Self {
             state: Mutex::new(CommandState {
+                live: BTreeSet::new(),
                 peers: BTreeMap::new(),
                 disconnects: BTreeSet::new(),
                 stop_admission: false,
@@ -181,33 +189,31 @@ impl CommandQueue {
         }
     }
 
+    fn lock(&self) -> std::sync::MutexGuard<'_, CommandState> {
+        self.state.lock().expect("UDP command queue poisoned")
+    }
+
     fn send(&self, id: ConnectionId, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
+        let mut state = self.lock();
+        if !state.live.contains(&id) {
+            return Err(SendError::UnknownConnection);
+        }
         let max_bytes = match delivery {
-            Delivery::ReliableOrdered => crate::MAX_RELIABLE_MESSAGE_BYTES,
+            Delivery::Reliable(_) => crate::MAX_RELIABLE_MESSAGE_BYTES,
             Delivery::LatestState => crate::MAX_LATEST_STATE_BYTES,
         };
         if payload.len() > max_bytes {
             return Err(SendError::PayloadTooLarge);
         }
-        let mut state = self.state.lock().expect("UDP command queue poisoned");
-        if state.disconnects.contains(&id) {
-            return Err(SendError::UnknownConnection);
-        }
-        let peer = state.peers.entry(id).or_insert_with(|| PeerCommands {
-            reliable: VecDeque::new(),
-            reliable_bytes: 0,
-            latest: None,
-        });
+        let peer = state.peers.entry(id).or_default();
         match delivery {
-            Delivery::ReliableOrdered => {
+            Delivery::Reliable(_) => {
+                // Each peer owns its allowance; a full one refuses this send
+                // and nothing else.
                 if peer.reliable.len() >= self.max_messages
                     || peer.reliable_bytes.saturating_add(payload.len()) > self.max_bytes
                 {
-                    // Each peer owns its allowance. Overflow removes only the
-                    // offender's pending traffic and schedules its disconnect.
-                    state.peers.remove(&id);
-                    state.disconnects.insert(id);
-                    return Err(SendError::ReliableOverflow);
+                    return Err(SendError::WouldBlock);
                 }
                 peer.reliable_bytes += payload.len();
                 peer.reliable.push_back(payload.to_vec());
@@ -220,45 +226,102 @@ impl CommandQueue {
         Ok(())
     }
 
-    fn disconnect(&self, id: ConnectionId) {
-        let mut state = self.state.lock().expect("UDP command queue poisoned");
+    fn capacity(&self, id: ConnectionId) -> ReliableCapacity {
+        let state = self.lock();
+        if !state.live.contains(&id) {
+            return ReliableCapacity::default();
+        }
+        let (messages, bytes) = state
+            .peers
+            .get(&id)
+            .map_or((0, 0), |peer| (peer.reliable.len(), peer.reliable_bytes));
+        ReliableCapacity::remaining(
+            self.max_messages.saturating_sub(messages),
+            self.max_bytes.saturating_sub(bytes),
+        )
+    }
+
+    /// The worker announced `id`: the caller may now send to it.
+    fn connected(&self, id: ConnectionId) {
+        self.lock().live.insert(id);
+    }
+
+    /// The connection ended at the worker: its queued commands go with it.
+    fn ended(&self, id: ConnectionId) {
+        let mut state = self.lock();
+        state.live.remove(&id);
         state.peers.remove(&id);
-        state.disconnects.insert(id);
+    }
+
+    /// The caller ended the connection.
+    fn disconnect(&self, id: ConnectionId) {
+        let mut state = self.lock();
+        if state.live.remove(&id) {
+            state.peers.remove(&id);
+            state.disconnects.insert(id);
+        }
     }
 
     fn stop_admission(&self) {
-        self.state
-            .lock()
-            .expect("UDP command queue poisoned")
-            .stop_admission = true;
+        self.lock().stop_admission = true;
     }
 
-    fn drain(&self) -> Vec<Command> {
-        const RELIABLE_PER_PEER_PER_DRAIN: usize = 32;
-
-        let mut state = self.state.lock().expect("UDP command queue poisoned");
-        let mut output = Vec::new();
+    /// Applies the queued commands to `endpoint` and returns the connections
+    /// the caller disconnected. Reliable messages move in order, each only
+    /// once the endpoint reports room for it; that report is advisory, so a
+    /// message the endpoint still refuses stays at the front for a later
+    /// turn.
+    fn apply<S: ServerIo>(&self, endpoint: &mut S, now_ms: u64) -> Vec<ConnectionId> {
+        let mut state = self.lock();
         if std::mem::take(&mut state.stop_admission) {
-            output.push(Command::StopAdmission);
+            endpoint.stop_admission();
         }
-        output.extend(state.disconnects.iter().copied().map(Command::Disconnect));
-        state.disconnects.clear();
-        for (&id, peer) in &mut state.peers {
-            for _ in 0..RELIABLE_PER_PEER_PER_DRAIN {
-                let Some(payload) = peer.reliable.pop_front() else {
+        let disconnects: Vec<_> = std::mem::take(&mut state.disconnects).into_iter().collect();
+        for &conn in &disconnects {
+            endpoint.disconnect(conn, now_ms);
+        }
+        let mut gone = Vec::new();
+        for (&conn, peer) in &mut state.peers {
+            let mut ended = false;
+            while let Some(payload) = peer.reliable.front() {
+                let capacity = endpoint.capacity(conn, Lane::DEFAULT);
+                if capacity.messages == 0 || capacity.bytes < payload.len() {
                     break;
-                };
-                peer.reliable_bytes -= payload.len();
-                output.push(Command::Send(id, Delivery::ReliableOrdered, payload));
+                }
+                match endpoint.send(conn, Delivery::RELIABLE_ORDERED, payload) {
+                    // Admission already bounded the size, so a payload the
+                    // endpoint calls too large is dropped rather than left to
+                    // wedge the lane.
+                    Ok(()) | Err(SendError::PayloadTooLarge) => {
+                        peer.reliable_bytes -= payload.len();
+                        peer.reliable.pop_front();
+                    }
+                    Err(SendError::WouldBlock) => break,
+                    Err(SendError::UnknownConnection | SendError::Disconnected) => {
+                        ended = true;
+                        break;
+                    }
+                }
             }
-            if let Some(payload) = peer.latest.take() {
-                output.push(Command::Send(id, Delivery::LatestState, payload));
+            if !ended && let Some(payload) = peer.latest.take() {
+                ended = matches!(
+                    endpoint.send(conn, Delivery::LatestState, &payload),
+                    Err(SendError::UnknownConnection | SendError::Disconnected)
+                );
             }
+            if ended {
+                // Its `Disconnected` event reaches the caller through ingress.
+                gone.push(conn);
+            }
+        }
+        for conn in gone {
+            state.live.remove(&conn);
+            state.peers.remove(&conn);
         }
         state
             .peers
             .retain(|_, peer| !peer.reliable.is_empty() || peer.latest.is_some());
-        output
+        disconnects
     }
 }
 
@@ -346,6 +409,10 @@ impl ServerIo for ThreadedUdpServer {
         self.commands.send(conn, delivery, payload)
     }
 
+    fn capacity(&self, conn: ConnectionId, _lane: Lane) -> ReliableCapacity {
+        self.commands.capacity(conn)
+    }
+
     fn flush(&mut self, _now_ms: u64) {}
 
     fn disconnect(&mut self, conn: ConnectionId, _now_ms: u64) {
@@ -390,8 +457,12 @@ fn worker_tick<S: ServerIo>(
 ) {
     for event in endpoint.poll(now_ms) {
         match event {
-            ServerEvent::Connected { conn } => ingress.connected(conn),
+            ServerEvent::Connected { conn } => {
+                commands.connected(conn);
+                ingress.connected(conn);
+            }
             ServerEvent::Disconnected { conn, reason } => {
+                commands.ended(conn);
                 ingress.disconnected(conn, reason);
             }
             ServerEvent::Message {
@@ -403,28 +474,14 @@ fn worker_tick<S: ServerIo>(
                     continue;
                 }
                 endpoint.disconnect(conn, now_ms);
-                ingress.disconnected(conn, DisconnectReason::ReliableOverflow);
+                commands.ended(conn);
+                ingress.disconnected(conn, DisconnectReason::InboundOverflow);
             }
         }
     }
 
-    for command in commands.drain() {
-        match command {
-            Command::Send(conn, delivery, payload) => {
-                if matches!(
-                    endpoint.send(conn, delivery, &payload),
-                    Err(SendError::ReliableOverflow)
-                ) {
-                    endpoint.disconnect(conn, now_ms);
-                    ingress.disconnected(conn, DisconnectReason::ReliableOverflow);
-                }
-            }
-            Command::Disconnect(conn) => {
-                endpoint.disconnect(conn, now_ms);
-                ingress.disconnected(conn, DisconnectReason::Local);
-            }
-            Command::StopAdmission => endpoint.stop_admission(),
-        }
+    for conn in commands.apply(endpoint, now_ms) {
+        ingress.disconnected(conn, DisconnectReason::Local);
     }
     endpoint.flush(now_ms);
 }
@@ -460,7 +517,7 @@ mod tests {
         let (mut client, mut server) = memory_duplex();
 
         client
-            .send(Delivery::ReliableOrdered, b"hello")
+            .send(Delivery::RELIABLE_ORDERED, b"hello")
             .expect("queue hello");
         client.flush(0);
         worker_tick(&mut server, &commands, &ingress, 0);
@@ -470,17 +527,17 @@ mod tests {
                 &events[..],
                 [
                     ServerEvent::Connected { conn },
-                    ServerEvent::Message { conn: from, delivery: Delivery::ReliableOrdered, payload },
+                    ServerEvent::Message { conn: from, delivery: Delivery::RELIABLE_ORDERED, payload },
                 ] if *conn == SOLO_CONNECTION && *from == SOLO_CONNECTION && payload == b"hello"
             ),
             "{events:?}"
         );
 
         commands
-            .send(SOLO_CONNECTION, Delivery::ReliableOrdered, b"one")
+            .send(SOLO_CONNECTION, Delivery::RELIABLE_ORDERED, b"one")
             .unwrap();
         commands
-            .send(SOLO_CONNECTION, Delivery::ReliableOrdered, b"two")
+            .send(SOLO_CONNECTION, Delivery::RELIABLE_ORDERED, b"two")
             .unwrap();
         commands
             .send(SOLO_CONNECTION, Delivery::LatestState, b"stale")
@@ -491,7 +548,7 @@ mod tests {
         worker_tick(&mut server, &commands, &ingress, 5);
         let received = client.poll(5);
         assert_eq!(
-            payloads(&received, Delivery::ReliableOrdered),
+            payloads(&received, Delivery::RELIABLE_ORDERED),
             vec![b"one".to_vec(), b"two".to_vec()]
         );
         assert_eq!(
@@ -516,7 +573,7 @@ mod tests {
     }
 
     /// A peer that fills its ingress allowance is disconnected at the
-    /// endpoint and reported as `ReliableOverflow`; its buffered ingress is
+    /// endpoint and reported as `InboundOverflow`; its buffered ingress is
     /// discarded with it (`IngressHub::disconnected`), so the simulation sees
     /// the lifecycle pair and no half-delivered stream, and the peer itself
     /// observes the disconnect.
@@ -534,7 +591,7 @@ mod tests {
             "the memory client is connected from the start"
         );
         for payload in [b"m1", b"m2", b"m3"] {
-            client.send(Delivery::ReliableOrdered, payload).unwrap();
+            client.send(Delivery::RELIABLE_ORDERED, payload).unwrap();
         }
         client.flush(0);
 
@@ -545,7 +602,7 @@ mod tests {
                 &events[..],
                 [
                     ServerEvent::Connected { conn },
-                    ServerEvent::Disconnected { conn: gone, reason: DisconnectReason::ReliableOverflow },
+                    ServerEvent::Disconnected { conn: gone, reason: DisconnectReason::InboundOverflow },
                 ] if *conn == SOLO_CONNECTION && *gone == SOLO_CONNECTION
             ),
             "{events:?}"
@@ -567,52 +624,132 @@ mod tests {
         ConnectionId::from_raw(raw).expect("test ids are nonzero")
     }
 
-    #[test]
-    fn commands_preserve_reliable_and_coalesce_latest_per_peer() {
-        let queue = CommandQueue::new(&ThreadedUdpConfig::default());
-        let a = cid(1);
-        let b = cid(2);
-        queue.send(a, Delivery::ReliableOrdered, b"event").unwrap();
-        queue.send(a, Delivery::LatestState, b"old").unwrap();
-        queue.send(a, Delivery::LatestState, b"new").unwrap();
-        queue.send(b, Delivery::LatestState, b"other").unwrap();
-        let commands = queue.drain();
-        assert_eq!(commands.len(), 3);
-        assert!(matches!(
-            &commands[0],
-            Command::Send(_, Delivery::ReliableOrdered, payload) if payload == b"event"
-        ));
-        assert!(commands.iter().any(|command| matches!(
-            command,
-            Command::Send(id, Delivery::LatestState, payload) if *id == a && payload == b"new"
-        )));
+    /// A memory server end that admits at most `per_tick` reliable messages
+    /// between two polls. Its `capacity` over-promises by one message — the
+    /// report is advisory — so the worker also meets real refusals.
+    struct Throttled {
+        inner: crate::MemoryServerIo,
+        per_tick: usize,
+        admitted: usize,
     }
 
+    impl ServerIo for Throttled {
+        fn poll(&mut self, now_ms: u64) -> Vec<ServerEvent> {
+            self.admitted = 0;
+            self.inner.poll(now_ms)
+        }
+
+        fn send(
+            &mut self,
+            conn: ConnectionId,
+            delivery: Delivery,
+            payload: &[u8],
+        ) -> Result<(), SendError> {
+            if delivery != Delivery::LatestState && self.admitted >= self.per_tick {
+                return Err(SendError::WouldBlock);
+            }
+            self.inner.send(conn, delivery, payload)?;
+            if delivery != Delivery::LatestState {
+                self.admitted += 1;
+            }
+            Ok(())
+        }
+
+        fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
+            let inner = self.inner.capacity(conn, lane);
+            ReliableCapacity::remaining(
+                inner.messages.min(self.per_tick + 1 - self.admitted),
+                inner.bytes,
+            )
+        }
+
+        fn flush(&mut self, now_ms: u64) {
+            self.inner.flush(now_ms);
+        }
+
+        fn disconnect(&mut self, conn: ConnectionId, now_ms: u64) {
+            self.inner.disconnect(conn, now_ms);
+        }
+
+        fn stop_admission(&mut self) {
+            self.inner.stop_admission();
+        }
+    }
+
+    /// Defect (#267): the worker disconnecting a peer whose endpoint refuses
+    /// a send, or dropping, duplicating or reordering the refused message.
+    /// Oracle: the memory client's received sequence while the endpoint takes
+    /// two messages per tick and refuses the third: every queued message
+    /// arrives once, in order, nobody is disconnected, and the caller is
+    /// refused only while its command allowance is full.
     #[test]
-    fn reliable_overflow_schedules_peer_disconnect() {
+    fn worker_moves_messages_only_as_the_endpoint_admits_them() {
         let config = ThreadedUdpConfig {
-            reliable_queue_messages: 1,
+            reliable_queue_messages: 50,
             ..ThreadedUdpConfig::default()
         };
-        let queue = CommandQueue::new(&config);
-        let peer = cid(7);
-        queue
-            .send(peer, Delivery::ReliableOrdered, b"first")
-            .unwrap();
+        let commands = CommandQueue::new(&config);
+        let ingress = IngressHub::new(&config);
+        let (mut client, server) = memory_duplex();
+        let mut server = Throttled {
+            inner: server,
+            per_tick: 2,
+            admitted: 0,
+        };
+        worker_tick(&mut server, &commands, &ingress, 0);
+        assert!(matches!(
+            &ingress.drain()[..],
+            [ServerEvent::Connected { conn }] if *conn == SOLO_CONNECTION
+        ));
+
+        let message = |index: u32| index.to_le_bytes().to_vec();
+        for index in 0..50 {
+            commands
+                .send(SOLO_CONNECTION, Delivery::RELIABLE_ORDERED, &message(index))
+                .expect("within the command allowance");
+        }
         assert_eq!(
-            queue.send(peer, Delivery::ReliableOrdered, b"overflow"),
-            Err(SendError::ReliableOverflow)
+            commands.send(SOLO_CONNECTION, Delivery::RELIABLE_ORDERED, &message(50)),
+            Err(SendError::WouldBlock)
         );
-        assert!(
-            queue
-                .drain()
-                .iter()
-                .any(|command| matches!(command, Command::Disconnect(id) if *id == peer))
+        assert_eq!(
+            commands.capacity(SOLO_CONNECTION),
+            ReliableCapacity::default()
         );
+
+        let mut received = Vec::new();
+        let mut next = 50;
+        for tick in 1..=40 {
+            worker_tick(&mut server, &commands, &ingress, tick);
+            assert!(ingress.drain().is_empty(), "no lifecycle change");
+            for event in client.poll(tick) {
+                match event {
+                    ClientEvent::Message { payload, .. } => {
+                        received.push(u32::from_le_bytes(payload.try_into().unwrap()));
+                    }
+                    ClientEvent::Connected => {}
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            // The worker freed exactly what the endpoint took; refill it.
+            while next < 60 {
+                match commands.send(SOLO_CONNECTION, Delivery::RELIABLE_ORDERED, &message(next)) {
+                    Ok(()) => next += 1,
+                    Err(SendError::WouldBlock) => {
+                        assert_eq!(commands.capacity(SOLO_CONNECTION).messages, 0);
+                        break;
+                    }
+                    Err(error) => panic!("refused with {error:?}"),
+                }
+            }
+        }
+        assert_eq!(received, (0..60).collect::<Vec<_>>());
     }
 
+    /// Defect: a peer's full allowance refusing another peer, or a refusal
+    /// that schedules a disconnect. Oracle: per-peer bounds (netcode.md 11).
     #[test]
-    fn outbound_reliable_overflow_does_not_consume_another_peers_allowance() {
+    fn a_full_command_allowance_refuses_only_its_own_peer() {
         let config = ThreadedUdpConfig {
             reliable_queue_messages: 1,
             ..ThreadedUdpConfig::default()
@@ -620,32 +757,70 @@ mod tests {
         let queue = CommandQueue::new(&config);
         let noisy = cid(7);
         let healthy = cid(8);
+        queue.connected(noisy);
+        queue.connected(healthy);
         queue
-            .send(noisy, Delivery::ReliableOrdered, b"first")
+            .send(noisy, Delivery::RELIABLE_ORDERED, b"first")
             .unwrap();
         assert_eq!(
-            queue.send(noisy, Delivery::ReliableOrdered, b"overflow"),
-            Err(SendError::ReliableOverflow)
+            queue.send(noisy, Delivery::RELIABLE_ORDERED, b"refused"),
+            Err(SendError::WouldBlock)
         );
         queue
-            .send(healthy, Delivery::ReliableOrdered, b"healthy")
+            .send(healthy, Delivery::RELIABLE_ORDERED, b"healthy")
             .unwrap();
+        let state = queue.lock();
+        assert!(state.disconnects.is_empty());
+        assert!(state.live.contains(&noisy) && state.live.contains(&healthy));
+        drop(state);
 
-        let commands = queue.drain();
-        assert!(
-            commands
-                .iter()
-                .any(|command| matches!(command, Command::Disconnect(id) if *id == noisy))
+        // The byte allowance is exact: ten bytes admit 6 + 4, not 6 + 5.
+        let config = ThreadedUdpConfig {
+            reliable_queue_bytes: 10,
+            ..ThreadedUdpConfig::default()
+        };
+        let queue = CommandQueue::new(&config);
+        queue.connected(noisy);
+        queue
+            .send(noisy, Delivery::RELIABLE_ORDERED, &[0; 6])
+            .unwrap();
+        assert_eq!(queue.capacity(noisy).bytes, 4);
+        assert_eq!(
+            queue.send(noisy, Delivery::RELIABLE_ORDERED, &[0; 5]),
+            Err(SendError::WouldBlock)
         );
-        assert!(commands.iter().any(|command| matches!(
-            command,
-            Command::Send(id, Delivery::ReliableOrdered, payload)
-                if *id == healthy && payload == b"healthy"
-        )));
-        assert!(!commands.iter().any(|command| matches!(
-            command,
-            Command::Disconnect(id) if *id == healthy
-        )));
+        queue
+            .send(noisy, Delivery::RELIABLE_ORDERED, &[0; 4])
+            .unwrap();
+    }
+
+    /// Defect: commands accepted for a connection the worker never
+    /// announced, or kept after it ended. Oracle: `ServerIo::send` and
+    /// `capacity` contracts for unknown connections.
+    #[test]
+    fn unknown_and_ended_connections_are_refused() {
+        let queue = CommandQueue::new(&ThreadedUdpConfig::default());
+        let peer = cid(3);
+        assert_eq!(
+            queue.send(peer, Delivery::RELIABLE_ORDERED, b"early"),
+            Err(SendError::UnknownConnection)
+        );
+        assert_eq!(queue.capacity(peer), ReliableCapacity::default());
+        queue.connected(peer);
+        queue
+            .send(peer, Delivery::RELIABLE_ORDERED, b"queued")
+            .unwrap();
+        assert!(queue.capacity(peer).messages > 0);
+        queue.ended(peer);
+        assert_eq!(
+            queue.send(peer, Delivery::RELIABLE_ORDERED, b"late"),
+            Err(SendError::UnknownConnection)
+        );
+        assert_eq!(queue.capacity(peer), ReliableCapacity::default());
+        assert!(
+            queue.lock().peers.is_empty(),
+            "queued commands went with it"
+        );
     }
 
     #[test]
@@ -685,9 +860,9 @@ mod tests {
         let healthy = cid(5);
         hub.connected(noisy);
         hub.connected(healthy);
-        assert!(hub.message(noisy, Delivery::ReliableOrdered, b"first".to_vec()));
-        assert!(!hub.message(noisy, Delivery::ReliableOrdered, b"overflow".to_vec()));
-        assert!(hub.message(healthy, Delivery::ReliableOrdered, b"healthy".to_vec()));
+        assert!(hub.message(noisy, Delivery::RELIABLE_ORDERED, b"first".to_vec()));
+        assert!(!hub.message(noisy, Delivery::RELIABLE_ORDERED, b"overflow".to_vec()));
+        assert!(hub.message(healthy, Delivery::RELIABLE_ORDERED, b"healthy".to_vec()));
 
         assert!(hub.drain().iter().any(|event| matches!(
             event,

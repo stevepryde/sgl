@@ -54,11 +54,10 @@ pub fn encode_envelope(
     payload: &[u8],
 ) -> Result<Vec<u8>, EnvelopeError> {
     let (class, sequence, cap) = match delivery {
-        Delivery::ReliableOrdered if sequence == 0 => {
-            (RELIABLE_CLASS, 0, MAX_RELIABLE_MESSAGE_BYTES)
-        }
+        // One reliable lane exists, so the wire needs no lane field yet.
+        Delivery::Reliable(_) if sequence == 0 => (RELIABLE_CLASS, 0, MAX_RELIABLE_MESSAGE_BYTES),
         Delivery::LatestState if sequence != 0 => (LATEST_CLASS, sequence, MAX_LATEST_STATE_BYTES),
-        Delivery::ReliableOrdered | Delivery::LatestState => {
+        Delivery::Reliable(_) | Delivery::LatestState => {
             return Err(EnvelopeError::InvalidSequence);
         }
     };
@@ -91,7 +90,7 @@ pub fn decode_envelope(magic: [u8; 3], bytes: &[u8]) -> Result<Envelope, Envelop
     let sequence = u64::from_be_bytes(bytes[5..13].try_into().expect("fixed-width sequence"));
     let length = u32::from_be_bytes(bytes[13..17].try_into().expect("fixed-width length")) as usize;
     let (delivery, cap) = match class {
-        RELIABLE_CLASS if sequence == 0 => (Delivery::ReliableOrdered, MAX_RELIABLE_MESSAGE_BYTES),
+        RELIABLE_CLASS if sequence == 0 => (Delivery::RELIABLE_ORDERED, MAX_RELIABLE_MESSAGE_BYTES),
         LATEST_CLASS if sequence != 0 => (Delivery::LatestState, MAX_LATEST_STATE_BYTES),
         RELIABLE_CLASS | LATEST_CLASS => return Err(EnvelopeError::InvalidSequence),
         _ => return Err(EnvelopeError::UnknownDelivery),
@@ -118,7 +117,7 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = test)]
     fn frozen_header_round_trips_both_delivery_classes() {
-        let reliable = encode_envelope(MAGIC, Delivery::ReliableOrdered, 0, b"event").unwrap();
+        let reliable = encode_envelope(MAGIC, Delivery::RELIABLE_ORDERED, 0, b"event").unwrap();
         assert_eq!(&reliable[..5], b"TST\x01\x00");
         assert_eq!(reliable.len(), ENVELOPE_HEADER_LEN + 5);
         assert_eq!(decode_envelope(MAGIC, &reliable).unwrap().sequence, 0);
@@ -187,7 +186,10 @@ mod properties {
     const MAGIC: [u8; 3] = *b"TST";
 
     fn delivery() -> impl Strategy<Value = Delivery> {
-        prop_oneof![Just(Delivery::ReliableOrdered), Just(Delivery::LatestState)]
+        prop_oneof![
+            Just(Delivery::RELIABLE_ORDERED),
+            Just(Delivery::LatestState)
+        ]
     }
 
     /// Defect: an out-of-bounds slice or an overflowing length sum on a
@@ -220,7 +222,7 @@ mod properties {
             (delivery(), any::<u64>(), bytes(300)),
             |(delivery, sequence, payload)| {
                 let valid = match delivery {
-                    Delivery::ReliableOrdered => sequence == 0,
+                    Delivery::Reliable(_) => sequence == 0,
                     Delivery::LatestState => sequence != 0,
                 };
                 match encode_envelope(MAGIC, delivery, sequence, &payload) {
@@ -250,7 +252,7 @@ mod properties {
     fn single_corruptions_of_a_valid_frame_are_refused_with_the_right_reason() {
         let strategy = (delivery(), 1u64.., bytes(300), 1usize..4, 2u8..);
         check(strategy, |(delivery, sequence, payload, extra, class)| {
-            let sequence = if delivery == Delivery::ReliableOrdered {
+            let sequence = if delivery == Delivery::RELIABLE_ORDERED {
                 0
             } else {
                 sequence
@@ -287,7 +289,7 @@ mod properties {
 
             let mut huge = frame;
             let cap = match delivery {
-                Delivery::ReliableOrdered => MAX_RELIABLE_MESSAGE_BYTES,
+                Delivery::Reliable(_) => MAX_RELIABLE_MESSAGE_BYTES,
                 Delivery::LatestState => MAX_LATEST_STATE_BYTES,
             };
             huge[13..17].copy_from_slice(&u32::try_from(cap + 1).unwrap().to_be_bytes());
@@ -302,7 +304,7 @@ mod properties {
     fn payload_caps_are_exact() {
         check(delivery(), |delivery| {
             let (sequence, cap) = match delivery {
-                Delivery::ReliableOrdered => (0, MAX_RELIABLE_MESSAGE_BYTES),
+                Delivery::Reliable(_) => (0, MAX_RELIABLE_MESSAGE_BYTES),
                 Delivery::LatestState => (1, MAX_LATEST_STATE_BYTES),
             };
             prop_assert!(encode_envelope(MAGIC, delivery, sequence, &vec![0; cap]).is_ok());

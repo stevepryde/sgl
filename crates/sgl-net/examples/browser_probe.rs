@@ -6,16 +6,18 @@
 //!
 //! Each scenario returns `Err(detail)` instead of panicking so the whole
 //! report reaches the page. Assertions are what a browser game observes:
-//! connection, echoed bytes, coalesced latest state, the cap refusal and the
-//! bounded reconnect that follows, a server-initiated close, a rejected
+//! connection, echoed bytes, coalesced latest state, a saturated lane that
+//! refuses and then drains without losing the connection, a
+//! server-initiated close with its bounded reconnect, a rejected
 //! subprotocol, and a clean local disconnect.
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
 use sgl_net::websocket::{
-    BrowserWebSocketClient, BrowserWebSocketConfig, GAME_PATH, ReconnectPolicy, WebSocketIdentity,
+    BrowserWebSocketClient, BrowserWebSocketConfig, GAME_PATH, MAX_WEBSOCKET_FRAME_BYTES,
+    ReconnectPolicy, WebSocketIdentity,
 };
-use sgl_net::{ClientEvent, ClientIo, Delivery, DisconnectReason, SendError};
+use sgl_net::{ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, SendError};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -134,7 +136,7 @@ async fn reliable_binary_payloads_echo_in_order() -> Result<(), String> {
     for payload in &corpus {
         driver
             .client
-            .send(Delivery::ReliableOrdered, payload)
+            .send(Delivery::RELIABLE_ORDERED, payload)
             .map_err(|e| format!("send: {e:?}"))?;
     }
     let want = corpus.len();
@@ -146,7 +148,7 @@ async fn reliable_binary_payloads_echo_in_order() -> Result<(), String> {
                     matches!(
                         e,
                         ClientEvent::Message {
-                            delivery: Delivery::ReliableOrdered,
+                            delivery: Delivery::RELIABLE_ORDERED,
                             ..
                         }
                     )
@@ -155,7 +157,7 @@ async fn reliable_binary_payloads_echo_in_order() -> Result<(), String> {
                 >= want
         })
         .await?;
-    let got = driver.payloads(Delivery::ReliableOrdered);
+    let got = driver.payloads(Delivery::RELIABLE_ORDERED);
     ensure!(got == corpus, "echo mismatch: {got:?}");
     Ok(())
 }
@@ -191,52 +193,81 @@ async fn latest_state_coalesces_to_the_newest_value() -> Result<(), String> {
     Ok(())
 }
 
-/// Defect: `bufferedAmount` miscounted so the reliable cap never trips, or a
-/// tripped cap that neither reports nor recovers. Oracle: a payload past the
-/// configured watermark is refused with `ReliableOverflow`, the connection
-/// is reported lost for that reason, and the bounded policy reconnects.
-async fn a_reliable_send_past_the_watermark_is_refused_then_reconnects() -> Result<(), String> {
+/// A fixture sink message: `S`, its index, then padding to 60 KiB.
+fn sink(index: u32) -> Vec<u8> {
+    let mut payload = vec![b'S'];
+    payload.extend_from_slice(&index.to_le_bytes());
+    payload.resize(60 * 1024, 0x5A);
+    payload
+}
+
+/// Defect (#267): `bufferedAmount` pacing that disconnects, sends past the
+/// watermark, or loses or reorders a paced frame; a full lane that closes
+/// the connection instead of refusing. Oracle: with the watermark at one
+/// frame, sends flushed in one browser task leave `bufferedAmount` above it
+/// so the lane fills and refuses with `WouldBlock`; the connection stays up,
+/// and the fixture receives every accepted message and then the retried
+/// one, in order (it answers `sink?` with its count and order check).
+async fn a_saturated_reliable_lane_refuses_then_drains_in_order() -> Result<(), String> {
     let mut config = config();
-    config.reliable_buffered_bytes = 128;
+    config.reliable_buffered_bytes = MAX_WEBSOCKET_FRAME_BYTES;
     let mut driver = Driver::connect(config).await?;
-    let refused = driver.client.send(Delivery::ReliableOrdered, &[1; 200]);
-    ensure!(
-        refused == Err(SendError::ReliableOverflow),
-        "expected ReliableOverflow, got {refused:?}"
-    );
-    let lost = ClientEvent::Disconnected {
-        reason: DisconnectReason::ReliableOverflow,
+    let mut next = 0u32;
+    let refused = loop {
+        ensure!(next < 32, "32 paced 60 KiB sends were never refused");
+        match driver.client.send(Delivery::RELIABLE_ORDERED, &sink(next)) {
+            Ok(()) => next += 1,
+            Err(error) => break error,
+        }
+        driver.client.flush(driver.now_ms);
     };
-    driver
-        .settle(|events| {
-            events.contains(&lost)
-                && events
-                    .iter()
-                    .filter(|e| **e == ClientEvent::Connected)
-                    .count()
-                    >= 2
-        })
-        .await?;
     ensure!(
-        driver
-            .events
-            .iter()
-            .any(|e| matches!(e, ClientEvent::Reconnecting { attempt: 1 })),
-        "no reconnect attempt: {:?}",
-        driver.events
+        refused == SendError::WouldBlock,
+        "expected WouldBlock, got {refused:?}"
     );
-    driver.events.clear();
-    driver
-        .client
-        .send(Delivery::ReliableOrdered, b"after")
-        .map_err(|e| format!("send after reconnect: {e:?}"))?;
-    driver
-        .settle(|events| {
-            events
-                .iter()
-                .any(|e| matches!(e, ClientEvent::Message { payload, .. } if payload == b"after"))
-        })
-        .await
+    ensure!(next > 1, "refused before pacing held a frame back");
+    let capacity = driver.client.capacity(Lane::DEFAULT);
+    ensure!(
+        capacity.messages == 0 || capacity.bytes < sink(next).len(),
+        "capacity {capacity:?} admits the refused message"
+    );
+
+    let (mut retried, mut queried) = (false, false);
+    let want = format!("sink {} true", next + 1);
+    for _ in 0..500 {
+        driver.now_ms += 10;
+        let events = driver.client.poll(driver.now_ms);
+        if let Some(lost) = events
+            .iter()
+            .find(|e| matches!(e, ClientEvent::Disconnected { .. }))
+        {
+            return Err(format!("the connection ended: {lost:?}"));
+        }
+        driver.events.extend(events);
+        if !retried {
+            retried = driver
+                .client
+                .send(Delivery::RELIABLE_ORDERED, &sink(next))
+                .is_ok();
+        }
+        if retried && !queried {
+            queried = driver
+                .client
+                .send(Delivery::RELIABLE_ORDERED, b"sink?")
+                .is_ok();
+        }
+        driver.client.flush(driver.now_ms);
+        if let Some(reply) = driver.payloads(Delivery::RELIABLE_ORDERED).last() {
+            let reply = String::from_utf8_lossy(reply);
+            ensure!(reply == want, "fixture saw {reply:?}, expected {want:?}");
+            return Ok(());
+        }
+        sleep_ms(10).await;
+    }
+    Err(format!(
+        "never drained (retried {retried}, queried {queried}); events: {:?}",
+        driver.events
+    ))
 }
 
 /// Defect: a server-initiated close surfacing as a transport error, or the
@@ -246,7 +277,7 @@ async fn a_server_close_is_reported_as_peer_and_reconnects() -> Result<(), Strin
     let mut driver = Driver::connect(config()).await?;
     driver
         .client
-        .send(Delivery::ReliableOrdered, b"close")
+        .send(Delivery::RELIABLE_ORDERED, b"close")
         .map_err(|e| format!("send: {e:?}"))?;
     driver
         .settle(|events| {
@@ -346,8 +377,8 @@ pub async fn run() -> String {
     );
     record(
         &mut report,
-        "a_reliable_send_past_the_watermark_is_refused_then_reconnects",
-        a_reliable_send_past_the_watermark_is_refused_then_reconnects().await,
+        "a_saturated_reliable_lane_refuses_then_drains_in_order",
+        a_saturated_reliable_lane_refuses_then_drains_in_order().await,
     );
     record(
         &mut report,

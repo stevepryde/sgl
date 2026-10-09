@@ -15,6 +15,19 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `SendError::ReliableOverflow` → `SendError::WouldBlock`: a full
+  reliable queue no longer disconnects the peer on any transport; the send is
+  refused whole and may be retried. `Delivery::ReliableOrdered` →
+  `Delivery::RELIABLE_ORDERED` (`Delivery::Reliable(Lane)`);
+  `DisconnectReason::ReliableOverflow` → `InboundOverflow` (inbound only).
+  `ClientIo::capacity(lane)` / `ServerIo::capacity(conn, lane)` are new
+  required methods. `BrowserWebSocketConfig::reliable_buffered_bytes` now
+  paces sends and must be at least `MAX_WEBSOCKET_FRAME_BYTES`;
+  `ThreadedUdpServer::send` refuses connections it has not announced.
+  Migration: rename the variants (exhaustive matches use
+  `Delivery::Reliable(_)`); treat `WouldBlock` as "keep it and retry
+  later", not as a lost connection; implement `capacity` on any
+  `ServerIo`/`ClientIo` wrapper.
 - `sgl-core` `FixedClock`: new opt-in `FixedClock::with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })`
   runs several steps per frame to follow elapsed time, and the new
   `dropped_dt` field reports unsimulated time; `with_hz` and `new` keep

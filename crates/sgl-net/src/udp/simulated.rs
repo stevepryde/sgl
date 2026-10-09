@@ -273,7 +273,7 @@ mod tests {
         );
 
         server
-            .send(server_peer, Delivery::ReliableOrdered, b"ServerClosing")
+            .send(server_peer, Delivery::RELIABLE_ORDERED, b"ServerClosing")
             .unwrap();
         server.flush(1);
         server.disconnect(server_peer, 1);
@@ -281,7 +281,7 @@ mod tests {
             client.poll(1),
             vec![EndpointEvent::Message {
                 peer: client_peer,
-                delivery: Delivery::ReliableOrdered,
+                delivery: Delivery::RELIABLE_ORDERED,
                 payload: b"ServerClosing".to_vec(),
             }]
         );
@@ -328,7 +328,7 @@ mod tests {
         );
 
         client
-            .send(client_peer, Delivery::ReliableOrdered, b"ClientClosing")
+            .send(client_peer, Delivery::RELIABLE_ORDERED, b"ClientClosing")
             .unwrap();
         client.disconnect(client_peer, 1);
         let events = server.poll(1);
@@ -336,7 +336,7 @@ mod tests {
             events,
             vec![EndpointEvent::Message {
                 peer: server_peer,
-                delivery: Delivery::ReliableOrdered,
+                delivery: Delivery::RELIABLE_ORDERED,
                 payload: b"ClientClosing".to_vec(),
             }]
         );
@@ -380,7 +380,7 @@ mod tests {
                 match event {
                     EndpointEvent::Connected { peer } => server_peer = Some(peer),
                     EndpointEvent::Message {
-                        delivery: Delivery::ReliableOrdered,
+                        delivery: Delivery::RELIABLE_ORDERED,
                         payload,
                         ..
                     } => reliable.push(u32::from_le_bytes(payload.try_into().unwrap())),
@@ -401,7 +401,7 @@ mod tests {
                         break;
                     }
                     client
-                        .send(client_peer, Delivery::ReliableOrdered, &sent.to_le_bytes())
+                        .send(client_peer, Delivery::RELIABLE_ORDERED, &sent.to_le_bytes())
                         .unwrap();
                     client
                         .send(client_peer, Delivery::LatestState, &sent.to_le_bytes())
@@ -516,7 +516,7 @@ mod tests {
 
         let reliable = vec![0x5a; crate::MAX_RELIABLE_MESSAGE_BYTES];
         client
-            .send(client_peer, Delivery::ReliableOrdered, &reliable)
+            .send(client_peer, Delivery::RELIABLE_ORDERED, &reliable)
             .unwrap();
         client
             .send(client_peer, Delivery::LatestState, b"old")
@@ -542,7 +542,7 @@ mod tests {
             client.flush(now);
             for event in server.poll(now) {
                 if let EndpointEvent::Message {
-                    delivery: Delivery::ReliableOrdered,
+                    delivery: Delivery::RELIABLE_ORDERED,
                     payload,
                     ..
                 } = event
@@ -558,7 +558,7 @@ mod tests {
         assert_eq!(
             client.send(
                 client_peer,
-                Delivery::ReliableOrdered,
+                Delivery::RELIABLE_ORDERED,
                 &vec![0; crate::MAX_RELIABLE_MESSAGE_BYTES + 1]
             ),
             Err(crate::SendError::PayloadTooLarge)

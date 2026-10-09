@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use crate::{
     Delivery, DisconnectReason, MAX_LATEST_STATE_BYTES, MAX_RELIABLE_MESSAGE_BYTES,
     RELIABLE_INBOUND_BYTES, RELIABLE_INBOUND_MESSAGES, RELIABLE_OUTBOUND_BYTES,
-    RELIABLE_OUTBOUND_MESSAGES, SendError,
+    RELIABLE_OUTBOUND_MESSAGES, ReliableCapacity, SendError,
 };
 
 #[derive(Clone, Debug)]
@@ -34,13 +34,26 @@ impl LaneQueue {
         }
     }
 
+    fn admits_reliable(&self, len: usize) -> bool {
+        self.reliable.len() < self.max_reliable_messages
+            && self
+                .reliable_bytes
+                .checked_add(len)
+                .is_some_and(|bytes| bytes <= self.max_reliable_bytes)
+    }
+
+    fn reliable_capacity(&self) -> ReliableCapacity {
+        ReliableCapacity::remaining(
+            self.max_reliable_messages
+                .saturating_sub(self.reliable.len()),
+            self.max_reliable_bytes.saturating_sub(self.reliable_bytes),
+        )
+    }
+
     fn push(&mut self, frame: QueuedFrame) -> Result<(), ()> {
         match frame.delivery {
-            Delivery::ReliableOrdered => {
-                if self.reliable.len() >= self.max_reliable_messages
-                    || self.reliable_bytes.saturating_add(frame.payload.len())
-                        > self.max_reliable_bytes
-                {
+            Delivery::Reliable(_) => {
+                if !self.admits_reliable(frame.payload.len()) {
                     return Err(());
                 }
                 self.reliable_bytes += frame.payload.len();
@@ -95,19 +108,26 @@ impl PeerState {
         }
     }
 
+    /// Queues a payload, or refuses it whole. A full reliable queue returns
+    /// `WouldBlock` and leaves the connection open.
     pub(super) fn send(&mut self, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
         if self.terminal.is_some() || self.graceful_closing {
             return Err(SendError::Disconnected);
         }
         let cap = match delivery {
-            Delivery::ReliableOrdered => MAX_RELIABLE_MESSAGE_BYTES,
+            Delivery::Reliable(_) => MAX_RELIABLE_MESSAGE_BYTES,
             Delivery::LatestState => MAX_LATEST_STATE_BYTES,
         };
         if payload.len() > cap {
             return Err(SendError::PayloadTooLarge);
         }
         let sequence = match delivery {
-            Delivery::ReliableOrdered => 0,
+            Delivery::Reliable(_) => {
+                if !self.outbound.admits_reliable(payload.len()) {
+                    return Err(SendError::WouldBlock);
+                }
+                0
+            }
             Delivery::LatestState => {
                 let sequence = self.next_latest_sequence;
                 let Some(next) = sequence.checked_add(1) else {
@@ -124,11 +144,17 @@ impl PeerState {
             payload: payload.to_vec(),
             generation: self.staging_generation,
         };
-        if self.outbound.push(frame).is_err() {
-            self.close(DisconnectReason::ReliableOverflow);
-            return Err(SendError::ReliableOverflow);
+        self.outbound
+            .push(frame)
+            .map_err(|()| SendError::WouldBlock)
+    }
+
+    /// What the reliable lane admits now; all zeros once closing or closed.
+    pub(super) fn capacity(&self) -> ReliableCapacity {
+        if self.terminal.is_some() || self.graceful_closing {
+            return ReliableCapacity::default();
         }
-        Ok(())
+        self.outbound.reliable_capacity()
     }
 
     pub(super) fn receive(&mut self, frame: QueuedFrame) -> Result<(), DisconnectReason> {
@@ -143,8 +169,8 @@ impl PeerState {
             self.last_inbound_latest_sequence = frame.sequence;
         }
         if self.inbound.push(frame).is_err() {
-            self.close(DisconnectReason::ReliableOverflow);
-            return Err(DisconnectReason::ReliableOverflow);
+            self.close(DisconnectReason::InboundOverflow);
+            return Err(DisconnectReason::InboundOverflow);
         }
         Ok(())
     }
@@ -227,16 +253,6 @@ impl PeerState {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub(super) fn staged_reliable_wire_bytes(&self) -> usize {
-        self.outbound.reliable_bytes.saturating_add(
-            self.outbound
-                .reliable
-                .len()
-                .saturating_mul(super::ENVELOPE_HEADER_LEN),
-        )
-    }
-
     pub(super) fn begin_graceful_close(&mut self, now_ms: u64) {
         if self.terminal.is_none() {
             self.graceful_closing = true;
@@ -277,7 +293,7 @@ impl PeerState {
             self.outbound.clear();
             if matches!(
                 reason,
-                DisconnectReason::ProtocolViolation | DisconnectReason::ReliableOverflow
+                DisconnectReason::ProtocolViolation | DisconnectReason::InboundOverflow
             ) {
                 self.inbound.clear();
             }
@@ -338,11 +354,11 @@ mod tests {
 
         let mut state = PeerState::new();
         for _ in 0..RELIABLE_OUTBOUND_MESSAGES {
-            state.send(Delivery::ReliableOrdered, b"x").unwrap();
+            state.send(Delivery::RELIABLE_ORDERED, b"x").unwrap();
         }
         assert_eq!(
-            state.send(Delivery::ReliableOrdered, b"x"),
-            Err(SendError::ReliableOverflow)
+            state.send(Delivery::RELIABLE_ORDERED, b"x"),
+            Err(SendError::WouldBlock)
         );
     }
 
@@ -359,17 +375,44 @@ mod tests {
         assert!(peer.pop_released_outbound().is_none());
     }
 
+    /// #267: a full reliable queue refuses the send without closing the
+    /// peer; a drained frame returns the allowance and the retry succeeds.
     #[wasm_bindgen_test(unsupported = test)]
-    fn reliable_overflow_closes_only_this_queue() {
+    fn a_full_reliable_queue_refuses_without_closing() {
         let mut peer = PeerState::new();
         for _ in 0..RELIABLE_OUTBOUND_MESSAGES {
-            peer.send(Delivery::ReliableOrdered, b"x").unwrap();
+            peer.send(Delivery::RELIABLE_ORDERED, b"x").unwrap();
         }
         assert_eq!(
-            peer.send(Delivery::ReliableOrdered, b"overflow"),
-            Err(SendError::ReliableOverflow)
+            peer.send(Delivery::RELIABLE_ORDERED, b"retry"),
+            Err(SendError::WouldBlock)
         );
-        assert_eq!(peer.terminal(), Some(DisconnectReason::ReliableOverflow));
+        assert_eq!(peer.terminal(), None);
+        peer.release_outbound().unwrap();
+        assert!(peer.pop_released_outbound().is_some());
+        peer.send(Delivery::RELIABLE_ORDERED, b"retry").unwrap();
+
+        // The byte allowance is exact: ten bytes short admits ten, not 11.
+        let mut peer = PeerState::new();
+        let full = RELIABLE_OUTBOUND_BYTES / MAX_RELIABLE_MESSAGE_BYTES;
+        for _ in 1..full {
+            peer.send(
+                Delivery::RELIABLE_ORDERED,
+                &vec![0; MAX_RELIABLE_MESSAGE_BYTES],
+            )
+            .unwrap();
+        }
+        peer.send(
+            Delivery::RELIABLE_ORDERED,
+            &vec![0; MAX_RELIABLE_MESSAGE_BYTES - 10],
+        )
+        .unwrap();
+        assert_eq!(peer.capacity().bytes, 10);
+        assert_eq!(
+            peer.send(Delivery::RELIABLE_ORDERED, &[0; 11]),
+            Err(SendError::WouldBlock)
+        );
+        peer.send(Delivery::RELIABLE_ORDERED, &[0; 10]).unwrap();
     }
 
     #[wasm_bindgen_test(unsupported = test)]
@@ -423,6 +466,7 @@ mod properties {
     fn op() -> impl Strategy<Value = Op> {
         prop_oneof![
             4 => bytes(2_500).prop_map(Op::SendReliable),
+            1 => (0..=MAX_RELIABLE_MESSAGE_BYTES).prop_map(|len| Op::SendReliable(vec![1; len])),
             2 => bytes(64).prop_map(Op::SendLatest),
             2 => Just(Op::Release),
             3 => Just(Op::PopReleased),
@@ -434,9 +478,10 @@ mod properties {
 
     /// Defect: a released frame leaking a staged one, reliable frames
     /// reordered around the latest slot, a cap enforced after the queue
-    /// grew, or a stale latest sequence accepted. Oracle: a model with a
-    /// FIFO plus one slot, the netcode.md 10–11 rules, and the module's
-    /// release generations.
+    /// grew, a full queue that closes the peer, a capacity report that
+    /// disagrees with admission, or a stale latest sequence accepted.
+    /// Oracle: a model with a FIFO plus one slot, the netcode.md 10–11
+    /// rules, and the module's release generations.
     #[test]
     fn peer_state_matches_the_fifo_plus_slot_model() {
         check(prop::collection::vec(op(), 1..250), |ops| {
@@ -455,17 +500,18 @@ mod properties {
             for op in ops {
                 match op {
                     Op::SendReliable(payload) => {
-                        let result = state.send(Delivery::ReliableOrdered, &payload);
+                        let capacity = state.capacity();
+                        let result = state.send(Delivery::RELIABLE_ORDERED, &payload);
+                        prop_assert_eq!(
+                            result.is_ok(),
+                            capacity.messages >= 1 && capacity.bytes >= payload.len()
+                        );
                         if terminal.is_some() {
                             prop_assert_eq!(result, Err(SendError::Disconnected));
                         } else if reliable.len() >= RELIABLE_OUTBOUND_MESSAGES
                             || reliable_bytes + payload.len() > RELIABLE_OUTBOUND_BYTES
                         {
-                            prop_assert_eq!(result, Err(SendError::ReliableOverflow));
-                            terminal = Some(DisconnectReason::ReliableOverflow);
-                            reliable.clear();
-                            reliable_bytes = 0;
-                            latest = None;
+                            prop_assert_eq!(result, Err(SendError::WouldBlock));
                         } else {
                             prop_assert_eq!(result, Ok(()));
                             reliable_bytes += payload.len();
@@ -496,7 +542,7 @@ mod properties {
                         let expected = if reliable.front().is_some_and(|(_, g)| *g <= released) {
                             let (payload, _) = reliable.pop_front().unwrap();
                             reliable_bytes -= payload.len();
-                            Some((Delivery::ReliableOrdered, 0, payload))
+                            Some((Delivery::RELIABLE_ORDERED, 0, payload))
                         } else if latest.as_ref().is_some_and(|(_, _, g)| *g <= released) {
                             let (sequence, payload, _) = latest.take().unwrap();
                             Some((Delivery::LatestState, sequence, payload))
@@ -510,7 +556,7 @@ mod properties {
                     }
                     Op::ReceiveReliable(payload) => {
                         let result = state.receive(QueuedFrame {
-                            delivery: Delivery::ReliableOrdered,
+                            delivery: Delivery::RELIABLE_ORDERED,
                             sequence: 0,
                             payload: payload.clone(),
                             generation: 0,
@@ -519,7 +565,7 @@ mod properties {
                             prop_assert_eq!(result, Err(DisconnectReason::Peer));
                         } else {
                             prop_assert_eq!(result, Ok(()));
-                            inbound.push_back((Delivery::ReliableOrdered, payload));
+                            inbound.push_back((Delivery::RELIABLE_ORDERED, payload));
                         }
                     }
                     Op::ReceiveLatest(step) => {
@@ -543,7 +589,7 @@ mod properties {
                         } else {
                             prop_assert_eq!(result, Ok(()));
                             last_inbound_latest = sequence;
-                            inbound.retain(|(d, _)| *d == Delivery::ReliableOrdered);
+                            inbound.retain(|(d, _)| *d == Delivery::RELIABLE_ORDERED);
                             inbound.push_back((Delivery::LatestState, vec![step as u8]));
                         }
                     }
@@ -551,7 +597,7 @@ mod properties {
                         // Reliable frames drain before the single latest slot.
                         let expected = if let Some(i) = inbound
                             .iter()
-                            .position(|(d, _)| *d == Delivery::ReliableOrdered)
+                            .position(|(d, _)| *d == Delivery::RELIABLE_ORDERED)
                         {
                             inbound.remove(i)
                         } else {

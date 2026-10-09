@@ -28,8 +28,8 @@ use super::native_write::{drain_outbound, send_ping};
 use super::queue::{PeerState, QueuedFrame};
 use super::{MAX_WEBSOCKET_FRAME_BYTES, WebSocketIdentity, decode_envelope, encode_envelope};
 use crate::{
-    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, RttEstimate, RttEstimator,
-    SendError, ServerEvent, ServerIo,
+    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, ReliableCapacity,
+    RttEstimate, RttEstimator, SendError, ServerEvent, ServerIo,
 };
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -653,8 +653,9 @@ impl ServerIo for NativeWebSocketServer {
         let registry = lock(&self.registry);
         let peer = registry.get(&conn).ok_or(SendError::UnknownConnection)?;
         let result = lock(&peer.shared.state).send(delivery, payload);
-        // A refused send can close the peer; its socket closes promptly.
-        let wake = result.is_err() && peer.shared.request_turn();
+        // A send that ended the peer closes its socket promptly; any other
+        // refusal changed nothing.
+        let wake = result == Err(SendError::Disconnected) && peer.shared.request_turn();
         drop(registry);
         if wake {
             self.wake_worker();
@@ -663,6 +664,14 @@ impl ServerIo for NativeWebSocketServer {
             SendError::Disconnected => SendError::UnknownConnection,
             error => error,
         })
+    }
+
+    fn capacity(&self, conn: ConnectionId, _lane: Lane) -> ReliableCapacity {
+        lock(&self.registry)
+            .get(&conn)
+            .map_or_else(ReliableCapacity::default, |peer| {
+                lock(&peer.shared.state).capacity()
+            })
     }
 
     fn flush(&mut self, now_ms: u64) {
@@ -882,11 +891,16 @@ impl ClientIo for NativeWebSocketClient {
 
     fn send(&mut self, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
         let result = lock(&self.shared.state).send(delivery, payload);
-        // A refused send can close the peer; its socket closes promptly.
-        if result.is_err() {
+        // A send that ended the peer closes its socket promptly; any other
+        // refusal changed nothing.
+        if result == Err(SendError::Disconnected) {
             self.request_turn();
         }
         result
+    }
+
+    fn capacity(&self, _lane: Lane) -> ReliableCapacity {
+        lock(&self.shared.state).capacity()
     }
 
     fn flush(&mut self, now_ms: u64) {
@@ -1012,12 +1026,12 @@ where
         let frame = state.peek_released_outbound()?;
         let encoded =
             encode_envelope(magic, frame.delivery, frame.sequence, &frame.payload).ok()?;
-        if frame.delivery == Delivery::ReliableOrdered {
-            let _ = state.pop_released_outbound();
-        } else {
+        if frame.delivery == Delivery::LatestState {
             let sequence = frame.sequence;
             let _ = state.pop_released_outbound();
             state.acknowledge_latest(sequence);
+        } else {
+            let _ = state.pop_released_outbound();
         }
         Some(Message::Binary(encoded.into()))
     });
@@ -1135,7 +1149,7 @@ mod tests {
         let shared = SharedPeer::new(MAGIC, 0, 50);
         shared.advance(0);
         let mut socket = server_socket(client_frames(vec![
-            envelope(Delivery::ReliableOrdered, 0, b"first"),
+            envelope(Delivery::RELIABLE_ORDERED, 0, b"first"),
             envelope(Delivery::LatestState, 1, b"state"),
         ]));
         assert_eq!(
@@ -1146,7 +1160,7 @@ mod tests {
         let first = state.pop_inbound().expect("first frame");
         assert_eq!(
             (first.delivery, &first.payload[..]),
-            (Delivery::ReliableOrdered, &b"first"[..])
+            (Delivery::RELIABLE_ORDERED, &b"first"[..])
         );
         let second = state.pop_inbound().expect("second frame");
         assert_eq!(
@@ -1203,9 +1217,9 @@ mod tests {
         let shared = SharedPeer::new(MAGIC, 0, 0);
         {
             let mut state = lock(&shared.state);
-            state.send(Delivery::ReliableOrdered, b"r1").unwrap();
+            state.send(Delivery::RELIABLE_ORDERED, b"r1").unwrap();
             state.send(Delivery::LatestState, b"stale").unwrap();
-            state.send(Delivery::ReliableOrdered, b"r2").unwrap();
+            state.send(Delivery::RELIABLE_ORDERED, b"r2").unwrap();
             state.send(Delivery::LatestState, b"fresh").unwrap();
             state.release_outbound().unwrap();
         }
@@ -1231,11 +1245,11 @@ mod tests {
         assert_eq!(frames.len(), 3, "{frames:?}");
         assert_eq!(
             (frames[0].0, frames[0].1, &frames[0].2[..]),
-            (Delivery::ReliableOrdered, 0, &b"r1"[..])
+            (Delivery::RELIABLE_ORDERED, 0, &b"r1"[..])
         );
         assert_eq!(
             (frames[1].0, frames[1].1, &frames[1].2[..]),
-            (Delivery::ReliableOrdered, 0, &b"r2"[..])
+            (Delivery::RELIABLE_ORDERED, 0, &b"r2"[..])
         );
         assert_eq!(frames[2].0, Delivery::LatestState);
         assert_ne!(frames[2].1, 0);
@@ -1313,7 +1327,7 @@ mod tests {
     fn socket_tick_bounds_reads_per_turn() {
         let shared = SharedPeer::new(MAGIC, 0, 0);
         let frames = (0..MAX_READS_PER_WAKE + 2)
-            .map(|_| envelope(Delivery::ReliableOrdered, 0, b"x"))
+            .map(|_| envelope(Delivery::RELIABLE_ORDERED, 0, b"x"))
             .collect();
         let mut socket = server_socket(client_frames(frames));
         assert_eq!(
@@ -1343,7 +1357,7 @@ mod tests {
         let shared = SharedPeer::new(MAGIC, 0, 0);
         {
             let mut state = lock(&shared.state);
-            state.send(Delivery::ReliableOrdered, b"bye").unwrap();
+            state.send(Delivery::RELIABLE_ORDERED, b"bye").unwrap();
             state.begin_graceful_close(0);
             state.release_outbound().unwrap();
         }
@@ -1467,7 +1481,7 @@ mod tests {
             for payload in payloads {
                 lock(&shared.state)
                     .receive(QueuedFrame {
-                        delivery: Delivery::ReliableOrdered,
+                        delivery: Delivery::RELIABLE_ORDERED,
                         sequence: 0,
                         payload: payload.to_vec(),
                         generation: 0,

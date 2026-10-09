@@ -10,7 +10,7 @@ use sgl_net::websocket::{
     WebSocketIdentity, encode_envelope,
 };
 use sgl_net::{
-    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, MAX_LATEST_STATE_BYTES,
+    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES,
     RELIABLE_OUTBOUND_MESSAGES, SendError, ServerEvent, ServerIo,
 };
 use tungstenite::client::IntoClientRequest;
@@ -97,7 +97,7 @@ fn native_client_and_server_are_trait_transparent_on_both_lanes() {
     let conn = connected_id(&wait_server_events(&mut server));
 
     client
-        .send(Delivery::ReliableOrdered, b"client event")
+        .send(Delivery::RELIABLE_ORDERED, b"client event")
         .unwrap();
     client.send(Delivery::LatestState, b"old").unwrap();
     client.send(Delivery::LatestState, b"new").unwrap();
@@ -109,7 +109,7 @@ fn native_client_and_server_are_trait_transparent_on_both_lanes() {
         vec![
             ServerEvent::Message {
                 conn,
-                delivery: Delivery::ReliableOrdered,
+                delivery: Delivery::RELIABLE_ORDERED,
                 payload: b"client event".to_vec(),
             },
             ServerEvent::Message {
@@ -121,7 +121,7 @@ fn native_client_and_server_are_trait_transparent_on_both_lanes() {
     );
 
     server
-        .send(conn, Delivery::ReliableOrdered, b"server event")
+        .send(conn, Delivery::RELIABLE_ORDERED, b"server event")
         .unwrap();
     for value in 0_u8..100 {
         server.send(conn, Delivery::LatestState, &[value]).unwrap();
@@ -132,7 +132,7 @@ fn native_client_and_server_are_trait_transparent_on_both_lanes() {
         received,
         vec![
             ClientEvent::Message {
-                delivery: Delivery::ReliableOrdered,
+                delivery: Delivery::RELIABLE_ORDERED,
                 payload: b"server event".to_vec(),
             },
             ClientEvent::Message {
@@ -143,8 +143,12 @@ fn native_client_and_server_are_trait_transparent_on_both_lanes() {
     );
 }
 
+/// Defect (#267): a full reliable queue that closes the peer, or a refused
+/// message that is lost or duplicated. Oracle: the client's received list —
+/// every accepted message, then the retried one, each once and in order —
+/// while another client on the same server is unaffected.
 #[test]
-fn reliable_overflow_disconnects_only_the_overflowing_peer() {
+fn a_saturated_lane_would_block_and_delivers_everything_after_the_drain() {
     let mut server = server(4);
     let mut first = connect_native(&server);
     let first_conn = connected_id(&wait_server_events(&mut server));
@@ -153,30 +157,59 @@ fn reliable_overflow_disconnects_only_the_overflowing_peer() {
     first.poll(0);
     second.poll(0);
 
-    for _ in 0..RELIABLE_OUTBOUND_MESSAGES {
+    let message = |index: usize| index.to_le_bytes().to_vec();
+    for index in 0..RELIABLE_OUTBOUND_MESSAGES {
         server
-            .send(first_conn, Delivery::ReliableOrdered, b"x")
+            .send(first_conn, Delivery::RELIABLE_ORDERED, &message(index))
             .unwrap();
     }
+    let retained = message(RELIABLE_OUTBOUND_MESSAGES);
     assert_eq!(
-        server.send(first_conn, Delivery::ReliableOrdered, b"overflow"),
-        Err(SendError::ReliableOverflow)
+        server.send(first_conn, Delivery::RELIABLE_ORDERED, &retained),
+        Err(SendError::WouldBlock)
     );
+    assert_eq!(server.capacity(first_conn, Lane::DEFAULT).messages, 0);
     server
-        .send(second_conn, Delivery::ReliableOrdered, b"still alive")
+        .send(second_conn, Delivery::RELIABLE_ORDERED, b"still alive")
         .unwrap();
     server.flush(0);
 
-    let terminal = wait_server_events(&mut server);
-    assert!(terminal.contains(&ServerEvent::Disconnected {
-        conn: first_conn,
-        reason: DisconnectReason::ReliableOverflow,
-    }));
+    let mut received = Vec::new();
+    let mut retried = false;
+    wait_until(Duration::from_secs(5), || {
+        for event in first.poll(0) {
+            match event {
+                ClientEvent::Message { payload, .. } => received.push(payload),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        for event in server.poll(0) {
+            assert!(
+                !matches!(event, ServerEvent::Disconnected { .. }),
+                "{event:?}"
+            );
+        }
+        if !retried
+            && server
+                .send(first_conn, Delivery::RELIABLE_ORDERED, &retained)
+                .is_ok()
+        {
+            retried = true;
+            server.flush(0);
+        }
+        (received.len() > RELIABLE_OUTBOUND_MESSAGES).then_some(())
+    });
+    assert_eq!(
+        received,
+        (0..=RELIABLE_OUTBOUND_MESSAGES)
+            .map(message)
+            .collect::<Vec<_>>()
+    );
     let second_events = collect_client_events(&mut second, 1);
     assert_eq!(
         second_events,
         vec![ClientEvent::Message {
-            delivery: Delivery::ReliableOrdered,
+            delivery: Delivery::RELIABLE_ORDERED,
             payload: b"still alive".to_vec(),
         }]
     );
@@ -272,11 +305,11 @@ fn text_malformed_oversize_wrong_class_and_stale_frames_fail_closed() {
     assert_protocol_disconnect(vec![Message::Binary(oversized.into())]);
 
     let mut wrong_class =
-        encode_envelope(*b"TST", Delivery::ReliableOrdered, 0, b"queued").unwrap();
+        encode_envelope(*b"TST", Delivery::RELIABLE_ORDERED, 0, b"queued").unwrap();
     wrong_class[5..13].copy_from_slice(&1_u64.to_be_bytes());
     assert_protocol_disconnect(vec![
         Message::Binary(
-            encode_envelope(*b"TST", Delivery::ReliableOrdered, 0, b"must be purged")
+            encode_envelope(*b"TST", Delivery::RELIABLE_ORDERED, 0, b"must be purged")
                 .unwrap()
                 .into(),
         ),
@@ -329,7 +362,7 @@ fn disconnect_flushes_accepted_reliable_before_close() {
     let conn = connected_id(&wait_server_events(&mut server));
 
     client
-        .send(Delivery::ReliableOrdered, b"last client event")
+        .send(Delivery::RELIABLE_ORDERED, b"last client event")
         .unwrap();
     client.disconnect(10);
     let events = collect_server_events(&mut server, 2);
@@ -337,7 +370,7 @@ fn disconnect_flushes_accepted_reliable_before_close() {
         events[0],
         ServerEvent::Message {
             conn,
-            delivery: Delivery::ReliableOrdered,
+            delivery: Delivery::RELIABLE_ORDERED,
             payload: b"last client event".to_vec(),
         }
     );
@@ -347,14 +380,14 @@ fn disconnect_flushes_accepted_reliable_before_close() {
     client.poll(0);
     let conn = connected_id(&wait_server_events(&mut server));
     server
-        .send(conn, Delivery::ReliableOrdered, b"last server event")
+        .send(conn, Delivery::RELIABLE_ORDERED, b"last server event")
         .unwrap();
     server.disconnect(conn, 20);
     let events = collect_client_events(&mut client, 2);
     assert_eq!(
         events[0],
         ClientEvent::Message {
-            delivery: Delivery::ReliableOrdered,
+            delivery: Delivery::RELIABLE_ORDERED,
             payload: b"last server event".to_vec(),
         }
     );
@@ -448,7 +481,7 @@ fn native_client_delivers_a_frame_that_came_with_the_upgrade_response() {
             })
             .unwrap();
         let envelope =
-            encode_envelope(*b"TST", Delivery::ReliableOrdered, 0, b"with the upgrade").unwrap();
+            encode_envelope(*b"TST", Delivery::RELIABLE_ORDERED, 0, b"with the upgrade").unwrap();
         let mut reply = format!(
             "HTTP/1.1 101 Switching Protocols\r\n\
              Connection: Upgrade\r\n\
@@ -478,7 +511,7 @@ fn native_client_delivers_a_frame_that_came_with_the_upgrade_response() {
         vec![
             ClientEvent::Connected,
             ClientEvent::Message {
-                delivery: Delivery::ReliableOrdered,
+                delivery: Delivery::RELIABLE_ORDERED,
                 payload: b"with the upgrade".to_vec(),
             },
         ]
