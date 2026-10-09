@@ -1208,18 +1208,23 @@ last, after everything it may use, and refuses a directive in it.
   (`volume_entry_fs`, `volume_exit_fs`, `volume_second_exit_fs`) that
   discards the other by `object_front_face`, the side the surface function's
   `front` reports; the second exit's also discards a fragment at or in front
-  of the exit layer, which its pass binds at group 3. Coverage plays no
-  part: a volume's boundary is its geometry, a masked cut-out included. The
-  blended draws' group 3 binds the layers on Extended (bindings 5–7), with
-  `BlendedTrace::volumes` 1 where they hold this frame's; elsewhere it binds
-  the opaque depth in their place and 0. At a `front` fragment, where the
-  view ray enters, the path runs to the nearest exit at or behind it while
-  at most one exit lies in front of it (`VOLUME_EXIT`), else to the opaque
-  surface: `VOLUME_OPAQUE` where no exit lies between (the volume meets the
-  opaque surface, or is open), `VOLUME_HIDDEN` where two exits lie in front
-  of the fragment, which leaves its own unmeasured. At a back fragment, seen
-  from inside where the ray leaves, it runs from the nearest entry where
-  that lies in front of it (`VOLUME_ENTRY`), else from the eye
+  of the exit layer, which it reads at its blended binding (6), its pass
+  binding a group 3 of the blended pipelines' layout with the opaque depth
+  in place of the layers it does not read, where the entry and exit passes
+  bind none; the same triangles rasterised through the same `@invariant`
+  vertex entry make that comparison exact, as the receivers' is, so the exit
+  layer's own faces and exits coplanar with them are peeled. Coverage plays
+  no part: a volume's boundary is its geometry, a masked cut-out included.
+  The blended draws' group 3 binds the layers on Extended (bindings 5–7),
+  with `BlendedTrace::volumes` 1 where they hold this frame's; elsewhere it
+  binds the opaque depth in their place and 0. At a `front` fragment, where
+  the view ray enters, the path runs to the nearest exit at or behind it
+  while at most one exit lies in front of it (`VOLUME_EXIT`), else to the
+  opaque surface: `VOLUME_OPAQUE` where no exit lies between (the volume
+  meets the opaque surface, or is open), `VOLUME_HIDDEN` where two exits lie
+  in front of the fragment, which leaves its own unmeasured. At a back
+  fragment, seen from inside where the ray leaves, it runs from the nearest
+  entry where that lies in front of it (`VOLUME_ENTRY`), else from the eye
   (`VOLUME_EYE`: the camera is inside, or the near plane cut the entry).
   Lengths are measured as `scene_depth_behind` measures, at most
   `SCENE_DEPTH_FAR`; `VOLUME_NONE` and length 0 where no layer is held

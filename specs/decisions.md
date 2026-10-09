@@ -625,16 +625,16 @@ Use the [current specs](README.md) for implementation and the
   eye, and one depth peel of the exits (Everitt, *Interactive
   Order-Independent Transparency*, NVIDIA 2001), so a volume behind
   another's far side, or a concave volume's second part, measures its own
-  exit; a third crossing is reported unmeasured (`VOLUME_HIDDEN`) rather
-  than given the opaque bound unmarked. Nearest-face layers need only the
-  depth test, where summing signed depths along the ray would count volumes
-  the nearest hides and need 32-bit float blending, optional on WebGPU. The
-  passes keep a side by discarding the other in a fragment entry, not by
-  culling: a double-sided material's batch holds mirrored and unmirrored
-  instances, whose sides only the object record's pose tells
+  exit; a third crossing is reported `VOLUME_HIDDEN`, with the opaque bound
+  as its length, rather than given that bound unmarked. Nearest-face layers
+  need only the depth test, where summing signed depths along the ray would
+  count volumes the nearest hides and need 32-bit float blending, optional
+  on WebGPU. The passes keep a side by discarding the other in a fragment
+  entry, not by culling: a double-sided material's batch holds mirrored and
+  unmirrored instances, whose sides only the object record's pose tells
   (`object_front`). Rationale: rasterised volumes get the distance a ray
   tracer measures at their first two crossings, following their deformed
   geometry, and materials that do not read it pay nothing. Limits: the path
   follows the view ray, not the refracted one; a nested volume (ice in
-  water) ends the outer volume's path at its own faces; a masked cut-out
-  still bounds; rays and probe captures have no layers.
+  water) starts or ends the outer volume's path at its own faces; a masked
+  cut-out still bounds; rays and probe captures have no layers.
