@@ -1418,11 +1418,15 @@ const VOLUME_EXIT:u32=1u;
 // At a front fragment: the path ends at the opaque surface, with no back
 // face between (the volume meets the opaque surface, or is open).
 const VOLUME_OPAQUE:u32=2u;
-// At a front fragment behind two back faces, which leave its own exit
-// unmeasured: the length is to the opaque surface, an upper bound.
+// Where another volume's faces hide the fragment's own segment: at a front
+// fragment behind two back faces, which leave its own exit unmeasured, the
+// length is to the opaque surface; at a back fragment behind another back
+// face, which hides where its segment starts, the length is from the eye.
+// Either is an upper bound.
 const VOLUME_HIDDEN:u32=3u;
 // At a back fragment, seen from inside where the ray leaves: the path
-// starts at the nearest front face in front of it, where the ray entered.
+// starts at the nearest front face in front of it, where the ray entered,
+// where no other back face lies between.
 const VOLUME_ENTRY:u32=4u;
 // At a back fragment with no front face in front of it (the camera is
 // inside, or the near plane cut the entry): the path starts at the eye.

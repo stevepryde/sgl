@@ -206,7 +206,17 @@ impl Transparent {
     /// into each volume layer and draws those materials' batches over it
     /// (`volumes`), which this frame's blended draws then bind; otherwise
     /// they bind the opaque depth in their place. Returns whether it drew.
+    /// Without volume paths it frees the layers, and the blended groups
+    /// that bound them let go of them.
     pub fn encode_volumes(&mut self, ctx: &mut FrameContext<'_>) -> bool {
+        if !ctx.effective.volume_paths {
+            if self.volumes.release() {
+                for blended in &mut self.blended {
+                    blended.group.forget();
+                }
+            }
+            return false;
+        }
         self.volumes.encode(ctx, &self.no_reflections)
     }
 

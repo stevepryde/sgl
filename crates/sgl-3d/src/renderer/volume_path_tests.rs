@@ -490,6 +490,106 @@ fn a_back_fragment_measures_from_its_entry_or_the_eye() {
     );
 }
 
+// Plausible defect: a back fragment measured from an entry that belongs to
+// another volume in front of it, so its path spans that volume and the
+// space between, which a shader that hides a back face behind an entry
+// (the example's glass) erases in the other volume's silhouette. The
+// oracle is the camera inside a large box with a smaller hidden box between
+// it and the large box's far side: behind the small box the large box's
+// back fragments report their segment hidden, with the distance from the
+// eye to where each pixel's ray leaves the large box (an upper bound);
+// beside it, that distance bounded by the eye.
+#[test]
+fn a_back_fragment_behind_another_exit_is_hidden() {
+    let Some(mut harness) = Harness::new(settings()) else {
+        return;
+    };
+    if !harness.renderer.volume_paths_in_effect(&harness.settings) {
+        eprintln!("skipping: the Basic tier measures no volume path");
+        return;
+    }
+    let shader = add_volume_shader(&mut harness.scene);
+    let material = volume(&mut harness, shader, VolumeShaderParams::default(), 0.);
+    let outer = Cuboid::new([0., 0., -3.], [3., 3., 4.]);
+    let inner = Cuboid::new([0.1, -0.1, -3.5], [0.8, 0.8, 0.4]);
+    place_box(&mut harness, outer, material, [0., 1.]);
+    place_box(&mut harness, inner, material, [0., 0.]);
+    place_wall(&mut harness, -12.);
+    let eye = Vec3::new(0.2, -0.1, 0.);
+    let camera = camera_at(eye);
+    harness.frame(&frame(camera, 0.));
+    let composite = harness.composite();
+    let counted = [true, false].map(|behind| {
+        check(
+            &composite,
+            &format!("behind the inner box {behind}"),
+            |pixel| {
+                let ray = ray(&camera, pixel);
+                let crosses = if inner.crossing(ray, MARGIN).is_some() {
+                    true
+                } else if inner.near(ray, MARGIN) {
+                    return None;
+                } else {
+                    false
+                };
+                if crosses != behind {
+                    return None;
+                }
+                let (_, exit) = outer.crossing(ray, MARGIN)?;
+                let from_eye = (ray.0 + ray.1 * exit).distance(eye.as_dvec3());
+                Some((from_eye, if behind { HIDDEN } else { EYE }, false))
+            },
+        )
+    });
+    assert!(
+        counted[0] >= 20 && counted[1] >= 100,
+        "{} pixels behind the inner box, {} beside it",
+        counted[0],
+        counted[1]
+    );
+}
+
+// Plausible defect: the layers' side selection swapped under a mirroring
+// pose, whose winding reverses, so a mirrored volume's entry and exit
+// layers trade faces and its fragments measure from or to their own side.
+// The oracle is a box posed with a negative scale, intersected through its
+// pose: its front fragments report its thickness bounded by its exit, and
+// its back fragments the same thickness bounded by its entry, as an
+// unmirrored box's do.
+#[test]
+fn a_mirrored_volume_keeps_its_sides() {
+    let Some(mut harness) = Harness::new(settings()) else {
+        return;
+    };
+    if !harness.renderer.volume_paths_in_effect(&harness.settings) {
+        eprintln!("skipping: the Basic tier measures no volume path");
+        return;
+    }
+    let shader = add_volume_shader(&mut harness.scene);
+    let material = volume(&mut harness, shader, VolumeShaderParams::default(), 0.);
+    let mirrored = Cuboid {
+        pose: Mat4::from_translation(Vec3::new(0., 0., -5.))
+            * Mat4::from_rotation_y(0.4)
+            * Mat4::from_scale(Vec3::new(-1., 1., 1.)),
+        ..Cuboid::new([0.3, 0., 0.], [1.2, 1., 0.5])
+    };
+    let id = place_box(&mut harness, mirrored, material, [1., 0.]);
+    place_wall(&mut harness, -12.);
+    let camera = camera_at(Vec3::ZERO);
+    for (front, bound, shown) in [(true, EXIT, [1., 0.]), (false, ENTRY, [0., 1.])] {
+        harness
+            .scene
+            .set_instance_shader_data(&harness.queue, id, [shown[0], shown[1], 0., 0.])
+            .unwrap();
+        harness.frame(&frame(camera, 0.));
+        let checked = check(&harness.composite(), &format!("front {front}"), |pixel| {
+            let (entry, exit) = mirrored.crossing(ray(&camera, pixel), MARGIN)?;
+            Some((exit - entry, bound, front))
+        });
+        assert!(checked >= 60, "front {front}: {checked} pixels");
+    }
+}
+
 // Plausible defects: the layers bound or measured where the binding tier's
 // sampled textures are spent, or while the setting is off, so a shader
 // reads a stale or garbage path where the contract promises none; the

@@ -16,7 +16,10 @@
 //! - `block-outside`, `block-inside`: a 1.6 m glass block with an opaque
 //!   cube inside it, which ends the path short of the block's far side,
 //!   seen from outside and with the camera inside the glass, where the
-//!   block's far faces absorb over the path from the eye.
+//!   block's far faces absorb over the path from the eye. The opaque cube
+//!   seen from inside the glass is not absorbed: no blended face lies
+//!   between the eye and it to absorb its light. A game covers that with
+//!   its own effect, such as a fog volume while the camera is inside.
 //! - `blob-*`: a glass sphere scaled 1.5 whose vertex function wobbles it
 //!   (static rest geometry, its displacement bound set), captured three
 //!   times a third of a second apart: the path follows the deformed surface.

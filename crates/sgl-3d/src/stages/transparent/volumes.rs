@@ -87,6 +87,15 @@ impl Volumes {
         }
     }
 
+    /// Frees the layers, as while the effective configuration has no
+    /// volume paths. Returns whether it held any, whose views the groups
+    /// that bound them still keep.
+    pub fn release(&mut self) -> bool {
+        self.held = false;
+        self.group.forget();
+        self.layers.take().is_some()
+    }
+
     /// The layers, where they hold this frame's.
     pub fn held(&self) -> Option<&Layers> {
         self.layers.as_ref().filter(|_| self.held)
@@ -101,12 +110,7 @@ impl Volumes {
     /// whether the layers hold this frame's.
     pub fn encode(&mut self, ctx: &mut FrameContext<'_>, blank: &wgpu::TextureView) -> bool {
         self.held = false;
-        if !ctx.effective.volume_paths {
-            self.layers = None;
-            self.group.forget();
-            return false;
-        }
-        if !ctx.views.blended.holds_volumes(ctx.scene) {
+        if !ctx.effective.volume_paths || !ctx.views.blended.holds_volumes(ctx.scene) {
             return false;
         }
         let depth = &ctx.targets.depth;

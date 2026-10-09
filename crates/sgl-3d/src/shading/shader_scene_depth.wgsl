@@ -55,8 +55,12 @@ fn scene_along_ray(ctx:SurfaceContext,depth:f32)->f32 {
 // nearest front face (entry), back face (exit) and back face behind that
 // (second exit). A `front` fragment's path runs to the nearest exit at or
 // behind it while at most one exit lies in front of it, else to the opaque
-// surface; a back fragment's from the nearest entry in front of it, else
-// from the eye. Lengths are measured as scene_depth_behind measures them.
+// surface. A back fragment's runs from the nearest entry in front of it
+// where no other exit lies between, else from the eye where neither an
+// entry nor another exit lies in front of it; where another exit lies in
+// front of it, which hides where its own segment starts, it is reported
+// hidden with the length from the eye, an upper bound. Lengths are
+// measured as scene_depth_behind measures them.
 fn scene_volume_path(ctx:SurfaceContext)->VolumePath {
  if blended_trace.volumes==0u {
   return VolumePath(0.,VOLUME_NONE);
@@ -84,12 +88,34 @@ fn scene_volume_path(ctx:SurfaceContext)->VolumePath {
   }
   return VolumePath(to_opaque,VOLUME_HIDDEN);
  }
+ let from_eye=scene_along_ray(ctx,ctx.view_depth);
  let entry=textureLoad(blended_volume_entry,texel,0);
- if entry>opaque {
-  let entry_depth=scene_view_depth(entry);
-  if entry_depth<ctx.view_depth {
+ let entry_depth=scene_view_depth(entry);
+ let entered=entry>opaque && entry_depth<ctx.view_depth;
+ let exit=textureLoad(blended_volume_exit,texel,0);
+ let second=textureLoad(blended_volume_second_exit,texel,0);
+ if !scene_exit_ahead(exit,opaque,ctx.view_depth) {
+  if entered {
    return VolumePath(scene_along_ray(ctx,ctx.view_depth-entry_depth),VOLUME_ENTRY);
   }
+  return VolumePath(from_eye,VOLUME_EYE);
  }
- return VolumePath(scene_along_ray(ctx,ctx.view_depth),VOLUME_EYE);
+ // Another exit lies in front: the entry starts this segment only where
+ // every such exit, at most one, precedes it.
+ if entered && exit>entry && !scene_exit_ahead(second,opaque,ctx.view_depth) {
+  return VolumePath(scene_along_ray(ctx,ctx.view_depth-entry_depth),VOLUME_ENTRY);
+ }
+ return VolumePath(from_eye,VOLUME_HIDDEN);
+}
+// How much nearer than a back fragment, as a share of its view depth, an
+// exit layer's face must lie to be another face: the fragment's own face is
+// usually the exit layer's, at its depth up to the rounding of the depth
+// target and of the fragment's interpolated position (about 1e-6 of the
+// depth in f32), which this equality tolerance clears with margin.
+const SCENE_VOLUME_SAME_FACE:f32=1e-4;
+// Whether exit layer texel `exit` holds a face (nearer than the `opaque`
+// texel) in front of a back fragment at linear view depth `view_depth`,
+// other than its own.
+fn scene_exit_ahead(exit:f32,opaque:f32,view_depth:f32)->bool {
+ return exit>opaque && scene_view_depth(exit)<view_depth*(1.-SCENE_VOLUME_SAME_FACE);
 }

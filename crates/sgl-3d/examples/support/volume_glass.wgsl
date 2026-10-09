@@ -17,8 +17,10 @@
 //   in front carries the whole path, and the exit, drawn after it, would
 //   show the background unabsorbed over it;
 // - without a measured path (VOLUME_NONE: the setting off or the Basic
-//   tier; VOLUME_HIDDEN: a third crossing) either face takes the authored
-//   thickness, as a material without a shader does.
+//   tier; VOLUME_HIDDEN: an entry face behind two exits, or an exit face
+//   behind another volume's exit, which hides where its segment starts)
+//   either face keeps its coverage and takes the authored thickness, as a
+//   material without a shader does.
 // Coverage is never faded by the path's length: a finite volume's entry and
 // exit meet at its silhouette, where the path falls to 0.
 //
