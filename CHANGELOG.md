@@ -18,8 +18,8 @@ docs and specs the entry links.
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`
-  games, `FixedClock` callers, `Settings` literals and exhaustive
-  `SceneError` matches as the entries below say.
+  games, `FixedClock` callers, `SurfaceMaterial` and `Settings` literals
+  and exhaustive `SceneError` matches as the entries below say.
 - `sgl-net` `SendError::ReliableOverflow` → `SendError::WouldBlock`: a full
   reliable queue no longer disconnects the peer on any transport; the send is
   refused whole and may be retried. `Delivery::ReliableOrdered` →
@@ -43,8 +43,10 @@ docs and specs the entry links.
   event_queue_messages}`, with the same values per lane (`DEFAULT_LANE_*`);
   `EndpointConfig::global_reliable_*_items` → `global_reliable_*_messages`,
   defaults 4,096 → 12,288 messages and 4 → 24 MiB.
-  Migration: rename the fields and constants; one-lane games change nothing
-  else; others pick `Lane::new(n)` and set `config.reliable.lanes[n].weight`.
+  Migration: rename the constants and global fields, and move removed
+  `ThreadedUdpConfig` bounds to `EndpointConfig::reliable.lanes[n]`; one-lane
+  games change nothing else; others pick `Lane::new(n)` and set
+  `config.reliable.lanes[n].weight`.
 - `sgl-net` `MAX_RELIABLE_MESSAGE_BYTES` (64 KiB) →
   `ReliableConfig::max_message_bytes` (default
   `DEFAULT_RELIABLE_MESSAGE_BYTES`, 64 KiB; at most
@@ -73,8 +75,9 @@ docs and specs the entry links.
 - `sgl-net` native WebSocket and UDP receivers: a lane past its `inbound_*`
   bounds (on UDP, or `EndpointConfig::global_reliable_inbound_messages`)
   stops taking messages until `poll` makes room, so the sender gets
-  `WouldBlock` (was disconnected with `InboundOverflow`), and the stall
-  times neither end out. No game-code changes needed; browser receivers
+  `WouldBlock` (was disconnected with `InboundOverflow`). A UDP sender
+  waits while keepalives arrive; a native WebSocket sender still times out
+  after its `timeout_ms`. No game-code changes needed; browser receivers
   still close on overflow, so size their `inbound_*` bounds for one poll
   interval.
 - `sgl-net` UDP: a flush packs messages, latest state and acknowledgements
@@ -89,7 +92,9 @@ docs and specs the entry links.
   is now the `fixed_dt()` method beside `fixed_step()`, and `dropped_dt`
   reports unsimulated time. New opt-in `with_catch_up(hz, CatchUp { .. })`
   runs several steps per frame; `with_hz` and `new` keep one step per
-  frame. Migration: pass `now.duration_since(last)` and call `fixed_dt()`.
+  frame. Migration: pass the frame's elapsed `Duration` (e.g.
+  `Duration::from_secs_f32(dt)` for an existing `f32` delta) and call
+  `fixed_dt()`.
 - `sgl-2d` `SpritePass::upload`: a handle already uploaded now has its pixels
   replaced (was ignored), and `SpritePass::replace` is public, so glyph pages
   from `TextRenderer::end_frame` update the existing pass. New
@@ -102,7 +107,8 @@ docs and specs the entry links.
   `PreparedModel::with_shader_data`; blended materials may read
   `scene_volume_path`
   ([Programmable surfaces](crates/sgl-3d/README.md#programmable-surfaces)).
-  Exhaustive `SceneError` matches add `UnknownShader`, `ShaderInUse`,
+  Migration: `SurfaceMaterial` literals without `..` add `shader: None`;
+  exhaustive `SceneError` matches add `UnknownShader`, `ShaderInUse`,
   `ShaderParameters`, `Shader`, `InvalidDisplacementBound` and
   `ShaderDataLength`.
 - `sgl-3d` `Settings::volume_paths` (new, on by default; saved settings

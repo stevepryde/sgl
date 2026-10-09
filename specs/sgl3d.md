@@ -235,7 +235,7 @@ The code's structure follows the
 
 ## Roadmap
 
-The status below reflects the `0.2.0` release. Parenthesized numbers
+The status below reflects the `0.4.0` release. Parenthesized numbers
 are stable roadmap labels, not GitHub issue numbers. Keep this status current
 when a roadmap feature lands. The
 [SGL project](https://github.com/users/stevepryde/projects/12) owns priority
