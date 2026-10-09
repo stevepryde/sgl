@@ -2,9 +2,9 @@
 // specs/sgl3d-architecture.md, Shader contract): what a game's WGSL module
 // (Scene::add_shader) receives and returns. A game's module defines
 // `struct ShaderParams`, `material_vertex` and `material_surface` over these
-// structs and may call the scene depth functions its program's provider
-// declares (shader_scene_depth_none.wgsl, shader_scene_depth.wgsl); nothing
-// else SGL3D declares is the contract. SGL3D's own programs compose
+// structs, and from material_surface may call the scene depth functions its
+// program's provider declares (shader_scene_depth_none.wgsl,
+// shader_scene_depth.wgsl); nothing else SGL3D declares is the contract. SGL3D's own programs compose
 // shader_default.wgsl in its place, whose functions return their argument.
 // The pattern is Filament ef1a133's materialVertex() and material()
 // (shaders/src/surface_main.vs, surface_main.fs,

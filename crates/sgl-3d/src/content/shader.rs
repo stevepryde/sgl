@@ -106,6 +106,10 @@ pub enum ShaderError {
     /// One call of `function` makes more than `SHADER_LOOP_BUDGET` loop
     /// iterations.
     LoopBudget { function: String, iterations: u64 },
+    /// `function`, which `material_vertex` is or calls, calls a scene depth
+    /// function (`scene_depth_available`, `scene_depth`,
+    /// `scene_depth_behind`): scene depth is `material_surface`'s.
+    SceneDepthInVertex { function: String },
     /// `function` takes a derivative (`dpdx`, `dpdy`, `fwidth` and their
     /// forms), or calls a function that takes one, within an `if`, a
     /// `switch` or a loop (the right of `&&` and `||` among them), or after
@@ -114,7 +118,8 @@ pub enum ShaderError {
     /// elsewhere. Take it in the function's top-level statements and
     /// `select` on its value.
     NonUniformDerivative { function: String },
-    /// A declaration whose name SGL3D's programs already use.
+    /// A declaration whose name SGL3D's programs on either binding tier
+    /// already use.
     NameTaken { name: String },
     /// `ShaderParams` takes more than `SHADER_PARAMS_MAX_BYTES`.
     ParamsTooLarge { size: u32, max: u32 },
@@ -146,6 +151,10 @@ impl std::fmt::Display for ShaderError {
             } => write!(
                 f,
                 "{function} makes {iterations} loop iterations, more than {SHADER_LOOP_BUDGET}"
+            ),
+            Self::SceneDepthInVertex { function } => write!(
+                f,
+                "{function} reads the scene depth from material_vertex, which only material_surface may"
             ),
             Self::NonUniformDerivative { function } => write!(
                 f,

@@ -92,7 +92,9 @@ fn the_contract_is_accepted() {
 // Plausible defects: a loop whose bound data can raise reaching a device,
 // which can hang it (AR-12); a counted loop miscounted. The oracle is the
 // counted-loop rule and SHADER_LOOP_BUDGET: a loop bounded by a parameter
-// or a `while` is unbounded; a 16 by 16 nest makes the budget's 256
+// or a `while` is unbounded, as is a counter whose limit plus step
+// overflows its type, which wraps before it passes the limit (`i <=
+// 4294967295u` holds for every u32); a 16 by 16 nest makes the budget's 256
 // iterations, a 17 by 17 one 289 and two loops of 200 one after the other
 // 400, each over it.
 #[wasm_bindgen_test(unsupported = test)]
@@ -113,6 +115,7 @@ fn loops_are_counted_within_the_budget() {
     unbounded("var s=0.; var i=0; while (i<4) { s+=1.; i++; } return s;");
     unbounded("var s=0.; for (var i=0;i<4;i++) { s+=1.; i--; } return s;");
     unbounded("var s=0.; loop { s+=1.; if s>4. { break; } } return s;");
+    unbounded("var s=0.; for (var i=4294967290u;i<=4294967295u;i++) { s+=1.; } return s;");
     let nest = |n: u32| {
         format!(
             "fn nested()->f32 {{ var s=0.; for (var i=0u;i<{n}u;i++) {{ for (var j=0u;j<{n}u;j++) {{ s+=1.; }} }} return s; }}"
@@ -209,6 +212,16 @@ fn forbidden_declarations_are_refused() {
             name: "MaterialVertex".into()
         }
     );
+    // A name only the Extended tier's programs declare (its blended draws'
+    // opaque depth, bind_blended_extended.wgsl), refused on Basic too: a
+    // game's module runs on whichever tier a player's device has.
+    let extended_only = with("const blended_scene_depth:f32=1.;");
+    assert_eq!(
+        validate(&extended_only, BindingTier::Basic).err(),
+        Some(ShaderError::NameTaken {
+            name: "blended_scene_depth".into()
+        })
+    );
 }
 
 // Plausible defect: a module missing a function, or with the wrong
@@ -268,6 +281,38 @@ fn the_contract_is_held_to() {
         )),
         ShaderError::Validate { .. }
     ));
+}
+
+// Plausible defect: a vertex function that reads the scene depth, itself
+// or through a function it calls, accepted, so the blended draws' pipeline,
+// whose vertex stage would then read a binding only their fragment stage
+// sees, fails when the material is first drawn. The oracle is the contract:
+// scene depth is the surface function's, which may call the same helper.
+#[wasm_bindgen_test(unsupported = test)]
+fn scene_depth_is_the_surface_functions() {
+    let helper = "fn depth_at(pixel:vec2<f32>)->f32 { return scene_depth(pixel); }";
+    let module = |vertex: &str, surface: &str| {
+        format!(
+            "{PARAMS}{helper}\nfn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {{\n var out=v;\n {vertex}\n return out;\n}}\nfn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {{\n var out=s;\n {surface}\n return out;\n}}"
+        )
+    };
+    validated(&module("", "out.thickness=depth_at(ctx.pixel);"))
+        .unwrap_or_else(|error| panic!("{error}"));
+    for (vertex, function) in [
+        ("out.position.y+=depth_at(vec2(0.));", "depth_at"),
+        (
+            "if scene_depth_available() { out.position.y+=1.; }",
+            "material_vertex",
+        ),
+    ] {
+        assert_eq!(
+            refused(&module(vertex, "")),
+            ShaderError::SceneDepthInVertex {
+                function: function.into()
+            },
+            "{vertex}"
+        );
+    }
 }
 
 // Plausible defect: a module that takes a derivative where a browser's

@@ -57,7 +57,7 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
             name: directive,
         });
     }
-    let reserved = reserved_names(tier);
+    let reserved = reserved_names();
     let declared = declared_names(&tokens);
     if let Some(name) = declared.iter().find(|name| reserved.contains(*name)) {
         return Err(ShaderError::NameTaken { name: name.clone() });
@@ -87,6 +87,7 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
     }
     loops::check(&module, |name| !CONTRACT_FUNCTIONS.contains(&name))?;
     derivatives::check(&module, |name| !CONTRACT_FUNCTIONS.contains(&name))?;
+    vertex_scene_depth(&module)?;
     let layout = params_layout(&module, params)?;
     for (label, program) in programs(tier, ProgramShader::Game(source)) {
         let module =
@@ -296,18 +297,77 @@ fn params_layout(
     })
 }
 
-/// The names SGL3D's programs on a device of `tier` declare at module
-/// scope, but those a game's module defines: each program parsed with the
-/// default provider's text where a game's module goes. Found once.
-fn reserved_names(tier: BindingTier) -> &'static HashSet<String> {
-    static NAMES: [OnceLock<HashSet<String>>; 2] = [OnceLock::new(), OnceLock::new()];
-    let index = match tier {
-        BindingTier::Basic => 0,
-        BindingTier::Extended => 1,
+/// Refuses `material_vertex` reaching a scene depth function, itself or
+/// through a function it calls: scene depth is the surface function's, and
+/// the binding it reads is the blended draws' fragment stage's alone, so a
+/// vertex stage that reads it would fail when its pipeline is created.
+fn vertex_scene_depth(module: &naga::Module) -> Result<(), ShaderError> {
+    let named = |handle: naga::Handle<naga::Function>| {
+        module.functions[handle].name.clone().unwrap_or_default()
     };
-    NAMES[index].get_or_init(|| {
+    let mut pending: Vec<_> = module
+        .functions
+        .iter()
+        .filter(|&(handle, _)| named(handle) == "material_vertex")
+        .map(|(handle, _)| handle)
+        .collect();
+    let mut seen = HashSet::new();
+    while let Some(handle) = pending.pop() {
+        if !seen.insert(handle) {
+            continue;
+        }
+        let mut callees = Vec::new();
+        calls(&module.functions[handle].body, &mut callees);
+        for callee in callees {
+            if CONTRACT_FUNCTIONS.contains(&named(callee).as_str()) {
+                return Err(ShaderError::SceneDepthInVertex {
+                    function: named(handle),
+                });
+            }
+            pending.push(callee);
+        }
+    }
+    Ok(())
+}
+
+/// The functions `block` calls, at any depth, into `callees`.
+fn calls(block: &naga::Block, callees: &mut Vec<naga::Handle<naga::Function>>) {
+    for statement in block.iter() {
+        match statement {
+            naga::Statement::Call { function, .. } => callees.push(*function),
+            naga::Statement::Block(inner) => calls(inner, callees),
+            naga::Statement::If { accept, reject, .. } => {
+                calls(accept, callees);
+                calls(reject, callees);
+            }
+            naga::Statement::Switch { cases, .. } => {
+                for case in cases {
+                    calls(&case.body, callees);
+                }
+            }
+            naga::Statement::Loop {
+                body, continuing, ..
+            } => {
+                calls(body, callees);
+                calls(continuing, callees);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The names SGL3D's programs on a device of either binding tier declare
+/// at module scope, but those a game's module defines: each program parsed
+/// with the default provider's text where a game's module goes. Both
+/// tiers', so a module one tier accepts never takes a name the other's
+/// programs declare. Found once.
+fn reserved_names() -> &'static HashSet<String> {
+    static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
+    NAMES.get_or_init(|| {
         let mut names = HashSet::new();
-        for (label, program) in programs(tier, ProgramShader::Game(SHADER_DEFAULT.source)) {
+        let tiers = [BindingTier::Basic, BindingTier::Extended];
+        let shader = ProgramShader::Game(SHADER_DEFAULT.source);
+        for (label, program) in tiers.into_iter().flat_map(|tier| programs(tier, shader)) {
             let module = naga::front::wgsl::parse_str(&program)
                 .unwrap_or_else(|error| panic!("{label}: {}", error.message()));
             let name = |name: &Option<String>| name.clone();

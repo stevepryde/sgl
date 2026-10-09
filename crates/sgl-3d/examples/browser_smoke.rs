@@ -400,7 +400,14 @@ fn add_glass(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene) -> R
     scene
         .set_material(queue, glass, values)
         .map_err(|e| format!("set_material: {e}"))?;
+    // The block `tint` mirrors: glass.wgsl's ShaderParams, one vec4.
     let tint = [0.4f32, 0.8, 0.6, 1.].map(|color| -color.ln() / 0.1);
+    let layout = scene
+        .shader_parameters_layout(shader)
+        .map_err(|e| format!("shader_parameters_layout: {e}"))?;
+    if layout.size as usize != size_of_val(&tint) || layout.fields.len() != 1 {
+        return Err(format!("glass: ShaderParams is not one vec4: {layout:?}"));
+    }
     scene
         .set_shader_parameters(queue, glass, bytemuck::bytes_of(&tint))
         .map_err(|e| format!("set_shader_parameters: {e}"))?;
