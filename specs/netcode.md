@@ -99,7 +99,8 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     held messages first; the threaded server polls its endpoint within the
     room its ingress has left, so it holds until its caller's `poll` drains
     the ingress. The UDP endpoint's `global_reliable_inbound_messages`, a
-    per-poll ceiling across peers, holds the same way. Native WebSocket
+    per-poll ceiling across peers, holds the same way, and held lanes take
+    turns at the front of a poll so each progresses. Native WebSocket
     stops reading the connection until `poll` makes room (13). The browser
     cannot stop reading, so there the inbound bounds are a budget per
     caller poll, sized for the poll interval, and a peer that exceeds them

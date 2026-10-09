@@ -253,7 +253,9 @@ pub enum DisconnectReason {
     TimedOut,
     /// Incoming transport data violated its framing contract.
     ProtocolViolation,
-    /// The peer exceeded this side's inbound reliable bounds.
+    /// The peer exceeded an inbound reliable bound this side cannot slow it
+    /// for: a browser receiver's lane bounds, or the UDP endpoint's
+    /// `global_reliable_inbound_bytes`.
     InboundOverflow,
     /// The underlying socket or browser transport failed.
     Transport,

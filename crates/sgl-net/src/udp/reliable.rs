@@ -344,6 +344,12 @@ impl Reliable {
         self.buffered_bytes + self.reassembly.retained_bytes()
     }
 
+    /// Whether the window's front fragment waits for room: buffered at the
+    /// front only while `admit` refuses it.
+    pub fn holding(&self) -> bool {
+        self.receive_buffer.contains_key(&self.receive_next)
+    }
+
     /// Whether this lane has received anything, so its acknowledgement
     /// means something to the peer.
     pub const fn has_received(&self) -> bool {
@@ -363,8 +369,7 @@ impl Reliable {
         Ack {
             next: self.receive_next,
             bits,
-            // Buffered at the front of the window only while refused.
-            held: self.receive_buffer.contains_key(&self.receive_next),
+            held: self.holding(),
         }
     }
 }

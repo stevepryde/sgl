@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::net::SocketAddr;
 
 use super::cookie::{ChallengeLimiter, ConfirmReplayCache, CookieKey};
@@ -51,14 +51,17 @@ pub struct EndpointConfig {
     /// Completed reliable messages from every peer in one poll. Past it, a
     /// lane holds its next message until a later poll, as a full lane does.
     pub global_reliable_inbound_messages: usize,
-    /// Inbound reliable bytes across peers: fragments awaiting reassembly
-    /// plus completed messages in one poll; at least
+    /// Inbound reliable bytes across peers: each lane's buffered window
+    /// (`WINDOW` fragments, including one held for room) and partial
+    /// message, plus completed messages in one poll; at least
     /// `reliable.max_message_bytes`, with room beside a message being
-    /// reassembled for the lane's out-of-order fragments and the other
-    /// lanes' and peers' traffic. The peer that exceeds it is disconnected
-    /// with `InboundOverflow`. It counts bytes received: a reassembly buffer
-    /// may reserve up to twice what has arrived, never past its message's
-    /// declared total.
+    /// reassembled for the lane's window and the other lanes' and peers'
+    /// traffic. It is the one inbound bound that closes a peer rather than
+    /// holding it: the peer that exceeds it is disconnected with
+    /// `InboundOverflow`, so it must cover every lane of `max_peers` for a
+    /// healthy peer never to be. It counts bytes received: a reassembly
+    /// buffer may reserve up to twice what has arrived, never past its
+    /// message's declared total.
     pub global_reliable_inbound_bytes: usize,
 }
 
@@ -286,6 +289,9 @@ pub struct Endpoint<T: DatagramTransport> {
     inbound_retained: usize,
     /// Completed reliable messages and bytes delivered in the current poll.
     poll_delivered: (usize, usize),
+    /// The held lane released first in the last poll; the next poll starts
+    /// after it.
+    last_released_first: Option<(u64, usize)>,
 }
 
 impl<T: DatagramTransport> Endpoint<T> {
@@ -368,6 +374,7 @@ impl<T: DatagramTransport> Endpoint<T> {
             outbound: (0, 0),
             inbound_retained: 0,
             poll_delivered: (0, 0),
+            last_released_first: None,
         })
     }
 
@@ -583,46 +590,72 @@ impl<T: DatagramTransport> Endpoint<T> {
         events
     }
 
-    /// Delivers, oldest first, the held messages each lane now has room for.
+    /// Delivers the held messages each lane now has room for, in order. The
+    /// held lanes take turns going first, so when the global message
+    /// ceiling binds every one of them progresses. A peer whose released
+    /// fragments break the framing rules is closed and delivers none.
     fn release_held(&mut self, events: &mut Vec<EndpointEvent>) {
+        let held: Vec<_> = self
+            .peers
+            .iter()
+            .filter(|(_, peer)| peer.handshake == Handshake::Connected && !peer.is_closing())
+            .flat_map(|(&id, peer)| {
+                (0..RELIABLE_LANES)
+                    .filter(|&index| peer.reliable[index].holding())
+                    .map(move |index| (id, index))
+            })
+            .collect();
+        let split = self
+            .last_released_first
+            .map_or(0, |last| held.partition_point(|&stream| stream <= last));
+        let order = held[split..].iter().chain(&held[..split]);
+        if let Some(&first) = order.clone().next() {
+            self.last_released_first = Some(first);
+        }
+
         let limits = InboundLimits {
             reliable: &self.config.reliable,
             global_messages: self.config.global_reliable_inbound_messages,
             global_bytes: self.config.global_reliable_inbound_bytes,
         };
-        let mut violators = Vec::new();
-        for (&id, peer) in &mut self.peers {
-            if peer.handshake != Handshake::Connected || peer.is_closing() {
+        let mut released = Vec::new();
+        let mut violators = BTreeSet::new();
+        for &(id, index) in order {
+            if violators.contains(&id) {
                 continue;
             }
-            for index in 0..RELIABLE_LANES {
-                let lane = lane_at(index);
-                let state = &mut peer.reliable[index];
-                let before = state.retained_bytes();
-                let mut messages = Vec::new();
-                let consumed = state.consume(
-                    &mut |len| {
-                        limits.admit(
-                            lane,
-                            &mut peer.delivered[index],
-                            &mut self.poll_delivered,
-                            len,
-                        )
-                    },
-                    &mut messages,
-                );
-                self.inbound_retained = self.inbound_retained - before + state.retained_bytes();
-                if consumed.is_err() {
-                    violators.push(id);
-                    break;
-                }
-                events.extend(messages.into_iter().map(|payload| EndpointEvent::Message {
-                    peer: id,
+            let peer = self.peers.get_mut(&id).expect("listed from peers");
+            let lane = lane_at(index);
+            let state = &mut peer.reliable[index];
+            let before = state.retained_bytes();
+            let mut messages = Vec::new();
+            let consumed = state.consume(
+                &mut |len| {
+                    limits.admit(
+                        lane,
+                        &mut peer.delivered[index],
+                        &mut self.poll_delivered,
+                        len,
+                    )
+                },
+                &mut messages,
+            );
+            self.inbound_retained = self.inbound_retained - before + state.retained_bytes();
+            if consumed.is_err() {
+                violators.insert(id);
+            }
+            released.extend(messages.into_iter().map(|payload| (id, lane, payload)));
+        }
+        events.extend(
+            released
+                .into_iter()
+                .filter(|(id, _, _)| !violators.contains(id))
+                .map(|(peer, lane, payload)| EndpointEvent::Message {
+                    peer,
                     delivery: Delivery::Reliable(lane),
                     payload,
-                }));
-            }
-        }
+                }),
+        );
         for id in violators {
             self.drop_peer(id, DisconnectReason::ProtocolViolation, true);
         }
@@ -1305,6 +1338,76 @@ mod tests {
             );
             assert_eq!(server.peer_count(), 1);
         }
+    }
+
+    /// Defect: held lanes released in a fixed order, so when the global
+    /// per-poll message ceiling binds one backlogged peer takes it every
+    /// poll and another, held behind it, never progresses. Oracle:
+    /// netcode.md 11 (other connections are never affected; a held peer is
+    /// slowed, not stopped) — two peers each holding a full window of
+    /// messages under a ceiling of two per poll both receive theirs in
+    /// order, and the gap between their shares stays within two polls'
+    /// ceiling (the poll they arrived in, and one turn) however many polls
+    /// pass.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn held_peers_share_a_binding_global_message_ceiling() {
+        const CEILING: usize = 2;
+        let (mut server, first, first_nonces) = connected_server(EndpointConfig {
+            global_reliable_inbound_messages: CEILING,
+            ..EndpointConfig::default()
+        });
+        let second = address(192, 0, 2, 91, 40_001);
+        request(&mut server, second, 66);
+        assert!(server.poll(2).is_empty());
+        let second_nonces = challenge_for(&server, second, 66);
+        confirm(&mut server, second, second_nonces);
+        assert_eq!(server.poll(3), vec![EndpointEvent::Connected { peer: 2 }]);
+        for (source, nonces) in [(first, first_nonces), (second, second_nonces)] {
+            let mut bytes = Vec::new();
+            packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+            for sequence in 0..super::super::reliable::WINDOW {
+                packet::push_reliable(
+                    &mut bytes,
+                    Lane::DEFAULT,
+                    sequence,
+                    Fragment::Whole,
+                    &sequence.to_le_bytes(),
+                );
+            }
+            server
+                .transport
+                .received
+                .push_back(ReceivedDatagram { source, bytes });
+        }
+        let mut received: BTreeMap<u64, Vec<u16>> = BTreeMap::new();
+        for now in 4..18 {
+            let events = server.poll(now);
+            assert_eq!(events.len(), CEILING, "the ceiling binds every poll");
+            for event in events {
+                let EndpointEvent::Message { peer, payload, .. } = event else {
+                    panic!("unexpected {event:?}");
+                };
+                received
+                    .entry(peer)
+                    .or_default()
+                    .push(u16::from_le_bytes(payload[..].try_into().unwrap()));
+            }
+        }
+        for (peer, got) in &received {
+            assert!(
+                got.iter().zip(0..).all(|(&a, b)| a == b),
+                "peer {peer} in order, once: {got:?}"
+            );
+        }
+        let counts: Vec<_> = [1, 2]
+            .iter()
+            .map(|peer| received.get(peer).map_or(0, Vec::len))
+            .collect();
+        assert!(
+            counts.iter().max().unwrap() - counts.iter().min().unwrap() <= 2 * CEILING,
+            "unfair split: {counts:?}"
+        );
+        assert_eq!(server.peer_count(), 2);
     }
 
     /// #254, #267: the global outbound allowance admits exactly its message
