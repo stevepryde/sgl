@@ -90,6 +90,9 @@ struct Connection {
     shared: Arc<SharedPeer>,
     /// A message the socket could not take yet (see `drain_outbound`).
     pending: Option<Message>,
+    /// A received frame its lane could not take yet; nothing more is read
+    /// until it fits (see `socket_tick`).
+    held: Option<tungstenite::Bytes>,
     /// Waiting in `IoWorker::runnable`.
     queued: bool,
 }
@@ -100,8 +103,18 @@ impl Connection {
             socket,
             shared,
             pending: None,
+            held: None,
             queued: false,
         }
+    }
+
+    fn tick(&mut self) -> SocketTick {
+        socket_tick(
+            &mut self.socket,
+            &self.shared,
+            &mut self.pending,
+            &mut self.held,
+        )
     }
 }
 
@@ -328,11 +341,7 @@ impl IoWorker {
                 continue;
             };
             connection.queued = false;
-            match socket_tick(
-                &mut connection.socket,
-                &connection.shared,
-                &mut connection.pending,
-            ) {
+            match connection.tick() {
                 SocketTick::Stop => self.release(token),
                 SocketTick::Continue { idle: false } => self.queue(token),
                 SocketTick::Continue { idle: true } => {}
@@ -567,11 +576,7 @@ impl IoWorker {
     fn finish(&mut self) {
         for connection in self.connections.values_mut() {
             connection.shared.shutdown.store(true, Ordering::Release);
-            let _ = socket_tick(
-                &mut connection.socket,
-                &connection.shared,
-                &mut connection.pending,
-            );
+            let _ = connection.tick();
         }
     }
 

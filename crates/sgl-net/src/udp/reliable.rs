@@ -1,5 +1,7 @@
 //! One reliable lane: a bounded 33-slot selective-repeat ARQ with its own
-//! sequence space, and in-order reassembly.
+//! sequence space, and in-order reassembly. Outbound messages are kept
+//! whole until acknowledged; each fragment in flight is a range of its
+//! message, so outbound memory is the held messages' bytes.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -9,13 +11,27 @@ use crate::lanes::{Fragment, FramingViolation, Reassembly};
 
 pub const WINDOW: u16 = 32;
 
+/// A received fragment waiting, out of order, for the gap before it.
 #[derive(Debug)]
 pub struct Slot {
     pub fragment: Fragment,
     pub bytes: Vec<u8>,
 }
 
-impl Slot {
+#[derive(Debug)]
+struct InFlight {
+    sequence: u16,
+    /// The message this fragment belongs to, by its position in the lane.
+    message: u64,
+    start: usize,
+    end: usize,
+    fragment: Fragment,
+    sent_at: Option<u64>,
+    transmissions: u8,
+    acknowledged: bool,
+}
+
+impl InFlight {
     /// Whether this fragment ends its message.
     const fn ends_message(&self) -> bool {
         matches!(self.fragment, Fragment::Whole | Fragment::Last)
@@ -23,18 +39,16 @@ impl Slot {
 }
 
 #[derive(Debug)]
-struct InFlight {
-    sequence: u16,
-    slot: Slot,
-    sent_at: Option<u64>,
-    transmissions: u8,
-    acknowledged: bool,
-}
-
-#[derive(Debug)]
 pub struct Reliable {
     next_sequence: u16,
-    queued: VecDeque<Slot>,
+    fragment_bytes: usize,
+    /// Held messages, oldest first: every one with a fragment not yet sent
+    /// or not yet acknowledged.
+    messages: VecDeque<Vec<u8>>,
+    /// The position of `messages[0]` in the lane.
+    first_message: u64,
+    /// The position and offset of the next fragment to send.
+    next_fragment: (u64, usize),
     in_flight: VecDeque<InFlight>,
     /// Messages and bytes held until the peer acknowledges them.
     held_messages: usize,
@@ -49,10 +63,15 @@ pub struct Reliable {
 }
 
 impl Reliable {
-    pub fn new(max_message_bytes: usize) -> Self {
+    /// A lane that sends fragments of at most `fragment_bytes` and accepts
+    /// messages of at most `max_message_bytes`.
+    pub fn new(max_message_bytes: usize, fragment_bytes: usize) -> Self {
         Self {
             next_sequence: 0,
-            queued: VecDeque::new(),
+            fragment_bytes,
+            messages: VecDeque::new(),
+            first_message: 0,
+            next_fragment: (0, 0),
             in_flight: VecDeque::new(),
             held_messages: 0,
             held_bytes: 0,
@@ -66,21 +85,9 @@ impl Reliable {
         }
     }
 
-    /// Queues one admitted message as fragments of at most
-    /// `fragment_bytes`; admission is the caller's.
-    pub fn enqueue(&mut self, payload: &[u8], fragment_bytes: usize) {
-        let mut start = 0;
-        loop {
-            let (fragment, end) = Fragment::at(payload.len(), start, fragment_bytes, TOTAL_LEN);
-            self.queued.push_back(Slot {
-                fragment,
-                bytes: payload[start..end].to_vec(),
-            });
-            if end == payload.len() {
-                break;
-            }
-            start = end;
-        }
+    /// Queues one admitted message whole; admission is the caller's.
+    pub fn enqueue(&mut self, payload: &[u8]) {
+        self.messages.push_back(payload.to_vec());
         self.held_messages += 1;
         self.held_bytes += payload.len();
     }
@@ -89,6 +96,12 @@ impl Reliable {
     /// unacknowledged alike.
     pub const fn held(&self) -> (usize, usize) {
         (self.held_messages, self.held_bytes)
+    }
+
+    /// The held message at lane position `message`.
+    fn message(&self, message: u64) -> &[u8] {
+        let index = usize::try_from(message - self.first_message).expect("a held message");
+        &self.messages[index]
     }
 
     /// The fragment to send now: the oldest due retransmission, else the
@@ -104,26 +117,37 @@ impl Reliable {
             .or_else(|| self.admit())
     }
 
-    /// Whether a queued fragment fits the window now.
+    /// Whether a fragment not yet sent fits the window now.
     pub fn window_open(&self) -> bool {
-        !self.queued.is_empty()
+        let unsent = self.next_fragment.0 < self.first_message + self.messages.len() as u64;
+        unsent
             && self
                 .in_flight
                 .front()
                 .is_none_or(|first| sequence::diff(self.next_sequence, first.sequence) <= WINDOW)
     }
 
-    /// Moves the next queued fragment into the window, if it fits.
+    /// Moves the next fragment into the window, if it fits.
     pub fn admit(&mut self) -> Option<u16> {
         if !self.window_open() {
             return None;
         }
-        let slot = self.queued.pop_front()?;
+        let (message, start) = self.next_fragment;
+        let len = self.message(message).len();
+        let (fragment, end) = Fragment::at(len, start, self.fragment_bytes, TOTAL_LEN);
+        self.next_fragment = if end == len {
+            (message + 1, 0)
+        } else {
+            (message, end)
+        };
         let sequence = self.next_sequence;
         self.next_sequence = sequence.wrapping_add(1);
         self.in_flight.push_back(InFlight {
             sequence,
-            slot,
+            message,
+            start,
+            end,
+            fragment,
             sent_at: None,
             transmissions: 0,
             acknowledged: false,
@@ -153,11 +177,16 @@ impl Reliable {
         })
     }
 
-    pub fn slot(&self, sequence: u16) -> Option<&Slot> {
-        self.in_flight
+    /// The in-flight fragment `sequence` and its bytes.
+    pub fn fragment(&self, sequence: u16) -> Option<(Fragment, &[u8])> {
+        let item = self
+            .in_flight
             .iter()
-            .find(|item| item.sequence == sequence)
-            .map(|item| &item.slot)
+            .find(|item| item.sequence == sequence)?;
+        Some((
+            item.fragment,
+            &self.message(item.message)[item.start..item.end],
+        ))
     }
 
     pub fn mark_sent(&mut self, sequence: u16, now_ms: u64) {
@@ -189,17 +218,22 @@ impl Reliable {
                 }
             }
         }
+        // Fragments leave the window in sequence order, which is message
+        // order, so a message's last fragment leaves after all its others
+        // and the message is then the oldest held.
         while let Some(item) = self.in_flight.pop_front_if(|item| item.acknowledged) {
-            self.held_bytes -= item.slot.bytes.len();
-            if item.slot.ends_message() {
+            self.held_bytes -= item.end - item.start;
+            if item.ends_message() {
                 self.held_messages -= 1;
+                self.messages.pop_front();
+                self.first_message += 1;
             }
         }
     }
 
     #[must_use]
     pub fn outbound_is_idle(&self) -> bool {
-        self.queued.is_empty() && self.in_flight.is_empty()
+        self.messages.is_empty() && self.in_flight.is_empty()
     }
 
     /// Applies one received fragment. Fragments ahead of the next expected
@@ -293,7 +327,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     fn lane() -> Reliable {
-        Reliable::new(64 * 1024)
+        Reliable::new(64 * 1024, 100)
     }
 
     /// #254: a stale fragment (already delivered in order) is dropped, a
@@ -327,7 +361,7 @@ mod tests {
     /// arrives, even out of order, before anything is buffered.
     #[wasm_bindgen_test(unsupported = test)]
     fn an_over_cap_total_is_refused_on_arrival() {
-        let mut lane = Reliable::new(100);
+        let mut lane = Reliable::new(100, 100);
         let mut out = Vec::new();
         assert_eq!(
             lane.receive(5, Fragment::First { total: 101 }, b"ab", &mut out),
@@ -343,7 +377,7 @@ mod tests {
     fn selective_ack_and_karn_sampling_are_exact() {
         let mut reliable = lane();
         for payload in [b"zero".as_slice(), b"one", b"two"] {
-            reliable.enqueue(payload, 100);
+            reliable.enqueue(payload);
         }
         for sequence in 0..3 {
             assert_eq!(reliable.next_sendable(10, 100, 12), Some(sequence));
@@ -374,7 +408,7 @@ mod tests {
         let mut reliable = lane();
         reliable.next_sequence = u16::MAX - 1;
         for _ in 0..3 {
-            reliable.enqueue(b"", 100);
+            reliable.enqueue(b"");
         }
         assert_eq!(reliable.admit(), Some(u16::MAX - 1));
         assert_eq!(reliable.admit(), Some(u16::MAX));
@@ -443,8 +477,10 @@ mod properties {
         let mut wire = Vec::new();
         while let Some(sequence) = sender.next_sendable(now_ms, RTO_MS, MAX_TRANSMISSIONS) {
             sender.mark_sent(sequence, now_ms);
-            let slot = sender.slot(sequence).expect("sent fragment is in flight");
-            wire.push((sequence, slot.fragment, slot.bytes.clone()));
+            let (fragment, bytes) = sender
+                .fragment(sequence)
+                .expect("sent fragment is in flight");
+            wire.push((sequence, fragment, bytes.to_vec()));
         }
         wire
     }
@@ -460,8 +496,10 @@ mod properties {
     #[test]
     fn reliable_lane_delivers_exactly_once_in_order_over_a_hostile_channel() {
         check(prop::collection::vec(round(), 1..60), |rounds| {
-            let (mut sender, mut receiver) =
-                (Reliable::new(4 * FRAGMENT), Reliable::new(4 * FRAGMENT));
+            let (mut sender, mut receiver) = (
+                Reliable::new(4 * FRAGMENT, FRAGMENT),
+                Reliable::new(4 * FRAGMENT, FRAGMENT),
+            );
             let mut sent = Vec::new();
             let mut delivered = Vec::new();
             let mut now_ms = 0;
@@ -475,7 +513,7 @@ mod properties {
                 if let Some(message) = &round.enqueue
                     && sender.held().0 < 64
                 {
-                    sender.enqueue(message, FRAGMENT);
+                    sender.enqueue(message);
                     sent.push(message.clone());
                 }
                 let mut wire = transmit(&mut sender, now_ms);

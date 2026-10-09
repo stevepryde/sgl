@@ -1,8 +1,9 @@
-//! Lanes over the seeded virtual network (netcode.md 14, #268): a small
-//! realtime message every tick on lane 0, reliable or unreliable, while
-//! lane 1 streams 60 KiB reliable messages as fast as it is admitted. Every bound asserted here comes from
-//! the network's parameters, the tick, and deficit round robin's gap bound,
-//! never from the scheduler's state.
+//! Lanes over the seeded virtual network (netcode.md 14, #268, #269): a
+//! small realtime message every tick on lane 0, reliable or unreliable,
+//! while lane 1 streams reliable messages (60 KiB, or 4 MiB) as fast as it
+//! is admitted. Every bound asserted here comes from the network's
+//! parameters, the tick, and deficit round robin's gap bound, never from
+//! the scheduler's state.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -69,6 +70,22 @@ fn indexed(index: u32, len: usize) -> Vec<u8> {
     payload
 }
 
+/// Bulk message `index`: seeded pseudo-random bytes after the index, so a
+/// misplaced fragment cannot match.
+fn bulk_payload(index: u32, len: usize) -> Vec<u8> {
+    let mut state = u64::from(index) | 1 << 40;
+    let mut payload: Vec<u8> = (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state.to_le_bytes()[0]
+        })
+        .collect();
+    payload[..4].copy_from_slice(&index.to_le_bytes());
+    payload
+}
+
 fn index_of(payload: &[u8]) -> u32 {
     u32::from_le_bytes(payload[..4].try_into().expect("indexed"))
 }
@@ -115,17 +132,72 @@ fn tick(
     (events, client_events)
 }
 
-/// Bulk streams from the start; realtime starts `bulk_lead_ms` later and
-/// sends one message per tick for `realtime_ms` with `delivery` on lane 0;
-/// then both drain (an unreliable stream for two more seconds).
-fn run(
-    network: SimulatedConfig,
-    seed: u64,
-    config: &EndpointConfig,
+/// The two streams: bulk messages of `bulk_bytes` from the start, and from
+/// `bulk_lead_ms` later one `realtime_bytes` message per tick for
+/// `realtime_ms` with `delivery` on lane 0.
+struct Workload {
+    bulk_bytes: usize,
+    realtime_bytes: usize,
     bulk_lead_ms: u64,
     realtime_ms: u64,
     delivery: Delivery,
-) -> Run {
+}
+
+/// 60 KiB bulk messages and 100-byte realtime messages.
+const fn streams(bulk_lead_ms: u64, realtime_ms: u64, delivery: Delivery) -> Workload {
+    Workload {
+        bulk_bytes: BULK_BYTES,
+        realtime_bytes: REALTIME_BYTES,
+        bulk_lead_ms,
+        realtime_ms,
+        delivery,
+    }
+}
+
+/// The index of a delivered bulk message, which must be byte for byte the
+/// message sent under it.
+fn checked_bulk(payload: &[u8], len: usize) -> u32 {
+    let index = index_of(payload);
+    assert!(
+        payload == bulk_payload(index, len),
+        "bulk {index} arrived altered"
+    );
+    index
+}
+
+/// Sends bulk messages from `first` until the lane refuses one, which waits
+/// in `next` for the next call; returns how many were sent.
+fn send_bulk(
+    client: &mut Endpoint<Tap>,
+    peer: u64,
+    next: &mut Option<Vec<u8>>,
+    first: u32,
+    len: usize,
+) -> u32 {
+    let mut sent = 0;
+    loop {
+        let message = next.get_or_insert_with(|| bulk_payload(first + sent, len));
+        if client
+            .send(peer, Delivery::Reliable(bulk()), message)
+            .is_err()
+        {
+            return sent;
+        }
+        *next = None;
+        sent += 1;
+    }
+}
+
+/// Runs `workload`; then both streams drain (an unreliable stream for two
+/// more seconds). Every bulk message must arrive intact.
+fn run(network: SimulatedConfig, seed: u64, config: &EndpointConfig, workload: &Workload) -> Run {
+    let &Workload {
+        bulk_bytes,
+        realtime_bytes,
+        bulk_lead_ms,
+        realtime_ms,
+        delivery,
+    } = workload;
     let network = SimulatedNetwork::new(network, seed).expect("valid network");
     let mut server = Endpoint::server(
         network.transport(SERVER),
@@ -160,6 +232,8 @@ fn run(
         bulk_delivered: Vec::new(),
     };
     let start = now;
+    // The bulk message waiting for admission, built once.
+    let mut next_bulk = None;
     let realtime_from = start + bulk_lead_ms;
     let realtime_until = realtime_from + realtime_ms;
     loop {
@@ -175,7 +249,11 @@ fn run(
                     delivery: Delivery::Reliable(lane),
                     payload,
                     ..
-                } if lane == bulk() => result.bulk_delivered.push(index_of(&payload)),
+                } if lane == bulk() => {
+                    result
+                        .bulk_delivered
+                        .push(checked_bulk(&payload, bulk_bytes));
+                }
                 other => panic!("unexpected {other:?}"),
             }
         }
@@ -183,20 +261,13 @@ fn run(
         if sending && now >= realtime_from {
             let index = u32::try_from(result.sent.len()).expect("few messages");
             client
-                .send(peer, delivery, &indexed(index, REALTIME_BYTES))
+                .send(peer, delivery, &indexed(index, realtime_bytes))
                 .expect("one message per tick fits the realtime lane");
             result.sent.push(now);
         }
-        while sending
-            && client
-                .send(
-                    peer,
-                    Delivery::Reliable(bulk()),
-                    &indexed(result.bulk_sent, BULK_BYTES),
-                )
-                .is_ok()
-        {
-            result.bulk_sent += 1;
+        if sending {
+            let first = result.bulk_sent;
+            result.bulk_sent += send_bulk(&mut client, peer, &mut next_bulk, first, bulk_bytes);
         }
         let realtime_drained = match delivery {
             Delivery::Unreliable(_) => now >= realtime_until + 2_000,
@@ -260,28 +331,83 @@ fn realtime_under_bulk_keeps_the_scheduling_bound() {
             network.clone(),
             seed,
             &config,
-            bulk_lead_ms,
-            20_000,
-            Delivery::Reliable(realtime()),
+            &streams(bulk_lead_ms, 20_000, Delivery::Reliable(realtime())),
         );
         assert_exact(&run);
-        let mut deadline = 0;
-        for (&(index, delivered_at), &sent_at) in run.delivered.iter().zip(&run.sent) {
-            let transmitted = &run.transmissions[&index];
-            assert_eq!(
-                transmitted[0],
-                sent_at + TICK_MS,
-                "lead {bulk_lead_ms}: realtime {index} waited for a later flush"
-            );
-            deadline = deadline.max(transmitted.last().expect("transmitted") + worst_delay);
-            assert!(
-                delivered_at <= deadline + TICK_MS,
-                "lead {bulk_lead_ms}: realtime {index} delivered at {delivered_at}, \
-                 bound {} (sent {sent_at}, transmitted {transmitted:?})",
-                deadline + TICK_MS
-            );
-        }
+        assert_scheduling_bound(&run, worst_delay, &format!("lead {bulk_lead_ms}"));
     }
+}
+
+/// Every realtime message was first transmitted in the flush right after
+/// its `send`, and delivered no later than the last transmission of it or
+/// an earlier realtime message plus the network's `worst_delay` and one
+/// poll tick.
+fn assert_scheduling_bound(run: &Run, worst_delay: u64, label: &str) {
+    let mut deadline = 0;
+    for (&(index, delivered_at), &sent_at) in run.delivered.iter().zip(&run.sent) {
+        let transmitted = &run.transmissions[&index];
+        assert_eq!(
+            transmitted[0],
+            sent_at + TICK_MS,
+            "{label}: realtime {index} waited for a later flush"
+        );
+        deadline = deadline.max(transmitted.last().expect("transmitted") + worst_delay);
+        assert!(
+            delivered_at <= deadline + TICK_MS,
+            "{label}: realtime {index} delivered at {delivered_at}, \
+             bound {} (sent {sent_at}, transmitted {transmitted:?})",
+            deadline + TICK_MS
+        );
+    }
+}
+
+/// Defect (#269): a message far larger than its lane's byte allowance and
+/// the reliable window — 4 MiB on a lane admitting 64 KiB — that holds the
+/// realtime lane back beyond deficit round robin's bound (a scheduler
+/// charging whole messages instead of fragments, or a message fragmented
+/// all at once ahead of other lanes), or that arrives altered, twice or
+/// out of order. Oracle: the bound of
+/// `realtime_under_bulk_keeps_the_scheduling_bound` over a network with
+/// 3 % loss, 10 % reordering and 2 % duplication, with a 1 KiB realtime
+/// message every tick; each 4 MiB message arrives once, in order, byte for
+/// byte.
+#[wasm_bindgen_test(unsupported = test)]
+fn realtime_beside_4_mib_messages_keeps_the_scheduling_bound() {
+    const MESSAGE_BYTES: usize = 4 << 20;
+    let network = SimulatedConfig {
+        one_way_latency_ms: 30,
+        jitter_ms: 5,
+        loss_per_10k: 300,
+        duplicate_per_10k: 200,
+        reorder_per_10k: 1_000,
+        reorder_extra_ms: 20,
+        max_in_flight_datagrams: 4_096,
+        lane_loss_per_10k: [0; RELIABLE_LANES],
+    };
+    let worst_delay = network.one_way_latency_ms + network.jitter_ms + network.reorder_extra_ms;
+    // Four datagrams a flush: fewer than the bulk window, so the bulk lane
+    // always has a fragment ready and only the scheduler leaves lane 0 room.
+    let mut config = endpoint_config(4, 12);
+    config.reliable.max_message_bytes = MESSAGE_BYTES;
+    config.reliable.lanes[bulk().index()].outbound_bytes = 64 * 1024;
+    let run = run(
+        network,
+        51,
+        &config,
+        &Workload {
+            bulk_bytes: MESSAGE_BYTES,
+            realtime_bytes: 1024,
+            bulk_lead_ms: 0,
+            realtime_ms: 40_000,
+            delivery: Delivery::Reliable(realtime()),
+        },
+    );
+    let sent = u32::try_from(run.sent.len()).expect("few messages");
+    let realtime: Vec<_> = run.delivered.iter().map(|&(index, _)| index).collect();
+    assert_eq!(realtime, (0..sent).collect::<Vec<_>>());
+    assert!(run.bulk_sent >= 2, "bulk barely ran: {}", run.bulk_sent);
+    assert_eq!(run.bulk_delivered, (0..run.bulk_sent).collect::<Vec<_>>());
+    assert_scheduling_bound(&run, worst_delay, "4 MiB bulk");
 }
 
 /// Defect: a lost bulk fragment delaying another lane — one sequence space,
@@ -313,9 +439,7 @@ fn bulk_loss_never_delays_the_realtime_lane() {
         network,
         21,
         &config,
-        0,
-        20_000,
-        Delivery::Reliable(realtime()),
+        &streams(0, 20_000, Delivery::Reliable(realtime())),
     );
     assert_exact(&run);
     for (&(index, delivered_at), &sent_at) in run.delivered.iter().zip(&run.sent) {
@@ -353,9 +477,7 @@ fn unreliable_under_bulk_is_sent_once_and_keeps_the_scheduling_bound() {
         network,
         31,
         &endpoint_config(2, 12),
-        0,
-        20_000,
-        Delivery::Unreliable(realtime()),
+        &streams(0, 20_000, Delivery::Unreliable(realtime())),
     );
     assert_eq!(run.bulk_delivered, (0..run.bulk_sent).collect::<Vec<_>>());
     assert!(run.bulk_sent > 10, "bulk barely ran: {}", run.bulk_sent);
@@ -402,9 +524,7 @@ fn unreliable_over_a_lossy_network_is_at_most_once() {
         network,
         41,
         &endpoint_config(64, 64),
-        0,
-        10_000,
-        Delivery::Unreliable(realtime()),
+        &streams(0, 10_000, Delivery::Unreliable(realtime())),
     );
     let sent = u32::try_from(run.sent.len()).expect("few messages");
     for index in 0..sent {

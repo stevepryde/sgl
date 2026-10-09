@@ -40,7 +40,11 @@ pub struct BrowserWebSocketConfig {
     pub reliable_buffered_bytes: usize,
     /// Browser buffered-byte watermark above which latest state stays coalesced.
     pub latest_buffered_bytes: usize,
-    /// The connection's reliable lanes: weights and per-lane bounds.
+    /// The connection's reliable message cap, lane weights and per-lane
+    /// bounds. The browser cannot stop reading a socket, so a lane's
+    /// `inbound_messages` and `inbound_bytes` must hold what can arrive
+    /// between two polls; a peer that sends more is disconnected with
+    /// `InboundOverflow`.
     pub reliable: ReliableConfig,
 }
 

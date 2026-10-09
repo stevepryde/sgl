@@ -38,6 +38,21 @@ retry after a later `flush` and `poll` (the [crate docs](src/lib.rs) show the
 loop); `capacity(lane)` reports what the lane admits now. Dropping a refused
 message loses it. A peer that floods this side's inbound bounds is
 disconnected with `DisconnectReason::InboundOverflow`.
+
+Reliable messages may be as large as `ReliableConfig::max_message_bytes`
+(default 64 KiB, up to `RELIABLE_MESSAGE_BYTES_LIMIT`, 16 MiB); set the same
+value on both ends. Transports fragment and reassemble them, holding each
+message once on the sender and at most one partial message per lane on the
+receiver, so a game sends a 4 MiB snapshot as one message with no
+segmentation of its own. A lane holding nothing admits one message of any
+size up to the cap even when its `outbound_bytes` is smaller, and a lane's
+inbound queue holds one message larger than `inbound_bytes` beside smaller
+ones, so a bulk lane keeps small allowances; on UDP the endpoint's
+`global_reliable_*_bytes` must hold at least one message. A native
+WebSocket receiver that polls slowly stops reading instead of overflowing,
+which makes the sender's `send` return `WouldBlock`; the browser cannot, so
+a browser game sizes each lane's inbound bounds for what arrives between
+two polls.
 `Delivery::Unreliable(lane)` sends independent best-effort messages of at
 most `MAX_UNRELIABLE_BYTES`: each is sent once, never retransmitted or
 fragmented, delivered at most once, in no promised order. The sender never

@@ -12,8 +12,8 @@ use sgl_net::RELIABLE_LANES;
 use sgl_net::udp::simulated::{SimulatedConfig, SimulatedNetwork, SimulatedTransport};
 use sgl_net::udp::{ClientEndpoint, EndpointConfig, MAX_RELIABLE_FRAGMENT_BYTES, ServerEndpoint};
 use sgl_net::{
-    ClientEvent, ClientIo, ConnectionId, Delivery, DenyReason, DisconnectReason,
-    MAX_RELIABLE_MESSAGE_BYTES, SendError, ServerEvent, ServerIo,
+    ClientEvent, ClientIo, ConnectionId, DEFAULT_RELIABLE_MESSAGE_BYTES, Delivery, DenyReason,
+    DisconnectReason, SendError, ServerEvent, ServerIo,
 };
 
 const TICK_MS: u64 = 16;
@@ -203,7 +203,7 @@ fn stream(
         if sent < total && sent.saturating_sub(received.len() as u32) < window {
             let payload = if sent == count {
                 let mut big = sent.to_le_bytes().to_vec();
-                big.resize(MAX_RELIABLE_MESSAGE_BYTES, 0xA5);
+                big.resize(DEFAULT_RELIABLE_MESSAGE_BYTES, 0xA5);
                 big
             } else {
                 message(sent)

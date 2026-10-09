@@ -1,13 +1,11 @@
 use std::net::SocketAddr;
 
 use super::latest::Latest;
-use super::packet::{ACK_LEN, Acks, Nonces};
+use super::packet::{ACK_LEN, Acks, MAX_RELIABLE_ITEM_PAYLOAD, Nonces};
 use super::reliable::Reliable;
 use super::unreliable::Unreliable;
-use crate::lanes::LaneScheduler;
-use crate::{
-    MAX_RELIABLE_MESSAGE_BYTES, RELIABLE_LANES, ReliableConfig, RttEstimate, RttEstimator,
-};
+use crate::lanes::{InboundUsage, LaneScheduler};
+use crate::{RELIABLE_LANES, ReliableConfig, RttEstimate, RttEstimator};
 
 /// What one lane sends in one datagram.
 pub enum Outgoing {
@@ -43,8 +41,9 @@ pub struct Peer {
     unreliable_turn: [bool; RELIABLE_LANES],
     /// Shares this peer's datagrams between its lanes.
     pub scheduler: LaneScheduler,
-    /// Completed reliable messages and bytes per lane in the current poll.
-    pub delivered: [(usize, usize); RELIABLE_LANES],
+    /// Completed reliable messages per lane in the current poll, against
+    /// the lane's inbound bounds.
+    pub delivered: [InboundUsage; RELIABLE_LANES],
     pub latest: Latest,
     pub last_receive_ms: u64,
     pub last_send_ms: u64,
@@ -66,11 +65,13 @@ impl Peer {
             addr,
             nonces,
             handshake,
-            reliable: std::array::from_fn(|_| Reliable::new(MAX_RELIABLE_MESSAGE_BYTES)),
+            reliable: std::array::from_fn(|_| {
+                Reliable::new(reliable.max_message_bytes, MAX_RELIABLE_ITEM_PAYLOAD)
+            }),
             unreliable: Default::default(),
             unreliable_turn: [false; RELIABLE_LANES],
             scheduler: LaneScheduler::new(reliable),
-            delivered: [(0, 0); RELIABLE_LANES],
+            delivered: [InboundUsage::default(); RELIABLE_LANES],
             latest: Latest::default(),
             last_receive_ms: now_ms,
             last_send_ms: now_ms,

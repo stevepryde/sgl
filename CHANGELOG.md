@@ -59,6 +59,23 @@ docs and specs the entry links.
   `SimulatedConfig` gains `lane_loss_per_10k`. Migration: add
   `lane_loss_per_10k: [0; RELIABLE_LANES]` or `..Default::default()` to
   `SimulatedConfig` literals; direct envelope users pass an `Envelope`.
+- `sgl-net` `MAX_RELIABLE_MESSAGE_BYTES` (64 KiB) → `ReliableConfig::max_message_bytes`
+  (default `DEFAULT_RELIABLE_MESSAGE_BYTES`, 64 KiB; at most
+  `RELIABLE_MESSAGE_BYTES_LIMIT`, 16 MiB; else
+  `ReliableConfigError::InvalidMessageBytes`); both ends must set the same
+  cap. A lane holding no reliable bytes now admits one message of any size
+  up to the cap and `capacity` reports the cap there; lane byte bounds may
+  be as small as 1 (were at least 64 KiB); a lane's inbound queue holds one
+  message larger than `inbound_bytes` beside smaller ones;
+  `EndpointConfig::global_reliable_{outbound,inbound}_bytes` must be at
+  least the cap. Migration: use `DEFAULT_RELIABLE_MESSAGE_BYTES` or the
+  configured value; add `max_message_bytes` (or `..ReliableConfig::DEFAULT`)
+  to `ReliableConfig` literals; delete game-side segmentation.
+- `sgl-net` native WebSocket: a receiver whose lane is full stops reading
+  until `poll` makes room, so the sender gets `WouldBlock` (was disconnected
+  with `InboundOverflow`); the stall does not count toward `timeout_ms`. No
+  game-code changes needed; browser receivers still close on overflow, so
+  size their `inbound_*` bounds for one poll interval.
 - `sgl-core` `FixedClock`: new opt-in `FixedClock::with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })`
   runs several steps per frame to follow elapsed time, and the new
   `dropped_dt` field reports unsimulated time; `with_hz` and `new` keep

@@ -3,15 +3,17 @@
 //! round robin; per-lane reassembly and inbound queues; and a latest-state
 //! slot each way. Shared by the native and browser transports. Nothing
 //! `send` accepted is dropped while the connection lives; an unpolled
-//! receiver sheds its oldest unreliable messages.
+//! receiver sheds its oldest unreliable messages. A reliable frame whose
+//! message its lane cannot take yet is either held by the native worker,
+//! which stops reading until `poll` makes room, or closes the peer.
 
 use std::collections::VecDeque;
 
 use super::codec::{ENVELOPE_HEADER_LEN, ENVELOPE_TOTAL_LEN, Envelope, WEBSOCKET_FRAGMENT_BYTES};
-use crate::lanes::{Fragment, LaneScheduler, Reassembly};
+use crate::lanes::{Fragment, InboundUsage, LaneConfig, LaneScheduler, Reassembly};
 use crate::{
-    Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, MAX_RELIABLE_MESSAGE_BYTES,
-    MAX_UNRELIABLE_BYTES, RELIABLE_LANES, ReliableCapacity, ReliableConfig, SendError,
+    Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, MAX_UNRELIABLE_BYTES, RELIABLE_LANES,
+    ReliableCapacity, ReliableConfig, SendError,
 };
 
 fn lane(index: usize) -> Lane {
@@ -189,30 +191,46 @@ impl OutboundLane {
 #[derive(Debug, Default)]
 struct InboundLane {
     reassembly: Reassembly,
-    reliable: Fifo<Vec<u8>>,
+    reliable: VecDeque<Vec<u8>>,
+    /// The reliable messages against the lane's inbound bounds.
+    usage: InboundUsage,
     unreliable: Fifo<Vec<u8>>,
     unreliable_turn: bool,
 }
 
 impl InboundLane {
     fn is_empty(&self) -> bool {
-        self.reliable.items.is_empty() && self.unreliable.items.is_empty()
+        self.reliable.is_empty() && self.unreliable.items.is_empty()
     }
 
     /// The next message, reliable and unreliable taking turns.
-    fn pop(&mut self) -> Option<(bool, Vec<u8>)> {
-        let (unreliable, fifo) = if self.unreliable.items.is_empty()
-            || (!self.unreliable_turn && !self.reliable.items.is_empty())
-        {
-            (false, &mut self.reliable)
+    fn pop(&mut self, bounds: &LaneConfig) -> Option<(bool, Vec<u8>)> {
+        let unreliable =
+            !self.unreliable.items.is_empty() && (self.unreliable_turn || self.reliable.is_empty());
+        let message = if unreliable {
+            let message = self.unreliable.items.pop_front()?;
+            self.unreliable.bytes -= message.len();
+            message
         } else {
-            (true, &mut self.unreliable)
+            let message = self.reliable.pop_front()?;
+            self.usage.remove(message.len(), bounds);
+            message
         };
-        let message = fifo.items.pop_front()?;
-        fifo.bytes -= message.len();
         self.unreliable_turn = !unreliable && !self.unreliable.items.is_empty();
         Some((unreliable, message))
     }
+}
+
+/// What [`PeerState::receive_or_hold`] did with a frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Received {
+    /// The frame was applied.
+    Accepted,
+    /// The frame completes a reliable message its lane cannot take until
+    /// `poll` returns some of the lane's messages. Nothing changed: the
+    /// caller keeps the frame, stops reading, and offers it again once
+    /// [`PeerState::can_resume`] says it fits.
+    Held,
 }
 
 #[derive(Debug)]
@@ -233,6 +251,8 @@ pub(super) struct PeerState {
     graceful_started_ms: Option<u64>,
     staging_generation: u64,
     released_generation: u64,
+    /// The lane and length of the message a held frame completes.
+    stalled: Option<(usize, usize)>,
 }
 
 impl PeerState {
@@ -253,6 +273,7 @@ impl PeerState {
             graceful_started_ms: None,
             staging_generation: 1,
             released_generation: 0,
+            stalled: None,
         }
     }
 
@@ -264,7 +285,7 @@ impl PeerState {
             return Err(SendError::Disconnected);
         }
         let cap = match delivery {
-            Delivery::Reliable(_) => MAX_RELIABLE_MESSAGE_BYTES,
+            Delivery::Reliable(_) => self.reliable.max_message_bytes,
             Delivery::Unreliable(_) => MAX_UNRELIABLE_BYTES,
             Delivery::LatestState => MAX_LATEST_STATE_BYTES,
         };
@@ -277,13 +298,10 @@ impl PeerState {
         };
         match delivery {
             Delivery::Reliable(lane) => {
-                let bounds = &self.reliable.lanes[lane.index()];
                 let queue = &mut self.outbound[lane.index()].reliable;
-                if !queue.admits(
-                    payload.len(),
-                    bounds.outbound_messages,
-                    bounds.outbound_bytes,
-                ) {
+                if !self.reliable.lanes[lane.index()]
+                    .outbound_admits((queue.items.len(), queue.bytes), payload.len())
+                {
                     return Err(SendError::WouldBlock);
                 }
                 queue.push(staged(payload, self.staging_generation), payload.len());
@@ -325,20 +343,53 @@ impl PeerState {
         if self.terminal.is_some() || self.graceful_closing {
             return ReliableCapacity::default();
         }
-        let bounds = &self.reliable.lanes[lane.index()];
         let queue = &self.outbound[lane.index()].reliable;
-        ReliableCapacity::remaining(
-            bounds.outbound_messages.saturating_sub(queue.items.len()),
-            bounds.outbound_bytes.saturating_sub(queue.bytes),
+        self.reliable.lanes[lane.index()].outbound_capacity(
+            (queue.items.len(), queue.bytes),
+            self.reliable.max_message_bytes,
         )
     }
 
     /// Applies one received frame. A reliable fragment goes through its
     /// lane's reassembly and a completed message joins the lane's inbound
-    /// queue within its bounds, or the peer is closed. An unreliable message
-    /// joins the lane's unreliable queue, dropping its oldest unpolled
-    /// messages if the caller has not polled in time.
+    /// queue within its bounds, or the peer is closed with
+    /// `InboundOverflow`. An unreliable message joins the lane's unreliable
+    /// queue, dropping its oldest unpolled messages if the caller has not
+    /// polled in time.
+    #[cfg(any(test, target_arch = "wasm32"))]
     pub(super) fn receive(&mut self, envelope: Envelope<'_>) -> Result<(), DisconnectReason> {
+        self.apply(envelope, false).map(drop)
+    }
+
+    /// Like [`Self::receive`], except that a reliable frame whose message
+    /// the lane's inbound queue cannot take yet is [`Received::Held`]
+    /// instead of closing the peer: read backpressure for a transport that
+    /// can stop reading (netcode.md 13).
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    pub(super) fn receive_or_hold(
+        &mut self,
+        envelope: Envelope<'_>,
+    ) -> Result<Received, DisconnectReason> {
+        self.apply(envelope, true)
+    }
+
+    /// Whether a frame is held because its lane was full.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    pub(super) const fn read_stalled(&self) -> bool {
+        self.stalled.is_some()
+    }
+
+    /// Whether the held frame's message now fits its lane.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    pub(super) fn can_resume(&self) -> bool {
+        self.stalled.is_some_and(|(lane, len)| {
+            self.inbound[lane]
+                .usage
+                .admits(len, &self.reliable.lanes[lane])
+        })
+    }
+
+    fn apply(&mut self, envelope: Envelope<'_>, hold: bool) -> Result<Received, DisconnectReason> {
         if self.terminal.is_some() {
             return Err(DisconnectReason::Peer);
         }
@@ -349,7 +400,7 @@ impl PeerState {
             Delivery::LatestState => {
                 self.last_inbound_latest_sequence = envelope.sequence;
                 self.inbound_latest = Some(envelope.payload.to_vec());
-                return Ok(());
+                return Ok(Received::Accepted);
             }
             // An unreliable message the caller has not polled for in time
             // makes room by dropping the lane's oldest unpolled ones, as a
@@ -365,31 +416,38 @@ impl PeerState {
                         bounds.unreliable_messages,
                         bounds.unreliable_bytes,
                     );
-                    return Ok(());
+                    return Ok(Received::Accepted);
                 }
             }
             Delivery::Reliable(lane) => {
                 let bounds = &self.reliable.lanes[lane.index()];
                 let inbound = &mut self.inbound[lane.index()];
-                match inbound.reassembly.push(
-                    envelope.fragment,
-                    envelope.payload,
-                    MAX_RELIABLE_MESSAGE_BYTES,
-                ) {
-                    Ok(None) => return Ok(()),
-                    Ok(Some(message))
-                        if inbound.reliable.admits(
-                            message.len(),
-                            bounds.inbound_messages,
-                            bounds.inbound_bytes,
-                        ) =>
-                    {
-                        let len = message.len();
-                        inbound.reliable.push(message, len);
-                        return Ok(());
+                let completes = inbound
+                    .reassembly
+                    .completes(envelope.fragment, envelope.payload.len());
+                match completes {
+                    Some(len) if !inbound.usage.admits(len, bounds) && hold => {
+                        self.stalled = Some((lane.index(), len));
+                        return Ok(Received::Held);
                     }
-                    Ok(Some(_)) => DisconnectReason::InboundOverflow,
-                    Err(_) => DisconnectReason::ProtocolViolation,
+                    Some(len) if !inbound.usage.admits(len, bounds) => {
+                        DisconnectReason::InboundOverflow
+                    }
+                    _ => match inbound.reassembly.push(
+                        envelope.fragment,
+                        envelope.payload,
+                        self.reliable.max_message_bytes,
+                    ) {
+                        Ok(message) => {
+                            if let Some(message) = message {
+                                inbound.usage.add(message.len(), bounds);
+                                inbound.reliable.push_back(message);
+                            }
+                            self.stalled = None;
+                            return Ok(Received::Accepted);
+                        }
+                        Err(_) => DisconnectReason::ProtocolViolation,
+                    },
                 }
             }
         };
@@ -407,7 +465,7 @@ impl PeerState {
             .next(|lane| !inbound[lane].is_empty())
         {
             let (unreliable, message) = self.inbound[index]
-                .pop()
+                .pop(&self.reliable.lanes[index])
                 .expect("the scheduler picked a backlog");
             let delivery = if unreliable {
                 Delivery::Unreliable(lane(index))
@@ -537,6 +595,7 @@ impl PeerState {
             self.terminal = Some(reason);
             self.graceful_closing = false;
             self.graceful_started_ms = None;
+            self.stalled = None;
             self.outbound = Default::default();
             self.outbound_latest = None;
             if matches!(
@@ -636,6 +695,7 @@ mod tests {
     /// peer; a drained message returns the allowance and the retry succeeds.
     #[wasm_bindgen_test(unsupported = test)]
     fn a_full_reliable_lane_refuses_without_closing() {
+        const CAP: usize = crate::DEFAULT_RELIABLE_MESSAGE_BYTES;
         let mut peer = new_peer();
         for _ in 0..DEFAULT_LANE_OUTBOUND_MESSAGES {
             peer.send(Delivery::RELIABLE_ORDERED, b"x").unwrap();
@@ -651,19 +711,13 @@ mod tests {
 
         // The byte allowance is exact: ten bytes short admits ten, not 11.
         let mut peer = new_peer();
-        let full = crate::DEFAULT_LANE_OUTBOUND_BYTES / MAX_RELIABLE_MESSAGE_BYTES;
+        let full = crate::DEFAULT_LANE_OUTBOUND_BYTES / CAP;
         for _ in 1..full {
-            peer.send(
-                Delivery::RELIABLE_ORDERED,
-                &vec![0; MAX_RELIABLE_MESSAGE_BYTES],
-            )
-            .unwrap();
+            peer.send(Delivery::RELIABLE_ORDERED, &vec![0; CAP])
+                .unwrap();
         }
-        peer.send(
-            Delivery::RELIABLE_ORDERED,
-            &vec![0; MAX_RELIABLE_MESSAGE_BYTES - 10],
-        )
-        .unwrap();
+        peer.send(Delivery::RELIABLE_ORDERED, &vec![0; CAP - 10])
+            .unwrap();
         assert_eq!(peer.capacity(Lane::DEFAULT).bytes, 10);
         assert_eq!(
             peer.send(Delivery::RELIABLE_ORDERED, &[0; 11]),
@@ -909,11 +963,27 @@ mod properties {
         PopInbound,
     }
 
+    /// The model's reliable message cap, and its lanes' outbound and
+    /// inbound byte bounds: smaller than the cap, so the one-message rules
+    /// of netcode.md 11 bind.
+    const CAP: usize = 40 * 1024;
+    const LANE_BYTES: usize = 8 * 1024;
+
+    fn config() -> ReliableConfig {
+        let mut config = ReliableConfig::DEFAULT;
+        config.max_message_bytes = CAP;
+        for lane in &mut config.lanes {
+            lane.outbound_bytes = LANE_BYTES;
+            lane.inbound_bytes = LANE_BYTES;
+        }
+        config
+    }
+
     fn op() -> impl Strategy<Value = Op> {
         let lane = 0..RELIABLE_LANES;
         prop_oneof![
             4 => (lane.clone(), bytes(2_500)).prop_map(|(l, p)| Op::Send(l, false, p)),
-            1 => (lane.clone(), 0..=MAX_RELIABLE_MESSAGE_BYTES)
+            1 => (lane.clone(), 0..=CAP + 1)
                 .prop_map(|(l, len)| Op::Send(l, false, vec![1; len])),
             3 => (lane.clone(), bytes(MAX_UNRELIABLE_BYTES + 1))
                 .prop_map(|(l, p)| Op::Send(l, true, p)),
@@ -922,7 +992,8 @@ mod properties {
             4 => Just(Op::PopReleased),
             2 => (lane.clone(), any::<bool>(), bytes(64))
                 .prop_map(|(l, unreliable, p)| Op::Receive(l, unreliable, p)),
-            1 => (lane, 0usize..200).prop_map(|(l, n)| Op::Receive(l, true, vec![2; n * 400])),
+            1 => (lane.clone(), 0usize..200).prop_map(|(l, n)| Op::Receive(l, true, vec![2; n * 400])),
+            1 => (lane, 0usize..40).prop_map(|(l, n)| Op::Receive(l, false, vec![3; n * 400])),
             1 => (0u64..4).prop_map(Op::ReceiveLatest),
             2 => Just(Op::PopInbound),
         ]
@@ -985,7 +1056,7 @@ mod properties {
     #[test]
     fn peer_state_matches_the_lane_fifo_plus_slot_model() {
         check(prop::collection::vec(op(), 1..250), |ops| {
-            let config = ReliableConfig::DEFAULT;
+            let config = config();
             let mut state = PeerState::new(&config);
             let mut outbound: Outbound = Default::default();
             let mut latest: Option<(u64, Vec<u8>, u64)> = None;
@@ -1026,12 +1097,20 @@ mod properties {
                         }
                         let (messages, bytes) = bounds(&config, index, unreliable, false);
                         let model = &mut outbound[slot(index, unreliable)];
+                        let cap = if unreliable {
+                            MAX_UNRELIABLE_BYTES
+                        } else {
+                            config.max_message_bytes
+                        };
+                        // A reliable lane holding no bytes takes one message
+                        // of any admitted size.
+                        let one_message = !unreliable && model.bytes() == 0;
                         if terminal.is_some() {
                             prop_assert_eq!(result, Err(SendError::Disconnected));
-                        } else if unreliable && payload.len() > MAX_UNRELIABLE_BYTES {
+                        } else if payload.len() > cap {
                             prop_assert_eq!(result, Err(SendError::PayloadTooLarge));
                         } else if model.messages.len() >= messages
-                            || model.bytes() + payload.len() > bytes
+                            || (!one_message && model.bytes() + payload.len() > bytes)
                         {
                             prop_assert_eq!(result, Err(SendError::WouldBlock));
                         } else {
@@ -1153,6 +1232,17 @@ mod properties {
                         let full = |queue: &VecDeque<Vec<u8>>| {
                             queue.len() >= messages || queued(queue) + payload.len() > bytes
                         };
+                        // Reliable: one message larger than the byte bound
+                        // may wait beside messages within it.
+                        let reliable_full = |queue: &VecDeque<Vec<u8>>| {
+                            let within = queue.iter().filter(|m| m.len() <= bytes);
+                            queue.len() >= messages
+                                || if payload.len() > bytes {
+                                    queue.iter().any(|m| m.len() > bytes)
+                                } else {
+                                    within.map(Vec::len).sum::<usize>() + payload.len() > bytes
+                                }
+                        };
                         let failure = if terminal.is_some() {
                             prop_assert_eq!(result, Err(DisconnectReason::Peer));
                             None
@@ -1166,7 +1256,7 @@ mod properties {
                                 queue.pop_front();
                             }
                             None
-                        } else if full(queue) {
+                        } else if reliable_full(queue) {
                             Some(DisconnectReason::InboundOverflow)
                         } else {
                             None

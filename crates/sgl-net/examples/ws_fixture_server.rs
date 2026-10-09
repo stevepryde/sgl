@@ -38,6 +38,8 @@ mod native {
             .with_origin_policy(OriginPolicy::exact([PAGE_ORIGIN.to_owned()]).expect("origin"));
         config.ping_interval_ms = 1_000;
         config.timeout_ms = 10_000;
+        // The probe's largest message (`LARGE_BYTES` in `browser_probe.rs`).
+        config.reliable.max_message_bytes = 256 * 1024;
         let mut server = NativeWebSocketServer::bind(config).expect("bind fixture server");
         println!("listening 127.0.0.1:{PORT}");
         std::io::stdout().flush().expect("flush");

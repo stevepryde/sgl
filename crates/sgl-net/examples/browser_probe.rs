@@ -8,7 +8,7 @@
 //! report reaches the page. Assertions are what a browser game observes:
 //! connection, echoed bytes, lanes and unreliable messages echoed whole
 //! and in their own order (long messages fragmented and reassembled on both
-//! sides), coalesced
+//! sides), a 256 KiB message past its lane's byte allowances, coalesced
 //! latest state, a saturated lane that refuses and then drains without
 //! losing the connection, a server-initiated close with its bounded
 //! reconnect, a rejected subprotocol, and a clean local disconnect.
@@ -236,6 +236,67 @@ async fn lanes_echo_whole_and_in_their_own_order() -> Result<(), String> {
     Ok(())
 }
 
+/// Bytes of the large-message scenario, the cap both ends configure for it.
+const LARGE_BYTES: usize = 256 * 1024;
+
+/// Defect (#269): browser fragmentation or reassembly that cannot carry a
+/// message larger than its lane's byte allowances and many frames long, or
+/// a configured cap ignored. Oracle: the fixture echoes the message on its
+/// lane and TCP loses nothing, so the seeded payload comes back byte for
+/// byte, once, and a byte past the cap is refused before anything is
+/// queued. This exercises the browser's side of the code the native
+/// WebSocket test drives with 4 MiB (`tests/large_messages.rs`); both use
+/// the same fragmentation and reassembly.
+async fn a_message_past_the_lane_allowances_echoes_whole() -> Result<(), String> {
+    let lane = Lane::new(2).expect("lane exists");
+    let mut config = config();
+    config.reliable.max_message_bytes = LARGE_BYTES;
+    config.reliable.lanes[lane.index()].outbound_bytes = 64 * 1024;
+    config.reliable.lanes[lane.index()].inbound_bytes = 64 * 1024;
+    let mut driver = Driver::connect(config).await?;
+    let mut state = 0x269_u64;
+    let message: Vec<u8> = (0..LARGE_BYTES)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state.to_le_bytes()[0]
+        })
+        .collect();
+    let refused = driver
+        .client
+        .send(Delivery::Reliable(lane), &vec![0; LARGE_BYTES + 1]);
+    ensure!(
+        refused == Err(SendError::PayloadTooLarge),
+        "a payload past the cap: {refused:?}"
+    );
+    driver
+        .client
+        .send(Delivery::Reliable(lane), &message)
+        .map_err(|e| format!("send: {e:?}"))?;
+    driver
+        .settle(|events| {
+            events.iter().any(|e| {
+                matches!(e, ClientEvent::Message { delivery: Delivery::Reliable(l), .. } if *l == lane)
+            })
+        })
+        .await?;
+    for _ in 0..10 {
+        driver.now_ms += 10;
+        let events = driver.client.poll(driver.now_ms);
+        driver.events.extend(events);
+        sleep_ms(10).await;
+    }
+    let got = driver.payloads(Delivery::Reliable(lane));
+    ensure!(got.len() == 1, "echoed {} times", got.len());
+    ensure!(
+        got[0] == message,
+        "the echo differs ({} bytes)",
+        got[0].len()
+    );
+    Ok(())
+}
+
 /// Defect: latest-state frames sent one per value instead of coalesced, or
 /// the newest value lost. Oracle: the newest value arrives and values never
 /// go backwards.
@@ -449,6 +510,11 @@ pub async fn run() -> String {
         &mut report,
         "lanes_echo_whole_and_in_their_own_order",
         lanes_echo_whole_and_in_their_own_order().await,
+    );
+    record(
+        &mut report,
+        "a_message_past_the_lane_allowances_echoes_whole",
+        a_message_past_the_lane_allowances_echoes_whole().await,
     );
     record(
         &mut report,

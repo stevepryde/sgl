@@ -1,19 +1,18 @@
-//! Lane measurements (netcode.md 14): a 100-byte realtime message every
-//! 16 ms while 60 KiB bulk messages stream as fast as they are admitted,
-//! client to server. Prints the realtime messages' p50, p99 and maximum
-//! latency, from when each was due to its delivery (a refused send keeps
-//! waiting), and the bulk throughput on the seeded virtual network (20 s of
-//! virtual time: 30 ms one way, 5 ms jitter, 2 % loss, 5 % reordered by
-//! 20 ms), loopback UDP and loopback WebSocket (10 s of wall time each).
-//! WebSocket bulk is paced to one message per 2 ms (about 30 MiB/s): the
-//! native worker reads frames as fast as loopback TCP delivers them, and an
-//! unpaced stream overruns the server's default 256 KiB inbound lane
-//! between two polls, which disconnects the client (`InboundOverflow`).
+//! Lane measurements (netcode.md 14 and 15): a small realtime message
+//! every 16 ms while bulk data streams client to server, on the seeded
+//! virtual network (30 ms one way, 5 ms jitter, 2 % loss, 5 % reordered by
+//! 20 ms), loopback UDP and loopback WebSocket. Prints the realtime
+//! messages' p50, p99 and maximum latency, from when each was due to its
+//! delivery (a refused send keeps waiting), and the bulk throughput.
 //!
-//! By default realtime uses lane 0 at weight 8 and bulk lane 1 at weight 1;
-//! `--single-lane` puts both on lane 0 for comparison.
+//! By default 100-byte realtime messages use lane 0 at weight 8 while
+//! 60 KiB bulk messages stream as fast as they are admitted on lane 1 at
+//! weight 1, for 20 s of virtual time and 10 s of wall time each;
+//! `--single-lane` puts both on lane 0 for comparison. `--large` instead
+//! sends one 4 MiB message (`max_message_bytes` 4 MiB, a 64 KiB bulk lane)
+//! beside 1 KiB realtime messages and reports how long it took to arrive.
 //!
-//! `cargo run --release -p sgl-net --example lane_bench [-- --single-lane]`
+//! `cargo run --release -p sgl-net --example lane_bench [-- --single-lane | --large]`
 //!
 //! A measurement, not a check: its numbers belong in a change description.
 
@@ -22,7 +21,8 @@ fn main() {}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    bench::run(std::env::args().any(|arg| arg == "--single-lane"));
+    let large = std::env::args().any(|arg| arg == "--large");
+    bench::run(std::env::args().any(|arg| arg == "--single-lane"), large);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,31 +41,45 @@ mod bench {
 
     const MAGIC: [u8; 3] = *b"LBN";
     const TICK_MS: u64 = 16;
-    const REALTIME_BYTES: usize = 100;
-    const BULK_BYTES: usize = 60 * 1024;
+    const LARGE_BYTES: usize = 4 << 20;
 
-    /// The lanes of the two streams and the configuration both ends use.
+    /// The lanes and sizes of the two streams, and the configuration both
+    /// ends use.
     struct Setup {
         realtime: Delivery,
+        realtime_bytes: usize,
         bulk: Delivery,
+        bulk_bytes: usize,
+        /// Send one bulk message and stop when it arrives.
+        once: bool,
         reliable: ReliableConfig,
     }
 
-    fn setup(single_lane: bool) -> Setup {
+    fn setup(single_lane: bool, large: bool) -> Setup {
         let mut reliable = ReliableConfig::DEFAULT;
         if single_lane {
             return Setup {
                 realtime: Delivery::RELIABLE_ORDERED,
+                realtime_bytes: 100,
                 bulk: Delivery::RELIABLE_ORDERED,
+                bulk_bytes: 60 * 1024,
+                once: false,
                 reliable,
             };
         }
         let bulk = Lane::new(1).expect("lane 1 exists");
         reliable.lanes[0].weight = 8;
         reliable.lanes[bulk.index()].weight = 1;
+        if large {
+            reliable.max_message_bytes = LARGE_BYTES;
+            reliable.lanes[bulk.index()].outbound_bytes = 64 * 1024;
+        }
         Setup {
             realtime: Delivery::RELIABLE_ORDERED,
+            realtime_bytes: if large { 1024 } else { 100 },
             bulk: Delivery::Reliable(bulk),
+            bulk_bytes: if large { LARGE_BYTES } else { 60 * 1024 },
+            once: large,
             reliable,
         }
     }
@@ -113,7 +127,6 @@ mod bench {
         server: &mut dyn ServerIo,
         mut clock: Clock,
         duration_ms: u64,
-        bulk_interval_us: u64,
     ) {
         let (mut server_up, mut client_up) = (false, false);
         while !(server_up && client_up) {
@@ -132,12 +145,12 @@ mod bench {
         let begin_us = clock.now_us();
         let end_us = begin_us + duration_ms * 1_000;
         let (mut next_realtime_us, mut realtime_index, mut bulk_index) = (begin_us, 0u32, 0u32);
-        let mut next_bulk_us = begin_us;
         let mut latencies_us = Vec::new();
         let mut bulk_bytes = 0usize;
+        let mut arrived_us = None;
         loop {
             let now_us = clock.now_us();
-            if now_us >= end_us {
+            if now_us >= end_us || arrived_us.is_some() {
                 break;
             }
             let tick_ms = now_us / 1_000;
@@ -146,7 +159,12 @@ mod bench {
                     ServerEvent::Message { payload, .. } if payload[0] == b'R' => {
                         latencies_us.push(clock.now_us() - sent_us(&payload));
                     }
-                    ServerEvent::Message { payload, .. } => bulk_bytes += payload.len(),
+                    ServerEvent::Message { payload, .. } => {
+                        bulk_bytes += payload.len();
+                        if setup.once {
+                            arrived_us = Some(clock.now_us());
+                        }
+                    }
                     ServerEvent::Disconnected { reason, .. } => {
                         panic!("{name}: the server lost the client: {reason:?}")
                     }
@@ -161,20 +179,22 @@ mod bench {
             if now_us >= next_realtime_us {
                 // Latency counts from when the message was due, so a send
                 // refused while the lane is full counts its wait too.
-                let message = payload(b'R', realtime_index, next_realtime_us, REALTIME_BYTES);
+                let message = payload(b'R', realtime_index, next_realtime_us, setup.realtime_bytes);
                 // A refused realtime message is retried next turn.
                 if client.send(setup.realtime, &message).is_ok() {
                     realtime_index += 1;
                     next_realtime_us += TICK_MS * 1_000;
                 }
             }
-            while now_us >= next_bulk_us
+            while !(setup.once && bulk_index == 1)
                 && client
-                    .send(setup.bulk, &payload(b'B', bulk_index, now_us, BULK_BYTES))
+                    .send(
+                        setup.bulk,
+                        &payload(b'B', bulk_index, now_us, setup.bulk_bytes),
+                    )
                     .is_ok()
             {
                 bulk_index += 1;
-                next_bulk_us = now_us + bulk_interval_us;
             }
             client.flush(tick_ms);
             server.flush(tick_ms);
@@ -184,14 +204,21 @@ mod bench {
         latencies_us.sort_unstable();
         let ms = |us: u64| us as f64 / 1_000.0;
         let percentile = |p: usize| ms(latencies_us[(latencies_us.len() - 1) * p / 100]);
+        let bulk = match arrived_us {
+            Some(arrived_us) => format!("4 MiB in {:>7.1} ms", ms(arrived_us - begin_us)),
+            None if setup.once => "4 MiB never arrived".to_owned(),
+            None => format!(
+                "bulk {:>8.0} KiB/s",
+                bulk_bytes as f64 / 1024.0 / (duration_ms as f64 / 1_000.0)
+            ),
+        };
         println!(
-            "{name:<18} realtime p50 {:>7.1} ms  p99 {:>7.1} ms  max {:>7.1} ms  ({} of {} delivered)  bulk {:>8.0} KiB/s",
+            "{name:<18} realtime p50 {:>7.1} ms  p99 {:>7.1} ms  max {:>7.1} ms  ({} of {} delivered)  {bulk}",
             percentile(50),
             percentile(99),
             ms(*latencies_us.last().unwrap_or(&0)),
             latencies_us.len(),
             realtime_index,
-            bulk_bytes as f64 / 1024.0 / (duration_ms as f64 / 1_000.0),
         );
     }
 
@@ -202,12 +229,14 @@ mod bench {
         }
     }
 
-    pub fn run(single_lane: bool) {
-        let setup = setup(single_lane);
+    pub fn run(single_lane: bool, large: bool) {
+        let setup = setup(single_lane, large);
         println!(
             "{}",
             if single_lane {
                 "both streams on lane 0"
+            } else if large {
+                "1 KiB realtime on lane 0 (weight 8), one 4 MiB message on lane 1 (weight 1)"
             } else {
                 "realtime on lane 0 (weight 8), bulk on lane 1 (weight 1)"
             }
@@ -248,8 +277,7 @@ mod bench {
             &mut client,
             &mut server,
             Clock::Virtual { now_us: 0 },
-            20_000,
-            0,
+            if large { 120_000 } else { 20_000 },
         );
 
         let mut server = UdpServer::bind_with_key(
@@ -274,7 +302,6 @@ mod bench {
                 started: Instant::now(),
             },
             10_000,
-            0,
         );
 
         let identity = WebSocketIdentity::new(MAGIC, GAME_PATH, "lane-bench.v1");
@@ -300,7 +327,6 @@ mod bench {
                 started: Instant::now(),
             },
             10_000,
-            2_000,
         );
     }
 }

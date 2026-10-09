@@ -10,6 +10,13 @@
 //! nothing accepted is dropped. A lane's traffic is therefore buffered at
 //! most twice: once here and once in the endpoint, each within the lane's
 //! bounds.
+//!
+//! Inbound has no such backpressure: the worker polls and acknowledges on
+//! its own clock, whether or not the caller has polled, so a lane's ingress
+//! bounds (`inbound_messages`, `inbound_bytes`) are its inbound budget per
+//! caller poll. A threaded game sizes them for its poll interval, as a
+//! browser game does; a peer that sends more between two polls is closed
+//! with `InboundOverflow`.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -20,6 +27,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::{EndpointConfig, UdpServer};
+use crate::lanes::InboundUsage;
 use crate::{
     ConnectionId, Delivery, DisconnectReason, Lane, RELIABLE_LANES, ReliableCapacity,
     ReliableConfig, SendError, ServerEvent, ServerIo,
@@ -103,37 +111,6 @@ impl PeerCommands {
     }
 }
 
-/// A delivery's lane queue among `reliable` and `unreliable`, with its
-/// message and byte bounds; `None` for latest state.
-fn lane_queue<'a>(
-    reliable: &'a mut [LaneQueue; RELIABLE_LANES],
-    unreliable: &'a mut [LaneQueue; RELIABLE_LANES],
-    config: &ReliableConfig,
-    delivery: Delivery,
-    inbound: bool,
-) -> Option<(&'a mut LaneQueue, usize, usize)> {
-    match delivery {
-        Delivery::Reliable(lane) => {
-            let bounds = &config.lanes[lane.index()];
-            let (messages, bytes) = if inbound {
-                (bounds.inbound_messages, bounds.inbound_bytes)
-            } else {
-                (bounds.outbound_messages, bounds.outbound_bytes)
-            };
-            Some((&mut reliable[lane.index()], messages, bytes))
-        }
-        Delivery::Unreliable(lane) => {
-            let bounds = &config.lanes[lane.index()];
-            Some((
-                &mut unreliable[lane.index()],
-                bounds.unreliable_messages,
-                bounds.unreliable_bytes,
-            ))
-        }
-        Delivery::LatestState => None,
-    }
-}
-
 struct CommandQueue {
     state: Mutex<CommandState>,
     reliable: ReliableConfig,
@@ -141,6 +118,8 @@ struct CommandQueue {
 
 struct PeerIngress {
     reliable: [LaneQueue; RELIABLE_LANES],
+    /// Each reliable queue against its lane's inbound bounds.
+    reliable_usage: [InboundUsage; RELIABLE_LANES],
     unreliable: [LaneQueue; RELIABLE_LANES],
     latest: Option<Vec<u8>>,
     /// The lane the next drain starts with.
@@ -183,6 +162,7 @@ impl IngressHub {
                 conn,
                 PeerIngress {
                     reliable: Default::default(),
+                    reliable_usage: Default::default(),
                     unreliable: Default::default(),
                     latest: None,
                     next_lane: 0,
@@ -202,9 +182,11 @@ impl IngressHub {
         }
     }
 
-    /// Queues one received message. A reliable message past its lane's
-    /// inbound bounds is `InboundOverflow`, closing the peer; an unreliable
-    /// one makes room by dropping the lane's oldest unpolled unreliable
+    /// Queues one received message. The worker acknowledges on its own
+    /// clock, so the lane's inbound bounds are the budget per caller poll: a
+    /// reliable message past them (netcode.md 11: one message may exceed the
+    /// byte bound) is `InboundOverflow`, closing the peer; an unreliable one
+    /// makes room by dropping the lane's oldest unpolled unreliable
     /// messages, as a full UDP socket buffer would, and only one larger than
     /// the whole queue (which the endpoint's cap rules out) is refused.
     fn message(
@@ -217,27 +199,30 @@ impl IngressHub {
         let Some(peer) = state.peers.get_mut(&conn) else {
             return Ok(());
         };
-        let Some((queue, messages, bytes)) = lane_queue(
-            &mut peer.reliable,
-            &mut peer.unreliable,
-            &self.reliable,
-            delivery,
-            true,
-        ) else {
-            peer.latest = Some(payload);
-            return Ok(());
-        };
-        if let Delivery::Unreliable(_) = delivery {
-            if payload.len() > bytes {
-                return Err(DisconnectReason::ProtocolViolation);
+        match delivery {
+            Delivery::Reliable(lane) => {
+                let bounds = &self.reliable.lanes[lane.index()];
+                let usage = &mut peer.reliable_usage[lane.index()];
+                if !usage.admits(payload.len(), bounds) {
+                    return Err(DisconnectReason::InboundOverflow);
+                }
+                usage.add(payload.len(), bounds);
+                peer.reliable[lane.index()].push(payload);
             }
-            while queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
-                queue.pop();
+            Delivery::Unreliable(lane) => {
+                let bounds = &self.reliable.lanes[lane.index()];
+                let (messages, bytes) = (bounds.unreliable_messages, bounds.unreliable_bytes);
+                if payload.len() > bytes {
+                    return Err(DisconnectReason::ProtocolViolation);
+                }
+                let queue = &mut peer.unreliable[lane.index()];
+                while queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
+                    queue.pop();
+                }
+                queue.push(payload);
             }
-        } else if queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
-            return Err(DisconnectReason::InboundOverflow);
+            Delivery::LatestState => peer.latest = Some(payload),
         }
-        queue.push(payload);
         Ok(())
     }
 
@@ -267,6 +252,10 @@ impl IngressHub {
                             break;
                         }
                         if let Some(payload) = queue[lane.index()].pop() {
+                            if let Delivery::Reliable(_) = delivery {
+                                peer.reliable_usage[lane.index()]
+                                    .remove(payload.len(), &self.reliable.lanes[lane.index()]);
+                            }
                             output.push(ServerEvent::Message {
                                 conn,
                                 delivery,
@@ -314,7 +303,7 @@ impl CommandQueue {
             return Err(SendError::UnknownConnection);
         }
         let max_bytes = match delivery {
-            Delivery::Reliable(_) => crate::MAX_RELIABLE_MESSAGE_BYTES,
+            Delivery::Reliable(_) => self.reliable.max_message_bytes,
             Delivery::Unreliable(_) => crate::MAX_UNRELIABLE_BYTES,
             Delivery::LatestState => crate::MAX_LATEST_STATE_BYTES,
         };
@@ -322,23 +311,31 @@ impl CommandQueue {
             return Err(SendError::PayloadTooLarge);
         }
         let peer = state.peers.entry(id).or_default();
-        let Some((queue, messages, bytes)) = lane_queue(
-            &mut peer.reliable,
-            &mut peer.unreliable,
-            &self.reliable,
-            delivery,
-            false,
-        ) else {
-            // One overwrite slot per peer keeps only current state.
-            peer.latest = Some(payload.to_vec());
-            return Ok(());
-        };
         // Each lane owns its allowances; a full one refuses this send and
         // nothing else.
-        if queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
-            return Err(SendError::WouldBlock);
+        match delivery {
+            Delivery::Reliable(lane) => {
+                let queue = &mut peer.reliable[lane.index()];
+                if !self.reliable.lanes[lane.index()]
+                    .outbound_admits((queue.messages.len(), queue.bytes), payload.len())
+                {
+                    return Err(SendError::WouldBlock);
+                }
+                queue.push(payload.to_vec());
+            }
+            Delivery::Unreliable(lane) => {
+                let bounds = &self.reliable.lanes[lane.index()];
+                let queue = &mut peer.unreliable[lane.index()];
+                if queue.messages.len() >= bounds.unreliable_messages
+                    || queue.bytes + payload.len() > bounds.unreliable_bytes
+                {
+                    return Err(SendError::WouldBlock);
+                }
+                queue.push(payload.to_vec());
+            }
+            // One overwrite slot per peer keeps only current state.
+            Delivery::LatestState => peer.latest = Some(payload.to_vec()),
         }
-        queue.push(payload.to_vec());
         Ok(())
     }
 
@@ -347,15 +344,11 @@ impl CommandQueue {
         if !state.live.contains(&id) {
             return ReliableCapacity::default();
         }
-        let (messages, bytes) = state.peers.get(&id).map_or((0, 0), |peer| {
+        let held = state.peers.get(&id).map_or((0, 0), |peer| {
             let queue = &peer.reliable[lane.index()];
             (queue.messages.len(), queue.bytes)
         });
-        let bounds = &self.reliable.lanes[lane.index()];
-        ReliableCapacity::remaining(
-            bounds.outbound_messages.saturating_sub(messages),
-            bounds.outbound_bytes.saturating_sub(bytes),
-        )
+        self.reliable.lanes[lane.index()].outbound_capacity(held, self.reliable.max_message_bytes)
     }
 
     /// The worker announced `id`: the caller may now send to it.
@@ -491,6 +484,11 @@ impl CommandQueue {
 }
 
 /// Simulation-side handle for the UDP worker.
+///
+/// The worker acknowledges received data on its own clock, so each lane's
+/// `inbound_messages` and `inbound_bytes` must hold what a peer can send
+/// between two calls to [`ServerIo::poll`]; a peer that sends more is
+/// disconnected with `InboundOverflow`.
 pub struct ThreadedUdpServer {
     local_addr: SocketAddr,
     commands: Arc<CommandQueue>,
@@ -1062,6 +1060,79 @@ mod tests {
         );
     }
 
+    /// Defect (#269): the threaded server refusing, or never moving, a
+    /// message larger than its lane's byte allowance (a cap other than the
+    /// configured one, admission without the one-message rule, a worker
+    /// waiting for room the endpoint never reports); or its ingress closing
+    /// a peer whose large message is followed by a smaller one before the
+    /// caller polls, or keeping a polled message's allowance. Oracle: the
+    /// one-message rules of netcode.md 11 — a 1 MiB message through a 64 KiB
+    /// lane arrives intact; ingress bounded at 4 KiB and two messages holds
+    /// a 10 KiB message beside a 4 KiB one in either order, again after each
+    /// drain, but not two 10 KiB messages.
+    #[test]
+    fn messages_past_the_lane_allowances_cross_the_worker_and_ingress() {
+        let mut config = lanes(|lane| {
+            lane.outbound_bytes = 64 * 1024;
+            lane.inbound_bytes = 4 * 1024;
+            lane.inbound_messages = 2;
+        });
+        config.max_message_bytes = 1 << 20;
+        let commands = CommandQueue::new(&config);
+        let ingress = IngressHub::new(&config);
+        let (mut client, mut server) = crate::memory_duplex_with(&config).unwrap();
+        worker_tick(&mut server, &commands, &ingress, 0);
+        ingress.drain();
+        let large: Vec<u8> = (0..1_u32 << 20).map(|i| (i % 251) as u8).collect();
+        assert_eq!(
+            commands.send(
+                SOLO_CONNECTION,
+                Delivery::Reliable(lane(1)),
+                &vec![0; (1 << 20) + 1]
+            ),
+            Err(SendError::PayloadTooLarge)
+        );
+        commands
+            .send(SOLO_CONNECTION, Delivery::Reliable(lane(1)), &large)
+            .expect("an idle lane takes one message of up to the cap");
+        let mut received = Vec::new();
+        for tick in 1..4 {
+            worker_tick(&mut server, &commands, &ingress, tick);
+            received.extend(payloads(&client.poll(tick), Delivery::Reliable(lane(1))));
+        }
+        assert!(received == [large], "the message crossed whole, once");
+
+        let hub = IngressHub::new(&config);
+        let peer = cid(5);
+        hub.connected(peer);
+        let (big, small) = (vec![1; 10 * 1024], vec![2; 4 * 1024]);
+        for pair in [[&big, &small], [&small, &big]] {
+            for payload in pair {
+                assert_eq!(
+                    hub.message(peer, Delivery::RELIABLE_ORDERED, payload.clone()),
+                    Ok(())
+                );
+            }
+            let drained: Vec<_> = hub
+                .drain()
+                .into_iter()
+                .filter_map(|event| match event {
+                    ServerEvent::Message { payload, .. } => Some(payload),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(drained, pair.map(Vec::clone));
+        }
+        assert_eq!(
+            hub.message(peer, Delivery::RELIABLE_ORDERED, big.clone()),
+            Ok(())
+        );
+        assert_eq!(
+            hub.message(peer, Delivery::RELIABLE_ORDERED, big),
+            Err(DisconnectReason::InboundOverflow)
+        );
+    }
+
     /// Defect: a peer's full allowance refusing another peer, or a refusal
     /// that schedules a disconnect. Oracle: per-peer bounds (netcode.md 11).
     #[test]
@@ -1109,7 +1180,7 @@ mod tests {
         drop(state);
 
         // The byte allowance is exact: the lane admits up to its bound.
-        let bound = crate::MAX_RELIABLE_MESSAGE_BYTES;
+        let bound = crate::DEFAULT_RELIABLE_MESSAGE_BYTES;
         let queue = CommandQueue::new(&lanes(|lane| lane.outbound_bytes = bound));
         queue.connected(noisy);
         queue

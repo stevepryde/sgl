@@ -46,19 +46,24 @@
 //! messages, as a full UDP socket buffer does (reliable overflow closes the
 //! peer).
 //! Each lane has its own bounds and a scheduling weight in
-//! [`ReliableConfig`]. Busy lanes share the connection by weight, so a bulk
-//! transfer on one lane neither refuses nor starves messages on another:
+//! [`ReliableConfig`], which also sets the largest reliable message
+//! (`max_message_bytes`, default 64 KiB, up to 16 MiB). Transports fragment
+//! and reassemble long messages, and a lane holding nothing admits one
+//! message of any size up to the cap, however small its byte allowance.
+//! Busy lanes share the connection by weight, so a bulk transfer on one
+//! lane neither refuses nor starves messages on another:
 //!
 //! ```
 //! use sgl_net::{ClientIo, Delivery, Lane, ReliableConfig, memory_duplex_with};
 //!
 //! let bulk = Lane::new(1).expect("lane 1 exists");
 //! let mut reliable = ReliableConfig::default();
+//! reliable.max_message_bytes = 4 << 20;
 //! reliable.lanes[Lane::DEFAULT.index()].weight = 8;
 //! reliable.lanes[bulk.index()].weight = 1;
 //! // Both ends of a connection use the same configuration.
 //! let (mut client, _server) = memory_duplex_with(&reliable)?;
-//! client.send(Delivery::Reliable(bulk), &[0; 60 * 1024])?;
+//! client.send(Delivery::Reliable(bulk), &vec![0; 4 << 20])?;
 //! client.send(Delivery::RELIABLE_ORDERED, b"input")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -77,8 +82,9 @@ pub(crate) mod proptest_support;
 pub use lanes::{
     DEFAULT_LANE_INBOUND_BYTES, DEFAULT_LANE_INBOUND_MESSAGES, DEFAULT_LANE_OUTBOUND_BYTES,
     DEFAULT_LANE_OUTBOUND_MESSAGES, DEFAULT_LANE_UNRELIABLE_BYTES,
-    DEFAULT_LANE_UNRELIABLE_MESSAGES, LANE_QUEUE_BYTES_LIMIT, LANE_QUEUE_MESSAGES_LIMIT,
-    LaneConfig, MAX_LANE_WEIGHT, ReliableConfig, ReliableConfigError,
+    DEFAULT_LANE_UNRELIABLE_MESSAGES, DEFAULT_RELIABLE_MESSAGE_BYTES, LANE_QUEUE_BYTES_LIMIT,
+    LANE_QUEUE_MESSAGES_LIMIT, LaneConfig, MAX_LANE_WEIGHT, RELIABLE_MESSAGE_BYTES_LIMIT,
+    ReliableConfig, ReliableConfigError,
 };
 pub use memory::{
     MemoryClientIo, MemoryServerIo, SOLO_CONNECTION, memory_duplex, memory_duplex_with,
@@ -87,8 +93,6 @@ pub use mux::{MAX_MUX_ORPHAN_BYTES, MAX_MUX_ORPHAN_MESSAGES, ServerIoMux};
 
 use std::num::NonZeroU64;
 
-/// Maximum bytes in one reliable payload before transport framing.
-pub const MAX_RELIABLE_MESSAGE_BYTES: usize = 64 * 1024;
 /// Maximum bytes in one latest-state payload across every transport.
 ///
 /// This is exactly the payload space left inside a 1,200-byte UDP datagram
@@ -202,8 +206,8 @@ pub enum SendError {
     UnknownConnection,
     /// The client-side peer is disconnected.
     Disconnected,
-    /// The payload exceeds its delivery class's shared cap:
-    /// [`MAX_RELIABLE_MESSAGE_BYTES`], [`MAX_UNRELIABLE_BYTES`] or
+    /// The payload exceeds its delivery class's cap: the transport's
+    /// [`ReliableConfig::max_message_bytes`], [`MAX_UNRELIABLE_BYTES`] or
     /// [`MAX_LATEST_STATE_BYTES`].
     PayloadTooLarge,
     /// The lane, or a shared ceiling, cannot take this message now. The
@@ -264,7 +268,9 @@ pub enum DisconnectReason {
 pub struct ReliableCapacity {
     /// Messages `send` would admit on this lane.
     pub messages: usize,
-    /// Largest payload `send` would admit now; zero when `messages` is zero.
+    /// Largest payload `send` would admit now: up to
+    /// [`ReliableConfig::max_message_bytes`] while the lane holds nothing;
+    /// zero when `messages` is zero.
     pub bytes: usize,
 }
 
@@ -274,10 +280,7 @@ impl ReliableCapacity {
         if messages == 0 {
             return Self::default();
         }
-        Self {
-            messages,
-            bytes: bytes.min(MAX_RELIABLE_MESSAGE_BYTES),
-        }
+        Self { messages, bytes }
     }
 }
 

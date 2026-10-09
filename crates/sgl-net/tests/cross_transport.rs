@@ -18,8 +18,9 @@ use sgl_net::websocket::{
     NativeWebSocketServerConfig, OriginPolicy, WebSocketIdentity,
 };
 use sgl_net::{
-    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES,
-    MAX_RELIABLE_MESSAGE_BYTES, RELIABLE_LANES, SendError, ServerEvent, ServerIo, memory_duplex,
+    ClientEvent, ClientIo, ConnectionId, DEFAULT_RELIABLE_MESSAGE_BYTES, Delivery,
+    DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, RELIABLE_LANES, SendError, ServerEvent,
+    ServerIo, memory_duplex,
 };
 
 const MAGIC: [u8; 3] = *b"XPT";
@@ -36,7 +37,7 @@ fn corpus() -> Vec<Vec<u8>> {
         vec![2; MAX_DATAGRAM_BYTES],
         vec![3; MAX_DATAGRAM_BYTES + 1],
         vec![4; MAX_LATEST_STATE_BYTES],
-        vec![5; MAX_RELIABLE_MESSAGE_BYTES],
+        vec![5; DEFAULT_RELIABLE_MESSAGE_BYTES],
         vec![0xFF; 512],
         binary,
     ]
@@ -197,7 +198,10 @@ fn run(mut pair: Pair) -> Trace {
     // Over-cap payloads are refused before any I/O, on both lanes.
     for (delivery, size) in [
         (Delivery::LatestState, MAX_LATEST_STATE_BYTES + 1),
-        (Delivery::RELIABLE_ORDERED, MAX_RELIABLE_MESSAGE_BYTES + 1),
+        (
+            Delivery::RELIABLE_ORDERED,
+            DEFAULT_RELIABLE_MESSAGE_BYTES + 1,
+        ),
     ] {
         let error = pair
             .client

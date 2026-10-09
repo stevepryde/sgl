@@ -528,3 +528,22 @@ Use the [current specs](README.md) for implementation and the
   standard pipeline (shadows, reflections, transmission, temporal
   antialiasing) sees the same surface, and the composition follows the
   reference engines' established practice (RD-2).
+- **D-36** Decision, 2026-10-09 (#269): the reliable message cap is a
+  setting, `ReliableConfig::max_message_bytes` (default 64 KiB, ceiling
+  16 MiB), not a constant; the receiver's cap governs, so both ends set the
+  same one. Transports fragment and reassemble: the sender keeps each
+  message whole and sends ranges of it, and the receiver checks the declared
+  total before buffering and grows its buffer with what arrives (at most
+  twice what has arrived), never past the total. Outbound, a lane holding no bytes admits one message of
+  any size up to the cap, as a send larger than `SO_SNDBUF` still proceeds
+  and GameNetworkingSockets refuses on bytes already queued rather than on
+  the message's own size. Inbound, a lane holds one message larger than its
+  `inbound_bytes` beside smaller ones, rather than one only when empty: a
+  receiver that returns everything a poll completed (the UDP endpoint) or
+  cannot stop reading (threaded ingress, the browser) would otherwise close
+  a healthy peer whose large message is followed by a small one before the
+  next poll. Native WebSocket stops reading a connection whose lane is full
+  until `poll` makes room (Mission Control's decision): WebSocket may be
+  slower than UDP, never weaker. The browser API has no read backpressure,
+  and a receiver-advertised window would change the wire format, so a
+  browser game sizes its inbound bounds instead.
