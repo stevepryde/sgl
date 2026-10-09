@@ -49,6 +49,8 @@ struct CommandState {
     peers: BTreeMap<ConnectionId, PeerCommands>,
     disconnects: BTreeSet<ConnectionId>,
     stop_admission: bool,
+    /// Where the next turn starts moving reliable messages.
+    next_start: ConnectionId,
 }
 
 #[derive(Default)]
@@ -183,6 +185,7 @@ impl CommandQueue {
                 peers: BTreeMap::new(),
                 disconnects: BTreeSet::new(),
                 stop_admission: false,
+                next_start: ConnectionId::MIN,
             }),
             max_messages: config.reliable_queue_messages,
             max_bytes: config.reliable_queue_bytes,
@@ -266,27 +269,47 @@ impl CommandQueue {
         self.lock().stop_admission = true;
     }
 
-    /// Applies the queued commands to `endpoint` and returns the connections
-    /// the caller disconnected. Reliable messages move in order, each only
-    /// once the endpoint reports room for it; that report is advisory, so a
-    /// message the endpoint still refuses stays at the front for a later
-    /// turn.
-    fn apply<S: ServerIo>(&self, endpoint: &mut S, now_ms: u64) -> Vec<ConnectionId> {
+    /// Moves queued commands to `endpoint` and returns the connections the
+    /// caller disconnected, for the worker to close after the lock is
+    /// released (closing flushes and sends datagrams).
+    ///
+    /// Reliable messages move in order, each only once the endpoint reports
+    /// room for it; that report is advisory, so a message the endpoint still
+    /// refuses stays at the front for a later turn. Peers take one message
+    /// per pass, starting from a cursor that rotates every turn, so when a
+    /// shared endpoint ceiling binds, freed room is shared between backlogged
+    /// peers instead of going to the lowest ids.
+    fn apply<S: ServerIo>(&self, endpoint: &mut S) -> Vec<ConnectionId> {
         let mut state = self.lock();
         if std::mem::take(&mut state.stop_admission) {
             endpoint.stop_admission();
         }
         let disconnects: Vec<_> = std::mem::take(&mut state.disconnects).into_iter().collect();
-        for &conn in &disconnects {
-            endpoint.disconnect(conn, now_ms);
-        }
-        let mut gone = Vec::new();
-        for (&conn, peer) in &mut state.peers {
-            let mut ended = false;
-            while let Some(payload) = peer.reliable.front() {
+        let start = state.next_start;
+        let mut order: Vec<_> = state.peers.range(start..).map(|(&id, _)| id).collect();
+        order.extend(state.peers.range(..start).map(|(&id, _)| id));
+        // The next turn starts with the peer after this turn's first.
+        state.next_start = order
+            .first()
+            .and_then(|id| id.checked_next())
+            .unwrap_or(ConnectionId::MIN);
+
+        let mut gone = BTreeSet::new();
+        let mut blocked = BTreeSet::new();
+        loop {
+            let mut progressed = false;
+            for &conn in &order {
+                if gone.contains(&conn) || blocked.contains(&conn) {
+                    continue;
+                }
+                let peer = state.peers.get_mut(&conn).expect("ordered from peers");
+                let Some(payload) = peer.reliable.front() else {
+                    continue;
+                };
                 let capacity = endpoint.capacity(conn, Lane::DEFAULT);
                 if capacity.messages == 0 || capacity.bytes < payload.len() {
-                    break;
+                    blocked.insert(conn);
+                    continue;
                 }
                 match endpoint.send(conn, Delivery::RELIABLE_ORDERED, payload) {
                     // Admission already bounded the size, so a payload the
@@ -295,25 +318,36 @@ impl CommandQueue {
                     Ok(()) | Err(SendError::PayloadTooLarge) => {
                         peer.reliable_bytes -= payload.len();
                         peer.reliable.pop_front();
+                        progressed = true;
                     }
-                    Err(SendError::WouldBlock) => break,
+                    Err(SendError::WouldBlock) => {
+                        blocked.insert(conn);
+                    }
                     Err(SendError::UnknownConnection | SendError::Disconnected) => {
-                        ended = true;
-                        break;
+                        gone.insert(conn);
                     }
                 }
             }
-            if !ended && let Some(payload) = peer.latest.take() {
-                ended = matches!(
-                    endpoint.send(conn, Delivery::LatestState, &payload),
-                    Err(SendError::UnknownConnection | SendError::Disconnected)
-                );
-            }
-            if ended {
-                // Its `Disconnected` event reaches the caller through ingress.
-                gone.push(conn);
+            if !progressed {
+                break;
             }
         }
+        for &conn in &order {
+            if gone.contains(&conn) {
+                continue;
+            }
+            let peer = state.peers.get_mut(&conn).expect("ordered from peers");
+            if let Some(payload) = peer.latest.take()
+                && matches!(
+                    endpoint.send(conn, Delivery::LatestState, &payload),
+                    Err(SendError::UnknownConnection | SendError::Disconnected)
+                )
+            {
+                gone.insert(conn);
+            }
+        }
+        // A connection the endpoint no longer knows: its `Disconnected`
+        // event reaches the caller through ingress.
         for conn in gone {
             state.live.remove(&conn);
             state.peers.remove(&conn);
@@ -480,7 +514,8 @@ fn worker_tick<S: ServerIo>(
         }
     }
 
-    for conn in commands.apply(endpoint, now_ms) {
+    for conn in commands.apply(endpoint) {
+        endpoint.disconnect(conn, now_ms);
         ingress.disconnected(conn, DisconnectReason::Local);
     }
     endpoint.flush(now_ms);
@@ -744,6 +779,111 @@ mod tests {
             }
         }
         assert_eq!(received, (0..60).collect::<Vec<_>>());
+    }
+
+    /// An endpoint with two connections sharing one ceiling: it admits
+    /// `per_tick` reliable messages between two polls across both, and
+    /// records what each connection received, in order.
+    struct SharedCeiling {
+        per_tick: usize,
+        admitted: usize,
+        announced: bool,
+        received: BTreeMap<ConnectionId, Vec<u32>>,
+    }
+
+    impl ServerIo for SharedCeiling {
+        fn poll(&mut self, _now_ms: u64) -> Vec<ServerEvent> {
+            self.admitted = 0;
+            if std::mem::replace(&mut self.announced, true) {
+                return Vec::new();
+            }
+            self.received
+                .keys()
+                .map(|&conn| ServerEvent::Connected { conn })
+                .collect()
+        }
+
+        fn send(
+            &mut self,
+            conn: ConnectionId,
+            _delivery: Delivery,
+            payload: &[u8],
+        ) -> Result<(), SendError> {
+            let received = self
+                .received
+                .get_mut(&conn)
+                .ok_or(SendError::UnknownConnection)?;
+            if self.admitted >= self.per_tick {
+                return Err(SendError::WouldBlock);
+            }
+            self.admitted += 1;
+            received.push(u32::from_le_bytes(payload.try_into().unwrap()));
+            Ok(())
+        }
+
+        fn capacity(&self, conn: ConnectionId, _lane: Lane) -> ReliableCapacity {
+            if !self.received.contains_key(&conn) {
+                return ReliableCapacity::default();
+            }
+            ReliableCapacity::remaining(self.per_tick - self.admitted, usize::MAX)
+        }
+
+        fn flush(&mut self, _now_ms: u64) {}
+
+        fn disconnect(&mut self, _conn: ConnectionId, _now_ms: u64) {}
+
+        fn stop_admission(&mut self) {}
+    }
+
+    /// Defect (#267 review): freed room under a binding shared ceiling going
+    /// to the lowest connection id every turn, starving a backlogged peer
+    /// with a higher id. Oracle: equal shares for equally backlogged peers —
+    /// with both command queues kept full and three slots per tick, each
+    /// peer receives its messages in order and the two counts differ by at
+    /// most one tick's worth.
+    #[test]
+    fn a_binding_shared_ceiling_is_shared_between_backlogged_peers() {
+        let config = ThreadedUdpConfig {
+            reliable_queue_messages: 16,
+            ..ThreadedUdpConfig::default()
+        };
+        let commands = CommandQueue::new(&config);
+        let ingress = IngressHub::new(&config);
+        let (low, high) = (cid(1), cid(9));
+        let mut endpoint = SharedCeiling {
+            per_tick: 3,
+            admitted: 0,
+            announced: false,
+            received: [(low, Vec::new()), (high, Vec::new())].into(),
+        };
+        let mut next = BTreeMap::from([(low, 0u32), (high, 0u32)]);
+        for tick in 0..40 {
+            worker_tick(&mut endpoint, &commands, &ingress, tick);
+            // Keep both peers backlogged: refill each command queue.
+            for (&conn, index) in &mut next {
+                while commands
+                    .send(conn, Delivery::RELIABLE_ORDERED, &index.to_le_bytes())
+                    .is_ok()
+                {
+                    *index += 1;
+                }
+                assert_eq!(commands.capacity(conn).messages, 0, "kept saturated");
+            }
+        }
+        let (low_got, high_got) = (&endpoint.received[&low], &endpoint.received[&high]);
+        for got in [low_got, high_got] {
+            assert!(
+                got.iter().zip(0..).all(|(&a, b)| a == b),
+                "in order, once: {got:?}"
+            );
+        }
+        assert!(!high_got.is_empty(), "the higher-id peer made progress");
+        assert!(
+            low_got.len().abs_diff(high_got.len()) <= endpoint.per_tick,
+            "unfair split: {} vs {}",
+            low_got.len(),
+            high_got.len()
+        );
     }
 
     /// Defect: a peer's full allowance refusing another peer, or a refusal
