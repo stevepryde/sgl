@@ -140,7 +140,8 @@ docs and specs the entry links.
   length inside the volume its material bounds
   ([Programmable surfaces](crates/sgl-3d/README.md#programmable-surfaces)).
   These names are now reserved: a game module that declares `VolumePath`,
-  `scene_volume_path` or a `VOLUME_` constant renames it.
+  `scene_volume_path`, `scene_along_ray`, `volume_exit_layer` or a
+  `VOLUME_` constant renames it.
 - `sgl-3d` `Settings::volume_paths` (new, `bool`, on by default) and
   `Renderer::volume_paths_in_effect` (new): the volume layers drawn for
   materials whose shader reads `scene_volume_path`; saved settings without

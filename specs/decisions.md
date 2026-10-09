@@ -636,5 +636,6 @@ Use the [current specs](README.md) for implementation and the
   tracer measures at their first two crossings, following their deformed
   geometry, and materials that do not read it pay nothing. Limits: the path
   follows the view ray, not the refracted one; a nested volume (ice in
-  water) starts or ends the outer volume's path at its own faces; a masked
+  water) starts or ends the outer volume's path at its own faces, as another
+  volume's entry in front of an exit starts that exit's path; a masked
   cut-out still bounds; rays and probe captures have no layers.
