@@ -423,6 +423,16 @@ pub struct Settings {
     /// `volumetric_fog/use_filter`): smoother fog, softer shafts and shadow
     /// edges in it, at the cost of two passes over the froxels.
     pub fog_filter: bool,
+    /// Measured volume paths, on by default and in every preset: a blended
+    /// material whose shader calls `scene_volume_path` reads the length of
+    /// its view ray inside its volume, which SGL3D measures from depth
+    /// layers of those materials' meshes, at the cost of three depth passes
+    /// over their meshes and three depth targets of the render size, paid
+    /// only in frames that draw such a material. Off, or on a device of the
+    /// Basic binding tier (`Renderer::volume_paths_in_effect`), no layer is
+    /// drawn or allocated and `scene_volume_path` reports `VOLUME_NONE`, so
+    /// those shaders take their own fallback.
+    pub volume_paths: bool,
     /// Camera-path heat shimmer.
     pub heat_distortion: bool,
     pub motion_blur: MotionBlur,
@@ -434,7 +444,8 @@ pub struct Settings {
 }
 
 impl Default for Settings {
-    /// High, with atmosphere allowed and the fog filter on, heat
+    /// High, with atmosphere allowed and the fog filter and volume paths
+    /// on, heat
     /// distortion, world-space reflections, hardware ray tracing,
     /// ray-traced shadows, occlusion culling and motion blur off, FSR2
     /// sharpening on at AMD's FSR sample's 0.8
@@ -464,6 +475,7 @@ impl Default for Settings {
             fog_quality: FogQuality::default(),
             dynamic_gi: DynamicGiQuality::default(),
             fog_filter: true,
+            volume_paths: true,
             heat_distortion: false,
             motion_blur: MotionBlur::Off,
             #[cfg(feature = "diagnostics")]

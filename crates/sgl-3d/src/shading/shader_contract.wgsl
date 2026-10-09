@@ -4,8 +4,10 @@
 // `struct ShaderParams`, `material_vertex` and `material_surface` over these
 // structs, and from material_surface may call the scene depth functions its
 // program's provider declares (shader_scene_depth_none.wgsl,
-// shader_scene_depth.wgsl); nothing else SGL3D declares is the contract. SGL3D's own programs compose
-// shader_default.wgsl in its place, whose functions return their argument.
+// shader_scene_depth.wgsl): scene_depth_available, scene_depth,
+// scene_depth_behind and scene_volume_path; nothing else SGL3D declares is
+// the contract. SGL3D's own programs compose shader_default.wgsl in its
+// place, whose functions return their argument.
 // The pattern is Filament ef1a133's materialVertex() and material()
 // (shaders/src/surface_main.vs, surface_main.fs,
 // surface_material_inputs.vs and .fs) and Godot b130438's vertex() and
@@ -93,3 +95,36 @@ struct SurfaceContext {
 }
 // What scene_depth returns at the sky.
 const SCENE_DEPTH_FAR:f32=1e30;
+// What scene_volume_path returns: the `length` in metres along the
+// fragment's view ray inside the volume its material bounds, at most
+// SCENE_DEPTH_FAR and never negative, and its `bound`, one of the VOLUME_*
+// constants, which says what ends the path away from the fragment. SGL3D
+// measures it in the camera's blended draws on the Extended binding tier
+// while Settings::volume_paths is on, from depth layers of the meshes of
+// the blended materials whose shader calls scene_volume_path, each a closed
+// mesh around its volume: the nearest front faces, the nearest back faces
+// and the nearest back faces behind those, at each pixel in front of the
+// opaque surface.
+struct VolumePath {
+ length:f32,
+ bound:u32,
+}
+// No path is measured (every other pass, the Basic binding tier, the
+// setting off): length 0. The shader takes its own fallback, such as
+// scene_depth_behind or an authored thickness.
+const VOLUME_NONE:u32=0u;
+// At a front fragment, where the view ray enters: the path ends at the
+// nearest back face behind the fragment, where the ray leaves.
+const VOLUME_EXIT:u32=1u;
+// At a front fragment: the path ends at the opaque surface, with no back
+// face between (the volume meets the opaque surface, or is open).
+const VOLUME_OPAQUE:u32=2u;
+// At a front fragment behind two back faces, which leave its own exit
+// unmeasured: the length is to the opaque surface, an upper bound.
+const VOLUME_HIDDEN:u32=3u;
+// At a back fragment, seen from inside where the ray leaves: the path
+// starts at the nearest front face in front of it, where the ray entered.
+const VOLUME_ENTRY:u32=4u;
+// At a back fragment with no front face in front of it (the camera is
+// inside, or the near plane cut the entry): the path starts at the eye.
+const VOLUME_EYE:u32=5u;

@@ -3,8 +3,10 @@
 // motion (fs), lit color with its ambient light, motion and exact primitive
 // identity (source_fs), the G-buffer and source_fs's outputs at once
 // (fused_opaque_fs), blended receivers as the surface (receiver_fs),
-// blended surfaces' colour (blended_fs) and FSR2's transparency and
-// composition mask over moving opaque surfaces (fsr2_composition_fs). A
+// blended surfaces' colour (blended_fs), FSR2's transparency and
+// composition mask over moving opaque surfaces (fsr2_composition_fs) and
+// the volume layers' depth (volume_entry_fs, volume_exit_fs,
+// volume_second_exit_fs). A
 // masked material's pipelines discard the texels it cuts out in each opaque
 // pass (material_alpha_discard), after the fragment's last derivative.
 struct SceneOutput {
@@ -193,6 +195,33 @@ struct ReceiverOutput {
  let recorded=stable_material(stable_raster_surface(i,front));
  let lobe=gbuffer_traced_lobe(recorded.normal,recorded.material,recorded.f0);
  return ReceiverOutput(gbuffer_encode_receiver(lobe),gbuffer_encode_motion(i.current_clip,i.previous_clip));
+}
+
+// The volume layers (stages/transparent/volumes.rs): the blended materials
+// whose shader reads its volume path, drawn through source_vs as
+// blended_fs draws them, with no face culled, over a copy of the opaque
+// depth each pass tests strictly nearer and writes, with no colour. Each
+// keeps one side, the one the surface function's `front` reports: the
+// entry layer the material's front, the exit layer its back, and the
+// second exit layer its back behind the exit layer's at the fragment's
+// pixel, which it reads (volume_exit_layer); the same triangles rasterised
+// through the same @invariant position make that comparison exact, so the
+// exit layer's own faces are peeled. Coverage plays no part: a volume's
+// boundary is its geometry.
+@fragment fn volume_entry_fs(i:Fragment,@builtin(front_facing) raster_front:bool) {
+ if !object_front_face(i,raster_front) {
+  discard;
+ }
+}
+@fragment fn volume_exit_fs(i:Fragment,@builtin(front_facing) raster_front:bool) {
+ if object_front_face(i,raster_front) {
+  discard;
+ }
+}
+@fragment fn volume_second_exit_fs(i:Fragment,@builtin(front_facing) raster_front:bool) {
+ if object_front_face(i,raster_front) || i.clip.z>=volume_exit_layer(vec2<i32>(i.clip.xy)) {
+  discard;
+ }
 }
 
 // What the frame's screen-space method returned for a blended fragment's

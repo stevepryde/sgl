@@ -172,6 +172,13 @@ pub(super) fn dynamic_gi(settings: &Settings, tier: BindingTier) -> DynamicGiQua
     }
 }
 
+/// `Settings::volume_paths` on a device of `tier`: the setting on the
+/// Extended binding tier, which alone binds the volume layers, else off.
+/// The saved choice is unchanged.
+pub(super) fn volume_paths(settings: &Settings, tier: BindingTier) -> bool {
+    settings.volume_paths && tier == BindingTier::Extended
+}
+
 /// What a frame's scene holds that its effective configuration follows.
 #[derive(Clone, Copy, Default)]
 pub(super) struct SceneContent {
@@ -319,6 +326,7 @@ pub(super) fn resolve(
         dynamic_gi: dynamic_gi(settings, tier)
             .rays()
             .filter(|_| content.dynamic_gi_volume),
+        volume_paths: volume_paths(settings, tier),
         bloom: settings.bloom.enabled(low) && !disable.bloom,
         motion_blur,
         heat: settings.heat_distortion,

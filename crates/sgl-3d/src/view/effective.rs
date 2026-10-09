@@ -126,6 +126,10 @@ pub(crate) struct Effective {
     /// The most rays a probe of the dynamic GI volume traces, while it
     /// runs: the scene holds a volume and `Settings::dynamic_gi` is not Off.
     pub dynamic_gi: Option<u32>,
+    /// The transparent stage draws the volume layers where the camera's
+    /// blended list holds a material whose shader reads its volume path:
+    /// `Settings::volume_paths` on a device of the Extended binding tier.
+    pub volume_paths: bool,
     pub bloom: bool,
     /// The share of each pixel's motion that motion blur spreads it over:
     /// the authored shutter scaled by the setting, while positive.

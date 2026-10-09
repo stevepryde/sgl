@@ -18,7 +18,9 @@ pub(crate) enum GeometryPass {
     /// G-buffer's depth; with `shadow_mask`, the camera's surfaces take the
     /// lights the ray-traced shadow mask holds from it, bound at group 3
     /// (`shading::bind::shadow_mask`).
-    Lighting { shadow_mask: bool },
+    Lighting {
+        shadow_mask: bool,
+    },
     /// `GBuffer` and `Lighting` in one pass.
     Fused,
     /// A GPU-built directional cascade's casters, pulled as the camera's
@@ -37,7 +39,9 @@ pub(crate) enum GeometryPass {
     /// alpha, tested against the opaque depth without writing it, with the blended group 3
     /// (`shading::bind::blended`); with `fsr2_masks`, also FSR2's reactive
     /// and transparency-and-composition masks (`mask_targets`).
-    Blended { fsr2_masks: bool },
+    Blended {
+        fsr2_masks: bool,
+    },
     /// Blended receivers of screen-space reflections as the surface: their
     /// traced lobe into the receiver layer and their motion into the
     /// G-buffer's, over the surface depth, tested strictly nearer and
@@ -48,6 +52,17 @@ pub(crate) enum GeometryPass {
     /// (`Material::surface_moves`), at the G-buffer's depth, with the
     /// reactive mask kept (`composition_targets`).
     Fsr2Composition,
+    /// The volume layers (`stages::transparent::volumes`): the depth of the
+    /// nearest faces of the blended materials whose shader reads its volume
+    /// path, over a copy of the opaque depth, tested strictly nearer and
+    /// written, with no colour and no face culled: their front faces
+    /// (`VolumeEntry`), their back faces (`VolumeExit`), and their back
+    /// faces behind the exit layer's (`VolumeSecondExit`, which reads that
+    /// layer through the blended group 3). Draws only those batches of the
+    /// blended list.
+    VolumeEntry,
+    VolumeExit,
+    VolumeSecondExit,
 }
 
 impl GeometryPass {
@@ -64,7 +79,22 @@ impl GeometryPass {
         if self == Self::PairedShadow {
             return alpha == Alpha::Opaque;
         }
-        matches!(self, Self::Blended { .. } | Self::Receivers) == (alpha == Alpha::Blend)
+        matches!(
+            self,
+            Self::Blended { .. }
+                | Self::Receivers
+                | Self::VolumeEntry
+                | Self::VolumeExit
+                | Self::VolumeSecondExit
+        ) == (alpha == Alpha::Blend)
+    }
+
+    /// Whether the pass draws a volume layer.
+    pub fn volume(self) -> bool {
+        matches!(
+            self,
+            Self::VolumeEntry | Self::VolumeExit | Self::VolumeSecondExit
+        )
     }
 
     /// Whether the pass pulls its vertices instead of reading vertex
@@ -102,9 +132,9 @@ impl GeometryPass {
 
 /// The depth write and test of each pass. A material/depth prepass and its
 /// Equal passes must select the same last draw when distinct materials have
-/// indistinguishable device depth. The receiver pass tests strictly nearer,
-/// so a receiver coplanar with opaque geometry leaves that the surface, and
-/// the blended draw nearer or equal.
+/// indistinguishable device depth. The receiver pass and the volume layers
+/// test strictly nearer, so a receiver or a face coplanar with opaque
+/// geometry leaves that the surface, and the blended draw nearer or equal.
 pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
     use wgpu::CompareFunction::*;
     match pass {
@@ -113,7 +143,10 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
         | GeometryPass::PairedShadow
         | GeometryPass::CaptureShadow
         | GeometryPass::LocalShadow
-        | GeometryPass::Receivers => (true, Greater),
+        | GeometryPass::Receivers
+        | GeometryPass::VolumeEntry
+        | GeometryPass::VolumeExit
+        | GeometryPass::VolumeSecondExit => (true, Greater),
         GeometryPass::GBuffer | GeometryPass::Fused => (true, GreaterEqual),
         GeometryPass::GBufferAnisotropy
         | GeometryPass::Lighting { .. }
@@ -160,7 +193,7 @@ pub(super) fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::
         DirectionalShadow | PairedShadow | CaptureShadow | LocalShadow => Vec::new(),
         Blended { .. } => vec![gbuffer::COLOR],
         Receivers => vec![gbuffer::RECEIVER, gbuffer::MOTION],
-        Fsr2Composition => Vec::new(),
+        Fsr2Composition | VolumeEntry | VolumeExit | VolumeSecondExit => Vec::new(),
     }
 }
 

@@ -62,14 +62,16 @@ pub(crate) fn material_provider(tier: BindingTier) -> &'static Module {
 }
 
 /// The blended pipelines' group 3 bindings of the Extended binding tier
-/// alone: the transparent stage's copy of the composed frame.
+/// alone: the transparent stage's copy of the composed frame, the opaque
+/// depth and the volume layers.
 pub(crate) static BIND_BLENDED_EXTENDED: Module = Module {
     name: "bind_blended_extended",
     source: include_str!("bind_blended_extended.wgsl"),
     deps: &[&BIND_BLENDED],
 };
 /// The transmission provider of the Extended binding tier: the frame behind
-/// a transmissive surface from the copy, bicubically filtered.
+/// a transmissive surface from the copy, bicubically filtered, and the exit
+/// volume layer the second exit layer's pass reads.
 pub(crate) static TRANSMISSION_EXTENDED: Module = Module {
     name: "transmission_extended",
     source: include_str!("transmission_extended.wgsl"),

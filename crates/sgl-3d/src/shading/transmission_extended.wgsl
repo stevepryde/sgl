@@ -2,7 +2,10 @@
 // a transmissive surface from the transparent stage's mipmapped copy of the
 // composed frame (bind_blended_extended.wgsl), where the draw's group 3
 // holds it (BlendedTrace.transmission), filtered through lit group 0's
-// trilinear clamp-to-edge sampler (decal_sampler). A program composes it or
+// trilinear clamp-to-edge sampler (decal_sampler); and, as the provider of
+// the blended group 3's other Extended binding a geometry pass reads, the
+// exit layer at a texel, which the second exit layer's pass peels behind
+// (volume_second_exit_fs in geometry.wgsl). A program composes it or
 // transmission_basic.wgsl, exactly one; transmission.wgsl calls it.
 //
 // Mipped bicubic texture filtering by N8 (https://www.shadertoy.com/view/Dl2SDW)
@@ -77,4 +80,9 @@ fn transmission_frame_sample(uv:vec2<f32>,lod:f32)->vec4<f32> {
  let fSample=bicubic(uv,vec4(1./fLodSize,fLodSize),fine);
  let cSample=bicubic(uv,vec4(1./cLodSize,cLodSize),coarse);
  return mix(fSample,cSample,fract(lod));
+}
+// The exit volume layer's device depth at `texel`, which the second exit
+// layer's pass (stages/transparent/volumes.rs) binds.
+fn volume_exit_layer(texel:vec2<i32>)->f32 {
+ return textureLoad(blended_volume_exit,texel,0);
 }

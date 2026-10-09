@@ -345,8 +345,9 @@ impl Renderer {
     /// The device's binding tier: `Extended` where it binds 48 or more
     /// sampled textures per shader stage, else `Basic`, on which baked
     /// light is non-directional, dynamic GI is off
-    /// (`dynamic_gi_in_effect`) and a material's anisotropy map gives way to
-    /// its factors. Fixed for the device; `graphics_device::limits` requests
+    /// (`dynamic_gi_in_effect`), no volume path is measured
+    /// (`volume_paths_in_effect`) and a material's anisotropy map gives way
+    /// to its factors. Fixed for the device; `graphics_device::limits` requests
     /// the adapter's.
     pub fn binding_tier(&self) -> BindingTier {
         self.pipelines.tier
@@ -357,6 +358,14 @@ impl Renderer {
     /// The saved choice is unchanged.
     pub fn dynamic_gi_in_effect(&self, settings: &Settings) -> DynamicGiQuality {
         effective::dynamic_gi(settings, self.binding_tier())
+    }
+
+    /// Whether volume paths are measured for `settings`
+    /// (`Settings::volume_paths`): their choice on the Extended binding
+    /// tier, off on Basic, where `scene_volume_path` reports `VOLUME_NONE`.
+    /// The saved choice is unchanged.
+    pub fn volume_paths_in_effect(&self, settings: &Settings) -> bool {
+        effective::volume_paths(settings, self.binding_tier())
     }
 
     /// Why FSR2 is not running on this device although it was chosen.

@@ -3,7 +3,9 @@
 //! require (face culling, alpha mode and deformed vertices: `variant`), by
 //! the diagnostics layer constants and by whether the scene holds rectangle
 //! lights and decals (`LitConstants`), and by the material's shader, whose
-//! programs (`programs`) a pipeline is created from. The lighting pass while ray-traced
+//! programs (`programs`) a pipeline is created from; the volume layers'
+//! passes exist for the shaders that read their volume path, on the
+//! Extended binding tier alone. The lighting pass while ray-traced
 //! shadows run composes the shadow mask's provider (`shading::SHADOW_MASK`)
 //! and binds the mask at its group 3; every other pass composes the
 //! provider that holds no slot (`shading::SHADOW_MASK_NONE`). Every program
@@ -62,15 +64,17 @@ impl Content {
 }
 
 /// What the materials that name one shader need of its pipelines: the
-/// alpha modes they use, opaque among them, and whether one is a receiver.
-/// A shader's opaque or masked material's surface always counts as moving
-/// (`Material::surface_moves`).
+/// alpha modes they use, opaque among them, whether one is a receiver, and
+/// whether one is blended and the shader reads its volume path, whose
+/// meshes the volume layers draw. A shader's opaque or masked material's
+/// surface always counts as moving (`Material::surface_moves`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ShaderContent {
     opaque: bool,
     mask: bool,
     blend: bool,
     receivers: bool,
+    volumes: bool,
 }
 
 impl ShaderContent {
@@ -89,11 +93,18 @@ impl ShaderContent {
                     shaders.len() - 1
                 }
             };
+            let reads_volume_path = scene
+                .shaders
+                .get(shader.shader)
+                .is_ok_and(|shader| shader.reads_volume_path);
             let content = &mut shaders[at].1;
             match Alpha::of(&material.values) {
                 Alpha::Opaque => content.opaque = true,
                 Alpha::Mask => content.mask = true,
-                Alpha::Blend => content.blend = true,
+                Alpha::Blend => {
+                    content.blend = true;
+                    content.volumes |= reads_volume_path;
+                }
             }
             content.receivers |= material.values.receives_screen_space_reflections();
         }
@@ -285,7 +296,9 @@ impl GeometryPipelines {
         if content.blend {
             alphas.push(Alpha::Blend);
         }
-        let mut sets = vec![(None, alphas, content.receivers, content.moving)];
+        let mut sets = vec![(None, alphas, content.receivers, content.moving, false)];
+        // The volume layers exist on the Extended binding tier alone.
+        let extended = self.tier == BindingTier::Extended;
         for &(id, shader) in &self.shaders {
             let alphas: Vec<_> = [
                 (shader.opaque, Alpha::Opaque),
@@ -296,20 +309,28 @@ impl GeometryPipelines {
             .filter_map(|(used, alpha)| used.then_some(alpha))
             .collect();
             let moving = shader.opaque || shader.mask;
-            sets.push((Some(id), alphas, shader.receivers, moving));
+            let volumes = shader.volumes && extended;
+            sets.push((Some(id), alphas, shader.receivers, moving, volumes));
         }
         let deformed: &[bool] = if content.deformed {
             &[false, true]
         } else {
             &[false]
         };
-        for (shader, alphas, receivers, moving) in sets {
+        for (shader, alphas, receivers, moving, volumes) in sets {
             let mut passes = passes.clone();
             if receivers {
                 passes.push(GeometryPass::Receivers);
             }
             if moving {
                 passes.push(GeometryPass::Fsr2Composition);
+            }
+            if volumes {
+                passes.extend([
+                    GeometryPass::VolumeEntry,
+                    GeometryPass::VolumeExit,
+                    GeometryPass::VolumeSecondExit,
+                ]);
             }
             for pass in passes {
                 for &alpha in alphas.iter().filter(|&&alpha| pass.draws(alpha)) {
@@ -395,6 +416,18 @@ impl GeometryPipelines {
                 Program::Geometry(GeometryForm::Plain),
                 &self.lit,
                 "FSR2 composition of moving surfaces",
+            ),
+            VolumeEntry | VolumeExit => (
+                Program::Geometry(GeometryForm::Plain),
+                &self.lit,
+                "volume layer",
+            ),
+            // The second exit reads the exit layer at its blended binding,
+            // which the plain program declares on the Extended tier.
+            VolumeSecondExit => (
+                Program::Geometry(GeometryForm::Plain),
+                &self.blended,
+                "second exit volume layer",
             ),
             Lighting { shadow_mask: true } => (
                 Program::Geometry(GeometryForm::ShadowMask),
@@ -483,6 +516,9 @@ impl GeometryPipelines {
             Blended { fsr2_masks: true } => (SOURCE_VS_ENTRY, Some(BLENDED_FSR2_MASKED_FS_ENTRY)),
             Receivers => (SOURCE_VS_ENTRY, Some(RECEIVER_FS_ENTRY)),
             Fsr2Composition => (SOURCE_VS_ENTRY, Some(FSR2_COMPOSITION_FS_ENTRY)),
+            VolumeEntry => (SOURCE_VS_ENTRY, Some(VOLUME_ENTRY_FS_ENTRY)),
+            VolumeExit => (SOURCE_VS_ENTRY, Some(VOLUME_EXIT_FS_ENTRY)),
+            VolumeSecondExit => (SOURCE_VS_ENTRY, Some(VOLUME_SECOND_EXIT_FS_ENTRY)),
         };
         let unclipped_depth = matches!(key.pass, DirectionalShadow | PairedShadow | CaptureShadow)
             && self.unclipped_depth;

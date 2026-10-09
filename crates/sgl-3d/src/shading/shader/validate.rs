@@ -31,12 +31,23 @@ use std::sync::OnceLock;
 #[derive(Clone, Debug)]
 pub(crate) struct ValidatedShader {
     pub layout: ShaderParamsLayout,
+    /// `material_surface` reaches `scene_volume_path`, itself or through a
+    /// function it calls: the shader reads its volume path, so its blended
+    /// materials' meshes are drawn into the volume layers.
+    pub reads_volume_path: bool,
 }
 
 /// The contract's scene depth functions, which a game's module calls and
 /// does not define.
-const CONTRACT_FUNCTIONS: [&str; 3] =
-    ["scene_depth_available", "scene_depth", "scene_depth_behind"];
+const CONTRACT_FUNCTIONS: [&str; 4] = [
+    "scene_depth_available",
+    "scene_depth",
+    "scene_depth_behind",
+    VOLUME_PATH,
+];
+
+/// The scene depth function that measures a volume's path.
+const VOLUME_PATH: &str = "scene_volume_path";
 
 /// The validator wgpu creates modules with (`ValidationFlags::all()`), with
 /// the capabilities SGL3D's programs need and nothing more, so a game's
@@ -87,7 +98,10 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
     }
     loops::check(&module, |name| !CONTRACT_FUNCTIONS.contains(&name))?;
     derivatives::check(&module, |name| !CONTRACT_FUNCTIONS.contains(&name))?;
-    vertex_scene_depth(&module)?;
+    if let Some(function) = reaches(&module, "material_vertex", &CONTRACT_FUNCTIONS) {
+        return Err(ShaderError::SceneDepthInVertex { function });
+    }
+    let reads_volume_path = reaches(&module, "material_surface", &[VOLUME_PATH]).is_some();
     let layout = params_layout(&module, params)?;
     for (label, program) in programs(tier, ProgramShader::Game(source)) {
         let module =
@@ -98,7 +112,10 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
             .validate(&module)
             .map_err(|error| validation(&error))?;
     }
-    Ok(ValidatedShader { layout })
+    Ok(ValidatedShader {
+        layout,
+        reads_volume_path,
+    })
 }
 
 /// Every program a device of `tier` composes `shader` into, by label: the
@@ -297,18 +314,19 @@ fn params_layout(
     })
 }
 
-/// Refuses `material_vertex` reaching a scene depth function, itself or
-/// through a function it calls: scene depth is the surface function's, and
-/// the binding it reads is the blended draws' fragment stage's alone, so a
+/// The function that calls one of `targets` where `root` reaches one,
+/// itself or through a function it calls. `material_vertex` may reach no
+/// scene depth function: scene depth is the surface function's, and the
+/// binding it reads is the blended draws' fragment stage's alone, so a
 /// vertex stage that reads it would fail when its pipeline is created.
-fn vertex_scene_depth(module: &naga::Module) -> Result<(), ShaderError> {
+fn reaches(module: &naga::Module, root: &str, targets: &[&str]) -> Option<String> {
     let named = |handle: naga::Handle<naga::Function>| {
         module.functions[handle].name.clone().unwrap_or_default()
     };
     let mut pending: Vec<_> = module
         .functions
         .iter()
-        .filter(|&(handle, _)| named(handle) == "material_vertex")
+        .filter(|&(handle, _)| named(handle) == root)
         .map(|(handle, _)| handle)
         .collect();
     let mut seen = HashSet::new();
@@ -319,15 +337,13 @@ fn vertex_scene_depth(module: &naga::Module) -> Result<(), ShaderError> {
         let mut callees = Vec::new();
         calls(&module.functions[handle].body, &mut callees);
         for callee in callees {
-            if CONTRACT_FUNCTIONS.contains(&named(callee).as_str()) {
-                return Err(ShaderError::SceneDepthInVertex {
-                    function: named(handle),
-                });
+            if targets.contains(&named(callee).as_str()) {
+                return Some(named(handle));
             }
             pending.push(callee);
         }
     }
-    Ok(())
+    None
 }
 
 /// The functions `block` calls, at any depth, into `callees`.

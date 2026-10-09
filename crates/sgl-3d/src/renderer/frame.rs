@@ -18,7 +18,8 @@ use crate::{FrameInput, Scene};
 /// phase), dynamic GI, shadows, volumetric fog, opaque (with the cull
 /// stage's late phase and pyramid while occlusion culling runs, and the
 /// ray-traced shadows between its G-buffer and lighting while they run),
-/// the transparent stage's receivers, reflections with the transparent
+/// the transparent stage's receivers and volume layers, reflections with
+/// the transparent
 /// stage drawn into their input (while a screen-space method traces it) and
 /// onto their result, heat, exposure, antialiasing, motion blur, then post.
 #[allow(clippy::too_many_arguments)]
@@ -250,6 +251,8 @@ pub(super) fn render(
     // the nearest receiver's over the opaque depth.
     let receivers = transparent.encode_receivers(&mut ctx);
     ctx.surface = targets.surface(receivers);
+    // The volume layers both blended draws read.
+    transparent.encode_volumes(&mut ctx);
     // Every reflection producer initializes composite before reading it.
     if let Some(post_fx) = post_fx.as_mut() {
         let camera = ctx.views.reflection_camera;

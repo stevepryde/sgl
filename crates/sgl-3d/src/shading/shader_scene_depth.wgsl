@@ -33,10 +33,63 @@ fn scene_depth(pixel:vec2<f32>)->f32 {
 // ray's cosine with the view axis; along an orthographic one's, the
 // difference. At most SCENE_DEPTH_FAR.
 fn scene_depth_behind(ctx:SurfaceContext)->f32 {
- let behind=max(scene_depth(ctx.pixel)-ctx.view_depth,0.);
+ return scene_along_ray(ctx,scene_depth(ctx.pixel)-ctx.view_depth);
+}
+// A difference `depth` in linear view depth along the fragment's view ray,
+// as a distance: over the ray's cosine with the view axis along a
+// perspective view's ray from the eye, the difference along an
+// orthographic one's. Within 0 and SCENE_DEPTH_FAR.
+fn scene_along_ray(ctx:SurfaceContext,depth:f32)->f32 {
+ let difference=max(depth,0.);
  if view.projection[2][3]==0. {
-  return behind;
+  return min(difference,SCENE_DEPTH_FAR);
  }
  let position=(view.view*vec4(ctx.position,1.)).xyz;
- return min(behind*length(position)/max(-position.z,1e-6),SCENE_DEPTH_FAR);
+ return min(difference*length(position)/max(-position.z,1e-6),SCENE_DEPTH_FAR);
+}
+// The fragment's view ray inside the volume its material bounds, from the
+// transparent stage's volume layers (bind_blended_extended.wgsl), where the
+// draw's group 3 holds this frame's (BlendedTrace.volumes): each layer's
+// texel is the opaque depth's where no face lies in front of the opaque
+// surface, else the device depth (reversed-Z: nearer is greater) of the
+// nearest front face (entry), back face (exit) and back face behind that
+// (second exit). A `front` fragment's path runs to the nearest exit at or
+// behind it while at most one exit lies in front of it, else to the opaque
+// surface; a back fragment's from the nearest entry in front of it, else
+// from the eye. Lengths are measured as scene_depth_behind measures them.
+fn scene_volume_path(ctx:SurfaceContext)->VolumePath {
+ if blended_trace.volumes==0u {
+  return VolumePath(0.,VOLUME_NONE);
+ }
+ let last=vec2<i32>(textureDimensions(blended_scene_depth))-vec2(1);
+ let texel=clamp(vec2<i32>(floor(ctx.pixel)),vec2(0),last);
+ let opaque=textureLoad(blended_scene_depth,texel,0);
+ if ctx.front {
+  let to_opaque=scene_along_ray(ctx,scene_view_depth(opaque)-ctx.view_depth);
+  let exit=textureLoad(blended_volume_exit,texel,0);
+  if exit<=opaque {
+   return VolumePath(to_opaque,VOLUME_OPAQUE);
+  }
+  let exit_depth=scene_view_depth(exit);
+  if exit_depth>=ctx.view_depth {
+   return VolumePath(scene_along_ray(ctx,exit_depth-ctx.view_depth),VOLUME_EXIT);
+  }
+  let second=textureLoad(blended_volume_second_exit,texel,0);
+  if second<=opaque {
+   return VolumePath(to_opaque,VOLUME_OPAQUE);
+  }
+  let second_depth=scene_view_depth(second);
+  if second_depth>=ctx.view_depth {
+   return VolumePath(scene_along_ray(ctx,second_depth-ctx.view_depth),VOLUME_EXIT);
+  }
+  return VolumePath(to_opaque,VOLUME_HIDDEN);
+ }
+ let entry=textureLoad(blended_volume_entry,texel,0);
+ if entry>opaque {
+  let entry_depth=scene_view_depth(entry);
+  if entry_depth<ctx.view_depth {
+   return VolumePath(scene_along_ray(ctx,ctx.view_depth-entry_depth),VOLUME_ENTRY);
+  }
+ }
+ return VolumePath(scene_along_ray(ctx,ctx.view_depth),VOLUME_EYE);
 }

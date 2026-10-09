@@ -15,6 +15,9 @@ pub(crate) struct Shader {
     pub source: String,
     pub label: String,
     pub layout: ShaderParamsLayout,
+    /// Its `material_surface` reaches `scene_volume_path`, so its blended
+    /// materials' meshes are drawn into the volume layers.
+    pub reads_volume_path: bool,
     /// The materials that name it.
     pub users: u32,
 }
@@ -53,6 +56,7 @@ impl Scene {
             source: source.wgsl,
             label: source.label,
             layout: validated.layout,
+            reads_volume_path: validated.reads_volume_path,
             users: 0,
         }))
     }

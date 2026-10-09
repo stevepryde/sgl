@@ -108,7 +108,8 @@ pub enum ShaderError {
     LoopBudget { function: String, iterations: u64 },
     /// `function`, which `material_vertex` is or calls, calls a scene depth
     /// function (`scene_depth_available`, `scene_depth`,
-    /// `scene_depth_behind`): scene depth is `material_surface`'s.
+    /// `scene_depth_behind`, `scene_volume_path`): scene depth is
+    /// `material_surface`'s.
     SceneDepthInVertex { function: String },
     /// `function` takes a derivative (`dpdx`, `dpdy`, `fwidth` and their
     /// forms), or calls a function that takes one, within an `if`, a
