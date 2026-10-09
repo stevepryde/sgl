@@ -5,7 +5,7 @@
 //! 0 magic[3]  3 version  4 kind (low nibble) | lane ack mask (high nibble,
 //! Payload only)  5 client nonce u64 LE  13 server nonce u64 LE
 //! Payload: one { next u16 LE, bits u32 LE } per mask bit, in lane order,
-//! then items:
+//! then any number of items, to the datagram's end:
 //! tag u8 | sequence u16 LE | length u16 LE | [total u32 LE iff FIRST and
 //! MORE] | payload
 //! tag: bits 0..1 kind (0 reliable, 1 latest, 2 unreliable), bit 2 FIRST,
@@ -29,7 +29,7 @@ pub const ALL_ACKS_LEN: usize = RELIABLE_LANES * ACK_LEN;
 pub const ITEM_HEADER_LEN: usize = 5;
 /// The declared total a multi-fragment message's first fragment carries.
 pub const TOTAL_LEN: usize = 4;
-/// Largest reliable fragment: a reliable datagram always has room for every
+/// Largest reliable fragment: a reliable item always fits beside every
 /// lane's acknowledgement.
 pub const MAX_RELIABLE_ITEM_PAYLOAD: usize =
     DATAGRAM_BYTES - BASE_HEADER_LEN - ALL_ACKS_LEN - ITEM_HEADER_LEN;
@@ -170,6 +170,26 @@ pub fn push_unreliable(output: &mut Vec<u8>, lane: Lane, sequence: u16, payload:
 pub fn push_latest(output: &mut Vec<u8>, sequence: u16, payload: &[u8]) {
     output.push(LATEST);
     push_item(output, sequence, payload, None);
+}
+
+/// Bytes the acknowledgements in `acks` take.
+pub fn acks_len(acks: &Acks) -> usize {
+    acks.iter().flatten().count() * ACK_LEN
+}
+
+/// Bytes an unreliable or latest-state item carrying `payload` bytes takes.
+pub const fn item_len(payload: usize) -> usize {
+    ITEM_HEADER_LEN + payload
+}
+
+/// Bytes a reliable item takes: a first fragment also declares its total.
+pub const fn reliable_item_len(fragment: Fragment, payload: usize) -> usize {
+    item_len(payload)
+        + if fragment.total().is_some() {
+            TOTAL_LEN
+        } else {
+            0
+        }
 }
 
 fn push_item(output: &mut Vec<u8>, sequence: u16, payload: &[u8], total: Option<u32>) {

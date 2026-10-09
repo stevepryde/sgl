@@ -56,7 +56,8 @@ docs and specs the entry links.
   `ProtocolViolation` (was `Transport`). `Envelope` borrows its payload and
   gains `fragment: Fragment`, `encode_envelope(magic, &envelope)`, and
   `EnvelopeError` gains `InvalidLane`, `InvalidFlags` and `InvalidTotal`.
-  `SimulatedConfig` gains `lane_loss_per_10k`. Migration: add
+  `SimulatedConfig` gains `lane_loss_per_10k` (removes a lane's items from
+  a datagram, dropping one left with none). Migration: add
   `lane_loss_per_10k: [0; RELIABLE_LANES]` or `..Default::default()` to
   `SimulatedConfig` literals; direct envelope users pass an `Envelope`.
 - `sgl-net` `MAX_RELIABLE_MESSAGE_BYTES` (64 KiB) → `ReliableConfig::max_message_bytes`
@@ -76,6 +77,14 @@ docs and specs the entry links.
   with `InboundOverflow`); the stall does not count toward `timeout_ms`. No
   game-code changes needed; browser receivers still close on overflow, so
   size their `inbound_*` bounds for one poll interval.
+- `sgl-net` UDP: a flush packs reliable fragments, unreliable messages,
+  latest state and acknowledgements into datagrams of up to
+  `MAX_DATAGRAM_BYTES` (was one item per datagram), so
+  `max_packets_per_peer_flush` bounds datagrams, not messages, and latest
+  state leads every flush (was a reserved datagram); a lane acknowledges an
+  arrival in the next two flushes, so an idle receiver sends one more
+  acknowledgement datagram per burst. The wire format is unchanged. No
+  game-code changes needed.
 - `sgl-core` `FixedClock`: new opt-in `FixedClock::with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })`
   runs several steps per frame to follow elapsed time, and the new
   `dropped_dt` field reports unsimulated time; `with_hz` and `new` keep

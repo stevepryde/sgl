@@ -547,3 +547,21 @@ Use the [current specs](README.md) for implementation and the
   slower than UDP, never weaker. The browser API has no read backpressure,
   and a receiver-advertised window would change the wire format, so a
   browser game sizes its inbound bounds instead.
+- **D-37** Decision, 2026-10-09: a UDP flush packs reliable fragments,
+  unreliable messages, latest state and acknowledgements into datagrams of
+  up to `MAX_DATAGRAM_BYTES`, as ENet packs commands and QUIC frames into
+  one packet; version 2's per-item framing already allowed it, so the wire
+  is unchanged. Items keep the lane schedule's order and a datagram closes
+  only when the next does not fit, so the scheduler still charges each
+  item once whatever its size (amending D-34, whose reason was one datagram
+  per item): charging items rather than bytes keeps the gap bound in items
+  and so in datagrams, and keeps one unit for UDP items, WebSocket frames
+  and memory messages; a lane of many small messages beside bulk takes a
+  weight for its rate. Latest state leads each flush's first datagram
+  instead of reserving one. With a lane's whole window able to ride one
+  datagram, a single lost acknowledgement left the sender waiting for the
+  receiver's keepalive and inflated its round-trip estimate until the lane
+  stalled under 20 % loss, so a lane acknowledges an arrival in the next
+  two flushes. The simulator's `lane_loss_per_10k` removes a lane's items
+  rather than the datagram, since a bulk fragment can now share one with
+  another lane's message.

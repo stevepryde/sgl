@@ -31,7 +31,8 @@ pub const LANE_QUEUE_BYTES_LIMIT: usize = 256 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LaneConfig {
     /// Scheduling share, `1..=MAX_LANE_WEIGHT`: a backlogged lane sends
-    /// `weight` fragments per round. Default 1 (equal shares).
+    /// `weight` items per round, an item being a reliable fragment or an
+    /// unreliable message whatever its size. Default 1 (equal shares).
     pub weight: u16,
     /// Messages this side holds for the lane until the peer acknowledges
     /// them, `1..=LANE_QUEUE_MESSAGES_LIMIT`. A full lane refuses `send`
@@ -322,17 +323,19 @@ impl Fragment {
 }
 
 /// Deficit round robin over the lanes with sendable work (Shreedhar and
-/// Varghese, 1996). Every fragment is charged one whole fragment, since each
-/// occupies one datagram or frame, so a lane's quantum is `weight`
-/// fragments: a backlogged lane sends `weight` fragments per round, every
-/// backlogged lane sends at least one, and between two fragments of lane `i`
-/// the other lanes send at most the sum of their weights.
+/// Varghese, 1996). Every item — a reliable fragment or an unreliable
+/// message, a UDP item or a frame — is charged once whatever its size, so a
+/// lane's quantum is `weight` items: a backlogged lane sends `weight` items
+/// per round, every backlogged lane sends at least one, and between two
+/// items of lane `i` the other lanes send at most the sum of their weights.
+/// UDP packs the items into datagrams in this order, so the bound holds on
+/// the wire.
 #[derive(Clone, Debug)]
 pub(crate) struct LaneScheduler {
     weights: [u16; RELIABLE_LANES],
     /// The lane being visited.
     current: usize,
-    /// Fragments `current` may still send in this visit; zero starts a new
+    /// Items `current` may still send in this visit; zero starts a new
     /// visit with a fresh quantum.
     remaining: u16,
 }
@@ -346,7 +349,7 @@ impl LaneScheduler {
         }
     }
 
-    /// Picks and charges the lane that sends the next fragment among those
+    /// Picks and charges the lane that sends the next item among those
     /// `ready` says have one; `None` when none has.
     pub(crate) fn next(&mut self, mut ready: impl FnMut(usize) -> bool) -> Option<usize> {
         for _ in 0..RELIABLE_LANES {
