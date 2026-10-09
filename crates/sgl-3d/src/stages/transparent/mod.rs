@@ -33,11 +33,11 @@ pub(crate) enum Beauty<'a> {
 /// blended receivers of screen-space reflections as the surface; the volume
 /// layers (`encode_volumes`), while volume paths are in effect, of the
 /// blended materials whose shader reads its volume path, which both blended
-/// draws read; then blended surfaces, transmissive ones among them, back to front, and
-/// additive glow and ground mist, drawn (`encode`) into the reflections'
-/// incident radiance while they trace it and onto the composite, each
-/// fogged from the frame's fog volume where it lies, then heat distortion
-/// (`encode_heat`). On a device of the Extended binding tier, in a frame
+/// draws read; then blended surfaces, transmissive ones among them, back to
+/// front, and additive glow and ground mist, drawn (`encode`) into the
+/// reflections' incident radiance while they trace it and onto the
+/// composite, each fogged from the frame's fog volume where it lies, then
+/// heat distortion (`encode_heat`). On a device of the Extended binding tier, in a frame
 /// whose blended list holds a transmissive material, the draw onto the
 /// composite first copies it with its mips (`transmission`), which the
 /// transmissive surfaces sample; elsewhere, and in the draw into the
@@ -199,7 +199,8 @@ impl Transparent {
         true
     }
 
-    /// The Volume layers step, after the receivers: when the effective
+    /// The Receivers and volume layers step's second part, after the
+    /// receivers: when the effective
     /// configuration has volume paths and the camera's blended list holds a
     /// material whose shader reads its volume path, copies the opaque depth
     /// into each volume layer and draws those materials' batches over it
