@@ -145,7 +145,8 @@ docs and specs the entry links.
 - `sgl-3d` `Settings::volume_paths` (new, `bool`, on by default) and
   `Renderer::volume_paths_in_effect` (new): the volume layers drawn for
   materials whose shader reads `scene_volume_path`; saved settings without
-  the field load with it on. No game-code changes needed.
+  the field load with it on. A `Settings` literal without `..` adds
+  `volume_paths: true`.
 - Docs: SGL has no physics engine; the [consumer guide](docs/README.md#physics)
   recommends custom arcade physics for most games (`sgl_core::collision` in
   2D) and Rapier only where simulated physics is the game. No game-code

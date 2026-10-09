@@ -610,11 +610,12 @@ Use the [current specs](README.md) for implementation and the
   `scene_volume_path` returns the length along the view ray and what bounds
   it, on the Extended tier behind `Settings::volume_paths` (on by default;
   it costs only frames that draw such a volume: three depth passes over its
-  meshes and three render-size depth targets). The reference engines take a
-  volume's thickness from its material (KHR_materials_volume's factor and
-  map, which glTF has rasterisers bake and ray tracers replace by the traced
-  distance; Bevy 9d12036, Filament ef1a133 and three.js r185 read it; Godot
-  b130438 has none) or measure water below a plane (Wicked 4323a33
+  meshes with three copies of the opaque depth, and three render-size depth
+  targets held from then until the setting is off). The reference engines
+  take a volume's thickness from its material (KHR_materials_volume's factor
+  and map, which glTF has rasterisers bake and ray tracers replace by the
+  traced distance; Bevy 9d12036, Filament ef1a133 and three.js r185 read it;
+  Godot b130438 has none) or measure water below a plane (Wicked 4323a33
   `oceanSurfacePS.hlsl`), which a finite volume is not; the opaque depth
   behind a surface (#272) bounds the path only from above. The exit layer is
   the back-face depth of Wyman's refraction (*An Approximate Image-Space
@@ -625,17 +626,19 @@ Use the [current specs](README.md) for implementation and the
   eye, and one depth peel of the exits (Everitt, *Interactive
   Order-Independent Transparency*, NVIDIA 2001), so a volume behind
   another's far side, or a concave volume's second part, measures its own
-  exit; a third crossing is reported `VOLUME_HIDDEN`, with the opaque bound
-  as its length, rather than given that bound unmarked. Nearest-face layers
-  need only the depth test, where summing signed depths along the ray would
-  count volumes the nearest hides and need 32-bit float blending, optional
-  on WebGPU. The passes keep a side by discarding the other in a fragment
-  entry, not by culling: a double-sided material's batch holds mirrored and
-  unmirrored instances, whose sides only the object record's pose tells
-  (`object_front`). Rationale: rasterised volumes get the distance a ray
-  tracer measures at their first two crossings, following their deformed
-  geometry, and materials that do not read it pay nothing. Limits: the path
-  follows the view ray, not the refracted one; a nested volume (ice in
-  water) starts or ends the outer volume's path at its own faces, as another
-  volume's entry in front of an exit starts that exit's path; a masked
-  cut-out still bounds; rays and probe captures have no layers.
+  exit; a third crossing, or an exit behind another exit, is reported
+  `VOLUME_HIDDEN`, with an upper bound as its length, rather than given that
+  bound unmarked. Nearest-face layers need only the depth test, where
+  summing signed depths along the ray would count volumes the nearest hides
+  and need 32-bit float blending, optional on WebGPU. The passes keep a side
+  by discarding the other in a fragment entry, not by culling: a
+  double-sided material's batch holds mirrored and unmirrored instances,
+  whose sides only the object record's pose tells (`object_front`).
+  Rationale: rasterised volumes get the distance a ray tracer measures at
+  their first two crossings, following their deformed geometry, and
+  materials that do not read it pay nothing. Limits: the path follows the
+  view ray, not the refracted one; a nested volume (ice in water) starts or
+  ends the outer volume's path at its own faces; an opaque object inside a
+  volume, seen from inside it, has no blended face in front of it and is not
+  absorbed; a masked cut-out still bounds; rays and probe captures have no
+  layers.
