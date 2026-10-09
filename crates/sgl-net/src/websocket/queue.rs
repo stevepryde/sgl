@@ -1,8 +1,9 @@
 //! One WebSocket connection's queues: per-lane outbound reliable messages
 //! (released as fragments) and unreliable messages, interleaved by deficit
 //! round robin; per-lane reassembly and inbound queues; and a latest-state
-//! slot each way. Shared by the native and browser transports. Nothing an
-//! end accepted is dropped while the connection lives.
+//! slot each way. Shared by the native and browser transports. Nothing
+//! `send` accepted is dropped while the connection lives; an unpolled
+//! receiver sheds its oldest unreliable messages.
 
 use std::collections::VecDeque;
 
@@ -68,6 +69,23 @@ impl<T> Fifo<T> {
     fn push(&mut self, item: T, len: usize) {
         self.bytes += len;
         self.items.push_back(item);
+    }
+}
+
+impl Fifo<Vec<u8>> {
+    /// Queues a received unreliable message, first dropping the oldest
+    /// unpolled ones until it fits, as a full socket buffer drops datagrams.
+    /// The caller has checked that it fits an empty queue.
+    fn push_dropping_oldest(&mut self, message: Vec<u8>, messages: usize, bytes: usize) {
+        while !self.admits(message.len(), messages, bytes) {
+            let dropped = self
+                .items
+                .pop_front()
+                .expect("a message that fits an empty queue fits after drops");
+            self.bytes -= dropped.len();
+        }
+        let len = message.len();
+        self.push(message, len);
     }
 }
 
@@ -316,9 +334,10 @@ impl PeerState {
     }
 
     /// Applies one received frame. A reliable fragment goes through its
-    /// lane's reassembly; a completed message, or an unreliable one, joins
-    /// the lane's inbound queue within the lane's bounds, or the peer is
-    /// closed — nothing received is dropped.
+    /// lane's reassembly and a completed message joins the lane's inbound
+    /// queue within its bounds, or the peer is closed. An unreliable message
+    /// joins the lane's unreliable queue, dropping its oldest unpolled
+    /// messages if the caller has not polled in time.
     pub(super) fn receive(&mut self, envelope: Envelope<'_>) -> Result<(), DisconnectReason> {
         if self.terminal.is_some() {
             return Err(DisconnectReason::Peer);
@@ -332,18 +351,22 @@ impl PeerState {
                 self.inbound_latest = Some(envelope.payload.to_vec());
                 return Ok(());
             }
+            // An unreliable message the caller has not polled for in time
+            // makes room by dropping the lane's oldest unpolled ones, as a
+            // full UDP socket buffer would; only one larger than the whole
+            // queue (which the codec's cap rules out) breaks the framing.
             Delivery::Unreliable(lane) => {
                 let bounds = &self.reliable.lanes[lane.index()];
-                let queue = &mut self.inbound[lane.index()].unreliable;
-                if queue.admits(
-                    envelope.payload.len(),
-                    bounds.unreliable_messages,
-                    bounds.unreliable_bytes,
-                ) {
-                    queue.push(envelope.payload.to_vec(), envelope.payload.len());
+                if envelope.payload.len() > bounds.unreliable_bytes {
+                    DisconnectReason::ProtocolViolation
+                } else {
+                    self.inbound[lane.index()].unreliable.push_dropping_oldest(
+                        envelope.payload.to_vec(),
+                        bounds.unreliable_messages,
+                        bounds.unreliable_bytes,
+                    );
                     return Ok(());
                 }
-                DisconnectReason::InboundOverflow
             }
             Delivery::Reliable(lane) => {
                 let bounds = &self.reliable.lanes[lane.index()];
@@ -746,6 +769,68 @@ mod tests {
         }
     }
 
+    /// Defect (design §12 review): a receiver that is not polled closing
+    /// the peer for unreliable traffic, dropping the newest instead of the
+    /// oldest, or losing track of the queue's bytes as it sheds. Oracle: the
+    /// UDP-socket rule — past either bound the oldest unpolled unreliable
+    /// messages go and the newest that fit arrive in order, the peer stays
+    /// open — while reliable overflow still closes it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn an_unpolled_receiver_sheds_its_oldest_unreliable_messages() {
+        fn unreliable(payload: &[u8]) -> Envelope<'_> {
+            Envelope {
+                delivery: Delivery::Unreliable(lane(2)),
+                sequence: 0,
+                fragment: Fragment::Whole,
+                payload,
+            }
+        }
+        let drain =
+            |peer: &mut PeerState| std::iter::from_fn(|| peer.pop_inbound()).collect::<Vec<_>>();
+        let mut config = ReliableConfig::DEFAULT;
+        config.lanes[2].unreliable_messages = 3;
+        config.lanes[2].inbound_messages = 1;
+        let mut peer = PeerState::new(&config);
+        for index in 0..7u8 {
+            peer.receive(unreliable(&[index])).unwrap();
+        }
+        assert_eq!(peer.terminal(), None);
+        assert_eq!(
+            drain(&mut peer),
+            [4, 5, 6].map(|index| (Delivery::Unreliable(lane(2)), vec![index]))
+        );
+
+        // The byte bound sheds too, and the queue's count recovers.
+        config.lanes[2].unreliable_bytes = MAX_UNRELIABLE_BYTES;
+        let mut peer = PeerState::new(&config);
+        for index in 0..5u8 {
+            peer.receive(unreliable(&[index; 500])).unwrap();
+        }
+        assert_eq!(
+            drain(&mut peer),
+            [3, 4].map(|index| (Delivery::Unreliable(lane(2)), vec![index; 500]))
+        );
+        peer.receive(unreliable(&[9; MAX_UNRELIABLE_BYTES]))
+            .unwrap();
+        assert_eq!(
+            drain(&mut peer),
+            [(Delivery::Unreliable(lane(2)), vec![9; MAX_UNRELIABLE_BYTES])]
+        );
+
+        // Reliable overflow still closes the peer.
+        let reliable = |payload: &'static [u8]| Envelope {
+            delivery: Delivery::Reliable(lane(2)),
+            sequence: 0,
+            fragment: Fragment::Whole,
+            payload,
+        };
+        peer.receive(reliable(b"one")).unwrap();
+        assert_eq!(
+            peer.receive(reliable(b"two")),
+            Err(DisconnectReason::InboundOverflow)
+        );
+    }
+
     #[wasm_bindgen_test(unsupported = test)]
     fn sequence_exhaustion_is_checked_and_terminal() {
         let mut peer = new_peer();
@@ -891,11 +976,12 @@ mod properties {
     /// latest state overtaking released lane frames, a cap enforced after
     /// the queue grew or on the wrong lane or class, a full queue that
     /// closes the peer, a capacity report that disagrees with reliable
-    /// admission, inbound queues reordered or past their bounds without
-    /// closing the peer, or a stale latest sequence accepted. Oracle: a
-    /// model with a reliable and an unreliable FIFO per lane plus one slot
-    /// each way, the netcode.md 10, 11 and 13 rules, and the module's
-    /// release generations.
+    /// admission, reliable inbound queues reordered or past their bounds
+    /// without closing the peer, unreliable inbound queues shedding anything
+    /// but their oldest messages or closing the peer, or a stale latest
+    /// sequence accepted. Oracle: a model with a reliable and an unreliable
+    /// FIFO per lane plus one slot each way, the netcode.md 10, 11 and 13
+    /// rules, and the module's release generations.
     #[test]
     fn peer_state_matches_the_lane_fifo_plus_slot_model() {
         check(prop::collection::vec(op(), 1..250), |ops| {
@@ -1060,22 +1146,42 @@ mod properties {
                             payload: &payload,
                         });
                         let (messages, bytes) = bounds(&config, index, unreliable, true);
-                        let queue = &inbound[slot(index, unreliable)];
-                        let queued: usize = queue.iter().map(Vec::len).sum();
-                        if terminal.is_some() {
+                        let queue = &mut inbound[slot(index, unreliable)];
+                        let queued = |queue: &VecDeque<Vec<u8>>| -> usize {
+                            queue.iter().map(Vec::len).sum()
+                        };
+                        let full = |queue: &VecDeque<Vec<u8>>| {
+                            queue.len() >= messages || queued(queue) + payload.len() > bytes
+                        };
+                        let failure = if terminal.is_some() {
                             prop_assert_eq!(result, Err(DisconnectReason::Peer));
-                        } else if queue.len() >= messages || queued + payload.len() > bytes {
-                            // Nothing received is dropped: the peer is closed.
-                            prop_assert_eq!(result, Err(DisconnectReason::InboundOverflow));
+                            None
+                        } else if unreliable && payload.len() > bytes {
+                            Some(DisconnectReason::ProtocolViolation)
+                        } else if unreliable {
+                            // An unpolled receiver sheds its oldest
+                            // unreliable messages, as a full UDP socket
+                            // buffer would.
+                            while full(queue) {
+                                queue.pop_front();
+                            }
+                            None
+                        } else if full(queue) {
+                            Some(DisconnectReason::InboundOverflow)
+                        } else {
+                            None
+                        };
+                        if let Some(reason) = failure {
+                            prop_assert_eq!(result, Err(reason));
                             close(
-                                DisconnectReason::InboundOverflow,
+                                reason,
                                 &mut terminal,
                                 &mut outbound,
                                 &mut latest,
                                 &mut inbound,
                                 &mut inbound_latest,
                             );
-                        } else {
+                        } else if terminal.is_none() {
                             prop_assert_eq!(result, Ok(()));
                             inbound[slot(index, unreliable)].push_back(payload);
                         }

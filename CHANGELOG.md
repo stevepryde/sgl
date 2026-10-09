@@ -42,9 +42,12 @@ docs and specs the entry links.
   else; others pick `Lane::new(n)` and set `config.reliable.lanes[n].weight`.
 - `sgl-net` `Delivery::Unreliable(Lane)` (new): messages of at most
   `MAX_UNRELIABLE_BYTES` (1168) sent once, never retransmitted, unordered,
-  delivered at most once; a full queue (`LaneConfig::unreliable_messages` /
-  `unreliable_bytes`) refuses with `WouldBlock`, and SGL never drops an
-  accepted one. Migration: exhaustive `Delivery` matches add an arm.
+  delivered at most once; a full send queue (`LaneConfig::unreliable_messages`
+  / `unreliable_bytes`) refuses with `WouldBlock` and the sender never drops
+  an accepted one; a receiver that is not polled drops its oldest unpolled
+  unreliable messages, as a full UDP socket buffer does, while reliable
+  overflow still closes the peer. Migration: exhaustive `Delivery` matches
+  add an arm.
 - `sgl-net` wire version 2 on UDP and WebSocket: old and new builds cannot
   connect, so rebuild servers and clients together and change the WebSocket
   subprotocol. `udp::MAX_RELIABLE_FRAGMENT_BYTES` 1168 → 1150; WebSocket

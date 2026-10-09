@@ -202,13 +202,20 @@ impl IngressHub {
         }
     }
 
-    /// Returns false when this peer exceeded a lane's ingress allowance:
-    /// its reliable inbound bounds, or its unreliable bounds. Nothing is
-    /// dropped instead.
-    fn message(&self, conn: ConnectionId, delivery: Delivery, payload: Vec<u8>) -> bool {
+    /// Queues one received message. A reliable message past its lane's
+    /// inbound bounds is `InboundOverflow`, closing the peer; an unreliable
+    /// one makes room by dropping the lane's oldest unpolled unreliable
+    /// messages, as a full UDP socket buffer would, and only one larger than
+    /// the whole queue (which the endpoint's cap rules out) is refused.
+    fn message(
+        &self,
+        conn: ConnectionId,
+        delivery: Delivery,
+        payload: Vec<u8>,
+    ) -> Result<(), DisconnectReason> {
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
         let Some(peer) = state.peers.get_mut(&conn) else {
-            return true;
+            return Ok(());
         };
         let Some((queue, messages, bytes)) = lane_queue(
             &mut peer.reliable,
@@ -218,20 +225,29 @@ impl IngressHub {
             true,
         ) else {
             peer.latest = Some(payload);
-            return true;
+            return Ok(());
         };
-        if queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
-            return false;
+        if let Delivery::Unreliable(_) = delivery {
+            if payload.len() > bytes {
+                return Err(DisconnectReason::ProtocolViolation);
+            }
+            while queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
+                queue.pop();
+            }
+        } else if queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
+            return Err(DisconnectReason::InboundOverflow);
         }
         queue.push(payload);
-        true
+        Ok(())
     }
 
     /// Surfaces lifecycle events, then up to a bounded number of reliable
     /// and unreliable messages per peer taken from its lanes in turn, then
     /// its latest state.
     fn drain(&self) -> Vec<ServerEvent> {
-        const RELIABLE_PER_PEER_PER_POLL: usize = 32;
+        // Shared across a peer's lanes and both classes: the sustainable
+        // per-poll rate above which its unreliable messages are shed.
+        const LANE_MESSAGES_PER_PEER_PER_POLL: usize = 32;
 
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
         let mut output: Vec<_> = state.lifecycle.drain(..).collect();
@@ -240,14 +256,14 @@ impl IngressHub {
             peer.next_lane = (first + 1) % RELIABLE_LANES;
             let mut taken = 0;
             let mut progressed = true;
-            while progressed && taken < RELIABLE_PER_PEER_PER_POLL {
+            while progressed && taken < LANE_MESSAGES_PER_PEER_PER_POLL {
                 progressed = false;
                 for lane in lanes_from(first) {
                     for (queue, delivery) in [
                         (&mut peer.reliable, Delivery::Reliable(lane)),
                         (&mut peer.unreliable, Delivery::Unreliable(lane)),
                     ] {
-                        if taken == RELIABLE_PER_PEER_PER_POLL {
+                        if taken == LANE_MESSAGES_PER_PEER_PER_POLL {
                             break;
                         }
                         if let Some(payload) = queue[lane.index()].pop() {
@@ -622,12 +638,12 @@ fn worker_tick<S: ServerIo>(
                 delivery,
                 payload,
             } => {
-                if ingress.message(conn, delivery, payload) {
+                let Err(reason) = ingress.message(conn, delivery, payload) else {
                     continue;
-                }
+                };
                 endpoint.disconnect(conn, now_ms);
                 commands.ended(conn);
-                ingress.disconnected(conn, DisconnectReason::InboundOverflow);
+                ingress.disconnected(conn, reason);
             }
         }
     }
@@ -733,14 +749,18 @@ mod tests {
         );
     }
 
-    /// A peer that fills its ingress allowance is disconnected at the
-    /// endpoint and reported as `InboundOverflow`; its buffered ingress is
-    /// discarded with it (`IngressHub::disconnected`), so the simulation sees
-    /// the lifecycle pair and no half-delivered stream, and the peer itself
-    /// observes the disconnect.
+    /// Unreliable messages past a lane's ingress allowance shed the oldest
+    /// unpolled ones and the peer stays; a peer that fills its reliable
+    /// ingress allowance is disconnected at the endpoint and reported as
+    /// `InboundOverflow`, its buffered ingress discarded with it
+    /// (`IngressHub::disconnected`), so the simulation sees no half-delivered
+    /// stream, and the peer itself observes the disconnect.
     #[test]
     fn worker_tick_disconnects_a_peer_that_overflows_ingress() {
-        let config = lanes(|lane| lane.inbound_messages = 2);
+        let config = lanes(|lane| {
+            lane.inbound_messages = 2;
+            lane.unreliable_messages = 2;
+        });
         let commands = CommandQueue::new(&config);
         let ingress = IngressHub::new(&config);
         let (mut client, mut server) = memory_duplex();
@@ -748,20 +768,42 @@ mod tests {
             matches!(&client.poll(0)[..], [ClientEvent::Connected]),
             "the memory client is connected from the start"
         );
+        // Unreliable messages past the bound shed the oldest: no disconnect.
+        for payload in [b"u1", b"u2", b"u3", b"u4"] {
+            client.send(Delivery::Unreliable(lane(1)), payload).unwrap();
+        }
+        client.flush(0);
+        worker_tick(&mut server, &commands, &ingress, 0);
+        let events = ingress.drain();
+        assert!(
+            matches!(&events[..], [ServerEvent::Connected { conn }, ..] if *conn == SOLO_CONNECTION),
+            "{events:?}"
+        );
+        let unreliable: Vec<_> = events[1..]
+            .iter()
+            .map(|event| match event {
+                ServerEvent::Message {
+                    delivery: Delivery::Unreliable(_),
+                    payload,
+                    ..
+                } => payload.clone(),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(unreliable, [b"u3".to_vec(), b"u4".to_vec()]);
+
+        // Reliable messages past the bound close the peer.
         for payload in [b"m1", b"m2", b"m3"] {
             client.send(Delivery::RELIABLE_ORDERED, payload).unwrap();
         }
-        client.flush(0);
-
-        worker_tick(&mut server, &commands, &ingress, 0);
+        client.flush(1);
+        worker_tick(&mut server, &commands, &ingress, 1);
         let events = ingress.drain();
         assert!(
             matches!(
                 &events[..],
-                [
-                    ServerEvent::Connected { conn },
-                    ServerEvent::Disconnected { conn: gone, reason: DisconnectReason::InboundOverflow },
-                ] if *conn == SOLO_CONNECTION && *gone == SOLO_CONNECTION
+                [ServerEvent::Disconnected { conn: gone, reason: DisconnectReason::InboundOverflow }]
+                    if *gone == SOLO_CONNECTION
             ),
             "{events:?}"
         );
@@ -1123,8 +1165,14 @@ mod tests {
         let hub = IngressHub::new(&ReliableConfig::DEFAULT);
         let peer = cid(3);
         hub.connected(peer);
-        assert!(hub.message(peer, Delivery::LatestState, b"old".to_vec()));
-        assert!(hub.message(peer, Delivery::LatestState, b"new".to_vec()));
+        assert_eq!(
+            hub.message(peer, Delivery::LatestState, b"old".to_vec()),
+            Ok(())
+        );
+        assert_eq!(
+            hub.message(peer, Delivery::LatestState, b"new".to_vec()),
+            Ok(())
+        );
 
         let events = hub.drain();
         assert_eq!(
@@ -1151,9 +1199,18 @@ mod tests {
         let healthy = cid(5);
         hub.connected(noisy);
         hub.connected(healthy);
-        assert!(hub.message(noisy, Delivery::RELIABLE_ORDERED, b"first".to_vec()));
-        assert!(!hub.message(noisy, Delivery::RELIABLE_ORDERED, b"overflow".to_vec()));
-        assert!(hub.message(healthy, Delivery::RELIABLE_ORDERED, b"healthy".to_vec()));
+        assert_eq!(
+            hub.message(noisy, Delivery::RELIABLE_ORDERED, b"first".to_vec()),
+            Ok(())
+        );
+        assert_eq!(
+            hub.message(noisy, Delivery::RELIABLE_ORDERED, b"overflow".to_vec()),
+            Err(DisconnectReason::InboundOverflow)
+        );
+        assert_eq!(
+            hub.message(healthy, Delivery::RELIABLE_ORDERED, b"healthy".to_vec()),
+            Ok(())
+        );
 
         assert!(hub.drain().iter().any(|event| matches!(
             event,
@@ -1163,5 +1220,72 @@ mod tests {
                 ..
             } if *conn == healthy && payload == b"healthy"
         )));
+    }
+
+    /// Defect (design §12 review): an unpolled receiver closing the peer for
+    /// unreliable traffic, dropping the newest instead of the oldest, or
+    /// letting the queue's byte count drift as it sheds. Oracle: the
+    /// UDP-socket rule — past either bound, the oldest unpolled unreliable
+    /// messages go and the newest that fit arrive in order — while reliable
+    /// overflow still closes the peer.
+    #[test]
+    fn ingress_sheds_the_oldest_unreliable_messages_and_keeps_the_peer() {
+        let peer = cid(6);
+        let unreliable = |hub: &IngressHub| -> Vec<Vec<u8>> {
+            hub.drain()
+                .into_iter()
+                .filter_map(|event| match event {
+                    ServerEvent::Message {
+                        delivery: Delivery::Unreliable(_),
+                        payload,
+                        ..
+                    } => Some(payload),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let hub = IngressHub::new(&lanes(|lane| lane.unreliable_messages = 3));
+        hub.connected(peer);
+        for index in 0..7u8 {
+            assert_eq!(
+                hub.message(peer, Delivery::Unreliable(lane(2)), vec![index]),
+                Ok(())
+            );
+        }
+        assert_eq!(unreliable(&hub), [vec![4], vec![5], vec![6]]);
+
+        let hub = IngressHub::new(&lanes(|lane| {
+            lane.unreliable_bytes = crate::MAX_UNRELIABLE_BYTES;
+        }));
+        hub.connected(peer);
+        for index in 0..5u8 {
+            assert_eq!(
+                hub.message(peer, Delivery::Unreliable(lane(2)), vec![index; 500]),
+                Ok(())
+            );
+        }
+        // Two 500-byte messages fit 1,168 bytes; the queue's count recovers.
+        assert_eq!(unreliable(&hub), [vec![3; 500], vec![4; 500]]);
+        assert_eq!(
+            hub.message(peer, Delivery::Unreliable(lane(2)), vec![9; 1_168]),
+            Ok(())
+        );
+        assert_eq!(unreliable(&hub), [vec![9; 1_168]]);
+        assert_eq!(
+            hub.message(peer, Delivery::Unreliable(lane(2)), vec![0; 1_169]),
+            Err(DisconnectReason::ProtocolViolation)
+        );
+
+        let hub = IngressHub::new(&lanes(|lane| lane.inbound_messages = 1));
+        hub.connected(peer);
+        assert_eq!(
+            hub.message(peer, Delivery::RELIABLE_ORDERED, b"one".to_vec()),
+            Ok(())
+        );
+        assert_eq!(
+            hub.message(peer, Delivery::RELIABLE_ORDERED, b"two".to_vec()),
+            Err(DisconnectReason::InboundOverflow)
+        );
     }
 }

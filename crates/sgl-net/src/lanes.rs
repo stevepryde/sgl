@@ -44,12 +44,15 @@ pub struct LaneConfig {
     /// Bytes of completed messages not yet returned by `poll`, from
     /// [`MAX_RELIABLE_MESSAGE_BYTES`] to `LANE_QUEUE_BYTES_LIMIT`.
     pub inbound_bytes: usize,
-    /// Unreliable messages this side queues for the lane until they are
-    /// sent, `1..=LANE_QUEUE_MESSAGES_LIMIT`; a full queue refuses `send` with
-    /// `WouldBlock`. Received unreliable messages past it are dropped.
+    /// Unreliable messages queued for the lane, `1..=LANE_QUEUE_MESSAGES_LIMIT`:
+    /// on the sending side until sent, where a full queue refuses `send`
+    /// with `WouldBlock`; on the receiving side until `poll` returns them,
+    /// where a receiver that is not polled drops its oldest unpolled
+    /// unreliable messages, as a full UDP socket buffer does. Reliable
+    /// overflow still closes the peer.
     pub unreliable_messages: usize,
-    /// Unreliable bytes queued for the lane, from
-    /// [`MAX_UNRELIABLE_BYTES`] to `LANE_QUEUE_BYTES_LIMIT`.
+    /// Unreliable bytes queued for the lane, with the same two meanings,
+    /// from [`MAX_UNRELIABLE_BYTES`] to `LANE_QUEUE_BYTES_LIMIT`.
     pub unreliable_bytes: usize,
 }
 

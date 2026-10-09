@@ -482,13 +482,17 @@ Use the [current specs](README.md) for implementation and the
   Unreliable means never retransmitted or fragmented (at most
   `MAX_UNRELIABLE_BYTES`, 1168) and unordered, delivered at most once (UDP
   receivers drop network duplicates by a per-lane sequence and a
-  1,024-message window, as ENet's unsequenced packets do). SGL never
-  discards an accepted message of any class while the connection lives:
-  overproduction is refused with `WouldBlock` from a bounded per-lane
-  queue, an unsent UDP message waits for a later flush, and WebSocket sends
-  every unreliable frame in its lane's schedule under the existing pacing,
-  so only the network can lose one. A lane's unreliable messages share its
-  quantum, taking turns with its new reliable fragments.
+  1,024-message window, as ENet's unsequenced packets do). The sending side
+  never discards an accepted message of any class while the connection
+  lives: overproduction is refused with `WouldBlock` from a bounded
+  per-lane queue, an unsent UDP message waits for a later flush, and
+  WebSocket sends every unreliable frame in its lane's schedule under the
+  existing pacing. A receiver that is not polled drops its oldest unpolled
+  unreliable messages, as a full UDP socket buffer does; reliable overflow
+  still closes the peer (Mission Control's decision on review, so a slow
+  poller is never disconnected for unreliable traffic on any transport). A
+  lane's unreliable messages share its quantum, taking turns with its new
+  reliable fragments.
   Rationale: the issue requires progress for every lane, which strict
   priority does not give (GameNetworkingSockets documents that lower
   priorities are starved); 8:1 reproduces Stevecraft's scheduler as a game

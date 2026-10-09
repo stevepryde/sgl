@@ -40,11 +40,17 @@ message loses it. A peer that floods this side's inbound bounds is
 disconnected with `DisconnectReason::InboundOverflow`.
 `Delivery::Unreliable(lane)` sends independent best-effort messages of at
 most `MAX_UNRELIABLE_BYTES`: each is sent once, never retransmitted or
-fragmented, delivered at most once, in no promised order. SGL never drops an
-accepted message; on UDP the network may lose one, while on WebSocket and in
-memory all arrive, in send order. A full unreliable queue refuses with
-`WouldBlock` like a full reliable lane, and a lane's unreliable messages take
-turns with its reliable fragments. `Delivery::LatestState` coalesces
+fragmented, delivered at most once, in no promised order. The sender never
+drops an accepted message; on UDP the network may lose one, while on
+WebSocket and in memory all arrive, in send order, while the receiver keeps
+polling. A receiver that is not polled drops its oldest unpolled unreliable
+messages, as a full UDP socket buffer does; reliable overflow still closes
+the peer. A full unreliable queue refuses `send` with `WouldBlock` like a
+full reliable lane, and a lane's unreliable messages take turns with its
+reliable fragments. On UDP each reliable fragment and each unreliable
+message takes its own datagram, so a peer sends at most
+`max_packets_per_peer_flush` of them per flush (one fewer while latest state
+is pending). `Delivery::LatestState` coalesces
 snapshots so the newest state wins.
 The same encoded payload can cross UDP, WebSocket, or memory. Payload caps
 are public constants and lane bounds `ReliableConfig` values in the

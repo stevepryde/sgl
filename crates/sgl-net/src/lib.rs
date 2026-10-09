@@ -40,8 +40,11 @@
 //! [`Delivery::Unreliable`] on one of [`RELIABLE_LANES`] lanes, and
 //! [`Delivery::LatestState`]. Reliable messages are exact and in order
 //! within their lane; unreliable ones are never retransmitted and unordered,
-//! delivered at most once. SGL never drops an accepted message of any class
-//! while the connection lives; only the network may lose an unreliable one.
+//! delivered at most once. The sender never drops an accepted message of any
+//! class while the connection lives; the network may lose an unreliable one,
+//! and a receiver that is not polled drops its oldest unpolled unreliable
+//! messages, as a full UDP socket buffer does (reliable overflow closes the
+//! peer).
 //! Each lane has its own bounds and a scheduling weight in
 //! [`ReliableConfig`]. Busy lanes share the connection by weight, so a bulk
 //! transfer on one lane neither refuses nor starves messages on another:
