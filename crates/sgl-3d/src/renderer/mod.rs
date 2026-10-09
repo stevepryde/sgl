@@ -20,6 +20,8 @@ mod floor_tests;
 mod shader_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod size_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod volume_path_tests;
 
 use crate::scene::rays::acceleration::RayTracingStats;
 use crate::settings::{Antialiasing, DynamicGiQuality, Settings};
