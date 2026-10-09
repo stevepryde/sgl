@@ -71,14 +71,17 @@ reliable fragments. On UDP small messages, fragments, latest state and
 acknowledgements share datagrams of up to `MAX_DATAGRAM_BYTES`, so a flush
 of `max_packets_per_peer_flush` datagrams carries hundreds of small
 messages. `Delivery::LatestState` coalesces snapshots so the newest state
-wins; on UDP it goes out in every flush, however busy the lanes.
+wins; however busy the lanes, it goes out in every UDP flush, and on
+WebSocket behind only the lane frames flushed before it.
 The same encoded payload can cross UDP, WebSocket, or memory. Payload caps
 are public constants and lane bounds `ReliableConfig` values in the
 [transport API](src/lib.rs). Connection IDs identify a connection inside a
 server process; they are not persistent player identities or wire-format IDs.
 
 UDP gives each lane its own retransmission, so a lost bulk fragment never
-delays another lane. WebSocket carries every lane on one TCP stream: lanes
+delays another lane. A UDP lane keeps at most 32 fragments in flight, so it
+carries at most 32 reliable messages per round trip: spread a higher rate
+of small reliable messages over lanes, or batch them into one message. WebSocket carries every lane on one TCP stream: lanes
 there interleave in 16 KiB fragments and keep their own admission, but a lost
 TCP segment stalls every lane until it is retransmitted. Use UDP where
 loss-isolated lanes matter.

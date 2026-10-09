@@ -1,11 +1,12 @@
 //! One WebSocket connection's queues: per-lane outbound reliable messages
 //! (released as fragments) and unreliable messages, interleaved by deficit
-//! round robin; per-lane reassembly and inbound queues; and a latest-state
-//! slot each way. Shared by the native and browser transports. Nothing
-//! `send` accepted is dropped while the connection lives; an unpolled
-//! receiver sheds its oldest unreliable messages. A reliable frame whose
-//! message its lane cannot take yet is either held by the native worker,
-//! which stops reading until `poll` makes room, or closes the peer.
+//! round robin; per-lane reassembly and inbound queues; and latest state
+//! each way, outbound behind only the lane frames flushed before it. Shared
+//! by the native and browser transports. Nothing `send` accepted is dropped
+//! while the connection lives; an unpolled receiver sheds its oldest
+//! unreliable messages. A reliable frame whose message its lane cannot take
+//! yet is either held by the native worker, which stops reading until
+//! `poll` makes room, or closes the peer.
 
 use std::collections::VecDeque;
 
@@ -185,6 +186,25 @@ impl OutboundLane {
     fn is_empty(&self) -> bool {
         self.reliable.items.is_empty() && self.unreliable.items.is_empty()
     }
+
+    /// The generation of its oldest queued message.
+    fn oldest_generation(&self) -> Option<u64> {
+        let front = |fifo: &Fifo<Staged>| fifo.items.front().map(|message| message.generation);
+        match (front(&self.reliable), front(&self.unreliable)) {
+            (Some(reliable), Some(unreliable)) => Some(reliable.min(unreliable)),
+            (reliable, unreliable) => reliable.or(unreliable),
+        }
+    }
+
+    /// Whether it queues a message staged after generation `after`, up to
+    /// `through`.
+    fn queues_between(&self, after: u64, through: u64) -> bool {
+        self.reliable
+            .items
+            .iter()
+            .chain(&self.unreliable.items)
+            .any(|message| message.generation > after && message.generation <= through)
+    }
 }
 
 /// One lane's inbound reassembly and the messages waiting for `poll`.
@@ -237,9 +257,14 @@ pub(super) enum Received {
 pub(super) struct PeerState {
     reliable: ReliableConfig,
     outbound: [OutboundLane; RELIABLE_LANES],
-    outbound_latest: Option<OutboundFrame>,
-    /// Released latest state waits for this generation, like reliable.
-    outbound_latest_generation: u64,
+    /// Latest state sent since the last release.
+    staged_latest: Option<OutboundFrame>,
+    /// Released latest states, oldest first, each with the generation it
+    /// was released in: one leaves once every lane frame of its generation
+    /// or earlier has, and of those whose turn has come only the newest. A
+    /// release drops the states nothing was flushed after, so this holds at
+    /// most one state more than the lanes have queued generations.
+    released_latest: VecDeque<(u64, OutboundFrame)>,
     outbound_scheduler: LaneScheduler,
     inbound: [InboundLane; RELIABLE_LANES],
     inbound_latest: Option<Vec<u8>>,
@@ -260,8 +285,8 @@ impl PeerState {
         Self {
             reliable: reliable.clone(),
             outbound: Default::default(),
-            outbound_latest: None,
-            outbound_latest_generation: 0,
+            staged_latest: None,
+            released_latest: VecDeque::new(),
             outbound_scheduler: LaneScheduler::new(reliable),
             inbound: Default::default(),
             inbound_latest: None,
@@ -325,13 +350,12 @@ impl PeerState {
                     return Err(SendError::Disconnected);
                 };
                 self.next_latest_sequence = next;
-                self.outbound_latest = Some(OutboundFrame {
+                self.staged_latest = Some(OutboundFrame {
                     delivery,
                     sequence,
                     fragment: Fragment::Whole,
                     payload: payload.to_vec(),
                 });
-                self.outbound_latest_generation = self.staging_generation;
             }
         }
         Ok(())
@@ -484,12 +508,39 @@ impl PeerState {
             return Err(self.terminal.unwrap_or(DisconnectReason::Peer));
         }
         self.released_generation = self.staging_generation;
+        if let Some(frame) = self.staged_latest.take() {
+            let released = self.released_generation;
+            // A state with nothing flushed after it would leave together
+            // with this newer one.
+            while self.released_latest.back().is_some_and(|&(generation, _)| {
+                !self
+                    .outbound
+                    .iter()
+                    .any(|lane| lane.queues_between(generation, released))
+            }) {
+                self.released_latest.pop_back();
+            }
+            self.released_latest.push_back((released, frame));
+        }
         let Some(next) = self.staging_generation.checked_add(1) else {
             self.close(DisconnectReason::ProtocolViolation);
             return Err(DisconnectReason::ProtocolViolation);
         };
         self.staging_generation = next;
         Ok(())
+    }
+
+    /// The index in `released_latest` of the state that leaves next: the
+    /// newest released before every lane frame still queued.
+    fn due_latest(&self) -> Option<usize> {
+        let oldest = self
+            .outbound
+            .iter()
+            .filter_map(OutboundLane::oldest_generation)
+            .min();
+        self.released_latest
+            .iter()
+            .rposition(|&(generation, _)| oldest.is_none_or(|oldest| generation < oldest))
     }
 
     fn released_lane(&self) -> Option<usize> {
@@ -507,6 +558,10 @@ impl PeerState {
     /// The delivery and encoded length of the frame
     /// [`Self::pop_released_frame`] would return.
     pub(super) fn next_released_frame_len(&self) -> Option<(Delivery, usize)> {
+        if let Some(index) = self.due_latest() {
+            let frame = &self.released_latest[index].1;
+            return Some((frame.delivery, ENVELOPE_HEADER_LEN + frame.payload.len()));
+        }
         if let Some(index) = self.released_lane() {
             let (unreliable, fragment, len) = self.outbound[index]
                 .peek(self.released_generation)
@@ -523,16 +578,19 @@ impl PeerState {
             };
             return Some((delivery, ENVELOPE_HEADER_LEN + total + len));
         }
-        self.outbound_latest
-            .as_ref()
-            .filter(|_| self.outbound_latest_generation <= self.released_generation)
-            .map(|frame| (frame.delivery, ENVELOPE_HEADER_LEN + frame.payload.len()))
+        None
     }
 
-    /// The next released frame: a reliable fragment or an unreliable
-    /// message from the lane deficit round robin picks, else the latest
-    /// state once every released lane frame has gone.
+    /// The next released frame: the latest state whose turn has come, once
+    /// every lane frame flushed with or before it has gone, else a reliable
+    /// fragment or an unreliable message from the lane deficit round robin
+    /// picks.
     pub(super) fn pop_released_frame(&mut self) -> Option<OutboundFrame> {
+        if let Some(index) = self.due_latest() {
+            // Older states whose turn came with it are stale.
+            self.released_latest.drain(..index);
+            return self.released_latest.pop_front().map(|(_, frame)| frame);
+        }
         let (outbound, released) = (&self.outbound, self.released_generation);
         if let Some(index) = self
             .outbound_scheduler
@@ -551,9 +609,6 @@ impl PeerState {
                 fragment,
                 payload,
             });
-        }
-        if self.outbound_latest_generation <= self.released_generation {
-            return self.outbound_latest.take();
         }
         None
     }
@@ -582,7 +637,8 @@ impl PeerState {
     pub(super) fn finish_graceful_close(&mut self) {
         if self.graceful_closing
             && self.outbound.iter().all(OutboundLane::is_empty)
-            && self.outbound_latest.is_none()
+            && self.staged_latest.is_none()
+            && self.released_latest.is_empty()
         {
             self.terminal = Some(DisconnectReason::Local);
             self.graceful_closing = false;
@@ -597,7 +653,8 @@ impl PeerState {
             self.graceful_started_ms = None;
             self.stalled = None;
             self.outbound = Default::default();
-            self.outbound_latest = None;
+            self.staged_latest = None;
+            self.released_latest.clear();
             if matches!(
                 reason,
                 DisconnectReason::ProtocolViolation | DisconnectReason::InboundOverflow
@@ -633,10 +690,10 @@ mod tests {
         std::iter::from_fn(|| peer.pop_released_frame()).collect()
     }
 
-    /// #254: a staged frame waits for its release; the latest slot goes out
-    /// once at its last value; the graceful close expires exactly at its
-    /// timeout; a lane admits exactly its message cap and only that lane
-    /// refuses past it.
+    /// #254: a staged frame waits for its release; released latest state
+    /// goes out once, at the last value of its flush; the graceful close
+    /// expires exactly at its timeout; a lane admits exactly its message cap
+    /// and only that lane refuses past it.
     #[wasm_bindgen_test(unsupported = test)]
     fn release_generations_expiry_and_lane_caps_are_exact() {
         let mut state = new_peer();
@@ -644,16 +701,19 @@ mod tests {
         assert!(!state.has_released_outbound(), "staged, not released");
         state.release_outbound().unwrap();
         state.send(Delivery::LatestState, b"s2").unwrap();
-        assert!(
-            !state.has_released_outbound(),
-            "the slot holds the staged value"
-        );
+        state.send(Delivery::LatestState, b"s3").unwrap();
         state.release_outbound().unwrap();
         assert_eq!(
             state.next_released_frame_len(),
             Some((Delivery::LatestState, ENVELOPE_HEADER_LEN + 2))
         );
-        assert_eq!(frames(&mut state).len(), 1);
+        // Nothing was flushed between the two states, so only the newer
+        // leaves.
+        let sent: Vec<_> = frames(&mut state)
+            .into_iter()
+            .map(|frame| frame.payload)
+            .collect();
+        assert_eq!(sent, [b"s3".to_vec()]);
         assert!(!state.has_released_outbound());
 
         let mut state = new_peer();
@@ -689,6 +749,105 @@ mod tests {
         assert_eq!(frame.payload, b"new");
         assert_eq!(frame.sequence, 3);
         assert!(peer.pop_released_frame().is_none());
+    }
+
+    /// Defect: latest state starved behind a bulk lane its producer keeps
+    /// full — written only once no released lane frame remains, so never
+    /// while bulk flows. Oracle: netcode.md 13 — a flushed latest state
+    /// waits only for the lane frames flushed before it. Each tick the game
+    /// fills a bulk lane until it refuses, sends its state and flushes, and
+    /// the socket takes two frames; every tick's state that leaves does so
+    /// behind at most the lane frames its flush found waiting, and the last
+    /// one leaves within that many writes of the producer stopping.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn latest_state_keeps_flowing_beside_a_bulk_lane_kept_full() {
+        /// What the socket wrote, against what each flush found waiting.
+        #[derive(Default)]
+        struct Socket {
+            /// Lane frames accepted and not yet written.
+            pending: usize,
+            /// Per tick: the lane frames waiting when it flushed, and those
+            /// written since.
+            found: Vec<usize>,
+            since: Vec<usize>,
+            /// The ticks whose state was written, in order.
+            written: Vec<u8>,
+        }
+
+        impl Socket {
+            fn write(&mut self, peer: &mut PeerState) -> bool {
+                let Some(frame) = peer.pop_released_frame() else {
+                    return false;
+                };
+                if frame.delivery == Delivery::LatestState {
+                    let tick = usize::from(frame.payload[0]);
+                    assert!(
+                        self.since[tick] <= self.found[tick],
+                        "tick {tick}'s state went behind {} lane frames; its flush found {}",
+                        self.since[tick],
+                        self.found[tick]
+                    );
+                    self.written.push(frame.payload[0]);
+                } else {
+                    self.pending -= 1;
+                    for count in &mut self.since {
+                        *count += 1;
+                    }
+                }
+                true
+            }
+        }
+
+        let mut peer = new_peer();
+        let bulk = Delivery::Reliable(lane(1));
+        // Each bulk message is one frame.
+        let message = [7; WEBSOCKET_FRAGMENT_BYTES];
+        let mut socket = Socket::default();
+        for tick in 0..60u8 {
+            while peer.send(bulk, &message).is_ok() {
+                socket.pending += 1;
+            }
+            peer.send(Delivery::LatestState, &[tick]).unwrap();
+            peer.release_outbound().unwrap();
+            socket.found.push(socket.pending);
+            socket.since.push(0);
+            for _ in 0..2 {
+                assert!(socket.write(&mut peer), "bulk is always released");
+            }
+        }
+        let during = socket.written.len();
+        while socket.write(&mut peer) {}
+        assert!(
+            during > 10,
+            "latest state starved while bulk flowed: {:?}",
+            socket.written
+        );
+        assert_eq!(
+            socket.written.last(),
+            Some(&59),
+            "the newest state left last"
+        );
+    }
+
+    /// Defect: a latest state sent after a flush withholding the one that
+    /// flush released, so a game that sends state every tick right after
+    /// flushing never gets one written. Oracle: netcode.md 13 — the flushed
+    /// value leaves, and the newer one waits for its own flush.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_newer_latest_state_waits_without_withholding_the_flushed_one() {
+        let mut peer = new_peer();
+        peer.send(Delivery::LatestState, b"flushed").unwrap();
+        peer.release_outbound().unwrap();
+        peer.send(Delivery::LatestState, b"newer").unwrap();
+        let payloads = |peer: &mut PeerState| -> Vec<Vec<u8>> {
+            frames(peer)
+                .into_iter()
+                .map(|frame| frame.payload)
+                .collect()
+        };
+        assert_eq!(payloads(&mut peer), [b"flushed".to_vec()]);
+        peer.release_outbound().unwrap();
+        assert_eq!(payloads(&mut peer), [b"newer".to_vec()]);
     }
 
     /// #267: a full reliable lane refuses the send without closing the
@@ -1044,7 +1203,8 @@ mod properties {
     /// Defect: a released frame leaking a staged one, a lane's fragments out
     /// of order or not covering its message, a frame past the fragment cap,
     /// an unreliable message dropped, duplicated, reordered or fragmented,
-    /// latest state overtaking released lane frames, a cap enforced after
+    /// latest state leaving before a lane frame flushed with or before it,
+    /// waiting behind one flushed after it, or leaving stale, a cap enforced after
     /// the queue grew or on the wrong lane or class, a full queue that
     /// closes the peer, a capacity report that disagrees with reliable
     /// admission, reliable inbound queues reordered or past their bounds
@@ -1059,8 +1219,10 @@ mod properties {
             let config = config();
             let mut state = PeerState::new(&config);
             let mut outbound: Outbound = Default::default();
-            let mut latest: Option<(u64, Vec<u8>, u64)> = None;
-            let mut next_latest = 1u64;
+            // Every latest state sent, with its staging generation, and the
+            // sequence of the newest one written.
+            let mut latest: Vec<(u64, Vec<u8>, u64)> = Vec::new();
+            let (mut next_latest, mut last_latest) = (1u64, 0u64);
             let (mut staging, mut released) = (1u64, 0u64);
             let mut terminal: Option<DisconnectReason> = None;
             let mut inbound: Inbound = Default::default();
@@ -1069,12 +1231,12 @@ mod properties {
             let close = |reason,
                          terminal: &mut Option<DisconnectReason>,
                          outbound: &mut Outbound,
-                         latest: &mut Option<(u64, Vec<u8>, u64)>,
+                         latest: &mut Vec<(u64, Vec<u8>, u64)>,
                          inbound: &mut Inbound,
                          inbound_latest: &mut Option<Vec<u8>>| {
                 *terminal = Some(reason);
                 *outbound = Default::default();
-                *latest = None;
+                latest.clear();
                 *inbound = Default::default();
                 *inbound_latest = None;
             };
@@ -1124,7 +1286,7 @@ mod properties {
                             prop_assert_eq!(result, Err(SendError::Disconnected));
                         } else {
                             prop_assert_eq!(result, Ok(()));
-                            latest = Some((next_latest, payload, staging));
+                            latest.push((next_latest, payload, staging));
                             next_latest += 1;
                         }
                     }
@@ -1153,6 +1315,24 @@ mod properties {
                         let any_released = outbound.iter().any(|queue| {
                             queue.messages.front().is_some_and(|(_, g)| *g <= released)
                         });
+                        // The newest latest state whose turn has come:
+                        // released, the last sent before its flush, newer
+                        // than any written, and with no lane frame of its
+                        // flush or an earlier one still queued.
+                        let due = latest
+                            .iter()
+                            .filter(|(sequence, _, generation)| {
+                                *generation <= released
+                                    && *sequence > last_latest
+                                    && !latest
+                                        .iter()
+                                        .any(|(s, _, g)| g == generation && s > sequence)
+                                    && !outbound.iter().any(|queue| {
+                                        queue.messages.iter().any(|(_, g)| g <= generation)
+                                    })
+                            })
+                            .max_by_key(|(sequence, _, _)| *sequence)
+                            .cloned();
                         let lane_frame = match &got {
                             Some(frame) => match frame.delivery {
                                 Delivery::Reliable(lane) => Some((lane.index(), false)),
@@ -1163,6 +1343,10 @@ mod properties {
                         };
                         match (got, lane_frame) {
                             (Some(frame), Some((index, unreliable))) => {
+                                prop_assert!(
+                                    due.is_none(),
+                                    "a due latest state waited behind a later lane frame"
+                                );
                                 prop_assert_eq!(frame.sequence, 0);
                                 prop_assert!(frame.payload.len() <= WEBSOCKET_FRAGMENT_BYTES);
                                 let model = &mut outbound[slot(index, unreliable)];
@@ -1197,19 +1381,18 @@ mod properties {
                                 }
                             }
                             (Some(frame), None) => {
-                                prop_assert!(
-                                    !any_released,
-                                    "latest overtook a released lane frame"
-                                );
-                                let (sequence, payload, generation) =
-                                    latest.take().expect("a latest frame");
-                                prop_assert!(generation <= released);
+                                let Some((sequence, payload, _)) = due else {
+                                    return Err(TestCaseError::fail(
+                                        "a latest state left before its turn",
+                                    ));
+                                };
                                 prop_assert_eq!(frame.sequence, sequence);
                                 prop_assert_eq!(frame.payload, payload);
+                                last_latest = sequence;
                             }
                             (None, _) => {
                                 prop_assert!(!any_released);
-                                prop_assert!(latest.as_ref().is_none_or(|(_, _, g)| *g > released));
+                                prop_assert!(due.is_none(), "a due latest state was not sent");
                             }
                         }
                     }

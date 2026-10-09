@@ -162,7 +162,11 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     lane back by at most one fragment. Unreliable frames wait in their lane's
     queue and leave in its schedule under the same pacing as reliable ones
     (the browser's `bufferedAmount` watermark); they are never dropped by the
-    sender. Text frames, wrong magic or version, the reserved kind, reserved
+    sender. Latest state waits only for the lane frames flushed with or
+    before it: a flush releases the state last sent before it, which leaves
+    ahead of lane frames flushed later; a newer state sent after that flush
+    waits for its own without withholding it, and of states whose turn comes
+    together only the newest leaves. Text frames, wrong magic or version, the reserved kind, reserved
     flags, an invalid lane, latest state or an unreliable message with
     fragment flags, a total not above its fragment, and frames over
     `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`. Every

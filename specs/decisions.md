@@ -594,3 +594,12 @@ Use the [current specs](README.md) for implementation and the
   two flushes. The simulator's `lane_loss_per_10k` removes a lane's items
   rather than the datagram, since a bulk fragment can now share one with
   another lane's message.
+- **D-40** Decision, 2026-10-09: WebSocket latest state waits only for the
+  lane frames flushed with or before it, keeping that order (the state
+  never overtakes events the game flushed first) but no longer waiting
+  behind frames flushed later. Behind every released lane frame, it never
+  left while a producer kept a bulk lane full, and a newer `send` after a
+  flush withheld the flushed state. Each released state keeps its flush's
+  generation; one with nothing flushed after it is dropped when the next is
+  released, so the queue holds at most one state more than the lanes have
+  queued generations.

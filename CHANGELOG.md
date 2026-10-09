@@ -94,6 +94,10 @@ docs and specs the entry links.
   arrival in the next two flushes, so an idle receiver sends one more
   acknowledgement datagram per burst. The wire format is unchanged. No
   game-code changes needed.
+- `sgl-net` WebSocket: flushed latest state leaves ahead of lane frames
+  flushed after it (was behind every released lane frame, so a lane kept
+  busy with bulk data starved it), and a newer `send` after a flush no
+  longer withholds the flushed state. No game-code changes needed.
 - `sgl-core` `FixedClock`: accumulates exact `Duration` time (was `f32`
   seconds): `begin_frame` takes the frame's `Duration`, the `fixed_dt` field
   is now the `fixed_dt()` method beside the exact `fixed_step()`, and the new
