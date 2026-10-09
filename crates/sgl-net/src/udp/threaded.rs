@@ -4,11 +4,12 @@
 //! with bounded queues, matching the WebSocket worker ownership model.
 //!
 //! The command queue is the only admission point the caller sees: `send`
-//! refuses with [`SendError::WouldBlock`] once a peer's reliable allowance is
-//! full, and the worker moves a message to the endpoint only when the
-//! endpoint reports room for it, so a refusal never ends a connection. A
-//! peer's reliable traffic is therefore buffered at most twice: once here
-//! and once in the endpoint.
+//! refuses with [`SendError::WouldBlock`] once a lane's allowance is full,
+//! and the worker moves a message to the endpoint only when the endpoint
+//! has room for it on that lane, so a refusal never ends a connection and
+//! nothing accepted is dropped. A lane's traffic is therefore buffered at
+//! most twice: once here and once in the endpoint, each within the lane's
+//! bounds.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -20,26 +21,52 @@ use std::time::{Duration, Instant};
 
 use super::{EndpointConfig, UdpServer};
 use crate::{
-    ConnectionId, Delivery, DisconnectReason, Lane, ReliableCapacity, SendError, ServerEvent,
-    ServerIo,
+    ConnectionId, Delivery, DisconnectReason, Lane, RELIABLE_LANES, ReliableCapacity,
+    ReliableConfig, SendError, ServerEvent, ServerIo,
 };
 
+/// The worker's own settings; lane bounds come from the endpoint's
+/// [`ReliableConfig`].
 #[derive(Debug, Clone, Copy)]
 pub struct ThreadedUdpConfig {
-    pub reliable_queue_messages: usize,
-    pub reliable_queue_bytes: usize,
-    pub event_queue_messages: usize,
+    /// How long the worker sleeps between turns.
     pub poll_interval: Duration,
 }
 
 impl Default for ThreadedUdpConfig {
     fn default() -> Self {
         Self {
-            reliable_queue_messages: crate::RELIABLE_OUTBOUND_MESSAGES,
-            reliable_queue_bytes: crate::RELIABLE_OUTBOUND_BYTES,
-            event_queue_messages: crate::RELIABLE_INBOUND_MESSAGES,
             poll_interval: Duration::from_millis(2),
         }
+    }
+}
+
+/// Every lane in order, starting at `first`.
+fn lanes_from(first: usize) -> impl Iterator<Item = Lane> {
+    (0..RELIABLE_LANES).map(move |offset| lane((first + offset) % RELIABLE_LANES))
+}
+
+fn lane(index: usize) -> Lane {
+    Lane::new(u8::try_from(index).expect("lane index fits")).expect("index below RELIABLE_LANES")
+}
+
+/// One lane's messages and their bytes.
+#[derive(Default)]
+struct LaneQueue {
+    messages: VecDeque<Vec<u8>>,
+    bytes: usize,
+}
+
+impl LaneQueue {
+    fn push(&mut self, payload: Vec<u8>) {
+        self.bytes += payload.len();
+        self.messages.push_back(payload);
+    }
+
+    fn pop(&mut self) -> Option<Vec<u8>> {
+        let payload = self.messages.pop_front()?;
+        self.bytes -= payload.len();
+        Some(payload)
     }
 }
 
@@ -49,27 +76,75 @@ struct CommandState {
     peers: BTreeMap<ConnectionId, PeerCommands>,
     disconnects: BTreeSet<ConnectionId>,
     stop_admission: bool,
-    /// Where the next turn starts moving reliable messages.
-    next_start: ConnectionId,
+    /// The lane that started the last turn; the next turn starts after it.
+    last_first: Option<(ConnectionId, Lane)>,
 }
 
 #[derive(Default)]
 struct PeerCommands {
-    reliable: VecDeque<Vec<u8>>,
-    reliable_bytes: usize,
+    reliable: [LaneQueue; RELIABLE_LANES],
+    unreliable: [LaneQueue; RELIABLE_LANES],
     latest: Option<Vec<u8>>,
+}
+
+impl PeerCommands {
+    fn is_empty(&self) -> bool {
+        self.latest.is_none()
+            && self
+                .reliable
+                .iter()
+                .chain(&self.unreliable)
+                .all(|lane| lane.messages.is_empty())
+    }
+
+    fn backlogged(&self, lane: Lane) -> bool {
+        !self.reliable[lane.index()].messages.is_empty()
+            || !self.unreliable[lane.index()].messages.is_empty()
+    }
+}
+
+/// A delivery's lane queue among `reliable` and `unreliable`, with its
+/// message and byte bounds; `None` for latest state.
+fn lane_queue<'a>(
+    reliable: &'a mut [LaneQueue; RELIABLE_LANES],
+    unreliable: &'a mut [LaneQueue; RELIABLE_LANES],
+    config: &ReliableConfig,
+    delivery: Delivery,
+    inbound: bool,
+) -> Option<(&'a mut LaneQueue, usize, usize)> {
+    match delivery {
+        Delivery::Reliable(lane) => {
+            let bounds = &config.lanes[lane.index()];
+            let (messages, bytes) = if inbound {
+                (bounds.inbound_messages, bounds.inbound_bytes)
+            } else {
+                (bounds.outbound_messages, bounds.outbound_bytes)
+            };
+            Some((&mut reliable[lane.index()], messages, bytes))
+        }
+        Delivery::Unreliable(lane) => {
+            let bounds = &config.lanes[lane.index()];
+            Some((
+                &mut unreliable[lane.index()],
+                bounds.unreliable_messages,
+                bounds.unreliable_bytes,
+            ))
+        }
+        Delivery::LatestState => None,
+    }
 }
 
 struct CommandQueue {
     state: Mutex<CommandState>,
-    max_messages: usize,
-    max_bytes: usize,
+    reliable: ReliableConfig,
 }
 
 struct PeerIngress {
-    reliable: VecDeque<Vec<u8>>,
-    reliable_bytes: usize,
+    reliable: [LaneQueue; RELIABLE_LANES],
+    unreliable: [LaneQueue; RELIABLE_LANES],
     latest: Option<Vec<u8>>,
+    /// The lane the next drain starts with.
+    next_lane: usize,
 }
 
 struct IngressState {
@@ -78,27 +153,26 @@ struct IngressState {
     active: BTreeSet<ConnectionId>,
 }
 
-/// Shared worker-to-simulation ingress with independent quotas per peer.
+/// Shared worker-to-simulation ingress with independent quotas per peer and
+/// lane.
 ///
-/// A noisy peer can exhaust only its own reliable allowance. Snapshot traffic
+/// A noisy peer can exhaust only its own lanes' allowances. Snapshot traffic
 /// always occupies one overwrite slot, so a delayed simulation never builds a
 /// stale-state backlog.
 struct IngressHub {
     state: Mutex<IngressState>,
-    max_reliable_messages: usize,
-    max_reliable_bytes: usize,
+    reliable: ReliableConfig,
 }
 
 impl IngressHub {
-    fn new(config: &ThreadedUdpConfig) -> Self {
+    fn new(reliable: &ReliableConfig) -> Self {
         Self {
             state: Mutex::new(IngressState {
                 lifecycle: VecDeque::new(),
                 peers: BTreeMap::new(),
                 active: BTreeSet::new(),
             }),
-            max_reliable_messages: config.event_queue_messages,
-            max_reliable_bytes: config.reliable_queue_bytes,
+            reliable: reliable.clone(),
         }
     }
 
@@ -108,9 +182,10 @@ impl IngressHub {
             state.peers.insert(
                 conn,
                 PeerIngress {
-                    reliable: VecDeque::new(),
-                    reliable_bytes: 0,
+                    reliable: Default::default(),
+                    unreliable: Default::default(),
                     latest: None,
+                    next_lane: 0,
                 },
             );
             state.lifecycle.push_back(ServerEvent::Connected { conn });
@@ -127,43 +202,81 @@ impl IngressHub {
         }
     }
 
-    /// Returns false when this peer exceeded its reliable ingress allowance.
-    fn message(&self, conn: ConnectionId, delivery: Delivery, payload: Vec<u8>) -> bool {
+    /// Queues one received message. A reliable message past its lane's
+    /// inbound bounds is `InboundOverflow`, closing the peer; an unreliable
+    /// one makes room by dropping the lane's oldest unpolled unreliable
+    /// messages, as a full UDP socket buffer would, and only one larger than
+    /// the whole queue (which the endpoint's cap rules out) is refused.
+    fn message(
+        &self,
+        conn: ConnectionId,
+        delivery: Delivery,
+        payload: Vec<u8>,
+    ) -> Result<(), DisconnectReason> {
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
         let Some(peer) = state.peers.get_mut(&conn) else {
-            return true;
+            return Ok(());
         };
-        match delivery {
-            Delivery::Reliable(_) => {
-                if peer.reliable.len() >= self.max_reliable_messages
-                    || peer.reliable_bytes.saturating_add(payload.len()) > self.max_reliable_bytes
-                {
-                    return false;
-                }
-                peer.reliable_bytes += payload.len();
-                peer.reliable.push_back(payload);
+        let Some((queue, messages, bytes)) = lane_queue(
+            &mut peer.reliable,
+            &mut peer.unreliable,
+            &self.reliable,
+            delivery,
+            true,
+        ) else {
+            peer.latest = Some(payload);
+            return Ok(());
+        };
+        if let Delivery::Unreliable(_) = delivery {
+            if payload.len() > bytes {
+                return Err(DisconnectReason::ProtocolViolation);
             }
-            Delivery::LatestState => peer.latest = Some(payload),
+            while queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
+                queue.pop();
+            }
+        } else if queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
+            return Err(DisconnectReason::InboundOverflow);
         }
-        true
+        queue.push(payload);
+        Ok(())
     }
 
+    /// Surfaces lifecycle events, then up to a bounded number of reliable
+    /// and unreliable messages per peer taken from its lanes in turn, then
+    /// its latest state.
     fn drain(&self) -> Vec<ServerEvent> {
-        const RELIABLE_PER_PEER_PER_POLL: usize = 32;
+        // Shared across a peer's lanes and both classes: the sustainable
+        // per-poll rate above which its unreliable messages are shed.
+        const LANE_MESSAGES_PER_PEER_PER_POLL: usize = 32;
 
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
         let mut output: Vec<_> = state.lifecycle.drain(..).collect();
         for (&conn, peer) in &mut state.peers {
-            for _ in 0..RELIABLE_PER_PEER_PER_POLL {
-                let Some(payload) = peer.reliable.pop_front() else {
-                    break;
-                };
-                peer.reliable_bytes -= payload.len();
-                output.push(ServerEvent::Message {
-                    conn,
-                    delivery: Delivery::RELIABLE_ORDERED,
-                    payload,
-                });
+            let first = peer.next_lane;
+            peer.next_lane = (first + 1) % RELIABLE_LANES;
+            let mut taken = 0;
+            let mut progressed = true;
+            while progressed && taken < LANE_MESSAGES_PER_PEER_PER_POLL {
+                progressed = false;
+                for lane in lanes_from(first) {
+                    for (queue, delivery) in [
+                        (&mut peer.reliable, Delivery::Reliable(lane)),
+                        (&mut peer.unreliable, Delivery::Unreliable(lane)),
+                    ] {
+                        if taken == LANE_MESSAGES_PER_PEER_PER_POLL {
+                            break;
+                        }
+                        if let Some(payload) = queue[lane.index()].pop() {
+                            output.push(ServerEvent::Message {
+                                conn,
+                                delivery,
+                                payload,
+                            });
+                            taken += 1;
+                            progressed = true;
+                        }
+                    }
+                }
             }
             if let Some(payload) = peer.latest.take() {
                 output.push(ServerEvent::Message {
@@ -178,17 +291,16 @@ impl IngressHub {
 }
 
 impl CommandQueue {
-    fn new(config: &ThreadedUdpConfig) -> Self {
+    fn new(reliable: &ReliableConfig) -> Self {
         Self {
             state: Mutex::new(CommandState {
                 live: BTreeSet::new(),
                 peers: BTreeMap::new(),
                 disconnects: BTreeSet::new(),
                 stop_admission: false,
-                next_start: ConnectionId::MIN,
+                last_first: None,
             }),
-            max_messages: config.reliable_queue_messages,
-            max_bytes: config.reliable_queue_bytes,
+            reliable: reliable.clone(),
         }
     }
 
@@ -203,44 +315,46 @@ impl CommandQueue {
         }
         let max_bytes = match delivery {
             Delivery::Reliable(_) => crate::MAX_RELIABLE_MESSAGE_BYTES,
+            Delivery::Unreliable(_) => crate::MAX_UNRELIABLE_BYTES,
             Delivery::LatestState => crate::MAX_LATEST_STATE_BYTES,
         };
         if payload.len() > max_bytes {
             return Err(SendError::PayloadTooLarge);
         }
         let peer = state.peers.entry(id).or_default();
-        match delivery {
-            Delivery::Reliable(_) => {
-                // Each peer owns its allowance; a full one refuses this send
-                // and nothing else.
-                if peer.reliable.len() >= self.max_messages
-                    || peer.reliable_bytes.saturating_add(payload.len()) > self.max_bytes
-                {
-                    return Err(SendError::WouldBlock);
-                }
-                peer.reliable_bytes += payload.len();
-                peer.reliable.push_back(payload.to_vec());
-            }
-            Delivery::LatestState => {
-                // One overwrite slot per peer keeps only current state.
-                peer.latest = Some(payload.to_vec());
-            }
+        let Some((queue, messages, bytes)) = lane_queue(
+            &mut peer.reliable,
+            &mut peer.unreliable,
+            &self.reliable,
+            delivery,
+            false,
+        ) else {
+            // One overwrite slot per peer keeps only current state.
+            peer.latest = Some(payload.to_vec());
+            return Ok(());
+        };
+        // Each lane owns its allowances; a full one refuses this send and
+        // nothing else.
+        if queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
+            return Err(SendError::WouldBlock);
         }
+        queue.push(payload.to_vec());
         Ok(())
     }
 
-    fn capacity(&self, id: ConnectionId) -> ReliableCapacity {
+    fn capacity(&self, id: ConnectionId, lane: Lane) -> ReliableCapacity {
         let state = self.lock();
         if !state.live.contains(&id) {
             return ReliableCapacity::default();
         }
-        let (messages, bytes) = state
-            .peers
-            .get(&id)
-            .map_or((0, 0), |peer| (peer.reliable.len(), peer.reliable_bytes));
+        let (messages, bytes) = state.peers.get(&id).map_or((0, 0), |peer| {
+            let queue = &peer.reliable[lane.index()];
+            (queue.messages.len(), queue.bytes)
+        });
+        let bounds = &self.reliable.lanes[lane.index()];
         ReliableCapacity::remaining(
-            self.max_messages.saturating_sub(messages),
-            self.max_bytes.saturating_sub(bytes),
+            bounds.outbound_messages.saturating_sub(messages),
+            bounds.outbound_bytes.saturating_sub(bytes),
         )
     }
 
@@ -273,58 +387,76 @@ impl CommandQueue {
     /// caller disconnected, for the worker to close after the lock is
     /// released (closing flushes and sends datagrams).
     ///
-    /// Reliable messages move in order, each only once the endpoint reports
-    /// room for it; that report is advisory, so a message the endpoint still
-    /// refuses stays at the front for a later turn. Peers take one message
-    /// per pass, starting from a cursor that rotates every turn, so when a
-    /// shared endpoint ceiling binds, freed room is shared between backlogged
-    /// peers instead of going to the lowest ids.
+    /// Each lane's messages move in order, reliable ones only once the
+    /// endpoint reports room for them on that lane; that report is advisory,
+    /// and unreliable room is not reported, so a message the endpoint still
+    /// refuses stays at the front for a later turn. Every pass moves at most
+    /// one reliable and one unreliable message per backlogged peer and lane,
+    /// starting from the one after the last turn's first, so when a shared
+    /// endpoint ceiling binds, freed room is shared between every backlogged
+    /// peer and lane instead of going to the lowest ids.
     fn apply<S: ServerIo>(&self, endpoint: &mut S) -> Vec<ConnectionId> {
         let mut state = self.lock();
         if std::mem::take(&mut state.stop_admission) {
             endpoint.stop_admission();
         }
         let disconnects: Vec<_> = std::mem::take(&mut state.disconnects).into_iter().collect();
-        let start = state.next_start;
-        let mut order: Vec<_> = state.peers.range(start..).map(|(&id, _)| id).collect();
-        order.extend(state.peers.range(..start).map(|(&id, _)| id));
-        // The next turn starts with the peer after this turn's first.
-        state.next_start = order
-            .first()
-            .and_then(|id| id.checked_next())
-            .unwrap_or(ConnectionId::MIN);
+        let backlogged: Vec<_> = state
+            .peers
+            .iter()
+            .flat_map(|(&conn, peer)| {
+                lanes_from(0)
+                    .filter(|&lane| peer.backlogged(lane))
+                    .map(move |lane| (conn, lane))
+            })
+            .collect();
+        let split = state.last_first.map_or(0, |last| {
+            backlogged.partition_point(|&stream| stream <= last)
+        });
+        let mut order = backlogged[split..].to_vec();
+        order.extend_from_slice(&backlogged[..split]);
+        if let Some(&first) = order.first() {
+            state.last_first = Some(first);
+        }
 
         let mut gone = BTreeSet::new();
         let mut blocked = BTreeSet::new();
         loop {
             let mut progressed = false;
-            for &conn in &order {
-                if gone.contains(&conn) || blocked.contains(&conn) {
-                    continue;
-                }
-                let peer = state.peers.get_mut(&conn).expect("ordered from peers");
-                let Some(payload) = peer.reliable.front() else {
-                    continue;
-                };
-                let capacity = endpoint.capacity(conn, Lane::DEFAULT);
-                if capacity.messages == 0 || capacity.bytes < payload.len() {
-                    blocked.insert(conn);
-                    continue;
-                }
-                match endpoint.send(conn, Delivery::RELIABLE_ORDERED, payload) {
-                    // Admission already bounded the size, so a payload the
-                    // endpoint calls too large is dropped rather than left to
-                    // wedge the lane.
-                    Ok(()) | Err(SendError::PayloadTooLarge) => {
-                        peer.reliable_bytes -= payload.len();
-                        peer.reliable.pop_front();
-                        progressed = true;
+            for &(conn, lane) in &order {
+                for delivery in [Delivery::Reliable(lane), Delivery::Unreliable(lane)] {
+                    if gone.contains(&conn) || blocked.contains(&(conn, delivery)) {
+                        continue;
                     }
-                    Err(SendError::WouldBlock) => {
-                        blocked.insert(conn);
+                    let peer = state.peers.get_mut(&conn).expect("ordered from peers");
+                    let queue = match delivery {
+                        Delivery::Unreliable(_) => &mut peer.unreliable[lane.index()],
+                        _ => &mut peer.reliable[lane.index()],
+                    };
+                    let Some(payload) = queue.messages.front() else {
+                        continue;
+                    };
+                    if let Delivery::Reliable(_) = delivery {
+                        let capacity = endpoint.capacity(conn, lane);
+                        if capacity.messages == 0 || capacity.bytes < payload.len() {
+                            blocked.insert((conn, delivery));
+                            continue;
+                        }
                     }
-                    Err(SendError::UnknownConnection | SendError::Disconnected) => {
-                        gone.insert(conn);
+                    match endpoint.send(conn, delivery, payload) {
+                        // Admission already bounded the size, so a payload
+                        // the endpoint calls too large is dropped rather than
+                        // left to wedge the lane.
+                        Ok(()) | Err(SendError::PayloadTooLarge) => {
+                            queue.pop();
+                            progressed = true;
+                        }
+                        Err(SendError::WouldBlock) => {
+                            blocked.insert((conn, delivery));
+                        }
+                        Err(SendError::UnknownConnection | SendError::Disconnected) => {
+                            gone.insert(conn);
+                        }
                     }
                 }
             }
@@ -332,11 +464,12 @@ impl CommandQueue {
                 break;
             }
         }
-        for &conn in &order {
+        let peers: Vec<_> = state.peers.keys().copied().collect();
+        for conn in peers {
             if gone.contains(&conn) {
                 continue;
             }
-            let peer = state.peers.get_mut(&conn).expect("ordered from peers");
+            let peer = state.peers.get_mut(&conn).expect("listed from peers");
             if let Some(payload) = peer.latest.take()
                 && matches!(
                     endpoint.send(conn, Delivery::LatestState, &payload),
@@ -352,9 +485,7 @@ impl CommandQueue {
             state.live.remove(&conn);
             state.peers.remove(&conn);
         }
-        state
-            .peers
-            .retain(|_, peer| !peer.reliable.is_empty() || peer.latest.is_some());
+        state.peers.retain(|_, peer| !peer.is_empty());
         disconnects
     }
 }
@@ -370,6 +501,8 @@ pub struct ThreadedUdpServer {
 
 impl ThreadedUdpServer {
     /// Bind synchronously so startup failure remains fatal to the caller.
+    /// The worker's queues take their lane bounds from
+    /// `net_config.reliable`.
     pub fn bind(
         port: u16,
         net_config: EndpointConfig,
@@ -388,11 +521,12 @@ impl ThreadedUdpServer {
         net_config: EndpointConfig,
         worker_config: ThreadedUdpConfig,
     ) -> io::Result<Self> {
+        let reliable = net_config.reliable.clone();
         let endpoint = UdpServer::bind(addr, net_config)?;
         let local_addr = endpoint.local_addr()?;
-        let commands = Arc::new(CommandQueue::new(&worker_config));
+        let commands = Arc::new(CommandQueue::new(&reliable));
         let worker_commands = Arc::clone(&commands);
-        let ingress = Arc::new(IngressHub::new(&worker_config));
+        let ingress = Arc::new(IngressHub::new(&reliable));
         let worker_ingress = Arc::clone(&ingress);
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown);
@@ -443,8 +577,8 @@ impl ServerIo for ThreadedUdpServer {
         self.commands.send(conn, delivery, payload)
     }
 
-    fn capacity(&self, conn: ConnectionId, _lane: Lane) -> ReliableCapacity {
-        self.commands.capacity(conn)
+    fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
+        self.commands.capacity(conn, lane)
     }
 
     fn flush(&mut self, _now_ms: u64) {}
@@ -504,12 +638,12 @@ fn worker_tick<S: ServerIo>(
                 delivery,
                 payload,
             } => {
-                if ingress.message(conn, delivery, payload) {
+                let Err(reason) = ingress.message(conn, delivery, payload) else {
                     continue;
-                }
+                };
                 endpoint.disconnect(conn, now_ms);
                 commands.ended(conn);
-                ingress.disconnected(conn, DisconnectReason::InboundOverflow);
+                ingress.disconnected(conn, reason);
             }
         }
     }
@@ -546,9 +680,8 @@ mod tests {
     /// memory duplex, with no socket or thread.
     #[test]
     fn worker_tick_relays_events_in_and_commands_out() {
-        let config = ThreadedUdpConfig::default();
-        let commands = CommandQueue::new(&config);
-        let ingress = IngressHub::new(&config);
+        let commands = CommandQueue::new(&ReliableConfig::DEFAULT);
+        let ingress = IngressHub::new(&ReliableConfig::DEFAULT);
         let (mut client, mut server) = memory_duplex();
 
         client
@@ -580,11 +713,20 @@ mod tests {
         commands
             .send(SOLO_CONNECTION, Delivery::LatestState, b"fresh")
             .unwrap();
+        for payload in [b"u1", b"u2"] {
+            commands
+                .send(SOLO_CONNECTION, Delivery::Unreliable(lane(2)), payload)
+                .unwrap();
+        }
         worker_tick(&mut server, &commands, &ingress, 5);
         let received = client.poll(5);
         assert_eq!(
             payloads(&received, Delivery::RELIABLE_ORDERED),
             vec![b"one".to_vec(), b"two".to_vec()]
+        );
+        assert_eq!(
+            payloads(&received, Delivery::Unreliable(lane(2))),
+            vec![b"u1".to_vec(), b"u2".to_vec()]
         );
         assert_eq!(
             payloads(&received, Delivery::LatestState),
@@ -607,17 +749,18 @@ mod tests {
         );
     }
 
-    /// A peer that fills its ingress allowance is disconnected at the
-    /// endpoint and reported as `InboundOverflow`; its buffered ingress is
-    /// discarded with it (`IngressHub::disconnected`), so the simulation sees
-    /// the lifecycle pair and no half-delivered stream, and the peer itself
-    /// observes the disconnect.
+    /// Unreliable messages past a lane's ingress allowance shed the oldest
+    /// unpolled ones and the peer stays; a peer that fills its reliable
+    /// ingress allowance is disconnected at the endpoint and reported as
+    /// `InboundOverflow`, its buffered ingress discarded with it
+    /// (`IngressHub::disconnected`), so the simulation sees no half-delivered
+    /// stream, and the peer itself observes the disconnect.
     #[test]
     fn worker_tick_disconnects_a_peer_that_overflows_ingress() {
-        let config = ThreadedUdpConfig {
-            event_queue_messages: 2,
-            ..ThreadedUdpConfig::default()
-        };
+        let config = lanes(|lane| {
+            lane.inbound_messages = 2;
+            lane.unreliable_messages = 2;
+        });
         let commands = CommandQueue::new(&config);
         let ingress = IngressHub::new(&config);
         let (mut client, mut server) = memory_duplex();
@@ -625,20 +768,42 @@ mod tests {
             matches!(&client.poll(0)[..], [ClientEvent::Connected]),
             "the memory client is connected from the start"
         );
+        // Unreliable messages past the bound shed the oldest: no disconnect.
+        for payload in [b"u1", b"u2", b"u3", b"u4"] {
+            client.send(Delivery::Unreliable(lane(1)), payload).unwrap();
+        }
+        client.flush(0);
+        worker_tick(&mut server, &commands, &ingress, 0);
+        let events = ingress.drain();
+        assert!(
+            matches!(&events[..], [ServerEvent::Connected { conn }, ..] if *conn == SOLO_CONNECTION),
+            "{events:?}"
+        );
+        let unreliable: Vec<_> = events[1..]
+            .iter()
+            .map(|event| match event {
+                ServerEvent::Message {
+                    delivery: Delivery::Unreliable(_),
+                    payload,
+                    ..
+                } => payload.clone(),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(unreliable, [b"u3".to_vec(), b"u4".to_vec()]);
+
+        // Reliable messages past the bound close the peer.
         for payload in [b"m1", b"m2", b"m3"] {
             client.send(Delivery::RELIABLE_ORDERED, payload).unwrap();
         }
-        client.flush(0);
-
-        worker_tick(&mut server, &commands, &ingress, 0);
+        client.flush(1);
+        worker_tick(&mut server, &commands, &ingress, 1);
         let events = ingress.drain();
         assert!(
             matches!(
                 &events[..],
-                [
-                    ServerEvent::Connected { conn },
-                    ServerEvent::Disconnected { conn: gone, reason: DisconnectReason::InboundOverflow },
-                ] if *conn == SOLO_CONNECTION && *gone == SOLO_CONNECTION
+                [ServerEvent::Disconnected { conn: gone, reason: DisconnectReason::InboundOverflow }]
+                    if *gone == SOLO_CONNECTION
             ),
             "{events:?}"
         );
@@ -657,6 +822,13 @@ mod tests {
 
     fn cid(raw: u64) -> ConnectionId {
         ConnectionId::from_raw(raw).expect("test ids are nonzero")
+    }
+
+    /// Every lane at the defaults, then changed by `edit`.
+    fn lanes(edit: impl Fn(&mut crate::LaneConfig)) -> ReliableConfig {
+        let mut config = ReliableConfig::DEFAULT;
+        config.lanes.iter_mut().for_each(edit);
+        config
     }
 
     /// A memory server end that admits at most `per_tick` reliable messages
@@ -719,10 +891,7 @@ mod tests {
     /// refused only while its command allowance is full.
     #[test]
     fn worker_moves_messages_only_as_the_endpoint_admits_them() {
-        let config = ThreadedUdpConfig {
-            reliable_queue_messages: 50,
-            ..ThreadedUdpConfig::default()
-        };
+        let config = lanes(|lane| lane.outbound_messages = 50);
         let commands = CommandQueue::new(&config);
         let ingress = IngressHub::new(&config);
         let (mut client, server) = memory_duplex();
@@ -748,7 +917,7 @@ mod tests {
             Err(SendError::WouldBlock)
         );
         assert_eq!(
-            commands.capacity(SOLO_CONNECTION),
+            commands.capacity(SOLO_CONNECTION, Lane::DEFAULT),
             ReliableCapacity::default()
         );
 
@@ -771,7 +940,10 @@ mod tests {
                 match commands.send(SOLO_CONNECTION, Delivery::RELIABLE_ORDERED, &message(next)) {
                     Ok(()) => next += 1,
                     Err(SendError::WouldBlock) => {
-                        assert_eq!(commands.capacity(SOLO_CONNECTION).messages, 0);
+                        assert_eq!(
+                            commands.capacity(SOLO_CONNECTION, Lane::DEFAULT).messages,
+                            0
+                        );
                         break;
                     }
                     Err(error) => panic!("refused with {error:?}"),
@@ -781,14 +953,15 @@ mod tests {
         assert_eq!(received, (0..60).collect::<Vec<_>>());
     }
 
-    /// An endpoint with two connections sharing one ceiling: it admits
-    /// `per_tick` reliable messages between two polls across both, and
-    /// records what each connection received, in order.
+    /// An endpoint whose connections share one ceiling: it admits
+    /// `per_tick` reliable messages between two polls across every
+    /// connection and lane, and records what each connection received on
+    /// each lane, in order.
     struct SharedCeiling {
         per_tick: usize,
         admitted: usize,
         announced: bool,
-        received: BTreeMap<ConnectionId, Vec<u32>>,
+        received: BTreeMap<(ConnectionId, Lane), Vec<u32>>,
     }
 
     impl ServerIo for SharedCeiling {
@@ -797,21 +970,25 @@ mod tests {
             if std::mem::replace(&mut self.announced, true) {
                 return Vec::new();
             }
-            self.received
-                .keys()
-                .map(|&conn| ServerEvent::Connected { conn })
+            let conns: BTreeSet<_> = self.received.keys().map(|&(conn, _)| conn).collect();
+            conns
+                .into_iter()
+                .map(|conn| ServerEvent::Connected { conn })
                 .collect()
         }
 
         fn send(
             &mut self,
             conn: ConnectionId,
-            _delivery: Delivery,
+            delivery: Delivery,
             payload: &[u8],
         ) -> Result<(), SendError> {
+            let Delivery::Reliable(lane) = delivery else {
+                return Ok(());
+            };
             let received = self
                 .received
-                .get_mut(&conn)
+                .get_mut(&(conn, lane))
                 .ok_or(SendError::UnknownConnection)?;
             if self.admitted >= self.per_tick {
                 return Err(SendError::WouldBlock);
@@ -821,8 +998,8 @@ mod tests {
             Ok(())
         }
 
-        fn capacity(&self, conn: ConnectionId, _lane: Lane) -> ReliableCapacity {
-            if !self.received.contains_key(&conn) {
+        fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
+            if !self.received.contains_key(&(conn, lane)) {
                 return ReliableCapacity::default();
             }
             ReliableCapacity::remaining(self.per_tick - self.admitted, usize::MAX)
@@ -835,65 +1012,64 @@ mod tests {
         fn stop_admission(&mut self) {}
     }
 
-    /// Defect (#267 review): freed room under a binding shared ceiling going
-    /// to the lowest connection id every turn, starving a backlogged peer
-    /// with a higher id. Oracle: equal shares for equally backlogged peers —
-    /// with both command queues kept full and three slots per tick, each
-    /// peer receives its messages in order and the two counts differ by at
-    /// most one tick's worth.
+    /// Defect (#267 review, #268): freed room under a binding shared ceiling
+    /// going to the lowest connection id or lane every turn, starving a
+    /// backlogged peer or lane with a higher one. Oracle: equal shares for
+    /// equally backlogged streams — with two peers each keeping two lanes'
+    /// command queues full and three slots per tick, every stream receives
+    /// its messages in order and any two counts differ by at most one tick's
+    /// worth.
     #[test]
-    fn a_binding_shared_ceiling_is_shared_between_backlogged_peers() {
-        let config = ThreadedUdpConfig {
-            reliable_queue_messages: 16,
-            ..ThreadedUdpConfig::default()
-        };
+    fn a_binding_shared_ceiling_is_shared_between_backlogged_peers_and_lanes() {
+        let config = lanes(|lane| lane.outbound_messages = 16);
         let commands = CommandQueue::new(&config);
         let ingress = IngressHub::new(&config);
-        let (low, high) = (cid(1), cid(9));
+        let streams = [cid(1), cid(9)]
+            .into_iter()
+            .flat_map(|conn| [(conn, lane(0)), (conn, lane(2))]);
         let mut endpoint = SharedCeiling {
             per_tick: 3,
             admitted: 0,
             announced: false,
-            received: [(low, Vec::new()), (high, Vec::new())].into(),
+            received: streams.clone().map(|stream| (stream, Vec::new())).collect(),
         };
-        let mut next = BTreeMap::from([(low, 0u32), (high, 0u32)]);
+        let mut next: BTreeMap<_, u32> = streams.map(|stream| (stream, 0)).collect();
         for tick in 0..40 {
             worker_tick(&mut endpoint, &commands, &ingress, tick);
-            // Keep both peers backlogged: refill each command queue.
-            for (&conn, index) in &mut next {
+            // Keep every stream backlogged: refill each lane's command queue.
+            for (&(conn, lane), index) in &mut next {
                 while commands
-                    .send(conn, Delivery::RELIABLE_ORDERED, &index.to_le_bytes())
+                    .send(conn, Delivery::Reliable(lane), &index.to_le_bytes())
                     .is_ok()
                 {
                     *index += 1;
                 }
-                assert_eq!(commands.capacity(conn).messages, 0, "kept saturated");
+                assert_eq!(commands.capacity(conn, lane).messages, 0, "kept saturated");
             }
         }
-        let (low_got, high_got) = (&endpoint.received[&low], &endpoint.received[&high]);
-        for got in [low_got, high_got] {
+        for (stream, got) in &endpoint.received {
             assert!(
                 got.iter().zip(0..).all(|(&a, b)| a == b),
-                "in order, once: {got:?}"
+                "{stream:?} in order, once: {got:?}"
             );
         }
-        assert!(!high_got.is_empty(), "the higher-id peer made progress");
+        let counts: Vec<_> = endpoint.received.values().map(Vec::len).collect();
+        let (least, most) = (counts.iter().min().unwrap(), counts.iter().max().unwrap());
+        assert!(*least > 0, "every stream made progress: {counts:?}");
         assert!(
-            low_got.len().abs_diff(high_got.len()) <= endpoint.per_tick,
-            "unfair split: {} vs {}",
-            low_got.len(),
-            high_got.len()
+            most - least <= endpoint.per_tick,
+            "unfair split: {counts:?}"
         );
     }
 
     /// Defect: a peer's full allowance refusing another peer, or a refusal
     /// that schedules a disconnect. Oracle: per-peer bounds (netcode.md 11).
     #[test]
-    fn a_full_command_allowance_refuses_only_its_own_peer() {
-        let config = ThreadedUdpConfig {
-            reliable_queue_messages: 1,
-            ..ThreadedUdpConfig::default()
-        };
+    fn a_full_command_allowance_refuses_only_its_own_peer_and_lane() {
+        let config = lanes(|lane| {
+            lane.outbound_messages = 1;
+            lane.unreliable_messages = 1;
+        });
         let queue = CommandQueue::new(&config);
         let noisy = cid(7);
         let healthy = cid(8);
@@ -909,22 +1085,37 @@ mod tests {
         queue
             .send(healthy, Delivery::RELIABLE_ORDERED, b"healthy")
             .unwrap();
+        queue
+            .send(noisy, Delivery::Reliable(lane(1)), b"another lane")
+            .expect("a full lane leaves the peer's other lanes admitting");
+        queue
+            .send(noisy, Delivery::Unreliable(lane(0)), b"unreliable")
+            .expect("the unreliable queue is separate");
+        assert_eq!(
+            queue.send(
+                noisy,
+                Delivery::Unreliable(lane(0)),
+                &[0; crate::MAX_UNRELIABLE_BYTES + 1]
+            ),
+            Err(SendError::PayloadTooLarge)
+        );
+        assert_eq!(
+            queue.send(noisy, Delivery::Unreliable(lane(0)), b"full"),
+            Err(SendError::WouldBlock)
+        );
         let state = queue.lock();
         assert!(state.disconnects.is_empty());
         assert!(state.live.contains(&noisy) && state.live.contains(&healthy));
         drop(state);
 
-        // The byte allowance is exact: ten bytes admit 6 + 4, not 6 + 5.
-        let config = ThreadedUdpConfig {
-            reliable_queue_bytes: 10,
-            ..ThreadedUdpConfig::default()
-        };
-        let queue = CommandQueue::new(&config);
+        // The byte allowance is exact: the lane admits up to its bound.
+        let bound = crate::MAX_RELIABLE_MESSAGE_BYTES;
+        let queue = CommandQueue::new(&lanes(|lane| lane.outbound_bytes = bound));
         queue.connected(noisy);
         queue
-            .send(noisy, Delivery::RELIABLE_ORDERED, &[0; 6])
+            .send(noisy, Delivery::RELIABLE_ORDERED, &vec![0; bound - 4])
             .unwrap();
-        assert_eq!(queue.capacity(noisy).bytes, 4);
+        assert_eq!(queue.capacity(noisy, Lane::DEFAULT).bytes, 4);
         assert_eq!(
             queue.send(noisy, Delivery::RELIABLE_ORDERED, &[0; 5]),
             Err(SendError::WouldBlock)
@@ -939,24 +1130,30 @@ mod tests {
     /// `capacity` contracts for unknown connections.
     #[test]
     fn unknown_and_ended_connections_are_refused() {
-        let queue = CommandQueue::new(&ThreadedUdpConfig::default());
+        let queue = CommandQueue::new(&ReliableConfig::DEFAULT);
         let peer = cid(3);
         assert_eq!(
             queue.send(peer, Delivery::RELIABLE_ORDERED, b"early"),
             Err(SendError::UnknownConnection)
         );
-        assert_eq!(queue.capacity(peer), ReliableCapacity::default());
+        assert_eq!(
+            queue.capacity(peer, Lane::DEFAULT),
+            ReliableCapacity::default()
+        );
         queue.connected(peer);
         queue
             .send(peer, Delivery::RELIABLE_ORDERED, b"queued")
             .unwrap();
-        assert!(queue.capacity(peer).messages > 0);
+        assert!(queue.capacity(peer, Lane::DEFAULT).messages > 0);
         queue.ended(peer);
         assert_eq!(
             queue.send(peer, Delivery::RELIABLE_ORDERED, b"late"),
             Err(SendError::UnknownConnection)
         );
-        assert_eq!(queue.capacity(peer), ReliableCapacity::default());
+        assert_eq!(
+            queue.capacity(peer, Lane::DEFAULT),
+            ReliableCapacity::default()
+        );
         assert!(
             queue.lock().peers.is_empty(),
             "queued commands went with it"
@@ -965,11 +1162,17 @@ mod tests {
 
     #[test]
     fn ingress_coalesces_latest_state_per_peer() {
-        let hub = IngressHub::new(&ThreadedUdpConfig::default());
+        let hub = IngressHub::new(&ReliableConfig::DEFAULT);
         let peer = cid(3);
         hub.connected(peer);
-        assert!(hub.message(peer, Delivery::LatestState, b"old".to_vec()));
-        assert!(hub.message(peer, Delivery::LatestState, b"new".to_vec()));
+        assert_eq!(
+            hub.message(peer, Delivery::LatestState, b"old".to_vec()),
+            Ok(())
+        );
+        assert_eq!(
+            hub.message(peer, Delivery::LatestState, b"new".to_vec()),
+            Ok(())
+        );
 
         let events = hub.drain();
         assert_eq!(
@@ -991,18 +1194,23 @@ mod tests {
 
     #[test]
     fn ingress_reliable_overflow_isolated_to_noisy_peer() {
-        let config = ThreadedUdpConfig {
-            event_queue_messages: 1,
-            ..ThreadedUdpConfig::default()
-        };
-        let hub = IngressHub::new(&config);
+        let hub = IngressHub::new(&lanes(|lane| lane.inbound_messages = 1));
         let noisy = cid(4);
         let healthy = cid(5);
         hub.connected(noisy);
         hub.connected(healthy);
-        assert!(hub.message(noisy, Delivery::RELIABLE_ORDERED, b"first".to_vec()));
-        assert!(!hub.message(noisy, Delivery::RELIABLE_ORDERED, b"overflow".to_vec()));
-        assert!(hub.message(healthy, Delivery::RELIABLE_ORDERED, b"healthy".to_vec()));
+        assert_eq!(
+            hub.message(noisy, Delivery::RELIABLE_ORDERED, b"first".to_vec()),
+            Ok(())
+        );
+        assert_eq!(
+            hub.message(noisy, Delivery::RELIABLE_ORDERED, b"overflow".to_vec()),
+            Err(DisconnectReason::InboundOverflow)
+        );
+        assert_eq!(
+            hub.message(healthy, Delivery::RELIABLE_ORDERED, b"healthy".to_vec()),
+            Ok(())
+        );
 
         assert!(hub.drain().iter().any(|event| matches!(
             event,
@@ -1012,5 +1220,72 @@ mod tests {
                 ..
             } if *conn == healthy && payload == b"healthy"
         )));
+    }
+
+    /// Defect (design §12 review): an unpolled receiver closing the peer for
+    /// unreliable traffic, dropping the newest instead of the oldest, or
+    /// letting the queue's byte count drift as it sheds. Oracle: the
+    /// UDP-socket rule — past either bound, the oldest unpolled unreliable
+    /// messages go and the newest that fit arrive in order — while reliable
+    /// overflow still closes the peer.
+    #[test]
+    fn ingress_sheds_the_oldest_unreliable_messages_and_keeps_the_peer() {
+        let peer = cid(6);
+        let unreliable = |hub: &IngressHub| -> Vec<Vec<u8>> {
+            hub.drain()
+                .into_iter()
+                .filter_map(|event| match event {
+                    ServerEvent::Message {
+                        delivery: Delivery::Unreliable(_),
+                        payload,
+                        ..
+                    } => Some(payload),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let hub = IngressHub::new(&lanes(|lane| lane.unreliable_messages = 3));
+        hub.connected(peer);
+        for index in 0..7u8 {
+            assert_eq!(
+                hub.message(peer, Delivery::Unreliable(lane(2)), vec![index]),
+                Ok(())
+            );
+        }
+        assert_eq!(unreliable(&hub), [vec![4], vec![5], vec![6]]);
+
+        let hub = IngressHub::new(&lanes(|lane| {
+            lane.unreliable_bytes = crate::MAX_UNRELIABLE_BYTES;
+        }));
+        hub.connected(peer);
+        for index in 0..5u8 {
+            assert_eq!(
+                hub.message(peer, Delivery::Unreliable(lane(2)), vec![index; 500]),
+                Ok(())
+            );
+        }
+        // Two 500-byte messages fit 1,168 bytes; the queue's count recovers.
+        assert_eq!(unreliable(&hub), [vec![3; 500], vec![4; 500]]);
+        assert_eq!(
+            hub.message(peer, Delivery::Unreliable(lane(2)), vec![9; 1_168]),
+            Ok(())
+        );
+        assert_eq!(unreliable(&hub), [vec![9; 1_168]]);
+        assert_eq!(
+            hub.message(peer, Delivery::Unreliable(lane(2)), vec![0; 1_169]),
+            Err(DisconnectReason::ProtocolViolation)
+        );
+
+        let hub = IngressHub::new(&lanes(|lane| lane.inbound_messages = 1));
+        hub.connected(peer);
+        assert_eq!(
+            hub.message(peer, Delivery::RELIABLE_ORDERED, b"one".to_vec()),
+            Ok(())
+        );
+        assert_eq!(
+            hub.message(peer, Delivery::RELIABLE_ORDERED, b"two".to_vec()),
+            Err(DisconnectReason::InboundOverflow)
+        );
     }
 }

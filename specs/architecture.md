@@ -75,7 +75,8 @@ frozen SGL API.
 - 2D lighting and darkness composite
 - Immediate-mode UI on the screen draw list
 - Glyph and text rendering
-- Two delivery classes: reliable-ordered and latest-state
+- Three delivery classes: reliable ordered and unreliable, each on one of
+  four lanes, and latest-state
 - Native UDP, browser WebSocket, in-memory duplex, server mux
 - Caller-supplied time on transport poll and flush
 - Deterministic RNG and canonical hashing

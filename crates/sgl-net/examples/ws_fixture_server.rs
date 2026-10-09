@@ -1,7 +1,8 @@
 //! Fixture server for the browser WebSocket tests (`bun scripts/tasks.ts
 //! check-browser`): a `NativeWebSocketServer` on a fixed loopback port that
-//! echoes reliable frames reliably and latest-state frames as latest state,
-//! and closes a connection when it receives the reliable command `close`.
+//! echoes reliable and unreliable messages on the lane and class they
+//! arrived on and latest-state frames as latest state, and closes a connection when it receives the
+//! reliable command `close`.
 //! Reliable frames starting with `S` are a sink: the fixture checks they
 //! carry consecutive indices from zero and answers the reliable query
 //! `sink?` with `sink <count> <in order>` instead of echoing them.

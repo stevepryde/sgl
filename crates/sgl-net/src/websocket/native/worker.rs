@@ -496,7 +496,12 @@ impl IoWorker {
             context.occupancy.fetch_sub(1, Ordering::AcqRel);
             return;
         }
-        let shared = SharedPeer::new(context.magic, context.ping_interval_ms, context.timeout_ms);
+        let shared = SharedPeer::new(
+            context.magic,
+            context.ping_interval_ms,
+            context.timeout_ms,
+            &context.reliable,
+        );
         // Admission is decided under the registry lock so a peer can never be
         // inserted after `stop_admission` or `Drop` has swept the registry.
         let mut registry = lock(&context.registry);

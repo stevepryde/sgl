@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+use sgl_net::RELIABLE_LANES;
 use sgl_net::udp::simulated::{SimulatedConfig, SimulatedNetwork, SimulatedTransport};
 use sgl_net::udp::{ClientEndpoint, EndpointConfig, MAX_RELIABLE_FRAGMENT_BYTES, ServerEndpoint};
 use sgl_net::{
@@ -31,6 +32,7 @@ fn clean() -> SimulatedConfig {
         reorder_per_10k: 0,
         reorder_extra_ms: 0,
         max_in_flight_datagrams: 4_096,
+        lane_loss_per_10k: [0; RELIABLE_LANES],
     }
 }
 
@@ -186,6 +188,10 @@ fn stream(
                     payload,
                     ..
                 } => latest.push(index_of(&payload)),
+                ServerEvent::Message {
+                    delivery: Delivery::Unreliable(_),
+                    ..
+                } => panic!("nothing is sent unreliably here"),
                 ServerEvent::Disconnected { reason, .. } => panic!("disconnected: {reason:?}"),
                 ServerEvent::Connected { .. } => {}
             }
@@ -234,6 +240,7 @@ fn reliable_order_and_latest_progress_hold_across_the_network_matrix() {
                                 reorder_per_10k: reorder,
                                 reorder_extra_ms: 40,
                                 max_in_flight_datagrams: 4_096,
+                                lane_loss_per_10k: [0; RELIABLE_LANES],
                             };
                             let label = format!(
                                 "loss {loss} reorder {reorder} dup {duplicate} jitter {jitter} latency {latency} seed {seed}"

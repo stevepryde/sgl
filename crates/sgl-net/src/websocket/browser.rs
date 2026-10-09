@@ -8,27 +8,20 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{BinaryType, CloseEvent, Event, MessageEvent, WebSocket};
 
-use super::queue::{PeerState, QueuedFrame};
+use super::queue::PeerState;
 use super::{
     MAX_BROWSER_BUFFERED_BYTES, MAX_BROWSER_RECONNECT_ATTEMPTS, MAX_BROWSER_RECONNECT_DELAY_MS,
     MAX_WEBSOCKET_FRAME_BYTES, ReconnectPolicy, ReconnectState, WebSocketIdentity, decode_envelope,
     encode_envelope,
 };
 use crate::{
-    ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, RELIABLE_OUTBOUND_BYTES,
-    ReliableCapacity, RttEstimate, SendError,
+    ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, ReliableCapacity, ReliableConfig,
+    RttEstimate, SendError,
 };
 
 fn copy_bounded_binary(buffer: &ArrayBuffer) -> Option<Vec<u8>> {
     (buffer.byte_length() as usize <= MAX_WEBSOCKET_FRAME_BYTES)
         .then(|| Uint8Array::new(buffer).to_vec())
-}
-
-fn projected_buffer_fits(buffered: usize, payload_bytes: usize, limit: usize) -> bool {
-    buffered
-        .checked_add(super::ENVELOPE_HEADER_LEN)
-        .and_then(|bytes| bytes.checked_add(payload_bytes))
-        .is_some_and(|bytes| bytes <= limit)
 }
 
 /// Browser WebSocket client configuration.
@@ -40,12 +33,15 @@ pub struct BrowserWebSocketConfig {
     pub identity: WebSocketIdentity,
     /// Poll-driven bounded reconnect policy.
     pub reconnect: ReconnectPolicy,
-    /// Browser buffered-byte watermark that paces reliable traffic: a
-    /// released frame waits while it would take `bufferedAmount` past this.
+    /// Browser buffered-byte watermark that paces reliable and unreliable
+    /// traffic: a released frame waits while it would take `bufferedAmount`
+    /// past this.
     /// At least [`MAX_WEBSOCKET_FRAME_BYTES`] so any frame can go out.
     pub reliable_buffered_bytes: usize,
     /// Browser buffered-byte watermark above which latest state stays coalesced.
     pub latest_buffered_bytes: usize,
+    /// The connection's reliable lanes: weights and per-lane bounds.
+    pub reliable: ReliableConfig,
 }
 
 impl BrowserWebSocketConfig {
@@ -56,8 +52,9 @@ impl BrowserWebSocketConfig {
             url: url.into(),
             identity,
             reconnect: ReconnectPolicy::default(),
-            reliable_buffered_bytes: RELIABLE_OUTBOUND_BYTES,
+            reliable_buffered_bytes: MAX_BROWSER_BUFFERED_BYTES,
             latest_buffered_bytes: 64 * 1024,
+            reliable: ReliableConfig::DEFAULT,
         }
     }
 
@@ -73,6 +70,7 @@ impl BrowserWebSocketConfig {
             || reconnect.initial_delay_ms > MAX_BROWSER_RECONNECT_DELAY_MS
             || reconnect.max_delay_ms < reconnect.initial_delay_ms
             || reconnect.max_delay_ms > MAX_BROWSER_RECONNECT_DELAY_MS
+            || self.reliable.validate().is_err()
         {
             return Err(
                 js_sys::Error::new("invalid bounded browser WebSocket configuration").into(),
@@ -91,9 +89,9 @@ struct BrowserState {
 }
 
 impl BrowserState {
-    fn new() -> Self {
+    fn new(reliable: &ReliableConfig) -> Self {
         Self {
-            peer: PeerState::new(),
+            peer: PeerState::new(reliable),
             opened: false,
             connected_pending: false,
             needs_reconnect: false,
@@ -108,8 +106,8 @@ impl BrowserState {
         }
     }
 
-    fn reset_for_reconnect(&mut self) {
-        self.peer = PeerState::new();
+    fn reset_for_reconnect(&mut self, reliable: &ReliableConfig) {
+        self.peer = PeerState::new(reliable);
         self.opened = false;
         self.connected_pending = false;
         self.needs_reconnect = false;
@@ -169,12 +167,7 @@ impl BrowserSocket {
                 let _ = message_socket.close();
                 return;
             };
-            let result = message_state.borrow_mut().peer.receive(QueuedFrame {
-                delivery: envelope.delivery,
-                sequence: envelope.sequence,
-                payload: envelope.payload,
-                generation: 0,
-            });
+            let result = message_state.borrow_mut().peer.receive(envelope);
             if result.is_err() {
                 let _ = message_socket.close();
             }
@@ -244,7 +237,7 @@ impl BrowserWebSocketClient {
     /// Starts the initial browser WebSocket connection.
     pub fn connect(config: BrowserWebSocketConfig) -> Result<Self, wasm_bindgen::JsValue> {
         config.validate()?;
-        let state = Rc::new(RefCell::new(BrowserState::new()));
+        let state = Rc::new(RefCell::new(BrowserState::new(&config.reliable)));
         let socket = BrowserSocket::connect(&config.url, &config.identity, &state)?;
         Ok(Self {
             config,
@@ -258,7 +251,9 @@ impl BrowserWebSocketClient {
 
     fn attempt_reconnect(&mut self) -> bool {
         self.socket.detach_and_close();
-        self.state.borrow_mut().reset_for_reconnect();
+        self.state
+            .borrow_mut()
+            .reset_for_reconnect(&self.config.reliable);
         match BrowserSocket::connect(&self.config.url, &self.config.identity, &self.state) {
             Ok(socket) => {
                 self.socket = socket;
@@ -285,30 +280,30 @@ impl BrowserWebSocketClient {
         }
         loop {
             let buffered = self.socket.socket.buffered_amount() as usize;
-            let next = self.state.borrow().peer.next_released_outbound();
-            let Some((delivery, payload_bytes)) = next else {
+            let next = self.state.borrow().peer.next_released_frame_len();
+            let Some((delivery, frame_bytes)) = next else {
                 break;
             };
+            // Unreliable frames wait for the reliable watermark like reliable
+            // ones: an accepted message is never dropped.
             let limit = match delivery {
-                Delivery::Reliable(_) => self.config.reliable_buffered_bytes,
+                Delivery::Reliable(_) | Delivery::Unreliable(_) => {
+                    self.config.reliable_buffered_bytes
+                }
                 Delivery::LatestState => self.config.latest_buffered_bytes,
             };
             // Paced, never fatal: the frame waits for the browser to drain.
-            if !projected_buffer_fits(buffered, payload_bytes, limit) {
+            if buffered.saturating_add(frame_bytes) > limit {
                 break;
             }
             let next_frame = self
                 .state
                 .borrow_mut()
                 .peer
-                .pop_released_outbound()
+                .pop_released_frame()
                 .expect("released outbound frame was observed above");
-            let Ok(encoded) = encode_envelope(
-                self.config.identity.magic,
-                next_frame.delivery,
-                next_frame.sequence,
-                &next_frame.payload,
-            ) else {
+            let Ok(encoded) = encode_envelope(self.config.identity.magic, &next_frame.envelope())
+            else {
                 self.close_protocol();
                 break;
             };
@@ -344,11 +339,8 @@ impl ClientIo for BrowserWebSocketClient {
                 self.reconnect.reset();
                 events.push(ClientEvent::Connected);
             }
-            while let Some(frame) = state.peer.pop_inbound() {
-                events.push(ClientEvent::Message {
-                    delivery: frame.delivery,
-                    payload: frame.payload,
-                });
+            while let Some((delivery, payload)) = state.peer.pop_inbound() {
+                events.push(ClientEvent::Message { delivery, payload });
             }
             if let Some(reason) = state.peer.terminal()
                 && !self.terminal_announced
@@ -386,8 +378,8 @@ impl ClientIo for BrowserWebSocketClient {
         result
     }
 
-    fn capacity(&self, _lane: Lane) -> ReliableCapacity {
-        self.state.borrow().peer.capacity()
+    fn capacity(&self, lane: Lane) -> ReliableCapacity {
+        self.state.borrow().peer.capacity(lane)
     }
 
     fn flush(&mut self, now_ms: u64) {

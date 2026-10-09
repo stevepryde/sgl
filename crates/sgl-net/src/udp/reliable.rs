@@ -1,17 +1,25 @@
-//! Bounded 33-slot selective-repeat ARQ and ordered reassembly.
+//! One reliable lane: a bounded 33-slot selective-repeat ARQ with its own
+//! sequence space, and in-order reassembly.
 
 use std::collections::{BTreeMap, VecDeque};
 
-use super::packet::Ack;
+use super::packet::{Ack, TOTAL_LEN};
 use super::sequence;
+use crate::lanes::{Fragment, FramingViolation, Reassembly};
 
 pub const WINDOW: u16 = 32;
-pub const MAX_OUTBOUND_FRAGMENTS: usize = 256;
 
 #[derive(Debug)]
 pub struct Slot {
-    pub more: bool,
+    pub fragment: Fragment,
     pub bytes: Vec<u8>,
+}
+
+impl Slot {
+    /// Whether this fragment ends its message.
+    const fn ends_message(&self) -> bool {
+        matches!(self.fragment, Fragment::Whole | Fragment::Last)
+    }
 }
 
 #[derive(Debug)]
@@ -28,105 +36,86 @@ pub struct Reliable {
     next_sequence: u16,
     queued: VecDeque<Slot>,
     in_flight: VecDeque<InFlight>,
+    /// Messages and bytes held until the peer acknowledges them.
+    held_messages: usize,
+    held_bytes: usize,
     receive_next: u16,
     receive_buffer: BTreeMap<u16, Slot>,
-    assembling: Vec<u8>,
-    assembly_active: bool,
-    assembly_items: usize,
+    buffered_bytes: usize,
+    reassembly: Reassembly,
     max_message_bytes: usize,
-    max_queued_messages: usize,
-    max_queued_bytes: usize,
-    max_receive_items: usize,
-    max_receive_bytes: usize,
+    received: bool,
     pub ack_dirty: bool,
 }
 
 impl Reliable {
-    pub fn new(
-        max_message_bytes: usize,
-        max_queued_messages: usize,
-        max_queued_bytes: usize,
-        max_receive_items: usize,
-        max_receive_bytes: usize,
-    ) -> Self {
+    pub fn new(max_message_bytes: usize) -> Self {
         Self {
             next_sequence: 0,
             queued: VecDeque::new(),
             in_flight: VecDeque::new(),
+            held_messages: 0,
+            held_bytes: 0,
             receive_next: 0,
             receive_buffer: BTreeMap::new(),
-            assembling: Vec::new(),
-            assembly_active: false,
-            assembly_items: 0,
+            buffered_bytes: 0,
+            reassembly: Reassembly::default(),
             max_message_bytes,
-            max_queued_messages,
-            max_queued_bytes,
-            max_receive_items,
-            max_receive_bytes,
+            received: false,
             ack_dirty: false,
         }
     }
 
-    pub fn enqueue(&mut self, payload: &[u8], fragment_bytes: usize) -> Result<(), ()> {
-        if !self.can_enqueue(payload.len(), fragment_bytes) {
-            return Err(());
-        }
-        if payload.is_empty() {
+    /// Queues one admitted message as fragments of at most
+    /// `fragment_bytes`; admission is the caller's.
+    pub fn enqueue(&mut self, payload: &[u8], fragment_bytes: usize) {
+        let mut start = 0;
+        loop {
+            let (fragment, end) = Fragment::at(payload.len(), start, fragment_bytes, TOTAL_LEN);
             self.queued.push_back(Slot {
-                more: false,
-                bytes: Vec::new(),
+                fragment,
+                bytes: payload[start..end].to_vec(),
             });
-            return Ok(());
+            if end == payload.len() {
+                break;
+            }
+            start = end;
         }
-        let mut chunks = payload.chunks(fragment_bytes).peekable();
-        while let Some(chunk) = chunks.next() {
-            self.queued.push_back(Slot {
-                more: chunks.peek().is_some(),
-                bytes: chunk.to_vec(),
-            });
-        }
-        Ok(())
+        self.held_messages += 1;
+        self.held_bytes += payload.len();
     }
 
-    pub fn can_enqueue(&self, payload_len: usize, fragment_bytes: usize) -> bool {
-        if fragment_bytes == 0 {
-            return false;
-        }
-        let fragment_count = payload_len.max(1).div_ceil(fragment_bytes);
-        if payload_len > self.max_message_bytes
-            || self.outbound_messages() >= self.max_queued_messages
-            || self
-                .outbound_bytes()
-                .checked_add(payload_len)
-                .is_none_or(|bytes| bytes > self.max_queued_bytes)
-            || self
-                .outbound_items()
-                .checked_add(fragment_count)
-                .is_none_or(|items| items > MAX_OUTBOUND_FRAGMENTS)
-        {
-            return false;
-        }
-        true
+    /// Messages and bytes held until acknowledged: queued, in flight and
+    /// unacknowledged alike.
+    pub const fn held(&self) -> (usize, usize) {
+        (self.held_messages, self.held_bytes)
     }
 
-    /// Remaining outbound allowance as (messages, fragments, bytes), each
-    /// counting everything still held: queued, in flight and unacknowledged.
-    pub fn outbound_allowance(&self) -> (usize, usize, usize) {
-        (
-            self.max_queued_messages
-                .saturating_sub(self.outbound_messages()),
-            MAX_OUTBOUND_FRAGMENTS.saturating_sub(self.outbound_items()),
-            self.max_queued_bytes.saturating_sub(self.outbound_bytes()),
-        )
+    /// The fragment to send now: the oldest due retransmission, else the
+    /// next queued fragment if the window admits it.
+    #[cfg(test)]
+    pub fn next_sendable(
+        &mut self,
+        now_ms: u64,
+        rto_ms: u64,
+        max_transmissions: u8,
+    ) -> Option<u16> {
+        self.first_due(now_ms, rto_ms, max_transmissions)
+            .or_else(|| self.admit())
     }
 
-    pub fn admit(&mut self) -> Option<u16> {
-        if self.queued.is_empty()
-            || self
+    /// Whether a queued fragment fits the window now.
+    pub fn window_open(&self) -> bool {
+        !self.queued.is_empty()
+            && self
                 .in_flight
                 .front()
-                .is_some_and(|first| sequence::diff(self.next_sequence, first.sequence) > WINDOW)
-        {
+                .is_none_or(|first| sequence::diff(self.next_sequence, first.sequence) <= WINDOW)
+    }
+
+    /// Moves the next queued fragment into the window, if it fits.
+    pub fn admit(&mut self) -> Option<u16> {
+        if !self.window_open() {
             return None;
         }
         let slot = self.queued.pop_front()?;
@@ -142,21 +131,16 @@ impl Reliable {
         Some(sequence)
     }
 
-    pub fn due_bounded(
-        &self,
-        now_ms: u64,
-        rto_ms: u64,
-        max_transmissions: u8,
-        output: &mut Vec<u16>,
-    ) {
-        output.extend(self.in_flight.iter().filter_map(|item| {
+    /// The oldest in-flight fragment due for (re)transmission.
+    pub fn first_due(&self, now_ms: u64, rto_ms: u64, max_transmissions: u8) -> Option<u16> {
+        self.in_flight.iter().find_map(|item| {
             (!item.acknowledged
                 && item.transmissions < max_transmissions
                 && item
                     .sent_at
                     .is_none_or(|sent| now_ms.saturating_sub(sent) >= rto_ms))
             .then_some(item.sequence)
-        }));
+        })
     }
 
     pub fn retry_exhausted(&self, now_ms: u64, rto_ms: u64, maximum: u8) -> bool {
@@ -205,8 +189,11 @@ impl Reliable {
                 }
             }
         }
-        while self.in_flight.front().is_some_and(|item| item.acknowledged) {
-            self.in_flight.pop_front();
+        while let Some(item) = self.in_flight.pop_front_if(|item| item.acknowledged) {
+            self.held_bytes -= item.slot.bytes.len();
+            if item.slot.ends_message() {
+                self.held_messages -= 1;
+            }
         }
     }
 
@@ -215,99 +202,72 @@ impl Reliable {
         self.queued.is_empty() && self.in_flight.is_empty()
     }
 
-    pub fn outbound_items(&self) -> usize {
-        self.queued.len().saturating_add(self.in_flight.len())
-    }
-
-    pub fn outbound_messages(&self) -> usize {
-        self.queued.iter().filter(|slot| !slot.more).count()
-            + self.in_flight.iter().filter(|item| !item.slot.more).count()
-    }
-
-    pub fn outbound_bytes(&self) -> usize {
-        self.queued
-            .iter()
-            .map(|slot| slot.bytes.len())
-            .chain(self.in_flight.iter().map(|item| item.slot.bytes.len()))
-            .sum()
-    }
-
-    pub fn inbound_items(&self) -> usize {
-        self.receive_buffer
-            .len()
-            .saturating_add(self.assembly_items)
-    }
-
-    pub fn inbound_bytes(&self) -> usize {
-        self.assembling.len().saturating_add(
-            self.receive_buffer
-                .values()
-                .map(|slot| slot.bytes.len())
-                .sum(),
-        )
-    }
-
+    /// Applies one received fragment. Fragments ahead of the next expected
+    /// sequence wait, within the window, for the gap to fill; the messages
+    /// this one completes in order are appended to `output`. A first
+    /// fragment declaring more than the message cap is refused on arrival.
     pub fn receive(
         &mut self,
         sequence: u16,
-        more: bool,
+        fragment: Fragment,
         payload: &[u8],
         output: &mut Vec<Vec<u8>>,
-    ) -> Result<(), ()> {
+    ) -> Result<(), FramingViolation> {
         self.ack_dirty = true;
-        let retains = more || sequence != self.receive_next || self.assembly_active;
-        if retains
-            && (self
-                .inbound_items()
-                .checked_add(1)
-                .is_none_or(|items| items > self.max_receive_items)
-                || self
-                    .inbound_bytes()
-                    .checked_add(payload.len())
-                    .is_none_or(|bytes| bytes > self.max_receive_bytes))
+        self.received = true;
+        if fragment
+            .total()
+            .is_some_and(|total| total as usize > self.max_message_bytes)
         {
-            return Err(());
+            return Err(FramingViolation);
         }
         if sequence == self.receive_next {
-            self.deliver(more, payload, output)?;
+            self.deliver(fragment, payload, output)?;
             self.receive_next = self.receive_next.wrapping_add(1);
             while let Some(slot) = self.receive_buffer.remove(&self.receive_next) {
-                self.deliver(slot.more, &slot.bytes, output)?;
+                self.buffered_bytes -= slot.bytes.len();
+                self.deliver(slot.fragment, &slot.bytes, output)?;
                 self.receive_next = self.receive_next.wrapping_add(1);
             }
         } else if sequence::newer(sequence, self.receive_next)
             && sequence::diff(sequence, self.receive_next) <= WINDOW
+            && !self.receive_buffer.contains_key(&sequence)
         {
-            self.receive_buffer.entry(sequence).or_insert_with(|| Slot {
-                more,
-                bytes: payload.to_vec(),
-            });
+            self.buffered_bytes += payload.len();
+            self.receive_buffer.insert(
+                sequence,
+                Slot {
+                    fragment,
+                    bytes: payload.to_vec(),
+                },
+            );
         }
         Ok(())
     }
 
-    fn deliver(&mut self, more: bool, payload: &[u8], output: &mut Vec<Vec<u8>>) -> Result<(), ()> {
-        if self
-            .assembling
-            .len()
-            .checked_add(payload.len())
-            .is_none_or(|bytes| bytes > self.max_message_bytes)
-        {
-            return Err(());
-        }
-        if more {
-            self.assembling.extend_from_slice(payload);
-            self.assembly_active = true;
-            self.assembly_items = self.assembly_items.saturating_add(1);
-        } else if !self.assembly_active {
-            output.push(payload.to_vec());
-        } else {
-            self.assembling.extend_from_slice(payload);
-            output.push(std::mem::take(&mut self.assembling));
-            self.assembly_active = false;
-            self.assembly_items = 0;
-        }
+    fn deliver(
+        &mut self,
+        fragment: Fragment,
+        payload: &[u8],
+        output: &mut Vec<Vec<u8>>,
+    ) -> Result<(), FramingViolation> {
+        output.extend(
+            self.reassembly
+                .push(fragment, payload, self.max_message_bytes)?,
+        );
         Ok(())
+    }
+
+    /// Inbound bytes retained: out-of-order fragments and the message being
+    /// assembled.
+    pub fn retained_bytes(&self) -> usize {
+        self.buffered_bytes + self.reassembly.retained_bytes()
+    }
+
+    /// Whether this lane has received anything, so its acknowledgement
+    /// means something to the peer.
+    pub const fn has_received(&self) -> bool {
+        self.received
     }
 
     pub fn ack(&self) -> Ack {
@@ -332,22 +292,8 @@ mod tests {
     use super::*;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    /// #254: admission is exact at the message-size, queued-message and
-    /// queued-byte caps, and `outbound_messages` counts messages, not
-    /// fragments.
-    #[wasm_bindgen_test(unsupported = test)]
-    fn admission_caps_are_exact() {
-        let mut lane = Reliable::new(10, 2, 15, 128, 1 << 20);
-        assert!(lane.can_enqueue(10, 4));
-        assert!(!lane.can_enqueue(11, 4));
-        lane.enqueue(&[1; 10], 4).unwrap();
-        assert_eq!(lane.outbound_messages(), 1, "three fragments, one message");
-        assert_eq!(lane.outbound_items(), 3);
-        assert!(lane.can_enqueue(5, 4), "exactly at the byte cap");
-        assert!(!lane.can_enqueue(6, 4));
-        lane.enqueue(&[2; 5], 4).unwrap();
-        assert_eq!(lane.outbound_messages(), 2);
-        assert!(!lane.can_enqueue(0, 4), "message cap reached");
+    fn lane() -> Reliable {
+        Reliable::new(64 * 1024)
     }
 
     /// #254: a stale fragment (already delivered in order) is dropped, a
@@ -357,35 +303,50 @@ mod tests {
     fn receive_gates_stale_windowed_and_beyond_window_fragments() {
         let mut lane = lane();
         let mut out = Vec::new();
-        lane.receive(0, false, b"first", &mut out).unwrap();
+        lane.receive(0, Fragment::Whole, b"first", &mut out)
+            .unwrap();
         assert_eq!(out, vec![b"first".to_vec()]);
-        lane.receive(0, false, b"first", &mut out).unwrap();
+        lane.receive(0, Fragment::Whole, b"first", &mut out)
+            .unwrap();
         assert_eq!(out.len(), 1, "a duplicate is not delivered again");
-        assert_eq!(lane.inbound_items(), 0, "nor retained");
-        lane.receive(1 + WINDOW, false, b"edge", &mut out).unwrap();
+        assert_eq!(lane.retained_bytes(), 0, "nor retained");
+        lane.receive(1 + WINDOW, Fragment::Whole, b"edge", &mut out)
+            .unwrap();
         assert_eq!(
-            lane.inbound_items(),
-            1,
+            lane.retained_bytes(),
+            4,
             "exactly one window ahead is buffered"
         );
-        lane.receive(2 + WINDOW, false, b"beyond", &mut out)
+        lane.receive(2 + WINDOW, Fragment::Whole, b"beyond", &mut out)
             .unwrap();
-        assert_eq!(lane.inbound_items(), 1, "beyond the window is ignored");
+        assert_eq!(lane.retained_bytes(), 4, "beyond the window is ignored");
         assert_eq!(out.len(), 1);
     }
 
-    fn lane() -> Reliable {
-        Reliable::new(64 * 1024, 128, 256 * 1024, 128, 256 * 1024)
+    /// A first fragment declaring more than the cap is refused when it
+    /// arrives, even out of order, before anything is buffered.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn an_over_cap_total_is_refused_on_arrival() {
+        let mut lane = Reliable::new(100);
+        let mut out = Vec::new();
+        assert_eq!(
+            lane.receive(5, Fragment::First { total: 101 }, b"ab", &mut out),
+            Err(FramingViolation)
+        );
+        assert_eq!(lane.retained_bytes(), 0);
+        lane.receive(5, Fragment::First { total: 100 }, b"ab", &mut out)
+            .unwrap();
+        assert_eq!(lane.retained_bytes(), 2);
     }
 
     #[wasm_bindgen_test(unsupported = test)]
     fn selective_ack_and_karn_sampling_are_exact() {
         let mut reliable = lane();
         for payload in [b"zero".as_slice(), b"one", b"two"] {
-            reliable.enqueue(payload, 100).unwrap();
+            reliable.enqueue(payload, 100);
         }
         for sequence in 0..3 {
-            assert_eq!(reliable.admit(), Some(sequence));
+            assert_eq!(reliable.next_sendable(10, 100, 12), Some(sequence));
             reliable.mark_sent(sequence, 10);
         }
         reliable.mark_sent(1, 20);
@@ -400,11 +361,12 @@ mod tests {
             &mut samples,
         );
         assert_eq!(samples, vec![30]);
-        assert_eq!(reliable.outbound_items(), 3);
+        assert_eq!(reliable.held(), (3, 10));
 
         reliable.acknowledge(Ack { next: 3, bits: 0 }, 60, &mut samples);
         assert_eq!(samples, vec![30, 50]);
         assert!(reliable.outbound_is_idle());
+        assert_eq!(reliable.held(), (0, 0));
     }
 
     #[wasm_bindgen_test(unsupported = test)]
@@ -412,7 +374,7 @@ mod tests {
         let mut reliable = lane();
         reliable.next_sequence = u16::MAX - 1;
         for _ in 0..3 {
-            reliable.enqueue(b"", 100).unwrap();
+            reliable.enqueue(b"", 100);
         }
         assert_eq!(reliable.admit(), Some(u16::MAX - 1));
         assert_eq!(reliable.admit(), Some(u16::MAX));
@@ -426,10 +388,10 @@ mod tests {
         reliable.receive_next = u16::MAX;
         let mut delivered = Vec::new();
         reliable
-            .receive(0, false, b"after", &mut delivered)
+            .receive(0, Fragment::Whole, b"after", &mut delivered)
             .unwrap();
         reliable
-            .receive(u16::MAX, false, b"before", &mut delivered)
+            .receive(u16::MAX, Fragment::Whole, b"before", &mut delivered)
             .unwrap();
         assert_eq!(delivered, vec![b"before".to_vec(), b"after".to_vec()]);
     }
@@ -473,51 +435,47 @@ mod properties {
             )
     }
 
-    fn lane() -> Reliable {
-        Reliable::new(4 * FRAGMENT, 64, 1 << 20, 256, 1 << 20)
-    }
+    type Datagram = (u16, Fragment, Vec<u8>);
 
-    /// One sender turn: admit queued fragments, transmit what is due, and
-    /// return the datagrams put on the wire.
-    fn transmit(sender: &mut Reliable, now_ms: u64) -> Vec<(u16, bool, Vec<u8>)> {
-        while sender.admit().is_some() {}
-        let mut due = Vec::new();
-        sender.due_bounded(now_ms, RTO_MS, MAX_TRANSMISSIONS, &mut due);
-        due.iter()
-            .map(|&sequence| {
-                sender.mark_sent(sequence, now_ms);
-                let slot = sender.slot(sequence).expect("due fragment is in flight");
-                (sequence, slot.more, slot.bytes.clone())
-            })
-            .collect()
+    /// One sender turn: transmit everything due or admitted, and return the
+    /// datagrams put on the wire.
+    fn transmit(sender: &mut Reliable, now_ms: u64) -> Vec<Datagram> {
+        let mut wire = Vec::new();
+        while let Some(sequence) = sender.next_sendable(now_ms, RTO_MS, MAX_TRANSMISSIONS) {
+            sender.mark_sent(sequence, now_ms);
+            let slot = sender.slot(sequence).expect("sent fragment is in flight");
+            wire.push((sequence, slot.fragment, slot.bytes.clone()));
+        }
+        wire
     }
 
     /// Defect: a window or ack-bitmap off-by-one, a reassembly that splices
-    /// fragments from different messages, or a retransmit path that
-    /// delivers a duplicate. Oracle: whatever the channel drops, duplicates
-    /// or reorders, the receiver's output is always a prefix of the sent
+    /// fragments from different messages, a retransmit path that delivers a
+    /// duplicate, or held-message accounting that never returns the
+    /// allowance. Oracle: whatever the channel drops, duplicates or
+    /// reorders, the receiver's output is always a prefix of the sent
     /// messages, at most `WINDOW + 1` fragments are ever in flight and they
     /// span at most one window, and once the channel is clean every message
-    /// arrives and the sender goes idle.
+    /// arrives and the sender goes idle holding nothing.
     #[test]
     fn reliable_lane_delivers_exactly_once_in_order_over_a_hostile_channel() {
         check(prop::collection::vec(round(), 1..60), |rounds| {
-            let (mut sender, mut receiver) = (lane(), lane());
+            let (mut sender, mut receiver) =
+                (Reliable::new(4 * FRAGMENT), Reliable::new(4 * FRAGMENT));
             let mut sent = Vec::new();
             let mut delivered = Vec::new();
             let mut now_ms = 0;
 
-            let deliver =
-                |lane: &mut Reliable, datagram: &(u16, bool, Vec<u8>), out: &mut Vec<Vec<u8>>| {
-                    lane.receive(datagram.0, datagram.1, &datagram.2, out)
-                        .expect("caps are generous in this model");
-                };
+            let deliver = |lane: &mut Reliable, datagram: &Datagram, out: &mut Vec<Vec<u8>>| {
+                lane.receive(datagram.0, datagram.1, &datagram.2, out)
+                    .expect("the sender only sends valid fragments");
+            };
 
             for round in &rounds {
                 if let Some(message) = &round.enqueue
-                    && sender.can_enqueue(message.len(), FRAGMENT)
+                    && sender.held().0 < 64
                 {
-                    sender.enqueue(message, FRAGMENT).unwrap();
+                    sender.enqueue(message, FRAGMENT);
                     sent.push(message.clone());
                 }
                 let mut wire = transmit(&mut sender, now_ms);
@@ -571,6 +529,8 @@ mod properties {
                 sender.acknowledge(receiver.ack(), now_ms, &mut samples);
             }
             prop_assert!(sender.outbound_is_idle(), "sender never drained");
+            prop_assert_eq!(sender.held(), (0, 0));
+            prop_assert_eq!(receiver.retained_bytes(), 0);
             prop_assert_eq!(delivered, sent);
             Ok(())
         });

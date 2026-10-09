@@ -457,3 +457,47 @@ Use the [current specs](README.md) for implementation and the
   Rationale: Rapier made the owner's driving game handle worse than arcade
   rules; designed handling, prediction and rollback come easier from rules
   written for the game.
+
+- **D-34** Decision, 2026-10-09 (#268): reliable delivery has four
+  independent lanes (`RELIABLE_LANES`), each exact and in order, unordered
+  across lanes, sharing a connection by weighted deficit round robin only;
+  there is no strict priority. Every fragment is charged one fragment,
+  since each takes one datagram or frame, so a backlogged lane sends its
+  weight in fragments per round and the gap between two of its fragments is
+  at most the other lanes' weights. On UDP each lane has its own sequence
+  space, window and retransmission, as ENet channels, GameNetworkingSockets
+  lanes and QUIC streams do, so loss on one lane never delays another;
+  WebSocket lanes share the TCP stream, keep admission per lane and bound
+  the application's interleave to one 16 KiB fragment. A long message's
+  first fragment declares its total, checked against the cap before
+  anything is buffered; there is no reassembly stall timer, since
+  keepalives decide liveness, the ARQ progress and the caps memory. Both
+  wire formats move to version 2 without negotiation: UDP carries a lane
+  acknowledgement mask in the kind byte's high nibble and only the
+  acknowledgements that fit, so `MAX_LATEST_STATE_BYTES` stays 1168 while
+  reliable fragments shrink to 1150 to carry all four; WebSocket gains flags
+  and lane bytes (an 18-byte header) and 16 KiB frames.
+  Owner direction, 2026-10-09: the same change adds a third delivery
+  class, `Delivery::Unreliable(Lane)`, superseding D-5's two-class scope.
+  Unreliable means never retransmitted or fragmented (at most
+  `MAX_UNRELIABLE_BYTES`, 1168) and unordered, delivered at most once (UDP
+  receivers drop network duplicates by a per-lane sequence and a
+  1,024-message window, as ENet's unsequenced packets do). The sending side
+  never discards an accepted message of any class while the connection
+  lives: overproduction is refused with `WouldBlock` from a bounded
+  per-lane queue, an unsent UDP message waits for a later flush, and
+  WebSocket sends every unreliable frame in its lane's schedule under the
+  existing pacing. A receiver that is not polled drops its oldest unpolled
+  unreliable messages, as a full UDP socket buffer does; reliable overflow
+  still closes the peer (Mission Control's decision on review, so a slow
+  poller is never disconnected for unreliable traffic on any transport). A
+  lane's unreliable messages share its quantum, taking turns with its new
+  reliable fragments.
+  Rationale: the issue requires progress for every lane, which strict
+  priority does not give (GameNetworkingSockets documents that lower
+  priorities are starved); 8:1 reproduces Stevecraft's scheduler as a game
+  setting, not a default. Keeping the latest-state cap avoids breaking games
+  that size snapshots to it. Games send position-style data unreliably
+  expecting most of it to arrive, as on UDP; dropping it at the sender
+  under backpressure would starve them on WebSocket for as long as a
+  backlog lasts.

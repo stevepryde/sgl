@@ -25,11 +25,11 @@ use tungstenite::protocol::{Message, WebSocketConfig};
 
 use self::worker::{IoWorker, WorkerHandle};
 use super::native_write::{drain_outbound, send_ping};
-use super::queue::{PeerState, QueuedFrame};
+use super::queue::PeerState;
 use super::{MAX_WEBSOCKET_FRAME_BYTES, WebSocketIdentity, decode_envelope, encode_envelope};
 use crate::{
     ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, ReliableCapacity,
-    RttEstimate, RttEstimator, SendError, ServerEvent, ServerIo,
+    ReliableConfig, RttEstimate, RttEstimator, SendError, ServerEvent, ServerIo,
 };
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -179,9 +179,14 @@ struct SharedPeer {
 }
 
 impl SharedPeer {
-    fn new(magic: [u8; 3], ping_interval_ms: u64, timeout_ms: u64) -> Arc<Self> {
+    fn new(
+        magic: [u8; 3],
+        ping_interval_ms: u64,
+        timeout_ms: u64,
+        reliable: &ReliableConfig,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new(PeerState::new()),
+            state: Mutex::new(PeerState::new(reliable)),
             liveness: Mutex::new(Liveness {
                 now_ms: 0,
                 last_activity_ms: 0,
@@ -246,7 +251,7 @@ impl SharedPeer {
             let state = lock(&self.state);
             if state.terminal().is_some()
                 || state.graceful_closing()
-                || state.next_released_outbound().is_some()
+                || state.has_released_outbound()
             {
                 return true;
             }
@@ -377,6 +382,7 @@ impl Callback for Admission {
 struct ListenerContext {
     admission: Admission,
     magic: [u8; 3],
+    reliable: ReliableConfig,
     handshake_timeout: Duration,
     ping_interval_ms: u64,
     timeout_ms: u64,
@@ -437,6 +443,8 @@ pub struct NativeWebSocketServerConfig {
     pub ping_interval_ms: u64,
     /// Caller-clock inactivity timeout. Zero disables the timeout.
     pub timeout_ms: u64,
+    /// Every connection's reliable lanes: weights and per-lane bounds.
+    pub reliable: ReliableConfig,
 }
 
 impl NativeWebSocketServerConfig {
@@ -453,6 +461,7 @@ impl NativeWebSocketServerConfig {
             handshake_timeout: Duration::from_secs(2),
             ping_interval_ms: 5_000,
             timeout_ms: 15_000,
+            reliable: ReliableConfig::DEFAULT,
         }
     }
 
@@ -520,6 +529,10 @@ impl NativeWebSocketServer {
                 "invalid bounded WebSocket timeout configuration",
             ));
         }
+        config
+            .reliable
+            .validate()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let listener = TcpListener::bind(config.bind_addr)?;
         listener.set_nonblocking(true)?;
         let local_addr = listener.local_addr()?;
@@ -533,6 +546,7 @@ impl NativeWebSocketServer {
                 subprotocol: config.identity.subprotocol,
             })),
             magic: config.identity.magic,
+            reliable: config.reliable,
             handshake_timeout: config.handshake_timeout,
             ping_interval_ms: config.ping_interval_ms,
             timeout_ms: config.timeout_ms,
@@ -604,11 +618,11 @@ impl ServerIo for NativeWebSocketServer {
                     .expect("connection key came from registry");
                 let event = if peer.connected_announced {
                     let mut state = lock(&peer.shared.state);
-                    if let Some(frame) = state.pop_inbound() {
+                    if let Some((delivery, payload)) = state.pop_inbound() {
                         Some(ServerEvent::Message {
                             conn,
-                            delivery: frame.delivery,
-                            payload: frame.payload,
+                            delivery,
+                            payload,
                         })
                     } else if let Some(reason) = state.terminal()
                         && !peer.disconnected_announced
@@ -666,11 +680,11 @@ impl ServerIo for NativeWebSocketServer {
         })
     }
 
-    fn capacity(&self, conn: ConnectionId, _lane: Lane) -> ReliableCapacity {
+    fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
         lock(&self.registry)
             .get(&conn)
             .map_or_else(ReliableCapacity::default, |peer| {
-                lock(&peer.shared.state).capacity()
+                lock(&peer.shared.state).capacity(lane)
             })
     }
 
@@ -748,6 +762,8 @@ pub struct NativeWebSocketClientConfig {
     pub timeout_ms: u64,
     /// Maximum wall-clock time spent connecting and completing the HTTP upgrade.
     pub handshake_timeout: Duration,
+    /// The connection's reliable lanes: weights and per-lane bounds.
+    pub reliable: ReliableConfig,
 }
 
 impl NativeWebSocketClientConfig {
@@ -765,6 +781,7 @@ impl NativeWebSocketClientConfig {
             ping_interval_ms: 5_000,
             timeout_ms: 15_000,
             handshake_timeout: Duration::from_secs(2),
+            reliable: ReliableConfig::DEFAULT,
         }
     }
 }
@@ -799,6 +816,10 @@ impl NativeWebSocketClient {
                 "invalid bounded WebSocket timeout configuration",
             ));
         }
+        config
+            .reliable
+            .validate()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let canonical = canonical_origin(&config.origin)?;
         if canonical != config.origin {
             return Err(io::Error::new(
@@ -829,6 +850,7 @@ impl NativeWebSocketClient {
             config.identity.magic,
             config.ping_interval_ms,
             config.timeout_ms,
+            &config.reliable,
         );
         let (mut worker, waker) = IoWorker::new()?;
         let response = worker.connect(
@@ -871,11 +893,8 @@ impl ClientIo for NativeWebSocketClient {
         }
         {
             let mut state = lock(&self.shared.state);
-            while let Some(frame) = state.pop_inbound() {
-                events.push(ClientEvent::Message {
-                    delivery: frame.delivery,
-                    payload: frame.payload,
-                });
+            while let Some((delivery, payload)) = state.pop_inbound() {
+                events.push(ClientEvent::Message { delivery, payload });
             }
             if let Some(reason) = state.terminal()
                 && !self.disconnected_announced
@@ -899,8 +918,8 @@ impl ClientIo for NativeWebSocketClient {
         result
     }
 
-    fn capacity(&self, _lane: Lane) -> ReliableCapacity {
-        lock(&self.shared.state).capacity()
+    fn capacity(&self, lane: Lane) -> ReliableCapacity {
+        lock(&self.shared.state).capacity(lane)
     }
 
     fn flush(&mut self, now_ms: u64) {
@@ -974,12 +993,8 @@ where
                     closing = true;
                     continue;
                 };
-                let _ = lock(&shared.state).receive(QueuedFrame {
-                    delivery: envelope.delivery,
-                    sequence: envelope.sequence,
-                    payload: envelope.payload,
-                    generation: 0,
-                });
+                // A refused frame closes the peer state with its reason.
+                let _ = lock(&shared.state).receive(envelope);
             }
             // Tungstenite queues the pong itself; the next read or flush
             // writes it.
@@ -995,7 +1010,9 @@ where
                 shared.close(DisconnectReason::Peer);
                 closing = true;
             }
-            Ok(Message::Text(_) | Message::Frame(_)) => {
+            // Text, and a frame past `MAX_WEBSOCKET_FRAME_BYTES`, break the
+            // framing.
+            Ok(Message::Text(_) | Message::Frame(_)) | Err(tungstenite::Error::Capacity(_)) => {
                 shared.close(DisconnectReason::ProtocolViolation);
                 closing = true;
             }
@@ -1023,16 +1040,11 @@ where
     let magic = shared.magic;
     let drain = drain_outbound(socket, pending, || {
         let mut state = lock(&shared.state);
-        let frame = state.peek_released_outbound()?;
-        let encoded =
-            encode_envelope(magic, frame.delivery, frame.sequence, &frame.payload).ok()?;
-        if frame.delivery == Delivery::LatestState {
-            let sequence = frame.sequence;
-            let _ = state.pop_released_outbound();
-            state.acknowledge_latest(sequence);
-        } else {
-            let _ = state.pop_released_outbound();
-        }
+        let frame = state.pop_released_frame()?;
+        let Ok(encoded) = encode_envelope(magic, &frame.envelope()) else {
+            state.close(DisconnectReason::ProtocolViolation);
+            return None;
+        };
         Some(Message::Binary(encoded.into()))
     });
     if drain.is_err() {
@@ -1121,10 +1133,21 @@ mod tests {
     }
 
     fn envelope(delivery: Delivery, sequence: u64, payload: &[u8]) -> Message {
-        Message::Binary(
-            encode_envelope(MAGIC, delivery, sequence, payload)
-                .expect("envelope")
-                .into(),
+        let envelope = crate::websocket::Envelope {
+            delivery,
+            sequence,
+            fragment: crate::websocket::Fragment::Whole,
+            payload,
+        };
+        Message::Binary(encode_envelope(MAGIC, &envelope).expect("envelope").into())
+    }
+
+    fn shared(ping_interval_ms: u64, timeout_ms: u64) -> Arc<SharedPeer> {
+        SharedPeer::new(
+            MAGIC,
+            ping_interval_ms,
+            timeout_ms,
+            &ReliableConfig::DEFAULT,
         )
     }
 
@@ -1146,7 +1169,7 @@ mod tests {
     /// talking is never timed out.
     #[test]
     fn socket_tick_queues_inbound_envelopes_and_counts_them_as_activity() {
-        let shared = SharedPeer::new(MAGIC, 0, 50);
+        let shared = shared(0, 50);
         shared.advance(0);
         let mut socket = server_socket(client_frames(vec![
             envelope(Delivery::RELIABLE_ORDERED, 0, b"first"),
@@ -1157,15 +1180,13 @@ mod tests {
             SocketTick::Continue { idle: true }
         );
         let mut state = lock(&shared.state);
-        let first = state.pop_inbound().expect("first frame");
         assert_eq!(
-            (first.delivery, &first.payload[..]),
-            (Delivery::RELIABLE_ORDERED, &b"first"[..])
+            state.pop_inbound(),
+            Some((Delivery::RELIABLE_ORDERED, b"first".to_vec()))
         );
-        let second = state.pop_inbound().expect("second frame");
         assert_eq!(
-            (second.delivery, &second.payload[..]),
-            (Delivery::LatestState, &b"state"[..])
+            state.pop_inbound(),
+            Some((Delivery::LatestState, b"state".to_vec()))
         );
         assert!(state.pop_inbound().is_none());
         drop(state);
@@ -1193,7 +1214,7 @@ mod tests {
             (Message::Close(None), DisconnectReason::Peer),
         ];
         for (message, reason) in cases {
-            let shared = SharedPeer::new(MAGIC, 0, 0);
+            let shared = shared(0, 0);
             let mut socket = server_socket(client_frames(vec![message]));
             assert_eq!(
                 tick(&mut socket, &shared),
@@ -1214,7 +1235,7 @@ mod tests {
     /// and acknowledged so the slot is free again.
     #[test]
     fn socket_tick_writes_released_outbound_in_order_and_acknowledges_latest() {
-        let shared = SharedPeer::new(MAGIC, 0, 0);
+        let shared = shared(0, 0);
         {
             let mut state = lock(&shared.state);
             state.send(Delivery::RELIABLE_ORDERED, b"r1").unwrap();
@@ -1234,7 +1255,7 @@ mod tests {
                 .map(|m| match m {
                     Message::Binary(bytes) => {
                         let e = decode_envelope(MAGIC, &bytes).expect("envelope");
-                        (e.delivery, e.sequence, e.payload)
+                        (e.delivery, e.sequence, e.payload.to_vec())
                     }
                     other => panic!("unexpected frame {other:?}"),
                 })
@@ -1254,7 +1275,7 @@ mod tests {
         assert_eq!(frames[2].0, Delivery::LatestState);
         assert_ne!(frames[2].1, 0);
         assert_eq!(&frames[2].2[..], b"fresh");
-        assert!(lock(&shared.state).next_released_outbound().is_none());
+        assert!(!lock(&shared.state).has_released_outbound());
         // The acknowledged slot accepts the next state with the next sequence.
         lock(&shared.state)
             .send(Delivery::LatestState, b"next")
@@ -1265,7 +1286,7 @@ mod tests {
     /// read by a later turn is sampled into the RTT at the next clock.
     #[test]
     fn socket_tick_pings_on_the_caller_clock_and_samples_the_pong() {
-        let shared = SharedPeer::new(MAGIC, 10, 0);
+        let shared = shared(10, 0);
         shared.advance(0);
         let mut socket = server_socket(Vec::new());
         tick(&mut socket, &shared);
@@ -1295,7 +1316,7 @@ mod tests {
     /// edge, and both go out once the socket takes writes again.
     #[test]
     fn socket_tick_holds_control_frames_while_writes_block() {
-        let shared = SharedPeer::new(MAGIC, 10, 0);
+        let shared = shared(10, 0);
         shared.advance(0);
         shared.advance(10);
         let mut socket = server_socket(client_frames(vec![Message::Ping(b"hi".to_vec().into())]));
@@ -1325,7 +1346,7 @@ mod tests {
     /// rest wait for the next turn, and a saturated turn does not idle.
     #[test]
     fn socket_tick_bounds_reads_per_turn() {
-        let shared = SharedPeer::new(MAGIC, 0, 0);
+        let shared = shared(0, 0);
         let frames = (0..MAX_READS_PER_WAKE + 2)
             .map(|_| envelope(Delivery::RELIABLE_ORDERED, 0, b"x"))
             .collect();
@@ -1354,7 +1375,7 @@ mod tests {
     /// writes the Close frame and stops the worker as `Local`.
     #[test]
     fn socket_tick_drains_before_finishing_a_graceful_close() {
-        let shared = SharedPeer::new(MAGIC, 0, 0);
+        let shared = shared(0, 0);
         {
             let mut state = lock(&shared.state);
             state.send(Delivery::RELIABLE_ORDERED, b"bye").unwrap();
@@ -1370,7 +1391,7 @@ mod tests {
         let frames = server_frames(std::mem::take(&mut socket.get_mut().outbound));
         assert!(
             matches!(&frames[..], [Message::Binary(bytes), Message::Close(_)]
-                if decode_envelope(MAGIC, bytes).map(|e| e.payload) == Ok(b"bye".to_vec())),
+                if decode_envelope(MAGIC, bytes).map(|e| e.payload) == Ok(&b"bye"[..])),
             "{frames:?}"
         );
     }
@@ -1477,14 +1498,14 @@ mod tests {
     #[test]
     fn server_poll_is_globally_bounded_and_round_robin() {
         fn peer(payloads: &[&[u8]]) -> ServerPeer {
-            let shared = SharedPeer::new(*b"TST", 0, 0);
+            let shared = shared(0, 0);
             for payload in payloads {
                 lock(&shared.state)
-                    .receive(QueuedFrame {
+                    .receive(crate::websocket::Envelope {
                         delivery: Delivery::RELIABLE_ORDERED,
                         sequence: 0,
-                        payload: payload.to_vec(),
-                        generation: 0,
+                        fragment: crate::websocket::Fragment::Whole,
+                        payload,
                     })
                     .unwrap();
             }
@@ -1540,13 +1561,13 @@ mod tests {
 
     #[test]
     fn async_activity_and_pong_are_sampled_at_the_next_caller_clock() {
-        let active = SharedPeer::new(*b"TST", 0, 30);
+        let active = shared(0, 30);
         active.advance(0);
         active.observe_activity();
         active.advance(100);
         assert_eq!(lock(&active.state).terminal(), None);
 
-        let pinging = SharedPeer::new(*b"TST", 10, 0);
+        let pinging = shared(10, 0);
         pinging.advance(0);
         pinging.advance(10);
         let ping = pinging.take_ping().unwrap();

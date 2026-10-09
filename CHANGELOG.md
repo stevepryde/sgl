@@ -28,6 +28,37 @@ docs and specs the entry links.
   `Delivery::Reliable(_)`); treat `WouldBlock` as "keep it and retry
   later", not as a lost connection; implement `capacity` on any
   `ServerIo`/`ClientIo` wrapper.
+- `sgl-net` lanes: `RELIABLE_LANES` 1 → 4 independent lanes (each ordered on
+  its own, unordered across lanes, own bounds, shared by weight). The new
+  `ReliableConfig`/`LaneConfig` (`reliable` on `EndpointConfig`,
+  `NativeWebSocketServerConfig`, `NativeWebSocketClientConfig` and
+  `BrowserWebSocketConfig`; `memory_duplex_with`) replace
+  `RELIABLE_OUTBOUND_*`, `RELIABLE_INBOUND_*`, `memory::MAX_RELIABLE_QUEUED`
+  and `ThreadedUdpConfig::{reliable_queue_messages, reliable_queue_bytes,
+  event_queue_messages}`, with the same values per lane (`DEFAULT_LANE_*`);
+  `EndpointConfig::global_reliable_*_items` → `global_reliable_*_messages`,
+  defaults 4,096 → 12,288 messages and 4 → 24 MiB.
+  Migration: rename the fields and constants; one-lane games change nothing
+  else; others pick `Lane::new(n)` and set `config.reliable.lanes[n].weight`.
+- `sgl-net` `Delivery::Unreliable(Lane)` (new): messages of at most
+  `MAX_UNRELIABLE_BYTES` (1168) sent once, never retransmitted, unordered,
+  delivered at most once; a full send queue (`LaneConfig::unreliable_messages`
+  / `unreliable_bytes`) refuses with `WouldBlock` and the sender never drops
+  an accepted one; a receiver that is not polled drops its oldest unpolled
+  unreliable messages, as a full UDP socket buffer does, while reliable
+  overflow still closes the peer. Migration: exhaustive `Delivery` matches
+  add an arm.
+- `sgl-net` wire version 2 on UDP and WebSocket: old and new builds cannot
+  connect, so rebuild servers and clients together and change the WebSocket
+  subprotocol. `udp::MAX_RELIABLE_FRAGMENT_BYTES` 1168 → 1150; WebSocket
+  frames carry at most `WEBSOCKET_FRAGMENT_BYTES` (16 KiB), so
+  `MAX_WEBSOCKET_FRAME_BYTES` is 16,406 and an oversized frame is
+  `ProtocolViolation` (was `Transport`). `Envelope` borrows its payload and
+  gains `fragment: Fragment`, `encode_envelope(magic, &envelope)`, and
+  `EnvelopeError` gains `InvalidLane`, `InvalidFlags` and `InvalidTotal`.
+  `SimulatedConfig` gains `lane_loss_per_10k`. Migration: add
+  `lane_loss_per_10k: [0; RELIABLE_LANES]` or `..Default::default()` to
+  `SimulatedConfig` literals; direct envelope users pass an `Envelope`.
 - `sgl-core` `FixedClock`: new opt-in `FixedClock::with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })`
   runs several steps per frame to follow elapsed time, and the new
   `dropped_dt` field reports unsimulated time; `with_hz` and `new` keep

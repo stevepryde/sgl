@@ -35,9 +35,37 @@
 //! }
 //! assert_eq!(received, sent);
 //! ```
+//!
+//! There are three delivery classes: [`Delivery::Reliable`] and
+//! [`Delivery::Unreliable`] on one of [`RELIABLE_LANES`] lanes, and
+//! [`Delivery::LatestState`]. Reliable messages are exact and in order
+//! within their lane; unreliable ones are never retransmitted and unordered,
+//! delivered at most once. The sender never drops an accepted message of any
+//! class while the connection lives; the network may lose an unreliable one,
+//! and a receiver that is not polled drops its oldest unpolled unreliable
+//! messages, as a full UDP socket buffer does (reliable overflow closes the
+//! peer).
+//! Each lane has its own bounds and a scheduling weight in
+//! [`ReliableConfig`]. Busy lanes share the connection by weight, so a bulk
+//! transfer on one lane neither refuses nor starves messages on another:
+//!
+//! ```
+//! use sgl_net::{ClientIo, Delivery, Lane, ReliableConfig, memory_duplex_with};
+//!
+//! let bulk = Lane::new(1).expect("lane 1 exists");
+//! let mut reliable = ReliableConfig::default();
+//! reliable.lanes[Lane::DEFAULT.index()].weight = 8;
+//! reliable.lanes[bulk.index()].weight = 1;
+//! // Both ends of a connection use the same configuration.
+//! let (mut client, _server) = memory_duplex_with(&reliable)?;
+//! client.send(Delivery::Reliable(bulk), &[0; 60 * 1024])?;
+//! client.send(Delivery::RELIABLE_ORDERED, b"input")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 #![forbid(unsafe_code)]
 
+mod lanes;
 pub mod memory;
 pub mod mux;
 pub mod udp;
@@ -46,8 +74,14 @@ pub mod websocket;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod proptest_support;
 
+pub use lanes::{
+    DEFAULT_LANE_INBOUND_BYTES, DEFAULT_LANE_INBOUND_MESSAGES, DEFAULT_LANE_OUTBOUND_BYTES,
+    DEFAULT_LANE_OUTBOUND_MESSAGES, DEFAULT_LANE_UNRELIABLE_BYTES,
+    DEFAULT_LANE_UNRELIABLE_MESSAGES, LANE_QUEUE_BYTES_LIMIT, LANE_QUEUE_MESSAGES_LIMIT,
+    LaneConfig, MAX_LANE_WEIGHT, ReliableConfig, ReliableConfigError,
+};
 pub use memory::{
-    MAX_RELIABLE_QUEUED, MemoryClientIo, MemoryServerIo, SOLO_CONNECTION, memory_duplex,
+    MemoryClientIo, MemoryServerIo, SOLO_CONNECTION, memory_duplex, memory_duplex_with,
 };
 pub use mux::{MAX_MUX_ORPHAN_BYTES, MAX_MUX_ORPHAN_MESSAGES, ServerIoMux};
 
@@ -58,18 +92,15 @@ pub const MAX_RELIABLE_MESSAGE_BYTES: usize = 64 * 1024;
 /// Maximum bytes in one latest-state payload across every transport.
 ///
 /// This is exactly the payload space left inside a 1,200-byte UDP datagram
-/// after its nonce-bearing envelope, acknowledgement state, and item header.
-/// WebSocket and memory transports use the same cap so a payload accepted by
-/// one transport remains portable to every other transport.
-pub const MAX_LATEST_STATE_BYTES: usize = udp::MAX_RELIABLE_FRAGMENT_BYTES;
-/// Maximum reliable messages awaiting outbound transport work per peer.
-pub const RELIABLE_OUTBOUND_MESSAGES: usize = 128;
-/// Maximum reliable bytes awaiting outbound transport work per peer.
-pub const RELIABLE_OUTBOUND_BYTES: usize = 256 * 1024;
-/// Maximum reliable messages awaiting delivery to a consumer per peer.
-pub const RELIABLE_INBOUND_MESSAGES: usize = 128;
-/// Maximum reliable bytes awaiting delivery to a consumer per peer.
-pub const RELIABLE_INBOUND_BYTES: usize = 256 * 1024;
+/// after its nonce-bearing envelope, one lane's acknowledgement state, and
+/// the item header. WebSocket and memory transports use the same cap so a
+/// payload accepted by one transport remains portable to every other
+/// transport.
+pub const MAX_LATEST_STATE_BYTES: usize = udp::MAX_LATEST_PAYLOAD_BYTES;
+/// Maximum bytes in one unreliable payload across every transport: one UDP
+/// datagram item beside one lane's acknowledgement, the same room as latest
+/// state. Unreliable messages are never fragmented.
+pub const MAX_UNRELIABLE_BYTES: usize = udp::MAX_LATEST_PAYLOAD_BYTES;
 
 /// A process-local connection identity.
 ///
@@ -108,10 +139,13 @@ impl ConnectionId {
 }
 
 /// Number of independent reliable ordered lanes every transport provides.
-pub const RELIABLE_LANES: usize = 1;
+pub const RELIABLE_LANES: usize = 4;
 
 /// One of [`RELIABLE_LANES`] reliable ordered lanes. Lanes are numbered; what
-/// each lane carries is the game's choice.
+/// each lane carries is the game's choice. Each lane is exact and in order on
+/// its own; there is no order across lanes. Each has its own bounds and
+/// scheduling weight in [`ReliableConfig`], so a saturated lane never
+/// refuses or delays another lane's messages beyond its weighted share.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Lane(u8);
 
@@ -139,9 +173,16 @@ impl Lane {
 /// The delivery classes supported by every transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Delivery {
-    /// Exact, in order and unduplicated within its [`Lane`]. A full lane
-    /// refuses the send with [`SendError::WouldBlock`].
+    /// Exact, in order and unduplicated within its [`Lane`]; unordered
+    /// across lanes. A full lane refuses the send with
+    /// [`SendError::WouldBlock`].
     Reliable(Lane),
+    /// Independent best-effort messages on a [`Lane`]: each is delivered at
+    /// most once or not at all, never retransmitted or fragmented (at most
+    /// [`MAX_UNRELIABLE_BYTES`]), in no promised order. It shares its lane's
+    /// scheduling share with that lane's reliable messages; a full queue
+    /// refuses the send with [`SendError::WouldBlock`].
+    Unreliable(Lane),
     /// A replaceable best-effort slot where only the newest state is useful.
     LatestState,
 }
@@ -161,7 +202,9 @@ pub enum SendError {
     UnknownConnection,
     /// The client-side peer is disconnected.
     Disconnected,
-    /// The payload exceeds its delivery class's shared cap.
+    /// The payload exceeds its delivery class's shared cap:
+    /// [`MAX_RELIABLE_MESSAGE_BYTES`], [`MAX_UNRELIABLE_BYTES`] or
+    /// [`MAX_LATEST_STATE_BYTES`].
     PayloadTooLarge,
     /// The lane, or a shared ceiling, cannot take this message now. The
     /// connection is unaffected; retry after a later `flush` and `poll` have

@@ -19,7 +19,7 @@ use sgl_net::websocket::{
 };
 use sgl_net::{
     ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES,
-    MAX_RELIABLE_MESSAGE_BYTES, SendError, ServerEvent, ServerIo, memory_duplex,
+    MAX_RELIABLE_MESSAGE_BYTES, RELIABLE_LANES, SendError, ServerEvent, ServerIo, memory_duplex,
 };
 
 const MAGIC: [u8; 3] = *b"XPT";
@@ -50,6 +50,8 @@ enum Observed {
     /// The newest latest-state value seen once the burst had settled.
     LatestSettled(Vec<u8>),
     Refused(Delivery, SendError),
+    /// Every message one lane delivered in the lanes phase, in order.
+    Lane(Lane, Vec<Vec<u8>>),
     Disconnected(DisconnectReason),
 }
 
@@ -263,6 +265,15 @@ fn run(mut pair: Pair) -> Trace {
         .client
         .extend(received.into_iter().map(Observed::Reliable));
 
+    // Lanes (#268): interleaved messages on three lanes, each direction;
+    // each lane must arrive whole and in its own order.
+    trace
+        .server
+        .extend(lanes_phase(&mut pair, Direction::ClientToServer, conn));
+    trace
+        .client
+        .extend(lanes_phase(&mut pair, Direction::ServerToClient, conn));
+
     // The client hangs up; the server must learn it was the peer.
     let now = pair.now;
     pair.client.disconnect(now);
@@ -387,6 +398,83 @@ fn saturate(pair: &mut Pair, direction: Direction, conn: ConnectionId) -> (Obser
     )
 }
 
+/// The lanes the lanes phase uses, and its messages per lane.
+const PHASE_LANES: [u8; 3] = [0, 1, 3];
+const PER_LANE: u8 = 12;
+
+/// Message `index` of `lane`: small on lane 0; on lane 1 sizes around the
+/// UDP fragment and past one WebSocket fragment; on lane 3 empty and
+/// around the WebSocket fragment boundary.
+fn lane_message(lane: u8, index: u8) -> Vec<u8> {
+    let len = match lane {
+        0 => 2 + usize::from(index),
+        1 => [3, 1_151, 17_000, 40_000][usize::from(index % 4)],
+        _ => [2, 16 * 1024, 16 * 1024 + 1][usize::from(index % 3)],
+    };
+    let mut payload: Vec<u8> = (0..len).map(|i| (i % 253) as u8).collect();
+    if len >= 2 {
+        payload[..2].copy_from_slice(&[lane, index]);
+    }
+    payload
+}
+
+fn lane_of(index: u8) -> Lane {
+    Lane::new(index).expect("phase lanes exist")
+}
+
+/// Sends every phase message interleaved across lanes in one burst, then
+/// returns each lane's deliveries in lane order.
+fn lanes_phase(pair: &mut Pair, direction: Direction, conn: ConnectionId) -> Vec<Observed> {
+    for index in 0..PER_LANE {
+        for lane in PHASE_LANES {
+            let payload = lane_message(lane, index);
+            let delivery = Delivery::Reliable(lane_of(lane));
+            match direction {
+                Direction::ClientToServer => pair.client.send(delivery, &payload),
+                Direction::ServerToClient => pair.server.send(conn, delivery, &payload),
+            }
+            .expect("the phase fits every lane's bounds");
+        }
+    }
+    let mut lanes: [Vec<Vec<u8>>; RELIABLE_LANES] = Default::default();
+    let expected = PHASE_LANES.len() * usize::from(PER_LANE);
+    let mut received = 0;
+    pair.settle(&mut |server_events, client_events| {
+        let messages = match direction {
+            Direction::ClientToServer => server_events
+                .iter()
+                .filter_map(|event| match event {
+                    ServerEvent::Message {
+                        delivery, payload, ..
+                    } => Some((*delivery, payload.clone())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            Direction::ServerToClient => client_events
+                .iter()
+                .filter_map(|event| match event {
+                    ClientEvent::Message { delivery, payload } => {
+                        Some((*delivery, payload.clone()))
+                    }
+                    _ => None,
+                })
+                .collect(),
+        };
+        for (delivery, payload) in messages {
+            let Delivery::Reliable(lane) = delivery else {
+                panic!("latest state in the lanes phase");
+            };
+            lanes[lane.index()].push(payload);
+            received += 1;
+        }
+        received >= expected
+    });
+    PHASE_LANES
+        .iter()
+        .map(|&lane| Observed::Lane(lane_of(lane), std::mem::take(&mut lanes[usize::from(lane)])))
+        .collect()
+}
+
 fn memory() -> Pair {
     let (client, server) = memory_duplex();
     Pair {
@@ -408,6 +496,7 @@ fn simulated() -> Pair {
             reorder_per_10k: 500,
             reorder_extra_ms: 30,
             max_in_flight_datagrams: 4_096,
+            lane_loss_per_10k: [0; RELIABLE_LANES],
         },
         77,
     )
@@ -466,10 +555,13 @@ fn websocket() -> Pair {
 }
 
 /// Defect: one transport truncating at its frame limit, mangling binary,
-/// coalescing the two lanes differently, reporting a cap with a different
-/// error, closing, losing or duplicating when a saturated lane refuses a
-/// send (#267), or ending a peer-initiated close with a different reason.
-/// Oracle: the other three transports, run through the identical script.
+/// coalescing the delivery classes differently, reporting a cap with a
+/// different error, closing, losing or duplicating when a saturated lane
+/// refuses a send (#267), mixing, reordering or misrouting messages between
+/// lanes or splitting a fragmented message wrongly (#268), or ending a
+/// peer-initiated close with a different reason. Oracle: the memory
+/// transport, run through the identical script and checked against the
+/// messages the script sent.
 #[test]
 fn the_same_payloads_produce_the_same_trace_on_every_transport() {
     let reference = run(memory());
@@ -493,6 +585,24 @@ fn the_same_payloads_produce_the_same_trace_on_every_transport() {
         server_reliable.ends_with(&saturated) && reliable(&reference.client).ends_with(&saturated),
         "the memory reference delivers every saturating message once, in order"
     );
+    let phase: Vec<_> = PHASE_LANES
+        .iter()
+        .map(|&lane| {
+            Observed::Lane(
+                lane_of(lane),
+                (0..PER_LANE)
+                    .map(|index| lane_message(lane, index))
+                    .collect(),
+            )
+        })
+        .collect();
+    for side in [&reference.server, &reference.client] {
+        assert!(
+            side.windows(phase.len())
+                .any(|window| window == phase.as_slice()),
+            "the memory reference delivers every lane whole and in its own order"
+        );
+    }
     for pair in [simulated(), loopback_udp(), websocket()] {
         let name = pair.name;
         let trace = run(pair);
