@@ -6,7 +6,7 @@
 //! same programs (specs/sgl3d-architecture.md, Shader contract).
 use super::bind::BindingTier;
 use super::shader::{
-    SHADER_DEFAULT, SHADER_PARAMS_BOUND, SHADER_PARAMS_NONE, SHADER_SCENE_DEPTH,
+    SHADER_DEFAULT, SHADER_INPUTS_BOUND, SHADER_INPUTS_NONE, SHADER_SCENE_DEPTH,
     SHADER_SCENE_DEPTH_NONE,
 };
 use super::{Module, compose};
@@ -25,18 +25,19 @@ pub(crate) enum ProgramShader<'a> {
 /// into.
 pub(crate) const GAME_MODULE_HEADER: &str = "\n// ---- module game shader\n";
 
-/// `roots` composed with `shader`: the default provider and no parameter
-/// binding, or the parameter blocks and the game's module after them.
+/// `roots` composed with `shader`: the default provider and no binding of
+/// its inputs, or the bindings of its parameter blocks and instance data
+/// and the game's module after them.
 fn shaded(roots: &[&'static Module], shader: ProgramShader<'_>) -> String {
     match shader {
         ProgramShader::Default => {
             let mut all = roots.to_vec();
-            all.extend([&SHADER_DEFAULT, &SHADER_PARAMS_NONE]);
+            all.extend([&SHADER_DEFAULT, &SHADER_INPUTS_NONE]);
             compose(&all)
         }
         ProgramShader::Game(source) => {
             let mut all = roots.to_vec();
-            all.push(&SHADER_PARAMS_BOUND);
+            all.push(&SHADER_INPUTS_BOUND);
             let mut program = compose(&all);
             program.push_str(GAME_MODULE_HEADER);
             program.push_str(source);

@@ -359,14 +359,14 @@ fn the_vertex_function_places_the_surface_in_every_camera_pass() {
 }
 
 // Plausible defects: the evaluation motion is measured from takes this
-// frame's time or parameters, or the last submitted frame's are not kept
-// as scene and renderer history, so a surface the shader moves writes no
-// motion, or one it stopped moving writes some. The oracle is the test's
-// surface through its own camera: a ground lifted by 0.5 sin(2 t), and
-// then by a lift its parameters change, at frames whose time and
-// parameters the test chooses; each pixel's motion is where its point of
-// this frame's plane lay on the last frame's plane (straight below it),
-// projected.
+// frame's time, parameters or instance data, or the last submitted frame's
+// are not kept as scene and renderer history, so a surface the shader
+// moves writes no motion, or one it stopped moving writes some. The oracle
+// is the test's surface through its own camera: a ground lifted by
+// 0.5 sin(2 t), then by a lift its parameters change, then by its
+// instance's data, at frames whose time, parameters and data the test
+// chooses; each pixel's motion is where its point of this frame's plane lay
+// on the last frame's plane (straight below it), projected.
 #[test]
 fn motion_follows_the_shaders_time_and_parameters() {
     let Some(mut harness) = Harness::new(settings()) else {
@@ -374,7 +374,7 @@ fn motion_follows_the_shaders_time_and_parameters() {
     };
     let shader = add_test_shader(&mut harness.scene);
     let material = harness.material(opaque(shader, 2.));
-    harness.place(ground([-8., 8.], [-8., 8.], 0.), material, [0.; 4]);
+    let instance = harness.place(ground([-8., 8.], [-8., 8.], 0.), material, [0.; 4]);
     let camera = looking_down();
     let waving = TestShaderParams {
         direction: [0., 1., 0.],
@@ -382,31 +382,38 @@ fn motion_follows_the_shaders_time_and_parameters() {
         frequency: 2.,
         ..Default::default()
     };
-    let height = |params: TestShaderParams, time: f64| {
+    let height = |params: TestShaderParams, time: f64, data: f32| {
         f64::from(params.lift)
             + f64::from(params.amplitude) * (f64::from(params.frequency) * time).sin()
+            + f64::from(data)
     };
     let lifted = TestShaderParams {
         direction: [0., 1., 0.],
         lift: 0.2,
         ..Default::default()
     };
-    // Each step: the parameters set before it, its time, and the plane's
-    // height then and in the step before.
+    // Each step: the parameters and instance data set before it, its time,
+    // and the plane's height in the step before.
     let steps = [
-        (waving, 0.3, None),
-        (waving, 0.55, Some(height(waving, 0.3))),
-        (lifted, 0.55, Some(height(waving, 0.55))),
-        (lifted, 0.55, Some(height(lifted, 0.55))),
+        (waving, 0., 0.3, None),
+        (waving, 0., 0.55, Some(height(waving, 0.3, 0.))),
+        (lifted, 0., 0.55, Some(height(waving, 0.55, 0.))),
+        (lifted, 0., 0.55, Some(height(lifted, 0.55, 0.))),
+        (lifted, 0.3, 0.55, Some(height(lifted, 0.55, 0.))),
+        (lifted, 0.3, 0.55, Some(height(lifted, 0.55, 0.3))),
     ];
-    for (step, (params, time, previous)) in steps.into_iter().enumerate() {
+    for (step, (params, data, time, previous)) in steps.into_iter().enumerate() {
         set_test_params(&mut harness.scene, &harness.queue, material, params);
+        harness
+            .scene
+            .set_instance_shader_data(&harness.queue, instance, [data, 0., 0., 0.])
+            .unwrap();
         harness.frame(&frame(camera, time));
         let Some(previous) = previous else {
             continue;
         };
         let motion = harness.motion();
-        let now = height(params, time);
+        let now = height(params, time, data);
         for pixel in PIXELS {
             let point = meets(ray(&camera, pixel), (now, 0.));
             let before = point - DVec3::Y * (now - previous);
@@ -619,6 +626,96 @@ fn blended_shaders_read_the_opaque_depth_behind_them_on_the_extended_tier() {
                     "{tier} {pixel:?}: {behind} behind and available {available}"
                 );
             }
+        }
+    }
+}
+
+// Plausible defect: an instance added at a removed instance's index reading
+// that instance's shader data, which lives apart from its object record.
+// The oracle is the rest plane: an instance whose data lifted it by 1 m is
+// removed and an instance added in its place, whose data is zero, so the
+// opaque depth holds the plane y = 0 through the test's camera.
+#[test]
+fn an_added_instance_reads_no_removed_instances_data() {
+    let Some(mut harness) = Harness::new(settings()) else {
+        return;
+    };
+    let shader = add_test_shader(&mut harness.scene);
+    let material = harness.material(opaque(shader, 2.));
+    set_test_params(
+        &mut harness.scene,
+        &harness.queue,
+        material,
+        TestShaderParams {
+            direction: [0., 1., 0.],
+            ..Default::default()
+        },
+    );
+    let lifted = harness.place(ground([-8., 8.], [-8., 8.], 0.), material, [1., 0., 0., 0.]);
+    let camera = looking_down();
+    harness.frame(&frame(camera, 0.));
+    let model = harness.scene.instance(lifted).unwrap().model;
+    harness.scene.remove_instance(lifted).unwrap();
+    harness
+        .scene
+        .add_instance(
+            &harness.device,
+            &harness.queue,
+            InstanceState::new(model),
+            Mobility::Static,
+        )
+        .unwrap();
+    harness.frame(&frame(camera, 0.));
+    let depths = harness.depth();
+    for pixel in PIXELS {
+        let expected = project(&camera, meets(ray(&camera, pixel), (0., 0.))).0;
+        assert_depth(texel(&depths, pixel), expected, &format!("{pixel:?}"));
+    }
+}
+
+// Plausible defects: a fragment's instance data not passed from its vertex
+// stage, which alone reads the instances' shader data (zero), or the last
+// submitted frame's in place of this frame's. The oracle is the test's own
+// data: the fixture shader adds its instance's data's y to its emission,
+// which an unlit black material's composite holds as written, before and
+// after the data changes.
+#[test]
+fn the_surface_function_reads_this_frames_instance_data() {
+    let Some(mut harness) = Harness::new(settings()) else {
+        return;
+    };
+    let shader = add_test_shader(&mut harness.scene);
+    let material = harness.material(shaded(
+        asset::Material {
+            base: [0., 0., 0., 1.],
+            unlit: true,
+            double_sided: true,
+            ..Default::default()
+        },
+        shader,
+        0.,
+    ));
+    let instance = harness.place(
+        ground([-8., 8.], [-8., 8.], 0.),
+        material,
+        [0., 0.25, 0., 0.],
+    );
+    let camera = looking_down();
+    harness.frame(&frame(camera, 0.));
+    let first = harness.composite();
+    harness
+        .scene
+        .set_instance_shader_data(&harness.queue, instance, [0., 0.5, 0., 0.])
+        .unwrap();
+    harness.frame(&frame(camera, 1. / 60.));
+    let second = harness.composite();
+    for pixel in PIXELS {
+        for (composite, expected) in [(&first, 0.25), (&second, 0.5)] {
+            let [red, green, blue, _] = texel(composite, pixel);
+            assert!(
+                red == 0. && green == 0. && (blue - expected).abs() <= 1e-3,
+                "{pixel:?}: emission {red}, {green}, {blue}, expected blue {expected}"
+            );
         }
     }
 }

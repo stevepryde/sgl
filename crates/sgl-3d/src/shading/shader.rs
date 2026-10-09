@@ -22,17 +22,18 @@ pub(crate) static SHADER_DEFAULT: Module = Module {
     source: include_str!("shader_default.wgsl"),
     deps: &[&SHADER_CONTRACT],
 };
-/// The parameters of the default provider's programs: a zero block, no
-/// binding.
-pub(crate) static SHADER_PARAMS_NONE: Module = Module {
-    name: "shader_params_none",
-    source: include_str!("shader_params_none.wgsl"),
+/// The inputs of the default provider's programs: a zero parameter block
+/// and zero instance data, no binding.
+pub(crate) static SHADER_INPUTS_NONE: Module = Module {
+    name: "shader_inputs_none",
+    source: include_str!("shader_inputs_none.wgsl"),
     deps: &[],
 };
-/// The parameters of a game's shader's programs: group 2's two blocks.
-pub(crate) static SHADER_PARAMS_BOUND: Module = Module {
-    name: "shader_params_bound",
-    source: include_str!("shader_params_bound.wgsl"),
+/// The inputs of a game's shader's programs: group 2's two parameter blocks
+/// and group 1's instance shader data.
+pub(crate) static SHADER_INPUTS_BOUND: Module = Module {
+    name: "shader_inputs_bound",
+    source: include_str!("shader_inputs_bound.wgsl"),
     deps: &[],
 };
 /// The scene depth provider of every pass but a game's shader's blended

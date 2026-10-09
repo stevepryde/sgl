@@ -739,9 +739,7 @@ fn rust_mirrors_match_wgsl_layouts() {
                 flags,
                 deformed_positions,
                 previous_positions,
-                deformed_normals,
-                shader_data,
-                previous_shader_data
+                deformed_normals
             ]
         ),
         mirror!(
@@ -1160,6 +1158,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         (1, "objects", group1::OBJECTS),
         (1, "scene_source", group1::SCENE_SOURCE),
         (1, "scene_instances", group1::SCENE_INSTANCES),
+        (1, "object_shader_data", group1::OBJECT_SHADER_DATA),
         (2, "material", group2::MATERIAL),
         (2, "base_map", group2::BASE_MAP),
         (2, "mr_map", group2::MR_MAP),
@@ -1232,9 +1231,16 @@ fn rust_binding_names_match_wgsl_bindings() {
             0,
             numbers(&bind::uniform_entries()),
         ),
+        // Group 1, with a game's shader's instance data (a ShaderParams the
+        // default provider declares).
         (
             "bind_scene",
-            &[&super::BIND_SCENE, &super::SCENE_RAYS],
+            &[
+                &super::BIND_SCENE,
+                &super::SCENE_RAYS,
+                &super::shader::SHADER_INPUTS_BOUND,
+                &super::shader::SHADER_DEFAULT,
+            ],
             1,
             numbers(&bind::scene_entries()),
         ),
@@ -1244,7 +1250,7 @@ fn rust_binding_names_match_wgsl_bindings() {
             "bind_material",
             &[
                 &super::BIND_MATERIAL,
-                &super::shader::SHADER_PARAMS_BOUND,
+                &super::shader::SHADER_INPUTS_BOUND,
                 &super::shader::SHADER_DEFAULT,
             ][..],
             2,
@@ -1254,7 +1260,7 @@ fn rust_binding_names_match_wgsl_bindings() {
             "bind_material_extended",
             &[
                 &super::tiers::BIND_MATERIAL_EXTENDED,
-                &super::shader::SHADER_PARAMS_BOUND,
+                &super::shader::SHADER_INPUTS_BOUND,
                 &super::shader::SHADER_DEFAULT,
             ],
             2,

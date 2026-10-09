@@ -763,9 +763,10 @@ pub(crate) fn adapter() -> Option<wgpu::Adapter> {
 /// along its parameters' `direction` by their `lift`, plus `amplitude` times
 /// the sine of `frequency` times the frame's time, plus the vertex's shader
 /// data's x and the instance's; its surface function cuts out the fragments
-/// at negative world x where `cutting` is positive, and adds the scene
-/// depth behind the fragment and whether it is available to its emission's
-/// red and green.
+/// at negative world x where `cutting` or the instance's data's z is
+/// positive, and adds the scene depth behind the fragment, whether it is
+/// available and the instance's data's y to its emission's red, green and
+/// blue.
 pub(crate) const TEST_SHADER: &str = r#"
 struct ShaderParams {
  direction:vec3<f32>,
@@ -783,8 +784,8 @@ fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->Mate
 }
 fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
  var out=s;
- out.base_color.a=select(s.base_color.a,0.,params.cutting>0. && ctx.position.x<0.);
- out.emission=s.emission+vec3(scene_depth_behind(ctx),select(0.,1.,scene_depth_available()),0.);
+ out.base_color.a=select(s.base_color.a,0.,(params.cutting>0. || ctx.instance.z>0.) && ctx.position.x<0.);
+ out.emission=s.emission+vec3(scene_depth_behind(ctx),select(0.,1.,scene_depth_available()),ctx.instance.y);
  return out;
 }
 "#;

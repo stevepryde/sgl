@@ -153,10 +153,6 @@ struct Object {
  deformed_positions:u32,
  previous_positions:u32,
  deformed_normals:u32,
- // The data its material's shader reads (Scene::set_instance_shader_data)
- // this frame and in the last submitted frame.
- shader_data:vec4<f32>,
- previous_shader_data:vec4<f32>,
 }
 // Object.flags: a static instance (a moving one has the bit clear); the
 // main camera draws it (InstanceState::visible); the other views show it

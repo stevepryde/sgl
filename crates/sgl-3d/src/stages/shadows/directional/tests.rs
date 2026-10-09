@@ -1351,19 +1351,23 @@ fn a_shaders_casters_cast_where_its_vertex_function_moves_them() {
 
 // Plausible defects: a shader's masked casters cutting out what the
 // material's record and maps cut out rather than what its surface function
-// does, or drawn whole. The oracle is geometric, as for masked casters: an
-// occluder the camera does not see, beyond the pancake, covers the
-// receiver, and its shader cuts it out where its world x is negative.
-// Behind its cut-out half the receiver is as lit as it is without the
-// occluder; behind its other half it is dark.
+// does, or drawn whole, or its surface function not given the material's
+// parameters or the instance's data there. The oracle is geometric, as for
+// masked casters: an occluder the camera does not see, beyond the pancake,
+// covers the receiver, and its shader cuts it out where its world x is
+// negative, by its parameters or by its instance's data. Behind its cut-out
+// half the receiver is as lit as it is without the occluder; behind its
+// other half it is dark.
 #[test]
 fn a_shaders_masked_casters_take_its_coverage() {
-    for (label, without) in [
-        ("unclipped depth", wgpu::Features::empty()),
+    for (label, without, cut_by_instance) in [
+        ("unclipped depth", wgpu::Features::empty(), false),
         (
             "emulated unclipped depth",
             wgpu::Features::DEPTH_CLIP_CONTROL,
+            false,
         ),
+        ("cut by instance data", wgpu::Features::empty(), true),
     ] {
         let Some(device) = test_support::device_without(without) else {
             return;
@@ -1379,7 +1383,7 @@ fn a_shaders_masked_casters_take_its_coverage() {
         let mut fixture = Fixture::new(device, SIZE);
         fixture.place(quad(Vec3::new(0., 0., -5.), 2.), true);
         let cutting = test_support::TestShaderParams {
-            cutting: 1.,
+            cutting: if cut_by_instance { 0. } else { 1. },
             ..Default::default()
         };
         let (_, occluder) = place_shaded(
@@ -1388,6 +1392,12 @@ fn a_shaders_masked_casters_take_its_coverage() {
             crate::AlphaMode::Mask { cutoff: 0.5 },
             (cutting, 0.),
         );
+        if cut_by_instance {
+            fixture
+                .scene
+                .set_instance_shader_data(&fixture.queue, occluder, [0., 0., 1., 0.])
+                .unwrap();
+        }
         let input = frame(DirectionalLight {
             direction: Vec3::NEG_Z,
             color: [1.; 3],

@@ -1487,8 +1487,11 @@ opaque surfaces in its composition mask. The first frame that draws a
 shader's material creates its programs and pipelines (up to about thirty
 natively, on the browser's main thread there): add shaders at load. A
 module's functions cost each pass that runs them, vertices twice in the
-passes that write motion. Consumer textures, direct scene colour, ray-hit
-evaluation and a second `custom` are not part of the contract.
+passes that write motion; a material without a shader costs nothing more,
+its programs reading neither parameter blocks nor instance data, which
+live beside the object records rather than in them. Consumer textures,
+direct scene colour, ray-hit evaluation and a second `custom` are not part
+of the contract.
 
 The [water example](examples/water.rs) moves a lake of 16 m chunks with six
 Gerstner waves (`examples/support/gerstner.wgsl`), anchored on their

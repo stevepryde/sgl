@@ -183,8 +183,8 @@ fn pulled_masked_caster(drawn:DrawInstance,vertex:u32)->MaskedCaster {
 // alpha of its surface function's base colour (material_shader.wgsl), as
 // Filament ef1a133 runs material() in its masked depth variants
 // (shaders/src/surface_depth_main.fs 21–69), so each vertex carries what
-// the function's context reads: the instance, its world position, normal
-// and the vertex function's `custom`. The pipelines of a material without
+// the function's context reads: the instance and its shader data, its
+// world position, normal and the vertex function's `custom`. The pipelines of a material without
 // one draw MaskedCaster's entries, which carry its texel alone.
 struct ShadedMaskedCaster {
  @builtin(position) position:vec4<f32>,
@@ -195,6 +195,7 @@ struct ShadedMaskedCaster {
  @location(4) normal:vec3<f32>,
  @location(5) custom:vec4<f32>,
  @location(6) @interpolate(flat) object:u32,
+ @location(7) @interpolate(flat) instance:vec4<f32>,
 }
 fn shaded_masked_caster_vertex(position:vec3<f32>,drawn:DrawInstance,vertex_index:u32)->ShadedMaskedCaster {
  let v=caster_vertex(position,drawn,vertex_index);
@@ -208,6 +209,7 @@ fn shaded_masked_caster_vertex(position:vec3<f32>,drawn:DrawInstance,vertex_inde
  out.normal=object_normal(model,v.normal);
  out.custom=v.custom;
  out.object=drawn.object;
+ out.instance=material_instance(drawn.object,false);
  return out;
 }
 fn pulled_shaded_masked_caster(drawn:DrawInstance,vertex:u32)->ShadedMaskedCaster {
@@ -241,7 +243,7 @@ fn shaded_caster_coverage(in:ShadedMaskedCaster,raster_front:bool)->f32 {
  let front=object_front(in.object,raster_front);
  let geometry_normal=side_normal(in.normal,front);
  let recorded=material_texel_surface(material_base_texels(in.uv,in.color),geometry_normal);
- let context=material_context(in.object,in.world,geometry_normal,in.uv,in.color,in.custom,front,in.position.xy);
+ let context=material_context(in.object,in.world,geometry_normal,in.uv,in.color,in.custom,in.instance,front,in.position.xy);
  return material_surface(recorded,context,material_shader_params(false)).base_color.a;
 }
 @fragment fn shadow_shaded_masked_fs(in:ShadedMaskedCaster,@builtin(front_facing) front:bool) {

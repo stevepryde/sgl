@@ -168,10 +168,6 @@ pub(crate) struct ObjectUniform {
     pub deformed_positions: u32,
     pub previous_positions: u32,
     pub deformed_normals: u32,
-    /// The data its material's shader reads this frame and in the last
-    /// submitted frame (`Scene::set_instance_shader_data`).
-    pub shader_data: [f32; 4],
-    pub previous_shader_data: [f32; 4],
 }
 
 /// The camera's view and frame data as last uploaded.

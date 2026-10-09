@@ -1,6 +1,6 @@
 //! A material's shader parameter blocks (`Scene::set_shader_parameters`):
 //! this frame's and the last submitted frame's, which its group 2 binds for
-//! its shader's programs (shader_params_bound.wgsl), and the CPU copies that
+//! its shader's programs (shader_inputs_bound.wgsl), and the CPU copies that
 //! keep the second a submitted frame behind the first (scene history,
 //! S3D-4). A material without a shader binds one shared zero block twice,
 //! which its programs never read.

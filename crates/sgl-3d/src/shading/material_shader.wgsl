@@ -11,7 +11,8 @@
 // (scene_forward_clustered.glsl 776–860). Its surface function: where
 // surface_raster.wgsl's raster_material and a masked caster's coverage
 // evaluate the material, at the context material_context gives it. Reads
-// `view`, `frame` and `objects`.
+// `view`, `frame`, `objects` and its program's inputs (material_instance,
+// material_shader_params).
 
 // Whether the pipeline writes motion, so its vertices are evaluated at the
 // last submitted frame too: a pipeline constant (view::pipelines), off for
@@ -22,9 +23,9 @@ override motion_vertices:bool=true;
 // index `object` at: this frame, or the last submitted one (`previous`).
 fn material_vertex_context(object:u32,previous:bool)->VertexContext {
  if previous {
-  return VertexContext(objects[object].previous_model,objects[object].previous_shader_data,frame.previous_elapsed_seconds,frame.previous_animation_phase,true);
+  return VertexContext(objects[object].previous_model,material_instance(object,true),frame.previous_elapsed_seconds,frame.previous_animation_phase,true);
  }
- return VertexContext(objects[object].model,objects[object].shader_data,frame.elapsed_seconds,frame.animation_phase,false);
+ return VertexContext(objects[object].model,material_instance(object,false),frame.elapsed_seconds,frame.animation_phase,false);
 }
 // `rest` as the material's vertex function places it for the instance at
 // `object`, this frame or the last submitted one (`previous`): a normal the
@@ -54,6 +55,7 @@ fn vertex(object:u32,rest:MaterialVertex,lightmap_uv:vec2<f32>,lightmap_bounds:v
  o.uv=v.uv;
  o.color=v.color;
  o.custom=v.custom;
+ o.instance=material_instance(object,false);
  o.lightmap_uv=lightmap_uv;
  o.lightmap_bounds=lightmap_bounds;
  o.current_clip=view.stable_view_projection*p;
@@ -68,11 +70,12 @@ fn vertex(object:u32,rest:MaterialVertex,lightmap_uv:vec2<f32>,lightmap_bounds:v
 // What the material's surface function evaluates a fragment of the instance
 // whose object record is at index `object` at (shader_contract.wgsl's
 // SurfaceContext): its render-frame position `world`, geometry normal on
-// the shaded side, UV, colour and `custom`, whether it is the material's
-// authored front, and its `pixel` in the pass's target. A shadow view's
-// eye and depth are its light's view's.
-fn material_context(object:u32,world:vec3<f32>,geometry_normal:vec3<f32>,uv:vec2<f32>,color:vec4<f32>,custom:vec4<f32>,front:bool,pixel:vec2<f32>)->SurfaceContext {
+// the shaded side, UV, colour and `custom`, its instance's shader data
+// `instance`, which its vertex passed it (material_instance), whether it is
+// the material's authored front, and its `pixel` in the pass's target. A
+// shadow view's eye and depth are its light's view's.
+fn material_context(object:u32,world:vec3<f32>,geometry_normal:vec3<f32>,uv:vec2<f32>,color:vec4<f32>,custom:vec4<f32>,instance:vec4<f32>,front:bool,pixel:vec2<f32>)->SurfaceContext {
  let model=objects[object].model;
  let view_depth=-(view.view*vec4(world,1.)).z;
- return SurfaceContext(world,geometry_normal,normalize(view.eye-world),uv,color,custom,objects[object].shader_data,model,transmission_model_scale(model),frame.elapsed_seconds,frame.animation_phase,front,pixel,view_depth);
+ return SurfaceContext(world,geometry_normal,normalize(view.eye-world),uv,color,custom,instance,model,transmission_model_scale(model),frame.elapsed_seconds,frame.animation_phase,front,pixel,view_depth);
 }

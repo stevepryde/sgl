@@ -3,7 +3,7 @@
 //! `Scene` operations that add, read, change and remove them.
 use super::deformation::InstanceDeformation;
 use super::models::Model;
-use super::objects::Objects;
+use super::objects::{Objects, ShaderData};
 use super::origin::translated;
 use super::rays::instances::RayInstances;
 use super::shadow_clusters::PosedClusters;
@@ -37,6 +37,9 @@ pub(crate) struct Instance {
     /// and as it was in the last submitted frame, none before it was in one.
     pub shader_data: [f32; 4],
     submitted_shader_data: Option<[f32; 4]>,
+    /// Its written shader data's last submitted frame's is from before the
+    /// last submitted frame.
+    shader_stale: bool,
 }
 
 impl Instance {
@@ -56,6 +59,7 @@ impl Instance {
             deformation,
             shader_data: [0.; 4],
             submitted_shader_data: None,
+            shader_stale: false,
         };
         instance.pose_casters(model);
         instance
@@ -103,9 +107,17 @@ impl Instance {
             deformed_positions,
             previous_positions,
             deformed_normals,
-            shader_data: self.shader_data,
-            previous_shader_data: self.submitted_shader_data.unwrap_or(self.shader_data),
         }
+    }
+
+    /// Its shader data, this frame's and the last submitted frame's, from
+    /// which its shaders' motion is measured: this frame's before it was in
+    /// one.
+    fn shader_record(&self) -> ShaderData {
+        [
+            self.shader_data,
+            self.submitted_shader_data.unwrap_or(self.shader_data),
+        ]
     }
 
     /// Its bounds in its model's space: as deformed, when it deforms.
@@ -165,10 +177,16 @@ impl Instances {
         self.objects.write(queue, id.index(), &instance.record());
     }
 
-    /// Sets instance `id`'s shader data and writes its record.
+    fn write_shader_data(&self, queue: &wgpu::Queue, id: InstanceId) {
+        let instance = self.slots.get(id).expect("a live instance");
+        self.objects
+            .write_shader_data(queue, id.index(), &instance.shader_record());
+    }
+
+    /// Sets instance `id`'s shader data and writes it.
     pub fn set_shader_data(&mut self, queue: &wgpu::Queue, id: InstanceId, data: [f32; 4]) {
         self.slots.get_mut(id).expect("a live instance").shader_data = data;
-        self.write(queue, id);
+        self.write_shader_data(queue, id);
     }
 
     /// Rewrites the object records of `model`'s instances.
@@ -180,8 +198,8 @@ impl Instances {
         }
     }
 
-    /// Room for `count` records, rewriting every record when the buffer
-    /// grows.
+    /// Room for `count` records, rewriting every record and every instance's
+    /// shader data when the buffers grow.
     fn reserve(
         &mut self,
         device: &wgpu::Device,
@@ -191,6 +209,8 @@ impl Instances {
         if self.objects.reserve(device, count)? {
             for (id, instance) in self.slots.iter() {
                 self.objects.write(queue, id.index(), &instance.record());
+                self.objects
+                    .write_shader_data(queue, id.index(), &instance.shader_record());
             }
         }
         Ok(())
@@ -257,7 +277,7 @@ impl Instances {
     pub fn finish_frame(&mut self) {
         for (_, instance) in self.slots.iter_mut() {
             if instance.submitted_shader_data != Some(instance.shader_data) {
-                instance.stale |= instance.submitted_shader_data.is_some();
+                instance.shader_stale |= instance.submitted_shader_data.is_some();
                 instance.submitted_shader_data = Some(instance.shader_data);
             }
             if let Some(deformation) = &mut instance.deformation {
@@ -277,7 +297,8 @@ impl Instances {
     /// Begins a frame: rewrites the records of moving instances not posed
     /// since the last submitted frame, whose motion it ended, and of
     /// deforming instances, whose deformed vertices this frame shows, and
-    /// replaces `work` with the deformations the frame writes.
+    /// the shader data of instances whose data the last submitted frame
+    /// changed, and replaces `work` with the deformations the frame writes.
     pub fn prepare_frame(
         &mut self,
         queue: &wgpu::Queue,
@@ -297,6 +318,11 @@ impl Instances {
             if instance.stale || deforms {
                 instance.stale = false;
                 self.objects.write(queue, id.index(), &instance.record());
+            }
+            if instance.shader_stale {
+                instance.shader_stale = false;
+                self.objects
+                    .write_shader_data(queue, id.index(), &instance.shader_record());
             }
         }
     }
@@ -362,6 +388,8 @@ impl Scene {
             .insert(Instance::new(state, mobility, model, deformation));
         self.instances.counts[kind(mobility)] += 1;
         self.write_instance(queue, id);
+        // Its index may be a removed instance's.
+        self.instances.write_shader_data(queue, id);
         Ok(id)
     }
 

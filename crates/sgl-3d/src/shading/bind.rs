@@ -58,6 +58,9 @@ pub(crate) mod group1 {
     pub(crate) const OBJECTS: u32 = 0;
     pub(crate) const SCENE_SOURCE: u32 = 1;
     pub(crate) const SCENE_INSTANCES: u32 = 2;
+    /// The instances' shader data (shader_inputs_bound.wgsl), which only a
+    /// game's shader's programs read, in their vertex stage.
+    pub(crate) const OBJECT_SHADER_DATA: u32 = 3;
 }
 
 /// Group 2's bindings and their tiers, the maps a material fills them with,
@@ -396,15 +399,19 @@ pub(crate) fn uniforms<'a>(
 }
 
 /// Group 1, the scene: bind_scene.wgsl's object records (`scene::objects`),
-/// then scene_rays.wgsl's source and instance buffers.
+/// then scene_rays.wgsl's source and instance buffers, then
+/// shader_inputs_bound.wgsl's instance shader data.
 pub(crate) fn scene(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     layout(device, "scene objects and rays", &scene_entries())
 }
 
 /// Group 1's entries: geometry passes read the object records; ray queries
 /// and ray hits, which also run in compute, read the ray buffers and, for a
-/// hit's pose, flags and ambient cube, the object records.
-pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
+/// hit's pose, flags and ambient cube, the object records; a game's
+/// shader's vertex stage reads the instances' shader data, which no
+/// fragment stage sees, so a fragment stage still binds S3D-1's floor of
+/// storage buffers.
+pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 4] {
     let storage = |binding, visibility| wgpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -420,6 +427,7 @@ pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
         storage(group1::OBJECTS, rays),
         storage(group1::SCENE_SOURCE, rays),
         storage(group1::SCENE_INSTANCES, rays),
+        storage(group1::OBJECT_SHADER_DATA, wgpu::ShaderStages::VERTEX),
     ]
 }
 

@@ -27,7 +27,7 @@ pub(crate) const SHEEN_ROUGHNESS_MAP: u32 = 17;
 pub(crate) const DIFFUSE_TRANSMISSION_MAP: u32 = 18;
 pub(crate) const DIFFUSE_TRANSMISSION_COLOR_MAP: u32 = 19;
 /// A material's shader's parameter blocks, this frame's and the last
-/// submitted frame's (shader_params_bound.wgsl), on every tier, which its
+/// submitted frame's (shader_inputs_bound.wgsl), on every tier, which its
 /// vertex and fragment stages read.
 pub(crate) const SHADER_PARAMS: u32 = 20;
 pub(crate) const PREVIOUS_SHADER_PARAMS: u32 = 21;
@@ -246,7 +246,7 @@ impl MaterialMap {
 
 /// Group 2, a material, on a device of `tier`: bind_material.wgsl's values,
 /// its maps and sampler and its baked-lighting eligibility, its shader's
-/// parameter blocks (shader_params_bound.wgsl), and on `Extended`
+/// parameter blocks (shader_inputs_bound.wgsl), and on `Extended`
 /// bind_material_extended.wgsl's maps.
 pub(crate) fn material(device: &wgpu::Device, tier: BindingTier) -> wgpu::BindGroupLayout {
     layout(device, "material", &material_entries(tier))

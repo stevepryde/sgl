@@ -126,7 +126,7 @@ fn raster_material(i:Fragment,front:bool)->MaterialSurface {
 // What the material's shader function evaluates a fragment at
 // (material_context).
 fn material_surface_context(i:Fragment,front:bool)->SurfaceContext {
- return material_context(fragment_object(i),i.world,surface_geometry_normal(i,front),i.uv,i.color,i.custom,front,i.clip.xy);
+ return material_context(fragment_object(i),i.world,surface_geometry_normal(i,front),i.uv,i.color,i.custom,i.instance,front,i.clip.xy);
 }
 // Its decals are those of `clusters`, the cluster that holds it; its
 // material `m` (raster_material).

@@ -320,7 +320,7 @@ fn material_normal_oracle(
                         &shading::tiers::MATERIAL_MAPS_EXTENDED,
                         &shading::tiers::LIT_BASIC,
                         &shading::shader::SHADER_DEFAULT,
-                        &shading::shader::SHADER_PARAMS_NONE,
+                        &shading::shader::SHADER_INPUTS_NONE,
                         &shading::shader::SHADER_SCENE_DEPTH_NONE,
                     ]),
                     r#"

@@ -78,7 +78,7 @@ pub struct Scene {
     /// Group 1: the object records and the ray buffers.
     pub(crate) scene_group: wgpu::BindGroup,
     /// The buffers `scene_group` binds: objects, ray source, ray instances.
-    bound: [wgpu::Buffer; 3],
+    bound: [wgpu::Buffer; 4],
     scene_layout: wgpu::BindGroupLayout,
     pub(crate) static_lighting: static_lighting::StaticLighting,
     baked_specular_probes: Option<probes::UploadedProbes>,
@@ -115,12 +115,12 @@ pub struct Scene {
     origin: glam::DVec3,
 }
 
-/// Group 1 (`shading::bind::scene`) over `objects`, `source` and
-/// `instances`.
+/// Group 1 (`shading::bind::scene`) over `objects`, `source`, `instances`
+/// and the instances' `shader_data`.
 fn scene_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    [objects, source, instances]: &[wgpu::Buffer; 3],
+    [objects, source, instances, shader_data]: &[wgpu::Buffer; 4],
 ) -> wgpu::BindGroup {
     use crate::shading::bind::group1;
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -138,6 +138,10 @@ fn scene_group(
             wgpu::BindGroupEntry {
                 binding: group1::SCENE_INSTANCES,
                 resource: instances.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: group1::OBJECT_SHADER_DATA,
+                resource: shader_data.as_entire_binding(),
             },
         ],
     })
@@ -198,11 +202,12 @@ impl Scene {
         instances: &instances::Instances,
         rays: &rays::SceneRays,
         ray_instances: &rays::instances::RayInstances,
-    ) -> [wgpu::Buffer; 3] {
+    ) -> [wgpu::Buffer; 4] {
         [
             instances.objects.buffer().clone(),
             rays.source().clone(),
             ray_instances.buffer().clone(),
+            instances.objects.shader_data().clone(),
         ]
     }
 

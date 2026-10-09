@@ -151,7 +151,8 @@ impl Fixture {
             .update(device, queue, &self.rays, None, &mut moving);
     }
 
-    /// Group 1 over the object records, the source and the entries.
+    /// Group 1 over the object records, the source, the entries and the
+    /// instances' shader data.
     pub fn scene_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
         super::super::scene_group(
             device,
@@ -160,6 +161,7 @@ impl Fixture {
                 self.objects.buffer().clone(),
                 self.rays.source().clone(),
                 self.instances.buffer().clone(),
+                self.objects.shader_data().clone(),
             ],
         )
     }

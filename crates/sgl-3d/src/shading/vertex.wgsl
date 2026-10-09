@@ -1,6 +1,6 @@
 // Scene geometry's vertex stage: the fragment a vertex interpolates, and the
 // drawn instance's transform of positions, normals and tangents by its
-// object record (shaded_vertex.wgsl places the vertex). Reads `view` and
+// object record (material_shader.wgsl places the vertex). Reads `view` and
 // `objects`.
 struct Fragment {
  @invariant @builtin(position) clip:vec4<f32>,
@@ -17,6 +17,9 @@ struct Fragment {
  // What the material's vertex function passes its surface function
  // (shader_contract.wgsl's MaterialVertex.custom).
  @location(10) custom:vec4<f32>,
+ // Its instance's shader data (shader_inputs_bound.wgsl), which only the
+ // vertex stage reads; zero where the program composes no game's shader.
+ @location(11) @interpolate(flat) instance:vec4<f32>,
 }
 // Keep projection separate from the view transform. Precomposing P*V lets
 // translation cancellation corrupt tiny depth gaps before rasterization.
