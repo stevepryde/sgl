@@ -32,6 +32,7 @@ pub(crate) use tiers::{lit_provider, material_provider, transmission_provider};
 pub(crate) mod packed_vertex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod packed_vertex_tests;
+pub(crate) mod programs;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rect_light_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]

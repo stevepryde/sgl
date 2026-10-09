@@ -12,6 +12,7 @@
 //! for the device, so no key holds it.
 use crate::Scene;
 use crate::shading::bind::{BindingTier, LitLayout};
+use crate::shading::programs::*;
 use crate::shading::{self, gbuffer};
 use crate::view::targets::{composition_targets, mask_targets};
 use std::collections::HashMap;
@@ -24,88 +25,6 @@ pub(crate) use key::{LayerConstants, LitConstants};
 pub(crate) use pass::{GeometryPass, depth};
 use pass::{attachments_fit, targets};
 pub(crate) use variant::{Alpha, Cull, Variant};
-
-/// Scene geometry's camera and probe-capture passes. A program composes it
-/// with one shadow-mask provider, one lit provider, one material-map
-/// provider and one transmission provider (`geometry_program`).
-pub(crate) static GEOMETRY: shading::Module = shading::Module {
-    name: "geometry",
-    source: include_str!("geometry.wgsl"),
-    deps: &[
-        &shading::BIND_LIT,
-        &shading::BIND_SCENE,
-        &shading::BIND_MATERIAL,
-        &shading::BIND_BLENDED,
-        &shading::GBUFFER,
-        &shading::VERTEX,
-        &shading::VERTEX_PULL,
-        &shading::SURFACE,
-        &shading::SURFACE_RASTER,
-        &shading::FRAME_FOG,
-        &shading::TRANSMISSION,
-    ],
-};
-/// The entry points the geometry passes' pipelines are created with, from
-/// either geometry program: the vertex all share and each pass's fragment.
-pub(crate) const SOURCE_VS_ENTRY: &str = "source_vs";
-pub(crate) const FS_ENTRY: &str = "fs";
-pub(crate) const STABLE_FS_ENTRY: &str = "stable_fs";
-pub(crate) const STABLE_LEGACY_FS_ENTRY: &str = "stable_legacy_fs";
-pub(crate) const ANISOTROPY_FS_ENTRY: &str = "anisotropy_fs";
-pub(crate) const SOURCE_FS_ENTRY: &str = "source_fs";
-pub(crate) const FUSED_OPAQUE_FS_ENTRY: &str = "fused_opaque_fs";
-pub(crate) const BLENDED_FS_ENTRY: &str = "blended_fs";
-pub(crate) const BLENDED_FSR2_MASKED_FS_ENTRY: &str = "blended_fsr2_masked_fs";
-pub(crate) const RECEIVER_FS_ENTRY: &str = "receiver_fs";
-pub(crate) const FSR2_COMPOSITION_FS_ENTRY: &str = "fsr2_composition_fs";
-/// The geometry program on a device of `tier`: `GEOMETRY` with the shadow
-/// mask's provider where `shadow_mask`, else with the provider that holds
-/// no slot, and the tier's lit, material-map and transmission providers.
-pub(crate) fn geometry_program(shadow_mask: bool, tier: BindingTier) -> String {
-    let provider = if shadow_mask {
-        &shading::SHADOW_MASK
-    } else {
-        &shading::SHADOW_MASK_NONE
-    };
-    shading::compose(&[
-        &GEOMETRY,
-        provider,
-        shading::lit_provider(tier),
-        shading::material_provider(tier),
-        shading::transmission_provider(tier),
-    ])
-}
-
-/// The directional and local-light shadow casters.
-pub(crate) static CASTER: shading::Module = shading::Module {
-    name: "caster",
-    source: include_str!("caster.wgsl"),
-    deps: &[
-        &shading::BIND_SHADOW,
-        &shading::BIND_SCENE,
-        &shading::SCENE_RAYS,
-        &shading::VERTEX_PULL,
-        &shading::MATERIAL_RASTER,
-        &shading::BIND_CASTER_POSITIONS,
-    ],
-};
-/// The entry points the casters' pipelines are created with: a vertex for
-/// each way a caster's vertices arrive and its depth is clipped, and the
-/// fragments that clamp depth or cut out masked texels.
-pub(crate) const SHADOW_VS_ENTRY: &str = "shadow_vs";
-pub(crate) const SHADOW_UNCLIPPED_VS_ENTRY: &str = "shadow_unclipped_vs";
-pub(crate) const SHADOW_MASKED_VS_ENTRY: &str = "shadow_masked_vs";
-pub(crate) const SHADOW_MASKED_UNCLIPPED_VS_ENTRY: &str = "shadow_masked_unclipped_vs";
-pub(crate) const SHADOW_PULLED_VS_ENTRY: &str = "shadow_pulled_vs";
-pub(crate) const SHADOW_PULLED_UNCLIPPED_VS_ENTRY: &str = "shadow_pulled_unclipped_vs";
-pub(crate) const SHADOW_PULLED_MASKED_VS_ENTRY: &str = "shadow_pulled_masked_vs";
-pub(crate) const SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY: &str =
-    "shadow_pulled_masked_unclipped_vs";
-pub(crate) const SHADOW_PAIRED_VS_ENTRY: &str = "shadow_paired_vs";
-pub(crate) const SHADOW_PAIRED_UNCLIPPED_VS_ENTRY: &str = "shadow_paired_unclipped_vs";
-pub(crate) const SHADOW_UNCLIPPED_FS_ENTRY: &str = "shadow_unclipped_fs";
-pub(crate) const SHADOW_MASKED_FS_ENTRY: &str = "shadow_masked_fs";
-pub(crate) const SHADOW_MASKED_UNCLIPPED_FS_ENTRY: &str = "shadow_masked_unclipped_fs";
 
 /// Which alpha modes the scene's materials use beyond opaque, whether one
 /// is a receiver of screen-space reflections, whether an opaque or masked
@@ -221,7 +140,7 @@ impl GeometryPipelines {
             geometry_shadow_masked: None,
             caster: device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("shadow casters"),
-                source: wgpu::ShaderSource::Wgsl(shading::compose(&[&CASTER]).into()),
+                source: wgpu::ShaderSource::Wgsl(caster_program().into()),
             }),
             cache: HashMap::new(),
             layers,

@@ -80,7 +80,7 @@ const MATERIAL_EMITS_INTO_GI:u32=512u;
 // A blended material whose alpha fades its diffuse and emitted light alone,
 // its specular keeping full strength (AlphaMode::Blend's keeps_specular):
 // Filament's transparent blending, where without it alpha fades all of its
-// light, Filament's fade (view/geometry.wgsl, blended_color).
+// light, Filament's fade (geometry.wgsl, blended_color).
 const MATERIAL_KEEPS_SPECULAR:u32=1024u;
 // A transmissive material (SurfaceMaterial::transmission above 0), drawn
 // with the blended surfaces whatever its alpha mode, which rays pass through.

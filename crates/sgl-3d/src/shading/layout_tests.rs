@@ -42,7 +42,7 @@ pub(crate) use mirror;
 fn programs() -> Vec<(&'static str, String)> {
     let roots: [&'static super::Module; 32] = [
         &crate::shading::PACKED_VERTEX,
-        &crate::view::pipelines::CASTER,
+        &crate::shading::programs::CASTER,
         &crate::stages::opaque::sky::SKY,
         &crate::stages::transparent::effects::GLOW,
         &crate::stages::transparent::mist::MIST,
@@ -88,7 +88,7 @@ fn programs() -> Vec<(&'static str, String)> {
     // binding tier's material-map provider.
     {
         use crate::shading::bind::BindingTier::{Basic, Extended};
-        use crate::view::pipelines::geometry_program;
+        use crate::shading::programs::geometry_program;
         programs.extend([
             ("geometry", geometry_program(false, Extended)),
             ("geometry_basic", geometry_program(false, Basic)),
@@ -135,6 +135,7 @@ type Program = (&'static str, String, Vec<(naga::ShaderStage, &'static str)>);
 /// library validated whole is listed nowhere and holds none.
 fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use super::FULLSCREEN_VS_ENTRY;
+    use crate::shading::programs as view;
     use crate::stages::cull::{self, pyramid};
     use crate::stages::dynamic_gi::pipelines as gi;
     use crate::stages::opaque::{ambient_occlusion as ao, sky};
@@ -143,7 +144,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::stages::shadows::{local, traced, traced::denoise};
     use crate::stages::transparent::{effects, heat, mist, transmission};
     use crate::stages::{deform, exposure, fog, motion_blur, probe_prefilter};
-    use crate::view::{pipelines as view, post_fx};
+    use crate::view::post_fx;
     let geometry = vec![
         view::SOURCE_VS_ENTRY,
         view::FS_ENTRY,
@@ -973,8 +974,8 @@ fn vertex_inputs(
 #[wasm_bindgen_test(unsupported = test)]
 fn vertex_layouts_match_wgsl_inputs() {
     use super::vertex::{CASTER_LAYOUT, DRAW_INSTANCE_LAYOUT};
+    use crate::shading::programs as view;
     use crate::stages::transparent::{effects, heat, mist};
-    use crate::view::pipelines as view;
     let caster = view::CASTER.name;
     let pipelines = [
         (
