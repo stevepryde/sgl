@@ -25,8 +25,8 @@ Use only the crates your game needs, all at the same version:
 
 ```toml
 [dependencies]
-sgl-core = "0.3.0"
-sgl-2d = "0.3.0"
+sgl-core = "0.4.0"
+sgl-2d = "0.4.0"
 ```
 
 When changing SGL alongside a game, use a sibling checkout:
@@ -102,11 +102,11 @@ the game's `Cargo.lock`:
 
 ```toml
 [dependencies]
-sgl-core = "0.3.0"
-sgl-2d = "0.3.0"
+sgl-core = "0.4.0"
+sgl-2d = "0.4.0"
 ```
 
-During `0.x`, `"0.3.0"` accepts compatible `0.3.x` releases but never `0.4`,
+During `0.x`, `"0.4.0"` accepts compatible `0.4.x` releases but never `0.5`,
 which may break APIs; `Cargo.lock` keeps the resolved graph until you update.
 For Git dependencies, use the same full commit `rev` for all SGL crates.
 

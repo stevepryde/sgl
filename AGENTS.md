@@ -43,7 +43,7 @@ compatibility shims solely to avoid updating consumers.
   Cargo-compatible semantic versioning: during `0.x`, incompatible changes
   advance the minor version, not just the patch version.
 - Games depend on every SGL crate with the same version requirement (for
-  example, `"0.3.0"`) and commit `Cargo.lock`; Git consumers reference one full
+  example, `"0.4.0"`) and commit `Cargo.lock`; Git consumers reference one full
   commit `rev`. Upgrade to a new minor version deliberately, applying all
   intervening migration notes and validating the game's affected workflows and
   targets.
