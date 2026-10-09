@@ -44,7 +44,8 @@
 //! class while the connection lives; the network may lose an unreliable one,
 //! and a receiver that is not polled drops its oldest unpolled unreliable
 //! messages, as a full UDP socket buffer does (reliable overflow closes the
-//! peer).
+//! peer only on a browser WebSocket receiver or past
+//! [`udp::EndpointConfig::global_reliable_inbound_bytes`]).
 //! Each lane has its own bounds and a scheduling weight in
 //! [`ReliableConfig`], which also sets the largest reliable message
 //! (`max_message_bytes`, default 64 KiB, up to 16 MiB). Transports fragment

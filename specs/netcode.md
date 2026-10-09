@@ -105,8 +105,8 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     cannot stop reading, so there the inbound bounds are a budget per
     caller poll, sized for the poll interval, and a peer that exceeds them
     is closed alone with `DisconnectReason::InboundOverflow`; elsewhere that
-    reason means a peer past the UDP endpoint's
-    `global_reliable_inbound_bytes` or one that breaks the protocol.
+    reason means only a peer past the UDP endpoint's
+    `global_reliable_inbound_bytes`.
     Received unreliable messages waiting for `poll` past a lane's
     `unreliable_messages` or `unreliable_bytes` (WebSocket and threaded UDP
     ingress) instead shed the oldest: a receiver that is not polled drops
