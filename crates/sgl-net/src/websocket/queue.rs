@@ -365,7 +365,7 @@ impl PeerState {
     /// the lane's inbound queue cannot take yet is [`Received::Held`]
     /// instead of closing the peer: read backpressure for a transport that
     /// can stop reading (netcode.md 13).
-    #[cfg(any(test, not(target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn receive_or_hold(
         &mut self,
         envelope: Envelope<'_>,
@@ -374,13 +374,13 @@ impl PeerState {
     }
 
     /// Whether a frame is held because its lane was full.
-    #[cfg(any(test, not(target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) const fn read_stalled(&self) -> bool {
         self.stalled.is_some()
     }
 
     /// Whether the held frame's message now fits its lane.
-    #[cfg(any(test, not(target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn can_resume(&self) -> bool {
         self.stalled.is_some_and(|(lane, len)| {
             self.inbound[lane]
