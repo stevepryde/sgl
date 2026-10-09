@@ -107,7 +107,8 @@ impl FixedClock {
             "FixedClock: max_steps_per_frame must be at least 1"
         );
         Self {
-            max_frame_dt: f32::INFINITY,
+            // Finite, so an infinite or NaN delta is a maximal stall.
+            max_frame_dt: f32::MAX,
             catch_up: Some(catch_up),
             ..Self::with_hz(hz)
         }
@@ -118,7 +119,7 @@ impl FixedClock {
     /// the per-frame step counter.
     pub fn begin_frame(&mut self, real_dt: f32) {
         let added = real_dt.min(self.max_frame_dt);
-        self.dropped_dt = real_dt - added;
+        self.dropped_dt = (real_dt - added).max(0.0);
         self.accumulator += added;
         self.steps_this_frame = 0;
         if let Some(policy) = self.catch_up {
@@ -136,6 +137,7 @@ impl FixedClock {
                 self.accumulator = retained;
             }
         }
+        self.dropped_dt = self.dropped_dt.min(f32::MAX);
     }
 
     /// Consume one fixed step if enough time has accumulated and the frame's
@@ -297,10 +299,11 @@ mod tests {
     }
 
     /// After multi-step frames, `alpha` is the fraction of a step left over
-    /// from elapsed time: 0.125 s frames at 30 Hz are 3.75 steps each.
+    /// from elapsed time: 0.11 s frames at 30 Hz are 3.3 steps each, so no
+    /// tested frame ends on a whole step.
     #[wasm_bindgen_test(unsupported = test)]
     fn catch_up_interpolates_the_elapsed_remainder() {
-        let (hz, dt) = (30.0_f32, 0.125_f32);
+        let (hz, dt) = (30.0_f32, 0.11_f32);
         let policy = CatchUp {
             max_steps_per_frame: 8,
             max_debt_steps: 0,
@@ -353,6 +356,38 @@ mod tests {
                 assert_eq!(clock.dropped_dt.to_bits(), 0);
                 assert!((clock.alpha - 0.5).abs() < 1e-3);
                 owed = owed + 1 - want;
+            }
+        }
+    }
+
+    /// An infinite or NaN delta is a maximal stall, never a poisoned clock:
+    /// `dropped_dt` stays finite and later 1/30 s frames at 30 Hz run one
+    /// step each (two at most, carrying the stall's fractional remainder).
+    #[wasm_bindgen_test(unsupported = test)]
+    fn non_finite_delta_recovers_on_the_next_frame() {
+        let hz = 30.0_f32;
+        let policy = CatchUp {
+            max_steps_per_frame: 8,
+            max_debt_steps: 4,
+        };
+        for bad in [f32::INFINITY, f32::NAN] {
+            for mut clock in [
+                FixedClock::with_hz(hz),
+                FixedClock::with_catch_up(hz, policy),
+            ] {
+                frame(&mut clock, bad);
+                assert!(clock.dropped_dt.is_finite(), "{bad}: {}", clock.dropped_dt);
+                // Drain any carried debt, then count steps over 30 frames.
+                for _ in 0..4 {
+                    frame(&mut clock, 1.0 / hz);
+                }
+                let frames = 30_u32;
+                let ticks: u32 = (0..frames).map(|_| frame(&mut clock, 1.0 / hz)).sum();
+                assert!(
+                    ticks.abs_diff(frames) <= 1,
+                    "{bad}: {ticks} ticks in {frames} frames"
+                );
+                assert_eq!(clock.dropped_dt.to_bits(), 0);
             }
         }
     }

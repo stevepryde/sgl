@@ -268,7 +268,8 @@ fn every_stream_seed_component_matters() {
 /// Defect: accumulator drift or a broken clamp, so a stall produces a burst
 /// of steps or the cadence oscillates. Oracle: core.md 2 — each frame adds
 /// `min(dt, fixed_dt)` and runs at most one step; steps over a whole
-/// schedule are the integer part of the clamped time.
+/// schedule are the integer part of the clamped time, and the clamped-off
+/// time is reported in `dropped_dt`.
 #[test]
 fn fixed_clock_runs_the_clamped_time_one_step_per_frame() {
     let strategy = prop::collection::vec(finite(0.0..0.3), 1..400);
@@ -277,6 +278,7 @@ fn fixed_clock_runs_the_clamped_time_one_step_per_frame() {
         let fixed = f64::from(clock.fixed_dt);
         let mut steps = 0u32;
         let mut clamped_total = 0.0f64;
+        let (mut supplied, mut dropped) = (0.0f64, 0.0f64);
         for dt in dts {
             clock.begin_frame(dt);
             while clock.step() {
@@ -293,6 +295,13 @@ fn fixed_clock_runs_the_clamped_time_one_step_per_frame() {
                 clock.alpha
             );
             clamped_total += f64::from(dt).min(fixed);
+            supplied += f64::from(dt);
+            dropped += f64::from(clock.dropped_dt);
+            let held = supplied - f64::from(steps) * fixed - dropped;
+            prop_assert!(
+                held > -1e-3 && held < fixed + 1e-3,
+                "held {held} s outside [0, one step)"
+            );
         }
         let expected = (clamped_total / fixed).floor() as u32;
         prop_assert!(
