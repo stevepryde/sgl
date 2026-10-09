@@ -134,6 +134,17 @@ docs and specs the entry links.
 - `sgl-3d` `SceneError`: new `UnknownShader`, `ShaderInUse`,
   `ShaderParameters`, `Shader`, `InvalidDisplacementBound` and
   `ShaderDataLength` variants; an exhaustive match adds arms.
+- `sgl-3d` shader contract: new `scene_volume_path(ctx) -> VolumePath`
+  (`length`, `bound`) and `VOLUME_NONE`, `VOLUME_EXIT`, `VOLUME_OPAQUE`,
+  `VOLUME_HIDDEN`, `VOLUME_ENTRY`, `VOLUME_EYE`: a blended draw's view-ray
+  length inside the volume its material bounds
+  ([Programmable surfaces](crates/sgl-3d/README.md#programmable-surfaces)).
+  These names are now reserved: a game module that declares `VolumePath`,
+  `scene_volume_path` or a `VOLUME_` constant renames it.
+- `sgl-3d` `Settings::volume_paths` (new, `bool`, on by default) and
+  `Renderer::volume_paths_in_effect` (new): the volume layers drawn for
+  materials whose shader reads `scene_volume_path`; saved settings without
+  the field load with it on. No game-code changes needed.
 - Docs: SGL has no physics engine; the [consumer guide](docs/README.md#physics)
   recommends custom arcade physics for most games (`sgl_core::collision` in
   2D) and Rapier only where simulated physics is the game. No game-code

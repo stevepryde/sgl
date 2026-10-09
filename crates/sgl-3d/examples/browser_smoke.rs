@@ -14,7 +14,9 @@
 //! region; glow, heat shimmer and mist; a fog volume; a glass pane whose
 //! thickness varies across it through a game's shader
 //! (`support/glass.wgsl`, composed and validated through naga in the
-//! browser); and an environment. Where the device has BC, the
+//! browser); a closed glass box whose shader reads its volume path
+//! (`support/volume_glass.wgsl`), so the volume layers draw where the tier
+//! is `Extended`; and an environment. Where the device has BC, the
 //! grate's image, the probe and the atlas are block-compressed, as a game
 //! ships them. Each
 //! configuration reports `ok` or `FAIL`: WebGPU validation, out-of-memory and
@@ -442,6 +444,81 @@ fn add_glass(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene) -> R
     Ok(())
 }
 
+/// A closed, double-sided glass box beside the pane, away from the measured
+/// points, whose shader (`support/volume_glass.wgsl`) absorbs over its
+/// volume path: the volume layers' passes and programs run where the tier
+/// is `Extended`, and the shader takes its authored 40 cm elsewhere.
+fn add_volume_glass(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &mut Scene,
+) -> Result<(), String> {
+    let shader = scene
+        .add_shader(ShaderSource {
+            wgsl: include_str!("support/volume_glass.wgsl").into(),
+            label: "volume glass".into(),
+        })
+        .map_err(|e| format!("add_shader: {e}"))?;
+    let glass = Material {
+        base: [1.; 4],
+        metallic: 0.,
+        roughness: 0.05,
+        transmission: 1.,
+        alpha: AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+            keeps_specular: false,
+        },
+        double_sided: true,
+        casts_directional_shadow: false,
+        ..Default::default()
+    };
+    let glass = scene
+        .add_materials(device, queue, &[glass], &[])
+        .map_err(|e| format!("add_materials: {e}"))?[0];
+    let values = SurfaceMaterial {
+        shader: Some(MaterialShader {
+            shader,
+            displacement_bound: 0.,
+        }),
+        ..scene
+            .material(glass)
+            .map_err(|e| format!("material: {e}"))?
+    };
+    scene
+        .set_material(queue, glass, values)
+        .map_err(|e| format!("set_material: {e}"))?;
+    // volume_glass.wgsl's ShaderParams, two vec4s: the absorption per metre
+    // with the authored thickness, and no wobble.
+    let tint = [0.5f32, 0.8, 0.7].map(|color| -color.ln() / 0.4);
+    let params = [[tint[0], tint[1], tint[2], 0.4], [0.; 4]];
+    let layout = scene
+        .shader_parameters_layout(shader)
+        .map_err(|e| format!("shader_parameters_layout: {e}"))?;
+    if layout.size as usize != size_of_val(&params) || layout.fields.len() != 2 {
+        return Err(format!(
+            "volume glass: ShaderParams is not two vec4s: {layout:?}"
+        ));
+    }
+    scene
+        .set_shader_parameters(queue, glass, bytemuck::bytes_of(&params))
+        .map_err(|e| format!("set_shader_parameters: {e}"))?;
+    let mesh = cuboid(Vec3::new(-1.2, 0.3, 4.6), Vec3::splat(0.4), 0);
+    let mesh = ModelMesh {
+        vertices: mesh.vertices,
+        indices: mesh.indices,
+        material: glass,
+        deformation: Default::default(),
+    };
+    let model = PreparedModel::new(vec![mesh]).map_err(|e| format!("PreparedModel: {e}"))?;
+    let model = scene
+        .add_model(device, queue, model)
+        .map_err(|e| format!("add_model: {e}"))?;
+    scene
+        .add_instance(device, queue, InstanceState::new(model), Mobility::Static)
+        .map_err(|e| format!("add_instance: {e}"))?;
+    Ok(())
+}
+
 fn add_content(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -512,6 +589,7 @@ fn add_content(
             .map_err(|e| format!("add_light: {e}"))?;
     }
     add_glass(device, queue, scene)?;
+    add_volume_glass(device, queue, scene)?;
     let paint = scene
         .add_decal_image(Image::Rgba8(image::RgbaImage::from_pixel(
             8,
@@ -730,6 +808,7 @@ struct Rendered {
     pixels: Vec<u8>,
     antialiasing: Antialiasing,
     fsr2_error: Option<String>,
+    volume_paths: bool,
     timed_frames: usize,
 }
 
@@ -778,8 +857,9 @@ async fn configuration(
         ));
     }
     let mut report = format!(
-        "antialiasing {:?}, lit luma {lit:.1}, shadowed {shadowed:.1}",
-        rendered.antialiasing
+        "antialiasing {:?}, volume paths {}, lit luma {lit:.1}, shadowed {shadowed:.1}",
+        rendered.antialiasing,
+        if rendered.volume_paths { "on" } else { "off" }
     );
     if let Some(reason) = rendered.fsr2_error {
         let _ = write!(report, ", FSR2 off: {reason}");
@@ -888,6 +968,7 @@ async fn render(
         pixels: read_pixels(device, queue, &output).await?,
         antialiasing: renderer.antialiasing_in_effect(settings),
         fsr2_error: renderer.fsr2_error().map(str::to_owned),
+        volume_paths: renderer.volume_paths_in_effect(settings),
         timed_frames,
     })
 }

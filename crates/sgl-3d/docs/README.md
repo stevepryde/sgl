@@ -42,7 +42,8 @@ its rendering `settings::Settings`.
    `Renderer::binding_tier` reports the device's binding tier: `Extended`
    at 48 or more sampled textures per stage, else `Basic`, where baked
    light is non-directional, dynamic GI is off
-   (`Renderer::dynamic_gi_in_effect`), the anisotropy, clearcoat,
+   (`Renderer::dynamic_gi_in_effect`), so are volume paths
+   (`Renderer::volume_paths_in_effect`), the anisotropy, clearcoat,
    iridescence, transmission, thickness, sheen and diffuse transmission maps
    give way to their factors and transmission is blended through unrefracted
    ([features](features.md#platforms)).
@@ -86,6 +87,8 @@ chunks whose waves its own shader moves and whose surface receives
 screen-space reflections,
 [`examples/shaders.rs`](../examples/shaders.rs) vegetation bent by a wind
 shader and glass whose thickness varies across it,
+[`examples/volumes.rs`](../examples/volumes.rs) closed glass that absorbs
+over each view ray's path inside it, seen from outside and inside,
 [`examples/streaming.rs`](../examples/streaming.rs) a block world streamed
 in 16 m chunks about a moving camera, edited and remeshed, with the render
 origin following it, and what each scene operation costs, and
