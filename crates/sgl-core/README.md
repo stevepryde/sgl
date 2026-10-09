@@ -25,7 +25,10 @@ simulation that must keep pace with elapsed time (an authoritative server or
 a networked client) uses `FixedClock::with_catch_up` instead: a `CatchUp`
 policy sets the most steps one frame runs and how many due steps carry to
 later frames (`max_debt_steps: 0` discards everything past the frame's
-budget). `dropped_dt` reports supplied time that will never be simulated.
+budget). `begin_frame` takes the frame's elapsed `Duration` and the clock
+accumulates it exactly in whole nanoseconds; `fixed_step()` is the exact step
+and `fixed_dt()` the same in `f32` seconds. `dropped_dt` reports supplied time
+that will never be simulated.
 Use its interpolation fraction for presentation, keeping game simulation
 separate from rendering.
 

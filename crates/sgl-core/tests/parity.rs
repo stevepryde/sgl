@@ -6,6 +6,7 @@ use sgl_core::collision::{Aabb, sweep_aabb};
 use sgl_core::math::Vec2;
 use sgl_core::time::FixedClock;
 use sgl_core::{SplitMix64, StateHasher};
+use std::time::Duration;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test(unsupported = test)]
@@ -47,26 +48,28 @@ fn typed_writes_and_late_rng_draws_are_target_independent() {
     assert_eq!(rng.range_inclusive(10, 20), 10);
 }
 
+/// Regenerated when `FixedClock` moved to exact `Duration` time (D-37); the
+/// step, accumulator and `alpha` must still agree bit for bit across targets.
 #[wasm_bindgen_test(unsupported = test)]
 fn fixed_clock_cadence_is_target_independent() {
     let mut clock = FixedClock::with_hz(60.0);
     let mut steps = 0u32;
     for frame in 0..240u32 {
         // A render loop wobbling between 30 and 144 Hz with two stalls.
-        let dt = match frame % 7 {
-            0 => 1.0 / 30.0,
-            1 => 1.0 / 144.0,
-            2 => 0.25,
-            _ => 1.0 / 59.94,
+        let elapsed = match frame % 7 {
+            0 => Duration::from_nanos(33_333_333),
+            1 => Duration::from_nanos(6_944_444),
+            2 => Duration::from_millis(250),
+            _ => Duration::from_nanos(16_683_350),
         };
-        clock.begin_frame(dt);
+        clock.begin_frame(elapsed);
         while clock.step() {
             steps += 1;
         }
         clock.finish();
     }
     assert_eq!(steps, 219);
-    assert_eq!(clock.alpha.to_bits(), 1_058_362_684);
+    assert_eq!(clock.alpha.to_bits(), 1_058_362_689);
 }
 
 #[wasm_bindgen_test(unsupported = test)]

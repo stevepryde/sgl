@@ -76,10 +76,14 @@ docs and specs the entry links.
   with `InboundOverflow`); the stall does not count toward `timeout_ms`. No
   game-code changes needed; browser receivers still close on overflow, so
   size their `inbound_*` bounds for one poll interval.
-- `sgl-core` `FixedClock`: new opt-in `FixedClock::with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })`
-  runs several steps per frame to follow elapsed time, and the new
-  `dropped_dt` field reports unsimulated time; `with_hz` and `new` keep
-  their one-step render-paced cadence. No game-code changes needed.
+- `sgl-core` `FixedClock`: accumulates exact `Duration` time (was `f32`
+  seconds): `begin_frame` takes the frame's `Duration`, the `fixed_dt` field
+  is now the `fixed_dt()` method beside the exact `fixed_step()`, and the new
+  `dropped_dt: Duration` reports unsimulated time. New opt-in
+  `with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })` runs
+  several steps per frame to follow elapsed time; `with_hz` and `new` keep
+  their one-step render-paced cadence. Migration: pass the frame's elapsed
+  `Duration` from `Instant` (`now.duration_since(last)`) and call `fixed_dt()`.
 - `sgl-2d` `SpritePass::upload`: a handle already uploaded now has its pixels
   replaced (was ignored), and `SpritePass::replace` is public, so glyph pages
   from `TextRenderer::end_frame` update the existing pass. No game-code
