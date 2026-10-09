@@ -1287,7 +1287,8 @@ once added (`SurfaceMaterial::shader`:
 composes the module into its own programs and calls the functions from
 every pass that rasterises the material, so colour, depth, shadows, the reflections' surface,
 temporal antialiasing and motion blur see one surface: water's waves,
-vegetation in the wind, glass whose thickness varies across it. The
+vegetation in the wind, glass whose thickness varies across it or that
+absorbs over the length of each view ray inside it. The
 equations are the game's; SGL3D ships none ([D-35](../../specs/decisions.md)).
 A shader is content: it changes what a surface is, never how SGL3D renders
 it, and nothing about it is a setting.
@@ -1409,6 +1410,10 @@ fn scene_depth(pixel:vec2<f32>)->f32
 // The metres along the fragment's view ray to the opaque surface behind
 // it, 0 where it is in front or unavailable.
 fn scene_depth_behind(ctx:SurfaceContext)->f32
+// The metres of the fragment's view ray inside the volume its material
+// bounds, and what ends it (a VOLUME_* constant): VOLUME_NONE and 0
+// where the volume layers are not held.
+fn scene_volume_path(ctx:SurfaceContext)->VolumePath
 
 // Defined by the game's module. A function that changes nothing returns
 // its argument.
@@ -1452,6 +1457,43 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
   return 0. Water's column behind a fragment (`scene_depth_behind`) gives
   depth-dependent absorption and a fade into the shore. Scene colour is
   never sampled: refraction stays SGL3D's.
+- **Volume paths.** A blended or transmissive material whose
+  `material_surface` reaches `scene_volume_path` bounds a volume: SGL3D
+  draws its meshes, as their vertex function places them, into three depth
+  layers each frame (the nearest entry face, the nearest exit face and the
+  next exit behind it), and the function returns the length in metres
+  along the view ray inside the volume (`VolumePath::length`, at most
+  `SCENE_DEPTH_FAR`) and what ends it (`VolumePath::bound`). At an entry
+  fragment (`ctx.front`): `VOLUME_EXIT`, to the volume's exit;
+  `VOLUME_OPAQUE`, to the opaque surface, where no exit lies between (an
+  opaque object inside, or an open volume); `VOLUME_HIDDEN`, a third
+  crossing whose exit is unmeasured, the opaque bound as its length. At an
+  exit fragment: `VOLUME_ENTRY`, from the nearest entry in front;
+  `VOLUME_EYE`, from the eye (the camera is inside, or the near plane cut
+  the entry). `VOLUME_NONE`, length 0, in every other pass, on the `Basic`
+  tier and with `Settings::volume_paths` off
+  (`Renderer::volume_paths_in_effect`). Use it so:
+  - absorb over it: set `thickness` to the length divided by the
+    instance's scale (`ctx.model_scale`; exact under a uniform scale), the
+    mesh's units the transmission refracts and absorbs over, or supply
+    `thickness` from the game's own data; take an authored thickness where
+    the bound is `VOLUME_NONE` or `VOLUME_HIDDEN`;
+  - never fade coverage by it: entry and exit meet at a finite volume's
+    silhouette, where the path is 0, so it would erase the surface and its
+    reflection there; fade into a shore by `scene_depth_behind`;
+  - a double-sided volume draws both its entry and exit faces, each
+    transmitting the opaque frame behind it, so absorb at one: at entry
+    faces, and at exit faces only for `VOLUME_EYE`, giving an exit face
+    behind an entry (`VOLUME_ENTRY`) no coverage under `AlphaMode::Blend`.
+
+  The layers follow the deformed surface and are drawn on the frame's
+  jittered lattice; they keep no history. The path follows the view ray,
+  not the refracted one; a volume inside another (ice in water) starts or
+  ends the outer one's path at its faces; a masked cut-out still bounds;
+  rays and probe captures see no layers. Cost: in frames whose blended
+  list holds such a material, three depth passes over those materials'
+  meshes (timing group `volume layers`) and three render-size depth
+  targets; other frames and materials pay nothing.
 - **Time and anchoring.** `ctx.phase` is the exact long-session clock: a
   motion with a whole number of cycles per hour repeats exactly, as normal
   layers do; `ctx.time` is `f32` and loses precision over long sessions.
@@ -1507,8 +1549,8 @@ not the module's to read); a module-scope `var`, a binding, an `override`
 or an entry point (the module declares `const`, `struct`, `alias` and `fn`);
 a missing or mis-signed function or `ShaderParams`; `discard` (coverage is
 `base_color.a`); a derivative in `material_vertex` or any other program
-error; a scene depth function called by `material_vertex` or a function it
-calls (`ShaderError::SceneDepthInVertex`: scene depth is the surface
+error; a scene depth function (`scene_volume_path` among them) called by
+`material_vertex` or a function it calls (`ShaderError::SceneDepthInVertex`: scene depth is the surface
 function's); a derivative (`dpdx`, `dpdy`, `fwidth`), or a call of a function
 that takes one, within an `if`, a `switch` or a loop (the right of `&&` and
 `||` among them) or after a `return` within one, since WGSL allows
@@ -1553,11 +1595,17 @@ period, with the column behind the water tinting and fading it, and
 compares the same waves as morph targets (`--morph`); the [shaders
 example](examples/shaders.rs) bends masked grass and tree cards in the wind
 (`support/wind.wgsl`) under cascades and a spot light, and gives a glass pane
-a thickness that varies across it (`support/glass.wgsl`):
+a thickness that varies across it (`support/glass.wgsl`); the [volumes
+example](examples/volumes.rs) absorbs over the volume path in closed glass
+(`support/volume_glass.wgsl`): a thin slab before a near and a far wall, a
+block with an opaque object inside seen from outside and inside, a
+wobbling blob and two boxes one behind the other, with `--volume-paths
+off` for the authored thickness:
 
 ```sh
 cargo run --release -p sgl-3d --example water -- --chunks 100 --run velvet
 cargo run --release -p sgl-3d --example shaders
+cargo run --release -p sgl-3d --example volumes
 ```
 
 ## Skinned meshes and morph targets
@@ -2392,8 +2440,8 @@ setting chooses it.
 
 | Tier | Sampled textures per stage | Lighting | Material maps |
 | --- | --- | --- | --- |
-| `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted; no scene depth for a shader | base, metallic-roughness (with packed occlusion), emission, normal, bump |
-| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission; scene depth for a blended shader | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission, thickness, sheen colour, sheen roughness, diffuse transmission and diffuse transmission colour maps |
+| `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted; no scene depth or volume path for a shader | base, metallic-roughness (with packed occlusion), emission, normal, bump |
+| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission; scene depth and volume paths for a blended shader | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission, thickness, sheen colour, sheen roughness, diffuse transmission and diffuse transmission colour maps |
 
 A Vulkan driver lands in either tier, by its `maxPerStageResources`.
 
