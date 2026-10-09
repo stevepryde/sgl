@@ -421,6 +421,7 @@ pub(crate) fn look(material: &Material) -> SetLook {
         group: material.values.visibility_group,
         casts: material.casts_directional_shadows(),
         opaque: material.values.alpha == crate::AlphaMode::Opaque,
+        displacement_bound: material.displacement_bound(),
     }
 }
 

@@ -55,6 +55,20 @@ fn cull_population(flags:u32,draw_set:DrawSet)->bool {
  return (flags&OBJECT_CAPTURE_VISIBLE)!=0u && enabled && casts;
 }
 
+// Bounds `lo` to `hi` in a mesh's space, grown by its set's displacement
+// bound (DrawSet.displacement_bound): where its material's shader may move
+// its vertices, as Godot b130438 grows an instance's bounds by its
+// extra_cull_margin (renderer_scene_cull.cpp 2010–2081). Every test of a
+// candidate's or a section's bounds takes them grown.
+struct CullBounds {
+ lo:vec3<f32>,
+ hi:vec3<f32>,
+}
+fn cull_grown(lo:vec3<f32>,hi:vec3<f32>,draw_set:u32)->CullBounds {
+ let bound=cull_sets[draw_set].displacement_bound;
+ return CullBounds(lo-vec3(bound),hi+vec3(bound));
+}
+
 // A candidate's chosen level: its mesh record word and its bounds in its
 // model's space.
 struct CullLevel {
@@ -115,10 +129,11 @@ fn cull_instances(@builtin(workgroup_id) workgroup:vec3<u32>,@builtin(local_invo
  }
  let model=cull_objects[candidate.object].model;
  let level=cull_level(candidate,model);
- if (cull_view.flags&CULL_FRUSTUM)!=0u && !cull_reaches(model,level.lo,level.hi) {
+ let bounds=cull_grown(level.lo,level.hi,candidate.draw_set);
+ if (cull_view.flags&CULL_FRUSTUM)!=0u && !cull_reaches(model,bounds.lo,bounds.hi) {
   return;
  }
- if cull_occludes_early() && cull_occluded(cull_occlusion.previous,cull_objects[candidate.object].previous_model,level.lo,level.hi) {
+ if cull_occludes_early() && cull_occluded(cull_occlusion.previous,cull_objects[candidate.object].previous_model,bounds.lo,bounds.hi) {
   let slot=atomicAdd(&cull_lists.late_count,1u);
   if slot<cull_view.candidates {
    cull_lists.entries[cull_view.candidates+slot]=vec2(index,level.mesh);
@@ -252,12 +267,11 @@ fn cull_sections(@builtin(workgroup_id) workgroup:vec3<u32>,@builtin(local_invoc
    break;
   }
   let at=cull_section_words(mesh,section);
-  let lo=cull_source_v3(at+SCENE_SECTION_MIN);
-  let hi=cull_source_v3(at+SCENE_SECTION_MAX);
-  if tested && !cull_reaches(model,lo,hi) {
+  let bounds=cull_section_bounds(at,candidate.draw_set);
+  if tested && !cull_reaches(model,bounds.lo,bounds.hi) {
    continue;
   }
-  if occludes && cull_occluded(cull_occlusion.previous,previous_model,lo,hi) {
+  if occludes && cull_occluded(cull_occlusion.previous,previous_model,bounds.lo,bounds.hi) {
    let slot=atomicAdd(&cull_lists.queue_count,1u);
    if slot<cull_view.queue_capacity {
     cull_lists.entries[queue+slot]=vec2(index,section);
@@ -283,7 +297,8 @@ fn cull_instances_late(@builtin(workgroup_id) workgroup:vec3<u32>,@builtin(local
  let candidate=cull_candidates[slot_index];
  let model=cull_objects[candidate.object].model;
  let level=cull_level(candidate,model);
- if cull_occluded(cull_occlusion.current,model,level.lo,level.hi) {
+ let bounds=cull_grown(level.lo,level.hi,candidate.draw_set);
+ if cull_occluded(cull_occlusion.current,model,bounds.lo,bounds.hi) {
   return;
  }
  let slot=atomicAdd(&cull_lists.late_visible_count,1u);
@@ -333,7 +348,7 @@ fn cull_sections_late(@builtin(workgroup_id) workgroup:vec3<u32>,@builtin(local_
     break;
    }
    let at=cull_section_words(mesh,section);
-   if tested && !cull_late_visible(model,at) {
+   if tested && !cull_late_visible(model,at,candidate.draw_set) {
     continue;
    }
    cull_append(entry.x,candidate,mesh,at,flags,true);
@@ -348,16 +363,20 @@ fn cull_sections_late(@builtin(workgroup_id) workgroup:vec3<u32>,@builtin(local_
  let entry=cull_lists.entries[queue_entry.x];
  let candidate=cull_candidates[entry.x];
  let at=cull_section_words(entry.y,queue_entry.y);
- if cull_late_visible(cull_objects[candidate.object].model,at) {
+ if cull_late_visible(cull_objects[candidate.object].model,at,candidate.draw_set) {
   cull_append(entry.x,candidate,entry.y,at,cull_objects[candidate.object].flags,true);
  }
 }
 
-// Whether the section whose words are at `at` passes the view's clip
-// volume and is not hidden behind this frame's depth pyramid at pose
-// `model`.
-fn cull_late_visible(model:mat4x4<f32>,at:u32)->bool {
- let lo=cull_source_v3(at+SCENE_SECTION_MIN);
- let hi=cull_source_v3(at+SCENE_SECTION_MAX);
- return cull_reaches(model,lo,hi) && !cull_occluded(cull_occlusion.current,model,lo,hi);
+// The bounds of the section whose words are at `at`, of a candidate drawn
+// in set `draw_set`, grown (cull_grown).
+fn cull_section_bounds(at:u32,draw_set:u32)->CullBounds {
+ return cull_grown(cull_source_v3(at+SCENE_SECTION_MIN),cull_source_v3(at+SCENE_SECTION_MAX),draw_set);
+}
+// Whether the section whose words are at `at`, of a candidate drawn in set
+// `draw_set`, passes the view's clip volume and is not hidden behind this
+// frame's depth pyramid at pose `model`.
+fn cull_late_visible(model:mat4x4<f32>,at:u32,draw_set:u32)->bool {
+ let bounds=cull_section_bounds(at,draw_set);
+ return cull_reaches(model,bounds.lo,bounds.hi) && !cull_occluded(cull_occlusion.current,model,bounds.lo,bounds.hi);
 }

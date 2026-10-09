@@ -10,7 +10,7 @@ use crate::content::identity::Identity;
 use crate::content::material::SurfaceMaterial;
 use crate::scene::instances::Instance;
 use crate::scene::materials::Material;
-use crate::scene::static_edits::posed_bounds;
+use crate::scene::static_edits::{posed_bounds, posed_grown};
 use crate::{Mobility, Scene};
 use glam::{Mat4, Vec3};
 
@@ -77,9 +77,14 @@ impl LightReach {
             if instance.mobility != Mobility::Static || !instance.state.capture_visible {
                 continue;
             }
+            let model = scene.drawn_model(instance.state.model);
             for (mesh, posed) in instance.casters.iter().enumerate() {
+                // Grown by what the mesh's material's shader may move it.
+                let grow = scene
+                    .drawn_material(model.meshes[mesh].material)
+                    .displacement_bound();
                 for (group, &bounds) in posed.groups.iter().enumerate() {
-                    if within(bounds, light) {
+                    if within(posed_grown(bounds, instance.state.pose, grow), light) {
                         self.groups
                             .push((id.index() as u32, mesh as u32, group as u32));
                     }

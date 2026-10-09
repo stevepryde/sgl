@@ -33,13 +33,15 @@ pub(crate) struct SetKey {
 }
 
 /// What a set's record takes of its material: its visibility group,
-/// whether it casts the directional shadow, and whether it is opaque, so a
-/// cascade may draw its paired sections indexed (`SET_PAIRS`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// whether it casts the directional shadow, whether it is opaque, so a
+/// cascade may draw its paired sections indexed (`SET_PAIRS`), and its
+/// shader's displacement bound, by which the cull grows its bounds.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct SetLook {
     pub group: u32,
     pub casts: bool,
     pub opaque: bool,
+    pub displacement_bound: f32,
 }
 
 /// A live set.
@@ -216,5 +218,6 @@ fn record(set: &Set) -> DrawSet {
         } else {
             0
         } | if set.look.opaque { SET_PAIRS } else { 0 },
+        displacement_bound: set.look.displacement_bound,
     }
 }

@@ -190,6 +190,21 @@ fn ground(x: [f32; 2], z: [f32; 2], slope: f32) -> (Vec<Vertex>, Vec<[f32; 4]>) 
     (vertices, data)
 }
 
+/// A quad in the plane z = `z` over `x` and `y`, facing +Z.
+fn wall(x: [f32; 2], y: [f32; 2], z: f32) -> (Vec<Vertex>, Vec<[f32; 4]>) {
+    let corners = [(x[0], y[0]), (x[1], y[0]), (x[1], y[1]), (x[0], y[1])];
+    let vertices = corners
+        .map(|(x, y)| Vertex {
+            position: [x, y, z],
+            normal: [0., 0., 1.],
+            color: [1.; 4],
+            lightmap_bounds: [0., 0., 1., 1.],
+            ..bytemuck::Zeroable::zeroed()
+        })
+        .to_vec();
+    (vertices, Vec::new())
+}
+
 /// A double-sided lit white material through `shader`'s vertices moved at
 /// most `bound`.
 fn opaque(shader: crate::ShaderId, bound: f32) -> asset::Material {
@@ -463,6 +478,66 @@ fn a_render_origin_move_moves_no_surface() {
         assert!(
             x.abs() < 1e-4 && y.abs() < 1e-4,
             "{pixel:?}: motion {x}, {y}"
+        );
+    }
+}
+
+// Plausible defect: culling by the mesh's rest bounds, so a surface the
+// shader moves into view is culled where it lands: by the camera's
+// GPU-built list (an opaque wall) and its CPU-built blended list (a
+// receiver). The oracle is the frustum: both walls lie 12 m below the view
+// at rest and the shader lifts them 12 m into it, to z = -4; with a
+// displacement bound of 0 they are culled, the depth at their pixels the
+// sky's, and with one of 12 they are drawn at their lifted depth.
+#[test]
+fn culling_grows_the_bounds_by_the_displacement_bound() {
+    let Some(mut harness) = Harness::new(receiving()) else {
+        return;
+    };
+    let shader = add_test_shader(&mut harness.scene);
+    let params = TestShaderParams {
+        direction: [0., 1., 0.],
+        lift: 12.,
+        ..Default::default()
+    };
+    let walls = [opaque(shader, 0.), receiver(shader, 0.)].map(|values| {
+        let material = harness.material(values);
+        set_test_params(&mut harness.scene, &harness.queue, material, params);
+        material
+    });
+    harness.place(wall([-2., -0.5], [-13., -11.], -4.), walls[0], [0.; 4]);
+    harness.place(wall([0.5, 2.], [-13., -11.], -4.), walls[1], [0.; 4]);
+    let camera = Camera {
+        view: Mat4::IDENTITY,
+        projection: crate::perspective(1., 1., 0.1),
+        eye: Vec3::ZERO,
+    };
+    // At x = -1.25 and 1.25 m on z = -4, NDC -0.57 and 0.57 under
+    // cot(0.5) = 1.83: columns 6.8 and 25.2.
+    let (left, right) = ([7, 16], [25, 16]);
+    for (bound, drawn) in [(0., false), (12., true)] {
+        for material in walls {
+            let mut values = harness.scene.material(material).unwrap();
+            values.shader = values.shader.map(|shader| MaterialShader {
+                displacement_bound: bound,
+                ..shader
+            });
+            harness
+                .scene
+                .set_material(&harness.queue, material, values)
+                .unwrap();
+        }
+        harness.frame(&frame(camera, 0.));
+        let expected = if drawn { 0.1 / 4. } else { 0. };
+        assert_depth(
+            texel(&harness.depth(), left),
+            expected,
+            &format!("the opaque wall at a bound of {bound}"),
+        );
+        assert_depth(
+            texel(&harness.surface_depth(), right),
+            expected,
+            &format!("the receiver at a bound of {bound}"),
         );
     }
 }

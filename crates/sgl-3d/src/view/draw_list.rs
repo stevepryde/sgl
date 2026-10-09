@@ -24,6 +24,7 @@ use super::population::{LightReach, Population, moving_caster_reaches, within};
 use crate::content::identity::{Identity, ModelId};
 use crate::scene::instances::Instance;
 use crate::scene::models::{Mesh, Model};
+use crate::scene::static_edits::{grown, posed_grown};
 use crate::shading::vertex::DrawInstance;
 use crate::{Mobility, Scene};
 use batching::{BatchKey, Batcher, InstanceDraw};
@@ -217,16 +218,18 @@ impl DrawList {
             if camera {
                 let frustum = culled.then(|| &*frustum.get_or_insert_with(|| view.frustum(pose)));
                 let push = |range: Range<u32>| self.ranges.push(range);
+                // Grown by what the material's shader may move it.
+                let grow = material.displacement_bound();
                 match &instance.deformation {
                     // Its triangles' bounds at bind do not hold it: it is
                     // culled whole, by its deformed bounds.
                     Some(deformation) => {
-                        let bounds = deformation.mesh_bounds[mesh_index];
+                        let bounds = grown(deformation.mesh_bounds[mesh_index], grow);
                         if frustum.is_none_or(|frustum| frustum.reaches(bounds)) {
-                            drawn.ranges.visible(None, push);
+                            drawn.ranges.visible(None, 0., push);
                         }
                     }
-                    None => drawn.ranges.visible(frustum, push),
+                    None => drawn.ranges.visible(frustum, grow, push),
                 }
             } else if drawn.count > 0 {
                 self.ranges.push(0..drawn.count);
@@ -268,7 +271,8 @@ impl DrawList {
         reach: &LightReach,
     ) {
         let view_projection = view.view_projection();
-        let mirrored = instance.state.pose.determinant() < 0.;
+        let pose = instance.state.pose;
+        let mirrored = pose.determinant() < 0.;
         let mut groups = reach.of(index).peekable();
         while let Some(&(mesh_index, _)) = groups.peek() {
             let mesh = &model.meshes[mesh_index];
@@ -279,9 +283,11 @@ impl DrawList {
             let bounds = &instance.casters[mesh_index];
             let material = scene.drawn_material(mesh.material);
             let enabled = population.draws(material, mask);
+            // Each posed box grown by what the material's shader may move it.
+            let grow = |bounds: [Vec3; 2]| posed_grown(bounds, pose, material.displacement_bound());
             let start = self.ranges.len();
             while let Some((_, group)) = groups.next_if(|&(mesh, _)| mesh == mesh_index) {
-                if !enabled || !clip_intersects(bounds.groups[group], view_projection) {
+                if !enabled || !clip_intersects(grow(bounds.groups[group]), view_projection) {
                     continue;
                 }
                 let group = clustered.groups[group].clone();
@@ -289,7 +295,8 @@ impl DrawList {
                     .iter()
                     .zip(&bounds.clusters[group])
                     .filter(|(_, bounds)| {
-                        within(**bounds, light) && clip_intersects(**bounds, view_projection)
+                        let bounds = grow(**bounds);
+                        within(bounds, light) && clip_intersects(bounds, view_projection)
                     })
                 {
                     // Clusters adjacent in the index buffer draw as one range.
@@ -337,7 +344,7 @@ impl DrawList {
         light: (Vec3, f32),
     ) {
         let pose = instance.state.pose;
-        let bounds = instance.bounds(model);
+        let bounds = grown(instance.bounds(model), scene.displacement_of(model));
         if !moving_caster_reaches(bounds, pose, view.view_projection(), light) {
             return;
         }
