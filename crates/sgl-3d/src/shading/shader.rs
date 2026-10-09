@@ -5,6 +5,7 @@
 //! (`validate`).
 use super::Module;
 
+mod derivatives;
 mod loops;
 mod validate;
 pub(crate) use validate::validate;

@@ -6,7 +6,8 @@
 //! only constants, structs, aliases and functions, among them
 //! `ShaderParams`, `material_vertex` and `material_surface` as the contract
 //! gives them, without `discard`, with counted loops within the budget
-//! (`loops`) and parameters within `SHADER_PARAMS_MAX_BYTES`; and that every
+//! (`loops`), derivatives only in uniform control flow (`derivatives`) and
+//! parameters within `SHADER_PARAMS_MAX_BYTES`; and that every
 //! program the device's tier composes it into (`programs`) parses and
 //! validates with the naga wgpu creates its modules with. Bevy 9d12036
 //! validates a material's shader only when wgpu creates its module and logs
@@ -17,7 +18,9 @@ use super::super::compose;
 use super::super::programs::{
     GAME_MODULE_HEADER, GeometryForm, ProgramShader, caster_program, geometry_program,
 };
-use super::{CONTRACT_NAMES, SHADER_CONTRACT, SHADER_DEFAULT, SHADER_SCENE_DEPTH_NONE, loops};
+use super::{
+    CONTRACT_NAMES, SHADER_CONTRACT, SHADER_DEFAULT, SHADER_SCENE_DEPTH_NONE, derivatives, loops,
+};
 use crate::content::shader::{
     ForbiddenItem, SHADER_PARAMS_MAX_BYTES, ShaderError, ShaderParamField, ShaderParamsLayout,
 };
@@ -83,6 +86,7 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
         }
     }
     loops::check(&module, |name| !CONTRACT_FUNCTIONS.contains(&name))?;
+    derivatives::check(&module, |name| !CONTRACT_FUNCTIONS.contains(&name))?;
     let layout = params_layout(&module, params)?;
     for (label, program) in programs(tier, ProgramShader::Game(source)) {
         let module =

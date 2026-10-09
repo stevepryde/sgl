@@ -1410,7 +1410,9 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
   whose `transmission` is above 0, where they drive SGL3D's one refraction
   per fragment (the base colour tints what it transmits, `attenuation`
   absorbs it over `thickness`, `ior` and `roughness` bend and blur it), and
-  `ior` and `specular` set its dielectric reflectance too. Coverage
+  `ior` and `specular` set its dielectric reflectance too; a `clearcoat`
+  it gives a material whose record has none lies on the geometry normal,
+  the coat's normal map being the record's. Coverage
   (`base_color.a`, under the record's alpha mode) and transmission are
   independent controls. A shader material keeps its `double_sided` as a
   volume, shading its back as the medium's exit by `ctx.front`.
@@ -1464,7 +1466,12 @@ not the module's to read); a module-scope `var`, a binding, an `override`
 or an entry point (the module declares `const`, `struct`, `alias` and `fn`);
 a missing or mis-signed function or `ShaderParams`; `discard` (coverage is
 `base_color.a`); a derivative in `material_vertex` or any other program
-error; `ShaderParams` over `shader::SHADER_PARAMS_MAX_BYTES` (4096); and a
+error; a derivative (`dpdx`, `dpdy`, `fwidth`), or a call of a function
+that takes one, within an `if`, a `switch` or a loop (the right of `&&` and
+`||` among them) or after a `return` within one, since WGSL allows
+derivatives only in uniform control flow and browsers refuse a program
+that may take one elsewhere, where naga does not (take it at the
+function's top level and `select` on it); `ShaderParams` over `shader::SHADER_PARAMS_MAX_BYTES` (4096); and a
 loop that is not a counted loop, or a function one call of which makes more
 than `shader::SHADER_LOOP_BUDGET` (256) iterations in all (AR-12). A counted
 loop is the `for` loop a counter of `i32` or `u32` makes, from a literal or

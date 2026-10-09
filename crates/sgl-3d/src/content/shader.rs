@@ -106,6 +106,14 @@ pub enum ShaderError {
     /// One call of `function` makes more than `SHADER_LOOP_BUDGET` loop
     /// iterations.
     LoopBudget { function: String, iterations: u64 },
+    /// `function` takes a derivative (`dpdx`, `dpdy`, `fwidth` and their
+    /// forms), or calls a function that takes one, within an `if`, a
+    /// `switch` or a loop (the right of `&&` and `||` among them), or after
+    /// a `return` within one: WGSL allows derivatives only in uniform
+    /// control flow, and a browser refuses a program that may take one
+    /// elsewhere. Take it in the function's top-level statements and
+    /// `select` on its value.
+    NonUniformDerivative { function: String },
     /// A declaration whose name SGL3D's programs already use.
     NameTaken { name: String },
     /// `ShaderParams` takes more than `SHADER_PARAMS_MAX_BYTES`.
@@ -138,6 +146,10 @@ impl std::fmt::Display for ShaderError {
             } => write!(
                 f,
                 "{function} makes {iterations} loop iterations, more than {SHADER_LOOP_BUDGET}"
+            ),
+            Self::NonUniformDerivative { function } => write!(
+                f,
+                "{function} takes a derivative within control flow, which WGSL allows only in uniform control flow"
             ),
             Self::NameTaken { name } => write!(f, "SGL3D already declares {name}"),
             Self::ParamsTooLarge { size, max } => {

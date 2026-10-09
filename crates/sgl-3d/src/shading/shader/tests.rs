@@ -270,6 +270,60 @@ fn the_contract_is_held_to() {
     ));
 }
 
+// Plausible defect: a module that takes a derivative where a browser's
+// compiler refuses one accepted, so that its pipelines fail in Chrome after
+// `add_shader` returned it, as naga 30 accepts it. The oracle is WGSL's
+// uniformity rule, which Chrome applies: a derivative under a branch on a
+// fragment's value, after a return under one, on the right of `&&` after a
+// fragment's value, or in a function called under such a branch, may be
+// taken by some invocations of a quad and not others, and is refused; one
+// in a function's top-level statements, directly or through a function
+// called there, is uniform and accepted.
+#[wasm_bindgen_test(unsupported = test)]
+fn derivatives_are_taken_in_uniform_control_flow() {
+    let module = |body: &str, helpers: &str| {
+        format!(
+            "{PARAMS}{helpers}\nfn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {{ return v; }}\nfn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {{\n var out=s;\n {body}\n return out;\n}}"
+        )
+    };
+    let slope = "fn slope(x:f32)->f32 { return abs(dpdx(x)); }";
+    for (body, helpers) in [
+        ("out.roughness=abs(dpdx(ctx.position.x));", ""),
+        (
+            "let d=slope(ctx.position.x);\n out.roughness=select(s.roughness,d,s.base_color.a>0.5);",
+            slope,
+        ),
+    ] {
+        validated(&module(body, helpers)).unwrap_or_else(|error| panic!("{body}: {error}"));
+    }
+    for (body, helpers) in [
+        (
+            "if s.base_color.a>0.5 { out.roughness=abs(dpdx(ctx.position.x)); }",
+            "",
+        ),
+        (
+            "if s.base_color.a>0.5 { return out; }\n out.roughness=abs(dpdy(ctx.position.y));",
+            "",
+        ),
+        (
+            "let rough=s.base_color.a>0.5 && fwidth(ctx.position.x)>0.;\n out.roughness=select(0.,1.,rough);",
+            "",
+        ),
+        (
+            "if s.base_color.a>0.5 { out.roughness=slope(ctx.position.x); }",
+            slope,
+        ),
+    ] {
+        assert_eq!(
+            refused(&module(body, helpers)),
+            ShaderError::NonUniformDerivative {
+                function: "material_surface".into()
+            },
+            "{body}"
+        );
+    }
+}
+
 // Plausible defects: naga's uniform layout misreported to the game, whose
 // Rust mirror then writes members at the wrong offsets; a block past the
 // limit accepted. The oracle is WGSL's alignment rules, independent of

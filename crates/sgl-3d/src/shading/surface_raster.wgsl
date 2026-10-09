@@ -158,10 +158,12 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
  s.dielectric_f0=material_surface_f0(material,m.ior,m.specular);
  s.specular=m.specular;
  s.roughness=surface_roughness(decaled.roughness,n,i);
- // The coat's normal is taken only where it has a coat.
+ // The coat's normal is the record's coat's, taken only where the record
+ // has a coat: a uniform branch, since its frame takes derivatives
+ // (surface_map_frame), which WGSL allows only in uniform control flow.
  s.coat=m.clearcoat;
  s.coat_normal=geometry_normal;
- if material.coat>0. || m.clearcoat>0. {
+ if material.coat>0. {
   s.coat_normal=surface_coat_normal(i,front);
  }
  s.coat_roughness=surface_roughness(m.coat_roughness,n,i);
