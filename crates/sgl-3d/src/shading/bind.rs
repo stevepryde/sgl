@@ -100,14 +100,16 @@ pub(crate) mod blended {
     pub(crate) const SURFACE_DEPTH: u32 = 1;
     pub(crate) const TRACE: u32 = 2;
     pub(crate) const TRANSMISSION: u32 = 3;
+    pub(crate) const SCENE_DEPTH: u32 = 4;
 
     /// The least binding tier that binds `binding`, the one declaration of
-    /// each one's: the transparent stage's copy of the composed frame is
-    /// `Extended`'s alone, below which transmitted light is blended through
-    /// unrefracted.
+    /// each one's: the transparent stage's copy of the composed frame, below
+    /// which transmitted light is blended through unrefracted, and the
+    /// opaque depth a game's shader reads (shader_scene_depth.wgsl), below
+    /// which it reads none, are `Extended`'s alone.
     pub(crate) fn tier(binding: u32) -> BindingTier {
         match binding {
-            TRANSMISSION => BindingTier::Extended,
+            TRANSMISSION | SCENE_DEPTH => BindingTier::Extended,
             _ => BindingTier::Basic,
         }
     }
@@ -444,7 +446,8 @@ pub(crate) fn caster_positions_entries() -> [wgpu::BindGroupLayoutEntry; 1] {
 
 /// The blended pipelines' group 3 on a device of `tier`: bind_blended.wgsl's
 /// screen-space method's result, surface depth and trace, and on
-/// `Extended` bind_blended_extended.wgsl's transmission copy.
+/// `Extended` bind_blended_extended.wgsl's transmission copy and opaque
+/// depth.
 pub(crate) fn blended(device: &wgpu::Device, tier: BindingTier) -> wgpu::BindGroupLayout {
     layout(device, "blended reflections", &blended_entries(tier))
 }
@@ -482,6 +485,7 @@ pub(crate) fn blended_entries(tier: BindingTier) -> Vec<wgpu::BindGroupLayoutEnt
             blended::TRANSMISSION,
             wgpu::TextureSampleType::Float { filterable: true },
         ),
+        texture(blended::SCENE_DEPTH, wgpu::TextureSampleType::Depth),
     ]
     .into_iter()
     .filter(|entry| blended::tier(entry.binding) <= tier)

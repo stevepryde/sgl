@@ -33,6 +33,10 @@ pub(crate) struct Instance {
     stale: bool,
     /// Its pose of its model's deformation, when the model deforms.
     pub deformation: Option<InstanceDeformation>,
+    /// The data its materials' shaders read (`Scene::set_instance_shader_data`),
+    /// and as it was in the last submitted frame, none before it was in one.
+    pub shader_data: [f32; 4],
+    submitted_shader_data: Option<[f32; 4]>,
 }
 
 impl Instance {
@@ -50,6 +54,8 @@ impl Instance {
             submitted: None,
             stale: false,
             deformation,
+            shader_data: [0.; 4],
+            submitted_shader_data: None,
         };
         instance.pose_casters(model);
         instance
@@ -97,6 +103,8 @@ impl Instance {
             deformed_positions,
             previous_positions,
             deformed_normals,
+            shader_data: self.shader_data,
+            previous_shader_data: self.submitted_shader_data.unwrap_or(self.shader_data),
         }
     }
 
@@ -155,6 +163,12 @@ impl Instances {
     fn write(&self, queue: &wgpu::Queue, id: InstanceId) {
         let instance = self.slots.get(id).expect("a live instance");
         self.objects.write(queue, id.index(), &instance.record());
+    }
+
+    /// Sets instance `id`'s shader data and writes its record.
+    pub fn set_shader_data(&mut self, queue: &wgpu::Queue, id: InstanceId, data: [f32; 4]) {
+        self.slots.get_mut(id).expect("a live instance").shader_data = data;
+        self.write(queue, id);
     }
 
     /// Rewrites the object records of `model`'s instances.
@@ -238,9 +252,14 @@ impl Instances {
 
     /// Commits a submitted frame: each moving instance's pose and
     /// deformation become the ones its motion is measured from while it was
-    /// visible.
+    /// visible, and each instance's shader data the one its shaders'
+    /// motion is.
     pub fn finish_frame(&mut self) {
         for (_, instance) in self.slots.iter_mut() {
+            if instance.submitted_shader_data != Some(instance.shader_data) {
+                instance.stale |= instance.submitted_shader_data.is_some();
+                instance.submitted_shader_data = Some(instance.shader_data);
+            }
             if let Some(deformation) = &mut instance.deformation {
                 deformation.finish(instance.state.visible);
             }
@@ -331,11 +350,11 @@ impl Scene {
             }
             return Err(error);
         }
+        let shaded = self.shaded_bounds(self.models.get(state.model)?);
         let model = self.models.get_mut(state.model)?;
         model.instances += 1;
         if mobility == Mobility::Static {
-            self.static_edits
-                .record(posed_bounds(model.bounds, state.pose));
+            self.static_edits.record(posed_bounds(shaded, state.pose));
         }
         let id = self
             .instances
@@ -412,13 +431,13 @@ impl Scene {
             self.models.get_mut(previous)?.instances -= 1;
             self.models.get_mut(state.model)?.instances += 1;
         }
+        let before = self.shaded_bounds(self.models.get(previous)?);
+        let after = self.shaded_bounds(self.models.get(state.model)?);
         let instance = self.instances.slots.get_mut(id).unwrap();
         if previous != state.model {
             instance.baked_irradiance = AmbientCube::default();
         }
         if instance.mobility == Mobility::Static && instance.state != state {
-            let before = self.models.get(previous)?.bounds;
-            let after = self.models.get(state.model)?.bounds;
             self.static_edits
                 .record(posed_bounds(before, instance.state.pose));
             self.static_edits.record(posed_bounds(after, state.pose));
@@ -445,6 +464,7 @@ impl Scene {
         if let Some(deformation) = instance.deformation.take() {
             deformation.free(&mut self.rays);
         }
+        let shaded = self.shaded_bounds(self.drawn_model(instance.state.model));
         let model = self
             .models
             .get_mut(instance.state.model)
@@ -453,7 +473,7 @@ impl Scene {
         self.instances.counts[kind(instance.mobility)] -= 1;
         if instance.mobility == Mobility::Static {
             self.static_edits
-                .record(posed_bounds(model.bounds, instance.state.pose));
+                .record(posed_bounds(shaded, instance.state.pose));
         }
         Ok(())
     }

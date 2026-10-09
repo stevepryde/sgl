@@ -3,6 +3,7 @@
 //! operations that add, read, edit and remove them.
 use super::candidates::CandidateMesh;
 use super::rays::SceneRays;
+use super::shaders::Shaders;
 use super::slots::Slots;
 use super::textures::{self, Textures};
 use super::{Scene, SceneError, buffer};
@@ -13,12 +14,29 @@ use crate::shading::bind::group2::MaterialMap;
 use crate::shading::material::{MaterialMaps, MaterialUniform};
 use group::{Bound, Groups};
 use maps::{InEffect, authored, authored_maps};
+use params::ParamBlock;
 use std::collections::HashMap;
 use std::ops::Range;
 use validate::{
     validate_alpha, validate_anisotropy, validate_diffuse_transmission, validate_iridescence,
-    validate_normal_layers, validate_reflectance, validate_sheen, validate_transmission,
+    validate_normal_layers, validate_reflectance, validate_shader, validate_sheen,
+    validate_transmission,
 };
+
+/// The parameter blocks of `values`' shader, of its size, where it has one.
+fn params_block(
+    device: &wgpu::Device,
+    shaders: &Shaders,
+    values: &SurfaceMaterial,
+) -> Option<ParamBlock> {
+    let shader = values.shader?;
+    let size = shaders
+        .get(shader.shader)
+        .expect("a validated material's shader lives")
+        .layout
+        .size;
+    Some(ParamBlock::new(device, size))
+}
 
 pub(crate) struct Material {
     pub values: SurfaceMaterial,
@@ -42,6 +60,8 @@ pub(crate) struct Material {
     /// Meshes drawn with it, model meshes and their levels of detail alike,
     /// without authored tangent frames.
     pub untangented: u32,
+    /// Its shader's parameter blocks, while it has a shader.
+    params: Option<ParamBlock>,
 }
 
 impl Material {
@@ -64,10 +84,27 @@ impl Material {
         MaterialUniform::new(&self.values, self.bound.maps.maps())
     }
 
-    /// Whether its shading changes with the frame's time where its geometry
-    /// stands still (`MaterialUniform::surface_moves`).
+    /// Whether its shading may change with the frame's time where its
+    /// geometry stands still: its record's (`record_moves`), or any
+    /// material's with a shader, whose functions SGL3D does not analyse
+    /// (Godot b130438's `is_animated()` analyses its material's code;
+    /// scene_shader_forward_clustered.cpp 250–252).
     pub fn surface_moves(&self) -> bool {
+        self.record_moves() || self.values.shader.is_some()
+    }
+
+    /// Whether its record's shading changes with the frame's time
+    /// (`MaterialUniform::surface_moves`), as rays see it too.
+    pub fn record_moves(&self) -> bool {
         self.uniform().surface_moves()
+    }
+
+    /// How far its shader moves a vertex, in its meshes' units; 0 without
+    /// one.
+    pub fn displacement_bound(&self) -> f32 {
+        self.values
+            .shader
+            .map_or(0., |shader| shader.displacement_bound)
     }
 
     /// Visibility and explicit casting are independent caller policies.
@@ -92,13 +129,15 @@ pub(crate) struct Materials {
     /// (`SurfaceMaterial::caster_values`).
     pub casters: u64,
     /// How many of its materials are masked, how many blended and how many
-    /// of those receive screen-space reflections, and how many opaque or
-    /// masked ones' surfaces move (`Material::surface_moves`), and how many
-    /// have an iridescent film.
+    /// of those receive screen-space reflections, how many opaque or masked
+    /// ones' surfaces move (`Material::surface_moves`) and of those how many
+    /// records do (`Material::record_moves`), and how many have an
+    /// iridescent film.
     masked: usize,
     blended: usize,
     receivers: usize,
     moving: usize,
+    moving_records: usize,
     films: usize,
     sheens: usize,
     diffuse_transmission: usize,
@@ -116,6 +155,7 @@ impl Materials {
             blended: 0,
             receivers: 0,
             moving: 0,
+            moving_records: 0,
             films: 0,
             sheens: 0,
             diffuse_transmission: 0,
@@ -146,6 +186,54 @@ impl Materials {
         self.moving > 0
     }
 
+    /// Whether an opaque or masked material's record moves
+    /// (`Material::record_moves`), as rays see it.
+    pub fn holds_moving_records(&self) -> bool {
+        self.moving_records > 0
+    }
+
+    /// The device's binding tier, which a shader's programs are validated
+    /// for.
+    pub fn tier(&self) -> crate::shading::bind::BindingTier {
+        self.groups.tier
+    }
+
+    /// Whether a material has a shader.
+    pub fn holds_shaders(&self) -> bool {
+        self.slots
+            .iter()
+            .any(|(_, material)| material.values.shader.is_some())
+    }
+
+    /// `id`'s parameter block of its shader's size becomes `bytes`.
+    pub fn set_parameters(&mut self, queue: &wgpu::Queue, id: MaterialId, bytes: &[u8]) {
+        self.slots
+            .get_mut(id)
+            .and_then(|material| material.params.as_mut())
+            .expect("a live material with a shader")
+            .set(queue, bytes);
+    }
+
+    /// Before a frame: each shader parameter block's last submitted copy is
+    /// uploaded where it changed.
+    pub fn prepare_frame(&mut self, queue: &wgpu::Queue) {
+        for (_, material) in self.slots.iter_mut() {
+            if let Some(params) = &mut material.params {
+                params.prepare_frame(queue);
+            }
+        }
+    }
+
+    /// Commits a submitted frame: each shader parameter block becomes the
+    /// one its next frame's motion is measured from.
+    pub fn finish_frame(&mut self) {
+        for (_, material) in self.slots.iter_mut() {
+            if let Some(params) = &mut material.params {
+                params.finish_frame();
+            }
+        }
+    }
+
     /// Whether a material has an iridescent film: the lit pipelines
     /// evaluate films only while one does (`LitConstants::films`).
     pub fn holds_films(&self) -> bool {
@@ -171,14 +259,14 @@ impl Materials {
         self.transmissive > 0
     }
 
-    /// Counts `by` more materials of `values` whose surface `moves` or not:
-    /// one with an iridescent film among the films, one with a sheen among
-    /// the sheens, one that passes diffuse light through among those; a
-    /// blended or
-    /// transmissive one among the blended (and the receivers where it is
-    /// one), else a masked one among the masked and one whose surface moves
-    /// among the moving.
-    fn count(&mut self, values: &SurfaceMaterial, moves: bool, by: isize) {
+    /// Counts `by` more materials of `values` whose record moves or not
+    /// (`record_moves`): one with an iridescent film among the films, one
+    /// with a sheen among the sheens, one that passes diffuse light through
+    /// among those; a blended or transmissive one among the blended (and the
+    /// receivers where it is one), else a masked one among the masked, one
+    /// whose surface moves (its record, or with a shader) among the moving
+    /// and one whose record moves among those.
+    fn count(&mut self, values: &SurfaceMaterial, record_moves: bool, by: isize) {
         let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
         if values.iridescence > 0. {
             add(&mut self.films);
@@ -199,8 +287,11 @@ impl Materials {
             }
             return;
         }
-        if moves {
+        if record_moves || values.shader.is_some() {
             add(&mut self.moving);
+        }
+        if record_moves {
+            add(&mut self.moving_records);
         }
         if matches!(values.alpha, AlphaMode::Mask { .. }) {
             add(&mut self.masked);
@@ -225,6 +316,7 @@ impl Materials {
     /// every binding tier alike, without uploading.
     fn validate(
         device: &wgpu::Device,
+        shaders: &Shaders,
         materials: &[AuthoredMaterial],
         images: &[Image],
     ) -> Result<(), SceneError> {
@@ -243,6 +335,7 @@ impl Materials {
             validate_sheen(&values)?;
             validate_diffuse_transmission(&values)?;
             validate_normal_layers(&values, authored_maps(material), material.wrap)?;
+            validate_shader(&values, shaders)?;
         }
         Ok(())
     }
@@ -253,11 +346,11 @@ impl Materials {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        rays: &mut SceneRays,
+        (rays, shaders): (&mut SceneRays, &Shaders),
         materials: &[AuthoredMaterial],
         images: &[Image],
     ) -> Result<Vec<MaterialId>, SceneError> {
-        Self::validate(device, materials, images)?;
+        Self::validate(device, shaders, materials, images)?;
         let in_effect: Vec<_> = materials
             .iter()
             .map(|material| InEffect::of(material, self.groups.tier))
@@ -276,7 +369,7 @@ impl Materials {
         let result = self.upload(
             device,
             queue,
-            rays,
+            (rays, shaders),
             (materials, &in_effect, images),
             &uses,
             (&mut uploaded, &mut added),
@@ -300,7 +393,7 @@ impl Materials {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        rays: &mut SceneRays,
+        (rays, shaders): (&mut SceneRays, &Shaders),
         (materials, in_effect, images): (&[AuthoredMaterial], &[InEffect], &[Image]),
         uses: &[[bool; 2]],
         (uploaded, added): (&mut [Option<usize>], &mut Vec<MaterialId>),
@@ -312,7 +405,7 @@ impl Materials {
         }
         for (material, &maps) in materials.iter().zip(in_effect) {
             let maps = maps.map(|index| uploaded[index].expect("a map in effect is uploaded"));
-            added.push(self.add_one(device, queue, rays, material, maps)?);
+            added.push(self.add_one(device, queue, (rays, shaders), material, maps)?);
         }
         Ok(())
     }
@@ -322,7 +415,7 @@ impl Materials {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        rays: &mut SceneRays,
+        (rays, shaders): (&mut SceneRays, &Shaders),
         material: &AuthoredMaterial,
         maps: InEffect,
     ) -> Result<MaterialId, SceneError> {
@@ -351,9 +444,14 @@ impl Materials {
             maps,
             wrap: material.wrap,
         };
-        let group = self
-            .groups
-            .group(device, &self.textures, &bound, &values_buffer, &baked);
+        let params = params_block(device, shaders, &values);
+        let group = self.groups.group(
+            device,
+            &self.textures,
+            &bound,
+            [&values_buffer, &baked],
+            params.as_ref(),
+        );
         let mut distinct: Vec<usize> = maps.images().map(|(texture, _)| texture).collect();
         distinct.sort_unstable();
         distinct.dedup();
@@ -373,6 +471,7 @@ impl Materials {
             record,
             users: HashMap::new(),
             untangented: 0,
+            params,
         }))
     }
 
@@ -388,10 +487,14 @@ impl Materials {
             .iter()
             .map(|(id, material)| {
                 let bound = &material.bound;
-                let (buffer, baked) = (&material.buffer, &material.baked);
-                let group = self
-                    .groups
-                    .group(device, &self.textures, bound, buffer, baked);
+                let buffers = [&material.buffer, &material.baked];
+                let group = self.groups.group(
+                    device,
+                    &self.textures,
+                    bound,
+                    buffers,
+                    material.params.as_ref(),
+                );
                 (id, group)
             })
             .collect();
@@ -400,14 +503,17 @@ impl Materials {
         }
     }
 
-    /// Replaces a material's values in raster and the ray source at once.
+    /// Replaces a material's values in raster and the ray source at once;
+    /// one whose shader changes takes zero parameter blocks of its new
+    /// shader's size, in a group 2 that binds them.
     pub fn set(
         &mut self,
         queue: &wgpu::Queue,
-        rays: &SceneRays,
+        (rays, shaders): (&SceneRays, &Shaders),
         id: MaterialId,
         values: SurfaceMaterial,
     ) -> Result<(), SceneError> {
+        validate_shader(&values, shaders)?;
         let material = self.slots.get_mut(id).ok_or(SceneError::UnknownMaterial)?;
         validate_anisotropy(&values, material.untangented)?;
         validate_alpha(&values)?;
@@ -421,11 +527,23 @@ impl Materials {
             if material.values.caster_values() != values.caster_values() {
                 self.casters = super::next_generation();
             }
-            let old = (material.values, material.surface_moves());
+            let old = (material.values, material.record_moves());
             material.values = values;
             let uniform = material.uniform();
             crate::counters::write_buffer(queue, &material.buffer, 0, bytemuck::bytes_of(&uniform));
             rays.write_material(queue, material.word(), &uniform);
+            let shader = |values: &SurfaceMaterial| values.shader.map(|shader| shader.shader);
+            if shader(&old.0) != shader(&values) {
+                let device = &self.groups.device;
+                material.params = params_block(device, shaders, &values);
+                material.group = self.groups.group(
+                    device,
+                    &self.textures,
+                    &material.bound,
+                    [&material.buffer, &material.baked],
+                    material.params.as_ref(),
+                );
+            }
             self.count(&old.0, old.1, -1);
             self.count(&values, uniform.surface_moves(), 1);
         }
@@ -449,7 +567,7 @@ impl Materials {
             return Err(SceneError::MaterialInUse);
         }
         let material = self.slots.remove(id).unwrap();
-        self.count(&material.values, material.surface_moves(), -1);
+        self.count(&material.values, material.record_moves(), -1);
         rays.free(material.record);
         for texture in material.textures {
             self.textures.release(rays, texture);
@@ -472,12 +590,21 @@ impl Scene {
         images: &[Image],
     ) -> Result<Vec<MaterialId>, SceneError> {
         self.edited();
-        let ids = self
-            .materials
-            .add(device, queue, &mut self.rays, materials, images);
+        let ids = self.materials.add(
+            device,
+            queue,
+            (&mut self.rays, &self.shaders),
+            materials,
+            images,
+        );
         // A failure after the source grew still leaves it grown.
         self.refresh_scene_group(device);
-        ids
+        let ids = ids?;
+        for &id in &ids {
+            let shader = self.materials.get(id)?.values.shader;
+            self.shaders.count(shader.map(|shader| shader.shader), 1);
+        }
+        Ok(ids)
     }
 
     /// A material's current values.
@@ -528,7 +655,11 @@ impl Scene {
                 return Err(SceneError::DeviceLimit);
             }
         }
-        self.materials.set(queue, &self.rays, id, values)?;
+        self.materials
+            .set(queue, (&self.rays, &self.shaders), id, values)?;
+        let shader = |values: &SurfaceMaterial| values.shader.map(|shader| shader.shader);
+        self.shaders.count(shader(&old), -1);
+        self.shaders.count(shader(&values), 1);
         if blending || std::mem::discriminant(&old.alpha) != std::mem::discriminant(&values.alpha) {
             self.models.classify_users(id, &self.materials);
         }
@@ -543,7 +674,10 @@ impl Scene {
     /// Removes a material no model's mesh uses.
     pub fn remove_material(&mut self, id: MaterialId) -> Result<(), SceneError> {
         self.edited();
-        self.materials.remove(&mut self.rays, id)
+        let shader = self.materials.get(id)?.values.shader;
+        self.materials.remove(&mut self.rays, id)?;
+        self.shaders.count(shader.map(|shader| shader.shader), -1);
+        Ok(())
     }
 }
 
@@ -553,6 +687,7 @@ mod group;
 pub(crate) mod maps;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod normal_layer_tests;
+mod params;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod sheen_transmission_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]

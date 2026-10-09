@@ -143,7 +143,13 @@ pub(crate) struct FrameUniform {
     pub irradiance_volume_cell_size: [f32; 3],
     pub padding_cell_size: f32,
     pub irradiance_volume_cells: [u32; 3],
-    pub padding_cells: u32,
+    /// The last submitted frame's `elapsed_seconds` and `animation_phase`,
+    /// which a material's vertex function evaluates motion at; this
+    /// frame's after history restarts.
+    pub previous_elapsed_seconds: f32,
+    pub previous_animation_phase: f32,
+    /// WGSL rounds `Frame` up to its 16-byte alignment.
+    pub padding_previous: [f32; 3],
 }
 
 /// One instance's record (`Object` in uniforms.wgsl), at its index in the
@@ -162,6 +168,10 @@ pub(crate) struct ObjectUniform {
     pub deformed_positions: u32,
     pub previous_positions: u32,
     pub deformed_normals: u32,
+    /// The data its material's shader reads this frame and in the last
+    /// submitted frame (`Scene::set_instance_shader_data`).
+    pub shader_data: [f32; 4],
+    pub previous_shader_data: [f32; 4],
 }
 
 /// The camera's view and frame data as last uploaded.

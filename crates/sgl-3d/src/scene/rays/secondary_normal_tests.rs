@@ -136,6 +136,7 @@ fn plane_asset(has_normal_map: bool) -> Asset {
             unlit: false,
             emits_into_gi: true,
             alpha: crate::AlphaMode::Opaque,
+            shader: None,
         }],
         images: vec![
             crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(1, 1, image::Rgba(PIXEL))),
@@ -276,6 +277,7 @@ fn material_normal_oracle(
                     emits_into_gi: true,
                     double_sided: true,
                     alpha: crate::AlphaMode::Opaque,
+                    shader: None,
                 },
                 // A normal map, else the bump map, as the scene puts them in
                 // effect (`scene::materials::maps::InEffect`).
@@ -317,10 +319,22 @@ fn material_normal_oracle(
                         &shading::SHADOW_MASK_NONE,
                         &shading::tiers::MATERIAL_MAPS_EXTENDED,
                         &shading::tiers::LIT_BASIC,
+                        &shading::shader::SHADER_DEFAULT,
+                        &shading::shader::SHADER_PARAMS_NONE,
+                        &shading::shader::SHADER_SCENE_DEPTH_NONE,
                     ]),
                     r#"
 override fixture_observe:u32=0u;
-@vertex fn fixture_vs(v:Vertex)->Fragment {
+struct FixtureVertex {
+ @location(0) position:vec3<f32>,
+ @location(1) normal:vec3<f32>,
+ @location(2) uv:vec2<f32>,
+ @location(3) color:vec4<f32>,
+ @location(4) lightmap_uv:vec2<f32>,
+ @location(5) lightmap_bounds:vec4<f32>,
+ @location(6) tangent:vec4<f32>,
+}
+@vertex fn fixture_vs(v:FixtureVertex)->Fragment {
  var o:Fragment;
  o.clip=vec4((v.color.x+(v.position.x-v.color.x)*v.color.y)/4.,v.position.y,0.,1.);
  let model=objects[0].model;

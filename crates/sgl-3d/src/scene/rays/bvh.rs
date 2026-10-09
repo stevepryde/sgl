@@ -541,6 +541,7 @@ mod tests {
                 vertices,
                 indices,
                 ranges,
+                shader_data: &[],
             })
             .collect();
         for base in [1, 4096, 0x00ab_cdef] {

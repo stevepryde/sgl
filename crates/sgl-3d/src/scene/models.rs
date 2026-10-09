@@ -477,12 +477,15 @@ impl Scene {
             self.instances.slots.get_mut(instance).unwrap().deformation = Some(deformation);
         }
         Models::take_materials(&mut self.materials, id, &built.meshes);
-        let model = self.models.get_mut(id).unwrap();
-        // Replacing the geometry a static instance shows is a static edit.
+        // Replacing the geometry a static instance shows is a static edit,
+        // of each geometry's bounds as its materials' shaders may move it.
+        let before = self.shaded_bounds(self.models.get(id)?);
+        let after = self.shaded_bounds(&built);
         for pose in self.instances.static_poses(id) {
-            self.static_edits.record(posed_bounds(model.bounds, pose));
-            self.static_edits.record(posed_bounds(built.bounds, pose));
+            self.static_edits.record(posed_bounds(before, pose));
+            self.static_edits.record(posed_bounds(after, pose));
         }
+        let model = self.models.get_mut(id).unwrap();
         let previous = std::mem::replace(&mut model.meshes, built.meshes);
         model.bounds = built.bounds;
         model.geometry = built.geometry;

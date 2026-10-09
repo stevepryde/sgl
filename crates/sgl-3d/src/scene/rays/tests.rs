@@ -81,6 +81,7 @@ impl Fixture {
                     vertices: &mesh.vertices,
                     indices: &mesh.indices,
                     ranges,
+                    shader_data: &[],
                 })
                 .collect();
             let material_words: Vec<_> = asset
@@ -243,6 +244,7 @@ fn material(double_sided: bool) -> Material {
         unlit: false,
         emits_into_gi: true,
         alpha: crate::AlphaMode::Opaque,
+        shader: None,
     }
 }
 pub(super) fn asset(meshes: Vec<CpuMesh>, two_sided: bool) -> Asset {

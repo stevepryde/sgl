@@ -43,7 +43,7 @@ fn stable_surface(i:Fragment,s:Surface)->StableOutput {
 }
 // The G-buffer records no emission.
 fn stable_raster_surface(i:Fragment,front:bool)->Surface {
- return raster_surface(i,front,surface_base_color(i),vec3(0.),cluster_range(i.world,i.clip.xy));
+ return raster_surface(i,front,raster_material(i,front),cluster_range(i.world,i.clip.xy));
 }
 @fragment fn stable_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->StableOutput {
  let front=object_front_face(i,raster_front);
@@ -68,20 +68,23 @@ fn camera_ambient(shaded:Shaded)->vec4<f32> {
 }
 fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
  let front=object_front_face(i,raster_front);
- let base=surface_base_color(i);
- let emission=surface_emission(i);
- // Keep split lighting's early unlit exit before normal maps and BRDF sampling.
+ // Keep split lighting's early unlit exit before normal maps and BRDF
+ // sampling: an unlit material reads only its base colour and emission.
  var shaded:Shaded;
+ var alpha:f32;
  if (material.flags&MATERIAL_UNLIT)!=0u {
-  material_alpha_discard(base.a);
-  shaded=shade_unlit(unlit_surface(base,emission));
+  let m=raster_material(i,front);
+  alpha=m.base_color.a;
+  material_alpha_discard(alpha);
+  shaded=shade_unlit(unlit_surface(m.base_color,raster_emission(i,m.emission)));
  } else {
   let context=raster_context(i);
-  let s=raster_surface(i,front,base,emission,context.clusters);
-  material_alpha_discard(base.a);
+  let s=raster_surface(i,front,raster_material(i,front),context.clusters);
+  alpha=s.base.a;
+  material_alpha_discard(alpha);
   shaded=shade_lit(s,context);
  }
- return ShadedFragment(shaded,base.a,gbuffer_encode_motion(i.current_clip,i.previous_clip));
+ return ShadedFragment(shaded,alpha,gbuffer_encode_motion(i.current_clip,i.previous_clip));
 }
 // Probe captures, which keep their ambient light, occluded by their
 // material's occlusion, in color.
@@ -108,12 +111,12 @@ struct LegacyStableOutput {
 }
 @fragment fn anisotropy_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->@location(0) vec4<f32> {
  let front=object_front_face(i,raster_front);
- let alpha=surface_base_color(i).a;
+ let m=raster_material(i,front);
  var anisotropy=vec4(0.);
  if material.anisotropy_strength>0. {
-  anisotropy=surface_anisotropy(i,front,surface_normal(i,front));
+  anisotropy=surface_anisotropy(i,front,m.normal);
  }
- material_alpha_discard(alpha);
+ material_alpha_discard(m.base_color.a);
  return gbuffer_encode_anisotropy(anisotropy,material.environment_scale);
 }
 
@@ -133,7 +136,8 @@ struct LegacyStableOutput {
   return dummy;
  }
  let v=scene_source_vertex(drawn.object,drawn.mesh,drawn_index(drawn,draw_vertex));
- var o=vertex(drawn.object,Vertex(v.position,v.normal,v.uv,v.color,v.lightmap_uv,v.lightmap_bounds,v.tangent),v.previous_position);
+ let rest=MaterialVertex(v.position,v.normal,v.tangent,v.uv,v.color,v.shader_data,vec4(0.));
+ var o=vertex(drawn.object,rest,v.lightmap_uv,v.lightmap_bounds,v.previous_position);
  o.source_id=v.source_id;
  return o;
 }
@@ -162,7 +166,7 @@ struct FusedOpaqueOutput {
 @fragment fn fused_opaque_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->FusedOpaqueOutput {
  let front=object_front_face(i,raster_front);
  let context=raster_context(i);
- let s=raster_surface(i,front,surface_base_color(i),surface_emission(i),context.clusters);
+ let s=raster_surface(i,front,raster_material(i,front),context.clusters);
  material_alpha_discard(s.base.a);
  let stable=stable_surface(i,s);
  var shaded:Shaded;
@@ -253,7 +257,8 @@ struct BlendedColor {
 fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
  let front=object_front_face(i,raster_front);
  let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
- var s=raster_surface(i,front,surface_base_color(i),surface_emission(i),context.clusters);
+ let m=raster_material(i,front);
+ var s=raster_surface(i,front,m,context.clusters);
  let coverage=select(1.,s.base.a,(material.flags&MATERIAL_ALPHA_BLEND)!=0u);
  // The light transmitted through it, times its share of the diffuse light
  // under the coat, and the share of its pixel it shades itself: compiled in
@@ -266,9 +271,9 @@ fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
   if material_cut_out(material,s.base.a) {
    discard;
   }
-  s.transmission=surface_transmission(i);
+  s.transmission=m.transmission;
   let model=objects[fragment_object(i)].model;
-  transmitted=getIBLVolumeRefraction(s.normal,s.view,s.roughness,s.base.rgb*(1.-s.metallic),surface_f0(s),surface_f90(s),s.position,model,material.ior,surface_thickness(i),material.attenuation,material.dispersion);
+  transmitted=getIBLVolumeRefraction(s.normal,s.view,s.roughness,s.base.rgb*(1.-s.metallic),surface_f0(s),surface_f90(s),s.position,model,m.ior,m.thickness,m.attenuation,m.dispersion);
   through=s.transmission*(1.-pbr_coat_fresnel(s.coat_normal,s.view,s.coat));
   own_share=coverage*(1.-through*transmitted.share);
  }
@@ -338,7 +343,7 @@ struct BlendedFsr2Masked {
 // FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt). The reactive
 // mask at location 0 is kept (view::targets::composition_targets). A masked
 // material's cut-out texels are not its surface.
-@fragment fn fsr2_composition_fs(i:Fragment)->@location(1) f32 {
- material_alpha_discard(surface_base_color(i).a);
+@fragment fn fsr2_composition_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->@location(1) f32 {
+ material_alpha_discard(raster_material(i,object_front_face(i,raster_front)).base_color.a);
  return 1.;
 }

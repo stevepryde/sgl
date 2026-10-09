@@ -89,7 +89,14 @@ pub(crate) static TRANSMISSION: Module = Module {
 pub(crate) static SURFACE_RASTER: Module = Module {
     name: "surface_raster",
     source: include_str!("surface_raster.wgsl"),
-    deps: &[&VERTEX, &PBR, &ANISOTROPY, &MATERIAL_RASTER, &SURFACE],
+    deps: &[
+        &VERTEX,
+        &PBR,
+        &ANISOTROPY,
+        &MATERIAL_RASTER,
+        &SURFACE,
+        &MATERIAL_SHADER,
+    ],
 };
 /// A ray hit's `Surface` and its shading, a dynamic GI probe ray's hit's
 /// light with its visibility ray among it, which goes through the ray

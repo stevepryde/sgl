@@ -155,6 +155,23 @@ pub enum SceneError {
     /// No irradiance volume is installed, or an irradiance region's corner
     /// is off its lattice or the region not wholly within it.
     IrradianceRegionOutside,
+    /// The shader was removed, or another scene issued its identity; or a
+    /// material names such a shader.
+    UnknownShader,
+    /// A material names the shader.
+    ShaderInUse,
+    /// `Scene::set_shader_parameters` was given `given` bytes for a
+    /// material whose shader's `ShaderParams` takes `expected`, 0 for a
+    /// material without a shader.
+    ShaderParameters { expected: u32, given: u32 },
+    /// `Scene::add_shader` refused the module.
+    Shader(crate::shader::ShaderError),
+    /// A material's shader's displacement bound is not finite and
+    /// nonnegative.
+    InvalidDisplacementBound,
+    /// Mesh `mesh`'s shader data is neither empty nor one entry per vertex,
+    /// or no data was given for it (`PreparedModel::with_shader_data`).
+    ShaderDataLength { mesh: usize },
     /// The content would exceed a limit of the device.
     DeviceLimit,
     /// The specular probe collection was refused.
@@ -279,6 +296,24 @@ impl std::fmt::Display for SceneError {
             Self::IrradianceRegionOutside => {
                 "an irradiance region must lie on the installed irradiance volume's lattice and wholly within it"
             }
+            Self::UnknownShader => "the shader is not in this scene",
+            Self::ShaderInUse => "a material names the shader",
+            Self::ShaderParameters { expected, given } => {
+                return write!(
+                    f,
+                    "the material's shader parameters take {expected} bytes, not {given}"
+                );
+            }
+            Self::Shader(error) => return error.fmt(f),
+            Self::InvalidDisplacementBound => {
+                "a shader's displacement bound must be finite and nonnegative"
+            }
+            Self::ShaderDataLength { mesh } => {
+                return write!(
+                    f,
+                    "mesh {mesh}'s shader data must be empty or one entry per vertex"
+                );
+            }
             Self::DeviceLimit => "the content exceeds a limit of the device",
             Self::Probe(error) => return error.fmt(f),
         })
@@ -289,8 +324,15 @@ impl std::error::Error for SceneError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Probe(error) => Some(error),
+            Self::Shader(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+impl From<crate::shader::ShaderError> for SceneError {
+    fn from(error: crate::shader::ShaderError) -> Self {
+        Self::Shader(error)
     }
 }
 

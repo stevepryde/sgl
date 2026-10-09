@@ -1,5 +1,6 @@
-// A rasterized fragment's Surface (surface.wgsl): material textures sampled
-// with the view's mip bias, normal and bump maps along screen derivatives,
+// A rasterized fragment's material (raster_material, which the material's
+// shader function finishes) and Surface (surface.wgsl): material textures
+// sampled with the view's mip bias, normal and bump maps along screen derivatives,
 // a normal map's scrolling layers where the frame's time puts them,
 // the view's decals (decals.wgsl) over a lit material, and roughness filtered
 // by the geometry normal's variance. Every geometry pass evaluates materials
@@ -18,7 +19,7 @@ fn surface_roughness(rough:f32,n:vec3<f32>,i:Fragment)->f32 {
  return pbr_filtered_roughness(rough,geometry_normal);
 }
 fn surface_geometry_normal(i:Fragment,front:bool)->vec3<f32> {
- return normalize(i.normal)*select(-1.0,1.0,front);
+ return side_normal(i.normal,front);
 }
 // The tangent frame a normal map's texel is taken on, the base's and the
 // coat's alike, as KHR_materials_clearcoat takes the coat's on the base's
@@ -85,29 +86,52 @@ fn surface_coat_normal(i:Fragment,front:bool)->vec3<f32> {
 fn surface_anisotropy(i:Fragment,front:bool,n:vec3<f32>)->vec4<f32> {
  return pbr_resolve_anisotropy(n,surface_tangent_frame(i,front),material.anisotropy_strength,material.anisotropy_rotation,(material.maps&MATERIAL_MAP_ANISOTROPY)!=0u,material_anisotropy_texel(i.uv));
 }
-fn surface_base_color(i:Fragment)->vec4<f32> {
- return material_base_color(i.uv,i.color);
-}
-fn surface_emission(i:Fragment)->vec3<f32> {
- var emission=material.emission*textureSampleBias(emission_map,tex_sampler,i.uv,view.mip_bias).rgb;
+// The fragment's emitted light `emission`, none from a moving instance
+// while the instance emission diagnostics layer is off.
+fn raster_emission(i:Fragment,emission:vec3<f32>)->vec3<f32> {
  if !instance_emission_enabled && (objects[fragment_object(i)].flags&OBJECT_STATIC)==0u {
-  emission=vec3(0.);
+  return vec3(0.);
  }
  return emission;
 }
-// A fragment's transmission and its volume's thickness
-// (material_transmission, material_thickness): their factors on the Basic
-// binding tier, which binds neither map.
-fn surface_transmission(i:Fragment)->f32 {
- return material_transmission(material,material_transmission_texel(i.uv));
-}
-fn surface_thickness(i:Fragment)->f32 {
- return material_thickness(material,material_thickness_texel(i.uv));
-}
-// Its decals are those of `clusters`, the cluster that holds it.
-fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,clusters:ClusterRange)->Surface {
- let object=fragment_object(i);
+// A rasterized fragment's material (shader_contract.wgsl's MaterialSurface):
+// its record and maps at the fragment (material_texel_surface), the normal
+// mapped (surface_normal), as the material's shader function then makes it
+// (material_surface, with its context, material_surface_context). Every
+// raster pass that reads the material, lit and caster alike, takes it from
+// here; a material without a shader takes its record and maps unchanged.
+// Each Extended map is sampled only where its factor or flag leaves it
+// anything to scale.
+fn raster_material(i:Fragment,front:bool)->MaterialSurface {
  let mr=textureSampleBias(mr_map,tex_sampler,i.uv,view.mip_bias);
+ let emission=textureSampleBias(emission_map,tex_sampler,i.uv,view.mip_bias).rgb;
+ var coat=vec4(1.);
+ var coat_roughness=vec4(1.);
+ if material.coat>0. {
+  coat=material_clearcoat_texel(i.uv);
+  coat_roughness=material_coat_roughness_texel(i.uv);
+ }
+ var transmission=vec4(1.);
+ if (material.flags&MATERIAL_TRANSMISSIVE)!=0u {
+  transmission=material_transmission_texel(i.uv);
+ }
+ var thickness=vec4(1.);
+ if (material.flags&MATERIAL_TRANSMISSIVE)!=0u || material.diffuse_transmission>0. {
+  thickness=material_thickness_texel(i.uv);
+ }
+ let texels=MaterialTexels(material_base_color(i.uv,i.color),emission,mr,coat,coat_roughness,transmission,thickness);
+ let recorded=material_texel_surface(texels,surface_normal(i,front));
+ return material_surface(recorded,material_surface_context(i,front),material_shader_params(false));
+}
+// What the material's shader function evaluates a fragment at
+// (material_context).
+fn material_surface_context(i:Fragment,front:bool)->SurfaceContext {
+ return material_context(fragment_object(i),i.world,surface_geometry_normal(i,front),i.uv,i.color,i.custom,front,i.clip.xy);
+}
+// Its decals are those of `clusters`, the cluster that holds it; its
+// material `m` (raster_material).
+fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)->Surface {
+ let object=fragment_object(i);
  let geometry_normal=surface_geometry_normal(i,front);
  let unlit=(material.flags&MATERIAL_UNLIT)!=0u;
  // The atlas's mips follow the position's derivatives under the view's mip
@@ -115,7 +139,7 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  let bias=exp2(view.mip_bias);
  let position_dx=dpdx(i.world)*bias;
  let position_dy=dpdy(i.world)*bias;
- var decaled=DecalSurface(base.rgb,surface_normal(i,front),material.roughness*mr.g,material.metallic*mr.b);
+ var decaled=DecalSurface(m.base_color.rgb,m.normal,m.roughness,m.metallic);
  if !unlit {
   decaled=decal_surface(decaled,clusters,i.world,geometry_normal,position_dx,position_dy);
  }
@@ -129,23 +153,21 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
  s.view=normalize(view.eye-i.world);
  s.normal=n;
  s.geometry_normal=geometry_normal;
- s.base=vec4(decaled.base,base.a);
+ s.base=vec4(decaled.base,m.base_color.a);
  s.metallic=decaled.metallic;
- s.dielectric_f0=material_dielectric_f0(material);
- s.specular=material.specular;
+ s.dielectric_f0=material_surface_f0(material,m.ior,m.specular);
+ s.specular=m.specular;
  s.roughness=surface_roughness(decaled.roughness,n,i);
- // The coat's and the film's maps are sampled only where their factor
- // leaves them anything to scale.
- var coat_roughness=material.coat_roughness;
+ // The coat's normal is taken only where it has a coat.
+ s.coat=m.clearcoat;
  s.coat_normal=geometry_normal;
- if material.coat>0. {
-  s.coat=material_coat(material,material_clearcoat_texel(i.uv));
-  coat_roughness=material_coat_roughness(material,material_coat_roughness_texel(i.uv));
+ if material.coat>0. || m.clearcoat>0. {
   s.coat_normal=surface_coat_normal(i,front);
  }
- s.coat_roughness=surface_roughness(coat_roughness,n,i);
- // The sheen's and the diffuse transmission's maps likewise. The sheen's
- // roughness is filtered as the base's is, as Filament ef1a133 filters it
+ s.coat_roughness=surface_roughness(m.coat_roughness,n,i);
+ // The sheen's and the diffuse transmission's maps are sampled only where
+ // their factor leaves them anything to scale. The sheen's roughness is
+ // filtered as the base's is, as Filament ef1a133 filters it
  // (surface_shading_lit.fs 154–160).
  var sheen_roughness=material.sheen_roughness;
  if any(material.sheen>vec3(0.)) {
@@ -158,13 +180,13 @@ fn raster_surface(i:Fragment,front:bool,base:vec4<f32>,emission:vec3<f32>,cluste
   s.diffuse_transmission=material_diffuse_transmission(material,material_diffuse_transmission_texel(i.uv));
   s.diffuse_transmission_color=material_diffuse_transmission_color(material,material_diffuse_transmission_color_texel(i.uv));
   // Its volume, which the transmitted lobe lies behind and crosses.
-  s.volume_thickness=transmission_world_thickness(surface_thickness(i),objects[object].model);
-  s.volume_attenuation=material.attenuation;
+  s.volume_thickness=transmission_world_thickness(m.thickness,objects[object].model);
+  s.volume_attenuation=m.attenuation;
  }
  s.anisotropy=anisotropy;
- s.emission=emission;
+ s.emission=raster_emission(i,m.emission);
  s.environment_scale=material.environment_scale;
- s.occlusion=material_occlusion(material,mr);
+ s.occlusion=m.occlusion;
  s.unlit=unlit;
  s.front=front;
  s.moving=(objects[object].flags&OBJECT_STATIC)==0u;

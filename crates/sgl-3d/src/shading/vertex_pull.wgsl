@@ -7,7 +7,7 @@
 // those of rigid ones do not branch on it.
 override deformed_vertices:bool=false;
 struct PulledSceneVertex {
- position:vec3<f32>, previous_position:vec3<f32>, normal:vec3<f32>, uv:vec2<f32>, color:vec4<f32>, source_id:vec2<u32>, lightmap_uv:vec2<f32>, lightmap_bounds:vec4<f32>, tangent:vec4<f32>,
+ position:vec3<f32>, previous_position:vec3<f32>, normal:vec3<f32>, uv:vec2<f32>, color:vec4<f32>, source_id:vec2<u32>, lightmap_uv:vec2<f32>, lightmap_bounds:vec4<f32>, tangent:vec4<f32>, shader_data:vec4<f32>,
 }
 // A GPU-built draw's vertex past its instance's triangles: a fixed finite
 // point outside the clip volume on every side (x, y, and depth past w),
@@ -50,7 +50,7 @@ fn scene_source_vertex(object:u32,mesh:u32,index:u32)->PulledSceneVertex {
  let position=scene_pulled_position(object,mesh,vertex_index);
  let primitive=scene_source[mesh+SCENE_MESH_INDICES]+(index/3u)*3u;
  var pulled=PulledSceneVertex(position,position,vec3(0.),scene_vertex_uv(vertex,scene_mesh_uv_rect(mesh)),scene_vertex_color(vertex),
-  vec2(object+1u,primitive),scene_vertex_lightmap_uv(vertex),scene_vertex_lightmap_bounds(mesh,vertex),vec4(0.));
+  vec2(object+1u,primitive),scene_vertex_lightmap_uv(vertex),scene_vertex_lightmap_bounds(mesh,vertex),vec4(0.),scene_vertex_shader_data(mesh,vertex_index));
  // A deforming instance's frame is its deformed one, so its rest frame is
  // decoded only for rigid ones.
  var frame:PackedFrame;

@@ -1,6 +1,7 @@
 //! A material's values, which `Scene::material` reads and
 //! `Scene::set_material` replaces, and how its alpha is used.
 use super::asset::Material;
+use super::shader::MaterialShader;
 
 /// How a material uses its alpha: glTF's `alphaMode`, with Bevy's
 /// `AlphaMode` names (Bevy 9d12036, its phases and pipeline keys in
@@ -187,6 +188,17 @@ pub struct SurfaceMaterial {
     /// Whether both sides of each triangle are drawn.
     pub double_sided: bool,
     pub alpha: AlphaMode,
+    /// The game's shader (`Scene::add_shader`) its surfaces are evaluated
+    /// through: its vertex function places every vertex in every view that
+    /// rasterises it and its surface function finishes every fragment from
+    /// these values and the maps, with what culling allows for its
+    /// displacement. Its parameters start as zeros
+    /// (`Scene::set_shader_parameters`). A shader material's surface counts
+    /// as moving for FSR2's composition mask, and its `double_sided` holds
+    /// even for a volume (`thickness` above 0). Rays, bakes and the static
+    /// layers of local-light shadows see its rest geometry and these values.
+    /// None by default.
+    pub shader: Option<MaterialShader>,
 }
 
 impl Default for SurfaceMaterial {
@@ -239,6 +251,7 @@ impl SurfaceMaterial {
             emits_into_gi: m.emits_into_gi,
             double_sided: m.double_sided,
             alpha: m.alpha,
+            shader: m.shader,
         }
     }
 
@@ -256,8 +269,10 @@ impl SurfaceMaterial {
 
     /// Whether it bounds a volume, whose back faces are not drawn
     /// (`KHR_materials_volume`: `doubleSided` does not apply to a volume).
+    /// A material with a shader is the game's to shade on either side
+    /// (its surface context's `front`), so its `double_sided` holds.
     pub(crate) fn volume(&self) -> bool {
-        self.transmissive() && self.thickness > 0.
+        self.transmissive() && self.thickness > 0. && self.shader.is_none()
     }
 
     /// Whether the material is a blended receiver of screen-space
@@ -273,9 +288,12 @@ impl SurfaceMaterial {
     }
 
     /// What its shadow casters depend on: its side, its visibility group,
-    /// whether it is drawn blended (and casts nothing) and, for a masked
-    /// material, its cutoff and base alpha.
-    pub(crate) fn caster_values(&self) -> (bool, u32, AlphaMode, bool, f32) {
+    /// whether it is drawn blended (and casts nothing), for a masked
+    /// material, its cutoff and base alpha, and its shader, which places
+    /// their vertices.
+    pub(crate) fn caster_values(
+        &self,
+    ) -> (bool, u32, AlphaMode, bool, f32, Option<MaterialShader>) {
         let alpha = match self.alpha {
             AlphaMode::Mask { .. } => self.base[3],
             _ => 1.,
@@ -286,6 +304,7 @@ impl SurfaceMaterial {
             self.alpha,
             self.blended(),
             alpha,
+            self.shader,
         )
     }
 }

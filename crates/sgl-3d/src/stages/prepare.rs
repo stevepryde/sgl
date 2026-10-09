@@ -152,13 +152,18 @@ impl Prepare {
         let volume = scene
             .dynamic_gi_placement()
             .filter(|_| effective.dynamic_gi.is_some());
-        let frame = frame_uniform(
+        let mut frame = frame_uniform(
             input,
             (&scene.static_lighting, scene.irradiance_volume()),
             &shadow,
             effective.fog.is_some(),
             volume.as_ref(),
         );
+        // The last submitted frame's time, at which materials' vertex
+        // functions evaluate the motion they write.
+        frame.previous_elapsed_seconds = history.previous_elapsed_seconds as f32;
+        frame.previous_animation_phase =
+            crate::shading::material::animation_phase(history.previous_elapsed_seconds);
         views.reflection_camera = reflection_camera::Camera::new(camera.view, camera.projection);
         if let Some(jitter) = jitter {
             // As Diligent's `TemporalAntiAliasing::GetJitteredProjMatrix`

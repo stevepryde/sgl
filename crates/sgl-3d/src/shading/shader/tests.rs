@@ -1,0 +1,304 @@
+//! What `Scene::add_shader` refuses and accepts of a game's module, through
+//! the validation it runs (`validate`), on both binding tiers: the typed
+//! refusal the contract gives each kind of module, and the layout naga gives
+//! `ShaderParams`. CPU only: naga parses and validates every program.
+use super::validate;
+use crate::content::shader::{
+    ForbiddenItem, SHADER_PARAMS_MAX_BYTES, ShaderError, ShaderParamField,
+};
+use crate::shading::bind::BindingTier;
+use wasm_bindgen_test::wasm_bindgen_test;
+
+/// A game's module that reads every part of the contract: its parameters
+/// in both functions, the vertex's data and the instance's, the time,
+/// phase and evaluation it is, `custom` through to the surface, the scene
+/// depth functions, a derivative in the surface function and a counted
+/// loop in a helper.
+pub(crate) const FIXTURE: &str = r#"
+struct ShaderParams {
+ amplitude:f32,
+ frequency:f32,
+ tint:vec2<f32>,
+ waves:array<vec4<f32>,2>,
+}
+const COMPONENTS:u32=2u;
+fn fixture_height(x:f32,params:ShaderParams,time:f32)->f32 {
+ var height=0.;
+ for (var i=0u;i<COMPONENTS;i++) {
+  height+=params.waves[i].x*sin(x*params.frequency+time*params.waves[i].y);
+ }
+ return height;
+}
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {
+ var out=v;
+ let anchor=v.position.x+ctx.instance.x+v.shader_data.x;
+ out.position.y+=params.amplitude*fixture_height(anchor,params,ctx.time+ctx.phase);
+ out.custom=vec4(anchor,select(0.,1.,ctx.previous),ctx.model[3].x,1.);
+ return out;
+}
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
+ var out=s;
+ let scale=(ctx.model_scale.x+ctx.model_scale.y+ctx.model_scale.z)/3.;
+ out.thickness=min(scene_depth_behind(ctx)/scale,8.);
+ out.base_color=vec4(s.base_color.rgb*vec3(params.tint,1.),s.base_color.a*select(0.5,1.,scene_depth_available()));
+ out.roughness=clamp(s.roughness+abs(dpdx(ctx.position.x)),0.,1.);
+ out.emission=s.emission*ctx.custom.w+vec3(0.,min(scene_depth(ctx.pixel),1.)*0.,ctx.time*0.);
+ return out;
+}
+"#;
+
+/// The fixture's functions, to which each case adds or in which it replaces
+/// a declaration.
+const FUNCTIONS: &str = r#"
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {
+ return v;
+}
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
+ return s;
+}
+"#;
+const PARAMS: &str = "struct ShaderParams { value:vec4<f32>, }\n";
+
+/// A module of the identity functions, `PARAMS` and `extra`.
+fn with(extra: &str) -> String {
+    format!("{PARAMS}{FUNCTIONS}{extra}")
+}
+
+/// `source` validated on both tiers, which must agree.
+fn validated(source: &str) -> Result<super::validate::ValidatedShader, ShaderError> {
+    let extended = validate(source, BindingTier::Extended);
+    let basic = validate(source, BindingTier::Basic);
+    assert_eq!(
+        extended.as_ref().err(),
+        basic.as_ref().err(),
+        "the tiers disagree on {source}"
+    );
+    extended
+}
+
+fn refused(source: &str) -> ShaderError {
+    validated(source).expect_err("the module is refused")
+}
+
+// Plausible defect: a module that reads the whole contract refused, or one
+// the programs it is composed into reject accepted. The oracle is the
+// contract: the fixture uses only what it lists.
+#[wasm_bindgen_test(unsupported = test)]
+fn the_contract_is_accepted() {
+    validated(FIXTURE).unwrap_or_else(|error| panic!("{error}"));
+    validated(&with("")).unwrap_or_else(|error| panic!("{error}"));
+}
+
+// Plausible defects: a loop whose bound data can raise reaching a device,
+// which can hang it (AR-12); a counted loop miscounted. The oracle is the
+// counted-loop rule and SHADER_LOOP_BUDGET: a loop bounded by a parameter
+// or a `while` is unbounded; a 16 by 16 nest makes the budget's 256
+// iterations, a 17 by 17 one 289 and two loops of 200 one after the other
+// 400, each over it.
+#[wasm_bindgen_test(unsupported = test)]
+fn loops_are_counted_within_the_budget() {
+    let unbounded = |body: &str| {
+        let error = refused(&with(&format!(
+            "fn looped(params:ShaderParams)->f32 {{\n{body}\n}}"
+        )));
+        assert_eq!(
+            error,
+            ShaderError::UnboundedLoop {
+                function: "looped".into()
+            },
+            "{body}"
+        );
+    };
+    unbounded("var s=0.; for (var i=0u;i<u32(params.value.x);i++) { s+=1.; } return s;");
+    unbounded("var s=0.; var i=0; while (i<4) { s+=1.; i++; } return s;");
+    unbounded("var s=0.; for (var i=0;i<4;i++) { s+=1.; i--; } return s;");
+    unbounded("var s=0.; loop { s+=1.; if s>4. { break; } } return s;");
+    let nest = |n: u32| {
+        format!(
+            "fn nested()->f32 {{ var s=0.; for (var i=0u;i<{n}u;i++) {{ for (var j=0u;j<{n}u;j++) {{ s+=1.; }} }} return s; }}"
+        )
+    };
+    validated(&with(&nest(16))).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        refused(&with(&nest(17))),
+        ShaderError::LoopBudget {
+            function: "nested".into(),
+            iterations: 289
+        }
+    );
+    assert_eq!(
+        refused(&with(
+            "fn twice()->f32 { var s=0.; for (var i=0;i<200;i++) { s+=1.; } for (var j=0;j<200;j++) { s+=1.; } return s; }"
+        )),
+        ShaderError::LoopBudget {
+            function: "twice".into(),
+            iterations: 400
+        }
+    );
+    // A loop within a counted loop through a call counts its callee's.
+    assert_eq!(
+        refused(&with(
+            "fn inner()->f32 { var s=0.; for (var i=0;i<=16;i+=1) { s+=1.; } return s; }
+             fn outer()->f32 { var s=0.; for (var i=0;i<16;i++) { s+=inner(); } return s; }"
+        )),
+        ShaderError::LoopBudget {
+            function: "outer".into(),
+            iterations: 272
+        }
+    );
+    // `break if` after the step: 4 iterations from 0 by 1 to 4.
+    validated(&with(
+        "fn after()->f32 { var s=0.; var k=0; loop { s+=1.; continuing { k+=1; break if k>=4; } } return s; }",
+    ))
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+// Plausible defect: a module that would steal a binding, add a pass or
+// override, end a fragment's coverage outside its base colour's alpha, or
+// redefine a name SGL3D's programs use accepted, so a pipeline later fails
+// or misbehaves. The oracle is the contract's typed refusal for each.
+#[wasm_bindgen_test(unsupported = test)]
+fn forbidden_declarations_are_refused() {
+    let forbidden = |item, name: &str| ShaderError::Forbidden {
+        item,
+        name: name.into(),
+    };
+    assert_eq!(
+        refused(&with(
+            "@group(1) @binding(0) var<uniform> stolen:vec4<f32>;"
+        )),
+        forbidden(ForbiddenItem::Binding, "stolen")
+    );
+    assert_eq!(
+        refused(&with("var<private> counter:u32;")),
+        forbidden(ForbiddenItem::Variable, "counter")
+    );
+    assert_eq!(
+        refused(&with("override scale:f32=1.;")),
+        forbidden(ForbiddenItem::Override, "scale")
+    );
+    assert_eq!(
+        refused(&with(
+            "@fragment fn extra()->@location(0) vec4<f32> { return vec4(1.); }"
+        )),
+        forbidden(ForbiddenItem::EntryPoint, "extra")
+    );
+    assert_eq!(
+        refused(&format!("// a comment first\nenable f16;\n{}", with(""))),
+        forbidden(ForbiddenItem::Directive, "enable f16")
+    );
+    assert_eq!(
+        refused(&format!(
+            "{PARAMS}fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {{ return v; }}
+             fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {{ if s.base_color.a<0.5 {{ discard; }} return s; }}"
+        )),
+        ShaderError::Discard {
+            function: "material_surface".into()
+        }
+    );
+    // `vertex` is SGL3D's (material_shader.wgsl), as is a contract struct.
+    assert_eq!(
+        refused(&with("fn vertex()->f32 { return 1.; }")),
+        ShaderError::NameTaken {
+            name: "vertex".into()
+        }
+    );
+    assert_eq!(
+        refused(&with("struct MaterialVertex { x:f32, }")),
+        ShaderError::NameTaken {
+            name: "MaterialVertex".into()
+        }
+    );
+}
+
+// Plausible defect: a module missing a function, or with the wrong
+// signature, reaching composition, where SGL3D's calls fail; a parse error
+// placed in SGL3D's library rather than the game's line; SGL3D's globals
+// readable; a derivative in the vertex function accepted. The oracle is
+// the contract's signatures and the game's own source lines.
+#[wasm_bindgen_test(unsupported = test)]
+fn the_contract_is_held_to() {
+    let surface = "fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface { return s; }";
+    assert_eq!(
+        refused(&format!("{PARAMS}{surface}")),
+        ShaderError::MissingFunction {
+            name: "material_vertex"
+        }
+    );
+    assert_eq!(
+        refused(FUNCTIONS),
+        ShaderError::MissingFunction {
+            name: "ShaderParams"
+        }
+    );
+    assert!(matches!(
+        refused(&format!(
+            "{PARAMS}{surface}\nfn material_vertex(v:MaterialVertex,params:ShaderParams)->MaterialVertex {{ return v; }}"
+        )),
+        ShaderError::Signature {
+            name: "material_vertex",
+            ..
+        }
+    ));
+    // Where `needle` is in `source`: its line and column, from 1.
+    let place = |source: &str, needle: &str| {
+        source
+            .lines()
+            .enumerate()
+            .find_map(|(line, text)| Some((line as u32 + 1, text.find(needle)? as u32 + 1)))
+            .unwrap()
+    };
+    let source = with("\nfn broken( {");
+    match refused(&source) {
+        ShaderError::Parse { line, .. } => assert_eq!(line, place(&source, "broken").0),
+        error => panic!("{error:?}"),
+    }
+    let source = format!(
+        "{PARAMS}{surface}\nfn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {{\n var out=v;\n out.position.y+=frame.elapsed_seconds;\n return out;\n}}"
+    );
+    match refused(&source) {
+        ShaderError::Parse { line, column, .. } => {
+            assert_eq!((line, column), place(&source, "frame."))
+        }
+        error => panic!("{error:?}"),
+    }
+    assert!(matches!(
+        refused(&format!(
+            "{PARAMS}{surface}\nfn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {{ var out=v; out.position.y+=dpdx(v.position.x); return out; }}"
+        )),
+        ShaderError::Validate { .. }
+    ));
+}
+
+// Plausible defects: naga's uniform layout misreported to the game, whose
+// Rust mirror then writes members at the wrong offsets; a block past the
+// limit accepted. The oracle is WGSL's alignment rules, independent of
+// SGL3D: a vec3 aligns to 16 bytes and takes 12, an array of vec4 strides
+// 16, a struct's size rounds up to its alignment.
+#[wasm_bindgen_test(unsupported = test)]
+fn the_parameter_layout_is_wgsl_s() {
+    let layout = validated(&format!(
+        "struct ShaderParams {{ a:f32, b:vec3<f32>, c:array<vec4<f32>,2>, }}{FUNCTIONS}"
+    ))
+    .unwrap_or_else(|error| panic!("{error}"))
+    .layout;
+    let field = |name: &str, offset, size| ShaderParamField {
+        name: name.into(),
+        offset,
+        size,
+    };
+    assert_eq!(layout.size, 64);
+    assert_eq!(
+        layout.fields,
+        [field("a", 0, 4), field("b", 16, 12), field("c", 32, 32)]
+    );
+    assert_eq!(
+        refused(&format!(
+            "struct ShaderParams {{ big:array<vec4<f32>,313>, }}{FUNCTIONS}"
+        )),
+        ShaderError::ParamsTooLarge {
+            size: 5008,
+            max: SHADER_PARAMS_MAX_BYTES
+        }
+    );
+}

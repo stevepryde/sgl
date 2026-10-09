@@ -81,6 +81,35 @@ impl PreparedModel {
     /// needs the scene or the device (its materials, the device's limits)
     /// is checked when it is added.
     pub fn new(meshes: Vec<ModelMesh>) -> Result<Self, SceneError> {
+        let streams = vec![Vec::new(); meshes.len()];
+        Self::prepare(meshes, streams)
+    }
+
+    /// `meshes` prepared as `new` prepares them, each with the data its
+    /// material's shader reads per vertex (`MaterialVertex::shader_data`):
+    /// `shader_data[i]` is mesh `i`'s, empty for none, whose vertices read
+    /// zero, or one entry per vertex, held beside its vertices once, 16
+    /// bytes a vertex. A mesh given another count is refused
+    /// (`SceneError::ShaderDataLength`).
+    pub fn with_shader_data(
+        meshes: Vec<ModelMesh>,
+        shader_data: Vec<Vec<[f32; 4]>>,
+    ) -> Result<Self, SceneError> {
+        if let Some(mesh) = (0..meshes.len().max(shader_data.len())).find(|&index| {
+            match (meshes.get(index), shader_data.get(index)) {
+                (Some(mesh), Some(data)) => !data.is_empty() && data.len() != mesh.vertices.len(),
+                _ => true,
+            }
+        }) {
+            return Err(SceneError::ShaderDataLength { mesh });
+        }
+        Self::prepare(meshes, shader_data)
+    }
+
+    fn prepare(
+        meshes: Vec<ModelMesh>,
+        shader_data: Vec<Vec<[f32; 4]>>,
+    ) -> Result<Self, SceneError> {
         let tangents = step(BuildStep::Validate, || {
             if !meshes
                 .iter()
@@ -104,10 +133,12 @@ impl PreparedModel {
         let ray_meshes: Vec<_> = meshes
             .iter()
             .zip(&ranges)
-            .map(|(mesh, ranges)| RayMesh {
+            .zip(&shader_data)
+            .map(|((mesh, ranges), shader_data)| RayMesh {
                 vertices: &mesh.vertices,
                 indices: &mesh.indices,
                 ranges,
+                shader_data,
             })
             .collect();
         let rays = rays::prepare_model(&ray_meshes)?;

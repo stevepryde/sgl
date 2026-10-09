@@ -284,7 +284,8 @@ impl Transparent {
     /// `reflections` with its cutoff and fade where the draw composes them,
     /// else `no_reflections` and no trace, and the frame's surface depth;
     /// on a device of `tier` `Extended`, the transmission `copy` where it
-    /// holds the frame, else `no_reflections` in its place.
+    /// holds the frame, else `no_reflections` in its place, and the opaque
+    /// depth.
     fn blended_group<'a>(
         ctx: &FrameContext<'_>,
         blended: &'a mut BlendedGroup,
@@ -320,6 +321,11 @@ impl Transparent {
                 bind::blended::TRANSMISSION,
                 texture(copy.unwrap_or(no_reflections)),
             ));
+        }
+        // The opaque depth, which the draws test read-only, as the glow
+        // samples it: a game's shader's scene depth (shader_scene_depth.wgsl).
+        if bind::blended::tier(bind::blended::SCENE_DEPTH) <= tier {
+            entries.push((bind::blended::SCENE_DEPTH, texture(&ctx.targets.depth)));
         }
         blended
             .group

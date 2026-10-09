@@ -1,15 +1,7 @@
-// Scene geometry's vertex stage: the authored vertex, the fragment it
-// interpolates, and the drawn instance's transform of positions, normals and
-// tangents by its object record. Reads `view` and `objects`.
-struct Vertex {
- @location(0) position:vec3<f32>,
- @location(1) normal:vec3<f32>,
- @location(2) uv:vec2<f32>,
- @location(3) color:vec4<f32>,
- @location(4) lightmap_uv:vec2<f32>,
- @location(5) lightmap_bounds:vec4<f32>,
- @location(6) tangent:vec4<f32>,
-}
+// Scene geometry's vertex stage: the fragment a vertex interpolates, and the
+// drawn instance's transform of positions, normals and tangents by its
+// object record (shaded_vertex.wgsl places the vertex). Reads `view` and
+// `objects`.
 struct Fragment {
  @invariant @builtin(position) clip:vec4<f32>,
  @location(0) world:vec3<f32>,
@@ -22,6 +14,9 @@ struct Fragment {
  @location(7) lightmap_uv:vec2<f32>,
  @location(8) @interpolate(flat) lightmap_bounds:vec4<f32>,
  @location(9) tangent:vec4<f32>,
+ // What the material's vertex function passes its surface function
+ // (shader_contract.wgsl's MaterialVertex.custom).
+ @location(10) custom:vec4<f32>,
 }
 // Keep projection separate from the view transform. Precomposing P*V lets
 // translation cancellation corrupt tiny depth gaps before rasterization.
@@ -72,11 +67,21 @@ fn transmission_world_thickness(thickness:f32,model:mat4x4<f32>)->f32 {
 fn fragment_object(i:Fragment)->u32 {
  return i.source_id.x-1u;
 }
-// Raster winding reverses under mirrored poses; material sides stay authored.
-fn object_front_face(i:Fragment,front:bool)->bool {
- let model=objects[fragment_object(i)].model;
+// Raster winding reverses under mirrored poses; material sides stay
+// authored: whether a face raster takes as `front` of the instance whose
+// object record is at index `object` is its material's front.
+fn object_front(object:u32,front:bool)->bool {
+ let model=objects[object].model;
  let mirrored=dot(model[0].xyz,cross(model[1].xyz,model[2].xyz))<0.;
  return front!=mirrored;
+}
+fn object_front_face(i:Fragment,front:bool)->bool {
+ return object_front(fragment_object(i),front);
+}
+// The interpolated vertex normal `normal`, unit, on the side shaded: the
+// material's `front`, or its back.
+fn side_normal(normal:vec3<f32>,front:bool)->vec3<f32> {
+ return normalize(normal)*select(-1.0,1.0,front);
 }
 // Where raster draws the world point `world`: its clip position, which
 // the view's jitter offsets in xy by 2 * jitter * w. The transmitted light's
@@ -84,22 +89,4 @@ fn object_front_face(i:Fragment,front:bool)->bool {
 fn scene_raster_clip(world:vec4<f32>)->vec4<f32> {
  let clip=scene_clip_position(world,view.view,view.projection);
  return vec4(clip.xy+2.*view.jitter*clip.w,clip.zw);
-}
-// Motion is measured from `previous_position` at the instance's previous
-// pose, both from the object record at index `object`.
-fn vertex(object:u32,v:Vertex,previous_position:vec3<f32>)->Fragment {
- var o:Fragment;
- let model=objects[object].model;
- let p=model*vec4(v.position,1);
- o.clip=scene_raster_clip(p);
- o.world=p.xyz;
- o.normal=object_normal(model,v.normal);
- o.tangent=object_tangent(model,v.tangent,v.normal);
- o.uv=v.uv;
- o.color=v.color;
- o.lightmap_uv=v.lightmap_uv;
- o.lightmap_bounds=v.lightmap_bounds;
- o.current_clip=view.stable_view_projection*p;
- o.previous_clip=view.previous_view_projection*objects[object].previous_model*vec4(previous_position,1);
- return o;
 }

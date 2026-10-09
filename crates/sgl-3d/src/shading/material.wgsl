@@ -140,6 +140,29 @@ fn material_thickness(m:Material,thickness:vec4<f32>)->f32 {
 fn material_dielectric_f0(m:Material)->vec3<f32> {
  return min(m.specular_f0,vec3(1.))*m.specular;
 }
+// The reflectance at normal incidence of a dielectric of index of
+// refraction `ior` seen from air, ((ior − 1) / (ior + 1))², 1 for the
+// record's 0, an infinite one: shading::material::ior_f0's twin.
+fn material_ior_f0(ior:f32)->f32 {
+ if ior==0. {
+  return 1.;
+ }
+ let r=1.-2./(ior+1.);
+ return r*r;
+}
+// Material `m`'s dielectric reflectance at normal incidence
+// (material_dielectric_f0) at the IOR `ior` and specular strength
+// `specular` its shader gives a fragment (shader_contract.wgsl's
+// MaterialSurface): the record's at its own IOR, else its specular colour's
+// tint of its IOR's F0 at `ior`, untinted where its IOR reflects nothing.
+fn material_surface_f0(m:Material,ior:f32,specular:f32)->vec3<f32> {
+ if ior==m.ior {
+  return min(m.specular_f0,vec3(1.))*specular;
+ }
+ let recorded=material_ior_f0(m.ior);
+ let tint=select(vec3(1.),m.specular_f0/max(recorded,1e-6),recorded>0.);
+ return min(tint*material_ior_f0(ior),vec3(1.))*specular;
+}
 // The tangent-space normal of material `m`'s normal map texel `texel`: its X
 // and Y scaled by normal_scale, as glTF's normalTexture.scale scales them.
 fn material_mapped_normal(m:Material,texel:vec4<f32>)->vec3<f32> {

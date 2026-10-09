@@ -26,6 +26,11 @@ pub(crate) const SHEEN_COLOR_MAP: u32 = 16;
 pub(crate) const SHEEN_ROUGHNESS_MAP: u32 = 17;
 pub(crate) const DIFFUSE_TRANSMISSION_MAP: u32 = 18;
 pub(crate) const DIFFUSE_TRANSMISSION_COLOR_MAP: u32 = 19;
+/// A material's shader's parameter blocks, this frame's and the last
+/// submitted frame's (shader_params_bound.wgsl), on every tier, which its
+/// vertex and fragment stages read.
+pub(crate) const SHADER_PARAMS: u32 = 20;
+pub(crate) const PREVIOUS_SHADER_PARAMS: u32 = 21;
 
 /// Which bindings SGL3D binds on a device, by its sampled textures per
 /// shader stage: `Basic` from S3D-1's floor up to 47, where the bindings
@@ -240,8 +245,9 @@ impl MaterialMap {
 }
 
 /// Group 2, a material, on a device of `tier`: bind_material.wgsl's values,
-/// its maps and sampler and its baked-lighting eligibility, and on
-/// `Extended` bind_material_extended.wgsl's maps.
+/// its maps and sampler and its baked-lighting eligibility, its shader's
+/// parameter blocks (shader_params_bound.wgsl), and on `Extended`
+/// bind_material_extended.wgsl's maps.
 pub(crate) fn material(device: &wgpu::Device, tier: BindingTier) -> wgpu::BindGroupLayout {
     layout(device, "material", &material_entries(tier))
 }
@@ -273,5 +279,11 @@ pub(crate) fn material_entries(tier: BindingTier) -> Vec<wgpu::BindGroupLayoutEn
         count: None,
     });
     entries.push(uniform(BAKED_MATERIAL));
+    entries.extend([SHADER_PARAMS, PREVIOUS_SHADER_PARAMS].map(|binding| {
+        wgpu::BindGroupLayoutEntry {
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ..uniform(binding)
+        }
+    }));
     entries
 }

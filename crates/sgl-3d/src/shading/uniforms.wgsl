@@ -118,6 +118,11 @@ struct Frame {
  irradiance_volume_origin:vec3<f32>,
  irradiance_volume_cell_size:vec3<f32>,
  irradiance_volume_cells:vec3<u32>,
+ // The last submitted frame's elapsed_seconds and animation_phase, which a
+ // material's vertex function evaluates the motion it writes at
+ // (material_shader.wgsl); this frame's after history restarts.
+ previous_elapsed_seconds:f32,
+ previous_animation_phase:f32,
 }
 // The frame's volumetric fog ran: draws fog themselves from its volume.
 const FRAME_FOG:u32=1u;
@@ -148,6 +153,10 @@ struct Object {
  deformed_positions:u32,
  previous_positions:u32,
  deformed_normals:u32,
+ // The data its material's shader reads (Scene::set_instance_shader_data)
+ // this frame and in the last submitted frame.
+ shader_data:vec4<f32>,
+ previous_shader_data:vec4<f32>,
 }
 // Object.flags: a static instance (a moving one has the bit clear); the
 // main camera draws it (InstanceState::visible); the other views show it

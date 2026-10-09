@@ -1,5 +1,5 @@
 //! The scene layer: [`Scene`], the retained content a game adds, edits and
-//! removes (materials, models, instances, lights, decals, environments,
+//! removes (shaders, materials, models, instances, lights, decals, environments,
 //! baked lighting, probes, the irradiance volume, the dynamic GI volume's
 //! placement and transient geometry), with the GPU buffers that mirror it
 //! and the ray-query structures built from its geometry. Nothing here
@@ -32,6 +32,7 @@ pub(crate) mod probes;
 pub(crate) mod ranges;
 pub(crate) mod ray_class;
 pub(crate) mod rays;
+pub(crate) mod shaders;
 pub(crate) mod shadow_clusters;
 mod slots;
 pub(crate) mod static_edits;
@@ -53,6 +54,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// `settings::Settings` and each frame's camera and look are a
 /// [`FrameInput`](crate::FrameInput). All dimensions are metres, Y-up.
 pub struct Scene {
+    pub(crate) shaders: shaders::Shaders,
     pub(crate) materials: materials::Materials,
     pub(crate) models: models::Models,
     pub(crate) instances: instances::Instances,
@@ -150,6 +152,7 @@ impl Scene {
         let ray_instances = rays::instances::RayInstances::new(device);
         let bound = Self::buffers(&instances, &rays, &ray_instances);
         Self {
+            shaders: shaders::Shaders::default(),
             materials: materials::Materials::new(device, queue),
             models: models::Models::default(),
             candidates: candidates::Candidates::new(&device.limits()),
@@ -226,8 +229,25 @@ impl Scene {
             .expect("a mesh's material lives")
     }
 
-    /// Before a frame: uploads a decal atlas packed since the last one and
-    /// the draw candidates, sets and chains edits changed, rewrites records
+    /// The farthest the shaders of `model`'s meshes' materials move a
+    /// vertex, in its meshes' units (`MaterialShader::displacement_bound`).
+    pub(crate) fn displacement_of(&self, model: &models::Model) -> f32 {
+        model
+            .meshes
+            .iter()
+            .map(|mesh| self.drawn_material(mesh.material).displacement_bound())
+            .fold(0., f32::max)
+    }
+
+    /// `model`'s bounds in its space, grown by what its materials' shaders
+    /// may move its vertices (`displacement_of`).
+    pub(crate) fn shaded_bounds(&self, model: &models::Model) -> [glam::Vec3; 2] {
+        static_edits::grown(model.bounds, self.displacement_of(model))
+    }
+
+    /// Before a frame: uploads a decal atlas packed since the last one, the
+    /// draw candidates, sets and chains edits changed and the shader
+    /// parameter blocks the last submitted frame changed, rewrites records
     /// whose motion the last submitted frame ended, chooses the deformations
     /// the frame writes and shows, and orders the mist from `eye`.
     pub(crate) fn prepare_frame(
@@ -238,6 +258,7 @@ impl Scene {
     ) {
         self.upload_decals(device, queue);
         self.candidates.upload(device, queue);
+        self.materials.prepare_frame(queue);
         self.instances
             .prepare_frame(queue, &self.models, &mut self.deformations);
         self.transient.sort_mist(queue, eye);
@@ -416,11 +437,13 @@ impl Scene {
     pub(crate) fn specular_probes(&self) -> Option<&probes::UploadedProbes> {
         self.baked_specular_probes.as_ref()
     }
-    /// Commits a submitted frame: each moving instance's pose becomes the
-    /// one its motion is measured from, and its static edits are no longer
+    /// Commits a submitted frame: each moving instance's pose, and each
+    /// instance's shader data and material's shader parameters, become the
+    /// ones its motion is measured from, and its static edits are no longer
     /// pending. `Renderer::finish_frame` calls it.
     pub(crate) fn finish_frame(&mut self) {
         self.instances.finish_frame();
+        self.materials.finish_frame();
         self.static_edits.finish();
         if let Some(acceleration) = &mut self.acceleration {
             acceleration.finish_frame();

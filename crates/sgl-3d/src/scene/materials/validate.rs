@@ -153,3 +153,19 @@ pub(super) fn validate_normal_layers(
         Err(SceneError::InvalidNormalLayers)
     }
 }
+
+/// The shader `values` names: one of the scene's, `shaders`, with a finite
+/// nonnegative displacement bound.
+pub(super) fn validate_shader(
+    values: &SurfaceMaterial,
+    shaders: &crate::scene::shaders::Shaders,
+) -> Result<(), SceneError> {
+    let Some(shader) = values.shader else {
+        return Ok(());
+    };
+    shaders.get(shader.shader)?;
+    if !(shader.displacement_bound.is_finite() && shader.displacement_bound >= 0.) {
+        return Err(SceneError::InvalidDisplacementBound);
+    }
+    Ok(())
+}

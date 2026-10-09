@@ -23,7 +23,7 @@ pub use content::baked_specular_probe::{
 pub use content::decal::Decal;
 pub use content::dynamic_gi::DynamicGiVolume;
 pub use content::identity::{
-    DecalId, DecalImageId, EnvironmentId, InstanceId, LightId, MaterialId, ModelId,
+    DecalId, DecalImageId, EnvironmentId, InstanceId, LightId, MaterialId, ModelId, ShaderId,
 };
 pub use content::instance::{InstanceState, Mobility};
 pub use content::irradiance_volume::{IrradianceCell, IrradianceVolume};
@@ -33,6 +33,7 @@ pub use content::lighting::{
 };
 pub use content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 pub use content::model::{AssetIds, ModelMesh};
+pub use content::shader::{MaterialShader, ShaderSource};
 pub use content::transient::FogVolume;
 pub use content::{
     asset, baked_specular_probe, deformation, environment, geometry, static_lighting,
@@ -59,6 +60,15 @@ pub mod lod {
 /// Caller-authored additive geometry.
 pub mod effects {
     pub use crate::content::transient::{Glow, GlowKind, GlowProfile};
+}
+/// A game's material shaders (`Scene::add_shader`): their source, what a
+/// material names, the parameter block's layout, why a module is refused,
+/// and the contract's limits.
+pub mod shader {
+    pub use crate::content::shader::{
+        ForbiddenItem, MaterialShader, SHADER_LOOP_BUDGET, SHADER_PARAMS_MAX_BYTES, ShaderError,
+        ShaderParamField, ShaderParamsLayout, ShaderSource,
+    };
 }
 /// Caller-authored heat shimmer geometry.
 pub mod heat_distortion {

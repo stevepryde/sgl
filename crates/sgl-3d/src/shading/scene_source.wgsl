@@ -25,8 +25,10 @@ const SCENE_IMAGE_BC7:u32=1u;
 // words; its first vertex among its model's, where a deforming instance's
 // vertices of it start (deformation.wgsl); the word where its own chart
 // table starts; the rectangle its packed UVs span (min in xy, extent in
-// zw); and the word where its section table starts, with its sections.
-const SCENE_MESH_WORDS:u32=11u;
+// zw); the word where its section table starts, with its sections; and the
+// word where its shader data starts (PreparedModel::with_shader_data), 0
+// for a mesh without, whose vertices' data read zero.
+const SCENE_MESH_WORDS:u32=12u;
 const SCENE_MESH_VERTICES:u32=0u;
 const SCENE_MESH_INDICES:u32=1u;
 const SCENE_MESH_MATERIAL_WORD:u32=2u;
@@ -35,6 +37,9 @@ const SCENE_MESH_CHARTS:u32=4u;
 const SCENE_MESH_UV_RECT:u32=5u;
 const SCENE_MESH_SECTIONS:u32=9u;
 const SCENE_MESH_SECTION_COUNT:u32=10u;
+const SCENE_MESH_SHADER_DATA:u32=11u;
+// A vertex's shader data: four f32 words.
+const SCENE_SHADER_DATA_WORDS:u32=4u;
 // A section table entry's: a leaf of the mesh's range hierarchy, at most
 // SECTION_VERTICES / 3 triangles in the mesh's own order: its bounds in the
 // model's space, min then max, its first index, relative to its mesh's

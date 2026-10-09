@@ -38,6 +38,7 @@ mod rect_light_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod scene_ray_valid_tests;
 mod scene_rays;
+pub(crate) mod shader;
 pub(crate) use scene_rays::{RayQueryForm, SCENE_RAYS, SCENE_RAYS_PREDICATE, ray_trace_root};
 #[cfg(test)]
 pub(crate) use scene_rays::{SCENE_RAYS_PORTABLE, SCENE_RAYS_QUERY_OPAQUE};
@@ -184,7 +185,7 @@ pub(crate) static MATERIAL: Module = Module {
 pub(crate) static MATERIAL_RASTER: Module = Module {
     name: "material_raster",
     source: include_str!("material_raster.wgsl"),
-    deps: &[&BIND_MATERIAL],
+    deps: &[&BIND_MATERIAL, &shader::SHADER_CONTRACT],
 };
 /// Rec. 709 luminance of linear RGB, for SGL3D's own shaders; ports keep
 /// their upstream helpers.
@@ -445,6 +446,15 @@ pub(crate) static VERTEX: Module = Module {
     name: "vertex",
     source: include_str!("vertex.wgsl"),
     deps: &[&BIND_SCENE],
+};
+/// The material's shader functions where SGL3D calls them: its vertex
+/// function before the pose and the context of its surface function. Reads
+/// `view`, `frame` and the object records, and calls the program's shader
+/// provider (`programs::ProgramShader`).
+pub(crate) static MATERIAL_SHADER: Module = Module {
+    name: "material_shader",
+    source: include_str!("material_shader.wgsl"),
+    deps: &[&VERTEX, &shader::SHADER_CONTRACT],
 };
 /// The G-buffer's targets: their encode and decode functions. Its traced
 /// lobe is the one `SPECULAR_LOBES` selects.

@@ -27,9 +27,10 @@ const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
 // wgpu sets to WebGPU's, and wgpu's validation of every pipeline layout
 // against the device's limits: frames that build the heaviest pipelines
 // (transmissive, dispersive blended receivers of screen-space reflections
-// that between them carry every material map, world-space reflections,
-// ambient occlusion, fog and TAA, over an irradiance volume and a dynamic
-// GI volume) on a device of
+// that between them carry every material map, one through a game's shader
+// that reads the scene depth, a masked wall through the same shader,
+// world-space reflections, ambient occlusion, fog and TAA, over an
+// irradiance volume and a dynamic GI volume) on a device of
 // those limits and no optional feature raise no validation error, the
 // device reports the Basic tier, and dynamic GI is reported off.
 #[test]
@@ -91,11 +92,28 @@ fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality
     let size = [32, 32];
     let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
     let mut scene = Scene::new(&device, &queue);
-    let wall = scene
-        .add_asset(&device, &queue, test_support::cube())
-        .unwrap();
+    // A game's shader, whose programs the tier's validation composed, on
+    // the masked wall's casters and G-buffer and the bump glass's blended
+    // draws, which take the scene depth on Extended.
+    let shader = test_support::add_test_shader(&mut scene);
+    let mut wall = test_support::cube();
+    let material = wall.materials.remove(0);
+    wall.materials.push(test_support::shaded(
+        crate::asset::Material {
+            alpha: AlphaMode::Mask { cutoff: 0.5 },
+            ..material
+        },
+        shader,
+        0.,
+    ));
+    let wall = scene.add_asset(&device, &queue, wall).unwrap();
     let normal_glass = scene.add_asset(&device, &queue, glass(true)).unwrap();
-    let bump_glass = scene.add_asset(&device, &queue, glass(false)).unwrap();
+    let mut bump_glass = glass(false);
+    let material = bump_glass.materials.remove(0);
+    bump_glass
+        .materials
+        .push(test_support::shaded(material, shader, 0.));
+    let bump_glass = scene.add_asset(&device, &queue, bump_glass).unwrap();
     for (model, at, mobility) in [
         (wall.model, Vec3::new(0.3, 0., -4.), Mobility::Static),
         (
