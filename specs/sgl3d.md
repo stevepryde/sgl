@@ -67,6 +67,11 @@ settings SGL3D has today.
    one decoder, which decodes each image the game does not supply and never
    reads one it does. Explicit node selection preserves ancestor transforms and rejects
    an empty selection. Games keep authored sources, export recipes and gameplay RON.
+   A game's material shaders (`Scene::add_shader`: WGSL vertex and surface
+   functions SGL3D composes into its own programs) are its content, never
+   SGL3D's built-in look: SGL3D ships no water, wind or glass equations,
+   which live with the game and the examples. They are shading content, not
+   a gameplay scripting language: game logic stays Rust.
 3. **S3D-3 — Coordinates and state.** The boundary uses metres, +Y up,
    right-handed view/projection matrices, camera-local forward −Z, reversed-Z
    device depth (1 at the near plane, 0 at the far plane; `sgl_3d::perspective`
@@ -119,7 +124,9 @@ settings SGL3D has today.
    game's. That is a `Settings` field when it selects which mode or
    implementation SGL3D uses, or its quality, performance or comfort level, or
    is a diagnostics switch, otherwise a field of `FrameInput` (the per-frame
-   look) or of the scene type it belongs to (content). How a feature is done
+   look) or of the scene type it belongs to (content). A material's shader
+   is content: it changes what a surface is, never how SGL3D renders it,
+   and nothing about it is a setting. How a feature is done
    is SGL3D's: its algorithm, kernels, thresholds, history weights and other
    internal parameters are chosen by SGL3D for each level and are never game
    fields. A game need not set any control: a setting defaults as
@@ -253,6 +260,15 @@ current capabilities and limits.
   [#243](https://github.com/stevepryde/sgl/issues/243)), skinned meshes and
   morph targets (18), instanced draws (19), compressed material textures
   (20), and decals (21). See [content support and limits](../crates/sgl-3d/docs/features.md#content).
+- **Programmable surfaces
+  ([#272](https://github.com/stevepryde/sgl/issues/272), [D-35](decisions.md)):**
+  a game's WGSL vertex and surface functions, composed into SGL3D's own
+  programs and run in every raster pass, with motion from two evaluations,
+  culling grown by a displacement bound and the opaque depth behind a
+  blended surface on the Extended tier, as the architecture designs them
+  ([Programmable surfaces](sgl3d-architecture.md#designs-that-span-stages));
+  rays, bakes and static shadow layers see the rest geometry. See
+  [programmable surfaces](../crates/sgl-3d/README.md#programmable-surfaces).
 - **Effects:** motion blur (9) and volumetric fog with light shafts (10).
   See [motion blur](../crates/sgl-3d/README.md#motion-blur) and
   [fog](../crates/sgl-3d/README.md#volumetric-fog).
