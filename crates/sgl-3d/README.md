@@ -1507,9 +1507,11 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
   `VOLUME_OPAQUE`, to the opaque surface, where no exit lies between (an
   opaque object inside, or an open volume); `VOLUME_HIDDEN`, a third
   crossing whose exit is unmeasured, the opaque bound as its length. At an
-  exit fragment: `VOLUME_ENTRY`, from the nearest entry in front;
-  `VOLUME_EYE`, from the eye (the camera is inside, or the near plane cut
-  the entry). `VOLUME_NONE`, length 0, in every other pass, on the `Basic`
+  exit fragment: `VOLUME_ENTRY`, from the nearest entry in front, with no
+  other exit between; `VOLUME_EYE`, from the eye (the camera is inside, or
+  the near plane cut the entry); `VOLUME_HIDDEN`, behind another exit,
+  which hides where its segment starts, the eye's distance as its
+  length. `VOLUME_NONE`, length 0, in every other pass, on the `Basic`
   tier and with `Settings::volume_paths` off
   (`Renderer::volume_paths_in_effect`). Use it so:
   - absorb over it: set `thickness` to the length divided by the
@@ -1523,16 +1525,22 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
   - a double-sided volume draws both its entry and exit faces, each
     transmitting the opaque frame behind it, so absorb at one: at entry
     faces, and at exit faces only for `VOLUME_EYE`, giving an exit face
-    behind an entry (`VOLUME_ENTRY`) no coverage under `AlphaMode::Blend`.
+    behind an entry (`VOLUME_ENTRY`) no coverage under `AlphaMode::Blend`;
+    an exit face at `VOLUME_HIDDEN` keeps its coverage with the authored
+    thickness.
 
   The layers follow the deformed surface and are drawn on the frame's
   jittered lattice; they keep no history. The path follows the view ray,
   not the refracted one; a volume inside another (ice in water) starts or
-  ends the outer one's path at its faces; a masked cut-out still bounds;
-  rays and probe captures see no layers. Cost: in frames whose blended
-  list holds such a material, three depth passes over those materials'
-  meshes (timing group `volume layers`) and three render-size depth
-  targets; other frames and materials pay nothing.
+  ends the outer one's path at its faces; an opaque object inside a
+  volume, seen from inside it, has no blended face in front of it and is
+  not absorbed (cover it with the game's own effect, such as a fog volume
+  while the camera is inside); a masked cut-out still bounds; rays and
+  probe captures see no layers. Cost: in frames whose blended list holds
+  such a material, three copies of the opaque depth and three depth passes
+  over those materials' meshes (timing group `volume layers`); three
+  render-size depth targets, held from the first such frame until the
+  setting is off; other frames and materials pay nothing.
 - **Time and anchoring.** `ctx.phase` is the exact long-session clock: a
   motion with a whole number of cycles per hour repeats exactly, as normal
   layers do; `ctx.time` is `f32` and loses precision over long sessions.
