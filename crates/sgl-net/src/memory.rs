@@ -15,9 +15,8 @@ use std::rc::Rc;
 use crate::lanes::LaneScheduler;
 use crate::{
     ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES,
-    MAX_RELIABLE_MESSAGE_BYTES, MAX_UNRELIABLE_BYTES, RELIABLE_LANES, ReliableCapacity,
-    ReliableConfig, ReliableConfigError, RttEstimate, RttEstimator, SendError, ServerEvent,
-    ServerIo,
+    MAX_UNRELIABLE_BYTES, RELIABLE_LANES, ReliableCapacity, ReliableConfig, ReliableConfigError,
+    RttEstimate, RttEstimator, SendError, ServerEvent, ServerIo,
 };
 
 /// The process-local identity of an in-memory duplex's single connection.
@@ -156,11 +155,9 @@ impl DuplexEnd {
         if !self.connected() {
             return ReliableCapacity::default();
         }
-        let (messages, bytes) = self.lane_usage(Delivery::Reliable(lane));
-        let bounds = &self.reliable.lanes[lane.index()];
-        ReliableCapacity::remaining(
-            bounds.outbound_messages.saturating_sub(messages),
-            bounds.outbound_bytes.saturating_sub(bytes),
+        self.reliable.lanes[lane.index()].outbound_capacity(
+            self.lane_usage(Delivery::Reliable(lane)),
+            self.reliable.max_message_bytes,
         )
     }
 
@@ -169,26 +166,24 @@ impl DuplexEnd {
             return Err(SendError::Disconnected);
         }
         let cap = match delivery {
-            Delivery::Reliable(_) => MAX_RELIABLE_MESSAGE_BYTES,
+            Delivery::Reliable(_) => self.reliable.max_message_bytes,
             Delivery::Unreliable(_) => MAX_UNRELIABLE_BYTES,
             Delivery::LatestState => MAX_LATEST_STATE_BYTES,
         };
         if payload.len() > cap {
             return Err(SendError::PayloadTooLarge);
         }
-        let item = PendingItem {
-            delivery,
-            payload: payload.to_vec(),
-        };
         match delivery {
             Delivery::Reliable(lane) => {
-                let (messages, bytes) = self.lane_usage(delivery);
-                let bounds = &self.reliable.lanes[lane.index()];
-                if messages >= bounds.outbound_messages
-                    || bytes + payload.len() > bounds.outbound_bytes
+                if !self.reliable.lanes[lane.index()]
+                    .outbound_admits(self.lane_usage(delivery), payload.len())
                 {
                     return Err(SendError::WouldBlock);
                 }
+                let item = PendingItem {
+                    delivery,
+                    payload: payload.to_vec(),
+                };
                 self.pending.lanes[lane.index()].push(item, payload.len());
             }
             Delivery::Unreliable(lane) => {
@@ -199,9 +194,18 @@ impl DuplexEnd {
                 {
                     return Err(SendError::WouldBlock);
                 }
+                let item = PendingItem {
+                    delivery,
+                    payload: payload.to_vec(),
+                };
                 self.pending.unreliable[lane.index()].push(item, payload.len());
             }
-            Delivery::LatestState => self.pending.latest = Some(item),
+            Delivery::LatestState => {
+                self.pending.latest = Some(PendingItem {
+                    delivery,
+                    payload: payload.to_vec(),
+                });
+            }
         }
         Ok(())
     }
@@ -661,35 +665,27 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = test)]
     fn shared_payload_and_reliable_byte_caps_fail_before_allocation_growth() {
+        const CAP: usize = crate::DEFAULT_RELIABLE_MESSAGE_BYTES;
         let (mut client, _server) = memory_duplex();
         assert_eq!(
             client.send(Delivery::LatestState, &vec![0; MAX_LATEST_STATE_BYTES + 1]),
             Err(SendError::PayloadTooLarge)
         );
         assert_eq!(
-            client.send(
-                Delivery::RELIABLE_ORDERED,
-                &vec![0; MAX_RELIABLE_MESSAGE_BYTES + 1]
-            ),
+            client.send(Delivery::RELIABLE_ORDERED, &vec![0; CAP + 1]),
             Err(SendError::PayloadTooLarge)
         );
 
         // Fill the byte allowance to ten bytes short: capacity reports
         // exactly what is left, and admission agrees at the boundary.
-        let full = crate::DEFAULT_LANE_OUTBOUND_BYTES / MAX_RELIABLE_MESSAGE_BYTES;
+        let full = crate::DEFAULT_LANE_OUTBOUND_BYTES / CAP;
         for _ in 1..full {
             client
-                .send(
-                    Delivery::RELIABLE_ORDERED,
-                    &vec![0; MAX_RELIABLE_MESSAGE_BYTES],
-                )
+                .send(Delivery::RELIABLE_ORDERED, &vec![0; CAP])
                 .expect("within byte allowance");
         }
         client
-            .send(
-                Delivery::RELIABLE_ORDERED,
-                &vec![0; MAX_RELIABLE_MESSAGE_BYTES - 10],
-            )
+            .send(Delivery::RELIABLE_ORDERED, &vec![0; CAP - 10])
             .expect("within byte allowance");
         assert_eq!(
             client.capacity(Lane::DEFAULT),
@@ -771,12 +767,16 @@ mod properties {
         ]
     }
 
+    /// The largest reliable message cap the configurations use.
+    const MAX_MESSAGE: usize = 64 * 1024;
+
     /// Mostly small payloads, with large ones (up to one byte past the
-    /// reliable cap) so the byte allowance binds as well as the count.
+    /// largest reliable cap) so the byte allowance binds as well as the
+    /// count.
     fn payload() -> impl Strategy<Value = Vec<u8>> {
         prop_oneof![
             6 => bytes(32),
-            1 => (0..=MAX_RELIABLE_MESSAGE_BYTES + 1).prop_map(|len| vec![0xA5; len]),
+            1 => (0..=MAX_MESSAGE + 1).prop_map(|len| vec![0xA5; len]),
         ]
     }
 
@@ -796,19 +796,32 @@ mod properties {
         ]
     }
 
-    /// Small per-lane bounds so lanes fill independently.
+    /// Small per-lane bounds so lanes fill independently, byte bounds
+    /// from a byte to past the message cap so the one-message rule binds.
     fn config() -> impl Strategy<Value = ReliableConfig> {
-        let lane = (1u16..=8, 1usize..=24, 0usize..3, 1usize..=24).prop_map(
-            |(weight, messages, extra, unreliable)| LaneConfig {
-                weight,
-                outbound_messages: messages,
-                outbound_bytes: MAX_RELIABLE_MESSAGE_BYTES * (1 + extra),
-                unreliable_messages: unreliable,
-                unreliable_bytes: MAX_UNRELIABLE_BYTES * (1 + extra),
-                ..LaneConfig::DEFAULT
-            },
-        );
-        prop::array::uniform4(lane).prop_map(|lanes| ReliableConfig { lanes })
+        let lane = (
+            1u16..=8,
+            1usize..=24,
+            1usize..=3 * MAX_MESSAGE,
+            1usize..=24,
+            0usize..3,
+        )
+            .prop_map(
+                |(weight, messages, outbound_bytes, unreliable, extra)| LaneConfig {
+                    weight,
+                    outbound_messages: messages,
+                    outbound_bytes,
+                    unreliable_messages: unreliable,
+                    unreliable_bytes: MAX_UNRELIABLE_BYTES * (1 + extra),
+                    ..LaneConfig::DEFAULT
+                },
+            );
+        (prop::array::uniform4(lane), 1..=MAX_MESSAGE).prop_map(|(lanes, max_message_bytes)| {
+            ReliableConfig {
+                max_message_bytes,
+                lanes,
+            }
+        })
     }
 
     fn fits(capacity: ReliableCapacity, len: usize) -> bool {
@@ -846,7 +859,7 @@ mod properties {
                 Delivery::Reliable(lane) => {
                     let bounds = &config.lanes[lane.index()];
                     let (messages, bytes) = (bounds.outbound_messages, bounds.outbound_bytes);
-                    (MAX_RELIABLE_MESSAGE_BYTES, messages, bytes)
+                    (config.max_message_bytes, messages, bytes)
                 }
                 Delivery::Unreliable(lane) => {
                     let bounds = &config.lanes[lane.index()];
@@ -864,7 +877,10 @@ mod properties {
             };
             let held = self.staged[slot].iter().chain(&self.visible[slot]);
             let held_bytes: usize = held.clone().map(Vec::len).sum();
-            if held.count() >= messages || held_bytes + payload.len() > bytes {
+            // A reliable lane holding no bytes takes one message of any
+            // admitted size (netcode.md 11).
+            let one_message = matches!(delivery, Delivery::Reliable(_)) && held_bytes == 0;
+            if held.count() >= messages || (!one_message && held_bytes + payload.len() > bytes) {
                 return Err(SendError::WouldBlock);
             }
             self.staged[slot].push_back(payload);
@@ -933,7 +949,7 @@ mod properties {
                                 let capacity = lane.map(|lane| client.capacity(lane));
                                 let result = client.send(delivery, &payload);
                                 if let Some(capacity) = capacity
-                                    && payload.len() <= MAX_RELIABLE_MESSAGE_BYTES
+                                    && payload.len() <= config.max_message_bytes
                                 {
                                     prop_assert_eq!(result.is_ok(), fits(capacity, payload.len()));
                                 }
@@ -953,7 +969,7 @@ mod properties {
                                     lane.map(|lane| server.capacity(SOLO_CONNECTION, lane));
                                 let result = server.send(SOLO_CONNECTION, delivery, &payload);
                                 if let Some(capacity) = capacity
-                                    && payload.len() <= MAX_RELIABLE_MESSAGE_BYTES
+                                    && payload.len() <= config.max_message_bytes
                                 {
                                     prop_assert_eq!(result.is_ok(), fits(capacity, payload.len()));
                                 }

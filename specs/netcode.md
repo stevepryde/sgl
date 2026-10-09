@@ -58,40 +58,56 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     memory every unreliable message arrives in send order while the receiver
     keeps polling, though that order is not promised.
 11. Every bound is a public constant or a validated configuration value and is
-    enforced before I/O. A payload over `MAX_RELIABLE_MESSAGE_BYTES`,
-    `MAX_UNRELIABLE_BYTES` or `MAX_LATEST_STATE_BYTES` returns
-    `SendError::PayloadTooLarge`. Each lane has its own weight and bounds in
-    `ReliableConfig` (`LaneConfig`; defaults `DEFAULT_LANE_*`), which every
-    transport takes (`reliable` on `EndpointConfig`,
-    `NativeWebSocketServerConfig`, `NativeWebSocketClientConfig` and
-    `BrowserWebSocketConfig`; `memory_duplex_with`) and validates before use;
-    both ends use the same configuration. A lane holding its
-    `outbound_messages` or `outbound_bytes` (unflushed, in flight and
-    unacknowledged alike), a lane whose unreliable queue holds
-    `unreliable_messages` or `unreliable_bytes` not yet sent, or a shared
-    ceiling such as the UDP endpoint's `global_reliable_outbound_*`, refuses
-    the send with `SendError::WouldBlock`: nothing is queued, the caller keeps
-    the payload and may retry after a later `flush` and `poll`, and the
-    connection and every message accepted before it are unaffected. A full
-    lane never refuses another lane, and a full unreliable queue never refuses
-    reliable messages. `capacity` reports the reliable allowance. A retried
-    message is ordered after whatever the lane accepted meanwhile. The
-    threaded UDP worker moves a message to its endpoint only when the endpoint
-    has room on that lane, rotating between backlogged peers and lanes, and
-    the browser holds released frames while `bufferedAmount` is above its
-    watermark; neither refuses an accepted message or disconnects. A peer that
-    exceeds this side's reliable inbound bounds — a lane's completed messages
-    not yet returned by `poll` past its `inbound_messages` or `inbound_bytes`,
-    or the UDP endpoint's `global_reliable_inbound_*` — is closed alone with
-    `DisconnectReason::InboundOverflow`. Received unreliable messages waiting
-    for `poll` past a lane's `unreliable_messages` or `unreliable_bytes`
-    (WebSocket and threaded UDP ingress) instead shed the oldest: a receiver
-    that is not polled drops its oldest unpolled unreliable messages, as a
-    full UDP socket buffer does; reliable overflow still closes the peer. The
-    threaded server's poll returns at most 32 lane messages per peer
-    (`LANE_MESSAGES_PER_PEER_PER_POLL`), shared across its lanes and both
-    classes, so that is the sustainable per-poll rate above which a peer's
-    unreliable messages are shed. Other connections are never affected.
+    enforced before I/O. A payload over the transport's
+    `ReliableConfig::max_message_bytes` (default
+    `DEFAULT_RELIABLE_MESSAGE_BYTES`, 64 KiB; at most
+    `RELIABLE_MESSAGE_BYTES_LIMIT`, 16 MiB), `MAX_UNRELIABLE_BYTES` or
+    `MAX_LATEST_STATE_BYTES` returns `SendError::PayloadTooLarge`. Each lane
+    has its own weight and bounds in `ReliableConfig` (`LaneConfig`;
+    defaults `DEFAULT_LANE_*`), which every transport takes (`reliable` on
+    `EndpointConfig`, `NativeWebSocketServerConfig`,
+    `NativeWebSocketClientConfig` and `BrowserWebSocketConfig`;
+    `memory_duplex_with`) and validates before use; both ends use the same
+    configuration. A lane holding its `outbound_messages` or `outbound_bytes`
+    (unflushed, in flight and unacknowledged alike), a lane whose unreliable
+    queue holds `unreliable_messages` or `unreliable_bytes` not yet sent, or
+    a shared ceiling such as the UDP endpoint's `global_reliable_outbound_*`,
+    refuses the send with `SendError::WouldBlock`: nothing is queued, the
+    caller keeps the payload and may retry after a later `flush` and `poll`,
+    and the connection and every message accepted before it are unaffected.
+    A lane holding no reliable bytes admits one message of any size up to
+    the cap (the one-message rule), so a byte bound smaller than a message
+    never refuses it for good and a lane holds at most the larger of the
+    two; `capacity` then reports the cap. The UDP endpoint's shared byte
+    ceilings are validated to hold at least one message. A full lane never
+    refuses another lane, and a full unreliable queue never refuses reliable
+    messages. `capacity` reports the reliable allowance. A retried message
+    is ordered after whatever the lane accepted meanwhile. The threaded UDP
+    worker moves a message to its endpoint only when the endpoint has room
+    on that lane, rotating between backlogged peers and lanes, and the
+    browser holds released frames while `bufferedAmount` is above its
+    watermark; neither refuses an accepted message or disconnects. A lane's
+    completed reliable messages not yet returned by `poll` are bounded by
+    its `inbound_messages`, and by its `inbound_bytes` beside at most one
+    larger message, so a message of any admitted size followed by smaller
+    ones before the next poll fits; a lane holds at most `inbound_bytes`
+    plus one message. A peer that exceeds those bounds, or the UDP
+    endpoint's `global_reliable_inbound_*`, is closed alone with
+    `DisconnectReason::InboundOverflow` — except on native WebSocket, which
+    stops reading the connection until `poll` makes room (13), so there it
+    means only a peer that breaks the protocol. The threaded UDP server
+    acknowledges on its worker's clock and the browser cannot stop reading,
+    so there the inbound bounds are a budget per caller poll, sized for the
+    poll interval. Received unreliable messages
+    waiting for `poll` past a lane's `unreliable_messages` or
+    `unreliable_bytes` (WebSocket and threaded UDP ingress) instead shed the
+    oldest: a receiver that is not polled drops its oldest unpolled
+    unreliable messages, as a full UDP socket buffer does; reliable overflow
+    still closes the peer. The threaded server's poll returns at most 32
+    lane messages per peer (`LANE_MESSAGES_PER_PEER_PER_POLL`), shared
+    across its lanes and both classes, so that is the sustainable per-poll
+    rate above which a peer's unreliable messages are shed. Other
+    connections are never affected.
 12. UDP datagrams (version 2) are at most `MAX_DATAGRAM_BYTES` (1200). A
     payload datagram's kind byte carries a lane acknowledgement mask in its
     high nibble, and one six-byte acknowledgement follows per set lane; an
@@ -129,11 +145,22 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`. Every
     lane shares the one TCP stream: a lost segment stalls every lane until TCP
     retransmits it, and a frame already written precedes everything after it;
-    UDP is the transport for loss-isolated lanes. Neither transport negotiates
-    a version, so builds on different versions cannot connect; a game changes
-    its WebSocket subprotocol when the wire version changes. Browser reconnect
-    follows `ReconnectPolicy` with bounded attempts and delay, driven by
-    `poll(now_ms)`.
+    UDP is the transport for loss-isolated lanes. WebSocket may be slower
+    than UDP, never weaker: a native receiver whose lane cannot take a
+    completed message holds that frame and stops reading the connection
+    until the caller's `poll` makes room, so its kernel buffer fills, TCP
+    closes the sender's window, the sender's worker stops writing and its
+    game's `send` returns `WouldBlock`. Every lane of that connection waits
+    meanwhile. The stall is not the peer's inactivity; the sender's own
+    timeout bounds how long it waits for a receiver that never polls. The
+    browser WebSocket API cannot stop reading, so a browser receiver keeps
+    its inbound bounds: a browser game sizes `inbound_messages` and
+    `inbound_bytes` for the most it can receive between two polls, and a
+    sender that outruns them is still closed with `InboundOverflow`.
+    Neither transport negotiates a version, so builds on different versions
+    cannot connect; a game changes its WebSocket subprotocol when the wire
+    version changes. Browser reconnect follows `ReconnectPolicy` with
+    bounded attempts and delay, driven by `poll(now_ms)`.
 14. Lanes share a connection by deficit round robin over the lanes with
     sendable work. Each lane's quantum is `LaneConfig::weight` fragments
     (`1..=MAX_LANE_WEIGHT`, default 1), and each fragment counts once since it
@@ -152,14 +179,26 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     state is pending; packing small items into shared datagrams is a
     follow-up. Latest state keeps its reserved UDP datagram per flush; the
     memory transport, whose messages cross whole, returns lanes interleaved by
-    the same weights. Each lane reassembles one message at a time against the
-    total its first fragment declares: a middle or last fragment with no
-    first, a first or whole fragment while assembling, a declared total above
-    `MAX_RELIABLE_MESSAGE_BYTES` or not above the first fragment, a middle
-    fragment that reaches the total, and a last fragment that misses it are
+    the same weights.
+15. A reliable message longer than one UDP item or WebSocket frame is
+    fragmented as it is sent, each fragment a range of the queued message,
+    so the sender holds every message once; the first fragment declares the
+    message's total. Each lane reassembles one message at a time against
+    that total: a middle or last fragment with no first, a first or whole
+    fragment while assembling, a declared total above the receiver's
+    `max_message_bytes` or not above the first fragment, a middle fragment
+    that reaches the total, and a last fragment that misses it are
     `ProtocolViolation`, and nothing from the offending datagram or frame is
-    delivered. Partial messages go with their connection whatever ends it;
-    there is no reassembly timer.
+    delivered. The receiver's cap governs, so both ends configure the same
+    one. The total is checked before anything is buffered, and the buffer
+    grows geometrically with what arrives, reserving at most twice what has
+    arrived and never past the total, so a lane holds at most one partial
+    message of the cap (plus, on UDP, its out-of-order window); the UDP
+    endpoint's `global_reliable_inbound_bytes` caps the received bytes
+    across peers. Partial messages go with their connection whatever ends
+    it, a timed-out sender's included; there is no reassembly timer:
+    keepalives decide liveness, retransmission progress, and the caps
+    memory.
 
 ## Acceptance
 
@@ -170,6 +209,11 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
   retained message lands exactly once.
 - A realtime lane keeps its scheduling bound while another lane streams bulk
   data, and on UDP a dropped bulk fragment delays no other lane.
+- A 4 MiB message crosses every transport within the configured memory,
+  through a lane whose byte allowance is smaller, while a realtime lane
+  keeps its scheduling bound.
+- A receiver that polls slowly makes a native WebSocket sender slower, not
+  disconnected.
 - Unreliable messages are never retransmitted and never delivered twice;
   with no network loss and a polled receiver every accepted one arrives,
   and no sending side drops one.

@@ -14,6 +14,13 @@
 //! TCP retransmits it, and a frame already written precedes everything after
 //! it. Lanes here bound the application's interleaving and keep admission
 //! independent per lane; UDP is the transport for loss-isolated lanes.
+//!
+//! A native receiver whose lane cannot take a completed message stops
+//! reading that connection until `poll` makes room, so TCP pushes back to
+//! the sender, whose `send` returns `WouldBlock`; a slow receiver makes the
+//! sender slower, never disconnects it. The browser API cannot stop
+//! reading: a browser game sizes its lanes' inbound bounds for what can
+//! arrive between two polls.
 
 #[cfg(target_arch = "wasm32")]
 mod browser;

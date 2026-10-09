@@ -290,6 +290,76 @@ fn unreliable_messages_all_arrive_in_order_beside_reliable_bulk() {
     assert_eq!(bulk_got, (0..BULK).map(bulk).collect::<Vec<_>>());
 }
 
+/// Defect (#269, design §13): a receiver whose inbound lane fills between
+/// polls disconnecting a healthy sender (`InboundOverflow`) instead of
+/// pushing back through TCP, or losing, duplicating or reordering messages
+/// while it stops and resumes reading. Oracle: netcode.md 13 — a WebSocket
+/// receiver that polls slowly makes a fast sender slower, never
+/// disconnected. The server's lane holds 16 messages, so it takes at most
+/// 64 KiB a poll, while the client offers 256 KiB a turn; the client's own
+/// lane holds 1 MiB, four turns' worth, and its 24 MiB stream outgrows both
+/// TCP buffers several times over, so its `send` is refused only once the
+/// stalled receiver has filled them. Every message arrives once and in
+/// order, and neither side reports a disconnect.
+#[test]
+fn a_slowly_polled_receiver_paces_a_fast_sender_instead_of_disconnecting_it() {
+    const MESSAGES: u32 = 6_144;
+    const MESSAGE_BYTES: usize = 4 * 1024;
+    const PER_TURN: usize = 64;
+    let mut reliable = ReliableConfig::DEFAULT;
+    reliable.lanes[0].inbound_messages = 16;
+    let mut config = NativeWebSocketServerConfig::new(([127, 0, 0, 1], 0).into(), identity())
+        .with_origin_policy(OriginPolicy::exact([ORIGIN_VALUE.to_owned()]).unwrap());
+    config.reliable = reliable;
+    let mut server = NativeWebSocketServer::bind(config).unwrap();
+    let mut client_config =
+        NativeWebSocketClientConfig::new(url(&server), ORIGIN_VALUE, identity());
+    client_config.reliable.lanes[0].outbound_messages = 4_096;
+    client_config.reliable.lanes[0].outbound_bytes = 1 << 20;
+    let mut client = NativeWebSocketClient::connect(client_config).unwrap();
+    client.poll(0);
+    connected_id(&wait_server_events(&mut server));
+
+    let message = |index: u32| {
+        let mut payload = vec![0xC3; MESSAGE_BYTES];
+        payload[..4].copy_from_slice(&index.to_le_bytes());
+        payload
+    };
+    let (mut sent, mut refused) = (0, 0);
+    let mut received = Vec::new();
+    wait_until(Duration::from_secs(30), || {
+        for _ in 0..PER_TURN {
+            if sent == MESSAGES {
+                break;
+            }
+            match client.send(Delivery::RELIABLE_ORDERED, &message(sent)) {
+                Ok(()) => sent += 1,
+                Err(SendError::WouldBlock) => {
+                    refused += 1;
+                    break;
+                }
+                Err(error) => panic!("send refused with {error:?}"),
+            }
+        }
+        client.flush(0);
+        let client_events = client.poll(0);
+        assert!(client_events.is_empty(), "the sender saw {client_events:?}");
+        thread::sleep(Duration::from_millis(1));
+        for event in server.poll(0) {
+            match event {
+                ServerEvent::Message { payload, .. } => {
+                    assert_eq!(payload[4..], message(0)[4..]);
+                    received.push(u32::from_le_bytes(payload[..4].try_into().unwrap()));
+                }
+                other => panic!("the receiver saw {other:?}"),
+            }
+        }
+        (received.len() == MESSAGES as usize).then_some(())
+    });
+    assert_eq!(received, (0..MESSAGES).collect::<Vec<_>>());
+    assert!(refused > 0, "the stalled receiver never pushed back");
+}
+
 fn raw_request(url: &str, origins: &[&str]) -> tungstenite::http::Request<()> {
     let mut request = url.into_client_request().unwrap();
     request

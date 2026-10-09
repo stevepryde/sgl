@@ -550,7 +550,7 @@ mod tests {
         }
         assert!(server_peer.is_some());
 
-        let reliable = vec![0x5a; crate::MAX_RELIABLE_MESSAGE_BYTES];
+        let reliable = vec![0x5a; crate::DEFAULT_RELIABLE_MESSAGE_BYTES];
         client
             .send(client_peer, Delivery::RELIABLE_ORDERED, &reliable)
             .unwrap();
@@ -595,7 +595,7 @@ mod tests {
             client.send(
                 client_peer,
                 Delivery::RELIABLE_ORDERED,
-                &vec![0; crate::MAX_RELIABLE_MESSAGE_BYTES + 1]
+                &vec![0; crate::DEFAULT_RELIABLE_MESSAGE_BYTES + 1]
             ),
             Err(crate::SendError::PayloadTooLarge)
         );

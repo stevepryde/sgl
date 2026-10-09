@@ -25,7 +25,7 @@ use tungstenite::protocol::{Message, WebSocketConfig};
 
 use self::worker::{IoWorker, WorkerHandle};
 use super::native_write::{drain_outbound, send_ping};
-use super::queue::PeerState;
+use super::queue::{PeerState, Received};
 use super::{MAX_WEBSOCKET_FRAME_BYTES, WebSocketIdentity, decode_envelope, encode_envelope};
 use crate::{
     ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, ReliableCapacity,
@@ -211,7 +211,15 @@ impl SharedPeer {
     }
 
     fn advance(&self, now_ms: u64) {
+        // While this side holds a frame for a full lane it reads nothing,
+        // so the peer's silence is this side's doing, not the peer's: the
+        // stall is not inactivity. The peer's own timeout bounds how long
+        // it waits for a receiver that never polls.
+        let stalled = lock(&self.state).read_stalled();
         let mut liveness = lock(&self.liveness);
+        if stalled {
+            liveness.observe_activity();
+        }
         liveness.advance(now_ms);
         let graceful_closing = lock(&self.state).graceful_closing();
         if liveness.timed_out() && !graceful_closing {
@@ -241,8 +249,8 @@ impl SharedPeer {
 
     /// Whether a worker turn would act on something only the caller causes:
     /// a close to write, a graceful close to finish, released frames to send,
-    /// or a ping the caller's clock made due. Socket readiness covers the
-    /// rest.
+    /// a held frame that now fits because `poll` made room, or a ping the
+    /// caller's clock made due. Socket readiness covers the rest.
     fn needs_turn(&self) -> bool {
         if self.shutdown.load(Ordering::Acquire) {
             return true;
@@ -252,6 +260,7 @@ impl SharedPeer {
             if state.terminal().is_some()
                 || state.graceful_closing()
                 || state.has_released_outbound()
+                || state.can_resume()
             {
                 return true;
             }
@@ -441,7 +450,9 @@ pub struct NativeWebSocketServerConfig {
     pub handshake_timeout: Duration,
     /// Caller-clock interval between liveness pings. Zero disables pings.
     pub ping_interval_ms: u64,
-    /// Caller-clock inactivity timeout. Zero disables the timeout.
+    /// Caller-clock inactivity timeout. Zero disables the timeout. Time this
+    /// side spends not reading because a lane is full does not count; the
+    /// peer's own timeout bounds how long it waits for this side to poll.
     pub timeout_ms: u64,
     /// Every connection's reliable lanes: weights and per-lane bounds.
     pub reliable: ReliableConfig,
@@ -601,7 +612,6 @@ impl ServerIo for NativeWebSocketServer {
                 .get(conn)
                 .expect("connection key came from registry");
             peer.shared.advance(now_ms);
-            wake |= peer.shared.request_turn();
         }
 
         // Drain in rounds so every active peer gets one turn before any peer
@@ -643,6 +653,14 @@ impl ServerIo for NativeWebSocketServer {
                     progressed = true;
                 }
             }
+        }
+        // After the drain, so a peer whose held frame now fits resumes
+        // reading.
+        for conn in &connections {
+            let peer = registry
+                .get(conn)
+                .expect("connection key came from registry");
+            wake |= peer.shared.request_turn();
         }
         for conn in remove {
             if let Some(peer) = registry.remove(&conn) {
@@ -758,7 +776,9 @@ pub struct NativeWebSocketClientConfig {
     pub identity: WebSocketIdentity,
     /// Caller-clock interval between liveness pings. Zero disables pings.
     pub ping_interval_ms: u64,
-    /// Caller-clock inactivity timeout. Zero disables the timeout.
+    /// Caller-clock inactivity timeout. Zero disables the timeout. Time this
+    /// side spends not reading because a lane is full does not count; the
+    /// peer's own timeout bounds how long it waits for this side to poll.
     pub timeout_ms: u64,
     /// Maximum wall-clock time spent connecting and completing the HTTP upgrade.
     pub handshake_timeout: Duration,
@@ -962,17 +982,32 @@ enum SocketTick {
     Stop,
 }
 
+/// Offers one binary frame to the peer state. Returns whether the frame is
+/// held because its lane is full; any other refusal closes the peer state
+/// with its reason, and a frame that does not decode breaks the framing.
+fn deliver_frame(shared: &SharedPeer, bytes: &[u8]) -> Result<Received, ()> {
+    let Ok(envelope) = decode_envelope(shared.magic, bytes) else {
+        shared.close(DisconnectReason::ProtocolViolation);
+        return Err(());
+    };
+    lock(&shared.state).receive_or_hold(envelope).map_err(drop)
+}
+
 /// One socket turn: read buffered inbound frames into the shared
 /// peer state (bounded per turn so a flood cannot starve outbound work),
 /// send a due ping, drain released outbound frames, and finish a graceful
-/// close. The I/O worker runs it for a connection on readiness or a caller
-/// request; tests drive it over an in-memory stream. Time never enters
-/// here — liveness is advanced by the caller's clock through
+/// close. A frame whose lane cannot take its message stays in `held` and
+/// nothing more is read until the caller's `poll` makes room (read
+/// backpressure: the kernel buffer fills and TCP stops the sender). The
+/// I/O worker runs it for a connection on readiness or a caller request;
+/// tests drive it over an in-memory stream. Time never enters here —
+/// liveness is advanced by the caller's clock through
 /// [`SharedPeer::advance`].
 fn socket_tick<Stream>(
     socket: &mut WebSocket<Stream>,
     shared: &SharedPeer,
     pending: &mut Option<Message>,
+    held: &mut Option<tungstenite::Bytes>,
 ) -> SocketTick
 where
     Stream: Read + Write,
@@ -983,18 +1018,24 @@ where
     }
     let mut reads = 0;
     let mut closing = false;
-    while reads < MAX_READS_PER_WAKE && !closing {
+    if let Some(bytes) = held.take() {
+        match deliver_frame(shared, &bytes) {
+            Ok(Received::Held) => *held = Some(bytes),
+            // Reading resumes now: the peer's silence counts from here.
+            Ok(Received::Accepted) => shared.observe_activity(),
+            Err(()) => closing = true,
+        }
+    }
+    while reads < MAX_READS_PER_WAKE && !closing && held.is_none() {
         match socket.read() {
             Ok(Message::Binary(bytes)) => {
                 reads += 1;
                 shared.observe_activity();
-                let Ok(envelope) = decode_envelope(shared.magic, &bytes) else {
-                    shared.close(DisconnectReason::ProtocolViolation);
-                    closing = true;
-                    continue;
-                };
-                // A refused frame closes the peer state with its reason.
-                let _ = lock(&shared.state).receive(envelope);
+                match deliver_frame(shared, &bytes) {
+                    Ok(Received::Held) => *held = Some(bytes),
+                    Ok(Received::Accepted) => {}
+                    Err(()) => closing = true,
+                }
             }
             // Tungstenite queues the pong itself; the next read or flush
             // writes it.
@@ -1028,7 +1069,8 @@ where
     if closing {
         return SocketTick::Continue { idle: false };
     }
-    let saturated = reads >= MAX_READS_PER_WAKE;
+    // A held frame waits for the caller's request, not for readiness.
+    let saturated = reads >= MAX_READS_PER_WAKE && held.is_none();
 
     if let Some(payload) = shared.take_ping()
         && send_ping(socket, payload).is_err()
@@ -1065,6 +1107,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::websocket::{Fragment, WEBSOCKET_FRAGMENT_BYTES};
     use tungstenite::protocol::Role;
 
     /// An in-memory socket: reads consume a scripted inbound buffer and
@@ -1160,8 +1203,10 @@ mod tests {
     }
 
     fn tick(socket: &mut WebSocket<Scripted>, shared: &SharedPeer) -> SocketTick {
-        let mut pending = None;
-        socket_tick(socket, shared, &mut pending)
+        let (mut pending, mut held) = (None, None);
+        let tick = socket_tick(socket, shared, &mut pending, &mut held);
+        assert!(held.is_none(), "these tests never fill a lane");
+        tick
     }
 
     /// Inbound binary envelopes land in the peer's inbound queue in order,
@@ -1196,6 +1241,120 @@ mod tests {
             None,
             "activity read by the worker must reset the timeout"
         );
+    }
+
+    fn fragment_frame(delivery: Delivery, fragment: Fragment, payload: &[u8]) -> Message {
+        let envelope = crate::websocket::Envelope {
+            delivery,
+            sequence: 0,
+            fragment,
+            payload,
+        };
+        Message::Binary(encode_envelope(MAGIC, &envelope).expect("envelope").into())
+    }
+
+    /// Defect (#269, design §13): a full inbound lane that closes a healthy
+    /// peer, a frame read past a held one (reordering the lane), a held
+    /// frame lost or delivered twice, a stall that never resumes once
+    /// `poll` makes room or wakes the worker while nothing changed, or this
+    /// side's own stall counted as the peer's inactivity — or the exemption
+    /// outliving the stall. Oracle: netcode.md 13's read backpressure and
+    /// the lane's order: with a one-message lane, three frames arrive one
+    /// per poll in order, the peer stays open across a stall longer than
+    /// its timeout, and once nothing is held its silence times it out.
+    #[test]
+    fn socket_tick_holds_a_frame_its_lane_cannot_take_until_poll_makes_room() {
+        let mut config = ReliableConfig::DEFAULT;
+        config.lanes[0].inbound_messages = 1;
+        let shared = SharedPeer::new(MAGIC, 0, 50, &config);
+        shared.advance(0);
+        let mut socket = server_socket(client_frames(
+            [b"r1", b"r2", b"r3"]
+                .map(|payload| envelope(Delivery::RELIABLE_ORDERED, 0, payload))
+                .into(),
+        ));
+        let (mut pending, mut held) = (None, None);
+        let mut received = Vec::new();
+        for now_ms in [100, 200, 300] {
+            assert_eq!(
+                socket_tick(&mut socket, &shared, &mut pending, &mut held),
+                SocketTick::Continue { idle: true }
+            );
+            shared.advance(now_ms);
+            if held.is_some() {
+                // Longer than the timeout with nothing read: the stall.
+                shared.advance(now_ms + 60);
+            }
+            assert_eq!(lock(&shared.state).terminal(), None, "at {now_ms}");
+            assert!(!shared.needs_turn(), "nothing to do before a poll");
+            let message = lock(&shared.state).pop_inbound();
+            received.extend(message.map(|(_, payload)| payload));
+            assert_eq!(shared.needs_turn(), held.is_some(), "at {now_ms}");
+        }
+        assert_eq!(received, [b"r1".to_vec(), b"r2".to_vec(), b"r3".to_vec()]);
+        assert!(held.is_none());
+        shared.advance(349);
+        assert_eq!(lock(&shared.state).terminal(), None);
+        shared.advance(350);
+        assert_eq!(
+            lock(&shared.state).terminal(),
+            Some(DisconnectReason::TimedOut),
+            "silence counts again once nothing is held"
+        );
+
+        // A peer that stops halfway through a message is not this side's
+        // stall: its silence times it out.
+        let shared = SharedPeer::new(MAGIC, 0, 50, &ReliableConfig::DEFAULT);
+        shared.advance(0);
+        let mut socket = server_socket(client_frames(vec![fragment_frame(
+            Delivery::RELIABLE_ORDERED,
+            Fragment::First { total: 40_000 },
+            &[1; WEBSOCKET_FRAGMENT_BYTES],
+        )]));
+        tick(&mut socket, &shared);
+        shared.advance(10);
+        shared.advance(60);
+        assert_eq!(
+            lock(&shared.state).terminal(),
+            Some(DisconnectReason::TimedOut)
+        );
+    }
+
+    /// Defect (#269): a WebSocket receiver that checks declared totals
+    /// against the default cap instead of its configured one. Oracle: the
+    /// configured cap (netcode.md 15) — a first fragment declaring it,
+    /// past the default, waits for its message; one declaring a byte more
+    /// closes the peer as `ProtocolViolation` before anything is buffered,
+    /// and a whole message received before it in the same turn is not
+    /// delivered.
+    #[test]
+    fn a_declared_total_past_the_configured_cap_is_a_protocol_violation() {
+        const CAP: u32 = 1 << 20;
+        let mut config = ReliableConfig::DEFAULT;
+        config.max_message_bytes = CAP as usize;
+        for (total, violation) in [(CAP, false), (CAP + 1, true)] {
+            let shared = SharedPeer::new(MAGIC, 0, 0, &config);
+            let mut socket = server_socket(client_frames(vec![
+                envelope(Delivery::Reliable(Lane::new(1).unwrap()), 0, b"whole"),
+                fragment_frame(
+                    Delivery::Reliable(Lane::new(2).unwrap()),
+                    Fragment::First { total },
+                    b"ab",
+                ),
+            ]));
+            tick(&mut socket, &shared);
+            let mut state = lock(&shared.state);
+            if violation {
+                assert_eq!(state.terminal(), Some(DisconnectReason::ProtocolViolation));
+                assert_eq!(state.pop_inbound(), None);
+            } else {
+                assert_eq!(state.terminal(), None);
+                assert_eq!(
+                    state.pop_inbound(),
+                    Some((Delivery::Reliable(Lane::new(1).unwrap()), b"whole".to_vec()))
+                );
+            }
+        }
     }
 
     /// Text, malformed, and Close frames fail closed with the spec'd

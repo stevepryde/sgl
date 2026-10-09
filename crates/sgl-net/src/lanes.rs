@@ -1,9 +1,13 @@
-//! Reliable lanes: their configuration, the scheduler that shares one
-//! connection between them, and the fragment reassembly every transport
-//! uses (netcode.md 14).
+//! Reliable lanes: their configuration and admission rules, the scheduler
+//! that shares one connection between them, and the fragment reassembly
+//! every transport uses (netcode.md 11, 14 and 15).
 
-use crate::{MAX_RELIABLE_MESSAGE_BYTES, MAX_UNRELIABLE_BYTES, RELIABLE_LANES};
+use crate::{MAX_UNRELIABLE_BYTES, RELIABLE_LANES, ReliableCapacity};
 
+/// Default [`ReliableConfig::max_message_bytes`].
+pub const DEFAULT_RELIABLE_MESSAGE_BYTES: usize = 64 * 1024;
+/// Ceiling for [`ReliableConfig::max_message_bytes`].
+pub const RELIABLE_MESSAGE_BYTES_LIMIT: usize = 16 * 1024 * 1024;
 /// Largest [`LaneConfig::weight`] a lane may be given.
 pub const MAX_LANE_WEIGHT: u16 = 256;
 /// Default [`LaneConfig::outbound_messages`].
@@ -34,15 +38,23 @@ pub struct LaneConfig {
     /// with [`SendError::WouldBlock`](crate::SendError::WouldBlock).
     pub outbound_messages: usize,
     /// Bytes this side holds for the lane until the peer acknowledges them,
-    /// from [`MAX_RELIABLE_MESSAGE_BYTES`] to `LANE_QUEUE_BYTES_LIMIT`.
+    /// `1..=LANE_QUEUE_BYTES_LIMIT`. A lane holding no bytes admits one
+    /// message of any size up to [`ReliableConfig::max_message_bytes`], so
+    /// a bound smaller than a message never blocks it for good and the lane
+    /// holds at most the larger of the two.
     pub outbound_bytes: usize,
     /// Completed messages from the peer not yet returned by `poll`,
     /// `1..=LANE_QUEUE_MESSAGES_LIMIT`. A peer that exceeds it is
     /// disconnected with
-    /// [`DisconnectReason::InboundOverflow`](crate::DisconnectReason::InboundOverflow).
+    /// [`DisconnectReason::InboundOverflow`](crate::DisconnectReason::InboundOverflow),
+    /// except on native WebSocket, which stops reading until `poll` makes
+    /// room.
     pub inbound_messages: usize,
-    /// Bytes of completed messages not yet returned by `poll`, from
-    /// [`MAX_RELIABLE_MESSAGE_BYTES`] to `LANE_QUEUE_BYTES_LIMIT`.
+    /// Bytes of completed messages not yet returned by `poll`,
+    /// `1..=LANE_QUEUE_BYTES_LIMIT`. Beside them the lane holds at most one
+    /// message larger than this bound, so a large message followed by
+    /// smaller ones before the next poll fits, and the lane holds at most
+    /// this plus [`ReliableConfig::max_message_bytes`].
     pub inbound_bytes: usize,
     /// Unreliable messages queued for the lane, `1..=LANE_QUEUE_MESSAGES_LIMIT`:
     /// on the sending side until sent, where a full queue refuses `send`
@@ -73,9 +85,9 @@ impl LaneConfig {
             return Err(ReliableConfigError::InvalidWeight);
         }
         let messages = 1..=LANE_QUEUE_MESSAGES_LIMIT;
-        // A byte bound below the largest message would refuse that message
-        // forever.
-        let bytes = MAX_RELIABLE_MESSAGE_BYTES..=LANE_QUEUE_BYTES_LIMIT;
+        // The one-message rules keep a bound below the largest message from
+        // refusing it forever.
+        let bytes = 1..=LANE_QUEUE_BYTES_LIMIT;
         if !messages.contains(&self.outbound_messages)
             || !messages.contains(&self.inbound_messages)
             || !messages.contains(&self.unreliable_messages)
@@ -87,6 +99,35 @@ impl LaneConfig {
         }
         Ok(())
     }
+
+    /// Whether a lane holding `held` (messages, bytes) for the peer admits
+    /// a `len`-byte reliable message: within its message bound, and either
+    /// holding no bytes (the one-message rule) or keeping its bytes within
+    /// `outbound_bytes`. The message cap is checked before this.
+    pub(crate) const fn outbound_admits(&self, held: (usize, usize), len: usize) -> bool {
+        held.0 < self.outbound_messages && (held.1 == 0 || held.1 + len <= self.outbound_bytes)
+    }
+
+    /// What a lane holding `held` (messages, bytes) admits now: up to
+    /// `max_message_bytes` while it holds no bytes, else what is left of
+    /// `outbound_bytes` — nothing while a large message keeps it past them.
+    pub(crate) fn outbound_capacity(
+        &self,
+        held: (usize, usize),
+        max_message_bytes: usize,
+    ) -> ReliableCapacity {
+        let room = if held.1 == 0 {
+            Some(max_message_bytes)
+        } else {
+            self.outbound_bytes.checked_sub(held.1)
+        };
+        room.map_or_else(ReliableCapacity::default, |room| {
+            ReliableCapacity::remaining(
+                self.outbound_messages.saturating_sub(held.0),
+                room.min(max_message_bytes),
+            )
+        })
+    }
 }
 
 impl Default for LaneConfig {
@@ -95,24 +136,38 @@ impl Default for LaneConfig {
     }
 }
 
-/// Per-connection lane configuration shared by every transport: one
-/// [`LaneConfig`] per lane, indexed by [`Lane::index`](crate::Lane::index),
-/// bounding its reliable and unreliable queues. Both ends of a connection
-/// should use the same configuration.
+/// Per-connection reliable configuration shared by every transport: the
+/// largest reliable message, and one [`LaneConfig`] per lane, indexed by
+/// [`Lane::index`](crate::Lane::index), bounding its reliable and unreliable
+/// queues. Both ends of a connection use the same configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReliableConfig {
+    /// Largest reliable payload, `1..=RELIABLE_MESSAGE_BYTES_LIMIT`
+    /// (default [`DEFAULT_RELIABLE_MESSAGE_BYTES`]): a larger `send` returns
+    /// [`SendError::PayloadTooLarge`](crate::SendError::PayloadTooLarge).
+    /// Transports fragment and reassemble longer messages, holding at most
+    /// one partial message of this size per lane. The receiver's value
+    /// governs: a peer that declares a longer message is closed with
+    /// [`DisconnectReason::ProtocolViolation`](crate::DisconnectReason::ProtocolViolation).
+    pub max_message_bytes: usize,
     /// Each lane's weight and bounds.
     pub lanes: [LaneConfig; RELIABLE_LANES],
 }
 
 impl ReliableConfig {
-    /// Every lane at [`LaneConfig::DEFAULT`].
+    /// A [`DEFAULT_RELIABLE_MESSAGE_BYTES`] cap and every lane at
+    /// [`LaneConfig::DEFAULT`].
     pub const DEFAULT: Self = Self {
+        max_message_bytes: DEFAULT_RELIABLE_MESSAGE_BYTES,
         lanes: [LaneConfig::DEFAULT; RELIABLE_LANES],
     };
 
-    /// Checks every lane's weight and bounds against their ranges.
+    /// Checks the message cap and every lane's weight and bounds against
+    /// their ranges.
     pub fn validate(&self) -> Result<(), ReliableConfigError> {
+        if !(1..=RELIABLE_MESSAGE_BYTES_LIMIT).contains(&self.max_message_bytes) {
+            return Err(ReliableConfigError::InvalidMessageBytes);
+        }
         self.lanes.iter().try_for_each(LaneConfig::validate)
     }
 }
@@ -130,6 +185,8 @@ pub enum ReliableConfigError {
     InvalidWeight,
     /// A message or byte bound is outside its range.
     InvalidBound,
+    /// `max_message_bytes` is outside `1..=RELIABLE_MESSAGE_BYTES_LIMIT`.
+    InvalidMessageBytes,
 }
 
 impl std::fmt::Display for ReliableConfigError {
@@ -137,11 +194,61 @@ impl std::fmt::Display for ReliableConfigError {
         formatter.write_str(match self {
             Self::InvalidWeight => "reliable lane weight is outside 1..=MAX_LANE_WEIGHT",
             Self::InvalidBound => "reliable lane bound is outside its range",
+            Self::InvalidMessageBytes => {
+                "max_message_bytes is outside 1..=RELIABLE_MESSAGE_BYTES_LIMIT"
+            }
         })
     }
 }
 
 impl std::error::Error for ReliableConfigError {}
+
+/// One lane's completed reliable messages that `poll` has not returned yet,
+/// against the lane's inbound bounds: at most `inbound_messages` messages,
+/// and `inbound_bytes` bytes beside at most one message larger than that
+/// (netcode.md 11). A message of any admitted size followed by smaller ones
+/// before the next poll therefore fits, and the lane holds at most
+/// `inbound_bytes` plus one message.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct InboundUsage {
+    messages: usize,
+    /// Bytes of the messages within `inbound_bytes` each.
+    bytes: usize,
+    /// Whether a message larger than `inbound_bytes` is held.
+    oversized: bool,
+}
+
+impl InboundUsage {
+    /// Whether the lane can take a completed `len`-byte message now.
+    pub(crate) const fn admits(&self, len: usize, lane: &LaneConfig) -> bool {
+        self.messages < lane.inbound_messages
+            && if len > lane.inbound_bytes {
+                !self.oversized
+            } else {
+                self.bytes + len <= lane.inbound_bytes
+            }
+    }
+
+    /// Counts an admitted `len`-byte message.
+    pub(crate) const fn add(&mut self, len: usize, lane: &LaneConfig) {
+        self.messages += 1;
+        if len > lane.inbound_bytes {
+            self.oversized = true;
+        } else {
+            self.bytes += len;
+        }
+    }
+
+    /// Releases a counted `len`-byte message that `poll` returned.
+    pub(crate) const fn remove(&mut self, len: usize, lane: &LaneConfig) {
+        self.messages -= 1;
+        if len > lane.inbound_bytes {
+            self.oversized = false;
+        } else {
+            self.bytes -= len;
+        }
+    }
+}
 
 /// Where a frame's payload sits in its reliable message.
 ///
@@ -278,6 +385,8 @@ pub(crate) struct FramingViolation;
 
 /// One lane's inbound reassembly: idle, or assembling one message against
 /// the total its first fragment declared. Fragments arrive in lane order.
+/// The buffer grows geometrically with what arrives, reserving at most twice
+/// what has arrived and never past the declared total.
 #[derive(Debug, Default)]
 pub(crate) struct Reassembly {
     declared: Option<usize>,
@@ -285,6 +394,29 @@ pub(crate) struct Reassembly {
 }
 
 impl Reassembly {
+    /// The length of the message `fragment`, carrying `len` bytes, would
+    /// complete; `None` when it completes nothing or breaks the rules.
+    pub(crate) fn completes(&self, fragment: Fragment, len: usize) -> Option<usize> {
+        match (fragment, self.declared) {
+            (Fragment::Whole, None) => Some(len),
+            (Fragment::Last, Some(declared)) if self.buffer.len() + len == declared => {
+                Some(declared)
+            }
+            _ => None,
+        }
+    }
+
+    /// Appends one fragment of a message declared `declared` bytes long,
+    /// growing the buffer geometrically but never past the declaration.
+    fn append(&mut self, payload: &[u8], declared: usize) {
+        let needed = self.buffer.len() + payload.len();
+        if needed > self.buffer.capacity() {
+            let target = needed.max(2 * self.buffer.capacity()).min(declared);
+            self.buffer.reserve_exact(target - self.buffer.len());
+        }
+        self.buffer.extend_from_slice(payload);
+    }
+
     /// Applies one in-order fragment; returns the message it completes.
     /// Nothing is buffered beyond what arrived, and after a violation the
     /// caller closes the peer.
@@ -303,16 +435,16 @@ impl Reassembly {
                 if (payload.len() + 1..=max_message_bytes).contains(&(total as usize)) =>
             {
                 self.declared = Some(total as usize);
-                self.buffer.extend_from_slice(payload);
+                self.append(payload, total as usize);
                 Ok(None)
             }
             (Fragment::Middle, Some(declared)) if received < declared => {
-                self.buffer.extend_from_slice(payload);
+                self.append(payload, declared);
                 Ok(None)
             }
             (Fragment::Last, Some(declared)) if received == declared => {
                 self.declared = None;
-                self.buffer.extend_from_slice(payload);
+                self.append(payload, declared);
                 Ok(Some(std::mem::take(&mut self.buffer)))
             }
             _ => Err(FramingViolation),
