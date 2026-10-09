@@ -708,26 +708,15 @@ impl Renderer {
     /// does, so a texture changed under its handle (a glyph page from
     /// `TextRenderer::end_frame`) reaches the GPU without a new texture.
     pub fn upload_texture(&mut self, gpu: &Gpu, handle: Handle<Texture>, tex: &Texture) {
-        if self.sprites.has_texture(handle) {
-            self.sprites.replace(&gpu.device, &gpu.queue, handle, tex);
-        } else {
-            self.sprites.upload(&gpu.device, &gpu.queue, handle, tex);
-        }
+        self.sprites.upload(&gpu.device, &gpu.queue, handle, tex);
     }
 
     /// Replace a sprite texture's GPU pixels while keeping its asset `handle`
-    /// valid for existing draw data. This updates the handle's ordinary
-    /// diffuse upload, every normal-map association that uses it, or both.
-    /// Returns `false` when the handle is unknown in either role.
-    ///
-    /// A same-size replacement keeps the texture's atlas placement and any
-    /// registered normal-map association. A dimension change relocates it
-    /// and clears that association, so a matching normal map must be
-    /// registered again with [`Self::upload_normal_map`]. A resized normal
-    /// map is likewise detached from each differently-sized diffuse.
-    /// Dimension changes allocate new atlas space until the renderer is
-    /// dropped. Callers that use an explicit [`SpriteInstance::src`](super::draw::SpriteInstance::src) must
-    /// keep that rectangle within the replacement's new dimensions.
+    /// valid for existing draw data; `false` when the handle is unknown.
+    /// Follows [`SpritePass::replace`](super::sprite::SpritePass::replace):
+    /// equal dimensions update in place, while changed dimensions relocate
+    /// the texture and detach its normal map, which
+    /// [`Self::upload_normal_map`] registers again.
     pub fn replace_texture(&mut self, gpu: &Gpu, handle: Handle<Texture>, tex: &Texture) -> bool {
         self.sprites.replace(&gpu.device, &gpu.queue, handle, tex)
     }
@@ -741,7 +730,9 @@ impl Renderer {
     /// without a second atlas entry.
     pub fn white_texture(&mut self, gpu: &Gpu, assets: &mut Assets<Texture>) -> Handle<Texture> {
         let handle = crate::assets::white_texture(assets);
-        if let Some(tex) = assets.get(handle) {
+        if !self.sprites.has_texture(handle)
+            && let Some(tex) = assets.get(handle)
+        {
             self.sprites.upload(&gpu.device, &gpu.queue, handle, tex);
         }
         handle

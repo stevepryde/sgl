@@ -10,7 +10,14 @@
 //!
 //! Atlas placement is invisible to the game: instances address sprites by
 //! asset [`Handle`] + pixel `src` rect; [`SpritePass::upload`] records the
-//! page + pixel offset and UVs are adjusted at draw.
+//! page + pixel offset and UVs are adjusted at draw. Uploading or
+//! [`replacing`](SpritePass::replace) a texture under a handle already on
+//! the GPU updates its pixels in place, so the pass lives as long as the
+//! game's renderer and glyph pages from `TextRenderer::end_frame` are
+//! re-uploaded under their stable handles.
+//!
+//! [`SpritePass::draw_stats`] reports the draws the last `prepare` set up
+//! per channel ([`SpriteDrawStats`]).
 //!
 //! **Normal maps (R-6)**: a texture may register a companion normal map
 //! ([`SpritePass::upload_normal`]) which is written into the page's parallel
@@ -40,6 +47,7 @@
 //! both modes (the UI stays gamma), and pages upload identically.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use glam::{Affine2, Mat4, Vec2};
 use wgpu::util::DeviceExt;
@@ -127,6 +135,29 @@ struct Batch {
     first: u32,
     count: u32,
     scissor: Option<[u32; 4]>,
+}
+
+/// The draws [`SpritePass::draw_world`] and [`SpritePass::draw_screen`]
+/// encode for the most recent [`SpritePass::prepare`], per [`DrawList`]
+/// channel ([`SpritePass::draw_stats`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpriteDrawStats {
+    pub world: ChannelDrawStats,
+    pub screen: ChannelDrawStats,
+}
+
+/// One channel's encoded draw work. Both counts are after `prepare`'s
+/// culling: an instance whose texture was never uploaded, or whose clip
+/// covers no target pixel, is in neither; a partly clipped instance counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChannelDrawStats {
+    /// Instanced draw calls: one per run of z-order-adjacent instances that
+    /// share a texture page (an atlas page or a standalone texture) and a
+    /// clip, so a texture-page or clip change starts another. Zero when the
+    /// channel has nothing to draw, in which case it encodes no commands.
+    pub draws: u32,
+    /// Sprite instances (quads) across those draws.
+    pub instances: u32,
 }
 
 /// Clamp a logical-pixel clip rect to a `target`-sized render target,
@@ -441,7 +472,11 @@ impl SpritePass {
 
     /// Upload a decoded texture to the GPU under its asset `handle`:
     /// shelf-packed into a shared atlas page when small (≤ [`MAX_ATLAS_DIM`]),
-    /// standalone otherwise. Idempotent per handle.
+    /// standalone otherwise. A handle already uploaded has its pixels
+    /// replaced as [`replace`](Self::replace) does, so a texture changed
+    /// under its handle (a glyph page returned by `TextRenderer::end_frame`)
+    /// reaches the GPU without recreating the pass. Upload a texture again
+    /// only when its pixels change: each call writes them.
     pub fn upload(
         &mut self,
         device: &wgpu::Device,
@@ -450,24 +485,35 @@ impl SpritePass {
         tex: &Texture,
     ) {
         if self.entries.contains_key(&handle) {
+            self.replace(device, queue, handle, tex);
             return;
         }
         let entry = self.place(device, queue, tex);
         self.entries.insert(handle, entry);
     }
 
-    /// Replace a texture's GPU pixels without changing its asset `handle`.
-    /// The handle may identify an ordinary diffuse upload, a normal map
-    /// registered to one or more diffuse textures, or both. Returns `false`
-    /// when the handle is unknown in either role.
+    /// Replace a texture's GPU pixels under its existing asset `handle`, so
+    /// draw data that already names the handle draws the new pixels from the
+    /// next [`prepare`](Self::prepare). The handle may be an ordinary
+    /// diffuse upload, a normal map registered with
+    /// [`upload_normal`](Self::upload_normal) for one or more diffuse
+    /// textures, or both; every role is updated. Returns `false`, uploading
+    /// nothing, when the handle is unknown in either role
+    /// ([`upload`](Self::upload) adds it instead).
     ///
-    /// Same-size replacements write into the existing placement and preserve
-    /// any registered normal-map association. A size change relocates the
-    /// texture because atlas placements have fixed extents, and clears that
-    /// association: the caller must register a matching normal map again.
-    /// Normal-only handles update every compatible diffuse association; a
-    /// mismatch detaches only the incompatible association.
-    pub(crate) fn replace(
+    /// - **Same dimensions** write into the existing placement: no texture,
+    ///   page or bind group is created, and a registered normal map stays
+    ///   associated.
+    /// - **Changed dimensions** move the texture to a new placement, because
+    ///   atlas placements have fixed extents; crossing [`MAX_ATLAS_DIM`]
+    ///   moves it between a shared atlas page and a standalone page in
+    ///   either direction. Its registered normal map is detached: register a
+    ///   matching one again. The old placement's space is not reused until
+    ///   the pass is dropped. An explicit [`SpriteInstance::src`] must stay
+    ///   within the new dimensions.
+    /// - **A normal-map handle** writes into each diffuse association of the
+    ///   same dimensions and detaches each of different dimensions.
+    pub fn replace(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -797,6 +843,25 @@ impl SpritePass {
         queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.raw));
     }
 
+    /// What the most recent [`prepare`](Self::prepare) set up for
+    /// [`draw_world`](Self::draw_world) and
+    /// [`draw_screen`](Self::draw_screen) to encode, whether or not they are
+    /// called (see [`ChannelDrawStats`]). These are encoded commands, not GPU
+    /// work: an unclipped sprite outside the target still counts.
+    pub fn draw_stats(&self) -> SpriteDrawStats {
+        let mut stats = SpriteDrawStats::default();
+        for batch in &self.batches {
+            let channel = if batch.camera == 0 {
+                &mut stats.world
+            } else {
+                &mut stats.screen
+            };
+            channel.draws += 1;
+            channel.instances += batch.count;
+        }
+        stats
+    }
+
     /// Instance-buffer capacity in instances; grows only past it.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn instance_capacity(&self) -> u64 {
@@ -822,7 +887,7 @@ impl SpritePass {
 
     fn draw_channel(
         &self,
-        pass: &mut wgpu::RenderPass<'_>,
+        pass: &mut impl PassEncoder,
         pipeline: &wgpu::RenderPipeline,
         camera: usize,
     ) {
@@ -832,7 +897,7 @@ impl SpritePass {
         pass.set_pipeline(pipeline);
         pass.set_vertex_buffer(0, self.quad_vb.slice(..));
         pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-        pass.set_bind_group(0, &self.cameras[camera].bind_group, &[]);
+        pass.set_bind_group(0, &self.cameras[camera].bind_group);
         let (tw, th) = self.target_size;
         let mut scissor_active = false;
         for batch in self.batches.iter().filter(|b| b.camera == camera) {
@@ -847,7 +912,7 @@ impl SpritePass {
                 }
                 None => {}
             }
-            pass.set_bind_group(1, &self.pages[batch.page].bind_group, &[]);
+            pass.set_bind_group(1, &self.pages[batch.page].bind_group);
             pass.draw(
                 0..QUAD_VERTS.len() as u32,
                 batch.first..batch.first + batch.count,
@@ -856,6 +921,34 @@ impl SpritePass {
         if scissor_active {
             pass.set_scissor_rect(0, 0, tw, th);
         }
+    }
+}
+
+/// The render-pass commands the sprite pass encodes: a [`wgpu::RenderPass`]
+/// in use; the GPU tests record them to observe the encoded draws.
+trait PassEncoder {
+    fn set_pipeline(&mut self, pipeline: &wgpu::RenderPipeline);
+    fn set_vertex_buffer(&mut self, slot: u32, slice: wgpu::BufferSlice<'_>);
+    fn set_bind_group(&mut self, index: u32, group: &wgpu::BindGroup);
+    fn set_scissor_rect(&mut self, x: u32, y: u32, width: u32, height: u32);
+    fn draw(&mut self, vertices: Range<u32>, instances: Range<u32>);
+}
+
+impl PassEncoder for wgpu::RenderPass<'_> {
+    fn set_pipeline(&mut self, pipeline: &wgpu::RenderPipeline) {
+        wgpu::RenderPass::set_pipeline(self, pipeline);
+    }
+    fn set_vertex_buffer(&mut self, slot: u32, slice: wgpu::BufferSlice<'_>) {
+        wgpu::RenderPass::set_vertex_buffer(self, slot, slice);
+    }
+    fn set_bind_group(&mut self, index: u32, group: &wgpu::BindGroup) {
+        wgpu::RenderPass::set_bind_group(self, index, group, &[]);
+    }
+    fn set_scissor_rect(&mut self, x: u32, y: u32, width: u32, height: u32) {
+        wgpu::RenderPass::set_scissor_rect(self, x, y, width, height);
+    }
+    fn draw(&mut self, vertices: Range<u32>, instances: Range<u32>) {
+        wgpu::RenderPass::draw(self, vertices, instances);
     }
 }
 
@@ -1059,6 +1152,7 @@ mod gpu_tests {
     use crate::assets::Assets;
     use crate::canvas::camera::Camera;
     use crate::canvas::test_gpu::{device, read_texture, rgba16f_to_f32};
+    use crate::canvas::text::GLYPH_PAGE_SIZE;
 
     const SIZE: u32 = 4;
 
@@ -1462,6 +1556,391 @@ mod gpu_tests {
             4,
         );
         assert!(pixels.chunks_exact(4).all(|p| p == [210, 45, 15, 255]));
+    }
+
+    /// Draw `list`'s screen channel 1:1 into a cleared `width × height`
+    /// `Rgba8Unorm` target and read it back.
+    fn draw_screen_target(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pass: &mut SpritePass,
+        list: &DrawList,
+        (width, height): (u32, u32),
+    ) -> Vec<u8> {
+        pass.prepare(
+            device,
+            queue,
+            list,
+            Mat4::IDENTITY,
+            WorldUnits::default(),
+            Camera::screen_view_proj(width, height),
+            (width, height),
+            1.0,
+        );
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("screen test target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("screen test pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.draw_screen(&mut rp);
+        }
+        queue.submit(Some(encoder.finish()));
+        read_texture(device, queue, &target, width, height, 4)
+    }
+
+    /// A 2×2 opaque texture whose four texels are `texels` in row order.
+    fn quad_texels(texels: [[u8; 3]; 4]) -> Texture {
+        Texture {
+            width: 2,
+            height: 2,
+            rgba: texels
+                .iter()
+                .flat_map(|t| [t[0], t[1], t[2], 255])
+                .collect(),
+        }
+    }
+
+    /// A 2×2 sprite drawn 1:1 with its top-left texel at target pixel `x, 0`.
+    fn at_x(handle: Handle<Texture>, x: f32) -> SpriteInstance {
+        SpriteInstance::new(handle, Vec2::new(x + 1.0, 1.0))
+    }
+
+    /// The 4×2 capture of `left` and `right` 2×2 textures side by side.
+    fn side_by_side(left: &Texture, right: &Texture) -> Vec<u8> {
+        let row = |tex: &Texture, y: usize| tex.rgba[y * 8..y * 8 + 8].to_vec();
+        (0..2)
+            .flat_map(|y| [row(left, y), row(right, y)].concat())
+            .collect()
+    }
+
+    /// #271: draw data that names a handle draws the pixels most recently
+    /// written through the public `replace` or `upload` from the next
+    /// frame, and the atlas neighbour packed beside it keeps its own.
+    #[test]
+    fn public_updates_reach_a_drawn_handle_and_spare_its_neighbour() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut pass = SpritePass::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+            LightingSpace::Gamma,
+        );
+        let mut assets = Assets::<Texture>::new();
+        let left = assets.insert(
+            "neighbour.png".into(),
+            quad_texels([[200, 10, 10], [10, 200, 10], [10, 10, 200], [90, 90, 90]]),
+        );
+        // Uploaded second, so it sits away from the atlas origin.
+        let right = assets.insert(
+            "updated.png".into(),
+            quad_texels([[1, 2, 3], [40, 50, 60], [70, 80, 90], [250, 240, 230]]),
+        );
+        let (neighbour, first) = (assets.get(left).unwrap(), assets.get(right).unwrap());
+        pass.upload(&device, &queue, left, neighbour);
+        pass.upload(&device, &queue, right, first);
+        let mut list = DrawList::new();
+        list.push_screen(at_x(left, 0.0));
+        list.push_screen(at_x(right, 2.0));
+        assert_eq!(
+            draw_screen_target(&device, &queue, &mut pass, &list, (4, 2)),
+            side_by_side(neighbour, first)
+        );
+
+        let replaced = quad_texels([[33, 66, 99], [120, 0, 7], [5, 180, 5], [0, 0, 0]]);
+        assert!(pass.replace(&device, &queue, right, &replaced));
+        assert_eq!(
+            draw_screen_target(&device, &queue, &mut pass, &list, (4, 2)),
+            side_by_side(neighbour, &replaced),
+            "replace did not reach the drawn handle, or touched its neighbour"
+        );
+
+        let uploaded = quad_texels([[9, 8, 7], [6, 5, 4], [3, 2, 1], [222, 111, 0]]);
+        pass.upload(&device, &queue, right, &uploaded);
+        assert_eq!(
+            draw_screen_target(&device, &queue, &mut pass, &list, (4, 2)),
+            side_by_side(neighbour, &uploaded),
+            "uploading a known handle did not replace its pixels"
+        );
+    }
+
+    /// #271: a glyph page already drawn gains a glyph; uploading the handle
+    /// `end_frame` returns updates the pass in place, so the page's texels
+    /// on the GPU match the republished asset while an unrelated sprite in
+    /// the same capture is unchanged.
+    #[test]
+    fn a_republished_glyph_page_reaches_the_existing_pass() {
+        use crate::canvas::text::{TextChannel, TextRenderer, TextStyle};
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut pass = SpritePass::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+            LightingSpace::Gamma,
+        );
+        let mut assets = Assets::<Texture>::new();
+        let icon = assets.insert(
+            "icon.png".into(),
+            quad_texels([[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]]),
+        );
+        pass.upload(&device, &queue, icon, assets.get(icon).unwrap());
+        let icon_texels = assets.get(icon).unwrap().rgba.clone();
+        let mut text = TextRenderer::new(include_bytes!(
+            "../../tests/fixtures/IBMPlexSans-Regular.ttf"
+        ))
+        .expect("test font should parse");
+        let style = TextStyle::new(24.0, [1.0; 4]);
+
+        // Frame 1: draw text through the pass.
+        let mut list = DrawList::new();
+        text.draw("A", Vec2::new(4.0, 4.0), &style, 0.0, TextChannel::Screen);
+        let changed = text.end_frame(&mut assets, &mut list);
+        let [page] = changed[..] else {
+            panic!("expected one new page, got {changed:?}")
+        };
+        pass.upload(&device, &queue, page, assets.get(page).unwrap());
+        draw_screen_target(&device, &queue, &mut pass, &list, (64, 64));
+        let before = assets.get(page).unwrap().rgba.clone();
+
+        // Frame 2: new glyphs dirty the same page.
+        list.clear();
+        text.draw("Wq", Vec2::new(4.0, 4.0), &style, 0.0, TextChannel::Screen);
+        let changed = text.end_frame(&mut assets, &mut list);
+        assert_eq!(changed, [page], "the page kept its handle");
+        let republished = assets.get(page).unwrap();
+        pass.upload(&device, &queue, page, republished);
+
+        // Probe: the page's packed region 1:1, the icon below it.
+        let (w, h) = list.screen.iter().fold((0, 0), |(w, h), quad| {
+            let src = quad.src.expect("glyph quads carry a src rect");
+            (w.max(src.max.x as u32), h.max(src.max.y as u32))
+        });
+        let mut probe = DrawList::new();
+        probe.push_screen(SpriteInstance {
+            src: Some(Rect::new(0.0, 0.0, w as f32, h as f32)),
+            ..SpriteInstance::new(page, Vec2::new(w as f32, h as f32) * 0.5)
+        });
+        probe.push_screen(SpriteInstance::new(icon, Vec2::new(1.0, h as f32 + 1.0)));
+        let pixels = draw_screen_target(&device, &queue, &mut pass, &probe, (w, h + 2));
+
+        // Premultiplied page texels, row by row.
+        let page_row = |rgba: &[u8], y: u32| -> Vec<u8> {
+            let start = (y * GLYPH_PAGE_SIZE * 4) as usize;
+            rgba[start..start + (w * 4) as usize]
+                .chunks_exact(4)
+                .flat_map(|t| {
+                    let a = u32::from(t[3]);
+                    let pm = |c: u8| ((u32::from(c) * a + 127) / 255) as u8;
+                    [pm(t[0]), pm(t[1]), pm(t[2]), t[3]]
+                })
+                .collect()
+        };
+        let stride = (w * 4) as usize;
+        let mut changed_rows = 0;
+        for y in 0..h {
+            let got = &pixels[y as usize * stride..(y as usize + 1) * stride];
+            assert_eq!(got, page_row(&republished.rgba, y), "page row {y}");
+            changed_rows += usize::from(got != page_row(&before, y));
+        }
+        assert!(
+            changed_rows > 0,
+            "frame 2 added no ink to the probed region"
+        );
+        for y in 0..2 {
+            let row = &pixels[(h + y) as usize * stride..][..8];
+            assert_eq!(row, &icon_texels[y as usize * 8..][..8], "icon row {y}");
+        }
+    }
+
+    /// Records the commands the pass encodes: the observation point for
+    /// draw statistics.
+    #[derive(Default)]
+    struct Recorder {
+        page: Option<wgpu::BindGroup>,
+        scissor: Option<[u32; 4]>,
+        /// Each draw's instance range, bound page and scissor.
+        draws: Vec<(Range<u32>, wgpu::BindGroup, Option<[u32; 4]>)>,
+    }
+
+    impl PassEncoder for Recorder {
+        fn set_pipeline(&mut self, _: &wgpu::RenderPipeline) {}
+        fn set_vertex_buffer(&mut self, _: u32, _: wgpu::BufferSlice<'_>) {}
+        fn set_bind_group(&mut self, index: u32, group: &wgpu::BindGroup) {
+            if index == 1 {
+                self.page = Some(group.clone());
+            }
+        }
+        fn set_scissor_rect(&mut self, x: u32, y: u32, width: u32, height: u32) {
+            self.scissor = Some([x, y, width, height]);
+        }
+        fn draw(&mut self, _: Range<u32>, instances: Range<u32>) {
+            let page = self.page.clone().expect("draw without a page bound");
+            self.draws.push((instances, page, self.scissor));
+        }
+    }
+
+    impl Recorder {
+        fn observed(&self) -> ChannelDrawStats {
+            ChannelDrawStats {
+                draws: self.draws.len() as u32,
+                instances: self.draws.iter().map(|(r, ..)| r.len() as u32).sum(),
+            }
+        }
+
+        /// Distinct page bind groups the draws used.
+        fn pages(&self) -> usize {
+            let mut pages: Vec<&wgpu::BindGroup> = Vec::new();
+            for (_, page, _) in &self.draws {
+                if !pages.contains(&page) {
+                    pages.push(page);
+                }
+            }
+            pages.len()
+        }
+    }
+
+    /// #271: the reported draws equal the draw calls observed on the pass,
+    /// and both match the counts that follow from this list's construction
+    /// across two texture pages, clipped content, culled and unknown
+    /// sprites, and both channels.
+    #[test]
+    fn draw_stats_match_the_encoded_draws() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut pass = SpritePass::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+            LightingSpace::Gamma,
+        );
+        let mut assets = Assets::<Texture>::new();
+        let a = assets.insert("a.png".into(), flat(1, 1, [255; 4]));
+        let b = assets.insert("b.png".into(), flat(1, 1, [255; 4]));
+        let big = assets.insert("big.png".into(), flat(MAX_ATLAS_DIM + 1, 1, [255; 4]));
+        let missing = assets.insert("missing.png".into(), flat(1, 1, [255; 4]));
+        for handle in [a, b, big] {
+            pass.upload(&device, &queue, handle, assets.get(handle).unwrap());
+        }
+
+        let target = (64, 32);
+        let clip_one = Rect::new(2.0, 3.0, 10.0, 5.0); // px [2, 3, 10, 5]
+        let clip_two = Rect::new(20.5, 0.0, 4.0, 4.0); // px [20, 0, 5, 4]
+        let off_target = Rect::new(100.0, 0.0, 8.0, 8.0);
+        let sprite = |texture, clip: Option<Rect>| SpriteInstance {
+            clip,
+            ..SpriteInstance::new(texture, Vec2::splat(4.0))
+        };
+        let mut list = DrawList::new();
+        for instance in [
+            sprite(a, None), // draw 1: the atlas page, three instances
+            sprite(b, None),
+            sprite(a, None),
+            sprite(big, None),         // draw 2: the standalone page
+            sprite(a, None),           // draw 3: back on the atlas page
+            sprite(missing, None),     // never uploaded: skipped
+            sprite(a, Some(clip_one)), // draw 4: two instances under clip one
+            sprite(b, Some(clip_one)),
+            sprite(a, Some(clip_two)),   // draw 5: clip two
+            sprite(a, Some(off_target)), // clipped to nothing: culled
+            sprite(b, None),             // draw 6: unclipped again
+        ] {
+            list.push_screen(instance);
+        }
+        list.push(sprite(a, None)); // world draw 1
+        list.push(sprite(b, None));
+        list.push(sprite(big, None)); // world draw 2
+        pass.prepare(
+            &device,
+            &queue,
+            &list,
+            Mat4::IDENTITY,
+            WorldUnits::default(),
+            Mat4::IDENTITY,
+            target,
+            1.0,
+        );
+
+        let mut screen = Recorder::default();
+        pass.draw_channel(&mut screen, &pass.screen_pipeline, 1);
+        let mut world = Recorder::default();
+        pass.draw_channel(&mut world, &pass.scene_pipeline, 0);
+        let stats = pass.draw_stats();
+        assert_eq!(
+            stats.screen,
+            screen.observed(),
+            "screen: reported vs encoded"
+        );
+        assert_eq!(stats.world, world.observed(), "world: reported vs encoded");
+        assert_eq!(
+            stats.screen,
+            ChannelDrawStats {
+                draws: 6,
+                instances: 9
+            }
+        );
+        assert_eq!(
+            stats.world,
+            ChannelDrawStats {
+                draws: 2,
+                instances: 3
+            }
+        );
+        assert_eq!((screen.pages(), world.pages()), (2, 2));
+        let scissors: Vec<_> = screen.draws.iter().map(|d| d.2).collect();
+        assert_eq!(scissors[3], Some([2, 3, 10, 5]), "clip one");
+        assert_eq!(scissors[4], Some([20, 0, 5, 4]), "clip two");
+        assert_eq!(scissors[5], Some([0, 0, 64, 32]), "unclipped after a clip");
+
+        // Statistics describe the latest prepare only.
+        pass.prepare(
+            &device,
+            &queue,
+            &DrawList::new(),
+            Mat4::IDENTITY,
+            WorldUnits::default(),
+            Mat4::IDENTITY,
+            target,
+            1.0,
+        );
+        let mut empty = Recorder::default();
+        pass.draw_channel(&mut empty, &pass.screen_pipeline, 1);
+        assert_eq!(pass.draw_stats(), SpriteDrawStats::default());
+        assert!(empty.draws.is_empty());
     }
 
     /// The linear scene pipeline decodes the page texel: an sRGB 128

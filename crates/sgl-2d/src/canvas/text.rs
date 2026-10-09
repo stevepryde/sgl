@@ -13,9 +13,10 @@
 //!    [`Texture`] asset, in place under a handle that stays stable for the
 //!    page's lifetime, flushes the queued quads into the `DrawList`, and
 //!    returns the changed pages' handles, which the app passes to
-//!    `Renderer::upload_texture` before rendering (an already-uploaded page
-//!    has its GPU pixels replaced). A page costs one asset and one texture
-//!    however often it changes.
+//!    `Renderer::upload_texture` or `SpritePass::upload` before rendering
+//!    (an already-uploaded page has its GPU pixels replaced in place). A
+//!    page costs one asset and one texture however often it changes;
+//!    unchanged pages and other textures are not uploaded again.
 //!
 //! **Outline** (Godot `outline_size`) is done by re-drawing the glyph quads
 //! offset along concentric rings of the outline radius, in the outline
@@ -455,9 +456,9 @@ impl TextRenderer {
     /// quads into `list`. Each page keeps one asset, replaced in place, so
     /// its handle never changes. Returns the handles of the pages that
     /// changed this frame — the app must upload each
-    /// (`Renderer::upload_texture`, which replaces an already-uploaded
-    /// page's pixels) before rendering the frame. Call once per frame after
-    /// all `draw` calls.
+    /// (`Renderer::upload_texture` or `SpritePass::upload`, which replace an
+    /// already-uploaded page's pixels under its handle) before rendering the
+    /// frame. Call once per frame after all `draw` calls.
     pub fn end_frame(
         &mut self,
         assets: &mut Assets<Texture>,

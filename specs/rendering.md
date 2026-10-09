@@ -22,21 +22,29 @@ Their CPU-side contracts are in [client](client.md).
    `RendererInitError` the game can show (`Context::try_new` /
    `try_new_async`); `Context::new` / `new_async` panic with it.
 2. The game uploads decoded straight-alpha RGBA8 textures explicitly under
-   their asset handles. Rendering does not load files or decode images.
-   Uploading a handle that is already uploaded replaces its pixels.
-   A texture can be replaced under its existing handle: equal dimensions
-   preserve its placement and registered normal map, while changed dimensions
-   relocate it and detach the now-incompatible normal map. Replacing a handle
-   used as a normal map updates every size-compatible diffuse association and
-   detaches each incompatible one.
+   their asset handles, through `Renderer` or a game-owned
+   `canvas::sprite::SpritePass`. Rendering does not load files or decode
+   images. Uploading a handle that is already uploaded replaces its pixels.
+   A texture can be replaced under its existing handle, so draw data naming
+   it draws the new pixels from the next frame without recreating the pass:
+   equal dimensions write into its placement and preserve its registered
+   normal map, while changed dimensions relocate it (between a shared atlas
+   page and a standalone page when the size crosses the atlas limit) and
+   detach the now-incompatible normal map. Replacing a handle used as a
+   normal map updates every size-compatible diffuse association and detaches
+   each incompatible one.
 3. A frame supplies game-owned draw and light data at the configured logical
    size. The camera may carry a pixels-per-unit / y-up world convention so the
    game pushes world-unit positions and sizes and the renderer applies the
    pixel seam; the default remains y-down logical pixels.
 4. Pipelines, textures, the camera uniform, quad data, and instance allocation
    persist across frames. The instance buffer grows only when required.
-5. Adjacent sprites using the same texture share a draw call. Nearest sampling
-   and premultiplied-alpha blending are the current defaults.
+5. Adjacent sprites on the same texture page (atlas page or standalone
+   texture) and clip share a draw call. `SpritePass::draw_stats` reports
+   each channel's draw calls and instances as encoded for the latest
+   `prepare`, after culling sprites with unknown textures or clips that
+   cover no target pixel. Nearest sampling and premultiplied-alpha blending
+   are the current defaults.
 6. Minimized or transiently unavailable surfaces skip a frame. The renderer
    does not request another redraw or advance game state.
 7. The renderer renders and reads back its offscreen scene without a
