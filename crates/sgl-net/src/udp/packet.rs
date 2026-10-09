@@ -8,9 +8,13 @@
 //! then items:
 //! tag u8 | sequence u16 LE | length u16 LE | [total u32 LE iff FIRST and
 //! MORE] | payload
-//! tag: bits 0..1 kind (0 reliable, 1 latest), bit 2 FIRST, bit 3 MORE,
-//! bits 4..7 lane
+//! tag: bits 0..1 kind (0 reliable, 1 latest, 2 unreliable), bit 2 FIRST,
+//! bit 3 MORE, bits 4..7 lane
 //! ```
+//!
+//! Latest and unreliable items carry neither flag; latest state has no lane.
+//! An unreliable item's sequence is its lane's unreliable sequence, which
+//! only lets the receiver drop network duplicates.
 
 use crate::lanes::Fragment;
 use crate::{Lane, RELIABLE_LANES};
@@ -35,6 +39,7 @@ pub const MAX_LATEST_ITEM_PAYLOAD: usize =
 
 const RELIABLE: u8 = 0;
 const LATEST: u8 = 1;
+const UNRELIABLE: u8 = 2;
 const KIND_BITS: u8 = 0b11;
 const FIRST: u8 = 1 << 2;
 const MORE: u8 = 1 << 3;
@@ -88,6 +93,11 @@ pub enum Item<'a> {
         lane: Lane,
         sequence: u16,
         fragment: Fragment,
+        payload: &'a [u8],
+    },
+    Unreliable {
+        lane: Lane,
+        sequence: u16,
         payload: &'a [u8],
     },
     Latest {
@@ -151,6 +161,12 @@ pub fn push_reliable(
     push_item(output, sequence, payload, fragment.total());
 }
 
+pub fn push_unreliable(output: &mut Vec<u8>, lane: Lane, sequence: u16, payload: &[u8]) {
+    let lane = u8::try_from(lane.index()).expect("lanes fit four bits");
+    output.push(UNRELIABLE | lane << LANE_SHIFT);
+    push_item(output, sequence, payload, None);
+}
+
 pub fn push_latest(output: &mut Vec<u8>, sequence: u16, payload: &[u8]) {
     output.push(LATEST);
     push_item(output, sequence, payload, None);
@@ -196,6 +212,11 @@ fn item<'a>(rest: &mut &'a [u8]) -> Option<Item<'a>> {
                 payload: take(rest, length)?,
             })
         }
+        UNRELIABLE if !first && !more => Some(Item::Unreliable {
+            lane: Lane::new(lane)?,
+            sequence,
+            payload: take(rest, length)?,
+        }),
         LATEST if !first && !more && lane == 0 => Some(Item::Latest {
             sequence,
             payload: take(rest, length)?,
@@ -336,6 +357,11 @@ mod properties {
             fragment: Fragment,
             payload: Vec<u8>,
         },
+        Unreliable {
+            lane: Lane,
+            sequence: u16,
+            payload: Vec<u8>,
+        },
         Latest {
             sequence: u16,
             payload: Vec<u8>,
@@ -356,7 +382,9 @@ mod properties {
                             0
                         }
                 }
-                Self::Latest { payload, .. } => ITEM_HEADER_LEN + payload.len(),
+                Self::Unreliable { payload, .. } | Self::Latest { payload, .. } => {
+                    ITEM_HEADER_LEN + payload.len()
+                }
             }
         }
     }
@@ -373,6 +401,15 @@ mod properties {
                     lane,
                     sequence,
                     fragment,
+                    payload: payload.to_vec(),
+                },
+                Item::Unreliable {
+                    lane,
+                    sequence,
+                    payload,
+                } => Self::Unreliable {
+                    lane,
+                    sequence,
                     payload: payload.to_vec(),
                 },
                 Item::Latest { sequence, payload } => Self::Latest {
@@ -407,6 +444,13 @@ mod properties {
         );
         prop_oneof![
             reliable,
+            (lane(), any::<u16>(), bytes(300)).prop_map(|(lane, sequence, payload)| {
+                Owned::Unreliable {
+                    lane,
+                    sequence,
+                    payload,
+                }
+            }),
             (any::<u16>(), bytes(300))
                 .prop_map(|(sequence, payload)| Owned::Latest { sequence, payload }),
         ]
@@ -444,6 +488,11 @@ mod properties {
                     fragment,
                     payload,
                 } => push_reliable(&mut out, *lane, *sequence, *fragment, payload),
+                Owned::Unreliable {
+                    lane,
+                    sequence,
+                    payload,
+                } => push_unreliable(&mut out, *lane, *sequence, payload),
                 Owned::Latest { sequence, payload } => push_latest(&mut out, *sequence, payload),
             }
         }
@@ -484,7 +533,7 @@ mod properties {
 
     /// Defect: a header field added or reordered in the writer but not the
     /// parser, an ack entry attributed to the wrong lane, a lane, flag or
-    /// total dropped or confused between reliable and latest items, or an
+    /// total dropped, items of one kind read as another, or an
     /// item boundary computed off by one. Oracle: what was written is what
     /// is read, and `nonces` agrees with `parse`.
     #[test]
@@ -532,15 +581,16 @@ mod properties {
         );
     }
 
-    /// Defect: an item the wire rules forbid reaching a lane — a reliable
-    /// lane past `RELIABLE_LANES`, a latest item with fragment flags or a
-    /// lane, a reserved item kind, or a first fragment whose declared total
-    /// is missing or not above its own length. Oracle: the explicit
+    /// Defect: an item the wire rules forbid reaching a lane — a reliable or
+    /// unreliable lane past `RELIABLE_LANES`, a latest or unreliable item
+    /// with fragment flags, a latest item with a lane, the reserved item
+    /// kind, or a first fragment whose declared total is missing or not above
+    /// its own length. Oracle: the explicit
     /// rejection rules of netcode.md 12, applied to one corrupted item of an
     /// otherwise valid datagram.
     #[test]
     fn items_the_wire_rules_forbid_reject_the_datagram() {
-        let strategy = (nonces(), acks(), bytes(40), any::<u16>(), 0u8..8, 0u32..2);
+        let strategy = (nonces(), acks(), bytes(40), any::<u16>(), 0u8..10, 0u32..2);
         check(
             strategy,
             |(nonces, acks, payload, sequence, case, slack)| {
@@ -568,10 +618,24 @@ mod properties {
                         push_latest(&mut bytes, sequence, &payload);
                         bytes[at] |= (1 + slack as u8) << LANE_SHIFT;
                     }
-                    // Item kinds 2 and 3 are reserved.
-                    4 | 5 => {
+                    // Item kind 3 is reserved, on its own or over another kind.
+                    4 => {
                         push_reliable(&mut bytes, lane0, sequence, Fragment::Whole, &payload);
-                        bytes[at] |= case - 2;
+                        bytes[at] |= KIND_BITS;
+                    }
+                    5 => {
+                        push_unreliable(&mut bytes, lane0, sequence, &payload);
+                        bytes[at] |= KIND_BITS;
+                    }
+                    // Unreliable items carry no fragment flags and a lane
+                    // that exists.
+                    8 => {
+                        push_unreliable(&mut bytes, lane0, sequence, &payload);
+                        bytes[at] |= if slack == 0 { FIRST } else { MORE };
+                    }
+                    9 => {
+                        push_unreliable(&mut bytes, lane0, sequence, &payload);
+                        bytes[at] |= (4 + (slack as u8) * 7) << LANE_SHIFT;
                     }
                     // A first fragment declares more than it carries.
                     6 => {

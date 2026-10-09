@@ -91,14 +91,9 @@ impl Reliable {
         (self.held_messages, self.held_bytes)
     }
 
-    /// Whether a fragment can be sent now: a due retransmission or a queued
-    /// fragment the window admits.
-    pub fn sendable(&self, now_ms: u64, rto_ms: u64, max_transmissions: u8) -> bool {
-        self.first_due(now_ms, rto_ms, max_transmissions).is_some() || self.window_open()
-    }
-
     /// The fragment to send now: the oldest due retransmission, else the
     /// next queued fragment if the window admits it.
+    #[cfg(test)]
     pub fn next_sendable(
         &mut self,
         now_ms: u64,
@@ -109,7 +104,8 @@ impl Reliable {
             .or_else(|| self.admit())
     }
 
-    fn window_open(&self) -> bool {
+    /// Whether a queued fragment fits the window now.
+    pub fn window_open(&self) -> bool {
         !self.queued.is_empty()
             && self
                 .in_flight
@@ -117,7 +113,8 @@ impl Reliable {
                 .is_none_or(|first| sequence::diff(self.next_sequence, first.sequence) <= WINDOW)
     }
 
-    fn admit(&mut self) -> Option<u16> {
+    /// Moves the next queued fragment into the window, if it fits.
+    pub fn admit(&mut self) -> Option<u16> {
         if !self.window_open() {
             return None;
         }
@@ -134,7 +131,8 @@ impl Reliable {
         Some(sequence)
     }
 
-    fn first_due(&self, now_ms: u64, rto_ms: u64, max_transmissions: u8) -> Option<u16> {
+    /// The oldest in-flight fragment due for (re)transmission.
+    pub fn first_due(&self, now_ms: u64, rto_ms: u64, max_transmissions: u8) -> Option<u16> {
         self.in_flight.iter().find_map(|item| {
             (!item.acknowledged
                 && item.transmissions < max_transmissions

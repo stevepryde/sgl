@@ -36,11 +36,15 @@
 //! assert_eq!(received, sent);
 //! ```
 //!
-//! Reliable delivery has [`RELIABLE_LANES`] independent lanes, each exact and
-//! in order on its own with no order across them, each with its own bounds
-//! and a scheduling weight in [`ReliableConfig`]. Busy lanes share the
-//! connection by weight, so a bulk transfer on one lane neither refuses nor
-//! starves messages on another:
+//! There are three delivery classes: [`Delivery::Reliable`] and
+//! [`Delivery::Unreliable`] on one of [`RELIABLE_LANES`] lanes, and
+//! [`Delivery::LatestState`]. Reliable messages are exact and in order
+//! within their lane; unreliable ones are never retransmitted and unordered,
+//! delivered at most once. SGL never drops an accepted message of any class
+//! while the connection lives; only the network may lose an unreliable one.
+//! Each lane has its own bounds and a scheduling weight in
+//! [`ReliableConfig`]. Busy lanes share the connection by weight, so a bulk
+//! transfer on one lane neither refuses nor starves messages on another:
 //!
 //! ```
 //! use sgl_net::{ClientIo, Delivery, Lane, ReliableConfig, memory_duplex_with};
@@ -69,8 +73,9 @@ pub(crate) mod proptest_support;
 
 pub use lanes::{
     DEFAULT_LANE_INBOUND_BYTES, DEFAULT_LANE_INBOUND_MESSAGES, DEFAULT_LANE_OUTBOUND_BYTES,
-    DEFAULT_LANE_OUTBOUND_MESSAGES, LANE_QUEUE_BYTES_LIMIT, LANE_QUEUE_MESSAGES_LIMIT, LaneConfig,
-    MAX_LANE_WEIGHT, ReliableConfig, ReliableConfigError,
+    DEFAULT_LANE_OUTBOUND_MESSAGES, DEFAULT_LANE_UNRELIABLE_BYTES,
+    DEFAULT_LANE_UNRELIABLE_MESSAGES, LANE_QUEUE_BYTES_LIMIT, LANE_QUEUE_MESSAGES_LIMIT,
+    LaneConfig, MAX_LANE_WEIGHT, ReliableConfig, ReliableConfigError,
 };
 pub use memory::{
     MemoryClientIo, MemoryServerIo, SOLO_CONNECTION, memory_duplex, memory_duplex_with,
@@ -89,6 +94,10 @@ pub const MAX_RELIABLE_MESSAGE_BYTES: usize = 64 * 1024;
 /// payload accepted by one transport remains portable to every other
 /// transport.
 pub const MAX_LATEST_STATE_BYTES: usize = udp::MAX_LATEST_PAYLOAD_BYTES;
+/// Maximum bytes in one unreliable payload across every transport: one UDP
+/// datagram item beside one lane's acknowledgement, the same room as latest
+/// state. Unreliable messages are never fragmented.
+pub const MAX_UNRELIABLE_BYTES: usize = udp::MAX_LATEST_PAYLOAD_BYTES;
 
 /// A process-local connection identity.
 ///
@@ -165,6 +174,12 @@ pub enum Delivery {
     /// across lanes. A full lane refuses the send with
     /// [`SendError::WouldBlock`].
     Reliable(Lane),
+    /// Independent best-effort messages on a [`Lane`]: each is delivered at
+    /// most once or not at all, never retransmitted or fragmented (at most
+    /// [`MAX_UNRELIABLE_BYTES`]), in no promised order. It shares its lane's
+    /// scheduling share with that lane's reliable messages; a full queue
+    /// refuses the send with [`SendError::WouldBlock`].
+    Unreliable(Lane),
     /// A replaceable best-effort slot where only the newest state is useful.
     LatestState,
 }
@@ -184,7 +199,9 @@ pub enum SendError {
     UnknownConnection,
     /// The client-side peer is disconnected.
     Disconnected,
-    /// The payload exceeds its delivery class's shared cap.
+    /// The payload exceeds its delivery class's shared cap:
+    /// [`MAX_RELIABLE_MESSAGE_BYTES`], [`MAX_UNRELIABLE_BYTES`] or
+    /// [`MAX_LATEST_STATE_BYTES`].
     PayloadTooLarge,
     /// The lane, or a shared ceiling, cannot take this message now. The
     /// connection is unaffected; retry after a later `flush` and `poll` have

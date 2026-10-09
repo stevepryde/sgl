@@ -6,9 +6,10 @@
 //! The command queue is the only admission point the caller sees: `send`
 //! refuses with [`SendError::WouldBlock`] once a lane's allowance is full,
 //! and the worker moves a message to the endpoint only when the endpoint
-//! reports room for it on that lane, so a refusal never ends a connection.
-//! A lane's reliable traffic is therefore buffered at most twice: once here
-//! and once in the endpoint, each within the lane's bounds.
+//! has room for it on that lane, so a refusal never ends a connection and
+//! nothing accepted is dropped. A lane's traffic is therefore buffered at
+//! most twice: once here and once in the endpoint, each within the lane's
+//! bounds.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -82,12 +83,54 @@ struct CommandState {
 #[derive(Default)]
 struct PeerCommands {
     reliable: [LaneQueue; RELIABLE_LANES],
+    unreliable: [LaneQueue; RELIABLE_LANES],
     latest: Option<Vec<u8>>,
 }
 
 impl PeerCommands {
     fn is_empty(&self) -> bool {
-        self.latest.is_none() && self.reliable.iter().all(|lane| lane.messages.is_empty())
+        self.latest.is_none()
+            && self
+                .reliable
+                .iter()
+                .chain(&self.unreliable)
+                .all(|lane| lane.messages.is_empty())
+    }
+
+    fn backlogged(&self, lane: Lane) -> bool {
+        !self.reliable[lane.index()].messages.is_empty()
+            || !self.unreliable[lane.index()].messages.is_empty()
+    }
+}
+
+/// A delivery's lane queue among `reliable` and `unreliable`, with its
+/// message and byte bounds; `None` for latest state.
+fn lane_queue<'a>(
+    reliable: &'a mut [LaneQueue; RELIABLE_LANES],
+    unreliable: &'a mut [LaneQueue; RELIABLE_LANES],
+    config: &ReliableConfig,
+    delivery: Delivery,
+    inbound: bool,
+) -> Option<(&'a mut LaneQueue, usize, usize)> {
+    match delivery {
+        Delivery::Reliable(lane) => {
+            let bounds = &config.lanes[lane.index()];
+            let (messages, bytes) = if inbound {
+                (bounds.inbound_messages, bounds.inbound_bytes)
+            } else {
+                (bounds.outbound_messages, bounds.outbound_bytes)
+            };
+            Some((&mut reliable[lane.index()], messages, bytes))
+        }
+        Delivery::Unreliable(lane) => {
+            let bounds = &config.lanes[lane.index()];
+            Some((
+                &mut unreliable[lane.index()],
+                bounds.unreliable_messages,
+                bounds.unreliable_bytes,
+            ))
+        }
+        Delivery::LatestState => None,
     }
 }
 
@@ -98,6 +141,7 @@ struct CommandQueue {
 
 struct PeerIngress {
     reliable: [LaneQueue; RELIABLE_LANES],
+    unreliable: [LaneQueue; RELIABLE_LANES],
     latest: Option<Vec<u8>>,
     /// The lane the next drain starts with.
     next_lane: usize,
@@ -139,6 +183,7 @@ impl IngressHub {
                 conn,
                 PeerIngress {
                     reliable: Default::default(),
+                    unreliable: Default::default(),
                     latest: None,
                     next_lane: 0,
                 },
@@ -157,30 +202,34 @@ impl IngressHub {
         }
     }
 
-    /// Returns false when this peer exceeded a lane's ingress allowance.
+    /// Returns false when this peer exceeded a lane's ingress allowance:
+    /// its reliable inbound bounds, or its unreliable bounds. Nothing is
+    /// dropped instead.
     fn message(&self, conn: ConnectionId, delivery: Delivery, payload: Vec<u8>) -> bool {
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
         let Some(peer) = state.peers.get_mut(&conn) else {
             return true;
         };
-        match delivery {
-            Delivery::Reliable(lane) => {
-                let bounds = &self.reliable.lanes[lane.index()];
-                let queue = &mut peer.reliable[lane.index()];
-                if queue.messages.len() >= bounds.inbound_messages
-                    || queue.bytes + payload.len() > bounds.inbound_bytes
-                {
-                    return false;
-                }
-                queue.push(payload);
-            }
-            Delivery::LatestState => peer.latest = Some(payload),
+        let Some((queue, messages, bytes)) = lane_queue(
+            &mut peer.reliable,
+            &mut peer.unreliable,
+            &self.reliable,
+            delivery,
+            true,
+        ) else {
+            peer.latest = Some(payload);
+            return true;
+        };
+        if queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
+            return false;
         }
+        queue.push(payload);
         true
     }
 
     /// Surfaces lifecycle events, then up to a bounded number of reliable
-    /// messages per peer taken from its lanes in turn, then its latest state.
+    /// and unreliable messages per peer taken from its lanes in turn, then
+    /// its latest state.
     fn drain(&self) -> Vec<ServerEvent> {
         const RELIABLE_PER_PEER_PER_POLL: usize = 32;
 
@@ -194,17 +243,22 @@ impl IngressHub {
             while progressed && taken < RELIABLE_PER_PEER_PER_POLL {
                 progressed = false;
                 for lane in lanes_from(first) {
-                    if taken == RELIABLE_PER_PEER_PER_POLL {
-                        break;
-                    }
-                    if let Some(payload) = peer.reliable[lane.index()].pop() {
-                        output.push(ServerEvent::Message {
-                            conn,
-                            delivery: Delivery::Reliable(lane),
-                            payload,
-                        });
-                        taken += 1;
-                        progressed = true;
+                    for (queue, delivery) in [
+                        (&mut peer.reliable, Delivery::Reliable(lane)),
+                        (&mut peer.unreliable, Delivery::Unreliable(lane)),
+                    ] {
+                        if taken == RELIABLE_PER_PEER_PER_POLL {
+                            break;
+                        }
+                        if let Some(payload) = queue[lane.index()].pop() {
+                            output.push(ServerEvent::Message {
+                                conn,
+                                delivery,
+                                payload,
+                            });
+                            taken += 1;
+                            progressed = true;
+                        }
                     }
                 }
             }
@@ -245,30 +299,30 @@ impl CommandQueue {
         }
         let max_bytes = match delivery {
             Delivery::Reliable(_) => crate::MAX_RELIABLE_MESSAGE_BYTES,
+            Delivery::Unreliable(_) => crate::MAX_UNRELIABLE_BYTES,
             Delivery::LatestState => crate::MAX_LATEST_STATE_BYTES,
         };
         if payload.len() > max_bytes {
             return Err(SendError::PayloadTooLarge);
         }
         let peer = state.peers.entry(id).or_default();
-        match delivery {
-            Delivery::Reliable(lane) => {
-                // Each lane owns its allowance; a full one refuses this send
-                // and nothing else.
-                let bounds = &self.reliable.lanes[lane.index()];
-                let queue = &mut peer.reliable[lane.index()];
-                if queue.messages.len() >= bounds.outbound_messages
-                    || queue.bytes + payload.len() > bounds.outbound_bytes
-                {
-                    return Err(SendError::WouldBlock);
-                }
-                queue.push(payload.to_vec());
-            }
-            Delivery::LatestState => {
-                // One overwrite slot per peer keeps only current state.
-                peer.latest = Some(payload.to_vec());
-            }
+        let Some((queue, messages, bytes)) = lane_queue(
+            &mut peer.reliable,
+            &mut peer.unreliable,
+            &self.reliable,
+            delivery,
+            false,
+        ) else {
+            // One overwrite slot per peer keeps only current state.
+            peer.latest = Some(payload.to_vec());
+            return Ok(());
+        };
+        // Each lane owns its allowances; a full one refuses this send and
+        // nothing else.
+        if queue.messages.len() >= messages || queue.bytes + payload.len() > bytes {
+            return Err(SendError::WouldBlock);
         }
+        queue.push(payload.to_vec());
         Ok(())
     }
 
@@ -317,13 +371,14 @@ impl CommandQueue {
     /// caller disconnected, for the worker to close after the lock is
     /// released (closing flushes and sends datagrams).
     ///
-    /// Each lane's messages move in order, each only once the endpoint
-    /// reports room for it on that lane; that report is advisory, so a
-    /// message the endpoint still refuses stays at the front for a later
-    /// turn. Every pass moves at most one message per backlogged peer and
-    /// lane, starting from the one after the last turn's first, so when a
-    /// shared endpoint ceiling binds, freed room is shared between every
-    /// backlogged peer and lane instead of going to the lowest ids.
+    /// Each lane's messages move in order, reliable ones only once the
+    /// endpoint reports room for them on that lane; that report is advisory,
+    /// and unreliable room is not reported, so a message the endpoint still
+    /// refuses stays at the front for a later turn. Every pass moves at most
+    /// one reliable and one unreliable message per backlogged peer and lane,
+    /// starting from the one after the last turn's first, so when a shared
+    /// endpoint ceiling binds, freed room is shared between every backlogged
+    /// peer and lane instead of going to the lowest ids.
     fn apply<S: ServerIo>(&self, endpoint: &mut S) -> Vec<ConnectionId> {
         let mut state = self.lock();
         if std::mem::take(&mut state.stop_admission) {
@@ -335,7 +390,7 @@ impl CommandQueue {
             .iter()
             .flat_map(|(&conn, peer)| {
                 lanes_from(0)
-                    .filter(|lane| !peer.reliable[lane.index()].messages.is_empty())
+                    .filter(|&lane| peer.backlogged(lane))
                     .map(move |lane| (conn, lane))
             })
             .collect();
@@ -353,32 +408,39 @@ impl CommandQueue {
         loop {
             let mut progressed = false;
             for &(conn, lane) in &order {
-                if gone.contains(&conn) || blocked.contains(&(conn, lane)) {
-                    continue;
-                }
-                let peer = state.peers.get_mut(&conn).expect("ordered from peers");
-                let queue = &mut peer.reliable[lane.index()];
-                let Some(payload) = queue.messages.front() else {
-                    continue;
-                };
-                let capacity = endpoint.capacity(conn, lane);
-                if capacity.messages == 0 || capacity.bytes < payload.len() {
-                    blocked.insert((conn, lane));
-                    continue;
-                }
-                match endpoint.send(conn, Delivery::Reliable(lane), payload) {
-                    // Admission already bounded the size, so a payload the
-                    // endpoint calls too large is dropped rather than left to
-                    // wedge the lane.
-                    Ok(()) | Err(SendError::PayloadTooLarge) => {
-                        queue.pop();
-                        progressed = true;
+                for delivery in [Delivery::Reliable(lane), Delivery::Unreliable(lane)] {
+                    if gone.contains(&conn) || blocked.contains(&(conn, delivery)) {
+                        continue;
                     }
-                    Err(SendError::WouldBlock) => {
-                        blocked.insert((conn, lane));
+                    let peer = state.peers.get_mut(&conn).expect("ordered from peers");
+                    let queue = match delivery {
+                        Delivery::Unreliable(_) => &mut peer.unreliable[lane.index()],
+                        _ => &mut peer.reliable[lane.index()],
+                    };
+                    let Some(payload) = queue.messages.front() else {
+                        continue;
+                    };
+                    if let Delivery::Reliable(_) = delivery {
+                        let capacity = endpoint.capacity(conn, lane);
+                        if capacity.messages == 0 || capacity.bytes < payload.len() {
+                            blocked.insert((conn, delivery));
+                            continue;
+                        }
                     }
-                    Err(SendError::UnknownConnection | SendError::Disconnected) => {
-                        gone.insert(conn);
+                    match endpoint.send(conn, delivery, payload) {
+                        // Admission already bounded the size, so a payload
+                        // the endpoint calls too large is dropped rather than
+                        // left to wedge the lane.
+                        Ok(()) | Err(SendError::PayloadTooLarge) => {
+                            queue.pop();
+                            progressed = true;
+                        }
+                        Err(SendError::WouldBlock) => {
+                            blocked.insert((conn, delivery));
+                        }
+                        Err(SendError::UnknownConnection | SendError::Disconnected) => {
+                            gone.insert(conn);
+                        }
                     }
                 }
             }
@@ -635,11 +697,20 @@ mod tests {
         commands
             .send(SOLO_CONNECTION, Delivery::LatestState, b"fresh")
             .unwrap();
+        for payload in [b"u1", b"u2"] {
+            commands
+                .send(SOLO_CONNECTION, Delivery::Unreliable(lane(2)), payload)
+                .unwrap();
+        }
         worker_tick(&mut server, &commands, &ingress, 5);
         let received = client.poll(5);
         assert_eq!(
             payloads(&received, Delivery::RELIABLE_ORDERED),
             vec![b"one".to_vec(), b"two".to_vec()]
+        );
+        assert_eq!(
+            payloads(&received, Delivery::Unreliable(lane(2))),
+            vec![b"u1".to_vec(), b"u2".to_vec()]
         );
         assert_eq!(
             payloads(&received, Delivery::LatestState),
@@ -953,7 +1024,10 @@ mod tests {
     /// that schedules a disconnect. Oracle: per-peer bounds (netcode.md 11).
     #[test]
     fn a_full_command_allowance_refuses_only_its_own_peer_and_lane() {
-        let config = lanes(|lane| lane.outbound_messages = 1);
+        let config = lanes(|lane| {
+            lane.outbound_messages = 1;
+            lane.unreliable_messages = 1;
+        });
         let queue = CommandQueue::new(&config);
         let noisy = cid(7);
         let healthy = cid(8);
@@ -972,6 +1046,21 @@ mod tests {
         queue
             .send(noisy, Delivery::Reliable(lane(1)), b"another lane")
             .expect("a full lane leaves the peer's other lanes admitting");
+        queue
+            .send(noisy, Delivery::Unreliable(lane(0)), b"unreliable")
+            .expect("the unreliable queue is separate");
+        assert_eq!(
+            queue.send(
+                noisy,
+                Delivery::Unreliable(lane(0)),
+                &[0; crate::MAX_UNRELIABLE_BYTES + 1]
+            ),
+            Err(SendError::PayloadTooLarge)
+        );
+        assert_eq!(
+            queue.send(noisy, Delivery::Unreliable(lane(0)), b"full"),
+            Err(SendError::WouldBlock)
+        );
         let state = queue.lock();
         assert!(state.disconnects.is_empty());
         assert!(state.live.contains(&noisy) && state.live.contains(&healthy));

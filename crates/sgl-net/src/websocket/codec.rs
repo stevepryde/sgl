@@ -1,5 +1,5 @@
 use crate::lanes::Fragment;
-use crate::{Delivery, Lane, MAX_LATEST_STATE_BYTES};
+use crate::{Delivery, Lane, MAX_LATEST_STATE_BYTES, MAX_UNRELIABLE_BYTES};
 
 /// Frozen WebSocket envelope version.
 pub const ENVELOPE_VERSION: u8 = 2;
@@ -14,6 +14,7 @@ pub const WEBSOCKET_FRAGMENT_BYTES: usize = 16 * 1024;
 
 const RELIABLE_KIND: u8 = 0;
 const LATEST_KIND: u8 = 1;
+const UNRELIABLE_KIND: u8 = 2;
 const KIND_BITS: u8 = 0b11;
 const FIRST: u8 = 1 << 2;
 const MORE: u8 = 1 << 3;
@@ -24,10 +25,11 @@ const FLAG_BITS: u8 = KIND_BITS | FIRST | MORE;
 pub struct Envelope<'a> {
     /// Delivery semantics carried by this frame, including its lane.
     pub delivery: Delivery,
-    /// Zero for reliable frames and nonzero for latest-state frames.
+    /// Zero for reliable and unreliable frames and nonzero for latest-state
+    /// frames.
     pub sequence: u64,
     /// Where the payload sits in its reliable message; always
-    /// [`Fragment::Whole`] for latest state.
+    /// [`Fragment::Whole`] for unreliable messages and latest state.
     pub fragment: Fragment,
     /// Opaque transport payload.
     pub payload: &'a [u8],
@@ -44,19 +46,22 @@ pub enum EnvelopeError {
     UnsupportedVersion,
     /// The delivery kind is unknown.
     UnknownDelivery,
-    /// Reliable used a nonzero sequence or latest-state used zero.
+    /// Reliable or unreliable used a nonzero sequence, or latest state used
+    /// zero.
     InvalidSequence,
-    /// A reliable lane past [`RELIABLE_LANES`](crate::RELIABLE_LANES), or
-    /// latest state on a lane other than zero.
+    /// A lane past [`RELIABLE_LANES`](crate::RELIABLE_LANES), or latest
+    /// state on a lane other than zero.
     InvalidLane,
-    /// Reserved flag bits are set, or latest state carries fragment flags.
+    /// Reserved flag bits are set, or an unreliable or latest-state frame
+    /// carries fragment flags.
     InvalidFlags,
     /// A first fragment's declared total is not larger than the fragment.
     InvalidTotal,
     /// The declared payload length does not equal the frame remainder.
     LengthMismatch,
     /// The payload exceeds its frame's cap: [`WEBSOCKET_FRAGMENT_BYTES`]
-    /// for reliable, [`MAX_LATEST_STATE_BYTES`] for latest state.
+    /// for reliable, [`MAX_UNRELIABLE_BYTES`] for unreliable and
+    /// [`MAX_LATEST_STATE_BYTES`] for latest state.
     TooLarge,
 }
 
@@ -81,17 +86,24 @@ pub fn encode_envelope(magic: [u8; 3], envelope: &Envelope<'_>) -> Result<Vec<u8
         Delivery::Reliable(lane) if sequence == 0 => {
             (RELIABLE_KIND, lane, WEBSOCKET_FRAGMENT_BYTES)
         }
+        Delivery::Unreliable(lane) if sequence == 0 => {
+            (UNRELIABLE_KIND, lane, MAX_UNRELIABLE_BYTES)
+        }
         Delivery::LatestState if sequence != 0 => {
             (LATEST_KIND, Lane::DEFAULT, MAX_LATEST_STATE_BYTES)
         }
-        Delivery::Reliable(_) | Delivery::LatestState => {
+        Delivery::Reliable(_) | Delivery::Unreliable(_) | Delivery::LatestState => {
             return Err(EnvelopeError::InvalidSequence);
         }
     };
     let (first, more) = match delivery {
         Delivery::Reliable(_) => fragment.flags(),
-        Delivery::LatestState if fragment == Fragment::Whole => (false, false),
-        Delivery::LatestState => return Err(EnvelopeError::InvalidFlags),
+        Delivery::Unreliable(_) | Delivery::LatestState if fragment == Fragment::Whole => {
+            (false, false)
+        }
+        Delivery::Unreliable(_) | Delivery::LatestState => {
+            return Err(EnvelopeError::InvalidFlags);
+        }
     };
     if payload.len() > cap {
         return Err(EnvelopeError::TooLarge);
@@ -117,7 +129,7 @@ pub fn encode_envelope(magic: [u8; 3], envelope: &Envelope<'_>) -> Result<Vec<u8
 /// Decodes one complete binary frame and applies its rules: known kind and
 /// lane, the sequence rule, fragment flags only on reliable frames, the
 /// per-frame payload cap, and a declared total larger than the first
-/// fragment.
+/// fragment. Kind 3 is reserved.
 pub fn decode_envelope(magic: [u8; 3], bytes: &[u8]) -> Result<Envelope<'_>, EnvelopeError> {
     if bytes.len() < ENVELOPE_HEADER_LEN {
         return Err(EnvelopeError::Truncated);
@@ -139,6 +151,13 @@ pub fn decode_envelope(magic: [u8; 3], bytes: &[u8]) -> Result<Envelope<'_>, Env
         RELIABLE_KIND => {
             let lane = Lane::new(bytes[5]).ok_or(EnvelopeError::InvalidLane)?;
             (Delivery::Reliable(lane), WEBSOCKET_FRAGMENT_BYTES)
+        }
+        UNRELIABLE_KIND => {
+            let lane = Lane::new(bytes[5]).ok_or(EnvelopeError::InvalidLane)?;
+            if first || more {
+                return Err(EnvelopeError::InvalidFlags);
+            }
+            (Delivery::Unreliable(lane), MAX_UNRELIABLE_BYTES)
         }
         LATEST_KIND if bytes[5] != 0 => return Err(EnvelopeError::InvalidLane),
         LATEST_KIND if first || more => return Err(EnvelopeError::InvalidFlags),
@@ -172,7 +191,7 @@ pub fn decode_envelope(magic: [u8; 3], bytes: &[u8]) -> Result<Envelope<'_>, Env
         sequence,
         fragment: match delivery {
             Delivery::Reliable(_) => Fragment::from_flags(first, more, total),
-            Delivery::LatestState => Fragment::Whole,
+            Delivery::Unreliable(_) | Delivery::LatestState => Fragment::Whole,
         },
         payload: &bytes[header..],
     })
@@ -194,9 +213,10 @@ mod tests {
         }
     }
 
-    /// The frozen version-2 layout of netcode.md 13: flags then lane after
-    /// the version, big-endian sequence and length, and the declared total
-    /// only on a first fragment.
+    /// The frozen version-2 layout of netcode.md 13: flags (kind 0
+    /// reliable, 1 latest, 2 unreliable) then lane after the version,
+    /// big-endian sequence and length, and the declared total only on a
+    /// first fragment.
     #[wasm_bindgen_test(unsupported = test)]
     fn frozen_header_round_trips_every_frame_shape() {
         let whole = encode_envelope(MAGIC, &reliable(2, Fragment::Whole, b"event")).unwrap();
@@ -225,6 +245,16 @@ mod tests {
         let encoded = encode_envelope(MAGIC, &latest).unwrap();
         assert_eq!(encoded[4..14], [1, 0, 0, 0, 0, 0, 0, 0, 0, 7]);
         assert_eq!(decode_envelope(MAGIC, &encoded).unwrap(), latest);
+
+        let unreliable = Envelope {
+            delivery: Delivery::Unreliable(Lane::new(3).unwrap()),
+            sequence: 0,
+            fragment: Fragment::Whole,
+            payload: b"position",
+        };
+        let encoded = encode_envelope(MAGIC, &unreliable).unwrap();
+        assert_eq!(encoded[4..6], [2, 3]);
+        assert_eq!(decode_envelope(MAGIC, &encoded).unwrap(), unreliable);
     }
 }
 
@@ -241,8 +271,18 @@ mod properties {
     fn delivery() -> impl Strategy<Value = Delivery> {
         prop_oneof![
             (0..RELIABLE_LANES).prop_map(|lane| Delivery::Reliable(Lane::new(lane as u8).unwrap())),
+            (0..RELIABLE_LANES)
+                .prop_map(|lane| Delivery::Unreliable(Lane::new(lane as u8).unwrap())),
             Just(Delivery::LatestState)
         ]
+    }
+
+    fn cap(delivery: Delivery) -> usize {
+        match delivery {
+            Delivery::Reliable(_) => WEBSOCKET_FRAGMENT_BYTES,
+            Delivery::Unreliable(_) => MAX_UNRELIABLE_BYTES,
+            Delivery::LatestState => MAX_LATEST_STATE_BYTES,
+        }
     }
 
     fn fragment() -> impl Strategy<Value = Fragment> {
@@ -262,7 +302,7 @@ mod properties {
         payload: &[u8],
     ) -> Envelope<'_> {
         let fragment = match (delivery, fragment) {
-            (Delivery::LatestState, _) => Fragment::Whole,
+            (Delivery::Unreliable(_) | Delivery::LatestState, _) => Fragment::Whole,
             (_, Fragment::First { total }) => Fragment::First {
                 total: (total % 100_000).max(payload.len() as u32 + 1),
             },
@@ -320,7 +360,9 @@ mod properties {
                     _ if (delivery == Delivery::LatestState) == (sequence == 0) => {
                         Err(EnvelopeError::InvalidSequence)
                     }
-                    Delivery::LatestState if fragment != Fragment::Whole => {
+                    Delivery::Unreliable(_) | Delivery::LatestState
+                        if fragment != Fragment::Whole =>
+                    {
                         Err(EnvelopeError::InvalidFlags)
                     }
                     _ if fragment
@@ -344,9 +386,10 @@ mod properties {
     }
 
     /// Defect: a decoder that trusts the declared length over the frame
-    /// size, accepts an unknown kind, reserved flags, a lane that does not
-    /// exist, fragment flags or a lane on latest state, a total not above
-    /// its fragment, or a payload past its frame cap. Oracle: each single
+    /// size, accepts the reserved kind, reserved flags, a lane that does not
+    /// exist, fragment flags on unreliable or latest state, a lane on latest
+    /// state, a total not above its fragment, or a payload past its frame
+    /// cap. Oracle: each single
     /// corruption of a valid frame is refused with its own reason
     /// (netcode.md 13).
     #[test]
@@ -357,13 +400,13 @@ mod properties {
             fragment(),
             bytes(300),
             1usize..4,
-            2u8..4,
+            any::<bool>(),
             4u8..=255,
             1u8..16,
         );
         check(
             strategy,
-            |(delivery, sequence, fragment, payload, extra, kind, lane, reserved)| {
+            |(delivery, sequence, fragment, payload, extra, first, lane, reserved)| {
                 let envelope = valid(delivery, sequence, fragment, &payload);
                 let frame = encode_envelope(MAGIC, &envelope).unwrap();
                 let decode = |bytes: &[u8]| decode_envelope(MAGIC, bytes).map(|_| ());
@@ -379,7 +422,7 @@ mod properties {
                 }
 
                 let mut unknown = frame.clone();
-                unknown[4] = (unknown[4] & !KIND_BITS) | kind;
+                unknown[4] |= KIND_BITS;
                 prop_assert_eq!(decode(&unknown), Err(EnvelopeError::UnknownDelivery));
 
                 let mut flagged = frame.clone();
@@ -388,17 +431,14 @@ mod properties {
 
                 let mut laned = frame.clone();
                 laned[5] = match delivery {
-                    Delivery::Reliable(_) => lane,
+                    Delivery::Reliable(_) | Delivery::Unreliable(_) => lane,
                     Delivery::LatestState => lane - 3,
                 };
                 prop_assert_eq!(decode(&laned), Err(EnvelopeError::InvalidLane));
 
                 let mut huge = frame.clone();
-                let cap = match delivery {
-                    Delivery::Reliable(_) => WEBSOCKET_FRAGMENT_BYTES,
-                    Delivery::LatestState => MAX_LATEST_STATE_BYTES,
-                };
-                huge[14..18].copy_from_slice(&u32::try_from(cap + 1).unwrap().to_be_bytes());
+                huge[14..18]
+                    .copy_from_slice(&u32::try_from(cap(delivery) + 1).unwrap().to_be_bytes());
                 prop_assert_eq!(decode(&huge), Err(EnvelopeError::TooLarge));
 
                 match envelope.fragment {
@@ -408,14 +448,19 @@ mod properties {
                             .copy_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
                         prop_assert_eq!(decode(&short_total), Err(EnvelopeError::InvalidTotal));
                     }
-                    // Latest with fragment flags; reliable as the other kind
-                    // keeps its sequence, which the other kind forbids.
-                    _ if delivery == Delivery::LatestState => {
+                    // Latest or unreliable with a fragment flag; each as the
+                    // other kind keeps its sequence, which that kind forbids.
+                    _ if !matches!(delivery, Delivery::Reliable(_)) => {
                         let mut fragmented = frame.clone();
-                        fragmented[4] |= FIRST;
+                        fragmented[4] |= if first { FIRST } else { MORE };
                         prop_assert_eq!(decode(&fragmented), Err(EnvelopeError::InvalidFlags));
                         let mut swapped = frame.clone();
-                        swapped[4] ^= LATEST_KIND;
+                        swapped[4] = if delivery == Delivery::LatestState {
+                            UNRELIABLE_KIND
+                        } else {
+                            LATEST_KIND
+                        };
+                        swapped[5] = 0;
                         prop_assert_eq!(decode(&swapped), Err(EnvelopeError::InvalidSequence));
                     }
                     Fragment::Whole | Fragment::Middle | Fragment::Last => {
@@ -435,10 +480,7 @@ mod properties {
     #[test]
     fn payload_caps_are_exact() {
         check(delivery(), |delivery| {
-            let cap = match delivery {
-                Delivery::Reliable(_) => WEBSOCKET_FRAGMENT_BYTES,
-                Delivery::LatestState => MAX_LATEST_STATE_BYTES,
-            };
+            let cap = cap(delivery);
             let full = vec![0; cap];
             prop_assert!(
                 encode_envelope(MAGIC, &valid(delivery, 1, Fragment::Whole, &full)).is_ok()

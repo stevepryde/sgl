@@ -477,8 +477,23 @@ Use the [current specs](README.md) for implementation and the
   acknowledgements that fit, so `MAX_LATEST_STATE_BYTES` stays 1168 while
   reliable fragments shrink to 1150 to carry all four; WebSocket gains flags
   and lane bytes (an 18-byte header) and 16 KiB frames.
+  Owner direction, 2026-10-09: the same change adds a third delivery
+  class, `Delivery::Unreliable(Lane)`, superseding D-5's two-class scope.
+  Unreliable means never retransmitted or fragmented (at most
+  `MAX_UNRELIABLE_BYTES`, 1168) and unordered, delivered at most once (UDP
+  receivers drop network duplicates by a per-lane sequence and a
+  1,024-message window, as ENet's unsequenced packets do). SGL never
+  discards an accepted message of any class while the connection lives:
+  overproduction is refused with `WouldBlock` from a bounded per-lane
+  queue, an unsent UDP message waits for a later flush, and WebSocket sends
+  every unreliable frame in its lane's schedule under the existing pacing,
+  so only the network can lose one. A lane's unreliable messages share its
+  quantum, taking turns with its new reliable fragments.
   Rationale: the issue requires progress for every lane, which strict
   priority does not give (GameNetworkingSockets documents that lower
   priorities are starved); 8:1 reproduces Stevecraft's scheduler as a game
   setting, not a default. Keeping the latest-state cap avoids breaking games
-  that size snapshots to it.
+  that size snapshots to it. Games send position-style data unreliably
+  expecting most of it to arrive, as on UDP; dropping it at the sender
+  under backpressure would starve them on WebSocket for as long as a
+  backlog lasts.

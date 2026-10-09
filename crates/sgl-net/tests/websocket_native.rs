@@ -12,7 +12,8 @@ use sgl_net::websocket::{
 };
 use sgl_net::{
     ClientEvent, ClientIo, ConnectionId, DEFAULT_LANE_OUTBOUND_MESSAGES, Delivery,
-    DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, SendError, ServerEvent, ServerIo,
+    DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, ReliableConfig, SendError, ServerEvent,
+    ServerIo,
 };
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::HeaderValue;
@@ -225,6 +226,68 @@ fn a_saturated_lane_would_block_and_delivers_everything_after_the_drain() {
             payload: b"still alive".to_vec(),
         }]
     );
+}
+
+/// Defect (design §12): WebSocket dropping, duplicating, reordering or
+/// fragmenting accepted unreliable messages while another lane streams bulk
+/// data. Oracle: SGL never drops an accepted message and TCP loses nothing,
+/// so every accepted lane-0 unreliable message arrives once, in send order,
+/// and every bulk message arrives intact and in order.
+#[test]
+fn unreliable_messages_all_arrive_in_order_beside_reliable_bulk() {
+    const BULK: u32 = 20;
+    const UNRELIABLE: u32 = 300;
+    let mut reliable = ReliableConfig::DEFAULT;
+    reliable.lanes[0].weight = 8;
+    // The test's own polling must not be what limits the bulk stream.
+    reliable.lanes[1].inbound_messages = 1_024;
+    reliable.lanes[1].inbound_bytes = 64 * 1024 * 1024;
+    let mut config = NativeWebSocketServerConfig::new(([127, 0, 0, 1], 0).into(), identity())
+        .with_origin_policy(OriginPolicy::exact([ORIGIN_VALUE.to_owned()]).unwrap());
+    config.reliable = reliable.clone();
+    let mut server = NativeWebSocketServer::bind(config).unwrap();
+    let mut client_config =
+        NativeWebSocketClientConfig::new(url(&server), ORIGIN_VALUE, identity());
+    client_config.reliable = reliable;
+    let mut client = NativeWebSocketClient::connect(client_config).unwrap();
+    client.poll(0);
+    connected_id(&wait_server_events(&mut server));
+
+    let bulk_lane = Delivery::Reliable(Lane::new(1).unwrap());
+    let unreliable_lane = Delivery::Unreliable(Lane::DEFAULT);
+    let bulk = |index: u32| vec![u8::try_from(index).unwrap(); 60 * 1024];
+    let (mut bulk_sent, mut unreliable_sent) = (0, 0);
+    let (mut bulk_got, mut unreliable_got) = (Vec::new(), Vec::new());
+    wait_until(Duration::from_secs(10), || {
+        if bulk_sent < BULK && client.send(bulk_lane, &bulk(bulk_sent)).is_ok() {
+            bulk_sent += 1;
+        }
+        if unreliable_sent < UNRELIABLE
+            && client
+                .send(unreliable_lane, &unreliable_sent.to_le_bytes())
+                .is_ok()
+        {
+            unreliable_sent += 1;
+        }
+        client.flush(0);
+        for event in server.poll(0) {
+            match event {
+                ServerEvent::Message {
+                    delivery, payload, ..
+                } if delivery == unreliable_lane => {
+                    unreliable_got.push(u32::from_le_bytes(payload.try_into().unwrap()));
+                }
+                ServerEvent::Message {
+                    delivery, payload, ..
+                } if delivery == bulk_lane => bulk_got.push(payload),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        (unreliable_got.len() >= UNRELIABLE as usize && bulk_got.len() >= BULK as usize)
+            .then_some(())
+    });
+    assert_eq!(unreliable_got, (0..UNRELIABLE).collect::<Vec<_>>());
+    assert_eq!(bulk_got, (0..BULK).map(bulk).collect::<Vec<_>>());
 }
 
 fn raw_request(url: &str, origins: &[&str]) -> tungstenite::http::Request<()> {

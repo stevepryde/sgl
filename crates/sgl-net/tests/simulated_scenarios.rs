@@ -188,6 +188,10 @@ fn stream(
                     payload,
                     ..
                 } => latest.push(index_of(&payload)),
+                ServerEvent::Message {
+                    delivery: Delivery::Unreliable(_),
+                    ..
+                } => panic!("nothing is sent unreliably here"),
                 ServerEvent::Disconnected { reason, .. } => panic!("disconnected: {reason:?}"),
                 ServerEvent::Connected { .. } => {}
             }

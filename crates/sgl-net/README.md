@@ -38,7 +38,14 @@ retry after a later `flush` and `poll` (the [crate docs](src/lib.rs) show the
 loop); `capacity(lane)` reports what the lane admits now. Dropping a refused
 message loses it. A peer that floods this side's inbound bounds is
 disconnected with `DisconnectReason::InboundOverflow`.
-`Delivery::LatestState` coalesces snapshots so the newest state wins.
+`Delivery::Unreliable(lane)` sends independent best-effort messages of at
+most `MAX_UNRELIABLE_BYTES`: each is sent once, never retransmitted or
+fragmented, delivered at most once, in no promised order. SGL never drops an
+accepted message; on UDP the network may lose one, while on WebSocket and in
+memory all arrive, in send order. A full unreliable queue refuses with
+`WouldBlock` like a full reliable lane, and a lane's unreliable messages take
+turns with its reliable fragments. `Delivery::LatestState` coalesces
+snapshots so the newest state wins.
 The same encoded payload can cross UDP, WebSocket, or memory. Payload caps
 are public constants and lane bounds `ReliableConfig` values in the
 [transport API](src/lib.rs). Connection IDs identify a connection inside a

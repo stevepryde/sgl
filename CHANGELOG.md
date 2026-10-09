@@ -40,6 +40,11 @@ docs and specs the entry links.
   defaults 4,096 → 12,288 messages and 4 → 24 MiB.
   Migration: rename the fields and constants; one-lane games change nothing
   else; others pick `Lane::new(n)` and set `config.reliable.lanes[n].weight`.
+- `sgl-net` `Delivery::Unreliable(Lane)` (new): messages of at most
+  `MAX_UNRELIABLE_BYTES` (1168) sent once, never retransmitted, unordered,
+  delivered at most once; a full queue (`LaneConfig::unreliable_messages` /
+  `unreliable_bytes`) refuses with `WouldBlock`, and SGL never drops an
+  accepted one. Migration: exhaustive `Delivery` matches add an arm.
 - `sgl-net` wire version 2 on UDP and WebSocket: old and new builds cannot
   connect, so rebuild servers and clients together and change the WebSocket
   subprotocol. `udp::MAX_RELIABLE_FRAGMENT_BYTES` 1168 → 1150; WebSocket

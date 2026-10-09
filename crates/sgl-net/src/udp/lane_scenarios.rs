@@ -1,6 +1,6 @@
 //! Lanes over the seeded virtual network (netcode.md 14, #268): a small
-//! realtime message every tick on lane 0 while lane 1 streams 60 KiB
-//! messages as fast as it is admitted. Every bound asserted here comes from
+//! realtime message every tick on lane 0, reliable or unreliable, while
+//! lane 1 streams 60 KiB reliable messages as fast as it is admitted. Every bound asserted here comes from
 //! the network's parameters, the tick, and deficit round robin's gap bound,
 //! never from the scheduler's state.
 
@@ -31,8 +31,8 @@ fn bulk() -> Lane {
     Lane::new(1).expect("lane 1 exists")
 }
 
-/// The client's datagram transport, recording when each realtime message's
-/// fragment went on the wire.
+/// The client's datagram transport, recording when each realtime message
+/// went on the wire, reliable or unreliable.
 struct Tap {
     inner: SimulatedTransport,
     transmissions: Rc<RefCell<BTreeMap<u32, Vec<u64>>>>,
@@ -42,7 +42,8 @@ impl DatagramTransport for Tap {
     fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) {
         if let Some(Parsed::Payload { items, .. }) = packet::parse(payload, MAGIC) {
             for item in items {
-                if let Item::Reliable { lane, payload, .. } = item
+                if let Item::Reliable { lane, payload, .. } | Item::Unreliable { lane, payload, .. } =
+                    item
                     && lane == realtime()
                 {
                     let index = u32::from_le_bytes(payload[..4].try_into().expect("indexed"));
@@ -76,7 +77,8 @@ fn index_of(payload: &[u8]) -> u32 {
 struct Run {
     /// When each realtime message was handed to `send`.
     sent: Vec<u64>,
-    /// When the server's poll returned each realtime message, in order.
+    /// When the server's poll returned each realtime message, in the order
+    /// it did.
     delivered: Vec<(u32, u64)>,
     /// When each realtime message's fragment was transmitted.
     transmissions: BTreeMap<u32, Vec<u64>>,
@@ -114,13 +116,15 @@ fn tick(
 }
 
 /// Bulk streams from the start; realtime starts `bulk_lead_ms` later and
-/// sends one message per tick for `realtime_ms`; then both drain.
+/// sends one message per tick for `realtime_ms` with `delivery` on lane 0;
+/// then both drain (an unreliable stream for two more seconds).
 fn run(
     network: SimulatedConfig,
     seed: u64,
     config: &EndpointConfig,
     bulk_lead_ms: u64,
     realtime_ms: u64,
+    delivery: Delivery,
 ) -> Run {
     let network = SimulatedNetwork::new(network, seed).expect("valid network");
     let mut server = Endpoint::server(
@@ -163,10 +167,10 @@ fn run(
         for event in events {
             match event {
                 EndpointEvent::Message {
-                    delivery: Delivery::Reliable(lane),
+                    delivery: got,
                     payload,
                     ..
-                } if lane == realtime() => result.delivered.push((index_of(&payload), now)),
+                } if got == delivery => result.delivered.push((index_of(&payload), now)),
                 EndpointEvent::Message {
                     delivery: Delivery::Reliable(lane),
                     payload,
@@ -179,11 +183,7 @@ fn run(
         if sending && now >= realtime_from {
             let index = u32::try_from(result.sent.len()).expect("few messages");
             client
-                .send(
-                    peer,
-                    Delivery::Reliable(realtime()),
-                    &indexed(index, REALTIME_BYTES),
-                )
+                .send(peer, delivery, &indexed(index, REALTIME_BYTES))
                 .expect("one message per tick fits the realtime lane");
             result.sent.push(now);
         }
@@ -198,8 +198,11 @@ fn run(
         {
             result.bulk_sent += 1;
         }
-        let drained = result.delivered.len() == result.sent.len()
-            && result.bulk_delivered.len() == result.bulk_sent as usize;
+        let realtime_drained = match delivery {
+            Delivery::Unreliable(_) => now >= realtime_until + 2_000,
+            _ => result.delivered.len() == result.sent.len(),
+        };
+        let drained = realtime_drained && result.bulk_delivered.len() == result.bulk_sent as usize;
         if !sending && drained {
             break;
         }
@@ -253,7 +256,14 @@ fn realtime_under_bulk_keeps_the_scheduling_bound() {
     let worst_delay = network.one_way_latency_ms + network.jitter_ms + network.reorder_extra_ms;
     let config = endpoint_config(2, 12);
     for (seed, bulk_lead_ms) in [(11, 0), (12, 1_000)] {
-        let run = run(network.clone(), seed, &config, bulk_lead_ms, 20_000);
+        let run = run(
+            network.clone(),
+            seed,
+            &config,
+            bulk_lead_ms,
+            20_000,
+            Delivery::Reliable(realtime()),
+        );
         assert_exact(&run);
         let mut deadline = 0;
         for (&(index, delivered_at), &sent_at) in run.delivered.iter().zip(&run.sent) {
@@ -299,7 +309,14 @@ fn bulk_loss_never_delays_the_realtime_lane() {
     // Sixty-four transmissions: half the bulk datagrams vanish, and the
     // connection must outlive that rather than time out on retry exhaustion.
     let config = endpoint_config(64, 64);
-    let run = run(network, 21, &config, 0, 20_000);
+    let run = run(
+        network,
+        21,
+        &config,
+        0,
+        20_000,
+        Delivery::Reliable(realtime()),
+    );
     assert_exact(&run);
     for (&(index, delivered_at), &sent_at) in run.delivered.iter().zip(&run.sent) {
         assert!(
@@ -308,4 +325,103 @@ fn bulk_loss_never_delays_the_realtime_lane() {
             delivered_at - sent_at
         );
     }
+}
+
+/// Defect (#268, design §12): an unreliable message retransmitted, sent
+/// twice, delivered twice after a network duplicate, dropped by SGL, or
+/// queued behind the bulk lane's backlog. Oracle: the wire and the network
+/// parameters — with no loss but 5 % duplication and 5 % reordering, every
+/// accepted lane-0 unreliable message goes on the wire exactly once, in the
+/// flush right after its `send` (deficit round robin at 8:1 and two
+/// datagrams per flush), and is delivered exactly once within the
+/// network's worst delay and one poll tick of that transmission; the bulk
+/// lane stays exact.
+#[wasm_bindgen_test(unsupported = test)]
+fn unreliable_under_bulk_is_sent_once_and_keeps_the_scheduling_bound() {
+    let network = SimulatedConfig {
+        one_way_latency_ms: 30,
+        jitter_ms: 5,
+        loss_per_10k: 0,
+        duplicate_per_10k: 500,
+        reorder_per_10k: 500,
+        reorder_extra_ms: 20,
+        max_in_flight_datagrams: 4_096,
+        lane_loss_per_10k: [0; RELIABLE_LANES],
+    };
+    let worst_delay = network.one_way_latency_ms + network.jitter_ms + network.reorder_extra_ms;
+    let run = run(
+        network,
+        31,
+        &endpoint_config(2, 12),
+        0,
+        20_000,
+        Delivery::Unreliable(realtime()),
+    );
+    assert_eq!(run.bulk_delivered, (0..run.bulk_sent).collect::<Vec<_>>());
+    assert!(run.bulk_sent > 10, "bulk barely ran: {}", run.bulk_sent);
+    let mut delivered: Vec<_> = run.delivered.iter().map(|&(index, _)| index).collect();
+    delivered.sort_unstable();
+    let sent = u32::try_from(run.sent.len()).expect("few messages");
+    assert_eq!(
+        delivered,
+        (0..sent).collect::<Vec<_>>(),
+        "each exactly once"
+    );
+    for &(index, delivered_at) in &run.delivered {
+        let sent_at = run.sent[index as usize];
+        assert_eq!(
+            run.transmissions[&index],
+            [sent_at + TICK_MS],
+            "unreliable {index} goes out once, in the next flush"
+        );
+        assert!(
+            delivered_at <= sent_at + TICK_MS + worst_delay + TICK_MS,
+            "unreliable {index} delivered at {delivered_at}, sent at {sent_at}"
+        );
+    }
+}
+
+/// Defect: an unreliable message retransmitted after loss, or delivered
+/// twice when the network duplicates it. Oracle: the wire — over 20 % loss,
+/// 10 % duplication and 10 % reordering, every accepted message is
+/// transmitted exactly once, and the server delivers only messages that
+/// were sent, none twice.
+#[wasm_bindgen_test(unsupported = test)]
+fn unreliable_over_a_lossy_network_is_at_most_once() {
+    let network = SimulatedConfig {
+        one_way_latency_ms: 30,
+        jitter_ms: 5,
+        loss_per_10k: 2_000,
+        duplicate_per_10k: 1_000,
+        reorder_per_10k: 1_000,
+        reorder_extra_ms: 20,
+        max_in_flight_datagrams: 4_096,
+        lane_loss_per_10k: [0; RELIABLE_LANES],
+    };
+    let run = run(
+        network,
+        41,
+        &endpoint_config(64, 64),
+        0,
+        10_000,
+        Delivery::Unreliable(realtime()),
+    );
+    let sent = u32::try_from(run.sent.len()).expect("few messages");
+    for index in 0..sent {
+        assert_eq!(
+            run.transmissions.get(&index).map(Vec::len),
+            Some(1),
+            "unreliable {index} transmitted once"
+        );
+    }
+    let mut delivered: Vec<_> = run.delivered.iter().map(|&(index, _)| index).collect();
+    delivered.sort_unstable();
+    let before = delivered.len();
+    delivered.dedup();
+    assert_eq!(
+        delivered.len(),
+        before,
+        "an unreliable message delivered twice"
+    );
+    assert!(delivered.iter().all(|&index| index < sent));
 }

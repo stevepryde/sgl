@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 
 use super::cookie::{ChallengeLimiter, ConfirmReplayCache, CookieKey};
 use super::packet::{self, Acks, Item, Kind, Nonces, Parsed};
-use super::peer::{CloseGrace, Handshake, Peer};
+use super::peer::{CloseGrace, Handshake, Outgoing, Peer};
 use super::transport::DatagramTransport;
 use crate::{
     DEFAULT_LANE_INBOUND_BYTES, DEFAULT_LANE_INBOUND_MESSAGES, DEFAULT_LANE_OUTBOUND_BYTES,
@@ -147,7 +147,8 @@ struct InboundLimits<'a> {
 }
 
 struct StagedPayload {
-    reliable: Vec<(Lane, Vec<u8>)>,
+    /// Reliable and unreliable messages, in item order.
+    messages: Vec<(Delivery, Vec<u8>)>,
     latest: Option<Vec<u8>>,
     /// Completed messages and bytes across peers in this poll, with this
     /// datagram's.
@@ -194,10 +195,25 @@ fn receive_payload_items(
                     {
                         return Err(DisconnectReason::InboundOverflow);
                     }
-                    staged_reliable.push((lane, message));
+                    staged_reliable.push((Delivery::Reliable(lane), message));
                 }
                 if retained.saturating_add(delivered.1) > limits.global_bytes {
                     return Err(DisconnectReason::InboundOverflow);
+                }
+            }
+            // Unreliable messages wait in no queue here, and each poll
+            // reads a bounded number of datagrams, so they need no inbound
+            // allowance; network duplicates are dropped.
+            Item::Unreliable {
+                lane,
+                sequence,
+                payload,
+            } => {
+                if payload.len() > crate::MAX_UNRELIABLE_BYTES {
+                    return Err(DisconnectReason::ProtocolViolation);
+                }
+                if peer.unreliable[lane.index()].accept(sequence) {
+                    staged_reliable.push((Delivery::Unreliable(lane), payload.to_vec()));
                 }
             }
             Item::Latest { sequence, payload } => {
@@ -211,7 +227,7 @@ fn receive_payload_items(
         }
     }
     Ok(StagedPayload {
-        reliable: staged_reliable,
+        messages: staged_reliable,
         latest: staged_latest,
         delivered,
         peer_delivered,
@@ -428,6 +444,21 @@ impl<T: DatagramTransport> Endpoint<T> {
                 self.outbound = (self.outbound.0 + 1, self.outbound.1 + payload.len());
                 Ok(())
             }
+            Delivery::Unreliable(lane) => {
+                if payload.len() > crate::MAX_UNRELIABLE_BYTES {
+                    return Err(SendError::PayloadTooLarge);
+                }
+                let bounds = &self.config.reliable.lanes[lane.index()];
+                let queue = &mut state.unreliable[lane.index()];
+                let (messages, bytes) = queue.queued();
+                if messages >= bounds.unreliable_messages
+                    || bytes + payload.len() > bounds.unreliable_bytes
+                {
+                    return Err(SendError::WouldBlock);
+                }
+                queue.push(payload);
+                Ok(())
+            }
             Delivery::LatestState => {
                 if payload.len() > crate::MAX_LATEST_STATE_BYTES {
                     return Err(SendError::PayloadTooLarge);
@@ -596,9 +627,9 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
     }
 
-    /// Sends up to `budget` reliable datagrams, one fragment each, choosing
-    /// the lane of every fragment by deficit round robin; within a lane a
-    /// due retransmission goes before a new fragment.
+    /// Sends up to `budget` lane datagrams, one item each — a reliable
+    /// fragment or an unreliable message — choosing the lane of every one by
+    /// deficit round robin; within a lane a due retransmission goes first.
     fn flush_reliable_packets(&mut self, id: u64, now_ms: u64, budget: usize) -> usize {
         let mut packet_count = 0;
         while packet_count < budget {
@@ -609,30 +640,48 @@ impl<T: DatagramTransport> Endpoint<T> {
                 self.config.max_reliable_transmissions
             };
             let rto_ms = peer.rto_ms();
-            let reliable = &peer.reliable;
-            let Some(lane) = peer
-                .scheduler
-                .next(|lane| reliable[lane].sendable(now_ms, rto_ms, max_transmissions))
+            let mut scheduler = peer.scheduler.clone();
+            let Some(index) =
+                scheduler.next(|lane| peer.sendable(lane, now_ms, rto_ms, max_transmissions))
             else {
                 break;
             };
-            let sequence = peer.reliable[lane]
-                .next_sendable(now_ms, rto_ms, max_transmissions)
+            peer.scheduler = scheduler;
+            let lane =
+                Lane::new(u8::try_from(index).expect("lane index fits")).expect("valid lane");
+            let outgoing = peer
+                .next_outgoing(index, now_ms, rto_ms, max_transmissions)
                 .expect("the scheduler picked a sendable lane");
-            let acks = peer.acks(packet::ALL_ACKS_LEN);
-            let slot = peer.reliable[lane]
-                .slot(sequence)
-                .expect("a sent fragment is in flight");
-            packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
-            packet::push_reliable(
-                &mut self.scratch,
-                Lane::new(u8::try_from(lane).expect("lane index fits")).expect("valid lane"),
-                sequence,
-                slot.fragment,
-                &slot.bytes,
-            );
+            let acks = match &outgoing {
+                Outgoing::Reliable(sequence) => {
+                    let acks = peer.acks(packet::ALL_ACKS_LEN);
+                    let slot = peer.reliable[index]
+                        .slot(*sequence)
+                        .expect("a sent fragment is in flight");
+                    packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
+                    packet::push_reliable(
+                        &mut self.scratch,
+                        lane,
+                        *sequence,
+                        slot.fragment,
+                        &slot.bytes,
+                    );
+                    peer.reliable[index].mark_sent(*sequence, now_ms);
+                    acks
+                }
+                Outgoing::Unreliable(sequence, payload) => {
+                    let acks = peer.acks(
+                        packet::DATAGRAM_BYTES
+                            - packet::BASE_HEADER_LEN
+                            - packet::ITEM_HEADER_LEN
+                            - payload.len(),
+                    );
+                    packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
+                    packet::push_unreliable(&mut self.scratch, lane, *sequence, payload);
+                    acks
+                }
+            };
             self.transport.send(peer.addr, &self.scratch, now_ms);
-            peer.reliable[lane].mark_sent(sequence, now_ms);
             peer.sent_acks(&acks);
             peer.last_send_ms = now_ms;
             packet_count += 1;
@@ -935,16 +984,13 @@ impl<T: DatagramTransport> Endpoint<T> {
         };
         peer.delivered = staged.peer_delivered;
         self.poll_delivered = staged.delivered;
-        events.extend(
-            staged
-                .reliable
-                .into_iter()
-                .map(|(lane, payload)| EndpointEvent::Message {
-                    peer: id,
-                    delivery: Delivery::Reliable(lane),
-                    payload,
-                }),
-        );
+        events.extend(staged.messages.into_iter().map(|(delivery, payload)| {
+            EndpointEvent::Message {
+                peer: id,
+                delivery,
+                payload,
+            }
+        }));
         if let Some(payload) = staged.latest {
             if let Some(EndpointEvent::Message {
                 payload: existing, ..
@@ -1300,7 +1346,7 @@ mod tests {
         };
         items.find_map(|item| match item {
             Item::Reliable { payload, .. } => Some(payload.to_vec()),
-            Item::Latest { .. } => None,
+            Item::Unreliable { .. } | Item::Latest { .. } => None,
         })
     }
 
@@ -2211,6 +2257,133 @@ mod tests {
                 }]
             );
         }
+    }
+
+    /// #268 (design §11–12): an unreliable payload over
+    /// `MAX_UNRELIABLE_BYTES` is too large and a full unreliable lane queue
+    /// refuses with `WouldBlock`; the peer stays connected, other lanes and
+    /// the reliable allowance still admit, and every accepted message goes
+    /// on the wire exactly once, however many flushes follow.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn unreliable_admission_refuses_whole_and_sends_each_message_once() {
+        let (mut server, _, _) = connected_server(EndpointConfig::default());
+        let unreliable = Delivery::Unreliable(lane(2));
+        assert_eq!(
+            server.send(1, unreliable, &[0; crate::MAX_UNRELIABLE_BYTES + 1]),
+            Err(SendError::PayloadTooLarge)
+        );
+        let accepted = crate::DEFAULT_LANE_UNRELIABLE_MESSAGES;
+        for index in 0..accepted {
+            server
+                .send(1, unreliable, &u32::try_from(index).unwrap().to_le_bytes())
+                .expect("within the unreliable queue");
+        }
+        assert_eq!(server.send(1, unreliable, b"x"), Err(SendError::WouldBlock));
+        server
+            .send(1, Delivery::Unreliable(lane(3)), b"other lane")
+            .expect("another lane's queue admits");
+        server
+            .send(1, Delivery::Reliable(lane(2)), b"reliable")
+            .expect("the reliable allowance is separate");
+        assert!(server.poll(2).is_empty(), "no disconnect is announced");
+        assert_eq!(server.peer_count(), 1);
+
+        for now in [3, 4, 5, 500, 1_000, 2_000] {
+            server.flush(now);
+        }
+        let mut sent: Vec<u32> = server
+            .transport
+            .sent
+            .iter()
+            .filter_map(|datagram| match packet::parse(&datagram.bytes, MAGIC)? {
+                Parsed::Payload { items, .. } => Some(items.collect::<Vec<_>>()),
+                Parsed::Control { .. } => None,
+            })
+            .flatten()
+            .filter_map(|item| match item {
+                Item::Unreliable {
+                    lane: got, payload, ..
+                } if got == lane(2) => Some(u32::from_le_bytes(payload.try_into().unwrap())),
+                _ => None,
+            })
+            .collect();
+        sent.sort_unstable();
+        let expected = u32::try_from(accepted).unwrap();
+        assert_eq!(sent, (0..expected).collect::<Vec<_>>());
+        server
+            .send(1, unreliable, b"room again")
+            .expect("sent messages leave the queue");
+    }
+
+    /// #268 (netcode.md 14): within one lane a new reliable fragment and an
+    /// unreliable message take turns, so neither waits behind more than one
+    /// of the other. Oracle: that bound, read off the wire order of one
+    /// flush that carries a lane's reliable backlog and its unreliable
+    /// queue.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_lane_alternates_new_reliable_fragments_and_unreliable_messages() {
+        let (mut server, _, _) = connected_server(EndpointConfig::default());
+        for _ in 0..3 {
+            server
+                .send(
+                    1,
+                    Delivery::Reliable(lane(2)),
+                    &[1; 3 * packet::MAX_RELIABLE_ITEM_PAYLOAD],
+                )
+                .unwrap();
+        }
+        for index in 0..4u8 {
+            server
+                .send(1, Delivery::Unreliable(lane(2)), &[index])
+                .unwrap();
+        }
+        server.flush(3);
+        let order: Vec<bool> = server
+            .transport
+            .sent
+            .iter()
+            .filter_map(|datagram| match packet::parse(&datagram.bytes, MAGIC)? {
+                Parsed::Payload { mut items, .. } => items.next(),
+                Parsed::Control { .. } => None,
+            })
+            .map(|item| matches!(item, Item::Unreliable { .. }))
+            .collect();
+        assert_eq!(order.iter().filter(|&&unreliable| unreliable).count(), 4);
+        let last_unreliable = order.iter().rposition(|&unreliable| unreliable).unwrap();
+        let mut reliable_run = 0;
+        for &unreliable in &order[..last_unreliable] {
+            reliable_run = if unreliable { 0 } else { reliable_run + 1 };
+            assert!(
+                reliable_run <= 1,
+                "{order:?}: two reliable fragments before a waiting unreliable message"
+            );
+        }
+    }
+
+    /// #268 (design §11): a network duplicate of an unreliable datagram is
+    /// delivered once, and an earlier message that arrives after it still
+    /// arrives. Oracle: at most once per sent message, no order promised.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_duplicated_unreliable_datagram_is_delivered_once() {
+        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
+        let datagram = |sequence: u16, payload: &[u8]| {
+            let mut bytes = Vec::new();
+            packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+            packet::push_unreliable(&mut bytes, lane(1), sequence, payload);
+            ReceivedDatagram { source, bytes }
+        };
+        for (sequence, payload) in [(5, b"five"), (5, b"five"), (4, b"four"), (5, b"five")] {
+            server
+                .transport
+                .received
+                .push_back(datagram(sequence, payload));
+        }
+        let message = |payload: &[u8]| EndpointEvent::Message {
+            peer: 1,
+            delivery: Delivery::Unreliable(lane(1)),
+            payload: payload.to_vec(),
+        };
+        assert_eq!(server.poll(2), vec![message(b"five"), message(b"four")]);
     }
 
     /// #268 (netcode.md 12): a maximal latest-state datagram has room for

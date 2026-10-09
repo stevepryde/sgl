@@ -1,7 +1,8 @@
-//! One WebSocket connection's queues: per-lane outbound messages released
-//! as fragments by deficit round robin, per-lane reassembly and inbound
-//! queues, and a latest-state slot each way. Shared by the native and
-//! browser transports.
+//! One WebSocket connection's queues: per-lane outbound reliable messages
+//! (released as fragments) and unreliable messages, interleaved by deficit
+//! round robin; per-lane reassembly and inbound queues; and a latest-state
+//! slot each way. Shared by the native and browser transports. Nothing an
+//! end accepted is dropped while the connection lives.
 
 use std::collections::VecDeque;
 
@@ -9,7 +10,7 @@ use super::codec::{ENVELOPE_HEADER_LEN, ENVELOPE_TOTAL_LEN, Envelope, WEBSOCKET_
 use crate::lanes::{Fragment, LaneScheduler, Reassembly};
 use crate::{
     Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, MAX_RELIABLE_MESSAGE_BYTES,
-    RELIABLE_LANES, ReliableCapacity, ReliableConfig, SendError,
+    MAX_UNRELIABLE_BYTES, RELIABLE_LANES, ReliableCapacity, ReliableConfig, SendError,
 };
 
 fn lane(index: usize) -> Lane {
@@ -43,26 +44,74 @@ struct Staged {
     generation: u64,
 }
 
-/// One lane's outbound messages. The front message leaves as fragments;
-/// it counts against the lane's bounds until its last fragment is taken.
-#[derive(Debug, Default)]
-struct OutboundLane {
-    messages: VecDeque<Staged>,
-    /// Bytes of the front message already taken as fragments.
-    taken: usize,
+/// One FIFO of messages and their bytes.
+#[derive(Debug)]
+struct Fifo<T> {
+    items: VecDeque<T>,
     bytes: usize,
 }
 
+impl<T> Default for Fifo<T> {
+    fn default() -> Self {
+        Self {
+            items: VecDeque::new(),
+            bytes: 0,
+        }
+    }
+}
+
+impl<T> Fifo<T> {
+    fn admits(&self, len: usize, messages: usize, bytes: usize) -> bool {
+        self.items.len() < messages && self.bytes + len <= bytes
+    }
+
+    fn push(&mut self, item: T, len: usize) {
+        self.bytes += len;
+        self.items.push_back(item);
+    }
+}
+
+/// One lane's outbound messages. The front reliable message leaves as
+/// fragments and counts against the lane's bounds until its last fragment
+/// is taken; unreliable messages leave whole. When both are released a new
+/// reliable fragment and an unreliable message take turns.
+#[derive(Debug, Default)]
+struct OutboundLane {
+    reliable: Fifo<Staged>,
+    /// Bytes of the front reliable message already taken as fragments.
+    taken: usize,
+    unreliable: Fifo<Staged>,
+    unreliable_turn: bool,
+}
+
 impl OutboundLane {
-    fn released(&self, generation: u64) -> bool {
-        self.messages
+    fn reliable_released(&self, generation: u64) -> bool {
+        self.reliable
+            .items
             .front()
             .is_some_and(|message| message.generation <= generation)
     }
 
-    /// The front message's next fragment and its end.
+    fn unreliable_released(&self, generation: u64) -> bool {
+        self.unreliable
+            .items
+            .front()
+            .is_some_and(|message| message.generation <= generation)
+    }
+
+    fn released(&self, generation: u64) -> bool {
+        self.reliable_released(generation) || self.unreliable_released(generation)
+    }
+
+    /// Whether the next frame is the front unreliable message.
+    fn unreliable_next(&self, generation: u64) -> bool {
+        self.unreliable_released(generation)
+            && (self.unreliable_turn || !self.reliable_released(generation))
+    }
+
+    /// The front reliable message's next fragment and its end.
     fn next_fragment(&self) -> Option<(Fragment, usize)> {
-        let front = self.messages.front()?;
+        let front = self.reliable.items.front()?;
         Some(Fragment::at(
             front.payload.len(),
             self.taken,
@@ -71,32 +120,81 @@ impl OutboundLane {
         ))
     }
 
-    fn take_fragment(&mut self) -> Option<(Fragment, Vec<u8>)> {
+    /// The next frame's kind, fragment and payload length.
+    fn peek(&self, generation: u64) -> Option<(bool, Fragment, usize)> {
+        if self.unreliable_next(generation) {
+            let front = self.unreliable.items.front()?;
+            return Some((true, Fragment::Whole, front.payload.len()));
+        }
         let (fragment, end) = self.next_fragment()?;
-        let front = self.messages.front().expect("a fragment has a message");
+        Some((false, fragment, end - self.taken))
+    }
+
+    /// Takes the next released frame: whether it is unreliable, its
+    /// fragment and its payload.
+    fn take(&mut self, generation: u64) -> Option<(bool, Fragment, Vec<u8>)> {
+        if self.unreliable_next(generation) {
+            let message = self.unreliable.items.pop_front()?;
+            self.unreliable.bytes -= message.payload.len();
+            self.unreliable_turn = false;
+            return Some((true, Fragment::Whole, message.payload));
+        }
+        let (fragment, end) = self.next_fragment()?;
+        self.unreliable_turn = self.unreliable_released(generation);
+        let front = self
+            .reliable
+            .items
+            .front()
+            .expect("a fragment has a message");
         if end < front.payload.len() {
             let payload = front.payload[self.taken..end].to_vec();
             self.taken = end;
-            return Some((fragment, payload));
+            return Some((false, fragment, payload));
         }
-        let message = self.messages.pop_front().expect("checked above");
-        self.bytes -= message.payload.len();
+        let message = self.reliable.items.pop_front().expect("checked above");
+        self.reliable.bytes -= message.payload.len();
         let payload = if self.taken == 0 {
             message.payload
         } else {
             message.payload[self.taken..].to_vec()
         };
         self.taken = 0;
-        Some((fragment, payload))
+        Some((false, fragment, payload))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.reliable.items.is_empty() && self.unreliable.items.is_empty()
     }
 }
 
-/// One lane's inbound reassembly and completed messages.
+/// One lane's inbound reassembly and the messages waiting for `poll`.
 #[derive(Debug, Default)]
 struct InboundLane {
     reassembly: Reassembly,
-    messages: VecDeque<Vec<u8>>,
-    bytes: usize,
+    reliable: Fifo<Vec<u8>>,
+    unreliable: Fifo<Vec<u8>>,
+    unreliable_turn: bool,
+}
+
+impl InboundLane {
+    fn is_empty(&self) -> bool {
+        self.reliable.items.is_empty() && self.unreliable.items.is_empty()
+    }
+
+    /// The next message, reliable and unreliable taking turns.
+    fn pop(&mut self) -> Option<(bool, Vec<u8>)> {
+        let (unreliable, fifo) = if self.unreliable.items.is_empty()
+            || (!self.unreliable_turn && !self.reliable.items.is_empty())
+        {
+            (false, &mut self.reliable)
+        } else {
+            (true, &mut self.unreliable)
+        };
+        let message = fifo.items.pop_front()?;
+        fifo.bytes -= message.len();
+        self.unreliable_turn = !unreliable && !self.unreliable.items.is_empty();
+        Some((unreliable, message))
+    }
 }
 
 #[derive(Debug)]
@@ -140,33 +238,49 @@ impl PeerState {
         }
     }
 
-    /// Queues a payload, or refuses it whole. A full reliable lane returns
-    /// `WouldBlock` and leaves the connection open.
+    /// Queues a payload, or refuses it whole. A full reliable or unreliable
+    /// lane queue returns `WouldBlock` and leaves the connection open; an
+    /// accepted message is never dropped while the connection lives.
     pub(super) fn send(&mut self, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
         if self.terminal.is_some() || self.graceful_closing {
             return Err(SendError::Disconnected);
         }
         let cap = match delivery {
             Delivery::Reliable(_) => MAX_RELIABLE_MESSAGE_BYTES,
+            Delivery::Unreliable(_) => MAX_UNRELIABLE_BYTES,
             Delivery::LatestState => MAX_LATEST_STATE_BYTES,
         };
         if payload.len() > cap {
             return Err(SendError::PayloadTooLarge);
         }
+        let staged = |payload: &[u8], generation| Staged {
+            payload: payload.to_vec(),
+            generation,
+        };
         match delivery {
             Delivery::Reliable(lane) => {
                 let bounds = &self.reliable.lanes[lane.index()];
-                let queue = &mut self.outbound[lane.index()];
-                if queue.messages.len() >= bounds.outbound_messages
-                    || queue.bytes + payload.len() > bounds.outbound_bytes
-                {
+                let queue = &mut self.outbound[lane.index()].reliable;
+                if !queue.admits(
+                    payload.len(),
+                    bounds.outbound_messages,
+                    bounds.outbound_bytes,
+                ) {
                     return Err(SendError::WouldBlock);
                 }
-                queue.bytes += payload.len();
-                queue.messages.push_back(Staged {
-                    payload: payload.to_vec(),
-                    generation: self.staging_generation,
-                });
+                queue.push(staged(payload, self.staging_generation), payload.len());
+            }
+            Delivery::Unreliable(lane) => {
+                let bounds = &self.reliable.lanes[lane.index()];
+                let queue = &mut self.outbound[lane.index()].unreliable;
+                if !queue.admits(
+                    payload.len(),
+                    bounds.unreliable_messages,
+                    bounds.unreliable_bytes,
+                ) {
+                    return Err(SendError::WouldBlock);
+                }
+                queue.push(staged(payload, self.staging_generation), payload.len());
             }
             Delivery::LatestState => {
                 let sequence = self.next_latest_sequence;
@@ -187,24 +301,24 @@ impl PeerState {
         Ok(())
     }
 
-    /// What `lane` admits now; all zeros once closing or closed.
+    /// What `lane` admits now for reliable messages; all zeros once closing
+    /// or closed.
     pub(super) fn capacity(&self, lane: Lane) -> ReliableCapacity {
         if self.terminal.is_some() || self.graceful_closing {
             return ReliableCapacity::default();
         }
         let bounds = &self.reliable.lanes[lane.index()];
-        let queue = &self.outbound[lane.index()];
+        let queue = &self.outbound[lane.index()].reliable;
         ReliableCapacity::remaining(
-            bounds
-                .outbound_messages
-                .saturating_sub(queue.messages.len()),
+            bounds.outbound_messages.saturating_sub(queue.items.len()),
             bounds.outbound_bytes.saturating_sub(queue.bytes),
         )
     }
 
     /// Applies one received frame. A reliable fragment goes through its
-    /// lane's reassembly; a completed message joins the lane's inbound queue
-    /// within the lane's bounds.
+    /// lane's reassembly; a completed message, or an unreliable one, joins
+    /// the lane's inbound queue within the lane's bounds, or the peer is
+    /// closed — nothing received is dropped.
     pub(super) fn receive(&mut self, envelope: Envelope<'_>) -> Result<(), DisconnectReason> {
         if self.terminal.is_some() {
             return Err(DisconnectReason::Peer);
@@ -218,21 +332,37 @@ impl PeerState {
                 self.inbound_latest = Some(envelope.payload.to_vec());
                 return Ok(());
             }
+            Delivery::Unreliable(lane) => {
+                let bounds = &self.reliable.lanes[lane.index()];
+                let queue = &mut self.inbound[lane.index()].unreliable;
+                if queue.admits(
+                    envelope.payload.len(),
+                    bounds.unreliable_messages,
+                    bounds.unreliable_bytes,
+                ) {
+                    queue.push(envelope.payload.to_vec(), envelope.payload.len());
+                    return Ok(());
+                }
+                DisconnectReason::InboundOverflow
+            }
             Delivery::Reliable(lane) => {
                 let bounds = &self.reliable.lanes[lane.index()];
-                let queue = &mut self.inbound[lane.index()];
-                match queue.reassembly.push(
+                let inbound = &mut self.inbound[lane.index()];
+                match inbound.reassembly.push(
                     envelope.fragment,
                     envelope.payload,
                     MAX_RELIABLE_MESSAGE_BYTES,
                 ) {
                     Ok(None) => return Ok(()),
                     Ok(Some(message))
-                        if queue.messages.len() < bounds.inbound_messages
-                            && queue.bytes + message.len() <= bounds.inbound_bytes =>
+                        if inbound.reliable.admits(
+                            message.len(),
+                            bounds.inbound_messages,
+                            bounds.inbound_bytes,
+                        ) =>
                     {
-                        queue.bytes += message.len();
-                        queue.messages.push_back(message);
+                        let len = message.len();
+                        inbound.reliable.push(message, len);
                         return Ok(());
                     }
                     Ok(Some(_)) => DisconnectReason::InboundOverflow,
@@ -244,21 +374,24 @@ impl PeerState {
         Err(failure)
     }
 
-    /// The next inbound message: reliable lanes interleaved by weight, then
-    /// the newest latest state.
+    /// The next inbound message: lanes interleaved by weight, each lane's
+    /// reliable and unreliable messages taking turns, then the newest latest
+    /// state.
     pub(super) fn pop_inbound(&mut self) -> Option<(Delivery, Vec<u8>)> {
         let inbound = &self.inbound;
         if let Some(index) = self
             .inbound_scheduler
-            .next(|lane| !inbound[lane].messages.is_empty())
+            .next(|lane| !inbound[lane].is_empty())
         {
-            let queue = &mut self.inbound[index];
-            let message = queue
-                .messages
-                .pop_front()
+            let (unreliable, message) = self.inbound[index]
+                .pop()
                 .expect("the scheduler picked a backlog");
-            queue.bytes -= message.len();
-            return Some((Delivery::Reliable(lane(index)), message));
+            let delivery = if unreliable {
+                Delivery::Unreliable(lane(index))
+            } else {
+                Delivery::Reliable(lane(index))
+            };
+            return Some((delivery, message));
         }
         self.inbound_latest
             .take()
@@ -294,19 +427,20 @@ impl PeerState {
     /// [`Self::pop_released_frame`] would return.
     pub(super) fn next_released_frame_len(&self) -> Option<(Delivery, usize)> {
         if let Some(index) = self.released_lane() {
-            let queue = &self.outbound[index];
-            let (fragment, end) = queue
-                .next_fragment()
-                .expect("a released lane has a message");
+            let (unreliable, fragment, len) = self.outbound[index]
+                .peek(self.released_generation)
+                .expect("a released lane has a frame");
             let total = if fragment.total().is_some() {
                 ENVELOPE_TOTAL_LEN
             } else {
                 0
             };
-            return Some((
-                Delivery::Reliable(lane(index)),
-                ENVELOPE_HEADER_LEN + total + end - queue.taken,
-            ));
+            let delivery = if unreliable {
+                Delivery::Unreliable(lane(index))
+            } else {
+                Delivery::Reliable(lane(index))
+            };
+            return Some((delivery, ENVELOPE_HEADER_LEN + total + len));
         }
         self.outbound_latest
             .as_ref()
@@ -314,20 +448,24 @@ impl PeerState {
             .map(|frame| (frame.delivery, ENVELOPE_HEADER_LEN + frame.payload.len()))
     }
 
-    /// The next released frame: a fragment from the lane deficit round
-    /// robin picks, else the latest state once every released reliable
-    /// fragment has gone.
+    /// The next released frame: a reliable fragment or an unreliable
+    /// message from the lane deficit round robin picks, else the latest
+    /// state once every released lane frame has gone.
     pub(super) fn pop_released_frame(&mut self) -> Option<OutboundFrame> {
         let (outbound, released) = (&self.outbound, self.released_generation);
         if let Some(index) = self
             .outbound_scheduler
             .next(|lane| outbound[lane].released(released))
         {
-            let (fragment, payload) = self.outbound[index]
-                .take_fragment()
-                .expect("a released lane has a message");
+            let (unreliable, fragment, payload) = self.outbound[index]
+                .take(released)
+                .expect("a released lane has a frame");
             return Some(OutboundFrame {
-                delivery: Delivery::Reliable(lane(index)),
+                delivery: if unreliable {
+                    Delivery::Unreliable(lane(index))
+                } else {
+                    Delivery::Reliable(lane(index))
+                },
                 sequence: 0,
                 fragment,
                 payload,
@@ -362,7 +500,7 @@ impl PeerState {
 
     pub(super) fn finish_graceful_close(&mut self) {
         if self.graceful_closing
-            && self.outbound.iter().all(|lane| lane.messages.is_empty())
+            && self.outbound.iter().all(OutboundLane::is_empty)
             && self.outbound_latest.is_none()
         {
             self.terminal = Some(DisconnectReason::Local);
@@ -556,6 +694,58 @@ mod tests {
         );
     }
 
+    /// Defect (design §12): an unreliable message held behind bulk data,
+    /// dropped under backpressure, reordered or fragmented on WebSocket.
+    /// Oracle: the scheduling bounds of netcode.md 14 — with bulk on lane 1
+    /// at 8:1, deficit round robin lets at most one bulk fragment go before
+    /// a released lane-0 unreliable message; with bulk on lane 0 itself, new
+    /// reliable fragments and unreliable messages take turns, so again at
+    /// most one goes first. The bulk lane is kept full and every accepted
+    /// unreliable message leaves whole, once, in send order.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn unreliable_frames_keep_their_lane_bound_behind_bulk() {
+        let mut config = ReliableConfig::DEFAULT;
+        config.lanes[0].weight = 8;
+        config.lanes[1].weight = 1;
+        for bulk_lane in [1, 0] {
+            let mut peer = PeerState::new(&config);
+            let bulk = Delivery::Reliable(lane(bulk_lane));
+            let (mut bulk_sent, mut left) = (0u32, Vec::new());
+            for index in 0..200u32 {
+                while peer.send(bulk, &vec![bulk_sent as u8; 60 * 1024]).is_ok() {
+                    bulk_sent += 1;
+                }
+                peer.send(Delivery::Unreliable(lane(0)), &index.to_le_bytes())
+                    .expect("one message per round fits");
+                peer.release_outbound().unwrap();
+                // The socket takes frames until the unreliable one has gone.
+                let mut bulk_ahead = 0;
+                loop {
+                    let frame = peer.pop_released_frame().expect("a released frame");
+                    if frame.delivery == bulk {
+                        bulk_ahead += 1;
+                        assert!(
+                            bulk_ahead <= 1,
+                            "bulk on lane {bulk_lane}: message {index} waited for more"
+                        );
+                        continue;
+                    }
+                    assert_eq!(frame.delivery, Delivery::Unreliable(lane(0)));
+                    assert_eq!(frame.fragment, Fragment::Whole);
+                    left.push(u32::from_le_bytes(frame.payload.try_into().unwrap()));
+                    break;
+                }
+                // And one more, so the bulk keeps moving.
+                peer.pop_released_frame().expect("bulk is backlogged");
+            }
+            assert_eq!(
+                left,
+                (0..200).collect::<Vec<_>>(),
+                "bulk on lane {bulk_lane}"
+            );
+        }
+    }
+
     #[wasm_bindgen_test(unsupported = test)]
     fn sequence_exhaustion_is_checked_and_terminal() {
         let mut peer = new_peer();
@@ -624,11 +814,12 @@ mod properties {
 
     #[derive(Debug, Clone)]
     enum Op {
-        SendReliable(usize, Vec<u8>),
+        /// Sends on a lane, unreliably when the flag is set.
+        Send(usize, bool, Vec<u8>),
         SendLatest(Vec<u8>),
         Release,
         PopReleased,
-        ReceiveReliable(usize, Vec<u8>),
+        Receive(usize, bool, Vec<u8>),
         ReceiveLatest(u64),
         PopInbound,
     }
@@ -636,58 +827,93 @@ mod properties {
     fn op() -> impl Strategy<Value = Op> {
         let lane = 0..RELIABLE_LANES;
         prop_oneof![
-            4 => (lane.clone(), bytes(2_500)).prop_map(|(l, p)| Op::SendReliable(l, p)),
+            4 => (lane.clone(), bytes(2_500)).prop_map(|(l, p)| Op::Send(l, false, p)),
             1 => (lane.clone(), 0..=MAX_RELIABLE_MESSAGE_BYTES)
-                .prop_map(|(l, len)| Op::SendReliable(l, vec![1; len])),
+                .prop_map(|(l, len)| Op::Send(l, false, vec![1; len])),
+            3 => (lane.clone(), bytes(MAX_UNRELIABLE_BYTES + 1))
+                .prop_map(|(l, p)| Op::Send(l, true, p)),
             2 => bytes(64).prop_map(Op::SendLatest),
             2 => Just(Op::Release),
             4 => Just(Op::PopReleased),
-            2 => (lane, bytes(64)).prop_map(|(l, p)| Op::ReceiveReliable(l, p)),
+            2 => (lane.clone(), any::<bool>(), bytes(64))
+                .prop_map(|(l, unreliable, p)| Op::Receive(l, unreliable, p)),
+            1 => (lane, 0usize..200).prop_map(|(l, n)| Op::Receive(l, true, vec![2; n * 400])),
             1 => (0u64..4).prop_map(Op::ReceiveLatest),
             2 => Just(Op::PopInbound),
         ]
     }
 
-    /// One outbound lane of the model: messages with the release generation
-    /// they wait for, and how much of the front one has left as fragments.
+    /// One outbound queue of the model: messages with the release
+    /// generation they wait for, and how much of the front one has left as
+    /// fragments.
     #[derive(Default)]
-    struct ModelLane {
+    struct ModelQueue {
         messages: VecDeque<(Vec<u8>, u64)>,
         taken: usize,
     }
 
-    impl ModelLane {
+    impl ModelQueue {
         fn bytes(&self) -> usize {
             self.messages.iter().map(|(payload, _)| payload.len()).sum()
         }
     }
 
+    /// The model's queue index for a lane: reliable queues first.
+    fn slot(index: usize, unreliable: bool) -> usize {
+        if unreliable {
+            RELIABLE_LANES + index
+        } else {
+            index
+        }
+    }
+
+    /// The lane's message and byte bounds for one class and direction.
+    fn bounds(
+        config: &ReliableConfig,
+        index: usize,
+        unreliable: bool,
+        inbound: bool,
+    ) -> (usize, usize) {
+        let lane = &config.lanes[index];
+        match (unreliable, inbound) {
+            (true, _) => (lane.unreliable_messages, lane.unreliable_bytes),
+            (false, false) => (lane.outbound_messages, lane.outbound_bytes),
+            (false, true) => (lane.inbound_messages, lane.inbound_bytes),
+        }
+    }
+
+    type Outbound = [ModelQueue; 2 * RELIABLE_LANES];
+    type Inbound = [VecDeque<Vec<u8>>; 2 * RELIABLE_LANES];
+
     /// Defect: a released frame leaking a staged one, a lane's fragments out
     /// of order or not covering its message, a frame past the fragment cap,
-    /// latest state overtaking released reliable frames, a cap enforced
-    /// after the queue grew or on the wrong lane, a full lane that closes the
-    /// peer, a capacity report that disagrees with admission, inbound lanes
-    /// reordered or past their bounds, or a stale latest sequence accepted.
-    /// Oracle: a model with a FIFO per lane plus one slot each way, the
-    /// netcode.md 10, 11 and 13 rules, and the module's release generations.
+    /// an unreliable message dropped, duplicated, reordered or fragmented,
+    /// latest state overtaking released lane frames, a cap enforced after
+    /// the queue grew or on the wrong lane or class, a full queue that
+    /// closes the peer, a capacity report that disagrees with reliable
+    /// admission, inbound queues reordered or past their bounds without
+    /// closing the peer, or a stale latest sequence accepted. Oracle: a
+    /// model with a reliable and an unreliable FIFO per lane plus one slot
+    /// each way, the netcode.md 10, 11 and 13 rules, and the module's
+    /// release generations.
     #[test]
     fn peer_state_matches_the_lane_fifo_plus_slot_model() {
         check(prop::collection::vec(op(), 1..250), |ops| {
             let config = ReliableConfig::DEFAULT;
             let mut state = PeerState::new(&config);
-            let mut outbound: [ModelLane; RELIABLE_LANES] = Default::default();
+            let mut outbound: Outbound = Default::default();
             let mut latest: Option<(u64, Vec<u8>, u64)> = None;
             let mut next_latest = 1u64;
             let (mut staging, mut released) = (1u64, 0u64);
             let mut terminal: Option<DisconnectReason> = None;
-            let mut inbound: [VecDeque<Vec<u8>>; RELIABLE_LANES] = Default::default();
+            let mut inbound: Inbound = Default::default();
             let mut inbound_latest: Option<Vec<u8>> = None;
             let mut last_inbound_latest = 0u64;
             let close = |reason,
                          terminal: &mut Option<DisconnectReason>,
-                         outbound: &mut [ModelLane; RELIABLE_LANES],
+                         outbound: &mut Outbound,
                          latest: &mut Option<(u64, Vec<u8>, u64)>,
-                         inbound: &mut [VecDeque<Vec<u8>>; RELIABLE_LANES],
+                         inbound: &mut Inbound,
                          inbound_latest: &mut Option<Vec<u8>>| {
                 *terminal = Some(reason);
                 *outbound = Default::default();
@@ -698,19 +924,28 @@ mod properties {
 
             for op in ops {
                 match op {
-                    Op::SendReliable(index, payload) => {
+                    Op::Send(index, unreliable, payload) => {
+                        let delivery = if unreliable {
+                            Delivery::Unreliable(lane(index))
+                        } else {
+                            Delivery::Reliable(lane(index))
+                        };
                         let capacity = state.capacity(lane(index));
-                        let result = state.send(Delivery::Reliable(lane(index)), &payload);
-                        prop_assert_eq!(
-                            result.is_ok(),
-                            capacity.messages >= 1 && capacity.bytes >= payload.len()
-                        );
-                        let bounds = &config.lanes[index];
-                        let model = &mut outbound[index];
+                        let result = state.send(delivery, &payload);
+                        if !unreliable {
+                            prop_assert_eq!(
+                                result.is_ok(),
+                                capacity.messages >= 1 && capacity.bytes >= payload.len()
+                            );
+                        }
+                        let (messages, bytes) = bounds(&config, index, unreliable, false);
+                        let model = &mut outbound[slot(index, unreliable)];
                         if terminal.is_some() {
                             prop_assert_eq!(result, Err(SendError::Disconnected));
-                        } else if model.messages.len() >= bounds.outbound_messages
-                            || model.bytes() + payload.len() > bounds.outbound_bytes
+                        } else if unreliable && payload.len() > MAX_UNRELIABLE_BYTES {
+                            prop_assert_eq!(result, Err(SendError::PayloadTooLarge));
+                        } else if model.messages.len() >= messages
+                            || model.bytes() + payload.len() > bytes
                         {
                             prop_assert_eq!(result, Err(SendError::WouldBlock));
                         } else {
@@ -750,25 +985,28 @@ mod properties {
                                 (frame.delivery, encoded.len())
                             })
                         );
-                        let any_released = outbound
-                            .iter()
-                            .any(|lane| lane.messages.front().is_some_and(|(_, g)| *g <= released));
-                        match got {
-                            Some(OutboundFrame {
-                                delivery: Delivery::Reliable(lane),
-                                sequence,
-                                fragment,
-                                payload,
-                            }) => {
-                                prop_assert_eq!(sequence, 0);
-                                prop_assert!(payload.len() <= WEBSOCKET_FRAGMENT_BYTES);
-                                let model = &mut outbound[lane.index()];
+                        let any_released = outbound.iter().any(|queue| {
+                            queue.messages.front().is_some_and(|(_, g)| *g <= released)
+                        });
+                        let lane_frame = match &got {
+                            Some(frame) => match frame.delivery {
+                                Delivery::Reliable(lane) => Some((lane.index(), false)),
+                                Delivery::Unreliable(lane) => Some((lane.index(), true)),
+                                Delivery::LatestState => None,
+                            },
+                            None => None,
+                        };
+                        match (got, lane_frame) {
+                            (Some(frame), Some((index, unreliable))) => {
+                                prop_assert_eq!(frame.sequence, 0);
+                                prop_assert!(frame.payload.len() <= WEBSOCKET_FRAGMENT_BYTES);
+                                let model = &mut outbound[slot(index, unreliable)];
                                 let (message, generation) =
                                     model.messages.front().expect("a released message");
                                 prop_assert!(*generation <= released, "staged frame leaked");
                                 let start = model.taken;
-                                let end = start + payload.len();
-                                prop_assert_eq!(&message[start..end], &payload[..]);
+                                let end = start + frame.payload.len();
+                                prop_assert_eq!(&message[start..end], &frame.payload[..]);
                                 let expected = match (start == 0, end == message.len()) {
                                     (true, true) => Fragment::Whole,
                                     (true, false) => Fragment::First {
@@ -777,9 +1015,13 @@ mod properties {
                                     (false, false) => Fragment::Middle,
                                     (false, true) => Fragment::Last,
                                 };
-                                prop_assert_eq!(fragment, expected);
+                                prop_assert_eq!(frame.fragment, expected);
                                 prop_assert!(
-                                    !payload.is_empty() || message.is_empty(),
+                                    !unreliable || frame.fragment == Fragment::Whole,
+                                    "a fragmented unreliable message"
+                                );
+                                prop_assert!(
+                                    !frame.payload.is_empty() || message.is_empty(),
                                     "an empty fragment of a non-empty message"
                                 );
                                 if end == message.len() {
@@ -789,34 +1031,41 @@ mod properties {
                                     model.taken = end;
                                 }
                             }
-                            Some(frame) => {
-                                prop_assert!(!any_released, "latest overtook released reliable");
+                            (Some(frame), None) => {
+                                prop_assert!(
+                                    !any_released,
+                                    "latest overtook a released lane frame"
+                                );
                                 let (sequence, payload, generation) =
                                     latest.take().expect("a latest frame");
                                 prop_assert!(generation <= released);
                                 prop_assert_eq!(frame.sequence, sequence);
                                 prop_assert_eq!(frame.payload, payload);
                             }
-                            None => {
+                            (None, _) => {
                                 prop_assert!(!any_released);
                                 prop_assert!(latest.as_ref().is_none_or(|(_, _, g)| *g > released));
                             }
                         }
                     }
-                    Op::ReceiveReliable(index, payload) => {
+                    Op::Receive(index, unreliable, payload) => {
                         let result = state.receive(Envelope {
-                            delivery: Delivery::Reliable(lane(index)),
+                            delivery: if unreliable {
+                                Delivery::Unreliable(lane(index))
+                            } else {
+                                Delivery::Reliable(lane(index))
+                            },
                             sequence: 0,
                             fragment: Fragment::Whole,
                             payload: &payload,
                         });
-                        let bounds = &config.lanes[index];
-                        let queued: usize = inbound[index].iter().map(Vec::len).sum();
+                        let (messages, bytes) = bounds(&config, index, unreliable, true);
+                        let queue = &inbound[slot(index, unreliable)];
+                        let queued: usize = queue.iter().map(Vec::len).sum();
                         if terminal.is_some() {
                             prop_assert_eq!(result, Err(DisconnectReason::Peer));
-                        } else if inbound[index].len() >= bounds.inbound_messages
-                            || queued + payload.len() > bounds.inbound_bytes
-                        {
+                        } else if queue.len() >= messages || queued + payload.len() > bytes {
+                            // Nothing received is dropped: the peer is closed.
                             prop_assert_eq!(result, Err(DisconnectReason::InboundOverflow));
                             close(
                                 DisconnectReason::InboundOverflow,
@@ -828,7 +1077,7 @@ mod properties {
                             );
                         } else {
                             prop_assert_eq!(result, Ok(()));
-                            inbound[index].push_back(payload);
+                            inbound[slot(index, unreliable)].push_back(payload);
                         }
                     }
                     Op::ReceiveLatest(step) => {
@@ -860,11 +1109,21 @@ mod properties {
                         }
                     }
                     Op::PopInbound => match state.pop_inbound() {
-                        // Any lane may come next; within a lane, in order.
+                        // Any lane and class may come next; within one, in
+                        // order.
                         Some((Delivery::Reliable(lane), payload)) => {
-                            prop_assert_eq!(inbound[lane.index()].pop_front(), Some(payload));
+                            prop_assert_eq!(
+                                inbound[slot(lane.index(), false)].pop_front(),
+                                Some(payload)
+                            );
                         }
-                        // Reliable messages drain before the latest slot.
+                        Some((Delivery::Unreliable(lane), payload)) => {
+                            prop_assert_eq!(
+                                inbound[slot(lane.index(), true)].pop_front(),
+                                Some(payload)
+                            );
+                        }
+                        // Lane messages drain before the latest slot.
                         Some((Delivery::LatestState, payload)) => {
                             prop_assert!(inbound.iter().all(VecDeque::is_empty));
                             prop_assert_eq!(inbound_latest.take(), Some(payload));

@@ -6,8 +6,9 @@
 //!
 //! Each scenario returns `Err(detail)` instead of panicking so the whole
 //! report reaches the page. Assertions are what a browser game observes:
-//! connection, echoed bytes, lanes echoed whole and in their own order
-//! (long messages fragmented and reassembled on both sides), coalesced
+//! connection, echoed bytes, lanes and unreliable messages echoed whole
+//! and in their own order (long messages fragmented and reassembled on both
+//! sides), coalesced
 //! latest state, a saturated lane that refuses and then drains without
 //! losing the connection, a server-initiated close with its bounded
 //! reconnect, a rejected subprotocol, and a clean local disconnect.
@@ -177,12 +178,16 @@ fn lane_message(lane: Lane, index: u8) -> Vec<u8> {
 }
 
 /// Defect: browser fragmentation or reassembly that splits, joins or
-/// reorders a long message, or a frame tagged with the wrong lane. Oracle:
-/// the fixture echoes each message on the lane it arrived on, so every
-/// lane's echoes are what was sent on it, in order.
+/// reorders a long message, a frame tagged with the wrong lane or class, or
+/// an unreliable message dropped, duplicated or reordered by SGL. Oracle:
+/// the fixture echoes each message on the lane and class it arrived on, and
+/// TCP loses nothing, so every lane's reliable echoes and the lane-2
+/// unreliable echoes are what was sent there, in order.
 async fn lanes_echo_whole_and_in_their_own_order() -> Result<(), String> {
     let mut driver = Driver::connect(config()).await?;
     let lanes = [0, 1, 3].map(|index| Lane::new(index).expect("lane exists"));
+    let unreliable = Lane::new(2).expect("lane exists");
+    let unreliable_message = |index: u8| vec![b'U', index, 0x5A, 0xA5];
     for index in 0..4 {
         for lane in lanes {
             driver
@@ -190,8 +195,12 @@ async fn lanes_echo_whole_and_in_their_own_order() -> Result<(), String> {
                 .send(Delivery::Reliable(lane), &lane_message(lane, index))
                 .map_err(|e| format!("send: {e:?}"))?;
         }
+        driver
+            .client
+            .send(Delivery::Unreliable(unreliable), &unreliable_message(index))
+            .map_err(|e| format!("unreliable send: {e:?}"))?;
     }
-    let want = 4 * lanes.len();
+    let want = 4 * (lanes.len() + 1);
     driver
         .settle(|events| {
             events
@@ -200,7 +209,7 @@ async fn lanes_echo_whole_and_in_their_own_order() -> Result<(), String> {
                     matches!(
                         e,
                         ClientEvent::Message {
-                            delivery: Delivery::Reliable(_),
+                            delivery: Delivery::Reliable(_) | Delivery::Unreliable(_),
                             ..
                         }
                     )
@@ -221,6 +230,9 @@ async fn lanes_echo_whole_and_in_their_own_order() -> Result<(), String> {
                 .collect::<Vec<_>>()
         );
     }
+    let got = driver.payloads(Delivery::Unreliable(unreliable));
+    let sent: Vec<_> = (0..4).map(unreliable_message).collect();
+    ensure!(got == sent, "unreliable echoed {got:?}");
     Ok(())
 }
 

@@ -37,7 +37,8 @@ pub struct SimulatedConfig {
     /// Hard bound for datagrams retained by the whole virtual network.
     pub max_in_flight_datagrams: usize,
     /// Extra drop probability, in parts per 10,000, for a datagram that
-    /// carries a reliable item of each lane, on top of `loss_per_10k`.
+    /// carries a reliable or unreliable item of each lane, on top of
+    /// `loss_per_10k`.
     pub lane_loss_per_10k: [u32; RELIABLE_LANES],
 }
 
@@ -110,7 +111,7 @@ impl Network {
     }
 
     /// Whether the per-lane loss drops a datagram: one draw for each lane
-    /// with loss configured whose reliable item it carries.
+    /// with loss configured whose item it carries.
     fn lane_loss(&mut self, bytes: &[u8]) -> bool {
         let loss = self.config.lane_loss_per_10k;
         if loss == [0; RELIABLE_LANES] || bytes.len() < 3 {
@@ -122,7 +123,7 @@ impl Network {
         };
         let mut lanes = [false; RELIABLE_LANES];
         for item in items {
-            if let Item::Reliable { lane, .. } = item {
+            if let Item::Reliable { lane, .. } | Item::Unreliable { lane, .. } = item {
                 lanes[lane.index()] = true;
             }
         }

@@ -33,8 +33,9 @@ pub struct BrowserWebSocketConfig {
     pub identity: WebSocketIdentity,
     /// Poll-driven bounded reconnect policy.
     pub reconnect: ReconnectPolicy,
-    /// Browser buffered-byte watermark that paces reliable traffic: a
-    /// released frame waits while it would take `bufferedAmount` past this.
+    /// Browser buffered-byte watermark that paces reliable and unreliable
+    /// traffic: a released frame waits while it would take `bufferedAmount`
+    /// past this.
     /// At least [`MAX_WEBSOCKET_FRAME_BYTES`] so any frame can go out.
     pub reliable_buffered_bytes: usize,
     /// Browser buffered-byte watermark above which latest state stays coalesced.
@@ -283,8 +284,12 @@ impl BrowserWebSocketClient {
             let Some((delivery, frame_bytes)) = next else {
                 break;
             };
+            // Unreliable frames wait for the reliable watermark like reliable
+            // ones: an accepted message is never dropped.
             let limit = match delivery {
-                Delivery::Reliable(_) => self.config.reliable_buffered_bytes,
+                Delivery::Reliable(_) | Delivery::Unreliable(_) => {
+                    self.config.reliable_buffered_bytes
+                }
                 Delivery::LatestState => self.config.latest_buffered_bytes,
             };
             // Paced, never fatal: the frame waits for the browser to drain.

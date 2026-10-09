@@ -15,6 +15,7 @@ mod sequence;
 mod session;
 pub mod simulated;
 mod transport;
+mod unreliable;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;

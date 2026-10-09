@@ -2,7 +2,7 @@
 //! connection between them, and the fragment reassembly every transport
 //! uses (netcode.md 14).
 
-use crate::{MAX_RELIABLE_MESSAGE_BYTES, RELIABLE_LANES};
+use crate::{MAX_RELIABLE_MESSAGE_BYTES, MAX_UNRELIABLE_BYTES, RELIABLE_LANES};
 
 /// Largest [`LaneConfig::weight`] a lane may be given.
 pub const MAX_LANE_WEIGHT: u16 = 256;
@@ -14,12 +14,16 @@ pub const DEFAULT_LANE_OUTBOUND_BYTES: usize = 256 * 1024;
 pub const DEFAULT_LANE_INBOUND_MESSAGES: usize = 128;
 /// Default [`LaneConfig::inbound_bytes`].
 pub const DEFAULT_LANE_INBOUND_BYTES: usize = 256 * 1024;
+/// Default [`LaneConfig::unreliable_messages`].
+pub const DEFAULT_LANE_UNRELIABLE_MESSAGES: usize = 128;
+/// Default [`LaneConfig::unreliable_bytes`].
+pub const DEFAULT_LANE_UNRELIABLE_BYTES: usize = 64 * 1024;
 /// Ceiling for a lane's message bounds.
 pub const LANE_QUEUE_MESSAGES_LIMIT: usize = 65_536;
 /// Ceiling for a lane's byte bounds.
 pub const LANE_QUEUE_BYTES_LIMIT: usize = 256 * 1024 * 1024;
 
-/// One reliable lane's scheduling share and queue bounds.
+/// One lane's scheduling share and queue bounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LaneConfig {
     /// Scheduling share, `1..=MAX_LANE_WEIGHT`: a backlogged lane sends
@@ -40,6 +44,13 @@ pub struct LaneConfig {
     /// Bytes of completed messages not yet returned by `poll`, from
     /// [`MAX_RELIABLE_MESSAGE_BYTES`] to `LANE_QUEUE_BYTES_LIMIT`.
     pub inbound_bytes: usize,
+    /// Unreliable messages this side queues for the lane until they are
+    /// sent, `1..=LANE_QUEUE_MESSAGES_LIMIT`; a full queue refuses `send` with
+    /// `WouldBlock`. Received unreliable messages past it are dropped.
+    pub unreliable_messages: usize,
+    /// Unreliable bytes queued for the lane, from
+    /// [`MAX_UNRELIABLE_BYTES`] to `LANE_QUEUE_BYTES_LIMIT`.
+    pub unreliable_bytes: usize,
 }
 
 impl LaneConfig {
@@ -50,6 +61,8 @@ impl LaneConfig {
         outbound_bytes: DEFAULT_LANE_OUTBOUND_BYTES,
         inbound_messages: DEFAULT_LANE_INBOUND_MESSAGES,
         inbound_bytes: DEFAULT_LANE_INBOUND_BYTES,
+        unreliable_messages: DEFAULT_LANE_UNRELIABLE_MESSAGES,
+        unreliable_bytes: DEFAULT_LANE_UNRELIABLE_BYTES,
     };
 
     fn validate(&self) -> Result<(), ReliableConfigError> {
@@ -62,8 +75,10 @@ impl LaneConfig {
         let bytes = MAX_RELIABLE_MESSAGE_BYTES..=LANE_QUEUE_BYTES_LIMIT;
         if !messages.contains(&self.outbound_messages)
             || !messages.contains(&self.inbound_messages)
+            || !messages.contains(&self.unreliable_messages)
             || !bytes.contains(&self.outbound_bytes)
             || !bytes.contains(&self.inbound_bytes)
+            || !(MAX_UNRELIABLE_BYTES..=LANE_QUEUE_BYTES_LIMIT).contains(&self.unreliable_bytes)
         {
             return Err(ReliableConfigError::InvalidBound);
         }
@@ -77,9 +92,10 @@ impl Default for LaneConfig {
     }
 }
 
-/// Per-connection reliable configuration shared by every transport: one
-/// [`LaneConfig`] per lane, indexed by [`Lane::index`](crate::Lane::index).
-/// Both ends of a connection should use the same configuration.
+/// Per-connection lane configuration shared by every transport: one
+/// [`LaneConfig`] per lane, indexed by [`Lane::index`](crate::Lane::index),
+/// bounding its reliable and unreliable queues. Both ends of a connection
+/// should use the same configuration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReliableConfig {
     /// Each lane's weight and bounds.

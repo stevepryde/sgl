@@ -19,10 +19,11 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    interrupted accept, or one that took a connection the client had already
    reset, it accepts again at once; after any other accept error it retries
    after a short back-off.
-3. Delivery is either reliable ordered on a lane (`Delivery::Reliable(Lane)`;
-   `RELIABLE_LANES` (4) independent lanes, `Delivery::RELIABLE_ORDERED` is
-   lane 0) or newest-wins latest-state. What each lane carries is the game's
-   choice.
+3. Delivery has three classes: reliable ordered on a lane
+   (`Delivery::Reliable(Lane)`; `RELIABLE_LANES` (4) independent lanes,
+   `Delivery::RELIABLE_ORDERED` is lane 0), unreliable on a lane
+   (`Delivery::Unreliable(Lane)`: independent best-effort messages), and
+   newest-wins latest-state. What each lane carries is the game's choice.
 4. Transports own framing, sequencing, acknowledgement, retransmission, queue
    bounds, connection identity, and socket or browser I/O. The game supplies
    UDP magic, WebSocket magic, path, and subprotocol.
@@ -45,7 +46,15 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     never a stale one. Reliable delivery is exact, in order, and unduplicated
     within each lane; there is no order across lanes. On UDP each lane has
     its own sequence space, window and retransmission, so a lost fragment of
-    one lane never delays another lane's delivery.
+    one lane never delays another lane's delivery. "Unreliable" means never
+    retransmitted and unordered: each unreliable message is sent whole (at
+    most `MAX_UNRELIABLE_BYTES`, 1168), never fragmented or retransmitted, and
+    delivered at most once or not at all, in no promised order relative to
+    any other message. SGL itself never drops an accepted message of any
+    class while the connection lives; only the network may lose an
+    unreliable one (UDP), and a receiver drops network duplicates. On
+    WebSocket and in memory every unreliable message arrives, in send order,
+    though that order is not promised.
 11. Every bound is a public constant or a validated configuration value and
     is enforced before I/O. A payload over `MAX_RELIABLE_MESSAGE_BYTES` or
     `MAX_LATEST_STATE_BYTES` returns `SendError::PayloadTooLarge`. Each lane
@@ -55,20 +64,23 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     `NativeWebSocketClientConfig` and `BrowserWebSocketConfig`;
     `memory_duplex_with`) and validates before use; both ends use the same
     configuration. A lane holding its `outbound_messages` or `outbound_bytes`
-    (unflushed, in flight and unacknowledged alike), or a shared ceiling such
-    as the UDP endpoint's `global_reliable_outbound_*`, refuses the send with
-    `SendError::WouldBlock`: nothing is queued, the caller keeps the payload
-    and may retry after a later `flush` and `poll`, and the connection and
-    every message accepted before it are unaffected. A full lane never
-    refuses another lane. A retried message is ordered after whatever the
+    (unflushed, in flight and unacknowledged alike), a lane whose unreliable
+    queue holds `unreliable_messages` or `unreliable_bytes` not yet sent, or a
+    shared ceiling such as the UDP endpoint's `global_reliable_outbound_*`,
+    refuses the send with `SendError::WouldBlock`: nothing is queued, the
+    caller keeps the payload and may retry after a later `flush` and `poll`,
+    and the connection and every message accepted before it are unaffected.
+    A full lane never refuses another lane, and a full unreliable queue never
+    refuses reliable messages. `capacity` reports the reliable allowance. A retried message is ordered after whatever the
     lane accepted meanwhile. The threaded UDP worker moves a message to its
     endpoint only when the endpoint has room on that lane, rotating between
     backlogged peers and lanes, and the browser holds released frames while
     `bufferedAmount` is above its watermark; neither refuses an accepted
     message or disconnects. A peer that exceeds this side's inbound bounds —
     a lane's completed messages not yet returned by `poll` past its
-    `inbound_messages` or `inbound_bytes`, or the UDP endpoint's
-    `global_reliable_inbound_*` — is closed alone with
+    `inbound_messages` or `inbound_bytes`, its received unreliable messages
+    waiting for `poll` past `unreliable_messages` or `unreliable_bytes`, or
+    the UDP endpoint's `global_reliable_inbound_*` — is closed alone with
     `DisconnectReason::InboundOverflow`. Other connections are never
     affected.
 12. UDP datagrams (version 2) are at most `MAX_DATAGRAM_BYTES` (1200). A
@@ -78,26 +90,34 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     and rides the next datagram, normally the acknowledgement datagram of the
     same flush. Each item's tag carries its
     kind, FIRST and MORE flags and lane, and the first fragment of a longer
-    message its total length. Reliable fragments carry at most
+    message its total length. Item kinds are 0 reliable, 1 latest state and
+    2 unreliable (3 is reserved); an unreliable item carries no fragment
+    flags, and its sequence is its lane's unreliable sequence, which the
+    receiver uses only to drop duplicates within a 1,024-message window (one
+    reordered behind more than that counts as lost). Reliable fragments carry at most
     `MAX_RELIABLE_FRAGMENT_BYTES` (1150, four fewer on a first fragment), so
     every reliable datagram also carries every lane's acknowledgement; latest
-    state carries at most `MAX_LATEST_STATE_BYTES` (1168) beside one. A
-    datagram with a reserved item kind, a lane past `RELIABLE_LANES`, latest
-    state with fragment flags or a lane, a first fragment declaring no more
-    than it carries, or mask bits on a control kind is rejected; from a
-    connected peer that is `ProtocolViolation`. The reliable window is
+    state and unreliable messages carry at most 1168 beside one. A datagram
+    with the reserved item kind, a lane past `RELIABLE_LANES`, latest state
+    or an unreliable message with fragment flags, latest state with a lane, a
+    first fragment declaring no more than it carries, or mask bits on a
+    control kind is rejected; from a connected peer that is
+    `ProtocolViolation`. The reliable window is
     `WINDOW` (32) fragments per lane; handshakes use a keyed cookie challenge
     with a per-prefix challenge budget and a confirm replay cache.
 13. WebSocket frames use the 18-byte version-2 envelope: magic, version,
-    flags (kind, FIRST, MORE), lane, big-endian sequence (0 for reliable,
-    strictly increasing for latest), big-endian length, then the big-endian
-    declared total on the first fragment of a longer message. A reliable
-    message leaves in frames of at most `WEBSOCKET_FRAGMENT_BYTES` (16 KiB),
-    so a long message holds another lane back by at most one fragment. Text
-    frames, wrong magic or version, an unknown kind, reserved flags, an
-    invalid lane, latest state with fragment flags, a total not above its
-    fragment, and frames over `MAX_WEBSOCKET_FRAME_BYTES` are rejected as
-    `ProtocolViolation`. Every lane shares the one TCP stream: a lost segment
+    flags (kind 0 reliable, 1 latest, 2 unreliable; FIRST; MORE), lane,
+    big-endian sequence (0 for reliable and unreliable, strictly increasing
+    for latest), big-endian length, then the big-endian declared total on the
+    first fragment of a longer message. A reliable message leaves in frames
+    of at most `WEBSOCKET_FRAGMENT_BYTES` (16 KiB), so a long message holds
+    another lane back by at most one fragment. Unreliable frames wait in
+    their lane's queue and leave in its schedule under the same pacing as
+    reliable ones (the browser's `bufferedAmount` watermark); they are never
+    dropped by the sender. Text frames, wrong magic or version, the reserved
+    kind, reserved flags, an invalid lane, latest state or an unreliable
+    message with fragment flags, a total not above its fragment, and frames
+    over `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`. Every lane shares the one TCP stream: a lost segment
     stalls every lane until TCP retransmits it, and a frame already written
     precedes everything after it; UDP is the transport for loss-isolated
     lanes. Neither transport negotiates a version, so builds on different
@@ -110,10 +130,15 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     it takes one datagram or frame: a backlogged lane sends `weight`
     fragments per round, every backlogged lane makes progress, and between
     two fragments of a lane the other lanes send at most the sum of their
-    weights. There is no strict priority. Within a lane, due retransmissions
-    go before new fragments; latest state keeps its reserved UDP datagram per
-    flush; the memory transport, whose messages cross whole, returns lanes
-    interleaved by the same weights. Each lane reassembles one message at a
+    weights. There is no strict priority. A lane's unreliable messages share
+    its quantum with its reliable work, each message counting as one
+    fragment. Within a lane, due UDP retransmissions go first; otherwise a
+    new reliable fragment and an unreliable message take turns, so neither
+    waits behind more than one of the other (plus, on UDP, the lane's due
+    retransmissions, at most `WINDOW` + 1 per retransmission timeout). An
+    unsent UDP unreliable message waits for a later flush. Latest state keeps
+    its reserved UDP datagram per flush; the memory transport, whose messages
+    cross whole, returns lanes interleaved by the same weights. Each lane reassembles one message at a
     time against the total its first fragment declares: a middle or last
     fragment with no first, a first or whole fragment while assembling, a
     declared total above `MAX_RELIABLE_MESSAGE_BYTES` or not above the first
@@ -131,5 +156,8 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
   retained message lands exactly once.
 - A realtime lane keeps its scheduling bound while another lane streams bulk
   data, and on UDP a dropped bulk fragment delays no other lane.
+- Unreliable messages are never retransmitted and never delivered twice;
+  with no network loss every accepted one arrives, and SGL drops none on any
+  transport.
 - A seeded `SimulatedNetwork` run replays the same event trace.
 - `sgl-net` has no dependency on `sgl-2d` or a game crate.
