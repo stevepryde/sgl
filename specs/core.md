@@ -8,10 +8,20 @@ browser client must get identical results from it.
 
 1. `sgl-core` has no I/O, no clocks, no threads, and no other SGL crate as a
    dependency. Every operation takes its `dt`, seed, or `Rng` from the caller.
-2. **Time.** `FixedClock` runs the simulation in constant `1/hz` steps. The
-   per-frame delta is clamped to one fixed step, so a frame runs at most one
-   step and the cadence never oscillates near the fixed rate. `alpha` is the
-   overstep fraction in `[0, 1)`. Default rate is 60 Hz; the game may set any.
+2. **Time.** `FixedClock` runs the simulation in constant `1/hz` steps from
+   caller-supplied frame time. Default rate is 60 Hz; the game may set any.
+   The default policy is render-paced: the per-frame delta is clamped to one
+   fixed step, so a frame runs at most one step and the cadence never
+   oscillates near the fixed rate, but simulation falls behind real time
+   whenever frames are longer than a step. The opt-in `CatchUp` policy
+   accumulates the whole delta, so simulation follows elapsed time: a frame
+   runs at most `max_steps_per_frame` steps, carries at most
+   `max_debt_steps` whole due steps to later frames, and discards the rest.
+   An authoritative or networked simulation chooses `CatchUp`; a client
+   whose simulation only feeds its own presentation keeps the default.
+   Supplied time is always simulated, held (under a step plus any debt), or
+   reported in `dropped_dt`. `alpha` is the fractional overstep in `[0, 1)`,
+   excluding whole steps of debt.
 3. **Hashing.** `StateHasher` is a canonical, length-prefixed BLAKE3 encoding
    of typed writes: different write sequences produce different digests, and
    the digest for a given sequence is frozen across versions and targets.

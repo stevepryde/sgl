@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `FixedClock`: new opt-in `FixedClock::with_catch_up(hz, CatchUp { max_steps_per_frame, max_debt_steps })`
+  runs several steps per frame to follow elapsed time, and the new
+  `dropped_dt` field reports unsimulated time; `with_hz` and `new` keep
+  their one-step render-paced cadence. No game-code changes needed.
 - Docs: SGL has no physics engine; the [consumer guide](docs/README.md#physics)
   recommends custom arcade physics for most games (`sgl_core::collision` in
   2D) and Rapier only where simulated physics is the game. No game-code

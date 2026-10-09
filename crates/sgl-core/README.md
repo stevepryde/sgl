@@ -18,10 +18,16 @@ same API.
 | Swept AABB, kinematic sliding, sensors, and one-way platforms | [`collision`](src/collision.rs) |
 | Shared 2D vector and geometry helpers | [`math`](src/math.rs) |
 
-`FixedClock` clamps each frame delta to one fixed step. It runs at most one
-simulation step per frame; it is not a catch-up accumulator. Use its
-interpolation fraction for presentation, keeping game simulation separate
-from rendering.
+`FixedClock::with_hz` is render-paced: it clamps each frame delta to one
+fixed step and runs at most one simulation step per frame, so its cadence
+stays steady but simulation slows when frames are longer than a step. A
+simulation that must keep pace with elapsed time (an authoritative server or
+a networked client) uses `FixedClock::with_catch_up` instead: a `CatchUp`
+policy sets the most steps one frame runs and how many due steps carry to
+later frames (`max_debt_steps: 0` discards everything past the frame's
+budget). `dropped_dt` reports supplied time that will never be simulated.
+Use its interpolation fraction for presentation, keeping game simulation
+separate from rendering.
 
 `SplitMix64` and canonical hashes have frozen cross-target contracts.
 `random::Rng` is deterministic for a seed within its dependency version;
