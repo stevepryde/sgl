@@ -177,7 +177,7 @@ fn stream(
         for event in server_events {
             match event {
                 ServerEvent::Message {
-                    delivery: Delivery::ReliableOrdered,
+                    delivery: Delivery::Reliable(_),
                     payload,
                     ..
                 } => received.push(index_of(&payload)),
@@ -203,7 +203,7 @@ fn stream(
                 message(sent)
             };
             world.clients[client]
-                .send(Delivery::ReliableOrdered, &payload)
+                .send(Delivery::RELIABLE_ORDERED, &payload)
                 .expect("windowed sends never overflow");
             sent += 1;
         }
@@ -261,84 +261,120 @@ fn reliable_order_and_latest_progress_hold_across_the_network_matrix() {
     assert_eq!(runs, 144);
 }
 
-/// Defect: a per-peer bound leaking into the shared budget, or a flooding
-/// peer starving the poll loop. Oracle: the flooder alone is refused
-/// (`SendError::ReliableOverflow`) and closed, while the other clients'
-/// reliable streams stay exact and complete on the same server.
+/// Sends `next..total` to `send` in order until it refuses with
+/// `WouldBlock`, retaining the refused index; any other error fails.
+fn send_until_blocked(
+    next: &mut u32,
+    total: u32,
+    mut send: impl FnMut(&[u8]) -> Result<(), SendError>,
+) -> bool {
+    while *next < total {
+        match send(&message(*next)) {
+            Ok(()) => *next += 1,
+            Err(SendError::WouldBlock) => return true,
+            Err(error) => panic!("send {next} failed with {error:?}"),
+        }
+    }
+    false
+}
+
+/// Defect (#267): a saturated sender closed instead of refused, a refused
+/// message lost or duplicated on retry, a per-peer bound leaking into the
+/// shared budget, or a flooding peer starving the poll loop. Oracle: the
+/// flooder and the server toward it are refused with `WouldBlock`, nobody
+/// is disconnected, every stream — the flooder's both ways and the other
+/// clients' — arrives exact and in order on the same server.
 #[test]
-fn an_overflowing_client_is_closed_alone_while_others_stay_exact() {
+fn a_saturated_client_is_refused_alone_and_its_streams_stay_exact() {
+    const FLOOD: u32 = 400;
     let mut world = World::new(SimulatedConfig::default(), 7, EndpointConfig::default());
     let clients: Vec<usize> = (0..6).map(|i| world.connect(i)).collect();
     let ids = world.connect_all(20_000);
-    // Resolved up front: a `Disconnected` arrives after the server has
-    // already forgotten the peer's address.
     let by_id: BTreeMap<ConnectionId, usize> = ids.iter().copied().zip(0..).collect();
     let flooder = clients[0];
 
-    // Flood without draining until the client-side cap refuses a send.
-    let mut refused = None;
-    for i in 0..10_000u32 {
-        match world.clients[flooder].send(Delivery::ReliableOrdered, &message(i)) {
-            Ok(()) => {}
-            Err(error) => {
-                refused = Some(error);
-                break;
-            }
-        }
-    }
-    assert_eq!(refused, Some(SendError::ReliableOverflow));
+    // Flood both ways without draining until each side is refused.
+    let (mut up, mut down) = (0u32, 0u32);
+    assert!(send_until_blocked(&mut up, FLOOD, |payload| {
+        world.clients[flooder].send(Delivery::RELIABLE_ORDERED, payload)
+    }));
+    assert!(send_until_blocked(&mut down, FLOOD, |payload| {
+        world
+            .server
+            .send(ids[flooder], Delivery::RELIABLE_ORDERED, payload)
+    }));
+    assert!(up < FLOOD && down < FLOOD);
 
-    // Everyone else streams normally while the flooder's closure plays out.
     let mut per_client: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
+    let mut flooder_received = Vec::new();
     let mut sent = vec![0u32; clients.len()];
-    let mut server_disconnects = Vec::new();
-    let mut flooder_closed = false;
-    let deadline = world.now + 60_000;
+    let deadline = world.now + 120_000;
     while world.now < deadline {
         let (server_events, client_events) = world.tick();
         for event in server_events {
             match event {
                 ServerEvent::Message {
                     conn,
-                    delivery: Delivery::ReliableOrdered,
+                    delivery: Delivery::RELIABLE_ORDERED,
                     payload,
-                } => {
-                    per_client
-                        .entry(by_id[&conn])
-                        .or_default()
-                        .push(index_of(&payload));
-                }
+                } => per_client
+                    .entry(by_id[&conn])
+                    .or_default()
+                    .push(index_of(&payload)),
                 ServerEvent::Disconnected { conn, reason } => {
-                    server_disconnects.push((by_id[&conn], reason));
+                    panic!("server closed {conn:?}: {reason:?}")
                 }
                 _ => {}
             }
         }
-        if client_events[flooder]
-            .iter()
-            .any(|e| matches!(e, ClientEvent::Disconnected { .. }))
-        {
-            flooder_closed = true;
+        for (client, events) in client_events.iter().enumerate() {
+            for event in events {
+                match event {
+                    ClientEvent::Message {
+                        delivery: Delivery::RELIABLE_ORDERED,
+                        payload,
+                    } if client == flooder => flooder_received.push(index_of(payload)),
+                    ClientEvent::Disconnected { reason } => {
+                        panic!("client {client} closed: {reason:?}")
+                    }
+                    _ => {}
+                }
+            }
         }
+        // The flooder retries its retained message, then continues.
+        send_until_blocked(&mut up, FLOOD, |payload| {
+            world.clients[flooder].send(Delivery::RELIABLE_ORDERED, payload)
+        });
+        send_until_blocked(&mut down, FLOOD, |payload| {
+            world
+                .server
+                .send(ids[flooder], Delivery::RELIABLE_ORDERED, payload)
+        });
         for &client in &clients[1..] {
             let delivered = per_client.get(&client).map_or(0, Vec::len) as u32;
             if sent[client] < 40 && sent[client].saturating_sub(delivered) < 8 {
                 world.clients[client]
-                    .send(Delivery::ReliableOrdered, &message(sent[client]))
+                    .send(Delivery::RELIABLE_ORDERED, &message(sent[client]))
                     .expect("healthy clients keep sending");
+                world
+                    .server
+                    .send(ids[client], Delivery::RELIABLE_ORDERED, b"ok")
+                    .expect("the server keeps sending to healthy clients");
                 sent[client] += 1;
             }
         }
         let all_delivered = clients[1..]
             .iter()
             .all(|c| per_client.get(c).map_or(0, Vec::len) == 40);
-        if flooder_closed && all_delivered && !server_disconnects.is_empty() {
+        if all_delivered
+            && per_client.get(&flooder).map_or(0, Vec::len) == FLOOD as usize
+            && flooder_received.len() == FLOOD as usize
+        {
             break;
         }
     }
-    assert!(flooder_closed, "the flooder must observe its own closure");
-    assert_eq!(server_disconnects.len(), 1, "{server_disconnects:?}");
-    assert_eq!(server_disconnects[0].0, flooder, "{server_disconnects:?}");
+    assert_eq!(per_client[&flooder], (0..FLOOD).collect::<Vec<_>>());
+    assert_eq!(flooder_received, (0..FLOOD).collect::<Vec<_>>());
     for &client in &clients[1..] {
         assert_eq!(
             per_client[&client],
@@ -346,6 +382,48 @@ fn an_overflowing_client_is_closed_alone_while_others_stay_exact() {
             "client {client}"
         );
     }
+}
+
+/// Defect (#267): backpressure masking a dead link, so a sender that keeps
+/// retrying refused messages never learns the peer is gone. Oracle: the
+/// configured liveness bound — once the server falls silent, the saturated
+/// client reports `TimedOut` within `timeout_ms` (to tick granularity) and
+/// its sends never fail with anything but `WouldBlock` before that.
+#[test]
+fn a_saturated_sender_still_times_out_when_the_peer_falls_silent() {
+    let config = EndpointConfig {
+        timeout_ms: 1_000,
+        keepalive_ms: 200,
+        ..EndpointConfig::default()
+    };
+    let mut world = World::new(clean(), 13, config.clone());
+    let client = world.connect(1);
+    world.connect_all(5_000);
+    let silent_from = world.now;
+    let mut next = 0u32;
+    let mut timed_out_at = None;
+    while timed_out_at.is_none() && world.now < silent_from + 10 * config.timeout_ms {
+        // Only the client runs: the server never polls or answers again.
+        world.now += TICK_MS;
+        for event in world.clients[client].poll(world.now) {
+            if let ClientEvent::Disconnected { reason } = event {
+                assert_eq!(reason, DisconnectReason::TimedOut);
+                timed_out_at = Some(world.now);
+            }
+        }
+        if timed_out_at.is_none() {
+            send_until_blocked(&mut next, u32::MAX, |payload| {
+                world.clients[client].send(Delivery::RELIABLE_ORDERED, payload)
+            });
+        }
+        world.clients[client].flush(world.now);
+    }
+    let elapsed = timed_out_at.expect("the sender must time out") - silent_from;
+    assert!(
+        elapsed <= config.timeout_ms + 2 * TICK_MS,
+        "timed out after {elapsed} ms"
+    );
+    assert!(next > 0, "the sender was admitting before the link died");
 }
 
 /// Defect: a datagram from a previous connection (old nonce/epoch) surfacing
@@ -360,7 +438,7 @@ fn a_reconnect_from_the_same_address_never_receives_the_old_epoch() {
     let first_id = world.connect_all(20_000)[0];
     for i in 0..20u32 {
         world.clients[first]
-            .send(Delivery::ReliableOrdered, &[0xF0, i as u8])
+            .send(Delivery::RELIABLE_ORDERED, &[0xF0, i as u8])
             .unwrap();
     }
     world.clients[first].disconnect(world.now);
@@ -395,7 +473,7 @@ fn a_reconnect_from_the_same_address_never_receives_the_old_epoch() {
             && sent < 20
         {
             world.clients[second]
-                .send(Delivery::ReliableOrdered, &[0x0F, sent as u8])
+                .send(Delivery::RELIABLE_ORDERED, &[0x0F, sent as u8])
                 .unwrap();
             sent += 1;
         }
@@ -539,7 +617,7 @@ fn ten_virtual_minutes_at_twenty_percent_loss_stay_bounded() {
         for event in server_events {
             match event {
                 ServerEvent::Message {
-                    delivery: Delivery::ReliableOrdered,
+                    delivery: Delivery::RELIABLE_ORDERED,
                     payload,
                     ..
                 } => received.push(index_of(&payload)),
@@ -562,7 +640,7 @@ fn ten_virtual_minutes_at_twenty_percent_loss_stay_bounded() {
             .expect("latest state accepted");
         if sent.saturating_sub(received.len() as u32) < 4 {
             world.clients[client]
-                .send(Delivery::ReliableOrdered, &message(sent))
+                .send(Delivery::RELIABLE_ORDERED, &message(sent))
                 .expect("windowed reliable sends accepted");
             sent += 1;
         }
@@ -597,7 +675,7 @@ fn the_same_seed_replays_the_same_event_trace() {
             ));
             if sent < 200 {
                 world.clients[client]
-                    .send(Delivery::ReliableOrdered, &message(sent))
+                    .send(Delivery::RELIABLE_ORDERED, &message(sent))
                     .unwrap();
                 world.clients[client]
                     .send(Delivery::LatestState, &sent.to_le_bytes())

@@ -10,9 +10,9 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::{
-    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, MAX_LATEST_STATE_BYTES,
-    MAX_RELIABLE_MESSAGE_BYTES, RELIABLE_OUTBOUND_BYTES, RELIABLE_OUTBOUND_MESSAGES, RttEstimate,
-    RttEstimator, SendError, ServerEvent, ServerIo,
+    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES,
+    MAX_RELIABLE_MESSAGE_BYTES, RELIABLE_OUTBOUND_BYTES, RELIABLE_OUTBOUND_MESSAGES,
+    ReliableCapacity, RttEstimate, RttEstimator, SendError, ServerEvent, ServerIo,
 };
 
 /// Maximum reliable messages queued in either direction.
@@ -110,41 +110,65 @@ impl DuplexEnd {
             && Rc::strong_count(&self.inbound) > 1
     }
 
+    /// Reliable messages and bytes this direction still holds: staged here
+    /// plus flushed but not yet polled by the peer.
+    fn reliable_usage(&self) -> (usize, usize) {
+        let outbound = self.outbound.borrow();
+        (
+            outbound
+                .reliable_len()
+                .saturating_add(self.pending.reliable_len()),
+            outbound
+                .reliable_bytes()
+                .saturating_add(self.pending.reliable_bytes()),
+        )
+    }
+
+    fn capacity(&self) -> ReliableCapacity {
+        if !self.connected() {
+            return ReliableCapacity::default();
+        }
+        let (messages, bytes) = self.reliable_usage();
+        ReliableCapacity::remaining(
+            MAX_RELIABLE_QUEUED.saturating_sub(messages),
+            RELIABLE_OUTBOUND_BYTES.saturating_sub(bytes),
+        )
+    }
+
     fn send(&mut self, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
         if !self.connected() {
             return Err(SendError::Disconnected);
         }
         let cap = match delivery {
-            Delivery::ReliableOrdered => MAX_RELIABLE_MESSAGE_BYTES,
+            Delivery::Reliable(_) => MAX_RELIABLE_MESSAGE_BYTES,
             Delivery::LatestState => MAX_LATEST_STATE_BYTES,
         };
         if payload.len() > cap {
             return Err(SendError::PayloadTooLarge);
         }
-        let item = PendingItem {
-            delivery,
-            payload: payload.to_vec(),
-        };
         match delivery {
-            Delivery::ReliableOrdered => {
-                let in_flight = self.outbound.borrow().reliable_len();
-                let in_flight_bytes = self.outbound.borrow().reliable_bytes();
-                if in_flight
-                    .checked_add(self.pending.reliable_len())
-                    .is_none_or(|total| total >= MAX_RELIABLE_QUEUED)
-                    || in_flight_bytes
-                        .checked_add(self.pending.reliable_bytes())
-                        .and_then(|total| total.checked_add(payload.len()))
+            Delivery::Reliable(_) => {
+                let (messages, bytes) = self.reliable_usage();
+                if messages >= MAX_RELIABLE_QUEUED
+                    || bytes
+                        .checked_add(payload.len())
                         .is_none_or(|total| total > RELIABLE_OUTBOUND_BYTES)
                 {
-                    return Err(SendError::ReliableOverflow);
+                    return Err(SendError::WouldBlock);
                 }
+                let item = PendingItem {
+                    delivery,
+                    payload: payload.to_vec(),
+                };
                 self.pending
                     .push_reliable(item, payload.len())
-                    .map_err(|_| SendError::ReliableOverflow)
+                    .map_err(|_| SendError::WouldBlock)
             }
             Delivery::LatestState => {
-                self.pending.push_latest(item);
+                self.pending.push_latest(PendingItem {
+                    delivery,
+                    payload: payload.to_vec(),
+                });
                 Ok(())
             }
         }
@@ -271,6 +295,10 @@ impl ClientIo for MemoryClientIo {
         self.duplex.send(delivery, payload)
     }
 
+    fn capacity(&self, _lane: Lane) -> ReliableCapacity {
+        self.duplex.capacity()
+    }
+
     fn flush(&mut self, now_ms: u64) {
         self.duplex.flush(now_ms);
     }
@@ -345,6 +373,13 @@ impl ServerIo for MemoryServerIo {
         self.duplex.send(delivery, payload)
     }
 
+    fn capacity(&self, conn: ConnectionId, _lane: Lane) -> ReliableCapacity {
+        if conn != SOLO_CONNECTION || !self.announced {
+            return ReliableCapacity::default();
+        }
+        self.duplex.capacity()
+    }
+
     fn flush(&mut self, now_ms: u64) {
         self.duplex.flush(now_ms);
     }
@@ -374,16 +409,16 @@ mod tests {
         // Four messages fit the byte allowance together; a fifth does not.
         let big = vec![1u8; 60 * 1024];
         for _ in 0..4 {
-            client.send(Delivery::ReliableOrdered, &big).unwrap();
+            client.send(Delivery::RELIABLE_ORDERED, &big).unwrap();
         }
         assert_eq!(
-            client.send(Delivery::ReliableOrdered, &big),
-            Err(SendError::ReliableOverflow)
+            client.send(Delivery::RELIABLE_ORDERED, &big),
+            Err(SendError::WouldBlock)
         );
         client.flush(0);
         assert_eq!(server.poll(1).len(), 5, "connected plus four payloads");
         client
-            .send(Delivery::ReliableOrdered, &big)
+            .send(Delivery::RELIABLE_ORDERED, &big)
             .expect("allowance returned after the drain");
     }
 
@@ -394,7 +429,7 @@ mod tests {
     #[wasm_bindgen_test(unsupported = test)]
     fn a_peer_gone_before_the_first_poll_still_yields_the_lifecycle() {
         let (mut client, mut server) = memory_duplex();
-        client.send(Delivery::ReliableOrdered, b"bye").unwrap();
+        client.send(Delivery::RELIABLE_ORDERED, b"bye").unwrap();
         client.disconnect(0);
         assert_eq!(
             server.poll(1),
@@ -404,7 +439,7 @@ mod tests {
                 },
                 ServerEvent::Message {
                     conn: SOLO_CONNECTION,
-                    delivery: Delivery::ReliableOrdered,
+                    delivery: Delivery::RELIABLE_ORDERED,
                     payload: b"bye".to_vec(),
                 },
                 ServerEvent::Disconnected {
@@ -427,7 +462,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            client.send(Delivery::ReliableOrdered, b"x"),
+            client.send(Delivery::RELIABLE_ORDERED, b"x"),
             Err(SendError::Disconnected)
         );
     }
@@ -484,7 +519,7 @@ mod tests {
         let _ = client.poll(0);
         let _ = server.poll(0);
         server
-            .send(SOLO_CONNECTION, Delivery::ReliableOrdered, b"event")
+            .send(SOLO_CONNECTION, Delivery::RELIABLE_ORDERED, b"event")
             .expect("queue event");
         server.flush(1_000);
         let _ = client.poll(1_040);
@@ -528,32 +563,32 @@ mod tests {
         let _ = server.poll(0);
         client.send(Delivery::LatestState, b"old").expect("latest");
         client
-            .send(Delivery::ReliableOrdered, b"first")
+            .send(Delivery::RELIABLE_ORDERED, b"first")
             .expect("first");
         client
             .send(Delivery::LatestState, b"new")
             .expect("replace latest");
         client
-            .send(Delivery::ReliableOrdered, b"second")
+            .send(Delivery::RELIABLE_ORDERED, b"second")
             .expect("second");
         client.flush(1);
         assert_eq!(
             messages(&server.poll(1)),
             vec![
-                (Delivery::ReliableOrdered, b"first".to_vec()),
-                (Delivery::ReliableOrdered, b"second".to_vec()),
+                (Delivery::RELIABLE_ORDERED, b"first".to_vec()),
+                (Delivery::RELIABLE_ORDERED, b"second".to_vec()),
                 (Delivery::LatestState, b"new".to_vec()),
             ]
         );
 
         for _ in 0..MAX_RELIABLE_QUEUED {
             client
-                .send(Delivery::ReliableOrdered, b"x")
+                .send(Delivery::RELIABLE_ORDERED, b"x")
                 .expect("within bound");
         }
         assert_eq!(
-            client.send(Delivery::ReliableOrdered, b"overflow"),
-            Err(SendError::ReliableOverflow)
+            client.send(Delivery::RELIABLE_ORDERED, b"overflow"),
+            Err(SendError::WouldBlock)
         );
         client
             .send(Delivery::LatestState, b"still replaceable")
@@ -569,22 +604,43 @@ mod tests {
         );
         assert_eq!(
             client.send(
-                Delivery::ReliableOrdered,
+                Delivery::RELIABLE_ORDERED,
                 &vec![0; MAX_RELIABLE_MESSAGE_BYTES + 1]
             ),
             Err(SendError::PayloadTooLarge)
         );
 
-        let payload = vec![0; MAX_RELIABLE_MESSAGE_BYTES];
-        for _ in 0..(RELIABLE_OUTBOUND_BYTES / MAX_RELIABLE_MESSAGE_BYTES) {
+        // Fill the byte allowance to ten bytes short: capacity reports
+        // exactly what is left, and admission agrees at the boundary.
+        let full = RELIABLE_OUTBOUND_BYTES / MAX_RELIABLE_MESSAGE_BYTES;
+        for _ in 1..full {
             client
-                .send(Delivery::ReliableOrdered, &payload)
+                .send(
+                    Delivery::RELIABLE_ORDERED,
+                    &vec![0; MAX_RELIABLE_MESSAGE_BYTES],
+                )
                 .expect("within byte allowance");
         }
+        client
+            .send(
+                Delivery::RELIABLE_ORDERED,
+                &vec![0; MAX_RELIABLE_MESSAGE_BYTES - 10],
+            )
+            .expect("within byte allowance");
         assert_eq!(
-            client.send(Delivery::ReliableOrdered, b"one byte too many"),
-            Err(SendError::ReliableOverflow)
+            client.capacity(Lane::DEFAULT),
+            ReliableCapacity {
+                messages: MAX_RELIABLE_QUEUED - full,
+                bytes: 10,
+            }
         );
+        assert_eq!(
+            client.send(Delivery::RELIABLE_ORDERED, &[0; 11]),
+            Err(SendError::WouldBlock)
+        );
+        client
+            .send(Delivery::RELIABLE_ORDERED, &[0; 10])
+            .expect("exactly the remaining bytes");
     }
 
     #[wasm_bindgen_test(unsupported = test)]
@@ -612,7 +668,7 @@ mod tests {
             "the already-created memory peer remains admitted"
         );
         server
-            .send(SOLO_CONNECTION, Delivery::ReliableOrdered, b"existing")
+            .send(SOLO_CONNECTION, Delivery::RELIABLE_ORDERED, b"existing")
             .expect("stop_admission preserves existing peers");
         drop(server);
         assert_eq!(
@@ -632,8 +688,9 @@ mod properties {
 
     #[derive(Debug, Clone)]
     enum Op {
-        ClientSend(Delivery, Vec<u8>),
-        ServerSend(Delivery, Vec<u8>),
+        /// Sends the payload this many times in a row.
+        ClientSend(Delivery, Vec<u8>, usize),
+        ServerSend(Delivery, Vec<u8>, usize),
         ClientFlush,
         ServerFlush,
         ClientPoll,
@@ -641,18 +698,39 @@ mod properties {
     }
 
     fn delivery() -> impl Strategy<Value = Delivery> {
-        prop_oneof![Just(Delivery::ReliableOrdered), Just(Delivery::LatestState)]
+        prop_oneof![
+            Just(Delivery::RELIABLE_ORDERED),
+            Just(Delivery::LatestState)
+        ]
+    }
+
+    /// Mostly small payloads, with large ones (up to one byte past the
+    /// reliable cap) so the byte allowance binds as well as the count.
+    fn payload() -> impl Strategy<Value = Vec<u8>> {
+        prop_oneof![
+            6 => bytes(32),
+            1 => (0..=MAX_RELIABLE_MESSAGE_BYTES + 1).prop_map(|len| vec![0xA5; len]),
+        ]
+    }
+
+    /// Usually one send, sometimes a burst long enough to fill the lane.
+    fn repeat() -> impl Strategy<Value = usize> {
+        prop_oneof![9 => Just(1), 1 => 1..=MAX_RELIABLE_QUEUED + 8]
     }
 
     fn op() -> impl Strategy<Value = Op> {
         prop_oneof![
-            4 => (delivery(), bytes(32)).prop_map(|(d, p)| Op::ClientSend(d, p)),
-            4 => (delivery(), bytes(32)).prop_map(|(d, p)| Op::ServerSend(d, p)),
+            4 => (delivery(), payload(), repeat()).prop_map(|(d, p, n)| Op::ClientSend(d, p, n)),
+            4 => (delivery(), payload(), repeat()).prop_map(|(d, p, n)| Op::ServerSend(d, p, n)),
             2 => Just(Op::ClientFlush),
             2 => Just(Op::ServerFlush),
             2 => Just(Op::ClientPoll),
             2 => Just(Op::ServerPoll),
         ]
+    }
+
+    fn fits(capacity: ReliableCapacity, len: usize) -> bool {
+        capacity.messages >= 1 && capacity.bytes >= len
     }
 
     /// One direction of the model: staged until flushed, then visible to
@@ -668,13 +746,21 @@ mod properties {
     impl Lane {
         fn send(&mut self, delivery: Delivery, payload: Vec<u8>) -> Result<(), SendError> {
             match delivery {
-                Delivery::ReliableOrdered => {
-                    if self.staged_reliable.len() + self.visible_reliable.len()
-                        >= MAX_RELIABLE_QUEUED
+                Delivery::Reliable(_) => {
+                    if payload.len() > MAX_RELIABLE_MESSAGE_BYTES {
+                        return Err(SendError::PayloadTooLarge);
+                    }
+                    let held = self.staged_reliable.iter().chain(&self.visible_reliable);
+                    let bytes: usize = held.clone().map(Vec::len).sum();
+                    if held.count() >= MAX_RELIABLE_QUEUED
+                        || bytes + payload.len() > RELIABLE_OUTBOUND_BYTES
                     {
-                        return Err(SendError::ReliableOverflow);
+                        return Err(SendError::WouldBlock);
                     }
                     self.staged_reliable.push_back(payload);
+                }
+                Delivery::LatestState if payload.len() > MAX_LATEST_STATE_BYTES => {
+                    return Err(SendError::PayloadTooLarge);
                 }
                 Delivery::LatestState => self.staged_latest = Some(payload),
             }
@@ -692,7 +778,7 @@ mod properties {
             let mut out: Vec<_> = self
                 .visible_reliable
                 .drain(..)
-                .map(|p| (Delivery::ReliableOrdered, p))
+                .map(|p| (Delivery::RELIABLE_ORDERED, p))
                 .collect();
             out.extend(
                 self.visible_latest
@@ -704,10 +790,12 @@ mod properties {
     }
 
     /// Defect: a lane that reorders reliable messages, shows a stale latest
-    /// state, leaks staged data before `flush`, or keeps refusing sends
-    /// after a drain. Oracle: two model lanes with a stage/flush step, a
-    /// FIFO, and one slot; the reliable cap returns `ReliableOverflow` and
-    /// the connection stays usable.
+    /// state, leaks staged data before `flush`, keeps refusing sends after a
+    /// drain, or reports a capacity that disagrees with admission. Oracle:
+    /// two model lanes with a stage/flush step, a FIFO, and one slot; the
+    /// reliable message and byte caps return `WouldBlock` and the connection
+    /// stays usable; a reliable send succeeds exactly when the capacity
+    /// reported just before it says the payload fits.
     #[test]
     fn memory_duplex_matches_the_staged_lane_model_in_both_directions() {
         check(prop::collection::vec(op(), 1..400), |ops| {
@@ -720,17 +808,29 @@ mod properties {
             let (mut to_server, mut to_client) = (Lane::default(), Lane::default());
             for op in ops {
                 match op {
-                    Op::ClientSend(delivery, payload) => {
-                        prop_assert_eq!(
-                            client.send(delivery, &payload),
-                            to_server.send(delivery, payload)
-                        );
+                    Op::ClientSend(delivery, payload, repeat) => {
+                        for _ in 0..repeat {
+                            let capacity = client.capacity(crate::Lane::DEFAULT);
+                            let result = client.send(delivery, &payload);
+                            if delivery != Delivery::LatestState
+                                && payload.len() <= MAX_RELIABLE_MESSAGE_BYTES
+                            {
+                                prop_assert_eq!(result.is_ok(), fits(capacity, payload.len()));
+                            }
+                            prop_assert_eq!(result, to_server.send(delivery, payload.clone()));
+                        }
                     }
-                    Op::ServerSend(delivery, payload) => {
-                        prop_assert_eq!(
-                            server.send(SOLO_CONNECTION, delivery, &payload),
-                            to_client.send(delivery, payload)
-                        );
+                    Op::ServerSend(delivery, payload, repeat) => {
+                        for _ in 0..repeat {
+                            let capacity = server.capacity(SOLO_CONNECTION, crate::Lane::DEFAULT);
+                            let result = server.send(SOLO_CONNECTION, delivery, &payload);
+                            if delivery != Delivery::LatestState
+                                && payload.len() <= MAX_RELIABLE_MESSAGE_BYTES
+                            {
+                                prop_assert_eq!(result.is_ok(), fits(capacity, payload.len()));
+                            }
+                            prop_assert_eq!(result, to_client.send(delivery, payload.clone()));
+                        }
                     }
                     Op::ClientFlush => {
                         client.flush(1);

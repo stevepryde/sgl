@@ -15,12 +15,18 @@ and connection lifecycle, with no rendering or windowing dependency.
 | Several server transports behind one interface | [`ServerIoMux`](src/mux.rs) |
 
 The shared [`ClientIo` and `ServerIo`](src/lib.rs) traits provide `poll`,
-`send`, `flush`, and disconnect operations. Supply monotonic `now_ms` values
-from the game's clock, poll events, enqueue encoded messages, and flush
-outbound work. Handle `SendError` and lifecycle events explicitly; bounded
-queues are part of the contract.
+`send`, `capacity`, `flush`, and disconnect operations. Supply monotonic
+`now_ms` values from the game's clock, poll events, enqueue encoded
+messages, and flush outbound work. Handle `SendError` and lifecycle events
+explicitly; bounded queues are part of the contract.
 
-`Delivery::ReliableOrdered` preserves every accepted message in order.
+`Delivery::RELIABLE_ORDERED` (`Delivery::Reliable(Lane::DEFAULT)`) preserves
+every accepted message in order. A full reliable lane refuses a send with
+`SendError::WouldBlock`: nothing was queued and the connection is fine, so
+keep the message and retry after a later `flush` and `poll` (the
+[crate docs](src/lib.rs) show the loop); `capacity` reports what the lane
+admits now. Dropping a refused message loses it. A peer that floods this
+side's inbound bounds is disconnected with `DisconnectReason::InboundOverflow`.
 `Delivery::LatestState` coalesces snapshots so the newest state wins.
 The same encoded payload can cross UDP, WebSocket, or memory. Payload caps
 and queue bounds are public constants in the [transport API](src/lib.rs).

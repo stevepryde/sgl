@@ -2,6 +2,9 @@
 //! check-browser`): a `NativeWebSocketServer` on a fixed loopback port that
 //! echoes reliable frames reliably and latest-state frames as latest state,
 //! and closes a connection when it receives the reliable command `close`.
+//! Reliable frames starting with `S` are a sink: the fixture checks they
+//! carry consecutive indices from zero and answers the reliable query
+//! `sink?` with `sink <count> <in order>` instead of echoing them.
 //! The probe page is served by `browser/lane.test.ts` at a pinned address,
 //! which is the only admitted Origin.
 //!
@@ -12,6 +15,7 @@ fn main() {}
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
+    use std::collections::BTreeMap;
     use std::io::Write;
     use std::time::{Duration, Instant};
 
@@ -37,6 +41,9 @@ mod native {
         println!("listening 127.0.0.1:{PORT}");
         std::io::stdout().flush().expect("flush");
 
+        // Per connection: the next expected sink index and whether every
+        // sink message so far arrived in order.
+        let mut sinks: BTreeMap<_, (u32, bool)> = BTreeMap::new();
         let started = Instant::now();
         loop {
             let now_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -44,18 +51,41 @@ mod native {
                 match event {
                     ServerEvent::Message {
                         conn,
-                        delivery: Delivery::ReliableOrdered,
+                        delivery: Delivery::RELIABLE_ORDERED,
                         payload,
                     } if payload == b"close" => server.disconnect(conn, now_ms),
+                    ServerEvent::Message {
+                        conn,
+                        delivery: Delivery::RELIABLE_ORDERED,
+                        payload,
+                    } if payload.first() == Some(&b'S') && payload.len() >= 5 => {
+                        let index = u32::from_le_bytes(payload[1..5].try_into().expect("4 bytes"));
+                        let (next, ordered) = sinks.entry(conn).or_insert((0, true));
+                        *ordered &= index == *next;
+                        *next += 1;
+                    }
+                    ServerEvent::Message {
+                        conn,
+                        delivery: Delivery::RELIABLE_ORDERED,
+                        payload,
+                    } if payload == b"sink?" => {
+                        let (count, ordered) = sinks.get(&conn).copied().unwrap_or((0, true));
+                        let reply = format!("sink {count} {ordered}");
+                        let _ = server.send(conn, Delivery::RELIABLE_ORDERED, reply.as_bytes());
+                    }
                     ServerEvent::Message {
                         conn,
                         delivery,
                         payload,
                     } => {
-                        // Echo failures (a peer past its cap) are the peer's problem.
+                        // The probe never sends more than one lane's allowance
+                        // to echo, so a refused echo is not retried here.
                         let _ = server.send(conn, delivery, &payload);
                     }
-                    ServerEvent::Connected { .. } | ServerEvent::Disconnected { .. } => {}
+                    ServerEvent::Disconnected { conn, .. } => {
+                        sinks.remove(&conn);
+                    }
+                    ServerEvent::Connected { .. } => {}
                 }
             }
             server.flush(now_ms);

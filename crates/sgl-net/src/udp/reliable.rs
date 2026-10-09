@@ -109,6 +109,17 @@ impl Reliable {
         true
     }
 
+    /// Remaining outbound allowance as (messages, fragments, bytes), each
+    /// counting everything still held: queued, in flight and unacknowledged.
+    pub fn outbound_allowance(&self) -> (usize, usize, usize) {
+        (
+            self.max_queued_messages
+                .saturating_sub(self.outbound_messages()),
+            MAX_OUTBOUND_FRAGMENTS.saturating_sub(self.outbound_items()),
+            self.max_queued_bytes.saturating_sub(self.outbound_bytes()),
+        )
+    }
+
     pub fn admit(&mut self) -> Option<u16> {
         if self.queued.is_empty()
             || self

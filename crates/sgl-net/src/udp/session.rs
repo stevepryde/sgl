@@ -4,7 +4,8 @@ use std::net::SocketAddr;
 
 use super::{DatagramTransport, Endpoint, EndpointConfig, EndpointError, EndpointEvent};
 use crate::{
-    ClientEvent, ClientIo, ConnectionId, Delivery, RttEstimate, SendError, ServerEvent, ServerIo,
+    ClientEvent, ClientIo, ConnectionId, Delivery, Lane, ReliableCapacity, RttEstimate, SendError,
+    ServerEvent, ServerIo,
 };
 
 /// Server-side session adapter over a caller-supplied datagram transport.
@@ -65,6 +66,10 @@ impl<T: DatagramTransport> ServerIo for ServerEndpoint<T> {
         payload: &[u8],
     ) -> Result<(), SendError> {
         self.endpoint.send(conn.raw(), delivery, payload)
+    }
+
+    fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
+        self.endpoint.capacity(conn.raw(), lane)
     }
 
     fn flush(&mut self, now_ms: u64) {
@@ -136,6 +141,10 @@ impl<T: DatagramTransport> ClientIo for ClientEndpoint<T> {
 
     fn send(&mut self, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
         self.endpoint.send(self.peer, delivery, payload)
+    }
+
+    fn capacity(&self, lane: Lane) -> ReliableCapacity {
+        self.endpoint.capacity(self.peer, lane)
     }
 
     fn flush(&mut self, now_ms: u64) {

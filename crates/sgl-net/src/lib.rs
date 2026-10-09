@@ -3,6 +3,38 @@
 //! Transports carry only bytes and a [`Delivery`] class. Every operation that
 //! needs time receives `now_ms` from its caller; implementations do not read a
 //! system or browser clock and never interpret game messages.
+//!
+//! A full reliable lane refuses a send with [`SendError::WouldBlock`]: nothing
+//! was queued, the connection is unaffected, and the caller keeps the message
+//! to retry after a later `flush` and `poll`. Ignoring the error loses the
+//! message.
+//!
+//! ```
+//! use std::collections::VecDeque;
+//! use sgl_net::{ClientIo, Delivery, SendError, ServerEvent, ServerIo, memory_duplex};
+//!
+//! let (mut client, mut server) = memory_duplex();
+//! let sent: Vec<Vec<u8>> = (0u32..300).map(|i| i.to_le_bytes().to_vec()).collect();
+//! let mut pending: VecDeque<Vec<u8>> = sent.iter().cloned().collect();
+//! let mut received = Vec::new();
+//! for now_ms in 0..10 {
+//!     while let Some(message) = pending.front() {
+//!         match client.send(Delivery::RELIABLE_ORDERED, message) {
+//!             Ok(()) => drop(pending.pop_front()),
+//!             // Keep the message and retry on a later tick.
+//!             Err(SendError::WouldBlock) => break,
+//!             Err(error) => panic!("connection lost: {error}"),
+//!         }
+//!     }
+//!     client.flush(now_ms);
+//!     for event in server.poll(now_ms) {
+//!         if let ServerEvent::Message { payload, .. } = event {
+//!             received.push(payload);
+//!         }
+//!     }
+//! }
+//! assert_eq!(received, sent);
+//! ```
 
 #![forbid(unsafe_code)]
 
@@ -75,16 +107,54 @@ impl ConnectionId {
     }
 }
 
-/// The two delivery classes supported by every transport.
+/// Number of independent reliable ordered lanes every transport provides.
+pub const RELIABLE_LANES: usize = 1;
+
+/// One of [`RELIABLE_LANES`] reliable ordered lanes. Lanes are numbered; what
+/// each lane carries is the game's choice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Lane(u8);
+
+impl Lane {
+    /// Lane 0, the lane of [`Delivery::RELIABLE_ORDERED`].
+    pub const DEFAULT: Self = Self(0);
+
+    /// Returns lane `index`, or `None` when `index >= RELIABLE_LANES`.
+    #[must_use]
+    pub const fn new(index: u8) -> Option<Self> {
+        if (index as usize) < RELIABLE_LANES {
+            Some(Self(index))
+        } else {
+            None
+        }
+    }
+
+    /// Returns this lane's zero-based index.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// The delivery classes supported by every transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Delivery {
-    /// A bounded FIFO lane. Overflow is reported to the sender.
-    ReliableOrdered,
+    /// Exact, in order and unduplicated within its [`Lane`]. A full lane
+    /// refuses the send with [`SendError::WouldBlock`].
+    Reliable(Lane),
     /// A replaceable best-effort slot where only the newest state is useful.
     LatestState,
 }
 
+impl Delivery {
+    /// Reliable delivery on [`Lane::DEFAULT`]. Usable in patterns.
+    pub const RELIABLE_ORDERED: Self = Self::Reliable(Lane::DEFAULT);
+}
+
 /// Why a transport could not queue a payload.
+///
+/// Every error leaves the transport unchanged: nothing was queued and the
+/// caller keeps the payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SendError {
     /// The server-side process-local connection is unknown or disconnected.
@@ -93,8 +163,10 @@ pub enum SendError {
     Disconnected,
     /// The payload exceeds its delivery class's shared cap.
     PayloadTooLarge,
-    /// The bounded reliable lane has exhausted its message or byte allowance.
-    ReliableOverflow,
+    /// The lane, or a shared ceiling, cannot take this message now. The
+    /// connection is unaffected; retry after a later `flush` and `poll` have
+    /// drained capacity (`capacity` reports it).
+    WouldBlock,
 }
 
 impl std::fmt::Display for SendError {
@@ -103,7 +175,7 @@ impl std::fmt::Display for SendError {
             Self::UnknownConnection => "unknown or disconnected connection",
             Self::Disconnected => "peer is disconnected",
             Self::PayloadTooLarge => "payload exceeds the delivery-class limit",
-            Self::ReliableOverflow => "reliable queue allowance exhausted",
+            Self::WouldBlock => "reliable lane is full; retry later",
         })
     }
 }
@@ -134,10 +206,36 @@ pub enum DisconnectReason {
     TimedOut,
     /// Incoming transport data violated its framing contract.
     ProtocolViolation,
-    /// Reliable backpressure exceeded a hard bound.
-    ReliableOverflow,
+    /// The peer exceeded this side's inbound reliable bounds.
+    InboundOverflow,
     /// The underlying socket or browser transport failed.
     Transport,
+}
+
+/// What one reliable lane admits right now.
+///
+/// Advisory: it holds until the next operation on the transport, and `send`
+/// remains the only atomic admission. A payload of `len` bytes is admitted
+/// when `messages >= 1 && bytes >= len`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReliableCapacity {
+    /// Messages `send` would admit on this lane.
+    pub messages: usize,
+    /// Largest payload `send` would admit now; zero when `messages` is zero.
+    pub bytes: usize,
+}
+
+impl ReliableCapacity {
+    /// A lane's capacity from its remaining message and byte allowances.
+    pub(crate) fn remaining(messages: usize, bytes: usize) -> Self {
+        if messages == 0 {
+            return Self::default();
+        }
+        Self {
+            messages,
+            bytes: bytes.min(MAX_RELIABLE_MESSAGE_BYTES),
+        }
+    }
 }
 
 /// One event observed by a client transport.
@@ -200,8 +298,12 @@ pub trait ClientIo {
     /// Returns events available at the caller-provided virtual time.
     fn poll(&mut self, now_ms: u64) -> Vec<ClientEvent>;
 
-    /// Queues an opaque payload for the next [`Self::flush`].
+    /// Queues an opaque payload for the next [`Self::flush`], or refuses it
+    /// whole without affecting the connection.
     fn send(&mut self, delivery: Delivery, payload: &[u8]) -> Result<(), SendError>;
+
+    /// Reports what `lane` admits now; all zeros once disconnected.
+    fn capacity(&self, lane: Lane) -> ReliableCapacity;
 
     /// Advances outbound transport work at the caller-provided virtual time.
     fn flush(&mut self, now_ms: u64);
@@ -226,6 +328,10 @@ impl<T: ClientIo + ?Sized> ClientIo for Box<T> {
         (**self).send(delivery, payload)
     }
 
+    fn capacity(&self, lane: Lane) -> ReliableCapacity {
+        (**self).capacity(lane)
+    }
+
     fn flush(&mut self, now_ms: u64) {
         (**self).flush(now_ms);
     }
@@ -244,13 +350,18 @@ pub trait ServerIo {
     /// Returns events available at the caller-provided virtual time.
     fn poll(&mut self, now_ms: u64) -> Vec<ServerEvent>;
 
-    /// Queues an opaque payload for one process-local connection.
+    /// Queues an opaque payload for one process-local connection, or refuses
+    /// it whole without affecting the connection.
     fn send(
         &mut self,
         conn: ConnectionId,
         delivery: Delivery,
         payload: &[u8],
     ) -> Result<(), SendError>;
+
+    /// Reports what `lane` of `conn` admits now; all zeros for an unknown or
+    /// disconnected connection.
+    fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity;
 
     /// Advances outbound transport work at the caller-provided virtual time.
     fn flush(&mut self, now_ms: u64);
@@ -274,6 +385,10 @@ impl<T: ServerIo + ?Sized> ServerIo for Box<T> {
         payload: &[u8],
     ) -> Result<(), SendError> {
         (**self).send(conn, delivery, payload)
+    }
+
+    fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
+        (**self).capacity(conn, lane)
     }
 
     fn flush(&mut self, now_ms: u64) {

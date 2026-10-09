@@ -15,8 +15,8 @@ use super::{
     encode_envelope,
 };
 use crate::{
-    ClientEvent, ClientIo, Delivery, DisconnectReason, MAX_LATEST_STATE_BYTES,
-    MAX_RELIABLE_MESSAGE_BYTES, RELIABLE_OUTBOUND_BYTES, RttEstimate, SendError,
+    ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, RELIABLE_OUTBOUND_BYTES,
+    ReliableCapacity, RttEstimate, SendError,
 };
 
 fn copy_bounded_binary(buffer: &ArrayBuffer) -> Option<Vec<u8>> {
@@ -40,7 +40,9 @@ pub struct BrowserWebSocketConfig {
     pub identity: WebSocketIdentity,
     /// Poll-driven bounded reconnect policy.
     pub reconnect: ReconnectPolicy,
-    /// Browser buffered-byte watermark that disconnects reliable traffic.
+    /// Browser buffered-byte watermark that paces reliable traffic: a
+    /// released frame waits while it would take `bufferedAmount` past this.
+    /// At least [`MAX_WEBSOCKET_FRAME_BYTES`] so any frame can go out.
     pub reliable_buffered_bytes: usize,
     /// Browser buffered-byte watermark above which latest state stays coalesced.
     pub latest_buffered_bytes: usize,
@@ -61,7 +63,7 @@ impl BrowserWebSocketConfig {
 
     fn validate(&self) -> Result<(), wasm_bindgen::JsValue> {
         let reconnect = self.reconnect;
-        if self.reliable_buffered_bytes == 0
+        if self.reliable_buffered_bytes < MAX_WEBSOCKET_FRAME_BYTES
             || self.reliable_buffered_bytes > MAX_BROWSER_BUFFERED_BYTES
             || self.latest_buffered_bytes == 0
             || self.latest_buffered_bytes > MAX_BROWSER_BUFFERED_BYTES
@@ -288,16 +290,11 @@ impl BrowserWebSocketClient {
                 break;
             };
             let limit = match delivery {
-                Delivery::ReliableOrdered => self.config.reliable_buffered_bytes,
+                Delivery::Reliable(_) => self.config.reliable_buffered_bytes,
                 Delivery::LatestState => self.config.latest_buffered_bytes,
             };
+            // Paced, never fatal: the frame waits for the browser to drain.
             if !projected_buffer_fits(buffered, payload_bytes, limit) {
-                if delivery == Delivery::ReliableOrdered {
-                    self.state
-                        .borrow_mut()
-                        .fail(DisconnectReason::ReliableOverflow);
-                    self.socket.detach_and_close();
-                }
                 break;
             }
             let next_frame = self
@@ -370,49 +367,27 @@ impl ClientIo for BrowserWebSocketClient {
                 self.reconnect.schedule(now_ms, self.config.reconnect);
             }
         }
-        if self.state.borrow().peer.graceful_closing() {
-            self.flush_released();
-        }
+        // Released frames paced by `bufferedAmount` go out as it drains.
+        self.flush_released();
         events
     }
 
     fn send(&mut self, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
-        let payload_cap = match delivery {
-            Delivery::ReliableOrdered => MAX_RELIABLE_MESSAGE_BYTES,
-            Delivery::LatestState => MAX_LATEST_STATE_BYTES,
-        };
-        if payload.len() > payload_cap {
-            return Err(SendError::PayloadTooLarge);
-        }
-        if delivery == Delivery::ReliableOrdered {
-            let buffered = self.socket.socket.buffered_amount() as usize;
-            let staged = self.state.borrow().peer.staged_reliable_wire_bytes();
-            if !projected_buffer_fits(
-                buffered.saturating_add(staged),
-                payload.len(),
-                self.config.reliable_buffered_bytes,
-            ) {
-                self.state
-                    .borrow_mut()
-                    .fail(DisconnectReason::ReliableOverflow);
-                self.socket.detach_and_close();
-                return Err(SendError::ReliableOverflow);
-            }
-        }
         let (result, graceful_closing) = {
             let mut state = self.state.borrow_mut();
             let result = state.peer.send(delivery, payload);
             (result, state.peer.graceful_closing())
         };
-        if result.is_err() {
-            if result == Err(SendError::ReliableOverflow) {
-                self.state.borrow_mut().needs_reconnect = true;
-            }
-            if !graceful_closing {
-                self.socket.detach_and_close();
-            }
+        // A send that ended the peer closes the socket; any other refusal
+        // changed nothing.
+        if result == Err(SendError::Disconnected) && !graceful_closing {
+            self.socket.detach_and_close();
         }
         result
+    }
+
+    fn capacity(&self, _lane: Lane) -> ReliableCapacity {
+        self.state.borrow().peer.capacity()
     }
 
     fn flush(&mut self, now_ms: u64) {

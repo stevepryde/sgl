@@ -5,8 +5,8 @@ use std::net::SocketAddr;
 
 use super::{DatagramTransport, Endpoint, EndpointConfig, EndpointEvent};
 use crate::{
-    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, RttEstimate, SendError,
-    ServerEvent, ServerIo,
+    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, ReliableCapacity,
+    RttEstimate, SendError, ServerEvent, ServerIo,
 };
 
 /// `std` UDP socket used by the clockless endpoint.
@@ -100,6 +100,10 @@ impl ServerIo for UdpServer {
         self.endpoint.send(conn.raw(), delivery, payload)
     }
 
+    fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
+        self.endpoint.capacity(conn.raw(), lane)
+    }
+
     fn flush(&mut self, now_ms: u64) {
         self.endpoint.flush(now_ms);
     }
@@ -185,6 +189,10 @@ impl ClientIo for UdpClient {
         self.endpoint.send(self.peer, delivery, payload)
     }
 
+    fn capacity(&self, lane: Lane) -> ReliableCapacity {
+        self.endpoint.capacity(self.peer, lane)
+    }
+
     fn flush(&mut self, now_ms: u64) {
         self.endpoint.flush(now_ms);
     }
@@ -236,7 +244,9 @@ mod tests {
         }
         let connection = connection.expect("loopback handshake completes");
 
-        client.send(Delivery::ReliableOrdered, b"loopback").unwrap();
+        client
+            .send(Delivery::RELIABLE_ORDERED, b"loopback")
+            .unwrap();
         let mut delivered = false;
         for now in 200..400 {
             client.flush(now);
@@ -245,7 +255,7 @@ mod tests {
                     event,
                     ServerEvent::Message {
                         conn,
-                        delivery: Delivery::ReliableOrdered,
+                        delivery: Delivery::RELIABLE_ORDERED,
                         payload,
                     } if *conn == connection && payload == b"loopback"
                 )
@@ -278,7 +288,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            client.send(Delivery::ReliableOrdered, b"after-timeout"),
+            client.send(Delivery::RELIABLE_ORDERED, b"after-timeout"),
             Err(SendError::Disconnected)
         );
     }

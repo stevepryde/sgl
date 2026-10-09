@@ -18,7 +18,7 @@ use sgl_net::websocket::{
     NativeWebSocketServerConfig, OriginPolicy, WebSocketIdentity,
 };
 use sgl_net::{
-    ClientEvent, ClientIo, Delivery, DisconnectReason, MAX_LATEST_STATE_BYTES,
+    ClientEvent, ClientIo, ConnectionId, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES,
     MAX_RELIABLE_MESSAGE_BYTES, SendError, ServerEvent, ServerIo, memory_duplex,
 };
 
@@ -58,6 +58,10 @@ struct Trace {
     client: Vec<Observed>,
 }
 
+/// A per-tick check that can also send between ticks.
+type Driver<'a> =
+    dyn FnMut(&mut dyn ClientIo, &mut dyn ServerIo, &[ServerEvent], &[ClientEvent]) -> bool + 'a;
+
 /// A transport pair plus how to wait for it: virtual transports settle in a
 /// bounded number of ticks, real ones within a wall-clock deadline.
 struct Pair {
@@ -71,6 +75,12 @@ struct Pair {
 impl Pair {
     /// Tick until `done` returns true or the transport's budget is spent.
     fn settle(&mut self, done: &mut dyn FnMut(&[ServerEvent], &[ClientEvent]) -> bool) {
+        self.drive(&mut |_, _, server_events, client_events| done(server_events, client_events));
+    }
+
+    /// Like [`Self::settle`], with the transports available to `done` so it
+    /// can send between ticks.
+    fn drive(&mut self, done: &mut Driver<'_>) {
         let deadline = Instant::now() + Duration::from_secs(10);
         for _ in 0..20_000 {
             self.now += 16;
@@ -78,7 +88,12 @@ impl Pair {
             let client_events = self.client.poll(self.now);
             self.server.flush(self.now);
             self.client.flush(self.now);
-            if done(&server_events, &client_events) {
+            if done(
+                &mut *self.client,
+                &mut *self.server,
+                &server_events,
+                &client_events,
+            ) {
                 return;
             }
             if self.real_time {
@@ -119,7 +134,7 @@ fn run(mut pair: Pair) -> Trace {
         // probe so the harness does not depend on event ordering above.
         let mut id = None;
         pair.client
-            .send(Delivery::ReliableOrdered, b"probe")
+            .send(Delivery::RELIABLE_ORDERED, b"probe")
             .unwrap();
         pair.settle(&mut |s, _| {
             for event in s {
@@ -138,14 +153,14 @@ fn run(mut pair: Pair) -> Trace {
     let corpus = corpus();
     for payload in &corpus {
         pair.client
-            .send(Delivery::ReliableOrdered, payload)
+            .send(Delivery::RELIABLE_ORDERED, payload)
             .unwrap();
     }
     let mut received = Vec::new();
     pair.settle(&mut |s, _| {
         for event in s {
             if let ServerEvent::Message {
-                delivery: Delivery::ReliableOrdered,
+                delivery: Delivery::RELIABLE_ORDERED,
                 payload,
                 ..
             } = event
@@ -180,7 +195,7 @@ fn run(mut pair: Pair) -> Trace {
     // Over-cap payloads are refused before any I/O, on both lanes.
     for (delivery, size) in [
         (Delivery::LatestState, MAX_LATEST_STATE_BYTES + 1),
-        (Delivery::ReliableOrdered, MAX_RELIABLE_MESSAGE_BYTES + 1),
+        (Delivery::RELIABLE_ORDERED, MAX_RELIABLE_MESSAGE_BYTES + 1),
     ] {
         let error = pair
             .client
@@ -203,7 +218,7 @@ fn run(mut pair: Pair) -> Trace {
     ];
     for payload in &back {
         pair.server
-            .send(conn, Delivery::ReliableOrdered, payload)
+            .send(conn, Delivery::RELIABLE_ORDERED, payload)
             .unwrap();
     }
     for i in 0..10u8 {
@@ -217,7 +232,7 @@ fn run(mut pair: Pair) -> Trace {
         for event in c {
             match event {
                 ClientEvent::Message {
-                    delivery: Delivery::ReliableOrdered,
+                    delivery: Delivery::RELIABLE_ORDERED,
                     payload,
                 } => received.push(payload.clone()),
                 ClientEvent::Message {
@@ -233,6 +248,20 @@ fn run(mut pair: Pair) -> Trace {
         .client
         .extend(received.into_iter().map(Observed::Reliable));
     trace.client.push(Observed::LatestSettled(newest.unwrap()));
+
+    // Saturation (#267): each side sends indexed reliable messages without
+    // flushing until refused, keeps the refused one, ticks with nobody
+    // disconnected, then retries it and sends the rest as capacity returns.
+    let (refusal, received) = saturate(&mut pair, Direction::ClientToServer, conn);
+    trace.client.push(refusal);
+    trace
+        .server
+        .extend(received.into_iter().map(Observed::Reliable));
+    let (refusal, received) = saturate(&mut pair, Direction::ServerToClient, conn);
+    trace.server.push(refusal);
+    trace
+        .client
+        .extend(received.into_iter().map(Observed::Reliable));
 
     // The client hangs up; the server must learn it was the peer.
     let now = pair.now;
@@ -253,6 +282,109 @@ fn run(mut pair: Pair) -> Trace {
         trace.client.len()
     );
     trace
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    ClientToServer,
+    ServerToClient,
+}
+
+/// Messages in the saturation phase: more than any transport's per-peer
+/// reliable allowance, so every transport refuses at least once.
+const SATURATION_MESSAGES: u32 = 160;
+
+fn indexed(index: u32) -> Vec<u8> {
+    let mut payload = vec![0xB7; 200];
+    payload[..4].copy_from_slice(&index.to_le_bytes());
+    payload
+}
+
+fn send_indexed(
+    direction: Direction,
+    client: &mut dyn ClientIo,
+    server: &mut dyn ServerIo,
+    conn: ConnectionId,
+    next: &mut u32,
+) -> Option<SendError> {
+    while *next < SATURATION_MESSAGES {
+        let payload = indexed(*next);
+        let result = match direction {
+            Direction::ClientToServer => client.send(Delivery::RELIABLE_ORDERED, &payload),
+            Direction::ServerToClient => server.send(conn, Delivery::RELIABLE_ORDERED, &payload),
+        };
+        match result {
+            Ok(()) => *next += 1,
+            Err(error) => return Some(error),
+        }
+    }
+    None
+}
+
+/// Runs one direction of the saturation phase; returns the first refusal and
+/// the payloads the receiver observed.
+fn saturate(pair: &mut Pair, direction: Direction, conn: ConnectionId) -> (Observed, Vec<Vec<u8>>) {
+    let name = pair.name;
+    let mut next = 0;
+    let refusal = send_indexed(
+        direction,
+        &mut *pair.client,
+        &mut *pair.server,
+        conn,
+        &mut next,
+    )
+    .unwrap_or_else(|| panic!("{name}: {SATURATION_MESSAGES} sends were never refused"));
+    let capacity = match direction {
+        Direction::ClientToServer => pair.client.capacity(Lane::DEFAULT),
+        Direction::ServerToClient => pair.server.capacity(conn, Lane::DEFAULT),
+    };
+    assert!(
+        capacity.messages == 0 || capacity.bytes < indexed(next).len(),
+        "{name}: capacity {capacity:?} admits the refused message"
+    );
+    let mut received = Vec::new();
+    let mut ticks = 0;
+    pair.drive(&mut |client, server, server_events, client_events| {
+        assert!(
+            !server_events
+                .iter()
+                .any(|e| matches!(e, ServerEvent::Disconnected { .. }))
+                && !client_events
+                    .iter()
+                    .any(|e| matches!(e, ClientEvent::Disconnected { .. })),
+            "{name}: a refused send ended the connection"
+        );
+        let payloads = match direction {
+            Direction::ClientToServer => server_events
+                .iter()
+                .filter_map(|event| match event {
+                    ServerEvent::Message { payload, .. } => Some(payload.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            Direction::ServerToClient => client_events
+                .iter()
+                .filter_map(|event| match event {
+                    ClientEvent::Message { payload, .. } => Some(payload.clone()),
+                    _ => None,
+                })
+                .collect(),
+        };
+        received.extend(payloads);
+        ticks += 1;
+        // Hold the refused message for 50 ticks, then retry and continue.
+        if ticks > 50 {
+            match send_indexed(direction, client, server, conn, &mut next) {
+                None | Some(SendError::WouldBlock) => {}
+                Some(error) => panic!("{name}: retry refused with {error:?}"),
+            }
+        }
+        received.len() >= SATURATION_MESSAGES as usize
+    });
+    (
+        Observed::Refused(Delivery::RELIABLE_ORDERED, refusal),
+        received,
+    )
 }
 
 fn memory() -> Pair {
@@ -335,19 +467,31 @@ fn websocket() -> Pair {
 
 /// Defect: one transport truncating at its frame limit, mangling binary,
 /// coalescing the two lanes differently, reporting a cap with a different
-/// error, or ending a peer-initiated close with a different reason. Oracle:
-/// the other three transports, run through the identical script.
+/// error, closing, losing or duplicating when a saturated lane refuses a
+/// send (#267), or ending a peer-initiated close with a different reason.
+/// Oracle: the other three transports, run through the identical script.
 #[test]
 fn the_same_payloads_produce_the_same_trace_on_every_transport() {
     let reference = run(memory());
-    let corpus_len = corpus().len();
-    assert_eq!(
-        reference
-            .server
+    let saturated: Vec<_> = (0..SATURATION_MESSAGES)
+        .map(|index| Observed::Reliable(indexed(index)))
+        .collect();
+    let reliable = |trace: &[Observed]| -> Vec<Observed> {
+        trace
             .iter()
             .filter(|o| matches!(o, Observed::Reliable(_)))
-            .count(),
-        corpus_len
+            .cloned()
+            .collect()
+    };
+    let server_reliable = reliable(&reference.server);
+    assert_eq!(
+        server_reliable.len(),
+        corpus().len() + saturated.len(),
+        "the memory reference delivers the corpus and the saturation phase"
+    );
+    assert!(
+        server_reliable.ends_with(&saturated) && reliable(&reference.client).ends_with(&saturated),
+        "the memory reference delivers every saturating message once, in order"
     );
     for pair in [simulated(), loopback_udp(), websocket()] {
         let name = pair.name;

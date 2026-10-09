@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{ConnectionId, Delivery, SendError, ServerEvent, ServerIo};
+use crate::{ConnectionId, Delivery, Lane, ReliableCapacity, SendError, ServerEvent, ServerIo};
 
 /// Maximum orphan messages retained across all child transports.
 pub const MAX_MUX_ORPHAN_MESSAGES: usize = 64;
@@ -276,6 +276,14 @@ impl ServerIo for ServerIoMux {
         self.sources[route.source].send(route.child, delivery, payload)
     }
 
+    fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
+        self.routes
+            .get(&conn)
+            .map_or_else(ReliableCapacity::default, |route| {
+                self.sources[route.source].capacity(route.child, lane)
+            })
+    }
+
     fn flush(&mut self, now_ms: u64) {
         for source in &mut self.sources {
             source.flush(now_ms);
@@ -314,7 +322,7 @@ mod tests {
     fn orphan_timing_and_message_cap_are_exact() {
         let message = |child: ConnectionId| ServerEvent::Message {
             conn: child,
-            delivery: Delivery::ReliableOrdered,
+            delivery: Delivery::RELIABLE_ORDERED,
             payload: b"early".to_vec(),
         };
         let mut source = ScriptedServer::default();
@@ -380,6 +388,10 @@ mod tests {
             Ok(())
         }
 
+        fn capacity(&self, _conn: ConnectionId, _lane: Lane) -> ReliableCapacity {
+            ReliableCapacity::default()
+        }
+
         fn flush(&mut self, _now_ms: u64) {}
 
         fn disconnect(&mut self, conn: ConnectionId, _now_ms: u64) {
@@ -423,7 +435,7 @@ mod tests {
                 ServerEvent::Connected { conn: id(2) },
             ]
         );
-        mux.send(id(2), Delivery::ReliableOrdered, b"two")
+        mux.send(id(2), Delivery::RELIABLE_ORDERED, b"two")
             .expect("route second source");
     }
 
@@ -431,7 +443,7 @@ mod tests {
     fn orphan_is_ordered_after_connected_same_or_next_poll() {
         let orphan = ServerEvent::Message {
             conn: id(7),
-            delivery: Delivery::ReliableOrdered,
+            delivery: Delivery::RELIABLE_ORDERED,
             payload: b"early".to_vec(),
         };
         let connected = ServerEvent::Connected { conn: id(7) };
@@ -456,7 +468,7 @@ mod tests {
                     ServerEvent::Connected { conn: id(1) },
                     ServerEvent::Message {
                         conn: id(1),
-                        delivery: Delivery::ReliableOrdered,
+                        delivery: Delivery::RELIABLE_ORDERED,
                         payload: b"early".to_vec(),
                     },
                 ]
@@ -473,13 +485,13 @@ mod tests {
             ServerEvent::Connected { conn: healthy },
             ServerEvent::Message {
                 conn: bad,
-                delivery: Delivery::ReliableOrdered,
+                delivery: Delivery::RELIABLE_ORDERED,
                 payload: vec![0; MAX_MUX_ORPHAN_BYTES + 1],
             },
         ]);
         source.polls.push_back(vec![ServerEvent::Message {
             conn: healthy,
-            delivery: Delivery::ReliableOrdered,
+            delivery: Delivery::RELIABLE_ORDERED,
             payload: b"alive".to_vec(),
         }]);
         let mut mux = ServerIoMux::new();
@@ -490,7 +502,7 @@ mod tests {
             mux.poll(1),
             vec![ServerEvent::Message {
                 conn: id(1),
-                delivery: Delivery::ReliableOrdered,
+                delivery: Delivery::RELIABLE_ORDERED,
                 payload: b"alive".to_vec(),
             }]
         );
@@ -508,7 +520,7 @@ mod tests {
             },
             ServerEvent::Message {
                 conn: child,
-                delivery: Delivery::ReliableOrdered,
+                delivery: Delivery::RELIABLE_ORDERED,
                 payload: b"late".to_vec(),
             },
         ]);
@@ -535,7 +547,7 @@ mod tests {
 
         assert_eq!(mux.poll(0).len(), 1);
         assert_eq!(
-            mux.send(id(1), Delivery::ReliableOrdered, b"still routed"),
+            mux.send(id(1), Delivery::RELIABLE_ORDERED, b"still routed"),
             Ok(())
         );
     }
@@ -577,8 +589,18 @@ mod properties {
 
     /// A child transport replaying a script and recording what the mux sends.
     struct Scripted {
+        source: usize,
         polls: VecDeque<Vec<ServerEvent>>,
         recorded: Rc<RefCell<Recorded>>,
+    }
+
+    /// The capacity a scripted child reports for one of its connections:
+    /// distinct per (source, child) so a misrouted query is visible.
+    fn child_capacity(source: usize, child: ConnectionId) -> ReliableCapacity {
+        ReliableCapacity {
+            messages: 1 + source * 256 + child.raw() as usize,
+            bytes: 0,
+        }
     }
 
     impl ServerIo for Scripted {
@@ -597,6 +619,10 @@ mod properties {
                 .sent
                 .push((conn, delivery, payload.to_vec()));
             Ok(())
+        }
+
+        fn capacity(&self, conn: ConnectionId, _lane: Lane) -> ReliableCapacity {
+            child_capacity(self.source, conn)
         }
 
         fn flush(&mut self, _now_ms: u64) {}
@@ -621,7 +647,7 @@ mod properties {
     /// is well-formed per public id (Connected first, Disconnected last),
     /// every message's tag names the public id's own (source, child) and
     /// messages of one child keep their order, ids are never reused, and a
-    /// send lands at exactly the tagged child transport.
+    /// send or capacity query lands at exactly the tagged child transport.
     #[test]
     fn mux_merges_children_into_unique_well_formed_connections() {
         let strategy = prop::collection::vec(
@@ -645,7 +671,7 @@ mod properties {
                                 index += 1;
                                 ServerEvent::Message {
                                     conn: cid(*c),
-                                    delivery: Delivery::ReliableOrdered,
+                                    delivery: Delivery::RELIABLE_ORDERED,
                                     payload: tag(source, *c, index),
                                 }
                             }
@@ -661,6 +687,7 @@ mod properties {
             let mut mux = ServerIoMux::new();
             for (source, script) in scripts.into_iter().enumerate() {
                 mux.push(Scripted {
+                    source,
                     polls: script,
                     recorded: Rc::clone(&recorders[source]),
                 });
@@ -720,12 +747,20 @@ mod properties {
                         let last = recorded.sent.last().expect("the send reached its source");
                         prop_assert_eq!(last.0, cid(origin.1));
                         prop_assert_eq!(&last.2, &payload);
+                        prop_assert_eq!(
+                            mux.capacity(conn, Lane::DEFAULT),
+                            child_capacity(usize::from(origin.0), cid(origin.1))
+                        );
                     }
                 }
                 for retired in seen_ids.iter().filter(|id| !live.contains_key(id)) {
                     prop_assert_eq!(
                         mux.send(*retired, Delivery::LatestState, &[1]),
                         Err(SendError::UnknownConnection)
+                    );
+                    prop_assert_eq!(
+                        mux.capacity(*retired, Lane::DEFAULT),
+                        ReliableCapacity::default()
                     );
                 }
             }

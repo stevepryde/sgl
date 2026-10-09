@@ -5,7 +5,7 @@ use super::cookie::{ChallengeLimiter, ConfirmReplayCache, CookieKey};
 use super::packet::{self, Ack, Item, Kind, Nonces, Parsed};
 use super::peer::{CloseGrace, Handshake, Peer};
 use super::transport::DatagramTransport;
-use crate::{Delivery, DenyReason, DisconnectReason, SendError};
+use crate::{Delivery, DenyReason, DisconnectReason, Lane, ReliableCapacity, SendError};
 
 const MAX_CONFIG_PEERS: usize = 256;
 const MAX_CONFIG_DATAGRAMS_PER_POLL: usize = 4_096;
@@ -124,7 +124,7 @@ pub enum EndpointEvent {
 fn reliable_event_usage(events: &[EndpointEvent]) -> (usize, usize) {
     events.iter().fold((0, 0), |(items, bytes), event| {
         if let EndpointEvent::Message {
-            delivery: Delivery::ReliableOrdered,
+            delivery: Delivery::Reliable(_),
             payload,
             ..
         } = event
@@ -140,7 +140,7 @@ fn peer_reliable_event_usage(events: &[EndpointEvent], peer: u64) -> (usize, usi
     events.iter().fold((0, 0), |(items, bytes), event| {
         if let EndpointEvent::Message {
             peer: event_peer,
-            delivery: Delivery::ReliableOrdered,
+            delivery: Delivery::Reliable(_),
             payload,
         } = event
             && *event_peer == peer
@@ -193,7 +193,7 @@ fn receive_payload_items(
                 let mut messages = Vec::new();
                 peer.reliable
                     .receive(sequence, more, payload, &mut messages)
-                    .map_err(|()| DisconnectReason::ReliableOverflow)?;
+                    .map_err(|()| DisconnectReason::InboundOverflow)?;
                 usage.retained_items = usage
                     .retained_items
                     .saturating_sub(before_items)
@@ -225,7 +225,7 @@ fn receive_payload_items(
                         .saturating_add(usage.peer_delivered_bytes)
                         > crate::RELIABLE_INBOUND_BYTES;
                 if exceeded {
-                    return Err(DisconnectReason::ReliableOverflow);
+                    return Err(DisconnectReason::InboundOverflow);
                 }
                 staged_reliable.extend(messages);
             }
@@ -407,85 +407,91 @@ impl<T: DatagramTransport> Endpoint<T> {
         Ok(id)
     }
 
+    /// Queues a payload for `peer`, or refuses it whole: a full lane or
+    /// global ceiling returns [`SendError::WouldBlock`] and leaves every
+    /// peer connected.
     pub fn send(&mut self, peer: u64, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
-        if payload.len() > crate::MAX_RELIABLE_MESSAGE_BYTES {
-            return Err(SendError::PayloadTooLarge);
-        }
-        let Some(state) = self.peers.get(&peer) else {
-            return Err(if self.role == EndpointRole::Client {
-                SendError::Disconnected
-            } else {
-                SendError::UnknownConnection
-            });
-        };
-        if state.is_closing() {
+        if self.peers.get(&peer).is_none_or(Peer::is_closing) {
             return Err(if self.role == EndpointRole::Client {
                 SendError::Disconnected
             } else {
                 SendError::UnknownConnection
             });
         }
-        let global_overflow = if delivery == Delivery::ReliableOrdered {
-            let fragments = payload.len().max(1).div_ceil(packet::MAX_ITEM_PAYLOAD);
-            let items: usize = self
-                .peers
-                .values()
-                .map(|state| state.reliable.outbound_items())
-                .sum();
-            let bytes: usize = self
-                .peers
-                .values()
-                .map(|state| state.reliable.outbound_bytes())
-                .sum();
-            items
-                .checked_add(fragments)
-                .is_none_or(|total| total > self.config.global_reliable_outbound_items)
-                || bytes
-                    .checked_add(payload.len())
-                    .is_none_or(|total| total > self.config.global_reliable_outbound_bytes)
-        } else {
-            false
-        };
-        if global_overflow {
-            // The offender is the peer holding the largest reliable backlog,
-            // not necessarily the peer this send addresses. Closing peers
-            // already drain under a bounded grace deadline, so they are not
-            // candidates. Ties resolve toward the addressed peer, then the
-            // highest identity, keeping the choice deterministic.
-            let offender = self
-                .peers
-                .iter()
-                .filter(|(_, state)| !state.is_closing())
-                .max_by_key(|(id, state)| {
-                    (
-                        state.reliable.outbound_bytes(),
-                        state.reliable.outbound_items(),
-                        **id == peer,
-                    )
-                })
-                .map_or(peer, |(id, _)| *id);
-            self.drop_peer(offender, DisconnectReason::ReliableOverflow, true);
-            return Err(SendError::ReliableOverflow);
-        }
-        let state = self.peers.get_mut(&peer).expect("checked peer exists");
-        let result = match delivery {
-            Delivery::ReliableOrdered => state
-                .reliable
-                .enqueue(payload, packet::MAX_ITEM_PAYLOAD)
-                .map_err(|()| SendError::ReliableOverflow),
+        match delivery {
+            Delivery::Reliable(_) => {
+                if payload.len() > crate::MAX_RELIABLE_MESSAGE_BYTES {
+                    return Err(SendError::PayloadTooLarge);
+                }
+                let fragments = payload.len().max(1).div_ceil(packet::MAX_ITEM_PAYLOAD);
+                let items: usize = self
+                    .peers
+                    .values()
+                    .map(|state| state.reliable.outbound_items())
+                    .sum();
+                let bytes: usize = self
+                    .peers
+                    .values()
+                    .map(|state| state.reliable.outbound_bytes())
+                    .sum();
+                if items
+                    .checked_add(fragments)
+                    .is_none_or(|total| total > self.config.global_reliable_outbound_items)
+                    || bytes
+                        .checked_add(payload.len())
+                        .is_none_or(|total| total > self.config.global_reliable_outbound_bytes)
+                {
+                    return Err(SendError::WouldBlock);
+                }
+                let state = self.peers.get_mut(&peer).expect("checked peer exists");
+                state
+                    .reliable
+                    .enqueue(payload, packet::MAX_ITEM_PAYLOAD)
+                    .map_err(|()| SendError::WouldBlock)
+            }
             Delivery::LatestState => {
                 if payload.len() > crate::MAX_LATEST_STATE_BYTES {
-                    Err(SendError::PayloadTooLarge)
-                } else {
-                    state.latest.replace(payload);
-                    Ok(())
+                    return Err(SendError::PayloadTooLarge);
                 }
+                let state = self.peers.get_mut(&peer).expect("checked peer exists");
+                state.latest.replace(payload);
+                Ok(())
             }
-        };
-        if result == Err(SendError::ReliableOverflow) {
-            self.drop_peer(peer, DisconnectReason::ReliableOverflow, true);
         }
-        result
+    }
+
+    /// What `lane` of `peer` admits now: the peer's own message, fragment and
+    /// byte allowances and the endpoint's global outbound ceilings, whichever
+    /// binds first. All zeros for an unknown or closing peer.
+    #[must_use]
+    pub fn capacity(&self, peer: u64, _lane: Lane) -> ReliableCapacity {
+        let Some(state) = self.peers.get(&peer).filter(|state| !state.is_closing()) else {
+            return ReliableCapacity::default();
+        };
+        let (global_items, global_bytes) =
+            self.peers
+                .values()
+                .fold((0_usize, 0_usize), |(items, bytes), state| {
+                    (
+                        items.saturating_add(state.reliable.outbound_items()),
+                        bytes.saturating_add(state.reliable.outbound_bytes()),
+                    )
+                });
+        let (messages, fragments, bytes) = state.reliable.outbound_allowance();
+        let fragments = fragments.min(
+            self.config
+                .global_reliable_outbound_items
+                .saturating_sub(global_items),
+        );
+        let bytes = bytes
+            .min(
+                self.config
+                    .global_reliable_outbound_bytes
+                    .saturating_sub(global_bytes),
+            )
+            .min(fragments.saturating_mul(packet::MAX_ITEM_PAYLOAD));
+        // Every message takes at least one fragment.
+        ReliableCapacity::remaining(messages.min(fragments), bytes)
     }
 
     pub fn poll(&mut self, now_ms: u64) -> Vec<EndpointEvent> {
@@ -966,7 +972,7 @@ impl<T: DatagramTransport> Endpoint<T> {
                 .into_iter()
                 .map(|payload| EndpointEvent::Message {
                     peer: id,
-                    delivery: Delivery::ReliableOrdered,
+                    delivery: Delivery::RELIABLE_ORDERED,
                     payload,
                 }),
         );
@@ -1145,7 +1151,7 @@ mod tests {
             server.poll(3),
             vec![EndpointEvent::Disconnected {
                 peer: 1,
-                reason: DisconnectReason::ReliableOverflow,
+                reason: DisconnectReason::InboundOverflow,
             }]
         );
 
@@ -1162,32 +1168,40 @@ mod tests {
         assert_eq!(server.peer_count(), 0);
     }
 
-    /// #254: the global outbound allowance admits exactly its item and byte
-    /// caps and refuses the next send without touching the peer.
+    /// #254, #267: the global outbound allowance admits exactly its item and
+    /// byte caps and refuses the next send with `WouldBlock` without touching
+    /// the peer.
     #[wasm_bindgen_test(unsupported = test)]
     fn outbound_global_caps_admit_exactly_the_cap() {
         let (mut server, _, _) = connected_server(EndpointConfig {
             global_reliable_outbound_items: 2,
             ..EndpointConfig::default()
         });
-        assert_eq!(server.send(1, Delivery::ReliableOrdered, b"a"), Ok(()));
-        assert_eq!(server.send(1, Delivery::ReliableOrdered, b"b"), Ok(()));
+        assert_eq!(server.send(1, Delivery::RELIABLE_ORDERED, b"a"), Ok(()));
+        assert_eq!(server.send(1, Delivery::RELIABLE_ORDERED, b"b"), Ok(()));
         assert_eq!(
-            server.send(1, Delivery::ReliableOrdered, b"c"),
-            Err(SendError::ReliableOverflow)
+            server.send(1, Delivery::RELIABLE_ORDERED, b"c"),
+            Err(SendError::WouldBlock)
         );
+        assert_eq!(server.peer_count(), 1);
 
         let (mut server, _, _) = connected_server(EndpointConfig {
             global_reliable_outbound_bytes: 6,
             ..EndpointConfig::default()
         });
-        assert_eq!(server.send(1, Delivery::ReliableOrdered, b"abc"), Ok(()));
-        assert_eq!(server.send(1, Delivery::ReliableOrdered, b"def"), Ok(()));
+        assert_eq!(server.send(1, Delivery::RELIABLE_ORDERED, b"abc"), Ok(()));
+        assert_eq!(server.capacity(1, Lane::DEFAULT).bytes, 3);
+        assert_eq!(
+            server.send(1, Delivery::RELIABLE_ORDERED, b"defg"),
+            Err(SendError::WouldBlock)
+        );
+        assert_eq!(server.send(1, Delivery::RELIABLE_ORDERED, b"def"), Ok(()));
         assert_eq!(server.peer_count(), 1);
         assert_eq!(
-            server.send(1, Delivery::ReliableOrdered, b"g"),
-            Err(SendError::ReliableOverflow)
+            server.send(1, Delivery::RELIABLE_ORDERED, b"g"),
+            Err(SendError::WouldBlock)
         );
+        assert_eq!(server.peer_count(), 1);
     }
 
     /// #254: an idle peer gets a keepalive exactly `keepalive_ms` after the
@@ -1215,7 +1229,7 @@ mod tests {
         });
         let big = vec![7u8; packet::MAX_ITEM_PAYLOAD];
         for _ in 0..3 {
-            server.send(1, Delivery::ReliableOrdered, &big).unwrap();
+            server.send(1, Delivery::RELIABLE_ORDERED, &big).unwrap();
         }
         server.flush(10);
         assert_eq!(server.transport.sent.len(), 2);
@@ -1364,7 +1378,7 @@ mod tests {
     fn graceful_close_delivers_reliable_reason_before_disconnect_on_ack() {
         let (mut server, source, nonces) = connected_server(EndpointConfig::default());
         server
-            .send(1, Delivery::ReliableOrdered, b"ServerClosing")
+            .send(1, Delivery::RELIABLE_ORDERED, b"ServerClosing")
             .unwrap();
         server.flush(10);
         server.disconnect(1, 10);
@@ -1375,7 +1389,7 @@ mod tests {
         );
         assert!(server.peers[&1].is_closing());
         assert_eq!(
-            server.send(1, Delivery::ReliableOrdered, b"late"),
+            server.send(1, Delivery::RELIABLE_ORDERED, b"late"),
             Err(SendError::UnknownConnection)
         );
 
@@ -1403,7 +1417,7 @@ mod tests {
         };
         let (mut server, _source, nonces) = connected_server(config);
         server
-            .send(1, Delivery::ReliableOrdered, b"Denied: deterministic")
+            .send(1, Delivery::RELIABLE_ORDERED, b"Denied: deterministic")
             .unwrap();
         server.flush(10);
         server.disconnect(1, 10);
@@ -1484,7 +1498,7 @@ mod tests {
         assert_eq!(client.poll(2), vec![EndpointEvent::Connected { peer }]);
         client.transport.sent.clear();
         client
-            .send(peer, Delivery::ReliableOrdered, b"abandoned")
+            .send(peer, Delivery::RELIABLE_ORDERED, b"abandoned")
             .unwrap();
 
         client.disconnect(peer, 3);
@@ -1790,7 +1804,7 @@ mod tests {
         assert_eq!(client.transport.sent.last().unwrap().now_ms, 500);
         assert_eq!(client.peers[&peer].last_receive_ms, 500);
         assert_eq!(
-            client.send(peer + 1, Delivery::ReliableOrdered, b"missing"),
+            client.send(peer + 1, Delivery::RELIABLE_ORDERED, b"missing"),
             Err(SendError::Disconnected)
         );
         assert!(client.poll(599).is_empty());
@@ -1802,7 +1816,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            client.send(peer, Delivery::ReliableOrdered, b"after-timeout"),
+            client.send(peer, Delivery::RELIABLE_ORDERED, b"after-timeout"),
             Err(SendError::Disconnected)
         );
     }
@@ -1850,7 +1864,7 @@ mod tests {
             server.poll(3),
             vec![EndpointEvent::Disconnected {
                 peer: 1,
-                reason: DisconnectReason::ReliableOverflow,
+                reason: DisconnectReason::InboundOverflow,
             }]
         );
     }
@@ -1888,7 +1902,7 @@ mod tests {
             server.poll(201),
             vec![EndpointEvent::Disconnected {
                 peer: 1,
-                reason: DisconnectReason::ReliableOverflow,
+                reason: DisconnectReason::InboundOverflow,
             }]
         );
     }
@@ -1901,7 +1915,7 @@ mod tests {
         };
         let (mut server, _source, _nonces) = connected_server(config);
         server
-            .send(1, Delivery::ReliableOrdered, b"never-acked")
+            .send(1, Delivery::RELIABLE_ORDERED, b"never-acked")
             .unwrap();
         server.flush(10);
         server.flush(210);
@@ -1941,17 +1955,30 @@ mod tests {
         assert_eq!(server.peer_count(), 0);
     }
 
+    /// #267: a full per-peer allowance, or a global ceiling a multi-fragment
+    /// message cannot fit, refuses the send with `WouldBlock`; the peer stays
+    /// connected, nothing is announced, and its queued messages still go out.
     #[wasm_bindgen_test(unsupported = test)]
-    fn per_peer_and_global_outbound_overflow_remove_only_the_offender() {
+    fn per_peer_and_global_outbound_saturation_refuses_without_disconnecting() {
         let (mut server, _, _) = connected_server(EndpointConfig::default());
         for _ in 0..crate::RELIABLE_OUTBOUND_MESSAGES {
-            server.send(1, Delivery::ReliableOrdered, b"").unwrap();
+            server.send(1, Delivery::RELIABLE_ORDERED, b"").unwrap();
         }
         assert_eq!(
-            server.send(1, Delivery::ReliableOrdered, b"overflow"),
-            Err(SendError::ReliableOverflow)
+            server.send(1, Delivery::RELIABLE_ORDERED, b"refused"),
+            Err(SendError::WouldBlock)
         );
-        assert_eq!(server.peer_count(), 0);
+        assert_eq!(server.peer_count(), 1);
+        assert!(server.poll(2).is_empty(), "no disconnect is announced");
+        server.flush(3);
+        assert!(
+            server
+                .transport
+                .sent
+                .iter()
+                .any(|datagram| reliable_payload(datagram).is_some()),
+            "the accepted backlog still flushes"
+        );
 
         let config = EndpointConfig {
             global_reliable_outbound_items: 1,
@@ -1961,46 +1988,169 @@ mod tests {
         assert_eq!(
             server.send(
                 1,
-                Delivery::ReliableOrdered,
+                Delivery::RELIABLE_ORDERED,
                 &vec![7; packet::MAX_ITEM_PAYLOAD + 1]
             ),
-            Err(SendError::ReliableOverflow)
+            Err(SendError::WouldBlock)
         );
-        assert_eq!(server.peer_count(), 0);
+        assert_eq!(server.peer_count(), 1);
+        assert_eq!(
+            server.send(
+                1,
+                Delivery::RELIABLE_ORDERED,
+                &[7; packet::MAX_ITEM_PAYLOAD]
+            ),
+            Ok(()),
+            "a one-fragment message still fits"
+        );
     }
 
+    /// #267: a global ceiling filled by one peer's backlog refuses another
+    /// peer's send with `WouldBlock` and closes nobody; once the backlog is
+    /// acknowledged the refused send succeeds.
     #[wasm_bindgen_test(unsupported = test)]
-    fn global_outbound_overflow_drops_the_largest_backlog_not_the_send_target() {
+    fn global_outbound_saturation_closes_no_peer_and_recovers_after_acks() {
         let config = EndpointConfig {
             global_reliable_outbound_items: 4,
             ..EndpointConfig::default()
         };
-        let (mut server, _, _) = connected_server(config);
+        let (mut server, source, nonces) = connected_server(config);
         let second_source = address(192, 0, 2, 91, 40_001);
         request(&mut server, second_source, 66);
         assert!(server.poll(2).is_empty());
-        let nonces = challenge_for(&server, second_source, 66);
-        confirm(&mut server, second_source, nonces);
+        let second_nonces = challenge_for(&server, second_source, 66);
+        confirm(&mut server, second_source, second_nonces);
         assert_eq!(server.poll(3), vec![EndpointEvent::Connected { peer: 2 }]);
 
         for _ in 0..4 {
             server
-                .send(1, Delivery::ReliableOrdered, b"backlog")
+                .send(1, Delivery::RELIABLE_ORDERED, b"backlog")
                 .unwrap();
         }
         assert_eq!(
-            server.send(2, Delivery::ReliableOrdered, b"healthy"),
-            Err(SendError::ReliableOverflow)
+            server.send(2, Delivery::RELIABLE_ORDERED, b"healthy"),
+            Err(SendError::WouldBlock)
         );
-        assert_eq!(
-            server.poll(4),
-            vec![EndpointEvent::Disconnected {
-                peer: 1,
-                reason: DisconnectReason::ReliableOverflow,
-            }]
+        assert!(server.poll(4).is_empty(), "no peer is closed");
+        assert_eq!(server.peer_count(), 2);
+
+        server.flush(5);
+        server.transport.receive_ack(source, nonces, 4);
+        assert!(server.poll(6).is_empty());
+        server
+            .send(2, Delivery::RELIABLE_ORDERED, b"healthy")
+            .expect("the acknowledged backlog returned the allowance");
+    }
+
+    /// The highest reliable sequence sent to `destination`, read off the wire.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn highest_reliable_sequence(
+        endpoint: &Endpoint<RecordingTransport>,
+        destination: SocketAddr,
+    ) -> Option<u16> {
+        endpoint
+            .transport
+            .sent
+            .iter()
+            .filter(|datagram| datagram.destination == destination)
+            .filter_map(|datagram| match packet::parse(&datagram.bytes, MAGIC)? {
+                Parsed::Payload { items, .. } => items
+                    .filter_map(|item| match item {
+                        Item::Reliable { sequence, .. } => Some(sequence),
+                        Item::Latest { .. } => None,
+                    })
+                    .max(),
+                Parsed::Control { .. } => None,
+            })
+            .max()
+    }
+
+    /// Defect (#267): a capacity report that disagrees with admission (a
+    /// forgotten fragment or global bound, an off-by-one at a cap), or a
+    /// refused send that still closes a peer. Oracle: `send`, the atomic
+    /// admission path, over random sends, flushes and wire-derived acks on
+    /// two peers sharing small global ceilings: the send succeeds exactly
+    /// when the capacity read just before it says the payload fits, and a
+    /// refusal is `WouldBlock` with both peers still connected.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn capacity_predicts_admission_across_peer_and_global_bounds() {
+        use crate::proptest_support::check;
+        use proptest::prelude::*;
+
+        #[derive(Clone, Debug)]
+        enum Op {
+            Send(u64, usize),
+            Flush,
+            Ack(u64),
+        }
+        let fragment = packet::MAX_ITEM_PAYLOAD;
+        let length = prop_oneof![
+            Just(0),
+            Just(1),
+            Just(fragment),
+            Just(fragment + 1),
+            Just(2 * fragment + 1),
+            0..=crate::MAX_RELIABLE_MESSAGE_BYTES,
+        ];
+        let op = prop_oneof![
+            6 => (1..=2_u64, length).prop_map(|(peer, len)| Op::Send(peer, len)),
+            2 => Just(Op::Flush),
+            1 => (1..=2_u64).prop_map(Op::Ack),
+        ];
+        let strategy = (
+            1..=300_usize,
+            1..=400_000_usize,
+            prop::collection::vec(op, 1..300),
         );
-        assert!(server.peers.contains_key(&2));
-        server.send(2, Delivery::ReliableOrdered, b"retry").unwrap();
+        check(strategy, |(items, bytes, ops)| {
+            let config = EndpointConfig {
+                global_reliable_outbound_items: items,
+                global_reliable_outbound_bytes: bytes,
+                ..EndpointConfig::default()
+            };
+            let (mut server, first_source, first_nonces) = connected_server(config);
+            let second_source = address(192, 0, 2, 91, 40_001);
+            request(&mut server, second_source, 66);
+            assert!(server.poll(2).is_empty());
+            let second_nonces = challenge_for(&server, second_source, 66);
+            confirm(&mut server, second_source, second_nonces);
+            assert_eq!(server.poll(3), vec![EndpointEvent::Connected { peer: 2 }]);
+            let mut now = 3;
+            for op in ops {
+                match op {
+                    Op::Send(peer, len) => {
+                        let capacity = server.capacity(peer, Lane::DEFAULT);
+                        let fits = capacity.messages >= 1 && capacity.bytes >= len;
+                        let result = server.send(peer, Delivery::RELIABLE_ORDERED, &vec![3; len]);
+                        prop_assert_eq!(result.is_ok(), fits, "{:?} for {} bytes", capacity, len);
+                        if result.is_err() {
+                            prop_assert_eq!(result, Err(SendError::WouldBlock));
+                        }
+                        prop_assert_eq!(server.peer_count(), 2);
+                    }
+                    Op::Flush => {
+                        now += 1;
+                        server.flush(now);
+                    }
+                    Op::Ack(peer) => {
+                        let (source, nonces) = if peer == 1 {
+                            (first_source, first_nonces)
+                        } else {
+                            (second_source, second_nonces)
+                        };
+                        if let Some(highest) = highest_reliable_sequence(&server, source) {
+                            server
+                                .transport
+                                .receive_ack(source, nonces, highest.wrapping_add(1));
+                        }
+                        now += 1;
+                        prop_assert!(server.poll(now).is_empty());
+                    }
+                }
+            }
+            Ok(())
+        });
     }
 
     #[wasm_bindgen_test(unsupported = test)]
@@ -2024,7 +2174,7 @@ mod tests {
             server.poll(3),
             vec![EndpointEvent::Disconnected {
                 peer: 1,
-                reason: DisconnectReason::ReliableOverflow,
+                reason: DisconnectReason::InboundOverflow,
             }]
         );
     }
@@ -2060,7 +2210,7 @@ mod tests {
             server.poll(5),
             vec![EndpointEvent::Disconnected {
                 peer: 1,
-                reason: DisconnectReason::ReliableOverflow,
+                reason: DisconnectReason::InboundOverflow,
             }]
         );
     }
