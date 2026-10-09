@@ -19,7 +19,7 @@ use sgl_core::collision::{
 };
 use sgl_core::math::Vec2;
 use sgl_core::random::Rng;
-use sgl_core::time::FixedClock;
+use sgl_core::time::{CatchUp, FixedClock};
 use sgl_core::{Digest, Grid2, SplitMix64, StateHasher, derive_stream_seed};
 
 const SEED: [u8; 32] = *b"sgl-core property tests seed  01";
@@ -268,7 +268,8 @@ fn every_stream_seed_component_matters() {
 /// Defect: accumulator drift or a broken clamp, so a stall produces a burst
 /// of steps or the cadence oscillates. Oracle: core.md 2 — each frame adds
 /// `min(dt, fixed_dt)` and runs at most one step; steps over a whole
-/// schedule are the integer part of the clamped time.
+/// schedule are the integer part of the clamped time, and the clamped-off
+/// time is reported in `dropped_dt`.
 #[test]
 fn fixed_clock_runs_the_clamped_time_one_step_per_frame() {
     let strategy = prop::collection::vec(finite(0.0..0.3), 1..400);
@@ -277,6 +278,7 @@ fn fixed_clock_runs_the_clamped_time_one_step_per_frame() {
         let fixed = f64::from(clock.fixed_dt);
         let mut steps = 0u32;
         let mut clamped_total = 0.0f64;
+        let (mut supplied, mut dropped) = (0.0f64, 0.0f64);
         for dt in dts {
             clock.begin_frame(dt);
             while clock.step() {
@@ -293,12 +295,64 @@ fn fixed_clock_runs_the_clamped_time_one_step_per_frame() {
                 clock.alpha
             );
             clamped_total += f64::from(dt).min(fixed);
+            supplied += f64::from(dt);
+            dropped += f64::from(clock.dropped_dt);
+            let held = supplied - f64::from(steps) * fixed - dropped;
+            prop_assert!(
+                held > -1e-3 && held < fixed + 1e-3,
+                "held {held} s outside [0, one step)"
+            );
         }
         let expected = (clamped_total / fixed).floor() as u32;
         prop_assert!(
             steps.abs_diff(expected) <= 1,
             "{steps} steps for {clamped_total} s of clamped time (expected {expected})"
         );
+        Ok(())
+    });
+}
+
+/// Defect: a catch-up clock that loses or invents time, overruns its budget,
+/// or carries more debt than allowed. Oracle: core.md 2 — supplied time is
+/// either simulated, reported as dropped, or still held (at most the debt
+/// plus a fractional step), and a frame runs at most its budget.
+#[test]
+fn catch_up_clock_conserves_supplied_time() {
+    let strategy = (
+        1u32..10,
+        0u32..10,
+        finite(10.0..120.0),
+        prop::collection::vec(finite(0.0..0.5), 1..200),
+    );
+    check(strategy, |(budget, debt, hz, dts)| {
+        let policy = CatchUp {
+            max_steps_per_frame: budget,
+            max_debt_steps: debt,
+        };
+        let mut clock = FixedClock::with_catch_up(hz, policy);
+        let fixed = f64::from(clock.fixed_dt);
+        let (mut supplied, mut simulated, mut dropped) = (0.0f64, 0.0f64, 0.0f64);
+        for dt in dts {
+            clock.begin_frame(dt);
+            while clock.step() {}
+            clock.finish();
+            prop_assert!(clock.steps_this_frame <= budget, "budget overrun");
+            prop_assert!((0.0..1.0).contains(&clock.alpha), "alpha {}", clock.alpha);
+            prop_assert!(
+                clock.dropped_dt >= 0.0,
+                "negative drop {}",
+                clock.dropped_dt
+            );
+            supplied += f64::from(dt);
+            simulated += f64::from(clock.steps_this_frame) * fixed;
+            dropped += f64::from(clock.dropped_dt);
+            let held = supplied - simulated - dropped;
+            prop_assert!(
+                held > -1e-3 && held < (f64::from(debt) + 1.0) * fixed + 1e-3,
+                "held {held} s outside [0, {} steps]",
+                debt + 1
+            );
+        }
         Ok(())
     });
 }
