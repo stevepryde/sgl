@@ -198,6 +198,9 @@ pub struct SpritePass {
     default_normal_view: wgpu::TextureView,
     pages: Vec<Page>,
     atlases: Vec<AtlasPage>,
+    /// Standalone page indices a resized texture released, reused before a
+    /// new page is opened.
+    free_pages: Vec<usize>,
     entries: HashMap<Handle<Texture>, Entry>,
     /// Scratch reused every frame.
     raw: Vec<InstanceRaw>,
@@ -458,6 +461,7 @@ impl SpritePass {
             default_normal_view,
             pages: Vec::new(),
             atlases: Vec::new(),
+            free_pages: Vec::new(),
             entries: HashMap::new(),
             raw: Vec::new(),
             batches: Vec::new(),
@@ -472,11 +476,14 @@ impl SpritePass {
 
     /// Upload a decoded texture to the GPU under its asset `handle`:
     /// shelf-packed into a shared atlas page when small (≤ [`MAX_ATLAS_DIM`]),
-    /// standalone otherwise. A handle already uploaded has its pixels
-    /// replaced as [`replace`](Self::replace) does, so a texture changed
-    /// under its handle (a glyph page returned by `TextRenderer::end_frame`)
-    /// reaches the GPU without recreating the pass. Upload a texture again
-    /// only when its pixels change: each call writes them.
+    /// standalone otherwise. A handle already uploaded with `upload` has its
+    /// pixels replaced as [`replace`](Self::replace) does, so a texture
+    /// changed under its handle (a glyph page returned by
+    /// `TextRenderer::end_frame`) reaches the GPU without recreating the
+    /// pass. Upload a texture again only when its pixels change: each call
+    /// writes them. A handle known only as a normal map gains a diffuse
+    /// upload here; use [`replace`](Self::replace) to update its normal-map
+    /// pixels.
     pub fn upload(
         &mut self,
         device: &wgpu::Device,
@@ -508,9 +515,11 @@ impl SpritePass {
     ///   atlas placements have fixed extents; crossing [`MAX_ATLAS_DIM`]
     ///   moves it between a shared atlas page and a standalone page in
     ///   either direction. Its registered normal map is detached: register a
-    ///   matching one again. The old placement's space is not reused until
-    ///   the pass is dropped. An explicit [`SpriteInstance::src`] must stay
-    ///   within the new dimensions.
+    ///   matching one again. A standalone page the texture had to itself is
+    ///   reused or freed, so repeated resizes do not grow the pass; space in
+    ///   a shared atlas page is not reused until the pass is dropped. An
+    ///   explicit [`SpriteInstance::src`] must stay within the new
+    ///   dimensions.
     /// - **A normal-map handle** writes into each diffuse association of the
     ///   same dimensions and detaches each of different dimensions.
     pub fn replace(
@@ -529,6 +538,8 @@ impl SpritePass {
                 let (x, y) = (entry.offset.x as u32, entry.offset.y as u32);
                 write_pixels(queue, &self.pages[entry.page].texture, x, y, tex);
             } else {
+                let old = entry.page;
+                self.release_if_exclusive(device, handle, old, tex);
                 let entry = self.place(device, queue, tex);
                 self.entries.insert(handle, entry);
             }
@@ -567,6 +578,32 @@ impl SpritePass {
         found
     }
 
+    /// Before `handle` (on page `page`) is placed again for `tex`: when `page`
+    /// is a standalone page no other texture uses, put it on the free list
+    /// for [`place`](Self::place) to rebuild, freeing its textures now if
+    /// `tex` will go to an atlas instead. Indices stay valid for batches
+    /// already prepared.
+    fn release_if_exclusive(
+        &mut self,
+        device: &wgpu::Device,
+        handle: Handle<Texture>,
+        page: usize,
+        tex: &Texture,
+    ) {
+        let shared = self.atlases.iter().any(|atlas| atlas.page == page)
+            || self
+                .entries
+                .iter()
+                .any(|(other, entry)| *other != handle && entry.page == page);
+        if shared {
+            return;
+        }
+        if tex.width <= MAX_ATLAS_DIM && tex.height <= MAX_ATLAS_DIM {
+            self.pages[page] = self.new_page(device, 1, 1, "released sprite page");
+        }
+        self.free_pages.push(page);
+    }
+
     /// Allocate a GPU placement for `tex`, upload its pixels, and return the
     /// unassociated entry. Existing handle ownership is managed by callers.
     fn place(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, tex: &Texture) -> Entry {
@@ -581,7 +618,13 @@ impl SpritePass {
                 normal: None,
             }
         } else {
-            let page = self.create_page(device, w, h, "standalone sprite page");
+            let label = "standalone sprite page";
+            let page = if let Some(page) = self.free_pages.pop() {
+                self.pages[page] = self.new_page(device, w, h, label);
+                page
+            } else {
+                self.create_page(device, w, h, label)
+            };
             write_pixels(queue, &self.pages[page].texture, 0, 0, tex);
             Entry {
                 page,
@@ -714,8 +757,15 @@ impl SpritePass {
         (page, x, y)
     }
 
-    /// Create an empty sRGB page texture + bind group; returns its index.
+    /// Create an empty page and return its index.
     fn create_page(&mut self, device: &wgpu::Device, w: u32, h: u32, label: &str) -> usize {
+        let page = self.new_page(device, w, h, label);
+        self.pages.push(page);
+        self.pages.len() - 1
+    }
+
+    /// An empty sRGB page texture + bind group, without a normal companion.
+    fn new_page(&self, device: &wgpu::Device, w: u32, h: u32, label: &str) -> Page {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
@@ -734,14 +784,13 @@ impl SpritePass {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bind_group = self.page_bind_group(device, &view, &self.default_normal_view, label);
-        self.pages.push(Page {
+        Page {
             texture,
             view,
             normal: None,
             bind_group,
             size: Vec2::new(w as f32, h as f32),
-        });
-        self.pages.len() - 1
+        }
     }
 
     /// Convert a **pre-sorted** [`DrawList`] into batched GPU instances and
@@ -1678,6 +1727,7 @@ mod gpu_tests {
         );
 
         let replaced = quad_texels([[33, 66, 99], [120, 0, 7], [5, 180, 5], [0, 0, 0]]);
+        let pages = pass.page_count();
         assert!(pass.replace(&device, &queue, right, &replaced));
         assert_eq!(
             draw_screen_target(&device, &queue, &mut pass, &list, (4, 2)),
@@ -1687,6 +1737,7 @@ mod gpu_tests {
 
         let uploaded = quad_texels([[9, 8, 7], [6, 5, 4], [3, 2, 1], [222, 111, 0]]);
         pass.upload(&device, &queue, right, &uploaded);
+        assert_eq!(pass.page_count(), pages, "a same-size update opened a page");
         assert_eq!(
             draw_screen_target(&device, &queue, &mut pass, &list, (4, 2)),
             side_by_side(neighbour, &uploaded),
@@ -1741,7 +1792,9 @@ mod gpu_tests {
         let changed = text.end_frame(&mut assets, &mut list);
         assert_eq!(changed, [page], "the page kept its handle");
         let republished = assets.get(page).unwrap();
+        let pages = pass.page_count();
         pass.upload(&device, &queue, page, republished);
+        assert_eq!(pass.page_count(), pages, "the page update opened a page");
 
         // Probe: the page's packed region 1:1, the icon below it.
         let (w, h) = list.screen.iter().fold((0, 0), |(w, h), quad| {
@@ -1783,6 +1836,73 @@ mod gpu_tests {
             let row = &pixels[(h + y) as usize * stride..][..8];
             assert_eq!(row, &icon_texels[y as usize * 8..][..8], "icon row {y}");
         }
+    }
+
+    /// #271: resizing a standalone texture through `upload`, again and again
+    /// and through an atlas size, keeps reusing its page, and the last
+    /// resize's texels are what is drawn.
+    #[test]
+    fn standalone_resizes_reuse_their_page() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut pass = SpritePass::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+            LightingSpace::Gamma,
+        );
+        let mut assets = Assets::<Texture>::new();
+        let other = assets.insert(
+            "other.png".into(),
+            flat(MAX_ATLAS_DIM + 1, 1, [9, 9, 9, 255]),
+        );
+        let resized = assets.insert("resized.png".into(), flat(MAX_ATLAS_DIM + 1, 1, [1; 4]));
+        for handle in [other, resized] {
+            pass.upload(&device, &queue, handle, assets.get(handle).unwrap());
+        }
+        let pages = pass.page_count();
+        // Texel (x, y) of the last texture is (x, y, x + y, 255).
+        let pattern = |w: u32, h: u32| Texture {
+            width: w,
+            height: h,
+            rgba: (0..h)
+                .flat_map(|y| (0..w).flat_map(move |x| [x as u8, y as u8, (x + y) as u8, 255]))
+                .collect(),
+        };
+        for step in 0..8 {
+            let tex = flat(MAX_ATLAS_DIM + 2 + step, 1 + step % 3, [step as u8; 4]);
+            pass.upload(&device, &queue, resized, &tex);
+        }
+        // Into the atlas (opening it) and back out.
+        pass.upload(&device, &queue, resized, &flat(2, 2, [7; 4]));
+        let with_atlas = pass.page_count();
+        assert_eq!(with_atlas, pages + 1, "the atlas page");
+        pass.upload(&device, &queue, resized, &pattern(MAX_ATLAS_DIM + 5, 3));
+        assert_eq!(
+            pass.page_count(),
+            with_atlas,
+            "standalone resizes opened pages"
+        );
+
+        let mut list = DrawList::new();
+        list.push_screen(SpriteInstance {
+            src: Some(Rect::new(0.0, 0.0, 4.0, 3.0)),
+            ..SpriteInstance::new(resized, Vec2::new(2.0, 1.5))
+        });
+        let pixels = draw_screen_target(&device, &queue, &mut pass, &list, (4, 3));
+        assert_eq!(pixels, pattern(4, 3).rgba);
+
+        // The other standalone texture kept its page and pixels.
+        let mut list = DrawList::new();
+        list.push_screen(SpriteInstance {
+            src: Some(Rect::new(0.0, 0.0, 1.0, 1.0)),
+            scale: Vec2::splat(2.0),
+            ..SpriteInstance::new(other, Vec2::splat(1.0))
+        });
+        let pixels = draw_screen_target(&device, &queue, &mut pass, &list, (2, 2));
+        assert!(pixels.chunks_exact(4).all(|p| p == [9, 9, 9, 255]));
     }
 
     /// Records the commands the pass encodes: the observation point for
@@ -1877,7 +1997,9 @@ mod gpu_tests {
             sprite(b, Some(clip_one)),
             sprite(a, Some(clip_two)),   // draw 5: clip two
             sprite(a, Some(off_target)), // clipped to nothing: culled
-            sprite(b, None),             // draw 6: unclipped again
+            sprite(a, None),             // draw 6: unclipped again, two
+            sprite(missing, None),       // instances across a skipped one
+            sprite(a, None),
         ] {
             list.push_screen(instance);
         }
@@ -1910,7 +2032,7 @@ mod gpu_tests {
             stats.screen,
             ChannelDrawStats {
                 draws: 6,
-                instances: 9
+                instances: 10
             }
         );
         assert_eq!(

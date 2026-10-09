@@ -29,8 +29,9 @@ Their CPU-side contracts are in [client](client.md).
    it draws the new pixels from the next frame without recreating the pass:
    equal dimensions write into its placement and preserve its registered
    normal map, while changed dimensions relocate it (between a shared atlas
-   page and a standalone page when the size crosses the atlas limit) and
-   detach the now-incompatible normal map. Replacing a handle used as a
+   page and a standalone page when the size crosses the atlas limit, reusing
+   a standalone page it had to itself) and detach the now-incompatible
+   normal map. Replacing a handle used as a
    normal map updates every size-compatible diffuse association and detaches
    each incompatible one.
 3. A frame supplies game-owned draw and light data at the configured logical

@@ -21,10 +21,11 @@ docs and specs the entry links.
   their one-step render-paced cadence. No game-code changes needed.
 - `sgl-2d` `SpritePass::upload`: a handle already uploaded now has its pixels
   replaced (was ignored), and `SpritePass::replace` is public, so glyph pages
-  from `TextRenderer::end_frame` update the existing pass. Migration: delete
-  any rebuild of the `SpritePass` and re-upload of retained textures; upload
-  only the handles `end_frame` returns, and stop calling `upload` for
-  unchanged textures each frame.
+  from `TextRenderer::end_frame` update the existing pass. No game-code
+  changes required; optionally drop a `SpritePass` rebuild and re-upload of
+  retained textures and upload only the handles `end_frame` returns. Games
+  that call `upload` for unchanged textures every frame should upload only
+  on change.
 - `sgl-2d` `SpritePass::draw_stats` (new, `SpriteDrawStats` /
   `ChannelDrawStats`): per-channel draw calls and instances encoded for the
   latest `prepare`. No game-code changes needed.
