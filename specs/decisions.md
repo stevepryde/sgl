@@ -547,3 +547,11 @@ Use the [current specs](README.md) for implementation and the
   slower than UDP, never weaker. The browser API has no read backpressure,
   and a receiver-advertised window would change the wire format, so a
   browser game sizes its inbound bounds instead.
+- **D-37** Decision, 2026-10-09 (#270 follow-up): `FixedClock` accumulates
+  exact `Duration` time with the step `Duration::from_secs_f64(1.0 / hz)`,
+  not `f32` seconds. Rationale: a game timing frames with `Duration` must get
+  the same tick counts from SGL's clock as from its own integer clock; `f32`
+  rounding ran 0 ticks on a first 1/30 s frame at 30 Hz and dropped 141
+  steps of a 5 s stall instead of 142. The cross-target clock fixture in
+  `crates/sgl-core/tests/parity.rs` was regenerated with whole-nanosecond
+  inputs (its final `alpha` changed; the step count did not).
