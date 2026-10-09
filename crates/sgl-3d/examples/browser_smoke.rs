@@ -11,8 +11,10 @@
 //! with an ambient cube; a box lit by a static irradiance atlas; point, spot
 //! and rectangle lights; a decal; a baked specular probe; a dynamic GI volume
 //! over the ground, part of it covered by an irradiance volume written by
-//! region; glow, heat shimmer and mist; a fog volume; and an
-//! environment. Where the device has BC, the
+//! region; glow, heat shimmer and mist; a fog volume; a glass pane whose
+//! thickness varies across it through a game's shader
+//! (`support/glass.wgsl`, composed and validated through naga in the
+//! browser); and an environment. Where the device has BC, the
 //! grate's image, the probe and the atlas are block-compressed, as a game
 //! ships them. Each
 //! configuration reports `ok` or `FAIL`: WebGPU validation, out-of-memory and
@@ -27,9 +29,9 @@ use sgl_3d::glam::camera;
 use sgl_3d::{
     AlphaMode, BakedSpecularProbe, Camera, Decal, DirectionalLight, DirectionalShadow,
     DynamicGiVolume, EnvironmentId, Fog, FogVolume, FrameInput, HemisphereLight, InstanceId,
-    InstanceState, IrradianceCell, IrradianceVolume, Light, LightShape, Mist, Mobility,
-    PreparedIrradianceRegion, Renderer, Scene, SpecularProbeBox, SpecularProbeRadiance,
-    SpecularProbeTexels,
+    InstanceState, IrradianceCell, IrradianceVolume, Light, LightShape, MaterialShader, Mist,
+    Mobility, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene, ShaderSource,
+    SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     deformation::{
         Influence, Joint, MeshDeformation, MorphDelta, MorphTarget, MorphWeight, Node, Rig,
@@ -362,6 +364,68 @@ struct Content {
     deforming: InstanceId,
 }
 
+/// A transmissive glass pane beside the deforming box, away from the
+/// measured points, whose thickness its shader (`support/glass.wgsl`)
+/// takes from each vertex's data: 20 cm at its foot, 1 cm at its top.
+fn add_glass(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene) -> Result<(), String> {
+    let shader = scene
+        .add_shader(ShaderSource {
+            wgsl: include_str!("support/glass.wgsl").into(),
+            label: "tinted glass".into(),
+        })
+        .map_err(|e| format!("add_shader: {e}"))?;
+    let glass = Material {
+        base: [1.; 4],
+        metallic: 0.,
+        roughness: 0.05,
+        transmission: 1.,
+        thickness: 0.1,
+        double_sided: true,
+        casts_directional_shadow: false,
+        shader: Some(MaterialShader {
+            shader,
+            displacement_bound: 0.,
+        }),
+        ..Default::default()
+    };
+    let glass = scene
+        .add_materials(device, queue, &[glass], &[])
+        .map_err(|e| format!("add_materials: {e}"))?[0];
+    let tint = [0.4f32, 0.8, 0.6, 1.].map(|color| -color.ln() / 0.1);
+    scene
+        .set_shader_parameters(queue, glass, bytemuck::bytes_of(&tint))
+        .map_err(|e| format!("set_shader_parameters: {e}"))?;
+    let corners = [(-0.6, 0.), (0.6, 0.), (0.6, 1.2), (-0.6, 1.2)];
+    let mesh = ModelMesh {
+        vertices: corners
+            .map(|(x, y)| Vertex {
+                tangent: [0.; 4],
+                lightmap_bounds: [0., 0., 1., 1.],
+                lightmap_uv: [0.; 2],
+                position: [x - 1.2, y, 3.5],
+                normal: [0., 0., 1.],
+                uv: [0.; 2],
+                color: [1.; 4],
+            })
+            .to_vec(),
+        indices: vec![0, 1, 2, 0, 2, 3],
+        material: glass,
+        deformation: Default::default(),
+    };
+    let thickness = corners
+        .map(|(_, y)| [0.2 - 0.19 * y / 1.2, 0., 0., 0.])
+        .to_vec();
+    let model = PreparedModel::with_shader_data(vec![mesh], vec![thickness])
+        .map_err(|e| format!("PreparedModel: {e}"))?;
+    let model = scene
+        .add_model(device, queue, model)
+        .map_err(|e| format!("add_model: {e}"))?;
+    scene
+        .add_instance(device, queue, InstanceState::new(model), Mobility::Static)
+        .map_err(|e| format!("add_instance: {e}"))?;
+    Ok(())
+}
+
 fn add_content(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -431,6 +495,7 @@ fn add_content(
             .add_light(device, queue, light)
             .map_err(|e| format!("add_light: {e}"))?;
     }
+    add_glass(device, queue, scene)?;
     let paint = scene
         .add_decal_image(Image::Rgba8(image::RgbaImage::from_pixel(
             8,

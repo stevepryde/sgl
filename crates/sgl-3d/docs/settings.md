@@ -107,6 +107,13 @@ is done (its algorithm and internal parameters) is SGL3D's.
   `true` by default): `false` keeps the light it gives off itself (its
   emission, an unlit material's whole colour) out of global illumination,
   for a fixture a scene light stands for. Content, not a setting.
+- A material's shader and what its functions read: `SurfaceMaterial::shader`
+  (`MaterialShader`: the shader and its `displacement_bound`, none by
+  default), its parameter block (`Scene::set_shader_parameters`, zeros by
+  default), an instance's shader data (`Scene::set_instance_shader_data`,
+  zero by default) and a mesh's per-vertex data
+  (`PreparedModel::with_shader_data`). Content, not settings: a shader
+  changes what a surface is, never how SGL3D renders it.
 
 With the `diagnostics` feature, `Settings::diagnostics` holds investigation
 switches (layers off, the frame probe, the tone-target capture, the

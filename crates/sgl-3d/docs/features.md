@@ -126,9 +126,11 @@ them through unrefracted. A probe captured on an
   true, .. }`): water or glass, with the normals the game animates, that
   receives the frame's screen-space reflections where it is the nearest
   receiver, and that TAA, FSR2 and motion blur reproject by its own motion.
-  One reflecting layer per pixel; a transmissive receiver refracts too. Animate water with scrolling
-  normal layers; a mesh replaced every frame with `Scene::set_model` is
-  prepared again, ray BVH included, every frame. [Blended receivers](../README.md#blended-receivers).
+  One reflecting layer per pixel; a transmissive receiver refracts too. Move
+  water's waves with a shader's vertex function and add their detail with
+  scrolling normal layers; a mesh replaced every frame with
+  `Scene::set_model` is prepared again, ray BVH included, every frame.
+  [Blended receivers](../README.md#blended-receivers).
 - **Scrolling normal layers** (`asset::Material::normal_layers`,
   `SurfaceMaterial::normal_layers`, `NormalLayer`): a material's repeating
   normal map drawn as two layers, each with its velocity, scale and
@@ -137,6 +139,26 @@ them through unrefracted. A probe captured on an
   too. Precise however long a session runs. FSR2 is told where they move,
   opaque surfaces included, as AMD asks for animated textures.
   [Scrolling normal layers](../README.md#scrolling-normal-layers).
+- **Programmable surfaces** (`Scene::add_shader`, `ShaderSource`,
+  `SurfaceMaterial::shader`, `MaterialShader`): the game's WGSL vertex and
+  surface functions for a material, composed into SGL3D's programs and run
+  in every pass that rasterises it (G-buffer, lighting, receivers, blended
+  draws, captures, cascades and local-light faces), with motion from a
+  second evaluation at the last submitted frame and culling grown by the
+  material's `displacement_bound`: waves on static water chunks, wind on
+  vegetation, glass of varying thickness. Its parameters
+  (`Scene::set_shader_parameters`, laid out as `shader_parameters_layout`
+  says), its instances' data (`set_instance_shader_data`) and its meshes'
+  per-vertex data (`PreparedModel::with_shader_data`) upload nothing per
+  frame; time and phase come from the frame. A blended shader reads the
+  opaque depth behind it on `Extended`; scene colour reaches it only through
+  SGL3D's transmission, which its surface function drives per fragment.
+  Validated with naga when it is added (typed `shader::ShaderError`: no
+  bindings, entry points, overrides, `discard` or unbounded loops). Rays,
+  bakes and a static instance's local-light shadow layers see the rest
+  geometry. Add shaders at load: a shader's first drawn frame compiles its
+  pipelines. SGL3D ships no water, wind or glass; the examples carry their
+  own. [Programmable surfaces](../README.md#programmable-surfaces).
 - **Decals**: boxes that project the game's images onto the lit surfaces
   inside them, changing base colour and, with their maps, normal, roughness
   and metallic before lighting, so reflections and SSR see them

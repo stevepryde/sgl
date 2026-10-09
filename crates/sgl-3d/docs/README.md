@@ -65,7 +65,7 @@ its rendering `settings::Settings`.
    setting that [applies at resize](settings.md#when-changes-apply) changed);
    a `FrameInput` with the camera, the authored look and the presentation
    time in seconds (`elapsed_seconds`, an `f64`, which moves materials'
-   normal layers and the mist); `Renderer::render`
+   normal layers, their shaders and the mist); `Renderer::render`
    into the output view. Draw the game's UI (`sgl-2d` can, on the same
    device), submit, and call `Renderer::finish_frame`.
 4. Set `FrameInput::camera_cut` on a camera cut. History restarts itself then,
@@ -81,8 +81,11 @@ fog);
 [`examples/skinned.rs`](../examples/skinned.rs) adds a skinned, morphed glTF
 and the game's side of animating it,
 [`examples/instances.rs`](../examples/instances.rs) many instances of a few
-models, [`examples/water.rs`](../examples/water.rs) a lake whose
-animated surface receives screen-space reflections,
+models, [`examples/water.rs`](../examples/water.rs) a lake of 16 m
+chunks whose waves its own shader moves and whose surface receives
+screen-space reflections,
+[`examples/shaders.rs`](../examples/shaders.rs) vegetation bent by a wind
+shader and glass whose thickness varies across it,
 [`examples/streaming.rs`](../examples/streaming.rs) a block world streamed
 in 16 m chunks about a moving camera, edited and remeshed, with the render
 origin following it, and what each scene operation costs, and
@@ -137,7 +140,10 @@ and an asynchronous readback.
   frame time in `FrameInput::frame_time_ms`. Capture probes natively; the
   capture's blocking readback fails on WebGPU.
 - Measure cost per pass with `timing::GpuTiming` before and after a change.
-- Need a rendering feature SGL3D lacks? Build it in SGL3D, not in the game,
+- Need a rendering feature SGL3D lacks? An effect of your own surfaces
+  (waves, wind, a glass's varying thickness) is a
+  [shader](../README.md#programmable-surfaces): the game's WGSL, which every
+  pass runs. A feature of the renderer is built in SGL3D, not in the game,
   following the spec's
   [rendering development rules](../../../specs/sgl3d.md#rendering-development)
   and the [architecture](../../../specs/sgl3d-architecture.md): port a proven,

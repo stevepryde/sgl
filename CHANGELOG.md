@@ -73,6 +73,24 @@ docs and specs the entry links.
 - `sgl-2d` `SpritePass::draw_stats` (new, `SpriteDrawStats` /
   `ChannelDrawStats`): per-channel draw calls and instances encoded for the
   latest `prepare`. No game-code changes needed.
+- `sgl-3d` `Scene::add_shader` (new, `ShaderSource`, `ShaderId`,
+  `shader::ShaderError`): a game's WGSL `material_vertex`,
+  `material_surface` and `ShaderParams`, validated when added and run in
+  every raster pass; `remove_shader`, `shader_parameters_layout`,
+  `set_shader_parameters`, `set_instance_shader_data` and
+  `instance_shader_data` go with it
+  ([Programmable surfaces](crates/sgl-3d/README.md#programmable-surfaces)).
+  No game-code changes needed.
+- `sgl-3d` `SurfaceMaterial::shader` and `asset::Material::shader` (new,
+  `MaterialShader { shader, displacement_bound }`, `None` by default):
+  builders with `..Default::default()` keep compiling; a full struct
+  literal adds `shader: None`.
+- `sgl-3d` `PreparedModel::with_shader_data` (new): meshes with per-vertex
+  data for their material's shader; `PreparedModel::new` is unchanged. No
+  game-code changes needed.
+- `sgl-3d` `SceneError`: new `UnknownShader`, `ShaderInUse`,
+  `ShaderParameters`, `Shader`, `InvalidDisplacementBound` and
+  `ShaderDataLength` variants; an exhaustive match adds arms.
 - Docs: SGL has no physics engine; the [consumer guide](docs/README.md#physics)
   recommends custom arcade physics for most games (`sgl_core::collision` in
   2D) and Rapier only where simulated physics is the game. No game-code
