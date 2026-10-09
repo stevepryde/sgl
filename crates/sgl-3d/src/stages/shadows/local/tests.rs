@@ -1415,3 +1415,178 @@ fn a_surface_passing_light_through_takes_its_own_side_s_light_as_one_that_does_n
         }
     }
 }
+
+/// A blocker drawn through the test shader (`test_support::TEST_SHADER`)
+/// with `params`, masked where `masked`, at the origin as a static or
+/// moving instance, and a point light 1 m in front of it.
+fn shaded_blocker(
+    harness: &Harness,
+    params: test_support::TestShaderParams,
+    masked: bool,
+    mobility: Mobility,
+) -> (Scene, LightId) {
+    let (device, queue) = (&harness.device, &harness.queue);
+    let mut scene = Scene::new(device, queue);
+    let shader = test_support::add_test_shader(&mut scene);
+    let mut blocker = blocker();
+    if masked {
+        blocker.materials[0].alpha = crate::AlphaMode::Mask { cutoff: 0.5 };
+    }
+    let ids = scene.add_asset(device, queue, blocker).unwrap();
+    test_support::set_shader(&mut scene, queue, ids.materials[0], (shader, 1.));
+    test_support::set_test_params(&mut scene, queue, ids.materials[0], params);
+    scene
+        .add_instance(device, queue, at(ids.model, Vec3::ZERO), mobility)
+        .unwrap();
+    let light = scene
+        .add_light(device, queue, point(Vec3::new(0., 0., 1.), 4.))
+        .unwrap();
+    (scene, light)
+}
+
+// Plausible defects: a material's shader not applied to a local light's
+// casters, its static layer's (indexed from the slabs) or a moving
+// instance's, so its shadow stays at its rest geometry. The oracle is
+// geometric: a point light 1 m in front of a blocker the shader moves
+// 0.75 m toward it; a receiver 0.5 m in front of the blocker's rest lies
+// behind the moved blocker from the light, so it is dark, where the
+// blocker at rest would leave it lit.
+#[test]
+fn a_shaders_casters_cast_where_its_vertex_function_moves_them() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let receiver = [(Vec3::new(0., 0., 0.5), 0.)];
+    for mobility in [Mobility::Static, Mobility::Moving] {
+        for (lift, expected) in [(0., 1.), (0.75, 0.)] {
+            let params = test_support::TestShaderParams {
+                direction: [0., 0., 1.],
+                lift,
+                ..Default::default()
+            };
+            let (mut scene, light) = shaded_blocker(&harness, params, false, mobility);
+            harness.frame(&mut scene, &input());
+            let label = format!("a {mobility:?} blocker lifted {lift}");
+            harness.expect(light, &[(receiver[0].0, expected)], &label);
+        }
+    }
+}
+
+// Plausible defect: a shader's masked casters cutting out what the
+// material's record and maps cut out rather than what its surface function
+// does. The oracle is geometric, as for masked casters: the shader cuts the
+// blocker out where its world x is negative, so the segment from the light
+// to the left receiver crosses a cut-out texel and the right one's a kept
+// one.
+#[test]
+fn a_shaders_masked_casters_take_its_coverage() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let params = test_support::TestShaderParams {
+        cutting: 1.,
+        ..Default::default()
+    };
+    let (mut scene, light) = shaded_blocker(&harness, params, true, Mobility::Static);
+    harness.frame(&mut scene, &input());
+    let expected = [
+        (Vec3::new(-0.15, 0., -1.), 1.),
+        (Vec3::new(0.15, 0., -1.), 0.),
+    ];
+    harness.expect(light, &expected, "the camera's view");
+}
+
+/// A scene whose `blocker()` material is drawn through the test shader
+/// (`test_support::TEST_SHADER`), which lifts it along +Z by `lift` plus
+/// its instance's data's x, moving it at most `bound`, and a point light
+/// at z = 1 m that reaches 4 m: the scene, the light and the blocker's
+/// model, of which it holds no instance.
+fn reaching_scene(harness: &Harness, lift: f32, bound: f32) -> (Scene, LightId, crate::ModelId) {
+    let (device, queue) = (&harness.device, &harness.queue);
+    let mut scene = Scene::new(device, queue);
+    let shader = test_support::add_test_shader(&mut scene);
+    let ids = scene.add_asset(device, queue, blocker()).unwrap();
+    test_support::set_shader(&mut scene, queue, ids.materials[0], (shader, bound));
+    let params = test_support::TestShaderParams {
+        direction: [0., 0., 1.],
+        lift,
+        ..Default::default()
+    };
+    test_support::set_test_params(&mut scene, queue, ids.materials[0], params);
+    let light = scene
+        .add_light(device, queue, point(Vec3::new(0., 0., 1.), 4.))
+        .unwrap();
+    (scene, light, ids.model)
+}
+
+/// Where a reaching scene's blocker rests: 6 m behind its light, beyond its
+/// 4 m reach. Lifted 5.5 m, it lies 0.5 m in front of the light, between
+/// the light and `REACHED`.
+const RESTING: Vec3 = Vec3::new(0., 0., -5.);
+const REACHED: Vec3 = Vec3::ZERO;
+
+// Plausible defects: a local light's CPU culling of a shader material's
+// casters by their rest bounds (a static instance's caster groups and
+// clusters for the light's faces, a moving instance's reach and its
+// casters), so a blocker the shader moves into the light's range casts
+// nothing. The oracle is geometric: the blocker rests beyond the light's
+// reach and the shader lifts it between the light and a receiver. With a
+// displacement bound that covers the lift the receiver is dark; with 0,
+// which the game promises and the shader breaks, culling by the rest
+// bounds drops the blocker and the receiver stays lit.
+#[test]
+fn a_local_lights_casters_are_culled_by_bounds_grown_by_the_displacement() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    for mobility in [Mobility::Static, Mobility::Moving] {
+        for (bound, expected) in [(0., 1.), (6., 0.)] {
+            let (mut scene, light, model) = reaching_scene(&harness, 5.5, bound);
+            let (device, queue) = (&harness.device, &harness.queue);
+            scene
+                .add_instance(device, queue, at(model, RESTING), mobility)
+                .unwrap();
+            harness.frame(&mut scene, &input());
+            let label = format!("a {mobility:?} blocker moved at most {bound} m");
+            harness.expect(light, &[(REACHED, expected)], &label);
+        }
+    }
+}
+
+// Plausible defects: a static edit of a shader material's instance (added,
+// its shader data changed, removed) recorded at its rest bounds, so the
+// light's cached static layer, which the edit's displaced geometry reaches
+// and its rest bounds do not, keeps the shadow it had. The oracle is
+// geometric: the blocker rests beyond the light's reach and the shader
+// lifts it between the light and a receiver by its parameters plus its
+// instance's data; the receiver is dark exactly while the lifted blocker
+// is there.
+#[test]
+fn static_edits_of_a_shaded_instance_restale_the_faces_its_displacement_reaches() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (mut scene, light, model) = reaching_scene(&harness, 5.5, 6.);
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let input = input();
+    harness.frame(&mut scene, &input);
+    harness.expect(light, &[(REACHED, 1.)], "no blocker");
+    let blocker = scene
+        .add_instance(&device, &queue, at(model, RESTING), Mobility::Static)
+        .unwrap();
+    harness.frame(&mut scene, &input);
+    harness.expect(light, &[(REACHED, 0.)], "a lifted blocker added");
+    scene
+        .set_instance_shader_data(&queue, blocker, [-5.5, 0., 0., 0.])
+        .unwrap();
+    harness.frame(&mut scene, &input);
+    harness.expect(light, &[(REACHED, 1.)], "its data returning it to rest");
+    scene
+        .set_instance_shader_data(&queue, blocker, [0.; 4])
+        .unwrap();
+    harness.frame(&mut scene, &input);
+    harness.expect(light, &[(REACHED, 0.)], "its data lifting it again");
+    scene.remove_instance(blocker).unwrap();
+    harness.frame(&mut scene, &input);
+    harness.expect(light, &[(REACHED, 1.)], "the lifted blocker removed");
+}

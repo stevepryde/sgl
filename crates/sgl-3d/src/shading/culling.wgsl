@@ -83,12 +83,14 @@ struct LodChain {
 }
 // What draws with one pipeline and one material: its region of each
 // GPU-built view's cluster list, its material's visibility group and
-// SET_* bits.
+// SET_* bits, and how far its material's shader moves a vertex in its
+// mesh's units, by which the cull grows its meshes' and sections' bounds.
 struct DrawSet {
  region:u32,
  capacity:u32,
  visibility_group:u32,
  flags:u32,
+ displacement_bound:f32,
 }
 // One GPU-built view's cull: its clip volume's planes in world space, each
 // plane's tolerance row, the level of detail's transforms and render size,

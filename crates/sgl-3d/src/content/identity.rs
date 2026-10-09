@@ -64,3 +64,7 @@ identity!(
     /// A decal of a scene: a box that projects images onto surfaces.
     DecalId
 );
+identity!(
+    /// A shader of a scene: a game's WGSL module its materials name.
+    ShaderId
+);

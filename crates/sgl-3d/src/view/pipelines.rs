@@ -2,7 +2,8 @@
 //! draw list, in one cache keyed by pass, by what the material and instance
 //! require (face culling, alpha mode and deformed vertices: `variant`), by
 //! the diagnostics layer constants and by whether the scene holds rectangle
-//! lights and decals (`LitConstants`). The lighting pass while ray-traced
+//! lights and decals (`LitConstants`), and by the material's shader, whose
+//! programs (`programs`) a pipeline is created from. The lighting pass while ray-traced
 //! shadows run composes the shadow mask's provider (`shading::SHADOW_MASK`)
 //! and binds the mask at its group 3; every other pass composes the
 //! provider that holds no slot (`shading::SHADOW_MASK_NONE`). Every program
@@ -11,101 +12,23 @@
 //! pipeline layout takes group 0's and group 2's layouts of that tier, fixed
 //! for the device, so no key holds it.
 use crate::Scene;
+use crate::content::identity::{Identity, ShaderId};
 use crate::shading::bind::{BindingTier, LitLayout};
+use crate::shading::programs::*;
 use crate::shading::{self, gbuffer};
 use crate::view::targets::{composition_targets, mask_targets};
 use std::collections::HashMap;
 
 mod key;
 mod pass;
+mod programs;
 mod variant;
 use key::PipelineKey;
 pub(crate) use key::{LayerConstants, LitConstants};
 pub(crate) use pass::{GeometryPass, depth};
 use pass::{attachments_fit, targets};
+use programs::{Program, ProgramSet};
 pub(crate) use variant::{Alpha, Cull, Variant};
-
-/// Scene geometry's camera and probe-capture passes. A program composes it
-/// with one shadow-mask provider, one lit provider, one material-map
-/// provider and one transmission provider (`geometry_program`).
-pub(crate) static GEOMETRY: shading::Module = shading::Module {
-    name: "geometry",
-    source: include_str!("geometry.wgsl"),
-    deps: &[
-        &shading::BIND_LIT,
-        &shading::BIND_SCENE,
-        &shading::BIND_MATERIAL,
-        &shading::BIND_BLENDED,
-        &shading::GBUFFER,
-        &shading::VERTEX,
-        &shading::VERTEX_PULL,
-        &shading::SURFACE,
-        &shading::SURFACE_RASTER,
-        &shading::FRAME_FOG,
-        &shading::TRANSMISSION,
-    ],
-};
-/// The entry points the geometry passes' pipelines are created with, from
-/// either geometry program: the vertex all share and each pass's fragment.
-pub(crate) const SOURCE_VS_ENTRY: &str = "source_vs";
-pub(crate) const FS_ENTRY: &str = "fs";
-pub(crate) const STABLE_FS_ENTRY: &str = "stable_fs";
-pub(crate) const STABLE_LEGACY_FS_ENTRY: &str = "stable_legacy_fs";
-pub(crate) const ANISOTROPY_FS_ENTRY: &str = "anisotropy_fs";
-pub(crate) const SOURCE_FS_ENTRY: &str = "source_fs";
-pub(crate) const FUSED_OPAQUE_FS_ENTRY: &str = "fused_opaque_fs";
-pub(crate) const BLENDED_FS_ENTRY: &str = "blended_fs";
-pub(crate) const BLENDED_FSR2_MASKED_FS_ENTRY: &str = "blended_fsr2_masked_fs";
-pub(crate) const RECEIVER_FS_ENTRY: &str = "receiver_fs";
-pub(crate) const FSR2_COMPOSITION_FS_ENTRY: &str = "fsr2_composition_fs";
-/// The geometry program on a device of `tier`: `GEOMETRY` with the shadow
-/// mask's provider where `shadow_mask`, else with the provider that holds
-/// no slot, and the tier's lit, material-map and transmission providers.
-pub(crate) fn geometry_program(shadow_mask: bool, tier: BindingTier) -> String {
-    let provider = if shadow_mask {
-        &shading::SHADOW_MASK
-    } else {
-        &shading::SHADOW_MASK_NONE
-    };
-    shading::compose(&[
-        &GEOMETRY,
-        provider,
-        shading::lit_provider(tier),
-        shading::material_provider(tier),
-        shading::transmission_provider(tier),
-    ])
-}
-
-/// The directional and local-light shadow casters.
-pub(crate) static CASTER: shading::Module = shading::Module {
-    name: "caster",
-    source: include_str!("caster.wgsl"),
-    deps: &[
-        &shading::BIND_SHADOW,
-        &shading::BIND_SCENE,
-        &shading::SCENE_RAYS,
-        &shading::VERTEX_PULL,
-        &shading::MATERIAL_RASTER,
-        &shading::BIND_CASTER_POSITIONS,
-    ],
-};
-/// The entry points the casters' pipelines are created with: a vertex for
-/// each way a caster's vertices arrive and its depth is clipped, and the
-/// fragments that clamp depth or cut out masked texels.
-pub(crate) const SHADOW_VS_ENTRY: &str = "shadow_vs";
-pub(crate) const SHADOW_UNCLIPPED_VS_ENTRY: &str = "shadow_unclipped_vs";
-pub(crate) const SHADOW_MASKED_VS_ENTRY: &str = "shadow_masked_vs";
-pub(crate) const SHADOW_MASKED_UNCLIPPED_VS_ENTRY: &str = "shadow_masked_unclipped_vs";
-pub(crate) const SHADOW_PULLED_VS_ENTRY: &str = "shadow_pulled_vs";
-pub(crate) const SHADOW_PULLED_UNCLIPPED_VS_ENTRY: &str = "shadow_pulled_unclipped_vs";
-pub(crate) const SHADOW_PULLED_MASKED_VS_ENTRY: &str = "shadow_pulled_masked_vs";
-pub(crate) const SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY: &str =
-    "shadow_pulled_masked_unclipped_vs";
-pub(crate) const SHADOW_PAIRED_VS_ENTRY: &str = "shadow_paired_vs";
-pub(crate) const SHADOW_PAIRED_UNCLIPPED_VS_ENTRY: &str = "shadow_paired_unclipped_vs";
-pub(crate) const SHADOW_UNCLIPPED_FS_ENTRY: &str = "shadow_unclipped_fs";
-pub(crate) const SHADOW_MASKED_FS_ENTRY: &str = "shadow_masked_fs";
-pub(crate) const SHADOW_MASKED_UNCLIPPED_FS_ENTRY: &str = "shadow_masked_unclipped_fs";
 
 /// Which alpha modes the scene's materials use beyond opaque, whether one
 /// is a receiver of screen-space reflections, whether an opaque or masked
@@ -138,6 +61,47 @@ impl Content {
     }
 }
 
+/// What the materials that name one shader need of its pipelines: the
+/// alpha modes they use, opaque among them, and whether one is a receiver.
+/// A shader's opaque or masked material's surface always counts as moving
+/// (`Material::surface_moves`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ShaderContent {
+    opaque: bool,
+    mask: bool,
+    blend: bool,
+    receivers: bool,
+}
+
+impl ShaderContent {
+    /// Each shader the materials of `scene` name, with what they need, in
+    /// the order of their identities' indices.
+    fn of(scene: &Scene) -> Vec<(ShaderId, Self)> {
+        let mut shaders: Vec<(ShaderId, Self)> = Vec::new();
+        for (_, material) in scene.materials.slots.iter() {
+            let Some(shader) = material.values.shader else {
+                continue;
+            };
+            let at = match shaders.iter().position(|(id, _)| *id == shader.shader) {
+                Some(at) => at,
+                None => {
+                    shaders.push((shader.shader, Self::default()));
+                    shaders.len() - 1
+                }
+            };
+            let content = &mut shaders[at].1;
+            match Alpha::of(&material.values) {
+                Alpha::Opaque => content.opaque = true,
+                Alpha::Mask => content.mask = true,
+                Alpha::Blend => content.blend = true,
+            }
+            content.receivers |= material.values.receives_screen_space_reflections();
+        }
+        shaders.sort_by_key(|(id, _)| id.index());
+        shaders
+    }
+}
+
 pub(crate) struct GeometryPipelines {
     /// Group 0 lit, then scene and material.
     lit: wgpu::PipelineLayout,
@@ -150,11 +114,11 @@ pub(crate) struct GeometryPipelines {
     /// `shadow`'s, then the caster positions group 3, for the GPU-built
     /// cascades' casters.
     pulled_shadow: wgpu::PipelineLayout,
-    geometry: wgpu::ShaderModule,
-    /// The geometry program with the shadow mask's provider, made when the
-    /// ray-traced shadows first run.
-    geometry_shadow_masked: Option<wgpu::ShaderModule>,
-    caster: wgpu::ShaderModule,
+    /// The programs of materials without a shader.
+    programs: ProgramSet,
+    /// The programs of each shader a material names, dropped with their
+    /// pipelines when none does.
+    shader_programs: HashMap<ShaderId, ProgramSet>,
     cache: HashMap<PipelineKey, wgpu::RenderPipeline>,
     /// The diagnostics layers `get` returns pipelines for.
     layers: LayerConstants,
@@ -163,6 +127,9 @@ pub(crate) struct GeometryPipelines {
     /// The content `get` returns pipelines for beyond opaque, rigid
     /// geometry.
     content: Content,
+    /// The shaders `get` returns pipelines for, with what their materials
+    /// need.
+    shaders: Vec<(ShaderId, ShaderContent)>,
     /// Whether `get` returns the lighting pipelines that take the shadow
     /// mask, prepared once ray-traced shadows run.
     shadow_mask: bool,
@@ -214,19 +181,13 @@ impl GeometryPipelines {
                 "GPU-built cascade casters",
                 &[shadow, scene, material, positions],
             ),
-            geometry: device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("SGL material"),
-                source: wgpu::ShaderSource::Wgsl(geometry_program(false, tier).into()),
-            }),
-            geometry_shadow_masked: None,
-            caster: device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("shadow casters"),
-                source: wgpu::ShaderSource::Wgsl(shading::compose(&[&CASTER]).into()),
-            }),
+            programs: ProgramSet::default_set(),
+            shader_programs: HashMap::new(),
             cache: HashMap::new(),
             layers,
             lit_constants: LitConstants::default(),
             content: Content::default(),
+            shaders: Vec::new(),
             shadow_mask: false,
             anisotropy_inline: attachments_fit(&limits, &targets(GeometryPass::GBuffer, true)),
             fused_supported: attachments_fit(&limits, &targets(GeometryPass::Fused, true)),
@@ -242,9 +203,11 @@ impl GeometryPipelines {
     /// `get` returns pipelines compiled with `layers` for `scene` from now
     /// on: shading rectangle lights and applying decals while it holds one,
     /// and for the alpha modes its materials use and its deforming models,
-    /// created here on first use, with the lighting pipelines that take the
-    /// shadow mask once `shadow_mask` (ray-traced shadows run). Without
-    /// diagnostics every frame uses `ALL`.
+    /// and for each shader its materials name, created here on first use,
+    /// with the lighting pipelines that take the shadow mask once
+    /// `shadow_mask` (ray-traced shadows run). A shader no material names
+    /// any longer loses its programs and pipelines. Without diagnostics
+    /// every frame uses `ALL`.
     pub fn specialise(
         &mut self,
         device: &wgpu::Device,
@@ -254,25 +217,36 @@ impl GeometryPipelines {
     ) {
         let lit_constants = LitConstants::of(scene);
         let content = Content::of(scene);
+        let shaders = if scene.materials.holds_shaders() {
+            ShaderContent::of(scene)
+        } else {
+            Vec::new()
+        };
         let shadow_mask = self.shadow_mask || shadow_mask;
         if (
             self.layers,
             self.lit_constants,
             self.content,
             self.shadow_mask,
-        ) != (layers, lit_constants, content, shadow_mask)
+            &self.shaders,
+        ) != (layers, lit_constants, content, shadow_mask, &shaders)
         {
             self.layers = layers;
             self.lit_constants = lit_constants;
             self.content = content;
             self.shadow_mask = shadow_mask;
-            if shadow_mask && self.geometry_shadow_masked.is_none() {
-                self.geometry_shadow_masked =
-                    Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some("SGL material with the shadow mask"),
-                        source: wgpu::ShaderSource::Wgsl(geometry_program(true, self.tier).into()),
-                    }));
+            self.shader_programs
+                .retain(|id, _| shaders.iter().any(|(shader, _)| shader == id));
+            self.cache.retain(|key, _| {
+                key.shader
+                    .is_none_or(|id| shaders.iter().any(|(shader, _)| *shader == id))
+            });
+            for &(id, _) in &shaders {
+                self.shader_programs
+                    .entry(id)
+                    .or_insert_with(|| ProgramSet::of(scene, id));
             }
+            self.shaders = shaders;
             self.prepare_layers(device);
         }
     }
@@ -280,9 +254,9 @@ impl GeometryPipelines {
     /// Creates the current specialisation's pipelines: each geometry pass
     /// the device takes and the two casters, for each cull, each alpha mode
     /// the scene uses and, for pulled passes, deformed vertices while it
-    /// holds a deforming model.
+    /// holds a deforming model; and the same of each shader's, for the alpha
+    /// modes its materials use.
     fn prepare_layers(&mut self, device: &wgpu::Device) {
-        let (layers, lit_constants) = (self.layers, self.lit_constants);
         let mut passes = vec![
             GeometryPass::Forward,
             GeometryPass::GBuffer,
@@ -300,48 +274,71 @@ impl GeometryPipelines {
         if self.fused_supported {
             passes.push(GeometryPass::Fused);
         }
-        if self.content.receivers {
-            passes.push(GeometryPass::Receivers);
-        }
-        if self.content.moving {
-            passes.push(GeometryPass::Fsr2Composition);
-        }
         if self.shadow_mask {
             passes.push(GeometryPass::Lighting { shadow_mask: true });
         }
+        let content = self.content;
         let mut alphas = vec![Alpha::Opaque];
-        if self.content.mask {
+        if content.mask {
             alphas.push(Alpha::Mask);
         }
-        if self.content.blend {
+        if content.blend {
             alphas.push(Alpha::Blend);
         }
-        let deformed: &[bool] = if self.content.deformed {
+        let mut sets = vec![(None, alphas, content.receivers, content.moving)];
+        for &(id, shader) in &self.shaders {
+            let alphas: Vec<_> = [
+                (shader.opaque, Alpha::Opaque),
+                (shader.mask, Alpha::Mask),
+                (shader.blend, Alpha::Blend),
+            ]
+            .into_iter()
+            .filter_map(|(used, alpha)| used.then_some(alpha))
+            .collect();
+            let moving = shader.opaque || shader.mask;
+            sets.push((Some(id), alphas, shader.receivers, moving));
+        }
+        let deformed: &[bool] = if content.deformed {
             &[false, true]
         } else {
             &[false]
         };
-        for pass in passes {
-            for &alpha in alphas.iter().filter(|&&alpha| pass.draws(alpha)) {
-                for cull in [Cull::None, Cull::Back, Cull::Front] {
-                    for &deformed in deformed {
-                        let variant = Variant {
-                            cull,
-                            alpha,
-                            deformed,
-                        };
-                        let key = PipelineKey::new(
-                            pass,
-                            variant,
-                            layers,
-                            lit_constants,
-                            self.content.transmissive,
-                        );
-                        self.prepare(device, key);
+        for (shader, alphas, receivers, moving) in sets {
+            let mut passes = passes.clone();
+            if receivers {
+                passes.push(GeometryPass::Receivers);
+            }
+            if moving {
+                passes.push(GeometryPass::Fsr2Composition);
+            }
+            for pass in passes {
+                for &alpha in alphas.iter().filter(|&&alpha| pass.draws(alpha)) {
+                    for cull in [Cull::None, Cull::Back, Cull::Front] {
+                        for &deformed in deformed {
+                            let variant = Variant {
+                                cull,
+                                alpha,
+                                deformed,
+                            };
+                            let key = self.key(pass, variant, shader);
+                            self.prepare(device, key);
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// The key of `pass`'s pipeline for `variant` and `shader` in the
+    /// current specialisation.
+    fn key(&self, pass: GeometryPass, variant: Variant, shader: Option<ShaderId>) -> PipelineKey {
+        PipelineKey::new(
+            pass,
+            variant,
+            shader,
+            (self.layers, self.lit_constants),
+            self.content.transmissive,
+        )
     }
 
     /// Creates the pipeline for `key` unless it exists.
@@ -352,45 +349,76 @@ impl GeometryPipelines {
         }
     }
 
-    /// `pass`'s pipeline for `variant`.
-    pub fn get(&self, pass: GeometryPass, variant: Variant) -> &wgpu::RenderPipeline {
-        let key = PipelineKey::new(
-            pass,
-            variant,
-            self.layers,
-            self.lit_constants,
-            self.content.transmissive,
-        );
+    /// `pass`'s pipeline for `variant`, of the material's `shader`.
+    pub fn get(
+        &self,
+        pass: GeometryPass,
+        variant: Variant,
+        shader: Option<ShaderId>,
+    ) -> &wgpu::RenderPipeline {
+        let key = self.key(pass, variant, shader);
         self.cache
             .get(&key)
             .unwrap_or_else(|| panic!("geometry pipeline {key:?} was not prepared"))
     }
 
-    fn create(&self, device: &wgpu::Device, key: PipelineKey) -> wgpu::RenderPipeline {
+    /// The shader modules and pipelines it holds for game shaders.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn shader_programs(&self) -> (usize, usize) {
+        (
+            self.shader_programs.values().map(ProgramSet::modules).sum(),
+            self.cache.keys().filter(|key| key.shader.is_some()).count(),
+        )
+    }
+
+    fn create(&mut self, device: &wgpu::Device, key: PipelineKey) -> wgpu::RenderPipeline {
         use GeometryPass::*;
         let masked = key.variant.alpha == Alpha::Mask;
+        let shaded = key.shader.is_some();
         let vertex_buffers = &shading::vertex::GEOMETRY_BUFFERS;
-        let (module, layout, label) = match key.pass {
+        let (program, layout, label) = match key.pass {
             DirectionalShadow | PairedShadow => {
-                (&self.caster, &self.pulled_shadow, "shadow caster")
+                (Program::Caster, &self.pulled_shadow, "shadow caster")
             }
-            CaptureShadow | LocalShadow => (&self.caster, &self.shadow, "shadow caster"),
-            Blended { .. } => (&self.geometry, &self.blended, "blended scene geometry"),
-            Receivers => (&self.geometry, &self.lit, "blended receivers"),
+            CaptureShadow | LocalShadow => (Program::Caster, &self.shadow, "shadow caster"),
+            Blended { .. } => (
+                Program::Geometry(GeometryForm::Blended),
+                &self.blended,
+                "blended scene geometry",
+            ),
+            Receivers => (
+                Program::Geometry(GeometryForm::Plain),
+                &self.lit,
+                "blended receivers",
+            ),
             Fsr2Composition => (
-                &self.geometry,
+                Program::Geometry(GeometryForm::Plain),
                 &self.lit,
                 "FSR2 composition of moving surfaces",
             ),
             Lighting { shadow_mask: true } => (
-                self.geometry_shadow_masked
-                    .as_ref()
-                    .expect("the shadow-masked program is made with its pipelines"),
+                Program::Geometry(GeometryForm::ShadowMask),
                 &self.shadow_masked,
                 "shadow-masked scene lighting",
             ),
-            _ => (&self.geometry, &self.lit, "lit scene geometry"),
+            _ => (
+                Program::Geometry(GeometryForm::Plain),
+                &self.lit,
+                "lit scene geometry",
+            ),
         };
+        let layout = layout.clone();
+        let tier = self.tier;
+        let programs = match key.shader {
+            Some(id) => self
+                .shader_programs
+                .get_mut(&id)
+                .expect("a specialised shader's programs are held"),
+            None => &mut self.programs,
+        };
+        let module = programs.module(device, tier, program).clone();
+        let module = &module;
+        let layout = &layout;
         // Casters are depth-only: their cull selects the side that casts. A
         // directional cascade's depth is unclipped, so casters between the
         // light and the cascade are drawn at its near plane, as Bevy's
@@ -399,6 +427,24 @@ impl GeometryPipelines {
         // emulates it in the shader, as Bevy does. A masked material's
         // casters discard what it cuts out, as Bevy's do (MAY_DISCARD).
         let (vertex, fragment) = match key.pass {
+            // A shader's masked casters take their coverage from its surface
+            // function, whose context their vertices carry.
+            DirectionalShadow if masked && shaded && !self.unclipped_depth => (
+                SHADOW_PULLED_SHADED_MASKED_UNCLIPPED_VS_ENTRY,
+                Some(SHADOW_SHADED_MASKED_UNCLIPPED_FS_ENTRY),
+            ),
+            DirectionalShadow if masked && shaded => (
+                SHADOW_PULLED_SHADED_MASKED_VS_ENTRY,
+                Some(SHADOW_SHADED_MASKED_FS_ENTRY),
+            ),
+            CaptureShadow if masked && shaded && !self.unclipped_depth => (
+                SHADOW_SHADED_MASKED_UNCLIPPED_VS_ENTRY,
+                Some(SHADOW_SHADED_MASKED_UNCLIPPED_FS_ENTRY),
+            ),
+            CaptureShadow | LocalShadow if masked && shaded => (
+                SHADOW_SHADED_MASKED_VS_ENTRY,
+                Some(SHADOW_SHADED_MASKED_FS_ENTRY),
+            ),
             DirectionalShadow if masked && !self.unclipped_depth => (
                 SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY,
                 Some(SHADOW_MASKED_UNCLIPPED_FS_ENTRY),

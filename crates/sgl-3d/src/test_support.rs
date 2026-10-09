@@ -757,3 +757,92 @@ pub(crate) fn adapter() -> Option<wgpu::Adapter> {
         }
     }
 }
+
+/// A game's shader for fixtures (`Scene::add_shader`): it moves every vertex
+/// along its parameters' `direction` by their `lift`, plus `amplitude` times
+/// the sine of `frequency` times the frame's time, plus the vertex's shader
+/// data's x and the instance's; its surface function cuts out the fragments
+/// at negative world x where `cutting` or the instance's data's z is
+/// positive, and adds the scene depth behind the fragment, whether it is
+/// available and the instance's data's y to its emission's red, green and
+/// blue.
+pub(crate) const TEST_SHADER: &str = r#"
+struct ShaderParams {
+ direction:vec3<f32>,
+ lift:f32,
+ amplitude:f32,
+ frequency:f32,
+ cutting:f32,
+ unused:f32,
+}
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {
+ var out=v;
+ let along=params.lift+params.amplitude*sin(params.frequency*ctx.time)+v.shader_data.x+ctx.instance.x;
+ out.position+=params.direction*along;
+ return out;
+}
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
+ var out=s;
+ out.base_color.a=select(s.base_color.a,0.,(params.cutting>0. || ctx.instance.z>0.) && ctx.position.x<0.);
+ out.emission=s.emission+vec3(scene_depth_behind(ctx),select(0.,1.,scene_depth_available()),ctx.instance.y);
+ return out;
+}
+"#;
+
+/// `TEST_SHADER`'s `ShaderParams`, mirrored.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct TestShaderParams {
+    pub direction: [f32; 3],
+    pub lift: f32,
+    pub amplitude: f32,
+    pub frequency: f32,
+    pub cutting: f32,
+    pub unused: f32,
+}
+
+/// `TEST_SHADER` added to `scene`.
+pub(crate) fn add_test_shader(scene: &mut crate::Scene) -> crate::ShaderId {
+    scene
+        .add_shader(crate::ShaderSource {
+            wgsl: TEST_SHADER.into(),
+            label: "test shader".into(),
+        })
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// Draws `material` through `shader`, whose vertices move at most `bound`,
+/// as a game names a material's shader: `Scene::set_material`.
+pub(crate) fn set_shader(
+    scene: &mut crate::Scene,
+    queue: &wgpu::Queue,
+    material: crate::MaterialId,
+    (shader, bound): (crate::ShaderId, f32),
+) {
+    let values = scene.material(material).unwrap();
+    scene
+        .set_material(
+            queue,
+            material,
+            crate::SurfaceMaterial {
+                shader: Some(crate::MaterialShader {
+                    shader,
+                    displacement_bound: bound,
+                }),
+                ..values
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// Sets `material`'s `TEST_SHADER` parameters.
+pub(crate) fn set_test_params(
+    scene: &mut crate::Scene,
+    queue: &wgpu::Queue,
+    material: crate::MaterialId,
+    params: TestShaderParams,
+) {
+    scene
+        .set_shader_parameters(queue, material, bytemuck::bytes_of(&params))
+        .unwrap();
+}

@@ -58,14 +58,16 @@ impl Inputs {
         let mut frame = ctx.values.frame;
         // The camera's cascades, which probe hits do not use, and the
         // clock, but for the phase of an opaque or masked surface whose
-        // shading it moves (`Material::surface_moves`); the rays pass
-        // through blended ones.
+        // record's shading it moves (`Material::record_moves`; rays see no
+        // shader); the rays pass through blended ones.
         frame.shadow_cascades = bytemuck::Zeroable::zeroed();
         frame.elapsed_seconds = 0.;
+        frame.previous_elapsed_seconds = 0.;
         frame.frame_count = 0;
-        if !ctx.scene.materials.holds_moving_surfaces() {
+        if !ctx.scene.materials.holds_moving_records() {
             frame.animation_phase = 0.;
         }
+        frame.previous_animation_phase = frame.animation_phase;
         Self {
             edits: ctx.scene.edits,
             deformation_edits: ctx.hardware_rays.map(|_| ctx.scene.deformation_edits),

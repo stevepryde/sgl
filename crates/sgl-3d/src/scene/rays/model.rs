@@ -18,6 +18,9 @@ pub(crate) struct RayMesh<'a> {
     pub vertices: &'a [Vertex],
     pub indices: &'a [u32],
     pub ranges: &'a MeshRanges,
+    /// Each vertex's shader data, or none
+    /// (`PreparedModel::with_shader_data`).
+    pub shader_data: &'a [[f32; 4]],
 }
 
 /// A model's words prepared without the source (`prepare_model`): its mesh
@@ -37,7 +40,8 @@ pub(crate) struct PreparedRayModel {
 /// `meshes`' words, addressed from zero, which `SceneRays::place_model`
 /// places: its mesh records, each mesh's chart table, each mesh's section
 /// table, each mesh's packed vertices (`shading::packed_vertex`), from a
-/// multiple of `VERTEX_WORDS`, and indices, and its BVH. The geometry is
+/// multiple of `VERTEX_WORDS`, indices and shader data, where it has any,
+/// and its BVH. The geometry is
 /// validated: indices name vertices, positions are finite and normals are
 /// finite and not zero. Refuses a mesh whose vertices name more than 65,536
 /// distinct lightmap chart bounds.
@@ -69,6 +73,7 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
                 vertex_block(len)
                     + mesh.vertices.len() * words::<PackedVertex>()
                     + mesh.indices.len()
+                    + mesh.shader_data.len() * words::<[f32; 4]>()
             },
         );
         let mut words = vec![0u32; table_word];
@@ -92,6 +97,12 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
             }
             let indices = words.len() as u32;
             words.extend_from_slice(mesh.indices);
+            let shader_data = if mesh.shader_data.is_empty() {
+                0
+            } else {
+                words.len() as u32
+            };
+            words.extend_from_slice(bytemuck::cast_slice(mesh.shader_data));
             mesh_words.push(RayMeshWords {
                 vertices,
                 vertex_count: mesh.vertices.len() as u32,
@@ -108,6 +119,7 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
                 uv_rect: uv.words(),
                 sections: section_tables[index],
                 section_count: sections[index].len() as u32,
+                shader_data,
             }]));
             first_vertex += mesh.vertices.len() as u32;
         }
@@ -128,8 +140,9 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
 
 /// Names each mesh's material record in the mesh records `records` holds,
 /// one material word per record, and adds `base` to the words where each
-/// record's vertices, indices, chart table and section table start; a section's first index is relative to its mesh's indices
-/// and needs none.
+/// record's vertices, indices, chart table, section table and shader data
+/// (where it has any) start; a section's first index is relative to its
+/// mesh's indices and needs none.
 fn rebase_records(records: &mut [u32], base: u32, materials: &[u32]) {
     let records: &mut [MeshRecord] = bytemuck::cast_slice_mut(records);
     assert_eq!(
@@ -142,6 +155,9 @@ fn rebase_records(records: &mut [u32], base: u32, materials: &[u32]) {
         record.indices += base;
         record.charts += base;
         record.sections += base;
+        if record.shader_data != 0 {
+            record.shader_data += base;
+        }
         record.material_word = material_word;
     }
 }
@@ -185,8 +201,9 @@ impl PreparedRayModel {
 /// A mesh's record in the source: where its packed vertices and indices
 /// start, its material's record, its first vertex among its model's, where
 /// its own chart table starts, the rectangle its packed UVs span
-/// (`UvRect::words`), and where its section table starts, with its sections,
-/// which the GPU draw lists cull by.
+/// (`UvRect::words`), where its section table starts, with its sections,
+/// which the GPU draw lists cull by, and where its shader data starts, 0
+/// without any.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct MeshRecord {
@@ -198,6 +215,7 @@ pub(super) struct MeshRecord {
     pub uv_rect: [f32; 4],
     pub sections: u32,
     pub section_count: u32,
+    pub shader_data: u32,
 }
 
 /// A section table's entry: a leaf of its mesh's range hierarchy
@@ -317,6 +335,7 @@ mod record_tests {
                 vertices,
                 indices,
                 ranges,
+                shader_data: &[],
             })
             .collect();
         let mut prepared = prepare_model(&rays).unwrap();

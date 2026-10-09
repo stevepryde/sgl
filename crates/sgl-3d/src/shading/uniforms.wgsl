@@ -118,6 +118,11 @@ struct Frame {
  irradiance_volume_origin:vec3<f32>,
  irradiance_volume_cell_size:vec3<f32>,
  irradiance_volume_cells:vec3<u32>,
+ // The last submitted frame's elapsed_seconds and animation_phase, which a
+ // material's vertex function evaluates the motion it writes at
+ // (material_shader.wgsl); this frame's after history restarts.
+ previous_elapsed_seconds:f32,
+ previous_animation_phase:f32,
 }
 // The frame's volumetric fog ran: draws fog themselves from its volume.
 const FRAME_FOG:u32=1u;

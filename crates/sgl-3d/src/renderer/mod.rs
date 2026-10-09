@@ -17,6 +17,8 @@ mod diagnostics_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod floor_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod shader_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod size_tests;
 
 use crate::scene::rays::acceleration::RayTracingStats;
@@ -329,7 +331,8 @@ impl Renderer {
             projection: input.camera.projection,
             jitter: [0.; 2],
         };
-        self.history.begin(camera, reset, scene.origin())
+        self.history
+            .begin(camera, reset, scene.origin(), input.elapsed_seconds)
     }
 
     /// The antialiasing that runs for `settings`: their choice resolved for

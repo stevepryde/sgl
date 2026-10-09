@@ -34,6 +34,37 @@ pub(crate) fn posed_bounds(bounds: [Vec3; 2], pose: Mat4) -> [Vec3; 2] {
     outward(min, max)
 }
 
+/// `bounds`, in a mesh's space, grown by `by` on every side: what a
+/// material's shader that moves a vertex at most `by`
+/// (`MaterialShader::displacement_bound`) may reach. `bounds` where `by` is
+/// 0.
+pub(crate) fn grown(bounds: [Vec3; 2], by: f32) -> [Vec3; 2] {
+    if by == 0. {
+        return bounds;
+    }
+    [bounds[0] - Vec3::splat(by), bounds[1] + Vec3::splat(by)]
+}
+
+/// `posed`, a box `posed_bounds` gave of bounds in a mesh's space at
+/// `pose`, as it would be of those bounds `grown` by `by`: the box's half
+/// extent grows by the pose's absolute linear part times `by` on each axis,
+/// exactly as posing the grown box grows it. `posed` where `by` is 0.
+pub(crate) fn posed_grown(posed: [Vec3; 2], pose: Mat4, by: f32) -> [Vec3; 2] {
+    if by == 0. {
+        return posed;
+    }
+    let linear = glam::Mat3::from_mat4(pose);
+    let abs = glam::Mat3::from_cols(
+        linear.x_axis.abs(),
+        linear.y_axis.abs(),
+        linear.z_axis.abs(),
+    );
+    let growth = abs * Vec3::splat(by);
+    // Rounded outward: one ulp of the larger magnitude more.
+    let slack = posed[0].abs().max(posed[1].abs()) * f32::EPSILON;
+    [posed[0] - growth - slack, posed[1] + growth + slack]
+}
+
 /// The `f32` box that holds the `f64` box from `min` to `max`.
 fn outward(min: DVec3, max: DVec3) -> [Vec3; 2] {
     let down = |v: f64| {

@@ -1,5 +1,6 @@
 //! Conservative clipping of retained triangle ranges, without changing primitive order.
 use crate::scene::mesh_ranges::MeshRanges;
+use crate::scene::static_edits::grown;
 use glam::{DMat4, DVec4, Mat4, Vec3};
 use std::ops::Range;
 
@@ -132,8 +133,10 @@ fn absolute(matrix: DMat4) -> DMat4 {
 }
 
 impl MeshRanges {
-    /// Visit visible ranges in original order, coalescing adjacent accepted nodes.
-    pub fn visible(&self, frustum: Option<&Frustum>, mut draw: impl FnMut(Range<u32>)) {
+    /// Visit visible ranges in original order, coalescing adjacent accepted
+    /// nodes, each node's bounds `grow`n (`static_edits::grown`) by what its
+    /// material's shader may move its vertices.
+    pub fn visible(&self, frustum: Option<&Frustum>, grow: f32, mut draw: impl FnMut(Range<u32>)) {
         let Some(root) = self.nodes.first() else {
             return;
         };
@@ -144,7 +147,7 @@ impl MeshRanges {
         let mut at = 0;
         let mut pending: Option<Range<u32>> = None;
         while let Some(node) = self.nodes.get(at) {
-            match frustum.classify(node.bounds) {
+            match frustum.classify(grown(node.bounds, grow)) {
                 Relation::Outside => at = node.end,
                 Relation::Crossing if node.end > at + 1 => at += 1,
                 _ => {

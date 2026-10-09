@@ -3,6 +3,7 @@
 //! constants each key sets.
 use super::{Alpha, GeometryPass, Variant};
 use crate::Scene;
+use crate::content::identity::ShaderId;
 use crate::settings::DisabledLayers;
 
 /// The geometry shader's diagnostics layers, compiled as pipeline constants.
@@ -111,6 +112,9 @@ impl LitConstants {
 pub(crate) struct PipelineKey {
     pub(super) pass: GeometryPass,
     pub(super) variant: Variant,
+    /// The material's shader, whose programs it is created from; none for
+    /// SGL3D's default provider's.
+    pub(super) shader: Option<ShaderId>,
     layers: LayerConstants,
     lit: LitConstants,
     /// A blended pass's transmission (`transmission_enabled` in
@@ -128,13 +132,14 @@ impl PipelineKey {
     pub fn new(
         pass: GeometryPass,
         variant: Variant,
-        layers: LayerConstants,
-        lit: LitConstants,
+        shader: Option<ShaderId>,
+        (layers, lit): (LayerConstants, LitConstants),
         transmission: bool,
     ) -> Self {
         let caster = pass.caster();
         Self {
             pass,
+            shader,
             variant: Variant {
                 deformed: variant.deformed && pass.pulled(),
                 ..variant
@@ -147,8 +152,10 @@ impl PipelineKey {
 
     /// The pipeline constants: a masked material's discard (`alpha_mask`,
     /// material_raster.wgsl), for the pulled passes deformed vertices, and
-    /// for the camera and probe passes the layers and the lit constants,
-    /// and for the blended passes whether transmission is compiled in.
+    /// for the camera and probe passes the layers and the lit constants and
+    /// whether they write motion (`motion_vertices`, material_shader.wgsl:
+    /// not the blended draws or FSR2's composition mask), and for the
+    /// blended passes whether transmission is compiled in.
     pub(super) fn constants(self) -> Vec<(&'static str, f64)> {
         let masked = (
             "alpha_mask",
@@ -162,6 +169,11 @@ impl PipelineKey {
         if !self.pass.caster() {
             constants.extend(self.layers.constants());
             constants.extend(self.lit.constants());
+            let motion = !matches!(
+                self.pass,
+                GeometryPass::Blended { .. } | GeometryPass::Fsr2Composition
+            );
+            constants.push(("motion_vertices", f64::from(u8::from(motion))));
         }
         if !self.pass.caster() || self.variant.alpha == Alpha::Mask {
             constants.push(masked);

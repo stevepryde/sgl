@@ -80,7 +80,7 @@ fn retained_ranges_never_drop_clipped_triangles_under_affine_cameras() {
                 let jitter = [0.013, -0.007];
                 let frustum = Frustum::new(view, projection, pose, jitter);
                 let mut submitted = vec![false; mesh.indices.len() / 3];
-                ranges.visible(Some(&frustum), |range| {
+                ranges.visible(Some(&frustum), 0., |range| {
                     for primitive in range.start / 3..range.end / 3 {
                         assert!(
                             !submitted[primitive as usize],
@@ -131,7 +131,7 @@ fn whole_world_bounds_do_not_prevent_eliminating_distant_ranges() {
     );
     let ranges = MeshRanges::new(&mesh.vertices, &mesh.indices);
     let mut submitted = Vec::new();
-    ranges.visible(Some(&frustum), |range| {
+    ranges.visible(Some(&frustum), 0., |range| {
         submitted.extend(range.start / 3..range.end / 3)
     });
     assert!(

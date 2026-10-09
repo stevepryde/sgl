@@ -1,6 +1,7 @@
 //! The camera's history: the last submitted frame's unjittered view and
-//! projection, with the jitter antialiasing applied to that frame, and the
-//! frames since the last reset. The renderer owns it; a frame commits to it
+//! projection, with the jitter antialiasing applied to that frame, its time
+//! (`FrameInput::elapsed_seconds`), at which a material's vertex function
+//! evaluates the motion it writes, and the frames since the last reset. The renderer owns it; a frame commits to it
 //! only when the caller finishes that frame. It is kept in the render frame
 //! of the scene's origin it was committed at, and a frame whose scene moved
 //! its origin since sees it translated into its own (the architecture's
@@ -61,6 +62,10 @@ pub(crate) struct HistoryFrame {
     pub camera: CameraFrame,
     /// The scene's render origin this frame (`Scene::origin`).
     pub origin: DVec3,
+    /// This frame's time, which `finish` commits, and the last submitted
+    /// frame's; this frame's after a reset.
+    pub elapsed_seconds: f64,
+    pub previous_elapsed_seconds: f64,
 }
 
 #[derive(Default)]
@@ -69,13 +74,21 @@ pub(crate) struct CameraHistory {
     frames: u32,
     /// The render origin `previous` is expressed in.
     origin: DVec3,
+    /// The last submitted frame's time.
+    elapsed_seconds: f64,
 }
 
 impl CameraHistory {
-    /// The history of a frame seen by `camera` with the scene's origin at
-    /// `origin`, restarted when `reset`. Nothing changes until `finish`, so
-    /// an abandoned frame translates nothing twice.
-    pub fn begin(&self, camera: CameraFrame, reset: bool, origin: DVec3) -> HistoryFrame {
+    /// The history of a frame seen by `camera` at `elapsed_seconds` with the
+    /// scene's origin at `origin`, restarted when `reset`. Nothing changes
+    /// until `finish`, so an abandoned frame translates nothing twice.
+    pub fn begin(
+        &self,
+        camera: CameraFrame,
+        reset: bool,
+        origin: DVec3,
+        elapsed_seconds: f64,
+    ) -> HistoryFrame {
         let (previous, frames) = if reset {
             (None, 0)
         } else {
@@ -94,6 +107,12 @@ impl CameraHistory {
             frames,
             camera,
             origin,
+            elapsed_seconds,
+            previous_elapsed_seconds: if previous.is_some() {
+                self.elapsed_seconds
+            } else {
+                elapsed_seconds
+            },
         }
     }
 
@@ -102,6 +121,7 @@ impl CameraHistory {
         self.previous = Some(frame.camera);
         self.frames = frame.frames.saturating_add(1);
         self.origin = frame.origin;
+        self.elapsed_seconds = frame.elapsed_seconds;
     }
 }
 
@@ -131,14 +151,14 @@ mod tests {
             jitter: [0.25, -0.5],
         };
         let mut history = CameraHistory::default();
-        let first = history.begin(camera(eye), false, DVec3::ZERO);
+        let first = history.begin(camera(eye), false, DVec3::ZERO, 0.);
         history.finish(first);
         let moved = Vec3::new(5000., 0., -7000.);
         let point = Vec3::new(5010.5, 11., -7031.);
         let before = first.camera.jittered_view_projection() * point.extend(1.);
         // An abandoned frame after the move, then the frame that finishes.
         for _ in 0..2 {
-            let frame = history.begin(camera(eye - moved), false, moved.as_dvec3());
+            let frame = history.begin(camera(eye - moved), false, moved.as_dvec3(), 0.);
             let previous = frame.previous_camera.expect("history continues");
             let after = previous.jittered_view_projection() * (point - moved).extend(1.);
             let ndc = |clip: Vec4| clip.truncate() / clip.w;
@@ -150,7 +170,7 @@ mod tests {
             );
             assert_eq!(previous.jitter, first.camera.jitter);
         }
-        let reset = history.begin(camera(eye - moved), true, moved.as_dvec3());
+        let reset = history.begin(camera(eye - moved), true, moved.as_dvec3(), 0.);
         assert!(reset.previous_camera.is_none() && !reset.valid);
     }
 }

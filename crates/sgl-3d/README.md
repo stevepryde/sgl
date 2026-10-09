@@ -22,7 +22,7 @@ This page is the detailed reference:
 - [Reflections](#reflections), [TAA, SMAA and FSR2](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
-- [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
+- [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
 - [Settings and fallbacks](#settings-and-capability-fallback), [binding tiers](#binding-tiers), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
 
 ## Dependencies and data conventions
@@ -1115,7 +1115,8 @@ twice or more.
   mask its moving layers mark ([FSR2](#fsr2)), as AMD documents for
   animated textures: FSR2 then keeps no detail locked there.
 
-The [water example](examples/water.rs) scrolls a procedural wave map.
+The [water example](examples/water.rs) scrolls a procedural wave map over
+its shader's waves.
 
 ## Alpha-masked and blended materials
 
@@ -1173,7 +1174,8 @@ glass, water, clear plastic. Its values, on `asset::Material` and
 - `thickness`: the depth of the volume beneath the surface in the mesh's
   units, which the instance's scale scales; 0 is a thin wall, which bends
   nothing; `thickness_texture`'s green channel multiplies it. A volume
-  draws its front faces alone.
+  draws its front faces alone, but for a material with a
+  [shader](#programmable-surfaces), which keeps its `double_sided`.
 - `attenuation_distance` (metres, positive, `f32::INFINITY` for none) and
   `attenuation_color` (linear, 0..=1): white light takes the colour after
   that distance through the volume (Beer-Lambert).
@@ -1251,26 +1253,311 @@ misses; probe and sky specular do. Unlit receivers, additive effects and mist
 reflect nothing.
 
 The game supplies the receiver as any surface: its mesh, the normals it
-animates, and its material's roughness, F0 and coat. Animate water's waves
-with its material's [scrolling normal layers](#scrolling-normal-layers):
-they move with the frame's time and upload nothing, so the receiver can be a
-static instance, and many water chunks cost nothing per frame beyond their
-pixels. A mesh replaced every frame belongs on a moving instance, so that
-the replacement is no static edit; each replacement prepares the model
-again (`PreparedModel::new`, its BVH included) and `Scene::set_model`
-places and copies it. A deforming model animated with
-`set_instance_deformation` is not seen by rays. The renderer allocates the
+animates, and its material's roughness, F0 and coat. Move water's waves
+with its material's [shader](#programmable-surfaces), a vertex function
+that displaces static chunks with the frame's time, and add their fine
+detail with [scrolling normal layers](#scrolling-normal-layers): neither
+uploads anything per frame, so the receiver can be static instances, and
+many water chunks cost nothing per frame beyond their vertices and pixels.
+A mesh replaced every frame belongs on a moving instance, so that the
+replacement is no static edit; each replacement prepares the model again
+(`PreparedModel::new`, its BVH included) and `Scene::set_model` places and
+copies it. A deforming model animated with `set_instance_deformation` is not
+seen by rays, nor is a shader's displacement. The renderer allocates the
 surface's targets (a depth and an RGBA16F layer, 12 bytes per render pixel)
 in the first frame whose scene holds a receiver and keeps them from then
-on; a renderer that has never rendered a receiver pays nothing. The [water example](examples/water.rs) is a lake that
-receives reflections, its waves from its material's normal layers; it prints
-the GPU time of the passes receivers touch before and after its lake is
-marked, and with its waves instead replaced every frame by `set_model`
-(`set-model`), with what that uploads and the CPU time preparing and
-replacing it take:
+on; a renderer that has never rendered a receiver pays nothing. The [water
+example](examples/water.rs) is a lake of shader water that receives
+reflections; it prints the GPU time of the passes the water touches, what it
+holds and uploads, and, with `--morph`, the same waves as morph targets, or
+replaced every frame by `set_model` (`set-model`), with the CPU time
+preparing and replacing it take:
 
 ```sh
 cargo run --release -p sgl-3d --example water
+```
+
+## Programmable surfaces
+
+A game gives a material its own vertex and surface functions in WGSL: one
+module added to the scene (`Scene::add_shader`), which a material names
+once added (`SurfaceMaterial::shader`:
+`MaterialShader { shader, displacement_bound }`, through
+`Scene::set_material`; an authored `asset::Material` has none). SGL3D
+composes the module into its own programs and calls the functions from
+every pass that rasterises the material, so colour, depth, shadows, the reflections' surface,
+temporal antialiasing and motion blur see one surface: water's waves,
+vegetation in the wind, glass whose thickness varies across it. The
+equations are the game's; SGL3D ships none ([D-35](../../specs/decisions.md)).
+A shader is content: it changes what a surface is, never how SGL3D renders
+it, and nothing about it is a setting.
+
+The module defines `ShaderParams`, `material_vertex` and `material_surface`,
+over the contract SGL3D declares, `shading/shader_contract.wgsl`, verbatim:
+
+```wgsl
+// The shader contract (the package README's "Programmable surfaces";
+// specs/sgl3d-architecture.md, Shader contract): what a game's WGSL module
+// (Scene::add_shader) receives and returns. A game's module defines
+// `struct ShaderParams`, `material_vertex` and `material_surface` over these
+// structs, and from material_surface may call the scene depth functions its
+// program's provider declares (shader_scene_depth_none.wgsl,
+// shader_scene_depth.wgsl); nothing else SGL3D declares is the contract. SGL3D's own programs compose
+// shader_default.wgsl in its place, whose functions return their argument.
+// The pattern is Filament ef1a133's materialVertex() and material()
+// (shaders/src/surface_main.vs, surface_main.fs,
+// surface_material_inputs.vs and .fs) and Godot b130438's vertex() and
+// fragment() (scene_forward_clustered.glsl), which every pass of a material
+// compiles.
+
+// A vertex in and out of material_vertex, in the mesh's own units and axes,
+// after SGL3D's skinning and morphing and before the instance's pose:
+// `normal` unit; `tangent` xyz unit and w its handedness, all zero where the
+// mesh has none; `color` linear RGB and alpha, as asset::Vertex::color;
+// `shader_data` the mesh's per-vertex data (PreparedModel::with_shader_data),
+// zero without any; `custom` what the shader passes to material_surface,
+// interpolated, zero in.
+struct MaterialVertex {
+ position:vec3<f32>,
+ normal:vec3<f32>,
+ tangent:vec4<f32>,
+ uv:vec2<f32>,
+ color:vec4<f32>,
+ shader_data:vec4<f32>,
+ custom:vec4<f32>,
+}
+// What material_vertex evaluates at: the instance's pose `model`, its
+// shader data `instance` (Scene::set_instance_shader_data), the frame's
+// `time` (FrameInput::elapsed_seconds in f32, which loses precision over a
+// long session) and `phase` (where that time falls in the hour over which
+// material animation repeats exactly, 0..1), and whether this is the
+// evaluation at the last submitted frame (`previous`), whose time, phase,
+// parameters, pose and instance data it then holds, from which motion is
+// measured.
+struct VertexContext {
+ model:mat4x4<f32>,
+ instance:vec4<f32>,
+ time:f32,
+ phase:f32,
+ previous:bool,
+}
+// A surface in and out of material_surface: the material's record and maps
+// already evaluated at the fragment. `base_color` is linear RGB, the
+// record's base times its base map and the vertex colour, its alpha the
+// fragment's coverage; `roughness` perceptual; `normal` unit, in the render
+// frame's world space on the shaded side, the mapped normal; `specular`
+// KHR_materials_specular's strength; `transmission` KHR_materials_
+// transmission's share; `thickness` KHR_materials_volume's, in the mesh's
+// units; `attenuation` the Beer-Lambert coefficient per metre, finite and
+// nonnegative; `ior` at least 1, 0 for an infinite one.
+struct MaterialSurface {
+ base_color:vec4<f32>,
+ emission:vec3<f32>,
+ metallic:f32,
+ roughness:f32,
+ normal:vec3<f32>,
+ occlusion:f32,
+ specular:f32,
+ clearcoat:f32,
+ coat_roughness:f32,
+ transmission:f32,
+ thickness:f32,
+ attenuation:vec3<f32>,
+ ior:f32,
+ dispersion:f32,
+}
+// What material_surface evaluates at: the fragment's render-frame
+// `position` (displaced), its interpolated `geometry_normal` on the shaded
+// side, the unit direction toward the eye `view`, its `uv` and `color`,
+// material_vertex's `custom`, the instance's data, pose and the pose's axis
+// scales `model_scale`, the frame's `time` and `phase`, whether it is the
+// material's authored `front`, its `pixel` in the pass's target in texels,
+// and its linear `view_depth` in metres.
+struct SurfaceContext {
+ position:vec3<f32>,
+ geometry_normal:vec3<f32>,
+ view:vec3<f32>,
+ uv:vec2<f32>,
+ color:vec4<f32>,
+ custom:vec4<f32>,
+ instance:vec4<f32>,
+ model:mat4x4<f32>,
+ model_scale:vec3<f32>,
+ time:f32,
+ phase:f32,
+ front:bool,
+ pixel:vec2<f32>,
+ view_depth:f32,
+}
+// What scene_depth returns at the sky.
+const SCENE_DEPTH_FAR:f32=1e30;
+```
+
+Beside the contract, a program declares the scene depth functions, which
+only `material_surface` and the functions it calls may call
+(`shader_scene_depth.wgsl` in the camera's blended draws on the Extended
+binding tier, `shader_scene_depth_none.wgsl` everywhere else), and the
+game's module defines the rest:
+
+```wgsl
+// Declared by SGL3D. Whether this draw reads the scene depth: a blended
+// draw of the camera on the Extended binding tier.
+fn scene_depth_available()->bool
+// The linear view depth in metres of the opaque surface at `pixel`:
+// SCENE_DEPTH_FAR at the sky, 0 where unavailable.
+fn scene_depth(pixel:vec2<f32>)->f32
+// The metres along the fragment's view ray to the opaque surface behind
+// it, 0 where it is in front or unavailable.
+fn scene_depth_behind(ctx:SurfaceContext)->f32
+
+// Defined by the game's module. A function that changes nothing returns
+// its argument.
+struct ShaderParams { /* the game's fields, WGSL's uniform layout */ }
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface
+```
+
+- **The vertex function** runs in every pass's vertex shader, after
+  skinning and morphing and before the pose: the G-buffer, lighting and
+  fused passes, the receiver pass, both blended draws, FSR2's composition
+  pass, probe-capture faces, the directional cascades and the local-light
+  shadow faces. The camera's
+  passes that write motion (all but the blended draws and FSR2's
+  composition mask) evaluate it again at the last submitted frame, with
+  `ctx.previous` true and that frame's time, phase, parameters, instance
+  data and pose, so TAA, FSR2 and motion blur reproject what it moves; the
+  game writes no motion. A function that displaces writes matching normals
+  (and tangents, where a material is anisotropic); SGL3D makes a changed
+  normal unit and the pose's transforms keep the frame perpendicular.
+- **The surface function** runs where SGL3D has evaluated the material's
+  record and maps at a fragment, before decals, roughness filtering and the
+  coat's normal, in every pass that builds a surface (an unlit material's
+  base colour and emission among them), and for coverage alone in FSR2's
+  composition pass and a masked material's shadow casters. A field it does
+  not set keeps the record's and maps' value. The pipelines are the
+  record's: its alpha mode, transmission, side and receiver flag choose
+  them, so `transmission` and `thickness` take effect only on a material
+  whose `transmission` is above 0, where they drive SGL3D's one refraction
+  per fragment (the base colour tints what it transmits, `attenuation`
+  absorbs it over `thickness`, `ior` and `roughness` bend and blur it), and
+  `ior` and `specular` set its dielectric reflectance too; a `clearcoat`
+  it gives a material whose record has none lies on the geometry normal,
+  the coat's normal map being the record's. Coverage
+  (`base_color.a`, under the record's alpha mode) and transmission are
+  independent controls. A shader material keeps its `double_sided` as a
+  volume, shading its back as the medium's exit by `ctx.front`.
+- **Scene depth** is the opaque depth, which holds no blended surface,
+  receiver or effect, in the camera's blended draws on the Extended binding
+  tier; elsewhere `scene_depth_available()` is false and both functions
+  return 0. Water's column behind a fragment (`scene_depth_behind`) gives
+  depth-dependent absorption and a fade into the shore. Scene colour is
+  never sampled: refraction stays SGL3D's.
+- **Time and anchoring.** `ctx.phase` is the exact long-session clock: a
+  motion with a whole number of cycles per hour repeats exactly, as normal
+  layers do; `ctx.time` is `f32` and loses precision over long sessions.
+  Positions are model-local, so an effect continuous across chunks and
+  render-origin moves anchors on the instance's data (a chunk's world
+  origin, or that origin modulo the effect's period), which
+  `Scene::move_origin` leaves as it is, never on the render frame.
+- **Culling** grows the bounds of the material's meshes and sections, in
+  their units before the pose, by `displacement_bound`: the farthest the
+  vertex function moves a vertex, finite and nonnegative
+  (`SceneError::InvalidDisplacementBound` otherwise). A vertex moved
+  farther may be culled where it shows.
+
+The Rust side:
+
+- `Scene::add_shader(ShaderSource { wgsl, label })` validates the module and
+  returns its `ShaderId`, or `SceneError::Shader(ShaderError)` with why it
+  refused it; `remove_shader` refuses one a material names
+  (`SceneError::ShaderInUse`); an ended or another scene's identity is
+  `SceneError::UnknownShader`, as is a material that names one.
+  `scene.set_material(queue, id, SurfaceMaterial { shader: Some(..),
+  ..scene.material(id)? })` names a shader after `add_materials` or
+  `add_asset`.
+- `Scene::shader_parameters_layout(id)` is naga's uniform layout of
+  `ShaderParams` (`shader::ShaderParamsLayout`: its size and each member's
+  name, offset and size) for the game's `#[repr(C)]` mirror to check itself
+  against. `Scene::set_shader_parameters(queue, material, bytes)` replaces a
+  material's block, of exactly that size (`SceneError::ShaderParameters`
+  otherwise, and for a material without a shader); it starts as zeros when
+  the material gains the shader. Time comes from the frame, so most blocks
+  are set once. A new block is no static edit: the local-light shadow
+  layers of static instances keep the displacement they were drawn with,
+  so static instances that parameters animate keep their old local-light
+  shadows (animate them through moving instances, or instance data).
+- `Scene::set_instance_shader_data(queue, instance, [f32; 4])` and
+  `instance_shader_data` hold an instance's data, zero when it is added;
+  for a static instance a change is a static edit, which redraws the
+  local-light layers its displaced bounds reach.
+- `PreparedModel::with_shader_data(meshes, data)` prepares meshes with
+  per-vertex data, one `Vec<[f32; 4]>` a mesh, empty or one entry per vertex
+  (`SceneError::ShaderDataLength` otherwise), held beside its vertices,
+  16 bytes a vertex; `PreparedModel::new` and glTF meshes carry none.
+
+`add_shader` validates on native and in the browser with naga, composing
+the module into every program the device's binding tier creates for it, so
+a pipeline created later from an accepted module cannot fail WGSL
+validation. It refuses, with a typed `shader::ShaderError`: a directive
+(`enable`, `requires`, `diagnostic`); a name SGL3D's programs on either
+binding tier declare; a
+parse or type error against the contract alone, its line and column in the
+game's source (SGL3D's other declarations, such as `view` or `frame`, are
+not the module's to read); a module-scope `var`, a binding, an `override`
+or an entry point (the module declares `const`, `struct`, `alias` and `fn`);
+a missing or mis-signed function or `ShaderParams`; `discard` (coverage is
+`base_color.a`); a derivative in `material_vertex` or any other program
+error; a scene depth function called by `material_vertex` or a function it
+calls (`ShaderError::SceneDepthInVertex`: scene depth is the surface
+function's); a derivative (`dpdx`, `dpdy`, `fwidth`), or a call of a function
+that takes one, within an `if`, a `switch` or a loop (the right of `&&` and
+`||` among them) or after a `return` within one, since WGSL allows
+derivatives only in uniform control flow and browsers refuse a program
+that may take one elsewhere, where naga does not (take it at the
+function's top level and `select` on it); `ShaderParams` over
+`shader::SHADER_PARAMS_MAX_BYTES` (4096); and a
+loop that is not a counted loop, or a function one call of which makes more
+than `shader::SHADER_LOOP_BUDGET` (256) iterations in all (AR-12). A counted
+loop is the `for` loop a counter of `i32` or `u32` makes, from a literal or
+`const` start, tested with `<` or `<=` against a literal or `const` limit,
+and changed only by its update, adding a positive literal or `const` step
+(or `loop { … continuing { i += step; break if i >= limit; } }`, `>=` or
+`>`), whose limit plus step fits the counter's type, so it cannot wrap;
+nested
+loops' counts multiply, one loop after another's add, and a call within a
+loop counts its callee's, so six Gerstner components cost six and a 16 × 16
+nest the whole budget.
+
+Limits. Rays (world-space reflections, dynamic GI, ray-traced shadows, the
+hardware path's BLASes) see the rest geometry and the plain material, so an
+opaque displaced surface reflects and bounces at rest, and a masked
+shader's coverage is the base map's at ray hits. Probe captures hold the
+capture's instant. A static instance's local-light shadow layers hold its
+displacement at their draw while the cascades, drawn every frame, animate;
+an instance whose local-light shadow must animate is a moving instance. A
+material with a shader counts as one whose shading moves, so FSR2 marks its
+opaque surfaces in its composition mask. The first frame that draws a
+shader's material creates its programs (at most four shader modules) and
+the pipelines its materials' alpha modes and sides need (natively, and on
+the browser's main thread there): add shaders at load. A
+module's functions cost each pass that runs them, vertices twice in the
+passes that write motion; a material without a shader costs nothing more,
+its programs reading neither parameter blocks nor instance data, which
+live beside the object records rather than in them. Consumer textures,
+direct scene colour, ray-hit evaluation and a second `custom` are not part
+of the contract.
+
+The [water example](examples/water.rs) moves a lake of 16 m chunks with six
+Gerstner waves (`examples/support/gerstner.wgsl`), anchored on their
+period, with the column behind the water tinting and fading it, and
+compares the same waves as morph targets (`--morph`); the [shaders
+example](examples/shaders.rs) bends masked grass and tree cards in the wind
+(`support/wind.wgsl`) under cascades and a spot light, and gives a glass pane
+a thickness that varies across it (`support/glass.wgsl`):
+
+```sh
+cargo run --release -p sgl-3d --example water -- --chunks 100 --run velvet
+cargo run --release -p sgl-3d --example shaders
 ```
 
 ## Skinned meshes and morph targets
@@ -2105,8 +2392,8 @@ setting chooses it.
 
 | Tier | Sampled textures per stage | Lighting | Material maps |
 | --- | --- | --- | --- |
-| `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted | base, metallic-roughness (with packed occlusion), emission, normal, bump |
-| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission, thickness, sheen colour, sheen roughness, diffuse transmission and diffuse transmission colour maps |
+| `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted; no scene depth for a shader | base, metallic-roughness (with packed occlusion), emission, normal, bump |
+| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission; scene depth for a blended shader | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission, thickness, sheen colour, sheen roughness, diffuse transmission and diffuse transmission colour maps |
 
 A Vulkan driver lands in either tier, by its `maxPerStageResources`.
 
@@ -2168,7 +2455,8 @@ ground, a shadow-casting box, a masked grate with a BC7 image, a blended
 pane that receives screen-space reflections, a skinned and morphed box with an ambient cube, a box lit by a BC6H/BC7
 static irradiance atlas, point, spot and rectangle lights, a decal, a BC6H
 specular probe, a dynamic GI volume, an irradiance volume written by region,
-glow, heat shimmer, mist, a fog volume and an environment);
+glow, heat shimmer, mist, a fog volume, a glass pane through a game's shader,
+which naga validates in the browser, and an environment);
 frames under four settings configurations; an asynchronous readback; and
 error scopes. It loads no glTF and sets no lightmap or mesh LODs.
 
@@ -2389,7 +2677,9 @@ changing them. `src/lib.rs` declares the layers and re-exports the public
 surface. The layers, in order: `src/content/` (CPU data and loading: `asset`
 and its glTF import, `lighting`, `light`, `decal`, `static_lighting`, `environment`,
 probe descriptions, ...; no wgpu), `src/shading/` (the WGSL library composed by
-`shading::compose`, and its Rust mirrors), `src/scene/` (`Scene`, its GPU
+`shading::compose`, the geometry and caster programs (`shading::programs`),
+a game shader's contract and validation (`shading::shader`), and its Rust
+mirrors), `src/scene/` (`Scene`, its GPU
 buffers and the ray-query structure built from its geometry), `src/view/`
 (views, draw lists, the geometry pipeline cache, and what the renderer lends
 stages: the frame's context, the effective configuration, the shared targets,

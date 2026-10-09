@@ -289,7 +289,10 @@ pub(crate) fn frame_uniform(
             .map_or([0.; 3], |volume| volume.cell_size.to_array()),
         padding_cell_size: 0.,
         irradiance_volume_cells: irradiance_volume.map_or([0; 3], |volume| volume.cells),
-        padding_cells: 0,
+        // A frame without history evaluates its motion at its own time.
+        previous_elapsed_seconds: input.elapsed_seconds as f32,
+        previous_animation_phase: crate::shading::material::animation_phase(input.elapsed_seconds),
+        padding_previous: [0.; 3],
     }
 }
 

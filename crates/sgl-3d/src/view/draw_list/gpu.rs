@@ -482,7 +482,12 @@ impl GpuList {
                 issued += 1;
             }
             if paired && set.variant.alpha == Alpha::Opaque {
-                pass.set_pipeline(pipelines.get(GeometryPass::PairedShadow, set.variant));
+                let shader = scene
+                    .drawn_material(set.material)
+                    .values
+                    .shader
+                    .map(|shader| shader.shader);
+                pass.set_pipeline(pipelines.get(GeometryPass::PairedShadow, set.variant, shader));
                 binder.forget_pipeline();
                 let index = 2 * self.commands + set.index;
                 pass.set_vertex_buffer(

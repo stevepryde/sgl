@@ -51,6 +51,11 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MESH_SECTION_COUNT",
             offset_of!(MeshRecord, section_count),
         ),
+        (
+            "SCENE_MESH_SHADER_DATA",
+            offset_of!(MeshRecord, shader_data),
+        ),
+        ("SCENE_SHADER_DATA_WORDS", size_of::<[f32; 4]>()),
         ("SCENE_SECTION_WORDS", size_of::<SectionRecord>()),
         ("SCENE_SECTION_MIN", offset_of!(SectionRecord, bounds_min)),
         ("SCENE_SECTION_MAX", offset_of!(SectionRecord, bounds_max)),

@@ -501,3 +501,30 @@ Use the [current specs](README.md) for implementation and the
   expecting most of it to arrive, as on UDP; dropping it at the sender
   under backpressure would starve them on WebSocket for as long as a
   backlog lasts.
+- **D-35** Owner direction, 2026-10-09 (#272): SGL3D extends to what a game's
+  surfaces need through the game's own shaders, not a water category or a
+  second renderer. A game adds a WGSL module (`Scene::add_shader`) that
+  defines a vertex function, a surface function and a parameter block over
+  SGL3D's contract; a material names it, and SGL3D composes it into its own
+  geometry and caster programs (`shading::programs`), validated when it is
+  added so no pipeline created from it later fails. The vertex function runs
+  in every raster pass's vertex shader after skinning and morphing, not in
+  the deform stage, which would make every shaded instance a moving one
+  with its own vertices and no cache (Godot b130438's `vertex()` in every
+  pass variant, Filament ef1a133's `materialVertex()`, Bevy 9d12036's
+  material vertex shaders); motion comes from a second evaluation with the
+  last submitted frame's time, parameters, instance data and pose, as
+  Godot's motion-vector variant does; culling grows by a per-material
+  displacement bound, as Godot's `extra_cull_margin`; scene colour reaches
+  a surface only through SGL3D's one transmission path, which the surface
+  function drives per fragment; the opaque depth reaches the blended draws'
+  surface functions on the Extended binding tier alone; rays, bakes and
+  static shadow layers see the rest geometry and the plain material, as in
+  every reference engine; and a game's loops are counted loops within a
+  per-call budget, AR-12's form for code SGL3D does not write. SGL3D ships
+  no water, wind or glass: those equations are the game's, and the examples
+  carry their own. Rationale: one renderer serves every game's surfaces
+  without game categories in the library (S3D-2, AR-6), each feature of the
+  standard pipeline (shadows, reflections, transmission, temporal
+  antialiasing) sees the same surface, and the composition follows the
+  reference engines' established practice (RD-2).

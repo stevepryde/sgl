@@ -1262,3 +1262,162 @@ fn a_volume_attenuates_the_light_it_passes_through() {
         );
     }
 }
+
+/// `mesh` placed as a static instance the light sees and the camera does
+/// not, with a white single-sided material of `alpha` drawn through the
+/// test shader (`test_support::TEST_SHADER`) with `params`, whose vertices
+/// move at most `bound`: its material and its instance.
+fn place_shaded(
+    fixture: &mut Fixture,
+    mesh: CpuMesh,
+    alpha: crate::AlphaMode,
+    (params, bound): (test_support::TestShaderParams, f32),
+) -> (crate::MaterialId, crate::InstanceId) {
+    let (device, queue) = (&fixture.device, &fixture.queue);
+    let shader = test_support::add_test_shader(&mut fixture.scene);
+    let mut asset = Fixture::white(mesh);
+    asset.materials[0].alpha = alpha;
+    let ids = fixture.scene.add_asset(device, queue, asset).unwrap();
+    test_support::set_shader(&mut fixture.scene, queue, ids.materials[0], (shader, bound));
+    test_support::set_test_params(&mut fixture.scene, queue, ids.materials[0], params);
+    let state = InstanceState {
+        visible: false,
+        ..InstanceState::new(ids.model)
+    };
+    let instance = fixture
+        .scene
+        .add_instance(device, queue, state, Mobility::Static)
+        .unwrap();
+    (ids.materials[0], instance)
+}
+
+// Plausible defects: a material's shader not applied to its casters, so its
+// shadow stays where its rest geometry is, or a GPU-built cascade culling
+// its casters by their rest bounds. The oracle is geometric: the light
+// shines along the camera's view onto a receiver ahead; an occluder beyond
+// the cascades' pancake lies 40 m aside at rest, outside every cascade,
+// and the shader moves it 40 m back over the receiver. With a displacement
+// bound of 40 its shadow covers the receiver; with one of 0 the cascades
+// cull it where it rests, as they do without the shader.
+#[test]
+fn a_shaders_casters_cast_where_its_vertex_function_moves_them() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::new(device, SIZE);
+    fixture.place(quad(Vec3::new(0., 0., -5.), 1.), true);
+    let rest = beyond_the_pancake() + Vec3::X * 40.;
+    let moved = test_support::TestShaderParams {
+        direction: [-1., 0., 0.],
+        lift: 40.,
+        ..Default::default()
+    };
+    let (material, _) = place_shaded(
+        &mut fixture,
+        quad(rest, 1.5),
+        crate::AlphaMode::Opaque,
+        (moved, 0.),
+    );
+    let input = frame(DirectionalLight {
+        direction: Vec3::NEG_Z,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: Some(two_cascades()),
+        ..Default::default()
+    });
+    let center = [[SIZE[0] / 2, SIZE[1] / 2]];
+    let at_bound = |fixture: &mut Fixture, bound: f32| {
+        let mut values = fixture.scene.material(material).unwrap();
+        values.shader = values.shader.map(|shader| crate::MaterialShader {
+            displacement_bound: bound,
+            ..shader
+        });
+        fixture
+            .scene
+            .set_material(&fixture.queue, material, values)
+            .unwrap();
+        fixture.observe(&input, &center)[0]
+    };
+    let culled = at_bound(&mut fixture, 0.);
+    let shadowed = at_bound(&mut fixture, 40.);
+    assert!(
+        culled > 0.05 && shadowed < 0.01 * culled,
+        "the receiver is {shadowed} with the occluder moved over it and {culled} with it culled at rest"
+    );
+}
+
+// Plausible defects: a shader's masked casters cutting out what the
+// material's record and maps cut out rather than what its surface function
+// does, or drawn whole, or its surface function not given the material's
+// parameters or the instance's data there. The oracle is geometric, as for
+// masked casters: an occluder the camera does not see, beyond the pancake,
+// covers the receiver, and its shader cuts it out where its world x is
+// negative, by its parameters or by its instance's data. Behind its cut-out
+// half the receiver is as lit as it is without the occluder; behind its
+// other half it is dark.
+#[test]
+fn a_shaders_masked_casters_take_its_coverage() {
+    for (label, without, cut_by_instance) in [
+        ("unclipped depth", wgpu::Features::empty(), false),
+        (
+            "emulated unclipped depth",
+            wgpu::Features::DEPTH_CLIP_CONTROL,
+            false,
+        ),
+        ("cut by instance data", wgpu::Features::empty(), true),
+    ] {
+        let Some(device) = test_support::device_without(without) else {
+            return;
+        };
+        let native = device
+            .0
+            .features()
+            .contains(wgpu::Features::DEPTH_CLIP_CONTROL);
+        if native != without.is_empty() {
+            eprintln!("skipping {label}: the adapter has no DEPTH_CLIP_CONTROL");
+            continue;
+        }
+        let mut fixture = Fixture::new(device, SIZE);
+        fixture.place(quad(Vec3::new(0., 0., -5.), 2.), true);
+        let cutting = test_support::TestShaderParams {
+            cutting: if cut_by_instance { 0. } else { 1. },
+            ..Default::default()
+        };
+        let (_, occluder) = place_shaded(
+            &mut fixture,
+            quad(beyond_the_pancake(), 1.5),
+            crate::AlphaMode::Mask { cutoff: 0.5 },
+            (cutting, 0.),
+        );
+        if cut_by_instance {
+            fixture
+                .scene
+                .set_instance_shader_data(&fixture.queue, occluder, [0., 0., 1., 0.])
+                .unwrap();
+        }
+        let input = frame(DirectionalLight {
+            direction: Vec3::NEG_Z,
+            color: [1.; 3],
+            illuminance: 1.,
+            shadow: Some(two_cascades()),
+            ..Default::default()
+        });
+        // The receiver at x = -0.6 and +0.6 m.
+        let pixels = [[12, SIZE[1] / 2], [19, SIZE[1] / 2]];
+        let masked = fixture.observe(&input, &pixels);
+        fixture.cast(occluder, false);
+        let lit = fixture.observe(&input, &pixels);
+        assert!(
+            lit[0] > 0.05 && (masked[0] - lit[0]).abs() < 0.01 * lit[0],
+            "{label}: behind the cut-out half the receiver is {} with the occluder and {} without",
+            masked[0],
+            lit[0]
+        );
+        assert!(
+            lit[1] > 0.05 && masked[1] < 0.01 * lit[1],
+            "{label}: behind the kept half the receiver is {} with the occluder and {} without",
+            masked[1],
+            lit[1]
+        );
+    }
+}

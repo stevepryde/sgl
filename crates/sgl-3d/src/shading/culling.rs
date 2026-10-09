@@ -154,14 +154,17 @@ pub(crate) struct LodChain {
 
 /// What draws with one pipeline and one material (`DrawSet` in
 /// culling.wgsl): its region of each GPU-built view's cluster list, in draw
-/// instances, its material's visibility group and `SET_*` bits.
+/// instances, its material's visibility group and `SET_*` bits, and how far
+/// its material's shader moves a vertex (`MaterialShader::displacement_bound`),
+/// by which the cull grows its meshes' and sections' bounds.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct DrawSet {
     pub region: u32,
     pub capacity: u32,
     pub visibility_group: u32,
     pub flags: u32,
+    pub displacement_bound: f32,
 }
 
 /// One GPU-built view's cull for a frame (`CullView` in culling.wgsl): what
@@ -399,7 +402,13 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 7] {
             "cull",
             "DrawSet",
             DrawSet,
-            [region, capacity, visibility_group, flags]
+            [
+                region,
+                capacity,
+                visibility_group,
+                flags,
+                displacement_bound
+            ]
         ),
         mirror!(
             "cull",

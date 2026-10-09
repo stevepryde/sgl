@@ -40,9 +40,8 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 32] = [
+    let roots: [&'static super::Module; 31] = [
         &crate::shading::PACKED_VERTEX,
-        &crate::view::pipelines::CASTER,
         &crate::stages::opaque::sky::SKY,
         &crate::stages::transparent::effects::GLOW,
         &crate::stages::transparent::mist::MIST,
@@ -85,15 +84,44 @@ fn programs() -> Vec<(&'static str, String)> {
         .collect();
     // The geometry program with each shadow-mask provider (exactly one, the
     // mask's for the lighting pass while ray-traced shadows run) and each
-    // binding tier's material-map provider.
+    // binding tier's material-map provider, and the caster program, each
+    // with the default shader provider and with a game's module (a fixture
+    // that reads every part of the contract), the blended draws' with its
+    // scene depth on Extended.
     {
         use crate::shading::bind::BindingTier::{Basic, Extended};
-        use crate::view::pipelines::geometry_program;
+        use crate::shading::programs::{
+            GeometryForm::{Blended, Plain, ShadowMask},
+            ProgramShader::{Default, Game},
+            caster_program, geometry_program,
+        };
+        let game = Game(crate::shading::shader::tests::FIXTURE);
         programs.extend([
-            ("geometry", geometry_program(false, Extended)),
-            ("geometry_basic", geometry_program(false, Basic)),
-            ("geometry_shadow_mask", geometry_program(true, Extended)),
-            ("geometry_shadow_mask_basic", geometry_program(true, Basic)),
+            ("geometry", geometry_program(Plain, Extended, Default)),
+            ("geometry_basic", geometry_program(Plain, Basic, Default)),
+            (
+                "geometry_shadow_mask",
+                geometry_program(ShadowMask, Extended, Default),
+            ),
+            (
+                "geometry_shadow_mask_basic",
+                geometry_program(ShadowMask, Basic, Default),
+            ),
+            ("caster", caster_program(Default)),
+            ("geometry_shader", geometry_program(Plain, Extended, game)),
+            (
+                "geometry_shader_basic",
+                geometry_program(Plain, Basic, game),
+            ),
+            (
+                "geometry_shader_shadow_mask",
+                geometry_program(ShadowMask, Extended, game),
+            ),
+            (
+                "geometry_shader_blended",
+                geometry_program(Blended, Extended, game),
+            ),
+            ("caster_shader", caster_program(game)),
         ]);
     }
     // The tracing stages' programs on each path their rays take, with the
@@ -135,6 +163,7 @@ type Program = (&'static str, String, Vec<(naga::ShaderStage, &'static str)>);
 /// library validated whole is listed nowhere and holds none.
 fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use super::FULLSCREEN_VS_ENTRY;
+    use crate::shading::programs as view;
     use crate::stages::cull::{self, pyramid};
     use crate::stages::dynamic_gi::pipelines as gi;
     use crate::stages::opaque::{ambient_occlusion as ao, sky};
@@ -143,7 +172,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::stages::shadows::{local, traced, traced::denoise};
     use crate::stages::transparent::{effects, heat, mist, transmission};
     use crate::stages::{deform, exposure, fog, motion_blur, probe_prefilter};
-    use crate::view::{pipelines as view, post_fx};
+    use crate::view::post_fx;
     let geometry = vec![
         view::SOURCE_VS_ENTRY,
         view::FS_ENTRY,
@@ -157,29 +186,38 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         view::RECEIVER_FS_ENTRY,
         view::FSR2_COMPOSITION_FS_ENTRY,
     ];
+    let caster = vec![
+        view::SHADOW_VS_ENTRY,
+        view::SHADOW_UNCLIPPED_VS_ENTRY,
+        view::SHADOW_MASKED_VS_ENTRY,
+        view::SHADOW_MASKED_UNCLIPPED_VS_ENTRY,
+        view::SHADOW_PULLED_VS_ENTRY,
+        view::SHADOW_PULLED_UNCLIPPED_VS_ENTRY,
+        view::SHADOW_PULLED_MASKED_VS_ENTRY,
+        view::SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY,
+        view::SHADOW_PAIRED_VS_ENTRY,
+        view::SHADOW_PAIRED_UNCLIPPED_VS_ENTRY,
+        view::SHADOW_UNCLIPPED_FS_ENTRY,
+        view::SHADOW_MASKED_FS_ENTRY,
+        view::SHADOW_MASKED_UNCLIPPED_FS_ENTRY,
+        view::SHADOW_SHADED_MASKED_VS_ENTRY,
+        view::SHADOW_SHADED_MASKED_UNCLIPPED_VS_ENTRY,
+        view::SHADOW_PULLED_SHADED_MASKED_VS_ENTRY,
+        view::SHADOW_PULLED_SHADED_MASKED_UNCLIPPED_VS_ENTRY,
+        view::SHADOW_SHADED_MASKED_FS_ENTRY,
+        view::SHADOW_SHADED_MASKED_UNCLIPPED_FS_ENTRY,
+    ];
     let mut entries = vec![
         (view::GEOMETRY.name, geometry.clone()),
         ("geometry_basic", geometry.clone()),
         ("geometry_shadow_mask", geometry.clone()),
-        ("geometry_shadow_mask_basic", geometry),
-        (
-            view::CASTER.name,
-            vec![
-                view::SHADOW_VS_ENTRY,
-                view::SHADOW_UNCLIPPED_VS_ENTRY,
-                view::SHADOW_MASKED_VS_ENTRY,
-                view::SHADOW_MASKED_UNCLIPPED_VS_ENTRY,
-                view::SHADOW_PULLED_VS_ENTRY,
-                view::SHADOW_PULLED_UNCLIPPED_VS_ENTRY,
-                view::SHADOW_PULLED_MASKED_VS_ENTRY,
-                view::SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY,
-                view::SHADOW_PAIRED_VS_ENTRY,
-                view::SHADOW_PAIRED_UNCLIPPED_VS_ENTRY,
-                view::SHADOW_UNCLIPPED_FS_ENTRY,
-                view::SHADOW_MASKED_FS_ENTRY,
-                view::SHADOW_MASKED_UNCLIPPED_FS_ENTRY,
-            ],
-        ),
+        ("geometry_shadow_mask_basic", geometry.clone()),
+        ("geometry_shader", geometry.clone()),
+        ("geometry_shader_basic", geometry.clone()),
+        ("geometry_shader_shadow_mask", geometry.clone()),
+        ("geometry_shader_blended", geometry),
+        ("caster_shader", caster.clone()),
+        (view::CASTER.name, caster),
         (sky::SKY.name, vec![sky::SKY_VS_ENTRY, sky::SKY_FS_ENTRY]),
         (
             effects::GLOW.name,
@@ -666,6 +704,8 @@ fn rust_mirrors_match_wgsl_layouts() {
                 irradiance_volume_origin,
                 irradiance_volume_cell_size,
                 irradiance_volume_cells,
+                previous_elapsed_seconds,
+                previous_animation_phase,
             ]
         ),
         mirror!(
@@ -973,8 +1013,8 @@ fn vertex_inputs(
 #[wasm_bindgen_test(unsupported = test)]
 fn vertex_layouts_match_wgsl_inputs() {
     use super::vertex::{CASTER_LAYOUT, DRAW_INSTANCE_LAYOUT};
+    use crate::shading::programs as view;
     use crate::stages::transparent::{effects, heat, mist};
-    use crate::view::pipelines as view;
     let caster = view::CASTER.name;
     let pipelines = [
         (
@@ -984,6 +1024,8 @@ fn vertex_layouts_match_wgsl_inputs() {
                 (caster, view::SHADOW_UNCLIPPED_VS_ENTRY),
                 (caster, view::SHADOW_MASKED_VS_ENTRY),
                 (caster, view::SHADOW_MASKED_UNCLIPPED_VS_ENTRY),
+                (caster, view::SHADOW_SHADED_MASKED_VS_ENTRY),
+                (caster, view::SHADOW_SHADED_MASKED_UNCLIPPED_VS_ENTRY),
             ][..],
         ),
         (
@@ -994,6 +1036,8 @@ fn vertex_layouts_match_wgsl_inputs() {
                 (caster, view::SHADOW_PULLED_UNCLIPPED_VS_ENTRY),
                 (caster, view::SHADOW_PULLED_MASKED_VS_ENTRY),
                 (caster, view::SHADOW_PULLED_MASKED_UNCLIPPED_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_SHADED_MASKED_VS_ENTRY),
+                (caster, view::SHADOW_PULLED_SHADED_MASKED_UNCLIPPED_VS_ENTRY),
             ][..],
         ),
         (
@@ -1114,6 +1158,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         (1, "objects", group1::OBJECTS),
         (1, "scene_source", group1::SCENE_SOURCE),
         (1, "scene_instances", group1::SCENE_INSTANCES),
+        (1, "object_shader_data", group1::OBJECT_SHADER_DATA),
         (2, "material", group2::MATERIAL),
         (2, "base_map", group2::BASE_MAP),
         (2, "mr_map", group2::MR_MAP),
@@ -1145,10 +1190,13 @@ fn rust_binding_names_match_wgsl_bindings() {
             "diffuse_transmission_color_map",
             group2::DIFFUSE_TRANSMISSION_COLOR_MAP,
         ),
+        (2, "shader_params", group2::SHADER_PARAMS),
+        (2, "previous_shader_params", group2::PREVIOUS_SHADER_PARAMS),
         (3, "blended_reflections", blended::REFLECTIONS),
         (3, "blended_surface_depth", blended::SURFACE_DEPTH),
         (3, "blended_trace", blended::TRACE),
         (3, "blended_transmission", blended::TRANSMISSION),
+        (3, "blended_scene_depth", blended::SCENE_DEPTH),
         (3, "caster_positions", caster::POSITIONS),
         (3, "scene_tlas", hardware::SCENE_TLAS),
         (3, "shadow_mask", shadow_mask::MASK),
@@ -1183,22 +1231,38 @@ fn rust_binding_names_match_wgsl_bindings() {
             0,
             numbers(&bind::uniform_entries()),
         ),
+        // Group 1, with a game's shader's instance data (a ShaderParams the
+        // default provider declares).
         (
             "bind_scene",
-            &[&super::BIND_SCENE, &super::SCENE_RAYS],
+            &[
+                &super::BIND_SCENE,
+                &super::SCENE_RAYS,
+                &super::shader::SHADER_INPUTS_BOUND,
+                &super::shader::SHADER_DEFAULT,
+            ],
             1,
             numbers(&bind::scene_entries()),
         ),
-        // Group 2 on each binding tier.
+        // Group 2 on each binding tier, with a game's shader's parameter
+        // blocks (a ShaderParams the default provider declares).
         (
             "bind_material",
-            &[&super::BIND_MATERIAL],
+            &[
+                &super::BIND_MATERIAL,
+                &super::shader::SHADER_INPUTS_BOUND,
+                &super::shader::SHADER_DEFAULT,
+            ][..],
             2,
             numbers(&group2::material_entries(bind::BindingTier::Basic)),
         ),
         (
             "bind_material_extended",
-            &[&super::tiers::BIND_MATERIAL_EXTENDED],
+            &[
+                &super::tiers::BIND_MATERIAL_EXTENDED,
+                &super::shader::SHADER_INPUTS_BOUND,
+                &super::shader::SHADER_DEFAULT,
+            ],
             2,
             numbers(&group2::material_entries(bind::BindingTier::Extended)),
         ),

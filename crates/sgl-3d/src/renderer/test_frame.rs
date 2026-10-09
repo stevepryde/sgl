@@ -340,6 +340,11 @@ impl Renderer {
     }
 
     /// Whether this device writes the G-buffer and lighting in one pass.
+    /// The shader modules and pipelines it holds for game shaders.
+    pub(crate) fn test_shader_programs(&self) -> (usize, usize) {
+        self.pipelines.shader_programs()
+    }
+
     pub(crate) fn test_fused_supported(&self) -> bool {
         self.pipelines.fused_supported
     }

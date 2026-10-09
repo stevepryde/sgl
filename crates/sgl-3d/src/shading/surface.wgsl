@@ -229,7 +229,7 @@ fn surface_f0s(surface:Surface)->SurfaceF0 {
 // A surface's specular reflectance at normal incidence: its dielectric F0
 // mixed toward its base by metallic, as three.js 0.185.1's
 // specularColorBlended and KHR_materials_specular's F0, each under its
-// film (surface_f0s). The G-buffer records it (view/geometry.wgsl).
+// film (surface_f0s). The G-buffer records it (geometry.wgsl).
 fn surface_f0(surface:Surface)->vec3<f32> {
  let f=surface_f0s(surface);
  return mix(f.dielectric,f.metal,surface.metallic);
@@ -239,7 +239,7 @@ fn surface_f0(surface:Surface)->vec3<f32> {
 // (dielectric_f90 = specular), Filament ef1a133's specular-factor path
 // computes it (shaders/src/surface_shading_lit.fs, pixel.f90) and three.js
 // 0.185.1 does (MeshPhysicalNodeMaterial.setupSpecular, specularF90). The
-// G-buffer records it (view/geometry.wgsl).
+// G-buffer records it (geometry.wgsl).
 fn surface_f90(surface:Surface)->f32 {
  return mix(surface.specular,1.,surface.metallic);
 }
@@ -305,7 +305,7 @@ fn surface_sheen_scaling(surface:Surface)->f32 {
 // (sheen_scaling), as KHR_materials_sheen dims the base's environment
 // reflectance (README 160–169) and Filament ef1a133 its indirect specular
 // (surface_light_indirect.fs 393–394). It scales the split sum's single
-// scattering exactly, so the G-buffer records it (view/geometry.wgsl) for
+// scattering exactly, so the G-buffer records it (geometry.wgsl) for
 // source completion, and shade_lit passes it to the base lobe and its
 // occlusion in every other view.
 struct SurfaceBaseLobe {

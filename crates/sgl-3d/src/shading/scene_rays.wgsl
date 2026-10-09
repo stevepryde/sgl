@@ -143,6 +143,15 @@ fn scene_vertex_lightmap_bounds(mesh:u32,at:u32)->vec4<f32> {
  let chart=packed_vertex_chart(scene_source[at+PACKED_VERTEX_ANGLE_CHART]);
  return scene_v4(scene_source[mesh+SCENE_MESH_CHARTS]+chart*SCENE_CHART_WORDS);
 }
+// Vertex `vertex`'s shader data of the mesh whose record is at `mesh`: zero
+// for a mesh without any.
+fn scene_vertex_shader_data(mesh:u32,vertex:u32)->vec4<f32> {
+ let data=scene_source[mesh+SCENE_MESH_SHADER_DATA];
+ if data==0u {
+  return vec4(0.);
+ }
+ return scene_v4(data+vertex*SCENE_SHADER_DATA_WORDS);
+}
 // The record words of vertex `vertex` of the mesh whose record is at `mesh`.
 fn scene_vertex_word(mesh:u32,vertex:u32)->u32 {
  return scene_source[mesh+SCENE_MESH_VERTICES]+vertex*PACKED_VERTEX_WORDS;

@@ -58,6 +58,9 @@ pub(crate) mod group1 {
     pub(crate) const OBJECTS: u32 = 0;
     pub(crate) const SCENE_SOURCE: u32 = 1;
     pub(crate) const SCENE_INSTANCES: u32 = 2;
+    /// The instances' shader data (shader_inputs_bound.wgsl), which only a
+    /// game's shader's programs read, in their vertex stage.
+    pub(crate) const OBJECT_SHADER_DATA: u32 = 3;
 }
 
 /// Group 2's bindings and their tiers, the maps a material fills them with,
@@ -100,14 +103,16 @@ pub(crate) mod blended {
     pub(crate) const SURFACE_DEPTH: u32 = 1;
     pub(crate) const TRACE: u32 = 2;
     pub(crate) const TRANSMISSION: u32 = 3;
+    pub(crate) const SCENE_DEPTH: u32 = 4;
 
     /// The least binding tier that binds `binding`, the one declaration of
-    /// each one's: the transparent stage's copy of the composed frame is
-    /// `Extended`'s alone, below which transmitted light is blended through
-    /// unrefracted.
+    /// each one's: the transparent stage's copy of the composed frame, below
+    /// which transmitted light is blended through unrefracted, and the
+    /// opaque depth a game's shader reads (shader_scene_depth.wgsl), below
+    /// which it reads none, are `Extended`'s alone.
     pub(crate) fn tier(binding: u32) -> BindingTier {
         match binding {
-            TRANSMISSION => BindingTier::Extended,
+            TRANSMISSION | SCENE_DEPTH => BindingTier::Extended,
             _ => BindingTier::Basic,
         }
     }
@@ -394,15 +399,19 @@ pub(crate) fn uniforms<'a>(
 }
 
 /// Group 1, the scene: bind_scene.wgsl's object records (`scene::objects`),
-/// then scene_rays.wgsl's source and instance buffers.
+/// then scene_rays.wgsl's source and instance buffers, then
+/// shader_inputs_bound.wgsl's instance shader data.
 pub(crate) fn scene(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     layout(device, "scene objects and rays", &scene_entries())
 }
 
 /// Group 1's entries: geometry passes read the object records; ray queries
 /// and ray hits, which also run in compute, read the ray buffers and, for a
-/// hit's pose, flags and ambient cube, the object records.
-pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
+/// hit's pose, flags and ambient cube, the object records; a game's
+/// shader's vertex stage reads the instances' shader data, which no
+/// fragment stage sees, so a fragment stage still binds S3D-1's floor of
+/// storage buffers.
+pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 4] {
     let storage = |binding, visibility| wgpu::BindGroupLayoutEntry {
         binding,
         visibility,
@@ -418,6 +427,7 @@ pub(crate) fn scene_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
         storage(group1::OBJECTS, rays),
         storage(group1::SCENE_SOURCE, rays),
         storage(group1::SCENE_INSTANCES, rays),
+        storage(group1::OBJECT_SHADER_DATA, wgpu::ShaderStages::VERTEX),
     ]
 }
 
@@ -444,7 +454,8 @@ pub(crate) fn caster_positions_entries() -> [wgpu::BindGroupLayoutEntry; 1] {
 
 /// The blended pipelines' group 3 on a device of `tier`: bind_blended.wgsl's
 /// screen-space method's result, surface depth and trace, and on
-/// `Extended` bind_blended_extended.wgsl's transmission copy.
+/// `Extended` bind_blended_extended.wgsl's transmission copy and opaque
+/// depth.
 pub(crate) fn blended(device: &wgpu::Device, tier: BindingTier) -> wgpu::BindGroupLayout {
     layout(device, "blended reflections", &blended_entries(tier))
 }
@@ -482,6 +493,7 @@ pub(crate) fn blended_entries(tier: BindingTier) -> Vec<wgpu::BindGroupLayoutEnt
             blended::TRANSMISSION,
             wgpu::TextureSampleType::Float { filterable: true },
         ),
+        texture(blended::SCENE_DEPTH, wgpu::TextureSampleType::Depth),
     ]
     .into_iter()
     .filter(|entry| blended::tier(entry.binding) <= tier)

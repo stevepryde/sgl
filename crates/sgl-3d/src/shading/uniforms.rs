@@ -143,7 +143,13 @@ pub(crate) struct FrameUniform {
     pub irradiance_volume_cell_size: [f32; 3],
     pub padding_cell_size: f32,
     pub irradiance_volume_cells: [u32; 3],
-    pub padding_cells: u32,
+    /// The last submitted frame's `elapsed_seconds` and `animation_phase`,
+    /// which a material's vertex function evaluates motion at; this
+    /// frame's after history restarts.
+    pub previous_elapsed_seconds: f32,
+    pub previous_animation_phase: f32,
+    /// WGSL rounds `Frame` up to its 16-byte alignment.
+    pub padding_previous: [f32; 3],
 }
 
 /// One instance's record (`Object` in uniforms.wgsl), at its index in the

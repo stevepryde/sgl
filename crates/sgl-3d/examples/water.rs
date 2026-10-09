@@ -1,36 +1,39 @@
-//! Blended receivers of screen-space reflections: a lake whose surface, one
-//! static quad whose material scrolls two layers of a wave normal map with
-//! the frame's time (`asset::Material::normal_layers`), receives
-//! reflections over submerged rocks and a sunken block, between an opaque
-//! shoreline rising out of the water and posts standing in it, under a
-//! bright panel above the far shore. A second receiver sheet lies partly
-//! over the lake and a glass pane that does not receive, its reflections at
-//! full strength, stands in front.
+//! A lake of programmable water (`Scene::add_shader`): the example's own
+//! Gerstner waves (`support/gerstner.wgsl`, which SGL3D does not ship) move
+//! the vertices of `--chunks` static 16 m chunk instances (64 by default),
+//! and its normal map's two scrolling layers (`asset::Material::normal_layers`)
+//! add the fine detail over them. The water is a blended receiver of
+//! screen-space reflections and transmits the light behind it: its shader
+//! takes the water column behind each fragment from the scene depth to tint
+//! it, fade it into the shore and set its volume's thickness. It lies over
+//! submerged rocks and a sunken block, between an opaque shoreline and posts
+//! standing in it, under a bright panel above the far shore, with a second
+//! receiver sheet over part of it and a glass pane in front. Halfway through
+//! each run the render origin moves by whole chunks with the camera, which
+//! the waves cross unchanged.
 //!
-//! `cargo run --release -p sgl-3d --example water [-- --frames N] [--run NAME]...`
+//! `cargo run --release -p sgl-3d --example water [-- --frames N] [--run NAME]... [--chunks N] [--morph] [--size WxH]`
 //!
-//! Renders each run below at 1920×1080 through the public `Scene` and
-//! `Renderer` API and prints, per run, the median and 95th percentile GPU
-//! time of the frame and of the pass groups receivers touch, over the frames
-//! after a warm-up, with up to two frames in flight, and what the frames
-//! replace in the scene. `--run` renders only the runs it names. `before`
-//! and `after` are the same frames with the lake and the sheet unmarked and
-//! marked; `set-model` is `after` with the waves animated as before material
-//! layers existed: a 128×128 grid whose normals follow a sum of sines,
-//! replaced every frame with `Scene::set_model`. `fsr2-opaque` is `fsr2`
-//! with the lake opaque, whose moving layers mark FSR2's transparency and
-//! composition mask. `transmission` is `after` with the lake transmissive,
-//! a volume of water that tints and refracts the bed through its waves, and
-//! the glass pane transmissive, and `transmission-fsr2` is `fsr2` so; their
-//! frames add the transparent stage's copy of the composed frame
-//! (`transmission copy`). Every 30th frame and the last of each run are
+//! Renders each run below at `--size` (1920×1080 by default) through the
+//! public `Scene` and `Renderer` API and prints, per run, the median and
+//! 95th percentile GPU time of the frame and of the pass groups the water
+//! touches, over the frames after a warm-up, with up to two frames in
+//! flight, the scene's ray-source and geometry bytes, and what each frame
+//! uploads for the water. `--run` renders only the runs it names. `--morph`
+//! animates the same waves with twelve sine and cosine morph targets per
+//! chunk instead, Retrocar's sea's technique: moving instances whose
+//! weights are set every frame and deformed by the deform pass, with a
+//! constant 2 m volume. `set-model` animates a 128×128 grid of the lake's
+//! normals replaced every frame with `Scene::set_model`, as before material
+//! layers and shaders existed. Every 30th frame and the last of each run are
 //! written to `target/water-example/<run>/` for the owner to judge.
-use sgl_3d::glam::{Quat, Vec3, camera};
+use sgl_3d::glam::{Mat4, Quat, Vec3, camera};
 use sgl_3d::{
-    AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameInput, InstanceState,
-    MaterialId, Mobility, ModelId, ModelMesh, MotionBlurParameters, NormalLayer, PreparedModel,
-    Renderer, Scene,
+    AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameInput, InstanceId,
+    InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh, MotionBlurParameters,
+    NormalLayer, PreparedModel, Renderer, Scene, ShaderSource, SurfaceMaterial,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
+    deformation::{MeshDeformation, MorphDelta, MorphTarget},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{
         Antialiasing, Fsr2Quality, MotionBlur, ReflectionMethod, ScreenSpaceReflections, Settings,
@@ -43,26 +46,51 @@ use std::path::Path;
 use std::time::Instant;
 
 const SIZE: [u32; 2] = [1920, 1080];
-/// The size the `resize` run switches to a third of the way through.
+/// The size the `resize-and-cut` run switches to a third of the way through.
 const RESIZED: [u32; 2] = [1280, 720];
 const WARM_UP: usize = 10;
 /// Grid cells along each side of the `set-model` lake's surface.
 const CELLS: usize = 128;
-/// The lake's surface spans x in ±40 m and z from 2.5 m to -52 m, at y = 0.
+/// The lake's open water spans x in ±40 m and z from 2.5 m to -52 m, at
+/// y = 0; its chunks reach beyond it, calmer under the shores.
 const LAKE: [[f32; 2]; 2] = [[-40., 2.5], [40., -52.]];
 /// Metres of lake one repeat of the wave normal map covers, at a layer's
 /// scale 1: the lake's UVs are its x and -z over this.
 const TILE: f32 = 16.;
 /// Texels on each side of the wave normal map.
 const MAP: u32 = 256;
+/// A water chunk's side, in metres, and its grid's cells along each side.
+const CHUNK: f32 = 16.;
+const CHUNK_CELLS: usize = 32;
+/// The metres over which the waves repeat along x and z: each wave's
+/// vector is a whole multiple of 2π / PERIOD on each axis.
+const PERIOD: f32 = 64.;
+/// Each wave's cycles across PERIOD along x and z.
+const WAVE_CYCLES: [[f32; 2]; 6] = [
+    [3., 1.],
+    [-2., 5.],
+    [6., -3.],
+    [1., 8.],
+    [-9., 4.],
+    [11., 7.],
+];
+/// The waves' steepness, amplitude per metre of wavelength, and the water's
+/// deep column in metres.
+const STEEPNESS: f32 = 0.5;
+const AMPLITUDE: f32 = 0.004;
+const DEEP: f32 = 3.;
+/// Where the render origin moves halfway through a run: whole chunks.
+const ORIGIN_MOVE: Vec3 = Vec3::new(2. * CHUNK, 0., -CHUNK);
 
 /// How the lake's waves move.
 #[derive(Clone, Copy, PartialEq)]
 enum Waves {
-    /// Its material's normal layers, with the frame's time.
-    Material,
-    /// Its material's normal layers, with the time held at zero.
+    /// Its chunks' vertices by the shader, with the frame's time.
+    Shader,
+    /// Its chunks' vertices by the shader, with the time held at zero.
     Still,
+    /// Its chunks' morph targets, weighted every frame (`--morph`).
+    Morph,
     /// Its grid's normals, replaced every frame with `Scene::set_model`.
     Mesh,
 }
@@ -71,58 +99,56 @@ enum Waves {
 struct Run {
     name: &'static str,
     settings: Settings,
-    /// The lake and the sheet receive screen-space reflections.
-    marked: bool,
-    /// The lake is opaque rather than blended.
-    opaque_lake: bool,
     /// The camera orbits; otherwise it stands still.
     orbit: bool,
     waves: Waves,
     /// A resize a third of the way through and a camera cut at two thirds.
     resize_and_cut: bool,
-    /// The lake and the glass pane transmit the light behind them.
-    transmissive: bool,
+    /// The glass pane transmits the light behind it.
+    transmissive_glass: bool,
 }
 
-fn runs() -> Vec<Run> {
+fn runs(morph: bool) -> Vec<Run> {
     let base = Settings {
         scene_resolution: sgl_3d::settings::SceneResolution::Full,
         atmosphere: false,
         antialiasing: Antialiasing::Taa,
         screen_space_reflections: ScreenSpaceReflections::Full,
-        reflection_method: ReflectionMethod::Crystal,
+        reflection_method: ReflectionMethod::Velvet,
         ..Settings::default()
     };
+    let waves = if morph { Waves::Morph } else { Waves::Shader };
     let run = |name, settings: Settings| Run {
         name,
         settings,
-        marked: true,
-        opaque_lake: false,
         orbit: true,
-        waves: Waves::Material,
+        waves,
         resize_and_cut: false,
-        transmissive: false,
+        transmissive_glass: false,
     };
     let with = |change: fn(&mut Settings)| {
         let mut settings = base;
         change(&mut settings);
         settings
     };
-    let blurred = with(|s| s.motion_blur = MotionBlur::Full);
-    let fsr2 = with(|s| {
-        s.antialiasing = Antialiasing::Fsr2;
-        s.fsr2_quality = Fsr2Quality::Quality;
-    });
     vec![
-        Run {
-            marked: false,
-            ..run("before", blurred)
-        },
-        run("after", blurred),
-        Run {
-            waves: Waves::Mesh,
-            ..run("set-model", blurred)
-        },
+        run("velvet", base),
+        run(
+            "ssr-off",
+            with(|s| s.screen_space_reflections = ScreenSpaceReflections::Off),
+        ),
+        run(
+            "crystal",
+            with(|s| s.reflection_method = ReflectionMethod::Crystal),
+        ),
+        run("motion-blur", with(|s| s.motion_blur = MotionBlur::Full)),
+        run(
+            "fsr2",
+            with(|s| {
+                s.antialiasing = Antialiasing::Fsr2;
+                s.fsr2_quality = Fsr2Quality::Quality;
+            }),
+        ),
         Run {
             orbit: false,
             ..run("stationary", base)
@@ -131,42 +157,17 @@ fn runs() -> Vec<Run> {
             waves: Waves::Still,
             ..run("still-waves", base)
         },
-        run(
-            "crystal-half",
-            with(|s| s.screen_space_reflections = ScreenSpaceReflections::Half),
-        ),
-        run(
-            "velvet-full",
-            with(|s| s.reflection_method = ReflectionMethod::Velvet),
-        ),
-        run(
-            "velvet-half",
-            with(|s| {
-                s.reflection_method = ReflectionMethod::Velvet;
-                s.screen_space_reflections = ScreenSpaceReflections::Half;
-            }),
-        ),
-        run(
-            "ssr-off",
-            with(|s| s.screen_space_reflections = ScreenSpaceReflections::Off),
-        ),
-        run("smaa", with(|s| s.antialiasing = Antialiasing::Smaa)),
-        run("fsr2", fsr2),
         Run {
-            opaque_lake: true,
-            ..run("fsr2-opaque", fsr2)
+            waves: Waves::Mesh,
+            ..run("set-model", base)
+        },
+        Run {
+            transmissive_glass: true,
+            ..run("transmissive-glass", base)
         },
         Run {
             resize_and_cut: true,
             ..run("resize-and-cut", base)
-        },
-        Run {
-            transmissive: true,
-            ..run("transmission", blurred)
-        },
-        Run {
-            transmissive: true,
-            ..run("transmission-fsr2", fsr2)
         },
     ]
 }
@@ -240,11 +241,11 @@ fn quad(origin: Vec3, u: Vec3, v: Vec3, material: usize) -> CpuMesh {
     }
 }
 
-/// The lake's surroundings, the second sheet and the glass pane; the lake
-/// itself is its own model. Materials 6 and 7 receive when `marked`.
-fn world(marked: bool, transmissive: bool) -> Asset {
+/// The lake's surroundings, the second sheet, a receiver, and the glass
+/// pane, transmissive where `transmissive`; the lake is its own models.
+fn world(transmissive: bool) -> Asset {
     let receiver = AlphaMode::Blend {
-        receives_screen_space_reflections: marked,
+        receives_screen_space_reflections: true,
         keeps_specular: false,
     };
     let tilt = |angle: f32| Quat::from_rotation_z(angle.to_radians());
@@ -436,26 +437,248 @@ fn water_layers() -> [NormalLayer; 2] {
     ]
 }
 
-/// The lake's surface as one quad, its UVs its x and -z over `TILE`.
-fn lake_quad(material: MaterialId) -> ModelMesh {
+/// The waves' parameters as `support/gerstner.wgsl` declares
+/// `ShaderParams`, which `main` checks against the layout naga gave the
+/// shader.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct WaterParams {
+    waves: [[f32; 4]; 6],
+    shape: [f32; 4],
+    deep: [f32; 4],
+    shallow: [f32; 4],
+    absorption: [f32; 4],
+}
+
+/// Each wave's unit direction along x and z, wavelength in metres and
+/// whole wavelengths travelled per hour: a lake's waves at a third of deep
+/// water's speed, sqrt(g / k), rounded to whole cycles.
+fn waves() -> [[f32; 4]; 6] {
+    WAVE_CYCLES.map(|[m, n]| {
+        let cycles = (m * m + n * n).sqrt();
+        let wavelength = PERIOD / cycles;
+        let k = std::f32::consts::TAU / wavelength;
+        let speed = (9.81 / k).sqrt() / 3.;
+        [
+            m / cycles,
+            n / cycles,
+            wavelength,
+            (speed * 3600. / wavelength).round(),
+        ]
+    })
+}
+
+/// The water's parameters: the waves, a blue-green tint deepening over
+/// 1.5 m of column, a fade into the shore over its last 0.4 m, and white
+/// light turning (0.45, 0.8, 0.75) over 3 m.
+fn water_params() -> WaterParams {
+    let absorption = [0.45f32, 0.8, 0.75].map(|color| -color.ln() / 3.);
+    WaterParams {
+        waves: waves(),
+        shape: [STEEPNESS, AMPLITUDE, DEEP, 0.],
+        deep: [0.55, 0.8, 0.85, 1.5],
+        shallow: [0.95, 1., 0.97, 0.4],
+        absorption: [absorption[0], absorption[1], absorption[2], 0.],
+    }
+}
+
+/// The farthest the waves move a vertex: the steepness's horizontal pinch
+/// and the height of every wave at once, at most twice their amplitudes'
+/// sum.
+fn displacement_bound() -> f32 {
+    2. * waves().iter().map(|wave| AMPLITUDE * wave[2]).sum::<f32>()
+}
+
+/// How much of the waves water at `x`, `z` takes: all of it on the open
+/// lake, falling to a sixth of it 4 m beyond, under the shores.
+fn wave_state(x: f32, z: f32) -> f32 {
     let [[x0, z0], [x1, z1]] = LAKE;
-    ModelMesh {
-        vertices: [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]
-            .map(|[x, z]| Vertex {
+    let outside = Vec3::new(
+        (x0 - x).max(x - x1).max(0.),
+        0.,
+        (z1 - z).max(z - z0).max(0.),
+    )
+    .length();
+    (1. - outside / 4.).clamp(1. / 6., 1.)
+}
+
+/// Each chunk's origin, its least x and z, in the chunks' row order: a
+/// grid as near square as `chunks` fills, about the lake's centre.
+fn chunk_origins(chunks: usize) -> Vec<Vec3> {
+    let columns = (chunks as f32).sqrt().ceil() as usize;
+    let rows = chunks.div_ceil(columns);
+    let center = Vec3::new(0., 0., -25.);
+    (0..chunks)
+        .map(|index| {
+            let (i, j) = ((index % columns) as f32, (index / columns) as f32);
+            center
+                + Vec3::new(
+                    (i - columns as f32 / 2.) * CHUNK,
+                    0.,
+                    (j - rows as f32 / 2.) * CHUNK,
+                )
+        })
+        .collect()
+}
+
+/// A chunk at `origin`: a flat grid in its own space facing +Y, its UVs the
+/// world's x and -z over `TILE`, and each vertex's wave state
+/// (`wave_state`) as its shader data; with morph targets of the waves where
+/// `morph`.
+fn chunk(origin: Vec3, material: MaterialId, morph: bool) -> (ModelMesh, Vec<[f32; 4]>) {
+    let step = CHUNK / CHUNK_CELLS as f32;
+    let row = CHUNK_CELLS + 1;
+    let mut vertices = Vec::with_capacity(row * row);
+    let mut data = Vec::with_capacity(row * row);
+    for j in 0..row {
+        for i in 0..row {
+            let (x, z) = (i as f32 * step, j as f32 * step);
+            let world = origin + Vec3::new(x, 0., z);
+            vertices.push(Vertex {
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
                 position: [x, 0., z],
                 normal: [0., 1., 0.],
-                uv: [x / TILE, -z / TILE],
+                uv: [world.x / TILE, -world.z / TILE],
                 color: [1.; 4],
-            })
-            .to_vec(),
-        // Facing +Y.
-        indices: vec![0, 1, 2, 0, 2, 3],
-        material,
-        deformation: Default::default(),
+            });
+            data.push([wave_state(world.x, world.z), 0., 0., 0.]);
+        }
     }
+    let indices = (0..CHUNK_CELLS as u32)
+        .flat_map(|j| (0..CHUNK_CELLS as u32).map(move |i| j * row as u32 + i))
+        .flat_map(|a| {
+            let row = row as u32;
+            [a, a + row, a + 1, a + 1, a + row, a + row + 1]
+        })
+        .collect();
+    let deformation = if morph {
+        morph_targets(origin, &vertices, &data)
+    } else {
+        MeshDeformation::default()
+    };
+    (
+        ModelMesh {
+            vertices,
+            indices,
+            material,
+            deformation,
+        },
+        data,
+    )
+}
+
+/// The waves as twelve morph targets of a chunk at `origin` (example-only
+/// code, Retrocar's sea's technique): a wave's displacement at its phase θ =
+/// φ − ωt is its cos ωt's share of the displacement at φ and its sin ωt's
+/// of the displacement a quarter cycle on, so two targets a wave, weighted
+/// cos ωt and sin ωt (`morph_weights`), each scaled by the vertex's state.
+fn morph_targets(origin: Vec3, vertices: &[Vertex], data: &[[f32; 4]]) -> MeshDeformation {
+    let mut targets = Vec::with_capacity(12);
+    for (index, wave) in waves().into_iter().enumerate() {
+        let k = std::f32::consts::TAU / wave[2];
+        let amplitude = AMPLITUDE * wave[2];
+        for quarter in [false, true] {
+            let deltas = vertices
+                .iter()
+                .zip(data)
+                .map(|(vertex, state)| {
+                    let anchor = origin + Vec3::from_array(vertex.position);
+                    let phi = k * (wave[0] * anchor.x + wave[1] * anchor.z);
+                    // cos θ = cos φ cos ωt + sin φ sin ωt and
+                    // sin θ = sin φ cos ωt − cos φ sin ωt.
+                    let (c, s) = if quarter {
+                        (phi.sin(), -phi.cos())
+                    } else {
+                        (phi.cos(), phi.sin())
+                    };
+                    let a = amplitude * state[0];
+                    MorphDelta {
+                        position: [
+                            STEEPNESS * a * wave[0] * c,
+                            a * s,
+                            STEEPNESS * a * wave[1] * c,
+                        ],
+                        normal: [
+                            -wave[0] * k * a * c,
+                            -STEEPNESS * k * a * s,
+                            -wave[1] * k * a * c,
+                        ],
+                        tangent: [0.; 3],
+                    }
+                })
+                .collect();
+            targets.push(MorphTarget {
+                weight: (2 * index + usize::from(quarter)) as u32,
+                deltas,
+            });
+        }
+    }
+    MeshDeformation {
+        influences: Vec::new(),
+        morph_targets: targets,
+    }
+}
+
+/// The morph targets' weights at `seconds`: cos ωt and sin ωt of each wave,
+/// at its whole cycles per hour.
+fn morph_weights(seconds: f64) -> [f32; 12] {
+    let phase = seconds.rem_euclid(3600.) / 3600.;
+    let waves = waves();
+    std::array::from_fn(|index| {
+        let angle = std::f64::consts::TAU * f64::from(waves[index / 2][3]) * phase;
+        if index % 2 == 0 {
+            angle.cos() as f32
+        } else {
+            angle.sin() as f32
+        }
+    })
+}
+
+/// The lake's chunks: their instances and whether they deform.
+struct Chunks {
+    instances: Vec<InstanceId>,
+    morph: bool,
+}
+
+/// `chunks` water chunks of `material` placed in `scene`: static instances
+/// whose shader data anchors them on the waves' period, or, `morph`,
+/// moving instances of deforming chunks.
+fn place_chunks(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    scene: &mut Scene,
+    material: MaterialId,
+    chunks: usize,
+    morph: bool,
+) -> Result<Chunks, Box<dyn Error>> {
+    let mut instances = Vec::with_capacity(chunks);
+    for origin in chunk_origins(chunks) {
+        let (mesh, data) = chunk(origin, material, morph);
+        let prepared = PreparedModel::with_shader_data(vec![mesh], vec![data])?;
+        let model = scene.add_model(device, queue, prepared)?;
+        let state = InstanceState {
+            pose: Mat4::from_translation(origin),
+            ..InstanceState::new(model)
+        };
+        let mobility = if morph {
+            Mobility::Moving
+        } else {
+            Mobility::Static
+        };
+        let instance = scene.add_instance(device, queue, state, mobility)?;
+        if !morph {
+            let anchor = [
+                origin.x.rem_euclid(PERIOD),
+                origin.z.rem_euclid(PERIOD),
+                0.,
+                0.,
+            ];
+            scene.set_instance_shader_data(queue, instance, anchor)?;
+        }
+        instances.push(instance);
+    }
+    Ok(Chunks { instances, morph })
 }
 
 /// The `set-model` lake's surface at `seconds`: a flat grid whose normals
@@ -588,14 +811,15 @@ fn save(
     Ok(())
 }
 
-/// The camera of frame `index` of a run at `size`.
-fn camera(index: usize, orbit: bool, size: [u32; 2]) -> Camera {
-    let center = Vec3::new(0., 0.5, -25.);
+/// The camera of frame `index` of a run at `size`, in the render frame of
+/// an origin at `origin`.
+fn camera(index: usize, orbit: bool, size: [u32; 2], origin: Vec3) -> Camera {
+    let center = Vec3::new(0., 0.5, -25.) - origin;
     let eye = if orbit {
         let angle = 0.5 * (index as f32 / 120. * std::f32::consts::TAU).sin();
         center + Vec3::new(33. * angle.sin(), 3.5, 33. * angle.cos())
     } else {
-        Vec3::new(0., 3., 8.)
+        Vec3::new(0., 3., 8.) - origin
     };
     Camera {
         eye,
@@ -604,18 +828,22 @@ fn camera(index: usize, orbit: bool, size: [u32; 2]) -> Camera {
     }
 }
 
-/// Each pass group's time in each measured frame, and the geometry the
-/// frames replaced in the scene.
+/// Each pass group's time in each measured frame, and what the frames
+/// uploaded for the water.
 #[derive(Default)]
 struct Times {
     groups: BTreeMap<&'static str, Vec<f64>>,
     totals: Vec<f64>,
-    /// Bytes of vertices and indices a frame gave `Scene::set_model`.
-    edited_bytes: usize,
+    /// Bytes a frame gave the scene for the water: morph weights, or a
+    /// replaced model's vertices and indices.
+    uploaded: usize,
     /// Each measured frame's `PreparedModel::new` and `Scene::set_model`
-    /// calls, in CPU milliseconds.
+    /// calls, in CPU milliseconds (`set-model`).
     prepares: Vec<f64>,
     edits: Vec<f64>,
+    /// The scene's ray-source and geometry bytes, live, once set up.
+    ray_source: u64,
+    geometry: u64,
 }
 
 impl Times {
@@ -626,19 +854,25 @@ impl Times {
         let measured = self.totals.len();
         self.totals.push(frame.total_ms);
         for pass in frame.passes {
-            // Crystal's, Velvet's and DiligentFX's passes, each as one group.
-            let name = ["Godot SSR", "SSR", "DiligentFX", "world reflection"]
-                .into_iter()
-                .find(|prefix| pass.name.starts_with(prefix))
-                .unwrap_or(pass.name);
+            // Crystal's, Velvet's, DiligentFX's and the cascades' passes,
+            // each as one group.
+            let name = [
+                "Godot SSR",
+                "SSR",
+                "DiligentFX",
+                "world reflection",
+                "directional shadow",
+            ]
+            .into_iter()
+            .find(|prefix| pass.name.starts_with(prefix))
+            .unwrap_or(pass.name);
             let times = self.groups.entry(name).or_default();
             times.resize(measured + 1, 0.);
             times[measured] += pass.ms;
         }
     }
 
-    fn edit(&mut self, bytes: usize, [prepare, edit]: [f64; 2]) {
-        self.edited_bytes = bytes;
+    fn edit(&mut self, [prepare, edit]: [f64; 2]) {
         self.prepares.push(prepare);
         self.edits.push(edit);
     }
@@ -654,30 +888,38 @@ impl Times {
             (at(0.5), at(0.95))
         };
         if self.totals.is_empty() {
-            println!("{name:<16} no GPU timestamps");
+            println!("{name:<20} no GPU timestamps");
         } else {
             let (median, p95) = quantiles(&self.totals, self.totals.len());
             println!(
-                "{name:<16} frame {median:7.3} / {p95:7.3} ms ({} frames)",
+                "{name:<20} frame {median:7.3} / {p95:7.3} ms ({} frames)",
                 self.totals.len()
             );
         }
-        if self.edits.is_empty() {
-            println!("  scene edits per frame: none");
-        } else {
+        println!(
+            "  ray source {:.2} MB, geometry {:.2} MB; uploads {} bytes a frame for the water",
+            self.ray_source as f64 / 1e6,
+            self.geometry as f64 / 1e6,
+            self.uploaded
+        );
+        if !self.edits.is_empty() {
             let (prepare, prepare_p95) = quantiles(&self.prepares, self.prepares.len());
             let (median, p95) = quantiles(&self.edits, self.edits.len());
             println!(
-                "  per frame: {} bytes of vertices and indices, prepared in {prepare:.3} / {prepare_p95:.3} ms and set_model {median:.3} / {p95:.3} ms CPU",
-                self.edited_bytes
+                "  prepared in {prepare:.3} / {prepare_p95:.3} ms and set_model {median:.3} / {p95:.3} ms CPU"
             );
         }
         for group in [
+            "deform",
+            "cull",
+            "directional shadow",
+            "opaque geometry + lighting",
+            "geometry",
+            "opaque lighting",
             "receivers",
             "DiligentFX",
             "SSR",
             "Godot SSR",
-            "world reflection",
             "reflection composition",
             "transmission copy",
             "blended",
@@ -694,102 +936,144 @@ impl Times {
     }
 }
 
+/// What the example's command line chose.
+struct Options {
+    frames: usize,
+    chunks: usize,
+    size: [u32; 2],
+    directory: std::path::PathBuf,
+}
+
 fn render(
     run: &Run,
-    frames: usize,
+    options: &Options,
     (device, queue): (&wgpu::Device, &wgpu::Queue),
-    directory: &Path,
 ) -> Result<Times, Box<dyn Error>> {
-    let directory = directory.join(run.name);
+    let directory = options.directory.join(run.name);
     std::fs::create_dir_all(&directory)?;
     let mut scene = Scene::new(device, queue);
-    let world = scene.add_asset(device, queue, world(run.marked, run.transmissive))?;
+    let world = scene.add_asset(device, queue, world(run.transmissive_glass))?;
     scene.add_instance(
         device,
         queue,
         InstanceState::new(world.model),
         Mobility::Static,
     )?;
-    let mesh = run.waves == Waves::Mesh;
+    let mut times = Times::default();
     let water = Material {
-        alpha: if run.opaque_lake {
-            AlphaMode::Opaque
-        } else {
-            AlphaMode::Blend {
-                receives_screen_space_reflections: run.marked,
-                keeps_specular: false,
-            }
+        alpha: AlphaMode::Blend {
+            receives_screen_space_reflections: true,
+            keeps_specular: true,
         },
         casts_directional_shadow: false,
-        ..material("water", [0.02, 0.05, 0.06, 0.6], 0.04)
+        ior: 1.33,
+        transmission: 1.,
+        attenuation_distance: 3.,
+        attenuation_color: [0.45, 0.8, 0.75],
+        ..material("water", [1.; 4], 0.04)
     };
-    // Water as a volume: it refracts at IOR 1.33 across 2 m of depth and
-    // turns white light blue-green over 3 m, covering its pixels whole.
-    let water = if run.transmissive {
-        Material {
-            base: [1.; 4],
-            ior: 1.33,
-            transmission: 1.,
-            thickness: 2.,
-            attenuation_distance: 3.,
-            attenuation_color: [0.45, 0.8, 0.75],
-            ..water
+    let mut chunks = None;
+    let mut grid = None;
+    match run.waves {
+        Waves::Shader | Waves::Still => {
+            let shader = scene.add_shader(ShaderSource {
+                wgsl: include_str!("support/gerstner.wgsl").into(),
+                label: "gerstner water".into(),
+            })?;
+            check_layout(&scene, shader)?;
+            let water = Material {
+                normal_texture: Some(0),
+                normal_layers: Some(water_layers()),
+                // The shader replaces this constant slab with the column.
+                thickness: 1.,
+                ..water
+            };
+            let water = scene.add_materials(device, queue, &[water], &[wave_map()])?[0];
+            // A material names its shader once added.
+            let values = SurfaceMaterial {
+                shader: Some(MaterialShader {
+                    shader,
+                    displacement_bound: displacement_bound(),
+                }),
+                ..scene.material(water)?
+            };
+            scene.set_material(queue, water, values)?;
+            scene.set_shader_parameters(queue, water, bytemuck::bytes_of(&water_params()))?;
+            let placed = place_chunks((device, queue), &mut scene, water, options.chunks, false)?;
+            chunks = Some(placed);
         }
-    } else {
-        water
-    };
-    let (water, images) = if mesh {
-        (water, Vec::new())
-    } else {
-        let layered = Material {
-            normal_texture: Some(0),
-            normal_layers: Some(water_layers()),
-            ..water
-        };
-        (layered, vec![wave_map()])
-    };
-    let water = scene.add_materials(device, queue, &[water], &images)?[0];
-    let (lake_model, mobility): (ModelId, _) = if mesh {
-        // Moving: replacing its geometry each frame is no static edit.
-        let model = scene.add_model(device, queue, PreparedModel::new(vec![lake(0., water)])?)?;
-        (model, Mobility::Moving)
-    } else {
-        let model = scene.add_model(device, queue, PreparedModel::new(vec![lake_quad(water)])?)?;
-        (model, Mobility::Static)
-    };
-    scene.add_instance(device, queue, InstanceState::new(lake_model), mobility)?;
+        Waves::Morph => {
+            let water = Material {
+                normal_texture: Some(0),
+                normal_layers: Some(water_layers()),
+                thickness: 2.,
+                ..water
+            };
+            let water = scene.add_materials(device, queue, &[water], &[wave_map()])?[0];
+            let placed = place_chunks((device, queue), &mut scene, water, options.chunks, true)?;
+            times.uploaded = placed.instances.len() * size_of::<[f32; 12]>();
+            chunks = Some(placed);
+        }
+        Waves::Mesh => {
+            let water = Material {
+                thickness: 2.,
+                ..water
+            };
+            let water = scene.add_materials(device, queue, &[water], &[])?[0];
+            // Moving: replacing its geometry each frame is no static edit.
+            let model =
+                scene.add_model(device, queue, PreparedModel::new(vec![lake(0., water)])?)?;
+            scene.add_instance(device, queue, InstanceState::new(model), Mobility::Moving)?;
+            grid = Some((model, water));
+        }
+    }
+    let resources = scene.diagnostic_resources();
+    times.ray_source = resources.ray_source_live;
+    times.geometry = resources.geometry_live;
     let environment = scene.add_environment(device, queue, &sky())?;
-    let mut size = SIZE;
+    let mut size = options.size;
     let mut texture = output(device, size);
     let mut renderer = Renderer::new(device, queue, texture.format(), size, 1., &run.settings)?;
     let mut timing = GpuTiming::new(device, queue);
-    let mut times = Times::default();
     let mut in_flight = None;
+    let mut origin = Vec3::ZERO;
+    let frames = options.frames;
     for index in 0..frames {
         if run.resize_and_cut && index == frames / 3 {
             size = RESIZED;
             texture = output(device, size);
+        }
+        // Halfway, the render origin moves by whole chunks, the camera with
+        // it: the waves cross it unchanged.
+        if index == frames / 2 {
+            scene.move_origin(device, queue, ORIGIN_MOVE)?;
+            origin += ORIGIN_MOVE;
         }
         renderer.resize(device, size, 1., &run.settings);
         let seconds = match run.waves {
             Waves::Still => 0.,
             _ => index as f64 / 60.,
         };
-        if mesh {
+        if let Some(chunks) = chunks.as_ref().filter(|chunks| chunks.morph) {
+            let weights = morph_weights(seconds);
+            for &instance in &chunks.instances {
+                scene.set_instance_deformation(queue, instance, &[], &weights)?;
+            }
+        }
+        if let Some((model, water)) = grid {
             let surface = lake(seconds as f32, water);
-            let bytes = surface.vertices.len() * size_of::<Vertex>()
+            times.uploaded = surface.vertices.len() * size_of::<Vertex>()
                 + surface.indices.len() * size_of::<u32>();
             let start = Instant::now();
             let prepared = PreparedModel::new(vec![surface])?;
             let prepared_at = Instant::now();
-            scene.set_model(device, queue, lake_model, prepared)?;
+            scene.set_model(device, queue, model, prepared)?;
             if index >= WARM_UP {
                 let ms = |from: Instant, to: Instant| (to - from).as_secs_f64() * 1000.;
-                let done = Instant::now();
-                times.edit(bytes, [ms(start, prepared_at), ms(prepared_at, done)]);
+                times.edit([ms(start, prepared_at), ms(prepared_at, Instant::now())]);
             }
         }
-        let mut input = FrameInput::new(camera(index, run.orbit, size));
+        let mut input = FrameInput::new(camera(index, run.orbit, size, origin));
         input.camera_cut = index == 0 || (run.resize_and_cut && index == 2 * frames / 3);
         input.elapsed_seconds = seconds;
         input.environment = Some(environment);
@@ -857,19 +1141,62 @@ fn render(
     Ok(times)
 }
 
+/// `WaterParams` against the layout naga gave the shader's `ShaderParams`:
+/// a mirror that drifted from the WGSL would write its members at the wrong
+/// offsets.
+fn check_layout(scene: &Scene, shader: sgl_3d::ShaderId) -> Result<(), Box<dyn Error>> {
+    let layout = scene.shader_parameters_layout(shader)?;
+    let mirror = [
+        ("waves", std::mem::offset_of!(WaterParams, waves)),
+        ("shape", std::mem::offset_of!(WaterParams, shape)),
+        ("deep", std::mem::offset_of!(WaterParams, deep)),
+        ("shallow", std::mem::offset_of!(WaterParams, shallow)),
+        ("absorption", std::mem::offset_of!(WaterParams, absorption)),
+    ];
+    let offsets: Vec<_> = layout
+        .fields
+        .iter()
+        .map(|field| (field.name.as_str(), field.offset as usize))
+        .collect();
+    if offsets != mirror || layout.size as usize != size_of::<WaterParams>() {
+        return Err(format!("WaterParams does not mirror ShaderParams: {layout:?}").into());
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut frames = 120;
+    let mut options = Options {
+        frames: 120,
+        chunks: 64,
+        size: SIZE,
+        directory: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/water-example"),
+    };
+    let mut morph = false;
     let mut only = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--frames" => frames = args.next().ok_or("--frames requires a count")?.parse()?,
+            "--frames" => {
+                options.frames = args.next().ok_or("--frames requires a count")?.parse()?
+            }
             "--run" => only.push(args.next().ok_or("--run requires a run's name")?),
+            "--chunks" => {
+                options.chunks = args.next().ok_or("--chunks requires a count")?.parse()?
+            }
+            "--morph" => morph = true,
+            "--size" => {
+                let size = args.next().ok_or("--size requires WxH")?;
+                let (width, height) = size.split_once('x').ok_or("--size requires WxH")?;
+                options.size = [width.parse()?, height.parse()?];
+            }
             other => return Err(format!("unknown argument {other}").into()),
         }
     }
-    if frames < WARM_UP + 3 {
+    if options.frames < WARM_UP + 3 {
         return Err(format!("--frames must be at least {}", WARM_UP + 3).into());
+    }
+    if options.chunks == 0 {
+        return Err("--chunks must be at least 1".into());
     }
     let adapter =
         pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default()))?;
@@ -880,12 +1207,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         required_limits: sgl_3d::graphics_device::limits(&adapter),
         ..Default::default()
     }))?;
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/water-example");
     println!(
-        "{frames} frames per run at {}x{}; GPU time median / p95",
-        SIZE[0], SIZE[1]
+        "{} frames per run at {}x{}, {} chunks{}; GPU time median / p95",
+        options.frames,
+        options.size[0],
+        options.size[1],
+        options.chunks,
+        if morph { " of morph targets" } else { "" }
     );
-    let runs: Vec<Run> = runs()
+    let runs: Vec<Run> = runs(morph)
         .into_iter()
         .filter(|run| only.is_empty() || only.iter().any(|name| name == run.name))
         .collect();
@@ -893,8 +1223,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(format!("no run is named {only:?}").into());
     }
     for run in runs {
-        render(&run, frames, (&device, &queue), &directory)?.report(run.name);
+        render(&run, &options, (&device, &queue))?.report(run.name);
     }
-    println!("Frames: {}", directory.canonicalize()?.display());
+    println!("Frames: {}", options.directory.canonicalize()?.display());
     Ok(())
 }
