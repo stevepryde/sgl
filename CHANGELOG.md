@@ -16,9 +16,9 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-net` native WebSocket `disconnect`: a graceful close no longer drops
-  frames still waiting on a blocked socket or its unflushed Close frame; it
-  now ends once both reach the socket or at `GRACEFUL_CLOSE_TIMEOUT_MS`. No
-  game-code changes needed.
+  frames still waiting on a blocked socket or its Close frame; it now ends,
+  as `Local`, once the peer answers the Close or ends the stream, or at
+  `GRACEFUL_CLOSE_TIMEOUT_MS`. No game-code changes needed.
 
 ## 0.4.0 — 2026-10-09
 
