@@ -69,7 +69,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    survive unrelated redraws under stable widget names. Edits scroll to keep
    the caret visible and clip content to the field and enclosing clip. Secret
    fields retain ASCII append/backspace/paste editing and never copy or cut;
-   they avoid temporary copies of the secret while editing.
+   they avoid temporary copies of the secret while editing, provided the
+   game preallocates `buf` with at least `max_len` bytes.
    Buttons act on press-down. At most one widget is active at a time. An open
    modal blocks widgets behind it. Line edits respect `max_len` and keep the
    buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text in

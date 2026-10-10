@@ -36,7 +36,9 @@ impl UiFrame<'_> {
     /// selection, copy and cut commands are ignored; clearing zeroizes the
     /// buffer. Draws and metrics only receive mask glyphs. Unlike normal line
     /// edits this preserves the preallocated secret buffer without temporary
-    /// copies during editing.
+    /// copies during editing. Preallocate `buf` with at least `max_len`
+    /// bytes: growing past its capacity reallocates and frees the old
+    /// allocation without zeroing it.
     pub fn password_edit_clear(
         &mut self,
         name: &str,
