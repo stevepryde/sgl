@@ -17,9 +17,11 @@ docs and specs the entry links.
 
 - `sgl-3d` `asset::load*`: a glTF mesh whose morphed primitives have
   different numbers of morph targets loaded, the extra targets driven by
-  another node's weights; it now fails the load naming the primitive, and
-  primitives without targets still load unmorphed. No game-code changes
-  needed; give every morphed primitive of the mesh the same shape keys.
+  another node's weights; it now fails the load naming the primitive.
+  Primitives without targets still load unmorphed, and a mesh whose first
+  primitive has none no longer refuses its morph-weight animation. No
+  game-code changes needed; give every morphed primitive of the mesh the
+  same shape keys.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
