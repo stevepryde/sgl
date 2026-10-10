@@ -19,6 +19,42 @@ docs and specs the entry links.
   of steps before confirming a hit was accepted by depth proximity and now
   reports a miss, so streaks near surfaces at the step cap give way to the
   fallback. No game-code changes needed.
+- `sgl-net` `BrowserWebSocketClient`: a close caused by a received frame
+  (`InboundOverflow`, or a `ProtocolViolation` found by the lane queues)
+  never reconnected; it now follows `ReconnectPolicy` like other non-local
+  closes, so expect `Reconnecting` after it. No game-code changes needed.
+- `sgl-net` `ReconnectPolicy::max_attempts` (browser): every `Connected`
+  restarted the count, so a connection that kept failing soon after it
+  opened reconnected forever at the first delay; the count now restarts only
+  after a connection stayed up at least `max_delay_ms`, so such a loop backs
+  off and stops after `max_attempts`. No game-code changes needed.
+- `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
+  grid cell it spanned (effectively hanging); a collider over 1024 cells is
+  now kept apart and a query over more cells than colliders scans the
+  colliders. No game-code changes needed.
+- `sgl-core` `AnimationSequence` ping-pong: a trailing step replayed the end
+  frame; a leading step skipped the reverse pass or replayed the start frame.
+  The bounce now turns on the first and last frame steps, playing outer
+  steps once per turnaround. No game-code changes needed.
+- `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
+  on the world channel shrank by `pixels_per_unit`; the new `units:
+  WorldUnits` field (default logical pixels) makes positions, sizes and
+  widths world units. World gizmos set `units: camera.units()`; struct
+  literals without `..Overlay::new(white)` add `units`; pixel overlays need
+  no other change.
+- `sgl-3d` `asset::load*`: a glTF mesh whose morphed primitives have
+  different numbers of morph targets loaded, the extra targets driven by
+  another node's weights; it now fails the load naming the primitive.
+  Primitives without targets still load unmorphed, and a mesh whose first
+  primitive has none no longer refuses its morph-weight animation. No
+  game-code changes needed; give every morphed primitive of the mesh the
+  same shape keys.
+- `sgl-net` `BrowserWebSocketConfig::latest_buffered_bytes`: any nonzero
+  value was accepted, and one below the largest latest-state frame blocked
+  every lane once a large state was sent; `BrowserWebSocketClient::connect`
+  now rejects values below `ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES`
+  (1186). Raise a smaller watermark to at least that; the 64 KiB default is
+  unaffected.
 - `sgl-net` `udp::LANE_MESSAGES_PER_PEER_PER_POLL` (32, native) is now public:
   the most lane messages a `ThreadedUdpServer` poll returns per peer, which
   `specs/netcode.md` already named. No game-code changes needed.
