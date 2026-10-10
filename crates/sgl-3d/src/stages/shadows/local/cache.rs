@@ -18,6 +18,7 @@
 //! light, which the scene translated alike.
 use super::shape::LightView;
 use crate::content::identity::{InstanceId, LightId, ModelId};
+use crate::scene::CasterShading;
 use crate::scene::origin::translated;
 use glam::{DVec3, Mat4};
 use std::collections::HashMap;
@@ -33,11 +34,36 @@ pub(super) struct FaceKey {
     pub mask: u32,
     /// The scene's material caster revision (`Materials::casters`).
     pub casters: u64,
-    /// The frame's time (`FrameInput::elapsed_seconds`), where a static
-    /// caster whose shader may change what it casts reaches the face
-    /// (`Material::shader_casts`): its vertex or surface function may read
-    /// the time.
+    /// What the shaders of the static casters that reach the face, and may
+    /// change what they cast, read (`Scene::caster_shading`).
+    pub shading: Shading,
+}
+
+/// What the shaders that may change what casters cast read, as of a frame:
+/// the frame's time (`FrameInput::elapsed_seconds`) where one reads it, and
+/// the latest of their parameter revisions (`Material::parameters`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Shading {
     pub time: Option<f64>,
+    pub parameters: u64,
+}
+
+impl Shading {
+    /// What `caster` reads at `time`.
+    pub fn of(caster: CasterShading, time: f64) -> Self {
+        Self {
+            time: caster.reads_time.then_some(time),
+            parameters: caster.parameters,
+        }
+    }
+
+    /// What either reads.
+    pub fn and(self, other: Self) -> Self {
+        Self {
+            time: self.time.or(other.time),
+            parameters: self.parameters.max(other.parameters),
+        }
+    }
 }
 
 /// A moving instance a face draws, as it drew it.
@@ -51,10 +77,10 @@ pub(super) struct MovingCaster {
     /// Its deformation's revision (`InstanceDeformation::revision`); zero
     /// when it does not deform.
     pub deformation: u64,
-    /// The frame's time and its shader data
+    /// What its shaders read, and its shader data
     /// (`Scene::set_instance_shader_data`), where its materials' shaders may
-    /// change what it casts (`Material::shader_casts`).
-    pub shaded: Option<(f64, [f32; 4])>,
+    /// change what it casts (`Scene::caster_shading`).
+    pub shaded: Option<(Shading, [f32; 4])>,
 }
 
 /// What a slot holds.

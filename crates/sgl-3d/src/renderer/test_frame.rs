@@ -124,7 +124,10 @@ impl Renderer {
             &self.bindings,
             (scene, &mut self.views.instances),
             (input.camera.view, input.camera.projection),
-            (values.frame.visibility_mask, input.elapsed_seconds),
+            crate::stages::shadows::local::ShadowFrame {
+                mask: values.frame.visibility_mask,
+                time: input.elapsed_seconds,
+            },
             effective.local_lights,
         );
         self.views.instances.upload(device, queue);

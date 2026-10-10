@@ -617,13 +617,16 @@ bounds are tested, so streaming many chunks in one frame redraws only the
 faces they reach, until more than 1024 edits in a frame merge in pairs),
 the visibility mask changes, or a material's side, visibility group or
 alpha mode changes
-(or a masked material's cutoff or base alpha). A material whose shader may
-change what it casts (a displacement bound above 0, or a masked material's
-surface function) redraws them as its inputs change: setting its shader
-parameters redraws every layer; the frame's time changing redraws the layers
-its static instances reach, and the faces its moving instances reach, every
-frame the time advances; a moving instance's shader data changing redraws
-the faces it reaches. A light that
+(or a masked material's cutoff or base alpha). A casting (not blended)
+material whose shader may change what it casts (a displacement bound above
+0, or a masked material's surface function) redraws the faces its instances
+reach as the shader's inputs change: its parameters
+(`Scene::set_shader_parameters`); the frame's time, where the shader reads
+`time` or `phase` (SGL3D reads the module for them, as Godot marks a shader
+animated by its code), which redraws those faces' static layers every frame
+the time advances, so a large static field of a time-animated shader costs
+a static-layer redraw of every face it reaches each frame; and a moving
+instance's shader data. A light that
 moved since the last frame, such as one following a craft, has no reusable
 layer and draws every caster. A frame in which nothing moved in any shadowed
 light's range draws no shadows at all. What a frame draws becomes reusable
@@ -1579,10 +1582,9 @@ The Rust side:
   material's block, of exactly that size (`SceneError::ShaderParameters`
   otherwise, and for a material without a shader); it starts as zeros when
   the material gains the shader. Time comes from the frame, so most blocks
-  are set once. A new block is no static edit: the local-light shadow
-  layers of static instances keep the displacement they were drawn with,
-  so static instances that parameters animate keep their old local-light
-  shadows (animate them through moving instances, or instance data).
+  are set once. Where the material's shader may change what it casts, a
+  new block redraws the local-light shadow faces its instances reach
+  ([Local-light shadows](#local-light-shadows)).
 - `Scene::set_instance_shader_data(queue, instance, [f32; 4])` and
   `instance_shader_data` hold an instance's data, zero when it is added;
   for a static instance a change is a static edit, which redraws the

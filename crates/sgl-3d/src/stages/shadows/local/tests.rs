@@ -1591,6 +1591,14 @@ fn static_edits_of_a_shaded_instance_restale_the_faces_its_displacement_reaches(
     harness.expect(light, &[(REACHED, 1.)], "the lifted blocker removed");
 }
 
+/// The identity camera's frame at `seconds`.
+fn at_time(seconds: f64) -> FrameInput {
+    FrameInput {
+        elapsed_seconds: seconds,
+        ..input()
+    }
+}
+
 // Plausible defects: a light's cached static layer or frame face kept when
 // what a shader-driven caster casts changed without a static edit or a
 // move: its material's shader parameters set, the frame's time advanced
@@ -1607,10 +1615,6 @@ fn shader_driven_casters_redraw_when_their_shaders_inputs_change() {
         return;
     };
     let (device, queue) = (harness.device.clone(), harness.queue.clone());
-    let at_time = |seconds: f64| FrameInput {
-        elapsed_seconds: seconds,
-        ..input()
-    };
     for mobility in [Mobility::Static, Mobility::Moving] {
         let (mut scene, light, model) = reaching_scene(&harness, 0., 6.);
         let material = scene.drawn_model(model).meshes[0].material;
@@ -1657,5 +1661,123 @@ fn shader_driven_casters_redraw_when_their_shaders_inputs_change() {
     for seconds in [1., 2.] {
         let stats = harness.frame(&mut scene, &at_time(seconds));
         assert_eq!(stats.draws, 0, "no shader at {seconds} s: {stats:?}");
+    }
+}
+
+/// A shader that lifts every vertex along its parameters' `direction` by
+/// their `lift`, whatever the time.
+const TIMELESS_SHADER: &str = r#"
+struct ShaderParams {
+ direction:vec3<f32>,
+ lift:f32,
+}
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {
+ var out=v;
+ out.position+=params.direction*params.lift;
+ return out;
+}
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
+ return s;
+}
+"#;
+
+/// A blocker 1 m in front of a point light, as a static or moving
+/// instance, its material drawn through `shader` (the test shader when
+/// None) moving at most `bound`, with `alpha`: the scene, the light and the
+/// blocker's material.
+fn shader_scene(
+    harness: &Harness,
+    shader: Option<&str>,
+    bound: f32,
+    alpha: crate::AlphaMode,
+    mobility: Mobility,
+) -> (Scene, LightId, crate::MaterialId) {
+    let (device, queue) = (&harness.device, &harness.queue);
+    let mut scene = Scene::new(device, queue);
+    let shader = match shader {
+        Some(wgsl) => scene
+            .add_shader(crate::ShaderSource {
+                wgsl: wgsl.into(),
+                label: "fixture shader".into(),
+            })
+            .unwrap(),
+        None => test_support::add_test_shader(&mut scene),
+    };
+    let mut blocker = blocker();
+    blocker.materials[0].alpha = alpha;
+    let ids = scene.add_asset(device, queue, blocker).unwrap();
+    test_support::set_shader(&mut scene, queue, ids.materials[0], (shader, bound));
+    scene
+        .add_instance(device, queue, at(ids.model, Vec3::ZERO), mobility)
+        .unwrap();
+    let light = scene
+        .add_light(device, queue, point(Vec3::new(0., 0., 1.), 4.))
+        .unwrap();
+    (scene, light, ids.materials[0])
+}
+
+// Plausible defects: a shader's masked casters' cached coverage kept when
+// its parameters change what its surface function cuts out, where it moves
+// no vertex (a displacement bound of 0). The oracle is geometric, as for
+// masked casters: with cutting on, the shader cuts the blocker out where
+// its world x is negative, so the receiver behind that half is lit, and
+// with it off the whole blocker shadows it.
+#[test]
+fn a_masked_casters_coverage_follows_its_shaders_parameters() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let queue = harness.queue.clone();
+    let behind = Vec3::new(-0.15, 0., -1.);
+    for mobility in [Mobility::Static, Mobility::Moving] {
+        let mask = crate::AlphaMode::Mask { cutoff: 0.5 };
+        let (mut scene, light, material) = shader_scene(&harness, None, 0., mask, mobility);
+        for (cutting, expected) in [(0., 0.), (1., 1.), (0., 0.)] {
+            let params = test_support::TestShaderParams {
+                cutting,
+                ..Default::default()
+            };
+            test_support::set_test_params(&mut scene, &queue, material, params);
+            harness.frame(&mut scene, &at_time(0.));
+            let label = format!("{mobility:?} cutting {cutting}");
+            harness.expect(light, &[(behind, expected)], &label);
+        }
+    }
+}
+
+// Plausible defects: casters whose shaders cannot change what they cast
+// redrawn every frame the time advances: a blended material's (which casts
+// no local shadow), an opaque one's whose shader moves nothing (a
+// displacement bound of 0), or one whose shader moves its vertices without
+// reading the time. The oracle is the draws the production encoder issued
+// into the atlas: after the first frames, none as the time advances.
+#[test]
+fn casters_whose_shaders_ignore_the_time_keep_their_shadows_as_it_passes() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let blend = crate::AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+        keeps_specular: true,
+    };
+    let opaque = crate::AlphaMode::Opaque;
+    let cases = [
+        ("blended, displaced", None, 1., blend),
+        ("opaque, moving nothing", None, 0., opaque),
+        ("displaced, timeless", Some(TIMELESS_SHADER), 1., opaque),
+    ];
+    for (label, shader, bound, alpha) in cases {
+        for mobility in [Mobility::Static, Mobility::Moving] {
+            let (mut scene, ..) = shader_scene(&harness, shader, bound, alpha, mobility);
+            harness.frame(&mut scene, &at_time(0.));
+            harness.frame(&mut scene, &at_time(0.));
+            for seconds in [1., 2.] {
+                let stats = harness.frame(&mut scene, &at_time(seconds));
+                assert_eq!(
+                    stats.draws, 0,
+                    "{label} {mobility:?} at {seconds} s: {stats:?}"
+                );
+            }
+        }
     }
 }

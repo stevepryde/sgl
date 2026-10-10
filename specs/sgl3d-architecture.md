@@ -537,11 +537,14 @@ last, after everything it may use, and refuses a directive in it.
   static layer, in a second atlas of the same layout. A frame copies a face's
   layer and draws its moving instances over it only when they entered, left,
   moved or deformed; it redraws the layer when a static edit's bounds reach
-  it (its light's range, then its face's frustum), or the visibility mask,
-  a material's caster values or the parameters of a shader that may change
-  what its casters cast (`Material::shader_casts`) make it stale, or the
-  frame's time changed where such a shader's static instance reaches it (its
-  moving instances' time and shader data redraw their faces alike), and
+  it (its light's range, then its face's frustum), or the visibility mask
+  or a material's caster values make it stale, or what the shaders of the
+  static casters that reach it read changed, where a casting material's
+  shader may change what it casts (`Material::shader_casts`): its
+  parameters' revision, and the frame's time where the shader reads it
+  (`time` or `phase`, found in its module at `Scene::add_shader`, as Godot
+  b130438's `is_animated()` reads its code). A moving instance's shader
+  data, and the same reads, redraw its faces alike. It
   draws
   every caster of a light that moved. What a frame draws becomes reusable at
   `finish_frame`. The camera's surfaces sample the frame's atlas; probe

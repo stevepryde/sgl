@@ -62,6 +62,9 @@ pub(crate) struct Material {
     pub untangented: u32,
     /// Its shader's parameter blocks, while it has a shader.
     params: Option<ParamBlock>,
+    /// Changes when its parameter block does (`Scene::set_shader_parameters`),
+    /// so the local-light shadow faces its casters reach redraw.
+    pub parameters: u64,
 }
 
 impl Material {
@@ -107,14 +110,24 @@ impl Material {
             .map_or(0., |shader| shader.displacement_bound)
     }
 
+    /// Whether its meshes cast local-light shadows under `mask` (all
+    /// groups when None): those of every material but a blended one, which
+    /// no shadow draws, in an enabled visibility group.
+    pub fn casts_local_shadow(&self, mask: Option<u32>) -> bool {
+        !self.values.blended() && self.enabled(mask)
+    }
+
     /// Whether its shader may change what its casters cast with its
-    /// parameters, the frame's time or an instance's data: its vertex
-    /// function moves vertices (a displacement bound above 0), or its
-    /// surface function sets a masked caster's coverage.
+    /// parameters, the frame's time or an instance's data: it casts
+    /// local-light shadows, and its vertex function moves vertices (a
+    /// displacement bound above 0) or its surface function sets a masked
+    /// caster's coverage.
     pub fn shader_casts(&self) -> bool {
-        self.values.shader.is_some_and(|shader| {
-            shader.displacement_bound > 0. || matches!(self.values.alpha, AlphaMode::Mask { .. })
-        })
+        self.casts_local_shadow(None)
+            && self.values.shader.is_some_and(|shader| {
+                shader.displacement_bound > 0.
+                    || matches!(self.values.alpha, AlphaMode::Mask { .. })
+            })
     }
 
     /// Visibility and explicit casting are independent caller policies.
@@ -136,8 +149,7 @@ impl Material {
 pub(crate) struct Materials {
     pub slots: Slots<MaterialId, Material>,
     /// Changes when an edit changes a value casters read
-    /// (`SurfaceMaterial::caster_values`, or the parameters of a shader
-    /// that may change what its casters cast, `Material::shader_casts`).
+    /// (`SurfaceMaterial::caster_values`).
     pub casters: u64,
     /// How many of its materials are masked, how many blended and how many
     /// of those receive screen-space reflections, how many opaque or masked
@@ -224,8 +236,8 @@ impl Materials {
             .any(|(_, material)| material.values.shader.is_some())
     }
 
-    /// `id`'s parameter block of its shader's size becomes `bytes`; where
-    /// its shader may change what it casts, a value casters read changed.
+    /// `id`'s parameter block of its shader's size becomes `bytes`, which
+    /// changes its parameter revision where it differs.
     pub fn set_parameters(&mut self, queue: &wgpu::Queue, id: MaterialId, bytes: &[u8]) {
         let material = self.slots.get_mut(id).expect("a live material");
         let changed = material
@@ -233,8 +245,8 @@ impl Materials {
             .as_mut()
             .expect("a material with a shader")
             .set(queue, bytes);
-        if changed && material.shader_casts() {
-            self.casters = super::next_generation();
+        if changed {
+            material.parameters = super::next_generation();
         }
     }
 
@@ -493,6 +505,7 @@ impl Materials {
             record,
             users: HashMap::new(),
             untangented: 0,
+            parameters: 0,
             params: None,
         }))
     }

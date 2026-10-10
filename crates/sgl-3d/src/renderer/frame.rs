@@ -157,7 +157,10 @@ pub(super) fn render(
         bindings,
         (scene, &mut views.instances),
         (input.camera.view, input.camera.projection),
-        (values.frame.visibility_mask, input.elapsed_seconds),
+        crate::stages::shadows::local::ShadowFrame {
+            mask: values.frame.visibility_mask,
+            time: input.elapsed_seconds,
+        },
         effective.local_lights,
     );
     // Every list the frame draws is built.
