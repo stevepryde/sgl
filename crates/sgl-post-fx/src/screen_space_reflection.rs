@@ -337,8 +337,9 @@ impl ScreenSpaceReflection {
 
         let (width, height) = (self.back_buffer_width, self.back_buffer_height);
         let half_res = feature_flags.contains(FeatureFlags::HALF_RESOLUTION);
+        // DFX-45: at least one texel, however thin the frame.
         let (trace_width, trace_height) = if half_res {
-            (width / 2, height / 2)
+            ((width / 2).max(1), (height / 2).max(1))
         } else {
             (width, height)
         };
@@ -446,8 +447,8 @@ impl ScreenSpaceReflection {
                 view(&texture_2d(
                     device,
                     "ScreenSpaceReflection::DepthStencilMaskHalfRes",
-                    width / 2,
-                    height / 2,
+                    trace_width,
+                    trace_height,
                     DEPTH_STENCIL_FORMAT,
                     1,
                 ))

@@ -176,7 +176,7 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     {
         let Xi = RotateVector(Rotator, Poisson[SampleIdx].xy);
 #if SSR_OPTION_HALF_RESOLUTION
-        let SampleCoord = ClampScreenCoord(vec2<i32>(0.5 * (floor(Position.xy) + Radius * Xi) + vec2<f32>(0.5, 0.5)), vec2<i32>(0.5 * g_Camera.f4ViewportSize.xy));
+        let SampleCoord = ClampScreenCoord(vec2<i32>(0.5 * (floor(Position.xy) + Radius * Xi) + vec2<f32>(0.5, 0.5)), vec2<i32>(textureDimensions(g_TextureIntersectSpecular)));
 #else
         let SampleCoord = ClampScreenCoord(vec2<i32>(Position.xy + Radius * Xi), vec2<i32>(g_Camera.f4ViewportSize.xy));
 #endif
