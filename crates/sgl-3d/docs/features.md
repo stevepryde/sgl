@@ -214,7 +214,8 @@ them through unrefracted. A probe captured on an
   receivers without baked lighting (moving instances, and static ones with
   no lightmap or assigned atlas chart), leaving the rest to the game's bake,
   and casts ray-traced shadow rays only at those receivers; `specular` scales its
-  highlights (0 for a fixture already reflected as an emitter), and
+  highlights (0 for a fixture already reflected as an emitter, which also
+  lights the base whole beneath a coat or sheen), and
   `fog_energy` its light in the volumetric fog (at most 0.001 leaves it out
   of the fog, which then skips its attenuation and shadow lookup), and
   `shadow_opacity` how dark its shadow is on surfaces and in the fog

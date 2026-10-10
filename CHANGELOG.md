@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Light::specular`: a diffuse-only light (0) dimmed a clearcoated
+  base by the coat's Fresnel, and a weight above 1 dimmed a sheened base
+  further; the coat's and sheen's dimming now follow
+  `specular` up to 1, and dynamic GI probe hits take no coat. No game-code
+  changes needed.
 - `sgl-3d` local-light shadows: a material shader's parameters
   (`Scene::set_shader_parameters`), the frame's time and a moving instance's
   `Scene::set_instance_shader_data` left cached shadows stale; casters whose

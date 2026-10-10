@@ -459,9 +459,12 @@ sun on water shows a disc.
   leaves that fixture out of its moving instances' ambient cubes, so its
   light counts once. A live light lights every receiver and is left out of
   the game's bake.
-- `specular` scales the light's specular lobes, base and coat (Godot's
-  `light_specular`). Use 0 for a fixture whose emitter reflections and
-  probes already show, so its highlight does not count twice.
+- `specular` scales the light's specular lobes, base, sheen and coat
+  (Godot's `light_specular`), and up to 1 the sheen's and coat's dimming of
+  the base beneath them, so at 0 the light lights the base whole and above
+  1 it only brightens the lobes. Use 0 for a
+  fixture whose emitter reflections and probes already show, so its
+  highlight does not count twice.
 - `fog_energy` scales the light it scatters in the
   [volumetric fog](#volumetric-fog) (Godot's
   `light_volumetric_fog_energy`): 1 is physical and 2 doubles it. At most
@@ -2026,6 +2029,7 @@ specular does not scatter, plus its multiple scattering, the one rule every
 indirect source follows. On a coated material the coat's Fresnel toward
 the view dims it, and the irradiance atlas's and a moving instance's
 ambient cube's light, as it dims the material's live light and emission
+(up to the light's `specular`; probe hits take no coat)
 (KHR_materials_clearcoat layers the coat over the whole base).
 
 Static instances' other surfaces can additionally carry `Vertex::lightmap_uv`
