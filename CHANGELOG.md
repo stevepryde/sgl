@@ -22,6 +22,14 @@ docs and specs the entry links.
   A page past the device's texture limit fails its upload with
   `TextureError::TooLarge`: log that error rather than unwrapping the
   upload.
+- `sgl-3d` shader contract `MaterialVertex::tangent`: documented as all
+  zero where a mesh has no tangents, but such a vertex always received an
+  arbitrary unit tangent in the normal's plane with handedness +1; the
+  contract now says so. Behaviour is unchanged. A game shader that tested
+  `tangent.w == 0.` to fall back never took that branch: where it is used
+  on meshes without authored tangents, derive the frame in
+  `material_surface` (for example from screen derivatives), or flag those
+  meshes through `ShaderParams` or shader data.
 - `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain
   buffers doubled past the device's storage binding limit once they held
   over half of it, failing the frame's cull bind group; their growth now
@@ -78,6 +86,11 @@ docs and specs the entry links.
   `meta.size` was accepted and sampled neighbouring atlas pixels; it is now
   `AsepriteError::FrameOutsideSheet { index, frame, sheet_size }`. Add the
   variant to exhaustive matches; re-export sheets whose frames overrun.
+- `sgl-post-fx` `PostFXContext`: the blue-noise draw's vertex range wrapped
+  at frame indices 1,431,655,765 and 2,863,311,530 (a debug-build panic, a
+  skipped update in release), and its R2 noise lost precision from about
+  87,000 frames and was constant beyond about 11 million; the frame index now
+  cycles every 256 frames. No game-code changes needed.
 - `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
   ran on the unexposed HDR scene, so the exposure changed which edges it
   found; it now runs after tone mapping, on display colour, before the
