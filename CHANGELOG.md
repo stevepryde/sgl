@@ -20,6 +20,33 @@ docs and specs the entry links.
   it waits only for frames flushed with or before it, and lane frames
   flushed later may leave first. Behaviour is unchanged. No game-code
   changes needed.
+- `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
+  glTF does not allow for its use, of no elements, or past its buffer view
+  or buffer, or an image view past its buffer, panicked or was misread; it
+  now fails the load with an error naming it.
+  No game-code changes needed; re-export a file that now fails.
+- `sgl-post-fx` SSR (SGL3D's `Crystal` reflections): a ray towards the camera
+  from a surface under one unit away was projected behind the camera and
+  traced mirrored, behind the surface; its end is now clipped to the near
+  plane (`CameraAttribs::set_clip_planes`, already required). The WGSL
+  `ProjectDirection` (`PostFX_Common`) takes the near plane's view Z as a
+  fifth argument: WGSL calling it adds it (`g_Camera.fNearPlaneZ`). No other
+  game-code changes needed.
+- `sgl-2d` `DrawList::sort`: a NaN `z` could panic or misorder the other
+  sprites; NaN now draws last and the rest stay ascending and stable. No
+  game-code changes needed.
+- `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
+  `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes,
+  so content re-derived from a persisted base seed (generated worlds,
+  replays) changes on upgrade. Games that need the old output regenerate it,
+  or store the derived seeds before upgrading.
+- `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
+  `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
+  Use or remove such calls; no other game-code changes are needed.
+- `sgl-net` `ThreadedUdpServer::disconnect`: reliable and unreliable
+  messages accepted before it but not yet handed to the endpoint were
+  dropped; they are now sent before the graceful close, within the same
+  `close_grace_ms`. No game-code changes needed.
 - `sgl-net` `NativeWebSocketClient::connect`: an IPv6-literal URL such as
   `ws://[::1]:9000/game/ws` failed host resolution; it now connects. No
   game-code changes needed.

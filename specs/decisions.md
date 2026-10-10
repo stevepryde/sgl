@@ -646,3 +646,11 @@ Use the [current specs](README.md) for implementation and the
   volume, seen from inside it, has no blended face in front of it and is not
   absorbed; a masked cut-out still bounds; rays and probe captures have no
   layers.
+- **D-42** Decision, 2026-10-10 (#312): `derive_stream_seed` absorbs its
+  base and each component in turn with one `SplitMix64` step apiece,
+  replacing rotate-and-XOR into one cursor, whose overlapping bits cancelled
+  (chunk `(65536, 0)` and `(0, 1)` shared a stream). Each step is a bijection
+  of its input, so one changed component always changes the seed. Every
+  derived seed changed; the frozen `derived_seed_is_frozen` value in
+  `crates/sgl-core/src/rng.rs` was regenerated and checked against an
+  independent model of the construction.
