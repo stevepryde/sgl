@@ -1117,7 +1117,9 @@ fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
 
 // PROVENANCE.md DFX-40: a roughness-0 surface reflects along the mirror
 // direction with a finite PDF, including at the blue noise's largest value
-// (unorm 1.0) and where its mapped normal faces away from the viewer.
+// (unorm 1.0) and where its mapped normal faces away from the viewer; a
+// rough surface seen exactly along its normal at that value samples a
+// finite ray too.
 #[test]
 fn ssr_roughness_zero_reflection_rays_are_finite() {
     use wgpu::util::DeviceExt;
@@ -1146,6 +1148,7 @@ fn ssr_roughness_zero_reflection_rays_are_finite() {
 @compute @workgroup_size(1) fn main() {{
     results[0] = SampleReflectionVector({view}, {facing}, 0.0, vec2<i32>(0));
     results[1] = SampleReflectionVector({view}, {away}, 0.0, vec2<i32>(0));
+    results[2] = SampleReflectionVector(vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0, 0.0, -1.0), 0.5, vec2<i32>(0));
 }}
 ",
         view = wgsl(view),
@@ -1178,13 +1181,13 @@ fn ssr_roughness_zero_reflection_rays_are_finite() {
     let noise = texture(&device, &queue, wgpu::TextureFormat::Rg8Unorm, &[128, 255]);
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 32,
+        size: 48,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: 32,
+        size: 48,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -1213,16 +1216,19 @@ fn ssr_roughness_zero_reflection_rays_are_finite() {
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
     }
-    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 32);
+    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 48);
     queue.submit([encoder.finish()]);
     readback.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let bytes = readback.get_mapped_range(..).unwrap();
     let result: &[[f32; 4]] = bytemuck::cast_slice(&bytes);
-    for (normal, ray) in normals.iter().zip(result) {
+    for (case, ray) in ["facing", "facing away", "rough, along its normal"]
+        .iter()
+        .zip(result)
+    {
         assert!(
             ray.iter().all(|v| v.is_finite()),
-            "normal {normal:?}: direction and PDF {ray:?}"
+            "{case}: direction and PDF {ray:?}"
         );
     }
     // The mirror direction about the facing normal.
