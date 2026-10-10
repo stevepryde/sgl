@@ -596,6 +596,19 @@ fn native_client_handshake_timeout_is_bounded() {
     let _ = stalled.join();
 }
 
+#[test]
+fn native_client_connects_to_an_ipv6_literal_url() {
+    let config =
+        NativeWebSocketServerConfig::new((std::net::Ipv6Addr::LOCALHOST, 0).into(), identity())
+            .with_origin_policy(OriginPolicy::exact([ORIGIN_VALUE.to_owned()]).unwrap());
+    let mut server = NativeWebSocketServer::bind(config).unwrap();
+    let endpoint = url(&server);
+    assert!(endpoint.starts_with("ws://[::1]:"), "{endpoint}");
+    let mut client = connect_native(&server);
+    assert_eq!(client.poll(0), vec![ClientEvent::Connected]);
+    connected_id(&wait_server_events(&mut server));
+}
+
 /// Defect: the client's I/O worker waits for socket readiness before its
 /// first turn, so a frame that arrived with the upgrade response — read into
 /// tungstenite's buffer during the handshake — is never delivered. Oracle: a

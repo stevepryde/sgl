@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `NativeWebSocketClient::connect`: an IPv6-literal URL such as
+  `ws://[::1]:9000/game/ws` failed host resolution; it now connects. No
+  game-code changes needed.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`
