@@ -44,10 +44,11 @@
 //!   sprites leave *fractional* coverage — a soft per-pixel approximation of
 //!   Godot's per-item masking.
 //! - **Shadows**: CPU-extruded shadow geometry (AR-6, Godot-style). For each
-//!   occluder polygon edge, a quad is extruded away from the light
-//!   ([`shadow_triangles`]); the union over all edges darkens everything
-//!   *behind* the first surface seen from the light — matching Godot's 1D
-//!   shadow map occlusion shape. Per shadow-casting light the triangles render
+//!   occluder polygon edge, a quad (capped by a far vertex on the bisector
+//!   when the edge spans more than 90° from the light) is extruded away from
+//!   the light past its footprint ([`shadow_triangles`]); the union over
+//!   all edges darkens everything *behind* the first surface seen from the
+//!   light — matching Godot's 1D shadow map occlusion shape. Per shadow-casting light the triangles render
 //!   into a shared R8 mask target (white = lit, black = shadow), which the
 //!   light pass samples with a 3×3 box tap for a soft, PCF-ish edge
 //!   (approximating Godot's `filter smooth 5.0`).
@@ -76,8 +77,8 @@ pub const MAX_SHADOW_LIGHTS: usize = 8;
 /// footprint (the largest cookie is 512 px at `texture_scale` 3.0 in the
 /// menu). Divided by the camera's `pixels_per_unit` so it is the same screen
 /// length in a world-unit camera. Lights with a larger footprint (a big
-/// analytic `radius`) extrude to twice their half-extent instead, so shadows
-/// always cover the footprint.
+/// analytic `radius`) extrude to twice their footprint's half-diagonal
+/// instead, so shadows always cover the footprint ([`shadow_triangles`]).
 const SHADOW_FAR: f32 = 4096.0;
 
 /// The light-accumulation target format: float so overlapping lights can sum
@@ -292,6 +293,14 @@ pub fn coverage(mask_rgb: [f32; 3], item_mask: u32) -> f32 {
 /// `[a, b, b + dir(b)·far, a + dir(a)·far]` (as two triangles, 6 vertices)
 /// where `dir(v) = normalize(v - light_pos)`.
 ///
+/// When the edge subtends more than 90° at the light (a long wall close to
+/// it), the straight far edge of that quad would pass close to the light and
+/// leave the shadow behind the wall lit. Such an edge gets a third far
+/// vertex on the bisector of `dir(a)` and `dir(b)` (a convex pentagon, 9
+/// vertices), so every far edge stays at least `far·cos 45°` from the light.
+/// Pass `far ≥ √2 ×` the footprint's half-diagonal (`|half_extent|`) and the
+/// shadow covers everything behind the edge inside the footprint.
+///
 /// The union over all edges is exactly "everything behind the first surface
 /// seen from the light" (Godot's occlusion shape): front-edge quads cover the
 /// polygon interior and beyond; back-edge quads are subsets of that union —
@@ -336,6 +345,28 @@ pub fn shadow_triangles(
             let (Some(ea), Some(eb)) = (extrude(a), extrude(b)) else {
                 continue;
             };
+            let (da, db) = ((ea - a).normalize(), (eb - b).normalize());
+            let bisector = da + db;
+            // Past 90°, cap the far side with a vertex on the bisector, as far
+            // from the light as the farther extruded end: it lies beyond the
+            // straight far edge, so the pentagon stays convex. A light on
+            // the edge itself (opposite directions) has no area behind it.
+            if da.dot(db) < 0.0 && bisector.length_squared() > 1e-8 {
+                let reach = (ea - light_pos).length().max((eb - light_pos).length());
+                let em = light_pos + bisector.normalize() * reach;
+                out.extend_from_slice(&[
+                    a.to_array(),
+                    b.to_array(),
+                    eb.to_array(),
+                    a.to_array(),
+                    eb.to_array(),
+                    em.to_array(),
+                    a.to_array(),
+                    em.to_array(),
+                    ea.to_array(),
+                ]);
+                continue;
+            }
             out.extend_from_slice(&[
                 a.to_array(),
                 b.to_array(),
@@ -952,7 +983,7 @@ impl LightPass {
                         // Always extrude past the footprint: an analytic
                         // radius is caller-chosen and may exceed SHADOW_FAR
                         // (in the camera's units).
-                        (SHADOW_FAR / units.pixels_per_unit).max(2.0 * half.max_element()),
+                        (SHADOW_FAR / units.pixels_per_unit).max(2.0 * half.length()),
                         &mut self.verts,
                     );
                     let end = self.verts.len() as u32;
@@ -1300,6 +1331,42 @@ mod tests {
         assert!(!in_shadow(&verts, Vec2::new(16.0, 90.0)), "beside/below");
     }
 
+    /// #319: a light 2 px from a long wall (the edge subtends nearly 180°)
+    /// still shadows everything behind the wall inside its footprint: with a
+    /// straight far edge, `(0, 200)` and `(0, 290)` were lit.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn shadow_behind_a_long_wall_close_to_the_light_reaches_the_footprint() {
+        let wall = vec![Vec2::new(-500.0, 2.0), Vec2::new(500.0, 10.0)];
+        let half = Vec2::splat(300.0);
+        for winding in [wall.clone(), wall.iter().rev().copied().collect()] {
+            let mut verts = Vec::new();
+            shadow_triangles(
+                Vec2::ZERO,
+                half,
+                &[winding],
+                2.0 * half.length(),
+                &mut verts,
+            );
+            for p in [
+                Vec2::new(0.0, 200.0),
+                Vec2::new(0.0, 290.0),
+                Vec2::new(290.0, 290.0),
+            ] {
+                assert!(in_shadow(&verts, p), "{p:?} behind the wall is lit");
+            }
+            for p in [
+                Vec2::new(0.0, -200.0),
+                Vec2::new(290.0, -290.0),
+                Vec2::new(0.0, 1.0),
+            ] {
+                assert!(
+                    !in_shadow(&verts, p),
+                    "{p:?} on the light's side is shadowed"
+                );
+            }
+        }
+    }
+
     /// The result is winding-independent (all edges extrude; the union is the
     /// same region).
     #[wasm_bindgen_test(unsupported = test)]
@@ -1450,6 +1517,30 @@ mod gpu_tests {
     fn rgb(px: &[f32], x: u32, y: u32) -> [f32; 3] {
         let i = ((y * SIZE + x) * 4) as usize;
         [px[i], px[i + 1], px[i + 2]]
+    }
+
+    /// #319: an analytic light 2 px above a long wall leaves the pixel
+    /// directly behind the wall, inside its radius, unlit, while a pixel as
+    /// far away on the light's side is lit.
+    #[test]
+    fn a_light_close_to_a_long_wall_is_blocked_behind_it() {
+        let Some(mut rig) = rig() else { return };
+        let frame = LightFrame {
+            lights: vec![PointLight {
+                shadows: true,
+                ..PointLight::analytic(Vec2::new(32.5, 20.5), 40.0, 0.0)
+            }],
+            occluders: vec![vec![
+                Vec2::new(-1000.0, 22.5),
+                Vec2::new(1000.0, 22.5),
+                Vec2::new(1000.0, 24.5),
+                Vec2::new(-1000.0, 24.5),
+            ]],
+            ..LightFrame::default()
+        };
+        let px = rig.render(&frame);
+        assert_eq!(rgb(&px, 32, 44), [0.0; 3], "behind the wall");
+        assert!(rgb(&px, 8, 20)[0] > 0.3, "the light's side is lit");
     }
 
     /// An analytic light centered on pixel (32, 32) with radius 16 and

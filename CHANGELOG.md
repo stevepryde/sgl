@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` light shadows (`shadow_triangles`, `LightPass`): a light close to
+  a long occluder edge lit part of the area behind it inside its footprint
+  (the wall-torch case); such edges now get a far cap that covers the
+  footprint. No game-code changes needed.
 - `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
   ran on the unexposed HDR scene, so the exposure changed which edges it
   found; it now runs after tone mapping, on display colour, before the
