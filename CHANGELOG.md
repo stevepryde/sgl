@@ -17,8 +17,9 @@ docs and specs the entry links.
 
 - `sgl-post-fx` `PostFXContext`: the blue-noise draw's vertex range wrapped
   at frame indices 1,431,655,765 and 2,863,311,530 (a debug-build panic, a
-  skipped update in release); the frame index now cycles every 2^30 frames.
-  No game-code changes needed.
+  skipped update in release), and its R2 noise lost precision from about
+  87,000 frames and was constant beyond about 11 million; the frame index now
+  cycles every 256 frames. No game-code changes needed.
 - `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
   ran on the unexposed HDR scene, so the exposure changed which edges it
   found; it now runs after tone mapping, on display colour, before the

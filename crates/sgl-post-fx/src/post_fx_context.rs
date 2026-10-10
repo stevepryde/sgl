@@ -764,10 +764,10 @@ pub(crate) fn draw(
 }
 
 /// The frame indices the blue noise draws cycle through (PROVENANCE.md
-/// DFX-44): a power of two, so the low bits the shader masks (`& 0xFF`,
-/// `& 127`) run on across the wrap, small enough that the last frame's three
-/// vertices fit in `u32`.
-const BLUE_NOISE_FRAME_PERIOD: u32 = 1 << 30;
+/// DFX-44): the period the shader's 2D sequence already has (`& 0xFF`), so
+/// its R2 sequence's `f32(Index)` keeps its precision, and the last frame's
+/// three vertices fit in `u32`.
+const BLUE_NOISE_FRAME_PERIOD: u32 = 256;
 
 /// The blue-noise triangle's vertices for frame `index`
 /// (`ShaderBaseVertexOffset`): the frame index reaches the shader as
@@ -791,5 +791,10 @@ mod tests {
             // The shader's frame index keeps the frame's low bits.
             assert_eq!((vertices.start / 3) & 0xFF, index & 0xFF, "frame {index}");
         }
+        // The period: frame 2^20 draws as frame 2^20 mod 256.
+        assert_eq!(
+            blue_noise_vertices(1 << 20),
+            blue_noise_vertices((1 << 20) % 256)
+        );
     }
 }
