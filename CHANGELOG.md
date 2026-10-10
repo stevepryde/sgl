@@ -15,6 +15,14 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` shader contract `MaterialVertex::tangent`: documented as all
+  zero where a mesh has no tangents, but such a vertex always received an
+  arbitrary unit tangent in the normal's plane with handedness +1; the
+  contract now says so. Behaviour is unchanged. A game shader that tested
+  `tangent.w == 0.` to fall back never took that branch: where it is used
+  on meshes without authored tangents, derive the frame in
+  `material_surface` (for example from screen derivatives), or flag those
+  meshes through `ShaderParams` or shader data.
 - `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain
   buffers doubled past the device's storage binding limit once they held
   over half of it, failing the frame's cull bind group; their growth now
