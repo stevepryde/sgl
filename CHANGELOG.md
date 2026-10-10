@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` native WebSocket `disconnect`: a graceful close no longer drops
+  frames still waiting on a blocked socket or its Close frame; it now ends,
+  as `Local`, once the peer answers the Close or ends the stream, or at
+  `GRACEFUL_CLOSE_TIMEOUT_MS`. No game-code changes needed.
 - `sgl-core` `move_and_collide` / `snap_to_ground`: a body that started
   inside a solid collider could move through it; it may now move out or
   along it but not deeper, and a body within `skin` below a one-way

@@ -82,7 +82,8 @@ pub const MAX_BROWSER_BUFFERED_BYTES: usize = 256 * 1024;
 pub const MAX_BROWSER_RECONNECT_ATTEMPTS: u16 = 64;
 /// Hard ceiling for one caller-clock browser reconnect delay.
 pub const MAX_BROWSER_RECONNECT_DELAY_MS: u64 = 60_000;
-/// Caller-clock deadline for draining accepted reliable frames during disconnect.
+/// Caller-clock deadline for a graceful disconnect: draining accepted
+/// frames, flushing the Close and waiting for the peer's Close reply.
 pub const GRACEFUL_CLOSE_TIMEOUT_MS: u64 = 1_000;
 
 /// Poll-driven reconnect policy used by the browser transport.
