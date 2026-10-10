@@ -339,6 +339,15 @@ fn malformed_accessors_are_rejected() {
             .as_u64()
             .unwrap() as usize
     }
+    // A 32-bit target's gltf refuses a size beyond its `usize` itself.
+    let (past_view, overflowing_view) = if cfg!(target_pointer_width = "64") {
+        (
+            "mesh 0 primitive 0: POSITION accessor",
+            "mesh 0 primitive 0: indices accessor",
+        )
+    } else {
+        ("exceeds system limits", "exceeds system limits")
+    };
     type Edit = fn(&mut Value, &mut Buffer);
     let cases: [(&str, Edit, &str); 15] = [
         (
@@ -347,7 +356,7 @@ fn malformed_accessors_are_rejected() {
                 let indices = buffer.floats(&[0., 1., 2.], "SCALAR", 1);
                 document["meshes"][0]["primitives"][0]["indices"] = json!(indices);
             },
-            "mesh 0 primitive 0",
+            "mesh 0 primitive 0: indices accessor",
         ),
         (
             "FLOAT JOINTS_0",
@@ -355,7 +364,7 @@ fn malformed_accessors_are_rejected() {
                 let joints = attribute(document, "JOINTS_0");
                 buffer.accessors[joints]["componentType"] = json!(5126);
             },
-            "mesh 0 primitive 0",
+            "mesh 0 primitive 0: JOINTS_0 accessor",
         ),
         (
             "VEC2 COLOR_0",
@@ -363,7 +372,7 @@ fn malformed_accessors_are_rejected() {
                 let colors = buffer.floats(&[1.; 6], "VEC2", 2);
                 document["meshes"][0]["primitives"][0]["attributes"]["COLOR_0"] = json!(colors);
             },
-            "mesh 0 primitive 0",
+            "mesh 0 primitive 0: COLOR_0 accessor",
         ),
         (
             "UNSIGNED_INT TEXCOORD_0",
@@ -371,7 +380,7 @@ fn malformed_accessors_are_rejected() {
                 let uvs = buffer.accessor(bytemuck::cast_slice(&[0u32; 6]), 5125, "VEC2", 3);
                 document["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"] = json!(uvs);
             },
-            "mesh 0 primitive 0",
+            "mesh 0 primitive 0: TEXCOORD_0 accessor",
         ),
         (
             "UNSIGNED_SHORT POSITION",
@@ -379,7 +388,7 @@ fn malformed_accessors_are_rejected() {
                 let positions = attribute(document, "POSITION");
                 buffer.accessors[positions]["componentType"] = json!(5123);
             },
-            "mesh 0 primitive 0",
+            "mesh 0 primitive 0: POSITION accessor",
         ),
         (
             "VEC4 NORMAL",
@@ -387,7 +396,7 @@ fn malformed_accessors_are_rejected() {
                 let normals = buffer.floats(&[0., 0., 1., 0.].repeat(3), "VEC4", 4);
                 document["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = json!(normals);
             },
-            "mesh 0 primitive 0",
+            "mesh 0 primitive 0: NORMAL accessor",
         ),
         (
             "POSITION of no elements",
@@ -395,7 +404,7 @@ fn malformed_accessors_are_rejected() {
                 let positions = attribute(document, "POSITION");
                 buffer.accessors[positions]["count"] = json!(0);
             },
-            "mesh 0 primitive 0",
+            "mesh 0 primitive 0: POSITION accessor",
         ),
         (
             "POSITION past its view",
@@ -403,7 +412,7 @@ fn malformed_accessors_are_rejected() {
                 let positions = attribute(document, "POSITION");
                 buffer.accessors[positions]["count"] = json!(1u64 << 62);
             },
-            "mesh 0 primitive 0",
+            past_view,
         ),
         (
             "POSITION stride under an element",
@@ -412,7 +421,7 @@ fn malformed_accessors_are_rejected() {
                 let view = buffer.accessors[positions]["bufferView"].as_u64().unwrap() as usize;
                 buffer.views[view]["byteStride"] = json!(4);
             },
-            "mesh 0 primitive 0",
+            "mesh 0 primitive 0: POSITION accessor",
         ),
         (
             "indices in a view whose end overflows",
@@ -423,7 +432,7 @@ fn malformed_accessors_are_rejected() {
                 buffer.views[view]["byteOffset"] = json!(u64::MAX - 2);
                 document["meshes"][0]["primitives"][0]["indices"] = json!(indices);
             },
-            "mesh 0 primitive 0",
+            overflowing_view,
         ),
         (
             // Read as no indices, which draws the vertices in order.
@@ -435,7 +444,7 @@ fn malformed_accessors_are_rejected() {
                 buffer.views[view]["byteOffset"] = json!(buffer.bytes.len() + 64);
                 document["meshes"][0]["primitives"][0]["indices"] = json!(indices);
             },
-            "mesh 0 primitive 0",
+            "mesh 0 primitive 0: indices accessor",
         ),
         (
             "morph target of no sparse elements",
@@ -450,7 +459,7 @@ fn malformed_accessors_are_rejected() {
                     "values": {"bufferView": view}
                 });
             },
-            "mesh 1 primitive 0",
+            "mesh 1 primitive 0: morph target 0 accessor",
         ),
         (
             "MAT3 inverse binds",
@@ -460,7 +469,7 @@ fn malformed_accessors_are_rejected() {
                     .unwrap() as usize;
                 buffer.accessors[binds]["type"] = json!("MAT3");
             },
-            "skin 1",
+            "skin 1: inverse bind matrices accessor",
         ),
         (
             "UNSIGNED_BYTE keyframe times",
@@ -470,7 +479,7 @@ fn malformed_accessors_are_rejected() {
                     .unwrap() as usize;
                 buffer.accessors[times]["componentType"] = json!(5121);
             },
-            "animation 0",
+            "animation 0: keyframe times accessor",
         ),
         (
             "UNSIGNED_INT rotations",
@@ -480,7 +489,7 @@ fn malformed_accessors_are_rejected() {
                     .unwrap() as usize;
                 buffer.accessors[turns]["componentType"] = json!(5125);
             },
-            "animation 0",
+            "animation 0: keyframe values accessor",
         ),
     ];
     for (label, edit, says) in cases {
@@ -488,10 +497,7 @@ fn malformed_accessors_are_rejected() {
             .err()
             .unwrap_or_else(|| panic!("{label} was accepted"))
             .to_string();
-        assert!(
-            error.contains(says) && error.contains("accessor"),
-            "{label}: {error}"
-        );
+        assert!(error.contains(says), "{label}: {error}");
     }
 }
 
