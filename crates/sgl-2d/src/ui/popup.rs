@@ -122,10 +122,14 @@ impl UiFrame<'_> {
     /// interactive, while `panel` becomes an input blocker for the
     /// ordinary widgets underneath on the following frames — the same
     /// semantics as an open dropdown popover, for panels the caller lays
-    /// out itself. Draws the panel backdrop + accent border.
+    /// out itself. Draws the panel backdrop + accent border. Like a popover,
+    /// only the part inside the current clip blocks.
     pub fn overlay_panel_begin(&mut self, panel: Rect) {
         self.overlay = true;
-        self.new_blocked.push(panel);
+        self.new_blocked.extend(
+            self.clip
+                .map_or(Some(panel), |clip| clip.intersection(&panel)),
+        );
         self.rect(panel, self.ui.theme.popup);
         self.border(panel, 2.0, self.ui.theme.accent);
     }
@@ -595,6 +599,27 @@ mod tests {
         assert!(ui.has_focus());
         ui.clear_focus();
         assert!(!ui.has_focus());
+    }
+
+    /// #323: a clipped overlay panel blocks only its visible part, like a
+    /// clipped dropdown popover.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn clipped_overlay_panel_blocks_only_its_visible_part() {
+        let (mut ui, mut text, _assets) = fixture();
+        let panel = Rect::new(100.0, 100.0, 300.0, 200.0);
+        let under = Rect::new(300.0, 100.0, 100.0, 200.0);
+        let mut fired = Vec::new();
+        for input in [UiInput::default(), press_at(350.0, 150.0)] {
+            let mut list = DrawList::new();
+            let mut f = ui.begin(&mut text, &mut list, input);
+            fired.push(f.button("under", under, "U", 16.0));
+            f.set_clip(Some(Rect::new(0.0, 0.0, 250.0, 540.0)));
+            f.overlay_panel_begin(panel);
+            f.overlay_panel_end();
+            f.set_clip(None);
+            f.end();
+        }
+        assert_eq!(fired, [false, true]);
     }
 
     /// Tooltips draw only while their anchor is hovered, land in the
