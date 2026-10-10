@@ -654,3 +654,32 @@ Use the [current specs](README.md) for implementation and the
   derived seed changed; the frozen `derived_seed_is_frozen` value in
   `crates/sgl-core/src/rng.rs` was regenerated and checked against an
   independent model of the construction.
+- **D-43** Decision, 2026-10-10 (#303): a UDP fragment's retransmission
+  timeout doubles for each resend since the peer last acknowledged
+  anything new, up to the 1 s ceiling the measured timeout already has, and
+  anything newly acknowledged on any lane returns every lane's fragments to
+  the measured timeout. `max_reliable_transmissions` is removed: a peer is
+  closed `TimedOut` after `timeout_ms` of silence, or once a lane with an
+  unheld fragment in flight has had nothing newly acknowledged for
+  2 × (`timeout_ms` + 1 s) since that fragment's first send while the peer
+  is still heard. A flat timeout and a
+  resend count made liveness twelve round-trip timeouts (600 ms on a LAN),
+  so a caller-polled receiver that stalled briefly with data in flight was
+  closed long before `timeout_ms`. The doubling is RFC 6298 §5.5's backoff,
+  kept per fragment as ENet keeps it per command. The reset is QUIC's,
+  which zeroes its probe-timeout backoff on every acknowledgement (RFC 9002
+  §6.2.1, Appendix A.7 `OnAckReceived`), per peer as QUIC does it per
+  connection: one datagram carries every lane's acknowledgements, so
+  random loss on a live path is resent at the measured timeout and a quiet
+  lane is not backed off while another is acknowledged (per-fragment
+  doubling alone stalled a lane under 50 % loss). The 1 s ceiling bounds
+  how long a stalled peer waits after it answers again. The lane bound is
+  ENet's, which closes a peer whose oldest unacknowledged reliable command
+  outlives a time limit reset by progress, and is as generous as ENet's
+  limits: a stall `timeout_ms` tolerates ends within `timeout_ms` of the
+  fragment's first send, so the peer then has more than `timeout_ms` + 2 s
+  to take it. That covers the next resend (within the 1 s ceiling), lost
+  resends and the round trip, which the RTO ceiling does not bound; a
+  tighter `timeout_ms` + 2 s left a recovering peer about 1 s. Only a
+  peer that keeps answering but never takes a fragment reaches the bound.
+  Held fragments (D-38) are exempt: they wait for the receiver's caller.
