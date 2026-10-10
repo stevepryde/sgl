@@ -222,6 +222,8 @@ fn forbidden_declarations_are_refused() {
     for builtin in [
         "fn smoothstep(a:f32,b:f32,x:f32)->f32 { return x; }",
         "fn saturate(x:f32)->f32 { return x; }",
+        // A predeclared type alias, which naga's built-in list leaves out.
+        "fn vec3f(x:f32)->vec3<f32> { return vec3(x); }",
     ] {
         let name = builtin[3..].split('(').next().unwrap();
         assert_eq!(

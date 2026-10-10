@@ -46,6 +46,47 @@ const CONTRACT_FUNCTIONS: [&str; 4] = [
     VOLUME_PATH,
 ];
 
+/// The predeclared types naga 30 resolves (`front::wgsl::parse::conv`,
+/// `map_predeclared_type`) that its `keywords::wgsl::BUILTIN_IDENTIFIERS`
+/// leaves out: WGSL's vector and matrix aliases, and naga's 16-bit integers
+/// and ray query types.
+const PREDECLARED_TYPES: [&str; 34] = [
+    "i16",
+    "u16",
+    "vec2i",
+    "vec3i",
+    "vec4i",
+    "vec2u",
+    "vec3u",
+    "vec4u",
+    "vec2f",
+    "vec3f",
+    "vec4f",
+    "vec2h",
+    "vec3h",
+    "vec4h",
+    "mat2x2f",
+    "mat2x3f",
+    "mat2x4f",
+    "mat3x2f",
+    "mat3x3f",
+    "mat3x4f",
+    "mat4x2f",
+    "mat4x3f",
+    "mat4x4f",
+    "mat2x2h",
+    "mat2x3h",
+    "mat2x4h",
+    "mat3x2h",
+    "mat3x3h",
+    "mat3x4h",
+    "mat4x2h",
+    "mat4x3h",
+    "mat4x4h",
+    "RayDesc",
+    "RayIntersection",
+];
+
 /// The scene depth function that measures a volume's path.
 const VOLUME_PATH: &str = "scene_volume_path";
 
@@ -74,8 +115,10 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
     // enumerant or built-in function, and naga resolves the module's own
     // first, so a game's `smoothstep` would replace the one SGL3D's
     // programs call: those names are SGL3D's too.
-    let builtin =
-        |name: &String| naga::keywords::wgsl::BUILTIN_IDENTIFIERS.contains(&name.as_str());
+    let builtin = |name: &String| {
+        naga::keywords::wgsl::BUILTIN_IDENTIFIERS.contains(&name.as_str())
+            || PREDECLARED_TYPES.contains(&name.as_str())
+    };
     if let Some(name) = declared
         .iter()
         .find(|name| reserved.contains(*name) || builtin(name))
