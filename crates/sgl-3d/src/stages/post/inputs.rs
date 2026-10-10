@@ -150,14 +150,14 @@ pub(super) fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// A full-screen pipeline of `shader`'s `fragment` over `layouts`, writing
-/// `formats` with `blend`.
+/// `formats` with `blend`, with the fragment's pipeline `constants`.
 pub(super) fn pipeline(
     device: &wgpu::Device,
     layouts: &[Option<&wgpu::BindGroupLayout>],
     shader: &wgpu::ShaderModule,
     fragment: &str,
     formats: &[wgpu::TextureFormat],
-    blend: Option<wgpu::BlendState>,
+    (blend, constants): (Option<wgpu::BlendState>, &[(&str, f64)]),
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(fragment),
@@ -186,7 +186,10 @@ pub(super) fn pipeline(
         fragment: Some(wgpu::FragmentState {
             module: shader,
             entry_point: Some(fragment),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants,
+                ..Default::default()
+            },
             targets: &targets,
         }),
         primitive: Default::default(),

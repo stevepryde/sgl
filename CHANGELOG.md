@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Renderer::new` `output_format`: a non-sRGB 8-bit output (a
+  browser canvas's `Bgra8Unorm` or `Rgba8Unorm`) took linear colour and
+  looked dark; the tone map now writes it sRGB-encoded, a float output too
+  in the browser. sRGB outputs and native float outputs are unchanged. No
+  game-code changes needed.
 - `sgl-3d` `Scene::add_shader`: a module declaring a WGSL built-in's name
   (`fn smoothstep`, `fn saturate`, a predeclared type or enumerant) was
   accepted and replaced it in SGL3D's own calls; it is now refused with

@@ -16,7 +16,11 @@ use glam::{Mat3, Vec2, Vec3, vec2, vec3};
 pub(crate) static TONE_MAP: crate::shading::Module = crate::shading::Module {
     name: "tone_map",
     source: include_str!("tone_map.wgsl"),
-    deps: &[&inputs::INPUTS, &crate::shading::LUMINANCE],
+    deps: &[
+        &inputs::INPUTS,
+        &crate::shading::LUMINANCE,
+        &crate::shading::SRGB,
+    ],
 };
 /// The entry points tone mapping's pipelines are created with, beside
 /// `inputs::VS_ENTRY`.
@@ -126,6 +130,23 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
     )]
 }
 
+/// Whether the output's colour is written sRGB-encoded: the attachment
+/// encodes an sRGB format, and natively a float format holds linear light,
+/// as a native float surface composites it (wgpu's `SurfaceColorSpace::Auto`
+/// resolves extended linear sRGB there); any other format, and a float one
+/// in the browser, whose canvas keeps its sRGB colour space for every
+/// format, stores what is written as sRGB-encoded, so tone mapping encodes
+/// it, as sgl-2d's blit does for a browser canvas's `Bgra8Unorm`.
+pub(crate) fn encodes_srgb(format: wgpu::TextureFormat) -> bool {
+    let float = matches!(
+        format,
+        wgpu::TextureFormat::Rgba16Float
+            | wgpu::TextureFormat::Rgba32Float
+            | wgpu::TextureFormat::Rg11b10Ufloat
+    );
+    !format.is_srgb() && (cfg!(target_arch = "wasm32") || !float)
+}
+
 /// Where tone mapping writes.
 pub(super) enum Destination<'a> {
     /// The output, through the tone-mapped target with `capture`.
@@ -178,25 +199,43 @@ impl ToneMap {
         });
         let layouts = [Some(inputs.layout()), Some(&look_layout)];
         let copy = [Some(inputs.layout())];
+        let output = [(
+            "OUTPUT_ENCODES_SRGB",
+            f64::from(u8::from(encodes_srgb(format))),
+        )];
         Self {
-            present: pipeline(device, &layouts, &shader, PRESENT_ENTRY, &[HDR], None),
+            present: pipeline(
+                device,
+                &layouts,
+                &shader,
+                PRESENT_ENTRY,
+                &[HDR],
+                (None, &[]),
+            ),
             present_direct: pipeline(
                 device,
                 &layouts,
                 &shader,
                 PRESENT_DIRECT_ENTRY,
                 &[format],
-                None,
+                (None, &output),
             ),
-            present_copy: pipeline(device, &copy, &shader, COPY_PIXEL_ENTRY, &[format], None),
-            resample: pipeline(device, &copy, &shader, RESAMPLE_ENTRY, &[HDR], None),
+            present_copy: pipeline(
+                device,
+                &copy,
+                &shader,
+                COPY_PIXEL_ENTRY,
+                &[format],
+                (None, &output),
+            ),
+            resample: pipeline(device, &copy, &shader, RESAMPLE_ENTRY, &[HDR], (None, &[])),
             resample_direct: pipeline(
                 device,
                 &copy,
                 &shader,
                 RESAMPLE_DIRECT_ENTRY,
                 &[format],
-                None,
+                (None, &output),
             ),
             grading: crate::counters::buffer(
                 device,

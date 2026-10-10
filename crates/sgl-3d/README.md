@@ -1849,7 +1849,13 @@ authored look and per-frame state in a `FrameInput`.
    mesh. `Renderer::new(&device, &queue,
    output_format, output_size, device_scale, &settings)` creates the targets
    for an output of `output_size` physical pixels in a window of
-   `device_scale` physical pixels per logical pixel.
+   `device_scale` physical pixels per logical pixel. Any colour format
+   presents the same display colour: an sRGB format's attachment encodes
+   it; natively a float format (`Rgba16Float`) holds linear light, as a
+   native float surface composites it; and any other (a browser canvas's
+   `Bgra8Unorm` or `Rgba8Unorm`), and in the browser a float one too, whose
+   canvas keeps its sRGB colour space, takes it sRGB-encoded by the tone
+   map.
 4. Each frame, `set_instance` each moving instance with its pose and
    visibility, and `set_instance_deformation` each deforming one
    ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)).
