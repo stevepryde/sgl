@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::dropdown`: an open popover's clipped-away options still
+  blocked widgets beneath them and kept the popover open when pressed; only
+  the visible part now blocks and counts as inside. No game-code changes
+  needed.
 - `sgl-2d` `UiFrame::password_edit_clear`: the clear button released the
   buffer's allocation; it now zeroizes in place and keeps the preallocated
   capacity. No game-code changes needed.
