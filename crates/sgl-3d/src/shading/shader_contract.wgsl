@@ -16,12 +16,18 @@
 
 // A vertex in and out of material_vertex, in the mesh's own units and axes,
 // after SGL3D's skinning and morphing and before the instance's pose:
-// `normal` unit; `tangent` xyz unit, in the normal's plane, and w its
-// handedness (+1 or -1); a vertex without a usable tangent (none, along the
-// normal, or handedness not +1 or -1) gets an arbitrary unit tangent in the
-// normal's plane of handedness +1, never zero, so a shader that needs a
-// consistent frame there builds its own; `color` linear RGB and alpha, as
-// asset::Vertex::color;
+// `normal` unit and `tangent` xyz a unit vector in the normal's plane, w its
+// handedness (+1 or -1), at rest and after skinning, while morph targets add
+// their deltas without renormalising or re-orthogonalising (as Bevy's
+// morph_vertex, which the deform stage ports), so a morphed vertex's frame
+// is only approximately orthonormal. A vertex without an authored
+// tangent (none, along the normal, or handedness not +1 or -1) gets an
+// arbitrary one in the normal's plane, handedness +1, never zero, which a
+// shader cannot tell from an authored one: a shader used on meshes without
+// authored tangents derives its frame itself, as from screen derivatives
+// in material_surface (as SGL3D's own normal maps do), or has such meshes
+// flagged through its ShaderParams or shader data; `color` linear RGB and
+// alpha, as asset::Vertex::color;
 // `shader_data` the mesh's per-vertex data (PreparedModel::with_shader_data),
 // zero without any; `custom` what the shader passes to material_surface,
 // interpolated, zero in.
