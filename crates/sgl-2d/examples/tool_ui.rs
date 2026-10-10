@@ -107,7 +107,7 @@ mod native {
             // Derive layout and input from the same physical-to-point transform.
             let scale = self.window.scale_factor() as f32;
             self.renderer.set_ui_scale(scale);
-            self.text.set_pixel_scale(scale);
+            self.text.set_pixel_scale(self.renderer.ui_pixel_scale());
             let (width, height) = self.renderer.target_size();
             let view = self.renderer.ui_size();
             self.input.dt = self.previous.elapsed().as_secs_f32();

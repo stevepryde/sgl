@@ -409,14 +409,18 @@ fn clamp_target_size(width: u32, height: u32, max_dim: u32) -> (u32, u32) {
     (width.min(max_dim), height.min(max_dim))
 }
 
-/// Target pixels per UI point for a `target` the window's `requested` size
-/// was scaled to. The blit letterboxes the target into the window by
+/// The screen channel's layout for a `target` the window's `requested` size
+/// was scaled to: `(layout size in UI points, target pixels per point)`.
+/// The blit letterboxes the target into the window by
 /// `fit = min(requested / target)` per axis (`fit_fractional`), so a point
 /// that covers `ui_scale / fit` target pixels lands on `ui_scale` window
-/// pixels. Exactly `ui_scale` when the target is the requested size.
-fn target_ui_scale(requested: (u32, u32), target: (u32, u32), ui_scale: f32) -> f32 {
+/// pixels. Exactly `target / ui_scale` and `ui_scale` when the target is the
+/// requested size.
+fn ui_layout(requested: (u32, u32), target: (u32, u32), ui_scale: f32) -> (glam::Vec2, f32) {
     let fit = (requested.0 as f32 / target.0 as f32).min(requested.1 as f32 / target.1 as f32);
-    ui_scale / fit
+    let px_per_point = ui_scale / fit;
+    let size = glam::Vec2::new(target.0 as f32, target.1 as f32) / px_per_point;
+    (size, px_per_point)
 }
 
 impl Renderer {
@@ -727,12 +731,20 @@ impl Renderer {
     /// UI out over this, not [`target_size`](Self::target_size).
     #[must_use]
     pub fn ui_size(&self) -> glam::Vec2 {
-        let (width, height) = (self.logical_width as f32, self.logical_height as f32);
-        glam::Vec2::new(width, height) / self.target_ui_scale()
+        self.ui_layout().0
     }
 
-    fn target_ui_scale(&self) -> f32 {
-        target_ui_scale(
+    /// Target pixels per UI point: the UI scale, raised when a very large
+    /// target is rendered scaled down. Set the text raster scale
+    /// (`TextRenderer::set_pixel_scale`) to this so glyphs rasterize at the
+    /// target's density.
+    #[must_use]
+    pub fn ui_pixel_scale(&self) -> f32 {
+        self.ui_layout().1
+    }
+
+    fn ui_layout(&self) -> (glam::Vec2, f32) {
+        ui_layout(
             self.requested_size,
             (self.logical_width, self.logical_height),
             self.ui_scale,
@@ -931,8 +943,8 @@ impl Renderer {
         // run at scale 1.0 on an unscaled target where `x / 1.0 == x`
         // exactly — the matrix and scissors are bit-identical to the
         // fixed-logical path.
-        let ui_scale = self.target_ui_scale();
-        let screen_vp = Camera::screen_view_proj_size(self.ui_size());
+        let (ui_size, ui_scale) = self.ui_layout();
+        let screen_vp = Camera::screen_view_proj_size(ui_size);
         // The world channel and lights are laid out in the camera's units
         // (pixels unless `Camera::with_units`); the screen channel is pixels.
         let world_units = camera.units();
@@ -1187,8 +1199,6 @@ mod tests {
         assert_eq!(clamp_target_size(100, 20_000, 8192), (100, 8192));
     }
 
-    /// Degenerate inputs stay valid: zero axes become 1 px and a bogus
-    /// zero device limit never produces a zero-sized texture.
     /// #326: an 8K window at UI scale 2 renders into a scaled-down target,
     /// yet the UI still lays out over the window's 3840×2160 points, and a
     /// widget drawn at a point is under the pointer at that point after the
@@ -1199,8 +1209,7 @@ mod tests {
         let target = clamp_target_size(requested.0, requested.1, 16384);
         assert!(target.0 < requested.0, "the target is scaled down");
         let ui_scale = 2.0;
-        let scale = target_ui_scale(requested, target, ui_scale);
-        let layout = Vec2::new(target.0 as f32, target.1 as f32) / scale;
+        let (layout, scale) = ui_layout(requested, target, ui_scale);
         assert!(
             (layout - Vec2::new(3840.0, 2160.0)).abs().max_element() < 0.5,
             "{layout}"
@@ -1222,6 +1231,8 @@ mod tests {
         }
     }
 
+    /// Degenerate inputs stay valid: zero axes become 1 px and a bogus
+    /// zero device limit never produces a zero-sized texture.
     #[wasm_bindgen_test(unsupported = test)]
     fn clamp_target_size_never_returns_zero() {
         assert_eq!(clamp_target_size(0, 0, 8192), (1, 1));

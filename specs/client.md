@@ -134,7 +134,7 @@ rectangles so their text, accent and surface roles follow the selected palette.
   viewport in points (`Renderer::ui_size`, which stays the window's size in
   points when a very large target is rendered scaled down). Convert physical
   pointer coordinates through the same DPI/letterbox mapping once, and set
-  text raster scale accordingly. Do not assume 960×540. Compact
+  text raster scale to `Renderer::ui_pixel_scale`. Do not assume 960×540. Compact
   mouse/keyboard tools can use small glyphs inside larger hit rectangles;
   preserve readable type, focus borders and gaps between actions.
 - **Bounded panes and rows.** Store pane extents in the game and constrain

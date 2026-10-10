@@ -19,7 +19,8 @@ docs and specs the entry links.
   large target down (over 4096² px), the UI laid out over the smaller
   target, too large and misaligned with the pointer; it now keeps the
   requested size over `ui_scale`. Lay out over the new `Renderer::ui_size()`
-  instead of `target_size() / ui_scale`.
+  instead of `target_size() / ui_scale`, and set the text raster scale to the
+  new `Renderer::ui_pixel_scale()`.
 - `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
   on the world channel shrank by `pixels_per_unit`; the new `units:
   WorldUnits` field (default logical pixels) makes positions, sizes and
