@@ -21,6 +21,8 @@ struct WorldParams {
  traced:f32,
  // Ray range in metres.
  range:f32,
+ // The previous frame's near plane, which wrote the depth history.
+ previous_near:f32,
 }
 @group(3) @binding(0) var world_depth:texture_depth_2d;
 @group(3) @binding(1) var world_normal:texture_2d<f32>;

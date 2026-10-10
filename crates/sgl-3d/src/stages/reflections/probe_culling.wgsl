@@ -182,7 +182,7 @@ fn main(@builtin(workgroup_id) gid:vec3<u32>,@builtin(global_invocation_id) dtid
     let b=aabb_transform(group_aabb_ws,probe.world_to_local);
     let a=aabb_from_min_max(probe.influence_min.xyz,probe.influence_max.xyz);
     if intersect_aabb(a,b) && (occupied&construct_entity_mask(min_depth_vs,depth_range_recip,center.z,radius))!=0u {
-     atomicOr(&tile[i/32u],1u<<(i%32u));
+     atomicOr(&tile[i/PROBE_BUCKET_PROBES],1u<<(i%PROBE_BUCKET_PROBES));
     }
    }
   }
