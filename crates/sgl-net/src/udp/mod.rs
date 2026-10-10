@@ -29,7 +29,7 @@ pub use transport::DatagramTransport;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{UdpClient, UdpServer, UdpSocketTransport};
 #[cfg(not(target_arch = "wasm32"))]
-pub use threaded::{ThreadedUdpConfig, ThreadedUdpServer};
+pub use threaded::{LANE_MESSAGES_PER_PEER_PER_POLL, ThreadedUdpConfig, ThreadedUdpServer};
 
 /// Maximum bytes in one UDP datagram.
 pub const MAX_DATAGRAM_BYTES: usize = packet::DATAGRAM_BYTES;

@@ -49,7 +49,8 @@ test("sgl-net on wasm32 links no native socket or entropy crates", () => {
   expect(["tungstenite", "getrandom"].filter((n) => reached.has(n))).toEqual([]);
 });
 
-// sgl-3d retains its proven glam 0.30 math while the 2D client uses glam 0.33.
+// SGL3D, its ports and the 2D client share one wgpu device API and one set of
+// browser bindings; a second version of either would not interoperate.
 test("the workspace resolves one version of wgpu and wasm-bindgen", () => {
   const dupes = duplicateVersions(host);
   expect(["wgpu", "wasm-bindgen"].filter((n) => dupes.has(n))).toEqual([]);

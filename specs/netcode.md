@@ -89,7 +89,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     worker moves a message to its endpoint only when the endpoint has room
     on that lane, rotating between backlogged peers and lanes, and the
     browser holds released frames while `bufferedAmount` is above its
-    watermark; neither refuses an accepted message or disconnects. A UDP
+    watermark, each watermark at least the largest frame it paces so a
+    frame always fits an empty buffer; neither refuses an accepted message
+    or disconnects. A UDP
     `disconnect` (caller-polled or threaded) admits nothing more but still
     sends the reliable and unreliable messages accepted before it, closing
     once they are acknowledged or `close_grace_ms` after the disconnect,
@@ -119,7 +121,7 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     ingress) instead shed the oldest: a receiver that is not polled drops
     its oldest unpolled unreliable messages, as a full UDP socket buffer
     does. The threaded server's poll returns at most 32 lane messages per
-    peer (`LANE_MESSAGES_PER_PEER_PER_POLL`), shared across its lanes and
+    peer (`udp::LANE_MESSAGES_PER_PEER_PER_POLL`), shared across its lanes and
     both classes, so that is the sustainable per-poll rate above which a
     peer's reliable messages wait and its unreliable messages are shed.
     Other connections are never affected.

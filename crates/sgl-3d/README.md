@@ -1667,7 +1667,8 @@ stay in the game (S3D-1).
   `Influence` per vertex (four joints of the asset's joint list and their
   weights; a fifth influence set is refused) and `MorphTarget`s (a
   displacement of each vertex's position, normal and tangent, scaled by one
-  morph weight). `Asset::rig` (`deformation::Rig`) holds the node hierarchy
+  morph weight; a primitive without targets loads unmorphed, and a mesh
+  whose morphed primitives differ in their number of targets is refused). `Asset::rig` (`deformation::Rig`) holds the node hierarchy
   with each node's rest transform, the joints (each skin's, in one list: a
   node and its inverse bind matrix), the morph weights (each morphed node's,
   with its rest weights) and the animation clips (`Clip`: channels of
@@ -1675,7 +1676,9 @@ stay in the game (S3D-1).
   with glTF's step, linear or cubic-spline interpolation). A skinned mesh's
   vertices stay in bind space, as glTF ignores its node's transform; a rigid
   node's transform is baked into its vertices and morph displacements, as
-  before. Primitives batch by material, skin and morphed node.
+  before. Primitives batch by material, skin and morphed node. A node
+  hierarchy that is not a set of trees (a node with two parents, or its own
+  ancestor) fails the load.
 - **Procedural.** `ModelMesh::deformation` takes the same data; a model with
   any deforming mesh deforms. `PreparedModel::new` refuses influences or
   targets that do not match their vertices, negative or non-finite weights,
@@ -1687,7 +1690,8 @@ stay in the game (S3D-1).
   &morph_weights)` gives one joint matrix per joint the model's influences
   name (glTF's: the joint's transform in the model's space times its inverse
   bind matrix; `Rig::joint_matrices` composes them from each node's local
-  transform) and one weight per morph weight its targets name; further ones
+  transform, and ends, with wrong matrices, on a built rig whose parents
+  form a cycle) and one weight per morph weight its targets name; further ones
   are ignored, fewer are refused (`SceneError::DeformationMismatch`). An
   instance keeps its deformation until it is set again and starts at its
   bind pose. The instance's pose places the deformed model in the world.

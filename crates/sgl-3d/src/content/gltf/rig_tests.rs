@@ -255,6 +255,70 @@ fn skins_morph_targets_and_clips_import_as_plain_data() {
     assert!(static_asset.meshes.pop().unwrap().deformation.is_rigid());
 }
 
+// Plausible defects: a node hierarchy that is not a set of trees walked as
+// one: the scene's walk recursing forever through a node that is its own
+// child; a cycle the scene never reaches loaded, so posing a joint on it
+// recurses forever later; a node with two parents read under both.
+#[wasm_bindgen_test(unsupported = test)]
+fn node_hierarchies_that_are_not_trees_are_rejected() {
+    type Edit = fn(&mut Value, &mut Buffer);
+    let cases: [(&str, Edit); 3] = [
+        ("a joint its own child", |document, _| {
+            document["nodes"][2]["children"] = json!([2]);
+        }),
+        ("a joint on a cycle outside the scene", |document, _| {
+            let nodes = document["nodes"].as_array_mut().unwrap();
+            nodes.push(json!({"children": [6]}));
+            nodes.push(json!({"children": [5]}));
+            document["skins"][0]["joints"] = json!([6]);
+        }),
+        ("a joint with two parents", |document, _| {
+            document["nodes"][0]["children"] = json!([1, 3, 2]);
+        }),
+    ];
+    for (label, edit) in cases {
+        let error = load_slice(&rigged(edit))
+            .err()
+            .unwrap_or_else(|| panic!("{label} was accepted"))
+            .to_string();
+        assert!(error.contains("node hierarchy"), "{label}: {error}");
+    }
+}
+
+// Plausible defect: a game-built rig whose parents form a cycle evaluated
+// by recursing up the parents forever, overflowing the stack, or a cycle
+// corrupting another joint's matrix. The oracle for the tree's joint is
+// glTF's: its parent's transform times its own.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_built_rig_with_a_parent_cycle_still_evaluates() {
+    let node = |parent, x: f32| crate::deformation::Node {
+        name: None,
+        parent,
+        translation: Vec3::new(x, 0., 0.),
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+    let joint = |node| crate::deformation::Joint {
+        node,
+        inverse_bind: Mat4::IDENTITY,
+    };
+    let rig = crate::deformation::Rig {
+        nodes: vec![
+            node(Some(1), 1.),
+            node(Some(0), 2.),
+            node(None, 3.),
+            node(Some(2), 4.),
+        ],
+        joints: vec![joint(0), joint(3)],
+        ..Default::default()
+    };
+    let locals: Vec<Mat4> = rig.nodes.iter().map(|node| node.rest()).collect();
+    let matrices = rig.joint_matrices(&locals);
+    assert_eq!(matrices.len(), 2);
+    assert!(matrices[0].is_finite());
+    assert_eq!(matrices[1], locals[2] * locals[3]);
+}
+
 // Plausible defects: a fifth influence silently dropped; a skinned
 // primitive without influences, with an out-of-range joint or with
 // weightless vertices loaded as partial geometry or left for the scene to
@@ -323,6 +387,62 @@ fn unsupported_skins_are_rejected() {
         assert!(
             error.contains("mesh 0 primitive 0") && error.contains(says),
             "{label}: {error}"
+        );
+    }
+}
+
+// Plausible defects: a mesh's primitive with another nonzero number of
+// morph targets than its others loaded against the node's weights, its
+// extra targets driven by weights past the node's; or a primitive without
+// targets, which glTF (3.7.2.2, KhronosGroup/glTF#2650) loads unmorphed,
+// refused, or taken for the mesh's count when it comes first, so the node's
+// weights and their animation are lost.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_mesh_s_morphed_primitives_share_one_target_count() {
+    // The rigged lid's one primitive (one target), with a copy of `targets`
+    // targets inserted at `at`.
+    let with_copy = |targets: usize, at: usize| {
+        rigged(|document, _| {
+            let lid = &document["meshes"][1]["primitives"][0];
+            let mut copy = json!({"attributes": lid["attributes"].clone()});
+            if targets > 0 {
+                copy["targets"] = json!(vec![lid["targets"][0].clone(); targets]);
+            }
+            document["meshes"][1]["primitives"]
+                .as_array_mut()
+                .unwrap()
+                .insert(at, copy);
+        })
+    };
+    let error = load_slice(&with_copy(2, 1))
+        .err()
+        .expect("a primitive of 2 targets beside one of 1 was accepted")
+        .to_string();
+    assert!(
+        error.contains("mesh 1 primitive 1") && error.contains("morph targets"),
+        "{error}"
+    );
+    for at in [1, 0] {
+        let asset = load_slice(&with_copy(0, at)).unwrap_or_else(|error| panic!("{error}"));
+        let morphed: Vec<_> = asset
+            .meshes
+            .iter()
+            .filter(|mesh| !mesh.deformation.morph_targets.is_empty())
+            .collect();
+        assert_eq!(morphed.len(), 1);
+        let targets = &morphed[0].deformation.morph_targets;
+        assert_eq!(targets.len(), 1);
+        assert_eq!((targets[0].weight, targets[0].deltas.len()), (0, 3));
+        assert!(
+            asset
+                .meshes
+                .iter()
+                .any(|mesh| mesh.deformation.is_rigid() && mesh.vertices.len() == 3),
+            "the primitive without targets did not load unmorphed"
+        );
+        assert_eq!(
+            asset.rig.clips[0].channels[1].values,
+            ChannelValues::MorphWeights(vec![0., 1.])
         );
     }
 }
