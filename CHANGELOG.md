@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `udp::LANE_MESSAGES_PER_PEER_PER_POLL` (32, native) is now public:
+  the most lane messages a `ThreadedUdpServer` poll returns per peer, which
+  `specs/netcode.md` already named. No game-code changes needed.
 - `sgl-2d` `UiFrame::dropdown` / `overlay_panel_begin`: a popover's or
   panel's clipped-away part still blocked widgets beneath it (and kept the
   popover open when pressed); only the visible part now blocks and counts as
