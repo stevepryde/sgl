@@ -136,7 +136,8 @@ pub(super) fn read_node(
                     }
                     Semantic::Positions | Semantic::Normals => (&[F32], &[Dimensions::Vec3]),
                     Semantic::Tangents => (&[F32], &[Vec4]),
-                    Semantic::TexCoords(0) => (&[F32, U8, U16], &[Vec2]),
+                    // TEXCOORD_1 is the lightmap UV (`Vertex::lightmap_uv`).
+                    Semantic::TexCoords(0 | 1) => (&[F32, U8, U16], &[Vec2]),
                     Semantic::Colors(0) => (&[F32, U8, U16], &[Dimensions::Vec3, Vec4]),
                     Semantic::Joints(0) => (&[U8, U16], &[Vec4]),
                     Semantic::Weights(0) => (&[F32, U8, U16], &[Vec4]),

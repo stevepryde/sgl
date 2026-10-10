@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: a mesh with `TEXCOORD_1`, or a texture SGL3D does
+  not sample (such as an ignored occlusion map) with nearest or other
+  non-trilinear sampling, failed the load; `TEXCOORD_1` now loads as
+  `Vertex::lightmap_uv` and only sampled maps' sampling is checked. No
+  game-code changes needed.
+
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
