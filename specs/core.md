@@ -39,8 +39,10 @@ browser client must get identical results from it.
    version. The digest for a given sequence is frozen across versions and
    targets. `Digest::hash_bytes` is raw BLAKE3 of the bytes.
 4. **RNG.** `SplitMix64` is a frozen stream: a seed produces the same values on
-   every version and target. `derive_stream_seed` gives distinct seeds for
-   distinct `(domain, a, b)`. `Rng` (the `fastrand` seam) is deterministic per
+   every version and target. `derive_stream_seed` absorbs `base`, `domain`,
+   `a` and `b` in turn, each mixed by a `SplitMix64` step: changing any one
+   of them always changes the seed, and no two can cancel (inputs differing
+   in several share a seed only by 64-bit chance). `Rng` (the `fastrand` seam) is deterministic per
    seed but its stream is not frozen across dependency upgrades.
 5. **Grid.** `Grid2` is row-major with `u16` dimensions; an oversized or
    overflowing construction returns `GridError`, never panics. `get` is `Some`
@@ -56,16 +58,24 @@ browser client must get identical results from it.
    construction or reset. Ping-pong never plays either end frame twice.
    Every tick returns: a non-finite `dt` is ignored, and in a repeating loop
    a tick whose duration is too small for `f32` to subtract from the
-   accumulated time drops the remainder.
+   accumulated time drops the remainder. So does a repeating cycle that
+   consumes no time, after as many zero-time advances as it has playback
+   positions (frames plus other steps, doubled for ping-pong), by when every
+   position has played at least once.
 7. **Collision.** `sweep_aabb` is a closed-form swept AABB test returning
    `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
    toward the body. `move_and_collide` slides a kinematic body against a
-   `ColliderSet` and never leaves it overlapping a solid collider; sensors
-   never block; one-way platforms block only a landing on the face along the
-   configured up axis. `CollisionConfig` names the up axis, skin, snap
-   distance, and thresholds in the caller's units; results mirror exactly
-   between y-up and y-down worlds. `ColliderSet::query` returns every
-   collider overlapping the region (it may return more).
+   `ColliderSet` and never moves it more than a rounding step into a solid
+   collider; a body that starts inside one may move out or along it, and its
+   least penetration depth never grows. It does not push bodies out: the game
+   keeps them clear. Sensors never block; one-way platforms block only a
+   landing on the face along the configured up axis, including a body within
+   `skin` (plus rounding) below that face, never a body deeper inside them.
+   `CollisionConfig` names the up axis, skin, snap distance, and
+   thresholds in the caller's units, rejecting negative or non-finite
+   lengths; results mirror exactly between y-up and y-down worlds.
+   `ColliderSet::query` returns every collider overlapping the region (it may
+   return more).
 8. Overflow checks are on in every profile; arithmetic on caller sizes must
    fail as an error or be checked, not wrap.
 

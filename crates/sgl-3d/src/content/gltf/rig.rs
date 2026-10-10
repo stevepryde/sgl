@@ -4,13 +4,15 @@
 use std::collections::HashMap;
 
 use glam::{Mat4, Quat, Vec3};
-use gltf::animation::{Interpolation as GltfInterpolation, util::ReadOutputs};
+use gltf::accessor::{DataType, Dimensions};
+use gltf::animation::{Interpolation as GltfInterpolation, Property, util::ReadOutputs};
 
 use super::super::asset::Result;
 use super::super::deformation::{
     Channel, ChannelValues, Clip, Influence, Interpolation, Joint, MAX_INDEX, MorphDelta,
     MorphTarget, MorphWeight, Node, Rig,
 };
+use super::check_accessor;
 
 /// The rig being imported, and where each skin's joints and each morphed
 /// node's weights start in it.
@@ -24,8 +26,11 @@ pub(super) struct Rigging {
 
 impl Rigging {
     /// The document's nodes, skins and clips; empty when it has no skin,
-    /// morph target or animation.
+    /// morph target or animation. Refuses a node hierarchy that is not a
+    /// set of trees, which the loader's and `Rig`'s walks of it assume,
+    /// whether or not the document deforms.
     pub fn new(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Result<Self> {
+        let parents = parents(document)?;
         let mut rigging = Self {
             rig: Rig::default(),
             skins: Vec::new(),
@@ -37,12 +42,6 @@ impl Rigging {
             .any(|primitive| primitive.morph_targets().next().is_some());
         if document.skins().next().is_none() && document.animations().next().is_none() && !morphed {
             return Ok(rigging);
-        }
-        let mut parents = vec![None; document.nodes().count()];
-        for node in document.nodes() {
-            for child in node.children() {
-                parents[child.index()] = Some(node.index());
-            }
         }
         rigging.rig.nodes = document
             .nodes()
@@ -59,6 +58,14 @@ impl Rigging {
             .collect();
         for skin in document.skins() {
             rigging.skins.push(rigging.rig.joints.len() as u32);
+            if let Some(accessor) = skin.inverse_bind_matrices() {
+                check_accessor(
+                    &accessor,
+                    &format!("skin {}: inverse bind matrices", skin.index()),
+                    &[DataType::F32],
+                    &[Dimensions::Mat4],
+                )?;
+            }
             let reader = skin.reader(|buffer| Some(&buffers[buffer.index()].0));
             let inverse_binds: Vec<Mat4> = match reader.read_inverse_bind_matrices() {
                 Some(matrices) => matrices.map(|m| Mat4::from_cols_array_2d(&m)).collect(),
@@ -137,11 +144,69 @@ impl Rigging {
     }
 }
 
+/// Each node's parent, the hierarchy glTF 2.0 requires (3.5.3: disjoint
+/// strict trees, each node with at most one parent and none its own
+/// ancestor), which gltf's validation leaves unchecked: a node with two
+/// parents, or under a cycle, is refused.
+fn parents(document: &gltf::Document) -> Result<Vec<Option<usize>>> {
+    let nodes: Vec<gltf::Node<'_>> = document.nodes().collect();
+    let mut parents = vec![None; nodes.len()];
+    for node in &nodes {
+        for child in node.children() {
+            if parents[child.index()].replace(node.index()).is_some() {
+                return Err(format!(
+                    "node {} has more than one parent; the node hierarchy must be a set of trees",
+                    child.index()
+                )
+                .into());
+            }
+        }
+    }
+    // With one parent at most, each node is reached once from the roots,
+    // and only one under a cycle is not.
+    let mut reached = vec![false; nodes.len()];
+    let mut stack: Vec<usize> = (0..nodes.len())
+        .filter(|&node| parents[node].is_none())
+        .collect();
+    while let Some(node) = stack.pop() {
+        reached[node] = true;
+        stack.extend(nodes[node].children().map(|child| child.index()));
+    }
+    if let Some(node) = reached.iter().position(|reached| !reached) {
+        return Err(format!(
+            "node {node}'s ancestors form a cycle; the node hierarchy must be a set of trees"
+        )
+        .into());
+    }
+    Ok(parents)
+}
+
 fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) -> Result<Clip> {
     let label = format!("animation {}", animation.index());
     let channels = animation
         .channels()
         .map(|channel| {
+            // glTF 2.0 3.11's accessor types for keyframe times and each
+            // property's values.
+            use DataType::{F32, I8, I16, U8, U16};
+            let sampler = channel.sampler();
+            check_accessor(
+                &sampler.input(),
+                &format!("{label}: keyframe times"),
+                &[F32],
+                &[Dimensions::Scalar],
+            )?;
+            let (types, shape): (&[DataType], _) = match channel.target().property() {
+                Property::Translation | Property::Scale => (&[F32], Dimensions::Vec3),
+                Property::Rotation => (&[F32, I8, U8, I16, U16], Dimensions::Vec4),
+                Property::MorphTargetWeights => (&[F32, I8, U8, I16, U16], Dimensions::Scalar),
+            };
+            check_accessor(
+                &sampler.output(),
+                &format!("{label}: keyframe values"),
+                types,
+                &[shape],
+            )?;
             let reader = channel.reader(|buffer| Some(&buffers[buffer.index()].0));
             let times: Vec<f32> = reader
                 .read_inputs()

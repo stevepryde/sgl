@@ -7,6 +7,8 @@ categories = ["game-development", "algorithms"]
 keywords = ["gamedev", "deterministic", "collision", "animation"]
 readme = "README.md"
 description = "Deterministic timing, grids, hashing, animation, and collision for SGL games"
+# Examples and tests stay in the repository.
+include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

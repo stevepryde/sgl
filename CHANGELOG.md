@@ -19,7 +19,85 @@ docs and specs the entry links.
   confirm of a client it had already accepted, so a lost accept left that
   client unconnected until both timed out; it now answers connections it
   has and refuses only new ones. No game-code changes needed.
-
+- `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
+  replaced the enclosing clip and its end reset the clip to `None`; it now
+  clips within the enclosing clip, nests, and restores the enclosing clip at
+  its end. Drop any `set_clip` that only restored the outer clip after
+  `scroll_area_end`.
+- `sgl-3d` dynamic GI (`Settings::dynamic_gi`): a probe refused for want of
+  the frame's ray budget kept its rays counted, refusing later probes that
+  fit; it now gives them back, so the frame uses its budget. No game-code
+  changes needed.
+- `sgl-net` `BrowserWebSocketClient::disconnect`: during reconnect backoff
+  it left the scheduled retry armed, so a later `poll` reconnected; it now
+  cancels the retry. No game-code changes needed.
+- `sgl-net` native WebSocket `disconnect`: a graceful close no longer drops
+  frames still waiting on a blocked socket or its Close frame; it now ends,
+  as `Local`, once the peer answers the Close or ends the stream, or at
+  `GRACEFUL_CLOSE_TIMEOUT_MS`. No game-code changes needed.
+- `sgl-core` `move_and_collide` / `snap_to_ground`: a body that started
+  inside a solid collider could move through it; it may now move out or
+  along it but not deeper, and a body within `skin` below a one-way
+  platform's top lands on it. `CollisionConfig::new` now panics on a negative
+  or non-finite `skin`, `snap_distance` or `block_epsilon`. No game-code
+  changes needed unless a game passes such a value.
+- `sgl-core` `AnimationSequence::tick`: in `Repeat`/`PingPongRepeat`, a
+  zero-time pass stopped after as many advances as there are steps, so
+  zero-duration frames delayed a following action and dropped the tick's
+  time; it now stops after as many as it has frame and step positions. No
+  game-code changes needed.
+- `sgl-core` `AnimationSequence`: a ping-pong sequence of one step with one
+  frame (or one pause or action) played it twice per bounce; it now plays it
+  once, so a `PingPongOnce` completes after one frame duration. No game-code
+  changes needed.
+- `sgl-3d` `asset::load*`: a glTF node that is its own ancestor overflowed
+  the stack at load or in `Rig::joint_matrices`, and a node with two parents
+  loaded; both now fail the load with an error naming the node, and
+  `Rig::joint_matrices` on a game-built rig with a parent cycle returns
+  (wrong matrices for the cycle's joints) instead of overflowing. No
+  game-code changes needed; re-export a file that now fails.
+- `examples/direct-game` took `Renderer::white_texture`'s handle from a
+  throwaway `Assets`, so it aliased the first texture of the game's own cache;
+  it now keeps one `Assets<Texture>` and draws a second texture from it.
+  Games that copied it: pass the game's texture cache to `white_texture`.
+- `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
+  promise that a flushed state leaves ahead of lane frames flushed after it;
+  it waits only for frames flushed with or before it, and lane frames
+  flushed later may leave first. Behaviour is unchanged. No game-code
+  changes needed.
+- `sgl-2d` `UiFrame::password_edit_clear`: the clear button released the
+  buffer's allocation; it now zeroizes in place and keeps the preallocated
+  capacity. No game-code changes needed.
+- All SGL crates: published packages no longer ship examples, tests, test
+  fixtures or unused vendored reference sources; read those in the repository.
+  Licences and notices still ship. No game-code changes needed.
+- `sgl-3d` `AutoExposure`: a long frame (`FrameInput::frame_time_ms`)
+  within a frame's step of the target stepped the correction past it, by
+  stops after a hitch; it now lands on the target. No game-code changes
+  needed.
+- `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
+  glTF does not allow for its use, of no elements, or past its buffer view
+  or buffer, or an image view past its buffer, panicked or was misread; it
+  now fails the load with an error naming it.
+  No game-code changes needed; re-export a file that now fails.
+- `sgl-post-fx` SSR (SGL3D's `Crystal` reflections): a ray towards the camera
+  from a surface under one unit away was projected behind the camera and
+  traced mirrored, behind the surface; its end is now clipped to the near
+  plane (`CameraAttribs::set_clip_planes`, already required). The WGSL
+  `ProjectDirection` (`PostFX_Common`) takes the near plane's view Z as a
+  fifth argument: WGSL calling it adds it (`g_Camera.fNearPlaneZ`). No other
+  game-code changes needed.
+- `sgl-2d` `DrawList::sort`: a NaN `z` could panic or misorder the other
+  sprites; NaN now draws last and the rest stay ascending and stable. No
+  game-code changes needed.
+- `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
+  `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes,
+  so content re-derived from a persisted base seed (generated worlds,
+  replays) changes on upgrade. Games that need the old output regenerate it,
+  or store the derived seeds before upgrading.
+- `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
+  `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
+  Use or remove such calls; no other game-code changes are needed.
 - `sgl-net` `ThreadedUdpServer::disconnect`: reliable and unreliable
   messages accepted before it but not yet handed to the endpoint were
   dropped; they are now sent before the graceful close, within the same
@@ -53,6 +131,11 @@ docs and specs the entry links.
 - `sgl-3d` `Renderer::finish_frame`: a `Renderer::resize` that changed the
   targets between `render` and `finish_frame` no longer loses its history
   reset; the next frame restarts history. No game-code changes needed.
+- `sgl-post-fx` SSR: a roughness-0 surface seen from below its mapped
+  normal's horizon, or, at importance-sample bias 0, at the blue noise's
+  largest value, gave a NaN ray and PDF; it now traces the mirror direction,
+  the noise stays below 1, and the resolve clamps N·V above 0. No game-code
+  changes needed.
 - `sgl-post-fx` SSR (`HierarchicalRaymarch`, SGL3D's `Crystal` reflections):
   a ray that runs out of `max_traversal_intersections` before confirming a
   hit was accepted by proximity and now reports a miss, so streaks near

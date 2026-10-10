@@ -194,7 +194,8 @@ frame.color_grading = ColorGrading {
   shifts the frame into the range. The correction follows it at
   `speed_brighten` stops per second when the scene got brighter and
   `speed_darken` when it got darker, by `FrameInput::frame_time_ms`, slowing
-  within 1.5 stops of it (Bevy's default), and stays within
+  within 1.5 stops of it (Bevy's default) and never stepping past it however
+  long the frame, and stays within
   `correction_min..=correction_max`. A camera cut, a target-changing resize,
   another scene or a switch from a fixed exposure sets it to its target.
   Timing group `exposure`.
@@ -1674,7 +1675,9 @@ stay in the game (S3D-1).
   with glTF's step, linear or cubic-spline interpolation). A skinned mesh's
   vertices stay in bind space, as glTF ignores its node's transform; a rigid
   node's transform is baked into its vertices and morph displacements, as
-  before. Primitives batch by material, skin and morphed node.
+  before. Primitives batch by material, skin and morphed node. A node
+  hierarchy that is not a set of trees (a node with two parents, or its own
+  ancestor) fails the load.
 - **Procedural.** `ModelMesh::deformation` takes the same data; a model with
   any deforming mesh deforms. `PreparedModel::new` refuses influences or
   targets that do not match their vertices, negative or non-finite weights,
@@ -1686,7 +1689,8 @@ stay in the game (S3D-1).
   &morph_weights)` gives one joint matrix per joint the model's influences
   name (glTF's: the joint's transform in the model's space times its inverse
   bind matrix; `Rig::joint_matrices` composes them from each node's local
-  transform) and one weight per morph weight its targets name; further ones
+  transform, and ends, with wrong matrices, on a built rig whose parents
+  form a cycle) and one weight per morph weight its targets name; further ones
   are ignored, fewer are refused (`SceneError::DeformationMismatch`). An
   instance keeps its deformation until it is set again and starts at its
   bind pose. The instance's pose places the deformed model in the world.
@@ -2581,7 +2585,11 @@ emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_iridescence`, `KHR_materials_sheen`,
 `KHR_materials_diffuse_transmission`, and the `KHR_materials_ior` and
 `KHR_materials_specular` factors. A primitive whose material has any map
-needs `TEXCOORD_0`.
+needs `TEXCOORD_0`. Every accessor the load reads must hold at least one
+element, within its buffer view and buffer, of a component type and shape
+glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
+bind matrices or keyframes), and an embedded image's buffer view must lie
+within its buffer; any other fails the load with an error naming it.
 
 A clearcoat normal map tilts the coat alone, on the base normal map's
 frame; without one the coat follows the geometry normal. An iridescent
