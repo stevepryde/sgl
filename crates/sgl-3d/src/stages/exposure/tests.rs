@@ -229,3 +229,37 @@ fn correction_adapts_at_the_authored_speeds_within_its_limits() {
     );
     assert_eq!(brightest, 1., "the correction stops at its upper limit");
 }
+
+// Defect: a long frame (a 3 s hitch) within the transition distance scales
+// the remaining delta by speed × time, so the correction lands stops past
+// its target, or oscillates around it at low frame rates. The oracle is the
+// target a history reset takes on the same frame: one long frame one stop
+// off, in either direction, ends on it, not past it.
+#[test]
+fn a_long_frame_lands_on_the_target() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let mut exposure = Exposure::new(&device);
+    let automatic = AutoExposure::default();
+    let frame = |delta_time, reset| Metering {
+        automatic: &automatic,
+        stops: 0.,
+        delta_time,
+        reset,
+    };
+    let dim = grey(&device, &queue, 1.);
+    let bright = grey(&device, &queue, 2.);
+    let dim_target = adapt(&device, &queue, &mut exposure, &dim, frame(0., true));
+    let bright_target = adapt(&device, &queue, &mut exposure, &bright, frame(0., true));
+    for (scene, target, direction) in [
+        (&dim, dim_target, "darker"),
+        (&bright, bright_target, "brighter"),
+    ] {
+        let landed = adapt(&device, &queue, &mut exposure, scene, frame(3., false));
+        assert!(
+            (landed - target).abs() < 1e-4,
+            "one stop {direction} over 3 s: {landed}, target {target}"
+        );
+    }
+}
