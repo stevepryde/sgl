@@ -175,8 +175,8 @@ impl UiFrame<'_> {
 mod tests {
     use super::*;
     use crate::canvas::draw::DrawList;
-    use crate::ui::UiInput;
     use crate::ui::test_ui::{fixture, hover_at, press_at};
+    use crate::ui::{UiInput, UiKey};
     use sgl_core::math::Vec2;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -401,6 +401,32 @@ mod tests {
                 Some(Rect::new(150.0, 100.0, 100.0, 50.0)),
             ]
         );
+    }
+
+    /// A scroll area entirely outside its enclosing clip clips to a zero
+    /// rect at the origin; a control straddling the origin there is hidden,
+    /// so Tab never focuses it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn fully_clipped_scroll_area_hides_controls_from_focus() {
+        let (mut ui, mut text, _assets) = fixture();
+        for keys in [vec![], vec![UiKey::Tab]] {
+            let mut list = DrawList::new();
+            let mut offset = 0.0;
+            let mut f = ui.begin(
+                &mut text,
+                &mut list,
+                UiInput {
+                    keys,
+                    ..UiInput::default()
+                },
+            );
+            f.set_clip(Some(Rect::new(0.0, 0.0, 100.0, 100.0)));
+            f.scroll_area_begin("s", Rect::new(200.0, 200.0, 50.0, 50.0), 50.0, &mut offset);
+            f.button("hidden", Rect::new(-5.0, -5.0, 10.0, 10.0), "X", 12.0);
+            f.scroll_area_end();
+            f.end();
+        }
+        assert!(!ui.is_focused_name("hidden"));
     }
 
     /// Scroll area: wheel scrolls only while hovered, the offset clamps to
