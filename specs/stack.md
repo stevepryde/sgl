@@ -18,8 +18,11 @@
   `glam` re-export for its math types. SGL3D, 2D and core share the workspace
   glam dependency; matching math types cross their boundaries directly.
 - SGL library crates support crates.io publication, starting at 0.1.0;
-  Git and local checkout dependencies remain supported. Examples are not published. Bun runs repository tooling and the
-  Playwright browser tests of the transport and SGL3D.
+  Git and local checkout dependencies remain supported. Each crate's
+  `include` list publishes its sources, data, guides and licences; examples,
+  tests, fixtures and unused vendored references stay in the repository.
+  Bun runs repository tooling and the Playwright browser tests of the
+  transport and SGL3D.
 
 Games commonly use glam, `image` (PNG), fontdue, RON, and postcard. Those
 belong in SGL when extracted code needs them, not before.
