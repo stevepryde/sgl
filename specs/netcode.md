@@ -168,9 +168,11 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     (the browser's `bufferedAmount` watermark); they are never dropped by the
     sender. Latest state waits only for the lane frames flushed with or
     before it: a flush releases the state last sent before it, which leaves
-    ahead of lane frames flushed later; a newer state sent after that flush
-    waits for its own without withholding it, and of states whose turn comes
-    together only the newest leaves. Text frames, wrong magic or version, the reserved kind, reserved
+    as soon as those frames have gone, ahead of every frame still queued; it
+    is not a barrier, so meanwhile lane frames flushed later may leave first
+    (holding them would let one lane's long message hold every lane back); a
+    newer state sent after that flush waits for its own without withholding
+    it, and of states whose turn comes together only the newest leaves. Text frames, wrong magic or version, the reserved kind, reserved
     flags, an invalid lane, latest state or an unreliable message with
     fragment flags, a total not above its fragment, and frames over
     `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`. Every
