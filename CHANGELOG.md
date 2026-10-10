@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` light shadows (`shadow_triangles`, `LightPass`): a light close to
+  a long occluder edge lit part of the area behind it inside its footprint
+  (the wall-torch case); such edges now get a far cap that covers the
+  footprint. No game-code changes needed.
 - `sgl-2d` `TextRenderer`: glyph pages were never reused, so text whose size
   changed every frame opened pages without bound, and an infinite outline or
   shadow width hung `draw`; a full atlas now empties and reuses its least
