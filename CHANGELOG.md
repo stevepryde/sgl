@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::dropdown`: an open dropdown that stopped being
+  submitted kept its popup open and the keyboard captured, blocking Tab and
+  Enter elsewhere; it now closes at `UiFrame::end`. No game-code changes
+  needed.
 - `sgl-2d` `UiFrame::dropdown` / `overlay_panel_begin`: a popover's or
   panel's clipped-away part still blocked widgets beneath it (and kept the
   popover open when pressed); only the visible part now blocks and counts as
