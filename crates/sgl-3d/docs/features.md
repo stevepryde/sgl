@@ -44,7 +44,8 @@ them through unrefracted. A probe captured on an
   `KHR_materials_specular` factors (a dielectric's F0: water's IOR 1.33
   gives 0.02), and `KHR_materials_transmission`, `KHR_materials_volume` and
   `KHR_materials_dispersion` (their maps on `Extended`). Every map lies on
-  `TEXCOORD_0`.
+  `TEXCOORD_0`; `TEXCOORD_1` loads as `Vertex::lightmap_uv`, the static
+  irradiance atlas chart.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
   `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
   emissive strength cap, images the game supplies, which are never decoded,
@@ -255,6 +256,10 @@ them through unrefracted. A probe captured on an
   be a baked scene light, which lights moving instances live; its light then
   stays out of their ambient cubes. Every indirect source (the environment,
   the hemisphere fill, these and both volumes) lights a material alike.
+  While an atlas is installed, a static instance's vertex with a
+  `lightmap_uv` (a glTF's `TEXCOORD_1`) samples it and takes no baked
+  lights: set `lightmap_uv` to `[0, 0]` on models the bake does not chart,
+  such as one exported with a second UV map for AO.
 - **Irradiance volume**: diffuse light the game computes over a lattice of
   cells (`Scene::set_irradiance_volume`, `IrradianceVolume`; a port of
   Bevy's irradiance volume), such as a voxel world's propagated sky and

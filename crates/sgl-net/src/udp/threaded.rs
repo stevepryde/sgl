@@ -17,10 +17,9 @@
 //! in the endpoint's window: the endpoint stops acknowledging that lane and
 //! reports it held, the peer's window closes and its `send` eventually
 //! returns `WouldBlock`, and the lane resumes once the caller's `poll`
-//! drains the ingress. A held fragment is neither retransmitted nor counted
-//! toward the peer's retry limit, and both ends keep exchanging keepalives,
-//! so a healthy peer is slowed, never disconnected, however late the caller
-//! polls.
+//! drains the ingress. A held fragment is not retransmitted, and both ends
+//! keep exchanging keepalives, so a healthy peer is slowed, never
+//! disconnected, however late the caller polls.
 //!
 //! A caller's `disconnect` stops admission at once but keeps what the
 //! connection already accepted: the worker reports the connection
@@ -303,10 +302,6 @@ impl IngressHub {
     /// and unreliable messages per peer taken from its lanes in turn, then
     /// its latest state.
     fn drain(&self) -> Vec<ServerEvent> {
-        // Shared across a peer's lanes and both classes: the sustainable
-        // per-poll rate above which its unreliable messages are shed.
-        const LANE_MESSAGES_PER_PEER_PER_POLL: usize = 32;
-
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
         let mut output: Vec<_> = state.lifecycle.drain(..).collect();
         for (&conn, peer) in &mut state.peers {
@@ -586,6 +581,12 @@ impl CommandQueue {
         ready
     }
 }
+
+/// Most lane messages one [`ThreadedUdpServer`] poll returns per peer, shared
+/// across its lanes and both reliable and unreliable messages: the
+/// sustainable per-poll rate above which a peer's reliable messages wait and
+/// its unreliable messages are shed.
+pub const LANE_MESSAGES_PER_PEER_PER_POLL: usize = 32;
 
 /// Simulation-side handle for the UDP worker.
 ///
@@ -1262,20 +1263,18 @@ mod tests {
     }
 
     /// Defect: a threaded server that disconnects a healthy sender because
-    /// its caller polls slowly — its ingress overflowing, the sender
-    /// exhausting its retries on a held fragment, or either end timing out
-    /// while the caller stalls — or that loses, duplicates or reorders
+    /// its caller polls slowly — its ingress overflowing, or either end
+    /// timing out while the caller stalls — or that loses, duplicates or reorders
     /// messages while pacing, or holds one peer back for another's full
     /// ingress. Oracle: netcode.md 11 (a receiver that polls slowly makes
     /// the sender slower, not disconnected; other connections are never
     /// affected). Over in-order and lossy seeded networks, to a server
     /// whose caller polls every 100 ms and once not at all for 3 s (longer
-    /// than the 1 s timeout and a five-transmission retry budget), one
+    /// than the 1 s timeout), one
     /// client sends 60 messages as fast as `send` admits, every third
     /// larger than the lane's 4 KiB inbound bound, and another sends five
     /// small ones 200 ms apart during the stall, one more than its lane
-    /// holds, so its last waits as the newest fragment, which the sender
-    /// would otherwise retransmit until it gave up. The fast sender is
+    /// holds, so its last waits as the newest fragment. The fast sender is
     /// refused with `WouldBlock`; nobody is disconnected; every message
     /// arrives once, in order; and the first poll after the stall finds
     /// the quiet client's first four messages, not held back by the fast
@@ -1317,7 +1316,6 @@ mod tests {
         let mut config = EndpointConfig {
             timeout_ms: 1_000,
             keepalive_ms: 100,
-            max_reliable_transmissions: 5,
             ..EndpointConfig::new(*b"PCD")
         };
         let bounds = &mut config.reliable.lanes[paced.index()];

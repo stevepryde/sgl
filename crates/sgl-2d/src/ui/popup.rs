@@ -122,10 +122,14 @@ impl UiFrame<'_> {
     /// interactive, while `panel` becomes an input blocker for the
     /// ordinary widgets underneath on the following frames — the same
     /// semantics as an open dropdown popover, for panels the caller lays
-    /// out itself. Draws the panel backdrop + accent border.
+    /// out itself. Draws the panel backdrop + accent border. Like a popover,
+    /// only the part inside the current clip blocks.
     pub fn overlay_panel_begin(&mut self, panel: Rect) {
         self.overlay = true;
-        self.new_blocked.push(panel);
+        self.new_blocked.extend(
+            self.clip
+                .map_or(Some(panel), |clip| clip.intersection(&panel)),
+        );
         self.rect(panel, self.ui.theme.popup);
         self.border(panel, 2.0, self.ui.theme.accent);
     }
@@ -140,8 +144,12 @@ impl UiFrame<'_> {
     /// `options[*selected]`; pressing it opens a popover listing every
     /// option in the overlay band (drawn above and input-blocking the
     /// widgets underneath). Selecting an option stores it and closes;
-    /// pressing elsewhere closes. The popover opens downward — place
-    /// dropdowns where `rect.max.y + options·row` stays on screen.
+    /// pressing elsewhere closes. The popover opens downward and stays in
+    /// the current clip: only its visible part shows, takes presses and
+    /// blocks widgets underneath. Place dropdowns where
+    /// `rect.max.y + options·row` stays on screen and inside the clip.
+    /// Submit it every frame while shown: an open dropdown not submitted in
+    /// a frame closes at [`end`](Self::end), releasing keyboard capture.
     /// Returns `true` the frame the selection changed.
     pub fn dropdown(
         &mut self,
@@ -189,6 +197,7 @@ impl UiFrame<'_> {
         if fired {
             self.ui.open_popup = if was_open { None } else { Some(id) };
         }
+        self.popup_seen |= self.ui.open_popup == Some(id);
         if !was_open || fired {
             return false;
         }
@@ -201,10 +210,13 @@ impl UiFrame<'_> {
             rect.size().x,
             row_h * options.len() as f32,
         );
+        // The popover draws and hit-tests within the current clip, so only
+        // its visible part blocks widgets underneath or counts as inside.
+        let visible = self.clip.map_or(Some(pop), |clip| clip.intersection(&pop));
         let overlay_was = self.overlay;
         self.overlay = true;
         self.popup_scope = Some(id);
-        self.new_blocked.push(pop);
+        self.new_blocked.extend(visible);
         self.rect(pop, self.ui.theme.popup);
         self.border(pop, 1.0, self.ui.theme.accent);
         let mut changed = false;
@@ -240,9 +252,13 @@ impl UiFrame<'_> {
         self.popup_scope = None;
         self.overlay = overlay_was;
 
-        // Click-away close (a press neither on the button nor the popover).
+        // Click-away close (a press neither on the button nor the visible
+        // popover).
         let p = self.input.mouse_pos;
-        if self.input.mouse_pressed && !contains(&rect, p) && !contains(&pop, p) {
+        if self.input.mouse_pressed
+            && !contains(&rect, p)
+            && !visible.is_some_and(|visible| contains(&visible, p))
+        {
             self.ui.open_popup = None;
         }
         changed
@@ -472,6 +488,70 @@ mod tests {
         assert_eq!(selected, 1);
     }
 
+    /// #323: a dropdown opened near the bottom of a scroll area blocks only
+    /// its visible options; a press on a widget under the clipped-away part
+    /// reaches that widget and closes the popover.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn clipped_dropdown_blocks_only_its_visible_options() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut list = DrawList::new();
+        let area = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let dd = Rect::new(10.0, 40.0, 160.0, 30.0);
+        let options = ["25%", "50%", "100%"];
+        let mut selected = 0usize;
+        let mut offset = 0.0;
+        // Options occupy y ∈ [72, 162); the scroll area shows y < 100.
+        let below = Rect::new(10.0, 120.0, 160.0, 30.0);
+        let mut fired = Vec::new();
+        for input in [
+            press_at(50.0, 55.0),
+            hover_at(0.0, 0.0, false),
+            press_at(50.0, 135.0),
+        ] {
+            let mut f = ui.begin(&mut text, &mut list, input);
+            fired.push(f.button("below", below, "B", 16.0));
+            f.scroll_area_begin("list", area, 100.0, &mut offset);
+            f.dropdown("zoom", dd, &options, &mut selected, 16.0);
+            f.scroll_area_end();
+            f.end();
+        }
+        assert_eq!(fired, [false, false, true]);
+        assert_eq!(selected, 0);
+        assert!(!ui.any_popup_open(), "the press outside the clip closes it");
+    }
+
+    /// #292: an open dropdown that stops being submitted closes, releasing
+    /// its keyboard capture, so Tab and Enter reach another button.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn removed_dropdown_releases_its_popup() {
+        let (mut ui, mut text, _assets) = fixture();
+        let dd = Rect::new(10.0, 10.0, 160.0, 30.0);
+        let options = ["a", "b"];
+        let mut selected = 0usize;
+        let mut list = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut list, press_at(50.0, 25.0));
+        f.dropdown("menu", dd, &options, &mut selected, 16.0);
+        f.end();
+        assert!(ui.any_popup_open());
+
+        let mut fired = Vec::new();
+        for keys in [vec![], vec![UiKey::Tab], vec![UiKey::Enter]] {
+            let mut list = DrawList::new();
+            let mut f = ui.begin(
+                &mut text,
+                &mut list,
+                UiInput {
+                    keys,
+                    ..UiInput::default()
+                },
+            );
+            fired.push(f.button("other", BTN, "OK", 16.0));
+            f.end();
+        }
+        assert!(!ui.any_popup_open());
+        assert_eq!(fired, [false, false, true]);
+    }
+
     /// A modal blocks every ordinary widget anywhere on screen the frame
     /// after it is shown, while its own buttons stay interactive.
     #[wasm_bindgen_test(unsupported = test)]
@@ -554,6 +634,27 @@ mod tests {
         assert!(ui.has_focus());
         ui.clear_focus();
         assert!(!ui.has_focus());
+    }
+
+    /// #323: a clipped overlay panel blocks only its visible part, like a
+    /// clipped dropdown popover.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn clipped_overlay_panel_blocks_only_its_visible_part() {
+        let (mut ui, mut text, _assets) = fixture();
+        let panel = Rect::new(100.0, 100.0, 300.0, 200.0);
+        let under = Rect::new(300.0, 100.0, 100.0, 200.0);
+        let mut fired = Vec::new();
+        for input in [UiInput::default(), press_at(350.0, 150.0)] {
+            let mut list = DrawList::new();
+            let mut f = ui.begin(&mut text, &mut list, input);
+            fired.push(f.button("under", under, "U", 16.0));
+            f.set_clip(Some(Rect::new(0.0, 0.0, 250.0, 540.0)));
+            f.overlay_panel_begin(panel);
+            f.overlay_panel_end();
+            f.set_clip(None);
+            f.end();
+        }
+        assert_eq!(fired, [false, true]);
     }
 
     /// Tooltips draw only while their anchor is hovered, land in the

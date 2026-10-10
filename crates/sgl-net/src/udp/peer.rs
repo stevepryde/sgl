@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use super::latest::Latest;
 use super::packet::{self, ACK_LEN, Acks, MAX_RELIABLE_ITEM_PAYLOAD, Nonces};
-use super::reliable::Reliable;
+use super::reliable::{MAX_RTO_MS, Reliable};
 use super::unreliable::Unreliable;
 use crate::lanes::{InboundUsage, LaneScheduler};
 use crate::{RELIABLE_LANES, ReliableConfig, RttEstimate, RttEstimator};
@@ -111,11 +111,36 @@ impl Peer {
         }
         u64::from(estimate.srtt_ms)
             .saturating_add(4 * u64::from(estimate.rttvar_ms))
-            .clamp(50, 1_000)
+            .clamp(50, MAX_RTO_MS)
     }
 
     pub const fn rtt(&self) -> RttEstimate {
         self.rtt.estimate()
+    }
+
+    /// Applies one datagram's acknowledgements, returning the round trips
+    /// they sample. Anything newly acknowledged on any lane returns every
+    /// lane's backoff to the round-trip estimate (RFC 9002 §6.2.1).
+    pub fn acknowledge(&mut self, acks: &Acks, now_ms: u64) -> Vec<u64> {
+        let mut samples = Vec::new();
+        let mut progressed = false;
+        for (lane, ack) in self.reliable.iter_mut().zip(acks) {
+            if let Some(ack) = ack {
+                progressed |= lane.acknowledge(*ack, now_ms, &mut samples);
+            }
+        }
+        if progressed {
+            self.reliable.iter_mut().for_each(Reliable::reset_backoff);
+        }
+        samples
+    }
+
+    /// Whether a lane has waited `bound_ms` for an acknowledgement with no
+    /// progress ([`Reliable::stalled`]).
+    pub fn stalled(&self, now_ms: u64, bound_ms: u64) -> bool {
+        self.reliable
+            .iter()
+            .any(|lane| lane.stalled(now_ms, bound_ms))
     }
 
     #[must_use]
@@ -152,7 +177,7 @@ impl Peer {
         lane: usize,
         now_ms: u64,
         rto_ms: u64,
-        max_transmissions: u8,
+        max_transmissions: Option<u8>,
     ) -> Option<(Next, usize)> {
         let reliable = &self.reliable[lane];
         if let Some(sequence) = reliable.first_due(now_ms, rto_ms, max_transmissions) {
@@ -199,13 +224,6 @@ impl Peer {
                 Outgoing::Reliable(sequence)
             }
         }
-    }
-
-    pub fn retry_exhausted(&self, now_ms: u64, maximum: u8) -> bool {
-        let rto_ms = self.rto_ms();
-        self.reliable
-            .iter()
-            .any(|lane| lane.retry_exhausted(now_ms, rto_ms, maximum))
     }
 
     /// Whether `lane` owes the peer an acknowledgement in this flush.

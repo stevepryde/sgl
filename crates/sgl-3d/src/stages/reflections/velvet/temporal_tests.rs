@@ -1,7 +1,7 @@
 //! Exercises the production temporal pass: on a still view whose traced hits
 //! move between neighbouring pixels every frame, as TAA's jitter moves hits on
 //! thin bright geometry, and after a turn that puts the reflections' hits
-//! behind the previous camera.
+//! behind the previous camera, and when the near plane changes.
 use super::*;
 use glam::Vec3;
 
@@ -209,8 +209,9 @@ fn still(continues: bool) -> TemporalParams {
         previous_view_projection: Mat4::IDENTITY.to_cols_array_2d(),
         size: [size, size, 1. / size, 1. / size],
         near: 0.1,
+        previous_near: 0.1,
         flags: if continues { TEMPORAL_CONTINUES } else { 0 },
-        padding: [0; 2],
+        padding: 0,
     }
 }
 
@@ -319,8 +320,9 @@ fn hits_behind_the_previous_camera_take_no_history() {
             previous_view_projection: previous_view_projection.to_cols_array_2d(),
             size: [size, size, 1. / size, 1. / size],
             near: 0.1,
+            previous_near: 0.1,
             flags: TEMPORAL_CONTINUES,
-            padding: [0; 2],
+            padding: 0,
         },
         1,
     );
@@ -330,6 +332,75 @@ fn hits_behind_the_previous_camera_take_no_history() {
             texel[0],
             value(expected[i * 4]),
             "pixel {i} took history from behind the previous camera"
+        );
+    }
+}
+
+// The depth history holds raw reversed-Z device depth, near / distance, so it
+// is linearised with the near plane that wrote it (#409). A still camera
+// whose near plane moves from 0.5 to 0.1 m sees a still plane 5 m away, at
+// depth 0.1 last frame and 0.02 now; read with this frame's near plane the
+// history would put it at 1 m and disocclude every pixel. The history, a
+// uniform 0.5 inside each neighbourhood's colour box, must carry over:
+// accumulated, each pixel lies within a few hundredths of 0.5, never at this
+// frame's hit or miss exactly.
+#[test]
+fn a_changed_near_plane_keeps_history() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let pass = Pass::new(&device, &queue);
+    let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
+    let (near, previous_near) = (0.1, 0.5);
+    let projection = crate::perspective(1.2, 1., near);
+    let previous_projection = crate::perspective(1.2, 1., previous_near);
+    let plane = Vec3::new(0., 0., -5.);
+    let depth = projection.project_point3(plane).z;
+    let previous_depth = previous_projection.project_point3(plane).z;
+    let texels = (SIZE * SIZE) as usize;
+    upload(
+        &queue,
+        &pass.depth,
+        bytemuck::cast_slice(&vec![depth; texels]),
+        4,
+    );
+    upload(
+        &queue,
+        &pass.reprojection,
+        bytemuck::cast_slice(&vec![depth; texels]),
+        4,
+    );
+    upload(
+        &queue,
+        &pass.depth_history[0],
+        bytemuck::cast_slice(&vec![previous_depth; texels]),
+        4,
+    );
+    upload(
+        &queue,
+        &pass.history[0],
+        bytemuck::cast_slice(&[HALF, HALF, HALF, ONE].repeat(texels)),
+        8,
+    );
+    let size = SIZE as f32;
+    let output = pass.run(
+        (&device, &queue),
+        &hits(0),
+        TemporalParams {
+            inverse_view_projection: (projection * view).inverse().to_cols_array_2d(),
+            previous_view_projection: (previous_projection * view).to_cols_array_2d(),
+            size: [size, size, 1. / size, 1. / size],
+            near,
+            previous_near,
+            flags: TEMPORAL_CONTINUES,
+            padding: 0,
+        },
+        1,
+    );
+    for (i, texel) in output.iter().enumerate() {
+        assert!(
+            (texel[0] - value(HALF)).abs() < 0.05,
+            "pixel {i} dropped its history: {texel:?}"
         );
     }
 }
