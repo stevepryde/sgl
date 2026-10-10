@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` dynamic GI (`Settings::dynamic_gi`): a probe refused for want of
+  the frame's ray budget kept its rays counted, refusing later probes that
+  fit; it now gives them back, so the frame uses its budget. No game-code
+  changes needed.
+
 - `sgl-post-fx` SSR (`HierarchicalRaymarch`, SGL3D's `Crystal` reflections):
   a ray that runs out of `max_traversal_intersections` before confirming a
   hit was accepted by proximity and now reports a miss, so streaks near

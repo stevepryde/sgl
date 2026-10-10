@@ -1501,7 +1501,10 @@ last, after everything it may use, and refuses a directive in it.
   chooses, so its turns under a longer stride are among its turns under a
   shorter one and a stride that changes from frame to frame skips none
   (phases that did not nest starved probes while the stride alternated);
-  what still exceeds the budget traces nothing, as Wicked's. A probe whose
+  what still exceeds the budget traces nothing, as Wicked's, but a refused
+  request gives its rays back (to the budget, the starting probes' room and
+  the shortened turns' spare alike), where Wicked's keeps them counted, so
+  a later request that fits still traces. A probe whose
   light is changing, its most inconsistent texel above the estimator's
   noise (0.2, below which Wicked's estimator catches a texel up at its
   least), also takes turns at its period shortened toward one as its

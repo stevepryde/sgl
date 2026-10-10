@@ -357,6 +357,11 @@ fn threshold() {
  allocation.ramp_bins=bin;
  allocation.ramp_room=starts-started;
 }
+// The reservations below each take `rays` from a shared count within its
+// limit, or take nothing: a refused reservation gives its rays back, so a
+// later request that fits still does, where Wicked's surfels keep a refused
+// request's count (surfel_updateCS.hlsl 263–268). Only a request made while
+// a refused one is outstanding can still see it, for a few instructions.
 // Whether a probe not yet blended that far away, which starts with
 // `rays`, starts this frame.
 fn ramp_starts(spacings:f32,rays:u32)->bool {
@@ -364,13 +369,35 @@ fn ramp_starts(spacings:f32,rays:u32)->bool {
  if bin<allocation.ramp_bins {
   return true;
  }
- return bin==allocation.ramp_bins && atomicAdd(&allocation.ramp_taken,rays)+rays<=allocation.ramp_room;
+ if bin!=allocation.ramp_bins {
+  return false;
+ }
+ if atomicAdd(&allocation.ramp_taken,rays)+rays<=allocation.ramp_room {
+  return true;
+ }
+ atomicSub(&allocation.ramp_taken,rays);
+ return false;
 }
 // Whether a blended probe takes a shortened turn this frame with `rays`
 // rays: on its turn at `shortened` where that is shorter than its
 // distance's `period`, within what the frame leaves the shortened turns.
 fn ddgi_shortened_turn(probe_index:u32,period:u32,shortened:u32,rays:u32)->bool {
- return shortened<period && ddgi_turn(probe_index,shortened,0u,volume.frame) && atomicAdd(&allocation.spare_taken,rays)+rays<=allocation.spare;
+ if shortened>=period || !ddgi_turn(probe_index,shortened,0u,volume.frame) {
+  return false;
+ }
+ if atomicAdd(&allocation.spare_taken,rays)+rays<=allocation.spare {
+  return true;
+ }
+ atomicSub(&allocation.spare_taken,rays);
+ return false;
+}
+// Whether a probe traces its `rays` within the frame's budget.
+fn reserve_budget(rays:u32)->bool {
+ if atomicAdd(&allocation.reserved,rays)+rays<=volume.budget {
+  return true;
+ }
+ atomicSub(&allocation.reserved,rays);
+ return false;
 }
 @compute @workgroup_size(ALLOCATION_THREADS)
 fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) group_index:u32) {
@@ -417,7 +444,7 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   // A paused volume traces nothing; its probes keep what they hold. A
   // probe traces within the budget, past which it traces nothing, as
   // Wicked's surfels do.
-  if allocation.paused!=0u || (traced>0u && atomicAdd(&allocation.reserved,traced)+traced>volume.budget) {
+  if allocation.paused!=0u || (traced>0u && !reserve_budget(traced)) {
    traced=0u;
    blended=0u;
   }
