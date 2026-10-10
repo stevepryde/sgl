@@ -4,8 +4,8 @@
 //! diagnostics capture it, into the tone-mapped target at the output size,
 //! undithered, which is then copied to the output texel for texel and
 //! dithered alike. Where SMAA runs, into a target at the scene size
-//! (`encode_scene`), which SMAA antialiases and `resample` then presents the
-//! same two ways.
+//! (`encode` to `Destination::Scene`), which SMAA antialiases and `resample`
+//! then presents the same two ways.
 use super::inputs::{self, Inputs, draw, pipeline, sampled, uniform_entry};
 use crate::frame_input::{AgxLook, ColorGrading};
 use crate::shading::gbuffer::COLOR as HDR;

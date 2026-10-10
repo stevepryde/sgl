@@ -316,8 +316,8 @@ fn scene_resolution_budgets_resize_targets_without_stretching_or_upscaling() {
 // The oracle is the displayed image: a scene 16 times brighter under an
 // exposure 16 times lower (and the reverse) is the same image, so its
 // antialiased presentation is identical, texel for texel, to the scene's
-// own; and SMAA changes that presentation, so its edges are found at all.
-// The scene is presented above its size, through the resample.
+// own; and SMAA's output differs from its input, so its edges are found at
+// all. The scene is presented above its size, through the resample.
 #[test]
 fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
     let Some((device, queue)) = crate::test_support::device() else {
@@ -343,7 +343,9 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
             })
             .collect()
     };
-    let mut present = |scale: f32, smaa: bool| {
+    // The captured presentation, and whether SMAA changed the tone-mapped
+    // scene.
+    let mut present = |scale: f32| {
         let scene = crate::test_support::hdr_texture(&device, &queue, scene_size, &texels(scale));
         let exposure = exposure_texture(&device, &queue, 1. / scale);
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -354,7 +356,7 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
             &scene,
             Presentation {
                 bloom: false,
-                smaa: smaa.then_some(SmaaQuality::Medium),
+                smaa: Some(SmaaQuality::Medium),
                 capture: true,
             },
             look(&exposure),
@@ -362,17 +364,19 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
             None,
         );
         queue.submit([encoder.finish()]);
-        read(&device, &queue, post.tone_mapped().texture(), 8)
+        let targets = post.smaa_targets.as_ref().unwrap();
+        let changed = read(&device, &queue, targets.tone_mapped.texture(), 8)
+            != read(&device, &queue, targets.antialiased.texture(), 8);
+        (
+            read(&device, &queue, post.tone_mapped().texture(), 8),
+            changed,
+        )
     };
-    let displayed = present(1., true);
-    assert_ne!(
-        displayed,
-        present(1., false),
-        "SMAA must change the diagonal"
-    );
+    let (displayed, changed) = present(1.);
+    assert!(changed, "SMAA must change the diagonal");
     for scale in [16., 1. / 16.] {
         assert!(
-            present(scale, true) == displayed,
+            present(scale).0 == displayed,
             "the scene times {scale} under an exposure of 1/{scale} must antialias alike"
         );
     }
