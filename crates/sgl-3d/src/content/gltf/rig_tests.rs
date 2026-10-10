@@ -340,7 +340,7 @@ fn malformed_accessors_are_rejected() {
             .unwrap() as usize
     }
     type Edit = fn(&mut Value, &mut Buffer);
-    let cases: [(&str, Edit, &str); 13] = [
+    let cases: [(&str, Edit, &str); 15] = [
         (
             "FLOAT indices",
             |document, buffer| {
@@ -415,6 +415,29 @@ fn malformed_accessors_are_rejected() {
             "mesh 0 primitive 0",
         ),
         (
+            "indices in a view whose end overflows",
+            |document, buffer| {
+                let indices =
+                    buffer.accessor(bytemuck::cast_slice(&[0u16, 1, 2]), 5123, "SCALAR", 3);
+                let view = buffer.accessors[indices]["bufferView"].as_u64().unwrap() as usize;
+                buffer.views[view]["byteOffset"] = json!(u64::MAX - 2);
+                document["meshes"][0]["primitives"][0]["indices"] = json!(indices);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            // Read as no indices, which draws the vertices in order.
+            "indices in a view past its buffer",
+            |document, buffer| {
+                let indices =
+                    buffer.accessor(bytemuck::cast_slice(&[0u16, 1, 2]), 5123, "SCALAR", 3);
+                let view = buffer.accessors[indices]["bufferView"].as_u64().unwrap() as usize;
+                buffer.views[view]["byteOffset"] = json!(buffer.bytes.len() + 64);
+                document["meshes"][0]["primitives"][0]["indices"] = json!(indices);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
             "morph target of no sparse elements",
             |document, buffer| {
                 let lift = document["meshes"][1]["primitives"][0]["targets"][0]["POSITION"]
@@ -470,4 +493,26 @@ fn malformed_accessors_are_rejected() {
             "{label}: {error}"
         );
     }
+}
+
+// Plausible defect: an embedded image's buffer view reaching past its
+// buffer handed to gltf's image decoding, which slices the buffer with it
+// unchecked and panics.
+#[wasm_bindgen_test(unsupported = test)]
+fn an_image_view_past_its_buffer_is_rejected() {
+    let bytes = rigged(|document, buffer| {
+        buffer
+            .views
+            .push(json!({"buffer": 0, "byteOffset": buffer.bytes.len(), "byteLength": 64}));
+        document["images"] =
+            json!([{"bufferView": buffer.views.len() - 1, "mimeType": "image/png"}]);
+    });
+    let error = load_slice(&bytes)
+        .err()
+        .expect("an image past its buffer was accepted")
+        .to_string();
+    assert!(
+        error.contains("image 0") && error.contains("buffer"),
+        "{error}"
+    );
 }
