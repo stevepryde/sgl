@@ -3,7 +3,7 @@
 Authority: Intel GameTechDev/XeGTAO commit
 [`a5b1686c7ea37788eeb3576b5be47f7c03db532c`](https://github.com/GameTechDev/XeGTAO/tree/a5b1686c7ea37788eeb3576b5be47f7c03db532c).
 The original `XeGTAO.h`, `XeGTAO.hlsli`, `vaGTAO.hlsl` and `vaGTAO.cpp`
-are preserved under `reference/`. They are MIT licensed, copyright 2016–2021
+are preserved in the repository under `reference/`. They are MIT licensed, copyright 2016–2021
 Intel Corporation. The WGSL adaptation retains that license.
 
 Configuration is full-resolution FP32 (`XE_GTAO_FP32_DEPTHS`,

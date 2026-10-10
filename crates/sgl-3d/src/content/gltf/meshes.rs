@@ -2,11 +2,15 @@
 //! into their vertices and skinned ones' kept in bind space, and batched by
 //! what primitives must share to be drawn as one mesh.
 use glam::{Mat4, Vec3};
+use gltf::Semantic;
+use gltf::accessor::DataType::{self, F32, U8, U16, U32};
+use gltf::accessor::Dimensions::{self, Scalar, Vec2, Vec4};
 use gltf::mesh::Mode;
 use std::collections::HashMap;
 
 use super::super::asset::{CpuMesh, Material, Result, Vertex};
 use super::super::deformation::{MeshDeformation, MorphTarget};
+use super::check_accessor;
 use super::rig::{Rigging, read_influences, read_morph_targets};
 
 /// What primitives must share to be drawn as one mesh: a material, and
@@ -123,24 +127,53 @@ pub(super) fn read_node(
                 )
                 .into());
             }
-            for (semantic, _) in primitive.attributes() {
-                if matches!(
-                    semantic,
-                    gltf::Semantic::Joints(1..) | gltf::Semantic::Weights(1..)
-                ) {
-                    return Err(format!("{label}: more than four joint influences per vertex; limit influences to four in the export").into());
-                }
-                if !matches!(
-                    semantic,
-                    gltf::Semantic::Positions
-                        | gltf::Semantic::Normals
-                        | gltf::Semantic::Tangents
-                        | gltf::Semantic::TexCoords(0)
-                        | gltf::Semantic::Colors(0)
-                        | gltf::Semantic::Joints(0)
-                        | gltf::Semantic::Weights(0)
-                ) {
-                    return Err(format!("{label}: unsupported attribute {semantic:?}; add its renderer input or remove it from the export").into());
+            // glTF 2.0 3.7.2.1's accessor types for each attribute, its
+            // indices and its morph targets' displacements.
+            for (semantic, accessor) in primitive.attributes() {
+                let (types, shapes): (&[DataType], &[Dimensions]) = match semantic {
+                    Semantic::Joints(1..) | Semantic::Weights(1..) => {
+                        return Err(format!("{label}: more than four joint influences per vertex; limit influences to four in the export").into());
+                    }
+                    Semantic::Positions | Semantic::Normals => (&[F32], &[Dimensions::Vec3]),
+                    Semantic::Tangents => (&[F32], &[Vec4]),
+                    Semantic::TexCoords(0) => (&[F32, U8, U16], &[Vec2]),
+                    Semantic::Colors(0) => (&[F32, U8, U16], &[Dimensions::Vec3, Vec4]),
+                    Semantic::Joints(0) => (&[U8, U16], &[Vec4]),
+                    Semantic::Weights(0) => (&[F32, U8, U16], &[Vec4]),
+                    _ => {
+                        return Err(format!("{label}: unsupported attribute {semantic:?}; add its renderer input or remove it from the export").into());
+                    }
+                };
+                check_accessor(
+                    &accessor,
+                    &format!("{label}: {}", semantic.to_string()),
+                    types,
+                    shapes,
+                )?;
+            }
+            if let Some(indices) = primitive.indices() {
+                check_accessor(
+                    &indices,
+                    &format!("{label}: indices"),
+                    &[U8, U16, U32],
+                    &[Scalar],
+                )?;
+            }
+            for (target, displacements) in primitive.morph_targets().enumerate() {
+                for accessor in [
+                    displacements.positions(),
+                    displacements.normals(),
+                    displacements.tangents(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    check_accessor(
+                        &accessor,
+                        &format!("{label}: morph target {target}"),
+                        &[F32],
+                        &[Dimensions::Vec3],
+                    )?;
                 }
             }
             let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()].0));

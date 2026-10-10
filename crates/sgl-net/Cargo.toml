@@ -7,6 +7,8 @@ categories = ["game-development", "network-programming"]
 keywords = ["gamedev", "networking", "udp", "websocket"]
 readme = "README.md"
 description = "Opaque-payload UDP, WebSocket, and in-memory game transports"
+# Examples and tests stay in the repository.
+include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

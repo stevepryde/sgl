@@ -12,6 +12,7 @@
 //!
 //! Draw order (PR-2): each channel is stable-sorted by ascending `z`, so
 //! equal-`z` sprites keep their push order ("tree order" parity with Godot).
+//! A NaN `z` draws last.
 //!
 //! Two CPU expansions turn one template instance into the quads that cover a
 //! target rect, so the GPU path stays a dumb textured-quad batcher:
@@ -114,6 +115,7 @@ pub struct SpriteInstance {
     /// channel is always gamma).
     pub color: [f32; 4],
     /// Draw depth: lower draws first; equal `z` keeps push order (PR-2).
+    /// NaN draws last.
     pub z: f32,
     pub flip_x: bool,
     pub flip_y: bool,
@@ -448,12 +450,17 @@ impl DrawList {
     }
 
     /// Stable-sort both channels by ascending `z` (equal `z` keeps push
-    /// order — PR-2 tree-order parity). Called by the renderer before
-    /// batching; idempotent.
+    /// order — PR-2 tree-order parity). A NaN `z` draws after every other
+    /// `z`. Called by the renderer before batching; idempotent.
     pub fn sort(&mut self) {
-        let by_z = |a: &SpriteInstance, b: &SpriteInstance| {
-            a.z.partial_cmp(&b.z).unwrap_or(std::cmp::Ordering::Equal)
+        // A total order (a NaN-tolerant `partial_cmp` is not one, and
+        // `sort_by` may panic on it) that still treats `-0.0` as `0.0`.
+        let key = |s: &SpriteInstance| match s.z {
+            z if z.is_nan() => f32::NAN,
+            0.0 => 0.0, // Also matches `-0.0`.
+            z => z,
         };
+        let by_z = |a: &SpriteInstance, b: &SpriteInstance| key(a).total_cmp(&key(b));
         self.world.sort_by(by_z);
         self.screen.sort_by(by_z);
     }
@@ -598,6 +605,35 @@ mod tests {
         list.sort();
         let order: Vec<f32> = list.world.iter().map(|s| s.rot).collect();
         assert_eq!(order, vec![1.0, 3.0, 2.0, 0.0]);
+    }
+
+    /// #321: NaN `z` values sort last without panicking, and the finite
+    /// entries stay ascending and stable (`-0.0` ties with `0.0`).
+    #[wasm_bindgen_test(unsupported = test)]
+    fn nan_z_sorts_last_and_keeps_the_rest_stable() {
+        let mut list = DrawList::new();
+        let mut expected = Vec::new();
+        for i in 0..200u16 {
+            let tag = f32::from(i);
+            let z = match i % 5 {
+                0 => f32::NAN,
+                1 => -f32::NAN,
+                2 => -0.0,
+                3 => 0.0,
+                _ => f32::from(i % 7) - 3.0,
+            };
+            list.push(sprite(z, tag));
+            if !z.is_nan() {
+                expected.push((if z == 0.0 { 0.0 } else { z }, tag));
+            }
+        }
+        expected.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        list.sort();
+        let (finite, nan) = list.world.split_at(expected.len());
+        let order: Vec<f32> = finite.iter().map(|s| s.rot).collect();
+        let want: Vec<f32> = expected.iter().map(|e| e.1).collect();
+        assert_eq!(order, want);
+        assert!(nan.iter().all(|s| s.z.is_nan()));
     }
 
     /// The two channels sort independently.
