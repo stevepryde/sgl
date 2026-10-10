@@ -2582,14 +2582,21 @@ loads on several threads: build it where it is used, or store a
 The loader supports glTF triangle meshes, baked rigid node transforms,
 skins with four influences per vertex, morph targets, animation clips as data
 ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)),
-UV0, metallic/roughness materials, the opaque, masked and blended alpha modes,
+UV0, `TEXCOORD_1` as `Vertex::lightmap_uv`, metallic/roughness materials, the
+opaque, masked and blended alpha modes,
 normal and bump maps, an occlusion map packed in the red channel of the
 metallic-roughness image (ORM), `KHR_materials_clearcoat` with its maps,
 emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_iridescence`, `KHR_materials_sheen`,
 `KHR_materials_diffuse_transmission`, and the `KHR_materials_ior` and
 `KHR_materials_specular` factors. A primitive whose material has any map
-needs `TEXCOORD_0`. Every accessor the load reads must hold at least one
+needs `TEXCOORD_0`. Each map SGL3D samples needs linear magnification and
+trilinear minification (or none set); a map it leaves out may sample any
+way. `TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static
+instance while an atlas is installed, a vertex it charts samples the atlas
+and takes no baked lights, so set `lightmap_uv` to `[0, 0]` on models the
+bake does not chart (one exported with a second UV map for AO, say).
+Every accessor the load reads must hold at least one
 element, within its buffer view and buffer, of a component type and shape
 glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
 bind matrices or keyframes), and an embedded image's buffer view must lie

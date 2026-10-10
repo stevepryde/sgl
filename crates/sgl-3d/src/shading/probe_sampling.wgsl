@@ -25,9 +25,11 @@ struct ProbeCollection {
  // scene/probe_grid.rs), in the collection's buffer.
  grid:array<u32>,
 }
-// Tiled culling (probe_culling.wgsl) records each tile's probes as 32-probe
-// buckets, in tiles of PROBE_TILE_SIZE by PROBE_TILE_SIZE pixels.
-const PROBE_BUCKETS:u32=MAX_PROBES/32u;
+// Tiled culling (probe_culling.wgsl) records each tile's probes as buckets of
+// PROBE_BUCKET_PROBES, one u32 mask with a bit per probe, in tiles of
+// PROBE_TILE_SIZE by PROBE_TILE_SIZE pixels.
+const PROBE_BUCKET_PROBES:u32=32u;
+const PROBE_BUCKETS:u32=MAX_PROBES/PROBE_BUCKET_PROBES;
 const PROBE_TILE_SIZE:u32=32u;
 // Box projection (Lagarde and Zanuttini, "Local Image-based Lighting With
 // Parallax-corrected Cubemaps", SIGGRAPH 2012): the reflected ray from the
