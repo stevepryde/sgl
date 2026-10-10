@@ -80,27 +80,25 @@ impl FrameAnimation {
     /// [`LoopMode::Once`] animation finishes (a completion edge, once).
     ///
     /// Large `dt` steps multiple frames; the leftover carries into the new
-    /// frame so long-run timing never drifts. A [`LoopMode::Repeat`] tick
-    /// longer than a whole pass over the order skips the whole passes. A
-    /// non-finite `dt` is ignored.
+    /// frame so long-run timing never drifts. A non-finite `dt` is ignored. A
+    /// [`LoopMode::Repeat`] tick whose frame duration is too small for `f32`
+    /// to subtract from the accumulated time drops the remainder.
     pub fn tick(&mut self, dt: f32) -> bool {
         if self.finished || !dt.is_finite() {
             return false;
         }
         self.timer += dt;
-        if self.loop_mode == LoopMode::Repeat {
-            // Whole passes return to the same position. Removing them bounds
-            // the loop below to one pass, where each subtraction lowers the
-            // timer (a duration below the timer's `f32` precision would not).
-            // Exact for any order shorter than 2^24 entries.
-            #[allow(clippy::cast_precision_loss)]
-            let pass = self.frame_duration * self.order.len() as f32;
-            if self.timer >= pass {
-                self.timer %= pass;
-            }
-        }
         while self.timer >= self.frame_duration {
-            self.timer -= self.frame_duration;
+            let rest = self.timer - self.frame_duration;
+            if rest >= self.timer && self.loop_mode == LoopMode::Repeat {
+                // The subtraction made no progress (a duration below the
+                // timer's precision, or a timer overflowed to infinity), so
+                // `Repeat` would spin. `Once` needs no guard: it finishes
+                // within one pass.
+                self.timer = 0.0;
+                return false;
+            }
+            self.timer = rest;
             if self.position + 1 < self.order.len() {
                 self.position += 1;
             } else {
@@ -241,15 +239,24 @@ mod tests {
     }
 
     /// #313: a frame duration below the timer's `f32` precision (2^-30 s
-    /// against a 1 s tick) returns. One second is 2^30 frames, an even
-    /// number of passes over two frames, so the cursor ends where it began.
+    /// against a 1 s tick) returns, dropping the remainder, and the next
+    /// frame's worth of time advances the cursor.
     #[wasm_bindgen_test(unsupported = test)]
-    fn a_tick_far_longer_than_a_frame_skips_whole_passes() {
+    fn a_frame_duration_below_the_timer_precision_drops_the_remainder() {
         let fps = 2f32.powi(30);
         let mut a = FrameAnimation::new([0, 1], fps, LoopMode::Repeat);
         a.tick(1.0);
         assert_eq!(a.current_frame(), 0);
         a.tick(1.0 / fps);
+        assert_eq!(a.current_frame(), 1);
+    }
+
+    /// #313: frame `i` shows for `[i·d, (i+1)·d)`, so 0.4 s into `[0, 1, 2]`
+    /// at 10 fps is frame 1 of the second pass.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_tick_past_a_whole_pass_lands_on_the_spec_frame() {
+        let mut a = FrameAnimation::new([0, 1, 2], 10.0, LoopMode::Repeat);
+        a.tick(0.4);
         assert_eq!(a.current_frame(), 1);
     }
 
