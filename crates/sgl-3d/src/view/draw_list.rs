@@ -344,7 +344,7 @@ impl DrawList {
         light: (Vec3, f32),
     ) {
         let pose = instance.state.pose;
-        let bounds = grown(instance.bounds(model), scene.displacement_of(model));
+        let bounds = scene.caster_bounds(instance, model);
         if !moving_caster_reaches(bounds, pose, view.view_projection(), light) {
             return;
         }

@@ -42,7 +42,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    advisory, and `send` is the only atomic admission.
 8. Generic endpoint adapters work over any `DatagramTransport`; the simulated
    network can create multiple independently addressed endpoints for acceptance
-   tests without real sockets or sleeps.
+   tests without real sockets or sleeps. A transport's receive reports an
+   empty socket apart from a failed receive; a poll skips a failed one and
+   reads on, each counting toward `max_datagrams_per_poll`, so an oversized
+   or ICMP-reported datagram costs only itself.
 
 9. Connection ids are unique for the life of a transport and never reused
    after `Disconnected`. Reconnecting yields a new id and a new epoch; late
@@ -173,6 +176,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     it carries, or mask bits on a control kind is rejected; from a connected
     peer that is `ProtocolViolation`. Handshakes use a keyed cookie
     challenge with a per-prefix challenge budget and a confirm replay cache.
+    A client confirms the first challenge it receives and ignores others,
+    so challenges to its retried requests, reordered across a cookie epoch,
+    cannot leave it holding a cookie the server has not kept.
 13. WebSocket frames use the 18-byte version-2 envelope: magic, version, flags
     (kind 0 reliable, 1 latest, 2 unreliable; FIRST; MORE), lane, big-endian
     sequence (0 for reliable and unreliable, strictly increasing for latest),

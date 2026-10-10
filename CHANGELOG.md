@@ -24,6 +24,29 @@ docs and specs the entry links.
   (a UDP client in its handshake too, with no `Connected`), and one
   already ended reports that end. Games that clean up when they call
   `disconnect`: ignore that event, or move the cleanup to it.
+- `sgl-3d` `Light::specular`: a diffuse-only light (0) dimmed a clearcoated
+  base by the coat's Fresnel, and a weight above 1 dimmed a sheened base
+  further; the coat's and sheen's dimming now follow
+  `specular` up to 1, and dynamic GI probe hits take no coat. No game-code
+  changes needed.
+- `sgl-3d` local-light shadows: a material shader's parameters
+  (`Scene::set_shader_parameters`), the frame's time and a moving instance's
+  `Scene::set_instance_shader_data` left cached shadows stale; casters whose
+  shader moves or cuts them now redraw where those change, every frame the
+  time advances for a shader that reads `time` or `phase`. No game-code
+  changes needed.
+- `sgl-net` UDP client handshake: a client confirmed the last challenge it
+  received, so challenges to its retried request that arrived reversed
+  across a cookie epoch left the join failing at the timeout after a ghost
+  `Connected` on the server; it now confirms the first. No game-code
+  changes needed.
+- `sgl-net` `DatagramTransport::receive`: returned `Option`, so any socket
+  error ended the endpoint's poll as if the socket were empty (on Windows an
+  oversized datagram or ICMP error starved every other peer); it now
+  returns `io::Result<Option<(usize, SocketAddr)>>`, `Ok(None)` when empty
+  and `Err` for a failed receive the endpoint skips. Custom transports:
+  return `Ok(None)` for `WouldBlock`, `Err` for other errors, and wrap a
+  datagram in `Ok(Some(..))`.
 - `sgl-3d` `Scene::add_shader`: loops that could run for ever were accepted
   as counted (a test or step read from a `let` computed before the loop, or
   a `break if` loop re-entered by an outer loop without restarting its

@@ -206,6 +206,9 @@ impl Population<'_> {
     /// frame's `mask`: blended ones only `Blended`, which draws nothing
     /// else, and shadows only casters.
     pub(super) fn draws(&self, material: &Material, mask: Option<u32>) -> bool {
+        if let Self::LocalShadow { .. } = self {
+            return material.casts_local_shadow(mask);
+        }
         if material.values.blended() != matches!(self, Self::Blended { .. }) {
             return false;
         }

@@ -481,3 +481,36 @@ fn the_parameter_layout_is_wgsl_s() {
         }
     );
 }
+
+// Plausible defects: a shader that reads the frame's time through a helper,
+// a local copy of its context or the phase, recorded as not reading it, so
+// a local light's cached shadow of its casters never follows the time; or
+// one that reads only other context members recorded as reading it, so its
+// casters' shadows redraw every frame for nothing. The oracle is the
+// contract: the time is the `time` and `phase` members of `VertexContext`
+// and `SurfaceContext`.
+#[wasm_bindgen_test(unsupported = test)]
+fn reading_the_time_is_recorded() {
+    let module = |helpers: &str, vertex: &str, surface: &str| {
+        format!(
+            "{PARAMS}{helpers}\nfn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {{\n var out=v;\n {vertex}\n return out;\n}}\nfn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {{\n var out=s;\n {surface}\n return out;\n}}"
+        )
+    };
+    let wave = "fn wave(ctx:VertexContext)->f32 { return sin(ctx.time); }";
+    for (helpers, vertex, surface, reads) in [
+        ("", "out.position.y+=ctx.time;", "", true),
+        ("", "", "out.roughness=fract(ctx.phase);", true),
+        (wave, "out.position.y+=wave(ctx);", "", true),
+        ("", "var held=ctx; out.position.y+=held.time;", "", true),
+        (
+            "",
+            "out.position.y+=ctx.instance.x;",
+            "out.roughness=ctx.uv.x;",
+            false,
+        ),
+    ] {
+        let source = module(helpers, vertex, surface);
+        let validated = validated(&source).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(validated.reads_time, reads, "{source}");
+    }
+}

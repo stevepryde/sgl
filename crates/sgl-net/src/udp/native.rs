@@ -33,8 +33,20 @@ impl DatagramTransport for UdpSocketTransport {
         let _ = self.socket.send_to(payload, destination);
     }
 
-    fn receive(&mut self, output: &mut [u8], _now_ms: u64) -> Option<(usize, SocketAddr)> {
-        self.socket.recv_from(output).ok()
+    /// Only `WouldBlock` means the socket is empty. Any other error (on
+    /// Windows, `WSAEMSGSIZE` for an oversized datagram or `WSAECONNRESET`
+    /// for an ICMP port-unreachable) concerns one datagram and is returned
+    /// for the endpoint to skip.
+    fn receive(
+        &mut self,
+        output: &mut [u8],
+        _now_ms: u64,
+    ) -> io::Result<Option<(usize, SocketAddr)>> {
+        match self.socket.recv_from(output) {
+            Ok(received) => Ok(Some(received)),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 }
 

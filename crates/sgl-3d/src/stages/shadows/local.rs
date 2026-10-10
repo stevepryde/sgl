@@ -44,6 +44,7 @@ use crate::view::draw_list::DrawInstances;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::{GeometryPass, GeometryPipelines};
 use glam::{Mat4, Vec3};
+pub(crate) use plan::ShadowFrame;
 use plan::{Face, Work};
 
 /// The last rendered frame's local-light shadows
@@ -293,9 +294,8 @@ impl Local {
 
     /// Places the shadows of `scene`'s casting lights that reach the view of
     /// a camera with `view` and `projection`, when `enabled`, plans the faces
-    /// whose content changed for the frame's visibility `mask`, with their
-    /// draws' instances in `drawn`, and uploads their views and the lights'
-    /// shadow records.
+    /// whose content changed for `frame`, with their draws' instances in
+    /// `drawn`, and uploads their views and the lights' shadow records.
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
@@ -304,10 +304,10 @@ impl Local {
         bindings: &FrameBindings,
         (scene, drawn): (&Scene, &mut DrawInstances),
         camera: (Mat4, Mat4),
-        mask: u32,
+        frame: ShadowFrame,
         enabled: bool,
     ) {
-        self.plan.prepare(drawn, scene, camera, mask, enabled);
+        self.plan.prepare(drawn, scene, camera, frame, enabled);
         self.upload_views(device, queue, bindings);
         let records = self.plan.records();
         if self.written.len() < records.len() {
@@ -319,7 +319,7 @@ impl Local {
     }
 
     /// Places the static layers a probe capture at `center` of `scene`
-    /// samples with visibility `mask`, when `enabled`, with their draws'
+    /// samples for `frame`, when `enabled`, with their draws'
     /// instances in `drawn`, and returns the shadow records that place them,
     /// which the capture's lit groups bind. `encode_capture` draws them, and
     /// `finish_capture` commits them once the capture is submitted.
@@ -331,11 +331,11 @@ impl Local {
         bindings: &FrameBindings,
         (scene, drawn): (&Scene, &mut DrawInstances),
         center: Vec3,
-        mask: u32,
+        frame: ShadowFrame,
         enabled: bool,
     ) -> wgpu::Buffer {
         self.plan
-            .prepare_capture(drawn, scene, center, mask, enabled);
+            .prepare_capture(drawn, scene, center, frame, enabled);
         self.upload_views(device, queue, bindings);
         crate::scene::buffer(
             device,

@@ -301,6 +301,163 @@ fn a_white_furnace_conserves_energy_under_a_film() {
     }
 }
 
+// Plausible defects: a diffuse-only light (`Light::specular` 0) dims a
+// coated or sheened base by a layer whose lobe it does not light, on the
+// base's front lobe or its passed-through one. The oracle is the bare base:
+// under diffuse-only lights from every direction of both hemispheres, a
+// base beneath a coat, a sheen or both diffuses exactly what the same base
+// without them does, on either side. The bound is f32 accumulation.
+#[test]
+fn diffuse_only_lights_light_the_base_whole_beneath_its_layers() {
+    let layers = [(0., [0.; 3]), (1., [0.; 3]), (0., [1.; 3]), (1., [1.; 3])];
+    let mut cases = Vec::new();
+    for nv in [0.3, 0.8] {
+        for transmission in [0., 0.5] {
+            for (coat, sheen) in layers {
+                cases.push(Layered {
+                    view: view(nv),
+                    coat,
+                    sheen,
+                    transmission,
+                    light_specular: 0.,
+                    ..Layered::default()
+                });
+            }
+        }
+    }
+    let Some(observed) = observe_lit(&cases) else {
+        return;
+    };
+    for (cases, observed) in cases
+        .chunks(layers.len())
+        .zip(observed.chunks(layers.len()))
+    {
+        let [bare_above, bare_below, _] = observed[0];
+        for (case, [above, below, _]) in cases.iter().zip(observed).skip(1) {
+            for (side, layered, bare) in [("front", above, bare_above), ("back", below, bare_below)]
+            {
+                assert!(
+                    (*layered - bare).abs().max_element() <= 1e-5 * bare.max_element().max(1e-3),
+                    "{case:?}, {side}: {layered:?}, {bare:?} without its layers"
+                );
+            }
+        }
+    }
+}
+
+// Plausible defects: a dynamic GI probe ray's hit, which takes diffuse light
+// alone, dims its base by a coat it does not evaluate: its indirect light,
+// its emission or the one light it draws. The oracle is the bare hit: a
+// coated hit, through shade_lit as a probe hit and probe_hit_light, takes
+// exactly what the same hit without its coat does, under a hemisphere fill
+// and a directional light. The bound is f32 rounding.
+#[test]
+fn a_probe_ray_s_hit_takes_no_coat() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let settings = quiet_settings();
+    let mut renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let mut scene = Scene::new(&device, &queue);
+    let mut input = dark_input();
+    input.hemisphere_light = HemisphereLight {
+        sky_color: [1.; 3],
+        ground_color: [0.5; 3],
+        intensity: 1.,
+    };
+    input.directional_lights[0] = Some(DirectionalLight {
+        direction: Vec3::new(0.3, 0., -1.),
+        color: [1.; 3],
+        illuminance: 1.,
+        ..Default::default()
+    });
+    let observation = format!(
+        r#"{}
+@group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
+@compute @workgroup_size(1) fn observe() {{
+ let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_PROBE_HIT,false,true,cluster_range(vec3(0.),vec2(0.)),untraced_reflection());
+ for (var coat=0u;coat<2u;coat++) {{
+  var s=case_surface(normalize(vec3(-.6,0.,.8)),.5,vec3(.8),0.);
+  s.lightmap_uv=vec2(-1.);
+  s.coat=f32(coat);
+  s.coat_roughness=.3;
+  s.emission=vec3(.25);
+  output[coat*2u]=vec4(shade_lit(s,context).color,0.);
+  output[coat*2u+1u]=vec4(probe_hit_light(s,cluster_range(s.position,vec2(0.)),vec3(0.)),0.);
+ }}
+}}
+"#,
+        grid_wgsl()
+    );
+    let rows = test_support::observe_ray_hits(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        &observation,
+        4,
+    );
+    let vector = |a: [f32; 4]| DVec3::new(a[0] as f64, a[1] as f64, a[2] as f64);
+    for (label, bare, coated) in [
+        ("indirect light and emission", rows[0], rows[2]),
+        ("its light", rows[1], rows[3]),
+    ] {
+        let (bare, coated) = (vector(bare), vector(coated));
+        assert!(bare.min_element() > 0.01, "{label}: {bare:?}");
+        assert!(
+            (coated - bare).abs().max_element() <= 1e-5 * bare.max_element(),
+            "{label}: coated {coated:?}, {bare:?} without its coat"
+        );
+    }
+}
+
+// Plausible defect: a light's specular weight above 1 dims a coated or
+// sheened base further than the physical layering does, darkening it, where
+// the weight is meant only to brighten the layers' lobes (Godot's
+// light_specular scales specular alone). The oracle is the weight-1 base:
+// a surface's passed-through lobe, which no specular lobe adds to, under
+// lights from every direction behind it, is the same under weights 2 and 4
+// as under 1, beneath a coat, a sheen or both. The bound is f32
+// accumulation.
+#[test]
+fn specular_weights_above_1_leave_the_base_beneath_its_layers_as_at_1() {
+    let layers = [(1., [0.; 3]), (0., [1.; 3]), (1., [1.; 3])];
+    let weights = [1., 2., 4.];
+    let mut cases = Vec::new();
+    for nv in [0.3, 0.8] {
+        for (coat, sheen) in layers {
+            for light_specular in weights {
+                cases.push(Layered {
+                    view: view(nv),
+                    coat,
+                    sheen,
+                    transmission: 1.,
+                    light_specular,
+                    ..Layered::default()
+                });
+            }
+        }
+    }
+    let Some(observed) = observe_lit(&cases) else {
+        return;
+    };
+    for (cases, observed) in cases
+        .chunks(weights.len())
+        .zip(observed.chunks(weights.len()))
+    {
+        let [_, at_1, _] = observed[0];
+        assert!(at_1.max_element() > 0., "{:?}: lit from behind", cases[0]);
+        for (case, [_, below, _]) in cases.iter().zip(observed).skip(1) {
+            assert!(
+                (*below - at_1).abs().max_element() <= 1e-5 * at_1.max_element(),
+                "{case:?}: {below:?} behind, {at_1:?} at weight 1"
+            );
+        }
+    }
+}
+
 // Plausible defects: direct light and the environment scatter a metal's
 // light by different models, so a rough metal is darker or brighter and
 // shifts hue under the sun against the sky (three.js r185's direct heuristic
