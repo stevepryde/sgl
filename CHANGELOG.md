@@ -16,8 +16,8 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` `Light::specular`: a diffuse-only light (0) dimmed a clearcoated
-  base by the coat's Fresnel, and a weight above 1 dimmed a coated or
-  sheened base further; the coat's and sheen's dimming now follow
+  base by the coat's Fresnel, and a weight above 1 dimmed a sheened base
+  further; the coat's and sheen's dimming now follow
   `specular` up to 1, and dynamic GI probe hits take no coat. No game-code
   changes needed.
 - `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain

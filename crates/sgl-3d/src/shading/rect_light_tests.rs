@@ -363,7 +363,7 @@ fn a_diffuse_only_rect_lights_a_coated_base_whole() {
             diffuse: 0.8,
             coat,
             coat_rough: 0.3,
-            coat_fresnel: 0.2,
+            coat_fresnel: 0.2 * coat,
             transmitted: 0.,
         })
         .collect();

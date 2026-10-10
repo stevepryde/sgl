@@ -2000,6 +2000,7 @@ specular does not scatter, plus its multiple scattering, the one rule every
 indirect source follows. On a coated material the coat's Fresnel toward
 the view dims it, and the irradiance atlas's and a moving instance's
 ambient cube's light, as it dims the material's live light and emission
+(up to the light's `specular`; probe hits take no coat)
 (KHR_materials_clearcoat layers the coat over the whole base).
 
 Static instances' other surfaces can additionally carry `Vertex::lightmap_uv`
