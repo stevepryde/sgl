@@ -136,8 +136,9 @@ rectangles so their text, accent and surface roles follow the selected palette.
   shrinking all text or stacking every action into a full-width button.
 - **Overflow ownership.** Give each overflowing pane one `scroll_area` and its
   own game-owned offset. Compute content height from the laid-out rows; keep
-  headers and toolbars outside its scrolling content. Restore enclosing clips
-  after custom clipping. Widget borders extend outside their hit rectangles:
+  headers and toolbars outside its scrolling content. A `scroll_area` clips
+  within the enclosing clip and restores it at `scroll_area_end`; restore
+  enclosing clips yourself after custom clipping. Widget borders extend outside their hit rectangles:
   inset content from viewport edges and reserve gaps for focus/selection strokes
   and the scrollbar. Clip long row names to their allocated space; provide
   their full meaning in focus/hover help instead of letting them cover actions.

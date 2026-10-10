@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
+  replaced the enclosing clip and its end reset the clip to `None`; it now
+  clips within the enclosing clip, nests, and restores the enclosing clip at
+  its end. Drop any `set_clip` that only restored the outer clip after
+  `scroll_area_end`.
 - `sgl-2d` `DrawList::sort`: a NaN `z` could panic or misorder the other
   sprites; NaN now draws last and the rest stay ascending and stable. No
 - `sgl-core` `derive_stream_seed`: components no longer cancel (chunk

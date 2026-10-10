@@ -167,11 +167,7 @@ impl UiFrame<'_> {
         }
         let scroll = if focused { self.ui.edit.scroll } else { 0.0 };
         let clip_was = self.clip;
-        let content_clip = clip_was.map_or(inner, |clip| {
-            clip.intersection(&inner)
-                .unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0))
-        });
-        self.set_clip(Some(content_clip));
+        self.set_clip(Some(self.clip_within(inner)));
         let text_rect = Rect::new(
             inner.min.x - scroll,
             inner.min.y,
