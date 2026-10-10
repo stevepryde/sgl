@@ -194,7 +194,8 @@ frame.color_grading = ColorGrading {
   shifts the frame into the range. The correction follows it at
   `speed_brighten` stops per second when the scene got brighter and
   `speed_darken` when it got darker, by `FrameInput::frame_time_ms`, slowing
-  within 1.5 stops of it (Bevy's default), and stays within
+  within 1.5 stops of it (Bevy's default) and never stepping past it however
+  long the frame, and stays within
   `correction_min..=correction_max`. A camera cut, a target-changing resize,
   another scene or a switch from a fixed exposure sets it to its target.
   Timing group `exposure`.
