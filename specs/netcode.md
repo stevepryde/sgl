@@ -116,7 +116,7 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     ingress) instead shed the oldest: a receiver that is not polled drops
     its oldest unpolled unreliable messages, as a full UDP socket buffer
     does. The threaded server's poll returns at most 32 lane messages per
-    peer (`LANE_MESSAGES_PER_PEER_PER_POLL`), shared across its lanes and
+    peer (`udp::LANE_MESSAGES_PER_PEER_PER_POLL`), shared across its lanes and
     both classes, so that is the sustainable per-poll rate above which a
     peer's reliable messages wait and its unreliable messages are shed.
     Other connections are never affected.

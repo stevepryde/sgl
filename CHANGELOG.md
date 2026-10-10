@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `udp::LANE_MESSAGES_PER_PEER_PER_POLL` (32, native) is now public:
+  the most lane messages a `ThreadedUdpServer` poll returns per peer, which
+  `specs/netcode.md` already named. No game-code changes needed.
 - All SGL crates: published packages no longer ship examples, tests, test
   fixtures or unused vendored reference sources; read those in the repository.
   Licences and notices still ship. No game-code changes needed.
