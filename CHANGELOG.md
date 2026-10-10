@@ -15,6 +15,14 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: a mesh with `TEXCOORD_1`, or a texture SGL3D does
+  not sample (such as an ignored occlusion map) with nearest or other
+  non-trilinear sampling, failed the load; `TEXCOORD_1` now loads as
+  `Vertex::lightmap_uv`, the mesh's static irradiance atlas chart, and only
+  sampled maps' sampling is checked. On a static instance while an atlas is
+  installed, a charted vertex samples the atlas and takes no baked lights:
+  set `lightmap_uv` to `[0, 0]` on models the bake does not chart (a second
+  UV map exported for AO, say). Otherwise no game-code changes needed.
 - `sgl-2d` `UiFrame::dropdown`: an open dropdown that stopped being
   submitted kept its popup open and the keyboard captured, blocking Tab and
   Enter elsewhere; it now closes at `UiFrame::end`. No game-code changes
