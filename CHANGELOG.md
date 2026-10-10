@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
+  ran on the unexposed HDR scene, so the exposure changed which edges it
+  found; it now runs after tone mapping, on display colour, before the
+  resample to the output. No game-code changes needed.
+
 - `sgl-3d` `AutoExposure`: a long frame (`FrameInput::frame_time_ms`)
   within a frame's step of the target stepped the correction past it, by
   stops after a hitch; it now lands on the target. No game-code changes

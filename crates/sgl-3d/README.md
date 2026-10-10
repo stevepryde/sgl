@@ -828,13 +828,15 @@ fast motion resolves softened rather than aliased. Upstream rejects by speed
 
 ### SMAA
 
-SMAA 1x runs on the linear HDR scene before tone mapping
-([`src/stages/post/smaa/README.md`](src/stages/post/smaa/README.md)) at
+SMAA 1x runs on the tone-mapped scene at the scene size, before it is
+resampled to the output and dithered
+([`src/stages/post/smaa/README.md`](src/stages/post/smaa/README.md)), so the
+exposure does not change which edges it finds. It runs at
 `Settings::smaa_quality` (`settings::SmaaQuality`), SMAA 2.8's presets:
 Low, Medium (the default), High and Ultra. They search up to 4, 8, 16 and
-32 steps of two pixels each way along an edge, at a colour contrast
-threshold of 0.15, 0.1, 0.1 and 0.05; High and Ultra also detect diagonal
-lines and corners.
+32 steps of two pixels each way along an edge, at a contrast threshold in
+sRGB-encoded display colour of 0.15, 0.1, 0.1 and 0.05; High and Ultra also
+detect diagonal lines and corners.
 
 ### FSR2
 

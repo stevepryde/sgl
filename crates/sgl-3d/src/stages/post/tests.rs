@@ -2,10 +2,14 @@ use super::*;
 use crate::settings::{Bloom, RenderPreset};
 use crate::test_support::{half, read};
 
-/// A 1×1 exposure multiplier of 1, as the exposure stage writes it.
-pub(super) fn unit_exposure(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+/// A 1×1 exposure multiplier of `value`, as the exposure stage writes it.
+pub(super) fn exposure_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    value: f32,
+) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("unit exposure"),
+        label: Some("fixture exposure"),
         size: wgpu::Extent3d {
             width: 1,
             height: 1,
@@ -20,7 +24,7 @@ pub(super) fn unit_exposure(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu:
     });
     queue.write_texture(
         texture.as_image_copy(),
-        bytemuck::bytes_of(&1f32),
+        bytemuck::bytes_of(&value),
         wgpu::TexelCopyBufferLayout::default(),
         texture.size(),
     );
@@ -184,7 +188,7 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
         )
         .unwrap();
         let output = target(&device, "bloom switch result", [64, 64], HDR);
-        let exposure = unit_exposure(&device, &queue);
+        let exposure = exposure_texture(&device, &queue, 1.);
         let scene = target(&device, "impulse", [64, 64], HDR);
         for preset in [RenderPreset::High, RenderPreset::Low, RenderPreset::High] {
             post.resize(&device, sizes([64, 64]), preset == RenderPreset::High);
@@ -304,4 +308,72 @@ fn scene_resolution_budgets_resize_targets_without_stretching_or_upscaling() {
             }
         }
     });
+}
+
+// Defect: SMAA detects edges on the unexposed HDR scene, so its absolute
+// thresholds scale with the exposure: a scene exposed up by 4 stops loses
+// its edges and one exposed down by 4 stops finds edges in every gradient.
+// The oracle is the displayed image: a scene 16 times brighter under an
+// exposure 16 times lower (and the reverse) is the same image, so its
+// antialiased presentation is identical, texel for texel, to the scene's
+// own; and SMAA changes that presentation, so its edges are found at all.
+// The scene is presented above its size, through the resample.
+#[test]
+fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let scene_size = [48, 40];
+    let sizes = Sizes {
+        render: scene_size,
+        scene: scene_size,
+        output: [72, 60],
+    };
+    let mut post = Post::new(&device, &queue, HDR, sizes, false, SmaaQuality::Medium).unwrap();
+    let output = target(&device, "SMAA exposure result", sizes.output, HDR);
+    // A dark field and a bright one across a shallow diagonal: 0.05 and 0.8
+    // differ by under SMAA's 0.1 threshold once divided by 16.
+    let texels = |scale: f32| -> Vec<[f32; 4]> {
+        (0..scene_size[1])
+            .flat_map(|y| {
+                (0..scene_size[0]).map(move |x| {
+                    let value = if 3 * x > 5 * y + 10 { 0.8 } else { 0.05 };
+                    [value * scale, value * scale, value * scale, 1.]
+                })
+            })
+            .collect()
+    };
+    let mut present = |scale: f32, smaa: bool| {
+        let scene = crate::test_support::hdr_texture(&device, &queue, scene_size, &texels(scale));
+        let exposure = exposure_texture(&device, &queue, 1. / scale);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        post.present(
+            &device,
+            &queue,
+            &mut encoder,
+            &scene,
+            Presentation {
+                bloom: false,
+                smaa: smaa.then_some(SmaaQuality::Medium),
+                capture: true,
+            },
+            look(&exposure),
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        read(&device, &queue, post.tone_mapped().texture(), 8)
+    };
+    let displayed = present(1., true);
+    assert_ne!(
+        displayed,
+        present(1., false),
+        "SMAA must change the diagonal"
+    );
+    for scale in [16., 1. / 16.] {
+        assert!(
+            present(scale, true) == displayed,
+            "the scene times {scale} under an exposure of 1/{scale} must antialias alike"
+        );
+    }
 }

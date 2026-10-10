@@ -1,12 +1,13 @@
-//! Post: bloom, SMAA (or its stand-in for TAA that did not run), then tone
-//! mapping with the frame's exposure and colour grading, dithered to the
-//! output.
+//! Post: bloom, then tone mapping with the frame's exposure and colour
+//! grading, dithered to the output; where SMAA runs (or stands in for TAA
+//! that did not run), tone mapping at the scene size, SMAA, then the
+//! antialiased scene resampled and dithered to the output.
 //!
 //! Reads: the completed scene at the scene size, motion-blurred when motion
 //! blur ran (`stages::motion_blur`), which antialiasing completed it
 //! (`Completed`), and the frame's exposure (`stages::exposure`).
-//! Writes: its own bloom chain, combined HDR, SMAA and tone-mapped targets,
-//! and the output.
+//! Writes: its own bloom chain, combined HDR, SMAA, tone-mapped scene,
+//! antialiased and tone-mapped targets, and the output.
 //! Honours: bloom (and the frame's authored bloom parameters, and the
 //! effective sizing's bloom targets), the frame's colour grading, the
 //! antialiasing in effect and SMAA's quality, the bloom and SMAA diagnostics
@@ -48,6 +49,8 @@ pub(crate) struct Post {
     inputs: inputs::Inputs,
     bloom: bloom::Bloom,
     smaa: smaa::Smaa,
+    /// SMAA's input: the tone-mapped scene at the scene size.
+    tone_mapped_scene: wgpu::TextureView,
     /// SMAA's output at the scene size.
     antialiased: wgpu::TextureView,
     tone_map: tone_map::ToneMap,
@@ -76,7 +79,8 @@ impl Post {
                 HDR,
                 smaa_quality,
             )?,
-            antialiased: target(device, "antialiased HDR scene", sizes.scene, HDR),
+            tone_mapped_scene: target(device, "tone-mapped scene", sizes.scene, HDR),
+            antialiased: target(device, "antialiased scene", sizes.scene, HDR),
             tone_map: tone_map::ToneMap::new(device, &inputs, format, sizes.output),
             inputs,
         })
@@ -86,7 +90,8 @@ impl Post {
     pub fn resize(&mut self, device: &wgpu::Device, sizes: Sizes, bloom_targets: bool) {
         self.inputs.forget();
         self.bloom.resize(device, sizes.scene, bloom_targets);
-        self.antialiased = target(device, "antialiased HDR scene", sizes.scene, HDR);
+        self.tone_mapped_scene = target(device, "tone-mapped scene", sizes.scene, HDR);
+        self.antialiased = target(device, "antialiased scene", sizes.scene, HDR);
         self.tone_map.resize(device, sizes.output);
         self.smaa.resize(device, sizes.scene[0], sizes.scene[1]);
     }
@@ -142,8 +147,9 @@ impl Post {
         );
     }
 
-    /// Bloom, SMAA, then tone mapping of `completed` to `output`, as
-    /// `presentation` asks, with `look`.
+    /// Bloom, then tone mapping of `completed` to `output`, as
+    /// `presentation` asks, with `look`; with SMAA, tone mapping at the scene
+    /// size, SMAA, then the result resampled to `output`.
     #[allow(clippy::too_many_arguments)]
     fn present(
         &mut self,
@@ -160,7 +166,7 @@ impl Post {
             self.inputs.forget();
         }
         // Without bloom, or at intensity 0 where Bevy skips its node, the
-        // completed scene goes to SMAA and tone mapping.
+        // completed scene goes to tone mapping.
         let combined = if presentation.bloom && look.bloom.intensity != 0. {
             crate::counters::write_buffer(
                 queue,
@@ -173,23 +179,53 @@ impl Post {
         } else {
             completed
         };
-        let hdr = if let Some(quality) = presentation.smaa {
-            self.smaa.set_quality(device, quality);
-            self.smaa
-                .encode(device, encoder, combined, &self.antialiased, timing);
-            &self.antialiased
-        } else {
-            combined
+        // SMAA after tone mapping and before the resample to the output, as
+        // Godot (`_render_buffers_post_process_and_tonemap`) and Bevy order
+        // them: its thresholds are for display colour.
+        let Some(quality) = presentation.smaa else {
+            self.tone_map.encode(
+                device,
+                queue,
+                encoder,
+                &self.inputs,
+                combined,
+                self.bloom.halo(),
+                look.exposure,
+                look.grading,
+                tone_map::Destination::Output {
+                    capture: presentation.capture,
+                    output,
+                },
+                timing,
+            );
+            return;
         };
         self.tone_map.encode(
             device,
             queue,
             encoder,
             &self.inputs,
-            hdr,
+            combined,
             self.bloom.halo(),
             look.exposure,
             look.grading,
+            tone_map::Destination::Scene(&self.tone_mapped_scene),
+            timing,
+        );
+        self.smaa.set_quality(device, quality);
+        self.smaa.encode(
+            device,
+            encoder,
+            &self.tone_mapped_scene,
+            &self.antialiased,
+            timing,
+        );
+        self.tone_map.resample(
+            device,
+            encoder,
+            &self.inputs,
+            &self.antialiased,
+            self.bloom.halo(),
             presentation.capture,
             output,
             timing,
