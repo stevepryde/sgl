@@ -7,6 +7,8 @@ categories = ["game-development", "rendering"]
 keywords = ["gamedev", "wgpu", "rendering", "sprites", "ui"]
 readme = "README.md"
 description = "Caller-driven 2D rendering, assets, text, lighting, and immediate UI for SGL games"
+# Examples and tests stay in the repository.
+include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

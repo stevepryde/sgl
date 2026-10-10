@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- All SGL crates: published packages no longer ship examples, tests, test
+  fixtures or unused vendored reference sources; read those in the repository.
+  Licences and notices still ship. No game-code changes needed.
+
 - `sgl-net` `ThreadedUdpServer::disconnect`: reliable and unreliable
   messages accepted before it but not yet handed to the endpoint were
   dropped; they are now sent before the graceful close, within the same

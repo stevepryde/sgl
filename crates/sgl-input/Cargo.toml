@@ -7,6 +7,8 @@ categories = ["game-development"]
 keywords = ["gamedev", "input", "gamepad", "controller"]
 readme = "README.md"
 description = "Caller-polled controller discovery, events, and held state for SGL games"
+# Examples and tests stay in the repository.
+include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
