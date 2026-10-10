@@ -40,7 +40,7 @@ struct ProbeSum {
  weight:f32
 }
 fn collection_buckets()->u32 {
- return min((collection.counts.x+31u)/32u,PROBE_BUCKETS);
+ return min((collection.counts.x+PROBE_BUCKET_PROBES-1u)/PROBE_BUCKET_PROBES,PROBE_BUCKETS);
 }
 // Adds probe `index` if it contains the receiver.
 fn collection_add(sum:ProbeSum,index:u32,world:vec3<f32>,direction:vec3<f32>,rough:f32,filter_sampler:sampler)->ProbeSum {
@@ -53,13 +53,19 @@ fn collection_add(sum:ProbeSum,index:u32,world:vec3<f32>,direction:vec3<f32>,rou
  return result;
 }
 // Adds the probes of bucket `bucket` in `bits` that contain the receiver.
+// Each pass takes one set bit, so a bucket's walk is capped at its
+// PROBE_BUCKET_PROBES bits (AR-12) and the caller's walk over PROBE_BUCKETS
+// buckets at MAX_PROBES, each probe once; the empty mask ends it sooner.
 fn collection_bucket(sum:ProbeSum,bucket:u32,bucket_bits:u32,world:vec3<f32>,direction:vec3<f32>,rough:f32,filter_sampler:sampler)->ProbeSum {
  var result=sum;
  var bits=bucket_bits;
- while bits!=0u {
+ for(var i=0u;i<PROBE_BUCKET_PROBES;i++) {
+  if bits==0u {
+   break;
+  }
   let bit=firstTrailingBit(bits);
   bits^=1u<<bit;
-  result=collection_add(result,bucket*32u+bit,world,direction,rough,filter_sampler);
+  result=collection_add(result,bucket*PROBE_BUCKET_PROBES+bit,world,direction,rough,filter_sampler);
  }
  return result;
 }

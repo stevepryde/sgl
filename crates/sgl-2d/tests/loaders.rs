@@ -292,7 +292,7 @@ fn mutated_exports_never_panic_and_accepted_sheets_are_well_formed() {
 /// sequences Aseprite documents, listed by hand.
 #[test]
 fn tag_directions_expand_to_the_documented_frame_orders() {
-    let cases: [(&str, usize, usize, Vec<usize>); 10] = [
+    let cases: [(&str, usize, usize, Vec<usize>); 13] = [
         ("forward", 0, 0, vec![0]),
         ("forward", 3, 4, vec![3, 4]),
         ("forward", 0, 4, vec![0, 1, 2, 3, 4]),
@@ -302,7 +302,10 @@ fn tag_directions_expand_to_the_documented_frame_orders() {
         ("pingpong", 0, 0, vec![0]),
         ("pingpong", 3, 4, vec![3, 4]),
         ("pingpong", 0, 4, vec![0, 1, 2, 3, 4, 3, 2, 1]),
-        ("pingpong_reverse", 1, 3, vec![1, 2, 3]),
+        ("pingpong_reverse", 0, 0, vec![0]),
+        ("pingpong_reverse", 3, 4, vec![4, 3]),
+        ("pingpong_reverse", 0, 4, vec![4, 3, 2, 1, 0, 1, 2, 3]),
+        ("sideways", 1, 3, vec![1, 2, 3]),
     ];
     let frames: Vec<Value> = (0..5)
         .map(|i| json!({ "frame": { "x": i * 8, "y": 0, "w": 8, "h": 8 }, "duration": 50 }))
@@ -318,8 +321,8 @@ fn tag_directions_expand_to_the_documented_frame_orders() {
         let sheet = AsepriteSheet::parse(&doc.to_string(), white()).expect("valid sheet");
         let tag = sheet.tag("t").expect("tag present");
         assert_eq!(tag.frame_order(), expected, "{direction} {from}..={to}");
-        if direction == "pingpong_reverse" {
-            assert_eq!(tag.dir, AseDirection::Other("pingpong_reverse".into()));
+        if direction == "sideways" {
+            assert_eq!(tag.dir, AseDirection::Other("sideways".into()));
         }
     }
     let doc = json!({
