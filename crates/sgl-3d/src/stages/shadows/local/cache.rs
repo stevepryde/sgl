@@ -33,6 +33,11 @@ pub(super) struct FaceKey {
     pub mask: u32,
     /// The scene's material caster revision (`Materials::casters`).
     pub casters: u64,
+    /// The frame's time (`FrameInput::elapsed_seconds`), where a static
+    /// caster whose shader may change what it casts reaches the face
+    /// (`Material::shader_casts`): its vertex or surface function may read
+    /// the time.
+    pub time: Option<f64>,
 }
 
 /// A moving instance a face draws, as it drew it.
@@ -46,6 +51,10 @@ pub(super) struct MovingCaster {
     /// Its deformation's revision (`InstanceDeformation::revision`); zero
     /// when it does not deform.
     pub deformation: u64,
+    /// The frame's time and its shader data
+    /// (`Scene::set_instance_shader_data`), where its materials' shaders may
+    /// change what it casts (`Material::shader_casts`).
+    pub shaded: Option<(f64, [f32; 4])>,
 }
 
 /// What a slot holds.

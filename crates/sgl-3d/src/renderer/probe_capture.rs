@@ -102,7 +102,7 @@ impl Renderer {
             &self.bindings,
             (scene, &mut views.instances),
             center,
-            input.visibility_mask,
+            (input.visibility_mask, input.elapsed_seconds),
             !settings.diagnostics_in_effect().disable.local_lights,
         );
         // Every list the capture draws is built.

@@ -617,7 +617,13 @@ bounds are tested, so streaming many chunks in one frame redraws only the
 faces they reach, until more than 1024 edits in a frame merge in pairs),
 the visibility mask changes, or a material's side, visibility group or
 alpha mode changes
-(or a masked material's cutoff or base alpha). A light that
+(or a masked material's cutoff or base alpha). A material whose shader may
+change what it casts (a displacement bound above 0, or a masked material's
+surface function) redraws them as its inputs change: setting its shader
+parameters redraws every layer; the frame's time changing redraws the layers
+its static instances reach, and the faces its moving instances reach, every
+frame the time advances; a moving instance's shader data changing redraws
+the faces it reaches. A light that
 moved since the last frame, such as one following a craft, has no reusable
 layer and draws every caster. A frame in which nothing moved in any shadowed
 light's range draws no shadows at all. What a frame draws becomes reusable

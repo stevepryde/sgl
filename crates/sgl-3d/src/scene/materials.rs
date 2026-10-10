@@ -107,6 +107,16 @@ impl Material {
             .map_or(0., |shader| shader.displacement_bound)
     }
 
+    /// Whether its shader may change what its casters cast with its
+    /// parameters, the frame's time or an instance's data: its vertex
+    /// function moves vertices (a displacement bound above 0), or its
+    /// surface function sets a masked caster's coverage.
+    pub fn shader_casts(&self) -> bool {
+        self.values.shader.is_some_and(|shader| {
+            shader.displacement_bound > 0. || matches!(self.values.alpha, AlphaMode::Mask { .. })
+        })
+    }
+
     /// Visibility and explicit casting are independent caller policies.
     pub fn casts_directional_shadow(&self, mask: u32) -> bool {
         self.casts_directional_shadow && self.enabled(Some(mask))
@@ -126,7 +136,8 @@ impl Material {
 pub(crate) struct Materials {
     pub slots: Slots<MaterialId, Material>,
     /// Changes when an edit changes a value casters read
-    /// (`SurfaceMaterial::caster_values`).
+    /// (`SurfaceMaterial::caster_values`, or the parameters of a shader
+    /// that may change what its casters cast, `Material::shader_casts`).
     pub casters: u64,
     /// How many of its materials are masked, how many blended and how many
     /// of those receive screen-space reflections, how many opaque or masked
@@ -198,6 +209,14 @@ impl Materials {
         self.groups.tier
     }
 
+    /// Whether a material's shader may change what its casters cast
+    /// (`Material::shader_casts`).
+    pub fn shader_casts(&self) -> bool {
+        self.slots
+            .iter()
+            .any(|(_, material)| material.shader_casts())
+    }
+
     /// Whether a material has a shader.
     pub fn holds_shaders(&self) -> bool {
         self.slots
@@ -205,13 +224,18 @@ impl Materials {
             .any(|(_, material)| material.values.shader.is_some())
     }
 
-    /// `id`'s parameter block of its shader's size becomes `bytes`.
+    /// `id`'s parameter block of its shader's size becomes `bytes`; where
+    /// its shader may change what it casts, a value casters read changed.
     pub fn set_parameters(&mut self, queue: &wgpu::Queue, id: MaterialId, bytes: &[u8]) {
-        self.slots
-            .get_mut(id)
-            .and_then(|material| material.params.as_mut())
-            .expect("a live material with a shader")
+        let material = self.slots.get_mut(id).expect("a live material");
+        let changed = material
+            .params
+            .as_mut()
+            .expect("a material with a shader")
             .set(queue, bytes);
+        if changed && material.shader_casts() {
+            self.casters = super::next_generation();
+        }
     }
 
     /// Before a frame: each shader parameter block's last submitted copy is

@@ -293,9 +293,9 @@ impl Local {
 
     /// Places the shadows of `scene`'s casting lights that reach the view of
     /// a camera with `view` and `projection`, when `enabled`, plans the faces
-    /// whose content changed for the frame's visibility `mask`, with their
-    /// draws' instances in `drawn`, and uploads their views and the lights'
-    /// shadow records.
+    /// whose content changed for the frame's visibility `mask` at its `time`
+    /// (`FrameInput::elapsed_seconds`), with their draws' instances in
+    /// `drawn`, and uploads their views and the lights' shadow records.
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
@@ -304,10 +304,10 @@ impl Local {
         bindings: &FrameBindings,
         (scene, drawn): (&Scene, &mut DrawInstances),
         camera: (Mat4, Mat4),
-        mask: u32,
+        frame: (u32, f64),
         enabled: bool,
     ) {
-        self.plan.prepare(drawn, scene, camera, mask, enabled);
+        self.plan.prepare(drawn, scene, camera, frame, enabled);
         self.upload_views(device, queue, bindings);
         let records = self.plan.records();
         if self.written.len() < records.len() {
@@ -319,7 +319,7 @@ impl Local {
     }
 
     /// Places the static layers a probe capture at `center` of `scene`
-    /// samples with visibility `mask`, when `enabled`, with their draws'
+    /// samples with visibility `mask` at `time`, when `enabled`, with their draws'
     /// instances in `drawn`, and returns the shadow records that place them,
     /// which the capture's lit groups bind. `encode_capture` draws them, and
     /// `finish_capture` commits them once the capture is submitted.
@@ -331,11 +331,11 @@ impl Local {
         bindings: &FrameBindings,
         (scene, drawn): (&Scene, &mut DrawInstances),
         center: Vec3,
-        mask: u32,
+        (mask, time): (u32, f64),
         enabled: bool,
     ) -> wgpu::Buffer {
         self.plan
-            .prepare_capture(drawn, scene, center, mask, enabled);
+            .prepare_capture(drawn, scene, center, (mask, time), enabled);
         self.upload_views(device, queue, bindings);
         crate::scene::buffer(
             device,

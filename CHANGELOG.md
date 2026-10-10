@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` local-light shadows: a material shader's parameters
+  (`Scene::set_shader_parameters`), the frame's time and a moving instance's
+  `Scene::set_instance_shader_data` left cached shadows stale; casters whose
+  shader moves or cuts them now redraw as those change, every frame time
+  advances. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at

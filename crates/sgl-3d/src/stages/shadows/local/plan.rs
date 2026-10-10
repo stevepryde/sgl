@@ -7,8 +7,11 @@
 //! cull order, and ranking them gives the room to the lights that matter
 //! most. A face is drawn only when what it shows changed (`cache`): its
 //! static layer when the face is new to its slot, the visibility mask or a
-//! material's caster values changed, or a static edit reached it; its moving
-//! casters over a copy of that layer when they entered, left or moved. A
+//! material's caster values changed, a static edit reached it, or the
+//! frame's time changed where a static caster whose shader may move or cut
+//! it with time reaches it; its moving casters over a copy of that layer
+//! when they entered, left, moved or, shaded so, changed their shader data
+//! or saw the frame's time change. A
 //! light that moved since the last finished frame has no reusable layer and
 //! draws every caster at once.
 use super::LocalShadowStats;
@@ -17,7 +20,7 @@ use super::cache::{Cache, FaceKey, MovingCaster, Slot};
 use super::shape::{LightView, Shape};
 use crate::content::identity::{Identity, LightId};
 use crate::content::light::Light;
-use crate::scene::static_edits::posed_bounds;
+use crate::scene::static_edits::{grown, posed_bounds};
 use crate::shading::lights::{LOCAL_SHADOW_CUBE, LOCAL_SHADOW_SPOT, LocalShadowRecord};
 use crate::view::clusters::ViewVolume;
 use crate::view::culling::clip_intersects;
@@ -112,15 +115,15 @@ impl Plan {
         &self.records
     }
 
-    /// Plans a frame of `scene` seen by a camera with `view` and
-    /// `projection`, with visibility `mask` and its lights' shadows on when
-    /// `enabled`.
+    /// Plans a frame of `scene` at `time` (`FrameInput::elapsed_seconds`)
+    /// seen by a camera with `view` and `projection`, with visibility `mask`
+    /// and its lights' shadows on when `enabled`.
     pub fn prepare(
         &mut self,
         drawn: &mut DrawInstances,
         scene: &Scene,
         (view, projection): (Mat4, Mat4),
-        mask: u32,
+        (mask, time): (u32, f64),
         enabled: bool,
     ) {
         self.begin(scene);
@@ -132,6 +135,8 @@ impl Plan {
                 .reaches(light)
                 .then(|| shadow.coverage(view, projection))
         });
+        let shaded = shaded_statics(scene);
+        let shades = scene.materials.shader_casts();
         // The moving casters and their world bounds.
         let moving: Vec<_> = scene
             .instances
@@ -151,8 +156,12 @@ impl Plan {
                         .deformation
                         .as_ref()
                         .map_or(0, |deformation| deformation.revision),
+                    shaded: (shades && scene.shader_casts(model))
+                        .then_some((time, instance.shader_data)),
                 };
-                let bounds = instance.bounds(model);
+                // As its shaders may move it, so a caster they move into
+                // a face is among the face's.
+                let bounds = grown(instance.bounds(model), scene.displacement_of(model));
                 (caster, bounds, posed_bounds(bounds, instance.state.pose))
             })
             .collect();
@@ -166,25 +175,32 @@ impl Plan {
             };
             self.stats.shadowed += 1;
             self.ranking.push(id);
-            let layered = self.place(drawn, scene, Some(&moving), (id, shadow, placement), mask);
+            let layered = self.place(
+                drawn,
+                scene,
+                (Some(&moving), &shaded),
+                (id, shadow, placement),
+                (mask, time),
+            );
             self.records[id.index()] = record(shadow, placement, layered);
         }
     }
 
-    /// Plans a probe capture at `center` of `scene` with visibility `mask`:
-    /// the static layers of every casting light that is on, when
-    /// `enabled`, placed by its coverage of the capture's faces, which the
-    /// capture samples. A capture shows no moving instances, so it draws no
-    /// frame faces, and it changes no frame's statistics.
+    /// Plans a probe capture at `center` of `scene` at `time` with
+    /// visibility `mask`: the static layers of every casting light that is
+    /// on, when `enabled`, placed by its coverage of the capture's faces,
+    /// which the capture samples. A capture shows no moving instances, so it
+    /// draws no frame faces, and it changes no frame's statistics.
     pub fn prepare_capture(
         &mut self,
         drawn: &mut DrawInstances,
         scene: &Scene,
         center: Vec3,
-        mask: u32,
+        (mask, time): (u32, f64),
         enabled: bool,
     ) {
         self.begin(scene);
+        let shaded = shaded_statics(scene);
         let stats = self.stats;
         let candidates = candidates(scene, enabled, |_, shadow| {
             Some(shadow.capture_coverage(center))
@@ -194,7 +210,13 @@ impl Plan {
                 self.allocation
                     .update(id, coverage, shadow.slots(), self.frame)
             {
-                self.place(drawn, scene, None, (id, shadow, placement), mask);
+                self.place(
+                    drawn,
+                    scene,
+                    (None, &shaded),
+                    (id, shadow, placement),
+                    (mask, time),
+                );
                 self.records[id.index()] = record(shadow, placement, true);
             }
         }
@@ -272,18 +294,19 @@ impl Plan {
     }
 
     /// Plans the faces of light `id`, seen as `shadow` and placed at
-    /// `placement`, whose content changed, among the scene's `moving`
-    /// casters with their models and world bounds; for a probe capture,
-    /// which has none, only the faces' static layers. Returns whether its
-    /// static layers hold its static casters once they are drawn: whether
-    /// it stayed still.
+    /// `placement`, whose content changed at `time`, among the scene's
+    /// `moving` casters with their models and world bounds, and the world
+    /// bounds of its `shaded` static casters (`shaded_statics`); for a probe
+    /// capture, which has no moving casters, only the faces' static layers.
+    /// Returns whether its static layers hold its static casters once they
+    /// are drawn: whether it stayed still.
     fn place(
         &mut self,
         drawn: &mut DrawInstances,
         scene: &Scene,
-        moving: Option<&[Moving]>,
+        (moving, shaded): (Option<&[Moving]>, &[[Vec3; 2]]),
         (id, shadow, placement): (LightId, LightView, Placement),
-        mask: u32,
+        (mask, time): (u32, f64),
     ) -> bool {
         let capture = moving.is_none();
         // A light seen differently in the last finished frame moved.
@@ -302,21 +325,32 @@ impl Plan {
             .iter()
             .filter(|(_, _, bounds)| within(*bounds, light))
             .collect();
+        // The shaded static casters its range reaches.
+        let shaded: Vec<_> = shaded
+            .iter()
+            .filter(|bounds| within(**bounds, light))
+            .collect();
         // The static cluster groups its range reaches, found once for every
         // face that draws its static casters.
         let mut reach = std::mem::take(&mut self.reach);
         let mut reached = false;
         for face in (0..shadow.slots()).filter(|&face| shadow.draws(face)) {
             let slot = placement.cell(face);
+            let mut view = None;
+            // Whether a shaded static caster reaches the face's view.
+            let shades = shaded.iter().any(|bounds| {
+                let view = view.get_or_insert_with(|| shadow.face(face));
+                clip_intersects(**bounds, view.view_projection())
+            });
             let key = FaceKey {
                 light: id,
                 view: shadow,
                 face,
                 mask,
                 casters: scene.materials.casters,
+                time: shades.then_some(time),
             };
             // The face's moving casters: those whose bounds reach its view.
-            let mut view = None;
             let moving: Vec<_> = nearby
                 .iter()
                 .filter(|(caster, bounds, _)| {
@@ -414,6 +448,30 @@ impl Plan {
     pub fn finish(&mut self) {
         self.cache.finish();
     }
+}
+
+/// The world bounds, grown by their shaders' displacement, of `scene`'s
+/// static casters whose materials' shaders may change what they cast with
+/// the frame's time (`Scene::shader_casts`): the faces they reach redraw
+/// their static layers when it changes. None without such a material.
+fn shaded_statics(scene: &Scene) -> Vec<[Vec3; 2]> {
+    if !scene.materials.shader_casts() {
+        return Vec::new();
+    }
+    scene
+        .instances
+        .slots
+        .iter()
+        .filter(|(_, instance)| {
+            instance.mobility == Mobility::Static && instance.state.capture_visible
+        })
+        .filter_map(|(_, instance)| {
+            let model = scene.drawn_model(instance.state.model);
+            scene
+                .shader_casts(model)
+                .then(|| posed_bounds(scene.shaded_bounds(model), instance.state.pose))
+        })
+        .collect()
 }
 
 /// The casting lights of `scene` that are on, when `enabled`, with what

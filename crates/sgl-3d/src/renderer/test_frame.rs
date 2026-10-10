@@ -124,7 +124,7 @@ impl Renderer {
             &self.bindings,
             (scene, &mut self.views.instances),
             (input.camera.view, input.camera.projection),
-            values.frame.visibility_mask,
+            (values.frame.visibility_mask, input.elapsed_seconds),
             effective.local_lights,
         );
         self.views.instances.upload(device, queue);

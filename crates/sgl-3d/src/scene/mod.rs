@@ -244,6 +244,15 @@ impl Scene {
             .fold(0., f32::max)
     }
 
+    /// Whether a shader of `model`'s meshes' materials may change what it
+    /// casts (`Material::shader_casts`).
+    pub(crate) fn shader_casts(&self, model: &models::Model) -> bool {
+        model
+            .meshes
+            .iter()
+            .any(|mesh| self.drawn_material(mesh.material).shader_casts())
+    }
+
     /// `model`'s bounds in its space, grown by what its materials' shaders
     /// may move its vertices (`displacement_of`).
     pub(crate) fn shaded_bounds(&self, model: &models::Model) -> [glam::Vec3; 2] {

@@ -1590,3 +1590,72 @@ fn static_edits_of_a_shaded_instance_restale_the_faces_its_displacement_reaches(
     harness.frame(&mut scene, &input);
     harness.expect(light, &[(REACHED, 1.)], "the lifted blocker removed");
 }
+
+// Plausible defects: a light's cached static layer or frame face kept when
+// what a shader-driven caster casts changed without a static edit or a
+// move: its material's shader parameters set, the frame's time advanced
+// for a shader that reads it, or a moving instance's shader data set. The
+// oracle is geometric, as above: the blocker rests beyond the light's reach
+// and the shader lifts it between the light and a receiver by its
+// parameters' lift, plus their amplitude times sin(frequency × time), plus
+// its instance's data's x; the receiver is dark exactly while the lifted
+// blocker is there. Repeating a frame with nothing changed still draws
+// nothing, and a scene without such shaders draws nothing as time passes.
+#[test]
+fn shader_driven_casters_redraw_when_their_shaders_inputs_change() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let at_time = |seconds: f64| FrameInput {
+        elapsed_seconds: seconds,
+        ..input()
+    };
+    for mobility in [Mobility::Static, Mobility::Moving] {
+        let (mut scene, light, model) = reaching_scene(&harness, 0., 6.);
+        let material = scene.drawn_model(model).meshes[0].material;
+        let blocker = scene
+            .add_instance(&device, &queue, at(model, RESTING), mobility)
+            .unwrap();
+        let mut frame = |scene: &mut Scene, seconds, expected, label: &str| {
+            let stats = harness.frame(scene, &at_time(seconds));
+            let label = format!("{mobility:?}: {label}");
+            harness.expect(light, &[(REACHED, expected)], &label);
+            stats.draws
+        };
+        let params = |lift, amplitude| test_support::TestShaderParams {
+            direction: [0., 0., 1.],
+            lift,
+            amplitude,
+            frequency: std::f32::consts::FRAC_PI_2,
+            ..Default::default()
+        };
+        frame(&mut scene, 0., 1., "at rest");
+        let still = frame(&mut scene, 0., 1., "at rest again");
+        assert_eq!(still, 0, "{mobility:?}: nothing changed");
+        test_support::set_test_params(&mut scene, &queue, material, params(5.5, 0.));
+        assert!(frame(&mut scene, 0., 0., "lifted by its parameters") > 0);
+        test_support::set_test_params(&mut scene, &queue, material, params(0., 5.5));
+        frame(&mut scene, 0., 1., "lifted by sin(0)");
+        let still = frame(&mut scene, 0., 1., "time standing still");
+        assert_eq!(still, 0, "{mobility:?}: time standing still");
+        assert!(frame(&mut scene, 1., 0., "lifted by sin(π/2)") > 0);
+        frame(&mut scene, 2., 1., "lifted by sin(π)");
+        test_support::set_test_params(&mut scene, &queue, material, params(0., 0.));
+        frame(&mut scene, 3., 1., "at rest");
+        scene
+            .set_instance_shader_data(&queue, blocker, [5.5, 0., 0., 0.])
+            .unwrap();
+        assert!(frame(&mut scene, 3., 0., "lifted by its data") > 0);
+        scene
+            .set_instance_shader_data(&queue, blocker, [0.; 4])
+            .unwrap();
+        frame(&mut scene, 3., 1., "returned by its data");
+    }
+    let (mut scene, ..) = cached_scene(&mut harness);
+    harness.frame(&mut scene, &at_time(0.));
+    for seconds in [1., 2.] {
+        let stats = harness.frame(&mut scene, &at_time(seconds));
+        assert_eq!(stats.draws, 0, "no shader at {seconds} s: {stats:?}");
+    }
+}
