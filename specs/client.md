@@ -79,6 +79,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    is clamped into the field's range. Widgets emit only to the screen channel.
    A splitter captures pointer travel along its configured axis, changes a
    caller-owned extent within supplied bounds, and returns resize cursor intent.
+   When `max` falls below `min` (a viewport too small for both panes), `max`
+   wins; a NaN bound is ignored. Neither panics.
    Capture continues outside the handle and across panes, blocks other pointer
    controls, and ends on release, removal or `cancel_interactions` (window focus
    loss). The game checks `pointer_captured` before world pointer dispatch.
