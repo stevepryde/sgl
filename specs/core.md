@@ -45,6 +45,8 @@ browser client must get identical results from it.
    during playback, even when a tick crosses that frame without stopping on
    it. `current_frame()` is `None` only before the first frame is reached after
    construction or reset. Ping-pong never plays either end frame twice.
+   Every tick returns: a non-finite `dt` is ignored, and time that `f32`
+   cannot subtract a duration from never spins a repeating loop.
 7. **Collision.** `sweep_aabb` is a closed-form swept AABB test returning
    `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
    toward the body. `move_and_collide` slides a kinematic body against a

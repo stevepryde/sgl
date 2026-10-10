@@ -49,12 +49,15 @@ impl FrameAnimation {
     /// An animation playing `order` at `fps`. Starts at the first entry.
     ///
     /// # Panics
-    /// If `order` is empty or `fps` is not positive — both are authoring
-    /// errors, not runtime conditions.
+    /// If `order` is empty or `fps` is not finite and positive — both are
+    /// authoring errors, not runtime conditions.
     pub fn new(order: impl Into<Vec<usize>>, fps: f32, loop_mode: LoopMode) -> Self {
         let order = order.into();
         assert!(!order.is_empty(), "FrameAnimation: empty frame order");
-        assert!(fps > 0.0, "FrameAnimation: fps must be positive, got {fps}");
+        assert!(
+            fps.is_finite() && fps > 0.0,
+            "FrameAnimation: fps must be finite and positive, got {fps}"
+        );
         Self {
             order,
             frame_duration: 1.0 / fps,
@@ -77,12 +80,25 @@ impl FrameAnimation {
     /// [`LoopMode::Once`] animation finishes (a completion edge, once).
     ///
     /// Large `dt` steps multiple frames; the leftover carries into the new
-    /// frame so long-run timing never drifts.
+    /// frame so long-run timing never drifts. A [`LoopMode::Repeat`] tick
+    /// longer than a whole pass over the order skips the whole passes. A
+    /// non-finite `dt` is ignored.
     pub fn tick(&mut self, dt: f32) -> bool {
-        if self.finished {
+        if self.finished || !dt.is_finite() {
             return false;
         }
         self.timer += dt;
+        if self.loop_mode == LoopMode::Repeat {
+            // Whole passes return to the same position. Removing them bounds
+            // the loop below to one pass, where each subtraction lowers the
+            // timer (a duration below the timer's `f32` precision would not).
+            // Exact for any order shorter than 2^24 entries.
+            #[allow(clippy::cast_precision_loss)]
+            let pass = self.frame_duration * self.order.len() as f32;
+            if self.timer >= pass {
+                self.timer %= pass;
+            }
+        }
         while self.timer >= self.frame_duration {
             self.timer -= self.frame_duration;
             if self.position + 1 < self.order.len() {
@@ -209,6 +225,40 @@ mod tests {
             seen.push(a.current_frame());
         }
         assert_eq!(seen, vec![2, 1, 2, 0, 2, 1]);
+    }
+
+    /// #313: a non-finite `dt` neither hangs a repeating animation nor
+    /// poisons its clock — the next finite tick advances on time.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_non_finite_dt_is_ignored() {
+        let mut a = FrameAnimation::new([0, 1], 10.0, LoopMode::Repeat);
+        for dt in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(!a.tick(dt));
+            assert_eq!(a.current_frame(), 0);
+        }
+        a.tick(0.1);
+        assert_eq!(a.current_frame(), 1);
+    }
+
+    /// #313: a frame duration below the timer's `f32` precision (2^-30 s
+    /// against a 1 s tick) returns. One second is 2^30 frames, an even
+    /// number of passes over two frames, so the cursor ends where it began.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_tick_far_longer_than_a_frame_skips_whole_passes() {
+        let fps = 2f32.powi(30);
+        let mut a = FrameAnimation::new([0, 1], fps, LoopMode::Repeat);
+        a.tick(1.0);
+        assert_eq!(a.current_frame(), 0);
+        a.tick(1.0 / fps);
+        assert_eq!(a.current_frame(), 1);
+    }
+
+    /// #313: an infinite fps (a zero frame duration) is an authoring error.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[should_panic(expected = "fps must be finite and positive")]
+    fn infinite_fps_is_rejected() {
+        let _ = FrameAnimation::new([0], f32::INFINITY, LoopMode::Repeat);
     }
 
     /// `reset` rewinds and un-finishes.

@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `FrameAnimation::tick` / `AnimationSequence::tick`: a NaN or
+  infinite `dt`, an infinite `fps`, or a frame duration below the accumulated
+  time's `f32` precision could hang a repeating animation; a non-finite `dt`
+  is now ignored, those ticks return, and `FrameAnimation::new` panics on an
+  infinite `fps`. No game-code changes needed.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`
