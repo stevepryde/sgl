@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: a glTF node that is its own ancestor overflowed
+  the stack at load or in `Rig::joint_matrices`, and a node with two parents
+  loaded; both now fail the load with an error naming the node, and
+  `Rig::joint_matrices` on a game-built rig with a parent cycle returns
+  (wrong matrices for the cycle's joints) instead of overflowing. No
+  game-code changes needed; re-export a file that now fails.
 - `examples/direct-game` took `Renderer::white_texture`'s handle from a
   throwaway `Assets`, so it aliased the first texture of the game's own cache;
   it now keeps one `Assets<Texture>` and draws a second texture from it.
