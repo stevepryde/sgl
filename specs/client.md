@@ -14,8 +14,11 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    whose RGBA length mismatches its size, and a normal map sized unlike its
    diffuse with a `TextureError`, changing nothing. `Assets` never removes
    an asset, so a `Handle<T>` stays valid for its cache's lifetime, and
-   re-inserting a path replaces the asset under the same handle. Loading is
-   synchronous.
+   re-inserting a path replaces the asset under the same handle. Handles from
+   different caches can share an index, and a renderer keys its textures by
+   handle, so each `Renderer` draws from one texture cache (for example
+   `AssetServer::textures`, which `Ui::new`, `TextRenderer::end_frame` and
+   `white_texture` then also take). Loading is synchronous.
    `white_texture` registers one shared 1×1 white pixel under `sgl://white`.
 2. **Draw list.** `DrawList` is the only channel from game code to the
    renderer: a `world` channel (through the camera) and a `screen` channel
@@ -69,11 +72,13 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    survive unrelated redraws under stable widget names. Edits scroll to keep
    the caret visible and clip content to the field and enclosing clip. Secret
    fields retain ASCII append/backspace/paste editing and never copy or cut;
-   they avoid temporary copies of the secret while editing.
+   they avoid temporary copies of the secret while editing, provided the
+   game preallocates `buf` with at least `max_len` bytes.
    Buttons act on press-down. At most one widget is active at a time. An open
    modal blocks widgets behind it. Line edits respect `max_len` and keep the
-   buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text. Scroll
-   areas clip their content and clamp their offset. A checkbox and a
+   buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text in
+   place and keeps the buffer's allocation. Scroll areas clip their content
+   and clamp their offset. A checkbox and a
    collapsing header flip their caller-owned flag on press-down over the whole
    rect. A numeric field's `-`/`+` ends add its step; a horizontal drag on the
    middle past a small threshold scrubs the value by its speed per pixel from
