@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
+  glTF does not allow for its use, of no elements, or past its buffer view
+  or buffer, or an image view past its buffer, panicked or was misread; it
+  now fails the load with an error naming it.
+  No game-code changes needed; re-export a file that now fails.
 - `sgl-post-fx` SSR (SGL3D's `Crystal` reflections): a ray towards the camera
   from a surface under one unit away was projected behind the camera and
   traced mirrored, behind the surface; its end is now clipped to the near
