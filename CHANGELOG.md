@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
+  glTF does not allow for its use, of no elements, or past its buffer view
+  panicked or was misread; it now fails the load with an error naming it.
+  No game-code changes needed; re-export a file that now fails.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`

@@ -326,3 +326,148 @@ fn unsupported_skins_are_rejected() {
         );
     }
 }
+
+// Plausible defect: an accessor whose component type or shape glTF does not
+// allow for its use, with no elements, or reaching past its buffer view
+// handed to the gltf crate's readers, which panic on it (an `unreachable!`,
+// a slice assertion or an arithmetic overflow) or misread it, taking the
+// game down instead of returning an error.
+#[wasm_bindgen_test(unsupported = test)]
+fn malformed_accessors_are_rejected() {
+    fn attribute(document: &Value, semantic: &str) -> usize {
+        document["meshes"][0]["primitives"][0]["attributes"][semantic]
+            .as_u64()
+            .unwrap() as usize
+    }
+    type Edit = fn(&mut Value, &mut Buffer);
+    let cases: [(&str, Edit, &str); 13] = [
+        (
+            "FLOAT indices",
+            |document, buffer| {
+                let indices = buffer.floats(&[0., 1., 2.], "SCALAR", 1);
+                document["meshes"][0]["primitives"][0]["indices"] = json!(indices);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            "FLOAT JOINTS_0",
+            |document, buffer| {
+                let joints = attribute(document, "JOINTS_0");
+                buffer.accessors[joints]["componentType"] = json!(5126);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            "VEC2 COLOR_0",
+            |document, buffer| {
+                let colors = buffer.floats(&[1.; 6], "VEC2", 2);
+                document["meshes"][0]["primitives"][0]["attributes"]["COLOR_0"] = json!(colors);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            "UNSIGNED_INT TEXCOORD_0",
+            |document, buffer| {
+                let uvs = buffer.accessor(bytemuck::cast_slice(&[0u32; 6]), 5125, "VEC2", 3);
+                document["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"] = json!(uvs);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            "UNSIGNED_SHORT POSITION",
+            |document, buffer| {
+                let positions = attribute(document, "POSITION");
+                buffer.accessors[positions]["componentType"] = json!(5123);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            "VEC4 NORMAL",
+            |document, buffer| {
+                let normals = buffer.floats(&[0., 0., 1., 0.].repeat(3), "VEC4", 4);
+                document["meshes"][0]["primitives"][0]["attributes"]["NORMAL"] = json!(normals);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            "POSITION of no elements",
+            |document, buffer| {
+                let positions = attribute(document, "POSITION");
+                buffer.accessors[positions]["count"] = json!(0);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            "POSITION past its view",
+            |document, buffer| {
+                let positions = attribute(document, "POSITION");
+                buffer.accessors[positions]["count"] = json!(1u64 << 62);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            "POSITION stride under an element",
+            |document, buffer| {
+                let positions = attribute(document, "POSITION");
+                let view = buffer.accessors[positions]["bufferView"].as_u64().unwrap() as usize;
+                buffer.views[view]["byteStride"] = json!(4);
+            },
+            "mesh 0 primitive 0",
+        ),
+        (
+            "morph target of no sparse elements",
+            |document, buffer| {
+                let lift = document["meshes"][1]["primitives"][0]["targets"][0]["POSITION"]
+                    .as_u64()
+                    .unwrap() as usize;
+                let view = buffer.accessors[lift]["bufferView"].clone();
+                buffer.accessors[lift]["sparse"] = json!({
+                    "count": 0,
+                    "indices": {"bufferView": view, "componentType": 5123},
+                    "values": {"bufferView": view}
+                });
+            },
+            "mesh 1 primitive 0",
+        ),
+        (
+            "MAT3 inverse binds",
+            |document, buffer| {
+                let binds = document["skins"][1]["inverseBindMatrices"]
+                    .as_u64()
+                    .unwrap() as usize;
+                buffer.accessors[binds]["type"] = json!("MAT3");
+            },
+            "skin 1",
+        ),
+        (
+            "UNSIGNED_BYTE keyframe times",
+            |document, buffer| {
+                let times = document["animations"][0]["samplers"][0]["input"]
+                    .as_u64()
+                    .unwrap() as usize;
+                buffer.accessors[times]["componentType"] = json!(5121);
+            },
+            "animation 0",
+        ),
+        (
+            "UNSIGNED_INT rotations",
+            |document, buffer| {
+                let turns = document["animations"][0]["samplers"][0]["output"]
+                    .as_u64()
+                    .unwrap() as usize;
+                buffer.accessors[turns]["componentType"] = json!(5125);
+            },
+            "animation 0",
+        ),
+    ];
+    for (label, edit, says) in cases {
+        let error = load_slice(&rigged(edit))
+            .err()
+            .unwrap_or_else(|| panic!("{label} was accepted"))
+            .to_string();
+        assert!(
+            error.contains(says) && error.contains("accessor"),
+            "{label}: {error}"
+        );
+    }
+}
