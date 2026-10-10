@@ -1186,7 +1186,7 @@ fn surfaces_behind_the_previous_camera_take_no_history() {
 
 // PROVENANCE.md DFX-43: the reprojected depth is the previous camera's, so it
 // is linearised with the previous projection. A still camera whose near plane
-// moves from 0.5 to 0.1 between two frames of a still scene keeps every
+// moves from 1.0 to 0.1 between two frames of a still scene keeps every
 // pixel's history, as it does when the near plane stays.
 #[test]
 fn a_changed_near_plane_keeps_history() {
@@ -1197,7 +1197,7 @@ fn a_changed_near_plane_keeps_history() {
     // The plane's camera z, from its depth 0.95 under the current camera.
     let z = current[14] / (0.95 - current[10]);
     let mut histories = Vec::new();
-    for near in [0.1f32, 0.5] {
+    for near in [0.1f32, 1.0] {
         let previous = camera_with_near(false, 0, near).m_proj;
         let mut ssr = ScreenSpaceReflection::new(&device);
         let mut context = PostFXContext::new(&device, &queue, Default::default());
