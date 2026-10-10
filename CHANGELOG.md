@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
+  of steps before confirming a hit was accepted by depth proximity and now
+  reports a miss, so streaks near surfaces at the step cap give way to the
+  fallback. No game-code changes needed.
 - `sgl-net` `BrowserWebSocketClient`: a close caused by a received frame
   (`InboundOverflow`, or a `ProtocolViolation` found by the lane queues)
   never reconnected; it now follows `ReconnectPolicy` like other non-local
