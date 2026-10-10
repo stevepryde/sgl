@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-input` `Gamepads::poll` on Windows, Linux and the web (Gilrs): a pad
+  connecting with a button held or a stick deflected read released and
+  centred until it changed, and a repeated `Connected` reset its state; now
+  `Connected` is followed by its held buttons and stick positions, as on
+  macOS, and is reported once. No game-code changes needed.
+
 - `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
   on the world channel shrank by `pixels_per_unit`; the new `units:
   WorldUnits` field (default logical pixels) makes positions, sizes and

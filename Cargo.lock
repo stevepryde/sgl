@@ -2207,6 +2207,7 @@ dependencies = [
  "gilrs",
  "objc2 0.6.4",
  "objc2-game-controller",
+ "wasm-bindgen-test",
  "winit",
 ]
 
