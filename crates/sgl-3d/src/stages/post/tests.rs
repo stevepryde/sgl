@@ -55,9 +55,10 @@ fn sizes(size: [u32; 2]) -> Sizes {
 }
 
 // Defects: AA Off still filters, flips rows, loses channels or skips/doubles the
-// display transfer. The independent oracle is captured pre-AA scene data plus
-// the sRGB transfer equation, within the output's dither of up to a code
-// value. Compilation cannot check these pixel semantics.
+// display transfer, on an sRGB output or one that stores what is written
+// alike. The independent oracle is captured pre-AA scene data plus the sRGB
+// transfer equation, within the output's dither of up to a code value.
+// Compilation cannot check these pixel semantics.
 #[test]
 fn antialiasing_off_preserves_captured_pixels() {
     let Some((device, queue)) = crate::test_support::device() else {
@@ -69,6 +70,8 @@ fn antialiasing_off_preserves_captured_pixels() {
             HDR,
             wgpu::TextureFormat::Rgba8UnormSrgb,
             wgpu::TextureFormat::Bgra8UnormSrgb,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Bgra8Unorm,
         ] {
             let mut post = Post::new(
                 &device,
@@ -137,13 +140,14 @@ fn antialiasing_off_preserves_captured_pixels() {
                     } else {
                         for (pixel, rgba) in actual.chunks_exact(4).enumerate() {
                             for (channel, &value) in rgba.iter().enumerate() {
-                                let source_channel =
-                                    if format == wgpu::TextureFormat::Bgra8UnormSrgb && channel < 3
-                                    {
-                                        2 - channel
-                                    } else {
-                                        channel
-                                    };
+                                let source_channel = if format.remove_srgb_suffix()
+                                    == wgpu::TextureFormat::Bgra8Unorm
+                                    && channel < 3
+                                {
+                                    2 - channel
+                                } else {
+                                    channel
+                                };
                                 let linear =
                                     f64::from(half(&bytes[pixel * 8 + source_channel * 2..]));
                                 let expected = if channel == 3 {

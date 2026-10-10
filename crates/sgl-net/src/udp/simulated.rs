@@ -1,6 +1,7 @@
 //! Seeded virtual datagram network for deterministic loss/latency tests.
 
 use std::borrow::Cow;
+use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
@@ -273,17 +274,26 @@ impl DatagramTransport for SimulatedTransport {
             .schedule(self.local, destination, payload, now_ms);
     }
 
-    fn receive(&mut self, output: &mut [u8], now_ms: u64) -> Option<(usize, SocketAddr)> {
-        let item = self
+    /// A datagram larger than `output` fails its receive, as on Windows,
+    /// and is gone.
+    fn receive(
+        &mut self,
+        output: &mut [u8],
+        now_ms: u64,
+    ) -> io::Result<Option<(usize, SocketAddr)>> {
+        let Some(item) = self
             .network
             .lock()
             .expect("simulated network poisoned")
-            .receive(self.local, now_ms)?;
+            .receive(self.local, now_ms)
+        else {
+            return Ok(None);
+        };
         if item.bytes.len() > output.len() {
-            return None;
+            return Err(io::Error::other("datagram larger than the receive buffer"));
         }
         output[..item.bytes.len()].copy_from_slice(&item.bytes);
-        Some((item.bytes.len(), item.source))
+        Ok(Some((item.bytes.len(), item.source)))
     }
 }
 
@@ -740,7 +750,10 @@ mod tests {
         sender.send(second, &alone, 0);
 
         let mut buffer = [0; super::super::MAX_DATAGRAM_BYTES + 1];
-        let (length, _) = receiver.receive(&mut buffer, 0).expect("the mix arrives");
+        let (length, _) = receiver
+            .receive(&mut buffer, 0)
+            .unwrap()
+            .expect("the mix arrives");
         let Some(Parsed::Payload { items, .. }) = packet::parse(&buffer[..length], magic) else {
             panic!("a payload datagram");
         };
@@ -758,6 +771,9 @@ mod tests {
                 },
             ]
         );
-        assert!(receiver.receive(&mut buffer, 0).is_none(), "lane 1 alone");
+        assert!(
+            receiver.receive(&mut buffer, 0).unwrap().is_none(),
+            "lane 1 alone"
+        );
     }
 }
