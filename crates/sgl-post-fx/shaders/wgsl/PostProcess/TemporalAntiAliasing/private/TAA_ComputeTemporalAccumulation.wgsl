@@ -220,13 +220,15 @@ fn ComputeDepthDisocclusion(Position: vec2<f32>, PrevPosition: vec2<f32>) -> f32
         return 0.0;
     }
     var Disocclusion = 0.0;
+    // DFX-42: neighbours clamp to the screen, as the closest-motion search's do.
+    let Dimension = vec2<i32>(textureDimensions(g_TexturePrevDepth));
 
     const SearchRadius = 1;
     for (var y = -SearchRadius; y <= SearchRadius; y++)
     {
         for (var x = -SearchRadius; x <= SearchRadius; x++)
         {
-            let Location = PrevPositioni + vec2<i32>(x, y);
+            let Location = ClampScreenCoord(PrevPositioni + vec2<i32>(x, y), Dimension);
             let PrevDepth = SamplePrevDepth(Location);
             let Weight = ComputeDepthDisocclusionWeight(CurrDepth, PrevDepth);
             Disocclusion = max(Disocclusion, Weight);
