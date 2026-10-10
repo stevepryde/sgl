@@ -1,11 +1,12 @@
-//! Finite traversal budgets retain radiance from a visible plane when an
-//! unfinished endpoint passes production proximity validation.
+//! A ray that runs out of traversal lookups reports a miss (AR-12), however
+//! near a surface it ends; one that finishes within its budget keeps the
+//! visible plane's radiance.
 #![cfg(not(target_arch = "wasm32"))]
 use sgl_post_fx::{CameraAttribs, ScreenSpaceReflectionAttribs};
 use wgpu::util::DeviceExt;
 
 #[test]
-fn finite_budget_keeps_visible_plane_radiance() {
+fn rays_that_run_out_of_lookups_miss() {
     let adapter =
         match pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())) {
             Ok(adapter) => adapter,
@@ -232,11 +233,15 @@ fn regression(@builtin(global_invocation_id) id: vec3<u32>) {
     let mapped = readback.slice(..).get_mapped_range().unwrap();
     let result: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
     eprintln!("budget rows (endpoint xyz, accepted; premultiplied radiance): {result:?}");
-    assert_eq!(
-        result[1], [0.; 4],
-        "near-origin endpoint must not self-reflect"
-    );
-    for budget in 1..=4 {
+    // Two lookups end the ray on the plane, but at mip 1, unconfirmed.
+    for budget in 0..=2 {
+        assert_eq!(
+            result[budget * 2 + 1],
+            [0.; 4],
+            "ray out of lookups accepted at budget {budget}"
+        );
+    }
+    for budget in 3..=4 {
         let rgba = result[budget * 2 + 1];
         assert!(
             rgba[0] > 0.9 && rgba[1] == 0. && rgba[2] == 0. && rgba[3] > 0.9,

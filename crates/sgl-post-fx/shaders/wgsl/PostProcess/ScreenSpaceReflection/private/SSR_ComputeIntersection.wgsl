@@ -247,8 +247,9 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
         Idx += 1u;
     }
 
-    // As upstream, pass unfinished endpoints to ValidateHit's proximity confidence.
-    *ValidHit = Idx <= MostIntersections;
+    // DFX-38: only a ray that descended below the most detailed mip hit; one that ran out of
+    // lookups reports a miss (AR-12), as do the early exits above.
+    *ValidHit = CurrentMip < MostDetailedMip;
 
     return Position;
 }
@@ -369,7 +370,7 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let RayOriginVS = ScreenXYDepthToViewSpace(RayOriginSS, g_Camera.mProj);
 
     let RayDirectionVS = SampleReflectionVector(-normalize(RayOriginVS), NormalVS, Roughness, vec2<i32>(VSOut.f4PixelPos.xy));
-    let RayDirectionSS = ProjectDirection(RayOriginVS, RayDirectionVS.xyz, RayOriginSS, g_Camera.mProj);
+    let RayDirectionSS = ProjectDirection(RayOriginVS, RayDirectionVS.xyz, RayOriginSS, g_Camera.mProj, g_Camera.fNearPlaneZ);
     let RayDirectionWS = (g_Camera.mViewInv * vec4<f32>(RayDirectionVS.xyz, 0.0)).xyz;
 
     var ValidHit = false;
