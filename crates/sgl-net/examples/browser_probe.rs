@@ -9,18 +9,22 @@
 //! connection, echoed bytes, lanes and unreliable messages echoed whole
 //! and in their own order (long messages fragmented and reassembled on both
 //! sides), a 256 KiB message past its lane's byte allowances, coalesced
-//! latest state, a saturated lane that refuses and then drains without
+//! latest state, a latest-state watermark refused below the largest frame
+//! and working at it, a saturated lane that refuses and then drains without
 //! losing the connection, a server-initiated close with its bounded
-//! reconnect, a rejected subprotocol, and a clean local disconnect, also
-//! during reconnect backoff.
+//! reconnect, an inbound overflow and its reconnect, reconnects bounded by
+//! the policy when every connection fails, a rejected subprotocol, and a
+//! clean local disconnect, also during reconnect backoff.
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
 use sgl_net::websocket::{
-    BrowserWebSocketClient, BrowserWebSocketConfig, GAME_PATH, MAX_WEBSOCKET_FRAME_BYTES,
-    ReconnectPolicy, WebSocketIdentity,
+    BrowserWebSocketClient, BrowserWebSocketConfig, ENVELOPE_HEADER_LEN, GAME_PATH,
+    MAX_WEBSOCKET_FRAME_BYTES, ReconnectPolicy, WebSocketIdentity,
 };
-use sgl_net::{ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, SendError};
+use sgl_net::{
+    ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, SendError,
+};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -407,6 +411,53 @@ async fn a_saturated_reliable_lane_refuses_then_drains_in_order() -> Result<(), 
     ))
 }
 
+/// Defect (#301): a latest-state watermark below the largest latest frame,
+/// which then never fits, stays at the head of the queue and blocks every
+/// lane behind it. Oracle: such a watermark is refused at construction, and
+/// at the smallest accepted one a largest latest state and a reliable
+/// message sent after it both come back from the fixture.
+async fn a_latest_watermark_takes_the_largest_latest_state() -> Result<(), String> {
+    let largest_frame = ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES;
+    let mut too_small = config();
+    too_small.latest_buffered_bytes = largest_frame - 1;
+    ensure!(
+        BrowserWebSocketClient::connect(too_small).is_err(),
+        "accepted a latest watermark below the largest latest frame"
+    );
+    let mut smallest = config();
+    smallest.latest_buffered_bytes = largest_frame;
+    let mut driver = Driver::connect(smallest).await?;
+    let state = vec![0x5A; MAX_LATEST_STATE_BYTES];
+    driver
+        .client
+        .send(Delivery::LatestState, &state)
+        .map_err(|e| format!("latest send: {e:?}"))?;
+    driver.client.flush(driver.now_ms);
+    driver
+        .client
+        .send(Delivery::RELIABLE_ORDERED, b"after")
+        .map_err(|e| format!("send: {e:?}"))?;
+    driver
+        .settle(|events| {
+            let echoed = |delivery: Delivery| {
+                events.iter().any(
+                    |e| matches!(e, ClientEvent::Message { delivery: d, .. } if *d == delivery),
+                )
+            };
+            echoed(Delivery::RELIABLE_ORDERED) && echoed(Delivery::LatestState)
+        })
+        .await?;
+    let after = driver.payloads(Delivery::RELIABLE_ORDERED);
+    ensure!(after == [b"after".to_vec()], "reliable echoed {after:?}");
+    let echoed = driver.payloads(Delivery::LatestState);
+    ensure!(
+        echoed == [state],
+        "latest state echoed {} times",
+        echoed.len()
+    );
+    Ok(())
+}
+
 /// Defect: a server-initiated close surfacing as a transport error, or the
 /// reconnect loop ignoring `poll`'s clock. Oracle: `Disconnected { Peer }`,
 /// then `Reconnecting`, then `Connected` again, all driven by polls.
@@ -437,6 +488,87 @@ async fn a_server_close_is_reported_as_peer_and_reconnects() -> Result<(), Strin
     ensure!(
         matches!((closed, reconnecting), (Some(c), Some(r)) if c < r),
         "expected Peer close then reconnect: {:?}",
+        driver.events
+    );
+    Ok(())
+}
+
+/// Defect (#305): a receive failure that closes the peer without arming
+/// the reconnect policy, unlike every other non-local close. Oracle: with a
+/// one-message inbound lane, eight echoes that arrive while the game is not
+/// polling overflow it; the client reports `Disconnected { InboundOverflow }`,
+/// then `Reconnecting` and `Connected` again, all driven by polls.
+async fn an_inbound_overflow_reconnects() -> Result<(), String> {
+    let mut config = config();
+    config.reliable.lanes[0].inbound_messages = 1;
+    let mut driver = Driver::connect(config).await?;
+    for index in 0..8u8 {
+        driver
+            .client
+            .send(Delivery::RELIABLE_ORDERED, &[b'o', index])
+            .map_err(|e| format!("send: {e:?}"))?;
+    }
+    driver.client.flush(driver.now_ms);
+    // The echoes arrive while nothing polls.
+    sleep_ms(300).await;
+    driver
+        .settle(|events| {
+            events
+                .iter()
+                .filter(|e| **e == ClientEvent::Connected)
+                .count()
+                >= 2
+        })
+        .await?;
+    let position = |wanted: &dyn Fn(&ClientEvent) -> bool| driver.events.iter().position(wanted);
+    let overflow = position(&|e| {
+        *e == ClientEvent::Disconnected {
+            reason: DisconnectReason::InboundOverflow,
+        }
+    });
+    let reconnecting = position(&|e| matches!(e, ClientEvent::Reconnecting { attempt: 1 }));
+    ensure!(
+        matches!((overflow, reconnecting), (Some(o), Some(r)) if o < r),
+        "expected InboundOverflow then a reconnect: {:?}",
+        driver.events
+    );
+    Ok(())
+}
+
+/// Defect (#305): a reconnect count restarted by every `Connected`, so a
+/// connection that keeps failing soon after it opens reconnects forever at
+/// the first delay and `max_attempts` never bounds it. Oracle: a game that
+/// asks the fixture to close each connection as soon as it opens sees the
+/// policy's three attempts, numbered 1, 2 and 3, and then no more.
+async fn a_connection_that_keeps_failing_stops_at_max_attempts() -> Result<(), String> {
+    let mut driver = Driver::connect(config()).await?;
+    let mut opened = 0;
+    // Longer than the policy's three delays (50, 100 and 200 ms) together.
+    for _ in 0..150 {
+        let connected = driver.count(&ClientEvent::Connected);
+        if connected > opened {
+            opened = connected;
+            driver
+                .client
+                .send(Delivery::RELIABLE_ORDERED, b"close")
+                .map_err(|e| format!("send: {e:?}"))?;
+        }
+        driver.now_ms += 10;
+        driver.events.extend(driver.client.poll(driver.now_ms));
+        driver.client.flush(driver.now_ms);
+        sleep_ms(10).await;
+    }
+    let attempts: Vec<u16> = driver
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            ClientEvent::Reconnecting { attempt } => Some(*attempt),
+            _ => None,
+        })
+        .collect();
+    ensure!(
+        attempts == [1, 2, 3],
+        "attempts {attempts:?}; events: {:?}",
         driver.events
     );
     Ok(())
@@ -562,8 +694,23 @@ pub async fn run() -> String {
     );
     record(
         &mut report,
+        "a_latest_watermark_takes_the_largest_latest_state",
+        a_latest_watermark_takes_the_largest_latest_state().await,
+    );
+    record(
+        &mut report,
         "a_server_close_is_reported_as_peer_and_reconnects",
         a_server_close_is_reported_as_peer_and_reconnects().await,
+    );
+    record(
+        &mut report,
+        "an_inbound_overflow_reconnects",
+        an_inbound_overflow_reconnects().await,
+    );
+    record(
+        &mut report,
+        "a_connection_that_keeps_failing_stops_at_max_attempts",
+        a_connection_that_keeps_failing_stops_at_max_attempts().await,
     );
     record(
         &mut report,

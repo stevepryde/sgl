@@ -147,14 +147,18 @@ fn SampleMotion(PixelCoord: vec2<i32>) -> vec2<f32>
 fn SampleClosestMotion(PixelCoord: vec2<i32>) -> vec2<f32>
 {
     var ClosestDepth: f32 = DepthFarPlane;
-    var ClosestOffset = vec2<i32>(0, 0);
+    var ClosestCoord = PixelCoord;
+    // DFX-42: neighbours clamp to the screen, as the clamp-to-edge samplers of Godot's and Bevy's
+    // closest-velocity searches do. An out-of-bounds load returns 0, the nearest conventional
+    // depth, whose motion would load as 0 too.
+    let Dimension = vec2<i32>(textureDimensions(g_TextureDepth));
 
     const SearchRadius = 1;
     for (var x = -SearchRadius; x <= SearchRadius; x++)
     {
         for (var y = -SearchRadius; y <= SearchRadius; y++)
         {
-            let Coord = PixelCoord + vec2<i32>(x, y);
+            let Coord = ClampScreenCoord(PixelCoord + vec2<i32>(x, y), Dimension);
             let NeighborDepth = SampleDepth(Coord);
 #if POSTFX_OPTION_INVERTED_DEPTH
             if (NeighborDepth > ClosestDepth)
@@ -162,13 +166,13 @@ fn SampleClosestMotion(PixelCoord: vec2<i32>) -> vec2<f32>
             if (NeighborDepth < ClosestDepth)
 #endif
             {
-                ClosestOffset = vec2<i32>(x, y);
+                ClosestCoord = Coord;
                 ClosestDepth = NeighborDepth;
             }
         }
     }
 
-    return SampleMotion(PixelCoord + ClosestOffset);
+    return SampleMotion(ClosestCoord);
 }
 
 // PROVENANCE.md DFX-14.
@@ -217,13 +221,15 @@ fn ComputeDepthDisocclusion(Position: vec2<f32>, PrevPosition: vec2<f32>) -> f32
         return 0.0;
     }
     var Disocclusion = 0.0;
+    // DFX-42: neighbours clamp to the screen, as the closest-motion search's do.
+    let Dimension = vec2<i32>(textureDimensions(g_TexturePrevDepth));
 
     const SearchRadius = 1;
     for (var y = -SearchRadius; y <= SearchRadius; y++)
     {
         for (var x = -SearchRadius; x <= SearchRadius; x++)
         {
-            let Location = PrevPositioni + vec2<i32>(x, y);
+            let Location = ClampScreenCoord(PrevPositioni + vec2<i32>(x, y), Dimension);
             let PrevDepth = SamplePrevDepth(Location);
             let Weight = ComputeDepthDisocclusionWeight(CurrDepth, PrevDepth);
             Disocclusion = max(Disocclusion, Weight);

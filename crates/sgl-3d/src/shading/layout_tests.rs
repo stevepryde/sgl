@@ -330,6 +330,8 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
                 tone_map::PRESENT_ENTRY,
                 tone_map::PRESENT_DIRECT_ENTRY,
                 tone_map::COPY_PIXEL_ENTRY,
+                tone_map::RESAMPLE_ENTRY,
+                tone_map::RESAMPLE_DIRECT_ENTRY,
             ],
         ),
         (
