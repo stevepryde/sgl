@@ -15,6 +15,15 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `BrowserWebSocketClient`: a close caused by a received frame
+  (`InboundOverflow`, or a `ProtocolViolation` found by the lane queues)
+  never reconnected; it now follows `ReconnectPolicy` like other non-local
+  closes, so expect `Reconnecting` after it. No game-code changes needed.
+- `sgl-net` `ReconnectPolicy::max_attempts` (browser): every `Connected`
+  restarted the count, so a connection that kept failing soon after it
+  opened reconnected forever at the first delay; the count now restarts only
+  after a connection stayed up at least `max_delay_ms`, so such a loop backs
+  off and stops after `max_attempts`. No game-code changes needed.
 - `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
   grid cell it spanned (effectively hanging); a collider over 1024 cells is
   now kept apart and a query over more cells than colliders scans the
