@@ -52,12 +52,15 @@ impl ParamBlock {
         }
     }
 
-    /// This frame's block becomes `bytes`, of its size.
-    pub fn set(&mut self, queue: &wgpu::Queue, bytes: &[u8]) {
-        if self.bytes != bytes {
+    /// This frame's block becomes `bytes`, of its size; returns whether it
+    /// changed.
+    pub fn set(&mut self, queue: &wgpu::Queue, bytes: &[u8]) -> bool {
+        let changed = self.bytes != bytes;
+        if changed {
             self.bytes.copy_from_slice(bytes);
             crate::counters::write_buffer(queue, &self.current, 0, bytes);
         }
+        changed
     }
 
     /// Commits a submitted frame: its block becomes the last submitted one.

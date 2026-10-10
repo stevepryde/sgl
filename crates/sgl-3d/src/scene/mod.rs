@@ -41,6 +41,15 @@ mod textures;
 pub(crate) mod transient;
 
 pub use error::SceneError;
+
+/// How a model's shaders may change what it casts (`Scene::caster_shading`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CasterShading {
+    /// One of them reads the frame's time.
+    pub reads_time: bool,
+    /// The latest of their materials' parameter revisions.
+    pub parameters: u64,
+}
 pub use prepared::PreparedModel;
 
 use crate::content::identity::{Identity, MaterialId, ModelId};
@@ -242,6 +251,43 @@ impl Scene {
             .iter()
             .map(|mesh| self.drawn_material(mesh.material).displacement_bound())
             .fold(0., f32::max)
+    }
+
+    /// How the shaders of `model`'s meshes' materials may change what it
+    /// casts in a local light's shadow (`Material::shader_casts`): None
+    /// where none may; else whether one reads the frame's time and the
+    /// latest of their parameter revisions (`Material::parameters`).
+    pub(crate) fn caster_shading(&self, model: &models::Model) -> Option<CasterShading> {
+        model
+            .meshes
+            .iter()
+            .map(|mesh| self.drawn_material(mesh.material))
+            .filter(|material| material.shader_casts())
+            .map(|material| {
+                let shader = material.values.shader.expect("a shader casts");
+                CasterShading {
+                    reads_time: self
+                        .shaders
+                        .get(shader.shader)
+                        .is_ok_and(|shader| shader.reads_time),
+                    parameters: material.parameters,
+                }
+            })
+            .reduce(|a, b| CasterShading {
+                reads_time: a.reads_time || b.reads_time,
+                parameters: a.parameters.max(b.parameters),
+            })
+    }
+
+    /// `instance`'s bounds in its model's space as a shadow caster: as it
+    /// shows `model` (its deformation's), grown by what its materials'
+    /// shaders may move its vertices (`displacement_of`).
+    pub(crate) fn caster_bounds(
+        &self,
+        instance: &instances::Instance,
+        model: &models::Model,
+    ) -> [glam::Vec3; 2] {
+        static_edits::grown(instance.bounds(model), self.displacement_of(model))
     }
 
     /// `model`'s bounds in its space, grown by what its materials' shaders

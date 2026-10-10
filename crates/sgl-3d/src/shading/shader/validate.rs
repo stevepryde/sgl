@@ -35,6 +35,9 @@ pub(crate) struct ValidatedShader {
     /// function it calls: the shader reads its volume path, so its blended
     /// materials' meshes are drawn into the volume layers.
     pub reads_volume_path: bool,
+    /// One of its functions reads the frame's time from a context
+    /// (`reads_time`), so what it does may change from frame to frame.
+    pub reads_time: bool,
 }
 
 /// The contract's scene depth functions, which a game's module calls and
@@ -134,7 +137,7 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
         return Err(ShaderError::MissingFunction { name });
     }
     let module = parse_against_contract(source)?;
-    validator()
+    let info = validator()
         .validate(&module)
         .map_err(|error| validation(&error))?;
     forbidden(&module)?;
@@ -154,6 +157,7 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
         return Err(ShaderError::SceneDepthInVertex { function });
     }
     let reads_volume_path = reaches(&module, "material_surface", &[VOLUME_PATH]).is_some();
+    let reads_time = reads_time(&module, &info);
     let layout = params_layout(&module, params)?;
     for (label, program) in programs(tier, ProgramShader::Game(source)) {
         let module =
@@ -167,6 +171,46 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
     Ok(ValidatedShader {
         layout,
         reads_volume_path,
+        reads_time,
+    })
+}
+
+/// Whether a function of `module`, the game's or the contract's, reads the
+/// `time` or `phase` member of a `VertexContext` or `SurfaceContext`, by
+/// value or through a pointer, whether or not its material functions reach
+/// it: a conservative test, as Godot b130438 marks a material animated where
+/// its code reads TIME (`is_animated()`, scene_shader_forward_clustered.cpp
+/// 250–252). Every read of a struct member is an access by constant index.
+fn reads_time(module: &naga::Module, info: &naga::valid::ModuleInfo) -> bool {
+    let timed = |ty: naga::Handle<naga::Type>, index: u32| {
+        let ty = match module.types[ty].inner {
+            naga::TypeInner::Pointer { base, .. } => base,
+            _ => ty,
+        };
+        let naga::TypeInner::Struct { members, .. } = &module.types[ty].inner else {
+            return false;
+        };
+        matches!(
+            module.types[ty].name.as_deref(),
+            Some("VertexContext" | "SurfaceContext")
+        ) && members
+            .get(index as usize)
+            .is_some_and(|member| matches!(member.name.as_deref(), Some("time" | "phase")))
+    };
+    module.functions.iter().any(|(handle, function)| {
+        let info = &info[handle];
+        function.expressions.iter().any(|(_, expression)| {
+            let naga::Expression::AccessIndex { base, index } = *expression else {
+                return false;
+            };
+            match &info[base].ty {
+                naga::proc::TypeResolution::Handle(ty) => timed(*ty, index),
+                naga::proc::TypeResolution::Value(naga::TypeInner::Pointer { base, .. }) => {
+                    timed(*base, index)
+                }
+                naga::proc::TypeResolution::Value(_) => false,
+            }
+        })
     })
 }
 

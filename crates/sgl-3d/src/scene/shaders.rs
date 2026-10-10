@@ -18,6 +18,9 @@ pub(crate) struct Shader {
     /// Its `material_surface` reaches `scene_volume_path`, so its blended
     /// materials' meshes are drawn into the volume layers.
     pub reads_volume_path: bool,
+    /// One of its functions reads the frame's time from a context, so what
+    /// its materials cast may change from frame to frame.
+    pub reads_time: bool,
     /// The materials that name it.
     pub users: u32,
 }
@@ -57,6 +60,7 @@ impl Scene {
             label: source.label,
             layout: validated.layout,
             reads_volume_path: validated.reads_volume_path,
+            reads_time: validated.reads_time,
             users: 0,
         }))
     }

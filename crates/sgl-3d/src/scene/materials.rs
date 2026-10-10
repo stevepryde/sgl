@@ -62,6 +62,9 @@ pub(crate) struct Material {
     pub untangented: u32,
     /// Its shader's parameter blocks, while it has a shader.
     params: Option<ParamBlock>,
+    /// Changes when its parameter block does (`Scene::set_shader_parameters`),
+    /// so the local-light shadow faces its casters reach redraw.
+    pub parameters: u64,
 }
 
 impl Material {
@@ -86,9 +89,12 @@ impl Material {
 
     /// Whether its shading may change with the frame's time where its
     /// geometry stands still: its record's (`record_moves`), or any
-    /// material's with a shader, whose functions SGL3D does not analyse
-    /// (Godot b130438's `is_animated()` analyses its material's code;
-    /// scene_shader_forward_clustered.cpp 250–252).
+    /// material's with a shader, whose surface may follow its parameters
+    /// and instance data from frame to frame as well as the time. Only the
+    /// local-light shadow cache narrows this, by whether the shader reads
+    /// the time (`Shader::reads_time`, as Godot b130438's `is_animated()`
+    /// reads its material's code; scene_shader_forward_clustered.cpp
+    /// 250–252).
     pub fn surface_moves(&self) -> bool {
         self.record_moves() || self.values.shader.is_some()
     }
@@ -105,6 +111,26 @@ impl Material {
         self.values
             .shader
             .map_or(0., |shader| shader.displacement_bound)
+    }
+
+    /// Whether its meshes cast local-light shadows under `mask` (all
+    /// groups when None): those of every material but a blended one, which
+    /// no shadow draws, in an enabled visibility group.
+    pub fn casts_local_shadow(&self, mask: Option<u32>) -> bool {
+        !self.values.blended() && self.enabled(mask)
+    }
+
+    /// Whether its shader may change what its casters cast with its
+    /// parameters, the frame's time or an instance's data: it casts
+    /// local-light shadows, and its vertex function moves vertices (a
+    /// displacement bound above 0) or its surface function sets a masked
+    /// caster's coverage.
+    pub fn shader_casts(&self) -> bool {
+        self.casts_local_shadow(None)
+            && self.values.shader.is_some_and(|shader| {
+                shader.displacement_bound > 0.
+                    || matches!(self.values.alpha, AlphaMode::Mask { .. })
+            })
     }
 
     /// Visibility and explicit casting are independent caller policies.
@@ -198,6 +224,14 @@ impl Materials {
         self.groups.tier
     }
 
+    /// Whether a material's shader may change what its casters cast
+    /// (`Material::shader_casts`).
+    pub fn shader_casts(&self) -> bool {
+        self.slots
+            .iter()
+            .any(|(_, material)| material.shader_casts())
+    }
+
     /// Whether a material has a shader.
     pub fn holds_shaders(&self) -> bool {
         self.slots
@@ -205,13 +239,18 @@ impl Materials {
             .any(|(_, material)| material.values.shader.is_some())
     }
 
-    /// `id`'s parameter block of its shader's size becomes `bytes`.
+    /// `id`'s parameter block of its shader's size becomes `bytes`, which
+    /// changes its parameter revision where it differs.
     pub fn set_parameters(&mut self, queue: &wgpu::Queue, id: MaterialId, bytes: &[u8]) {
-        self.slots
-            .get_mut(id)
-            .and_then(|material| material.params.as_mut())
-            .expect("a live material with a shader")
+        let material = self.slots.get_mut(id).expect("a live material");
+        let changed = material
+            .params
+            .as_mut()
+            .expect("a material with a shader")
             .set(queue, bytes);
+        if changed {
+            material.parameters = super::next_generation();
+        }
     }
 
     /// Before a frame: each shader parameter block's last submitted copy is
@@ -469,6 +508,7 @@ impl Materials {
             record,
             users: HashMap::new(),
             untangented: 0,
+            parameters: 0,
             params: None,
         }))
     }

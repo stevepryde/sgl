@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` local-light shadows: a material shader's parameters
+  (`Scene::set_shader_parameters`), the frame's time and a moving instance's
+  `Scene::set_instance_shader_data` left cached shadows stale; casters whose
+  shader moves or cuts them now redraw where those change, every frame the
+  time advances for a shader that reads `time` or `phase`. No game-code
+  changes needed.
 - `sgl-net` UDP client handshake: a client confirmed the last challenge it
   received, so challenges to its retried request that arrived reversed
   across a cookie epoch left the join failing at the timeout after a ghost
