@@ -233,12 +233,8 @@ fn regression(@builtin(global_invocation_id) id: vec3<u32>) {
     let mapped = readback.slice(..).get_mapped_range().unwrap();
     let result: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
     eprintln!("budget rows (endpoint xyz, accepted; premultiplied radiance): {result:?}");
-    assert_eq!(
-        result[1], [0.; 4],
-        "near-origin endpoint must not self-reflect"
-    );
     // Two lookups end the ray on the plane, but at mip 1, unconfirmed.
-    for budget in 1..=2 {
+    for budget in 0..=2 {
         assert_eq!(
             result[budget * 2 + 1],
             [0.; 4],
