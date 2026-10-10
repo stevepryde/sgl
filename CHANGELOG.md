@@ -15,11 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-input` `Gamepads::poll` on Windows, Linux and the web (Gilrs): a pad
-  connecting with a button held or a stick deflected read released and
-  centred until it changed, and a repeated `Connected` reset its state; now
-  `Connected` is followed by its held buttons and stick positions, as on
-  macOS, and is reported once. No game-code changes needed.
+- `sgl-input` `Gamepads::poll` on Windows, Linux and the web (Gilrs): a
+  repeated `Connected` for a pad reset its held state and is now ignored, and
+  a `ButtonReleased` with no reported press (a button held when the pad
+  connected) is now dropped on every target. Input already held at connection
+  is still not reported until it changes, a gilrs limitation. No game-code
+  changes needed.
 
 - `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
   on the world channel shrank by `pixels_per_unit`; the new `units:

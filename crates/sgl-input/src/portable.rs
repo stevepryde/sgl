@@ -43,14 +43,8 @@ impl Backend {
         let mut connected = HashSet::new();
         let initial = inner
             .gamepads()
-            .flat_map(|(id, pad)| {
-                on_connected(
-                    &mut connected,
-                    GamepadId(id.into()),
-                    pad.name().into(),
-                    |button| pad.is_pressed(button),
-                    |axis| pad.value(axis),
-                )
+            .filter_map(|(id, pad)| {
+                on_connected(&mut connected, GamepadId(id.into()), pad.name().into())
             })
             .collect();
         Ok(Self {
@@ -65,14 +59,8 @@ impl Backend {
             let id = GamepadId(event.id.into());
             let event = match event.event {
                 gilrs::EventType::Connected => {
-                    let pad = self.inner.gamepad(event.id);
-                    updates.extend(on_connected(
-                        &mut self.connected,
-                        id,
-                        pad.name().into(),
-                        |button| pad.is_pressed(button),
-                        |axis| pad.value(axis),
-                    ));
+                    let name = self.inner.gamepad(event.id).name().into();
+                    updates.extend(on_connected(&mut self.connected, id, name));
                     continue;
                 }
                 gilrs::EventType::Disconnected => {
@@ -106,33 +94,12 @@ impl Backend {
     }
 }
 
-/// The updates for a pad that connects: `Connected`, then each button already
-/// held and every stick's position, so held state is right before the next
-/// change (as the macOS backend seeds it). Nothing for a pad already
-/// connected: Windows can report again a pad that was listed at startup.
-fn on_connected(
-    connected: &mut HashSet<GamepadId>,
-    id: GamepadId,
-    name: String,
-    pressed: impl Fn(gilrs::Button) -> bool,
-    value: impl Fn(gilrs::Axis) -> f32,
-) -> Vec<Update> {
-    if !connected.insert(id) {
-        return Vec::new();
-    }
-    let input = |event| Update::Input(Event { id, event });
-    std::iter::once(Update::Connected(id, name))
-        .chain(
-            BUTTONS
-                .iter()
-                .filter(|(gilrs, _)| pressed(*gilrs))
-                .map(|&(_, button)| input(EventType::ButtonPressed(button))),
-        )
-        .chain(
-            AXES.iter()
-                .map(|&(gilrs, axis)| input(EventType::AxisChanged(axis, value(gilrs)))),
-        )
-        .collect()
+/// `Connected` for a pad, or nothing when it is already connected: Windows
+/// can report again a pad that was listed at startup. Input already held when
+/// a pad connects is not reported until it changes: gilrs starts each pad's
+/// state empty and its backends report only later changes.
+fn on_connected(connected: &mut HashSet<GamepadId>, id: GamepadId, name: String) -> Option<Update> {
+    connected.insert(id).then_some(Update::Connected(id, name))
 }
 
 fn map_button(button: gilrs::Button) -> Option<Button> {
@@ -148,50 +115,27 @@ mod tests {
     use crate::State;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    /// #317: a pad that connects with South held and the left stick pushed
-    /// right reads that state at once, and a repeated `Connected` for it
-    /// reports nothing and keeps the state.
+    /// #317: a repeated `Connected` for a pad already connected reports
+    /// nothing and keeps its held state; after a disconnect it connects again.
     #[wasm_bindgen_test(unsupported = test)]
-    fn a_pad_connecting_with_input_held_reads_it_at_once() {
+    fn a_repeated_connected_is_ignored() {
         let mut connected = HashSet::new();
         let mut state = State::default();
         let id = GamepadId(3);
-        let mut connect = |state: &mut State| {
-            on_connected(
-                &mut connected,
-                id,
-                "pad".into(),
-                |button| button == gilrs::Button::South,
-                |axis| {
-                    if axis == gilrs::Axis::LeftStickX {
-                        0.75
-                    } else {
-                        0.0
-                    }
-                },
-            )
-            .into_iter()
-            .filter_map(|update| state.apply(update))
-            .collect::<Vec<_>>()
+        let press = Update::Input(Event {
+            id,
+            event: EventType::ButtonPressed(Button::South),
+        });
+        let apply = |state: &mut State, update: Option<Update>| {
+            update.and_then(|update| state.apply(update))
         };
 
-        let first = connect(&mut state);
-        assert_eq!(
-            first[0],
-            Event {
-                id,
-                event: EventType::Connected
-            }
-        );
-        let pad = state.pads.get(&id).expect("connected");
-        assert!(pad.is_pressed(Button::South));
-        assert!(!pad.is_pressed(Button::East));
-        assert_eq!(pad.value(Axis::LeftStickX).to_bits(), 0.75f32.to_bits());
-
-        assert!(
-            connect(&mut state).is_empty(),
-            "a repeated Connected is ignored"
-        );
+        assert!(apply(&mut state, on_connected(&mut connected, id, "pad".into())).is_some());
+        state.apply(press);
+        assert!(apply(&mut state, on_connected(&mut connected, id, "pad".into())).is_none());
         assert!(state.pads[&id].is_pressed(Button::South));
+
+        connected.remove(&id);
+        assert!(on_connected(&mut connected, id, "pad".into()).is_some());
     }
 }
