@@ -18,7 +18,16 @@ docs and specs the entry links.
 - All SGL crates: published packages no longer ship examples, tests, test
   fixtures or unused vendored reference sources; read those in the repository.
   Licences and notices still ship. No game-code changes needed.
-
+- `sgl-2d` `DrawList::sort`: a NaN `z` could panic or misorder the other
+  sprites; NaN now draws last and the rest stay ascending and stable. No
+- `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
+  `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes,
+  so content re-derived from a persisted base seed (generated worlds,
+  replays) changes on upgrade. Games that need the old output regenerate it,
+  or store the derived seeds before upgrading.
+- `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
+  `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
+  Use or remove such calls; no other game-code changes are needed.
 - `sgl-net` `ThreadedUdpServer::disconnect`: reliable and unreliable
   messages accepted before it but not yet handed to the endpoint were
   dropped; they are now sent before the graceful close, within the same

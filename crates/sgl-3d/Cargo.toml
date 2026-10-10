@@ -25,6 +25,10 @@ include = [
     "/THIRD_PARTY_NOTICES.txt",
 ]
 
+# Exempt from `[workspace.lints]`: GPU packing casts and wgpu descriptor
+# defaults make clippy's pedantic group pervasive noise here. Unsafe code stays
+# denied as specs/stack.md records (`#![deny(unsafe_code)]` in src/lib.rs).
+
 [features]
 default = []
 diagnostics = ["dep:js-sys"]
