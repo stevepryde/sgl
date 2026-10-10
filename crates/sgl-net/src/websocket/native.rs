@@ -11,7 +11,7 @@ mod worker;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -58,7 +58,9 @@ enum OriginPolicyKind {
 }
 
 impl OriginPolicy {
-    /// Builds a canonical exact allowlist.
+    /// Builds a canonical exact allowlist. Each origin must be written as a
+    /// browser sends it: lowercase host, no default port, and an IPv6 literal
+    /// in compressed bracketed form (`http://[::1]:3000`).
     pub fn exact(origins: impl IntoIterator<Item = String>) -> io::Result<Self> {
         let mut canonical = BTreeSet::new();
         for origin in origins {
@@ -137,17 +139,22 @@ fn canonical_origin(raw: &str) -> io::Result<String> {
             "Origin must contain only scheme and authority",
         ));
     }
-    let host = authority.host().to_ascii_lowercase();
+    let host = authority.host();
     if host.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Origin host is empty",
         ));
     }
-    let rendered_host = if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host
+    // The authority keeps an IPv6 literal's brackets.
+    let rendered_host = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        Some(literal) => {
+            let address = literal.parse::<Ipv6Addr>().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "malformed Origin IPv6 address")
+            })?;
+            format!("[{}]", serialize_ipv6(address))
+        }
+        None => host.to_ascii_lowercase(),
     };
     let default_port = match scheme {
         "http" => 80,
@@ -159,6 +166,17 @@ fn canonical_origin(raw: &str) -> io::Result<String> {
         Some(port) => format!("{scheme}://{rendered_host}:{port}"),
         None => format!("{scheme}://{rendered_host}"),
     })
+}
+
+/// The WHATWG URL IPv6 serialization browsers use for `Origin`. `Display`
+/// follows RFC 5952, which matches it except that it writes an IPv4-mapped
+/// address in dotted form, which WHATWG keeps in hex.
+fn serialize_ipv6(address: Ipv6Addr) -> String {
+    let [.., high, low] = address.segments();
+    match address.to_ipv4_mapped() {
+        Some(_) => format!("::ffff:{high:x}:{low:x}"),
+        None => address.to_string(),
+    }
 }
 
 fn websocket_config() -> WebSocketConfig {
@@ -870,6 +888,11 @@ impl NativeWebSocketClient {
         let host = request.uri().host().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "WebSocket URL has no host")
         })?;
+        // The URI keeps an IPv6 literal's brackets; the resolver takes it bare.
+        let host = host
+            .strip_prefix('[')
+            .and_then(|literal| literal.strip_suffix(']'))
+            .unwrap_or(host);
         let port = request.uri().port_u16().unwrap_or(80);
         let addr = (host, port)
             .to_socket_addrs()?
@@ -1743,6 +1766,59 @@ mod tests {
             );
         }
         assert!(OriginPolicy::exact(Vec::new()).is_err());
+    }
+
+    #[test]
+    fn canonical_origin_keeps_ipv6_literals_in_browser_serialization() {
+        // Expected values are the WHATWG URL origin serialization browsers send.
+        for canonical in [
+            "http://[::1]:3000",
+            "https://[2001:db8::1]",
+            "http://[1::]",
+            "http://[::]:8080",
+            "http://[1:0:0:2::3]",
+        ] {
+            assert!(
+                OriginPolicy::exact([canonical.to_owned()]).is_ok(),
+                "rejected {canonical}"
+            );
+        }
+        assert_eq!(
+            canonical_origin("https://[2001:db8::1]:443").unwrap(),
+            "https://[2001:db8::1]"
+        );
+        assert_eq!(
+            canonical_origin("http://[::FFFF:1.2.3.4]:3000").unwrap(),
+            "http://[::ffff:102:304]:3000"
+        );
+        assert_eq!(
+            canonical_origin("http://[0:0:0:0:0:0:0:1]").unwrap(),
+            "http://[::1]"
+        );
+        assert_eq!(
+            canonical_origin("http://[1:0:0:2:0:0:0:3]").unwrap(),
+            "http://[1:0:0:2::3]"
+        );
+        assert_eq!(
+            canonical_origin("http://[1:0:0:2:0:0:3:4]").unwrap(),
+            "http://[1::2:0:0:3:4]"
+        );
+        assert_eq!(
+            canonical_origin("http://[1:0:2:3:4:5:6:7]").unwrap(),
+            "http://[1:0:2:3:4:5:6:7]"
+        );
+        for rejected in [
+            "http://[0::1]:3000",
+            "http://[::ABCD]",
+            "http://[::1]:80",
+            "http://[fe80::1%25en0]",
+            "http://[v1.x]",
+        ] {
+            assert!(
+                OriginPolicy::exact([rejected.to_owned()]).is_err(),
+                "accepted {rejected}"
+            );
+        }
     }
 
     #[test]
