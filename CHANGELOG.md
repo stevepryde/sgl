@@ -17,6 +17,7 @@ docs and specs the entry links.
 
 - `sgl-2d` `DrawList::sort`: a NaN `z` could panic or misorder the other
   sprites; NaN now draws last and the rest stay ascending and stable. No
+  game-code changes needed.
 - `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
   `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes,
   so content re-derived from a persisted base seed (generated worlds,
