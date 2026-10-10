@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
+  on the world channel shrank by `pixels_per_unit`; the new `units:
+  WorldUnits` field (default logical pixels) makes positions, sizes and
+  widths world units. World gizmos set `units: camera.units()`; struct
+  literals without `..Overlay::new(white)` add `units`.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at

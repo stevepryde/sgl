@@ -11,12 +11,17 @@
 //! plain `Vec<SpriteInstance>` — so the caller picks the channel by passing
 //! `&mut list.world` or `&mut list.screen`. Overlays usually want the screen
 //! channel: it draws after the lighting composite, so the gizmos stay unlit.
+//! Positions, sizes and widths are in the overlay's [`WorldUnits`]: logical
+//! pixels by default (always right for the screen channel); set the world
+//! camera's [`Camera::units`](crate::canvas::Camera::units) to draw world
+//! gizmos in world units.
 //!
 //! A full-canvas fade is just a fill over the logical view:
 //! `Overlay { color: [0.0, 0.0, 0.0, a], z, ..Overlay::new(white) }
 //! .fill_rect(&mut list.screen, Rect::new(0.0, 0.0, width, height))`.
 
 use crate::assets::{Handle, Texture};
+use crate::canvas::camera::WorldUnits;
 use crate::canvas::draw::{Rect, SpriteInstance};
 use sgl_core::math::Vec2;
 
@@ -34,58 +39,65 @@ pub struct Overlay {
     pub z: f32,
     /// Clip rect in logical view pixels, or `None` for unclipped.
     pub clip: Option<Rect>,
+    /// The units of every position, size and width passed to the
+    /// primitives: the world camera's [`Camera::units`] for world gizmos,
+    /// the default (logical pixels) for the screen channel.
+    ///
+    /// [`Camera::units`]: crate::canvas::Camera::units
+    pub units: WorldUnits,
 }
 
 impl Overlay {
-    /// Opaque white, `z = 0`, unclipped.
+    /// Opaque white, `z = 0`, unclipped, in logical pixels.
     pub fn new(white: Handle<Texture>) -> Self {
         Self {
             white,
             color: [1.0, 1.0, 1.0, 1.0],
             z: 0.0,
             clip: None,
+            units: WorldUnits::default(),
         }
     }
 
     /// Fill an axis-aligned rectangle. Empty or negative rects emit nothing.
     pub fn fill_rect(&self, out: &mut Vec<SpriteInstance>, rect: Rect) {
-        let size = rect.size();
-        // A negated conjunction so NaN extents are rejected as well.
-        if !(size.x > 0.0 && size.y > 0.0) {
-            return;
-        }
-        out.push(SpriteInstance {
-            scale: size,
-            color: self.color,
-            z: self.z,
-            clip: self.clip,
-            ..SpriteInstance::new(self.white, rect.min + size * 0.5)
-        });
+        let k = self.units.pixels_per_unit;
+        self.fill_px(
+            out,
+            Rect {
+                min: rect.min * k,
+                max: rect.max * k,
+            },
+        );
     }
 
-    /// A `width`-pixel segment from `a` to `b`.
+    /// A `width`-wide segment from `a` to `b`.
     ///
     /// Axis-aligned segments become **unrotated** quads whose leading edge is
-    /// snapped to the pixel grid (`(a.y - width / 2).round()`): a rotated 1 px
-    /// quad lands its edges on pixel centers, where the rasterizer's edge
-    /// rules can drop the whole row. Other segments are quads of length
-    /// `|b - a|` rotated to match. `width` floors at 1 px; a zero-length or
+    /// snapped to the pixel grid (`(a.y - width / 2).round()` in world
+    /// pixels): a rotated 1 px quad lands its edges on pixel centers, where
+    /// the rasterizer's edge rules can drop the whole row. Other segments are
+    /// quads of length `|b - a|` rotated to match. `width` floors at one
+    /// world pixel (`1 / pixels_per_unit` units); a zero-length or
     /// non-finite segment emits nothing.
     pub fn line(&self, out: &mut Vec<SpriteInstance>, a: Vec2, b: Vec2, width: f32) {
+        // Everything below is in world pixels (units × pixels_per_unit).
+        let k = self.units.pixels_per_unit;
+        let (a, b) = (a * k, b * k);
         let d = b - a;
         let len = d.length();
         if len <= 0.0 || !len.is_finite() {
             return;
         }
-        let width = width.max(1.0);
+        let width = (width * k).max(1.0);
         if d.y == 0.0 {
             let y = (a.y - width * 0.5).round();
-            self.fill_rect(out, Rect::new(a.x.min(b.x), y, len, width));
+            self.fill_px(out, Rect::new(a.x.min(b.x), y, len, width));
             return;
         }
         if d.x == 0.0 {
             let x = (a.x - width * 0.5).round();
-            self.fill_rect(out, Rect::new(x, a.y.min(b.y), width, len));
+            self.fill_px(out, Rect::new(x, a.y.min(b.y), width, len));
             return;
         }
         out.push(SpriteInstance {
@@ -94,37 +106,61 @@ impl Overlay {
             color: self.color,
             z: self.z,
             clip: self.clip,
-            ..SpriteInstance::new(self.white, (a + b) * 0.5)
+            ..SpriteInstance::new(self.white, (a + b) * 0.5 / k)
         });
     }
 
-    /// Outline a rectangle with four `width`-pixel strips drawn **inside** it,
+    /// Outline a rectangle with four `width`-wide strips drawn **inside** it,
     /// so the outline never spills past `rect` (it can be clipped to the same
     /// rect) and its thickness does not depend on the rect's own size.
     ///
     /// The strips do not overlap — the top and bottom run the full width, the
     /// left and right fill only the band between them — so a corner pixel is
     /// covered exactly once and a translucent outline stays even. `width`
-    /// floors at 1 px and clamps to half the rect on each axis. Strip rects
-    /// are exact (no pixel snapping); pass an integer-aligned `rect` for a
-    /// crisp edge.
+    /// floors at one world pixel and clamps to half the rect on each axis.
+    /// Strip rects are exact (no pixel snapping); pass a pixel-aligned
+    /// `rect` for a crisp edge.
     pub fn rect_outline(&self, out: &mut Vec<SpriteInstance>, rect: Rect, width: f32) {
+        let k = self.units.pixels_per_unit;
+        let rect = Rect {
+            min: rect.min * k,
+            max: rect.max * k,
+        };
         let size = rect.size();
         if !(size.x > 0.0 && size.y > 0.0) {
             return;
         }
-        let width = width.max(1.0);
+        let width = (width * k).max(1.0);
         // `2 * wx <= size.x` holds exactly, so the middle band never inverts.
         let wx = width.min(size.x * 0.5);
         let wy = width.min(size.y * 0.5);
         let band = size.y - 2.0 * wy;
-        self.fill_rect(out, Rect::new(rect.min.x, rect.min.y, size.x, wy));
-        self.fill_rect(out, Rect::new(rect.min.x, rect.max.y - wy, size.x, wy));
-        self.fill_rect(out, Rect::new(rect.min.x, rect.min.y + wy, wx, band));
-        self.fill_rect(out, Rect::new(rect.max.x - wx, rect.min.y + wy, wx, band));
+        self.fill_px(out, Rect::new(rect.min.x, rect.min.y, size.x, wy));
+        self.fill_px(out, Rect::new(rect.min.x, rect.max.y - wy, size.x, wy));
+        self.fill_px(out, Rect::new(rect.min.x, rect.min.y + wy, wx, band));
+        self.fill_px(out, Rect::new(rect.max.x - wx, rect.min.y + wy, wx, band));
     }
 
-    /// A circle outline as a regular `segments`-gon of `width`-pixel lines,
+    /// Fill `rect` given in world pixels: the 1×1 white texture is scaled in
+    /// pixels and the sprite pass divides by `pixels_per_unit`, so only the
+    /// center goes back into units. Exact for the default units.
+    fn fill_px(&self, out: &mut Vec<SpriteInstance>, rect: Rect) {
+        let size = rect.size();
+        // A negated conjunction so NaN extents are rejected as well.
+        if !(size.x > 0.0 && size.y > 0.0) {
+            return;
+        }
+        let center = (rect.min + size * 0.5) / self.units.pixels_per_unit;
+        out.push(SpriteInstance {
+            scale: size,
+            color: self.color,
+            z: self.z,
+            clip: self.clip,
+            ..SpriteInstance::new(self.white, center)
+        });
+    }
+
+    /// A circle outline as a regular `segments`-gon of `width`-wide lines,
     /// starting at `center + (radius, 0)`. `segments` floors at 3; a
     /// non-positive `radius` collapses every side to zero length and emits
     /// nothing.
@@ -237,6 +273,30 @@ mod tests {
         o.line(&mut out, Vec2::new(0.0, 10.0), Vec2::new(8.0, 10.0), 3.0);
         assert_eq!(out[0].pos, Vec2::new(4.0, 10.5));
         assert_eq!(out[0].scale, Vec2::new(8.0, 3.0));
+    }
+
+    /// #324: under 32 px/unit, line ends and widths are world units: quad
+    /// centers stay in units, quad scales are world pixels (the sprite pass
+    /// divides by `pixels_per_unit`), axis-aligned bands snap to the world
+    /// pixel grid and widths floor at one world pixel.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn lines_take_world_units() {
+        let o = Overlay {
+            units: WorldUnits {
+                pixels_per_unit: 32.0,
+                y_up: true,
+            },
+            ..overlay()
+        };
+        let mut out = Vec::new();
+        // 0.25 units = 8 px band starting at round(32 - 4) = 28 px.
+        o.line(&mut out, Vec2::new(0.0, 1.0), Vec2::new(2.0, 1.0), 0.25);
+        // Diagonal 3-4-5 in units, 0.001 units wide → floors at 1 px.
+        o.line(&mut out, Vec2::ZERO, Vec2::new(3.0, 4.0), 0.001);
+        assert_eq!(out[0].pos, Vec2::new(1.0, 1.0));
+        assert_eq!(out[0].scale, Vec2::new(64.0, 8.0));
+        assert_eq!(out[1].pos, Vec2::new(1.5, 2.0));
+        assert_eq!(out[1].scale, Vec2::new(160.0, 1.0));
     }
 
     /// A diagonal is a rotated quad as long as the segment; sub-pixel widths
