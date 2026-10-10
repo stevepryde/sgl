@@ -25,13 +25,24 @@ browser client must get identical results from it.
    Supplied time is exactly simulated, held (under a step plus any debt), or
    reported in `dropped_dt`. `alpha` is the fractional overstep in `[0, 1)`,
    excluding whole steps of debt.
-3. **Hashing.** `StateHasher` is a canonical, length-prefixed BLAKE3 encoding
-   of typed writes: different write sequences produce different digests, and
-   the digest for a given sequence is frozen across versions and targets.
-   `Digest::hash_bytes` is raw BLAKE3 of the bytes.
+3. **Hashing.** `StateHasher` is a canonical, schema-driven BLAKE3 encoding:
+   each write appends its fixed-width little-endian bytes untagged, and byte
+   strings and sequences carry a `u32` length prefix. The schema is the shape
+   of the primitive writes (which write methods, in what order). Two write
+   sequences with the same schema produce different digests whenever their
+   values differ. A `CanonicalWrite` impl is self-delimiting: its write shape
+   depends only on values it has already written, so it writes a length
+   before variable-length data and a tag before an optional value or enum
+   variant. Sequences with different schemas may encode alike (`u16(0x1234)`
+   equals `u8(0x34); u8(0x12)`), so a caller that hashes several kinds of
+   state in one stream or changes its schema writes its own leading tag or
+   version. The digest for a given sequence is frozen across versions and
+   targets. `Digest::hash_bytes` is raw BLAKE3 of the bytes.
 4. **RNG.** `SplitMix64` is a frozen stream: a seed produces the same values on
-   every version and target. `derive_stream_seed` gives distinct seeds for
-   distinct `(domain, a, b)`. `Rng` (the `fastrand` seam) is deterministic per
+   every version and target. `derive_stream_seed` absorbs `base`, `domain`,
+   `a` and `b` in turn, each mixed by a `SplitMix64` step: changing any one
+   of them always changes the seed, and no two can cancel (inputs differing
+   in several share a seed only by 64-bit chance). `Rng` (the `fastrand` seam) is deterministic per
    seed but its stream is not frozen across dependency upgrades.
 5. **Grid.** `Grid2` is row-major with `u16` dimensions; an oversized or
    overflowing construction returns `GridError`, never panics. `get` is `Some`
@@ -45,6 +56,9 @@ browser client must get identical results from it.
    during playback, even when a tick crosses that frame without stopping on
    it. `current_frame()` is `None` only before the first frame is reached after
    construction or reset. Ping-pong never plays either end frame twice.
+   Every tick returns: a non-finite `dt` is ignored, and in a repeating loop
+   a tick whose duration is too small for `f32` to subtract from the
+   accumulated time drops the remainder.
 7. **Collision.** `sweep_aabb` is a closed-form swept AABB test returning
    `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
    toward the body. `move_and_collide` slides a kinematic body against a

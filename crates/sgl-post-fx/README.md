@@ -15,8 +15,9 @@ workspace and owns GPU effects; SGL3D owns scene conventions and frame
 integration. It has no dependency on SGL3D.
 
 [PROVENANCE.md](PROVENANCE.md) records the source revisions and useful
-algorithm and implementation notes. `vendor/` retains the original reference
-files unedited.
+algorithm and implementation notes. `vendor/` in the repository retains the
+original reference files unedited; the published crate keeps only their
+licences, source revisions and the blue-noise table source it reads.
 
 - SSR is AMD's FidelityFX SSSR tracing with a confidence output and its own
   energy-preserving denoiser (spatial reconstruction, temporal accumulation,
@@ -94,7 +95,9 @@ world normals in [-1, 1], NDC motion vectors (current − previous) and the
 previous frame's depth. Set each `CameraAttribs`' clip planes with
 `set_clip_planes(near, far)`, passing far before near for reversed-Z: SSR's
 and TAA's temporal passes read the near and far planes' depths (DFX-32), and
-left at `Default`'s 0 they keep no history. The SSR output composites as
+left at `Default`'s 0 they keep no history; SSR's intersection clips rays
+towards the camera at the near plane (DFX-39), just in front of the camera
+when it is left at 0. The SSR output composites as
 `(F0 · LUT.x + LUT.y) · lerp(environment, rgb, a)`.
 `RenderAttributes::pass_timestamps` optionally supplies per-pass timestamp
 writes by the name of each pass's upstream debug group.

@@ -58,6 +58,7 @@ pub use gpu::{Context, Frame, Gpu, GpuError, RendererInitError};
 pub use letterbox::{Letterbox, fit_fractional};
 pub use light::{LightFrame, PointLight};
 pub use overlay::Overlay;
+pub use sprite::TextureError;
 
 /// The color space the world channel is lit and composited in
 /// (`Renderer::with_lighting`). Only the world channel, the light math and
