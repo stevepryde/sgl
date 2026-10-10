@@ -671,6 +671,94 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
     assert_eq!(ignored, [Ignored::SpecularMap { material: 0 }]);
 }
 
+// Defects: a whole file refused over an occlusion map SGL3D leaves out:
+// its UV set's TEXCOORD_1 refused as an unsupported attribute (and not
+// kept as the lightmap UV), or its nearest sampling refused although SGL3D
+// never samples it; or, the other way, a map SGL3D samples loaded with
+// sampling it does not support. The oracle is the documented fallback (a
+// left-out map is listed in `Asset::ignored` and the rest loads) and the
+// authored values.
+#[test]
+fn an_ignored_occlusion_map_constrains_neither_attributes_nor_sampling() {
+    let uv0 = [0., 0., 1., 0., 0., 1.];
+    let uv1 = [0.25, 0.5, 0.75, 0.5, 0.25, 0.75];
+    let load_triangle = |occlusion: serde_json::Value, nearest: usize, lightmap_uv: bool| {
+        let mut attributes = serde_json::json!({"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2});
+        if lightmap_uv {
+            attributes["TEXCOORD_1"] = 3.into();
+        }
+        let mut document = serde_json::json!({
+            "asset": {"version": "2.0"},
+            "buffers": [{"uri": "fixture.bin", "byteLength": 120}],
+            "bufferViews": [
+                {"buffer": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 36},
+                {"buffer": 0, "byteOffset": 72, "byteLength": 24}, {"buffer": 0, "byteOffset": 96, "byteLength": 24}
+            ],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0]},
+                {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+                {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2"},
+                {"bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC2"}
+            ],
+            "images": [{"uri": "orm.png"}, {"uri": "occlusion.png"}],
+            "samplers": [{"magFilter": 9728, "minFilter": 9728}],
+            "textures": [{"source": 0}, {"source": 1}],
+            "materials": [{
+                "pbrMetallicRoughness": {"metallicRoughnessTexture": {"index": 0}},
+                "occlusionTexture": occlusion
+            }],
+            "meshes": [{"primitives": [{"attributes": attributes, "material": 0}]}],
+            "nodes": [{"mesh": 0}],
+            "scenes": [{"nodes": [0]}], "scene": 0
+        });
+        document["textures"][nearest]["sampler"] = 0.into();
+        let values = [
+            &[0., 0., 0., 1., 0., 0., 0., 1., 0.][..],
+            &[0., 0., 1., 0., 0., 1., 0., 0., 1.],
+            &uv0,
+            &uv1,
+        ]
+        .concat();
+        let fixture = Fixture::new(&serde_json::to_vec(&document).unwrap(), &values);
+        let supplied = image::RgbaImage::new(1, 1);
+        let supply = |_: GltfImage<'_>| Ok(ImageSource::Supplied(Image::Rgba8(supplied.clone())));
+        load_with_options(
+            &fixture.path(),
+            LoadOptions {
+                images: Some(&supply),
+                ..Default::default()
+            },
+        )
+    };
+    // On TEXCOORD_1, which the mesh carries, and sampled nearest: its UVs
+    // are the lightmap UVs.
+    let asset = load_triangle(serde_json::json!({"index": 1, "texCoord": 1}), 1, true)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(asset.ignored, [Ignored::OcclusionMap { material: 0 }]);
+    let vertices = &asset.meshes[0].vertices;
+    let uvs: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.uv).collect();
+    let lightmap_uvs: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.lightmap_uv).collect();
+    assert_eq!(uvs.concat(), uv0);
+    assert_eq!(lightmap_uvs.concat(), uv1);
+    // An image of its own, sampled nearest, which SGL3D never samples.
+    let asset = load_triangle(serde_json::json!({"index": 1}), 1, false)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(asset.ignored, [Ignored::OcclusionMap { material: 0 }]);
+    assert_eq!(
+        (
+            asset.materials[0].mr_texture,
+            asset.materials[0].occlusion_texture
+        ),
+        (Some(0), Some(1))
+    );
+    // The metallic-roughness map, which SGL3D samples, sampled nearest.
+    let error = load_triangle(serde_json::json!({"index": 1}), 0, false)
+        .err()
+        .expect("a sampled map's nearest sampling was accepted")
+        .to_string();
+    assert!(error.contains("unsupported sampling"), "{error}");
+}
+
 // Defects: the loader misreads KHR_materials_transmission,
 // KHR_materials_volume or KHR_materials_dispersion (a channel or texture
 // swapped, a texture's image not resolved through its texture), takes

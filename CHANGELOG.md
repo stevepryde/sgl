@@ -22,6 +22,87 @@ docs and specs the entry links.
   and `Err` for a failed receive the endpoint skips. Custom transports:
   return `Ok(None)` for `WouldBlock`, `Err` for other errors, and wrap a
   datagram in `Ok(Some(..))`.
+- `sgl-3d` `Scene::add_shader`: a module declaring a WGSL built-in's name
+  (`fn smoothstep`, `fn saturate`, a predeclared type or enumerant) was
+  accepted and replaced it in SGL3D's own calls; it is now refused with
+  `ShaderError::NameTaken`. Migration: rename such helpers (for example
+  `my_smoothstep`).
+- `sgl-2d` `TextRenderer::draw`: a glyph larger than a `GLYPH_PAGE_SIZE`
+  page (a large size at a high pixel scale) panicked; it now gets a page of
+  its own sized to it, published by `end_frame` like any page, and one past
+  `canvas::text::MAX_GLYPH_PAGE_SIZE` (16384; 8192 on wasm32) is not drawn.
+  A page past the device's texture limit fails its upload with
+  `TextureError::TooLarge`: log that error rather than unwrapping the
+  upload.
+- `sgl-3d` shader contract `MaterialVertex::tangent`: documented as all
+  zero where a mesh has no tangents, but such a vertex always received an
+  arbitrary unit tangent in the normal's plane with handedness +1; the
+  contract now says so. Behaviour is unchanged. A game shader that tested
+  `tangent.w == 0.` to fall back never took that branch: where it is used
+  on meshes without authored tangents, derive the frame in
+  `material_surface` (for example from screen derivatives), or flag those
+  meshes through `ShaderParams` or shader data.
+- `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain
+  buffers doubled past the device's storage binding limit once they held
+  over half of it, failing the frame's cull bind group; their growth now
+  stops at the limit. No game-code changes needed.
+- `sgl-2d` light shadows (`shadow_triangles`, `LightPass`): a light close to
+  a long occluder edge lit part of the area behind it inside its footprint
+  (the wall-torch case); such edges now get a far cap that covers the
+  footprint. No game-code changes needed.
+- `sgl-2d` `TextRenderer`: glyph pages were never reused, so text whose size
+  changed every frame opened pages without bound, and an infinite outline or
+  shadow width hung `draw`; a full atlas now empties and reuses its least
+  recently used page (same handle, republished by `end_frame`), and ring
+  widths are capped at `canvas::text::MAX_RING_WIDTH` (64 px), non-finite
+  ones drawing no ring. Glyph instances from `end_frame` are valid for that
+  frame only; call it once per presented frame. No game-code changes needed
+  for games that already do.
+- `sgl-input` `Gamepads::poll` on Windows, Linux and the web (Gilrs): a
+  repeated `Connected` for a pad reset its held state and is now ignored, and
+  a `ButtonReleased` with no reported press (a button held when the pad
+  connected) is now dropped on every target. Input already held at connection
+  is still not reported until it changes, a gilrs limitation. No game-code
+  changes needed.
+- `sgl-post-fx` half-resolution SSR (SGL3D's `ScreenSpaceReflections::Half`):
+  a one-pixel-wide or -tall frame created zero-sized textures, a wgpu
+  validation error; each half-resolution side is now at least one texel. No
+  game-code changes needed.
+- `sgl-2d` `Renderer` screen channel: when `set_target_size` scaled a very
+  large target down (over 4096² px), the UI laid out over the smaller
+  target, too large and misaligned with the pointer; it now keeps the
+  requested size over `ui_scale`. Lay out over the new `Renderer::ui_size()`
+  instead of `target_size() / ui_scale`, and set the text raster scale to the
+  new `Renderer::ui_pixel_scale()`.
+- `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
+  its near plane read the reflection depth history with the new near plane
+  and discarded the history; it is now read with the near plane that wrote
+  it. No game-code changes needed.
+- `sgl-2d` `AseDirection`: `pingpong_reverse` tags parsed as `Other` and
+  played forward; they are now `AseDirection::PingpongReverse`, whose
+  `AseTag::frame_order` runs down and back up without repeating either end.
+  Add the variant to exhaustive matches.
+- `sgl-3d` `asset::load*`: a mesh with `TEXCOORD_1`, or a texture SGL3D does
+  not sample (such as an ignored occlusion map) with nearest or other
+  non-trilinear sampling, failed the load; `TEXCOORD_1` now loads as
+  `Vertex::lightmap_uv`, the mesh's static irradiance atlas chart, and only
+  sampled maps' sampling is checked. On a static instance while an atlas is
+  installed, a charted vertex samples the atlas and takes no baked lights:
+  set `lightmap_uv` to `[0, 0]` on models the bake does not chart (a second
+  UV map exported for AO, say). Otherwise no game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown`: an open dropdown that stopped being
+  submitted kept its popup open and the keyboard captured, blocking Tab and
+  Enter elsewhere; it now closes at `UiFrame::end`. No game-code changes
+  needed.
+- `sgl-2d` `AsepriteSheet::parse` / `load`: a frame rect reaching past
+  `meta.size` was accepted and sampled neighbouring atlas pixels; it is now
+  `AsepriteError::FrameOutsideSheet { index, frame, sheet_size }`. Add the
+  variant to exhaustive matches; re-export sheets whose frames overrun.
+- `sgl-post-fx` `PostFXContext`: the blue-noise draw's vertex range wrapped
+  at frame indices 1,431,655,765 and 2,863,311,530 (a debug-build panic, a
+  skipped update in release), and its R2 noise lost precision from about
+  87,000 frames and was constant beyond about 11 million; the frame index now
+  cycles every 256 frames. No game-code changes needed.
 - `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
   ran on the unexposed HDR scene, so the exposure changed which edges it
   found; it now runs after tone mapping, on display colour, before the
@@ -89,6 +170,14 @@ docs and specs the entry links.
   panel's clipped-away part still blocked widgets beneath it (and kept the
   popover open when pressed); only the visible part now blocks and counts as
   inside. No game-code changes needed.
+- `sgl-post-fx` TAA: under conventional (not reversed) depth the closest-
+  motion search took an out-of-screen neighbour as nearest, so the 1-pixel
+  border read zero motion and ghosted while the camera moved; neighbours now
+  clamp to the screen. No game-code changes needed.
+- `sgl-post-fx` SSR and TAA temporal passes: the reprojected depth was
+  linearised with the current projection, so a near or far plane that
+  changed between frames rejected history for a frame; it now uses the
+  previous camera's. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at

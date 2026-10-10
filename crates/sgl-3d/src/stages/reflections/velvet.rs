@@ -132,8 +132,9 @@ struct TemporalParams {
     previous_view_projection: [[f32; 4]; 4],
     size: [f32; 4],
     near: f32,
+    previous_near: f32,
     flags: u32,
-    padding: [u32; 2],
+    padding: u32,
 }
 /// `TemporalParams::flags`: history continues; clear, it resets.
 const TEMPORAL_CONTINUES: u32 = 1;
@@ -306,12 +307,17 @@ impl Velvet {
         self.previous_scene_frame = Some(input.frame.frames);
         // The renderer's camera history is the previous camera, as it
         // rasterized; a new history reprojects through this frame's.
-        let previous = match input.frame.previous_camera {
-            Some(camera) if self.frame > 0 => camera.jittered_view_projection(),
-            _ => {
+        let near = input.camera.proj[3][2];
+        let (previous, previous_near) = match input.frame.previous_camera {
+            Some(camera) if self.frame > 0 => (
+                camera.jittered_view_projection(),
+                camera.projection.w_axis.z,
+            ),
+            _ => (
                 Mat4::from_cols_array_2d(&input.camera.proj)
-                    * Mat4::from_cols_array_2d(&input.camera.view)
-            }
+                    * Mat4::from_cols_array_2d(&input.camera.view),
+                near,
+            ),
         };
         let current = (self.frame % 2) as usize;
         let continues = self.frame > 0;
@@ -326,9 +332,10 @@ impl Velvet {
                 inverse_view_projection: input.camera.inverse_view_proj,
                 previous_view_projection: previous.to_cols_array_2d(),
                 size: [width, height, 1. / width, 1. / height],
-                near: input.camera.proj[3][2],
+                near,
+                previous_near,
                 flags: if continues { TEMPORAL_CONTINUES } else { 0 },
-                padding: [0; 2],
+                padding: 0,
             }),
         );
         // Godot's projection with its depth correction flips y into
@@ -563,6 +570,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 4] {
                 previous_view_projection,
                 size,
                 near,
+                previous_near,
                 flags,
                 padding,
             ]

@@ -15,10 +15,14 @@ This boundary was requested while fixing Detonator Squad's macOS controller path
    release between polls must remain two ordered events even when held state
    ends released. Absent optional controls must not generate invented input.
 3. **Lifecycle.** It must discover controllers already connected and hot-plugged
-   after initialization. Input that happened before a disconnect must be
-   reported before it. Disconnect must remove their held state; late callbacks
-   from that connection must not affect a replacement controller. Device names
-   must be display metadata, never identity keys.
+   after initialization, each with one `Connected` (a repeated report is
+   ignored). On macOS the buttons already held and the sticks' positions
+   follow it; on Gilrs targets input already held at connection is not
+   reported until it changes (gilrs starts a pad's state empty), and a
+   release with no reported press is dropped. Input that happened before a
+   disconnect must be reported before it. Disconnect must remove their held
+   state; late callbacks from that connection must not affect a replacement
+   controller. Device names must be display metadata, never identity keys.
 4. **Composition.** The game must supply a running window event loop and continue
    polling while unfocused. The library must not select a player, trigger game
    actions, change system settings, initialize Steam, or invent game bindings.
