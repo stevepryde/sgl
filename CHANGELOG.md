@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
+  replaced the enclosing clip and its end reset the clip to `None`; it now
+  clips within the enclosing clip, nests, and restores the enclosing clip at
+  its end. Drop any `set_clip` that only restored the outer clip after
+  `scroll_area_end`.
 - `sgl-3d` dynamic GI (`Settings::dynamic_gi`): a probe refused for want of
   the frame's ray budget kept its rays counted, refusing later probes that
   fit; it now gives them back, so the frame uses its budget. No game-code
