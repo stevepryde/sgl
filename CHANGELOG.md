@@ -15,6 +15,14 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `TextRenderer`: glyph pages were never reused, so text whose size
+  changed every frame opened pages without bound, and an infinite outline or
+  shadow width hung `draw`; a full atlas now empties and reuses its least
+  recently used page (same handle, republished by `end_frame`), and ring
+  widths are capped at `canvas::text::MAX_RING_WIDTH` (64 px), non-finite
+  ones drawing no ring. Glyph instances from `end_frame` are valid for that
+  frame only; call it once per presented frame. No game-code changes needed
+  for games that already do.
 - `sgl-input` `Gamepads::poll` on Windows, Linux and the web (Gilrs): a
   repeated `Connected` for a pad reset its held state and is now ignored, and
   a `ButtonReleased` with no reported press (a button held when the pad
