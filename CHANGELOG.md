@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `AnimationSequence` ping-pong: a trailing step replayed the end
+  frame; a leading step skipped the reverse pass or replayed the start frame.
+  The bounce now turns on the first and last frame steps, playing outer
+  steps once per turnaround. No game-code changes needed.
 - `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
   on the world channel shrank by `pixels_per_unit`; the new `units:
   WorldUnits` field (default logical pixels) makes positions, sizes and
