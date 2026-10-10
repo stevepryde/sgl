@@ -62,11 +62,13 @@ browser client must get identical results from it.
 7. **Collision.** `sweep_aabb` is a closed-form swept AABB test returning
    `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
    toward the body. `move_and_collide` slides a kinematic body against a
-   `ColliderSet` and never moves it into a solid collider; a body that starts
-   inside one may move out or along it, never deeper (on the axis of least
-   penetration); sensors never block; one-way platforms block only a landing
-   on the face along the configured up axis, never a body already inside
-   them. `CollisionConfig` names the up axis, skin, snap distance, and
+   `ColliderSet` and never moves it more than a rounding step into a solid
+   collider; a body that starts inside one may move out or along it, and its
+   least penetration depth never grows. It does not push bodies out: the game
+   keeps them clear. Sensors never block; one-way platforms block only a
+   landing on the face along the configured up axis, including a body within
+   `skin` (plus rounding) below that face, never a body deeper inside them.
+   `CollisionConfig` names the up axis, skin, snap distance, and
    thresholds in the caller's units, rejecting negative or non-finite
    lengths; results mirror exactly between y-up and y-down worlds.
    `ColliderSet::query` returns every collider overlapping the region (it may

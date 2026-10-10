@@ -17,7 +17,8 @@ docs and specs the entry links.
 
 - `sgl-core` `move_and_collide` / `snap_to_ground`: a body that started
   inside a solid collider could move through it; it may now move out or
-  along it but not deeper. `CollisionConfig::new` now panics on a negative
+  along it but not deeper, and a body within `skin` below a one-way
+  platform's top lands on it. `CollisionConfig::new` now panics on a negative
   or non-finite `skin`, `snap_distance` or `block_epsilon`. No game-code
   changes needed unless a game passes such a value.
 - `examples/direct-game` took `Renderer::white_texture`'s handle from a

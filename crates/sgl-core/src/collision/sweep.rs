@@ -22,16 +22,17 @@ pub struct CollisionConfig {
     pub up: Vec2,
     /// Gap left between the body and a surface after a contact resolves, so
     /// the next frame's sweep starts clear of the surface instead of touching
-    /// it. Small relative to the body.
+    /// it. Small relative to the body. Finite and non-negative.
     pub skin: f32,
-    /// How far [`snap_to_ground`] probes along `-up`.
+    /// How far [`snap_to_ground`] probes along `-up`. Finite and
+    /// non-negative.
     pub snap_distance: f32,
     /// `normal · up` above which a face counts as a floor, and below whose
     /// negation it counts as a ceiling. `0.7` is roughly 45 degrees.
     pub normal_threshold: f32,
     /// Tolerance when comparing requested against achieved motion along `up`
     /// for the blocked flags. Must be well under `skin`, or a resolved contact
-    /// reads as unblocked.
+    /// reads as unblocked. Finite and non-negative.
     pub block_epsilon: f32,
 }
 
@@ -136,7 +137,10 @@ pub struct Contacts {
 /// float rounding at a contact) may move out of it or along it, never deeper:
 /// motion toward the collider on its axis of least penetration is a contact
 /// at the start, and only the slide along that face remains. A one-way
-/// platform the body is inside never blocks.
+/// platform the body is inside blocks only a fall onto it from within `skin`
+/// (plus float rounding) of its top face. `move_and_collide` does not push a
+/// body out: the game keeps bodies clear itself (where it spawns them, and
+/// carrying riders on moving platforms).
 ///
 /// Ties between colliders contacted at the same instant go to the lowest
 /// collider index, which [`ColliderSet::query`] makes deterministic.
@@ -240,12 +244,11 @@ fn earliest_hit(
             continue;
         }
         let hit = if body.overlaps(&collider.aabb) {
-            // A one-way platform the body is inside (rising through it) never
-            // blocks: it only stops a landing from above.
             if collider.flags.one_way {
-                continue;
+                one_way_landing(body, delta, &collider.aabb, config)
+            } else {
+                embedded_hit(body, delta, &collider.aabb)
             }
-            embedded_hit(body, delta, &collider.aabb)
         } else {
             sweep_aabb(body, delta, &collider.aabb)
         };
@@ -280,6 +283,33 @@ fn embedded_hit(body: &Aabb, delta: Vec2, target: &Aabb) -> Option<Hit> {
         (offset.y, delta.y, Vec2::new(0.0, offset.y.signum()))
     };
     (along * motion < 0.0).then_some(Hit { t: 0.0, normal })
+}
+
+/// The contact for a body that already overlaps a one-way platform. A body
+/// no deeper than `skin` (plus float rounding) below the platform's floor face
+/// is resting on it, so falling lands it there, as Godot's one-way collision
+/// margin does; deeper, it is passing through (part-way through a jump) and
+/// the platform never blocks.
+fn one_way_landing(
+    body: &Aabb,
+    delta: Vec2,
+    target: &Aabb,
+    config: &CollisionConfig,
+) -> Option<Hit> {
+    if delta.dot(config.up) >= 0.0 {
+        return None;
+    }
+    let offset = body.center - target.center;
+    let depth = body.half + target.half - offset.abs();
+    let face = (target.center.abs() + target.half).max_element();
+    let margin = config.skin + 4.0 * f32::EPSILON * face;
+    [
+        (depth.x, Vec2::new(offset.x.signum(), 0.0)),
+        (depth.y, Vec2::new(0.0, offset.y.signum())),
+    ]
+    .into_iter()
+    .find(|&(depth, normal)| depth <= margin && config.is_floor(normal))
+    .map(|(_, normal)| Hit { t: 0.0, normal })
 }
 
 /// Whether a one-way platform blocks this motion: only when the body is coming
@@ -713,6 +743,20 @@ mod tests {
             move_and_collide(body, Vec2::new(0.0, -2.0), &set, &config(Vec2::Y));
         assert_eq!(effective, Vec2::new(0.0, -2.0));
         assert!(!contacts.floor);
+    }
+
+    /// #315: a body rounded one float step into a one-way platform's top
+    /// lands on it instead of falling through.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_body_one_float_step_into_a_one_way_platform_lands() {
+        let platform = aabb(0.0, 0.0, 5.0, 0.25);
+        let set = set_with(&[(platform, ColliderFlags::ONE_WAY)]);
+        let body = aabb(0.0, 0.75f32.next_down(), 0.5, 0.5);
+        assert!(body.overlaps(&platform));
+        let (effective, contacts) =
+            move_and_collide(body, Vec2::new(0.0, -2.0), &set, &config(Vec2::Y));
+        assert!(effective.y >= 0.0, "fell {}", effective.y);
+        assert!(contacts.floor && contacts.down_blocked);
     }
 
     /// #315: negative or non-finite lengths are authoring errors.
