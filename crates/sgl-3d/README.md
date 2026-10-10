@@ -1856,7 +1856,8 @@ authored look and per-frame state in a `FrameInput`.
    abandoned frame loses none.
 
 History restarts for `FrameInput::camera_cut`, a resize that changes the
-targets and a different scene. Submit each encoded frame before rendering the
+targets (also one between a frame's `render` and `finish_frame`) and a
+different scene. Submit each encoded frame before rendering the
 next one with the same `Scene` and `Renderer`: frame uniforms and upload
 storage are retained, so frames with different inputs cannot be queued in one
 submission. Run probe captures between frames, never between a frame's
