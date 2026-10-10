@@ -93,7 +93,11 @@ mod bench {
             self.inner.send(destination, payload, now_ms);
         }
 
-        fn receive(&mut self, output: &mut [u8], now_ms: u64) -> Option<(usize, SocketAddr)> {
+        fn receive(
+            &mut self,
+            output: &mut [u8],
+            now_ms: u64,
+        ) -> std::io::Result<Option<(usize, SocketAddr)>> {
             self.inner.receive(output, now_ms)
         }
     }

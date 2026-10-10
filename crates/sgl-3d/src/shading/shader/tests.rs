@@ -118,6 +118,22 @@ fn loops_are_counted_within_the_budget() {
     unbounded("var s=0.; for (var i=0;i<4;i++) { s+=1.; i--; } return s;");
     unbounded("var s=0.; loop { s+=1.; if s>4. { break; } } return s;");
     unbounded("var s=0.; for (var i=4294967290u;i<=4294967295u;i++) { s+=1.; } return s;");
+    // A `let` evaluates once where it stands (#287): a test or a step
+    // computed before the loop reads the counter's first value for ever.
+    unbounded(
+        "var i=0u; let keep_going=i<4u; loop { if keep_going {} else { break; } continuing { i+=1u; } } return f32(i);",
+    );
+    unbounded(
+        "var i=0u; let next=i+1u; loop { if i<4u {} else { break; } continuing { i=next; } } return f32(i);",
+    );
+    unbounded(
+        "var i=0u; let done=i>=4u; loop { continuing { i+=1u; break if done; } } return f32(i);",
+    );
+    // A `break if` loop an outer loop enters again keeps its counter's last
+    // value and runs once more each time, until the counter wraps.
+    unbounded(
+        "var s=0.; var i=4294967000u; for (var o=0u;o<4u;o++) { loop { s+=1.; continuing { i+=100u; break if i>=4294967100u; } } } return s;",
+    );
     let nest = |n: u32| {
         format!(
             "fn nested()->f32 {{ var s=0.; for (var i=0u;i<{n}u;i++) {{ for (var j=0u;j<{n}u;j++) {{ s+=1.; }} }} return s; }}"
@@ -151,17 +167,27 @@ fn loops_are_counted_within_the_budget() {
             iterations: 272
         }
     );
-    // `break if` after the step: 4 iterations from 0 by 1 to 4.
+    // `break if` after the step: 4 iterations from 0 by 1 to 4; within an
+    // outer loop, restarted by a store before it each time.
     validated(&with(
         "fn after()->f32 { var s=0.; var k=0; loop { s+=1.; continuing { k+=1; break if k>=4; } } return s; }",
+    ))
+    .unwrap_or_else(|error| panic!("{error}"));
+    validated(&with(
+        "fn again()->f32 { var s=0.; var k=0; for (var o=0;o<4;o++) { k=0; loop { s+=1.; continuing { k+=1; break if k>=4; } } } return s; }",
+    ))
+    .unwrap_or_else(|error| panic!("{error}"));
+    validated(&with(
+        "fn declared()->f32 { var s=0.; for (var o=0;o<4;o++) { var k=0; loop { s+=1.; continuing { k+=1; break if k>=4; } } } return s; }",
     ))
     .unwrap_or_else(|error| panic!("{error}"));
 }
 
 // Plausible defect: a module that would steal a binding, add a pass or
 // override, end a fragment's coverage outside its base colour's alpha, or
-// redefine a name SGL3D's programs use accepted, so a pipeline later fails
-// or misbehaves. The oracle is the contract's typed refusal for each.
+// redefine a name SGL3D's programs use (its own, or a WGSL built-in they
+// call) accepted, so a pipeline later fails or silently shades otherwise.
+// The oracle is the contract's typed refusal for each.
 #[wasm_bindgen_test(unsupported = test)]
 fn forbidden_declarations_are_refused() {
     let forbidden = |item, name: &str| ShaderError::Forbidden {
@@ -214,6 +240,22 @@ fn forbidden_declarations_are_refused() {
             name: "MaterialVertex".into()
         }
     );
+    // A WGSL built-in function, which a module-scope declaration would
+    // replace in every SGL3D call to it (`smoothstep` in the film fade, the
+    // decal normal fade and specular_trace_fade; `saturate` in
+    // pbr_filtered_roughness): WGSL's own name, not one SGL3D declares.
+    for builtin in [
+        "fn smoothstep(a:f32,b:f32,x:f32)->f32 { return x; }",
+        "fn saturate(x:f32)->f32 { return x; }",
+        // A predeclared type alias, which naga's built-in list leaves out.
+        "fn vec3f(x:f32)->vec3<f32> { return vec3(x); }",
+    ] {
+        let name = builtin[3..].split('(').next().unwrap();
+        assert_eq!(
+            refused(&with(builtin)),
+            ShaderError::NameTaken { name: name.into() }
+        );
+    }
     // A name only the Extended tier's programs declare (its blended draws'
     // opaque depth, bind_blended_extended.wgsl), refused on Basic too: a
     // game's module runs on whichever tier a player's device has.

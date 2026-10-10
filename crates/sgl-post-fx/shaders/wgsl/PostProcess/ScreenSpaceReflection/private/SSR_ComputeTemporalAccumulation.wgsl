@@ -170,7 +170,8 @@ fn ComputePixelStatistic(PixelCoord: vec2<i32>) -> PixelStatistic
 
 fn ComputeReprojection(PrevPos: vec2<f32>, CurrDepth: f32) -> ProjectionDesc
 {
-    let CurrCamZ = DepthToCameraZ(CurrDepth, cbCameraAttribs.g_CurrCamera.mProj);
+    // DFX-43: CurrDepth is the reprojected depth, the previous camera's.
+    let CurrCamZ = DepthToCameraZ(CurrDepth, cbCameraAttribs.g_PrevCamera.mProj);
 
     var Desc: ProjectionDesc;
 

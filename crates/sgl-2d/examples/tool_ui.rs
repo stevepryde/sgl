@@ -107,9 +107,9 @@ mod native {
             // Derive layout and input from the same physical-to-point transform.
             let scale = self.window.scale_factor() as f32;
             self.renderer.set_ui_scale(scale);
-            self.text.set_pixel_scale(scale);
+            self.text.set_pixel_scale(self.renderer.ui_pixel_scale());
             let (width, height) = self.renderer.target_size();
-            let view = Vec2::new(width as f32 / scale, height as f32 / scale);
+            let view = self.renderer.ui_size();
             self.input.dt = self.previous.elapsed().as_secs_f32();
             self.previous = Instant::now();
             let theme = if self.light_tools {
@@ -312,9 +312,14 @@ mod native {
                 self.grid = !self.grid;
             }
             for handle in self.text.end_frame(&mut self.assets, &mut list) {
-                self.renderer
-                    .upload_texture(&self.context, handle, self.assets.get(handle).unwrap())
-                    .expect("glyph page uploads");
+                // A page too large for this device leaves its glyph undrawn.
+                if let Err(error) = self.renderer.upload_texture(
+                    &self.context,
+                    handle,
+                    self.assets.get(handle).unwrap(),
+                ) {
+                    eprintln!("glyph page not uploaded: {error}");
+                }
             }
             if let Some(surface) = self.context.acquire() {
                 self.renderer.render(

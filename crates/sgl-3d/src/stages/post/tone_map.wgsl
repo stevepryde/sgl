@@ -211,16 +211,24 @@ fn screen_space_dither(frag_coord:vec2<f32>)->vec3<f32> {
  dither=fract(dither/vec3(103.,71.,97.));
  return (dither-.5)/255.;
 }
-// Display-referred `color` dithered at the output pixel `frag_coord`, as
-// Bevy's tonemapping_frag.wesl does: in a 2.2 gamma approximation of the
-// sRGB encoding the output's attachment then performs, against banding
-// where it quantizes to 8 bits.
+// Whether the output stores what is written, so its colour is written
+// sRGB-encoded (tone_map::encodes_srgb): a pipeline constant of the
+// pipelines that write the output.
+override OUTPUT_ENCODES_SRGB:bool=false;
+// Display-referred `color` as the output takes it, dithered at the output
+// pixel `frag_coord` as Bevy's tonemapping_frag.wesl does, against banding
+// where it quantizes to 8 bits: in the sRGB encoding written here where the
+// output stores what is written (OUTPUT_ENCODES_SRGB), as sgl-2d's blit
+// encodes for such a surface; else linear, dithered in a 2.2 gamma
+// approximation of the encoding its attachment then performs.
 fn dither(color:vec3<f32>,frag_coord:vec2<f32>)->vec3<f32> {
+ if OUTPUT_ENCODES_SRGB {
+  return linear_to_srgb(max(color,vec3(0.)))+screen_space_dither(frag_coord);
+ }
  return powsafe(powsafe(color,1./2.2)+screen_space_dither(frag_coord),2.2);
 }
 // The tone-mapped target is already at output resolution: the copy dithers
-// each texel as the direct path does; the surface attachment still performs
-// its normal sRGB encoding.
+// each texel as the direct path does, encoded for the output alike.
 @fragment fn copy_pixel(i:Output)->@location(0) vec4<f32> {
  let color=textureLoad(scene,vec2<i32>(i.position.xy),0);
  return vec4(dither(color.rgb,i.position.xy),color.a);
