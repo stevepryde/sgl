@@ -87,10 +87,15 @@ pub fn composite_linear(albedo: [f32; 3], modulate: [f32; 3], accum: [f32; 3]) -
 /// calls [`set_target_size`](Self::set_target_size) with the surface size
 /// (native-res render; the blit becomes a 1:1 copy) and
 /// [`set_ui_scale`](Self::set_ui_scale) so the screen channel lays out in
-/// UI points (`physical / ui_scale`). Both default to the game behavior.
+/// UI points (`physical / ui_scale`, see [`ui_size`](Self::ui_size)). Both
+/// default to the game behavior.
 pub struct Renderer {
     logical_width: u32,
     logical_height: u32,
+    /// The size last asked of [`set_target_size`](Self::set_target_size)
+    /// (the window), before the target-size policy: the screen channel
+    /// lays out over it even when the target is scaled down.
+    requested_size: (u32, u32),
     /// The device's max 2D texture side, captured at init — the hard cap
     /// [`set_target_size`](Self::set_target_size) clamps against.
     max_texture_dim: u32,
@@ -404,6 +409,20 @@ fn clamp_target_size(width: u32, height: u32, max_dim: u32) -> (u32, u32) {
     (width.min(max_dim), height.min(max_dim))
 }
 
+/// The screen channel's layout for a `target` the window's `requested` size
+/// was scaled to: `(layout size in UI points, target pixels per point)`.
+/// The blit letterboxes the target into the window by
+/// `fit = min(requested / target)` per axis (`fit_fractional`), so a point
+/// that covers `ui_scale / fit` target pixels lands on `ui_scale` window
+/// pixels. Exactly `target / ui_scale` and `ui_scale` when the target is the
+/// requested size.
+fn ui_layout(requested: (u32, u32), target: (u32, u32), ui_scale: f32) -> (glam::Vec2, f32) {
+    let fit = (requested.0 as f32 / target.0 as f32).min(requested.1 as f32 / target.1 as f32);
+    let px_per_point = ui_scale / fit;
+    let size = glam::Vec2::new(target.0 as f32, target.1 as f32) / px_per_point;
+    (size, px_per_point)
+}
+
 impl Renderer {
     /// Build the offscreen targets (`logical_width × logical_height`), the
     /// sprite/light passes, the composite, and the blit pipeline targeting
@@ -605,6 +624,7 @@ impl Renderer {
         Self {
             logical_width,
             logical_height,
+            requested_size: (logical_width, logical_height),
             max_texture_dim: device.limits().max_texture_dimension_2d,
             ui_scale: 1.0,
             lighting_space,
@@ -653,8 +673,11 @@ impl Renderer {
     ///
     /// Requested dimensions pass through the target-size policy (device
     /// max-texture clamp + proportional scale-down above the pixel-area
-    /// budget); the letterbox blit absorbs any difference.
+    /// budget); the letterbox blit absorbs any difference, and the screen
+    /// channel keeps laying out over the requested size
+    /// ([`ui_size`](Self::ui_size)), so UI points still match the window.
     pub fn set_target_size(&mut self, gpu: &Gpu, width: u32, height: u32) {
+        self.requested_size = (width.max(1), height.max(1));
         let (width, height) = clamp_target_size(width, height, self.max_texture_dim);
         if (width, height) == (self.logical_width, self.logical_height) {
             return;
@@ -695,10 +718,37 @@ impl Renderer {
 
     /// Set the physical-pixels-per-UI-point factor for the screen channel
     /// (D-26). At scale `s` the screen channel lays out over a
-    /// `target / s` point space; `1.0` (the default, and the game scenes'
-    /// value) reproduces the pre-scale behavior bit-for-bit.
+    /// `requested size / s` point space ([`ui_size`](Self::ui_size)); `1.0`
+    /// (the default, and the game scenes' value) reproduces the pre-scale
+    /// behavior bit-for-bit.
     pub fn set_ui_scale(&mut self, scale: f32) {
         self.ui_scale = scale.max(0.25);
+    }
+
+    /// The screen channel's layout size in UI points: the size requested of
+    /// [`set_target_size`](Self::set_target_size) over the UI scale, so a
+    /// window's logical size even when the target is scaled down. Lay the
+    /// UI out over this, not [`target_size`](Self::target_size).
+    #[must_use]
+    pub fn ui_size(&self) -> glam::Vec2 {
+        self.ui_layout().0
+    }
+
+    /// Target pixels per UI point: the UI scale, raised when a very large
+    /// target is rendered scaled down. Set the text raster scale
+    /// (`TextRenderer::set_pixel_scale`) to this so glyphs rasterize at the
+    /// target's density.
+    #[must_use]
+    pub fn ui_pixel_scale(&self) -> f32 {
+        self.ui_layout().1
+    }
+
+    fn ui_layout(&self) -> (glam::Vec2, f32) {
+        ui_layout(
+            self.requested_size,
+            (self.logical_width, self.logical_height),
+            self.ui_scale,
+        )
     }
 
     /// Upload a decoded texture to the sprite pass under its asset `handle`
@@ -889,13 +939,12 @@ impl Renderer {
         list.sort();
 
         let world_vp = camera.view_proj();
-        // The screen channel lays out in UI points (`target / ui_scale`);
-        // game scenes run at scale 1.0 where `x / 1.0 == x` exactly — the
-        // matrix and scissors are bit-identical to the fixed-logical path.
-        let screen_vp = Camera::screen_view_proj_size(glam::Vec2::new(
-            self.logical_width as f32 / self.ui_scale,
-            self.logical_height as f32 / self.ui_scale,
-        ));
+        // The screen channel lays out in UI points (`ui_size`); game scenes
+        // run at scale 1.0 on an unscaled target where `x / 1.0 == x`
+        // exactly — the matrix and scissors are bit-identical to the
+        // fixed-logical path.
+        let (ui_size, ui_scale) = self.ui_layout();
+        let screen_vp = Camera::screen_view_proj_size(ui_size);
         // The world channel and lights are laid out in the camera's units
         // (pixels unless `Camera::with_units`); the screen channel is pixels.
         let world_units = camera.units();
@@ -907,7 +956,7 @@ impl Renderer {
             world_units,
             screen_vp,
             (self.logical_width, self.logical_height),
-            self.ui_scale,
+            ui_scale,
         );
         self.lights.prepare(
             &gpu.device,
@@ -1101,6 +1150,7 @@ pub(crate) struct ResourceStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec2;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     /// Every size the current callers actually pass — the fixed logical
@@ -1147,6 +1197,38 @@ mod tests {
     fn clamp_target_size_respects_the_device_dimension_limit() {
         assert_eq!(clamp_target_size(20_000, 100, 8192), (8192, 100));
         assert_eq!(clamp_target_size(100, 20_000, 8192), (100, 8192));
+    }
+
+    /// #326: an 8K window at UI scale 2 renders into a scaled-down target,
+    /// yet the UI still lays out over the window's 3840×2160 points, and a
+    /// widget drawn at a point is under the pointer at that point after the
+    /// letterbox blit (pointer points are window pixels / UI scale).
+    #[wasm_bindgen_test(unsupported = test)]
+    fn scaled_down_target_keeps_the_window_ui_layout() {
+        let requested = (7680, 4320);
+        let target = clamp_target_size(requested.0, requested.1, 16384);
+        assert!(target.0 < requested.0, "the target is scaled down");
+        let ui_scale = 2.0;
+        let (layout, scale) = ui_layout(requested, target, ui_scale);
+        assert!(
+            (layout - Vec2::new(3840.0, 2160.0)).abs().max_element() < 0.5,
+            "{layout}"
+        );
+
+        let letterbox = fit_fractional(requested.0, requested.1, target.0, target.1);
+        let blit = letterbox.width / target.0 as f32;
+        for point in [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1000.0, 500.0),
+            Vec2::new(3839.0, 2159.0),
+        ] {
+            let window = Vec2::new(letterbox.x, letterbox.y) + point * scale * blit;
+            let pointer = window / ui_scale;
+            assert!(
+                (pointer - point).abs().max_element() < 0.5,
+                "{point} -> {pointer}"
+            );
+        }
     }
 
     /// Degenerate inputs stay valid: zero axes become 1 px and a bogus
