@@ -13,6 +13,10 @@
 //!   loop in the same block, as naga writes a `for` nested in another loop;
 //! - is read and written nowhere else but through loads, and never passed
 //!   as a pointer;
+//! - is read by the test and the step where they stand: naga evaluates an
+//!   expression, loads included, at the emit that covers it, so both must be
+//!   emitted just before the `if` (or after the step, for `break if`) and
+//!   just before the store, not by a `let` earlier, as before the loop;
 //! - and its limit plus its step fit its type, so it cannot wrap.
 //!
 //! Anything else is refused, whatever it would do. The iterations of a call
@@ -194,14 +198,14 @@ fn counted(
             (variable, op, limit, false)
         }
         None => {
-            let first = body
+            let at = body
                 .iter()
-                .find(|statement| !matches!(statement, Statement::Emit(_)))?;
+                .position(|statement| !matches!(statement, Statement::Emit(_)))?;
             let Statement::If {
                 condition,
                 accept,
                 reject,
-            } = first
+            } = &body[at]
             else {
                 return None;
             };
@@ -209,6 +213,10 @@ fn counted(
                 return None;
             }
             let (variable, op, limit) = comparison(module, function, *condition)?;
+            // Evaluated by the emits before it, each iteration.
+            if !evaluated_in(function, &body[..at], *condition) {
+                return None;
+            }
             (variable, op, limit, true)
         }
     };
@@ -225,15 +233,26 @@ fn counted(
     };
     // The step: the one store to the counter in `continuing`, of the counter
     // plus a positive constant.
-    let mut steps = continuing.iter().filter_map(|statement| match statement {
-        Statement::Store { pointer, value } if local(function, *pointer) == Some(variable) => {
-            Some(*value)
-        }
-        _ => None,
-    });
-    let (step, None) = (steps.next()?, steps.next()) else {
+    let mut steps = continuing
+        .iter()
+        .enumerate()
+        .filter_map(|(at, statement)| match statement {
+            Statement::Store { pointer, value } if local(function, *pointer) == Some(variable) => {
+                Some((at, *value))
+            }
+            _ => None,
+        });
+    let ((store_at, step), None) = (steps.next()?, steps.next()) else {
         return None;
     };
+    // The step reads the counter just before its store, and `break if` just
+    // after it, each iteration: a `let` computed elsewhere, as before the
+    // loop, holds one value for ever (#287).
+    if !evaluated_in(function, &continuing[..store_at], step)
+        || break_if.is_some_and(|test| !evaluated_in(function, &continuing[store_at + 1..], test))
+    {
+        return None;
+    }
     let Expression::Binary {
         op: BinaryOperator::Add,
         left,
@@ -292,6 +311,29 @@ fn counted(
         _ => return None,
     };
     Some(iterations)
+}
+
+/// Whether the emits of `statements` evaluate `expression`, a binary
+/// operation, and every load it operates on. Naga evaluates an expression,
+/// and reads the variable a load names, at the emit that covers it, however
+/// often later statements refer to it.
+fn evaluated_in(
+    function: &Function,
+    statements: &[Statement],
+    expression: Handle<Expression>,
+) -> bool {
+    let emitted = |handle: Handle<Expression>| {
+        statements.iter().any(|statement| {
+            matches!(statement, Statement::Emit(range) if range.clone().any(|emitted| emitted == handle))
+        })
+    };
+    let Expression::Binary { left, right, .. } = function.expressions[expression] else {
+        return false;
+    };
+    emitted(expression)
+        && [left, right].into_iter().all(|operand| {
+            !matches!(function.expressions[operand], Expression::Load { .. }) || emitted(operand)
+        })
 }
 
 /// The stores to `variable` in `block` and everything it holds.

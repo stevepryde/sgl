@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::add_shader`: a loop whose test or step was a `let`
+  computed before the loop (so it read the counter once and never ended)
+  was accepted as counted; it is now refused with
+  `ShaderError::UnboundedLoop`. Write the test and step on the counter in
+  the loop itself, as a `for` loop does.
 - `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
   its near plane read the reflection depth history with the new near plane
   and discarded the history; it is now read with the near plane that wrote

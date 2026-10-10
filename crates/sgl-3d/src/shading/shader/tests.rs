@@ -118,6 +118,17 @@ fn loops_are_counted_within_the_budget() {
     unbounded("var s=0.; for (var i=0;i<4;i++) { s+=1.; i--; } return s;");
     unbounded("var s=0.; loop { s+=1.; if s>4. { break; } } return s;");
     unbounded("var s=0.; for (var i=4294967290u;i<=4294967295u;i++) { s+=1.; } return s;");
+    // A `let` evaluates once where it stands (#287): a test or a step
+    // computed before the loop reads the counter's first value for ever.
+    unbounded(
+        "var i=0u; let keep_going=i<4u; loop { if keep_going {} else { break; } continuing { i+=1u; } } return f32(i);",
+    );
+    unbounded(
+        "var i=0u; let next=i+1u; loop { if i<4u {} else { break; } continuing { i=next; } } return f32(i);",
+    );
+    unbounded(
+        "var i=0u; let done=i>=4u; loop { continuing { i+=1u; break if done; } } return f32(i);",
+    );
     let nest = |n: u32| {
         format!(
             "fn nested()->f32 {{ var s=0.; for (var i=0u;i<{n}u;i++) {{ for (var j=0u;j<{n}u;j++) {{ s+=1.; }} }} return s; }}"
