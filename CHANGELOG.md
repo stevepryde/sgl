@@ -19,8 +19,8 @@ docs and specs the entry links.
   round-trip timeout and closed the peer `TimedOut` after
   `EndpointConfig::max_reliable_transmissions` sends (about 600 ms on a
   LAN); resends now back off up to 1 s, and a peer is closed `TimedOut`
-  only after `timeout_ms` of silence, or `timeout_ms` + 2 s in which a
-  lane it keeps answering on acknowledges nothing. Migration: delete any
+  only after `timeout_ms` of silence, or 2 × (`timeout_ms` + 1 s) in which
+  a lane it keeps answering on acknowledges nothing. Migration: delete any
   `max_reliable_transmissions` field from `EndpointConfig` literals; set
   `timeout_ms` for how long a stalled peer may last.
 - `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape

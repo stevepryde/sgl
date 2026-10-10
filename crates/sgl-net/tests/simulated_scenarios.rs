@@ -437,7 +437,8 @@ fn a_saturated_sender_still_times_out_when_the_peer_falls_silent() {
 /// in flight being dropped once the sender has resent a fragment a fixed
 /// number of times, well inside `timeout_ms`. Oracle: netcode.md 11 (a
 /// receiver that polls slowly makes the sender slower, not disconnected)
-/// and `timeout_ms` as the only liveness bound. On a 1 ms link whose
+/// and netcode.md 12 (a stall shorter than `timeout_ms` never closes the
+/// peer). On a 1 ms link whose
 /// round trips the server has measured, the client stops polling for 5 s
 /// (more than twelve retransmissions even at the unmeasured 200 ms
 /// timeout, and under the 10 s `timeout_ms`) just after the server sends a

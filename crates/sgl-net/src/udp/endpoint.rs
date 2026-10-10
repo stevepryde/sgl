@@ -32,8 +32,10 @@ pub struct EndpointConfig {
     pub max_peers: usize,
     /// How long a connected peer may go unheard before it is closed with
     /// `TimedOut`. An unacknowledged fragment is resent, with backoff, for
-    /// as long as the peer is heard, unless its lane makes no progress for
-    /// two seconds more than this, which no stall this tolerates causes.
+    /// as long as the peer is heard, unless its lane acknowledges nothing
+    /// for `2 * (timeout_ms + 1 s)` from its first send: after any silence
+    /// shorter than this, the peer has more than `timeout_ms + 2 s` to
+    /// take it.
     pub timeout_ms: u64,
     pub keepalive_ms: u64,
     pub handshake_retry_ms: u64,
@@ -718,12 +720,12 @@ impl<T: DatagramTransport> Endpoint<T> {
             return;
         }
 
-        // A peer heard throughout a stall `timeout_ms` tolerates has a
-        // fragment resent within `MAX_RTO_MS` of answering again and
-        // acknowledged within a round trip, which the measured timeout's
-        // ceiling bounds; a lane that waits longer than that holds a
-        // fragment the peer will not take.
-        let bound_ms = self.config.timeout_ms + 2 * MAX_RTO_MS;
+        // Generous, as ENet's limits are: a stall `timeout_ms` tolerates
+        // ends within `timeout_ms` of the fragment's first send, leaving
+        // more than `timeout_ms + 2 * MAX_RTO_MS` for the peer to take it
+        // once it answers again, so only a peer that never takes it is
+        // closed.
+        let bound_ms = 2 * (self.config.timeout_ms + MAX_RTO_MS);
         if self
             .peers
             .get(&id)
@@ -2408,19 +2410,63 @@ mod tests {
         assert_eq!(server.peer_count(), 1);
     }
 
+    /// Defect (#303 review): backoff reset per lane, so a lane the peer has
+    /// not acknowledged keeps its doubled timeout while another lane of the
+    /// same peer is acknowledged. Oracle: RFC 9002 Appendix A.7
+    /// (`OnAckReceived` zeroes the backoff on any newly acknowledged
+    /// packet): lanes 0 and 1 are sent at 10 ms and resent at 210 ms, then
+    /// only lane 1 is acknowledged; lane 0 is next resent one unmeasured
+    /// 200 ms timeout after its last send, at 410 ms, not the doubled
+    /// 610 ms.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn an_acknowledgement_on_one_lane_resets_every_lanes_backoff() {
+        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
+        server
+            .send(1, Delivery::Reliable(lane(0)), b"lane 0")
+            .unwrap();
+        server
+            .send(1, Delivery::Reliable(lane(1)), b"lane 1")
+            .unwrap();
+        for now in 10..=700 {
+            if now == 300 {
+                let mut acks = [None; RELIABLE_LANES];
+                acks[1] = Some(packet::Ack {
+                    next: 1,
+                    bits: 0,
+                    held: false,
+                });
+                server.transport.receive_acks(source, nonces, &acks);
+                assert!(server.poll(now).is_empty());
+            }
+            server.flush(now);
+        }
+        let lane0_sends: Vec<_> = server
+            .transport
+            .sent
+            .iter()
+            .filter(|datagram| match packet::parse(&datagram.bytes, MAGIC) {
+                Some(Parsed::Payload { mut items, .. }) => items.any(
+                    |item| matches!(item, Item::Reliable { lane: sent, .. } if sent == lane(0)),
+                ),
+                _ => false,
+            })
+            .map(|datagram| datagram.now_ms)
+            .collect();
+        assert_eq!(lane0_sends, [10, 210, 410]);
+    }
+
     /// Defect (#303 review): a peer that keeps answering but never
     /// acknowledges a fragment wedging its lane forever, or being closed
     /// before a stall `timeout_ms` tolerates could have ended. Oracle: the
-    /// liveness bound of netcode.md 12, `timeout_ms` plus twice
-    /// `MAX_RTO_MS` without progress on a lane holding an unheld fragment.
-    /// The client sends a keepalive every 500 ms and never acknowledges the
-    /// fragment first sent at 10 ms: the server keeps the peer through
-    /// 12,009 ms and closes it `TimedOut` at 12,010 ms.
+    /// liveness bound of netcode.md 12, 2 × (`timeout_ms` + 1 s) without
+    /// progress on a lane holding an unheld fragment: 22 s at the default
+    /// 10 s timeout. The client sends a keepalive every 500 ms and never
+    /// acknowledges the fragment first sent at 10 ms: the server keeps the
+    /// peer through 22,009 ms and closes it `TimedOut` at 22,010 ms.
     #[wasm_bindgen_test(unsupported = test)]
     fn a_heard_peer_that_never_acknowledges_times_out_at_the_stall_bound() {
-        let config = EndpointConfig::default();
-        let bound = config.timeout_ms + 2 * MAX_RTO_MS;
-        let (mut server, source, nonces) = connected_server(config);
+        let bound = 22_000;
+        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
         server
             .send(1, Delivery::RELIABLE_ORDERED, b"never-acked")
             .unwrap();

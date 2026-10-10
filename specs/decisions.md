@@ -657,7 +657,8 @@ Use the [current specs](README.md) for implementation and the
   the measured timeout. `max_reliable_transmissions` is removed: a peer is
   closed `TimedOut` after `timeout_ms` of silence, or once a lane with an
   unheld fragment in flight has had nothing newly acknowledged for
-  `timeout_ms` + 2 s while the peer is still heard. A flat timeout and a
+  2 × (`timeout_ms` + 1 s) since that fragment's first send while the peer
+  is still heard. A flat timeout and a
   resend count made liveness twelve round-trip timeouts (600 ms on a LAN),
   so a caller-polled receiver that stalled briefly with data in flight was
   closed long before `timeout_ms`. The doubling is RFC 6298 §5.5's backoff,
@@ -670,9 +671,11 @@ Use the [current specs](README.md) for implementation and the
   doubling alone stalled a lane under 50 % loss). The 1 s ceiling bounds
   how long a stalled peer waits after it answers again. The lane bound is
   ENet's, which closes a peer whose oldest unacknowledged reliable command
-  outlives a time limit reset by progress: after a stall `timeout_ms`
-  tolerates, the next resend leaves within the 1 s ceiling and its
-  acknowledgement returns within a round trip, which that ceiling also
-  bounds, so only a peer that keeps answering but never takes a fragment
-  reaches it. Held fragments (D-38) are exempt: they wait for the
-  receiver's caller.
+  outlives a time limit reset by progress, and is as generous as ENet's
+  limits: a stall `timeout_ms` tolerates ends within `timeout_ms` of the
+  fragment's first send, so the peer then has more than `timeout_ms` + 2 s
+  to take it. That covers the next resend (within the 1 s ceiling), lost
+  resends and the round trip, which the RTO ceiling does not bound; a
+  tighter `timeout_ms` + 2 s left a recovering peer about 1 s. Only a
+  peer that keeps answering but never takes a fragment reaches the bound.
+  Held fragments (D-38) are exempt: they wait for the receiver's caller.

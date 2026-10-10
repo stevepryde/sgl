@@ -134,8 +134,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     anything newly acknowledged on any lane resets every lane's (D-43).
     There is no resend limit: a peer is closed `TimedOut` after `timeout_ms`
     without hearing from it, or once a lane with an unheld fragment in
-    flight has had nothing newly acknowledged for `timeout_ms` plus 2 s,
-    which no stall `timeout_ms` tolerates reaches. Its window of `WINDOW`
+    flight has had nothing newly acknowledged for 2 × (`timeout_ms` + 1 s)
+    since that fragment was first sent. After any stall shorter than
+    `timeout_ms`, the peer therefore has more than `timeout_ms` + 2 s from
+    when it answers again to take the fragment. Its window of `WINDOW`
     (32) fragments starts at the oldest fragment before which everything
     is acknowledged, so it never reaches past the receiver's,
     which buffers the same span from `next`. Any number of items fill the
