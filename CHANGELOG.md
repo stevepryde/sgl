@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `AsepriteSheet::parse` / `load`: a frame rect reaching past
+  `meta.size` was accepted and sampled neighbouring atlas pixels; it is now
+  `AsepriteError::FrameOutsideSheet { index, frame, sheet_size }`. Add the
+  variant to exhaustive matches; re-export sheets whose frames overrun.
 - `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
   ran on the unexposed HDR scene, so the exposure changed which edges it
   found; it now runs after tone mapping, on display colour, before the
