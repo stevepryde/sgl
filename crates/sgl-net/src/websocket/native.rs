@@ -1165,7 +1165,9 @@ where
     };
     for _ in 0..MAX_READS_PER_WAKE {
         match socket.read() {
-            Ok(Message::Close(_)) if flushed => return finish(),
+            // The peer's Close, a reply or one crossing ours: every data
+            // frame was flushed before ours was queued.
+            Ok(Message::Close(_)) => return finish(),
             Ok(_) => {}
             Err(tungstenite::Error::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
                 return SocketTick::Continue { idle: true };
@@ -1717,6 +1719,30 @@ mod tests {
         );
         assert_eq!(
             lock(&shared.state).terminal(),
+            Some(DisconnectReason::Local)
+        );
+
+        // A peer Close crossing our still-blocked Close finishes the close.
+        let crossing = self::shared(0, 0);
+        {
+            let mut state = lock(&crossing.state);
+            state.send(Delivery::RELIABLE_ORDERED, b"bye").unwrap();
+            state.begin_graceful_close(0);
+            state.release_outbound().unwrap();
+        }
+        let mut socket = server_socket(Vec::new());
+        socket.get_mut().write_budget = Some(bye_frame_len);
+        assert_eq!(
+            tick(&mut socket, &crossing),
+            SocketTick::Continue { idle: true }
+        );
+        socket
+            .get_mut()
+            .inbound
+            .extend(client_frames(vec![Message::Close(None)]));
+        assert_eq!(tick(&mut socket, &crossing), SocketTick::Stop);
+        assert_eq!(
+            lock(&crossing.state).terminal(),
             Some(DisconnectReason::Local)
         );
 
