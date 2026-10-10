@@ -405,7 +405,8 @@ fn ipv6_literal_origins_are_admitted_by_exact_and_any_policies() {
         let result = connect(raw_request(&endpoint, &origins));
         assert!(result.is_err(), "admitted origins {origins:?}");
     }
-    assert!(connect(raw_request(&endpoint, &[IPV6_ORIGIN])).is_ok());
+    // Kept open so the server reports it connected, not connected and gone.
+    let _raw = connect(raw_request(&endpoint, &[IPV6_ORIGIN])).unwrap();
 
     let mut client = NativeWebSocketClient::connect(NativeWebSocketClientConfig::new(
         endpoint,

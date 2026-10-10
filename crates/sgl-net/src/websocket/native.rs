@@ -168,45 +168,15 @@ fn canonical_origin(raw: &str) -> io::Result<String> {
     })
 }
 
-/// The WHATWG URL IPv6 serializer browsers use for `Origin`: lowercase hex
-/// pieces, the first longest run of two or more zero pieces as `::`, and no
-/// embedded IPv4 form (unlike `Ipv6Addr`'s `Display`).
+/// The WHATWG URL IPv6 serialization browsers use for `Origin`. `Display`
+/// follows RFC 5952, which matches it except that it writes an IPv4-mapped
+/// address in dotted form, which WHATWG keeps in hex.
 fn serialize_ipv6(address: Ipv6Addr) -> String {
-    use std::fmt::Write as _;
-
-    let pieces = address.segments();
-    let mut compress: Option<(usize, usize)> = None;
-    let (mut run_start, mut run) = (0, 0);
-    for (index, &piece) in pieces.iter().enumerate() {
-        if piece != 0 {
-            run = 0;
-            continue;
-        }
-        if run == 0 {
-            run_start = index;
-        }
-        run += 1;
-        if run >= 2 && compress.is_none_or(|(_, longest)| run > longest) {
-            compress = Some((run_start, run));
-        }
+    let [.., high, low] = address.segments();
+    match address.to_ipv4_mapped() {
+        Some(_) => format!("::ffff:{high:x}:{low:x}"),
+        None => address.to_string(),
     }
-    let mut out = String::new();
-    let mut index = 0;
-    while index < pieces.len() {
-        if let Some((start, len)) = compress
-            && index == start
-        {
-            out.push_str(if start == 0 { "::" } else { ":" });
-            index += len;
-            continue;
-        }
-        let _ = write!(out, "{:x}", pieces[index]);
-        if index + 1 < pieces.len() {
-            out.push(':');
-        }
-        index += 1;
-    }
-    out
 }
 
 fn websocket_config() -> WebSocketConfig {
@@ -1674,6 +1644,10 @@ mod tests {
         assert_eq!(
             canonical_origin("http://[1:0:0:2:0:0:0:3]").unwrap(),
             "http://[1:0:0:2::3]"
+        );
+        assert_eq!(
+            canonical_origin("http://[1:0:0:2:0:0:3:4]").unwrap(),
+            "http://[1::2:0:0:3:4]"
         );
         assert_eq!(
             canonical_origin("http://[1:0:2:3:4:5:6:7]").unwrap(),
