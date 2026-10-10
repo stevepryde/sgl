@@ -123,7 +123,12 @@ fn half(values: &[f32]) -> Vec<u8> {
 
 /// A camera 2 m from a plane it faces, reversed or conventional depth.
 fn camera(reversed: bool, frame_index: u32) -> CameraAttribs {
-    let (near, far) = (0.1f32, 100.0f32);
+    camera_with_near(reversed, frame_index, 0.1)
+}
+
+/// `camera` with its near plane at `near`.
+fn camera_with_near(reversed: bool, frame_index: u32, near: f32) -> CameraAttribs {
+    let far = 100.0f32;
     let aspect = SIZE[0] as f32 / SIZE[1] as f32;
     let y = 1.0 / (0.5f32).tan();
     // Left-handed perspective, column-vector convention, columns listed.
@@ -202,13 +207,16 @@ fn rigid(yaw: f32, offset: [f32; 3]) -> [f32; 16] {
 }
 
 /// Where the previous frame's camera stood: at `eye` in this frame's view
-/// space, turned by `yaw` from this frame's camera, with `depth` throughout
-/// its depth buffer.
+/// space, turned by `yaw` from this frame's camera, with its near plane at
+/// `near`, `depth` throughout its depth buffer, and `motion` (NDC x)
+/// throughout this frame's motion vectors.
 #[derive(Clone, Copy)]
 struct Previous {
     eye: [f32; 3],
     yaw: f32,
+    near: f32,
     depth: f32,
+    motion: f32,
 }
 
 /// `camera` standing at `previous.eye`, turned by `previous.yaw`.
@@ -803,7 +811,7 @@ fn denoise_frame(
         device,
         queue,
         wgpu::TextureFormat::Rg16Float,
-        &half(&[if previous.is_some() { 4.0 } else { 0.0 }, 0.0]),
+        &half(&[previous.map_or(0.0, |p| p.motion), 0.0]),
     );
     context.prepare_resources(
         device,
@@ -820,7 +828,9 @@ fn denoise_frame(
     ssr.prepare_shaders_and_pso(device);
     let camera = camera(false, index);
     let previous_depth = depth(device, &mut encoder, previous.map_or(0.95, |p| p.depth));
-    let previous = previous.map_or(camera, |previous| moved(camera, previous));
+    let previous = previous.map_or(camera, |previous| {
+        moved(camera_with_near(false, index, previous.near), previous)
+    });
     context.execute(&mut post_fx_context::RenderAttributes {
         device,
         queue,
@@ -1104,7 +1114,9 @@ fn reflection_hits_behind_the_previous_camera_take_no_history() {
             (index == 1).then_some(Previous {
                 eye: [0., 0., 2.5],
                 yaw: std::f32::consts::PI,
+                near: 0.1,
                 depth: 0.95,
+                motion: 4.0,
             }),
             |x, y| index == 0 || checkerboard(x, y),
         );
@@ -1154,7 +1166,9 @@ fn surfaces_behind_the_previous_camera_take_no_history() {
                 (index == 1).then_some(Previous {
                     eye: [0., 0., 2.5],
                     yaw: 15f32.to_radians(),
+                    near: 0.1,
                     depth: proj[10] + proj[14] / previous_z,
+                    motion: 4.0,
                 }),
                 |x, y| index == 0 || checkerboard(x, y),
             );
@@ -1168,4 +1182,61 @@ fn surfaces_behind_the_previous_camera_take_no_history() {
             }
         }
     }
+}
+
+// PROVENANCE.md DFX-43: the reprojected depth is the previous camera's, so it
+// is linearised with the previous projection. A still camera whose near plane
+// moves from 0.5 to 0.1 between two frames of a still scene keeps every
+// pixel's history, as it does when the near plane stays.
+#[test]
+fn a_changed_near_plane_keeps_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let current = camera(false, 0).m_proj;
+    // The plane's camera z, from its depth 0.95 under the current camera.
+    let z = current[14] / (0.95 - current[10]);
+    let mut histories = Vec::new();
+    for near in [0.1f32, 0.5] {
+        let previous = camera_with_near(false, 0, near).m_proj;
+        let mut ssr = ScreenSpaceReflection::new(&device);
+        let mut context = PostFXContext::new(&device, &queue, Default::default());
+        for index in 0..2 {
+            let frame = denoise_frame(
+                &device,
+                &queue,
+                &mut ssr,
+                &mut context,
+                FeatureFlags::NONE,
+                DEFAULT_FILTER,
+                index,
+                false,
+                (index == 1).then_some(Previous {
+                    eye: [0.; 3],
+                    yaw: 0.,
+                    near,
+                    depth: previous[10] + previous[14] / z,
+                    motion: 0.,
+                }),
+                |_, _| true,
+            );
+            if index == 1 {
+                histories.push(frame.variance_history);
+            }
+        }
+    }
+    let untaken = histories[0].iter().filter(|v| **v >= 1.0).count();
+    assert_eq!(
+        untaken, 0,
+        "{untaken} pixels took no history with the near plane unchanged"
+    );
+    let differ = histories[0]
+        .iter()
+        .zip(&histories[1])
+        .filter(|(a, b)| a != b)
+        .count();
+    assert_eq!(
+        differ, 0,
+        "{differ} pixels' history changed with the near plane"
+    );
 }

@@ -128,7 +128,12 @@ fn half(values: &[f32]) -> Vec<u8> {
 
 /// A camera 2 m from a plane it faces, reversed or conventional depth.
 fn camera(reversed: bool, frame_index: u32) -> CameraAttribs {
-    let (near, far) = (0.1f32, 100.0f32);
+    camera_with_near(reversed, frame_index, 0.1)
+}
+
+/// `camera` with its near plane at `near`.
+fn camera_with_near(reversed: bool, frame_index: u32, near: f32) -> CameraAttribs {
+    let far = 100.0f32;
     let aspect = SIZE[0] as f32 / SIZE[1] as f32;
     let y = 1.0 / (0.5f32).tan();
     // Left-handed perspective, column-vector convention, columns listed.
@@ -836,6 +841,115 @@ fn taa_surfaces_behind_the_previous_camera_take_no_history() {
     assert_eq!(
         alphas[7], 0.5,
         "a surface behind the previous camera kept history: {alphas:?}"
+    );
+}
+
+/// PROVENANCE.md DFX-43: the reprojected depth is the previous camera's, so
+/// TAA linearises it with the previous projection. A camera whose near plane
+/// moves from 0.5 to 0.1 between two frames of a still plane 2 m away, moving
+/// 1.28 pixels a frame so the depth test applies (DFX-19), keeps the history
+/// it keeps when the near plane stays.
+#[test]
+fn taa_a_changed_near_plane_keeps_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let motion = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0.04, 0.0]),
+    );
+    let color = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[4.0, 2.0, 1.0, 1.0]),
+    );
+    let camera = camera(true, 0);
+    // A camera's device depth at camera z 2: the z row of its projection's
+    // columns 2 and 3, over w = z.
+    let depth_at = |camera: &CameraAttribs| camera.m_proj[10] + camera.m_proj[14] / 2.0;
+    let mut kept = Vec::new();
+    for near in [0.1f32, 0.5] {
+        let previous = camera_with_near(true, 0, near);
+        let mut context = PostFXContext::new(&device, &queue, Default::default());
+        let mut taa = TemporalAntiAliasing::new(&device);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let current_depth = depth(&device, &mut encoder, depth_at(&camera));
+        let previous_depth = depth(&device, &mut encoder, depth_at(&previous));
+        for index in 0..8u32 {
+            let changed = index == 7;
+            context.prepare_resources(
+                &device,
+                &FrameDesc {
+                    index,
+                    width: SIZE[0],
+                    height: SIZE[1],
+                    output_width: SIZE[0],
+                    output_height: SIZE[1],
+                },
+                post_fx_context::FeatureFlags::REVERSED_DEPTH,
+            );
+            taa.prepare_resources(
+                &device,
+                &mut encoder,
+                &context,
+                temporal_anti_aliasing::FeatureFlags::NONE,
+                0,
+            );
+            context.execute(&mut RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                curr_depth_buffer_srv: &current_depth,
+                prev_depth_buffer_srv: if changed {
+                    &previous_depth
+                } else {
+                    &current_depth
+                },
+                curr_camera: Some(&camera),
+                prev_camera: Some(if changed { &previous } else { &camera }),
+                camera_attribs_cb: None,
+                pass_timestamps: None,
+            });
+            taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                post_fx_context: &mut context,
+                color_buffer_srv: &color,
+                depth_buffer_srv: &current_depth,
+                motion_vectors_srv: &motion,
+                taa_attribs: &TemporalAntiAliasingAttribs::default(),
+                accumulation_buffer_idx: 0,
+                pass_timestamps: None,
+            });
+            queue.submit([std::mem::replace(
+                &mut encoder,
+                device.create_command_encoder(&Default::default()),
+            )
+            .finish()]);
+        }
+        kept.push(read_rgba16f(
+            &device,
+            &queue,
+            taa.get_accumulated_frame_srv(false, 0),
+        ));
+    }
+    let differ = kept[0]
+        .iter()
+        .zip(&kept[1])
+        .filter(|(a, b)| a[3] != b[3])
+        .count();
+    let centre = kept[0][(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize][3];
+    assert!(
+        centre > 0.5,
+        "the unchanged camera kept no history: {centre}"
+    );
+    assert_eq!(
+        differ, 0,
+        "{differ} pixels' history weight changed with the near plane"
     );
 }
 

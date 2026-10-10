@@ -198,7 +198,8 @@ fn ClipToAABB(ColorPrev: vec3<f32>, AABBCentre: vec3<f32>, AABBExtents: vec3<f32
 
 fn ComputeDepthDisocclusionWeight(CurrDepth: f32, PrevDepth: f32) -> f32
 {
-    let LinearDepthCurr  = abs(DepthToCameraZ(CurrDepth, cbCameraAttribs.g_CurrCamera.mProj));
+    // DFX-43: CurrDepth is the reprojected depth, the previous camera's.
+    let LinearDepthCurr  = abs(DepthToCameraZ(CurrDepth, cbCameraAttribs.g_PrevCamera.mProj));
     let LinearDepthPrev  = abs(DepthToCameraZ(PrevDepth, cbCameraAttribs.g_PrevCamera.mProj));
     let MaxLinearDepth   = max(LinearDepthCurr, LinearDepthPrev);
     let LinearDepthDelta = abs(LinearDepthCurr - LinearDepthPrev);
