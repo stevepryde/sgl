@@ -138,6 +138,10 @@ docs and specs the entry links.
   motion search took an out-of-screen neighbour as nearest, so the 1-pixel
   border read zero motion and ghosted while the camera moved; neighbours now
   clamp to the screen. No game-code changes needed.
+- `sgl-post-fx` SSR and TAA temporal passes: the reprojected depth was
+  linearised with the current projection, so a near or far plane that
+  changed between frames rejected history for a frame; it now uses the
+  previous camera's. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
