@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
+  grid cell it spanned (effectively hanging); a collider over 1024 cells is
+  now kept apart and a query over more cells than colliders scans the
+  colliders. No game-code changes needed.
 - `sgl-core` `AnimationSequence` ping-pong: a trailing step replayed the end
   frame; a leading step skipped the reverse pass or replayed the start frame.
   The bounce now turns on the first and last frame steps, playing outer
