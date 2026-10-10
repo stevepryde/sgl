@@ -612,6 +612,19 @@ mod tests {
         assert!(!sequence.tick(0.25, &mut rng), "completion fires once");
     }
 
+    /// #299: a lone action under `PingPongOnce` fires once and completes.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_lone_action_pingpong_once_fires_once() {
+        let mut sequence = AnimationSequence::builder()
+            .loop_mode(SequenceLoop::PingPongOnce)
+            .action(5)
+            .build()
+            .unwrap();
+        assert!(sequence.tick(0.0, &mut rng()));
+        assert_eq!(sequence.take_action(), Some(5));
+        assert_eq!(sequence.take_action(), None);
+    }
+
     /// #249: the builder's boundaries — a zero frame duration and a random
     /// pause with equal bounds are valid; an inverted random range is not.
     #[wasm_bindgen_test(unsupported = test)]
