@@ -19,5 +19,8 @@ wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan",
 [dev-dependencies]
 pollster.workspace = true
 
+# Exempt from `[workspace.lints]`: GPU packing casts and wgpu descriptor
+# defaults make clippy's pedantic group pervasive noise here. Unsafe code stays
+# forbidden as specs/stack.md records.
 [lints.rust]
 unsafe_code = "forbid"
