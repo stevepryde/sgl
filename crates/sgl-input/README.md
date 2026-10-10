@@ -23,7 +23,9 @@ South/East/West/North are face-button positions. Stick values range from -1 to 1
 with positive Y pointing up. `LeftTrigger`/`RightTrigger` are shoulder buttons;
 `LeftTrigger2`/`RightTrigger2` are the lower triggers treated as buttons. Press and
 release events preserve taps between polls; `gamepad(id)` exposes the latest
-state and returns `None` after disconnection. IDs are local to this owner and must be discarded on disconnection; backends
+state and returns `None` after disconnection. On Windows, Linux and the web
+(Gilrs), a button held when a pad connects is not reported, and a deflected
+stick reads 0 until it changes. IDs are local to this owner and must be discarded on disconnection; backends
 may reuse them for later connections. They are not saved player identities. macOS supports extended-gamepad profiles
 and omits optional buttons a device does not provide.
 

@@ -414,8 +414,11 @@ Stages run in one order, written in one place in `renderer`:
 11. **Motion blur**: the antialiased frame blurred along the surface's
    motion, at the scene size, before bloom, SMAA and tone mapping, as Bevy
    and Wicked Engine run it after TAA.
-12. **Post**: bloom, SMAA, then tone mapping with the exposure and colour
-   grading, dithered to the output.
+12. **Post**: bloom, then tone mapping with the exposure and colour
+   grading, dithered to the output. Where SMAA runs, tone mapping writes the
+   scene size, SMAA antialiases that display colour, and it is resampled to
+   the output and dithered, as Godot and Bevy run SMAA after tone mapping
+   and before upscaling, so its thresholds see what is displayed.
 
 A new feature takes a place in this list by editing it here. A probe capture
 is a `Renderer` operation that runs prepare, shadows and opaque over its own

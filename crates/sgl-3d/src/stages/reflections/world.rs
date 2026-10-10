@@ -54,6 +54,8 @@ struct Params {
     rays: u32,
     traced: f32,
     range: f32,
+    previous_near: f32,
+    padding: [u32; 3],
 }
 /// Where the listed rays' count lies in the parameters, which the trace
 /// reads it from.
@@ -380,18 +382,22 @@ impl WorldReflections {
         self.previous_scene_frame = Some(history.frames);
         // The renderer's camera history is the previous camera, as it
         // rasterized; a new history reprojects through this frame's.
-        let previous = match history.previous_camera {
-            Some(camera) if self.frame > 0 => camera.jittered_view_projection(),
-            _ => {
+        let near = input.camera.proj[3][2];
+        let (previous, previous_near) = match history.previous_camera {
+            Some(camera) if self.frame > 0 => (
+                camera.jittered_view_projection(),
+                camera.projection.w_axis.z,
+            ),
+            _ => (
                 Mat4::from_cols_array_2d(&input.camera.proj)
-                    * Mat4::from_cols_array_2d(&input.camera.view)
-            }
+                    * Mat4::from_cols_array_2d(&input.camera.view),
+                near,
+            ),
         };
         let t = &self.targets;
         let [w, h] = t.full.map(|v| v as f32);
         let [rw, rh] = t.reduced.map(|v| v as f32);
         let eye = input.camera.camera_position;
-        let near = input.camera.proj[3][2];
         crate::counters::write_buffer(
             queue,
             &self.params,
@@ -406,6 +412,8 @@ impl WorldReflections {
                 rays: 0,
                 traced: input.traced,
                 range: RANGE,
+                previous_near,
+                padding: [0; 3],
             }),
         );
         let current = (self.frame % 2) as usize;
@@ -567,6 +575,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
             rays,
             traced,
             range,
+            previous_near,
         ]
     )]
 }

@@ -6,7 +6,6 @@ use std::path::Path;
 
 use glam::Mat4;
 use gltf::accessor::{DataType, Dimensions};
-use gltf::texture::{MagFilter, MinFilter};
 
 use super::asset::{Asset, Material, Result};
 use super::images::Image;
@@ -283,17 +282,6 @@ fn decode(
         .filter(|extension| !SUPPORTED_EXTENSIONS.contains(extension))
         .map(|extension| Ignored::Extension(extension.to_owned()))
         .collect();
-    for texture in document.textures() {
-        let sampler = texture.sampler();
-        if !matches!(sampler.mag_filter(), None | Some(MagFilter::Linear))
-            || !matches!(
-                sampler.min_filter(),
-                None | Some(MinFilter::LinearMipmapLinear)
-            )
-        {
-            return Err(format!("texture {} uses unsupported sampling; export linear magnification and trilinear minification", texture.index()).into());
-        }
-    }
     let mut materials = document
         .materials()
         .enumerate()

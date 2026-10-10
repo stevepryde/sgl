@@ -128,7 +128,12 @@ fn half(values: &[f32]) -> Vec<u8> {
 
 /// A camera 2 m from a plane it faces, reversed or conventional depth.
 fn camera(reversed: bool, frame_index: u32) -> CameraAttribs {
-    let (near, far) = (0.1f32, 100.0f32);
+    camera_with_near(reversed, frame_index, 0.1)
+}
+
+/// `camera` with its near plane at `near`.
+fn camera_with_near(reversed: bool, frame_index: u32, near: f32) -> CameraAttribs {
+    let far = 100.0f32;
     let aspect = SIZE[0] as f32 / SIZE[1] as f32;
     let y = 1.0 / (0.5f32).tan();
     // Left-handed perspective, column-vector convention, columns listed.
@@ -596,6 +601,85 @@ fn taa_rejects_history_gradually_by_motion_change_not_speed() {
     }
 }
 
+/// TAA's accumulated frame after three frames of the same depths, NDC motion
+/// (two values per texel) and colour under a still camera: the first frame
+/// copies its input (DFX-2), the next two resolve.
+fn taa_still_frames(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    reversed: bool,
+    depths: &[f32],
+    motion: &[f32],
+) -> Vec<[f32; 4]> {
+    let motion = texels(device, queue, wgpu::TextureFormat::Rg16Float, &half(motion));
+    let color = texture(
+        device,
+        queue,
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[4.0, 2.0, 1.0, 1.0]),
+    );
+    let mut context = PostFXContext::new(device, queue, Default::default());
+    let mut taa = TemporalAntiAliasing::new(device);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let current_depth = depth_values(device, queue, &mut encoder, depths);
+    let previous_depth = depth_values(device, queue, &mut encoder, depths);
+    let camera = camera(reversed, 0);
+    let context_flags = if reversed {
+        post_fx_context::FeatureFlags::REVERSED_DEPTH
+    } else {
+        post_fx_context::FeatureFlags::NONE
+    };
+    for index in 0..3u32 {
+        context.prepare_resources(
+            device,
+            &FrameDesc {
+                index,
+                width: SIZE[0],
+                height: SIZE[1],
+                output_width: SIZE[0],
+                output_height: SIZE[1],
+            },
+            context_flags,
+        );
+        taa.prepare_resources(
+            device,
+            &mut encoder,
+            &context,
+            temporal_anti_aliasing::FeatureFlags::NONE,
+            0,
+        );
+        context.execute(&mut RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &current_depth,
+            prev_depth_buffer_srv: &previous_depth,
+            curr_camera: Some(&camera),
+            prev_camera: Some(&camera),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            post_fx_context: &mut context,
+            color_buffer_srv: &color,
+            depth_buffer_srv: &current_depth,
+            motion_vectors_srv: &motion,
+            taa_attribs: &TemporalAntiAliasingAttribs::default(),
+            accumulation_buffer_idx: 0,
+            pass_timestamps: None,
+        });
+        queue.submit([std::mem::replace(
+            &mut encoder,
+            device.create_command_encoder(&Default::default()),
+        )
+        .finish()]);
+    }
+    read_rgba16f(device, queue, taa.get_accumulated_frame_srv(false, 0))
+}
+
 /// Defect: TAA's closest-motion search (PROVENANCE.md DFX-13) reading the
 /// depth convention backwards, searching less than the 3×3 neighbourhood, or
 /// picking the farthest depth instead of the nearest. Oracle: a pixel's
@@ -619,79 +703,7 @@ fn taa_closest_motion_is_the_nearest_depth_in_3x3() {
         // Four NDC units, two screens: off screen from every pixel.
         let mut motion = vec![0.0f32; 2 * (SIZE[0] * SIZE[1]) as usize];
         motion[2 * at(near_texel[0], near_texel[1])] = 4.0;
-        let motion = texels(
-            &device,
-            &queue,
-            wgpu::TextureFormat::Rg16Float,
-            &half(&motion),
-        );
-        let color = texture(
-            &device,
-            &queue,
-            wgpu::TextureFormat::Rgba16Float,
-            &half(&[4.0, 2.0, 1.0, 1.0]),
-        );
-        let mut context = PostFXContext::new(&device, &queue, Default::default());
-        let mut taa = TemporalAntiAliasing::new(&device);
-        let mut encoder = device.create_command_encoder(&Default::default());
-        let current_depth = depth_values(&device, &queue, &mut encoder, &depths);
-        let previous_depth = depth_values(&device, &queue, &mut encoder, &depths);
-        let camera = camera(reversed, 0);
-        let context_flags = if reversed {
-            post_fx_context::FeatureFlags::REVERSED_DEPTH
-        } else {
-            post_fx_context::FeatureFlags::NONE
-        };
-        // The first frame copies its input (DFX-2); the next two resolve.
-        for index in 0..3u32 {
-            context.prepare_resources(
-                &device,
-                &FrameDesc {
-                    index,
-                    width: SIZE[0],
-                    height: SIZE[1],
-                    output_width: SIZE[0],
-                    output_height: SIZE[1],
-                },
-                context_flags,
-            );
-            taa.prepare_resources(
-                &device,
-                &mut encoder,
-                &context,
-                temporal_anti_aliasing::FeatureFlags::NONE,
-                0,
-            );
-            context.execute(&mut RenderAttributes {
-                device: &device,
-                queue: &queue,
-                device_context: &mut encoder,
-                curr_depth_buffer_srv: &current_depth,
-                prev_depth_buffer_srv: &previous_depth,
-                curr_camera: Some(&camera),
-                prev_camera: Some(&camera),
-                camera_attribs_cb: None,
-                pass_timestamps: None,
-            });
-            taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
-                device: &device,
-                queue: &queue,
-                device_context: &mut encoder,
-                post_fx_context: &mut context,
-                color_buffer_srv: &color,
-                depth_buffer_srv: &current_depth,
-                motion_vectors_srv: &motion,
-                taa_attribs: &TemporalAntiAliasingAttribs::default(),
-                accumulation_buffer_idx: 0,
-                pass_timestamps: None,
-            });
-            queue.submit([std::mem::replace(
-                &mut encoder,
-                device.create_command_encoder(&Default::default()),
-            )
-            .finish()]);
-        }
-        let texels = read_rgba16f(&device, &queue, taa.get_accumulated_frame_srv(false, 0));
+        let texels = taa_still_frames(&device, &queue, reversed, &depths, &motion);
         for y in near_texel[1] - 3..=near_texel[1] + 3 {
             for x in near_texel[0] - 3..=near_texel[0] + 3 {
                 let within = x.abs_diff(near_texel[0]) <= 1 && y.abs_diff(near_texel[1]) <= 1;
@@ -710,6 +722,37 @@ fn taa_closest_motion_is_the_nearest_depth_in_3x3() {
                 }
             }
         }
+    }
+}
+
+/// PROVENANCE.md DFX-42: the closest-motion search clamps its neighbours to
+/// the screen, so under conventional depth, where the zero an out-of-bounds
+/// load returns is the nearest depth, a border pixel still takes its own
+/// motion. Every pixel moves off screen (a pan of two screens), so every
+/// pixel resets (alpha 0.5); a border pixel that read zero motion would keep
+/// a still pixel's history.
+#[test]
+fn taa_border_pixels_take_the_screens_motion() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let pixels = (SIZE[0] * SIZE[1]) as usize;
+    for reversed in [false, true] {
+        let depths = vec![0.5; pixels];
+        let motion: Vec<f32> = (0..pixels).flat_map(|_| [4.0, 0.0]).collect();
+        let texels = taa_still_frames(&device, &queue, reversed, &depths, &motion);
+        let kept: Vec<_> = texels
+            .iter()
+            .enumerate()
+            .filter(|(_, texel)| texel[3] != 0.5)
+            .map(|(i, texel)| (i as u32 % SIZE[0], i as u32 / SIZE[0], texel[3]))
+            .collect();
+        assert!(
+            kept.is_empty(),
+            "reversed {reversed}: {} pixels kept history, e.g. {:?}",
+            kept.len(),
+            &kept[..kept.len().min(4)]
+        );
     }
 }
 
@@ -839,6 +882,115 @@ fn taa_surfaces_behind_the_previous_camera_take_no_history() {
     );
 }
 
+/// PROVENANCE.md DFX-43: the reprojected depth is the previous camera's, so
+/// TAA linearises it with the previous projection. A camera whose near plane
+/// moves from 0.5 to 0.1 between two frames of a still plane 2 m away, moving
+/// 1.28 pixels a frame so the depth test applies (DFX-19), keeps the history
+/// it keeps when the near plane stays.
+#[test]
+fn taa_a_changed_near_plane_keeps_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let motion = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0.04, 0.0]),
+    );
+    let color = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[4.0, 2.0, 1.0, 1.0]),
+    );
+    let camera = camera(true, 0);
+    // A camera's device depth at camera z 2: the z row of its projection's
+    // columns 2 and 3, over w = z.
+    let depth_at = |camera: &CameraAttribs| camera.m_proj[10] + camera.m_proj[14] / 2.0;
+    let mut kept = Vec::new();
+    for near in [0.1f32, 0.5] {
+        let previous = camera_with_near(true, 0, near);
+        let mut context = PostFXContext::new(&device, &queue, Default::default());
+        let mut taa = TemporalAntiAliasing::new(&device);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let current_depth = depth(&device, &mut encoder, depth_at(&camera));
+        let previous_depth = depth(&device, &mut encoder, depth_at(&previous));
+        for index in 0..8u32 {
+            let changed = index == 7;
+            context.prepare_resources(
+                &device,
+                &FrameDesc {
+                    index,
+                    width: SIZE[0],
+                    height: SIZE[1],
+                    output_width: SIZE[0],
+                    output_height: SIZE[1],
+                },
+                post_fx_context::FeatureFlags::REVERSED_DEPTH,
+            );
+            taa.prepare_resources(
+                &device,
+                &mut encoder,
+                &context,
+                temporal_anti_aliasing::FeatureFlags::NONE,
+                0,
+            );
+            context.execute(&mut RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                curr_depth_buffer_srv: &current_depth,
+                prev_depth_buffer_srv: if changed {
+                    &previous_depth
+                } else {
+                    &current_depth
+                },
+                curr_camera: Some(&camera),
+                prev_camera: Some(if changed { &previous } else { &camera }),
+                camera_attribs_cb: None,
+                pass_timestamps: None,
+            });
+            taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                post_fx_context: &mut context,
+                color_buffer_srv: &color,
+                depth_buffer_srv: &current_depth,
+                motion_vectors_srv: &motion,
+                taa_attribs: &TemporalAntiAliasingAttribs::default(),
+                accumulation_buffer_idx: 0,
+                pass_timestamps: None,
+            });
+            queue.submit([std::mem::replace(
+                &mut encoder,
+                device.create_command_encoder(&Default::default()),
+            )
+            .finish()]);
+        }
+        kept.push(read_rgba16f(
+            &device,
+            &queue,
+            taa.get_accumulated_frame_srv(false, 0),
+        ));
+    }
+    let differ = kept[0]
+        .iter()
+        .zip(&kept[1])
+        .filter(|(a, b)| a[3] != b[3])
+        .count();
+    let centre = kept[0][(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize][3];
+    assert!(
+        centre > 0.5,
+        "the unchanged camera kept no history: {centre}"
+    );
+    assert_eq!(
+        differ, 0,
+        "{differ} pixels' history weight changed with the near plane"
+    );
+}
+
 /// A depth buffer of per-texel `values`, row-major, written by a full-screen
 /// pass: depth formats accept no texel uploads.
 fn depth_values(
@@ -965,14 +1117,6 @@ fn inverse(m: [f32; 16]) -> [f32; 16] {
     std::array::from_fn(|i| a[i / 4][4 + i % 4] as f32)
 }
 
-// PROVENANCE.md DFX-15: under a projection with off-centre terms (TAA
-// jitter) each ray reads the texel its reflection hits. A mirror floor at
-// y=-1, seen from the origin looking along +z, reflects a wall at z=8. Each
-// texel's colour is its own coordinates, so the output names the texel each
-// floor pixel's ray read; the expected texel is the mirror image projected
-// with the jittered projection. Upstream reconstructs view space without the
-// off-centre terms, which bends every screen-space ray by the jitter scaled
-// by the ray's length (several texels here).
 /// One SSR execution with the default attributes over a still frame of
 /// `SIZE` texels: depths, Rgba16Float world normals, R8 roughness and
 /// Rgba16Float colour. Returns the SSR radiance.
@@ -1049,6 +1193,14 @@ fn ssr_radiance(
     read_rgba16f(device, queue, ssr.get_ssr_radiance_srv())
 }
 
+// PROVENANCE.md DFX-15: under a projection with off-centre terms (TAA
+// jitter) each ray reads the texel its reflection hits. A mirror floor at
+// y=-1, seen from the origin looking along +z, reflects a wall at z=8. Each
+// texel's colour is its own coordinates, so the output names the texel each
+// floor pixel's ray read; the expected texel is the mirror image projected
+// with the jittered projection. Upstream reconstructs view space without the
+// off-centre terms, which bends every screen-space ray by the jitter scaled
+// by the ray's length (several texels here).
 #[test]
 fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
     let Some((device, queue)) = device() else {
