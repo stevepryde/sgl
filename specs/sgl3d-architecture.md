@@ -2775,8 +2775,10 @@ last, after everything it may use, and refuses a directive in it.
     `i32` or `u32` that starts at a literal or constant, is tested against
     one before each iteration, or after it in `break if`, and is changed
     only in its `continuing` block by a positive constant step, the test
-    and the step each reading the counter where they stand, never a value
-    computed earlier), and one
+    and the step each reading the counter in the loop's own test and
+    update statements, never a value computed elsewhere, and a `break if`
+    loop inside another loop restarting its counter just before it), and
+    one
     call of each function makes at most `SHADER_LOOP_BUDGET` (256)
     iterations in all, nested loops' counts multiplied, one loop after
     another's added and a call's callee's counted: the invocation's budget,

@@ -10,7 +10,8 @@
 //! - is changed by exactly one statement outside its initialisation, in the
 //!   loop's `continuing` block, adding a positive constant step to it;
 //! - starts at a constant: its declaration's, or a store just before the
-//!   loop in the same block, as naga writes a `for` nested in another loop;
+//!   loop in the same block, as naga writes a `for` nested in another loop
+//!   (a `break if` loop within another loop needs the store);
 //! - is read and written nowhere else but through loads, and never passed
 //!   as a pointer;
 //! - is read by the test and the step where they stand: naga evaluates an
@@ -66,23 +67,25 @@ impl Counter<'_> {
             return iterations;
         }
         let function = &self.module.functions[handle];
-        let iterations = self.block(function, &function.body);
+        let iterations = self.block(function, &function.body, false);
         self.counted.insert(handle, iterations);
         iterations
     }
 
-    fn block(&mut self, function: &Function, block: &Block) -> Option<u64> {
+    /// The iterations `block` makes; `nested` where a loop holds it, which
+    /// may run it again.
+    fn block(&mut self, function: &Function, block: &Block, nested: bool) -> Option<u64> {
         let mut total = 0u64;
         for (at, statement) in block.iter().enumerate() {
             let iterations = match statement {
-                Statement::Block(inner) => self.block(function, inner)?,
+                Statement::Block(inner) => self.block(function, inner, nested)?,
                 Statement::If { accept, reject, .. } => self
-                    .block(function, accept)?
-                    .max(self.block(function, reject)?),
+                    .block(function, accept, nested)?
+                    .max(self.block(function, reject, nested)?),
                 Statement::Switch { cases, .. } => {
                     let mut sum = 0u64;
                     for case in cases {
-                        sum = sum.saturating_add(self.block(function, &case.body)?);
+                        sum = sum.saturating_add(self.block(function, &case.body, nested)?);
                     }
                     sum
                 }
@@ -98,10 +101,11 @@ impl Counter<'_> {
                         body,
                         continuing,
                         *break_if,
+                        nested,
                     )?;
                     let inner = self
-                        .block(function, body)?
-                        .saturating_add(self.block(function, continuing)?);
+                        .block(function, body, true)?
+                        .saturating_add(self.block(function, continuing, true)?);
                     count.saturating_mul(inner.max(1))
                 }
                 Statement::Call {
@@ -180,7 +184,8 @@ fn comparison(
     Some((variable, mirrored, constant(module, function, left)?))
 }
 
-/// The iterations the loop at `at` in `block` makes, where it is counted.
+/// The iterations the loop at `at` in `block` makes, where it is counted;
+/// `nested` where an enclosing loop may run it again.
 fn counted(
     module: &Module,
     function: &Function,
@@ -188,6 +193,7 @@ fn counted(
     body: &Block,
     continuing: &Block,
     break_if: Option<Handle<Expression>>,
+    nested: bool,
 ) -> Option<u64> {
     // The test: the body's first statement but emits, `if test {} else
     // { break; }`, which runs while it holds; or `break if`, after each
@@ -280,6 +286,13 @@ fn counted(
             }
             _ => None,
         });
+    // A `break if` loop runs once more whatever its counter holds, so one an
+    // enclosing loop runs again from where it left off steps on past its
+    // limit each time, until the counter wraps: it starts again only from a
+    // store before it.
+    if start_store.is_none() && !before && nested {
+        return None;
+    }
     let start = match start_store {
         Some(value) => constant(module, function, value)?,
         None => match function.local_variables[variable].init {

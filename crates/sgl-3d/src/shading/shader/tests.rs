@@ -129,6 +129,11 @@ fn loops_are_counted_within_the_budget() {
     unbounded(
         "var i=0u; let done=i>=4u; loop { continuing { i+=1u; break if done; } } return f32(i);",
     );
+    // A `break if` loop an outer loop enters again keeps its counter's last
+    // value and runs once more each time, until the counter wraps.
+    unbounded(
+        "var s=0.; var i=4294967000u; for (var o=0u;o<4u;o++) { loop { s+=1.; continuing { i+=100u; break if i>=4294967100u; } } } return s;",
+    );
     let nest = |n: u32| {
         format!(
             "fn nested()->f32 {{ var s=0.; for (var i=0u;i<{n}u;i++) {{ for (var j=0u;j<{n}u;j++) {{ s+=1.; }} }} return s; }}"
@@ -162,9 +167,18 @@ fn loops_are_counted_within_the_budget() {
             iterations: 272
         }
     );
-    // `break if` after the step: 4 iterations from 0 by 1 to 4.
+    // `break if` after the step: 4 iterations from 0 by 1 to 4; within an
+    // outer loop, restarted by a store before it each time.
     validated(&with(
         "fn after()->f32 { var s=0.; var k=0; loop { s+=1.; continuing { k+=1; break if k>=4; } } return s; }",
+    ))
+    .unwrap_or_else(|error| panic!("{error}"));
+    validated(&with(
+        "fn again()->f32 { var s=0.; var k=0; for (var o=0;o<4;o++) { k=0; loop { s+=1.; continuing { k+=1; break if k>=4; } } } return s; }",
+    ))
+    .unwrap_or_else(|error| panic!("{error}"));
+    validated(&with(
+        "fn declared()->f32 { var s=0.; for (var o=0;o<4;o++) { var k=0; loop { s+=1.; continuing { k+=1; break if k>=4; } } } return s; }",
     ))
     .unwrap_or_else(|error| panic!("{error}"));
 }
