@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-input` `Gamepads::poll` on macOS: input queued before a controller
+  was unplugged was dropped (a tap then unplug between polls lost the tap);
+  it is now reported before the `Disconnected` event. No game-code changes
+  needed.
+
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
