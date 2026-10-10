@@ -89,7 +89,9 @@ pub const GRACEFUL_CLOSE_TIMEOUT_MS: u64 = 1_000;
 /// Poll-driven reconnect policy used by the browser transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReconnectPolicy {
-    /// Maximum reconnect attempts after a connection is lost.
+    /// Maximum reconnect attempts after a connection is lost. The count
+    /// restarts only once a connection has stayed up at least
+    /// `max_delay_ms`.
     pub max_attempts: u16,
     /// Delay before the first reconnect attempt.
     pub initial_delay_ms: u64,

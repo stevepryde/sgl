@@ -55,7 +55,9 @@ browser client must get identical results from it.
    exactly. Pauses, action steps, and completion hold the last frame reached
    during playback, even when a tick crosses that frame without stopping on
    it. `current_frame()` is `None` only before the first frame is reached after
-   construction or reset. Ping-pong never plays either end frame twice.
+   construction or reset. Ping-pong turns on the first and last frame steps
+   and never plays either end frame twice; steps outside them play once per
+   turnaround.
    Every tick returns: a non-finite `dt` is ignored, and in a repeating loop
    a tick whose duration is too small for `f32` to subtract from the
    accumulated time drops the remainder. So does a repeating cycle that
@@ -75,7 +77,10 @@ browser client must get identical results from it.
    thresholds in the caller's units, rejecting negative or non-finite
    lengths; results mirror exactly between y-up and y-down worlds.
    `ColliderSet::query` returns every collider overlapping the region (it may
-   return more).
+   return more). Neither `insert` nor `query` walks an unbounded cell range:
+   an insert buckets at most a fixed number of cells, and a query visits at
+   most about as many cells as the set holds colliders, plus the oversized
+   colliders. An inverted box (negative half-extents) addresses no cells.
 8. Overflow checks are on in every profile; arithmetic on caller sizes must
    fail as an error or be checked, not wrap.
 
