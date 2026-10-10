@@ -12,8 +12,9 @@
 //! latest state, a latest-state watermark refused below the largest frame
 //! and working at it, a saturated lane that refuses and then drains without
 //! losing the connection, a server-initiated close with its bounded
-//! reconnect, a rejected subprotocol, and a clean local disconnect, also
-//! during reconnect backoff.
+//! reconnect, an inbound overflow and its reconnect, reconnects bounded by
+//! the policy when every connection fails, a rejected subprotocol, and a
+//! clean local disconnect, also during reconnect backoff.
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -492,6 +493,87 @@ async fn a_server_close_is_reported_as_peer_and_reconnects() -> Result<(), Strin
     Ok(())
 }
 
+/// Defect (#305): a receive failure that closes the peer without arming
+/// the reconnect policy, unlike every other non-local close. Oracle: with a
+/// one-message inbound lane, eight echoes that arrive while the game is not
+/// polling overflow it; the client reports `Disconnected { InboundOverflow }`,
+/// then `Reconnecting` and `Connected` again, all driven by polls.
+async fn an_inbound_overflow_reconnects() -> Result<(), String> {
+    let mut config = config();
+    config.reliable.lanes[0].inbound_messages = 1;
+    let mut driver = Driver::connect(config).await?;
+    for index in 0..8u8 {
+        driver
+            .client
+            .send(Delivery::RELIABLE_ORDERED, &[b'o', index])
+            .map_err(|e| format!("send: {e:?}"))?;
+    }
+    driver.client.flush(driver.now_ms);
+    // The echoes arrive while nothing polls.
+    sleep_ms(300).await;
+    driver
+        .settle(|events| {
+            events
+                .iter()
+                .filter(|e| **e == ClientEvent::Connected)
+                .count()
+                >= 2
+        })
+        .await?;
+    let position = |wanted: &dyn Fn(&ClientEvent) -> bool| driver.events.iter().position(wanted);
+    let overflow = position(&|e| {
+        *e == ClientEvent::Disconnected {
+            reason: DisconnectReason::InboundOverflow,
+        }
+    });
+    let reconnecting = position(&|e| matches!(e, ClientEvent::Reconnecting { attempt: 1 }));
+    ensure!(
+        matches!((overflow, reconnecting), (Some(o), Some(r)) if o < r),
+        "expected InboundOverflow then a reconnect: {:?}",
+        driver.events
+    );
+    Ok(())
+}
+
+/// Defect (#305): a reconnect count restarted by every `Connected`, so a
+/// connection that keeps failing soon after it opens reconnects forever at
+/// the first delay and `max_attempts` never bounds it. Oracle: a game that
+/// asks the fixture to close each connection as soon as it opens sees the
+/// policy's three attempts, numbered 1, 2 and 3, and then no more.
+async fn a_connection_that_keeps_failing_stops_at_max_attempts() -> Result<(), String> {
+    let mut driver = Driver::connect(config()).await?;
+    let mut opened = 0;
+    // Longer than the policy's three delays (50, 100 and 200 ms) together.
+    for _ in 0..150 {
+        let connected = driver.count(&ClientEvent::Connected);
+        if connected > opened {
+            opened = connected;
+            driver
+                .client
+                .send(Delivery::RELIABLE_ORDERED, b"close")
+                .map_err(|e| format!("send: {e:?}"))?;
+        }
+        driver.now_ms += 10;
+        driver.events.extend(driver.client.poll(driver.now_ms));
+        driver.client.flush(driver.now_ms);
+        sleep_ms(10).await;
+    }
+    let attempts: Vec<u16> = driver
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            ClientEvent::Reconnecting { attempt } => Some(*attempt),
+            _ => None,
+        })
+        .collect();
+    ensure!(
+        attempts == [1, 2, 3],
+        "attempts {attempts:?}; events: {:?}",
+        driver.events
+    );
+    Ok(())
+}
+
 /// Defect: a handshake that ignores the subprotocol. Oracle: the fixture
 /// refuses another subprotocol, so the client never connects and reports
 /// the loss instead.
@@ -619,6 +701,16 @@ pub async fn run() -> String {
         &mut report,
         "a_server_close_is_reported_as_peer_and_reconnects",
         a_server_close_is_reported_as_peer_and_reconnects().await,
+    );
+    record(
+        &mut report,
+        "an_inbound_overflow_reconnects",
+        an_inbound_overflow_reconnects().await,
+    );
+    record(
+        &mut report,
+        "a_connection_that_keeps_failing_stops_at_max_attempts",
+        a_connection_that_keeps_failing_stops_at_max_attempts().await,
     );
     record(
         &mut report,

@@ -194,8 +194,13 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     sender that outruns them is still closed with `InboundOverflow`.
     Neither transport negotiates a version, so builds on different versions
     cannot connect; a game changes its WebSocket subprotocol when the wire
-    version changes. Browser reconnect follows `ReconnectPolicy` with
-    bounded attempts and delay, driven by `poll(now_ms)`.
+    version changes. Browser reconnect follows `ReconnectPolicy`, driven by
+    `poll(now_ms)`, after every close the game did not ask for,
+    `InboundOverflow` and `ProtocolViolation` included: at most
+    `max_attempts` attempts with doubling delays up to `max_delay_ms`. The
+    count restarts only after a connection that stayed up at least
+    `max_delay_ms`, so one that keeps failing soon after it opens backs off
+    and stops.
 14. Lanes share a connection by deficit round robin over the lanes with
     sendable work. Each lane's quantum is `LaneConfig::weight` items
     (`1..=MAX_LANE_WEIGHT`, default 1), an item being a reliable fragment or
