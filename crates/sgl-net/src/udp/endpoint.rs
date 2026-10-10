@@ -918,7 +918,13 @@ impl<T: DatagramTransport> Endpoint<T> {
                     return;
                 };
                 let peer = self.peers.get_mut(&id).expect("route points to peer");
-                if peer.handshake == Handshake::Connected {
+                // The client confirms the first challenge it gets. A later
+                // one answers a retried request and may carry an older
+                // cookie than one the server already accepted, which the
+                // server would not switch to.
+                if peer.handshake == Handshake::Connected
+                    || (peer.handshake == Handshake::ClientConfirm && peer.nonces != nonces)
+                {
                     return;
                 }
                 peer.nonces = nonces;
@@ -1777,6 +1783,86 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
             vec![(Kind::Disconnect, nonces); 3]
+        );
+    }
+
+    /// Defect (#308): a client that confirms whichever challenge arrived
+    /// last, so two challenges from either side of a cookie epoch boundary
+    /// that arrive reversed leave it confirming the older cookie while the
+    /// server keeps the newer, and every accept is ignored. Oracle: #308's
+    /// acceptance and netcode.md 12 (the client confirms the first
+    /// challenge, so the handshake completes over this reordering). The
+    /// client's request and its retry straddle the 5 s epoch boundary, the
+    /// newer challenge arrives first; the client connects and a message
+    /// crosses.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn challenges_reordered_across_a_cookie_epoch_still_connect() {
+        let (server_addr, client_addr) =
+            (address(192, 0, 2, 1, 7_000), address(192, 0, 2, 2, 40_000));
+        let mut server = Endpoint::server(
+            RecordingTransport::default(),
+            EndpointConfig::default(),
+            [14; 32],
+        )
+        .unwrap();
+        let mut client =
+            Endpoint::client(RecordingTransport::default(), EndpointConfig::default()).unwrap();
+        let peer = client.start_connect(server_addr, 4_850, 71).unwrap();
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(4_900).is_empty());
+        let older = std::mem::take(&mut server.transport.sent);
+        client.flush(5_050);
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(5_060).is_empty());
+        let newer = std::mem::take(&mut server.transport.sent);
+        assert_ne!(parsed_control(&older[0]), parsed_control(&newer[0]));
+        server.transport.sent = newer.into_iter().chain(older).collect();
+
+        let mut client_events = Vec::new();
+        let mut server_peer = None;
+        for now in 5_070..8_000 {
+            ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+                false
+            });
+            client_events.extend(client.poll(now));
+            client.flush(now);
+            ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+                false
+            });
+            for event in server.poll(now) {
+                match event {
+                    EndpointEvent::Connected { peer } if server_peer.is_none() => {
+                        server_peer = Some(peer);
+                    }
+                    other => panic!("server: {other:?} at {now}"),
+                }
+            }
+            server.flush(now);
+            if !client_events.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(client_events, [EndpointEvent::Connected { peer }]);
+
+        let server_peer = server_peer.expect("the server connected");
+        server
+            .send(server_peer, Delivery::RELIABLE_ORDERED, b"welcome")
+            .unwrap();
+        server.flush(8_000);
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert_eq!(
+            client.poll(8_001),
+            [EndpointEvent::Message {
+                peer,
+                delivery: Delivery::RELIABLE_ORDERED,
+                payload: b"welcome".to_vec(),
+            }]
         );
     }
 

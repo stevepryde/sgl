@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP client handshake: a client confirmed the last challenge it
+  received, so challenges to its retried request that arrived reversed
+  across a cookie epoch left the join failing at the timeout after a ghost
+  `Connected` on the server; it now confirms the first. No game-code
+  changes needed.
 - `sgl-net` `DatagramTransport::receive`: returned `Option`, so any socket
   error ended the endpoint's poll as if the socket were empty (on Windows an
   oversized datagram or ICMP error starved every other peer); it now
