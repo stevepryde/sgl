@@ -2582,7 +2582,11 @@ emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_iridescence`, `KHR_materials_sheen`,
 `KHR_materials_diffuse_transmission`, and the `KHR_materials_ior` and
 `KHR_materials_specular` factors. A primitive whose material has any map
-needs `TEXCOORD_0`.
+needs `TEXCOORD_0`. Every accessor the load reads must hold at least one
+element, within its buffer view and buffer, of a component type and shape
+glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
+bind matrices or keyframes), and an embedded image's buffer view must lie
+within its buffer; any other fails the load with an error naming it.
 
 A clearcoat normal map tilts the coat alone, on the base normal map's
 frame; without one the coat follows the geometry normal. An iridescent
