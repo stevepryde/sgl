@@ -997,6 +997,11 @@ impl<T: DatagramTransport> Endpoint<T> {
         now_ms: u64,
         events: &mut Vec<EndpointEvent>,
     ) {
+        // A stopped server admits no new route, so it spends no keyed hash
+        // on one.
+        if !self.accepting_connections && !self.routes.contains_key(&(source, nonces.client)) {
+            return;
+        }
         let Some(cookie_epoch) = self
             .cookie_key
             .as_ref()
@@ -1025,10 +1030,9 @@ impl<T: DatagramTransport> Endpoint<T> {
             return;
         }
 
-        if !self.accepting_connections
-            || self
-                .confirm_replays
-                .contains(source, nonces.client, nonces.server)
+        if self
+            .confirm_replays
+            .contains(source, nonces.client, nonces.server)
         {
             return;
         }
