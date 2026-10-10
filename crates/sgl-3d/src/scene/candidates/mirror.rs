@@ -69,8 +69,10 @@ impl<T: Pod> Mirror<T> {
     /// Uploads the records changed since the last upload: into a new buffer
     /// of twice the old one, holding every record, when they outgrew it.
     /// Doubling stops at what the device binds whole, as the scene's other
-    /// growable buffers' does: the owner keeps the records within it
-    /// (`Candidates::fits`), and the cull binds the buffer entire.
+    /// growable buffers' does, never below what the records need; the cull
+    /// binds the buffer entire. The candidates and sets keep their records
+    /// within that bound (`Candidates::fits`); the level-of-detail chains
+    /// are not held to it.
     pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let stride = std::mem::size_of::<T>() as u64;
         // A binding is never empty.
