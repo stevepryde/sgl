@@ -16,8 +16,9 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    an asset, so a `Handle<T>` stays valid for its cache's lifetime, and
    re-inserting a path replaces the asset under the same handle. Handles from
    different caches can share an index, and a renderer keys its textures by
-   handle, so a game draws only from one texture cache. Loading is
-   synchronous.
+   handle, so each `Renderer` draws from one texture cache (for example
+   `AssetServer::textures`, which `Ui::new`, `TextRenderer::end_frame` and
+   `white_texture` then also take). Loading is synchronous.
    `white_texture` registers one shared 1×1 white pixel under `sgl://white`.
 2. **Draw list.** `DrawList` is the only channel from game code to the
    renderer: a `world` channel (through the camera) and a `screen` channel

@@ -72,12 +72,11 @@ impl Game {
             ..SpriteInstance::new(graphics.white, camera.center - Vec2::new(130.0, 0.0))
         });
         // Scale multiplies the texture's size; read it from the cache.
-        let texels = graphics
+        let checker = graphics
             .textures
             .get(graphics.checker)
-            .map_or(Vec2::ONE, |texture| {
-                UVec2::new(texture.width, texture.height).as_vec2()
-            });
+            .expect("this cache issued the handle");
+        let texels = UVec2::new(checker.width, checker.height).as_vec2();
         self.draw.push(SpriteInstance {
             scale: Vec2::splat(200.0) / texels,
             ..SpriteInstance::new(graphics.checker, camera.center + Vec2::new(130.0, 0.0))
@@ -179,9 +178,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
+    use winit::platform::web::EventLoopExtWebSys;
+
     console_error_panic_hook::set_once();
     let event_loop = EventLoop::new().expect("event loop creation failed");
     event_loop.set_control_flow(ControlFlow::Poll);
-    use winit::platform::web::EventLoopExtWebSys;
     event_loop.spawn_app(Game::default());
 }
