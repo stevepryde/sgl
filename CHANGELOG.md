@@ -21,6 +21,40 @@ docs and specs the entry links.
   connected) is now dropped on every target. Input already held at connection
   is still not reported until it changes, a gilrs limitation. No game-code
   changes needed.
+- `sgl-post-fx` half-resolution SSR (SGL3D's `ScreenSpaceReflections::Half`):
+  a one-pixel-wide or -tall frame created zero-sized textures, a wgpu
+  validation error; each half-resolution side is now at least one texel. No
+  game-code changes needed.
+- `sgl-2d` `Renderer` screen channel: when `set_target_size` scaled a very
+  large target down (over 4096² px), the UI laid out over the smaller
+  target, too large and misaligned with the pointer; it now keeps the
+  requested size over `ui_scale`. Lay out over the new `Renderer::ui_size()`
+  instead of `target_size() / ui_scale`, and set the text raster scale to the
+  new `Renderer::ui_pixel_scale()`.
+- `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
+  its near plane read the reflection depth history with the new near plane
+  and discarded the history; it is now read with the near plane that wrote
+  it. No game-code changes needed.
+- `sgl-2d` `AseDirection`: `pingpong_reverse` tags parsed as `Other` and
+  played forward; they are now `AseDirection::PingpongReverse`, whose
+  `AseTag::frame_order` runs down and back up without repeating either end.
+  Add the variant to exhaustive matches.
+- `sgl-3d` `asset::load*`: a mesh with `TEXCOORD_1`, or a texture SGL3D does
+  not sample (such as an ignored occlusion map) with nearest or other
+  non-trilinear sampling, failed the load; `TEXCOORD_1` now loads as
+  `Vertex::lightmap_uv`, the mesh's static irradiance atlas chart, and only
+  sampled maps' sampling is checked. On a static instance while an atlas is
+  installed, a charted vertex samples the atlas and takes no baked lights:
+  set `lightmap_uv` to `[0, 0]` on models the bake does not chart (a second
+  UV map exported for AO, say). Otherwise no game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown`: an open dropdown that stopped being
+  submitted kept its popup open and the keyboard captured, blocking Tab and
+  Enter elsewhere; it now closes at `UiFrame::end`. No game-code changes
+  needed.
+- `sgl-2d` `AsepriteSheet::parse` / `load`: a frame rect reaching past
+  `meta.size` was accepted and sampled neighbouring atlas pixels; it is now
+  `AsepriteError::FrameOutsideSheet { index, frame, sheet_size }`. Add the
+  variant to exhaustive matches; re-export sheets whose frames overrun.
 - `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
   ran on the unexposed HDR scene, so the exposure changed which edges it
   found; it now runs after tone mapping, on display colour, before the
@@ -88,6 +122,10 @@ docs and specs the entry links.
   panel's clipped-away part still blocked widgets beneath it (and kept the
   popover open when pressed); only the visible part now blocks and counts as
   inside. No game-code changes needed.
+- `sgl-post-fx` TAA: under conventional (not reversed) depth the closest-
+  motion search took an out-of-screen neighbour as nearest, so the 1-pixel
+  border read zero motion and ghosted while the camera moved; neighbours now
+  clamp to the screen. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
