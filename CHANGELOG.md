@@ -17,8 +17,7 @@ docs and specs the entry links.
 
 - `sgl-3d` `Renderer::finish_frame`: a `Renderer::resize` that changed the
   targets between `render` and `finish_frame` no longer loses its history
-  reset; the next frame restarts TAA and SSR history. No game-code changes
-  needed.
+  reset; the next frame restarts history. No game-code changes needed.
 
 ## 0.4.0 — 2026-10-09
 

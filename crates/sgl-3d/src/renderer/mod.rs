@@ -79,7 +79,8 @@ pub struct Renderer {
     history: CameraHistory,
     /// The device traces rays in hardware, in this form.
     ray_form: Option<crate::view::trace_paths::DeviceRayForm>,
-    /// Targets changed since the last finished frame: history restarts.
+    /// Targets changed since the last finished frame was rendered: history
+    /// restarts.
     pending_reset: bool,
     /// Counts target changes, so `finish_frame` keeps a reset requested
     /// after the frame it commits was rendered.
