@@ -358,45 +358,61 @@ fn threshold() {
  allocation.ramp_room=starts-started;
 }
 // The reservations below each take `rays` from a shared count within its
-// limit, or take nothing: a refused reservation gives its rays back, so a
-// later request that fits still does, where Wicked's surfels keep a refused
-// request's count (surfel_updateCS.hlsl 263–268). Only a request made while
-// a refused one is outstanding can still see it, for a few instructions.
+// limit, or take nothing: a refused reservation gives its rays back, and so
+// does a probe the budget then refuses (`reserve_turn`), so a later request
+// that fits still does, where Wicked's surfels keep a refused request's
+// count (surfel_updateCS.hlsl 263–268). Only a request made while a refused
+// one is outstanding can still see it, for a few instructions.
+// Whether a probe was granted its turn, and the rays that took from the
+// starting probes' room or the shortened turns' spare.
+struct DdgiReservation {
+ granted:bool,
+ counted:u32,
+}
 // Whether a probe not yet blended that far away, which starts with
-// `rays`, starts this frame.
-fn ramp_starts(spacings:f32,rays:u32)->bool {
+// `rays`, starts this frame: those in the nearer bins all do, uncounted;
+// those in the boundary bin within its room.
+fn ramp_starts(spacings:f32,rays:u32)->DdgiReservation {
  let bin=ramp_bin(spacings);
  if bin<allocation.ramp_bins {
-  return true;
+  return DdgiReservation(true,0u);
  }
  if bin!=allocation.ramp_bins {
-  return false;
+  return DdgiReservation(false,0u);
  }
  if atomicAdd(&allocation.ramp_taken,rays)+rays<=allocation.ramp_room {
-  return true;
+  return DdgiReservation(true,rays);
  }
  atomicSub(&allocation.ramp_taken,rays);
- return false;
+ return DdgiReservation(false,0u);
 }
 // Whether a blended probe takes a shortened turn this frame with `rays`
 // rays: on its turn at `shortened` where that is shorter than its
 // distance's `period`, within what the frame leaves the shortened turns.
-fn ddgi_shortened_turn(probe_index:u32,period:u32,shortened:u32,rays:u32)->bool {
+fn ddgi_shortened_turn(probe_index:u32,period:u32,shortened:u32,rays:u32)->DdgiReservation {
  if shortened>=period || !ddgi_turn(probe_index,shortened,0u,volume.frame) {
-  return false;
+  return DdgiReservation(false,0u);
  }
  if atomicAdd(&allocation.spare_taken,rays)+rays<=allocation.spare {
-  return true;
+  return DdgiReservation(true,rays);
  }
  atomicSub(&allocation.spare_taken,rays);
- return false;
+ return DdgiReservation(false,0u);
 }
-// Whether a probe traces its `rays` within the frame's budget.
-fn reserve_budget(rays:u32)->bool {
+// Whether a probe granted its turn with `turn` traces its `rays` within the
+// frame's budget; refused, it gives back what its turn counted too.
+fn reserve_turn(rays:u32,turn:DdgiReservation,ramp:bool)->bool {
  if atomicAdd(&allocation.reserved,rays)+rays<=volume.budget {
   return true;
  }
  atomicSub(&allocation.reserved,rays);
+ if turn.counted>0u {
+  if ramp {
+   atomicSub(&allocation.ramp_taken,turn.counted);
+  } else {
+   atomicSub(&allocation.spare_taken,turn.counted);
+  }
+ }
  return false;
 }
 @compute @workgroup_size(ALLOCATION_THREADS)
@@ -413,12 +429,15 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   var blended=0u;
   var entry_rays=0u;
   var cycle=probe.fixed_frames;
+  // Its turn, and what that counted.
+  var turn=DdgiReservation(false,0u);
   if !probe.blended {
    let lattice=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
    let spacings=ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing));
    let starting=ddgi_most_rays(spacings);
+   turn=ramp_starts(spacings,starting);
    // Its first turn traces no fixed rays.
-   if ramp_starts(spacings,starting) {
+   if turn.granted {
     traced=starting;
     blended=starting;
     entry_rays=starting;
@@ -430,7 +449,11 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
    let shortened=requested>>24u;
    let fixed_rays=ddgi_turn_fixed_rays(probe);
    let turn_rays=ddgi_turn_rays(rays,fixed_rays);
-   if ddgi_turn(probe_index,period,allocation.stride,volume.frame) || ddgi_shortened_turn(probe_index,period,shortened,turn_rays+fixed_rays) {
+   turn.granted=ddgi_turn(probe_index,period,allocation.stride,volume.frame);
+   if !turn.granted {
+    turn=ddgi_shortened_turn(probe_index,period,shortened,turn_rays+fixed_rays);
+   }
+   if turn.granted {
     // Its fixed rays after its others, a whole cycle's marked
     // DDGI_FIXED_CYCLE.
     traced=turn_rays+fixed_rays;
@@ -444,7 +467,7 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
   // A paused volume traces nothing; its probes keep what they hold. A
   // probe traces within the budget, past which it traces nothing, as
   // Wicked's surfels do.
-  if allocation.paused!=0u || (traced>0u && !reserve_budget(traced)) {
+  if allocation.paused!=0u || (traced>0u && !reserve_turn(traced,turn,!probe.blended)) {
    traced=0u;
    blended=0u;
   }

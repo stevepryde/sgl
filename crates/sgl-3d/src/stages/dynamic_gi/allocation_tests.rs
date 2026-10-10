@@ -343,8 +343,10 @@ fn test_turn(@builtin(global_invocation_id) id:vec3<u32>) {{
 // short of its limit, a probe asking for 132 is refused and a later one
 // asking for 36 still takes them, leaving the count where the first found it
 // plus 36. (A refused request that kept its rays left the later probe
-// refused, under-using the frame.) The requests are made one after another,
-// by one invocation, so their order is the test's.
+// refused, under-using the frame.) And a probe granted its start or its
+// shortened turn that the full budget then refuses leaves the room or spare
+// where it found it. The requests are made one after another, by one
+// invocation, so their order is the test's.
 #[test]
 fn a_refused_request_leaves_its_rays_to_a_later_one_that_fits() {
     let Some((device, queue)) = test_support::device() else {
@@ -356,21 +358,34 @@ fn a_refused_request_leaves_its_rays_to_a_later_one_that_fits() {
 @group(1) @binding(0) var<storage,read_write> test_results:array<u32>;
 @compute @workgroup_size(1)
 fn test_reserve() {{
+ let distance_turn=DdgiReservation(true,0u);
  atomicStore(&allocation.reserved,volume.budget-68u);
- test_results[0]=u32(reserve_budget(132u));
- test_results[1]=u32(reserve_budget(36u));
+ test_results[0]=u32(reserve_turn(132u,distance_turn,false));
+ test_results[1]=u32(reserve_turn(36u,distance_turn,false));
  test_results[2]=atomicLoad(&allocation.reserved);
  allocation.ramp_bins=ramp_bin(2.);
  allocation.ramp_room={ROOM}u;
  atomicStore(&allocation.ramp_taken,{ROOM}u-68u);
- test_results[3]=u32(ramp_starts(2.,132u));
- test_results[4]=u32(ramp_starts(2.,36u));
+ test_results[3]=u32(ramp_starts(2.,132u).granted);
+ test_results[4]=u32(ramp_starts(2.,36u).granted);
  test_results[5]=atomicLoad(&allocation.ramp_taken);
  allocation.spare={ROOM}u;
  atomicStore(&allocation.spare_taken,{ROOM}u-68u);
- test_results[6]=u32(ddgi_shortened_turn(0u,2u,1u,132u));
- test_results[7]=u32(ddgi_shortened_turn(0u,2u,1u,36u));
+ test_results[6]=u32(ddgi_shortened_turn(0u,2u,1u,132u).granted);
+ test_results[7]=u32(ddgi_shortened_turn(0u,2u,1u,36u).granted);
  test_results[8]=atomicLoad(&allocation.spare_taken);
+ // The budget full: granted, refused, and the count as it was.
+ atomicStore(&allocation.reserved,volume.budget);
+ atomicStore(&allocation.ramp_taken,{ROOM}u-68u);
+ let start=ramp_starts(2.,36u);
+ test_results[9]=u32(start.granted);
+ test_results[10]=u32(reserve_turn(36u,start,true));
+ test_results[11]=atomicLoad(&allocation.ramp_taken);
+ atomicStore(&allocation.spare_taken,{ROOM}u-68u);
+ let shortened=ddgi_shortened_turn(0u,2u,1u,36u);
+ test_results[12]=u32(shortened.granted);
+ test_results[13]=u32(reserve_turn(36u,shortened,false));
+ test_results[14]=atomicLoad(&allocation.spare_taken);
 }}",
         crate::shading::compose(&[&ALLOCATE]),
     );
@@ -409,7 +424,7 @@ fn test_reserve() {{
         &[0; std::mem::size_of::<Allocation>()],
         wgpu::BufferUsages::STORAGE,
     );
-    let results = buffer("results", &[0; 9 * 4], wgpu::BufferUsages::STORAGE);
+    let results = buffer("results", &[0; 15 * 4], wgpu::BufferUsages::STORAGE);
     fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
         wgpu::BindGroupEntry {
             binding,
@@ -445,6 +460,16 @@ fn test_reserve() {{
             taken,
             [0, 1, limit - 68 + 36],
             "{name}: refused, taken, count"
+        );
+    }
+    for (name, taken) in [
+        ("starting room", &results[9..12]),
+        ("spare", &results[12..15]),
+    ] {
+        assert_eq!(
+            taken,
+            [1, 0, ROOM - 68],
+            "{name} past a full budget: granted, traced, count"
         );
     }
 }
