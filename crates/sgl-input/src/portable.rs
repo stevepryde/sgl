@@ -64,8 +64,8 @@ impl Backend {
                     continue;
                 }
                 gilrs::EventType::Disconnected => {
-                    self.connected.remove(&id);
-                    EventType::Disconnected
+                    updates.push(on_disconnected(&mut self.connected, id));
+                    continue;
                 }
                 gilrs::EventType::ButtonPressed(button, _) => {
                     let Some(button) = map_button(button) else {
@@ -97,9 +97,18 @@ impl Backend {
 /// `Connected` for a pad, or nothing when it is already connected: Windows
 /// can report again a pad that was listed at startup. Input already held when
 /// a pad connects is not reported until it changes: gilrs starts each pad's
-/// state empty and its backends report only later changes.
+/// cached state empty and reports only later changes.
 fn on_connected(connected: &mut HashSet<GamepadId>, id: GamepadId, name: String) -> Option<Update> {
     connected.insert(id).then_some(Update::Connected(id, name))
+}
+
+/// `Disconnected` for a pad, which a later `Connected` reports again.
+fn on_disconnected(connected: &mut HashSet<GamepadId>, id: GamepadId) -> Update {
+    connected.remove(&id);
+    Update::Input(Event {
+        id,
+        event: EventType::Disconnected,
+    })
 }
 
 fn map_button(button: gilrs::Button) -> Option<Button> {
@@ -135,7 +144,8 @@ mod tests {
         assert!(apply(&mut state, on_connected(&mut connected, id, "pad".into())).is_none());
         assert!(state.pads[&id].is_pressed(Button::South));
 
-        connected.remove(&id);
-        assert!(on_connected(&mut connected, id, "pad".into()).is_some());
+        state.apply(on_disconnected(&mut connected, id));
+        assert!(apply(&mut state, on_connected(&mut connected, id, "pad".into())).is_some());
+        assert!(!state.pads[&id].is_pressed(Button::South));
     }
 }
