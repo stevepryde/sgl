@@ -21,15 +21,15 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    renderer: a `world` channel (through the camera) and a `screen` channel
    (fixed logical space), both `SpriteInstance`s addressed by texture handle
    and pixel source rect. Each channel is stable-sorted by ascending `z`, so
-   equal-`z` sprites keep push order. `push_tiled` covers the target rect with
-   repeated source tiles including a partial last tile; `push_nine_slice`
-   keeps corners at native size and stretches edges and center. Both take a
-   `WorldUnits` (the world camera's on the world channel; the screen variants
-   use logical pixels): the target and tile sizes are in those units, the
-   grid's y direction follows `y_up` (the source's top row lands at the
-   larger world y), the 9-slice border stays in source pixels, and the
-   default units are bit-identical to the pixel layout. Expansions are
-   bounded by `MAX_TILED_QUADS`.
+   equal-`z` sprites keep push order; a NaN `z` draws last. `push_tiled`
+   covers the target rect with repeated source tiles including a partial last
+   tile; `push_nine_slice` keeps corners at native size and stretches edges
+   and center. Both take a `WorldUnits` (the world camera's on the world
+   channel; the screen variants use logical pixels): the target and tile
+   sizes are in those units, the grid's y direction follows `y_up` (the
+   source's top row lands at the larger world y), the 9-slice border stays in
+   source pixels, and the default units are bit-identical to the pixel
+   layout. Expansions are bounded by `MAX_TILED_QUADS`.
 3. **Camera.** `Camera` is a world-space center plus zoom over a logical view;
    the default convention is y-down logical pixels and clockwise rotation.
    `with_units` switches the world channel to pixels-per-unit and optional
@@ -69,11 +69,13 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    survive unrelated redraws under stable widget names. Edits scroll to keep
    the caret visible and clip content to the field and enclosing clip. Secret
    fields retain ASCII append/backspace/paste editing and never copy or cut;
-   they avoid temporary copies of the secret while editing.
+   they avoid temporary copies of the secret while editing, provided the
+   game preallocates `buf` with at least `max_len` bytes.
    Buttons act on press-down. At most one widget is active at a time. An open
    modal blocks widgets behind it. Line edits respect `max_len` and keep the
-   buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text. Scroll
-   areas clip their content and clamp their offset. A checkbox and a
+   buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text in
+   place and keeps the buffer's allocation. Scroll areas clip their content
+   and clamp their offset. A checkbox and a
    collapsing header flip their caller-owned flag on press-down over the whole
    rect. A numeric field's `-`/`+` ends add its step; a horizontal drag on the
    middle past a small threshold scrubs the value by its speed per pixel from

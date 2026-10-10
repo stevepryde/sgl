@@ -19,6 +19,44 @@ docs and specs the entry links.
   frames still waiting on a blocked socket or its Close frame; it now ends,
   as `Local`, once the peer answers the Close or ends the stream, or at
   `GRACEFUL_CLOSE_TIMEOUT_MS`. No game-code changes needed.
+- `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
+  promise that a flushed state leaves ahead of lane frames flushed after it;
+  it waits only for frames flushed with or before it, and lane frames
+  flushed later may leave first. Behaviour is unchanged. No game-code
+  changes needed.
+- `sgl-2d` `UiFrame::password_edit_clear`: the clear button released the
+  buffer's allocation; it now zeroizes in place and keeps the preallocated
+  capacity. No game-code changes needed.
+- All SGL crates: published packages no longer ship examples, tests, test
+  fixtures or unused vendored reference sources; read those in the repository.
+  Licences and notices still ship. No game-code changes needed.
+- `sgl-3d` `AutoExposure`: a long frame (`FrameInput::frame_time_ms`)
+  within a frame's step of the target stepped the correction past it, by
+  stops after a hitch; it now lands on the target. No game-code changes
+  needed.
+- `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
+  glTF does not allow for its use, of no elements, or past its buffer view
+  or buffer, or an image view past its buffer, panicked or was misread; it
+  now fails the load with an error naming it.
+  No game-code changes needed; re-export a file that now fails.
+- `sgl-post-fx` SSR (SGL3D's `Crystal` reflections): a ray towards the camera
+  from a surface under one unit away was projected behind the camera and
+  traced mirrored, behind the surface; its end is now clipped to the near
+  plane (`CameraAttribs::set_clip_planes`, already required). The WGSL
+  `ProjectDirection` (`PostFX_Common`) takes the near plane's view Z as a
+  fifth argument: WGSL calling it adds it (`g_Camera.fNearPlaneZ`). No other
+  game-code changes needed.
+- `sgl-2d` `DrawList::sort`: a NaN `z` could panic or misorder the other
+  sprites; NaN now draws last and the rest stay ascending and stable. No
+  game-code changes needed.
+- `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
+  `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes,
+  so content re-derived from a persisted base seed (generated worlds,
+  replays) changes on upgrade. Games that need the old output regenerate it,
+  or store the derived seeds before upgrading.
+- `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
+  `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
+  Use or remove such calls; no other game-code changes are needed.
 - `sgl-net` `ThreadedUdpServer::disconnect`: reliable and unreliable
   messages accepted before it but not yet handed to the endpoint were
   dropped; they are now sent before the graceful close, within the same

@@ -51,7 +51,19 @@ const commands: Array<{ argv: string[]; env?: Record<string, string> }> = [
   },
 ];
 
+// The wasm tests' runner and the browser lane both come from the wasm-bindgen
+// CLI; say how to install it before any step needs it.
+function requireWasmBindgenCli(): void {
+  if (!Bun.which("wasm-bindgen") || !Bun.which("wasm-bindgen-test-runner")) {
+    throw new Error(
+      "the wasm-bindgen CLI matching the wasm-bindgen Cargo.lock holds is missing: " +
+        "`cargo install wasm-bindgen-cli --version <it> --locked`",
+    );
+  }
+}
+
 if (task === "check") {
+  requireWasmBindgenCli();
   for (const { argv, env } of commands) {
     const result = Bun.spawnSync(argv, {
       stderr: "inherit",
@@ -158,12 +170,7 @@ if (task === "mutants") {
 const PROBE_DIR = "target/browser-probe";
 
 async function checkBrowser(): Promise<void> {
-  if (!Bun.which("wasm-bindgen")) {
-    throw new Error(
-      "the browser lane needs the wasm-bindgen CLI matching the wasm-bindgen " +
-        "Cargo.lock holds: `cargo install wasm-bindgen-cli --version <it> --locked`",
-    );
-  }
+  requireWasmBindgenCli();
   const steps: string[][] = [
     ["bun", "install", "--frozen-lockfile"],
     ["cargo", "build", "-p", "sgl-net", "--example", "browser_probe", "--target", "wasm32-unknown-unknown"],

@@ -11,6 +11,23 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "Caller-driven 3D rendering for SGL games, native and in the browser (WebGPU)"
+# Examples, tests and the XeGTAO reference sources stay in the repository; the
+# package keeps the agent guide, the data blobs under src/ and every licence.
+include = [
+    "/src",
+    "!/src/stages/opaque/ambient_occlusion/reference/*",
+    "/src/stages/opaque/ambient_occlusion/reference/LICENSE",
+    "/docs",
+    "/README.md",
+    "/SOFT_EFFECTS.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/THIRD_PARTY_NOTICES.txt",
+]
+
+# Exempt from `[workspace.lints]`: GPU packing casts and wgpu descriptor
+# defaults make clippy's pedantic group pervasive noise here. Unsafe code stays
+# denied as specs/stack.md records (`#![deny(unsafe_code)]` in src/lib.rs).
 
 [features]
 default = []
