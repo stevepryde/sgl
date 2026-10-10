@@ -61,7 +61,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    horizontal edit scroll, numeric draft, popups, blink). Tab/Shift-Tab wrap
    through visible widgets in the preceding frame's submission order; fully
    clipped and removed controls cannot receive keyboard input. Open dropdowns
-   and modals restrict keyboard interaction to their contents; a dropdown's
+   and modals restrict keyboard interaction to their contents; an open
+   dropdown not submitted in a frame closes at its end; a dropdown's
    popover stays in the current clip, and only its visible part blocks
    widgets beneath it. Buttons, toggles, checkboxes and dropdowns show an
    accent focus border and activate with Enter/Space. Escape dismisses the topmost dropdown or cancels the modal.
@@ -131,10 +132,12 @@ original translucent game appearance. Copy `*ui.theme()` for custom labels and
 rectangles so their text, accent and surface roles follow the selected palette.
 
 - **Coordinates and density.** Recompute bounds from the current logical
-  viewport in points. Convert physical pointer coordinates through the same
-  DPI/letterbox mapping once, and set text raster scale accordingly. Do not
-  assume 960×540. Compact mouse/keyboard tools can use small glyphs inside larger
-  hit rectangles; preserve readable type, focus borders and gaps between actions.
+  viewport in points (`Renderer::ui_size`, which stays the window's size in
+  points when a very large target is rendered scaled down). Convert physical
+  pointer coordinates through the same DPI/letterbox mapping once, and set
+  text raster scale to `Renderer::ui_pixel_scale`. Do not assume 960×540. Compact
+  mouse/keyboard tools can use small glyphs inside larger hit rectangles;
+  preserve readable type, focus borders and gaps between actions.
 - **Bounded panes and rows.** Store pane extents in the game and constrain
   `splitter` bounds to leave usable space for both sides. Clamp again when the
   viewport shrinks (with `.max(min).min(max)`, not `f32::clamp`, which panics
