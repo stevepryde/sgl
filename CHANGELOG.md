@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `AnimationSequence::tick`: in `Repeat`/`PingPongRepeat`, a
+  zero-time pass stopped after as many advances as there are steps, so
+  zero-duration frames delayed a following action and dropped the tick's
+  time; it now stops only once every frame and step position has played. No
+  game-code changes needed.
+
 - `sgl-core` `StateHasher`: the contract promised distinct digests for any
   different write sequences, but writes are untagged (`u16(0x1234)` equals
   `u8(0x34); u8(0x12)`); it now promises them only within one schema.

@@ -87,6 +87,10 @@ pub struct AnimationSequence {
     actions: std::collections::VecDeque<u32>,
     finished: bool,
     just_completed: bool,
+    /// Playback positions (step, frame cursor and, for ping-pong, direction)
+    /// in one loop cycle. More consecutive advances than this without
+    /// consuming time revisit a position: a zero-time cycle.
+    cycle_positions: usize,
 }
 
 impl AnimationSequence {
@@ -103,10 +107,11 @@ impl AnimationSequence {
     ///
     /// Large `dt` steps through as many frames and steps as it covers and
     /// carries the remainder, so long-run timing never drifts. A non-finite
-    /// `dt` is ignored. In the repeating modes, steps that consume no time
-    /// cannot spin: zero-duration steps (actions, zero-length pauses), and
-    /// durations too small to lower the accumulated time in `f32`, stop a tick
-    /// after one full pass over the steps, dropping the remainder. The
+    /// `dt` is ignored. In the repeating modes, a cycle that consumes no time
+    /// cannot spin: once a tick has advanced through every playback position
+    /// without consuming time (zero-duration frames and steps, or durations
+    /// too small to lower the accumulated time in `f32`), it stops and drops
+    /// the remainder, so each such position plays once per tick. The
     /// play-once modes need no such stop: they end after one bounded pass.
     pub fn tick(&mut self, dt: f32, rng: &mut Rng) -> bool {
         self.just_completed = false;
@@ -132,7 +137,7 @@ impl AnimationSequence {
                 idle_advances = 0;
             } else if repeating {
                 idle_advances += 1;
-                if idle_advances > self.steps.len() {
+                if idle_advances > self.cycle_positions {
                     self.timer = 0.0;
                     return false;
                 }
@@ -440,7 +445,20 @@ impl SequenceBuilder {
                 SequenceStep::Action(_) => {}
             }
         }
+        let positions: usize = self
+            .steps
+            .iter()
+            .map(|step| match step {
+                SequenceStep::PlayFrames { frames, .. } => frames.len(),
+                _ => 1,
+            })
+            .sum();
+        let directions = match self.loop_mode {
+            SequenceLoop::PingPongRepeat | SequenceLoop::PingPongOnce => 2,
+            SequenceLoop::Repeat | SequenceLoop::Once => 1,
+        };
         Ok(AnimationSequence {
+            cycle_positions: positions * directions,
             cursors: vec![0; self.steps.len()],
             held_frame: None,
             steps: self.steps,
@@ -1015,6 +1033,42 @@ mod tests {
             .expect("valid sequence");
         assert!(seq.tick(0.016, &mut rng()), "completion edge");
         assert_eq!(seq.current_frame(), Some(3));
+    }
+
+    /// #297: zero-duration frames before an action count as playback
+    /// positions, not steps: the action fires on the first tick, the frame
+    /// run's last frame holds through the pause, and the sequence finishes
+    /// once a second has elapsed. A repeating copy fires the action on the
+    /// first tick too.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn zero_duration_frames_do_not_delay_a_following_action() {
+        for loop_mode in [SequenceLoop::Once, SequenceLoop::Repeat] {
+            let mut seq = AnimationSequence::builder()
+                .loop_mode(loop_mode)
+                .play_frames([0, 1, 2, 3], 0.0)
+                .action(7)
+                .pause(1.0)
+                .build()
+                .expect("valid sequence");
+            let mut rng = rng();
+            assert!(!seq.tick(0.5, &mut rng));
+            assert_eq!(seq.take_action(), Some(7), "{loop_mode:?}");
+            assert_eq!(seq.current_frame(), Some(3));
+            let completed = seq.tick(0.5, &mut rng);
+            assert_eq!(completed, loop_mode == SequenceLoop::Once, "{loop_mode:?}");
+        }
+    }
+
+    /// #297: a ping-pong cycle that consumes no time still returns.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_zero_time_pingpong_cycle_returns() {
+        let mut seq = AnimationSequence::builder()
+            .loop_mode(SequenceLoop::PingPongRepeat)
+            .play_frames([0, 1, 2], 0.0)
+            .action(4)
+            .build()
+            .expect("valid sequence");
+        assert!(!seq.tick(1.0, &mut rng()));
     }
 
     /// #313: a frame duration too small to lower the accumulated time in
