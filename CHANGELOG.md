@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::password_edit_clear`: the clear button released the
+  buffer's allocation; it now zeroizes in place and keeps the preallocated
+  capacity. No game-code changes needed.
 - All SGL crates: published packages no longer ship examples, tests, test
   fixtures or unused vendored reference sources; read those in the repository.
   Licences and notices still ship. No game-code changes needed.
