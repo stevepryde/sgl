@@ -5,6 +5,7 @@
 use std::path::Path;
 
 use glam::Mat4;
+use gltf::accessor::{DataType, Dimensions};
 use gltf::texture::{MagFilter, MinFilter};
 
 use super::asset::{Asset, Material, Result};
@@ -226,6 +227,11 @@ fn read_images(
                         Some(_) => base,
                         None => Some(Path::new("")),
                     };
+                    if let gltf::image::Source::View { view, .. } = image.source()
+                        && !in_buffer(&view)
+                    {
+                        return Err(format!("image {index}'s buffer view does not fit its buffer; re-export valid glTF").into());
+                    }
                     let data = gltf::image::Data::from_source(image.source(), base, buffers)
                         .map_err(|error| format!("image {index} import failed: {error}; check referenced files and re-export valid glTF from the Blender source"))?;
                     rgba(index, data)
@@ -334,4 +340,78 @@ fn decode(
         rig: rigging.rig,
         ignored,
     })
+}
+
+/// Refuses an accessor the gltf crate's readers cannot read, which its
+/// validation lets through and its readers (gltf 1.4.1 `mesh::Reader`,
+/// `skin::Reader`, `animation::util::Reader` and `accessor::util::Iter`)
+/// assume away, panicking or misreading otherwise: one holding a component
+/// type or shape glTF 2.0 does not allow for its use (`types`, `shapes`),
+/// one of no elements, and one whose elements or sparse substitutions do
+/// not lie within their buffer views at a stride no narrower than an
+/// element, or whose views do not lie within their buffers. `what` names
+/// its use.
+fn check_accessor(
+    accessor: &gltf::Accessor<'_>,
+    what: &str,
+    types: &[DataType],
+    shapes: &[Dimensions],
+) -> Result<()> {
+    let index = accessor.index();
+    let (data_type, shape) = (accessor.data_type(), accessor.dimensions());
+    if !types.contains(&data_type) || !shapes.contains(&shape) {
+        return Err(format!("{what} accessor {index} holds {data_type:?} {shape:?}, where glTF allows {types:?} {shapes:?}; re-export valid glTF").into());
+    }
+    let sparse = accessor.sparse();
+    if accessor.count() == 0 || sparse.as_ref().is_some_and(|sparse| sparse.count() == 0) {
+        return Err(
+            format!("{what} accessor {index} has no elements; re-export valid glTF").into(),
+        );
+    }
+    let size = accessor.size();
+    let within = accessor
+        .view()
+        .is_none_or(|view| fits(&view, accessor.offset(), accessor.count(), size))
+        && sparse.is_none_or(|sparse| {
+            let (indices, values) = (sparse.indices(), sparse.values());
+            fits(
+                &indices.view(),
+                indices.offset(),
+                sparse.count(),
+                indices.index_type().size(),
+            ) && fits(&values.view(), values.offset(), sparse.count(), size)
+        });
+    if !within {
+        return Err(format!(
+            "{what} accessor {index} does not fit its buffer view and buffer; re-export valid glTF"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Whether `count` elements of `size` bytes from `offset` lie within `view`
+/// at its stride, an element's when it has none, as gltf's
+/// `accessor::util::Iter::new` reads them, and `view` within its buffer.
+fn fits(view: &gltf::buffer::View<'_>, offset: usize, count: usize, size: usize) -> bool {
+    let stride = view.stride().unwrap_or(size);
+    in_buffer(view)
+        && stride >= size
+        && count
+            .checked_sub(1)
+            .and_then(|last| last.checked_mul(stride))
+            .and_then(|start| start.checked_add(offset))
+            .and_then(|start| start.checked_add(size))
+            .is_some_and(|end| end <= view.length())
+}
+
+/// Whether `view` lies within its buffer, which gltf slices it from
+/// unchecked (gltf 1.4.1 `accessor::util::buffer_view_slice` and
+/// `image::Data::from_source` add its offset and length unchecked, and the
+/// latter indexes the buffer's data with them). `import_buffers` holds each
+/// buffer's data to at least its declared length.
+fn in_buffer(view: &gltf::buffer::View<'_>) -> bool {
+    view.offset()
+        .checked_add(view.length())
+        .is_some_and(|end| end <= view.buffer().length())
 }

@@ -18,7 +18,7 @@ use portable::Backend;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GamepadId(pub(crate) usize);
 
-/// Face buttons are named by position: South is Xbox A / PlayStation Cross.
+/// Face buttons are named by position: South is Xbox A / `PlayStation` Cross.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Button {
     South,
@@ -70,12 +70,15 @@ pub struct Gamepad {
     axes: HashMap<Axis, f32>,
 }
 impl Gamepad {
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
+    #[must_use]
     pub fn is_pressed(&self, button: Button) -> bool {
         self.pressed.contains(&button)
     }
+    #[must_use]
     pub fn value(&self, axis: Axis) -> f32 {
         self.axes.get(&axis).copied().unwrap_or(0.0)
     }
@@ -152,6 +155,7 @@ impl Gamepads {
             .filter_map(|event| self.state.apply(event))
             .collect()
     }
+    #[must_use]
     pub fn gamepad(&self, id: GamepadId) -> Option<&Gamepad> {
         self.state.pads.get(&id)
     }

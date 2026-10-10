@@ -10,6 +10,20 @@ version.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
 description = "SGL wgpu post-processing effects: screen-space reflections and temporal anti-aliasing derived from DiligentFX"
+# Tests and the vendored DiligentFX/DiligentCore references stay in the
+# repository; the package keeps their licences, source revisions and the
+# blue-noise source `post_fx_context.rs` reads.
+include = [
+    "/src",
+    "/shaders",
+    "/vendor/*/License.txt",
+    "/vendor/*/source-revision.txt",
+    "/vendor/DiligentFX/PostProcess/Common/src/SamplerBlueNoiseErrorDistribution_128x128_OptimizedFor_2d2d2d2d_1spp.cpp",
+    "/README.md",
+    "/PROVENANCE.md",
+    "/LICENSE*",
+    "/THIRD_PARTY_NOTICES.txt",
+]
 publish.workspace = true
 
 [dependencies]
@@ -19,5 +33,8 @@ wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan",
 [dev-dependencies]
 pollster.workspace = true
 
+# Exempt from `[workspace.lints]`: GPU packing casts and wgpu descriptor
+# defaults make clippy's pedantic group pervasive noise here. Unsafe code stays
+# forbidden as specs/stack.md records.
 [lints.rust]
 unsafe_code = "forbid"
