@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `OriginPolicy` and `NativeWebSocketClientConfig::origin`: IPv6
+  literal origins such as `http://[::1]:3000` were rejected as
+  non-canonical; they are now accepted in the browser's compressed
+  lowercase form. No game-code changes needed.
 - `sgl-2d` texture uploads: an empty, oversized or short-`rgba` texture, or
   a mis-sized normal map, panicked; `Renderer::upload_texture`,
   `upload_normal_map`, `upload_light_cookie`, `SpritePass::upload`,
