@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `StateHasher`: the contract promised distinct digests for any
+  different write sequences, but writes are untagged (`u16(0x1234)` equals
+  `u8(0x34); u8(0x12)`); it now promises them only within one schema.
+  Encoding and digests unchanged. Games that hash several kinds of state in
+  one stream, or change what they write, add a leading tag or version.
 - `sgl-core` `FrameAnimation::tick` / `AnimationSequence::tick`: a NaN or
   infinite `dt` could hang a repeating animation or freeze a `Once` one, and
   is now ignored. In `Repeat`/`PingPongRepeat`, a frame duration too small

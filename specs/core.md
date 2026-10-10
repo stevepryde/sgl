@@ -25,10 +25,19 @@ browser client must get identical results from it.
    Supplied time is exactly simulated, held (under a step plus any debt), or
    reported in `dropped_dt`. `alpha` is the fractional overstep in `[0, 1)`,
    excluding whole steps of debt.
-3. **Hashing.** `StateHasher` is a canonical, length-prefixed BLAKE3 encoding
-   of typed writes: different write sequences produce different digests, and
-   the digest for a given sequence is frozen across versions and targets.
-   `Digest::hash_bytes` is raw BLAKE3 of the bytes.
+3. **Hashing.** `StateHasher` is a canonical, schema-driven BLAKE3 encoding:
+   each write appends its fixed-width little-endian bytes untagged, and byte
+   strings and sequences carry a `u32` length prefix. The schema is the shape
+   of the primitive writes (which write methods, in what order). Two write
+   sequences with the same schema produce different digests whenever their
+   values differ. A `CanonicalWrite` impl is self-delimiting: its write shape
+   depends only on values it has already written, so it writes a length
+   before variable-length data and a tag before an optional value or enum
+   variant. Sequences with different schemas may encode alike (`u16(0x1234)`
+   equals `u8(0x34); u8(0x12)`), so a caller that hashes several kinds of
+   state in one stream or changes its schema writes its own leading tag or
+   version. The digest for a given sequence is frozen across versions and
+   targets. `Digest::hash_bytes` is raw BLAKE3 of the bytes.
 4. **RNG.** `SplitMix64` is a frozen stream: a seed produces the same values on
    every version and target. `derive_stream_seed` gives distinct seeds for
    distinct `(domain, a, b)`. `Rng` (the `fastrand` seam) is deterministic per

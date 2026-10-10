@@ -10,7 +10,7 @@ impl Digest {
     /// Computes the exact, unframed BLAKE3 digest of `bytes`.
     ///
     /// Use this for authored content hashes. Deterministic simulation state should
-    /// continue to use [`StateHasher`] so its typed framing remains explicit.
+    /// continue to use [`StateHasher`] so its canonical encoding remains explicit.
     #[must_use]
     pub fn hash_bytes(bytes: &[u8]) -> Self {
         Self(*blake3::hash(bytes).as_bytes())
@@ -42,12 +42,31 @@ impl fmt::Display for Digest {
 }
 
 /// Values with one frozen canonical byte representation.
+///
+/// An implementation must be self-delimiting: the shape of its writes (which
+/// primitive writes, in what order) may depend only on values it has already
+/// written. Write a length (with [`StateHasher::bytes`],
+/// [`StateHasher::sequence`] or [`StateHasher::length`]) before
+/// variable-length data, and a tag before an optional value or enum variant.
+/// Otherwise distinct values encode alike: if `Slot(Option<u32>)` writes its
+/// `u32` only when `Some`, `sequence(&[Slot(None), Slot(Some(5))])` and
+/// `sequence(&[Slot(Some(5)), Slot(None)])` hash the same.
 pub trait CanonicalWrite {
     /// Writes this value using its documented canonical byte representation.
     fn canonical_write(&self, out: &mut StateHasher);
 }
 
 /// An explicit BLAKE3 writer for deterministic state.
+///
+/// The encoding is schema-driven: each write appends its fixed-width
+/// little-endian bytes without a type tag, and [`bytes`](Self::bytes) and
+/// [`sequence`](Self::sequence) prefix a `u32` length. The schema is the shape
+/// of the primitive writes: which methods, in what order. Write sequences with
+/// the same schema hash differently whenever their values differ, provided
+/// each [`CanonicalWrite`] it uses is self-delimiting. Different schemas may encode alike —
+/// `u16(0x1234)` equals `u8(0x34); u8(0x12)` — so a caller that hashes several
+/// kinds of state in one stream, or changes what it writes, separates them
+/// itself with a leading tag or version (for example `u32(KIND)`).
 #[derive(Default)]
 pub struct StateHasher {
     inner: blake3::Hasher,
