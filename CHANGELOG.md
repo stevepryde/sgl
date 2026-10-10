@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
+  grid cell it spanned (effectively hanging); a collider over 1024 cells is
+  now kept apart and a query over more cells than colliders scans the
+  colliders. Results are unchanged. No game-code changes needed.
+
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
