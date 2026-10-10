@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `AsepriteSheet::parse` / `load`: a frame rect reaching past
+  `meta.size` was accepted and sampled neighbouring atlas pixels; it is now
+  `AsepriteError::FrameOutsideSheet { index, frame, sheet_size }`. Add the
+  variant to exhaustive matches; re-export sheets whose frames overrun.
 - `sgl-net` `udp::LANE_MESSAGES_PER_PEER_PER_POLL` (32, native) is now public:
   the most lane messages a `ThreadedUdpServer` poll returns per peer, which
   `specs/netcode.md` already named. No game-code changes needed.
