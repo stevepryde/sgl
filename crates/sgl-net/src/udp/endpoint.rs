@@ -563,11 +563,16 @@ impl<T: DatagramTransport> Endpoint<T> {
         self.release_held(&mut events);
         let mut buffer = std::mem::take(&mut self.receive_buffer);
         for _ in 0..self.config.max_datagrams_per_poll {
-            let Some((length, source)) = self.transport.receive(&mut buffer, now_ms) else {
-                break;
-            };
-            if length <= packet::DATAGRAM_BYTES {
-                self.handle_datagram(&buffer[..length], source, now_ms, &mut events);
+            match self.transport.receive(&mut buffer, now_ms) {
+                Ok(Some((length, source))) => {
+                    if length <= packet::DATAGRAM_BYTES {
+                        self.handle_datagram(&buffer[..length], source, now_ms, &mut events);
+                    }
+                }
+                Ok(None) => break,
+                // A failed receive loses only its own datagram; it counts
+                // toward the cap so a flood of them still ends the poll.
+                Err(_) => {}
             }
         }
         self.receive_buffer = buffer;
@@ -1554,10 +1559,20 @@ mod tests {
             });
         }
 
-        fn receive(&mut self, output: &mut [u8], _now_ms: u64) -> Option<(usize, SocketAddr)> {
-            let datagram = self.received.pop_front()?;
+        /// A datagram with no bytes stands for a failed receive.
+        fn receive(
+            &mut self,
+            output: &mut [u8],
+            _now_ms: u64,
+        ) -> std::io::Result<Option<(usize, SocketAddr)>> {
+            let Some(datagram) = self.received.pop_front() else {
+                return Ok(None);
+            };
+            if datagram.bytes.is_empty() {
+                return Err(std::io::ErrorKind::ConnectionReset.into());
+            }
             output[..datagram.bytes.len()].copy_from_slice(&datagram.bytes);
-            Some((datagram.bytes.len(), datagram.source))
+            Ok(Some((datagram.bytes.len(), datagram.source)))
         }
     }
 
@@ -1741,6 +1756,46 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
             vec![(Kind::Disconnect, nonces); 3]
+        );
+    }
+
+    /// Defect (#307): a failed receive (Windows' `WSAEMSGSIZE` or
+    /// `WSAECONNRESET`) ending the poll's reading, so a sender of oversized
+    /// datagrams holds every poll to about one datagram and starves the
+    /// rest. Oracle: `DatagramTransport::receive` (only `Ok(None)` means
+    /// nothing is waiting): two connect requests with a failed receive
+    /// between them are both challenged in one poll.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_failed_receive_skips_one_datagram_and_reading_goes_on() {
+        let mut server = Endpoint::server(
+            RecordingTransport::default(),
+            EndpointConfig::default(),
+            [13; 32],
+        )
+        .unwrap();
+        let (first, second) = (
+            address(192, 0, 2, 41, 40_000),
+            address(198, 51, 100, 7, 40_000),
+        );
+        request(&mut server, first, 91);
+        server.transport.received.push_back(ReceivedDatagram {
+            source: first,
+            bytes: Vec::new(),
+        });
+        request(&mut server, second, 92);
+
+        assert!(server.poll(0).is_empty());
+        assert_eq!(
+            server
+                .transport
+                .sent
+                .iter()
+                .map(|datagram| (datagram.destination, parsed_control(datagram).0))
+                .collect::<Vec<_>>(),
+            [
+                (first, Kind::ConnectChallenge),
+                (second, Kind::ConnectChallenge)
+            ]
         );
     }
 

@@ -15,6 +15,14 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `DatagramTransport::receive`: returned `Option`, so any socket
+  error ended the endpoint's poll as if the socket were empty (on Windows an
+  oversized datagram or ICMP error starved every other peer); it now
+  returns `io::Result<Option<(usize, SocketAddr)>>`, `Ok(None)` when empty
+  and `Err` for a failed receive the endpoint skips. Custom transports:
+  return `Ok(None)` for `WouldBlock`, `Err` for other errors, and wrap a
+  datagram in `Ok(Some(..))`.
+
 - `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
   promise that a flushed state leaves ahead of lane frames flushed after it;
   it waits only for frames flushed with or before it, and lane frames
