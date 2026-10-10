@@ -1604,7 +1604,9 @@ the module into every program the device's binding tier creates for it, so
 a pipeline created later from an accepted module cannot fail WGSL
 validation. It refuses, with a typed `shader::ShaderError`: a directive
 (`enable`, `requires`, `diagnostic`); a name SGL3D's programs on either
-binding tier declare; a
+binding tier declare, or a WGSL predeclared type, enumerant or built-in
+function (`smoothstep`, `saturate`), which would replace it in SGL3D's
+calls; a
 parse or type error against the contract alone, its line and column in the
 game's source (SGL3D's other declarations, such as `view` or `frame`, are
 not the module's to read); a module-scope `var`, a binding, an `override`

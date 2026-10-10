@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::add_shader`: a module declaring a WGSL built-in's name
+  (`fn smoothstep`, `fn saturate`, a predeclared type or enumerant) was
+  accepted and replaced it in SGL3D's own calls; it is now refused with
+  `ShaderError::NameTaken`. Migration: rename such helpers (for example
+  `my_smoothstep`).
 - `sgl-2d` `TextRenderer::draw`: a glyph larger than a `GLYPH_PAGE_SIZE`
   page (a large size at a high pixel scale) panicked; it now gets a page of
   its own sized to it, published by `end_frame` like any page, and one past
