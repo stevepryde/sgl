@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
+  of steps before confirming a hit was accepted by depth proximity and now
+  reports a miss, so streaks near surfaces at the step cap give way to the
+  fallback. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
