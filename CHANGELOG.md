@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- All SGL crates: published packages no longer ship examples, tests, test
+  fixtures or unused vendored reference sources; read those in the repository.
+  Licences and notices still ship. No game-code changes needed.
 - `sgl-3d` `AutoExposure`: a long frame (`FrameInput::frame_time_ms`)
   within a frame's step of the target stepped the correction past it, by
   stops after a hitch; it now lands on the target. No game-code changes
