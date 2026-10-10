@@ -49,7 +49,8 @@ licences, source revisions and the blue-noise table source it reads.
   frames, not by speed, and clips it towards the neighbourhood mean within a
   box that narrows with speed (DFX-14). A pixel that has not moved keeps a
   longer history within the same box and is not rejected by depth, as Bevy's
-  TAA treats still pixels (DFX-19).
+  TAA treats still pixels (DFX-19). Its closest-motion search clamps
+  neighbours to the screen, as Godot's and Bevy's do (DFX-42).
 - Host: derived from `ScreenSpaceReflection.cpp`, `TemporalAntiAliasing.cpp`,
   `PostFXContext.cpp` and `PostFXRenderTechnique.cpp`, recording into a
   caller's `wgpu::CommandEncoder` where
