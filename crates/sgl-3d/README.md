@@ -620,7 +620,16 @@ bounds are tested, so streaming many chunks in one frame redraws only the
 faces they reach, until more than 1024 edits in a frame merge in pairs),
 the visibility mask changes, or a material's side, visibility group or
 alpha mode changes
-(or a masked material's cutoff or base alpha). A light that
+(or a masked material's cutoff or base alpha). A casting (not blended)
+material whose shader may change what it casts (a displacement bound above
+0, or a masked material's surface function) redraws the faces its instances
+reach as the shader's inputs change: its parameters
+(`Scene::set_shader_parameters`); the frame's time, where the shader reads
+`time` or `phase` (SGL3D reads the module for them, as Godot marks a shader
+animated by its code), which redraws those faces' static layers every frame
+the time advances, so a large static field of a time-animated shader costs
+a static-layer redraw of every face it reaches each frame; and a moving
+instance's shader data. A light that
 moved since the last frame, such as one following a craft, has no reusable
 layer and draws every caster. A frame in which nothing moved in any shadowed
 light's range draws no shadows at all. What a frame draws becomes reusable
@@ -1323,8 +1332,18 @@ over the contract SGL3D declares, `shading/shader_contract.wgsl`, verbatim:
 
 // A vertex in and out of material_vertex, in the mesh's own units and axes,
 // after SGL3D's skinning and morphing and before the instance's pose:
-// `normal` unit; `tangent` xyz unit and w its handedness, all zero where the
-// mesh has none; `color` linear RGB and alpha, as asset::Vertex::color;
+// `normal` unit and `tangent` xyz a unit vector in the normal's plane, w its
+// handedness (+1 or -1), at rest and after skinning, while morph targets add
+// their deltas without renormalising or re-orthogonalising (as Bevy's
+// morph_vertex, which the deform stage ports), so a morphed vertex's frame
+// is only approximately orthonormal. A vertex without an authored
+// tangent (none, along the normal, or handedness not +1 or -1) gets an
+// arbitrary one in the normal's plane, handedness +1, never zero, which a
+// shader cannot tell from an authored one: a shader used on meshes without
+// authored tangents derives its frame itself, as from screen derivatives
+// in material_surface (as SGL3D's own normal maps do), or has such meshes
+// flagged through its ShaderParams or shader data; `color` linear RGB and
+// alpha, as asset::Vertex::color;
 // `shader_data` the mesh's per-vertex data (PreparedModel::with_shader_data),
 // zero without any; `custom` what the shader passes to material_surface,
 // interpolated, zero in.
@@ -1579,10 +1598,9 @@ The Rust side:
   material's block, of exactly that size (`SceneError::ShaderParameters`
   otherwise, and for a material without a shader); it starts as zeros when
   the material gains the shader. Time comes from the frame, so most blocks
-  are set once. A new block is no static edit: the local-light shadow
-  layers of static instances keep the displacement they were drawn with,
-  so static instances that parameters animate keep their old local-light
-  shadows (animate them through moving instances, or instance data).
+  are set once. Where the material's shader may change what it casts, a
+  new block redraws the local-light shadow faces its instances reach
+  ([Local-light shadows](#local-light-shadows)).
 - `Scene::set_instance_shader_data(queue, instance, [f32; 4])` and
   `instance_shader_data` hold an instance's data, zero when it is added;
   for a static instance a change is a static edit, which redraws the
@@ -1597,7 +1615,9 @@ the module into every program the device's binding tier creates for it, so
 a pipeline created later from an accepted module cannot fail WGSL
 validation. It refuses, with a typed `shader::ShaderError`: a directive
 (`enable`, `requires`, `diagnostic`); a name SGL3D's programs on either
-binding tier declare; a
+binding tier declare, or a WGSL predeclared type, enumerant or built-in
+function (`smoothstep`, `saturate`), which would replace it in SGL3D's
+calls; a
 parse or type error against the contract alone, its line and column in the
 game's source (SGL3D's other declarations, such as `view` or `frame`, are
 not the module's to read); a module-scope `var`, a binding, an `override`
@@ -1619,8 +1639,11 @@ loop is the `for` loop a counter of `i32` or `u32` makes, from a literal or
 `const` start, tested with `<` or `<=` against a literal or `const` limit,
 and changed only by its update, adding a positive literal or `const` step
 (or `loop { … continuing { i += step; break if i >= limit; } }`, `>=` or
-`>`), whose limit plus step fits the counter's type, so it cannot wrap;
-nested
+`>`), whose limit plus step fits the counter's type, so it cannot wrap.
+The test and the step must read the counter in the loop's own test and
+update statements (where a `for` loop puts them; `break if` after the
+step); a value computed anywhere else is refused. A `break if` loop inside
+another loop must set its counter's start just before it. Nested
 loops' counts multiply, one loop after another's add, and a call within a
 loop counts its callee's, so six Gerstner components cost six and a 16 × 16
 nest the whole budget.
@@ -1840,7 +1863,13 @@ authored look and per-frame state in a `FrameInput`.
    mesh. `Renderer::new(&device, &queue,
    output_format, output_size, device_scale, &settings)` creates the targets
    for an output of `output_size` physical pixels in a window of
-   `device_scale` physical pixels per logical pixel.
+   `device_scale` physical pixels per logical pixel. Any colour format
+   presents the same display colour: an sRGB format's attachment encodes
+   it; natively a float format (`Rgba16Float`) holds linear light, as a
+   native float surface composites it; and any other (a browser canvas's
+   `Bgra8Unorm` or `Rgba8Unorm`), and in the browser a float one too, whose
+   canvas keeps its sRGB colour space, takes it sRGB-encoded by the tone
+   map.
 4. Each frame, `set_instance` each moving instance with its pose and
    visibility, and `set_instance_deformation` each deforming one
    ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)).

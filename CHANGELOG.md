@@ -20,6 +20,58 @@ docs and specs the entry links.
   further; the coat's and sheen's dimming now follow
   `specular` up to 1, and dynamic GI probe hits take no coat. No game-code
   changes needed.
+- `sgl-3d` local-light shadows: a material shader's parameters
+  (`Scene::set_shader_parameters`), the frame's time and a moving instance's
+  `Scene::set_instance_shader_data` left cached shadows stale; casters whose
+  shader moves or cuts them now redraw where those change, every frame the
+  time advances for a shader that reads `time` or `phase`. No game-code
+  changes needed.
+- `sgl-net` UDP client handshake: a client confirmed the last challenge it
+  received, so challenges to its retried request that arrived reversed
+  across a cookie epoch left the join failing at the timeout after a ghost
+  `Connected` on the server; it now confirms the first. No game-code
+  changes needed.
+- `sgl-net` `DatagramTransport::receive`: returned `Option`, so any socket
+  error ended the endpoint's poll as if the socket were empty (on Windows an
+  oversized datagram or ICMP error starved every other peer); it now
+  returns `io::Result<Option<(usize, SocketAddr)>>`, `Ok(None)` when empty
+  and `Err` for a failed receive the endpoint skips. Custom transports:
+  return `Ok(None)` for `WouldBlock`, `Err` for other errors, and wrap a
+  datagram in `Ok(Some(..))`.
+- `sgl-3d` `Scene::add_shader`: loops that could run for ever were accepted
+  as counted (a test or step read from a `let` computed before the loop, or
+  a `break if` loop re-entered by an outer loop without restarting its
+  counter); they are now refused with `ShaderError::UnboundedLoop`. The test
+  and the step must read the counter in the loop's own test and update
+  statements (where a `for` loop puts them); a value computed anywhere else
+  is refused, including a `break if` test read before the step (previously
+  accepted and miscounted). Set a nested `break if` loop's counter just
+  before it.
+- `sgl-3d` `Renderer::new` `output_format`: a non-sRGB 8-bit output (a
+  browser canvas's `Bgra8Unorm` or `Rgba8Unorm`) took linear colour and
+  looked dark; the tone map now writes it sRGB-encoded, a float output too
+  in the browser. sRGB outputs and native float outputs are unchanged. No
+  game-code changes needed.
+- `sgl-3d` `Scene::add_shader`: a module declaring a WGSL built-in's name
+  (`fn smoothstep`, `fn saturate`, a predeclared type or enumerant) was
+  accepted and replaced it in SGL3D's own calls; it is now refused with
+  `ShaderError::NameTaken`. Migration: rename such helpers (for example
+  `my_smoothstep`).
+- `sgl-2d` `TextRenderer::draw`: a glyph larger than a `GLYPH_PAGE_SIZE`
+  page (a large size at a high pixel scale) panicked; it now gets a page of
+  its own sized to it, published by `end_frame` like any page, and one past
+  `canvas::text::MAX_GLYPH_PAGE_SIZE` (16384; 8192 on wasm32) is not drawn.
+  A page past the device's texture limit fails its upload with
+  `TextureError::TooLarge`: log that error rather than unwrapping the
+  upload.
+- `sgl-3d` shader contract `MaterialVertex::tangent`: documented as all
+  zero where a mesh has no tangents, but such a vertex always received an
+  arbitrary unit tangent in the normal's plane with handedness +1; the
+  contract now says so. Behaviour is unchanged. A game shader that tested
+  `tangent.w == 0.` to fall back never took that branch: where it is used
+  on meshes without authored tangents, derive the frame in
+  `material_surface` (for example from screen derivatives), or flag those
+  meshes through `ShaderParams` or shader data.
 - `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain
   buffers doubled past the device's storage binding limit once they held
   over half of it, failing the frame's cull bind group; their growth now
