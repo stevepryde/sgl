@@ -16,12 +16,14 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
-  UDP and memory connections reported nothing after a local disconnect
-  (UDP sometimes `Disconnected { Peer }`), while threaded UDP and WebSocket
-  reported `Local` (WebSocket sometimes `Peer`); every transport now
-  reports exactly one `Disconnected { reason: Local }`. Games that
-  already clean up when they call `disconnect`: ignore that event, or
-  move the cleanup to it.
+  UDP and memory reported nothing for a connection the caller closed (UDP
+  sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
+  when its endpoint found the peer gone first, that end, and WebSocket
+  `Local` or `Peer` by timing; now a connection still open at `disconnect`
+  reports exactly one `Disconnected { reason: Local }` on every transport
+  (a UDP client in its handshake too, with no `Connected`), and one
+  already ended reports that end. Games that clean up when they call
+  `disconnect`: ignore that event, or move the cleanup to it.
 - `sgl-3d` `Scene::add_shader`: loops that could run for ever were accepted
   as counted (a test or step read from a `let` computed before the loop, or
   a `break if` loop re-entered by an outer loop without restarting its

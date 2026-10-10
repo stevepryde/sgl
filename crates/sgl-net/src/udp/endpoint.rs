@@ -680,7 +680,8 @@ impl<T: DatagramTransport> Endpoint<T> {
     /// Stops admission to `peer` and closes it once what it accepted is
     /// acknowledged, or `close_grace_ms` from now. The next poll reports it
     /// `Disconnected { Local }`, and nothing about it follows, whatever the
-    /// peer does meanwhile.
+    /// peer does afterwards. A peer this endpoint no longer has, its end
+    /// already queued, is left alone.
     pub fn disconnect(&mut self, peer: u64, now_ms: u64) {
         let deadline_ms = self
             .now_ms

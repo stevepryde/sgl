@@ -286,8 +286,10 @@ impl DuplexEnd {
 
     fn disconnect(&mut self, now_ms: u64) {
         self.flush(now_ms);
+        // Only a connection still open ends here; one the peer already
+        // ended keeps its own end.
+        self.local_ended |= self.connected();
         self.open.set(false);
-        self.local_ended = true;
     }
 }
 
@@ -709,36 +711,35 @@ mod tests {
             .expect("exactly the remaining bytes");
     }
 
-    /// Defect (#309): a memory connection the caller closed reporting
-    /// nothing, or `Peer` when the other end closes too. Oracle: the
-    /// `disconnect` rule of netcode.md 2: exactly one `Disconnected`, with
-    /// reason `Local`, on each end that disconnected.
+    /// Defect (#309): a memory connection the caller closed while open
+    /// reporting nothing, or reporting `Local` to an end that disconnected
+    /// after its peer had already ended the connection. Oracle: the
+    /// `disconnect` rule of netcode.md 2: a connection still open when the
+    /// caller disconnects reports exactly one `Local`; one already ended
+    /// reports that end. The client disconnects first, then the server in
+    /// the same tick: the client reports `Local`, the server `Peer`, once.
     #[wasm_bindgen_test(unsupported = test)]
-    fn a_connection_both_ends_close_at_once_reports_local_on_each() {
+    fn the_end_that_disconnects_first_reports_local_and_the_other_peer() {
         let (mut client, mut server) = memory_duplex();
         let _ = client.poll(0);
         let _ = server.poll(0);
         client.disconnect(5);
         server.disconnect(SOLO_CONNECTION, 5);
-        for now in [6, 7] {
-            let expected_client: &[ClientEvent] = if now == 6 {
-                &[ClientEvent::Disconnected {
-                    reason: DisconnectReason::Local,
-                }]
-            } else {
-                &[]
-            };
-            let expected_server: &[ServerEvent] = if now == 6 {
-                &[ServerEvent::Disconnected {
-                    conn: SOLO_CONNECTION,
-                    reason: DisconnectReason::Local,
-                }]
-            } else {
-                &[]
-            };
-            assert_eq!(client.poll(now), expected_client);
-            assert_eq!(server.poll(now), expected_server);
-        }
+        assert_eq!(
+            client.poll(6),
+            [ClientEvent::Disconnected {
+                reason: DisconnectReason::Local,
+            }]
+        );
+        assert_eq!(
+            server.poll(6),
+            [ServerEvent::Disconnected {
+                conn: SOLO_CONNECTION,
+                reason: DisconnectReason::Peer,
+            }]
+        );
+        assert!(client.poll(7).is_empty());
+        assert!(server.poll(7).is_empty());
     }
 
     #[wasm_bindgen_test(unsupported = test)]

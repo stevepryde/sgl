@@ -652,14 +652,13 @@ impl PeerState {
 
     pub(super) fn close(&mut self, reason: DisconnectReason) {
         if self.terminal.is_none() {
-            // The caller disconnected first, so whatever ends the close
-            // ends it as `Local`.
-            let reason = if self.graceful_closing {
+            // The caller disconnected while the connection was open, so
+            // whatever ends its close ends it as `Local`.
+            self.terminal = Some(if self.graceful_closing {
                 DisconnectReason::Local
             } else {
                 reason
-            };
-            self.terminal = Some(reason);
+            });
             self.graceful_closing = false;
             self.graceful_started_ms = None;
             self.stalled = None;
@@ -743,6 +742,13 @@ mod tests {
         state.begin_graceful_close(100);
         state.close(DisconnectReason::Peer);
         assert_eq!(state.terminal(), Some(DisconnectReason::Local));
+        // A framing violation then still discards what the peer sent.
+        let mut state = new_peer();
+        state.inbound_latest = Some(b"from a violating peer".to_vec());
+        state.begin_graceful_close(100);
+        state.close(DisconnectReason::ProtocolViolation);
+        assert_eq!(state.terminal(), Some(DisconnectReason::Local));
+        assert_eq!(state.inbound_latest, None);
 
         let mut state = new_peer();
         for _ in 0..DEFAULT_LANE_OUTBOUND_MESSAGES {

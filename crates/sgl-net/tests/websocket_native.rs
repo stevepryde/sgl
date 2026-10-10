@@ -581,45 +581,6 @@ fn disconnect_flushes_accepted_reliable_before_close() {
     assert!(matches!(events[1], ClientEvent::Disconnected { .. }));
 }
 
-/// Defect (#309): a connection both ends close in the same tick reporting
-/// `Disconnected { Peer }`, twice, or not at all on one end. Oracle: the
-/// `disconnect` rule of netcode.md 2: a connection the caller disconnects
-/// reports exactly one `Disconnected`, with reason `Local`. Both ends
-/// disconnect at once; over the next half second each reports only that.
-#[test]
-fn a_connection_both_ends_close_at_once_reports_local_on_each() {
-    let mut server = server(4);
-    let mut client = connect_native(&server);
-    let conn = connected_id(&wait_server_events(&mut server));
-    assert_eq!(
-        collect_client_events(&mut client, 1),
-        [ClientEvent::Connected]
-    );
-
-    client.disconnect(10);
-    server.disconnect(conn, 10);
-    let (mut client_events, mut server_events) = (Vec::new(), Vec::new());
-    let deadline = Instant::now() + Duration::from_millis(500);
-    while Instant::now() < deadline {
-        client_events.extend(client.poll(20));
-        server_events.extend(server.poll(20));
-        thread::sleep(Duration::from_millis(1));
-    }
-    assert_eq!(
-        client_events,
-        [ClientEvent::Disconnected {
-            reason: DisconnectReason::Local,
-        }]
-    );
-    assert_eq!(
-        server_events,
-        [ServerEvent::Disconnected {
-            conn,
-            reason: DisconnectReason::Local,
-        }]
-    );
-}
-
 #[test]
 fn handshake_in_flight_when_admission_stops_is_not_admitted() {
     use std::io::Write;

@@ -23,15 +23,15 @@
 //!
 //! A caller's `disconnect` stops admission at once but keeps what the
 //! connection already accepted: the caller's next poll reports the
-//! connection `Disconnected { Local }`, even when the worker had already
-//! queued another end for it. The worker keeps moving its queued reliable
-//! and unreliable messages to the endpoint as room allows, and begins the
-//! endpoint's graceful close once none is left. The endpoint's
-//! `close_grace_ms` runs from the worker's first turn after the
-//! disconnect, so whatever is still queued
-//! or unacknowledged when it ends is abandoned. Messages that arrive from
-//! the connection meanwhile are acknowledged and dropped: the caller has
-//! already seen it end.
+//! connection `Disconnected { Local }` unless the worker had already
+//! queued another end for it, which is reported instead. The worker keeps
+//! moving its queued reliable and unreliable messages to the endpoint as
+//! room allows, and begins the endpoint's graceful close once none is
+//! left. The endpoint's `close_grace_ms` runs from the worker's first turn
+//! after the disconnect, so whatever is still queued or unacknowledged
+//! when it ends is abandoned. Messages that arrive from the connection
+//! meanwhile are acknowledged and dropped: the caller has already seen it
+//! end.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -242,25 +242,6 @@ impl IngressHub {
                 .lifecycle
                 .push_back(ServerEvent::Disconnected { conn, reason });
         }
-    }
-
-    /// The caller ended `conn`: it ends as `Local`, also when the worker
-    /// has queued another end the caller has not polled yet.
-    fn closed_by_caller(&self, conn: ConnectionId) {
-        let mut state = self.state.lock().expect("UDP ingress hub poisoned");
-        let queued = state.lifecycle.iter_mut().find_map(|event| match event {
-            ServerEvent::Disconnected {
-                conn: ended,
-                reason,
-            } if *ended == conn => Some(reason),
-            _ => None,
-        });
-        if let Some(reason) = queued {
-            *reason = DisconnectReason::Local;
-            return;
-        }
-        drop(state);
-        self.disconnected(conn, DisconnectReason::Local);
     }
 
     /// Each live peer's reliable messages waiting for the caller, per lane:
@@ -721,11 +702,14 @@ impl Drop for ThreadedUdpServer {
     }
 }
 
-/// The caller ends `conn`: its next poll reports `Disconnected { Local }`
-/// and nothing else about it, while what it accepted drains.
+/// The caller ends `conn`: if it is still open, its next poll reports
+/// `Disconnected { Local }` and nothing else about it, while what it
+/// accepted drains; an end the worker already queued is reported instead.
+/// The ingress records the end first, so an end the worker finds
+/// afterwards is not reported.
 fn disconnect_by_caller(commands: &CommandQueue, ingress: &IngressHub, conn: ConnectionId) {
+    ingress.disconnected(conn, DisconnectReason::Local);
     commands.disconnect(conn);
-    ingress.closed_by_caller(conn);
 }
 
 fn run_worker(
@@ -1672,6 +1656,83 @@ mod tests {
             begun + config.close_grace_ms,
         );
         assert_eq!(server.endpoint_mut().peer_count(), 0);
+    }
+
+    /// An endpoint that reports each turn's scripted events and accepts
+    /// every command.
+    struct Scripted {
+        turns: VecDeque<Vec<ServerEvent>>,
+    }
+
+    impl WorkerEndpoint for Scripted {
+        fn poll_within(
+            &mut self,
+            now_ms: u64,
+            _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
+        ) -> Vec<ServerEvent> {
+            self.poll(now_ms)
+        }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, _deadline_ms: u64) {
+            self.disconnect(conn, now_ms);
+        }
+    }
+
+    impl ServerIo for Scripted {
+        fn poll(&mut self, _now_ms: u64) -> Vec<ServerEvent> {
+            self.turns.pop_front().unwrap_or_default()
+        }
+
+        fn send(&mut self, _: ConnectionId, _: Delivery, _: &[u8]) -> Result<(), SendError> {
+            Ok(())
+        }
+
+        fn capacity(&self, _: ConnectionId, _: Lane) -> ReliableCapacity {
+            ReliableCapacity::remaining(1, usize::MAX)
+        }
+
+        fn flush(&mut self, _now_ms: u64) {}
+
+        fn disconnect(&mut self, _conn: ConnectionId, _now_ms: u64) {}
+
+        fn stop_admission(&mut self) {}
+    }
+
+    /// Defect (#309): the threaded server reporting the endpoint's end of a
+    /// connection the caller had already disconnected while it was open,
+    /// because the worker polled the endpoint before taking the caller's
+    /// disconnect. Oracle: the `disconnect` rule of netcode.md 2: a
+    /// connection still open when the caller disconnects reports exactly
+    /// one `Local`, whatever the peer does afterwards. The caller
+    /// disconnects; the endpoint's next poll reports the peer gone; the
+    /// caller sees one `Local`.
+    #[test]
+    fn a_peer_end_after_the_callers_disconnect_is_reported_local_once() {
+        let conn = cid(4);
+        let commands = CommandQueue::new(&ReliableConfig::DEFAULT, CLOSE_GRACE_MS);
+        let ingress = IngressHub::new(&ReliableConfig::DEFAULT);
+        let mut endpoint = Scripted {
+            turns: VecDeque::from([
+                vec![ServerEvent::Connected { conn }],
+                vec![ServerEvent::Disconnected {
+                    conn,
+                    reason: DisconnectReason::Peer,
+                }],
+            ]),
+        };
+        worker_tick(&mut endpoint, &commands, &ingress, 0);
+        assert_eq!(ingress.drain(), [ServerEvent::Connected { conn }]);
+        disconnect_by_caller(&commands, &ingress, conn);
+        for now in 1..4 {
+            worker_tick(&mut endpoint, &commands, &ingress, now);
+        }
+        assert_eq!(
+            ingress.drain(),
+            [ServerEvent::Disconnected {
+                conn,
+                reason: DisconnectReason::Local,
+            }]
+        );
     }
 
     /// Defect (#309): the threaded server reporting a connection both ends
