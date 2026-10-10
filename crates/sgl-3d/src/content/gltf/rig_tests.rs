@@ -327,6 +327,36 @@ fn unsupported_skins_are_rejected() {
     }
 }
 
+// Plausible defect: a mesh's later primitive with another number of morph
+// targets than its first loaded against the node's weights, its extra
+// targets driven by weights past the node's, or its missing ones dropped.
+#[wasm_bindgen_test(unsupported = test)]
+fn primitives_of_one_mesh_with_other_morph_target_counts_are_rejected() {
+    for targets in [2, 0] {
+        let bytes = rigged(|document, _| {
+            let lid = &document["meshes"][1]["primitives"][0];
+            let attributes = lid["attributes"].clone();
+            let target = lid["targets"][0].clone();
+            let mut second = json!({"attributes": attributes});
+            if targets > 0 {
+                second["targets"] = json!(vec![target; targets]);
+            }
+            document["meshes"][1]["primitives"]
+                .as_array_mut()
+                .unwrap()
+                .push(second);
+        });
+        let error = load_slice(&bytes)
+            .err()
+            .unwrap_or_else(|| panic!("a second primitive of {targets} targets was accepted"))
+            .to_string();
+        assert!(
+            error.contains("mesh 1 primitive 1") && error.contains("morph targets"),
+            "{error}"
+        );
+    }
+}
+
 // Plausible defect: an accessor whose component type or shape glTF does not
 // allow for its use, with no elements, or reaching past its buffer view
 // handed to the gltf crate's readers, which panic on it (an `unreachable!`,

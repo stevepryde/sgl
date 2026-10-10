@@ -119,8 +119,18 @@ pub(super) fn read_node(
             .into());
         }
         let normal_transform = transform.inverse().transpose();
+        // glTF 2.0 3.7.2.2: every primitive of a mesh has the same morph
+        // targets, which the node's one set of weights drives.
+        let mesh_targets = mesh
+            .primitives()
+            .next()
+            .map_or(0, |primitive| primitive.morph_targets().count());
         for primitive in mesh.primitives() {
             let label = format!("mesh {} primitive {}", mesh.index(), primitive.index());
+            let target_count = primitive.morph_targets().count();
+            if target_count != mesh_targets {
+                return Err(format!("{label}: {target_count} morph targets where the mesh's first primitive has {mesh_targets}; give every primitive of a mesh the same shape keys").into());
+            }
             if primitive.mode() != Mode::Triangles {
                 return Err(format!(
                     "{label}: only triangle primitives are supported; triangulate before export"
@@ -285,7 +295,6 @@ pub(super) fn read_node(
                 Some(skin) => read_influences(&reader, skin, vertices.len(), &label)?,
                 None => Vec::new(),
             };
-            let target_count = primitive.morph_targets().count();
             let morph_targets = if target_count == 0 {
                 Vec::new()
             } else {

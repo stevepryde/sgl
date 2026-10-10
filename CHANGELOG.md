@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: a glTF mesh whose primitives have different
+  numbers of morph targets loaded, its extra targets driven by another
+  node's weights; it now fails the load naming the primitive. No game-code
+  changes needed; give every primitive of the mesh the same shape keys.
+
 - `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
   glTF does not allow for its use, of no elements, or past its buffer view
   or buffer, or an image view past its buffer, panicked or was misread; it
