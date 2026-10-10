@@ -30,8 +30,10 @@ browser client must get identical results from it.
    the digest for a given sequence is frozen across versions and targets.
    `Digest::hash_bytes` is raw BLAKE3 of the bytes.
 4. **RNG.** `SplitMix64` is a frozen stream: a seed produces the same values on
-   every version and target. `derive_stream_seed` gives distinct seeds for
-   distinct `(domain, a, b)`. `Rng` (the `fastrand` seam) is deterministic per
+   every version and target. `derive_stream_seed` absorbs `base`, `domain`,
+   `a` and `b` in turn, each mixed by a `SplitMix64` step: changing any one
+   of them always changes the seed, and no two can cancel (inputs differing
+   in several share a seed only by 64-bit chance). `Rng` (the `fastrand` seam) is deterministic per
    seed but its stream is not frozen across dependency upgrades.
 5. **Grid.** `Grid2` is row-major with `u16` dimensions; an oversized or
    overflowing construction returns `GridError`, never panics. `get` is `Some`

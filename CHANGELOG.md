@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
+  `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes.
+  Games that persist derived seeds or streams (saves, replays, generated
+  worlds) regenerate them or keep their old seeds.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`
