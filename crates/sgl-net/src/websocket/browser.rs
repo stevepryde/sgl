@@ -171,8 +171,15 @@ impl BrowserSocket {
                 let _ = message_socket.close();
                 return;
             };
-            let result = message_state.borrow_mut().peer.receive(envelope);
-            if result.is_err() {
+            let mut state = message_state.borrow_mut();
+            let open = state.peer.terminal().is_none();
+            if let Err(reason) = state.peer.receive(envelope) {
+                // Like every other non-local close, a receive failure
+                // follows the reconnect policy.
+                if open {
+                    state.fail(reason);
+                }
+                drop(state);
                 let _ = message_socket.close();
             }
         }) as Box<dyn FnMut(_)>);

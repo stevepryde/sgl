@@ -193,7 +193,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     Neither transport negotiates a version, so builds on different versions
     cannot connect; a game changes its WebSocket subprotocol when the wire
     version changes. Browser reconnect follows `ReconnectPolicy` with
-    bounded attempts and delay, driven by `poll(now_ms)`.
+    bounded attempts and delay, driven by `poll(now_ms)`, after every close
+    the game did not ask for, `InboundOverflow` and `ProtocolViolation`
+    included.
 14. Lanes share a connection by deficit round robin over the lanes with
     sendable work. Each lane's quantum is `LaneConfig::weight` items
     (`1..=MAX_LANE_WEIGHT`, default 1), an item being a reliable fragment or

@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `BrowserWebSocketClient`: a close caused by a received frame
+  (`InboundOverflow`, or a `ProtocolViolation` found by the lane queues)
+  never reconnected; it now follows `ReconnectPolicy` like other non-local
+  closes, so expect `Reconnecting` after it. No game-code changes needed.
 - `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
   promise that a flushed state leaves ahead of lane frames flushed after it;
   it waits only for frames flushed with or before it, and lane frames

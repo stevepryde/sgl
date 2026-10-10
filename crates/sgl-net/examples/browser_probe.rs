@@ -11,7 +11,8 @@
 //! sides), a 256 KiB message past its lane's byte allowances, coalesced
 //! latest state, a saturated lane that refuses and then drains without
 //! losing the connection, a server-initiated close with its bounded
-//! reconnect, a rejected subprotocol, and a clean local disconnect.
+//! reconnect, an inbound overflow and its reconnect, a rejected
+//! subprotocol, and a clean local disconnect.
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -441,6 +442,48 @@ async fn a_server_close_is_reported_as_peer_and_reconnects() -> Result<(), Strin
     Ok(())
 }
 
+/// Defect (#305): a receive failure that closes the peer without arming
+/// the reconnect policy, unlike every other non-local close. Oracle: with a
+/// one-message inbound lane, three echoes that arrive while the game is not
+/// polling overflow it; the client reports `Disconnected { InboundOverflow }`,
+/// then `Reconnecting` and `Connected` again, all driven by polls.
+async fn an_inbound_overflow_reconnects() -> Result<(), String> {
+    let mut config = config();
+    config.reliable.lanes[0].inbound_messages = 1;
+    let mut driver = Driver::connect(config).await?;
+    for payload in [b"o1", b"o2", b"o3"] {
+        driver
+            .client
+            .send(Delivery::RELIABLE_ORDERED, payload)
+            .map_err(|e| format!("send: {e:?}"))?;
+    }
+    driver.client.flush(driver.now_ms);
+    // The echoes arrive while nothing polls.
+    sleep_ms(300).await;
+    driver
+        .settle(|events| {
+            events
+                .iter()
+                .filter(|e| **e == ClientEvent::Connected)
+                .count()
+                >= 2
+        })
+        .await?;
+    let position = |wanted: &dyn Fn(&ClientEvent) -> bool| driver.events.iter().position(wanted);
+    let overflow = position(&|e| {
+        *e == ClientEvent::Disconnected {
+            reason: DisconnectReason::InboundOverflow,
+        }
+    });
+    let reconnecting = position(&|e| matches!(e, ClientEvent::Reconnecting { attempt: 1 }));
+    ensure!(
+        matches!((overflow, reconnecting), (Some(o), Some(r)) if o < r),
+        "expected InboundOverflow then a reconnect: {:?}",
+        driver.events
+    );
+    Ok(())
+}
+
 /// Defect: a handshake that ignores the subprotocol. Oracle: the fixture
 /// refuses another subprotocol, so the client never connects and reports
 /// the loss instead.
@@ -530,6 +573,11 @@ pub async fn run() -> String {
         &mut report,
         "a_server_close_is_reported_as_peer_and_reconnects",
         a_server_close_is_reported_as_peer_and_reconnects().await,
+    );
+    record(
+        &mut report,
+        "an_inbound_overflow_reconnects",
+        an_inbound_overflow_reconnects().await,
     );
     record(
         &mut report,
