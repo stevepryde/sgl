@@ -122,7 +122,11 @@ impl State {
                     pad.pressed.insert(button);
                 }
                 EventType::ButtonReleased(button) => {
-                    pad.pressed.remove(&button);
+                    // A release with no reported press (held when the pad
+                    // connected on Gilrs) never reaches the game unmatched.
+                    if !pad.pressed.remove(&button) {
+                        return None;
+                    }
                 }
                 EventType::AxisChanged(axis, value) => {
                     pad.axes.insert(axis, value);
@@ -206,5 +210,30 @@ mod tests {
         let new_id = GamepadId(1);
         state.apply(Update::Connected(new_id, "pad".into()));
         assert!(!state.pads[&new_id].is_pressed(Button::DPadLeft));
+    }
+
+    /// #317: a release with no reported press (a button held when the pad
+    /// connected) yields no event and changes no state; a matched release
+    /// still reports.
+    #[test]
+    fn an_unmatched_release_is_dropped() {
+        let mut state = State::default();
+        let id = GamepadId(0);
+        state.apply(Update::Connected(id, "pad".into()));
+        state.apply(Update::Input(Event {
+            id,
+            event: EventType::ButtonPressed(Button::East),
+        }));
+        let release = |button| {
+            Update::Input(Event {
+                id,
+                event: EventType::ButtonReleased(button),
+            })
+        };
+        assert!(state.apply(release(Button::South)).is_none());
+        assert!(state.pads[&id].is_pressed(Button::East));
+        assert!(!state.pads[&id].is_pressed(Button::South));
+        assert!(state.apply(release(Button::East)).is_some());
+        assert!(!state.pads[&id].is_pressed(Button::East));
     }
 }

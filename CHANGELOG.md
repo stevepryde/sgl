@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-input` `Gamepads::poll` on Windows, Linux and the web (Gilrs): a
+  repeated `Connected` for a pad reset its held state and is now ignored, and
+  a `ButtonReleased` with no reported press (a button held when the pad
+  connected) is now dropped on every target. Input already held at connection
+  is still not reported until it changes, a gilrs limitation. No game-code
+  changes needed.
 - `sgl-post-fx` half-resolution SSR (SGL3D's `ScreenSpaceReflections::Half`):
   a one-pixel-wide or -tall frame created zero-sized textures, a wgpu
   validation error; each half-resolution side is now at least one texel. No
