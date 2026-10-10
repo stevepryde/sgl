@@ -43,6 +43,9 @@ libraries and libudev.
 - For SGL3D, follow its [architecture](specs/sgl3d-architecture.md) and
   [rendering development rules](specs/sgl3d.md#rendering-development).
   Keep licences and provenance with ported code.
+- Library crates take the root `[workspace.lints]`. `sgl-3d` and
+  `sgl-post-fx` are exempt from clippy's pedantic group, as their manifests
+  record; unsafe-code levels follow [stack](specs/stack.md).
 - Add tests only for plausible defects with independent observable results.
   Follow [testing](specs/testing.md); source-text assertions and duplicated
   implementation logic do not establish correctness.
