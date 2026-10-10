@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` SSR (SGL3D's `Crystal` reflections): a ray towards the camera
+  from a surface under one unit away was projected behind the camera and
+  traced mirrored, behind the surface; its end is now clipped to the near
+  plane (`CameraAttribs::set_clip_planes`, already required). No game-code
+  changes needed.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`

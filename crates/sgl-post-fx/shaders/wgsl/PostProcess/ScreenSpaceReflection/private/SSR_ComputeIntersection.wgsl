@@ -369,7 +369,7 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let RayOriginVS = ScreenXYDepthToViewSpace(RayOriginSS, g_Camera.mProj);
 
     let RayDirectionVS = SampleReflectionVector(-normalize(RayOriginVS), NormalVS, Roughness, vec2<i32>(VSOut.f4PixelPos.xy));
-    let RayDirectionSS = ProjectDirection(RayOriginVS, RayDirectionVS.xyz, RayOriginSS, g_Camera.mProj);
+    let RayDirectionSS = ProjectDirection(RayOriginVS, RayDirectionVS.xyz, RayOriginSS, g_Camera.mProj, g_Camera.fNearPlaneZ);
     let RayDirectionWS = (g_Camera.mViewInv * vec4<f32>(RayDirectionVS.xyz, 0.0)).xyz;
 
     var ValidHit = false;

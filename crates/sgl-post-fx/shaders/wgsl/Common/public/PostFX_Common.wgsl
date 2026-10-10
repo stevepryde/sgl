@@ -69,9 +69,17 @@ fn ProjectPosition(Origin: vec3<f32>, Transform: mat4x4<f32>) -> vec3<f32>
     return Projected.xyz;
 }
 
-fn ProjectDirection(Origin: vec3<f32>, Direction: vec3<f32>, OriginSS: vec3<f32>, Mat: mat4x4<f32>) -> vec3<f32>
+// PROVENANCE.md DFX-39: the end of the ray is clipped to the near plane (view Z `NearPlaneZ`)
+// before it is projected. A ray heading towards the camera from nearer than its length otherwise
+// ends behind the camera, where the projection mirrors its direction on the screen and in depth.
+fn ProjectDirection(Origin: vec3<f32>, Direction: vec3<f32>, OriginSS: vec3<f32>, Mat: mat4x4<f32>, NearPlaneZ: f32) -> vec3<f32>
 {
-    return ProjectPosition(Origin + Direction, Mat) - OriginSS;
+    var End = Origin + Direction;
+    if (Direction.z < 0.0 && End.z < NearPlaneZ) {
+        // An origin on (or by rounding nearer than) the near plane keeps no length.
+        End = Origin + Direction * max((NearPlaneZ - Origin.z) / Direction.z, 0.0);
+    }
+    return ProjectPosition(End, Mat) - OriginSS;
 }
 
 fn InvProjectPosition(Coord_: vec3<f32>, Transform: mat4x4<f32>) -> vec3<f32>

@@ -1114,3 +1114,111 @@ fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
         "only {checked} floor pixels reflected the wall"
     );
 }
+
+// PROVENANCE.md DFX-39: a ray towards the camera from a surface nearer than
+// its unit length, which ends behind the camera, is traced along its own
+// projection: the screen-space direction runs the way a point stepped a
+// little along the ray projects, not mirrored. A ray away from the camera
+// keeps that direction too.
+#[test]
+fn ssr_rays_towards_the_camera_are_projected_in_front_of_it() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let origin = [0.1f32, -0.05, 0.5];
+    let normalize = |v: [f32; 3]| {
+        let length = v.iter().map(|c| c * c).sum::<f32>().sqrt();
+        v.map(|c| c / length)
+    };
+    let rays = [[0.3f32, 0.2, -1.0], [0.3, 0.2, 1.0]].map(normalize);
+    for reversed in [false, true] {
+        let camera = camera(reversed, 0);
+        let m = camera.m_proj;
+        // Column-vector perspective (columns listed), D3D texture UV.
+        let project = |p: [f32; 3]| {
+            let clip: [f32; 4] = std::array::from_fn(|r| {
+                m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r]
+            });
+            [
+                0.5 + 0.5 * clip[0] / clip[3],
+                0.5 - 0.5 * clip[1] / clip[3],
+                clip[2] / clip[3],
+            ]
+        };
+        let wgsl = |v: [f32; 3]| format!("vec3<f32>({:?}, {:?}, {:?})", v[0], v[1], v[2]);
+        let matrix = m.map(|v| format!("{v:?}")).join(", ");
+        let mut source = sgl_post_fx::shaders::shader_source("PostFX_Common.fxh", &[]);
+        source.push_str(&format!(
+            "@group(0) @binding(0) var<storage, read_write> results: array<vec4<f32>>;
+@compute @workgroup_size(1) fn main() {{
+    let proj = mat4x4<f32>({matrix});
+    let origin = {origin};
+    let origin_ss = ProjectPosition(origin, proj);
+    results[0] = vec4<f32>(ProjectDirection(origin, {towards}, origin_ss, proj, {near:?}), 0.0);
+    results[1] = vec4<f32>(ProjectDirection(origin, {away}, origin_ss, proj, {near:?}), 0.0);
+}}
+",
+            origin = wgsl(origin),
+            towards = wgsl(rays[0]),
+            away = wgsl(rays[1]),
+            near = camera.f_near_plane_z,
+        ));
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: &module,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let output = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 32,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: output.as_entire_binding(),
+            }],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 32);
+        queue.submit([encoder.finish()]);
+        readback.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        let bytes = readback.get_mapped_range(..).unwrap();
+        let result: &[[f32; 4]] = bytemuck::cast_slice(&bytes);
+        let start = project(origin);
+        for (ray, traced) in rays.iter().zip(result) {
+            // A point 1 mm along the ray, in front of the camera.
+            let step = project(std::array::from_fn(|i| origin[i] + 1e-3 * ray[i]));
+            let expected = normalize(std::array::from_fn(|i| step[i] - start[i]));
+            let traced = normalize([traced[0], traced[1], traced[2]]);
+            let cosine: f32 = (0..3).map(|i| expected[i] * traced[i]).sum();
+            assert!(
+                cosine > 0.999,
+                "reversed {reversed}, ray {ray:?}: traced {traced:?}, its projection runs {expected:?}"
+            );
+        }
+    }
+}
