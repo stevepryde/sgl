@@ -348,6 +348,7 @@ impl Ui {
             key_used: false,
             focus_requested: false,
             splitter_seen: false,
+            scroll_clips: Vec::new(),
         }
     }
 }
@@ -382,6 +383,8 @@ pub struct UiFrame<'a> {
     key_used: bool,
     focus_requested: bool,
     splitter_seen: bool,
+    /// The clip each open scroll area restores at its `scroll_area_end`.
+    scroll_clips: Vec<Option<Rect>>,
 }
 
 impl UiFrame<'_> {
@@ -432,6 +435,15 @@ impl UiFrame<'_> {
     pub fn set_clip(&mut self, clip: Option<Rect>) {
         self.clip = clip;
         self.text.set_clip(clip);
+    }
+
+    /// `rect` narrowed to the current clip; a zero rect, which clips
+    /// everything, when they do not overlap.
+    fn clip_within(&self, rect: Rect) -> Rect {
+        self.clip.map_or(rect, |clip| {
+            clip.intersection(&rect)
+                .unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0))
+        })
     }
 
     /// A flat colored rectangle (the 1×1 white texture scaled).

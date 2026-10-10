@@ -11,7 +11,8 @@
 //! sides), a 256 KiB message past its lane's byte allowances, coalesced
 //! latest state, a saturated lane that refuses and then drains without
 //! losing the connection, a server-initiated close with its bounded
-//! reconnect, a rejected subprotocol, and a clean local disconnect.
+//! reconnect, a rejected subprotocol, and a clean local disconnect, also
+//! during reconnect backoff.
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -489,6 +490,39 @@ async fn a_local_disconnect_is_clean_and_final() -> Result<(), String> {
     Ok(())
 }
 
+/// Defect (#300): a local disconnect during reconnect backoff that leaves
+/// the scheduled retry armed, so a later poll reconnects anyway. Oracle: the
+/// server's close is reported and its retry scheduled (the policy's first
+/// delay is 50 ms), the game disconnects before it is due, and polls well
+/// past the longest delay surface no `Reconnecting` or `Connected`.
+async fn a_local_disconnect_during_backoff_cancels_the_retry() -> Result<(), String> {
+    let mut driver = Driver::connect(config()).await?;
+    driver
+        .client
+        .send(Delivery::RELIABLE_ORDERED, b"close")
+        .map_err(|e| format!("send: {e:?}"))?;
+    let peer = ClientEvent::Disconnected {
+        reason: DisconnectReason::Peer,
+    };
+    driver.settle(|events| events.contains(&peer)).await?;
+    let now = driver.now_ms;
+    driver.client.disconnect(now);
+    let closed = driver.events.len();
+    for _ in 0..50 {
+        driver.now_ms += 10;
+        driver.events.extend(driver.client.poll(driver.now_ms));
+        sleep_ms(10).await;
+    }
+    let after = &driver.events[closed..];
+    ensure!(
+        !after
+            .iter()
+            .any(|e| matches!(e, ClientEvent::Reconnecting { .. } | ClientEvent::Connected)),
+        "retried after a local close: {after:?}"
+    );
+    Ok(())
+}
+
 fn record(report: &mut String, name: &str, result: Result<(), String>) {
     match result {
         Ok(()) => report.push_str(&format!("ok {name}\n")),
@@ -540,6 +574,11 @@ pub async fn run() -> String {
         &mut report,
         "a_local_disconnect_is_clean_and_final",
         a_local_disconnect_is_clean_and_final().await,
+    );
+    record(
+        &mut report,
+        "a_local_disconnect_during_backoff_cancels_the_retry",
+        a_local_disconnect_during_backoff_cancels_the_retry().await,
     );
     report
 }

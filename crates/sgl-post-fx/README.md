@@ -15,8 +15,9 @@ workspace and owns GPU effects; SGL3D owns scene conventions and frame
 integration. It has no dependency on SGL3D.
 
 [PROVENANCE.md](PROVENANCE.md) records the source revisions and useful
-algorithm and implementation notes. `vendor/` retains the original reference
-files unedited.
+algorithm and implementation notes. `vendor/` in the repository retains the
+original reference files unedited; the published crate keeps only their
+licences, source revisions and the blue-noise table source it reads.
 
 - SSR is AMD's FidelityFX SSSR tracing with a confidence output and its own
   energy-preserving denoiser (spatial reconstruction, temporal accumulation,
@@ -30,7 +31,8 @@ files unedited.
   hierarchical SSR traces (DFX-18). A ray stops at the viewport edge (DFX-22)
   and at the far plane (DFX-26), as AMD's hybrid traversal stops it. At full
   importance-sample bias a ray follows the mirror direction, as Godot's SSR
-  traces (DFX-20). Its temporal
+  traces (DFX-20), and at roughness 0 at any bias; the resolve clamps N·V
+  above 0 as Filament does (DFX-40). Its temporal
   pass reprojects by the reflection's virtual point as AMD's reflection
   denoiser places it, rejects a surface history far from the current
   neighbourhood as AMD's does, and clamps to Wicked Engine's 2-deviation box

@@ -62,14 +62,12 @@ pub(super) struct FocusTarget {
 
 impl UiFrame<'_> {
     pub(super) fn register_focus(&mut self, id: u64, rect: &Rect) -> bool {
+        // A zero-area clip (a fully clipped scroll area) shows nothing.
         let visible = rect.size().x > 0.0
             && rect.size().y > 0.0
-            && self.clip.is_none_or(|clip| {
-                rect.min.x < clip.max.x
-                    && rect.max.x > clip.min.x
-                    && rect.min.y < clip.max.y
-                    && rect.max.y > clip.min.y
-            });
+            && self
+                .clip
+                .is_none_or(|clip| clip.intersection(rect).is_some());
         if visible && !self.focus_order.iter().any(|target| target.id == id) {
             self.focus_order.push(FocusTarget {
                 id,
