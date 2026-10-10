@@ -18,7 +18,7 @@ docs and specs the entry links.
 - `sgl-core` `AnimationSequence::tick`: in `Repeat`/`PingPongRepeat`, a
   zero-time pass stopped after as many advances as there are steps, so
   zero-duration frames delayed a following action and dropped the tick's
-  time; it now stops only once every frame and step position has played. No
+  time; it now stops after as many as it has frame and step positions. No
   game-code changes needed.
 - `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
   glTF does not allow for its use, of no elements, or past its buffer view

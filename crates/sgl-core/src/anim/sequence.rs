@@ -108,11 +108,13 @@ impl AnimationSequence {
     /// Large `dt` steps through as many frames and steps as it covers and
     /// carries the remainder, so long-run timing never drifts. A non-finite
     /// `dt` is ignored. In the repeating modes, a cycle that consumes no time
-    /// cannot spin: once a tick has advanced through every playback position
-    /// without consuming time (zero-duration frames and steps, or durations
-    /// too small to lower the accumulated time in `f32`), it stops and drops
-    /// the remainder, so each such position plays once per tick. The
-    /// play-once modes need no such stop: they end after one bounded pass.
+    /// cannot spin: a tick stops after as many consecutive zero-time advances
+    /// (zero-duration frames and steps, or durations too small to lower the
+    /// accumulated time in `f32`) as the sequence has playback positions —
+    /// frames plus other steps, doubled for ping-pong — and drops the
+    /// remainder. Every position in the cycle has then played at least once.
+    /// The play-once modes need no such stop: they end after one bounded
+    /// pass.
     pub fn tick(&mut self, dt: f32, rng: &mut Rng) -> bool {
         self.just_completed = false;
         self.actions.clear();
@@ -1059,9 +1061,10 @@ mod tests {
         }
     }
 
-    /// #297: a ping-pong cycle that consumes no time still returns.
+    /// #297: a zero-time ping-pong cycle reaches the action after its
+    /// zero-duration frames within the tick.
     #[wasm_bindgen_test(unsupported = test)]
-    fn a_zero_time_pingpong_cycle_returns() {
+    fn a_zero_time_pingpong_cycle_reaches_its_action() {
         let mut seq = AnimationSequence::builder()
             .loop_mode(SequenceLoop::PingPongRepeat)
             .play_frames([0, 1, 2], 0.0)
@@ -1069,6 +1072,7 @@ mod tests {
             .build()
             .expect("valid sequence");
         assert!(!seq.tick(1.0, &mut rng()));
+        assert_eq!(seq.take_action(), Some(4));
     }
 
     /// #313: a frame duration too small to lower the accumulated time in
