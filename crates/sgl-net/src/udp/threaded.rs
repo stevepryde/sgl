@@ -20,6 +20,16 @@
 //! drains the ingress. A held fragment is not retransmitted, and both ends
 //! keep exchanging keepalives, so a healthy peer is slowed, never
 //! disconnected, however late the caller polls.
+//!
+//! A caller's `disconnect` stops admission at once but keeps what the
+//! connection already accepted: the worker reports the connection
+//! `Disconnected` at its next turn, keeps moving the connection's queued
+//! reliable and unreliable messages to the endpoint as room allows, and
+//! begins the endpoint's graceful close once none is left. The endpoint's
+//! `close_grace_ms` runs from that first turn, so whatever is still queued
+//! or unacknowledged when it ends is abandoned. Messages that arrive from
+//! the connection meanwhile are acknowledged and dropped: the caller has
+//! already seen it end.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -63,6 +73,10 @@ trait WorkerEndpoint: ServerIo {
         now_ms: u64,
         holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
     ) -> Vec<ServerEvent>;
+
+    /// [`ServerIo::disconnect`] for a close that began earlier: what `conn`
+    /// still holds at `deadline_ms` is abandoned.
+    fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, deadline_ms: u64);
 }
 
 fn endpoint_poll_within<T: DatagramTransport>(
@@ -82,6 +96,11 @@ impl WorkerEndpoint for UdpServer {
         holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
     ) -> Vec<ServerEvent> {
         endpoint_poll_within(self.endpoint_mut(), now_ms, holding)
+    }
+
+    fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, deadline_ms: u64) {
+        self.endpoint_mut()
+            .disconnect_by(conn.raw(), now_ms, deadline_ms);
     }
 }
 
@@ -118,7 +137,11 @@ struct CommandState {
     /// Connections the worker has announced and not yet seen end.
     live: BTreeSet<ConnectionId>,
     peers: BTreeMap<ConnectionId, PeerCommands>,
+    /// Connections the caller disconnected since the worker's last turn.
     disconnects: BTreeSet<ConnectionId>,
+    /// Disconnected connections whose queued commands still drain, each
+    /// with its close deadline.
+    closing: BTreeMap<ConnectionId, u64>,
     stop_admission: bool,
     /// The lane that started the last turn; the next turn starts after it.
     last_first: Option<(ConnectionId, Lane)>,
@@ -150,6 +173,7 @@ impl PeerCommands {
 struct CommandQueue {
     state: Mutex<CommandState>,
     reliable: ReliableConfig,
+    close_grace_ms: u64,
 }
 
 struct PeerIngress {
@@ -328,16 +352,18 @@ impl IngressHub {
 }
 
 impl CommandQueue {
-    fn new(reliable: &ReliableConfig) -> Self {
+    fn new(reliable: &ReliableConfig, close_grace_ms: u64) -> Self {
         Self {
             state: Mutex::new(CommandState {
                 live: BTreeSet::new(),
                 peers: BTreeMap::new(),
                 disconnects: BTreeSet::new(),
+                closing: BTreeMap::new(),
                 stop_admission: false,
                 last_first: None,
             }),
             reliable: reliable.clone(),
+            close_grace_ms,
         }
     }
 
@@ -409,23 +435,41 @@ impl CommandQueue {
         let mut state = self.lock();
         state.live.remove(&id);
         state.peers.remove(&id);
+        state.disconnects.remove(&id);
+        state.closing.remove(&id);
     }
 
-    /// The caller ended the connection.
+    /// The caller ended the connection: it admits nothing more, and what it
+    /// accepted, except its latest state, still drains.
     fn disconnect(&self, id: ConnectionId) {
         let mut state = self.lock();
         if state.live.remove(&id) {
-            state.peers.remove(&id);
+            if let Some(peer) = state.peers.get_mut(&id) {
+                peer.latest = None;
+            }
             state.disconnects.insert(id);
         }
+    }
+
+    /// Starts the close deadline of each connection the caller disconnected
+    /// since the last turn, and returns them.
+    fn begin_closes(&self, now_ms: u64) -> Vec<ConnectionId> {
+        let mut state = self.lock();
+        let begun = std::mem::take(&mut state.disconnects);
+        let deadline_ms = now_ms.saturating_add(self.close_grace_ms);
+        state
+            .closing
+            .extend(begun.iter().map(|&conn| (conn, deadline_ms)));
+        begun.into_iter().collect()
     }
 
     fn stop_admission(&self) {
         self.lock().stop_admission = true;
     }
 
-    /// Moves queued commands to `endpoint` and returns the connections the
-    /// caller disconnected, for the worker to close after the lock is
+    /// Moves queued commands to `endpoint` and returns the disconnected
+    /// connections with nothing left to move, or whose deadline has passed,
+    /// each with its deadline, for the worker to close after the lock is
     /// released (closing flushes and sends datagrams).
     ///
     /// Each lane's messages move in order, reliable ones only once the
@@ -436,12 +480,11 @@ impl CommandQueue {
     /// starting from the one after the last turn's first, so when a shared
     /// endpoint ceiling binds, freed room is shared between every backlogged
     /// peer and lane instead of going to the lowest ids.
-    fn apply<S: ServerIo>(&self, endpoint: &mut S) -> Vec<ConnectionId> {
+    fn apply<S: ServerIo>(&self, endpoint: &mut S, now_ms: u64) -> Vec<(ConnectionId, u64)> {
         let mut state = self.lock();
         if std::mem::take(&mut state.stop_admission) {
             endpoint.stop_admission();
         }
-        let disconnects: Vec<_> = std::mem::take(&mut state.disconnects).into_iter().collect();
         let backlogged: Vec<_> = state
             .peers
             .iter()
@@ -527,7 +570,19 @@ impl CommandQueue {
             state.peers.remove(&conn);
         }
         state.peers.retain(|_, peer| !peer.is_empty());
-        disconnects
+        let ready: Vec<_> = state
+            .closing
+            .iter()
+            .filter(|&(conn, &deadline_ms)| {
+                !state.peers.contains_key(conn) || now_ms >= deadline_ms
+            })
+            .map(|(&conn, &deadline_ms)| (conn, deadline_ms))
+            .collect();
+        for (conn, _) in &ready {
+            state.closing.remove(conn);
+            state.peers.remove(conn);
+        }
+        ready
     }
 }
 
@@ -567,9 +622,10 @@ impl ThreadedUdpServer {
         worker_config: ThreadedUdpConfig,
     ) -> io::Result<Self> {
         let reliable = net_config.reliable.clone();
+        let close_grace_ms = net_config.close_grace_ms;
         let endpoint = UdpServer::bind(addr, net_config)?;
         let local_addr = endpoint.local_addr()?;
-        let commands = Arc::new(CommandQueue::new(&reliable));
+        let commands = Arc::new(CommandQueue::new(&reliable, close_grace_ms));
         let worker_commands = Arc::clone(&commands);
         let ingress = Arc::new(IngressHub::new(&reliable));
         let worker_ingress = Arc::clone(&ingress);
@@ -659,9 +715,10 @@ fn run_worker(
 }
 
 /// One worker turn at `now_ms`: surface the endpoint's events into the
-/// ingress queues, within the room they have left, apply the simulation's
-/// queued commands to the endpoint, then flush. The thread calls this on
-/// its own clock; tests drive it on theirs.
+/// ingress queues, within the room they have left, report the caller's
+/// disconnects, apply the simulation's queued commands to the endpoint,
+/// close the disconnected connections they have drained, then flush. The
+/// thread calls this on its own clock; tests drive it on theirs.
 fn worker_tick<S: WorkerEndpoint>(
     endpoint: &mut S,
     commands: &CommandQueue,
@@ -699,9 +756,11 @@ fn worker_tick<S: WorkerEndpoint>(
         }
     }
 
-    for conn in commands.apply(endpoint) {
-        endpoint.disconnect(conn, now_ms);
+    for conn in commands.begin_closes(now_ms) {
         ingress.disconnected(conn, DisconnectReason::Local);
+    }
+    for (conn, deadline_ms) in commands.apply(endpoint, now_ms) {
+        endpoint.disconnect_by(conn, now_ms, deadline_ms);
     }
     endpoint.flush(now_ms);
 }
@@ -713,6 +772,8 @@ mod tests {
     use crate::udp::simulated::{SimulatedConfig, SimulatedNetwork};
     use crate::udp::{ClientEndpoint, ServerEndpoint};
     use crate::{ClientEvent, ClientIo};
+
+    const CLOSE_GRACE_MS: u64 = 1_000;
 
     fn payloads(events: &[ClientEvent], wanted: Delivery) -> Vec<Vec<u8>> {
         events
@@ -733,7 +794,7 @@ mod tests {
     /// memory duplex, with no socket or thread.
     #[test]
     fn worker_tick_relays_events_in_and_commands_out() {
-        let commands = CommandQueue::new(&ReliableConfig::DEFAULT);
+        let commands = CommandQueue::new(&ReliableConfig::DEFAULT, CLOSE_GRACE_MS);
         let ingress = IngressHub::new(&ReliableConfig::DEFAULT);
         let (mut client, mut server) = memory_duplex();
 
@@ -807,7 +868,7 @@ mod tests {
     #[test]
     fn worker_tick_sheds_unpolled_unreliable_ingress_and_keeps_the_peer() {
         let config = lanes(|lane| lane.unreliable_messages = 2);
-        let commands = CommandQueue::new(&config);
+        let commands = CommandQueue::new(&config, CLOSE_GRACE_MS);
         let ingress = IngressHub::new(&config);
         let (mut client, mut server) = memory_duplex();
         assert!(
@@ -853,10 +914,16 @@ mod tests {
         ) -> Vec<ServerEvent> {
             endpoint_poll_within(self.endpoint_mut(), now_ms, holding)
         }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, deadline_ms: u64) {
+            self.endpoint_mut()
+                .disconnect_by(conn.raw(), now_ms, deadline_ms);
+        }
     }
 
     /// The memory transport delivers whole messages with no window to
-    /// hold, so these tests keep within the ingress bounds.
+    /// hold, so these tests keep within the ingress bounds. It has no close
+    /// grace, so it closes at once.
     impl WorkerEndpoint for crate::MemoryServerIo {
         fn poll_within(
             &mut self,
@@ -864,6 +931,10 @@ mod tests {
             _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
         ) -> Vec<ServerEvent> {
             self.poll(now_ms)
+        }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, _deadline_ms: u64) {
+            self.disconnect(conn, now_ms);
         }
     }
 
@@ -894,6 +965,10 @@ mod tests {
             _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
         ) -> Vec<ServerEvent> {
             self.poll(now_ms)
+        }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, _deadline_ms: u64) {
+            self.disconnect(conn, now_ms);
         }
     }
 
@@ -949,7 +1024,7 @@ mod tests {
     #[test]
     fn worker_moves_messages_only_as_the_endpoint_admits_them() {
         let config = lanes(|lane| lane.outbound_messages = 50);
-        let commands = CommandQueue::new(&config);
+        let commands = CommandQueue::new(&config, CLOSE_GRACE_MS);
         let ingress = IngressHub::new(&config);
         let (mut client, server) = memory_duplex();
         let mut server = Throttled {
@@ -1029,6 +1104,10 @@ mod tests {
         ) -> Vec<ServerEvent> {
             self.poll(now_ms)
         }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, _deadline_ms: u64) {
+            self.disconnect(conn, now_ms);
+        }
     }
 
     impl ServerIo for SharedCeiling {
@@ -1089,7 +1168,7 @@ mod tests {
     #[test]
     fn a_binding_shared_ceiling_is_shared_between_backlogged_peers_and_lanes() {
         let config = lanes(|lane| lane.outbound_messages = 16);
-        let commands = CommandQueue::new(&config);
+        let commands = CommandQueue::new(&config, CLOSE_GRACE_MS);
         let ingress = IngressHub::new(&config);
         let streams = [cid(1), cid(9)]
             .into_iter()
@@ -1139,7 +1218,7 @@ mod tests {
     fn a_message_past_the_lane_allowance_crosses_the_worker() {
         let mut config = lanes(|lane| lane.outbound_bytes = 64 * 1024);
         config.max_message_bytes = 1 << 20;
-        let commands = CommandQueue::new(&config);
+        let commands = CommandQueue::new(&config, CLOSE_GRACE_MS);
         let ingress = IngressHub::new(&config);
         let (mut client, mut server) = crate::memory_duplex_with(&config).unwrap();
         worker_tick(&mut server, &commands, &ingress, 0);
@@ -1244,7 +1323,7 @@ mod tests {
         let network = SimulatedNetwork::new(network, 0x7417).unwrap();
         let mut server =
             ServerEndpoint::new(network.transport(server_addr), config.clone(), [7; 32]).unwrap();
-        let commands = CommandQueue::new(&config.reliable);
+        let commands = CommandQueue::new(&config.reliable, config.close_grace_ms);
         let ingress = IngressHub::new(&config.reliable);
         let mut clients: Vec<_> = [(b'F', 2), (b'Q', 3)]
             .into_iter()
@@ -1350,7 +1429,7 @@ mod tests {
             lane.outbound_messages = 1;
             lane.unreliable_messages = 1;
         });
-        let queue = CommandQueue::new(&config);
+        let queue = CommandQueue::new(&config, CLOSE_GRACE_MS);
         let noisy = cid(7);
         let healthy = cid(8);
         queue.connected(noisy);
@@ -1390,7 +1469,7 @@ mod tests {
 
         // The byte allowance is exact: the lane admits up to its bound.
         let bound = crate::DEFAULT_RELIABLE_MESSAGE_BYTES;
-        let queue = CommandQueue::new(&lanes(|lane| lane.outbound_bytes = bound));
+        let queue = CommandQueue::new(&lanes(|lane| lane.outbound_bytes = bound), CLOSE_GRACE_MS);
         queue.connected(noisy);
         queue
             .send(noisy, Delivery::RELIABLE_ORDERED, &vec![0; bound - 4])
@@ -1410,7 +1489,7 @@ mod tests {
     /// `capacity` contracts for unknown connections.
     #[test]
     fn unknown_and_ended_connections_are_refused() {
-        let queue = CommandQueue::new(&ReliableConfig::DEFAULT);
+        let queue = CommandQueue::new(&ReliableConfig::DEFAULT, CLOSE_GRACE_MS);
         let peer = cid(3);
         assert_eq!(
             queue.send(peer, Delivery::RELIABLE_ORDERED, b"early"),
@@ -1438,6 +1517,134 @@ mod tests {
             queue.lock().peers.is_empty(),
             "queued commands went with it"
         );
+    }
+
+    /// A real loopback server driven turn by turn, a client connected to
+    /// it, and the connection; `now` is the last turn's time.
+    fn loopback(
+        config: &EndpointConfig,
+    ) -> (
+        UdpServer,
+        super::super::UdpClient,
+        CommandQueue,
+        IngressHub,
+        ConnectionId,
+        u64,
+    ) {
+        let mut server = UdpServer::bind_with_key(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            config.clone(),
+            [17; 32],
+        )
+        .unwrap();
+        let commands = CommandQueue::new(&config.reliable, config.close_grace_ms);
+        let ingress = IngressHub::new(&config.reliable);
+        let mut client = super::super::UdpClient::connect_with_nonce(
+            server.local_addr().unwrap(),
+            config.clone(),
+            0,
+            29,
+        )
+        .unwrap();
+        for now in 1..1_000 {
+            client.poll(now);
+            client.flush(now);
+            worker_tick(&mut server, &commands, &ingress, now);
+            if let Some(ServerEvent::Connected { conn }) = ingress.drain().first() {
+                return (server, client, commands, ingress, *conn, now);
+            }
+        }
+        panic!("the loopback handshake never completed");
+    }
+
+    /// Defect (#289): a caller's disconnect discarding reliable messages
+    /// `send` accepted before it. Oracle: netcode.md 10 (the sending side
+    /// never drops an accepted message while the connection lives) and the
+    /// endpoint's graceful close, which delivers what it holds before
+    /// closing. Over real loopback sockets, with two messages per lane in
+    /// the endpoint and two more waiting for room in the command queue when
+    /// the caller disconnects, the client receives all four, in order, then
+    /// `Disconnected`.
+    #[test]
+    fn a_disconnect_delivers_the_reliable_messages_accepted_before_it() {
+        let config = EndpointConfig {
+            reliable: lanes(|lane| lane.outbound_messages = 2),
+            ..EndpointConfig::default()
+        };
+        let (mut server, mut client, commands, ingress, conn, mut now) = loopback(&config);
+        let sent: Vec<_> = (0..4_u8).map(|index| vec![index; 4]).collect();
+        for message in &sent[..2] {
+            commands
+                .send(conn, Delivery::RELIABLE_ORDERED, message)
+                .unwrap();
+        }
+        now += 1;
+        worker_tick(&mut server, &commands, &ingress, now);
+        for message in &sent[2..] {
+            commands
+                .send(conn, Delivery::RELIABLE_ORDERED, message)
+                .unwrap();
+        }
+        commands.disconnect(conn);
+
+        let mut received = Vec::new();
+        loop {
+            now += 1;
+            assert!(now < 2_000, "never disconnected; received {received:?}");
+            worker_tick(&mut server, &commands, &ingress, now);
+            let events = client.poll(now);
+            client.flush(now);
+            for event in events {
+                match event {
+                    ClientEvent::Message { payload, .. } => received.push(payload),
+                    ClientEvent::Connected => {}
+                    ClientEvent::Disconnected { .. } => {
+                        assert_eq!(received, sent);
+                        return;
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+        }
+    }
+
+    /// Defect: a disconnect whose queued messages wait for room that never
+    /// comes keeping the connection past its close grace, or restarting the
+    /// grace once they move. Oracle: the endpoint's close deadline,
+    /// `close_grace_ms` after the disconnect. With a client that never
+    /// acknowledges, so two messages wait in the command queue behind two
+    /// unacknowledged ones, the server endpoint still holds the peer just
+    /// before the grace ends and has closed it when it does.
+    #[test]
+    fn a_disconnect_that_cannot_drain_closes_at_its_grace_deadline() {
+        let config = EndpointConfig {
+            reliable: lanes(|lane| lane.outbound_messages = 2),
+            close_grace_ms: 300,
+            ..EndpointConfig::default()
+        };
+        let (mut server, _silent, commands, ingress, conn, mut now) = loopback(&config);
+        for index in 0..4_u8 {
+            if index == 2 {
+                now += 1;
+                worker_tick(&mut server, &commands, &ingress, now);
+            }
+            commands
+                .send(conn, Delivery::RELIABLE_ORDERED, &[index])
+                .unwrap();
+        }
+        commands.disconnect(conn);
+        let begun = now + 1;
+        for tick in begun..begun + config.close_grace_ms {
+            worker_tick(&mut server, &commands, &ingress, tick);
+        }
+        assert_eq!(server.endpoint_mut().peer_count(), 1, "closed early");
+        worker_tick(
+            &mut server,
+            &commands,
+            &ingress,
+            begun + config.close_grace_ms,
+        );
+        assert_eq!(server.endpoint_mut().peer_count(), 0);
     }
 
     #[test]

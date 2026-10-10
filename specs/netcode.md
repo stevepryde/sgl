@@ -86,7 +86,11 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     worker moves a message to its endpoint only when the endpoint has room
     on that lane, rotating between backlogged peers and lanes, and the
     browser holds released frames while `bufferedAmount` is above its
-    watermark; neither refuses an accepted message or disconnects. A lane's
+    watermark; neither refuses an accepted message or disconnects. A UDP
+    `disconnect` (caller-polled or threaded) admits nothing more but still
+    sends the reliable and unreliable messages accepted before it, closing
+    once they are acknowledged or `close_grace_ms` after the disconnect,
+    whichever is first. A lane's
     completed reliable messages not yet returned by `poll` are bounded by
     its `inbound_messages`, and by its `inbound_bytes` beside at most one
     larger message, so a message of any admitted size followed by smaller
@@ -125,12 +129,15 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     to make room (11). The sender resends neither a marked nor a held
     fragment, nor samples a held one's round trip. It resends any other
     unacknowledged fragment one retransmission timeout after its last
-    transmission, doubling that timeout for each resend since the lane last
-    acknowledged anything, up to the 1 s ceiling of the timeout itself; any
-    new acknowledgement on the lane resets it (D-42). Resending never ends
-    a connection: a peer is closed `TimedOut` only after `timeout_ms`
-    without hearing from it. Its window of `WINDOW` (32) fragments starts at the oldest fragment before which
-    everything is acknowledged, so it never reaches past the receiver's,
+    transmission, doubling that timeout for each resend since the peer last
+    acknowledged anything new, up to the 1 s ceiling of the timeout itself;
+    anything newly acknowledged on any lane resets every lane's (D-42).
+    There is no resend limit: a peer is closed `TimedOut` after `timeout_ms`
+    without hearing from it, or once a lane with an unheld fragment in
+    flight has had nothing newly acknowledged for `timeout_ms` plus 2 s,
+    which no stall `timeout_ms` tolerates reaches. Its window of `WINDOW`
+    (32) fragments starts at the oldest fragment before which everything
+    is acknowledged, so it never reaches past the receiver's,
     which buffers the same span from `next`. Any number of items fill the
     rest of the datagram. Every payload datagram carries the
     acknowledgement of each lane that has received anything, where it fits,

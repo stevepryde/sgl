@@ -79,13 +79,17 @@ pub struct Renderer {
     history: CameraHistory,
     /// The device traces rays in hardware, in this form.
     ray_form: Option<crate::view::trace_paths::DeviceRayForm>,
-    /// Targets changed since the last finished frame: history restarts.
+    /// Targets changed since the last finished frame was rendered: history
+    /// restarts.
     pending_reset: bool,
+    /// Counts target changes, so `finish_frame` keeps a reset requested
+    /// after the frame it commits was rendered.
+    targets_generation: u64,
     /// The scene of the last finished frame.
     last_scene: Option<u64>,
-    /// The last rendered frame's history and scene, which `finish_frame`
-    /// commits.
-    rendered: Option<(HistoryFrame, u64)>,
+    /// The last rendered frame's history, scene and targets generation,
+    /// which `finish_frame` commits.
+    rendered: Option<(HistoryFrame, u64, u64)>,
     /// The numerical frame probe, once a frame asked for it.
     #[cfg(feature = "diagnostics")]
     probe: Option<crate::stages::frame_probe::FrameProbe>,
@@ -229,6 +233,7 @@ impl Renderer {
             history: CameraHistory::default(),
             ray_form,
             pending_reset: false,
+            targets_generation: 0,
             last_scene: None,
             rendered: None,
             #[cfg(feature = "diagnostics")]
@@ -276,6 +281,7 @@ impl Renderer {
         self.sizes = sizes;
         self.bloom_targets = sizing.bloom_targets;
         self.pending_reset = true;
+        self.targets_generation = self.targets_generation.wrapping_add(1);
     }
 
     /// Encodes one frame of `scene` as `input` describes it into `output`, a
@@ -306,9 +312,12 @@ impl Renderer {
     /// rendered but never finished (an abandoned encoder) leaves history
     /// untouched.
     pub fn finish_frame(&mut self, scene: &mut Scene) {
-        if let Some((frame, scene_id)) = self.rendered.take() {
+        if let Some((frame, scene_id, generation)) = self.rendered.take() {
             self.history.finish(frame);
-            self.pending_reset = false;
+            // A resize after the render still restarts the next frame.
+            if generation == self.targets_generation {
+                self.pending_reset = false;
+            }
             self.last_scene = Some(scene_id);
             scene.finish_frame();
             self.shadows.local.finish_frame();

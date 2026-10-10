@@ -675,7 +675,19 @@ impl<T: DatagramTransport> Endpoint<T> {
         self.finish_closing(now_ms);
     }
 
+    /// Stops admission to `peer` and closes it once what it accepted is
+    /// acknowledged, or `close_grace_ms` from now.
     pub fn disconnect(&mut self, peer: u64, now_ms: u64) {
+        let deadline_ms = self
+            .now_ms
+            .max(now_ms)
+            .saturating_add(self.config.close_grace_ms);
+        self.disconnect_by(peer, now_ms, deadline_ms);
+    }
+
+    /// [`Self::disconnect`] for a close its caller began earlier: whatever
+    /// is still unacknowledged at `deadline_ms` is abandoned.
+    pub(crate) fn disconnect_by(&mut self, peer: u64, now_ms: u64, deadline_ms: u64) {
         self.now_ms = self.now_ms.max(now_ms);
         let now_ms = self.now_ms;
         let Some(handshake) = self.peers.get(&peer).map(|state| state.handshake) else {
@@ -687,9 +699,7 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
         if let Some(state) = self.peers.get_mut(&peer) {
             state.latest.clear();
-            state.close_grace.get_or_insert(CloseGrace {
-                deadline_ms: now_ms.saturating_add(self.config.close_grace_ms),
-            });
+            state.close_grace.get_or_insert(CloseGrace { deadline_ms });
         }
         self.flush_peer(peer, now_ms);
         self.finish_closing(now_ms);
