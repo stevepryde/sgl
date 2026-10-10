@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `examples/direct-game` took `Renderer::white_texture`'s handle from a
+  throwaway `Assets`, so it aliased the first texture of the game's own cache;
+  it now keeps one `Assets<Texture>` and draws a second texture from it.
+  Games that copied it: pass the game's texture cache to `white_texture`.
 - `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
   promise that a flushed state leaves ahead of lane frames flushed after it;
   it waits only for frames flushed with or before it, and lane frames
