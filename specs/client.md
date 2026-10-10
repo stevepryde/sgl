@@ -9,23 +9,27 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
 1. **Assets.** `AssetServer` loads the same logical path from a native
    directory (`with_root`) or from caller-supplied bytes (`from_bundle`) and
    returns the same decoded value. `Texture` is straight-alpha RGBA8 on the
-   CPU; upload is the renderer's job. `Assets` never removes an asset, so a
-   `Handle<T>` stays valid for its cache's lifetime, and re-inserting a path
-   replaces the asset under the same handle. Loading is synchronous.
+   CPU; upload is the renderer's job. Texture, normal-map and light-cookie
+   uploads refuse an empty texture, one larger than the device allows, one
+   whose RGBA length mismatches its size, and a normal map sized unlike its
+   diffuse with a `TextureError`, changing nothing. `Assets` never removes
+   an asset, so a `Handle<T>` stays valid for its cache's lifetime, and
+   re-inserting a path replaces the asset under the same handle. Loading is
+   synchronous.
    `white_texture` registers one shared 1×1 white pixel under `sgl://white`.
 2. **Draw list.** `DrawList` is the only channel from game code to the
    renderer: a `world` channel (through the camera) and a `screen` channel
    (fixed logical space), both `SpriteInstance`s addressed by texture handle
    and pixel source rect. Each channel is stable-sorted by ascending `z`, so
-   equal-`z` sprites keep push order. `push_tiled` covers the target rect with
-   repeated source tiles including a partial last tile; `push_nine_slice`
-   keeps corners at native size and stretches edges and center. Both take a
-   `WorldUnits` (the world camera's on the world channel; the screen variants
-   use logical pixels): the target and tile sizes are in those units, the
-   grid's y direction follows `y_up` (the source's top row lands at the
-   larger world y), the 9-slice border stays in source pixels, and the
-   default units are bit-identical to the pixel layout. Expansions are
-   bounded by `MAX_TILED_QUADS`.
+   equal-`z` sprites keep push order; a NaN `z` draws last. `push_tiled`
+   covers the target rect with repeated source tiles including a partial last
+   tile; `push_nine_slice` keeps corners at native size and stretches edges
+   and center. Both take a `WorldUnits` (the world camera's on the world
+   channel; the screen variants use logical pixels): the target and tile
+   sizes are in those units, the grid's y direction follows `y_up` (the
+   source's top row lands at the larger world y), the 9-slice border stays in
+   source pixels, and the default units are bit-identical to the pixel
+   layout. Expansions are bounded by `MAX_TILED_QUADS`.
 3. **Camera.** `Camera` is a world-space center plus zoom over a logical view;
    the default convention is y-down logical pixels and clockwise rotation.
    `with_units` switches the world channel to pixels-per-unit and optional
