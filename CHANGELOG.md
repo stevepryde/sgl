@@ -19,6 +19,11 @@ docs and specs the entry links.
   throwaway `Assets`, so it aliased the first texture of the game's own cache;
   it now keeps one `Assets<Texture>` and draws a second texture from it.
   Games that copied it: pass the game's texture cache to `white_texture`.
+- `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
+  promise that a flushed state leaves ahead of lane frames flushed after it;
+  it waits only for frames flushed with or before it, and lane frames
+  flushed later may leave first. Behaviour is unchanged. No game-code
+  changes needed.
 - `sgl-2d` `UiFrame::password_edit_clear`: the clear button released the
   buffer's allocation; it now zeroizes in place and keeps the preallocated
   capacity. No game-code changes needed.
