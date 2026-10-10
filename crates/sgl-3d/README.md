@@ -460,8 +460,9 @@ sun on water shows a disc.
   light counts once. A live light lights every receiver and is left out of
   the game's bake.
 - `specular` scales the light's specular lobes, base, sheen and coat
-  (Godot's `light_specular`), and the sheen's and coat's dimming of the
-  base beneath them, so at 0 the light lights the base whole. Use 0 for a
+  (Godot's `light_specular`), and up to 1 the sheen's and coat's dimming of
+  the base beneath them, so at 0 the light lights the base whole and above
+  1 it only brightens the lobes. Use 0 for a
   fixture whose emitter reflections and probes already show, so its
   highlight does not count twice.
 - `fog_energy` scales the light it scatters in the

@@ -29,6 +29,9 @@ struct Receiver {
     coat: f64,
     coat_rough: f64,
     coat_fresnel: f64,
+    /// The share of its diffuse light it passes to its other side, in its
+    /// transmitted lobe (SurfaceReflectance.transmitted); 0 for none.
+    transmitted: f64,
 }
 
 /// The multiple-scattering gain the observation gives each surface's base
@@ -144,7 +147,7 @@ fn observe(lights: &[Light], receivers: &[Receiver]) -> Option<Vec<f64>> {
     for light in lights {
         scene.add_light(&device, &queue, *light).unwrap();
     }
-    let cases: Vec<[[f32; 4]; 4]> = receivers
+    let cases: Vec<[[f32; 4]; 5]> = receivers
         .iter()
         .map(|r| {
             [
@@ -152,11 +155,12 @@ fn observe(lights: &[Light], receivers: &[Receiver]) -> Option<Vec<f64>> {
                 r.view.as_vec3().extend(r.coat_rough as f32).to_array(),
                 r.position.as_vec3().extend(r.light as f32).to_array(),
                 [r.f0, r.diffuse, r.coat, r.coat_fresnel].map(|value| value as f32),
+                [r.transmitted as f32, 0., 0., 0.],
             ]
         })
         .collect();
     let observation = r#"
-struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
+struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32>,t:vec4<f32> }
 @group(0) @binding(3) var<storage,read> cases:array<Case>;
 @group(0) @binding(4) var<storage,read_write> result:array<vec4<f32>>;
 @compute @workgroup_size(64) fn observe(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -174,13 +178,15 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32> }
  surface.coat_roughness=c.v.w;
  surface.dielectric_f0=vec3(c.f.x);
  surface.specular=1.;
+ surface.diffuse_transmission=select(0.,1.,c.t.x>0.);
  var reflectance:SurfaceReflectance;
+ reflectance.transmitted=vec3(c.t.x);
  reflectance.diffuse=vec3(c.f.y);
  reflectance.f0=vec3(c.f.x);
  reflectance.f90=1.;
  reflectance.multiscatter=vec3(1.25);
  reflectance.coat_fresnel=c.f.w;
- let light=scene_light_sample(index,c.p.xyz,c.n.xyz,c.n.xyz,vec2(0.),SHADOW_RECEIVER_CAMERA,false,c.p.xyz,0.);
+ let light=scene_light_sample(index,c.p.xyz,c.n.xyz,c.n.xyz,vec2(0.),SHADOW_RECEIVER_CAMERA,surface_transmits(surface),c.p.xyz,0.);
  result[id.x]=vec4(surface_direct_light(surface,reflectance,light),0.);
 }
 "#;
@@ -266,6 +272,7 @@ fn rect_lights_match_numerical_integration() {
                             coat,
                             coat_rough: 0.3,
                             coat_fresnel: 0.05,
+                            transmitted: 0.,
                         });
                     }
                 }
@@ -292,6 +299,7 @@ fn rect_lights_match_numerical_integration() {
             coat: 0.,
             coat_rough: 0.3,
             coat_fresnel: 0.,
+            transmitted: 0.,
         });
     }
     let Some(observed) = observe(&lights, &receivers) else {
@@ -343,7 +351,7 @@ fn a_diffuse_only_rect_lights_a_coated_base_whole() {
         specular: 0.,
         ..rect(Vec3::new(0., 3., 0.), Vec3::NEG_Y, Vec3::X, 2., 0.5)
     };
-    let receivers: Vec<Receiver> = [0., 1.]
+    let mut receivers: Vec<Receiver> = [0., 1.]
         .into_iter()
         .map(|coat| Receiver {
             light: 0,
@@ -356,15 +364,29 @@ fn a_diffuse_only_rect_lights_a_coated_base_whole() {
             coat,
             coat_rough: 0.3,
             coat_fresnel: 0.2,
+            transmitted: 0.,
         })
         .collect();
+    // Facing away from the face, passing its diffuse light through: the
+    // transmitted lobe alone (surface_rect_light_transmitted).
+    let behind = receivers.len();
+    receivers.extend([0., 1.].map(|coat| Receiver {
+        normal: DVec3::NEG_Y,
+        view: tilted(DVec3::NEG_Y, DVec3::Z, 1.),
+        diffuse: 0.,
+        coat,
+        transmitted: 0.8,
+        ..receivers[0]
+    }));
     let Some(observed) = observe(&[light], &receivers) else {
         return;
     };
-    let (bare, coated) = (observed[0], observed[1]);
-    assert!(bare > 0., "the rectangle lights the base: {bare}");
-    assert!(
-        (coated - bare).abs() <= 1e-5 * bare,
-        "coated {coated}, {bare} without its coat"
-    );
+    for (side, at) in [("front", 0), ("behind", behind)] {
+        let (bare, coated) = (observed[at], observed[at + 1]);
+        assert!(bare > 0., "{side}: the rectangle lights the base: {bare}");
+        assert!(
+            (coated - bare).abs() <= 1e-5 * bare,
+            "{side}: coated {coated}, {bare} without its coat"
+        );
+    }
 }

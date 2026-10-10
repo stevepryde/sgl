@@ -355,22 +355,28 @@ fn surface_direct_light(surface:Surface,reflectance:SurfaceReflectance,light:Lig
 // leaves of the base beneath the sheen: the sheen's scaling at the view
 // (SurfaceReflectance.sheen_scaling), as Filament ef1a133 scales the base
 // for every light (surface_shading_model_standard.fs 146–149), weighted by
-// `specular` as the sheen's lobe is, so a diffuse-only light (0) lights the
-// base whole.
+// `specular` up to 1 (surface_layer_weight).
 fn surface_sheen_dimming(reflectance:SurfaceReflectance,specular:f32)->f32 {
- return saturate(1.-specular*(1.-reflectance.sheen_scaling));
+ return 1.-surface_layer_weight(specular)*(1.-reflectance.sheen_scaling);
 }
 // What a light whose specular lobes `specular` scales leaves of the base
 // beneath the coat: one less the coat's Fresnel toward the view
 // (SurfaceReflectance.coat_fresnel), as KHR_materials_clearcoat layers it,
-// weighted by `specular` as the coat's lobe is, so a diffuse-only light (0)
-// lights the base whole, as the sheen's dimming (surface_sheen_dimming).
-// The dielectric's own coupling of its diffuse light to its specular
-// (surface_diffuse_coupling) is not a layer over the base but glTF's
-// definition of the base's diffuse term, which a diffuse-only light
-// evaluates whole.
+// weighted by `specular` up to 1 (surface_layer_weight).
 fn surface_coat_dimming(reflectance:SurfaceReflectance,specular:f32)->f32 {
- return saturate(1.-specular*reflectance.coat_fresnel);
+ return 1.-surface_layer_weight(specular)*reflectance.coat_fresnel;
+}
+// How much of a layer's dimming of the base (the sheen's, the coat's) a
+// light whose specular lobes `specular` scales applies: from none for a
+// diffuse-only light (0), which lights the base whole, to the physical
+// dimming at 1; above 1 the light only brightens the layers' lobes, as
+// Godot's light_specular scales specular alone. The base dielectric's
+// coupling of its diffuse light to its specular (surface_diffuse_coupling)
+// takes no weight: it is the core material's own split between its diffuse
+// and specular, over which the KHR extension layers lie, and
+// `Light::specular` weights only those layers' dimming.
+fn surface_layer_weight(specular:f32)->f32 {
+ return clamp(specular,0.,1.);
 }
 // Whether a surface passes diffuse light to its other side, where the
 // pipeline compiles that in (diffuse_transmission_enabled).
@@ -630,8 +636,9 @@ const DYNAMIC_GI_BOUNCE:f32=.95;
 // ambient occlusion occludes; its baked chart's or ambient cube's in
 // `baked`, which its material's occlusion alone does; and the irradiance
 // volume's sky visibility a(n). A probe hit takes the dynamic GI volume's
-// last frame damped, as Wicked's bounce is. Neither volume's irradiance
-// takes environment_scale.
+// last frame damped, as Wicked's bounce is, and no coat: it takes diffuse
+// light alone, beneath neither layer, as it takes no sheen. Neither
+// volume's irradiance takes environment_scale.
 struct SurfaceIrradiance {
  open:vec3<f32>,
  baked:vec3<f32>,
@@ -639,7 +646,7 @@ struct SurfaceIrradiance {
 }
 fn surface_irradiance(s:Surface,normal:vec3<f32>,coat_fresnel:f32,probe_hit:bool)->SurfaceIrradiance {
  let indirect=surface_indirect_diffuse(s,normal,probe_hit);
- let under_coat=1.-coat_fresnel;
+ let under_coat=select(1.-coat_fresnel,1.,probe_hit);
  let fallback=indirect.ambient*under_coat;
  let environment=diffuse_environment(normal)*s.environment_scale*fallback;
  let hemisphere=pbr_hemisphere(normal,frame.hemisphere_sky_color,frame.hemisphere_ground_color,frame.hemisphere_intensity)/3.14159265359*fallback;
@@ -805,8 +812,9 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  // WebGL meshphysical shader do. Three.js's node path
  // (NodeMaterial.setupLighting), Filament ef1a133 (surface_shading_lit.fs
  // evaluateMaterial) and Godot b130438 (scene_forward_clustered.glsl) add
- // emission after the coat instead.
- color+=emission*(1.-reflectance.coat_fresnel);
+ // emission after the coat instead. A dynamic GI probe hit, which takes
+ // diffuse light alone beneath no layer, takes its emission whole too.
+ color+=emission*select(1.-reflectance.coat_fresnel,1.,probe_hit);
  if visibility<1. {
   let multi_occlusion=occlusion_multiscatter(specular_nv(n,v),rough,visibility,base_lobe.f0);
   color=occlusion_ambient(color,ambient,ambient_multi,visibility,multi_occlusion);

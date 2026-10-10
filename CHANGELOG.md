@@ -16,8 +16,9 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` `Light::specular`: a diffuse-only light (0) dimmed a clearcoated
-  base by the coat's Fresnel; the coat's dimming now follows `specular` as
-  the sheen's does, so such a light lights the base whole. No game-code
+  base by the coat's Fresnel, and a weight above 1 dimmed a coated or
+  sheened base further; the coat's and sheen's dimming now follow
+  `specular` up to 1, and dynamic GI probe hits take no coat. No game-code
   changes needed.
 - `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
   grid cell it spanned (effectively hanging); a collider over 1024 cells is
