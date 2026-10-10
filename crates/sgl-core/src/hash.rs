@@ -10,7 +10,7 @@ impl Digest {
     /// Computes the exact, unframed BLAKE3 digest of `bytes`.
     ///
     /// Use this for authored content hashes. Deterministic simulation state should
-    /// continue to use [`StateHasher`] so its typed framing remains explicit.
+    /// continue to use [`StateHasher`] so its canonical encoding remains explicit.
     #[must_use]
     pub fn hash_bytes(bytes: &[u8]) -> Self {
         Self(*blake3::hash(bytes).as_bytes())
@@ -48,6 +48,15 @@ pub trait CanonicalWrite {
 }
 
 /// An explicit BLAKE3 writer for deterministic state.
+///
+/// The encoding is schema-driven: each write appends its fixed-width
+/// little-endian bytes without a type tag, and [`bytes`](Self::bytes) and
+/// [`sequence`](Self::sequence) prefix a `u32` length. Write sequences with
+/// the same schema (the same methods in the same order) hash differently
+/// whenever their values differ. Different schemas may encode alike —
+/// `u16(0x1234)` equals `u8(0x34); u8(0x12)` — so a caller that hashes several
+/// kinds of state in one stream, or changes what it writes, separates them
+/// itself with a leading tag or version (for example `u32(KIND)`).
 #[derive(Default)]
 pub struct StateHasher {
     inner: blake3::Hasher,

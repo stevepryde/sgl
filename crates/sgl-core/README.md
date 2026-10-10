@@ -10,7 +10,7 @@ same API.
 | Need | API |
 | --- | --- |
 | Fixed-step simulation and interpolation | [`time::FixedClock`](src/time.rs) |
-| Typed canonical hashing and raw byte digests | [`StateHasher`, `CanonicalWrite`, `Digest`](src/hash.rs) |
+| Schema-driven canonical hashing and raw byte digests | [`StateHasher`, `CanonicalWrite`, `Digest`](src/hash.rs) |
 | Frozen seeded random stream | [`SplitMix64`, `derive_stream_seed`](src/rng.rs) |
 | General seeded randomness | [`random::Rng`](src/random.rs) |
 | Bounded row-major grid | [`Grid2`](src/grid.rs) |
