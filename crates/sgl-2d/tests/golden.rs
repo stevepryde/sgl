@@ -105,7 +105,8 @@ impl Rig {
     fn texture(&mut self, name: &str, tex: Texture) -> Handle<Texture> {
         let handle = self.assets.insert(PathBuf::from(name), tex);
         self.renderer
-            .upload_texture(&self.gpu, handle, self.assets.get(handle).unwrap());
+            .upload_texture(&self.gpu, handle, self.assets.get(handle).unwrap())
+            .unwrap();
         handle
     }
 
@@ -280,7 +281,8 @@ fn text_with_outline_and_shadow_matches_the_reference() {
     );
     for page in text.end_frame(&mut rig.assets, &mut list) {
         rig.renderer
-            .upload_texture(&rig.gpu, page, rig.assets.get(page).unwrap());
+            .upload_texture(&rig.gpu, page, rig.assets.get(page).unwrap())
+            .unwrap();
     }
     let pixels = rig.render(&mut list, &LightFrame::default());
     check("text", &pixels);
@@ -293,7 +295,8 @@ fn lit_scene(space: LightingSpace, name: &str) {
     let checker = rig.texture("checker", checker(16, 4, RED, BLUE));
     let cookie = rig.assets.insert(PathBuf::from("cookie"), radial(32));
     rig.renderer
-        .upload_light_cookie(&rig.gpu, cookie, rig.assets.get(cookie).unwrap());
+        .upload_light_cookie(&rig.gpu, cookie, rig.assets.get(cookie).unwrap())
+        .unwrap();
     let white = rig.white;
     let mut list = DrawList::new();
     list.push(SpriteInstance {
