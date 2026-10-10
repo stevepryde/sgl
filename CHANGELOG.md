@@ -20,6 +20,20 @@ docs and specs the entry links.
   so content re-derived from a persisted base seed (generated worlds,
   replays) changes on upgrade. Games that need the old output regenerate it,
   or store the derived seeds before upgrading.
+- `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
+  `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
+  Use or remove such calls; no other game-code changes are needed.
+- `sgl-net` `ThreadedUdpServer::disconnect`: reliable and unreliable
+  messages accepted before it but not yet handed to the endpoint were
+  dropped; they are now sent before the graceful close, within the same
+  `close_grace_ms`. No game-code changes needed.
+- `sgl-net` `NativeWebSocketClient::connect`: an IPv6-literal URL such as
+  `ws://[::1]:9000/game/ws` failed host resolution; it now connects. No
+  game-code changes needed.
+- `sgl-net` `OriginPolicy` and `NativeWebSocketClientConfig::origin`: IPv6
+  literal origins such as `http://[::1]:3000` were rejected as
+  non-canonical; they are now accepted in the browser's compressed
+  lowercase form. No game-code changes needed.
 - `sgl-2d` texture uploads: an empty, oversized or short-`rgba` texture, or
   a mis-sized normal map, panicked; `Renderer::upload_texture`,
   `upload_normal_map`, `upload_light_cookie`, `SpritePass::upload`,
