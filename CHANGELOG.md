@@ -18,6 +18,9 @@ docs and specs the entry links.
 - `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
   `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
   Use or remove such calls; no other game-code changes are needed.
+- `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
+  panicked; now `max` wins and a NaN bound is ignored. No game-code changes
+  needed.
 
 ## 0.4.0 — 2026-10-09
 

@@ -27,7 +27,8 @@ pub enum UiCursor {
     ResizeVertical,
 }
 
-/// Caller-owned splitter configuration. Bounds must be finite and `min <= max`.
+/// Caller-owned splitter configuration. When `max < min` (a viewport too small
+/// for both panes), `max` wins; a NaN bound is ignored.
 #[derive(Debug, Clone, Copy)]
 pub struct Splitter {
     pub axis: SplitterAxis,
@@ -83,7 +84,10 @@ impl UiFrame<'_> {
         if let Some(drag) = captured {
             self.splitter_seen = true;
             if self.input.mouse_down || self.input.mouse_released {
-                let next = (drag.extent + position - drag.start).clamp(options.min, options.max);
+                // Not `f32::clamp`: it panics on `min > max` or a NaN bound.
+                let next = (drag.extent + position - drag.start)
+                    .max(options.min)
+                    .min(options.max);
                 changed = *extent != next;
                 *extent = next;
             }
@@ -261,6 +265,40 @@ mod tests {
             );
             f.end();
             assert_eq!(extent, 60.0);
+        }
+    }
+
+    /// #318: a viewport-derived `max` below `min`, or a NaN bound, must not
+    /// panic mid-drag; `max` wins and a NaN bound is ignored.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn splitter_drag_tolerates_inverted_and_nan_bounds() {
+        for (min, max, drag_to, expected) in [
+            (220.0, 180.0, 400.0, 180.0),
+            (220.0, 180.0, 0.0, 180.0),
+            (f32::NAN, 180.0, 0.0, 0.0),
+            (f32::NAN, 180.0, 400.0, 180.0),
+            (60.0, f32::NAN, 400.0, 400.0),
+            (60.0, f32::NAN, 0.0, 60.0),
+        ] {
+            let (mut ui, mut text, _assets) = fixture();
+            let mut extent = 100.0;
+            let options = Splitter {
+                axis: SplitterAxis::Horizontal,
+                min,
+                max,
+            };
+            for input in [press_at(102.0, 15.0), hover_at(drag_to + 2.0, 15.0, true)] {
+                let mut list = DrawList::new();
+                let mut f = ui.begin(&mut text, &mut list, input);
+                f.splitter(
+                    "split",
+                    Rect::new(100.0, 0.0, 5.0, 100.0),
+                    &mut extent,
+                    options,
+                );
+                f.end();
+            }
+            assert_eq!(extent, expected, "min {min}, max {max}, drag to {drag_to}");
         }
     }
 
