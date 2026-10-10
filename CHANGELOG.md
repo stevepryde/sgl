@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `BrowserWebSocketClient::disconnect`: during reconnect backoff
+  it left the scheduled retry armed, so a later `poll` reconnected; it now
+  cancels the retry. No game-code changes needed.
+
 - `sgl-net` `NativeWebSocketClient::connect`: an IPv6-literal URL such as
   `ws://[::1]:9000/game/ws` failed host resolution; it now connects. No
   game-code changes needed.
