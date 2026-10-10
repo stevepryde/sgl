@@ -18,6 +18,9 @@ docs and specs the entry links.
 - `sgl-net` `NativeWebSocketClient::connect`: an IPv6-literal URL such as
   `ws://[::1]:9000/game/ws` failed host resolution; it now connects. No
   game-code changes needed.
+- `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
+  panicked; now `max` wins and a NaN bound is ignored. No game-code changes
+  needed.
 
 ## 0.4.0 — 2026-10-09
 
