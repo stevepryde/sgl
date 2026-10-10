@@ -18,8 +18,25 @@ docs and specs the entry links.
 - All SGL crates: published packages no longer ship examples, tests, test
   fixtures or unused vendored reference sources; read those in the repository.
   Licences and notices still ship. No game-code changes needed.
+- `sgl-3d` `AutoExposure`: a long frame (`FrameInput::frame_time_ms`)
+  within a frame's step of the target stepped the correction past it, by
+  stops after a hitch; it now lands on the target. No game-code changes
+  needed.
+- `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
+  glTF does not allow for its use, of no elements, or past its buffer view
+  or buffer, or an image view past its buffer, panicked or was misread; it
+  now fails the load with an error naming it.
+  No game-code changes needed; re-export a file that now fails.
+- `sgl-post-fx` SSR (SGL3D's `Crystal` reflections): a ray towards the camera
+  from a surface under one unit away was projected behind the camera and
+  traced mirrored, behind the surface; its end is now clipped to the near
+  plane (`CameraAttribs::set_clip_planes`, already required). The WGSL
+  `ProjectDirection` (`PostFX_Common`) takes the near plane's view Z as a
+  fifth argument: WGSL calling it adds it (`g_Camera.fNearPlaneZ`). No other
+  game-code changes needed.
 - `sgl-2d` `DrawList::sort`: a NaN `z` could panic or misorder the other
   sprites; NaN now draws last and the rest stay ascending and stable. No
+  game-code changes needed.
 - `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
   `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes,
   so content re-derived from a persisted base seed (generated worlds,
