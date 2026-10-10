@@ -70,7 +70,16 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
     }
     let reserved = reserved_names();
     let declared = declared_names(&tokens);
-    if let Some(name) = declared.iter().find(|name| reserved.contains(*name)) {
+    // WGSL lets a module-scope declaration shadow a predeclared type,
+    // enumerant or built-in function, and naga resolves the module's own
+    // first, so a game's `smoothstep` would replace the one SGL3D's
+    // programs call: those names are SGL3D's too.
+    let builtin =
+        |name: &String| naga::keywords::wgsl::BUILTIN_IDENTIFIERS.contains(&name.as_str());
+    if let Some(name) = declared
+        .iter()
+        .find(|name| reserved.contains(*name) || builtin(name))
+    {
         return Err(ShaderError::NameTaken { name: name.clone() });
     }
     // Missing before parsing, where an undeclared ShaderParams the

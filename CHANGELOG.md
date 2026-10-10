@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::add_shader`: a module declaring a WGSL built-in's name
+  (`fn smoothstep`, `fn saturate`, a predeclared type or enumerant) was
+  accepted and replaced it in SGL3D's own calls; it is now refused with
+  `ShaderError::NameTaken`. Migration: rename such helpers (for example
+  `my_smoothstep`).
+
 - `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
   its near plane read the reflection depth history with the new near plane
   and discarded the history; it is now read with the near plane that wrote
