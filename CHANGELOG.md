@@ -23,7 +23,66 @@ docs and specs the entry links.
   ones drawing no ring. Glyph instances from `end_frame` are valid for that
   frame only; call it once per presented frame. No game-code changes needed
   for games that already do.
-
+- `sgl-input` `Gamepads::poll` on Windows, Linux and the web (Gilrs): a
+  repeated `Connected` for a pad reset its held state and is now ignored, and
+  a `ButtonReleased` with no reported press (a button held when the pad
+  connected) is now dropped on every target. Input already held at connection
+  is still not reported until it changes, a gilrs limitation. No game-code
+  changes needed.
+- `sgl-post-fx` half-resolution SSR (SGL3D's `ScreenSpaceReflections::Half`):
+  a one-pixel-wide or -tall frame created zero-sized textures, a wgpu
+  validation error; each half-resolution side is now at least one texel. No
+  game-code changes needed.
+- `sgl-2d` `Renderer` screen channel: when `set_target_size` scaled a very
+  large target down (over 4096² px), the UI laid out over the smaller
+  target, too large and misaligned with the pointer; it now keeps the
+  requested size over `ui_scale`. Lay out over the new `Renderer::ui_size()`
+  instead of `target_size() / ui_scale`, and set the text raster scale to the
+  new `Renderer::ui_pixel_scale()`.
+- `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
+  its near plane read the reflection depth history with the new near plane
+  and discarded the history; it is now read with the near plane that wrote
+  it. No game-code changes needed.
+- `sgl-2d` `AseDirection`: `pingpong_reverse` tags parsed as `Other` and
+  played forward; they are now `AseDirection::PingpongReverse`, whose
+  `AseTag::frame_order` runs down and back up without repeating either end.
+  Add the variant to exhaustive matches.
+- `sgl-3d` `asset::load*`: a mesh with `TEXCOORD_1`, or a texture SGL3D does
+  not sample (such as an ignored occlusion map) with nearest or other
+  non-trilinear sampling, failed the load; `TEXCOORD_1` now loads as
+  `Vertex::lightmap_uv`, the mesh's static irradiance atlas chart, and only
+  sampled maps' sampling is checked. On a static instance while an atlas is
+  installed, a charted vertex samples the atlas and takes no baked lights:
+  set `lightmap_uv` to `[0, 0]` on models the bake does not chart (a second
+  UV map exported for AO, say). Otherwise no game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown`: an open dropdown that stopped being
+  submitted kept its popup open and the keyboard captured, blocking Tab and
+  Enter elsewhere; it now closes at `UiFrame::end`. No game-code changes
+  needed.
+- `sgl-2d` `AsepriteSheet::parse` / `load`: a frame rect reaching past
+  `meta.size` was accepted and sampled neighbouring atlas pixels; it is now
+  `AsepriteError::FrameOutsideSheet { index, frame, sheet_size }`. Add the
+  variant to exhaustive matches; re-export sheets whose frames overrun.
+- `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
+  ran on the unexposed HDR scene, so the exposure changed which edges it
+  found; it now runs after tone mapping, on display colour, before the
+  resample to the output. No game-code changes needed.
+- `sgl-net` UDP `stop_admission`: a stopped server ignored the handshake
+  confirm of a client it had already accepted, so a lost accept left that
+  client unconnected until both timed out; it now answers connections it
+  has and refuses only new ones. No game-code changes needed.
+- `sgl-net` UDP: an unacknowledged reliable fragment was resent every
+  round-trip timeout and closed the peer `TimedOut` after
+  `EndpointConfig::max_reliable_transmissions` sends (about 600 ms on a
+  LAN); resends now back off up to 1 s, and a peer is closed `TimedOut`
+  only after `timeout_ms` of silence, or 2 × (`timeout_ms` + 1 s) in which
+  a lane it keeps answering on acknowledges nothing. Migration: delete any
+  `max_reliable_transmissions` field from `EndpointConfig` literals; set
+  `timeout_ms` for how long a stalled peer may last.
+- `sgl-input` `Gamepads::poll` on macOS: input queued before a controller
+  was unplugged was dropped (a tap then unplug between polls lost the tap);
+  it is now reported before the `Disconnected` event. No game-code changes
+  needed.
 - `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
   of steps before confirming a hit was accepted by depth proximity and now
   reports a miss, so streaks near surfaces at the step cap give way to the
@@ -71,6 +130,10 @@ docs and specs the entry links.
   panel's clipped-away part still blocked widgets beneath it (and kept the
   popover open when pressed); only the visible part now blocks and counts as
   inside. No game-code changes needed.
+- `sgl-post-fx` TAA: under conventional (not reversed) depth the closest-
+  motion search took an out-of-screen neighbour as nearest, so the 1-pixel
+  border read zero motion and ghosted while the camera moved; neighbours now
+  clamp to the screen. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
