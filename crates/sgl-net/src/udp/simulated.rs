@@ -371,7 +371,13 @@ mod tests {
         );
 
         client.flush(1);
-        assert!(server.poll(1).is_empty());
+        assert_eq!(
+            server.poll(1),
+            vec![EndpointEvent::Disconnected {
+                peer: server_peer,
+                reason: crate::DisconnectReason::Local,
+            }]
+        );
         assert_eq!(
             client.poll(1),
             vec![EndpointEvent::Disconnected {
@@ -426,7 +432,13 @@ mod tests {
             }]
         );
         server.flush(1);
-        assert!(client.poll(1).is_empty());
+        assert_eq!(
+            client.poll(1),
+            vec![EndpointEvent::Disconnected {
+                peer: client_peer,
+                reason: crate::DisconnectReason::Local,
+            }]
+        );
         assert_eq!(
             server.poll(1),
             vec![EndpointEvent::Disconnected {

@@ -18,7 +18,12 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    retry. A server stops accepting only when admission stops. After an
    interrupted accept, or one that took a connection the client had already
    reset, it accepts again at once; after any other accept error it retries
-   after a short back-off.
+   after a short back-off. On every transport, a connection still open
+   when the caller disconnects reports exactly one `Disconnected`, with
+   reason `Local`, at a later poll, whatever the peer does afterwards (its
+   own close included). One that had already ended, its end set or queued
+   though not yet polled, reports that end instead. A UDP client that
+   disconnects during its handshake reports `Local` with no `Connected`.
 3. Delivery has three classes: reliable ordered on a lane
    (`Delivery::Reliable(Lane)`; `RELIABLE_LANES` (4) independent lanes,
    `Delivery::RELIABLE_ORDERED` is lane 0), unreliable on a lane

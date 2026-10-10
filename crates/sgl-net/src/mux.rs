@@ -18,6 +18,9 @@ pub const MAX_MUX_ORPHAN_BYTES: usize = 128 * 1024;
 struct Route {
     source: usize,
     child: ConnectionId,
+    /// The caller disconnected it: it admits nothing and waits for the
+    /// child's `Disconnected`.
+    closing: bool,
 }
 
 #[derive(Debug)]
@@ -187,7 +190,14 @@ impl ServerIoMux {
             return;
         };
         self.next_connection = public.checked_next();
-        self.routes.insert(public, Route { source, child });
+        self.routes.insert(
+            public,
+            Route {
+                source,
+                child,
+                closing: false,
+            },
+        );
         self.reverse.insert((source, child), public);
         output.push(ServerEvent::Connected { conn: public });
         if let Some(orphan) = self.remove_orphan(source, child) {
@@ -272,13 +282,18 @@ impl ServerIo for ServerIoMux {
         delivery: Delivery,
         payload: &[u8],
     ) -> Result<(), SendError> {
-        let route = *self.routes.get(&conn).ok_or(SendError::UnknownConnection)?;
+        let route = *self
+            .routes
+            .get(&conn)
+            .filter(|route| !route.closing)
+            .ok_or(SendError::UnknownConnection)?;
         self.sources[route.source].send(route.child, delivery, payload)
     }
 
     fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
         self.routes
             .get(&conn)
+            .filter(|route| !route.closing)
             .map_or_else(ReliableCapacity::default, |route| {
                 self.sources[route.source].capacity(route.child, lane)
             })
@@ -290,13 +305,15 @@ impl ServerIo for ServerIoMux {
         }
     }
 
+    /// Closes the child connection and keeps its route until the child
+    /// reports its single `Disconnected`, which is forwarded.
     fn disconnect(&mut self, conn: ConnectionId, now_ms: u64) {
-        let Some(route) = self.routes.remove(&conn) else {
+        let Some(route) = self.routes.get_mut(&conn).filter(|route| !route.closing) else {
             return;
         };
-        self.reverse.remove(&(route.source, route.child));
-        self.retire(route.source, route.child);
-        self.sources[route.source].disconnect(route.child, now_ms);
+        route.closing = true;
+        let (source, child) = (route.source, route.child);
+        self.sources[source].disconnect(child, now_ms);
     }
 
     fn stop_admission(&mut self) {
@@ -532,6 +549,83 @@ mod tests {
         assert!(matches!(events[0], ServerEvent::Connected { .. }));
         assert!(matches!(events[1], ServerEvent::Disconnected { .. }));
         assert!(mux.poll(1).is_empty());
+    }
+
+    /// Defect (#309 review): the mux dropping the route at `disconnect`, so
+    /// the child's `Disconnected` for it found no route and the game never
+    /// saw the connection end. Oracle: the `ServerIo::disconnect` contract
+    /// (netcode.md 2): the child's single `Disconnected` is forwarded, once;
+    /// the connection admits nothing meanwhile.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_disconnected_connection_forwards_the_childs_local_end_once() {
+        let child = id(5);
+        let mut source = ScriptedServer::default();
+        source
+            .polls
+            .push_back(vec![ServerEvent::Connected { conn: child }]);
+        source.polls.push_back(vec![ServerEvent::Disconnected {
+            conn: child,
+            reason: DisconnectReason::Local,
+        }]);
+        let mut mux = ServerIoMux::new();
+        mux.push(source);
+        let conn = match &mux.poll(0)[..] {
+            [ServerEvent::Connected { conn }] => *conn,
+            events => panic!("{events:?}"),
+        };
+
+        mux.disconnect(conn, 1);
+        assert_eq!(
+            mux.send(conn, Delivery::RELIABLE_ORDERED, b"late"),
+            Err(SendError::UnknownConnection)
+        );
+        assert_eq!(
+            mux.capacity(conn, Lane::DEFAULT),
+            ReliableCapacity::default()
+        );
+        mux.disconnect(conn, 1);
+        assert_eq!(
+            mux.poll(2),
+            [ServerEvent::Disconnected {
+                conn,
+                reason: DisconnectReason::Local,
+            }]
+        );
+        assert!(mux.poll(3).is_empty());
+    }
+
+    /// Defect (#309 review): an end the child had already queued before the
+    /// caller's `disconnect` lost behind the mux. Oracle: the
+    /// `ServerIo::disconnect` contract (netcode.md 2): a connection that had
+    /// already ended reports that end. The child queued `TimedOut`; the mux
+    /// forwards it as-is.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn an_end_the_child_queued_before_disconnect_is_forwarded() {
+        let child = id(6);
+        let mut source = ScriptedServer::default();
+        source
+            .polls
+            .push_back(vec![ServerEvent::Connected { conn: child }]);
+        source.polls.push_back(vec![ServerEvent::Disconnected {
+            conn: child,
+            reason: DisconnectReason::TimedOut,
+        }]);
+        let mut mux = ServerIoMux::new();
+        mux.push(source);
+        let conn = match &mux.poll(0)[..] {
+            [ServerEvent::Connected { conn }] => *conn,
+            events => panic!("{events:?}"),
+        };
+
+        mux.disconnect(conn, 1);
+        assert_eq!(
+            mux.poll(2),
+            [ServerEvent::Disconnected {
+                conn,
+                reason: DisconnectReason::TimedOut,
+            }]
+        );
+        assert!(mux.poll(3).is_empty());
     }
 
     #[wasm_bindgen_test(unsupported = test)]

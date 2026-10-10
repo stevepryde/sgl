@@ -15,6 +15,16 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
+  UDP and memory reported nothing for a connection the caller closed (UDP
+  sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
+  when its endpoint found the peer gone first, that end, and WebSocket
+  `Local` or `Peer` by timing; now a connection still open at `disconnect`
+  reports exactly one `Disconnected { reason: Local }` on every transport
+  (a UDP client in its handshake too, with no `Connected`), and one
+  already ended reports that end; `ServerIoMux` forwards either, where it
+  dropped them. Games that clean up when they call
+  `disconnect`: ignore that event, or move the cleanup to it.
 - `sgl-3d` `Light::specular`: a diffuse-only light (0) dimmed a clearcoated
   base by the coat's Fresnel, and a weight above 1 dimmed a sheened base
   further; the coat's and sheen's dimming now follow

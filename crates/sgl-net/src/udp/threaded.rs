@@ -22,14 +22,16 @@
 //! disconnected, however late the caller polls.
 //!
 //! A caller's `disconnect` stops admission at once but keeps what the
-//! connection already accepted: the worker reports the connection
-//! `Disconnected` at its next turn, keeps moving the connection's queued
-//! reliable and unreliable messages to the endpoint as room allows, and
-//! begins the endpoint's graceful close once none is left. The endpoint's
-//! `close_grace_ms` runs from that first turn, so whatever is still queued
-//! or unacknowledged when it ends is abandoned. Messages that arrive from
-//! the connection meanwhile are acknowledged and dropped: the caller has
-//! already seen it end.
+//! connection already accepted: the caller's next poll reports the
+//! connection `Disconnected { Local }` unless the worker had already
+//! queued another end for it, which is reported instead. The worker keeps
+//! moving its queued reliable and unreliable messages to the endpoint as
+//! room allows, and begins the endpoint's graceful close once none is
+//! left. The endpoint's `close_grace_ms` runs from the worker's first turn
+//! after the disconnect, so whatever is still queued or unacknowledged
+//! when it ends is abandoned. Messages that arrive from the connection
+//! meanwhile are acknowledged and dropped: the caller has already seen it
+//! end.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -448,15 +450,14 @@ impl CommandQueue {
     }
 
     /// Starts the close deadline of each connection the caller disconnected
-    /// since the last turn, and returns them.
-    fn begin_closes(&self, now_ms: u64) -> Vec<ConnectionId> {
+    /// since the last turn.
+    fn begin_closes(&self, now_ms: u64) {
         let mut state = self.lock();
         let begun = std::mem::take(&mut state.disconnects);
         let deadline_ms = now_ms.saturating_add(self.close_grace_ms);
         state
             .closing
-            .extend(begun.iter().map(|&conn| (conn, deadline_ms)));
-        begun.into_iter().collect()
+            .extend(begun.into_iter().map(|conn| (conn, deadline_ms)));
     }
 
     fn stop_admission(&self) {
@@ -687,7 +688,7 @@ impl ServerIo for ThreadedUdpServer {
     fn flush(&mut self, _now_ms: u64) {}
 
     fn disconnect(&mut self, conn: ConnectionId, _now_ms: u64) {
-        self.commands.disconnect(conn);
+        disconnect_by_caller(&self.commands, &self.ingress, conn);
     }
 
     fn stop_admission(&mut self) {
@@ -699,6 +700,16 @@ impl Drop for ThreadedUdpServer {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+/// The caller ends `conn`: if it is still open, its next poll reports
+/// `Disconnected { Local }` and nothing else about it, while what it
+/// accepted drains; an end the worker already queued is reported instead.
+/// The ingress records the end first, so an end the worker finds
+/// afterwards is not reported.
+fn disconnect_by_caller(commands: &CommandQueue, ingress: &IngressHub, conn: ConnectionId) {
+    ingress.disconnected(conn, DisconnectReason::Local);
+    commands.disconnect(conn);
 }
 
 fn run_worker(
@@ -758,9 +769,7 @@ fn worker_tick<S: WorkerEndpoint>(
         }
     }
 
-    for conn in commands.begin_closes(now_ms) {
-        ingress.disconnected(conn, DisconnectReason::Local);
-    }
+    commands.begin_closes(now_ms);
     for (conn, deadline_ms) in commands.apply(endpoint, now_ms) {
         endpoint.disconnect_by(conn, now_ms, deadline_ms);
     }
@@ -849,7 +858,7 @@ mod tests {
             vec![b"fresh".to_vec()]
         );
 
-        commands.disconnect(SOLO_CONNECTION);
+        disconnect_by_caller(&commands, &ingress, SOLO_CONNECTION);
         worker_tick(&mut server, &commands, &ingress, 10);
         assert!(matches!(
             &ingress.drain()[..],
@@ -1587,7 +1596,7 @@ mod tests {
                 .send(conn, Delivery::RELIABLE_ORDERED, message)
                 .unwrap();
         }
-        commands.disconnect(conn);
+        disconnect_by_caller(&commands, &ingress, conn);
 
         let mut received = Vec::new();
         loop {
@@ -1634,7 +1643,7 @@ mod tests {
                 .send(conn, Delivery::RELIABLE_ORDERED, &[index])
                 .unwrap();
         }
-        commands.disconnect(conn);
+        disconnect_by_caller(&commands, &ingress, conn);
         let begun = now + 1;
         for tick in begun..begun + config.close_grace_ms {
             worker_tick(&mut server, &commands, &ingress, tick);
@@ -1647,6 +1656,130 @@ mod tests {
             begun + config.close_grace_ms,
         );
         assert_eq!(server.endpoint_mut().peer_count(), 0);
+    }
+
+    /// An endpoint that reports each turn's scripted events and accepts
+    /// every command.
+    struct Scripted {
+        turns: VecDeque<Vec<ServerEvent>>,
+    }
+
+    impl WorkerEndpoint for Scripted {
+        fn poll_within(
+            &mut self,
+            now_ms: u64,
+            _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
+        ) -> Vec<ServerEvent> {
+            self.poll(now_ms)
+        }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, _deadline_ms: u64) {
+            self.disconnect(conn, now_ms);
+        }
+    }
+
+    impl ServerIo for Scripted {
+        fn poll(&mut self, _now_ms: u64) -> Vec<ServerEvent> {
+            self.turns.pop_front().unwrap_or_default()
+        }
+
+        fn send(&mut self, _: ConnectionId, _: Delivery, _: &[u8]) -> Result<(), SendError> {
+            Ok(())
+        }
+
+        fn capacity(&self, _: ConnectionId, _: Lane) -> ReliableCapacity {
+            ReliableCapacity::remaining(1, usize::MAX)
+        }
+
+        fn flush(&mut self, _now_ms: u64) {}
+
+        fn disconnect(&mut self, _conn: ConnectionId, _now_ms: u64) {}
+
+        fn stop_admission(&mut self) {}
+    }
+
+    /// Defect (#309): the threaded server reporting the endpoint's end of a
+    /// connection the caller had already disconnected while it was open,
+    /// because the worker polled the endpoint before taking the caller's
+    /// disconnect. Oracle: the `disconnect` rule of netcode.md 2: a
+    /// connection still open when the caller disconnects reports exactly
+    /// one `Local`, whatever the peer does afterwards. The caller
+    /// disconnects; the endpoint's next poll reports the peer gone; the
+    /// caller sees one `Local`.
+    #[test]
+    fn a_peer_end_after_the_callers_disconnect_is_reported_local_once() {
+        let conn = cid(4);
+        let commands = CommandQueue::new(&ReliableConfig::DEFAULT, CLOSE_GRACE_MS);
+        let ingress = IngressHub::new(&ReliableConfig::DEFAULT);
+        let mut endpoint = Scripted {
+            turns: VecDeque::from([
+                vec![ServerEvent::Connected { conn }],
+                vec![ServerEvent::Disconnected {
+                    conn,
+                    reason: DisconnectReason::Peer,
+                }],
+            ]),
+        };
+        worker_tick(&mut endpoint, &commands, &ingress, 0);
+        assert_eq!(ingress.drain(), [ServerEvent::Connected { conn }]);
+        disconnect_by_caller(&commands, &ingress, conn);
+        for now in 1..4 {
+            worker_tick(&mut endpoint, &commands, &ingress, now);
+        }
+        assert_eq!(
+            ingress.drain(),
+            [ServerEvent::Disconnected {
+                conn,
+                reason: DisconnectReason::Local,
+            }]
+        );
+    }
+
+    /// Defect (#309): the threaded server reporting a connection both ends
+    /// close in the same tick twice (the worker's `Local` and the
+    /// endpoint's own), or as `Peer`. Oracle: the `disconnect` rule of
+    /// netcode.md 2: exactly one `Disconnected`, with reason `Local`, on
+    /// each end. Over real loopback sockets both ends queue a reliable
+    /// message and disconnect in the same tick; over the next three
+    /// seconds each reports only `Local`.
+    #[test]
+    fn a_connection_both_ends_close_at_once_reports_local_on_each() {
+        let config = EndpointConfig::default();
+        let (mut server, mut client, commands, ingress, conn, mut now) = loopback(&config);
+        while !client.poll(now).contains(&ClientEvent::Connected) {
+            now += 1;
+            assert!(now < 1_000, "the client never connected");
+            worker_tick(&mut server, &commands, &ingress, now);
+        }
+        commands
+            .send(conn, Delivery::RELIABLE_ORDERED, b"server's last")
+            .unwrap();
+        client
+            .send(Delivery::RELIABLE_ORDERED, b"client's last")
+            .unwrap();
+        disconnect_by_caller(&commands, &ingress, conn);
+        client.disconnect(now);
+        let (mut server_events, mut client_events) = (Vec::new(), Vec::new());
+        for _ in 0..3_000 {
+            now += 1;
+            worker_tick(&mut server, &commands, &ingress, now);
+            server_events.extend(ingress.drain());
+            client_events.extend(client.poll(now));
+            client.flush(now);
+        }
+        assert_eq!(
+            server_events,
+            [ServerEvent::Disconnected {
+                conn,
+                reason: DisconnectReason::Local,
+            }]
+        );
+        assert_eq!(
+            client_events,
+            [ClientEvent::Disconnected {
+                reason: DisconnectReason::Local,
+            }]
+        );
     }
 
     #[test]
