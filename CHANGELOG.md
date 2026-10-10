@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
+  ran on the unexposed HDR scene, so the exposure changed which edges it
+  found; it now runs after tone mapping, on display colour, before the
+  resample to the output. No game-code changes needed.
 - `sgl-net` UDP `stop_admission`: a stopped server ignored the handshake
   confirm of a client it had already accepted, so a lost accept left that
   client unconnected until both timed out; it now answers connections it

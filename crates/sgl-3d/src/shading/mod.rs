@@ -199,7 +199,7 @@ pub(crate) static PBR: Module = Module {
     source: include_str!("pbr.wgsl"),
     deps: &[],
 };
-/// sRGB decoding (`shading::srgb`).
+/// sRGB encoding and decoding (`shading::srgb`).
 pub(crate) static SRGB: Module = Module {
     name: "srgb",
     source: include_str!("srgb.wgsl"),
