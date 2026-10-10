@@ -1628,8 +1628,11 @@ loop is the `for` loop a counter of `i32` or `u32` makes, from a literal or
 `const` start, tested with `<` or `<=` against a literal or `const` limit,
 and changed only by its update, adding a positive literal or `const` step
 (or `loop { … continuing { i += step; break if i >= limit; } }`, `>=` or
-`>`), whose limit plus step fits the counter's type, so it cannot wrap;
-nested
+`>`), whose limit plus step fits the counter's type, so it cannot wrap.
+The test and the step must read the counter in the loop's own test and
+update statements (where a `for` loop puts them; `break if` after the
+step); a value computed anywhere else is refused. A `break if` loop inside
+another loop must set its counter's start just before it. Nested
 loops' counts multiply, one loop after another's add, and a call within a
 loop counts its callee's, so six Gerstner components cost six and a 16 × 16
 nest the whole budget.

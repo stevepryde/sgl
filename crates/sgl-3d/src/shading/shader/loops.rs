@@ -10,9 +10,14 @@
 //! - is changed by exactly one statement outside its initialisation, in the
 //!   loop's `continuing` block, adding a positive constant step to it;
 //! - starts at a constant: its declaration's, or a store just before the
-//!   loop in the same block, as naga writes a `for` nested in another loop;
+//!   loop in the same block, as naga writes a `for` nested in another loop
+//!   (a `break if` loop within another loop needs the store);
 //! - is read and written nowhere else but through loads, and never passed
 //!   as a pointer;
+//! - is read by the test and the step where they stand: naga evaluates an
+//!   expression, loads included, at the emit that covers it, so both must be
+//!   emitted just before the `if` (or after the step, for `break if`) and
+//!   just before the store, not by a `let` earlier, as before the loop;
 //! - and its limit plus its step fit its type, so it cannot wrap.
 //!
 //! Anything else is refused, whatever it would do. The iterations of a call
@@ -62,23 +67,25 @@ impl Counter<'_> {
             return iterations;
         }
         let function = &self.module.functions[handle];
-        let iterations = self.block(function, &function.body);
+        let iterations = self.block(function, &function.body, false);
         self.counted.insert(handle, iterations);
         iterations
     }
 
-    fn block(&mut self, function: &Function, block: &Block) -> Option<u64> {
+    /// The iterations `block` makes; `nested` where a loop holds it, which
+    /// may run it again.
+    fn block(&mut self, function: &Function, block: &Block, nested: bool) -> Option<u64> {
         let mut total = 0u64;
         for (at, statement) in block.iter().enumerate() {
             let iterations = match statement {
-                Statement::Block(inner) => self.block(function, inner)?,
+                Statement::Block(inner) => self.block(function, inner, nested)?,
                 Statement::If { accept, reject, .. } => self
-                    .block(function, accept)?
-                    .max(self.block(function, reject)?),
+                    .block(function, accept, nested)?
+                    .max(self.block(function, reject, nested)?),
                 Statement::Switch { cases, .. } => {
                     let mut sum = 0u64;
                     for case in cases {
-                        sum = sum.saturating_add(self.block(function, &case.body)?);
+                        sum = sum.saturating_add(self.block(function, &case.body, nested)?);
                     }
                     sum
                 }
@@ -94,10 +101,11 @@ impl Counter<'_> {
                         body,
                         continuing,
                         *break_if,
+                        nested,
                     )?;
                     let inner = self
-                        .block(function, body)?
-                        .saturating_add(self.block(function, continuing)?);
+                        .block(function, body, true)?
+                        .saturating_add(self.block(function, continuing, true)?);
                     count.saturating_mul(inner.max(1))
                 }
                 Statement::Call {
@@ -176,7 +184,8 @@ fn comparison(
     Some((variable, mirrored, constant(module, function, left)?))
 }
 
-/// The iterations the loop at `at` in `block` makes, where it is counted.
+/// The iterations the loop at `at` in `block` makes, where it is counted;
+/// `nested` where an enclosing loop may run it again.
 fn counted(
     module: &Module,
     function: &Function,
@@ -184,6 +193,7 @@ fn counted(
     body: &Block,
     continuing: &Block,
     break_if: Option<Handle<Expression>>,
+    nested: bool,
 ) -> Option<u64> {
     // The test: the body's first statement but emits, `if test {} else
     // { break; }`, which runs while it holds; or `break if`, after each
@@ -194,14 +204,14 @@ fn counted(
             (variable, op, limit, false)
         }
         None => {
-            let first = body
+            let at = body
                 .iter()
-                .find(|statement| !matches!(statement, Statement::Emit(_)))?;
+                .position(|statement| !matches!(statement, Statement::Emit(_)))?;
             let Statement::If {
                 condition,
                 accept,
                 reject,
-            } = first
+            } = &body[at]
             else {
                 return None;
             };
@@ -209,6 +219,10 @@ fn counted(
                 return None;
             }
             let (variable, op, limit) = comparison(module, function, *condition)?;
+            // Evaluated by the emits before it, each iteration.
+            if !evaluated_in(function, &body[..at], *condition) {
+                return None;
+            }
             (variable, op, limit, true)
         }
     };
@@ -225,15 +239,26 @@ fn counted(
     };
     // The step: the one store to the counter in `continuing`, of the counter
     // plus a positive constant.
-    let mut steps = continuing.iter().filter_map(|statement| match statement {
-        Statement::Store { pointer, value } if local(function, *pointer) == Some(variable) => {
-            Some(*value)
-        }
-        _ => None,
-    });
-    let (step, None) = (steps.next()?, steps.next()) else {
+    let mut steps = continuing
+        .iter()
+        .enumerate()
+        .filter_map(|(at, statement)| match statement {
+            Statement::Store { pointer, value } if local(function, *pointer) == Some(variable) => {
+                Some((at, *value))
+            }
+            _ => None,
+        });
+    let ((store_at, step), None) = (steps.next()?, steps.next()) else {
         return None;
     };
+    // The step reads the counter just before its store, and `break if` just
+    // after it, each iteration: a `let` computed elsewhere, as before the
+    // loop, holds one value for ever (#287).
+    if !evaluated_in(function, &continuing[..store_at], step)
+        || break_if.is_some_and(|test| !evaluated_in(function, &continuing[store_at + 1..], test))
+    {
+        return None;
+    }
     let Expression::Binary {
         op: BinaryOperator::Add,
         left,
@@ -261,6 +286,13 @@ fn counted(
             }
             _ => None,
         });
+    // A `break if` loop runs once more whatever its counter holds, so one an
+    // enclosing loop runs again from where it left off steps on past its
+    // limit each time, until the counter wraps: it starts again only from a
+    // store before it.
+    if start_store.is_none() && !before && nested {
+        return None;
+    }
     let start = match start_store {
         Some(value) => constant(module, function, value)?,
         None => match function.local_variables[variable].init {
@@ -292,6 +324,29 @@ fn counted(
         _ => return None,
     };
     Some(iterations)
+}
+
+/// Whether the emits of `statements` evaluate `expression`, a binary
+/// operation, and every load it operates on. Naga evaluates an expression,
+/// and reads the variable a load names, at the emit that covers it, however
+/// often later statements refer to it.
+fn evaluated_in(
+    function: &Function,
+    statements: &[Statement],
+    expression: Handle<Expression>,
+) -> bool {
+    let emitted = |handle: Handle<Expression>| {
+        statements.iter().any(|statement| {
+            matches!(statement, Statement::Emit(range) if range.clone().any(|emitted| emitted == handle))
+        })
+    };
+    let Expression::Binary { left, right, .. } = function.expressions[expression] else {
+        return false;
+    };
+    emitted(expression)
+        && [left, right].into_iter().all(|operand| {
+            !matches!(function.expressions[operand], Expression::Load { .. }) || emitted(operand)
+        })
 }
 
 /// The stores to `variable` in `block` and everything it holds.

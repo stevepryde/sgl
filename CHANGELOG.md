@@ -15,6 +15,15 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::add_shader`: loops that could run for ever were accepted
+  as counted (a test or step read from a `let` computed before the loop, or
+  a `break if` loop re-entered by an outer loop without restarting its
+  counter); they are now refused with `ShaderError::UnboundedLoop`. The test
+  and the step must read the counter in the loop's own test and update
+  statements (where a `for` loop puts them); a value computed anywhere else
+  is refused, including a `break if` test read before the step (previously
+  accepted and miscounted). Set a nested `break if` loop's counter just
+  before it.
 - `sgl-3d` `Renderer::new` `output_format`: a non-sRGB 8-bit output (a
   browser canvas's `Bgra8Unorm` or `Rgba8Unorm`) took linear colour and
   looked dark; the tone map now writes it sRGB-encoded, a float output too
