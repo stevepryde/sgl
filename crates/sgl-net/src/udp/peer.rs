@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use super::latest::Latest;
 use super::packet::{self, ACK_LEN, Acks, MAX_RELIABLE_ITEM_PAYLOAD, Nonces};
-use super::reliable::Reliable;
+use super::reliable::{MAX_RTO_MS, Reliable};
 use super::unreliable::Unreliable;
 use crate::lanes::{InboundUsage, LaneScheduler};
 use crate::{RELIABLE_LANES, ReliableConfig, RttEstimate, RttEstimator};
@@ -111,7 +111,7 @@ impl Peer {
         }
         u64::from(estimate.srtt_ms)
             .saturating_add(4 * u64::from(estimate.rttvar_ms))
-            .clamp(50, 1_000)
+            .clamp(50, MAX_RTO_MS)
     }
 
     pub const fn rtt(&self) -> RttEstimate {
@@ -199,13 +199,6 @@ impl Peer {
                 Outgoing::Reliable(sequence)
             }
         }
-    }
-
-    pub fn retry_exhausted(&self, now_ms: u64, maximum: u8) -> bool {
-        let rto_ms = self.rto_ms();
-        self.reliable
-            .iter()
-            .any(|lane| lane.retry_exhausted(now_ms, rto_ms, maximum))
     }
 
     /// Whether `lane` owes the peer an acknowledgement in this flush.

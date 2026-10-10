@@ -123,9 +123,13 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     bits 0–30 mark which of the 31 fragments after it arrived and whose bit
     31 (HELD) says `next` itself arrived and waits for the receiver's caller
     to make room (11). The sender resends neither a marked nor a held
-    fragment and never counts a held one toward
-    `max_reliable_transmissions`, nor samples its round trip; its window of
-    `WINDOW` (32) fragments starts at the oldest fragment before which
+    fragment, nor samples a held one's round trip. It resends any other
+    unacknowledged fragment one retransmission timeout after its last
+    transmission, doubling that timeout for each resend since the lane last
+    acknowledged anything, up to the 1 s ceiling of the timeout itself; any
+    new acknowledgement on the lane resets it (D-42). Resending never ends
+    a connection: a peer is closed `TimedOut` only after `timeout_ms`
+    without hearing from it. Its window of `WINDOW` (32) fragments starts at the oldest fragment before which
     everything is acknowledged, so it never reaches past the receiver's,
     which buffers the same span from `next`. Any number of items fill the
     rest of the datagram. Every payload datagram carries the
@@ -250,7 +254,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
   keeps its scheduling bound.
 - A receiver that polls slowly makes a UDP (caller-polled or threaded) or
   native WebSocket sender slower, not disconnected; so does a threaded UDP
-  server whose caller stops polling for longer than the timeout.
+  server whose caller stops polling for longer than the timeout, and a
+  caller-polled UDP receiver that stalls for less than `timeout_ms` with
+  reliable data in flight keeps its connection and receives the data.
 - Unreliable messages are never retransmitted and never delivered twice;
   with no network loss and a polled receiver every accepted one arrives,
   and no sending side drops one.

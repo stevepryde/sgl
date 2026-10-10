@@ -15,6 +15,14 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP: an unacknowledged reliable fragment was resent every
+  round-trip timeout and closed the peer `TimedOut` after
+  `EndpointConfig::max_reliable_transmissions` sends (about 600 ms on a
+  LAN); resends now back off up to 1 s and never close a peer, so only
+  `timeout_ms` of silence does. Migration: delete any
+  `max_reliable_transmissions` field from `EndpointConfig` literals; set
+  `timeout_ms` for how long a silent peer may last.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`

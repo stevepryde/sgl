@@ -29,6 +29,9 @@ pub struct EndpointConfig {
     /// Three-byte datagram magic supplied by the game.
     pub magic: [u8; 3],
     pub max_peers: usize,
+    /// How long a connected peer may go unheard before it is closed with
+    /// `TimedOut`. This is the only liveness bound: an unacknowledged
+    /// fragment is resent, with backoff, for as long as the peer is heard.
     pub timeout_ms: u64,
     pub keepalive_ms: u64,
     pub handshake_retry_ms: u64,
@@ -41,7 +44,6 @@ pub struct EndpointConfig {
     pub challenge_prefix_refill_ms: u64,
     pub close_grace_ms: u64,
     pub close_retransmits: u8,
-    pub max_reliable_transmissions: u8,
     /// Every peer's reliable message cap, lane weights and per-lane bounds.
     pub reliable: ReliableConfig,
     /// Reliable messages held for every peer until acknowledged, across
@@ -84,7 +86,6 @@ impl EndpointConfig {
             challenge_prefix_refill_ms: 1_000,
             close_grace_ms: 1_000,
             close_retransmits: 2,
-            max_reliable_transmissions: 12,
             reliable: ReliableConfig::DEFAULT,
             // Sized so the shared ceilings do not bind before every lane of
             // the default peer count is full.
@@ -342,7 +343,6 @@ impl<T: DatagramTransport> Endpoint<T> {
             || config.close_grace_ms == 0
             || config.close_grace_ms > MAX_CONFIG_INTERVAL_MS
             || !(1..=MAX_CONFIG_CLOSE_RETRANSMITS).contains(&config.close_retransmits)
-            || !(1..=64).contains(&config.max_reliable_transmissions)
             || config.reliable.validate().is_err()
             || !(1..=MAX_GLOBAL_RELIABLE_MESSAGES)
                 .contains(&config.global_reliable_outbound_messages)
@@ -706,14 +706,6 @@ impl<T: DatagramTransport> Endpoint<T> {
             return;
         }
 
-        let retry_exhausted = self.peers.get(&id).is_some_and(|peer| {
-            peer.retry_exhausted(now_ms, self.config.max_reliable_transmissions)
-        });
-        if retry_exhausted {
-            self.drop_peer(id, DisconnectReason::TimedOut, true);
-            return;
-        }
-
         let max_packets = self.config.max_packets_per_peer_flush;
         let packet_count = self.flush_payloads(id, now_ms, max_packets);
         if !self.peers[&id].is_closing() {
@@ -756,10 +748,12 @@ impl<T: DatagramTransport> Endpoint<T> {
     /// is neither taken nor charged and waits for a later flush.
     fn flush_payloads(&mut self, id: u64, now_ms: u64, budget: usize) -> usize {
         let peer = self.peers.get_mut(&id).expect("peer exists");
+        // A live peer's fragments are resent until acknowledged; only
+        // `timeout_ms` of silence ends it.
         let max_transmissions = if peer.is_closing() {
             self.config.close_retransmits.saturating_add(1)
         } else {
-            self.config.max_reliable_transmissions
+            u8::MAX
         };
         let rto_ms = peer.rto_ms();
         // Every lane that has received anything acknowledges in every
@@ -2044,10 +2038,6 @@ mod tests {
                 handshake_retry_ms: EndpointConfig::default().timeout_ms,
                 ..EndpointConfig::default()
             },
-            EndpointConfig {
-                max_reliable_transmissions: 0,
-                ..EndpointConfig::default()
-            },
         ] {
             assert!(matches!(
                 Endpoint::client(RecordingTransport::default(), invalid),
@@ -2368,35 +2358,36 @@ mod tests {
     }
 
     #[wasm_bindgen_test(unsupported = test)]
-    fn reliable_retry_exhaustion_disconnects_instead_of_wedging() {
-        let config = EndpointConfig {
-            max_reliable_transmissions: 2,
-            ..EndpointConfig::default()
-        };
-        let (mut server, _source, _nonces) = connected_server(config);
+    /// Defect (#303): an unacknowledged fragment resent at a flat interval,
+    /// or its resends ending the connection before `timeout_ms`. Oracle:
+    /// RFC 6298 §5.5 (the timer doubles on each expiry) with the
+    /// `MAX_RTO_MS` ceiling, and `timeout_ms` as the only liveness bound:
+    /// from the unmeasured 200 ms timeout the resends fall 200, 400 and
+    /// 800 ms apart, then every second, and the peer stays until its
+    /// silence reaches `timeout_ms`.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn unacknowledged_fragments_back_off_and_never_end_the_connection() {
+        let (mut server, _source, _nonces) = connected_server(EndpointConfig::default());
         server
             .send(1, Delivery::RELIABLE_ORDERED, b"never-acked")
             .unwrap();
-        server.flush(10);
-        server.flush(210);
+        for now in 10..=9_000 {
+            server.flush(now);
+        }
         assert_eq!(
             server
                 .transport
                 .sent
                 .iter()
-                .filter_map(reliable_payload)
-                .count(),
-            2
+                .filter(|datagram| reliable_payload(datagram).is_some())
+                .map(|datagram| datagram.now_ms)
+                .collect::<Vec<_>>(),
+            [
+                10, 210, 610, 1_410, 2_410, 3_410, 4_410, 5_410, 6_410, 7_410, 8_410
+            ]
         );
-        server.flush(410);
-        assert_eq!(server.peer_count(), 0);
-        assert_eq!(
-            server.poll(411),
-            vec![EndpointEvent::Disconnected {
-                peer: 1,
-                reason: DisconnectReason::TimedOut,
-            }]
-        );
+        assert!(server.poll(9_000).is_empty());
+        assert_eq!(server.peer_count(), 1);
     }
 
     #[wasm_bindgen_test(unsupported = test)]

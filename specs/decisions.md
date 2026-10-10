@@ -642,3 +642,21 @@ Use the [current specs](README.md) for implementation and the
   volume, seen from inside it, has no blended face in front of it and is not
   absorbed; a masked cut-out still bounds; rays and probe captures have no
   layers.
+- **D-42** Decision, 2026-10-10 (#303): a UDP fragment's retransmission
+  timeout doubles for each resend since its lane last acknowledged
+  anything, up to the 1 s ceiling the measured timeout already has, and
+  any new acknowledgement on the lane returns every fragment to the
+  measured timeout; `max_reliable_transmissions` is removed, so only
+  `timeout_ms` of silence closes a peer. A flat timeout and a resend count
+  made liveness twelve round-trip timeouts (600 ms on a LAN), so a
+  caller-polled receiver that stalled briefly with data in flight was
+  closed long before `timeout_ms`. The doubling is RFC 6298 §5.5's backoff,
+  kept per fragment as ENet keeps it per command; the reset is RFC 6298
+  §5.7's, where TCP recomputes its timeout once new data is acknowledged,
+  so random loss on a live path is resent at the measured timeout and only
+  an unanswering peer is backed off (per-fragment doubling alone stalled a
+  lane under 50 % loss). The 1 s ceiling bounds how long a stalled peer
+  waits after it answers again. A peer that keeps answering but never
+  acknowledges one fragment holds that lane, as a peer that holds a
+  fragment does (D-38): datagrams are sized to cross every path, so only a
+  faulty peer does that, and it stalls only its own connection.

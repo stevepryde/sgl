@@ -17,10 +17,9 @@
 //! in the endpoint's window: the endpoint stops acknowledging that lane and
 //! reports it held, the peer's window closes and its `send` eventually
 //! returns `WouldBlock`, and the lane resumes once the caller's `poll`
-//! drains the ingress. A held fragment is neither retransmitted nor counted
-//! toward the peer's retry limit, and both ends keep exchanging keepalives,
-//! so a healthy peer is slowed, never disconnected, however late the caller
-//! polls.
+//! drains the ingress. A held fragment is not retransmitted, and both ends
+//! keep exchanging keepalives, so a healthy peer is slowed, never
+//! disconnected, however late the caller polls.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -1183,20 +1182,18 @@ mod tests {
     }
 
     /// Defect: a threaded server that disconnects a healthy sender because
-    /// its caller polls slowly — its ingress overflowing, the sender
-    /// exhausting its retries on a held fragment, or either end timing out
-    /// while the caller stalls — or that loses, duplicates or reorders
+    /// its caller polls slowly — its ingress overflowing, or either end
+    /// timing out while the caller stalls — or that loses, duplicates or reorders
     /// messages while pacing, or holds one peer back for another's full
     /// ingress. Oracle: netcode.md 11 (a receiver that polls slowly makes
     /// the sender slower, not disconnected; other connections are never
     /// affected). Over in-order and lossy seeded networks, to a server
     /// whose caller polls every 100 ms and once not at all for 3 s (longer
-    /// than the 1 s timeout and a five-transmission retry budget), one
+    /// than the 1 s timeout), one
     /// client sends 60 messages as fast as `send` admits, every third
     /// larger than the lane's 4 KiB inbound bound, and another sends five
     /// small ones 200 ms apart during the stall, one more than its lane
-    /// holds, so its last waits as the newest fragment, which the sender
-    /// would otherwise retransmit until it gave up. The fast sender is
+    /// holds, so its last waits as the newest fragment. The fast sender is
     /// refused with `WouldBlock`; nobody is disconnected; every message
     /// arrives once, in order; and the first poll after the stall finds
     /// the quiet client's first four messages, not held back by the fast
@@ -1238,7 +1235,6 @@ mod tests {
         let mut config = EndpointConfig {
             timeout_ms: 1_000,
             keepalive_ms: 100,
-            max_reliable_transmissions: 5,
             ..EndpointConfig::new(*b"PCD")
         };
         let bounds = &mut config.reliable.lanes[paced.index()];

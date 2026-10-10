@@ -6,8 +6,17 @@
 //! Receive flow control: the receiver consumes a fragment only when the
 //! message it completes fits the room its caller gives it. Otherwise the
 //! fragment waits in the window, the window stops advancing, and the
-//! acknowledgement reports the fragment held, so the sender neither
-//! retransmits it nor counts it toward retry exhaustion.
+//! acknowledgement reports the fragment held, so the sender does not
+//! retransmit it.
+//!
+//! An unacknowledged fragment is resent after the round-trip timeout, then
+//! after twice as long each time while the peer acknowledges nothing on the
+//! lane (RFC 6298 §5.5's backoff, kept per fragment as `ENet` keeps it per
+//! command), up to [`MAX_RTO_MS`]. The next acknowledgement of anything
+//! returns every fragment to the plain timeout, as TCP recomputes its RTO
+//! once new data is acknowledged (RFC 6298 §5.7), so random loss on a live
+//! path is not slowed. However often a fragment is resent, it never ends
+//! the connection: only the endpoint's `timeout_ms` of silence does.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -21,6 +30,11 @@ pub const WINDOW: u16 = 32;
 /// next and the one after, so one lost acknowledgement does not leave a
 /// sender whose whole window rode one datagram waiting for its timeout.
 pub const ACK_FLUSHES: u8 = 2;
+/// The longest a fragment waits for its next transmission: the ceiling of
+/// the measured round-trip timeout and of its backoff, so a peer that
+/// stalls is resent to at least once a second and recovers within one
+/// second of answering again.
+pub const MAX_RTO_MS: u64 = 1_000;
 
 /// A received fragment waiting for the gap before it, or for room.
 #[derive(Debug)]
@@ -39,6 +53,9 @@ struct InFlight {
     fragment: Fragment,
     sent_at: Option<u64>,
     transmissions: u8,
+    /// Resends since the lane last saw the peer acknowledge anything: the
+    /// doublings of this fragment's retransmission timeout.
+    backoff: u8,
     /// Arrived: before the peer's `next`, or marked in its bits. It stays
     /// in the window until `next` passes it, since the peer may yet hold it.
     acknowledged: bool,
@@ -174,37 +191,30 @@ impl Reliable {
             fragment,
             sent_at: None,
             transmissions: 0,
+            backoff: 0,
             acknowledged: false,
             peer_holds: false,
         });
         Some(sequence)
     }
 
-    /// The oldest in-flight fragment due for (re)transmission. A fragment
-    /// the peer holds is not: it has arrived.
+    /// The oldest in-flight fragment due for (re)transmission: `rto_ms`
+    /// after its last transmission, doubled for each resend since the peer
+    /// last acknowledged anything on the lane, up to [`MAX_RTO_MS`], and
+    /// only while it has gone out fewer than `max_transmissions` times. A
+    /// fragment the peer holds is not: it has arrived.
     pub fn first_due(&self, now_ms: u64, rto_ms: u64, max_transmissions: u8) -> Option<u16> {
         self.in_flight.iter().find_map(|item| {
+            let interval = rto_ms
+                .saturating_mul(1 << item.backoff.min(16))
+                .min(MAX_RTO_MS.max(rto_ms));
             (!item.acknowledged
                 && !item.peer_holds
                 && item.transmissions < max_transmissions
                 && item
                     .sent_at
-                    .is_none_or(|sent| now_ms.saturating_sub(sent) >= rto_ms))
+                    .is_none_or(|sent| now_ms.saturating_sub(sent) >= interval))
             .then_some(item.sequence)
-        })
-    }
-
-    /// Whether a fragment went unacknowledged through `maximum`
-    /// transmissions. One the peer holds waits for the peer's caller, not
-    /// the network, so it never counts.
-    pub fn retry_exhausted(&self, now_ms: u64, rto_ms: u64, maximum: u8) -> bool {
-        self.in_flight.iter().any(|item| {
-            !item.acknowledged
-                && !item.peer_holds
-                && item.transmissions >= maximum
-                && item
-                    .sent_at
-                    .is_some_and(|sent| now_ms.saturating_sub(sent) >= rto_ms)
         })
     }
 
@@ -226,6 +236,9 @@ impl Reliable {
             .iter_mut()
             .find(|item| item.sequence == sequence)
         {
+            if item.sent_at.is_some() {
+                item.backoff = item.backoff.saturating_add(1);
+            }
             item.transmissions = item.transmissions.saturating_add(1);
             item.sent_at = Some(now_ms);
         }
@@ -240,12 +253,14 @@ impl Reliable {
         if sequence::newer(ack.next, self.next_sequence) {
             return;
         }
+        let mut progressed = false;
         for item in &mut self.in_flight {
             let distance = sequence::diff(item.sequence, ack.next);
             let received = sequence::newer(ack.next, item.sequence)
                 || ((1..WINDOW).contains(&distance) && ack.bits & (1_u32 << (distance - 1)) != 0);
             if received && !item.acknowledged {
                 item.acknowledged = true;
+                progressed = true;
                 // A held fragment's acknowledgement waited on the peer's
                 // caller, so it measures no round trip.
                 if item.transmissions == 1
@@ -258,6 +273,13 @@ impl Reliable {
                 // Arrival is final: a later acknowledgement that predates
                 // the hold does not undo it.
                 item.peer_holds = true;
+            }
+        }
+        // The peer answers, so a fragment still missing was lost, not
+        // stalled: its timeout returns to the round-trip estimate.
+        if progressed {
+            for item in &mut self.in_flight {
+                item.backoff = 0;
             }
         }
         // Fragments leave the window in sequence order, which is message
@@ -530,7 +552,6 @@ mod tests {
         sender.acknowledge(stale, 11, &mut samples);
         for now_ms in [200, 5_000, 60_000] {
             assert_eq!(sender.next_sendable(now_ms, 100, 1), None, "at {now_ms}");
-            assert!(!sender.retry_exhausted(now_ms, 100, 1), "at {now_ms}");
         }
 
         receiver.consume(&mut all, &mut out).unwrap();
