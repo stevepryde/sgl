@@ -154,7 +154,9 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let PositionWS = ScreenSpaceToWorldSpace(vec3<f32>(ScreenCoordUV, Depth));
     let NormalWS = LoadNormalWS(PixelCoord);
     let ViewWS = normalize(g_Camera.f4Position.xyz - PositionWS);
-    let NdotV = saturate(dot(NormalWS, ViewWS));
+    // DFX-40: clamped above 0 as Filament (MIN_N_DOT_V) and Bevy clamp it: at 0 a mirror's
+    // visibility term is 0.5 / 0 and the weight NaN.
+    let NdotV = clamp(dot(NormalWS, ViewWS), 1e-4, 1.0);
 
     let Roughness = LoadRoughness(PixelCoord);
     let RoughnessFactor = saturate(f32(SSR_SPATIAL_RECONSTRUCTION_ROUGHNESS_FACTOR) * Roughness);

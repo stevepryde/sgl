@@ -87,6 +87,10 @@ pub struct AnimationSequence {
     actions: std::collections::VecDeque<u32>,
     finished: bool,
     just_completed: bool,
+    /// Playback positions (step, frame cursor and, for ping-pong, direction)
+    /// in one loop cycle. More consecutive advances than this without
+    /// consuming time revisit a position: a zero-time cycle.
+    cycle_positions: usize,
 }
 
 impl AnimationSequence {
@@ -103,11 +107,14 @@ impl AnimationSequence {
     ///
     /// Large `dt` steps through as many frames and steps as it covers and
     /// carries the remainder, so long-run timing never drifts. A non-finite
-    /// `dt` is ignored. In the repeating modes, steps that consume no time
-    /// cannot spin: zero-duration steps (actions, zero-length pauses), and
-    /// durations too small to lower the accumulated time in `f32`, stop a tick
-    /// after one full pass over the steps, dropping the remainder. The
-    /// play-once modes need no such stop: they end after one bounded pass.
+    /// `dt` is ignored. In the repeating modes, a cycle that consumes no time
+    /// cannot spin: a tick stops after as many consecutive zero-time advances
+    /// (zero-duration frames and steps, or durations too small to lower the
+    /// accumulated time in `f32`) as the sequence has playback positions —
+    /// frames plus other steps, doubled for ping-pong — and drops the
+    /// remainder. Every position in the cycle has then played at least once.
+    /// The play-once modes need no such stop: they end after one bounded
+    /// pass.
     pub fn tick(&mut self, dt: f32, rng: &mut Rng) -> bool {
         self.just_completed = false;
         self.actions.clear();
@@ -132,7 +139,7 @@ impl AnimationSequence {
                 idle_advances = 0;
             } else if repeating {
                 idle_advances += 1;
-                if idle_advances > self.steps.len() {
+                if idle_advances > self.cycle_positions {
                     self.timer = 0.0;
                     return false;
                 }
@@ -261,10 +268,20 @@ impl AnimationSequence {
                 if self.forward {
                     self.step += 1;
                     if self.step >= self.steps.len() {
-                        // Turn around one step in: the last step does not play
-                        // twice.
-                        self.step = self.steps.len().saturating_sub(2);
-                        self.forward = false;
+                        if self.is_one_element() {
+                            // The lone element is both ends, so the reverse
+                            // pass is empty: the bounce ends where it began.
+                            if self.loop_mode == SequenceLoop::PingPongOnce {
+                                return true;
+                            }
+                            self.step = 0;
+                            self.cursors.fill(0);
+                        } else {
+                            // Turn around one step in: the last step does not
+                            // play twice.
+                            self.step = self.steps.len().saturating_sub(2);
+                            self.forward = false;
+                        }
                     }
                 } else if self.step > 0 {
                     self.step -= 1;
@@ -283,6 +300,15 @@ impl AnimationSequence {
         }
         self.step_duration = None;
         false
+    }
+
+    /// Whether the sequence is a single step playing at most one frame.
+    fn is_one_element(&self) -> bool {
+        match self.steps.as_slice() {
+            [SequenceStep::PlayFrames { frames, .. }] => frames.len() == 1,
+            [_] => true,
+            _ => false,
+        }
     }
 
     /// Place the frame cursor at the entry end of the step just moved to.
@@ -440,7 +466,20 @@ impl SequenceBuilder {
                 SequenceStep::Action(_) => {}
             }
         }
+        let positions: usize = self
+            .steps
+            .iter()
+            .map(|step| match step {
+                SequenceStep::PlayFrames { frames, .. } => frames.len(),
+                _ => 1,
+            })
+            .sum();
+        let directions = match self.loop_mode {
+            SequenceLoop::PingPongRepeat | SequenceLoop::PingPongOnce => 2,
+            SequenceLoop::Repeat | SequenceLoop::Once => 1,
+        };
         Ok(AnimationSequence {
+            cycle_positions: positions * directions,
             cursors: vec![0; self.steps.len()],
             held_frame: None,
             steps: self.steps,
@@ -576,6 +615,34 @@ mod tests {
             assert!(matches!(sequence.current_frame(), Some(7) | None));
         }
         assert!(sequence.is_finished());
+    }
+
+    /// #299: a one-frame `PingPongOnce` shows its frame for one frame
+    /// duration, completes then, and reports completion once.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_one_frame_pingpong_once_completes_after_one_frame_duration() {
+        let mut sequence = AnimationSequence::builder()
+            .loop_mode(SequenceLoop::PingPongOnce)
+            .play_frames(vec![0], 0.25)
+            .build()
+            .unwrap();
+        let mut rng = rng();
+        assert!(sequence.tick(0.25, &mut rng), "completes after 0.25 s");
+        assert_eq!(sequence.current_frame(), Some(0));
+        assert!(!sequence.tick(0.25, &mut rng), "completion fires once");
+    }
+
+    /// #299: a lone action under `PingPongOnce` fires once and completes.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_lone_action_pingpong_once_fires_once() {
+        let mut sequence = AnimationSequence::builder()
+            .loop_mode(SequenceLoop::PingPongOnce)
+            .action(5)
+            .build()
+            .unwrap();
+        assert!(sequence.tick(0.0, &mut rng()));
+        assert_eq!(sequence.take_action(), Some(5));
+        assert_eq!(sequence.take_action(), None);
     }
 
     /// #249: the builder's boundaries — a zero frame duration and a random
@@ -1015,6 +1082,44 @@ mod tests {
             .expect("valid sequence");
         assert!(seq.tick(0.016, &mut rng()), "completion edge");
         assert_eq!(seq.current_frame(), Some(3));
+    }
+
+    /// #297: zero-duration frames before an action count as playback
+    /// positions, not steps: the action fires on the first tick, the frame
+    /// run's last frame holds through the pause, and the sequence finishes
+    /// once a second has elapsed. A repeating copy fires the action on the
+    /// first tick too.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn zero_duration_frames_do_not_delay_a_following_action() {
+        for loop_mode in [SequenceLoop::Once, SequenceLoop::Repeat] {
+            let mut seq = AnimationSequence::builder()
+                .loop_mode(loop_mode)
+                .play_frames([0, 1, 2, 3], 0.0)
+                .action(7)
+                .pause(1.0)
+                .build()
+                .expect("valid sequence");
+            let mut rng = rng();
+            assert!(!seq.tick(0.5, &mut rng));
+            assert_eq!(seq.take_action(), Some(7), "{loop_mode:?}");
+            assert_eq!(seq.current_frame(), Some(3));
+            let completed = seq.tick(0.5, &mut rng);
+            assert_eq!(completed, loop_mode == SequenceLoop::Once, "{loop_mode:?}");
+        }
+    }
+
+    /// #297: a zero-time ping-pong cycle reaches the action after its
+    /// zero-duration frames within the tick.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_zero_time_pingpong_cycle_reaches_its_action() {
+        let mut seq = AnimationSequence::builder()
+            .loop_mode(SequenceLoop::PingPongRepeat)
+            .play_frames([0, 1, 2], 0.0)
+            .action(4)
+            .build()
+            .expect("valid sequence");
+        assert!(!seq.tick(1.0, &mut rng()));
+        assert_eq!(seq.take_action(), Some(4));
     }
 
     /// #313: a frame duration too small to lower the accumulated time in

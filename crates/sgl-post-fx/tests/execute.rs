@@ -1350,3 +1350,129 @@ fn ssr_rays_towards_the_camera_are_projected_in_front_of_it() {
         }
     }
 }
+
+// PROVENANCE.md DFX-40: a roughness-0 surface reflects along the mirror
+// direction with a finite PDF, including at the blue noise's largest value
+// (unorm 1.0) and where its mapped normal faces away from the viewer; a
+// rough surface seen exactly along its normal at that value samples a
+// finite ray too.
+#[test]
+fn ssr_roughness_zero_reflection_rays_are_finite() {
+    use wgpu::util::DeviceExt;
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let normalize = |v: [f32; 3]| {
+        let length = v.iter().map(|c| c * c).sum::<f32>().sqrt();
+        v.map(|c| c / length)
+    };
+    // The direction to the viewer, and a normal facing it and one facing away.
+    let view = normalize([0.1, 0.2, -1.0]);
+    let normals = [normalize([0.3, -0.2, -1.0]), normalize([0.2, 0.1, 1.0])];
+    let mut source = sgl_post_fx::shaders::shader_source(
+        "SSR_ComputeIntersection.fx",
+        &[
+            ("SUPPORTED_SHADER_SRV", "1"),
+            ("SSR_OPTION_INVERTED_DEPTH", "0"),
+            ("SSR_OPTION_PREVIOUS_FRAME", "0"),
+            ("SSR_OPTION_HALF_RESOLUTION", "0"),
+        ],
+    );
+    let wgsl = |v: [f32; 3]| format!("vec3<f32>({:?}, {:?}, {:?})", v[0], v[1], v[2]);
+    source.push_str(&format!(
+        "@group(0) @binding(8) var<storage, read_write> results: array<vec4<f32>>;
+@compute @workgroup_size(1) fn main() {{
+    results[0] = SampleReflectionVector({view}, {facing}, 0.0, vec2<i32>(0));
+    results[1] = SampleReflectionVector({view}, {away}, 0.0, vec2<i32>(0));
+    results[2] = SampleReflectionVector(vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0, 0.0, -1.0), 0.5, vec2<i32>(0));
+}}
+",
+        view = wgsl(view),
+        facing = wgsl(normals[0]),
+        away = wgsl(normals[1]),
+    ));
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    // An unbiased sample, so the noise's second value reaches the sampler.
+    let attribs = ScreenSpaceReflectionAttribs {
+        ggx_importance_sample_bias: 0.0,
+        ..Default::default()
+    };
+    let attribs = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::bytes_of(&attribs),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    // The blue noise's format, at its largest second value.
+    let noise = texture(&device, &queue, wgpu::TextureFormat::Rg8Unorm, &[128, 255]);
+    let output = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 48,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 48,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: attribs.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::TextureView(&noise),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: output.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 48);
+    queue.submit([encoder.finish()]);
+    readback.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let bytes = readback.get_mapped_range(..).unwrap();
+    let result: &[[f32; 4]] = bytemuck::cast_slice(&bytes);
+    for (case, ray) in ["facing", "facing away", "rough, along its normal"]
+        .iter()
+        .zip(result)
+    {
+        assert!(
+            ray.iter().all(|v| v.is_finite()),
+            "{case}: direction and PDF {ray:?}"
+        );
+    }
+    // The mirror direction about the facing normal.
+    let n_dot_v: f32 = (0..3).map(|i| normals[0][i] * view[i]).sum();
+    let mirror: [f32; 3] = std::array::from_fn(|i| 2.0 * n_dot_v * normals[0][i] - view[i]);
+    let ray = result[0];
+    assert!(
+        (0..3).all(|i| (ray[i] - mirror[i]).abs() < 1e-4),
+        "roughness 0 traced {ray:?}, its mirror direction is {mirror:?}"
+    );
+}
