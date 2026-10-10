@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` texture uploads: an empty, oversized or short-`rgba` texture, or
+  a mis-sized normal map, panicked; `Renderer::upload_texture`,
+  `upload_normal_map`, `upload_light_cookie`, `SpritePass::upload`,
+  `upload_normal` and `LightPass::upload_cookie` now return
+  `Result<(), sgl_2d::canvas::TextureError>`, and `Renderer::replace_texture`
+  / `SpritePass::replace` `Result<bool, TextureError>`, changing nothing on
+  error. Handle or `.expect` each result.
 - `sgl-core` `StateHasher`: the contract promised distinct digests for any
   different write sequences, but writes are untagged (`u16(0x1234)` equals
   `u8(0x34); u8(0x12)`); it now promises them only within one schema.

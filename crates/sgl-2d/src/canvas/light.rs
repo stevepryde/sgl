@@ -63,6 +63,7 @@ use wgpu::util::DeviceExt;
 
 use crate::assets::{Handle, Texture};
 use crate::canvas::camera::WorldUnits;
+use crate::canvas::sprite::TextureError;
 
 /// Max active lights per frame (after view culling); extras are dropped.
 pub const MAX_LIGHTS: usize = 32;
@@ -816,16 +817,18 @@ impl LightPass {
 
     /// Upload a cookie texture under its asset `handle` (standalone —
     /// cookies are never atlased). Idempotent per handle. Lights referencing
-    /// an unregistered cookie are skipped.
+    /// an unregistered cookie are skipped. An invalid texture is refused
+    /// with a [`TextureError`].
     pub fn upload_cookie(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         handle: Handle<Texture>,
         tex: &Texture,
-    ) {
+    ) -> Result<(), TextureError> {
+        TextureError::check(device, tex)?;
         if self.cookies.contains_key(&handle) {
-            return;
+            return Ok(());
         }
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("light cookie"),
@@ -871,6 +874,7 @@ impl LightPass {
                 size: Vec2::new(tex.width as f32, tex.height as f32),
             },
         );
+        Ok(())
     }
 
     /// Plan this frame's lights: cull to the view, cap counts, fill the
@@ -1499,8 +1503,25 @@ mod gpu_tests {
                 rgba: vec![255, 255, 255, 128],
             },
         );
+        // #320: an empty cookie is refused and does not claim the handle,
+        // so the valid upload below still registers it.
+        let empty = Texture {
+            width: 0,
+            height: 1,
+            rgba: Vec::new(),
+        };
+        assert_eq!(
+            rig.pass
+                .upload_cookie(&rig.device, &rig.queue, handle, &empty),
+            Err(TextureError::Empty {
+                width: 0,
+                height: 1
+            })
+        );
         let tex = assets.get(handle).expect("just inserted");
-        rig.pass.upload_cookie(&rig.device, &rig.queue, handle, tex);
+        rig.pass
+            .upload_cookie(&rig.device, &rig.queue, handle, tex)
+            .unwrap();
         let frame = LightFrame {
             lights: vec![PointLight {
                 texture_scale: 32.0,
