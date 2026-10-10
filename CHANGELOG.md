@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `BrowserWebSocketConfig::latest_buffered_bytes`: any nonzero
+  value was accepted, and one below the largest latest-state frame blocked
+  every lane once a large state was sent; `BrowserWebSocketClient::connect`
+  now rejects values below `ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES`
+  (1186). Raise a smaller watermark to at least that; the 64 KiB default is
+  unaffected.
 - `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
   promise that a flushed state leaves ahead of lane frames flushed after it;
   it waits only for frames flushed with or before it, and lane frames
