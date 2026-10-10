@@ -50,7 +50,10 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    bit-identical to unscaled rendering.
 6. **Overlay.** Lines, rect outlines, fills, and circles are emitted as quads
    on the shared white texture into whichever channel the caller passes, with
-   the overlay's color, `z`, and clip.
+   the overlay's color, `z`, and clip. Positions, sizes and widths are in the
+   overlay's `WorldUnits` (logical pixels by default; the world camera's
+   units for world gizmos); pixel snapping and the one-pixel minimum width
+   apply in world pixels. The default is bit-identical to the pixel layout.
 7. **UI.** Immediate mode: the game rebuilds widgets every frame and supplies
    `UiInput` (logical-pixel mouse, edges, chars, editing/navigation keys,
    app-supplied clipboard paste, scroll, `dt`); the
@@ -141,11 +144,12 @@ rectangles so their text, accent and surface roles follow the selected palette.
   label.
   Reflow sections or wrap help when space runs out; do not solve overflow by
   shrinking all text or stacking every action into a full-width button.
-- **Overflow ownership.** Give each overflowing pane one `scroll_area` and its
-  own game-owned offset. Compute content height from the laid-out rows; keep
-  headers and toolbars outside its scrolling content. A `scroll_area` clips
-  within the enclosing clip and restores it at `scroll_area_end`; restore
-  enclosing clips yourself after custom clipping. Widget borders extend outside their hit rectangles:
+- **Overflow ownership.** Give each overflowing pane one
+  `scroll_area_begin`/`scroll_area_end` pair and its own game-owned offset.
+  Compute content height from the laid-out rows; keep headers and toolbars
+  outside its scrolling content. A scroll area clips within the enclosing
+  clip and restores it at `scroll_area_end`; restore enclosing clips yourself
+  after custom clipping. Widget borders extend outside their hit rectangles:
   inset content from viewport edges and reserve gaps for focus/selection strokes
   and the scrollbar. Clip long row names to their allocated space; provide
   their full meaning in focus/hover help instead of letting them cover actions.

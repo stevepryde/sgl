@@ -19,6 +19,36 @@ docs and specs the entry links.
   submitted kept its popup open and the keyboard captured, blocking Tab and
   Enter elsewhere; it now closes at `UiFrame::end`. No game-code changes
   needed.
+- `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
+  grid cell it spanned (effectively hanging); a collider over 1024 cells is
+  now kept apart and a query over more cells than colliders scans the
+  colliders. No game-code changes needed.
+- `sgl-core` `AnimationSequence` ping-pong: a trailing step replayed the end
+  frame; a leading step skipped the reverse pass or replayed the start frame.
+  The bounce now turns on the first and last frame steps, playing outer
+  steps once per turnaround. No game-code changes needed.
+- `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
+  on the world channel shrank by `pixels_per_unit`; the new `units:
+  WorldUnits` field (default logical pixels) makes positions, sizes and
+  widths world units. World gizmos set `units: camera.units()`; struct
+  literals without `..Overlay::new(white)` add `units`; pixel overlays need
+  no other change.
+- `sgl-3d` `asset::load*`: a glTF mesh whose morphed primitives have
+  different numbers of morph targets loaded, the extra targets driven by
+  another node's weights; it now fails the load naming the primitive.
+  Primitives without targets still load unmorphed, and a mesh whose first
+  primitive has none no longer refuses its morph-weight animation. No
+  game-code changes needed; give every morphed primitive of the mesh the
+  same shape keys.
+- `sgl-net` `BrowserWebSocketConfig::latest_buffered_bytes`: any nonzero
+  value was accepted, and one below the largest latest-state frame blocked
+  every lane once a large state was sent; `BrowserWebSocketClient::connect`
+  now rejects values below `ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES`
+  (1186). Raise a smaller watermark to at least that; the 64 KiB default is
+  unaffected.
+- `sgl-net` `udp::LANE_MESSAGES_PER_PEER_PER_POLL` (32, native) is now public:
+  the most lane messages a `ThreadedUdpServer` poll returns per peer, which
+  `specs/netcode.md` already named. No game-code changes needed.
 - `sgl-2d` `UiFrame::dropdown` / `overlay_panel_begin`: a popover's or
   panel's clipped-away part still blocked widgets beneath it (and kept the
   popover open when pressed); only the visible part now blocks and counts as
