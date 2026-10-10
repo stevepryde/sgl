@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `AseDirection`: `pingpong_reverse` tags parsed as `Other` and
+  played forward; they are now `AseDirection::PingpongReverse`, whose
+  `AseTag::frame_order` runs down and back up without repeating either end.
+  Add the variant to exhaustive matches.
 - `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
   of steps before confirming a hit was accepted by depth proximity and now
   reports a miss, so streaks near surfaces at the step cap give way to the
