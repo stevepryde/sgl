@@ -921,9 +921,9 @@ impl<T: DatagramTransport> Endpoint<T> {
                 peer.last_receive_ms = now_ms;
                 self.send_control(source, Kind::ConnectConfirm, nonces, now_ms);
             }
-            Kind::ConnectConfirm
-                if self.role == EndpointRole::Server && self.accepting_connections =>
-            {
+            // A stopped server still answers a connection it already has,
+            // whose accept may have been lost.
+            Kind::ConnectConfirm if self.role == EndpointRole::Server => {
                 self.handle_connect_confirm(nonces, source, now_ms, events);
             }
             Kind::ConnectAccept if self.role == EndpointRole::Client => {
@@ -1007,6 +1007,11 @@ impl<T: DatagramTransport> Endpoint<T> {
         now_ms: u64,
         events: &mut Vec<EndpointEvent>,
     ) {
+        // A stopped server admits no new route, so it spends no keyed hash
+        // on one.
+        if !self.accepting_connections && !self.routes.contains_key(&(source, nonces.client)) {
+            return;
+        }
         let Some(cookie_epoch) = self
             .cookie_key
             .as_ref()
@@ -1764,6 +1769,136 @@ mod tests {
         assert!(server.peers.is_empty());
         assert!(server.routes.is_empty());
         assert!(server.transport.sent.is_empty());
+    }
+
+    /// Moves what `from` (at `from_addr`) sent to `to_addr` into `to`,
+    /// except the datagrams `lose` picks.
+    fn ferry(
+        from: &mut Endpoint<RecordingTransport>,
+        from_addr: SocketAddr,
+        to: &mut Endpoint<RecordingTransport>,
+        to_addr: SocketAddr,
+        mut lose: impl FnMut(&SentDatagram) -> bool,
+    ) {
+        let (outgoing, others) = std::mem::take(&mut from.transport.sent)
+            .into_iter()
+            .partition::<Vec<_>, _>(|datagram| datagram.destination == to_addr);
+        from.transport.sent = others;
+        for datagram in outgoing {
+            if !lose(&datagram) {
+                to.transport.received.push_back(ReceivedDatagram {
+                    source: from_addr,
+                    bytes: datagram.bytes,
+                });
+            }
+        }
+    }
+
+    /// Defect (#306): a server whose admission stopped right after it
+    /// accepted a client ignoring that client's repeated confirm, so a lost
+    /// accept strands a connection the server already reported; or one that
+    /// now admits a new client. Oracle: `stop_admission` stops new
+    /// connections "without affecting existing ones" (`ServerIo`). The
+    /// first accept is lost and admission stops on `Connected`; the client
+    /// still connects and messages cross both ways, while a second client
+    /// challenged before the stop is not admitted by its confirm.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn stopped_admission_still_answers_a_connected_peer_whose_accept_was_lost() {
+        let server_addr = address(192, 0, 2, 1, 7_000);
+        let (joining, late) = (address(192, 0, 2, 2, 40_000), address(192, 0, 2, 3, 40_000));
+        let config = EndpointConfig::default();
+        let mut server =
+            Endpoint::server(RecordingTransport::default(), config.clone(), [12; 32]).unwrap();
+        let mut client = Endpoint::client(RecordingTransport::default(), config.clone()).unwrap();
+        let mut other = Endpoint::client(RecordingTransport::default(), config).unwrap();
+        let peer = client.start_connect(server_addr, 0, 61).unwrap();
+        other.start_connect(server_addr, 0, 62).unwrap();
+
+        let (mut accepts_lost, mut late_after_stop) = (0, 0);
+        let mut server_peer = None;
+        let mut client_events = Vec::new();
+        let mut other_events = Vec::new();
+        for now in 1..2_000 {
+            ferry(&mut client, joining, &mut server, server_addr, |_| false);
+            // The late client's request arrives; its confirms only after
+            // the stop.
+            ferry(&mut other, late, &mut server, server_addr, |_| {
+                let lost = now > 1 && server_peer.is_none();
+                late_after_stop += usize::from(!lost && server_peer.is_some());
+                lost
+            });
+            for event in server.poll(now) {
+                match event {
+                    EndpointEvent::Connected { peer } if server_peer.is_none() => {
+                        server_peer = Some(peer);
+                        server.stop_admission();
+                    }
+                    other => panic!("server: {other:?} at {now}"),
+                }
+            }
+            server.flush(now);
+            ferry(&mut server, server_addr, &mut client, joining, |datagram| {
+                let lost = accepts_lost == 0
+                    && matches!(
+                        packet::parse(&datagram.bytes, MAGIC),
+                        Some(Parsed::Control {
+                            kind: Kind::ConnectAccept,
+                            ..
+                        })
+                    );
+                accepts_lost += usize::from(lost);
+                lost
+            });
+            ferry(&mut server, server_addr, &mut other, late, |_| false);
+            client_events.extend(client.poll(now));
+            other_events.extend(other.poll(now));
+            client.flush(now);
+            other.flush(now);
+            if client_events.contains(&EndpointEvent::Connected { peer }) {
+                break;
+            }
+        }
+        assert_eq!(accepts_lost, 1);
+        assert_eq!(client_events, [EndpointEvent::Connected { peer }]);
+        assert!(
+            late_after_stop > 0,
+            "the late client confirmed after the stop"
+        );
+        assert!(other_events.is_empty(), "{other_events:?}");
+        assert_eq!(server.peer_count(), 1, "the late client was not admitted");
+
+        let server_peer = server_peer.expect("the server connected first");
+        server
+            .send(server_peer, Delivery::RELIABLE_ORDERED, b"welcome")
+            .unwrap();
+        client
+            .send(peer, Delivery::RELIABLE_ORDERED, b"hello")
+            .unwrap();
+        let (mut at_client, mut at_server) = (Vec::new(), Vec::new());
+        for now in 2_000..2_100 {
+            server.flush(now);
+            client.flush(now);
+            ferry(&mut server, server_addr, &mut client, joining, |_| false);
+            ferry(&mut client, joining, &mut server, server_addr, |_| false);
+            at_client.extend(client.poll(now));
+            at_server.extend(server.poll(now));
+        }
+        assert_eq!(
+            at_client,
+            [EndpointEvent::Message {
+                peer,
+                delivery: Delivery::RELIABLE_ORDERED,
+                payload: b"welcome".to_vec(),
+            }]
+        );
+        assert_eq!(
+            at_server,
+            [EndpointEvent::Message {
+                peer: server_peer,
+                delivery: Delivery::RELIABLE_ORDERED,
+                payload: b"hello".to_vec(),
+            }]
+        );
     }
 
     #[wasm_bindgen_test(unsupported = test)]

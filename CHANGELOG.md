@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP `stop_admission`: a stopped server ignored the handshake
+  confirm of a client it had already accepted, so a lost accept left that
+  client unconnected until both timed out; it now answers connections it
+  has and refuses only new ones. No game-code changes needed.
 - `sgl-net` UDP: an unacknowledged reliable fragment was resent every
   round-trip timeout and closed the peer `TimedOut` after
   `EndpointConfig::max_reliable_transmissions` sends (about 600 ms on a
