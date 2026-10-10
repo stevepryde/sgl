@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `DrawList::sort`: a NaN `z` could panic or misorder the other
+  sprites; NaN now draws last and the rest stay ascending and stable. No
+  game-code changes needed.
 - `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
   panicked; now `max` wins and a NaN bound is ignored. No game-code changes
   needed.
