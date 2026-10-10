@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `NativeWebSocketClient::connect`: an IPv6-literal URL such as
+  `ws://[::1]:9000/game/ws` failed host resolution; it now connects. No
+  game-code changes needed.
 - `sgl-net` `OriginPolicy` and `NativeWebSocketClientConfig::origin`: IPv6
   literal origins such as `http://[::1]:3000` were rejected as
   non-canonical; they are now accepted in the browser's compressed
