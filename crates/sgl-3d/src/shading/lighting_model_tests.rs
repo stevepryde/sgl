@@ -301,6 +301,50 @@ fn a_white_furnace_conserves_energy_under_a_film() {
     }
 }
 
+// Plausible defects: a diffuse-only light (`Light::specular` 0) dims a
+// coated or sheened base by a layer whose lobe it does not light, on the
+// base's front lobe or its passed-through one. The oracle is the bare base:
+// under diffuse-only lights from every direction of both hemispheres, a
+// base beneath a coat, a sheen or both diffuses exactly what the same base
+// without them does, on either side. The bound is f32 accumulation.
+#[test]
+fn diffuse_only_lights_light_the_base_whole_beneath_its_layers() {
+    let layers = [(0., [0.; 3]), (1., [0.; 3]), (0., [1.; 3]), (1., [1.; 3])];
+    let mut cases = Vec::new();
+    for nv in [0.3, 0.8] {
+        for transmission in [0., 0.5] {
+            for (coat, sheen) in layers {
+                cases.push(Layered {
+                    view: view(nv),
+                    coat,
+                    sheen,
+                    transmission,
+                    light_specular: 0.,
+                    ..Layered::default()
+                });
+            }
+        }
+    }
+    let Some(observed) = observe_lit(&cases) else {
+        return;
+    };
+    for (cases, observed) in cases
+        .chunks(layers.len())
+        .zip(observed.chunks(layers.len()))
+    {
+        let [bare_above, bare_below, _] = observed[0];
+        for (case, [above, below, _]) in cases.iter().zip(observed).skip(1) {
+            for (side, layered, bare) in [("front", above, bare_above), ("back", below, bare_below)]
+            {
+                assert!(
+                    (*layered - bare).abs().max_element() <= 1e-5 * bare.max_element().max(1e-3),
+                    "{case:?}, {side}: {layered:?}, {bare:?} without its layers"
+                );
+            }
+        }
+    }
+}
+
 // Plausible defects: direct light and the environment scatter a metal's
 // light by different models, so a rough metal is darker or brighter and
 // shifts hue under the sun against the sky (three.js r185's direct heuristic

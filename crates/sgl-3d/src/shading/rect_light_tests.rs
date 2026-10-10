@@ -332,3 +332,39 @@ fn rect_lights_match_numerical_integration() {
     }
     eprintln!("rect lights: worst error over its bounds {worst:?}");
 }
+
+// Plausible defect: a diffuse-only rectangle (`Light::specular` 0) dims a
+// coated base by a coat whose lobe it does not light. The oracle is the
+// bare base: a coated receiver takes exactly what the same receiver without
+// its coat does. The bound is f32 rounding.
+#[test]
+fn a_diffuse_only_rect_lights_a_coated_base_whole() {
+    let light = Light {
+        specular: 0.,
+        ..rect(Vec3::new(0., 3., 0.), Vec3::NEG_Y, Vec3::X, 2., 0.5)
+    };
+    let receivers: Vec<Receiver> = [0., 1.]
+        .into_iter()
+        .map(|coat| Receiver {
+            light: 0,
+            position: DVec3::ZERO,
+            normal: DVec3::Y,
+            view: tilted(DVec3::Y, DVec3::Z, 1.),
+            rough: 0.5,
+            f0: 0.04,
+            diffuse: 0.8,
+            coat,
+            coat_rough: 0.3,
+            coat_fresnel: 0.2,
+        })
+        .collect();
+    let Some(observed) = observe(&[light], &receivers) else {
+        return;
+    };
+    let (bare, coated) = (observed[0], observed[1]);
+    assert!(bare > 0., "the rectangle lights the base: {bare}");
+    assert!(
+        (coated - bare).abs() <= 1e-5 * bare,
+        "coated {coated}, {bare} without its coat"
+    );
+}

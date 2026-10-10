@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Light::specular`: a diffuse-only light (0) dimmed a clearcoated
+  base by the coat's Fresnel; the coat's dimming now follows `specular` as
+  the sheen's does, so such a light lights the base whole. No game-code
+  changes needed.
 - `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
   grid cell it spanned (effectively hanging); a collider over 1024 cells is
   now kept apart and a query over more cells than colliders scans the
