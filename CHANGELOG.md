@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `AnimationSequence`: a ping-pong sequence of one step with one
+  frame (or one pause or action) played it twice per bounce; it now plays it
+  once, so a `PingPongOnce` completes after one frame duration. No game-code
+  changes needed.
 - `sgl-3d` `asset::load*`: a glTF node that is its own ancestor overflowed
   the stack at load or in `Rig::joint_matrices`, and a node with two parents
   loaded; both now fail the load with an error naming the node, and

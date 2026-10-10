@@ -261,10 +261,20 @@ impl AnimationSequence {
                 if self.forward {
                     self.step += 1;
                     if self.step >= self.steps.len() {
-                        // Turn around one step in: the last step does not play
-                        // twice.
-                        self.step = self.steps.len().saturating_sub(2);
-                        self.forward = false;
+                        if self.is_one_element() {
+                            // The lone element is both ends, so the reverse
+                            // pass is empty: the bounce ends where it began.
+                            if self.loop_mode == SequenceLoop::PingPongOnce {
+                                return true;
+                            }
+                            self.step = 0;
+                            self.cursors.fill(0);
+                        } else {
+                            // Turn around one step in: the last step does not
+                            // play twice.
+                            self.step = self.steps.len().saturating_sub(2);
+                            self.forward = false;
+                        }
                     }
                 } else if self.step > 0 {
                     self.step -= 1;
@@ -283,6 +293,15 @@ impl AnimationSequence {
         }
         self.step_duration = None;
         false
+    }
+
+    /// Whether the sequence is a single step playing at most one frame.
+    fn is_one_element(&self) -> bool {
+        match self.steps.as_slice() {
+            [SequenceStep::PlayFrames { frames, .. }] => frames.len() == 1,
+            [_] => true,
+            _ => false,
+        }
     }
 
     /// Place the frame cursor at the entry end of the step just moved to.
@@ -576,6 +595,34 @@ mod tests {
             assert!(matches!(sequence.current_frame(), Some(7) | None));
         }
         assert!(sequence.is_finished());
+    }
+
+    /// #299: a one-frame `PingPongOnce` shows its frame for one frame
+    /// duration, completes then, and reports completion once.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_one_frame_pingpong_once_completes_after_one_frame_duration() {
+        let mut sequence = AnimationSequence::builder()
+            .loop_mode(SequenceLoop::PingPongOnce)
+            .play_frames(vec![0], 0.25)
+            .build()
+            .unwrap();
+        let mut rng = rng();
+        assert!(sequence.tick(0.25, &mut rng), "completes after 0.25 s");
+        assert_eq!(sequence.current_frame(), Some(0));
+        assert!(!sequence.tick(0.25, &mut rng), "completion fires once");
+    }
+
+    /// #299: a lone action under `PingPongOnce` fires once and completes.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_lone_action_pingpong_once_fires_once() {
+        let mut sequence = AnimationSequence::builder()
+            .loop_mode(SequenceLoop::PingPongOnce)
+            .action(5)
+            .build()
+            .unwrap();
+        assert!(sequence.tick(0.0, &mut rng()));
+        assert_eq!(sequence.take_action(), Some(5));
+        assert_eq!(sequence.take_action(), None);
     }
 
     /// #249: the builder's boundaries — a zero frame duration and a random
