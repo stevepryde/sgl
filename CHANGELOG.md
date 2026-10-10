@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP client handshake: a client confirmed the last challenge it
+  received, so challenges to its retried request that arrived reversed
+  across a cookie epoch left the join failing at the timeout after a ghost
+  `Connected` on the server; it now confirms the first. No game-code
+  changes needed.
+
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
