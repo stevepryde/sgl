@@ -9,9 +9,13 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
 1. **Assets.** `AssetServer` loads the same logical path from a native
    directory (`with_root`) or from caller-supplied bytes (`from_bundle`) and
    returns the same decoded value. `Texture` is straight-alpha RGBA8 on the
-   CPU; upload is the renderer's job. `Assets` never removes an asset, so a
-   `Handle<T>` stays valid for its cache's lifetime, and re-inserting a path
-   replaces the asset under the same handle. Loading is synchronous.
+   CPU; upload is the renderer's job. Texture, normal-map and light-cookie
+   uploads refuse an empty texture, one larger than the device allows, one
+   whose RGBA length mismatches its size, and a normal map sized unlike its
+   diffuse with a `TextureError`, changing nothing. `Assets` never removes
+   an asset, so a `Handle<T>` stays valid for its cache's lifetime, and
+   re-inserting a path replaces the asset under the same handle. Loading is
+   synchronous.
    `white_texture` registers one shared 1×1 white pixel under `sgl://white`.
 2. **Draw list.** `DrawList` is the only channel from game code to the
    renderer: a `world` channel (through the camera) and a `screen` channel

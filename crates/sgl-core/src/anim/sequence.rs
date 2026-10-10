@@ -102,27 +102,35 @@ impl AnimationSequence {
     /// once).
     ///
     /// Large `dt` steps through as many frames and steps as it covers and
-    /// carries the remainder, so long-run timing never drifts. Zero-duration
-    /// steps (actions, zero-length pauses) cannot spin: a tick stops after one
-    /// full pass over the steps without consuming time, dropping the remainder.
+    /// carries the remainder, so long-run timing never drifts. A non-finite
+    /// `dt` is ignored. In the repeating modes, steps that consume no time
+    /// cannot spin: zero-duration steps (actions, zero-length pauses), and
+    /// durations too small to lower the accumulated time in `f32`, stop a tick
+    /// after one full pass over the steps, dropping the remainder. The
+    /// play-once modes need no such stop: they end after one bounded pass.
     pub fn tick(&mut self, dt: f32, rng: &mut Rng) -> bool {
         self.just_completed = false;
         self.actions.clear();
-        if self.finished {
+        if self.finished || !dt.is_finite() {
             return false;
         }
         self.timer += dt;
 
+        let repeating = matches!(
+            self.loop_mode,
+            SequenceLoop::Repeat | SequenceLoop::PingPongRepeat
+        );
         let mut idle_advances = 0;
         loop {
             let duration = self.resolved_duration(rng);
             if self.timer < duration {
                 return false;
             }
-            if duration > 0.0 {
+            let before = self.timer;
+            self.timer -= duration;
+            if self.timer < before {
                 idle_advances = 0;
-                self.timer -= duration;
-            } else {
+            } else if repeating {
                 idle_advances += 1;
                 if idle_advances > self.steps.len() {
                     self.timer = 0.0;
@@ -976,6 +984,52 @@ mod tests {
                 .is_ok(),
             "a zero-length random pause is legitimate"
         );
+    }
+
+    /// #313: a non-finite `dt` neither hangs a repeating sequence nor
+    /// poisons its clock — the next finite tick advances on time.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_non_finite_dt_is_ignored() {
+        let mut seq = AnimationSequence::builder()
+            .loop_mode(SequenceLoop::PingPongRepeat)
+            .play_frames(vec![0, 1, 2], 0.1)
+            .build()
+            .expect("valid sequence");
+        let mut rng = rng();
+        for dt in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(!seq.tick(dt, &mut rng));
+            assert_eq!(seq.current_frame(), Some(0));
+        }
+        seq.tick(0.1, &mut rng);
+        assert_eq!(seq.current_frame(), Some(1));
+    }
+
+    /// #313: a play-once sequence whose frame durations are too small to
+    /// lower the accumulated time still plays to completion in one tick that
+    /// covers it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_once_sequence_with_vanishing_durations_completes_in_one_tick() {
+        let mut seq = AnimationSequence::builder()
+            .play_frames(vec![0, 1, 2, 3], 1e-30)
+            .build()
+            .expect("valid sequence");
+        assert!(seq.tick(0.016, &mut rng()), "completion edge");
+        assert_eq!(seq.current_frame(), Some(3));
+    }
+
+    /// #313: a frame duration too small to lower the accumulated time in
+    /// `f32` returns instead of spinning, in both repeating modes.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_vanishing_frame_duration_does_not_hang_a_repeating_sequence() {
+        for loop_mode in [SequenceLoop::Repeat, SequenceLoop::PingPongRepeat] {
+            let mut seq = AnimationSequence::builder()
+                .loop_mode(loop_mode)
+                .play_frames(vec![0], 1e-30)
+                .build()
+                .expect("valid sequence");
+            assert!(!seq.tick(0.016, &mut rng()));
+            assert_eq!(seq.current_frame(), Some(0));
+        }
     }
 
     /// `play_frame_range` is the inclusive range the Aseprite tags use.

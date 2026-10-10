@@ -38,7 +38,7 @@ use crate::canvas::draw::DrawList;
 use crate::canvas::gpu::{Context, Frame, Gpu};
 use crate::canvas::letterbox::fit_fractional;
 use crate::canvas::light::{LightFrame, LightPass};
-use crate::canvas::sprite::{MASK_FORMAT, NORMAL_FORMAT, SpritePass};
+use crate::canvas::sprite::{MASK_FORMAT, NORMAL_FORMAT, SpritePass, TextureError};
 use crate::canvas::{LightingSpace, linear_to_srgb, srgb_to_linear};
 
 /// Format of the composited target (both modes) and of the albedo target
@@ -707,17 +707,31 @@ impl Renderer {
     /// already on the GPU replaces its pixels as [`Self::replace_texture`]
     /// does, so a texture changed under its handle (a glyph page from
     /// `TextRenderer::end_frame`) reaches the GPU without a new texture.
-    pub fn upload_texture(&mut self, gpu: &Gpu, handle: Handle<Texture>, tex: &Texture) {
-        self.sprites.upload(&gpu.device, &gpu.queue, handle, tex);
+    /// An invalid texture (empty, larger than the device allows, or with an
+    /// `rgba` length that does not match its dimensions) is refused with a
+    /// [`TextureError`].
+    pub fn upload_texture(
+        &mut self,
+        gpu: &Gpu,
+        handle: Handle<Texture>,
+        tex: &Texture,
+    ) -> Result<(), TextureError> {
+        self.sprites.upload(&gpu.device, &gpu.queue, handle, tex)
     }
 
     /// Replace a sprite texture's GPU pixels while keeping its asset `handle`
-    /// valid for existing draw data; `false` when the handle is unknown.
+    /// valid for existing draw data; `Ok(false)` when the handle is unknown
+    /// and a [`TextureError`], changing nothing, for an invalid texture.
     /// Follows [`SpritePass::replace`](super::sprite::SpritePass::replace):
     /// equal dimensions update in place, while changed dimensions relocate
     /// the texture and detach its normal map, which
     /// [`Self::upload_normal_map`] registers again.
-    pub fn replace_texture(&mut self, gpu: &Gpu, handle: Handle<Texture>, tex: &Texture) -> bool {
+    pub fn replace_texture(
+        &mut self,
+        gpu: &Gpu,
+        handle: Handle<Texture>,
+        tex: &Texture,
+    ) -> Result<bool, TextureError> {
         self.sprites.replace(&gpu.device, &gpu.queue, handle, tex)
     }
 
@@ -733,7 +747,9 @@ impl Renderer {
         if !self.sprites.has_texture(handle)
             && let Some(tex) = assets.get(handle)
         {
-            self.sprites.upload(&gpu.device, &gpu.queue, handle, tex);
+            self.sprites
+                .upload(&gpu.device, &gpu.queue, handle, tex)
+                .expect("the shared white texture is a valid 1x1 texture");
         }
         handle
     }
@@ -741,24 +757,30 @@ impl Renderer {
     /// Register `normal` as the companion normal map of the already-uploaded
     /// `diffuse` texture (R-6, PR-4). Sprites then opt in by setting their
     /// `normal` field to this handle. The normal map must match the
-    /// diffuse's dimensions.
+    /// diffuse's dimensions, or a [`TextureError`] refuses it.
     pub fn upload_normal_map(
         &mut self,
         gpu: &Gpu,
         diffuse: Handle<Texture>,
         normal: Handle<Texture>,
         tex: &Texture,
-    ) {
+    ) -> Result<(), TextureError> {
         self.sprites
-            .upload_normal(&gpu.device, &gpu.queue, diffuse, normal, tex);
+            .upload_normal(&gpu.device, &gpu.queue, diffuse, normal, tex)
     }
 
     /// Upload a light-cookie texture (PR-4 `assets/lights/*.png`) for use by
     /// [`PointLight`](crate::canvas::light::PointLight)s. Idempotent per
-    /// handle; lights referencing an unregistered cookie are skipped.
-    pub fn upload_light_cookie(&mut self, gpu: &Gpu, handle: Handle<Texture>, tex: &Texture) {
+    /// handle; lights referencing an unregistered cookie are skipped. An
+    /// invalid texture is refused with a [`TextureError`].
+    pub fn upload_light_cookie(
+        &mut self,
+        gpu: &Gpu,
+        handle: Handle<Texture>,
+        tex: &Texture,
+    ) -> Result<(), TextureError> {
         self.lights
-            .upload_cookie(&gpu.device, &gpu.queue, handle, tex);
+            .upload_cookie(&gpu.device, &gpu.queue, handle, tex)
     }
 
     /// Render one frame **unlit**: identity lighting (white modulate, no
@@ -1258,13 +1280,17 @@ mod gpu_tests {
         );
 
         let small = assets.insert(PathBuf::from("small.png"), flat(8, [255, 0, 0, 255]));
-        renderer.upload_texture(&gpu, small, assets.get(small).unwrap());
+        renderer
+            .upload_texture(&gpu, small, assets.get(small).unwrap())
+            .unwrap();
         assert_eq!(renderer.resource_stats().sprite_pages, grown.sprite_pages);
         let big = assets.insert(
             PathBuf::from("big.png"),
             flat(MAX_ATLAS_DIM + 1, [0, 255, 0, 255]),
         );
-        renderer.upload_texture(&gpu, big, assets.get(big).unwrap());
+        renderer
+            .upload_texture(&gpu, big, assets.get(big).unwrap())
+            .unwrap();
         assert_eq!(
             renderer.resource_stats().sprite_pages,
             grown.sprite_pages + 1
@@ -1302,7 +1328,9 @@ mod gpu_tests {
             assert_eq!(changed.len(), 1, "{c} is a new glyph");
             for page in changed {
                 handles.insert(page);
-                renderer.upload_texture(&gpu, page, assets.get(page).unwrap());
+                renderer
+                    .upload_texture(&gpu, page, assets.get(page).unwrap())
+                    .unwrap();
             }
             renderer.render_scene(&gpu, &mut list, &camera, &LightFrame::default());
             let sprite_pages = renderer.resource_stats().sprite_pages;
