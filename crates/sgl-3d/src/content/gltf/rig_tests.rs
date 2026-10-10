@@ -391,6 +391,62 @@ fn unsupported_skins_are_rejected() {
     }
 }
 
+// Plausible defects: a mesh's primitive with another nonzero number of
+// morph targets than its others loaded against the node's weights, its
+// extra targets driven by weights past the node's; or a primitive without
+// targets, which glTF (3.7.2.2, KhronosGroup/glTF#2650) loads unmorphed,
+// refused, or taken for the mesh's count when it comes first, so the node's
+// weights and their animation are lost.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_mesh_s_morphed_primitives_share_one_target_count() {
+    // The rigged lid's one primitive (one target), with a copy of `targets`
+    // targets inserted at `at`.
+    let with_copy = |targets: usize, at: usize| {
+        rigged(|document, _| {
+            let lid = &document["meshes"][1]["primitives"][0];
+            let mut copy = json!({"attributes": lid["attributes"].clone()});
+            if targets > 0 {
+                copy["targets"] = json!(vec![lid["targets"][0].clone(); targets]);
+            }
+            document["meshes"][1]["primitives"]
+                .as_array_mut()
+                .unwrap()
+                .insert(at, copy);
+        })
+    };
+    let error = load_slice(&with_copy(2, 1))
+        .err()
+        .expect("a primitive of 2 targets beside one of 1 was accepted")
+        .to_string();
+    assert!(
+        error.contains("mesh 1 primitive 1") && error.contains("morph targets"),
+        "{error}"
+    );
+    for at in [1, 0] {
+        let asset = load_slice(&with_copy(0, at)).unwrap_or_else(|error| panic!("{error}"));
+        let morphed: Vec<_> = asset
+            .meshes
+            .iter()
+            .filter(|mesh| !mesh.deformation.morph_targets.is_empty())
+            .collect();
+        assert_eq!(morphed.len(), 1);
+        let targets = &morphed[0].deformation.morph_targets;
+        assert_eq!(targets.len(), 1);
+        assert_eq!((targets[0].weight, targets[0].deltas.len()), (0, 3));
+        assert!(
+            asset
+                .meshes
+                .iter()
+                .any(|mesh| mesh.deformation.is_rigid() && mesh.vertices.len() == 3),
+            "the primitive without targets did not load unmorphed"
+        );
+        assert_eq!(
+            asset.rig.clips[0].channels[1].values,
+            ChannelValues::MorphWeights(vec![0., 1.])
+        );
+    }
+}
+
 // Plausible defect: an accessor whose component type or shape glTF does not
 // allow for its use, with no elements, or reaching past its buffer view
 // handed to the gltf crate's readers, which panic on it (an `unreachable!`,
