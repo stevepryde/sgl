@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `examples/direct-game` took `Renderer::white_texture`'s handle from a
+  throwaway `Assets`, so it aliased the first texture of the game's own cache;
+  it now keeps one `Assets<Texture>` and draws a second texture from it.
+  Games that copied it: pass the game's texture cache to `white_texture`.
+
 - `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
   `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
   Use or remove such calls; no other game-code changes are needed.

@@ -14,7 +14,9 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    whose RGBA length mismatches its size, and a normal map sized unlike its
    diffuse with a `TextureError`, changing nothing. `Assets` never removes
    an asset, so a `Handle<T>` stays valid for its cache's lifetime, and
-   re-inserting a path replaces the asset under the same handle. Loading is
+   re-inserting a path replaces the asset under the same handle. Handles from
+   different caches can share an index, and a renderer keys its textures by
+   handle, so a game draws only from one texture cache. Loading is
    synchronous.
    `white_texture` registers one shared 1×1 white pixel under `sgl://white`.
 2. **Draw list.** `DrawList` is the only channel from game code to the

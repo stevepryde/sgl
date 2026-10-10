@@ -1,12 +1,13 @@
 //! Minimal proof that a game owns winit and calls SGL only to draw.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use sgl_2d::assets::{Assets, Handle, Texture};
 use sgl_2d::canvas::{Camera, Context, DrawList, Renderer, SpriteInstance};
-use sgl_core::math::Vec2;
+use sgl_core::math::{UVec2, Vec2};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -20,7 +21,11 @@ const LOGICAL_HEIGHT: u32 = 540;
 struct Graphics {
     context: Context,
     renderer: Renderer,
+    /// The game's one texture cache. The renderer keys uploads by handle, so
+    /// every texture it draws comes from this cache.
+    textures: Assets<Texture>,
     white: Handle<Texture>,
+    checker: Handle<Texture>,
 }
 
 type ReadyGraphics = Rc<RefCell<Option<Graphics>>>;
@@ -35,11 +40,21 @@ struct Game {
 impl Game {
     fn install_graphics(ready: &ReadyGraphics, context: Context) {
         let mut renderer = Renderer::new(&context, LOGICAL_WIDTH, LOGICAL_HEIGHT, [0.2, 0.22, 0.3]);
-        let white = renderer.white_texture(&context, &mut Assets::default());
+        let mut textures = Assets::new();
+        let white = renderer.white_texture(&context, &mut textures);
+        // A game loads its textures into the same cache, for example through
+        // `AssetServer::load_texture`; this one is generated in place.
+        let checker = textures.insert(PathBuf::from("direct-game://checker"), checker_texture());
+        let pixels = textures.get(checker).expect("this cache issued the handle");
+        renderer
+            .upload_texture(&context, checker, pixels)
+            .expect("the checker texture is valid");
         *ready.borrow_mut() = Some(Graphics {
             context,
             renderer,
+            textures,
             white,
+            checker,
         });
     }
 
@@ -54,7 +69,18 @@ impl Game {
             // The white texture is 1×1, so scale is the size in logical pixels.
             scale: Vec2::splat(200.0),
             color: [0.98, 0.77, 0.42, 1.0],
-            ..SpriteInstance::new(graphics.white, camera.center)
+            ..SpriteInstance::new(graphics.white, camera.center - Vec2::new(130.0, 0.0))
+        });
+        // Scale multiplies the texture's size; read it from the cache.
+        let texels = graphics
+            .textures
+            .get(graphics.checker)
+            .map_or(Vec2::ONE, |texture| {
+                UVec2::new(texture.width, texture.height).as_vec2()
+            });
+        self.draw.push(SpriteInstance {
+            scale: Vec2::splat(200.0) / texels,
+            ..SpriteInstance::new(graphics.checker, camera.center + Vec2::new(130.0, 0.0))
         });
         let Some(frame) = graphics.context.acquire() else {
             return;
@@ -64,6 +90,25 @@ impl Game {
             .render(&graphics.context, &frame, &mut self.draw, &camera);
         window.pre_present_notify();
         frame.present();
+    }
+}
+
+/// An 8×8 two-tone checkerboard.
+fn checker_texture() -> Texture {
+    const SIDE: u32 = 8;
+    let rgba = (0..SIDE * SIDE)
+        .flat_map(|i| {
+            if (i % SIDE + i / SIDE).is_multiple_of(2) {
+                [40, 120, 200, 255]
+            } else {
+                [235, 240, 245, 255]
+            }
+        })
+        .collect();
+    Texture {
+        width: SIDE,
+        height: SIDE,
+        rgba,
     }
 }
 
