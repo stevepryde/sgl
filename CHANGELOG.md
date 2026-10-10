@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `DatagramTransport::receive`: returned `Option`, so any socket
+  error ended the endpoint's poll as if the socket were empty (on Windows an
+  oversized datagram or ICMP error starved every other peer); it now
+  returns `io::Result<Option<(usize, SocketAddr)>>`, `Ok(None)` when empty
+  and `Err` for a failed receive the endpoint skips. Custom transports:
+  return `Ok(None)` for `WouldBlock`, `Err` for other errors, and wrap a
+  datagram in `Ok(Some(..))`.
 - `sgl-3d` `Scene::add_shader`: loops that could run for ever were accepted
   as counted (a test or step read from a `let` computed before the loop, or
   a `break if` loop re-entered by an outer loop without restarting its

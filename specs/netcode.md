@@ -37,7 +37,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    advisory, and `send` is the only atomic admission.
 8. Generic endpoint adapters work over any `DatagramTransport`; the simulated
    network can create multiple independently addressed endpoints for acceptance
-   tests without real sockets or sleeps.
+   tests without real sockets or sleeps. A transport's receive reports an
+   empty socket apart from a failed receive; a poll skips a failed one and
+   reads on, each counting toward `max_datagrams_per_poll`, so an oversized
+   or ICMP-reported datagram costs only itself.
 
 9. Connection ids are unique for the life of a transport and never reused
    after `Disconnected`. Reconnecting yields a new id and a new epoch; late
