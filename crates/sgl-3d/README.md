@@ -658,7 +658,8 @@ combines passes from several engines, listed with their licences under it.
   resolution, and supplies the roughness input (`src/view/post_fx.rs`):
   DiligentFX's `ScreenSpaceReflectionAttribs` defaults, with a perceptual
   `RoughnessThreshold` of 0.2 as in AMD's SSSR sample, Hydrogent's 64
-  traversal steps (`MaxTraversalIntersections`), the lobe peak
+  traversal steps (`MaxTraversalIntersections`; a ray that has not confirmed
+  a hit within them is a miss), the lobe peak
   (`GGXImportanceSampleBias` 1) and 0.95 of temporal history
   (`TemporalRadianceStabilityFactor`): one stochastic ray per pixel leaves
   blotches on glossy receivers that the denoiser holds.
