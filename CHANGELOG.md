@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Renderer` screen channel: when `set_target_size` scaled a very
+  large target down (over 4096² px), the UI laid out over the smaller
+  target, too large and misaligned with the pointer; it now keeps the
+  requested size over `ui_scale`. Lay out over the new `Renderer::ui_size()`
+  instead of `target_size() / ui_scale`, and set the text raster scale to the
+  new `Renderer::ui_pixel_scale()`.
 - `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
   its near plane read the reflection depth history with the new near plane
   and discarded the history; it is now read with the near plane that wrote
