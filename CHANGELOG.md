@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `BrowserWebSocketClient::disconnect`: during reconnect backoff
+  it left the scheduled retry armed, so a later `poll` reconnected; it now
+  cancels the retry. No game-code changes needed.
 - `sgl-net` native WebSocket `disconnect`: a graceful close no longer drops
   frames still waiting on a blocked socket or its Close frame; it now ends,
   as `Local`, once the peer answers the Close or ends the stream, or at
