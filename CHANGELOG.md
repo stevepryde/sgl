@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain
+  buffers doubled past the device's storage binding limit once they held
+  over half of it, failing the frame's cull bind group; their growth now
+  stops at the limit. No game-code changes needed.
+
 - `sgl-3d` `asset::load*`: a glTF mesh whose morphed primitives have
   different numbers of morph targets loaded, the extra targets driven by
   another node's weights; it now fails the load naming the primitive.
