@@ -888,6 +888,11 @@ impl NativeWebSocketClient {
         let host = request.uri().host().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "WebSocket URL has no host")
         })?;
+        // The URI keeps an IPv6 literal's brackets; the resolver takes it bare.
+        let host = host
+            .strip_prefix('[')
+            .and_then(|literal| literal.strip_suffix(']'))
+            .unwrap_or(host);
         let port = request.uri().port_u16().unwrap_or(80);
         let addr = (host, port)
             .to_socket_addrs()?

@@ -86,7 +86,11 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     worker moves a message to its endpoint only when the endpoint has room
     on that lane, rotating between backlogged peers and lanes, and the
     browser holds released frames while `bufferedAmount` is above its
-    watermark; neither refuses an accepted message or disconnects. A lane's
+    watermark; neither refuses an accepted message or disconnects. A UDP
+    `disconnect` (caller-polled or threaded) admits nothing more but still
+    sends the reliable and unreliable messages accepted before it, closing
+    once they are acknowledged or `close_grace_ms` after the disconnect,
+    whichever is first. A lane's
     completed reliable messages not yet returned by `poll` are bounded by
     its `inbound_messages`, and by its `inbound_bytes` beside at most one
     larger message, so a message of any admitted size followed by smaller
