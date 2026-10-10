@@ -18,8 +18,10 @@ docs and specs the entry links.
 - `sgl-post-fx` SSR (SGL3D's `Crystal` reflections): a ray towards the camera
   from a surface under one unit away was projected behind the camera and
   traced mirrored, behind the surface; its end is now clipped to the near
-  plane (`CameraAttribs::set_clip_planes`, already required). No game-code
-  changes needed.
+  plane (`CameraAttribs::set_clip_planes`, already required). The WGSL
+  `ProjectDirection` (`PostFX_Common`) takes the near plane's view Z as a
+  fifth argument: WGSL calling it adds it (`g_Camera.fNearPlaneZ`). No other
+  game-code changes needed.
 
 ## 0.4.0 — 2026-10-09
 

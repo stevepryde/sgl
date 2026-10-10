@@ -973,6 +973,82 @@ fn inverse(m: [f32; 16]) -> [f32; 16] {
 // with the jittered projection. Upstream reconstructs view space without the
 // off-centre terms, which bends every screen-space ray by the jitter scaled
 // by the ray's length (several texels here).
+/// One SSR execution with the default attributes over a still frame of
+/// `SIZE` texels: depths, Rgba16Float world normals, R8 roughness and
+/// Rgba16Float colour. Returns the SSR radiance.
+fn ssr_radiance(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    camera: &CameraAttribs,
+    depths: &[f32],
+    normals: &[u8],
+    roughness: &[u8],
+    color: &[u8],
+) -> Vec<[f32; 4]> {
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let current_depth = depth_values(device, queue, &mut encoder, depths);
+    let previous_depth = depth(device, &mut encoder, 1.0);
+    let normal = texels(device, queue, wgpu::TextureFormat::Rgba16Float, normals);
+    let material = texels(device, queue, wgpu::TextureFormat::R8Unorm, roughness);
+    let color = texels(device, queue, wgpu::TextureFormat::Rgba16Float, color);
+    let motion = texture(
+        device,
+        queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0.0, 0.0]),
+    );
+    // No fade-in: one execution, whose transition alpha would otherwise be
+    // 0 (DFX-24), as SGL3D configures the context.
+    let mut context = PostFXContext::new(
+        device,
+        queue,
+        post_fx_context::CreateInfo {
+            transition_duration: 0.0,
+        },
+    );
+    let mut ssr = ScreenSpaceReflection::new(device);
+    context.prepare_resources(
+        device,
+        &FrameDesc {
+            index: 0,
+            width: SIZE[0],
+            height: SIZE[1],
+            output_width: SIZE[0],
+            output_height: SIZE[1],
+        },
+        post_fx_context::FeatureFlags::NONE,
+    );
+    ssr.prepare_resources(device, &mut encoder, &mut context, FeatureFlags::NONE);
+    context.execute(&mut RenderAttributes {
+        device,
+        queue,
+        device_context: &mut encoder,
+        curr_depth_buffer_srv: &current_depth,
+        prev_depth_buffer_srv: &previous_depth,
+        curr_camera: Some(camera),
+        prev_camera: Some(camera),
+        camera_attribs_cb: None,
+        pass_timestamps: None,
+    });
+    ssr.execute(&mut screen_space_reflection::RenderAttributes {
+        device,
+        queue,
+        device_context: &mut encoder,
+        post_fx_context: &mut context,
+        color_buffer_srv: &color,
+        depth_buffer_srv: &current_depth,
+        normal_buffer_srv: &normal,
+        material_buffer_srv: &material,
+        motion_vectors_srv: &motion,
+        ssr_attribs: &ScreenSpaceReflectionAttribs::default(),
+        pass_timestamps: None,
+        reset_accumulation: true,
+        frame_time: 1.0 / 60.0,
+    });
+    queue.submit([encoder.finish()]);
+    read_rgba16f(device, queue, ssr.get_ssr_radiance_srv())
+}
+
 #[test]
 fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
     let Some((device, queue)) = device() else {
@@ -1023,68 +1099,9 @@ fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
         color.extend(half(&[x as f32, y as f32, 0.0, 1.0]));
         depths.push(depth_of(point[2]));
     }
-    let mut encoder = device.create_command_encoder(&Default::default());
-    let current_depth = depth_values(&device, &queue, &mut encoder, &depths);
-    let previous_depth = depth(&device, &mut encoder, 1.0);
-    let normal = texels(&device, &queue, wgpu::TextureFormat::Rgba16Float, &normals);
-    let material = texels(&device, &queue, wgpu::TextureFormat::R8Unorm, &roughness);
-    let color = texels(&device, &queue, wgpu::TextureFormat::Rgba16Float, &color);
-    let motion = texture(
-        &device,
-        &queue,
-        wgpu::TextureFormat::Rg16Float,
-        &half(&[0.0, 0.0]),
+    let output = ssr_radiance(
+        &device, &queue, &curr, &depths, &normals, &roughness, &color,
     );
-    // No fade-in: one execution, whose transition alpha would otherwise be
-    // 0 (DFX-24), as SGL3D configures the context.
-    let mut context = PostFXContext::new(
-        &device,
-        &queue,
-        post_fx_context::CreateInfo {
-            transition_duration: 0.0,
-        },
-    );
-    let mut ssr = ScreenSpaceReflection::new(&device);
-    context.prepare_resources(
-        &device,
-        &FrameDesc {
-            index: 0,
-            width: SIZE[0],
-            height: SIZE[1],
-            output_width: SIZE[0],
-            output_height: SIZE[1],
-        },
-        post_fx_context::FeatureFlags::NONE,
-    );
-    ssr.prepare_resources(&device, &mut encoder, &mut context, FeatureFlags::NONE);
-    context.execute(&mut RenderAttributes {
-        device: &device,
-        queue: &queue,
-        device_context: &mut encoder,
-        curr_depth_buffer_srv: &current_depth,
-        prev_depth_buffer_srv: &previous_depth,
-        curr_camera: Some(&curr),
-        prev_camera: Some(&curr),
-        camera_attribs_cb: None,
-        pass_timestamps: None,
-    });
-    ssr.execute(&mut screen_space_reflection::RenderAttributes {
-        device: &device,
-        queue: &queue,
-        device_context: &mut encoder,
-        post_fx_context: &mut context,
-        color_buffer_srv: &color,
-        depth_buffer_srv: &current_depth,
-        normal_buffer_srv: &normal,
-        material_buffer_srv: &material,
-        motion_vectors_srv: &motion,
-        ssr_attribs: &ScreenSpaceReflectionAttribs::default(),
-        pass_timestamps: None,
-        reset_accumulation: true,
-        frame_time: 1.0 / 60.0,
-    });
-    queue.submit([encoder.finish()]);
-    let output = read_rgba16f(&device, &queue, ssr.get_ssr_radiance_srv());
     let mut checked = 0;
     for (&(_, point, floor), read) in pixels.iter().zip(&output) {
         if !floor || read[3] == 0.0 {
@@ -1115,11 +1132,120 @@ fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
     );
 }
 
+// PROVENANCE.md DFX-39: a wall mirror half a metre in front of a camera that
+// looks slightly down reflects the floor between them. Its rays head back
+// towards the camera, so a unit ray ends behind it, and each mirror pixel
+// still reads the floor texel its mirror ray meets.
+#[test]
+fn ssr_a_near_mirror_reflects_the_floor_in_front_of_it() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // View space of a camera 0.3 above the floor, pitched 0.3 rad down, a
+    // wall 0.5 ahead: dot(p, n) = -distance on each plane.
+    const PITCH: f64 = 0.3;
+    const FLOOR: f64 = 0.3;
+    const WALL: f64 = 0.5;
+    let (s, c) = PITCH.sin_cos();
+    let floor_normal = [0.0, c, -s];
+    let wall_normal = [0.0, -s, -c];
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    // The nearest plane a ray from `o` along `d` meets, and whether it is the floor.
+    let trace = |o: [f64; 3], d: [f64; 3]| {
+        let meet = |n: [f64; 3], k: f64| {
+            let t = (k - dot(o, n)) / dot(d, n);
+            (dot(d, n) < 0.0 && t > 1e-9).then_some(t)
+        };
+        let (t, floor) = match (meet(floor_normal, -FLOOR), meet(wall_normal, -WALL)) {
+            (Some(f), Some(w)) => (f.min(w), f < w),
+            (Some(f), None) => (f, true),
+            (None, Some(w)) => (w, false),
+            (None, None) => return None,
+        };
+        Some((std::array::from_fn::<f64, 3, _>(|i| o[i] + t * d[i]), floor))
+    };
+    let curr = camera(false, 0);
+    let p = curr.m_proj.map(f64::from);
+    let (a, b, m22, m32) = (p[0], p[5], p[10], p[14]);
+    let [width, height] = SIZE.map(f64::from);
+    let pixels: Vec<_> = (0..SIZE[1])
+        .flat_map(|y| (0..SIZE[0]).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let ndc = [
+                (f64::from(x) + 0.5) / width * 2.0 - 1.0,
+                1.0 - (f64::from(y) + 0.5) / height * 2.0,
+            ];
+            let ray = [ndc[0] / a, ndc[1] / b, 1.0];
+            let (point, floor) = trace([0.0; 3], ray).unwrap();
+            (ray, point, floor)
+        })
+        .collect();
+    let mut normals = Vec::new();
+    let mut roughness = Vec::new();
+    let mut color = Vec::new();
+    let mut depths = Vec::new();
+    for (i, &(_, point, floor)) in pixels.iter().enumerate() {
+        let normal = if floor { floor_normal } else { wall_normal };
+        normals.extend(half(&[
+            normal[0] as f32,
+            normal[1] as f32,
+            normal[2] as f32,
+            0.0,
+        ]));
+        roughness.push(if floor { 255 } else { 0 });
+        let texel = [i as u32 % SIZE[0], i as u32 / SIZE[0]];
+        color.extend(half(&[texel[0] as f32, texel[1] as f32, 0.0, 1.0]));
+        depths.push(((point[2] * m22 + m32) / point[2]) as f32);
+    }
+    let output = ssr_radiance(
+        &device, &queue, &curr, &depths, &normals, &roughness, &color,
+    );
+    let mut checked = 0;
+    for (&(ray, point, floor), read) in pixels.iter().zip(&output) {
+        if floor || read[3] == 0.0 {
+            continue;
+        }
+        let length = dot(ray, ray).sqrt();
+        let view = ray.map(|r| r / length);
+        let mirror: [f64; 3] =
+            std::array::from_fn(|i| view[i] - 2.0 * dot(view, wall_normal) * wall_normal[i]);
+        let (hit, hit_floor) = trace(point, mirror).unwrap();
+        let expected = [
+            (hit[0] * a / hit[2] + 1.0) / 2.0 * width,
+            (1.0 - hit[1] * b / hit[2]) / 2.0 * height,
+        ]
+        .map(f64::floor);
+        // A mirror ray that leaves the screen within a texel of its edge may
+        // take the edge texel's surface.
+        if expected[0] < 1.0
+            || expected[1] < 1.0
+            || expected[0] > width - 2.0
+            || expected[1] > height - 2.0
+        {
+            continue;
+        }
+        // Radiance is premultiplied by confidence (DFX-17).
+        let texel = [read[0] / read[3], read[1] / read[3]].map(f64::from);
+        // Spatial reconstruction blends in neighbouring rays, whose hits lie
+        // a texel apart along the grazing floor.
+        let error = [texel[0] - expected[0], texel[1] - expected[1]];
+        assert!(
+            hit_floor && mirror[2] < 0.0 && error.iter().all(|e| e.abs() <= 1.5),
+            "mirror point {point:?} read texel {texel:?}, its mirror ray meets {hit:?}, texel {expected:?}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 100,
+        "only {checked} mirror pixels reflected the floor"
+    );
+}
+
 // PROVENANCE.md DFX-39: a ray towards the camera from a surface nearer than
 // its unit length, which ends behind the camera, is traced along its own
 // projection: the screen-space direction runs the way a point stepped a
-// little along the ray projects, not mirrored. A ray away from the camera
-// keeps that direction too.
+// little along the ray projects, not mirrored, also with the near plane left
+// at 0. A ray away from the camera keeps that direction too.
 #[test]
 fn ssr_rays_towards_the_camera_are_projected_in_front_of_it() {
     let Some((device, queue)) = device() else {
@@ -1156,6 +1282,7 @@ fn ssr_rays_towards_the_camera_are_projected_in_front_of_it() {
     let origin_ss = ProjectPosition(origin, proj);
     results[0] = vec4<f32>(ProjectDirection(origin, {towards}, origin_ss, proj, {near:?}), 0.0);
     results[1] = vec4<f32>(ProjectDirection(origin, {away}, origin_ss, proj, {near:?}), 0.0);
+    results[2] = vec4<f32>(ProjectDirection(origin, {towards}, origin_ss, proj, 0.0), 0.0);
 }}
 ",
             origin = wgsl(origin),
@@ -1177,13 +1304,13 @@ fn ssr_rays_towards_the_camera_are_projected_in_front_of_it() {
         });
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 32,
+            size: 48,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: 32,
+            size: 48,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1202,14 +1329,15 @@ fn ssr_rays_towards_the_camera_are_projected_in_front_of_it() {
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 32);
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 48);
         queue.submit([encoder.finish()]);
         readback.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         let bytes = readback.get_mapped_range(..).unwrap();
         let result: &[[f32; 4]] = bytemuck::cast_slice(&bytes);
         let start = project(origin);
-        for (ray, traced) in rays.iter().zip(result) {
+        // The third is the first with the near plane left at 0.
+        for (ray, traced) in [rays[0], rays[1], rays[0]].iter().zip(result) {
             // A point 1 mm along the ray, in front of the camera.
             let step = project(std::array::from_fn(|i| origin[i] + 1e-3 * ray[i]));
             let expected = normalize(std::array::from_fn(|i| step[i] - start[i]));

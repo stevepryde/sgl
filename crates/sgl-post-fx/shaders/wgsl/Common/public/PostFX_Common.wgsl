@@ -72,12 +72,14 @@ fn ProjectPosition(Origin: vec3<f32>, Transform: mat4x4<f32>) -> vec3<f32>
 // PROVENANCE.md DFX-39: the end of the ray is clipped to the near plane (view Z `NearPlaneZ`)
 // before it is projected. A ray heading towards the camera from nearer than its length otherwise
 // ends behind the camera, where the projection mirrors its direction on the screen and in depth.
+// A near plane left at 0 clips just in front of the camera plane, as Godot's bias does.
 fn ProjectDirection(Origin: vec3<f32>, Direction: vec3<f32>, OriginSS: vec3<f32>, Mat: mat4x4<f32>, NearPlaneZ: f32) -> vec3<f32>
 {
+    let ClipZ = max(NearPlaneZ, 1e-5);
     var End = Origin + Direction;
-    if (Direction.z < 0.0 && End.z < NearPlaneZ) {
-        // An origin on (or by rounding nearer than) the near plane keeps no length.
-        End = Origin + Direction * max((NearPlaneZ - Origin.z) / Direction.z, 0.0);
+    if (Direction.z < 0.0 && End.z < ClipZ) {
+        // An origin on (or by rounding nearer than) the clip plane keeps no length.
+        End = Origin + Direction * max((ClipZ - Origin.z) / Direction.z, 0.0);
     }
     return ProjectPosition(End, Mat) - OriginSS;
 }
