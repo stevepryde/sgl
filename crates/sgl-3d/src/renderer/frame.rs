@@ -59,6 +59,7 @@ pub(super) fn render(
         motion_blur,
         post,
         rendered,
+        targets_generation,
         ray_form,
         #[cfg(feature = "diagnostics")]
         probe,
@@ -132,7 +133,7 @@ pub(super) fn render(
     );
     // The camera history commits the jitter this frame applies.
     history.camera.jitter = jitter.map_or([0.; 2], |jitter| jitter.ndc);
-    *rendered = Some((history, scene.id));
+    *rendered = Some((history, scene.id, *targets_generation));
     // The camera's statistics: those completed so far, and none copied yet
     // this frame.
     statistics.poll(device);

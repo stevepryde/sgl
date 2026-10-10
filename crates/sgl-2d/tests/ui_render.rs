@@ -23,11 +23,13 @@ fn focus_disabled_selection_and_wrapped_tooltips_render_inside_viewport() {
     let mut renderer = Renderer::headless(&gpu, 128, 128, [0.0; 3], LightingSpace::Gamma);
     let mut assets = Assets::<Texture>::new();
     let mut ui = Ui::new(&mut assets);
-    renderer.upload_texture(
-        &gpu,
-        ui.white_texture(),
-        assets.get(ui.white_texture()).unwrap(),
-    );
+    renderer
+        .upload_texture(
+            &gpu,
+            ui.white_texture(),
+            assets.get(ui.white_texture()).unwrap(),
+        )
+        .unwrap();
     let mut text = TextRenderer::new(include_bytes!("fixtures/IBMPlexSans-Regular.ttf")).unwrap();
     let camera = Camera::new(128, 128);
     let control = Rect::new(90.0, 90.0, 24.0, 24.0);
@@ -111,7 +113,9 @@ fn focus_disabled_selection_and_wrapped_tooltips_render_inside_viewport() {
         }
         frame.end();
         for page in text.end_frame(&mut assets, &mut list) {
-            renderer.upload_texture(&gpu, page, assets.get(page).unwrap());
+            renderer
+                .upload_texture(&gpu, page, assets.get(page).unwrap())
+                .unwrap();
         }
         renderer.render_scene(&gpu, &mut list, &camera, &LightFrame::default());
         frames.push(renderer.read_scene(&gpu).unwrap());
@@ -157,11 +161,13 @@ fn opaque_tool_chrome_keeps_text_and_focus_legible_over_bright_and_dark_scenes()
     let mut renderer = Renderer::headless(&gpu, 256, 128, [0.0; 3], LightingSpace::Gamma);
     let mut assets = Assets::<Texture>::new();
     let mut ui = Ui::new(&mut assets);
-    renderer.upload_texture(
-        &gpu,
-        ui.white_texture(),
-        assets.get(ui.white_texture()).unwrap(),
-    );
+    renderer
+        .upload_texture(
+            &gpu,
+            ui.white_texture(),
+            assets.get(ui.white_texture()).unwrap(),
+        )
+        .unwrap();
     let mut text = TextRenderer::new(include_bytes!("fixtures/IBMPlexSans-Regular.ttf")).unwrap();
     let camera = Camera::new(256, 128);
     let pixel = |pixels: &[u8], x: usize, y: usize| -> [u8; 3] {
@@ -209,7 +215,9 @@ fn opaque_tool_chrome_keeps_text_and_focus_legible_over_bright_and_dark_scenes()
                 );
                 frame.end();
                 for page in text.end_frame(&mut assets, &mut list) {
-                    renderer.upload_texture(&gpu, page, assets.get(page).unwrap());
+                    renderer
+                        .upload_texture(&gpu, page, assets.get(page).unwrap())
+                        .unwrap();
                 }
                 renderer.render_scene(&gpu, &mut list, &camera, &LightFrame::default());
                 let pixels = renderer.read_scene(&gpu).unwrap();
