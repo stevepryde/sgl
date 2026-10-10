@@ -119,7 +119,8 @@ pub struct ScreenSpaceReflectionAttribs {
     pub roughness_channel: u32,
 
     /// Caps the maximum number of lookups that are performed from the depth buffer hierarchy. Most rays should terminate after approximately 20 lookups.
-    /// At most 256, the top of DiligentFX's range (`SSR_MAX_TRAVERSAL_INTERSECTIONS`, PROVENANCE.md DFX-30); more count as 256
+    /// At most 256, the top of DiligentFX's range (`SSR_MAX_TRAVERSAL_INTERSECTIONS`, PROVENANCE.md DFX-30); more count as 256.
+    /// A ray that runs out of lookups before confirming a hit is a miss (PROVENANCE.md DFX-38).
     pub max_traversal_intersections: u32,
 
     /// This parameter is aimed at reducing noise by modify sampling in the ray tracing stage. Increasing the value increases the deviation from the ground truth but reduces the noise

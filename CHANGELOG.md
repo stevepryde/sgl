@@ -18,6 +18,14 @@ docs and specs the entry links.
 - `sgl-3d` `Renderer::finish_frame`: a `Renderer::resize` that changed the
   targets between `render` and `finish_frame` no longer loses its history
   reset; the next frame restarts history. No game-code changes needed.
+- `sgl-post-fx` SSR (`HierarchicalRaymarch`, SGL3D's `Crystal` reflections):
+  a ray that runs out of `max_traversal_intersections` before confirming a
+  hit was accepted by proximity and now reports a miss, so streaks near
+  surfaces at the step cap give way to the fallback. No game-code changes
+  needed.
+- `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
+  panicked; now `max` wins and a NaN bound is ignored. No game-code changes
+  needed.
 
 ## 0.4.0 — 2026-10-09
 
