@@ -28,7 +28,9 @@
 //! reliable and unreliable messages to the endpoint as room allows, and
 //! begins the endpoint's graceful close once none is left. The endpoint's
 //! `close_grace_ms` runs from that first turn, so whatever is still queued
-//! or unacknowledged when it ends is abandoned.
+//! or unacknowledged when it ends is abandoned. Messages that arrive from
+//! the connection meanwhile are acknowledged and dropped: the caller has
+//! already seen it end.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -74,12 +76,8 @@ trait WorkerEndpoint: ServerIo {
     ) -> Vec<ServerEvent>;
 
     /// [`ServerIo::disconnect`] for a close that began earlier: what `conn`
-    /// still holds at `deadline_ms` is abandoned. A transport without a
-    /// close grace closes at once.
-    fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, deadline_ms: u64) {
-        let _ = deadline_ms;
-        self.disconnect(conn, now_ms);
-    }
+    /// still holds at `deadline_ms` is abandoned.
+    fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, deadline_ms: u64);
 }
 
 fn endpoint_poll_within<T: DatagramTransport>(
@@ -917,10 +915,16 @@ mod tests {
         ) -> Vec<ServerEvent> {
             endpoint_poll_within(self.endpoint_mut(), now_ms, holding)
         }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, deadline_ms: u64) {
+            self.endpoint_mut()
+                .disconnect_by(conn.raw(), now_ms, deadline_ms);
+        }
     }
 
     /// The memory transport delivers whole messages with no window to
-    /// hold, so these tests keep within the ingress bounds.
+    /// hold, so these tests keep within the ingress bounds. It has no close
+    /// grace, so it closes at once.
     impl WorkerEndpoint for crate::MemoryServerIo {
         fn poll_within(
             &mut self,
@@ -928,6 +932,10 @@ mod tests {
             _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
         ) -> Vec<ServerEvent> {
             self.poll(now_ms)
+        }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, _deadline_ms: u64) {
+            self.disconnect(conn, now_ms);
         }
     }
 
@@ -958,6 +966,10 @@ mod tests {
             _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
         ) -> Vec<ServerEvent> {
             self.poll(now_ms)
+        }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, _deadline_ms: u64) {
+            self.disconnect(conn, now_ms);
         }
     }
 
@@ -1092,6 +1104,10 @@ mod tests {
             _holding: &dyn Fn(ConnectionId, Lane) -> InboundUsage,
         ) -> Vec<ServerEvent> {
             self.poll(now_ms)
+        }
+
+        fn disconnect_by(&mut self, conn: ConnectionId, now_ms: u64, _deadline_ms: u64) {
+            self.disconnect(conn, now_ms);
         }
     }
 
