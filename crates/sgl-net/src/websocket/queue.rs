@@ -652,6 +652,13 @@ impl PeerState {
 
     pub(super) fn close(&mut self, reason: DisconnectReason) {
         if self.terminal.is_none() {
+            // The caller disconnected first, so whatever ends the close
+            // ends it as `Local`.
+            let reason = if self.graceful_closing {
+                DisconnectReason::Local
+            } else {
+                reason
+            };
             self.terminal = Some(reason);
             self.graceful_closing = false;
             self.graceful_started_ms = None;
@@ -727,6 +734,14 @@ mod tests {
             !state.expire_graceful_close(100 + crate::websocket::GRACEFUL_CLOSE_TIMEOUT_MS - 1)
         );
         assert!(state.expire_graceful_close(100 + crate::websocket::GRACEFUL_CLOSE_TIMEOUT_MS));
+        assert_eq!(state.terminal(), Some(DisconnectReason::Local));
+
+        // #309: the peer's own close landing during the caller's graceful
+        // close still ends it as `Local`.
+        let mut state = new_peer();
+        state.send(Delivery::RELIABLE_ORDERED, b"unsent").unwrap();
+        state.begin_graceful_close(100);
+        state.close(DisconnectReason::Peer);
         assert_eq!(state.terminal(), Some(DisconnectReason::Local));
 
         let mut state = new_peer();

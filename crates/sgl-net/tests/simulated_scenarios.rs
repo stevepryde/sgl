@@ -433,6 +433,50 @@ fn a_saturated_sender_still_times_out_when_the_peer_falls_silent() {
     assert!(next > 0, "the sender was admitting before the link died");
 }
 
+/// Defect (#309): a caller-polled UDP connection both ends close in the
+/// same tick reporting nothing, or `Disconnected { Peer }` when the other
+/// end's close lands in its grace period. Oracle: the `disconnect` rule of
+/// netcode.md 2: a connection the caller disconnects reports exactly one
+/// `Disconnected`, with reason `Local`. Each end queues a reliable message,
+/// so both closes wait out their grace, and then both disconnect in the
+/// same tick; over the next three seconds each end reports only `Local`.
+#[test]
+fn a_udp_connection_both_ends_close_at_once_reports_local_on_each() {
+    let mut world = World::new(clean(), 23, EndpointConfig::default());
+    let client = world.connect(1);
+    let conn = world.connect_all(5_000)[client];
+    world
+        .server
+        .send(conn, Delivery::RELIABLE_ORDERED, b"server's last")
+        .unwrap();
+    world.clients[client]
+        .send(Delivery::RELIABLE_ORDERED, b"client's last")
+        .unwrap();
+    world.server.disconnect(conn, world.now);
+    world.clients[client].disconnect(world.now);
+
+    let (mut server_events, mut client_events) = (Vec::new(), Vec::new());
+    let end = world.now + 3_000;
+    while world.now < end {
+        let (server, mut clients) = world.tick();
+        server_events.extend(server);
+        client_events.append(&mut clients[client]);
+    }
+    assert_eq!(
+        server_events,
+        [ServerEvent::Disconnected {
+            conn,
+            reason: DisconnectReason::Local,
+        }]
+    );
+    assert_eq!(
+        client_events,
+        [ClientEvent::Disconnected {
+            reason: DisconnectReason::Local,
+        }]
+    );
+}
+
 /// Defect (#303): a caller-polled receiver that stalls with reliable data
 /// in flight being dropped once the sender has resent a fragment a fixed
 /// number of times, well inside `timeout_ms`. Oracle: netcode.md 11 (a

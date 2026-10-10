@@ -357,7 +357,9 @@ pub trait ClientIo {
     /// Advances outbound transport work at the caller-provided virtual time.
     fn flush(&mut self, now_ms: u64);
 
-    /// Flushes pending work and ends the connection at `now_ms`.
+    /// Flushes pending work and ends the connection at `now_ms`. A later
+    /// poll reports exactly one `Disconnected { reason: Local }` for it,
+    /// whatever the peer does meanwhile.
     fn disconnect(&mut self, now_ms: u64);
 
     /// Returns this transport's shared RTT estimate.
@@ -415,7 +417,9 @@ pub trait ServerIo {
     /// Advances outbound transport work at the caller-provided virtual time.
     fn flush(&mut self, now_ms: u64);
 
-    /// Flushes and ends one process-local connection at `now_ms`.
+    /// Flushes and ends one process-local connection at `now_ms`. A later
+    /// poll reports exactly one `Disconnected { conn, reason: Local }` for
+    /// it, whatever the peer does meanwhile.
     fn disconnect(&mut self, conn: ConnectionId, now_ms: u64);
 
     /// Stops accepting new connections without affecting existing ones.

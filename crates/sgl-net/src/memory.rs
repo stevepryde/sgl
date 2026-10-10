@@ -130,6 +130,18 @@ impl DuplexEnd {
             && Rc::strong_count(&self.inbound) > 1
     }
 
+    /// Why the connection ended, once it has: `Local` when this end
+    /// disconnected first, whatever the other end did afterwards.
+    fn ended(&self) -> Option<DisconnectReason> {
+        if self.local_ended {
+            Some(DisconnectReason::Local)
+        } else if self.connected() {
+            None
+        } else {
+            Some(DisconnectReason::Peer)
+        }
+    }
+
     /// Reliable messages and bytes `lane` still holds in this direction:
     /// staged here plus flushed but not yet polled by the peer.
     fn lane_usage(&self, delivery: Delivery) -> (usize, usize) {
@@ -309,12 +321,12 @@ pub fn memory_duplex_with(
             duplex: client,
             rtt: RttEstimator::new(),
             announced: false,
-            peer_disconnect_announced: false,
+            disconnect_announced: false,
         },
         MemoryServerIo {
             duplex: server,
             announced: false,
-            peer_disconnect_announced: false,
+            disconnect_announced: false,
         },
     ))
 }
@@ -325,7 +337,7 @@ pub struct MemoryClientIo {
     duplex: DuplexEnd,
     rtt: RttEstimator,
     announced: bool,
-    peer_disconnect_announced: bool,
+    disconnect_announced: bool,
 }
 
 impl ClientIo for MemoryClientIo {
@@ -346,15 +358,11 @@ impl ClientIo for MemoryClientIo {
                 payload: item.payload,
             });
         }
-        if self.announced
-            && !self.duplex.local_ended
-            && !self.duplex.connected()
-            && !self.peer_disconnect_announced
+        if !self.disconnect_announced
+            && let Some(reason) = self.duplex.ended()
         {
-            self.peer_disconnect_announced = true;
-            events.push(ClientEvent::Disconnected {
-                reason: DisconnectReason::Peer,
-            });
+            self.disconnect_announced = true;
+            events.push(ClientEvent::Disconnected { reason });
         }
         events
     }
@@ -385,7 +393,7 @@ impl ClientIo for MemoryClientIo {
 pub struct MemoryServerIo {
     duplex: DuplexEnd,
     announced: bool,
-    peer_disconnect_announced: bool,
+    disconnect_announced: bool,
 }
 
 impl MemoryServerIo {
@@ -415,15 +423,13 @@ impl ServerIo for MemoryServerIo {
                 });
             }
         }
-        if self.announced
-            && !self.duplex.local_ended
-            && !self.duplex.connected()
-            && !self.peer_disconnect_announced
+        if !self.disconnect_announced
+            && let Some(reason) = self.duplex.ended()
         {
-            self.peer_disconnect_announced = true;
+            self.disconnect_announced = true;
             events.push(ServerEvent::Disconnected {
                 conn: SOLO_CONNECTION,
-                reason: DisconnectReason::Peer,
+                reason,
             });
         }
         events
@@ -701,6 +707,38 @@ mod tests {
         client
             .send(Delivery::RELIABLE_ORDERED, &[0; 10])
             .expect("exactly the remaining bytes");
+    }
+
+    /// Defect (#309): a memory connection the caller closed reporting
+    /// nothing, or `Peer` when the other end closes too. Oracle: the
+    /// `disconnect` rule of netcode.md 2: exactly one `Disconnected`, with
+    /// reason `Local`, on each end that disconnected.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_connection_both_ends_close_at_once_reports_local_on_each() {
+        let (mut client, mut server) = memory_duplex();
+        let _ = client.poll(0);
+        let _ = server.poll(0);
+        client.disconnect(5);
+        server.disconnect(SOLO_CONNECTION, 5);
+        for now in [6, 7] {
+            let expected_client: &[ClientEvent] = if now == 6 {
+                &[ClientEvent::Disconnected {
+                    reason: DisconnectReason::Local,
+                }]
+            } else {
+                &[]
+            };
+            let expected_server: &[ServerEvent] = if now == 6 {
+                &[ServerEvent::Disconnected {
+                    conn: SOLO_CONNECTION,
+                    reason: DisconnectReason::Local,
+                }]
+            } else {
+                &[]
+            };
+            assert_eq!(client.poll(now), expected_client);
+            assert_eq!(server.poll(now), expected_server);
+        }
     }
 
     #[wasm_bindgen_test(unsupported = test)]

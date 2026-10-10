@@ -678,7 +678,9 @@ impl<T: DatagramTransport> Endpoint<T> {
     }
 
     /// Stops admission to `peer` and closes it once what it accepted is
-    /// acknowledged, or `close_grace_ms` from now.
+    /// acknowledged, or `close_grace_ms` from now. The next poll reports it
+    /// `Disconnected { Local }`, and nothing about it follows, whatever the
+    /// peer does meanwhile.
     pub fn disconnect(&mut self, peer: u64, now_ms: u64) {
         let deadline_ms = self
             .now_ms
@@ -692,9 +694,16 @@ impl<T: DatagramTransport> Endpoint<T> {
     pub(crate) fn disconnect_by(&mut self, peer: u64, now_ms: u64, deadline_ms: u64) {
         self.now_ms = self.now_ms.max(now_ms);
         let now_ms = self.now_ms;
-        let Some(handshake) = self.peers.get(&peer).map(|state| state.handshake) else {
+        let Some(state) = self.peers.get(&peer) else {
             return;
         };
+        let handshake = state.handshake;
+        if !state.is_closing() {
+            self.pending_events.push_back(EndpointEvent::Disconnected {
+                peer,
+                reason: DisconnectReason::Local,
+            });
+        }
         if handshake != Handshake::Connected {
             self.remove_and_notify(peer, now_ms);
             return;
@@ -954,11 +963,13 @@ impl<T: DatagramTransport> Endpoint<T> {
                 let Some(id) = self.match_peer(source, nonces) else {
                     return;
                 };
-                self.remove_peer(id);
-                events.push(EndpointEvent::Disconnected {
-                    peer: id,
-                    reason: DisconnectReason::Peer,
-                });
+                // One the caller closed was reported `Local` already.
+                if self.remove_peer(id).is_some_and(|peer| !peer.is_closing()) {
+                    events.push(EndpointEvent::Disconnected {
+                        peer: id,
+                        reason: DisconnectReason::Peer,
+                    });
+                }
             }
             _ => {}
         }
@@ -1167,7 +1178,7 @@ impl<T: DatagramTransport> Endpoint<T> {
             let (addr, nonces) = (peer.addr, peer.nonces);
             self.send_control(addr, Kind::Disconnect, nonces, self.now_ms);
         }
-        if self.remove_peer(id).is_some() {
+        if self.remove_peer(id).is_some_and(|peer| !peer.is_closing()) {
             self.pending_events
                 .push_back(EndpointEvent::Disconnected { peer: id, reason });
         }
@@ -1687,7 +1698,13 @@ mod tests {
         );
 
         server.transport.receive_ack(source, nonces, 1);
-        assert!(server.poll(50).is_empty());
+        assert_eq!(
+            server.poll(50),
+            vec![EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::Local,
+            }]
+        );
         assert!(!server.peers.contains_key(&1));
         assert_eq!(
             server
@@ -1735,7 +1752,13 @@ mod tests {
             ]
         );
         assert!(server.peers.contains_key(&1));
-        assert!(server.poll(1_009).is_empty());
+        assert_eq!(
+            server.poll(1_009),
+            vec![EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::Local,
+            }]
+        );
         assert!(server.peers.contains_key(&1));
 
         assert!(server.poll(1_010).is_empty());
@@ -1937,7 +1960,13 @@ mod tests {
             vec![b"abandoned".to_vec()]
         );
         client.transport.receive_ack(server_address, nonces, 1);
-        assert!(client.poll(4).is_empty());
+        assert_eq!(
+            client.poll(4),
+            vec![EndpointEvent::Disconnected {
+                peer,
+                reason: DisconnectReason::Local,
+            }]
+        );
         assert!(!client.peers.contains_key(&peer));
         assert_eq!(
             client
@@ -2109,7 +2138,13 @@ mod tests {
         server.disconnect(1, boundary + 3);
         server.transport.sent.clear();
         confirm(&mut server, source, current);
-        assert!(server.poll(boundary + 4).is_empty());
+        assert_eq!(
+            server.poll(boundary + 4),
+            vec![EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::Local,
+            }]
+        );
         assert!(server.transport.sent.is_empty());
         assert!(server.peers.is_empty());
         assert!(server.routes.is_empty());
