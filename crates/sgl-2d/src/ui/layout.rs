@@ -107,8 +107,8 @@ impl UiFrame<'_> {
     /// total content height laid out from `rect.min.y - *offset`. The wheel
     /// scrolls while hovered; a draggable scrollbar appears when content
     /// overflows; `*offset` is clamped to the valid range. Draws after this
-    /// clip to `rect` (including text) until
-    /// [`scroll_area_end`](Self::scroll_area_end).
+    /// clip to `rect` within the enclosing clip (including text) until
+    /// [`scroll_area_end`](Self::scroll_area_end); scroll areas nest.
     pub fn scroll_area_begin(&mut self, name: &str, rect: Rect, content_h: f32, offset: &mut f32) {
         let id = widget_id(name);
         let view_h = rect.size().y;
@@ -159,12 +159,15 @@ impl UiFrame<'_> {
             self.rect(thumb, color);
         }
 
-        self.set_clip(Some(rect));
+        self.scroll_clips.push(self.clip);
+        self.set_clip(Some(self.clip_within(rect)));
     }
 
-    /// End the current scroll area (drops the clip).
+    /// End the innermost scroll area, restoring the clip in effect at its
+    /// [`scroll_area_begin`](Self::scroll_area_begin).
     pub fn scroll_area_end(&mut self) {
-        self.set_clip(None);
+        let outer = self.scroll_clips.pop().flatten();
+        self.set_clip(outer);
     }
 }
 
@@ -172,8 +175,8 @@ impl UiFrame<'_> {
 mod tests {
     use super::*;
     use crate::canvas::draw::DrawList;
-    use crate::ui::UiInput;
     use crate::ui::test_ui::{fixture, hover_at, press_at};
+    use crate::ui::{UiInput, UiKey};
     use sgl_core::math::Vec2;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -362,6 +365,68 @@ mod tests {
             .any(|q| close(q.pos, backdrop.0) && close(q.scale, backdrop.1));
         let rects: Vec<(Vec2, Vec2)> = list.screen.iter().map(|q| (q.pos, q.scale)).collect();
         assert!(found, "tooltip backdrop {backdrop:?} missing in {rects:?}");
+    }
+
+    /// #322: a scroll area inside a clipped panel (and one nested inside it)
+    /// clips to the intersection, ignores presses outside it, and restores
+    /// each enclosing clip at its end.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn nested_scroll_areas_intersect_and_restore_the_enclosing_clip() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut list = DrawList::new();
+        let panel = Rect::new(0.0, 0.0, 300.0, 200.0);
+        let outer = Rect::new(100.0, 100.0, 300.0, 300.0);
+        let inner = Rect::new(150.0, 50.0, 100.0, 100.0);
+        let (mut outer_offset, mut inner_offset) = (0.0, 0.0);
+        let mut f = ui.begin(&mut text, &mut list, press_at(350.0, 150.0));
+        f.set_clip(Some(panel));
+        f.scroll_area_begin("outer", outer, 300.0, &mut outer_offset);
+        assert!(
+            !f.button("hidden", Rect::new(320.0, 120.0, 60.0, 60.0), "", 12.0),
+            "a press outside the panel reached scrolled content"
+        );
+        f.scroll_area_begin("inner", inner, 100.0, &mut inner_offset);
+        f.rect(Rect::new(150.0, 50.0, 10.0, 10.0), [1.0; 4]);
+        f.scroll_area_end();
+        f.rect(Rect::new(100.0, 100.0, 10.0, 10.0), [1.0; 4]);
+        f.scroll_area_end();
+        f.rect(Rect::new(0.0, 0.0, 10.0, 10.0), [1.0; 4]);
+        f.end();
+        let clips: Vec<_> = list.screen.iter().rev().take(3).map(|q| q.clip).collect();
+        assert_eq!(
+            clips,
+            vec![
+                Some(panel),
+                Some(Rect::new(100.0, 100.0, 200.0, 100.0)),
+                Some(Rect::new(150.0, 100.0, 100.0, 50.0)),
+            ]
+        );
+    }
+
+    /// A scroll area entirely outside its enclosing clip clips to a zero
+    /// rect at the origin; a control straddling the origin there is hidden,
+    /// so Tab never focuses it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn fully_clipped_scroll_area_hides_controls_from_focus() {
+        let (mut ui, mut text, _assets) = fixture();
+        for keys in [vec![], vec![UiKey::Tab]] {
+            let mut list = DrawList::new();
+            let mut offset = 0.0;
+            let mut f = ui.begin(
+                &mut text,
+                &mut list,
+                UiInput {
+                    keys,
+                    ..UiInput::default()
+                },
+            );
+            f.set_clip(Some(Rect::new(0.0, 0.0, 100.0, 100.0)));
+            f.scroll_area_begin("s", Rect::new(200.0, 200.0, 50.0, 50.0), 50.0, &mut offset);
+            f.button("hidden", Rect::new(-5.0, -5.0, 10.0, 10.0), "X", 12.0);
+            f.scroll_area_end();
+            f.end();
+        }
+        assert!(!ui.is_focused_name("hidden"));
     }
 
     /// Scroll area: wheel scrolls only while hovered, the offset clamps to

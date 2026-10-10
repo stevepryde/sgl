@@ -399,6 +399,8 @@ impl ClientIo for BrowserWebSocketClient {
     }
 
     fn disconnect(&mut self, _now_ms: u64) {
+        // A local close is final: cancel any retry scheduled in backoff.
+        self.reconnect.reset();
         if self.socket.socket.ready_state() != WebSocket::OPEN {
             {
                 let mut state = self.state.borrow_mut();
