@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `OriginPolicy` and `NativeWebSocketClientConfig::origin`: IPv6
+  literal origins such as `http://[::1]:3000` were rejected as
+  non-canonical; they are now accepted in the browser's compressed
+  lowercase form. No game-code changes needed.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`

@@ -390,6 +390,46 @@ fn origin_admission_rejects_missing_duplicate_null_and_lookalike_values() {
     assert!(connect(raw_request(&endpoint, &[ORIGIN_VALUE])).is_ok());
 }
 
+#[test]
+fn ipv6_literal_origins_are_admitted_by_exact_and_any_policies() {
+    const IPV6_ORIGIN: &str = "http://[::1]:3000";
+    let config = NativeWebSocketServerConfig::new(([127, 0, 0, 1], 0).into(), identity())
+        .with_origin_policy(OriginPolicy::exact([IPV6_ORIGIN.to_owned()]).unwrap());
+    let mut exact = NativeWebSocketServer::bind(config).unwrap();
+    let endpoint = url(&exact);
+    for origins in [
+        vec!["http://[::1]:3001"],
+        vec!["http://[::2]:3000"],
+        vec!["http://[0::1]:3000"],
+    ] {
+        let result = connect(raw_request(&endpoint, &origins));
+        assert!(result.is_err(), "admitted origins {origins:?}");
+    }
+    assert!(connect(raw_request(&endpoint, &[IPV6_ORIGIN])).is_ok());
+
+    let mut client = NativeWebSocketClient::connect(NativeWebSocketClientConfig::new(
+        endpoint,
+        IPV6_ORIGIN,
+        identity(),
+    ))
+    .unwrap();
+    assert_eq!(client.poll(0), vec![ClientEvent::Connected]);
+    let events = collect_server_events(&mut exact, 2);
+    assert!(
+        events
+            .iter()
+            .filter(|event| matches!(event, ServerEvent::Connected { .. }))
+            .count()
+            == 2,
+        "{events:?}"
+    );
+
+    let config = NativeWebSocketServerConfig::new(([127, 0, 0, 1], 0).into(), identity())
+        .with_origin_policy(OriginPolicy::allow_any());
+    let any = NativeWebSocketServer::bind(config).unwrap();
+    assert!(connect(raw_request(&url(&any), &["https://[2001:db8::1]"])).is_ok());
+}
+
 fn assert_protocol_disconnect(message_sequence: Vec<Message>) {
     let mut server = server(2);
     let (mut socket, _) = connect(raw_request(&url(&server), &[ORIGIN_VALUE])).unwrap();
