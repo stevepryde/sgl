@@ -636,6 +636,47 @@ mod tests {
         assert_eq!(fired, [5, 5]);
     }
 
+    /// #314: a leading action is the start end: the reverse pass reaches it
+    /// once per bounce, and a repeat restarts one frame inside the frame step
+    /// rather than skipping the reverse pass or replaying frame 0.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_leading_action_does_not_move_the_start() {
+        let build = |loop_mode| {
+            AnimationSequence::builder()
+                .loop_mode(loop_mode)
+                .action(9)
+                .play_frames(vec![0, 1, 2], 0.1)
+                .build()
+                .unwrap()
+        };
+        let (seen, fired) = play_with_actions(&mut build(SequenceLoop::PingPongRepeat), 0.1, 8);
+        assert_eq!(
+            seen,
+            [
+                None,
+                Some(1),
+                Some(2),
+                Some(1),
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(1),
+                Some(0)
+            ]
+        );
+        assert_eq!(fired, [9, 9]);
+
+        let mut once = build(SequenceLoop::PingPongOnce);
+        let (seen, fired) = play_with_actions(&mut once, 0.1, 10);
+        assert_eq!(
+            seen,
+            [None, Some(1), Some(2), Some(1), Some(0)],
+            "completes on tick 5"
+        );
+        assert_eq!(fired, [9, 9]);
+        assert!(once.is_finished());
+    }
+
     /// #314: with several frame steps and a trailing action, the reverse
     /// pass skips the last frame step as it does without the action.
     #[wasm_bindgen_test(unsupported = test)]

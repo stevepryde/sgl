@@ -15,12 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-core` `AnimationSequence` ping-pong: a step after the last frame step
-  (or before the first) made the turnaround replay the end frame, and a
-  `PingPongRepeat` restart skipped the first step; the bounce now turns on
-  the first and last frame steps, playing outer steps once per turnaround.
-  No game-code changes needed.
-
+- `sgl-core` `AnimationSequence` ping-pong: a trailing step replayed the end
+  frame; a leading step skipped the reverse pass or replayed the start frame.
+  The bounce now turns on the first and last frame steps, playing outer
+  steps once per turnaround. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
