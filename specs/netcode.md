@@ -131,7 +131,7 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     unacknowledged fragment one retransmission timeout after its last
     transmission, doubling that timeout for each resend since the peer last
     acknowledged anything new, up to the 1 s ceiling of the timeout itself;
-    anything newly acknowledged on any lane resets every lane's (D-42).
+    anything newly acknowledged on any lane resets every lane's (D-43).
     There is no resend limit: a peer is closed `TimedOut` after `timeout_ms`
     without hearing from it, or once a lane with an unheld fragment in
     flight has had nothing newly acknowledged for `timeout_ms` plus 2 s,
