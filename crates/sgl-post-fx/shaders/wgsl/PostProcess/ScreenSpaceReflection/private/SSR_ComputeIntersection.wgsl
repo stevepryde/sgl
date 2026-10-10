@@ -330,8 +330,11 @@ fn SampleReflectionVector(View: vec3<f32>, Normal: vec3<f32>, Roughness: f32, Pi
     let ViewDirTS = View * TangentToWorld;
     // DFX-20: at full bias the ray follows the lobe's peak, the mirror direction, as Godot's SSR
     // traces reflect(view, normal). The fully biased sample is the spherical cap's pole, which is not.
+    // DFX-40: so does a delta lobe (alpha 0), whose only micro-normal is the normal, and a view at
+    // or below the normal's horizon, where visible normals are undefined; there the sampler can
+    // normalize a zero vector.
     var MicroNormalTS = vec3<f32>(0.0, 0.0, 1.0);
-    if (g_SSRAttribs.GGXImportanceSampleBias < 1.0) {
+    if (g_SSRAttribs.GGXImportanceSampleBias < 1.0 && AlphaRoughness > 0.0 && ViewDirTS.z > 0.0) {
         MicroNormalTS = SmithGGXSampleVisibleNormalHemisphere(ViewDirTS, AlphaRoughness, Xi);
     }
     let SampleDirTS = reflect(-ViewDirTS, MicroNormalTS);

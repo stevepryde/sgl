@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` SSR: a roughness-0 surface seen from below its mapped
+  normal's horizon, or sampled at the blue noise's largest value, gave a NaN
+  ray and PDF; it now traces the mirror direction, as do views below the
+  horizon at any roughness. No game-code changes needed.
+
 - `sgl-post-fx` SSR (`HierarchicalRaymarch`, SGL3D's `Crystal` reflections):
   a ray that runs out of `max_traversal_intersections` before confirming a
   hit was accepted by proximity and now reports a miss, so streaks near
