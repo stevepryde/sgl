@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `move_and_collide` / `snap_to_ground`: a body that started
+  inside a solid collider could move through it; it may now move out or
+  along it but not deeper. `CollisionConfig::new` now panics on a negative
+  or non-finite `skin`, `snap_distance` or `block_epsilon`. No game-code
+  changes needed unless a game passes such a value.
+
 - `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
   `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes,
   so content re-derived from a persisted base seed (generated worlds,

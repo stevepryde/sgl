@@ -62,12 +62,15 @@ browser client must get identical results from it.
 7. **Collision.** `sweep_aabb` is a closed-form swept AABB test returning
    `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
    toward the body. `move_and_collide` slides a kinematic body against a
-   `ColliderSet` and never leaves it overlapping a solid collider; sensors
-   never block; one-way platforms block only a landing on the face along the
-   configured up axis. `CollisionConfig` names the up axis, skin, snap
-   distance, and thresholds in the caller's units; results mirror exactly
-   between y-up and y-down worlds. `ColliderSet::query` returns every
-   collider overlapping the region (it may return more).
+   `ColliderSet` and never moves it into a solid collider; a body that starts
+   inside one may move out or along it, never deeper (on the axis of least
+   penetration); sensors never block; one-way platforms block only a landing
+   on the face along the configured up axis, never a body already inside
+   them. `CollisionConfig` names the up axis, skin, snap distance, and
+   thresholds in the caller's units, rejecting negative or non-finite
+   lengths; results mirror exactly between y-up and y-down worlds.
+   `ColliderSet::query` returns every collider overlapping the region (it may
+   return more).
 8. Overflow checks are on in every profile; arithmetic on caller sizes must
    fail as an error or be checked, not wrap.
 
