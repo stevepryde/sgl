@@ -58,9 +58,10 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    horizontal edit scroll, numeric draft, popups, blink). Tab/Shift-Tab wrap
    through visible widgets in the preceding frame's submission order; fully
    clipped and removed controls cannot receive keyboard input. Open dropdowns
-   and modals restrict keyboard interaction to their contents. Buttons, toggles,
-   checkboxes and dropdowns show an accent focus border and activate with
-   Enter/Space. Escape dismisses the topmost dropdown or cancels the modal.
+   and modals restrict keyboard interaction to their contents; a dropdown's
+   popover stays in the current clip, and only its visible part blocks
+   widgets beneath it. Buttons, toggles, checkboxes and dropdowns show an
+   accent focus border and activate with Enter/Space. Escape dismisses the topmost dropdown or cancels the modal.
    The app translates platform shortcuts, supplies clipboard paste, drains
    `take_clipboard_text` for copy/cut, and checks `keyboard_captured` after the
    frame before dispatching world shortcuts (including the dismissal frame).
