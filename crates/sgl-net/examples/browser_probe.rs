@@ -9,7 +9,8 @@
 //! connection, echoed bytes, lanes and unreliable messages echoed whole
 //! and in their own order (long messages fragmented and reassembled on both
 //! sides), a 256 KiB message past its lane's byte allowances, coalesced
-//! latest state, a saturated lane that refuses and then drains without
+//! latest state, a latest-state watermark refused below the largest frame
+//! and working at it, a saturated lane that refuses and then drains without
 //! losing the connection, a server-initiated close with its bounded
 //! reconnect, a rejected subprotocol, and a clean local disconnect, also
 //! during reconnect backoff.
@@ -17,10 +18,12 @@
 #![allow(clippy::future_not_send)]
 
 use sgl_net::websocket::{
-    BrowserWebSocketClient, BrowserWebSocketConfig, GAME_PATH, MAX_WEBSOCKET_FRAME_BYTES,
-    ReconnectPolicy, WebSocketIdentity,
+    BrowserWebSocketClient, BrowserWebSocketConfig, ENVELOPE_HEADER_LEN, GAME_PATH,
+    MAX_WEBSOCKET_FRAME_BYTES, ReconnectPolicy, WebSocketIdentity,
 };
-use sgl_net::{ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, SendError};
+use sgl_net::{
+    ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, SendError,
+};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -407,6 +410,53 @@ async fn a_saturated_reliable_lane_refuses_then_drains_in_order() -> Result<(), 
     ))
 }
 
+/// Defect (#301): a latest-state watermark below the largest latest frame,
+/// which then never fits, stays at the head of the queue and blocks every
+/// lane behind it. Oracle: such a watermark is refused at construction, and
+/// at the smallest accepted one a largest latest state and a reliable
+/// message sent after it both come back from the fixture.
+async fn a_latest_watermark_takes_the_largest_latest_state() -> Result<(), String> {
+    let largest_frame = ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES;
+    let mut too_small = config();
+    too_small.latest_buffered_bytes = largest_frame - 1;
+    ensure!(
+        BrowserWebSocketClient::connect(too_small).is_err(),
+        "accepted a latest watermark below the largest latest frame"
+    );
+    let mut smallest = config();
+    smallest.latest_buffered_bytes = largest_frame;
+    let mut driver = Driver::connect(smallest).await?;
+    let state = vec![0x5A; MAX_LATEST_STATE_BYTES];
+    driver
+        .client
+        .send(Delivery::LatestState, &state)
+        .map_err(|e| format!("latest send: {e:?}"))?;
+    driver.client.flush(driver.now_ms);
+    driver
+        .client
+        .send(Delivery::RELIABLE_ORDERED, b"after")
+        .map_err(|e| format!("send: {e:?}"))?;
+    driver
+        .settle(|events| {
+            let echoed = |delivery: Delivery| {
+                events.iter().any(
+                    |e| matches!(e, ClientEvent::Message { delivery: d, .. } if *d == delivery),
+                )
+            };
+            echoed(Delivery::RELIABLE_ORDERED) && echoed(Delivery::LatestState)
+        })
+        .await?;
+    let after = driver.payloads(Delivery::RELIABLE_ORDERED);
+    ensure!(after == [b"after".to_vec()], "reliable echoed {after:?}");
+    let echoed = driver.payloads(Delivery::LatestState);
+    ensure!(
+        echoed == [state],
+        "latest state echoed {} times",
+        echoed.len()
+    );
+    Ok(())
+}
+
 /// Defect: a server-initiated close surfacing as a transport error, or the
 /// reconnect loop ignoring `poll`'s clock. Oracle: `Disconnected { Peer }`,
 /// then `Reconnecting`, then `Connected` again, all driven by polls.
@@ -559,6 +609,11 @@ pub async fn run() -> String {
         &mut report,
         "a_saturated_reliable_lane_refuses_then_drains_in_order",
         a_saturated_reliable_lane_refuses_then_drains_in_order().await,
+    );
+    record(
+        &mut report,
+        "a_latest_watermark_takes_the_largest_latest_state",
+        a_latest_watermark_takes_the_largest_latest_state().await,
     );
     record(
         &mut report,

@@ -22,6 +22,19 @@ docs and specs the entry links.
   primitive has none no longer refuses its morph-weight animation. No
   game-code changes needed; give every morphed primitive of the mesh the
   same shape keys.
+- `sgl-net` `BrowserWebSocketConfig::latest_buffered_bytes`: any nonzero
+  value was accepted, and one below the largest latest-state frame blocked
+  every lane once a large state was sent; `BrowserWebSocketClient::connect`
+  now rejects values below `ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES`
+  (1186). Raise a smaller watermark to at least that; the 64 KiB default is
+  unaffected.
+- `sgl-net` `udp::LANE_MESSAGES_PER_PEER_PER_POLL` (32, native) is now public:
+  the most lane messages a `ThreadedUdpServer` poll returns per peer, which
+  `specs/netcode.md` already named. No game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown` / `overlay_panel_begin`: a popover's or
+  panel's clipped-away part still blocked widgets beneath it (and kept the
+  popover open when pressed); only the visible part now blocks and counts as
+  inside. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
