@@ -1,6 +1,6 @@
 //! Deterministic SMAA 1x at SMAA 2.8's quality presets; Medium matches the
-//! browser's Three.js SMAANode. Input is linear HDR color before tone mapping
-//! and sRGB; HUD follows output. See README.md and the adjacent upstream
+//! browser's Three.js SMAANode. Input is tone-mapped, display-linear colour,
+//! whose sRGB encoding edges are detected on; HUD follows output. See README.md and the adjacent upstream
 //! licenses for shader/atlas provenance.
 use crate::settings::SmaaQuality;
 use std::cell::RefCell;
@@ -8,7 +8,7 @@ use std::cell::RefCell;
 pub(crate) static SMAA: crate::shading::Module = crate::shading::Module {
     name: "smaa",
     source: include_str!("smaa.wgsl"),
-    deps: &[],
+    deps: &[&crate::shading::SRGB],
 };
 /// The entry points SMAA's pipelines are created with: each pass's
 /// fragment and vertex.
