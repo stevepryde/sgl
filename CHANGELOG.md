@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP `stop_admission`: a stopped server ignored the handshake
+  confirm of a client it had already accepted, so a lost accept left that
+  client unconnected until both timed out; it now answers connections it
+  has and refuses only new ones. No game-code changes needed.
+
 - `sgl-net` `ThreadedUdpServer::disconnect`: reliable and unreliable
   messages accepted before it but not yet handed to the endpoint were
   dropped; they are now sent before the graceful close, within the same
