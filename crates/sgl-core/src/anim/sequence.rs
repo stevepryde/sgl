@@ -12,11 +12,16 @@
 //!
 //! ## Ping-pong
 //!
-//! The reverse pass starts one element in, so neither end plays twice. With one
+//! The ends are the first and last frame steps; steps outside them (a trailing
+//! action, a leading pause) play once at the turnaround and are not replayed.
+//! Each pass starts one element in, so neither end plays twice. With one frame
 //! step this counts frames — `[0, 1, 2]` under
-//! [`SequenceLoop::PingPongOnce`] plays `0, 1, 2, 1, 0` and completes. With
-//! several steps it counts steps: the reverse pass resumes at the
-//! second-to-last step and enters each reversed step at its *last* frame.
+//! [`SequenceLoop::PingPongOnce`] plays `0, 1, 2, 1, 0` and completes, and
+//! [`SequenceLoop::PingPongRepeat`] continues `1, 2, 1, 0, …`. With several it
+//! counts steps: the reverse pass resumes at the step before the last frame
+//! step and enters each reversed step at its *last* frame, and a repeat
+//! resumes at the step after the first frame step. A sequence without frame
+//! steps bounces between its first and last steps the same way.
 
 use crate::random::Rng;
 
@@ -247,15 +252,11 @@ impl AnimationSequence {
     /// Move the step cursor per the loop mode. Returns `true` when the sequence
     /// completes.
     fn next_step(&mut self) -> bool {
-        let previous_step = self.step;
-        let previous_forward = self.forward;
-
+        self.step_duration = None;
         match self.loop_mode {
             SequenceLoop::Once => {
                 self.step += 1;
-                if self.step >= self.steps.len() {
-                    return true;
-                }
+                self.step >= self.steps.len()
             }
             SequenceLoop::Repeat => {
                 self.step += 1;
@@ -263,73 +264,94 @@ impl AnimationSequence {
                     self.step = 0;
                     self.cursors.fill(0);
                 }
+                false
             }
             SequenceLoop::PingPongRepeat | SequenceLoop::PingPongOnce => {
                 if self.forward {
-                    self.step += 1;
-                    if self.step >= self.steps.len() {
-                        if self.is_one_element() {
-                            // The lone element is both ends, so the reverse
-                            // pass is empty: the bounce ends where it began.
-                            if self.loop_mode == SequenceLoop::PingPongOnce {
-                                return true;
-                            }
-                            self.step = 0;
-                            self.cursors.fill(0);
-                        } else {
-                            // Turn around one step in: the last step does not
-                            // play twice.
-                            self.step = self.steps.len().saturating_sub(2);
-                            self.forward = false;
-                        }
+                    if self.step + 1 < self.steps.len() {
+                        self.step += 1;
+                        self.cursors[self.step] = 0;
+                        false
+                    } else {
+                        self.turn_back()
                     }
                 } else if self.step > 0 {
                     self.step -= 1;
-                } else if self.loop_mode == SequenceLoop::PingPongOnce {
-                    return true;
+                    self.cursors[self.step] = self.element_count(self.step) - 1;
+                    false
                 } else {
-                    self.step = usize::from(self.steps.len() > 1);
-                    self.forward = true;
-                    self.cursors.fill(0);
+                    self.restart_forward()
                 }
             }
         }
+    }
 
-        if self.step != previous_step || self.forward != previous_forward {
-            self.enter_step(previous_forward);
-        }
-        self.step_duration = None;
+    /// Start the reverse pass after the forward pass played its last step.
+    /// The end is the last frame shown: steps after the last frame step
+    /// played once at the turnaround and are not replayed. With one frame
+    /// step the pass resumes one frame inside it; with several it resumes at
+    /// the step before the last frame step, entered at its last element.
+    /// Returns `true` when a `PingPongOnce` completes.
+    fn turn_back(&mut self) -> bool {
+        let (first, last) = self.frame_ends();
+        self.forward = false;
+        let resume = if last > first {
+            last - 1
+        } else if self.element_count(last) > 1 {
+            self.step = last;
+            self.cursors[last] = self.element_count(last) - 2;
+            return false;
+        } else if last > 0 {
+            // A one-element end has nothing left to reverse through.
+            last - 1
+        } else {
+            return self.restart_forward();
+        };
+        self.step = resume;
+        self.cursors[resume] = self.element_count(resume) - 1;
         false
     }
 
-    /// Whether the sequence is a single step playing at most one frame.
-    fn is_one_element(&self) -> bool {
-        match self.steps.as_slice() {
-            [SequenceStep::PlayFrames { frames, .. }] => frames.len() == 1,
-            [_] => true,
-            _ => false,
+    /// Start the next forward pass after the reverse pass played step 0, or
+    /// complete a `PingPongOnce`. The start is the first frame shown: steps
+    /// before the first frame step played once at the turnaround and are not
+    /// replayed. With one frame step the pass resumes one frame inside it;
+    /// with several it resumes at the step after the first frame step.
+    fn restart_forward(&mut self) -> bool {
+        if self.loop_mode == SequenceLoop::PingPongOnce {
+            return true;
+        }
+        let (first, last) = self.frame_ends();
+        self.forward = true;
+        self.cursors.fill(0);
+        if last > first {
+            self.step = first + 1;
+        } else {
+            self.step = first;
+            self.cursors[first] = usize::from(self.element_count(first) > 1);
+        }
+        false
+    }
+
+    /// The first and last steps that play frames, or the first and last
+    /// steps when none do.
+    fn frame_ends(&self) -> (usize, usize) {
+        let plays = |step: &SequenceStep| matches!(step, SequenceStep::PlayFrames { .. });
+        match (
+            self.steps.iter().position(plays),
+            self.steps.iter().rposition(plays),
+        ) {
+            (Some(first), Some(last)) => (first, last),
+            _ => (0, self.steps.len() - 1),
         }
     }
 
-    /// Place the frame cursor at the entry end of the step just moved to.
-    ///
-    /// A reversed step starts at its last frame — except the single-step
-    /// turnaround, where the end frame just played and the pass starts one
-    /// frame in.
-    fn enter_step(&mut self, previous_forward: bool) {
-        let single_step = self.steps.len() == 1;
-        let forward = self.forward;
-        let SequenceStep::PlayFrames { frames, .. } = &self.steps[self.step] else {
-            return;
-        };
-        let len = frames.len();
-        self.cursors[self.step] = if forward {
-            usize::from(!previous_forward && single_step && len > 1)
-        } else if previous_forward && single_step && len > 1 {
-            len - 2
-        } else {
-            len - 1
-        };
+    /// Playback elements in `step`: its frames, or one for any other step.
+    fn element_count(&self, step: usize) -> usize {
+        match &self.steps[step] {
+            SequenceStep::PlayFrames { frames, .. } => frames.len(),
+            _ => 1,
+        }
     }
 }
 
@@ -566,6 +588,109 @@ mod tests {
             Some(3),
             "0.05 s remainder carried"
         );
+    }
+
+    /// Frames shown after each `dt` tick until completion (or `ticks`), and
+    /// every action fired along the way.
+    fn play_with_actions(
+        seq: &mut AnimationSequence,
+        dt: f32,
+        ticks: usize,
+    ) -> (Vec<Option<usize>>, Vec<u32>) {
+        let mut rng = rng();
+        let mut seen = vec![seq.current_frame()];
+        let mut fired = Vec::new();
+        for _ in 0..ticks {
+            let completed = seq.tick(dt, &mut rng);
+            while let Some(action) = seq.take_action() {
+                fired.push(action);
+            }
+            if completed {
+                break;
+            }
+            seen.push(seq.current_frame());
+        }
+        (seen, fired)
+    }
+
+    /// #314: a trailing action does not move the turnaround off the frame
+    /// step: each end frame shows once per direction change, the action
+    /// fires once per turnaround, and a repeat restarts inside the frame
+    /// step rather than skipping it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_trailing_action_does_not_repeat_the_end_frame() {
+        let build = |loop_mode| {
+            AnimationSequence::builder()
+                .loop_mode(loop_mode)
+                .play_frames(vec![0, 1, 2], 0.1)
+                .action(5)
+                .build()
+                .unwrap()
+        };
+        let (seen, fired) = play_with_actions(&mut build(SequenceLoop::PingPongOnce), 0.1, 10);
+        assert_eq!(seen, [0, 1, 2, 1, 0].map(Some).to_vec());
+        assert_eq!(fired, [5]);
+
+        let (seen, fired) = play_with_actions(&mut build(SequenceLoop::PingPongRepeat), 0.1, 8);
+        assert_eq!(seen, [0, 1, 2, 1, 0, 1, 2, 1, 0].map(Some).to_vec());
+        assert_eq!(fired, [5, 5]);
+    }
+
+    /// #314: a leading action is the start end: the reverse pass reaches it
+    /// once per bounce, and a repeat restarts one frame inside the frame step
+    /// rather than skipping the reverse pass or replaying frame 0.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_leading_action_does_not_move_the_start() {
+        let build = |loop_mode| {
+            AnimationSequence::builder()
+                .loop_mode(loop_mode)
+                .action(9)
+                .play_frames(vec![0, 1, 2], 0.1)
+                .build()
+                .unwrap()
+        };
+        let (seen, fired) = play_with_actions(&mut build(SequenceLoop::PingPongRepeat), 0.1, 8);
+        assert_eq!(
+            seen,
+            [
+                None,
+                Some(1),
+                Some(2),
+                Some(1),
+                Some(0),
+                Some(1),
+                Some(2),
+                Some(1),
+                Some(0)
+            ]
+        );
+        assert_eq!(fired, [9, 9]);
+
+        let mut once = build(SequenceLoop::PingPongOnce);
+        let (seen, fired) = play_with_actions(&mut once, 0.1, 10);
+        assert_eq!(
+            seen,
+            [None, Some(1), Some(2), Some(1), Some(0)],
+            "completes on tick 5"
+        );
+        assert_eq!(fired, [9, 9]);
+        assert!(once.is_finished());
+    }
+
+    /// #314: with several frame steps and a trailing action, the reverse
+    /// pass skips the last frame step as it does without the action.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_trailing_action_keeps_multi_step_pingpong_endpoints() {
+        let mut seq = AnimationSequence::builder()
+            .loop_mode(SequenceLoop::PingPongOnce)
+            .play_frames(vec![0, 1], 0.1)
+            .play_frames(vec![2, 3], 0.1)
+            .action(5)
+            .build()
+            .unwrap();
+        let (seen, fired) = play_with_actions(&mut seq, 0.1, 10);
+        assert_eq!(seen, [0, 1, 2, 3, 1, 0].map(Some).to_vec());
+        assert_eq!(fired, [5]);
     }
 
     /// #249: two ping-pong steps of two frames play 0 1 2 3, turn around one

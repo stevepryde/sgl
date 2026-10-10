@@ -105,13 +105,9 @@ struct Run {
 }
 
 /// Lane 0 weight 8, lane 1 weight 1 (the 8:1 split of netcode.md 14).
-fn endpoint_config(
-    max_packets_per_peer_flush: usize,
-    max_reliable_transmissions: u8,
-) -> EndpointConfig {
+fn endpoint_config(max_packets_per_peer_flush: usize) -> EndpointConfig {
     let mut config = EndpointConfig {
         max_packets_per_peer_flush,
-        max_reliable_transmissions,
         ..EndpointConfig::new(MAGIC)
     };
     config.reliable.lanes[realtime().index()].weight = 8;
@@ -326,7 +322,7 @@ fn realtime_under_bulk_keeps_the_scheduling_bound() {
         lane_loss_per_10k: [0; RELIABLE_LANES],
     };
     let worst_delay = network.one_way_latency_ms + network.jitter_ms + network.reorder_extra_ms;
-    let config = endpoint_config(2, 12);
+    let config = endpoint_config(2);
     for (seed, bulk_lead_ms) in [(11, 0), (12, 1_000)] {
         let run = run(
             network.clone(),
@@ -388,7 +384,7 @@ fn realtime_beside_4_mib_messages_keeps_the_scheduling_bound() {
     let worst_delay = network.one_way_latency_ms + network.jitter_ms + network.reorder_extra_ms;
     // Four datagrams a flush: fewer than the bulk window, so the bulk lane
     // always has a fragment ready and only the scheduler leaves lane 0 room.
-    let mut config = endpoint_config(4, 12);
+    let mut config = endpoint_config(4);
     config.reliable.max_message_bytes = MESSAGE_BYTES;
     config.reliable.lanes[bulk().index()].outbound_bytes = 64 * 1024;
     let run = run(
@@ -433,9 +429,9 @@ fn bulk_loss_never_delays_the_realtime_lane() {
         lane_loss_per_10k,
     };
     let bound = network.one_way_latency_ms + network.jitter_ms + 2 * TICK_MS;
-    // Sixty-four transmissions: half the bulk datagrams vanish, and the
-    // connection must outlive that rather than time out on retry exhaustion.
-    let config = endpoint_config(64, 64);
+    // Half the bulk datagrams vanish; the connection outlives that, as
+    // retransmission never ends it.
+    let config = endpoint_config(64);
     let run = run(
         network,
         21,
@@ -477,7 +473,7 @@ fn unreliable_under_bulk_is_sent_once_and_keeps_the_scheduling_bound() {
     let run = run(
         network,
         31,
-        &endpoint_config(2, 12),
+        &endpoint_config(2),
         &streams(0, 20_000, Delivery::Unreliable(realtime())),
     );
     assert_eq!(run.bulk_delivered, (0..run.bulk_sent).collect::<Vec<_>>());
@@ -524,7 +520,7 @@ fn unreliable_over_a_lossy_network_is_at_most_once() {
     let run = run(
         network,
         41,
-        &endpoint_config(64, 64),
+        &endpoint_config(64),
         &streams(0, 10_000, Delivery::Unreliable(realtime())),
     );
     let sent = u32::try_from(run.sent.len()).expect("few messages");

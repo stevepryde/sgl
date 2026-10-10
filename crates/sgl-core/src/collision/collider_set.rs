@@ -51,6 +51,12 @@ pub struct Collider {
     pub flags: ColliderFlags,
 }
 
+/// Most grid cells one collider is bucketed into. A collider spanning more
+/// (a long floor at a small cell size) is kept apart and offered to every
+/// query whose cells it meets, so an insert never walks an unbounded cell
+/// range.
+const MAX_COLLIDER_CELLS: u64 = 1024;
+
 /// The world's colliders, bucketed into a uniform grid for broadphase.
 ///
 /// The grid's cell size is the caller's choice: it is a spatial hash bucket,
@@ -59,12 +65,21 @@ pub struct Collider {
 /// each collider occupy more buckets. Either way the result is only a candidate
 /// list — [`query`](Self::query) reports colliders whose *cells* meet the
 /// region, not colliders that actually overlap it.
+///
+/// Work is bounded whatever the boxes' size: a collider spanning more than
+/// 1024 cells is not bucketed but checked by every query, and a query region
+/// spanning more cells than the set has colliders scans the colliders
+/// instead of the cells. A query visits at most about as many cells as the
+/// set holds colliders, plus the oversized colliders. An inverted box (a
+/// negative `half`) addresses no cells.
 #[derive(Debug)]
 pub struct ColliderSet {
     cell_size: f32,
     colliders: Vec<Collider>,
     /// Grid cell -> indices of the colliders overlapping that cell.
     grid: HashMap<IVec2, Vec<usize>>,
+    /// Colliders spanning more than [`MAX_COLLIDER_CELLS`] cells.
+    oversized: Vec<usize>,
 }
 
 impl ColliderSet {
@@ -84,6 +99,7 @@ impl ColliderSet {
             cell_size,
             colliders: Vec::new(),
             grid: HashMap::new(),
+            oversized: Vec::new(),
         }
     }
 
@@ -94,12 +110,20 @@ impl ColliderSet {
     }
 
     /// Inserts a world-space collider, bucketing it into every grid cell its
-    /// box overlaps, and returns its index.
+    /// box overlaps (or keeping it apart when that is more than 1024 cells),
+    /// and returns its index. A non-finite box addresses no cells and is never
+    /// a query candidate.
     pub fn insert(&mut self, aabb: Aabb, flags: ColliderFlags) -> usize {
         let index = self.colliders.len();
         self.colliders.push(Collider { aabb, flags });
-        for cell in cells_for(&aabb, self.cell_size) {
-            self.grid.entry(cell).or_default().push(index);
+        if let Some(cells) = CellRange::of(&aabb, self.cell_size) {
+            if cells.count() > MAX_COLLIDER_CELLS {
+                self.oversized.push(index);
+            } else {
+                for cell in cells.iter() {
+                    self.grid.entry(cell).or_default().push(index);
+                }
+            }
         }
         index
     }
@@ -115,14 +139,30 @@ impl ColliderSet {
     ///
     /// Each index appears exactly once, in ascending order, so a caller that
     /// breaks ties by "first candidate wins" behaves identically run to run.
+    ///
+    /// A region spanning more cells than the set has colliders is answered by
+    /// scanning the colliders' cell ranges, so a query visits at most about as
+    /// many cells as the set holds colliders, plus the oversized colliders.
     #[must_use]
     pub fn query(&self, region: &Aabb) -> Vec<usize> {
+        let Some(cells) = CellRange::of(region, self.cell_size) else {
+            return Vec::new();
+        };
+        let meets = |index: &usize| {
+            CellRange::of(&self.colliders[*index].aabb, self.cell_size)
+                .is_some_and(|other| other.meets(&cells))
+        };
         let mut found = Vec::new();
-        for cell in cells_for(region, self.cell_size) {
+        if cells.count() > self.colliders.len() as u64 {
+            found.extend((0..self.colliders.len()).filter(meets));
+            return found;
+        }
+        for cell in cells.iter() {
             if let Some(bucket) = self.grid.get(&cell) {
                 found.extend_from_slice(bucket);
             }
         }
+        found.extend(self.oversized.iter().copied().filter(meets));
         found.sort_unstable();
         found.dedup();
         found
@@ -145,6 +185,7 @@ impl ColliderSet {
     pub fn clear(&mut self) {
         self.colliders.clear();
         self.grid.clear();
+        self.oversized.clear();
     }
 
     /// Iterates the colliders in insertion order, so position `i` is the
@@ -164,22 +205,45 @@ impl<'a> IntoIterator for &'a ColliderSet {
 }
 
 /// The inclusive range of grid cells a box overlaps.
-fn cells_for(aabb: &Aabb, cell_size: f32) -> impl Iterator<Item = IVec2> {
-    let min = aabb.min();
-    let max = aabb.max();
-    // A non-finite box addresses no cells. Float-to-int casts saturate, so an
-    // infinite bound would otherwise walk the entire `i32` range.
-    let (x0, x1, y0, y1) = if min.is_finite() && max.is_finite() {
-        (
-            cell_of(min.x, cell_size),
-            cell_of(max.x, cell_size),
-            cell_of(min.y, cell_size),
-            cell_of(max.y, cell_size),
-        )
-    } else {
-        (0, -1, 0, -1)
-    };
-    (y0..=y1).flat_map(move |y| (x0..=x1).map(move |x| IVec2::new(x, y)))
+#[derive(Debug, Clone, Copy)]
+struct CellRange {
+    min: IVec2,
+    max: IVec2,
+}
+
+impl CellRange {
+    /// The cells `aabb` overlaps, or `None` for a non-finite box: float-to-int
+    /// casts saturate, so an infinite bound would address the whole `i32`
+    /// grid.
+    fn of(aabb: &Aabb, cell_size: f32) -> Option<Self> {
+        let (min, max) = (aabb.min(), aabb.max());
+        if !(min.is_finite() && max.is_finite()) {
+            return None;
+        }
+        let range = Self {
+            min: IVec2::new(cell_of(min.x, cell_size), cell_of(min.y, cell_size)),
+            max: IVec2::new(cell_of(max.x, cell_size), cell_of(max.y, cell_size)),
+        };
+        // An inverted box (negative `half`) addresses no cells.
+        range.min.cmple(range.max).all().then_some(range)
+    }
+
+    /// How many cells the range holds.
+    fn count(&self) -> u64 {
+        let span = |lo: i32, hi: i32| u64::try_from(i64::from(hi) - i64::from(lo) + 1).unwrap_or(0);
+        span(self.min.x, self.max.x).saturating_mul(span(self.min.y, self.max.y))
+    }
+
+    /// Whether the two ranges share a cell.
+    fn meets(&self, other: &Self) -> bool {
+        self.min.cmple(other.max).all() && other.min.cmple(self.max).all()
+    }
+
+    /// Every cell in the range, row by row.
+    fn iter(self) -> impl Iterator<Item = IVec2> {
+        (self.min.y..=self.max.y)
+            .flat_map(move |y| (self.min.x..=self.max.x).map(move |x| IVec2::new(x, y)))
+    }
 }
 
 /// The grid coordinate a world coordinate falls in.
@@ -284,6 +348,59 @@ mod tests {
             set.iter().next().map(|c| c.flags),
             Some(ColliderFlags::SENSOR)
         );
+    }
+
+    /// #316: a query region spanning 4e12 cells returns the colliders in it
+    /// without walking its cells.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_huge_query_region_is_answered_without_walking_its_cells() {
+        let mut set = ColliderSet::new(1.0);
+        let near = set.insert(aabb(0.0, 0.0, 0.5, 0.5), ColliderFlags::SOLID);
+        let far = set.insert(aabb(9e5, -9e5, 0.5, 0.5), ColliderFlags::SOLID);
+        set.insert(aabb(3e6, 0.0, 0.5, 0.5), ColliderFlags::SOLID);
+        assert_eq!(set.query(&aabb(0.0, 0.0, 1e6, 1e6)), vec![near, far]);
+    }
+
+    /// #316: an inverted box (negative half-extents spanning cells) addresses
+    /// no cells: as a collider it is never a candidate, and as a region it
+    /// finds nothing, whether the query walks the grid or scans.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn inverted_boxes_address_no_cells() {
+        let mut set = ColliderSet::new(1.0);
+        let solid = set.insert(aabb(0.0, 0.0, 0.5, 0.5), ColliderFlags::SOLID);
+        set.insert(aabb(0.0, 0.0, -3.0, -3.0), ColliderFlags::SOLID);
+        for i in 0..8u8 {
+            set.insert(
+                aabb(-50.0, f32::from(i) * 4.0, 0.5, 0.5),
+                ColliderFlags::SOLID,
+            );
+        }
+        // Grid path (4 cells, 10 colliders) and scan path (1e6 cells).
+        assert_eq!(set.query(&aabb(0.0, 0.0, 0.5, 0.5)), vec![solid]);
+        assert_eq!(set.query(&aabb(0.0, 0.0, 500.0, 500.0)).len(), 9);
+        assert!(set.query(&aabb(0.0, 0.0, -2.0, -2.0)).is_empty());
+        assert!(set.query(&aabb(0.0, 0.0, -500.0, -500.0)).is_empty());
+    }
+
+    /// #316: a collider spanning 4e12 cells is inserted without walking its
+    /// cells and is still found by a grid query from inside it, and only
+    /// there.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_huge_collider_is_found_from_the_cells_it_covers() {
+        let mut set = ColliderSet::new(1.0);
+        let small = set.insert(aabb(3e6, 0.0, 0.5, 0.5), ColliderFlags::SOLID);
+        let block = set.insert(aabb(0.0, 0.0, 1e6, 1e6), ColliderFlags::SOLID);
+        // More colliders than a small query's cells, so it walks the grid.
+        for i in 0..8u8 {
+            set.insert(
+                aabb(-3e6, f32::from(i) * 4.0, 0.5, 0.5),
+                ColliderFlags::SOLID,
+            );
+        }
+        assert_eq!(set.query(&aabb(5e5, -5e5, 0.5, 0.5)), vec![block]);
+        assert_eq!(set.query(&aabb(3e6, 0.0, 0.5, 0.5)), vec![small]);
+        set.clear();
+        assert!(set.query(&aabb(5e5, -5e5, 0.5, 0.5)).is_empty());
     }
 
     /// A non-finite box must address no cells. Saturating casts would otherwise
