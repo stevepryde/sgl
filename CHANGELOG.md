@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
+  its near plane read the reflection depth history with the new near plane
+  and discarded the history; it is now read with the near plane that wrote
+  it. No game-code changes needed.
 - `sgl-2d` `AseDirection`: `pingpong_reverse` tags parsed as `Other` and
   played forward; they are now `AseDirection::PingpongReverse`, whose
   `AseTag::frame_order` runs down and back up without repeating either end.
