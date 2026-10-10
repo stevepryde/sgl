@@ -86,7 +86,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     worker moves a message to its endpoint only when the endpoint has room
     on that lane, rotating between backlogged peers and lanes, and the
     browser holds released frames while `bufferedAmount` is above its
-    watermark; neither refuses an accepted message or disconnects. A UDP
+    watermark, each watermark at least the largest frame it paces so a
+    frame always fits an empty buffer; neither refuses an accepted message
+    or disconnects. A UDP
     `disconnect` (caller-polled or threaded) admits nothing more but still
     sends the reliable and unreliable messages accepted before it, closing
     once they are acknowledged or `close_grace_ms` after the disconnect,
@@ -116,7 +118,7 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     ingress) instead shed the oldest: a receiver that is not polled drops
     its oldest unpolled unreliable messages, as a full UDP socket buffer
     does. The threaded server's poll returns at most 32 lane messages per
-    peer (`LANE_MESSAGES_PER_PEER_PER_POLL`), shared across its lanes and
+    peer (`udp::LANE_MESSAGES_PER_PEER_PER_POLL`), shared across its lanes and
     both classes, so that is the sustainable per-poll rate above which a
     peer's reliable messages wait and its unreliable messages are shed.
     Other connections are never affected.
@@ -192,8 +194,13 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     sender that outruns them is still closed with `InboundOverflow`.
     Neither transport negotiates a version, so builds on different versions
     cannot connect; a game changes its WebSocket subprotocol when the wire
-    version changes. Browser reconnect follows `ReconnectPolicy` with
-    bounded attempts and delay, driven by `poll(now_ms)`.
+    version changes. Browser reconnect follows `ReconnectPolicy`, driven by
+    `poll(now_ms)`, after every close the game did not ask for,
+    `InboundOverflow` and `ProtocolViolation` included: at most
+    `max_attempts` attempts with doubling delays up to `max_delay_ms`. The
+    count restarts only after a connection that stayed up at least
+    `max_delay_ms`, so one that keeps failing soon after it opens backs off
+    and stops.
 14. Lanes share a connection by deficit round robin over the lanes with
     sendable work. Each lane's quantum is `LaneConfig::weight` items
     (`1..=MAX_LANE_WEIGHT`, default 1), an item being a reliable fragment or

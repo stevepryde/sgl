@@ -18,9 +18,58 @@ docs and specs the entry links.
 - `sgl-3d` `asset::load*`: a mesh with `TEXCOORD_1`, or a texture SGL3D does
   not sample (such as an ignored occlusion map) with nearest or other
   non-trilinear sampling, failed the load; `TEXCOORD_1` now loads as
-  `Vertex::lightmap_uv` and only sampled maps' sampling is checked. No
-  game-code changes needed.
-
+  `Vertex::lightmap_uv`, the mesh's static irradiance atlas chart, and only
+  sampled maps' sampling is checked. On a static instance while an atlas is
+  installed, a charted vertex samples the atlas and takes no baked lights:
+  set `lightmap_uv` to `[0, 0]` on models the bake does not chart (a second
+  UV map exported for AO, say). Otherwise no game-code changes needed.
+- `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
+  of steps before confirming a hit was accepted by depth proximity and now
+  reports a miss, so streaks near surfaces at the step cap give way to the
+  fallback. No game-code changes needed.
+- `sgl-net` `BrowserWebSocketClient`: a close caused by a received frame
+  (`InboundOverflow`, or a `ProtocolViolation` found by the lane queues)
+  never reconnected; it now follows `ReconnectPolicy` like other non-local
+  closes, so expect `Reconnecting` after it. No game-code changes needed.
+- `sgl-net` `ReconnectPolicy::max_attempts` (browser): every `Connected`
+  restarted the count, so a connection that kept failing soon after it
+  opened reconnected forever at the first delay; the count now restarts only
+  after a connection stayed up at least `max_delay_ms`, so such a loop backs
+  off and stops after `max_attempts`. No game-code changes needed.
+- `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
+  grid cell it spanned (effectively hanging); a collider over 1024 cells is
+  now kept apart and a query over more cells than colliders scans the
+  colliders. No game-code changes needed.
+- `sgl-core` `AnimationSequence` ping-pong: a trailing step replayed the end
+  frame; a leading step skipped the reverse pass or replayed the start frame.
+  The bounce now turns on the first and last frame steps, playing outer
+  steps once per turnaround. No game-code changes needed.
+- `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
+  on the world channel shrank by `pixels_per_unit`; the new `units:
+  WorldUnits` field (default logical pixels) makes positions, sizes and
+  widths world units. World gizmos set `units: camera.units()`; struct
+  literals without `..Overlay::new(white)` add `units`; pixel overlays need
+  no other change.
+- `sgl-3d` `asset::load*`: a glTF mesh whose morphed primitives have
+  different numbers of morph targets loaded, the extra targets driven by
+  another node's weights; it now fails the load naming the primitive.
+  Primitives without targets still load unmorphed, and a mesh whose first
+  primitive has none no longer refuses its morph-weight animation. No
+  game-code changes needed; give every morphed primitive of the mesh the
+  same shape keys.
+- `sgl-net` `BrowserWebSocketConfig::latest_buffered_bytes`: any nonzero
+  value was accepted, and one below the largest latest-state frame blocked
+  every lane once a large state was sent; `BrowserWebSocketClient::connect`
+  now rejects values below `ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES`
+  (1186). Raise a smaller watermark to at least that; the 64 KiB default is
+  unaffected.
+- `sgl-net` `udp::LANE_MESSAGES_PER_PEER_PER_POLL` (32, native) is now public:
+  the most lane messages a `ThreadedUdpServer` poll returns per peer, which
+  `specs/netcode.md` already named. No game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown` / `overlay_panel_begin`: a popover's or
+  panel's clipped-away part still blocked widgets beneath it (and kept the
+  popover open when pressed); only the visible part now blocks and counts as
+  inside. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
@@ -77,6 +126,10 @@ docs and specs the entry links.
   within a frame's step of the target stepped the correction past it, by
   stops after a hitch; it now lands on the target. No game-code changes
   needed.
+- `sgl-post-fx` half-resolution SSR (`FeatureFlags::HALF_RESOLUTION`): a 2×2
+  block on a silhouette could trace from its background pixel, a NaN ray
+  under an infinite reversed-Z projection; that pixel now reports a miss.
+  No game-code changes needed.
 - `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
   glTF does not allow for its use, of no elements, or past its buffer view
   or buffer, or an image view past its buffer, panicked or was misread; it
