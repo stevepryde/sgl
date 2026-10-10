@@ -79,6 +79,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    is clamped into the field's range. Widgets emit only to the screen channel.
    A splitter captures pointer travel along its configured axis, changes a
    caller-owned extent within supplied bounds, and returns resize cursor intent.
+   When `max` falls below `min` (a viewport too small for both panes), `max`
+   wins; a NaN bound is ignored. Neither panics.
    Capture continues outside the handle and across panes, blocks other pointer
    controls, and ends on release, removal or `cancel_interactions` (window focus
    loss). The game checks `pointer_captured` before world pointer dispatch.
@@ -122,8 +124,10 @@ rectangles so their text, accent and surface roles follow the selected palette.
   hit rectangles; preserve readable type, focus borders and gaps between actions.
 - **Bounded panes and rows.** Store pane extents in the game and constrain
   `splitter` bounds to leave usable space for both sides. Clamp again when the
-  viewport shrinks. Measure content with `TextRenderer::measure`; reserve fixed
-  trailing visibility/lock/delete actions before sizing a flexible row label.
+  viewport shrinks (with `.max(min).min(max)`, not `f32::clamp`, which panics
+  when the bounds cross). Measure content with `TextRenderer::measure`; reserve
+  fixed trailing visibility/lock/delete actions before sizing a flexible row
+  label.
   Reflow sections or wrap help when space runs out; do not solve overflow by
   shrinking all text or stacking every action into a full-width button.
 - **Overflow ownership.** Give each overflowing pane one `scroll_area` and its
