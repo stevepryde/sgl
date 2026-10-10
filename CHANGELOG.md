@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain
+  buffers doubled past the device's storage binding limit once they held
+  over half of it, failing the frame's cull bind group; their growth now
+  stops at the limit. No game-code changes needed.
 - `sgl-2d` light shadows (`shadow_triangles`, `LightPass`): a light close to
   a long occluder edge lit part of the area behind it inside its footprint
   (the wall-torch case); such edges now get a far cap that covers the
