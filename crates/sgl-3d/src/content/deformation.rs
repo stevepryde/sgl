@@ -146,7 +146,10 @@ impl Rig {
     /// Each joint's matrix with the nodes posed at `locals` (each node's
     /// transform relative to its parent, in node order): its node's
     /// transform in the asset's space times its inverse bind matrix, glTF's
-    /// joint matrix. Nodes may come in any order.
+    /// joint matrix. Nodes may come in any order. A loaded rig's parents
+    /// form trees; a built one whose parents form a cycle composes a node's
+    /// ancestors only as far as there are nodes, so its matrices are wrong
+    /// but its evaluation ends.
     pub fn joint_matrices(&self, locals: &[Mat4]) -> Vec<Mat4> {
         let mut globals: Vec<Option<Mat4>> = vec![None; self.nodes.len()];
         self.joints
@@ -155,15 +158,29 @@ impl Rig {
             .collect()
     }
 
+    /// `node`'s transform in the asset's space, each node's composed once:
+    /// up from it to the nearest composed ancestor or its root, then down.
+    /// A chain of ancestors is at most as long as there are nodes, the cap
+    /// that ends a cycle's walk.
     fn global(&self, node: usize, locals: &[Mat4], globals: &mut [Option<Mat4>]) -> Mat4 {
-        if let Some(global) = globals[node] {
-            return global;
+        let mut chain = Vec::new();
+        let mut above = Mat4::IDENTITY;
+        let mut at = node;
+        loop {
+            if let Some(global) = globals[at] {
+                above = global;
+                break;
+            }
+            chain.push(at);
+            match self.nodes[at].parent {
+                Some(parent) if chain.len() < self.nodes.len() => at = parent,
+                _ => break,
+            }
         }
-        let global = match self.nodes[node].parent {
-            Some(parent) => self.global(parent, locals, globals) * locals[node],
-            None => locals[node],
-        };
-        globals[node] = Some(global);
-        global
+        for &at in chain.iter().rev() {
+            above *= locals[at];
+            globals[at] = Some(above);
+        }
+        above
     }
 }
