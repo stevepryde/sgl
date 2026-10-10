@@ -10,7 +10,7 @@ import { chromium } from "playwright";
 const HOST = "127.0.0.1";
 const PORT = 8123;
 const DIST = process.env.SGL_BROWSER_PROBE_DIR ?? "target/browser-probe";
-const SCENARIOS = 9;
+const SCENARIOS = 10;
 
 async function startFixture(): Promise<Bun.Subprocess> {
   const fixture = Bun.spawn(["cargo", "run", "-q", "-p", "sgl-net", "--example", "ws_fixture_server"], {

@@ -1204,6 +1204,7 @@ mod gpu_tests {
     use crate::canvas::light::PointLight;
     use crate::canvas::sprite::MAX_ATLAS_DIM;
     use crate::canvas::test_gpu::{device, gpu, read_texture};
+    use crate::canvas::{Overlay, Rect, WorldUnits};
     use glam::Vec2;
     use std::path::PathBuf;
     use wgpu::util::DeviceExt;
@@ -1460,6 +1461,45 @@ mod gpu_tests {
         for c in &px[..3] {
             assert!((f32::from(*c) - 137.0).abs() <= 1.0, "{px:?}");
         }
+    }
+
+    /// #324: a world-channel overlay fill under a 32 px/unit, y-up camera
+    /// covers its rect in world units. The camera centers (1, 1) in a 64 px
+    /// view, so world `(x, y)` lands at pixel `(32 + 32(x - 1), 32 - 32(y - 1))`
+    /// and the rect `x ∈ [0.25, 1.25], y ∈ [0.5, 1.25]` covers columns
+    /// 8..40 and rows 24..48.
+    #[test]
+    fn world_overlay_fill_spans_world_units() {
+        let Some(gpu) = gpu() else { return };
+        let mut renderer = Renderer::headless(&gpu, 64, 64, [0.0; 3], LightingSpace::Gamma);
+        let mut assets: Assets<Texture> = Assets::new();
+        let white = renderer.white_texture(&gpu, &mut assets);
+        let units = WorldUnits {
+            pixels_per_unit: 32.0,
+            y_up: true,
+        };
+        let mut camera = Camera::new(64, 64).with_units(units);
+        camera.center = Vec2::ONE;
+        let mut list = DrawList::new();
+        Overlay {
+            color: [1.0, 0.0, 0.0, 1.0],
+            units,
+            ..Overlay::new(white)
+        }
+        .fill_rect(&mut list.world, Rect::new(0.25, 0.5, 1.0, 0.75));
+        renderer.render_scene(&gpu, &mut list, &camera, &LightFrame::default());
+        let pixels = renderer.read_scene(&gpu).expect("scene readback");
+        let red: Vec<(usize, usize)> = pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, p)| p[0] > 128)
+            .map(|(i, _)| (i % 64, i / 64))
+            .collect();
+        let columns = red.iter().map(|p| p.0);
+        let rows = red.iter().map(|p| p.1);
+        assert_eq!(red.len(), 32 * 24, "covered pixels");
+        assert_eq!((columns.clone().min(), columns.max()), (Some(8), Some(39)));
+        assert_eq!((rows.clone().min(), rows.max()), (Some(24), Some(47)));
     }
 
     /// The gamma composite stores the multiply-add unchanged: an 8-bit 128

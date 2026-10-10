@@ -10,13 +10,13 @@ use web_sys::{BinaryType, CloseEvent, Event, MessageEvent, WebSocket};
 
 use super::queue::PeerState;
 use super::{
-    MAX_BROWSER_BUFFERED_BYTES, MAX_BROWSER_RECONNECT_ATTEMPTS, MAX_BROWSER_RECONNECT_DELAY_MS,
-    MAX_WEBSOCKET_FRAME_BYTES, ReconnectPolicy, ReconnectState, WebSocketIdentity, decode_envelope,
-    encode_envelope,
+    ENVELOPE_HEADER_LEN, MAX_BROWSER_BUFFERED_BYTES, MAX_BROWSER_RECONNECT_ATTEMPTS,
+    MAX_BROWSER_RECONNECT_DELAY_MS, MAX_WEBSOCKET_FRAME_BYTES, ReconnectPolicy, ReconnectState,
+    WebSocketIdentity, decode_envelope, encode_envelope,
 };
 use crate::{
-    ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, ReliableCapacity, ReliableConfig,
-    RttEstimate, SendError,
+    ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES,
+    ReliableCapacity, ReliableConfig, RttEstimate, SendError,
 };
 
 fn copy_bounded_binary(buffer: &ArrayBuffer) -> Option<Vec<u8>> {
@@ -38,7 +38,10 @@ pub struct BrowserWebSocketConfig {
     /// past this.
     /// At least [`MAX_WEBSOCKET_FRAME_BYTES`] so any frame can go out.
     pub reliable_buffered_bytes: usize,
-    /// Browser buffered-byte watermark above which latest state stays coalesced.
+    /// Browser buffered-byte watermark above which latest state stays
+    /// coalesced: a released state waits while it would take
+    /// `bufferedAmount` past this. At least [`ENVELOPE_HEADER_LEN`] +
+    /// [`MAX_LATEST_STATE_BYTES`] so the largest state can go out.
     pub latest_buffered_bytes: usize,
     /// The connection's reliable message cap, lane weights and per-lane
     /// bounds. The browser cannot stop reading a socket, so a lane's
@@ -66,7 +69,7 @@ impl BrowserWebSocketConfig {
         let reconnect = self.reconnect;
         if self.reliable_buffered_bytes < MAX_WEBSOCKET_FRAME_BYTES
             || self.reliable_buffered_bytes > MAX_BROWSER_BUFFERED_BYTES
-            || self.latest_buffered_bytes == 0
+            || self.latest_buffered_bytes < ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES
             || self.latest_buffered_bytes > MAX_BROWSER_BUFFERED_BYTES
             || reconnect.max_attempts == 0
             || reconnect.max_attempts > MAX_BROWSER_RECONNECT_ATTEMPTS
