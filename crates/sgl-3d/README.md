@@ -1689,7 +1689,8 @@ stay in the game (S3D-1).
   &morph_weights)` gives one joint matrix per joint the model's influences
   name (glTF's: the joint's transform in the model's space times its inverse
   bind matrix; `Rig::joint_matrices` composes them from each node's local
-  transform) and one weight per morph weight its targets name; further ones
+  transform, and ends, with wrong matrices, on a built rig whose parents
+  form a cycle) and one weight per morph weight its targets name; further ones
   are ignored, fewer are refused (`SceneError::DeformationMismatch`). An
   instance keeps its deformation until it is set again and starts at its
   bind pose. The instance's pose places the deformed model in the world.

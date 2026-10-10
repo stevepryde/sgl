@@ -285,6 +285,40 @@ fn node_hierarchies_that_are_not_trees_are_rejected() {
     }
 }
 
+// Plausible defect: a game-built rig whose parents form a cycle evaluated
+// by recursing up the parents forever, overflowing the stack, or a cycle
+// corrupting another joint's matrix. The oracle for the tree's joint is
+// glTF's: its parent's transform times its own.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_built_rig_with_a_parent_cycle_still_evaluates() {
+    let node = |parent, x: f32| crate::deformation::Node {
+        name: None,
+        parent,
+        translation: Vec3::new(x, 0., 0.),
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+    let joint = |node| crate::deformation::Joint {
+        node,
+        inverse_bind: Mat4::IDENTITY,
+    };
+    let rig = crate::deformation::Rig {
+        nodes: vec![
+            node(Some(1), 1.),
+            node(Some(0), 2.),
+            node(None, 3.),
+            node(Some(2), 4.),
+        ],
+        joints: vec![joint(0), joint(3)],
+        ..Default::default()
+    };
+    let locals: Vec<Mat4> = rig.nodes.iter().map(|node| node.rest()).collect();
+    let matrices = rig.joint_matrices(&locals);
+    assert_eq!(matrices.len(), 2);
+    assert!(matrices[0].is_finite());
+    assert_eq!(matrices[1], locals[2] * locals[3]);
+}
+
 // Plausible defects: a fifth influence silently dropped; a skinned
 // primitive without influences, with an out-of-range joint or with
 // weightless vertices loaded as partial geometry or left for the scene to

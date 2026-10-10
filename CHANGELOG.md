@@ -17,8 +17,10 @@ docs and specs the entry links.
 
 - `sgl-3d` `asset::load*`: a glTF node that is its own ancestor overflowed
   the stack at load or in `Rig::joint_matrices`, and a node with two parents
-  loaded; both now fail the load with an error naming the node. No game-code
-  changes needed; re-export a file that now fails.
+  loaded; both now fail the load with an error naming the node, and
+  `Rig::joint_matrices` on a game-built rig with a parent cycle returns
+  (wrong matrices for the cycle's joints) instead of overflowing. No
+  game-code changes needed; re-export a file that now fails.
 - `sgl-2d` `UiFrame::password_edit_clear`: the clear button released the
   buffer's allocation; it now zeroizes in place and keeps the preallocated
   capacity. No game-code changes needed.
