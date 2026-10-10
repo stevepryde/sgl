@@ -21,15 +21,15 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    renderer: a `world` channel (through the camera) and a `screen` channel
    (fixed logical space), both `SpriteInstance`s addressed by texture handle
    and pixel source rect. Each channel is stable-sorted by ascending `z`, so
-   equal-`z` sprites keep push order. `push_tiled` covers the target rect with
-   repeated source tiles including a partial last tile; `push_nine_slice`
-   keeps corners at native size and stretches edges and center. Both take a
-   `WorldUnits` (the world camera's on the world channel; the screen variants
-   use logical pixels): the target and tile sizes are in those units, the
-   grid's y direction follows `y_up` (the source's top row lands at the
-   larger world y), the 9-slice border stays in source pixels, and the
-   default units are bit-identical to the pixel layout. Expansions are
-   bounded by `MAX_TILED_QUADS`.
+   equal-`z` sprites keep push order; a NaN `z` draws last. `push_tiled`
+   covers the target rect with repeated source tiles including a partial last
+   tile; `push_nine_slice` keeps corners at native size and stretches edges
+   and center. Both take a `WorldUnits` (the world camera's on the world
+   channel; the screen variants use logical pixels): the target and tile
+   sizes are in those units, the grid's y direction follows `y_up` (the
+   source's top row lands at the larger world y), the 9-slice border stays in
+   source pixels, and the default units are bit-identical to the pixel
+   layout. Expansions are bounded by `MAX_TILED_QUADS`.
 3. **Camera.** `Camera` is a world-space center plus zoom over a logical view;
    the default convention is y-down logical pixels and clockwise rotation.
    `with_units` switches the world channel to pixels-per-unit and optional
