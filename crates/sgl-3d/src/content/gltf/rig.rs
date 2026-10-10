@@ -24,8 +24,11 @@ pub(super) struct Rigging {
 
 impl Rigging {
     /// The document's nodes, skins and clips; empty when it has no skin,
-    /// morph target or animation.
+    /// morph target or animation. Refuses a node hierarchy that is not a
+    /// set of trees, which the loader's and `Rig`'s walks of it assume,
+    /// whether or not the document deforms.
     pub fn new(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Result<Self> {
+        let parents = parents(document)?;
         let mut rigging = Self {
             rig: Rig::default(),
             skins: Vec::new(),
@@ -37,12 +40,6 @@ impl Rigging {
             .any(|primitive| primitive.morph_targets().next().is_some());
         if document.skins().next().is_none() && document.animations().next().is_none() && !morphed {
             return Ok(rigging);
-        }
-        let mut parents = vec![None; document.nodes().count()];
-        for node in document.nodes() {
-            for child in node.children() {
-                parents[child.index()] = Some(node.index());
-            }
         }
         rigging.rig.nodes = document
             .nodes()
@@ -135,6 +132,43 @@ impl Rigging {
         self.morphs.insert(node.index(), first);
         Ok(first)
     }
+}
+
+/// Each node's parent, the hierarchy glTF 2.0 requires (3.5.3: disjoint
+/// strict trees, each node with at most one parent and none its own
+/// ancestor), which gltf's validation leaves unchecked: a node with two
+/// parents, or under a cycle, is refused.
+fn parents(document: &gltf::Document) -> Result<Vec<Option<usize>>> {
+    let nodes: Vec<gltf::Node<'_>> = document.nodes().collect();
+    let mut parents = vec![None; nodes.len()];
+    for node in &nodes {
+        for child in node.children() {
+            if parents[child.index()].replace(node.index()).is_some() {
+                return Err(format!(
+                    "node {} has more than one parent; the node hierarchy must be a set of trees",
+                    child.index()
+                )
+                .into());
+            }
+        }
+    }
+    // With one parent at most, each node is reached once from the roots,
+    // and only one under a cycle is not.
+    let mut reached = vec![false; nodes.len()];
+    let mut stack: Vec<usize> = (0..nodes.len())
+        .filter(|&node| parents[node].is_none())
+        .collect();
+    while let Some(node) = stack.pop() {
+        reached[node] = true;
+        stack.extend(nodes[node].children().map(|child| child.index()));
+    }
+    if let Some(node) = reached.iter().position(|reached| !reached) {
+        return Err(format!(
+            "node {node}'s ancestors form a cycle; the node hierarchy must be a set of trees"
+        )
+        .into());
+    }
+    Ok(parents)
 }
 
 fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) -> Result<Clip> {

@@ -1673,7 +1673,9 @@ stay in the game (S3D-1).
   with glTF's step, linear or cubic-spline interpolation). A skinned mesh's
   vertices stay in bind space, as glTF ignores its node's transform; a rigid
   node's transform is baked into its vertices and morph displacements, as
-  before. Primitives batch by material, skin and morphed node.
+  before. Primitives batch by material, skin and morphed node. A node
+  hierarchy that is not a set of trees (a node with two parents, or its own
+  ancestor) fails the load.
 - **Procedural.** `ModelMesh::deformation` takes the same data; a model with
   any deforming mesh deforms. `PreparedModel::new` refuses influences or
   targets that do not match their vertices, negative or non-finite weights,

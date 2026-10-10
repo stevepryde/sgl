@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: a glTF node that is its own ancestor overflowed
+  the stack at load or in `Rig::joint_matrices`, and a node with two parents
+  loaded; both now fail the load with an error naming the node. No game-code
+  changes needed; re-export a file that now fails.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`

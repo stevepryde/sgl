@@ -255,6 +255,36 @@ fn skins_morph_targets_and_clips_import_as_plain_data() {
     assert!(static_asset.meshes.pop().unwrap().deformation.is_rigid());
 }
 
+// Plausible defects: a node hierarchy that is not a set of trees walked as
+// one: the scene's walk recursing forever through a node that is its own
+// child; a cycle the scene never reaches loaded, so posing a joint on it
+// recurses forever later; a node with two parents read under both.
+#[wasm_bindgen_test(unsupported = test)]
+fn node_hierarchies_that_are_not_trees_are_rejected() {
+    type Edit = fn(&mut Value, &mut Buffer);
+    let cases: [(&str, Edit); 3] = [
+        ("a joint its own child", |document, _| {
+            document["nodes"][2]["children"] = json!([2]);
+        }),
+        ("a joint on a cycle outside the scene", |document, _| {
+            let nodes = document["nodes"].as_array_mut().unwrap();
+            nodes.push(json!({"children": [6]}));
+            nodes.push(json!({"children": [5]}));
+            document["skins"][0]["joints"] = json!([6]);
+        }),
+        ("a joint with two parents", |document, _| {
+            document["nodes"][0]["children"] = json!([1, 3, 2]);
+        }),
+    ];
+    for (label, edit) in cases {
+        let error = load_slice(&rigged(edit))
+            .err()
+            .unwrap_or_else(|| panic!("{label} was accepted"))
+            .to_string();
+        assert!(error.contains("node hierarchy"), "{label}: {error}");
+    }
+}
+
 // Plausible defects: a fifth influence silently dropped; a skinned
 // primitive without influences, with an out-of-range joint or with
 // weightless vertices loaded as partial geometry or left for the scene to
