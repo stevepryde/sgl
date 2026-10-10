@@ -49,12 +49,15 @@ impl FrameAnimation {
     /// An animation playing `order` at `fps`. Starts at the first entry.
     ///
     /// # Panics
-    /// If `order` is empty or `fps` is not positive — both are authoring
-    /// errors, not runtime conditions.
+    /// If `order` is empty or `fps` is not finite and positive — both are
+    /// authoring errors, not runtime conditions.
     pub fn new(order: impl Into<Vec<usize>>, fps: f32, loop_mode: LoopMode) -> Self {
         let order = order.into();
         assert!(!order.is_empty(), "FrameAnimation: empty frame order");
-        assert!(fps > 0.0, "FrameAnimation: fps must be positive, got {fps}");
+        assert!(
+            fps.is_finite() && fps > 0.0,
+            "FrameAnimation: fps must be finite and positive, got {fps}"
+        );
         Self {
             order,
             frame_duration: 1.0 / fps,
@@ -77,14 +80,25 @@ impl FrameAnimation {
     /// [`LoopMode::Once`] animation finishes (a completion edge, once).
     ///
     /// Large `dt` steps multiple frames; the leftover carries into the new
-    /// frame so long-run timing never drifts.
+    /// frame so long-run timing never drifts. A non-finite `dt` is ignored. A
+    /// [`LoopMode::Repeat`] tick whose frame duration is too small for `f32`
+    /// to subtract from the accumulated time drops the remainder.
     pub fn tick(&mut self, dt: f32) -> bool {
-        if self.finished {
+        if self.finished || !dt.is_finite() {
             return false;
         }
         self.timer += dt;
         while self.timer >= self.frame_duration {
-            self.timer -= self.frame_duration;
+            let rest = self.timer - self.frame_duration;
+            if rest >= self.timer && self.loop_mode == LoopMode::Repeat {
+                // The subtraction made no progress (a duration below the
+                // timer's precision, or a timer overflowed to infinity), so
+                // `Repeat` would spin. `Once` needs no guard: it finishes
+                // within one pass.
+                self.timer = 0.0;
+                return false;
+            }
+            self.timer = rest;
             if self.position + 1 < self.order.len() {
                 self.position += 1;
             } else {
@@ -209,6 +223,49 @@ mod tests {
             seen.push(a.current_frame());
         }
         assert_eq!(seen, vec![2, 1, 2, 0, 2, 1]);
+    }
+
+    /// #313: a non-finite `dt` neither hangs a repeating animation nor
+    /// poisons its clock — the next finite tick advances on time.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_non_finite_dt_is_ignored() {
+        let mut a = FrameAnimation::new([0, 1], 10.0, LoopMode::Repeat);
+        for dt in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(!a.tick(dt));
+            assert_eq!(a.current_frame(), 0);
+        }
+        a.tick(0.1);
+        assert_eq!(a.current_frame(), 1);
+    }
+
+    /// #313: a frame duration below the timer's `f32` precision (2^-30 s
+    /// against a 1 s tick) returns, dropping the remainder, and the next
+    /// frame's worth of time advances the cursor.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_frame_duration_below_the_timer_precision_drops_the_remainder() {
+        let fps = 2f32.powi(30);
+        let mut a = FrameAnimation::new([0, 1], fps, LoopMode::Repeat);
+        a.tick(1.0);
+        assert_eq!(a.current_frame(), 0);
+        a.tick(1.0 / fps);
+        assert_eq!(a.current_frame(), 1);
+    }
+
+    /// #313: frame `i` shows for `[i·d, (i+1)·d)`, so 0.4 s into `[0, 1, 2]`
+    /// at 10 fps is frame 1 of the second pass.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_tick_past_a_whole_pass_lands_on_the_spec_frame() {
+        let mut a = FrameAnimation::new([0, 1, 2], 10.0, LoopMode::Repeat);
+        a.tick(0.4);
+        assert_eq!(a.current_frame(), 1);
+    }
+
+    /// #313: an infinite fps (a zero frame duration) is an authoring error.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[should_panic(expected = "fps must be finite and positive")]
+    fn infinite_fps_is_rejected() {
+        let _ = FrameAnimation::new([0], f32::INFINITY, LoopMode::Repeat);
     }
 
     /// `reset` rewinds and un-finishes.
