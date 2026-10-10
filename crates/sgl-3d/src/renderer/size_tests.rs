@@ -1,4 +1,5 @@
-//! The renderer accepts every output size, however thin.
+//! The renderer accepts every output size, however thin, and restarts
+//! history when its targets change.
 use crate::renderer::Renderer;
 use crate::settings::Settings;
 use crate::{Camera, FrameInput, Scene, test_support};
@@ -76,4 +77,72 @@ fn one_pixel_thin_sizes_render_with_default_settings() {
             panic!("{first:?} then {second:?}: {error}");
         }
     }
+}
+
+// Plausible defect: `finish_frame` clears the reset a resize requested
+// between `render` and `finish_frame`, so the next frame reuses history
+// (TAA, Crystal SSR) rendered at the old size. The oracle is the documented
+// contract of `render`: history restarts after a resize that changed the
+// targets, so the frame after render, resize, finish_frame starts invalid,
+// while the same sequence without a resize continues history.
+#[test]
+fn resize_between_render_and_finish_restarts_history() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, test_support::cube());
+    let settings = Settings::default();
+    let first = [64, 48];
+    let second = [80, 48];
+    let mut renderer = Renderer::new(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        first,
+        1.,
+        &settings,
+    )
+    .unwrap();
+    let render = |renderer: &mut Renderer, scene: &mut Scene, size: [u32; 2]| {
+        let output =
+            crate::view::targets::target(&device, "resize", size, wgpu::TextureFormat::Rgba8Unorm);
+        let eye = glam::Vec3::new(2.4, 2., 3.3);
+        let input = FrameInput::new(Camera {
+            eye,
+            view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
+            projection: crate::perspective(
+                55f32.to_radians(),
+                size[0] as f32 / size[1] as f32,
+                0.1,
+            ),
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.rendered.as_ref().unwrap().0.valid
+    };
+    render(&mut renderer, &mut scene, first);
+    renderer.finish_frame(&mut scene);
+    assert!(
+        render(&mut renderer, &mut scene, first),
+        "history continues"
+    );
+    renderer.resize(&device, second, 1., &settings);
+    renderer.finish_frame(&mut scene);
+    assert!(
+        !render(&mut renderer, &mut scene, second),
+        "the frame after the resize restarts history"
+    );
+    renderer.finish_frame(&mut scene);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
 }

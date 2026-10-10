@@ -19,6 +19,36 @@ docs and specs the entry links.
   literal origins such as `http://[::1]:3000` were rejected as
   non-canonical; they are now accepted in the browser's compressed
   lowercase form. No game-code changes needed.
+- `sgl-2d` texture uploads: an empty, oversized or short-`rgba` texture, or
+  a mis-sized normal map, panicked; `Renderer::upload_texture`,
+  `upload_normal_map`, `upload_light_cookie`, `SpritePass::upload`,
+  `upload_normal` and `LightPass::upload_cookie` now return
+  `Result<(), sgl_2d::canvas::TextureError>`, and `Renderer::replace_texture`
+  / `SpritePass::replace` `Result<bool, TextureError>`, changing nothing on
+  error. Handle or `.expect` each result.
+- `sgl-core` `StateHasher`: the contract promised distinct digests for any
+  different write sequences, but writes are untagged (`u16(0x1234)` equals
+  `u8(0x34); u8(0x12)`); it now promises them only within one schema.
+  Encoding and digests unchanged. Games that hash several kinds of state in
+  one stream, or change what they write, add a leading tag or version.
+- `sgl-core` `FrameAnimation::tick` / `AnimationSequence::tick`: a NaN or
+  infinite `dt` could hang a repeating animation or freeze a `Once` one, and
+  is now ignored. In `Repeat`/`PingPongRepeat`, a frame duration too small
+  for `f32` to subtract from the accumulated time hung the tick; it now drops
+  the remainder. `FrameAnimation::new` now panics on an infinite `fps` (a
+  `Once` animation completed on its first tick; `Repeat` hung): pass a
+  finite `fps`. No other game-code changes needed.
+- `sgl-3d` `Renderer::finish_frame`: a `Renderer::resize` that changed the
+  targets between `render` and `finish_frame` no longer loses its history
+  reset; the next frame restarts history. No game-code changes needed.
+- `sgl-post-fx` SSR (`HierarchicalRaymarch`, SGL3D's `Crystal` reflections):
+  a ray that runs out of `max_traversal_intersections` before confirming a
+  hit was accepted by proximity and now reports a miss, so streaks near
+  surfaces at the step cap give way to the fallback. No game-code changes
+  needed.
+- `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
+  panicked; now `max` wins and a NaN bound is ignored. No game-code changes
+  needed.
 
 ## 0.4.0 — 2026-10-09
 
