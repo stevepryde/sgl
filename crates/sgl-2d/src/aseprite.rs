@@ -15,6 +15,8 @@
 //! `meta.frameTags` is optional and each tag's `direction` defaults to
 //! `forward`. Tag ranges are inclusive and validated against the frame count.
 //!
+//! Each frame's packed rect must lie within `meta.size`.
+//!
 //! Only the packed atlas rect (`frame`) and `duration` are read. `trimmed`,
 //! `sourceSize`, and `spriteSourceSize` are ignored, so a **trimmed** export
 //! yields the packed rect with its trim offset lost — export sheets untrimmed
@@ -131,11 +133,13 @@ impl AsepriteSheet {
     pub fn parse(json: &str, texture: Handle<Texture>) -> Result<Self, AsepriteError> {
         let raw: RawSheet = serde_json::from_str(json).map_err(AsepriteError::Json)?;
         let frames = decode_frames(raw.frames)?;
+        let sheet_size = (raw.meta.size.w, raw.meta.size.h);
+        check_frames_fit(&frames, sheet_size)?;
         let tags = decode_tags(raw.meta.frame_tags, frames.len())?;
         Ok(Self {
             frames,
             tags,
-            sheet_size: (raw.meta.size.w, raw.meta.size.h),
+            sheet_size,
             texture,
         })
     }
@@ -191,6 +195,12 @@ pub enum AsepriteError {
     DuplicateFrameIndex { index: usize },
     /// The recovered Hash-export indices skipped `expected`.
     MissingFrameIndex { expected: usize, found: usize },
+    /// A frame's rect reaches past the sheet's `meta.size`.
+    FrameOutsideSheet {
+        index: usize,
+        frame: AseFrame,
+        sheet_size: (u32, u32),
+    },
     /// A sequence step named a tag the sheet does not have.
     UnknownTag { name: String },
     /// A tag's inclusive range was empty or ran past the last frame.
@@ -225,6 +235,16 @@ impl std::fmt::Display for AsepriteError {
                 f,
                 "aseprite frame indices must be contiguous from 0: \
                  expected {expected}, found {found}"
+            ),
+            Self::FrameOutsideSheet {
+                index,
+                frame,
+                sheet_size: (w, h),
+            } => write!(
+                f,
+                "aseprite frame {index} at ({}, {}) sized {}x{} \
+                 reaches outside the {w}x{h} sheet",
+                frame.x, frame.y, frame.w, frame.h
             ),
             Self::TagRange {
                 name,
@@ -312,6 +332,26 @@ fn decode_frame(value: serde_json::Value) -> Result<AseFrame, AsepriteError> {
         h: raw.frame.h,
         duration_ms: raw.duration,
     })
+}
+
+/// Every frame rect must lie within the sheet: it addresses the sheet's image,
+/// and a rect past its edge would sample whatever the atlas holds beside it.
+fn check_frames_fit(frames: &[AseFrame], (w, h): (u32, u32)) -> Result<(), AsepriteError> {
+    for (index, frame) in frames.iter().enumerate() {
+        let fits = frame.x.checked_add(frame.w).is_some_and(|right| right <= w)
+            && frame
+                .y
+                .checked_add(frame.h)
+                .is_some_and(|bottom| bottom <= h);
+        if !fits {
+            return Err(AsepriteError::FrameOutsideSheet {
+                index,
+                frame: *frame,
+                sheet_size: (w, h),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn decode_tags(raw: Vec<RawTag>, frames: usize) -> Result<Vec<AseTag>, AsepriteError> {
@@ -623,6 +663,47 @@ mod tests {
             Err(AsepriteError::FramesShape)
         ));
         assert!(matches!(parse("not json"), Err(AsepriteError::Json(_))));
+    }
+
+    /// #295: a frame rect must lie within `meta.size`; one ending exactly at
+    /// the sheet's edge fits, one a pixel past it, or whose end overflows
+    /// `u32`, does not.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn frame_rects_must_lie_within_the_sheet() {
+        let sheet = |second: &str| {
+            format!(
+                r#"{{"frames":[
+                    {{"frame":{{"x":0,"y":0,"w":8,"h":8}},"duration":100}},
+                    {{"frame":{second},"duration":100}}],
+                "meta":{{"size":{{"w":16,"h":16}}}}}}"#
+            )
+        };
+        for edge in [
+            r#"{"x":8,"y":8,"w":8,"h":8}"#,
+            r#"{"x":0,"y":0,"w":16,"h":16}"#,
+        ] {
+            assert!(parse(&sheet(edge)).is_ok(), "{edge} fits the sheet");
+        }
+        for (outside, x, y, w, h) in [
+            (r#"{"x":15,"y":0,"w":8,"h":8}"#, 15, 0, 8, 8),
+            (r#"{"x":8,"y":9,"w":8,"h":8}"#, 8, 9, 8, 8),
+            (r#"{"x":0,"y":0,"w":17,"h":1}"#, 0, 0, 17, 1),
+            (r#"{"x":4294967295,"y":0,"w":1,"h":1}"#, u32::MAX, 0, 1, 1),
+            (r#"{"x":0,"y":1,"w":1,"h":4294967295}"#, 0, 1, 1, u32::MAX),
+        ] {
+            let err = parse(&sheet(outside)).expect_err(outside);
+            assert!(
+                matches!(
+                    err,
+                    AsepriteError::FrameOutsideSheet {
+                        index: 1,
+                        frame: AseFrame { x: fx, y: fy, w: fw, h: fh, .. },
+                        sheet_size: (16, 16),
+                    } if (fx, fy, fw, fh) == (x, y, w, h)
+                ),
+                "{outside}: got {err:?}"
+            );
+        }
     }
 
     /// A sheet exported without tags, and a tag exported without a direction,

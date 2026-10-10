@@ -348,6 +348,7 @@ impl Ui {
             key_used: false,
             focus_requested: false,
             splitter_seen: false,
+            popup_seen: false,
             scroll_clips: Vec::new(),
         }
     }
@@ -383,6 +384,8 @@ pub struct UiFrame<'a> {
     key_used: bool,
     focus_requested: bool,
     splitter_seen: bool,
+    /// The open popup's dropdown was submitted this frame.
+    popup_seen: bool,
     /// The clip each open scroll area restores at its `scroll_area_end`.
     scroll_clips: Vec<Option<Rect>>,
 }
@@ -499,12 +502,16 @@ impl UiFrame<'_> {
     }
 
     /// Finish the frame: releases clear the pressed widget; a press that no
-    /// line-edit consumed drops focus (click-away unfocus); this frame's
-    /// overlay regions become next frame's input blockers.
+    /// line-edit consumed drops focus (click-away unfocus); a dropdown not
+    /// submitted this frame closes; this frame's overlay regions become next
+    /// frame's input blockers.
     pub fn end(self) {
         self.text.set_clip(None);
         if self.input.mouse_released || !self.splitter_seen {
             self.ui.splitter_drag = None;
+        }
+        if !self.popup_seen {
+            self.ui.open_popup = None;
         }
         if self.input.mouse_released {
             self.ui.active = None;

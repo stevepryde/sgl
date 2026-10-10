@@ -148,6 +148,8 @@ impl UiFrame<'_> {
     /// the current clip: only its visible part shows, takes presses and
     /// blocks widgets underneath. Place dropdowns where
     /// `rect.max.y + options·row` stays on screen and inside the clip.
+    /// Submit it every frame while shown: an open dropdown not submitted in
+    /// a frame closes at [`end`](Self::end), releasing keyboard capture.
     /// Returns `true` the frame the selection changed.
     pub fn dropdown(
         &mut self,
@@ -195,6 +197,7 @@ impl UiFrame<'_> {
         if fired {
             self.ui.open_popup = if was_open { None } else { Some(id) };
         }
+        self.popup_seen |= self.ui.open_popup == Some(id);
         if !was_open || fired {
             return false;
         }
@@ -515,6 +518,38 @@ mod tests {
         assert_eq!(fired, [false, false, true]);
         assert_eq!(selected, 0);
         assert!(!ui.any_popup_open(), "the press outside the clip closes it");
+    }
+
+    /// #292: an open dropdown that stops being submitted closes, releasing
+    /// its keyboard capture, so Tab and Enter reach another button.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn removed_dropdown_releases_its_popup() {
+        let (mut ui, mut text, _assets) = fixture();
+        let dd = Rect::new(10.0, 10.0, 160.0, 30.0);
+        let options = ["a", "b"];
+        let mut selected = 0usize;
+        let mut list = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut list, press_at(50.0, 25.0));
+        f.dropdown("menu", dd, &options, &mut selected, 16.0);
+        f.end();
+        assert!(ui.any_popup_open());
+
+        let mut fired = Vec::new();
+        for keys in [vec![], vec![UiKey::Tab], vec![UiKey::Enter]] {
+            let mut list = DrawList::new();
+            let mut f = ui.begin(
+                &mut text,
+                &mut list,
+                UiInput {
+                    keys,
+                    ..UiInput::default()
+                },
+            );
+            fired.push(f.button("other", BTN, "OK", 16.0));
+            f.end();
+        }
+        assert!(!ui.any_popup_open());
+        assert_eq!(fired, [false, false, true]);
     }
 
     /// A modal blocks every ordinary widget anywhere on screen the frame

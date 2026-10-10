@@ -1,5 +1,5 @@
 //! glTF materials and the material extensions SGL3D supports.
-use gltf::texture::WrappingMode;
+use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 
 use super::super::asset::{Material, Result};
 use super::super::material::AlphaMode;
@@ -122,9 +122,19 @@ pub(super) fn read_material(
             .map(|t| t.texture())
             .filter(|_| occlusion.texture.is_some() && occlusion.texture == mr_image),
     ];
+    // The textures SGL3D samples, and only those (an ignored map's sampler
+    // constrains nothing), share one wrapping and its trilinear filtering.
     let mut wrap = None;
     for texture in textures.into_iter().flatten() {
         let sampler = texture.sampler();
+        if !matches!(sampler.mag_filter(), None | Some(MagFilter::Linear))
+            || !matches!(
+                sampler.min_filter(),
+                None | Some(MinFilter::LinearMipmapLinear)
+            )
+        {
+            return Err(format!("material {name}: texture {} uses unsupported sampling; export linear magnification and trilinear minification", texture.index()).into());
+        }
         let modes = [sampler.wrap_s(), sampler.wrap_t()];
         if wrap.is_some_and(|existing| existing != modes) {
             return Err(format!("material {name}: texture channels use different wrapping").into());

@@ -1,9 +1,11 @@
 //! Tone mapping and presentation (`tone_map.wgsl`): the frame's exposure,
-//! Bevy's colour grading and Filament's AgX with its look, from the
-//! antialiased HDR scene to the output, with Bevy's deband dither. Directly,
-//! or, when diagnostics capture it, into the tone-mapped target at the output
-//! size, undithered, which is then copied to the output texel for texel and
-//! dithered alike.
+//! Bevy's colour grading and Filament's AgX with its look, from the HDR
+//! scene to the output, with Bevy's deband dither. Directly, or, when
+//! diagnostics capture it, into the tone-mapped target at the output size,
+//! undithered, which is then copied to the output texel for texel and
+//! dithered alike. Where SMAA runs, into a target at the scene size
+//! (`encode` to `Destination::Scene`), which SMAA antialiases and `resample`
+//! then presents the same two ways.
 use super::inputs::{self, Inputs, draw, pipeline, sampled, uniform_entry};
 use crate::frame_input::{AgxLook, ColorGrading};
 use crate::shading::gbuffer::COLOR as HDR;
@@ -21,6 +23,8 @@ pub(crate) static TONE_MAP: crate::shading::Module = crate::shading::Module {
 pub(crate) const PRESENT_ENTRY: &str = "present";
 pub(crate) const PRESENT_DIRECT_ENTRY: &str = "present_direct";
 pub(crate) const COPY_PIXEL_ENTRY: &str = "copy_pixel";
+pub(crate) const RESAMPLE_ENTRY: &str = "resample";
+pub(crate) const RESAMPLE_DIRECT_ENTRY: &str = "resample_direct";
 
 /// `ColorGrading` in `tone_map.wgsl`: Bevy's `ColorGradingUniform` without
 /// its exposure.
@@ -122,6 +126,17 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
     )]
 }
 
+/// Where tone mapping writes.
+pub(super) enum Destination<'a> {
+    /// The output, through the tone-mapped target with `capture`.
+    Output {
+        capture: bool,
+        output: &'a wgpu::TextureView,
+    },
+    /// An RGBA16F target of the scene's size, undithered, for SMAA.
+    Scene(&'a wgpu::TextureView),
+}
+
 pub(super) struct ToneMap {
     /// Into the tone-mapped target.
     present: wgpu::RenderPipeline,
@@ -129,6 +144,11 @@ pub(super) struct ToneMap {
     present_direct: wgpu::RenderPipeline,
     /// The tone-mapped target into the output.
     present_copy: wgpu::RenderPipeline,
+    /// The antialiased tone-mapped scene into the tone-mapped target.
+    resample: wgpu::RenderPipeline,
+    /// The antialiased tone-mapped scene into the output, as the copy
+    /// writes it.
+    resample_direct: wgpu::RenderPipeline,
     look_layout: wgpu::BindGroupLayout,
     /// `ColorGradingUniform`.
     grading: wgpu::Buffer,
@@ -169,6 +189,15 @@ impl ToneMap {
                 None,
             ),
             present_copy: pipeline(device, &copy, &shader, COPY_PIXEL_ENTRY, &[format], None),
+            resample: pipeline(device, &copy, &shader, RESAMPLE_ENTRY, &[HDR], None),
+            resample_direct: pipeline(
+                device,
+                &copy,
+                &shader,
+                RESAMPLE_DIRECT_ENTRY,
+                &[format],
+                None,
+            ),
             grading: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -232,8 +261,7 @@ impl ToneMap {
     }
 
     /// `hdr` exposed by `exposure`, graded as `grading` and tone mapped, to
-    /// `output`, through the tone-mapped target with `capture`. `bloom` is
-    /// the bloom view the inputs' groups bind.
+    /// `destination`. `bloom` is the bloom view the inputs' groups bind.
     #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
@@ -245,14 +273,9 @@ impl ToneMap {
         bloom: &wgpu::TextureView,
         exposure: &wgpu::TextureView,
         grading: &ColorGrading,
-        capture: bool,
-        output: &wgpu::TextureView,
+        destination: Destination<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        #[cfg(any(test, feature = "diagnostics"))]
-        {
-            self.captured = capture;
-        }
         crate::counters::write_buffer(
             queue,
             &self.grading,
@@ -261,14 +284,26 @@ impl ToneMap {
         );
         let look = self.look(device, exposure);
         let group = inputs.group(device, hdr, bloom);
-        let (pipeline, target, label) = if capture {
-            (
-                &self.present,
-                &self.tone_mapped,
-                "tone map to the tone-mapped target",
-            )
-        } else {
-            (&self.present_direct, output, "tone map to the output")
+        let (pipeline, target, label, presented) = match destination {
+            Destination::Scene(scene) => {
+                (&self.present, scene, "tone map the scene for SMAA", None)
+            }
+            Destination::Output { capture, output } => {
+                #[cfg(any(test, feature = "diagnostics"))]
+                {
+                    self.captured = capture;
+                }
+                if capture {
+                    (
+                        &self.present,
+                        &self.tone_mapped,
+                        "tone map to the tone-mapped target",
+                        Some(output),
+                    )
+                } else {
+                    (&self.present_direct, output, "tone map to the output", None)
+                }
+            }
         };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
@@ -281,6 +316,43 @@ impl ToneMap {
         pass.set_bind_group(1, &look, &[]);
         pass.draw(0..3, 0..1);
         drop(pass);
+        if let Some(output) = presented {
+            self.present_output(device, encoder, inputs, bloom, output, timing);
+        }
+    }
+
+    /// `scene`, the antialiased tone-mapped scene at the scene size,
+    /// resampled to `output`, through the tone-mapped target with `capture`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resample(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        inputs: &Inputs,
+        scene: &wgpu::TextureView,
+        bloom: &wgpu::TextureView,
+        capture: bool,
+        output: &wgpu::TextureView,
+        timing: Option<&crate::timing::GpuTiming>,
+    ) {
+        #[cfg(any(test, feature = "diagnostics"))]
+        {
+            self.captured = capture;
+        }
+        let group = inputs.group(device, scene, bloom);
+        let (pipeline, target) = if capture {
+            (&self.resample, &self.tone_mapped)
+        } else {
+            (&self.resample_direct, output)
+        };
+        draw(
+            encoder,
+            pipeline,
+            &group,
+            target,
+            "resample the antialiased scene",
+            timing.and_then(|t| t.render_pass("tone map")),
+        );
         if capture {
             self.present_output(device, encoder, inputs, bloom, output, timing);
         }
