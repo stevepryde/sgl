@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `AnimationSequence`: a ping-pong sequence of one step with one
+  frame (or one pause or action) played it twice per bounce; it now plays it
+  once, so a `PingPongOnce` completes after one frame duration. No game-code
+  changes needed.
+
 - `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
   `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
   Use or remove such calls; no other game-code changes are needed.
