@@ -16,10 +16,15 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-core` `FrameAnimation::tick` / `AnimationSequence::tick`: a NaN or
-  infinite `dt`, an infinite `fps`, or a frame duration below the accumulated
-  time's `f32` precision could hang a repeating animation; a non-finite `dt`
-  is now ignored, those ticks return, and `FrameAnimation::new` panics on an
-  infinite `fps`. No game-code changes needed.
+  infinite `dt` could hang a repeating animation or freeze a `Once` one, and
+  is now ignored. In `Repeat`/`PingPongRepeat`, a frame duration too small
+  for `f32` to subtract from the accumulated time hung the tick; it now drops
+  the remainder. `FrameAnimation::new` now panics on an infinite `fps` (a
+  `Once` animation completed on its first tick; `Repeat` hung): pass a
+  finite `fps`. No other game-code changes needed.
+- `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
+  panicked; now `max` wins and a NaN bound is ignored. No game-code changes
+  needed.
 
 ## 0.4.0 — 2026-10-09
 
