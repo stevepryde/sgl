@@ -136,7 +136,7 @@ mod native {
                     [0.45, 0.5, 0.55, 0.35],
                 );
             }
-            self.pane = self.pane.clamp(220.0, (view.x - 240.0).min(440.0));
+            self.pane = self.pane.max(220.0).min((view.x - 240.0).min(440.0));
             let style = TextStyle::new(16.0, theme.text);
             // Measure actions and wrap the toolbar when its row fills.
             frame.panel(Rect::new(0.0, 0.0, view.x, 46.0));

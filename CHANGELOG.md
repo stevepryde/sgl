@@ -22,6 +22,9 @@ docs and specs the entry links.
   `Result<(), sgl_2d::canvas::TextureError>`, and `Renderer::replace_texture`
   / `SpritePass::replace` `Result<bool, TextureError>`, changing nothing on
   error. Handle or `.expect` each result.
+- `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
+  panicked; now `max` wins and a NaN bound is ignored. No game-code changes
+  needed.
 
 ## 0.4.0 — 2026-10-09
 
