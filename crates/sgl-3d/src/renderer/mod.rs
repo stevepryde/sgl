@@ -121,9 +121,11 @@ impl std::error::Error for RendererError {
 impl Renderer {
     /// A renderer presenting to `output_format` at `output_size` physical
     /// pixels, for a window of `device_scale` physical pixels per logical
-    /// pixel, sized for `settings`. Reflection source completion and SMAA are
-    /// built for them, so a first frame from a `perspective` camera does not
-    /// rebuild them.
+    /// pixel, sized for `settings`. Any colour format shows the same
+    /// display colour: one neither sRGB nor float (a browser canvas's
+    /// `Bgra8Unorm`) takes it sRGB-encoded. Reflection source completion
+    /// and SMAA are built for them, so a first frame from a `perspective`
+    /// camera does not rebuild them.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

@@ -204,17 +204,32 @@ fn srgb_code(value: f64) -> f64 {
 
 // Defects: no dither, so a gradient bands, every pixel of a column rounding
 // alike; a dither too strong, that strays more than a code value; and a
-// dither only the direct or only the captured path applies. The oracle is the undithered tone-mapped scene the capture writes
-// and the sRGB transfer function, at the GPU's 8-bit sRGB encoding: on both
-// paths each output code stays within a code value and a half of its exact
-// code, and down each column of a horizontal gradient the outputs average to
-// that exact code, not to its rounding as undithered output does.
+// dither only the direct or only the captured path applies; and an output
+// whose format stores what is written (a browser canvas's `Rgba8Unorm`)
+// given linear colour, dark and crushed. The oracle is the undithered
+// tone-mapped scene the capture writes and the sRGB transfer function, at
+// the GPU's 8-bit sRGB encoding or as stored: for an sRGB and a plain
+// 8-bit output alike, on both paths each output code stays within a code
+// value and a half of its exact code, and down each column of a horizontal
+// gradient the outputs average to that exact code, not to its rounding as
+// undithered output does.
 #[test]
 fn dithering_breaks_8_bit_banding_into_bounded_noise() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    for format in [
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        wgpu::TextureFormat::Rgba8Unorm,
+    ] {
+        dithers_into(&device, &queue, format);
+    }
+}
+
+/// `dithering_breaks_8_bit_banding_into_bounded_noise` for an output of
+/// `format`.
+fn dithers_into(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) {
+    let (device, queue) = (device.clone(), queue.clone());
     let size = [256, 64];
     let inputs = Inputs::new(&device);
     let mut tone_map = ToneMap::new(&device, &inputs, format, size);
@@ -275,17 +290,19 @@ fn dithering_breaks_8_bit_banding_into_bounded_noise() {
         for (index, exact) in exact.iter().enumerate() {
             assert!(
                 (code(index) - exact).abs() < 1.5,
-                "{path}: pixel {} channel {}: code {} for exact {exact}",
+                "{format:?} {path}: pixel {} channel {}: code {} for exact {exact}",
                 index / 3,
                 index % 3,
                 code(index)
             );
         }
         let dithered = banding(&|index| code(index) - exact[index]);
-        eprintln!("{path}: mean column error dithered {dithered}, rounded {rounded} code values");
+        eprintln!(
+            "{format:?} {path}: mean column error dithered {dithered}, rounded {rounded} code values"
+        );
         assert!(
             dithered < 0.25 * rounded,
-            "{path}: columns average {dithered} code values from exact, rounding {rounded}"
+            "{format:?} {path}: columns average {dithered} code values from exact, rounding {rounded}"
         );
     }
 }
