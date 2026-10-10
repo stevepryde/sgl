@@ -49,7 +49,9 @@ impl UiFrame<'_> {
         let btn = Rect::new(rect.max.x - side, rect.min.y, side, side);
         let mut cleared = false;
         if !buf.is_empty() && self.input.mouse_pressed && self.hit(&btn) {
-            zeroize_string(buf);
+            // Zeroes the bytes and spare capacity in place and keeps the
+            // allocation, so later typing does not reallocate the secret.
+            buf.zeroize();
             cleared = true;
         }
         let edited = self.line_edit_impl(name, rect, buf, max_len, px, true);
@@ -356,10 +358,6 @@ fn apply_edit(
     }
     chars.zeroize();
     changed
-}
-
-fn zeroize_string(value: &mut String) {
-    std::mem::take(value).into_bytes().zeroize();
 }
 
 fn masked_display(masked: bool, value: &str) -> Option<String> {
@@ -731,7 +729,37 @@ mod tests {
         value.push_str(secret);
         assert!(edit_apply_secret(&mut value, &[], true, 64));
         assert_eq!(value, "12abcde");
-        zeroize_string(&mut value);
-        assert!(value.is_empty());
+    }
+
+    /// #325: the clear button empties a preallocated secret buffer without
+    /// releasing it, so typing afterwards never reallocates secret prefixes.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn password_clear_button_keeps_the_preallocated_buffer() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut list = DrawList::new();
+        let field = Rect::new(10.0, 10.0, 300.0, 40.0);
+        let mut secret = String::with_capacity(64);
+        secret.push_str("12abcdef");
+        let (capacity, ptr) = (secret.capacity(), secret.as_ptr());
+
+        let mut f = ui.begin(&mut text, &mut list, press_at(295.0, 30.0));
+        assert!(f.password_edit_clear("secret", field, &mut secret, 64, 24.0));
+        f.end();
+        assert_eq!(secret, "");
+        assert_eq!(secret.capacity(), capacity);
+        assert_eq!(secret.as_ptr(), ptr);
+
+        let mut f = ui.begin(
+            &mut text,
+            &mut list,
+            UiInput {
+                chars: "new-secret".chars().collect(),
+                ..UiInput::default()
+            },
+        );
+        assert!(f.password_edit_clear("secret", field, &mut secret, 64, 24.0));
+        f.end();
+        assert_eq!(secret, "new-secret");
+        assert_eq!(secret.as_ptr(), ptr, "typing reallocated the secret");
     }
 }

@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::password_edit_clear`: the clear button released the
+  buffer's allocation; it now zeroizes in place and keeps the preallocated
+  capacity. No game-code changes needed.
 - `sgl-2d` texture uploads: an empty, oversized or short-`rgba` texture, or
   a mis-sized normal map, panicked; `Renderer::upload_texture`,
   `upload_normal_map`, `upload_light_cookie`, `SpritePass::upload`,

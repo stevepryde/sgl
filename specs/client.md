@@ -72,8 +72,9 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    they avoid temporary copies of the secret while editing.
    Buttons act on press-down. At most one widget is active at a time. An open
    modal blocks widgets behind it. Line edits respect `max_len` and keep the
-   buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text. Scroll
-   areas clip their content and clamp their offset. A checkbox and a
+   buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text in
+   place and keeps the buffer's allocation. Scroll areas clip their content
+   and clamp their offset. A checkbox and a
    collapsing header flip their caller-owned flag on press-down over the whole
    rect. A numeric field's `-`/`+` ends add its step; a horizontal drag on the
    middle past a small threshold scrubs the value by its speed per pixel from
