@@ -1320,8 +1320,12 @@ over the contract SGL3D declares, `shading/shader_contract.wgsl`, verbatim:
 
 // A vertex in and out of material_vertex, in the mesh's own units and axes,
 // after SGL3D's skinning and morphing and before the instance's pose:
-// `normal` unit; `tangent` xyz unit and w its handedness, all zero where the
-// mesh has none; `color` linear RGB and alpha, as asset::Vertex::color;
+// `normal` unit; `tangent` xyz unit, in the normal's plane, and w its
+// handedness (+1 or -1); a vertex without a usable tangent (none, along the
+// normal, or handedness not +1 or -1) gets an arbitrary unit tangent in the
+// normal's plane of handedness +1, never zero, so a shader that needs a
+// consistent frame there builds its own; `color` linear RGB and alpha, as
+// asset::Vertex::color;
 // `shader_data` the mesh's per-vertex data (PreparedModel::with_shader_data),
 // zero without any; `custom` what the shader passes to material_surface,
 // interpolated, zero in.
