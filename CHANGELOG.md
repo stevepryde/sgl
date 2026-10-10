@@ -19,6 +19,16 @@ docs and specs the entry links.
   frame (or one pause or action) played it twice per bounce; it now plays it
   once, so a `PingPongOnce` completes after one frame duration. No game-code
   changes needed.
+- `sgl-3d` `asset::load*`: a glTF node that is its own ancestor overflowed
+  the stack at load or in `Rig::joint_matrices`, and a node with two parents
+  loaded; both now fail the load with an error naming the node, and
+  `Rig::joint_matrices` on a game-built rig with a parent cycle returns
+  (wrong matrices for the cycle's joints) instead of overflowing. No
+  game-code changes needed; re-export a file that now fails.
+- `examples/direct-game` took `Renderer::white_texture`'s handle from a
+  throwaway `Assets`, so it aliased the first texture of the game's own cache;
+  it now keeps one `Assets<Texture>` and draws a second texture from it.
+  Games that copied it: pass the game's texture cache to `white_texture`.
 - `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
   promise that a flushed state leaves ahead of lane frames flushed after it;
   it waits only for frames flushed with or before it, and lane frames
@@ -90,6 +100,11 @@ docs and specs the entry links.
 - `sgl-3d` `Renderer::finish_frame`: a `Renderer::resize` that changed the
   targets between `render` and `finish_frame` no longer loses its history
   reset; the next frame restarts history. No game-code changes needed.
+- `sgl-post-fx` SSR: a roughness-0 surface seen from below its mapped
+  normal's horizon, or, at importance-sample bias 0, at the blue noise's
+  largest value, gave a NaN ray and PDF; it now traces the mirror direction,
+  the noise stays below 1, and the resolve clamps N·V above 0. No game-code
+  changes needed.
 - `sgl-post-fx` SSR (`HierarchicalRaymarch`, SGL3D's `Crystal` reflections):
   a ray that runs out of `max_traversal_intersections` before confirming a
   hit was accepted by proximity and now reports a miss, so streaks near
