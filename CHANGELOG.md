@@ -20,6 +20,9 @@ docs and specs the entry links.
   `u8(0x34); u8(0x12)`); it now promises them only within one schema.
   Encoding and digests unchanged. Games that hash several kinds of state in
   one stream, or change what they write, add a leading tag or version.
+- `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
+  panicked; now `max` wins and a NaN bound is ignored. No game-code changes
+  needed.
 
 ## 0.4.0 — 2026-10-09
 
