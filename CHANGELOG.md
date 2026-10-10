@@ -21,6 +21,19 @@ docs and specs the entry links.
   widths world units. World gizmos set `units: camera.units()`; struct
   literals without `..Overlay::new(white)` add `units`; pixel overlays need
   no other change.
+- `sgl-3d` `asset::load*`: a glTF mesh whose morphed primitives have
+  different numbers of morph targets loaded, the extra targets driven by
+  another node's weights; it now fails the load naming the primitive.
+  Primitives without targets still load unmorphed, and a mesh whose first
+  primitive has none no longer refuses its morph-weight animation. No
+  game-code changes needed; give every morphed primitive of the mesh the
+  same shape keys.
+- `sgl-net` `BrowserWebSocketConfig::latest_buffered_bytes`: any nonzero
+  value was accepted, and one below the largest latest-state frame blocked
+  every lane once a large state was sent; `BrowserWebSocketClient::connect`
+  now rejects values below `ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES`
+  (1186). Raise a smaller watermark to at least that; the 64 KiB default is
+  unaffected.
 - `sgl-net` `udp::LANE_MESSAGES_PER_PEER_PER_POLL` (32, native) is now public:
   the most lane messages a `ThreadedUdpServer` poll returns per peer, which
   `specs/netcode.md` already named. No game-code changes needed.
