@@ -312,9 +312,14 @@ mod native {
                 self.grid = !self.grid;
             }
             for handle in self.text.end_frame(&mut self.assets, &mut list) {
-                self.renderer
-                    .upload_texture(&self.context, handle, self.assets.get(handle).unwrap())
-                    .expect("glyph page uploads");
+                // A page too large for this device leaves its glyph undrawn.
+                if let Err(error) = self.renderer.upload_texture(
+                    &self.context,
+                    handle,
+                    self.assets.get(handle).unwrap(),
+                ) {
+                    eprintln!("glyph page not uploaded: {error}");
+                }
             }
             if let Some(surface) = self.context.acquire() {
                 self.renderer.render(

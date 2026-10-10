@@ -16,10 +16,11 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-2d` `TextRenderer::draw`: a glyph larger than a `GLYPH_PAGE_SIZE`
-  page (a large size at a high pixel scale) panicked; it now gets a page
-  sized to it, published by `end_frame` like any page (its upload fails with
-  `TextureError::TooLarge` past the device's texture limit). No game-code
-  changes needed.
+  page (a large size at a high pixel scale) panicked; it now gets a page of
+  its own sized to it, published by `end_frame` like any page, and one past
+  `canvas::text::MAX_GLYPH_PAGE_SIZE` (16384) is not drawn. A page past the
+  device's texture limit fails its upload with `TextureError::TooLarge`: log
+  that error rather than unwrapping the upload.
 
 - `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
   its near plane read the reflection depth history with the new near plane

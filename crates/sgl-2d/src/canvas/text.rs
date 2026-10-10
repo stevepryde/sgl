@@ -34,11 +34,17 @@ use sgl_core::math::Vec2;
 
 /// Pixel size of one (square) glyph atlas page. Comfortably holds the 84 px
 /// title alphabet; more pages open as needed. A glyph too large for it (a
-/// large size at a high pixel scale) gets a square page sized to the glyph,
-/// which uploads like any texture: one wider than the device's
-/// `max_texture_dimension_2d` is refused by the upload with
-/// `TextureError::TooLarge`.
+/// large size at a high pixel scale) gets a square page of its own, sized to
+/// it and holding nothing else, which uploads like any texture: one wider
+/// than the device's `max_texture_dimension_2d` is refused by the upload
+/// with `TextureError::TooLarge`. A glyph whose page would exceed
+/// [`MAX_GLYPH_PAGE_SIZE`] is not drawn (its advance still applies).
 pub const GLYPH_PAGE_SIZE: u32 = 512;
+
+/// Largest glyph page side, in pixels: 16384 is the widest texture any
+/// common GPU accepts, and its page is 1 GiB of RGBA. A larger glyph is
+/// neither rasterized nor packed.
+pub const MAX_GLYPH_PAGE_SIZE: u32 = 16384;
 
 /// Which [`DrawList`] channel text lands in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,8 +201,11 @@ struct GlyphSlot {
 /// One CPU-side atlas page: pixels + packer + the publish state.
 struct GlyphPage {
     /// Width and height in pixels: [`GLYPH_PAGE_SIZE`], or an oversized
-    /// glyph's larger side.
+    /// glyph's larger side plus padding.
     side: u32,
+    /// Holds one oversized glyph and nothing else: never packed into, so
+    /// ordinary glyphs never depend on a page that may not upload.
+    dedicated: bool,
     packer: ShelfPacker,
     /// RGBA8: white RGB, glyph coverage in alpha (the shader multiplies the
     /// instance color in, so one page serves every text color).
@@ -208,12 +217,16 @@ struct GlyphPage {
 }
 
 impl GlyphPage {
-    fn new(side: u32) -> Self {
-        let len = side as usize;
+    /// A page of `side` pixels square; `side` is at most
+    /// [`MAX_GLYPH_PAGE_SIZE`].
+    fn new(side: u32, dedicated: bool) -> Self {
+        let bytes = usize::try_from(u64::from(side) * u64::from(side) * 4)
+            .expect("a page within MAX_GLYPH_PAGE_SIZE is addressable");
         Self {
             side,
+            dedicated,
             packer: ShelfPacker::new(side, side),
-            pixels: vec![0; len * len * 4],
+            pixels: vec![0; bytes],
             dirty: false,
             handle: None,
         }
@@ -466,7 +479,10 @@ impl TextRenderer {
     /// changed this frame — the app must upload each
     /// (`Renderer::upload_texture` or `SpritePass::upload`, which replace an
     /// already-uploaded page's pixels under its handle) before rendering the
-    /// frame. Call once per frame after all `draw` calls.
+    /// frame. Call once per frame after all `draw` calls. An upload can fail
+    /// (`TextureError::TooLarge` for an oversized glyph's dedicated page on a
+    /// device with a smaller texture limit): log it and carry on rather than
+    /// unwrapping — only that glyph goes undrawn.
     pub fn end_frame(
         &mut self,
         assets: &mut Assets<Texture>,
@@ -521,10 +537,15 @@ impl TextRenderer {
         if let Some(slot) = self.glyphs.get(&key) {
             return *slot;
         }
-        let (metrics, coverage) = self.font.rasterize(c, px);
-        let bitmap = if metrics.width == 0 || metrics.height == 0 {
+        let metrics = self.font.metrics(c, px);
+        let side = u64::try_from(metrics.width.max(metrics.height)).unwrap_or(u64::MAX);
+        let bitmap = if metrics.width == 0
+            || metrics.height == 0
+            || side + u64::from(PADDING) > u64::from(MAX_GLYPH_PAGE_SIZE)
+        {
             None
         } else {
+            let (metrics, coverage) = self.font.rasterize(c, px);
             let (w, h) = (metrics.width as u32, metrics.height as u32);
             let (page, x, y) = self.place(w, h);
             let stride = self.pages[page].side as usize;
@@ -559,14 +580,22 @@ impl TextRenderer {
 
     /// Find (or open) a page with room for `w × h`; returns
     /// `(page index, x, y)`. A glyph that does not fit a [`GLYPH_PAGE_SIZE`]
-    /// page opens a page of its larger side plus the packer's padding.
+    /// page opens a dedicated page of its larger side plus the packer's
+    /// padding; dedicated pages are never packed into again.
     fn place(&mut self, w: u32, h: u32) -> (usize, u32, u32) {
-        for (i, page) in self.pages.iter_mut().enumerate() {
-            if let Some((x, y)) = page.packer.insert(w, h) {
-                return (i, x, y);
+        let side = w.max(h) + PADDING;
+        let dedicated = side > GLYPH_PAGE_SIZE;
+        if !dedicated {
+            for (i, page) in self.pages.iter_mut().enumerate() {
+                if page.dedicated {
+                    continue;
+                }
+                if let Some((x, y)) = page.packer.insert(w, h) {
+                    return (i, x, y);
+                }
             }
         }
-        let mut page = GlyphPage::new(GLYPH_PAGE_SIZE.max(w.max(h) + PADDING));
+        let mut page = GlyphPage::new(side.max(GLYPH_PAGE_SIZE), dedicated);
         let (x, y) = page
             .packer
             .insert(w, h)
@@ -952,6 +981,45 @@ mod tests {
             .map(|at| page.rgba[at])
             .collect();
         assert_eq!(alpha, coverage);
+    }
+
+    /// #291: an oversized glyph's page holds only that glyph: standard glyphs
+    /// drawn after it, enough to need a new page, all land on
+    /// `GLYPH_PAGE_SIZE` pages.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn standard_glyphs_never_share_an_oversized_page() {
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        let mut list = DrawList::new();
+        tr.set_pixel_scale(4.0);
+        let big = TextStyle::new(160.0, [1.0; 4]);
+        tr.draw("W", Vec2::ZERO, &big, 0.0, TextChannel::Screen);
+        tr.end_frame(&mut assets, &mut list);
+        list.clear();
+
+        tr.set_pixel_scale(1.0);
+        let alphabet: String = ('A'..='Z').chain('a'..='z').chain('0'..='9').collect();
+        for px in [84.0, 72.0, 48.0] {
+            let style = TextStyle::new(px, [1.0; 4]);
+            tr.draw(&alphabet, Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+        }
+        tr.end_frame(&mut assets, &mut list);
+        assert!(tr.page_count() >= 3, "standard glyphs needed a second page");
+        for quad in &list.screen {
+            let page = assets.get(quad.texture).expect("published page");
+            assert_eq!(page.width, GLYPH_PAGE_SIZE);
+        }
+    }
+
+    /// #291: a glyph whose page would exceed `MAX_GLYPH_PAGE_SIZE` is neither
+    /// rasterized nor packed, and still advances the pen.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_glyph_beyond_the_page_cap_is_skipped() {
+        let mut tr = renderer();
+        let slot = tr.glyph('W', 40_000.0);
+        assert!(slot.bitmap.is_none());
+        assert!(slot.advance > 0.0);
+        assert_eq!(tr.page_count(), 0);
     }
 
     /// The 1 px outline ring is the classic 8 directions; a 10 px ring has

@@ -46,10 +46,12 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    asset under a stable handle; `end_frame` republishes changed pages in
    place and returns their handles for the game to upload, which replaces
    their pixels in the existing renderer or sprite pass. A glyph too large
-   for a standard page gets a page sized to it; an upload wider than the
-   device allows fails with `TextureError::TooLarge`. Outline and
-   shadow are offset copies of the glyph quads. `pixel_scale = 1` is
-   bit-identical to unscaled rendering.
+   for a standard page gets a page of its own sized to it, holding nothing
+   else; an upload wider than the device allows fails with
+   `TextureError::TooLarge`, which the game logs. A glyph whose page would
+   exceed `MAX_GLYPH_PAGE_SIZE` (16384) is not drawn; its advance applies.
+   Outline and shadow are offset copies of the glyph quads. `pixel_scale = 1`
+   is bit-identical to unscaled rendering.
 6. **Overlay.** Lines, rect outlines, fills, and circles are emitted as quads
    on the shared white texture into whichever channel the caller passes, with
    the overlay's color, `z`, and clip. Positions, sizes and widths are in the
