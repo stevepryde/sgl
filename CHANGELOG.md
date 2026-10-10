@@ -17,8 +17,9 @@ docs and specs the entry links.
 
 - `sgl-3d` `Renderer::new` `output_format`: a non-sRGB 8-bit output (a
   browser canvas's `Bgra8Unorm` or `Rgba8Unorm`) took linear colour and
-  looked dark; the tone map now writes it sRGB-encoded. sRGB and float
-  outputs are unchanged. No game-code changes needed.
+  looked dark; the tone map now writes it sRGB-encoded, a float output too
+  in the browser. sRGB outputs and native float outputs are unchanged. No
+  game-code changes needed.
 - `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
   ran on the unexposed HDR scene, so the exposure changed which edges it
   found; it now runs after tone mapping, on display colour, before the

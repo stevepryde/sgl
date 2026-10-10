@@ -131,18 +131,20 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
 }
 
 /// Whether the output's colour is written sRGB-encoded: the attachment
-/// encodes an sRGB format, and a float format holds linear light, as a
-/// native float surface composites it; any other format (a browser
-/// canvas's `Bgra8Unorm` or `Rgba8Unorm`) stores what is written, so
-/// tone mapping encodes it, as sgl-2d's blit does for such a surface.
+/// encodes an sRGB format, and natively a float format holds linear light,
+/// as a native float surface composites it (wgpu's `SurfaceColorSpace::Auto`
+/// resolves extended linear sRGB there); any other format, and a float one
+/// in the browser, whose canvas keeps its sRGB colour space for every
+/// format, stores what is written as sRGB-encoded, so tone mapping encodes
+/// it, as sgl-2d's blit does for a browser canvas's `Bgra8Unorm`.
 pub(crate) fn encodes_srgb(format: wgpu::TextureFormat) -> bool {
-    !format.is_srgb()
-        && !matches!(
-            format,
-            wgpu::TextureFormat::Rgba16Float
-                | wgpu::TextureFormat::Rgba32Float
-                | wgpu::TextureFormat::Rg11b10Ufloat
-        )
+    let float = matches!(
+        format,
+        wgpu::TextureFormat::Rgba16Float
+            | wgpu::TextureFormat::Rgba32Float
+            | wgpu::TextureFormat::Rg11b10Ufloat
+    );
+    !format.is_srgb() && (cfg!(target_arch = "wasm32") || !float)
 }
 
 /// Where tone mapping writes.
