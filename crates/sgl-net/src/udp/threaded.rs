@@ -302,10 +302,6 @@ impl IngressHub {
     /// and unreliable messages per peer taken from its lanes in turn, then
     /// its latest state.
     fn drain(&self) -> Vec<ServerEvent> {
-        // Shared across a peer's lanes and both classes: the sustainable
-        // per-poll rate above which its unreliable messages are shed.
-        const LANE_MESSAGES_PER_PEER_PER_POLL: usize = 32;
-
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
         let mut output: Vec<_> = state.lifecycle.drain(..).collect();
         for (&conn, peer) in &mut state.peers {
@@ -585,6 +581,12 @@ impl CommandQueue {
         ready
     }
 }
+
+/// Most lane messages one [`ThreadedUdpServer`] poll returns per peer, shared
+/// across its lanes and both reliable and unreliable messages: the
+/// sustainable per-poll rate above which a peer's reliable messages wait and
+/// its unreliable messages are shed.
+pub const LANE_MESSAGES_PER_PEER_PER_POLL: usize = 32;
 
 /// Simulation-side handle for the UDP worker.
 ///

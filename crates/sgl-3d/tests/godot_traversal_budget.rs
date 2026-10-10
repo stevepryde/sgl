@@ -1,4 +1,6 @@
-//! A finite traversal budget must retain visible target radiance at a near-hit endpoint.
+//! A trace that runs out of steps before confirming a hit at the finest level
+//! is a miss (AR-12), however near its endpoint lies to a surface; one that
+//! confirms the hit keeps the surface's radiance.
 #![cfg(not(target_arch = "wasm32"))]
 use sgl_3d::glam::camera;
 use sgl_3d::glam::{Mat4, Vec3};
@@ -6,7 +8,7 @@ use wgpu::util::DeviceExt;
 const SIZE: u32 = 128;
 
 #[test]
-fn finite_budget_keeps_visible_target_radiance() {
+fn traces_that_run_out_of_steps_miss() {
     let adapter =
         pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default()));
     let Ok(adapter) = adapter else {
@@ -298,13 +300,14 @@ fn finite_budget_keeps_visible_target_radiance() {
         }
     }
     for (mips, budget, rgba) in results {
-        // With one mip the 31st step enters the target pixel; with two, the
-        // 16th reaches it at mip 1. Both endpoints represent the same visible
-        // red plane before the subsequent finest-mip intersection step.
-        if mips == 1 && budget == 30 {
+        // With one mip the 31st step enters the target pixel and the 32nd
+        // confirms the hit there. With two, the 16th reaches it at mip 1, the
+        // 17th descends to mip 0 and the 18th confirms. An endpoint on the
+        // visible red plane that the trace has not confirmed is still a miss.
+        if (mips == 1 && budget <= 31) || (mips == 2 && budget <= 17) {
             assert_eq!(
                 rgba, [0.; 4],
-                "endpoint far from the target supplied radiance"
+                "mip count {mips}, budget {budget}: an unconfirmed endpoint supplied radiance"
             );
         } else {
             // The trace stores Godot's luminance tone map of the unit red target

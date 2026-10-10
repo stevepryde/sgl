@@ -3,8 +3,8 @@
 //! at the reconstruction boundary, independent of traversal and hit geometry.
 use super::*;
 use crate::{CameraAttribs, post_fx_context::FrameDesc};
-const SIZE: [u32; 2] = [64, 48];
-fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
+pub(super) const SIZE: [u32; 2] = [64, 48];
+pub(super) fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let required = std::env::var("SGL_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0");
     match pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())) {
         Ok(adapter) => {
@@ -20,7 +20,7 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     }
 }
 
-fn texture(
+pub(super) fn texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
@@ -36,7 +36,7 @@ fn texture(
 }
 
 /// A texture of `data`, row-major texels.
-fn texels(
+pub(super) fn texels(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     format: wgpu::TextureFormat,
@@ -67,7 +67,7 @@ fn texels(
 }
 
 /// A depth buffer cleared to `depth`: depth formats accept no texel uploads.
-fn depth(
+pub(super) fn depth(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
     depth: f32,
@@ -102,7 +102,7 @@ fn depth(
     view
 }
 
-fn half(values: &[f32]) -> Vec<u8> {
+pub(super) fn half(values: &[f32]) -> Vec<u8> {
     values
         .iter()
         .flat_map(|v| {
@@ -228,16 +228,16 @@ fn moved(camera: CameraAttribs, previous: Previous) -> CameraAttribs {
     }
 }
 
-fn read_rgba16f(
+pub(super) fn read_rgba16f(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     view: &wgpu::TextureView,
 ) -> Vec<[f32; 4]> {
     let texture = view.texture();
-    let stride = (SIZE[0] * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let stride = (texture.width() * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
-        size: u64::from(stride * SIZE[1]),
+        size: u64::from(stride * texture.height()),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -264,12 +264,18 @@ fn read_rgba16f(
         let mantissa = f32::from(h & 0x3ff);
         if exponent == 0 {
             sign * mantissa * 2f32.powi(-24)
+        } else if exponent == 31 {
+            if mantissa == 0.0 {
+                sign * f32::INFINITY
+            } else {
+                f32::NAN
+            }
         } else {
             sign * (1.0 + mantissa / 1024.0) * 2f32.powi(exponent - 15)
         }
     };
-    (0..SIZE[1])
-        .flat_map(|y| (0..SIZE[0]).map(move |x| (y * stride + x * 8) as usize))
+    (0..texture.height())
+        .flat_map(|y| (0..texture.width()).map(move |x| (y * stride + x * 8) as usize))
         .map(|at| {
             std::array::from_fn(|c| {
                 half(u16::from_le_bytes([
@@ -281,7 +287,7 @@ fn read_rgba16f(
         .collect()
 }
 
-fn depth_values(
+pub(super) fn depth_values(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,

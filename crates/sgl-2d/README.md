@@ -10,8 +10,8 @@ canvas, event loop, simulation, input translation, and UI layout.
 [`canvas`](src/canvas.rs) renders a logical-resolution scene with world and
 screen draw channels, text, lighting, overlays, and letterbox presentation.
 Start with the [direct game](../../examples/direct-game/src/main.rs), which
-owns winit and draws a sprite on native and browser:
-`cargo run -p sgl-direct-game`. The [tool UI example](examples/tool_ui.rs)
+owns winit and draws sprites: `cargo run -p sgl-direct-game`. It also builds
+for `wasm32-unknown-unknown`, but the repository has no page that runs it. The [tool UI example](examples/tool_ui.rs)
 adds text and widgets: `cargo run -p sgl-2d --example tool_ui`.
 
 The game keeps composition; do not wrap the canvas in another engine layer.
