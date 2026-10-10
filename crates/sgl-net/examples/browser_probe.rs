@@ -11,8 +11,9 @@
 //! sides), a 256 KiB message past its lane's byte allowances, coalesced
 //! latest state, a saturated lane that refuses and then drains without
 //! losing the connection, a server-initiated close with its bounded
-//! reconnect, an inbound overflow and its reconnect, a rejected
-//! subprotocol, and a clean local disconnect.
+//! reconnect, an inbound overflow and its reconnect, reconnects bounded by
+//! the policy when every connection fails, a rejected subprotocol, and a
+//! clean local disconnect.
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -444,17 +445,17 @@ async fn a_server_close_is_reported_as_peer_and_reconnects() -> Result<(), Strin
 
 /// Defect (#305): a receive failure that closes the peer without arming
 /// the reconnect policy, unlike every other non-local close. Oracle: with a
-/// one-message inbound lane, three echoes that arrive while the game is not
+/// one-message inbound lane, eight echoes that arrive while the game is not
 /// polling overflow it; the client reports `Disconnected { InboundOverflow }`,
 /// then `Reconnecting` and `Connected` again, all driven by polls.
 async fn an_inbound_overflow_reconnects() -> Result<(), String> {
     let mut config = config();
     config.reliable.lanes[0].inbound_messages = 1;
     let mut driver = Driver::connect(config).await?;
-    for payload in [b"o1", b"o2", b"o3"] {
+    for index in 0..8u8 {
         driver
             .client
-            .send(Delivery::RELIABLE_ORDERED, payload)
+            .send(Delivery::RELIABLE_ORDERED, &[b'o', index])
             .map_err(|e| format!("send: {e:?}"))?;
     }
     driver.client.flush(driver.now_ms);
@@ -479,6 +480,45 @@ async fn an_inbound_overflow_reconnects() -> Result<(), String> {
     ensure!(
         matches!((overflow, reconnecting), (Some(o), Some(r)) if o < r),
         "expected InboundOverflow then a reconnect: {:?}",
+        driver.events
+    );
+    Ok(())
+}
+
+/// Defect (#305): a reconnect count restarted by every `Connected`, so a
+/// connection that keeps failing soon after it opens reconnects forever at
+/// the first delay and `max_attempts` never bounds it. Oracle: a game that
+/// asks the fixture to close each connection as soon as it opens sees the
+/// policy's three attempts, numbered 1, 2 and 3, and then no more.
+async fn a_connection_that_keeps_failing_stops_at_max_attempts() -> Result<(), String> {
+    let mut driver = Driver::connect(config()).await?;
+    let mut opened = 0;
+    // Longer than the policy's three delays (50, 100 and 200 ms) together.
+    for _ in 0..150 {
+        let connected = driver.count(&ClientEvent::Connected);
+        if connected > opened {
+            opened = connected;
+            driver
+                .client
+                .send(Delivery::RELIABLE_ORDERED, b"close")
+                .map_err(|e| format!("send: {e:?}"))?;
+        }
+        driver.now_ms += 10;
+        driver.events.extend(driver.client.poll(driver.now_ms));
+        driver.client.flush(driver.now_ms);
+        sleep_ms(10).await;
+    }
+    let attempts: Vec<u16> = driver
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            ClientEvent::Reconnecting { attempt } => Some(*attempt),
+            _ => None,
+        })
+        .collect();
+    ensure!(
+        attempts == [1, 2, 3],
+        "attempts {attempts:?}; events: {:?}",
         driver.events
     );
     Ok(())
@@ -578,6 +618,11 @@ pub async fn run() -> String {
         &mut report,
         "an_inbound_overflow_reconnects",
         an_inbound_overflow_reconnects().await,
+    );
+    record(
+        &mut report,
+        "a_connection_that_keeps_failing_stops_at_max_attempts",
+        a_connection_that_keeps_failing_stops_at_max_attempts().await,
     );
     record(
         &mut report,

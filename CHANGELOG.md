@@ -19,6 +19,11 @@ docs and specs the entry links.
   (`InboundOverflow`, or a `ProtocolViolation` found by the lane queues)
   never reconnected; it now follows `ReconnectPolicy` like other non-local
   closes, so expect `Reconnecting` after it. No game-code changes needed.
+- `sgl-net` `ReconnectPolicy::max_attempts` (browser): every `Connected`
+  restarted the count, so a connection that kept failing soon after it
+  opened reconnected forever at the first delay; the count now restarts only
+  after a connection stayed up at least `max_delay_ms`, so such a loop backs
+  off and stops after `max_attempts`. No game-code changes needed.
 - `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
   promise that a flushed state leaves ahead of lane frames flushed after it;
   it waits only for frames flushed with or before it, and lane frames
