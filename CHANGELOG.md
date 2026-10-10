@@ -18,9 +18,10 @@ docs and specs the entry links.
 - `sgl-2d` `TextRenderer::draw`: a glyph larger than a `GLYPH_PAGE_SIZE`
   page (a large size at a high pixel scale) panicked; it now gets a page of
   its own sized to it, published by `end_frame` like any page, and one past
-  `canvas::text::MAX_GLYPH_PAGE_SIZE` (16384) is not drawn. A page past the
-  device's texture limit fails its upload with `TextureError::TooLarge`: log
-  that error rather than unwrapping the upload.
+  `canvas::text::MAX_GLYPH_PAGE_SIZE` (16384; 8192 on wasm32) is not drawn.
+  A page past the device's texture limit fails its upload with
+  `TextureError::TooLarge`: log that error rather than unwrapping the
+  upload.
 - `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain
   buffers doubled past the device's storage binding limit once they held
   over half of it, failing the frame's cull bind group; their growth now
