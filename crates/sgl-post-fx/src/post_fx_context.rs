@@ -640,16 +640,13 @@ impl PostFXContext {
                 },
             ],
         );
-        // ShaderBaseVertexOffset: the frame index reaches the shader as
-        // VertexId / 3.
-        let start_vertex_location = 3u32.wrapping_mul(self.frame_desc.index);
         draw(
             render_attribs.device_context,
             "ComputeBlueNoiseTexture",
             &[&self.blue_noise_textures[0], &self.blue_noise_textures[1]],
             tech,
             &group,
-            start_vertex_location..start_vertex_location.wrapping_add(3),
+            blue_noise_vertices(self.frame_desc.index),
             render_attribs
                 .pass_timestamps
                 .and_then(|timestamps| timestamps("ComputeBlueNoiseTexture")),
@@ -764,4 +761,40 @@ pub(crate) fn draw(
     pass.set_pipeline(tech.pso.as_ref().expect("initialized technique"));
     pass.set_bind_group(0, group, &[]);
     pass.draw(vertices, 0..1);
+}
+
+/// The frame indices the blue noise draws cycle through (PROVENANCE.md
+/// DFX-44): the period the shader's 2D sequence already has (`& 0xFF`), so
+/// its R2 sequence's `f32(Index)` keeps its precision, and the last frame's
+/// three vertices fit in `u32`.
+const BLUE_NOISE_FRAME_PERIOD: u32 = 256;
+
+/// The blue-noise triangle's vertices for frame `index`
+/// (`ShaderBaseVertexOffset`): the frame index reaches the shader as
+/// `VertexId / 3`.
+fn blue_noise_vertices(index: u32) -> std::ops::Range<u32> {
+    let start = 3 * (index % BLUE_NOISE_FRAME_PERIOD);
+    start..start + 3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::blue_noise_vertices;
+
+    // #346: the frame indices at which `3 × index` wraps to just below
+    // `u32::MAX` or past it, and the last index.
+    #[test]
+    fn blue_noise_draws_three_vertices_at_every_frame_index() {
+        for index in [0, 1, 1_431_655_765, 2_863_311_530, u32::MAX] {
+            let vertices = blue_noise_vertices(index);
+            assert_eq!(vertices.len(), 3, "frame {index}: {vertices:?}");
+            // The shader's frame index keeps the frame's low bits.
+            assert_eq!((vertices.start / 3) & 0xFF, index & 0xFF, "frame {index}");
+        }
+        // The period: frame 2^20 draws as frame 2^20 mod 256.
+        assert_eq!(
+            blue_noise_vertices(1 << 20),
+            blue_noise_vertices((1 << 20) % 256)
+        );
+    }
 }

@@ -746,14 +746,23 @@ fn pixel(camera: &Camera, point: Vec3) -> [u32; 2] {
     ]
 }
 
-/// Rec. 709 luma of the encoded output, averaged over the 3×3 pixels
-/// around `at`.
+/// Rec. 709 luma of the output's linear light, on a 0 to 255 scale,
+/// averaged over the 3×3 pixels around `at`: the output holds sRGB-encoded
+/// bytes, which the sRGB transfer function (IEC 61966-2-1) decodes.
 fn luma(pixels: &[u8], at: [u32; 2]) -> f32 {
+    let linear = |code: u8| {
+        let encoded = f32::from(code) / 255.;
+        255. * if encoded <= 0.04045 {
+            encoded / 12.92
+        } else {
+            ((encoded + 0.055) / 1.055).powf(2.4)
+        }
+    };
     let mut sum = 0.;
     for y in at[1] - 1..=at[1] + 1 {
         for x in at[0] - 1..=at[0] + 1 {
             let p = &pixels[((y * SIZE[0] + x) * 4) as usize..][..3];
-            sum += 0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2]);
+            sum += 0.2126 * linear(p[0]) + 0.7152 * linear(p[1]) + 0.0722 * linear(p[2]);
         }
     }
     sum / 9.

@@ -185,8 +185,9 @@ fn loops_are_counted_within_the_budget() {
 
 // Plausible defect: a module that would steal a binding, add a pass or
 // override, end a fragment's coverage outside its base colour's alpha, or
-// redefine a name SGL3D's programs use accepted, so a pipeline later fails
-// or misbehaves. The oracle is the contract's typed refusal for each.
+// redefine a name SGL3D's programs use (its own, or a WGSL built-in they
+// call) accepted, so a pipeline later fails or silently shades otherwise.
+// The oracle is the contract's typed refusal for each.
 #[wasm_bindgen_test(unsupported = test)]
 fn forbidden_declarations_are_refused() {
     let forbidden = |item, name: &str| ShaderError::Forbidden {
@@ -239,6 +240,22 @@ fn forbidden_declarations_are_refused() {
             name: "MaterialVertex".into()
         }
     );
+    // A WGSL built-in function, which a module-scope declaration would
+    // replace in every SGL3D call to it (`smoothstep` in the film fade, the
+    // decal normal fade and specular_trace_fade; `saturate` in
+    // pbr_filtered_roughness): WGSL's own name, not one SGL3D declares.
+    for builtin in [
+        "fn smoothstep(a:f32,b:f32,x:f32)->f32 { return x; }",
+        "fn saturate(x:f32)->f32 { return x; }",
+        // A predeclared type alias, which naga's built-in list leaves out.
+        "fn vec3f(x:f32)->vec3<f32> { return vec3(x); }",
+    ] {
+        let name = builtin[3..].split('(').next().unwrap();
+        assert_eq!(
+            refused(&with(builtin)),
+            ShaderError::NameTaken { name: name.into() }
+        );
+    }
     // A name only the Extended tier's programs declare (its blended draws'
     // opaque depth, bind_blended_extended.wgsl), refused on Basic too: a
     // game's module runs on whichever tier a player's device has.

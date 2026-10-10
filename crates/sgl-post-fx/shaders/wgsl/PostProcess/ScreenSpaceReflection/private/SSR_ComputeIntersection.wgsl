@@ -356,7 +356,8 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 {
 #if SSR_OPTION_HALF_RESOLUTION
     let SampleIdx = ComputeHalfResolutionOffset(vec2<u32>(VSOut.f4PixelPos.xy));
-    let Position = 2.0 * floor(VSOut.f4PixelPos.xy) + vec2<f32>(f32(SampleIdx & 0x01u), f32(SampleIdx >> 1u)) + 0.5;
+    // DFX-45: a block on a one-pixel side reaches past the frame; it traces its pixel inside.
+    let Position = min(2.0 * floor(VSOut.f4PixelPos.xy) + vec2<f32>(f32(SampleIdx & 0x01u), f32(SampleIdx >> 1u)) + 0.5, g_Camera.f4ViewportSize.xy - 0.5);
     // DFX-41: the block passed the mask on its closest depth, but the pixel traced may be
     // background, which has no surface to reflect from; it reports a miss.
     if (IsBackground(LoadDepthHierarchy(vec2<i32>(Position), 0))) {
