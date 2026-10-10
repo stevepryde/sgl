@@ -57,6 +57,9 @@ pub enum AseDirection {
     Reverse,
     /// `from` → `to` → back down, playing neither end twice.
     Pingpong,
+    /// `to` → `from` → back up, playing neither end twice
+    /// (`pingpong_reverse`).
+    PingpongReverse,
     /// Any other direction string, lowercased and preserved verbatim. Treated
     /// as [`AseDirection::Forward`] by [`AseTag::frame_order`].
     Other(String),
@@ -68,6 +71,7 @@ impl AseDirection {
             "forward" => Self::Forward,
             "reverse" => Self::Reverse,
             "pingpong" => Self::Pingpong,
+            "pingpong_reverse" => Self::PingpongReverse,
             other => Self::Other(other.to_owned()),
         }
     }
@@ -90,15 +94,20 @@ impl AseTag {
     /// Expand this tag into the explicit frame-order array an animation driver
     /// plays, honouring [`dir`](AseTag::dir).
     ///
-    /// Forward is `from..=to`, reverse is the same reversed, and ping-pong runs
+    /// Forward is `from..=to`, reverse is the same reversed, ping-pong runs
     /// up and back down without repeating either end (`0..=3` → `[0, 1, 2, 3,
-    /// 2, 1]`). An unrecognised direction plays forward.
+    /// 2, 1]`), and reverse ping-pong runs down and back up the same way
+    /// (`[3, 2, 1, 0, 1, 2]`). An unrecognised direction plays forward.
     #[must_use]
     pub fn frame_order(&self) -> Vec<usize> {
         match self.dir {
             AseDirection::Reverse => (self.from..=self.to).rev().collect(),
             AseDirection::Pingpong => (self.from..=self.to)
                 .chain(((self.from + 1)..self.to).rev())
+                .collect(),
+            AseDirection::PingpongReverse => (self.from..=self.to)
+                .rev()
+                .chain((self.from + 1)..self.to)
                 .collect(),
             AseDirection::Forward | AseDirection::Other(_) => (self.from..=self.to).collect(),
         }
@@ -757,7 +766,19 @@ mod tests {
             vec![11, 10, 9, 8]
         );
         assert_eq!(
-            tag(0, 2, AseDirection::Other("pingpong_reverse".to_owned())).frame_order(),
+            tag(0, 3, AseDirection::PingpongReverse).frame_order(),
+            vec![3, 2, 1, 0, 1, 2]
+        );
+        assert_eq!(
+            tag(6, 7, AseDirection::PingpongReverse).frame_order(),
+            vec![7, 6]
+        );
+        assert_eq!(
+            tag(4, 4, AseDirection::PingpongReverse).frame_order(),
+            vec![4]
+        );
+        assert_eq!(
+            tag(0, 2, AseDirection::Other("sideways".to_owned())).frame_order(),
             vec![0, 1, 2],
             "an unknown direction plays forward"
         );

@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `AseDirection`: `pingpong_reverse` tags parsed as `Other` and
+  played forward; they are now `AseDirection::PingpongReverse`, whose
+  `AseTag::frame_order` runs down and back up without repeating either end.
+  Add the variant to exhaustive matches.
 - `sgl-3d` `asset::load*`: a mesh with `TEXCOORD_1`, or a texture SGL3D does
   not sample (such as an ignored occlusion map) with nearest or other
   non-trilinear sampling, failed the load; `TEXCOORD_1` now loads as
