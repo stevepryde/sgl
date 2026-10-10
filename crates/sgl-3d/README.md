@@ -1667,8 +1667,8 @@ stay in the game (S3D-1).
   `Influence` per vertex (four joints of the asset's joint list and their
   weights; a fifth influence set is refused) and `MorphTarget`s (a
   displacement of each vertex's position, normal and tangent, scaled by one
-  morph weight; a mesh whose primitives differ in their number of targets is
-  refused). `Asset::rig` (`deformation::Rig`) holds the node hierarchy
+  morph weight; a primitive without targets loads unmorphed, and a mesh
+  whose morphed primitives differ in their number of targets is refused). `Asset::rig` (`deformation::Rig`) holds the node hierarchy
   with each node's rest transform, the joints (each skin's, in one list: a
   node and its inverse bind matrix), the morph weights (each morphed node's,
   with its rest weights) and the animation clips (`Clip`: channels of
