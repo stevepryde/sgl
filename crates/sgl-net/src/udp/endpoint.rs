@@ -1287,10 +1287,11 @@ mod tests {
                     &sequence.to_le_bytes(),
                 );
             }
-            server
-                .transport
-                .received
-                .push_back(ReceivedDatagram { source, bytes });
+            server.transport.received.push_back(ReceivedDatagram {
+                source,
+                bytes,
+                fail: false,
+            });
         }
         fn delivered(events: &[EndpointEvent]) -> Vec<u16> {
             events
@@ -1384,10 +1385,11 @@ mod tests {
                     &sequence.to_le_bytes(),
                 );
             }
-            server
-                .transport
-                .received
-                .push_back(ReceivedDatagram { source, bytes });
+            server.transport.received.push_back(ReceivedDatagram {
+                source,
+                bytes,
+                fail: false,
+            });
         }
         let mut received: BTreeMap<u64, Vec<u16>> = BTreeMap::new();
         for now in 4..18 {
@@ -1515,6 +1517,8 @@ mod tests {
     struct ReceivedDatagram {
         source: SocketAddr,
         bytes: Vec<u8>,
+        /// The receive fails instead, as a socket error would.
+        fail: bool,
     }
 
     #[derive(Debug)]
@@ -1535,14 +1539,22 @@ mod tests {
             let mut bytes = Vec::new();
             packet::control(&mut bytes, MAGIC, kind, nonces);
             let length = bytes.len();
-            self.received.push_back(ReceivedDatagram { source, bytes });
+            self.received.push_back(ReceivedDatagram {
+                source,
+                bytes,
+                fail: false,
+            });
             length
         }
 
         fn receive_acks(&mut self, source: SocketAddr, nonces: Nonces, acks: &packet::Acks) {
             let mut bytes = Vec::new();
             packet::begin_payload(&mut bytes, MAGIC, nonces, acks);
-            self.received.push_back(ReceivedDatagram { source, bytes });
+            self.received.push_back(ReceivedDatagram {
+                source,
+                bytes,
+                fail: false,
+            });
         }
 
         fn receive_ack(&mut self, source: SocketAddr, nonces: Nonces, next: u16) {
@@ -1559,7 +1571,6 @@ mod tests {
             });
         }
 
-        /// A datagram with no bytes stands for a failed receive.
         fn receive(
             &mut self,
             output: &mut [u8],
@@ -1568,7 +1579,7 @@ mod tests {
             let Some(datagram) = self.received.pop_front() else {
                 return Ok(None);
             };
-            if datagram.bytes.is_empty() {
+            if datagram.fail {
                 return Err(std::io::ErrorKind::ConnectionReset.into());
             }
             output[..datagram.bytes.len()].copy_from_slice(&datagram.bytes);
@@ -1781,6 +1792,7 @@ mod tests {
         server.transport.received.push_back(ReceivedDatagram {
             source: first,
             bytes: Vec::new(),
+            fail: true,
         });
         request(&mut server, second, 92);
 
@@ -2193,10 +2205,11 @@ mod tests {
             let mut bytes = Vec::new();
             packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
             packet::push_latest(&mut bytes, sequence, &sequence.to_le_bytes());
-            server
-                .transport
-                .received
-                .push_back(ReceivedDatagram { source, bytes });
+            server.transport.received.push_back(ReceivedDatagram {
+                source,
+                bytes,
+                fail: false,
+            });
         }
 
         assert_eq!(
@@ -2262,10 +2275,11 @@ mod tests {
                         fragment,
                         &message[start..end],
                     );
-                    server
-                        .transport
-                        .received
-                        .push_back(ReceivedDatagram { source, bytes });
+                    server.transport.received.push_back(ReceivedDatagram {
+                        source,
+                        bytes,
+                        fail: false,
+                    });
                     sequence += 1;
                     start = end;
                     if end == message.len() {
@@ -2305,10 +2319,11 @@ mod tests {
                 fragment,
                 &message[start..end],
             );
-            server
-                .transport
-                .received
-                .push_back(ReceivedDatagram { source, bytes });
+            server.transport.received.push_back(ReceivedDatagram {
+                source,
+                bytes,
+                fail: false,
+            });
             if end == message.len() {
                 break;
             }
@@ -2388,10 +2403,11 @@ mod tests {
             packet::push_reliable(&mut bytes, Lane::DEFAULT, sequence, Fragment::Whole, b"");
         }
         assert!(bytes.len() <= packet::DATAGRAM_BYTES);
-        server
-            .transport
-            .received
-            .push_back(ReceivedDatagram { source, bytes });
+        server.transport.received.push_back(ReceivedDatagram {
+            source,
+            bytes,
+            fail: false,
+        });
 
         assert_eq!(server.poll(2).len(), cap);
         assert_eq!(
@@ -2416,10 +2432,11 @@ mod tests {
         packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
         packet::push_reliable(&mut bytes, lane(0), 0, Fragment::Whole, b"must-not-deliver");
         packet::push_reliable(&mut bytes, lane(2), 0, Fragment::Middle, b"orphan");
-        server
-            .transport
-            .received
-            .push_back(ReceivedDatagram { source, bytes });
+        server.transport.received.push_back(ReceivedDatagram {
+            source,
+            bytes,
+            fail: false,
+        });
 
         assert!(server.poll(2).is_empty());
         assert_eq!(server.peer_count(), 0);
@@ -2475,6 +2492,7 @@ mod tests {
         server.transport.received.push_back(ReceivedDatagram {
             source: address(192, 0, 2, 1, 40_000),
             bytes: vec![0; packet::DATAGRAM_BYTES + 1],
+            fail: false,
         });
         assert!(server.poll(0).is_empty());
         assert_eq!(server.peer_count(), 0);
@@ -2717,10 +2735,11 @@ mod tests {
             b"ab",
         );
         packet::push_reliable(&mut bytes, lane(1), 0, Fragment::First { total: 4 }, b"abc");
-        server
-            .transport
-            .received
-            .push_back(ReceivedDatagram { source, bytes });
+        server.transport.received.push_back(ReceivedDatagram {
+            source,
+            bytes,
+            fail: false,
+        });
 
         assert!(server.poll(2).is_empty());
         assert_eq!(server.peer_count(), 0);
@@ -2755,10 +2774,11 @@ mod tests {
 
         let (mut server, source, nonces) = connected_server(config.clone());
         let bytes = datagram(nonces, &[(Fragment::First { total: CAP }, b"ab")]);
-        server
-            .transport
-            .received
-            .push_back(ReceivedDatagram { source, bytes });
+        server.transport.received.push_back(ReceivedDatagram {
+            source,
+            bytes,
+            fail: false,
+        });
         assert_eq!(server.poll(4).len(), 1, "only the whole message");
         assert_eq!(server.peer_count(), 1);
 
@@ -2773,10 +2793,11 @@ mod tests {
         ] {
             let (mut server, source, nonces) = connected_server(config.clone());
             let bytes = datagram(nonces, fragments);
-            server
-                .transport
-                .received
-                .push_back(ReceivedDatagram { source, bytes });
+            server.transport.received.push_back(ReceivedDatagram {
+                source,
+                bytes,
+                fail: false,
+            });
 
             assert!(server.poll(4).is_empty());
             assert_eq!(server.peer_count(), 0);
@@ -2899,7 +2920,11 @@ mod tests {
             let mut bytes = Vec::new();
             packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
             packet::push_unreliable(&mut bytes, lane(1), sequence, payload);
-            ReceivedDatagram { source, bytes }
+            ReceivedDatagram {
+                source,
+                bytes,
+                fail: false,
+            }
         };
         for (sequence, payload) in [(5, b"five"), (5, b"five"), (4, b"four"), (5, b"five")] {
             server
@@ -2927,10 +2952,11 @@ mod tests {
         for index in [0, 1, 3] {
             packet::push_reliable(&mut bytes, lane(index), 0, Fragment::Whole, &[index]);
         }
-        server
-            .transport
-            .received
-            .push_back(ReceivedDatagram { source, bytes });
+        server.transport.received.push_back(ReceivedDatagram {
+            source,
+            bytes,
+            fail: false,
+        });
         assert_eq!(server.poll(2).len(), 3);
         server
             .send(
@@ -2981,10 +3007,11 @@ mod tests {
             b"must-not-deliver",
         );
         bytes.extend_from_slice(&[99, 0, 0, 0, 0]);
-        server
-            .transport
-            .received
-            .push_back(ReceivedDatagram { source, bytes });
+        server.transport.received.push_back(ReceivedDatagram {
+            source,
+            bytes,
+            fail: false,
+        });
 
         assert!(server.poll(6).is_empty());
         assert_eq!(server.peer_count(), 0);
@@ -3017,10 +3044,11 @@ mod tests {
         for index in [0, 3] {
             packet::push_reliable(&mut bytes, lane(index), 0, Fragment::Whole, b"in");
         }
-        server
-            .transport
-            .received
-            .push_back(ReceivedDatagram { source, bytes });
+        server.transport.received.push_back(ReceivedDatagram {
+            source,
+            bytes,
+            fail: false,
+        });
         assert_eq!(server.poll(2).len(), 2);
 
         server.send(1, Delivery::LatestState, &[9; 40]).unwrap();
@@ -3162,10 +3190,11 @@ mod tests {
         let mut bytes = Vec::new();
         packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
         packet::push_reliable(&mut bytes, lane(2), 0, Fragment::Whole, b"x");
-        server
-            .transport
-            .received
-            .push_back(ReceivedDatagram { source, bytes });
+        server.transport.received.push_back(ReceivedDatagram {
+            source,
+            bytes,
+            fail: false,
+        });
         assert_eq!(server.poll(2).len(), 1);
         let mut acknowledged = Vec::new();
         for now in 3..7 {
