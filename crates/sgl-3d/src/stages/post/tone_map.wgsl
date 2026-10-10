@@ -1,7 +1,9 @@
 // Tone mapping: the frame's exposure, Bevy's colour grading and Filament's
-// AgX, from the antialiased HDR scene to display-referred linear colour,
-// dithered as it is written to the output. SMAA has already run on HDR,
-// before this nonlinear operation.
+// AgX, from the HDR scene to display-referred linear colour, dithered as it
+// is written to the output. Where SMAA runs, the scene is tone mapped at the
+// scene size first, SMAA antialiases that, and the result is resampled to
+// the output and dithered, as Godot and Bevy run SMAA after tone mapping
+// and before upscaling.
 //
 // Colour grading ports Bevy 9d12036
 // crates/bevy_core_pipeline/src/tonemapping.wesl (LEVEL_MARGIN,
@@ -223,16 +225,29 @@ fn dither(color:vec3<f32>,frag_coord:vec2<f32>)->vec3<f32> {
  let color=textureLoad(scene,vec2<i32>(i.position.xy),0);
  return vec4(dither(color.rgb,i.position.xy),color.a);
 }
+// Display-referred `color` written to the output pixel `frag_coord` as the
+// tone-mapped target's copy writes it: rounded through half floats as the
+// RGBA16F target holds them (within one 8-bit code of it; WGSL leaves the
+// conversion's rounding open), then dithered, without an otherwise
+// redundant full-resolution image.
+fn present_rounded(color:vec3<f32>,frag_coord:vec2<f32>)->vec4<f32> {
+ let rg=unpack2x16float(pack2x16float(color.rg));
+ let ba=unpack2x16float(pack2x16float(vec2(color.b,1.)));
+ return vec4(dither(vec3(rg,ba.x),frag_coord),ba.y);
+}
 @fragment fn present(i:Output)->@location(0) vec4<f32> {
  return vec4(tone_map(textureSample(scene,linear_sampler,i.uv).rgb),1.);
 }
 @fragment fn present_direct(i:Output)->@location(0) vec4<f32> {
- // Round through half floats as the RGBA16F tone target holds them (within
- // one 8-bit code of it; WGSL leaves the conversion's rounding open), before
- // dithering and surface encoding, without an otherwise redundant
- // full-resolution image.
- let color=tone_map(textureSample(scene,linear_sampler,i.uv).rgb);
- let rg=unpack2x16float(pack2x16float(color.rg));
- let ba=unpack2x16float(pack2x16float(vec2(color.b,1.)));
- return vec4(dither(vec3(rg,ba.x),i.position.xy),ba.y);
+ return present_rounded(tone_map(textureSample(scene,linear_sampler,i.uv).rgb),i.position.xy);
+}
+// The antialiased tone-mapped scene, at the scene size, resampled to the
+// tone-mapped target.
+@fragment fn resample(i:Output)->@location(0) vec4<f32> {
+ return vec4(textureSample(scene,linear_sampler,i.uv).rgb,1.);
+}
+// The antialiased tone-mapped scene resampled to the output, as `resample`
+// and the copy write it.
+@fragment fn resample_direct(i:Output)->@location(0) vec4<f32> {
+ return present_rounded(textureSample(scene,linear_sampler,i.uv).rgb,i.position.xy);
 }

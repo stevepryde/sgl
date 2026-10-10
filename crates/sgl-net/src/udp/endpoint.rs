@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use super::cookie::{ChallengeLimiter, ConfirmReplayCache, CookieKey};
 use super::packet::{self, Acks, Item, Kind, Nonces, Parsed};
 use super::peer::{CloseGrace, Handshake, Outgoing, Peer};
+use super::reliable::MAX_RTO_MS;
 use super::transport::DatagramTransport;
 use crate::lanes::InboundUsage;
 use crate::{
@@ -29,6 +30,12 @@ pub struct EndpointConfig {
     /// Three-byte datagram magic supplied by the game.
     pub magic: [u8; 3],
     pub max_peers: usize,
+    /// How long a connected peer may go unheard before it is closed with
+    /// `TimedOut`. An unacknowledged fragment is resent, with backoff, for
+    /// as long as the peer is heard, unless its lane acknowledges nothing
+    /// for `2 * (timeout_ms + 1 s)` from its first send: after any silence
+    /// shorter than this, the peer has more than `timeout_ms + 2 s` to
+    /// take it.
     pub timeout_ms: u64,
     pub keepalive_ms: u64,
     pub handshake_retry_ms: u64,
@@ -41,7 +48,6 @@ pub struct EndpointConfig {
     pub challenge_prefix_refill_ms: u64,
     pub close_grace_ms: u64,
     pub close_retransmits: u8,
-    pub max_reliable_transmissions: u8,
     /// Every peer's reliable message cap, lane weights and per-lane bounds.
     pub reliable: ReliableConfig,
     /// Reliable messages held for every peer until acknowledged, across
@@ -84,7 +90,6 @@ impl EndpointConfig {
             challenge_prefix_refill_ms: 1_000,
             close_grace_ms: 1_000,
             close_retransmits: 2,
-            max_reliable_transmissions: 12,
             reliable: ReliableConfig::DEFAULT,
             // Sized so the shared ceilings do not bind before every lane of
             // the default peer count is full.
@@ -342,7 +347,6 @@ impl<T: DatagramTransport> Endpoint<T> {
             || config.close_grace_ms == 0
             || config.close_grace_ms > MAX_CONFIG_INTERVAL_MS
             || !(1..=MAX_CONFIG_CLOSE_RETRANSMITS).contains(&config.close_retransmits)
-            || !(1..=64).contains(&config.max_reliable_transmissions)
             || config.reliable.validate().is_err()
             || !(1..=MAX_GLOBAL_RELIABLE_MESSAGES)
                 .contains(&config.global_reliable_outbound_messages)
@@ -716,10 +720,17 @@ impl<T: DatagramTransport> Endpoint<T> {
             return;
         }
 
-        let retry_exhausted = self.peers.get(&id).is_some_and(|peer| {
-            peer.retry_exhausted(now_ms, self.config.max_reliable_transmissions)
-        });
-        if retry_exhausted {
+        // Generous, as ENet's limits are: a stall `timeout_ms` tolerates
+        // ends within `timeout_ms` of the fragment's first send, leaving
+        // more than `timeout_ms + 2 * MAX_RTO_MS` for the peer to take it
+        // once it answers again, so only a peer that never takes it is
+        // closed.
+        let bound_ms = 2 * (self.config.timeout_ms + MAX_RTO_MS);
+        if self
+            .peers
+            .get(&id)
+            .is_some_and(|peer| !peer.is_closing() && peer.stalled(now_ms, bound_ms))
+        {
             self.drop_peer(id, DisconnectReason::TimedOut, true);
             return;
         }
@@ -766,11 +777,10 @@ impl<T: DatagramTransport> Endpoint<T> {
     /// is neither taken nor charged and waits for a later flush.
     fn flush_payloads(&mut self, id: u64, now_ms: u64, budget: usize) -> usize {
         let peer = self.peers.get_mut(&id).expect("peer exists");
-        let max_transmissions = if peer.is_closing() {
-            self.config.close_retransmits.saturating_add(1)
-        } else {
-            self.config.max_reliable_transmissions
-        };
+        // A live peer's fragments are resent until acknowledged.
+        let max_transmissions = peer
+            .is_closing()
+            .then(|| self.config.close_retransmits.saturating_add(1));
         let rto_ms = peer.rto_ms();
         // Every lane that has received anything acknowledges in every
         // datagram, so the room beside them is the same all flush.
@@ -911,9 +921,9 @@ impl<T: DatagramTransport> Endpoint<T> {
                 peer.last_receive_ms = now_ms;
                 self.send_control(source, Kind::ConnectConfirm, nonces, now_ms);
             }
-            Kind::ConnectConfirm
-                if self.role == EndpointRole::Server && self.accepting_connections =>
-            {
+            // A stopped server still answers a connection it already has,
+            // whose accept may have been lost.
+            Kind::ConnectConfirm if self.role == EndpointRole::Server => {
                 self.handle_connect_confirm(nonces, source, now_ms, events);
             }
             Kind::ConnectAccept if self.role == EndpointRole::Client => {
@@ -997,6 +1007,11 @@ impl<T: DatagramTransport> Endpoint<T> {
         now_ms: u64,
         events: &mut Vec<EndpointEvent>,
     ) {
+        // A stopped server admits no new route, so it spends no keyed hash
+        // on one.
+        if !self.accepting_connections && !self.routes.contains_key(&(source, nonces.client)) {
+            return;
+        }
         let Some(cookie_epoch) = self
             .cookie_key
             .as_ref()
@@ -1073,12 +1088,7 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
         peer.last_receive_ms = now_ms;
         let held = peer.held();
-        let mut samples = Vec::new();
-        for (lane, ack) in peer.reliable.iter_mut().zip(acks) {
-            if let Some(ack) = ack {
-                lane.acknowledge(*ack, now_ms, &mut samples);
-            }
-        }
+        let samples = peer.acknowledge(acks, now_ms);
         let still_held = peer.held();
         self.outbound = (
             self.outbound.0 - (held.0 - still_held.0),
@@ -1761,6 +1771,136 @@ mod tests {
         assert!(server.transport.sent.is_empty());
     }
 
+    /// Moves what `from` (at `from_addr`) sent to `to_addr` into `to`,
+    /// except the datagrams `lose` picks.
+    fn ferry(
+        from: &mut Endpoint<RecordingTransport>,
+        from_addr: SocketAddr,
+        to: &mut Endpoint<RecordingTransport>,
+        to_addr: SocketAddr,
+        mut lose: impl FnMut(&SentDatagram) -> bool,
+    ) {
+        let (outgoing, others) = std::mem::take(&mut from.transport.sent)
+            .into_iter()
+            .partition::<Vec<_>, _>(|datagram| datagram.destination == to_addr);
+        from.transport.sent = others;
+        for datagram in outgoing {
+            if !lose(&datagram) {
+                to.transport.received.push_back(ReceivedDatagram {
+                    source: from_addr,
+                    bytes: datagram.bytes,
+                });
+            }
+        }
+    }
+
+    /// Defect (#306): a server whose admission stopped right after it
+    /// accepted a client ignoring that client's repeated confirm, so a lost
+    /// accept strands a connection the server already reported; or one that
+    /// now admits a new client. Oracle: `stop_admission` stops new
+    /// connections "without affecting existing ones" (`ServerIo`). The
+    /// first accept is lost and admission stops on `Connected`; the client
+    /// still connects and messages cross both ways, while a second client
+    /// challenged before the stop is not admitted by its confirm.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn stopped_admission_still_answers_a_connected_peer_whose_accept_was_lost() {
+        let server_addr = address(192, 0, 2, 1, 7_000);
+        let (joining, late) = (address(192, 0, 2, 2, 40_000), address(192, 0, 2, 3, 40_000));
+        let config = EndpointConfig::default();
+        let mut server =
+            Endpoint::server(RecordingTransport::default(), config.clone(), [12; 32]).unwrap();
+        let mut client = Endpoint::client(RecordingTransport::default(), config.clone()).unwrap();
+        let mut other = Endpoint::client(RecordingTransport::default(), config).unwrap();
+        let peer = client.start_connect(server_addr, 0, 61).unwrap();
+        other.start_connect(server_addr, 0, 62).unwrap();
+
+        let (mut accepts_lost, mut late_after_stop) = (0, 0);
+        let mut server_peer = None;
+        let mut client_events = Vec::new();
+        let mut other_events = Vec::new();
+        for now in 1..2_000 {
+            ferry(&mut client, joining, &mut server, server_addr, |_| false);
+            // The late client's request arrives; its confirms only after
+            // the stop.
+            ferry(&mut other, late, &mut server, server_addr, |_| {
+                let lost = now > 1 && server_peer.is_none();
+                late_after_stop += usize::from(!lost && server_peer.is_some());
+                lost
+            });
+            for event in server.poll(now) {
+                match event {
+                    EndpointEvent::Connected { peer } if server_peer.is_none() => {
+                        server_peer = Some(peer);
+                        server.stop_admission();
+                    }
+                    other => panic!("server: {other:?} at {now}"),
+                }
+            }
+            server.flush(now);
+            ferry(&mut server, server_addr, &mut client, joining, |datagram| {
+                let lost = accepts_lost == 0
+                    && matches!(
+                        packet::parse(&datagram.bytes, MAGIC),
+                        Some(Parsed::Control {
+                            kind: Kind::ConnectAccept,
+                            ..
+                        })
+                    );
+                accepts_lost += usize::from(lost);
+                lost
+            });
+            ferry(&mut server, server_addr, &mut other, late, |_| false);
+            client_events.extend(client.poll(now));
+            other_events.extend(other.poll(now));
+            client.flush(now);
+            other.flush(now);
+            if client_events.contains(&EndpointEvent::Connected { peer }) {
+                break;
+            }
+        }
+        assert_eq!(accepts_lost, 1);
+        assert_eq!(client_events, [EndpointEvent::Connected { peer }]);
+        assert!(
+            late_after_stop > 0,
+            "the late client confirmed after the stop"
+        );
+        assert!(other_events.is_empty(), "{other_events:?}");
+        assert_eq!(server.peer_count(), 1, "the late client was not admitted");
+
+        let server_peer = server_peer.expect("the server connected first");
+        server
+            .send(server_peer, Delivery::RELIABLE_ORDERED, b"welcome")
+            .unwrap();
+        client
+            .send(peer, Delivery::RELIABLE_ORDERED, b"hello")
+            .unwrap();
+        let (mut at_client, mut at_server) = (Vec::new(), Vec::new());
+        for now in 2_000..2_100 {
+            server.flush(now);
+            client.flush(now);
+            ferry(&mut server, server_addr, &mut client, joining, |_| false);
+            ferry(&mut client, joining, &mut server, server_addr, |_| false);
+            at_client.extend(client.poll(now));
+            at_server.extend(server.poll(now));
+        }
+        assert_eq!(
+            at_client,
+            [EndpointEvent::Message {
+                peer,
+                delivery: Delivery::RELIABLE_ORDERED,
+                payload: b"welcome".to_vec(),
+            }]
+        );
+        assert_eq!(
+            at_server,
+            [EndpointEvent::Message {
+                peer: server_peer,
+                delivery: Delivery::RELIABLE_ORDERED,
+                payload: b"hello".to_vec(),
+            }]
+        );
+    }
+
     #[wasm_bindgen_test(unsupported = test)]
     fn client_disconnect_drains_queued_reliable_data_before_close() {
         let server_address = address(192, 0, 2, 92, 32_167);
@@ -2052,10 +2192,6 @@ mod tests {
             },
             EndpointConfig {
                 handshake_retry_ms: EndpointConfig::default().timeout_ms,
-                ..EndpointConfig::default()
-            },
-            EndpointConfig {
-                max_reliable_transmissions: 0,
                 ..EndpointConfig::default()
             },
         ] {
@@ -2377,31 +2513,111 @@ mod tests {
         );
     }
 
+    /// Defect (#303): an unacknowledged fragment resent at a flat interval,
+    /// or its resends ending the connection before `timeout_ms`. Oracle:
+    /// RFC 6298 §5.5 (the timer doubles on each expiry) with the
+    /// `MAX_RTO_MS` ceiling, and `timeout_ms` bounding a silent peer: from
+    /// the unmeasured 200 ms timeout the resends fall 200, 400 and 800 ms
+    /// apart, then every second, and the peer stays until its silence
+    /// reaches `timeout_ms`.
     #[wasm_bindgen_test(unsupported = test)]
-    fn reliable_retry_exhaustion_disconnects_instead_of_wedging() {
-        let config = EndpointConfig {
-            max_reliable_transmissions: 2,
-            ..EndpointConfig::default()
-        };
-        let (mut server, _source, _nonces) = connected_server(config);
+    fn unacknowledged_fragments_back_off_to_the_timeout_ceiling() {
+        let (mut server, _source, _nonces) = connected_server(EndpointConfig::default());
         server
             .send(1, Delivery::RELIABLE_ORDERED, b"never-acked")
             .unwrap();
-        server.flush(10);
-        server.flush(210);
+        for now in 10..=9_000 {
+            server.flush(now);
+        }
         assert_eq!(
             server
                 .transport
                 .sent
                 .iter()
-                .filter_map(reliable_payload)
-                .count(),
-            2
+                .filter(|datagram| reliable_payload(datagram).is_some())
+                .map(|datagram| datagram.now_ms)
+                .collect::<Vec<_>>(),
+            [
+                10, 210, 610, 1_410, 2_410, 3_410, 4_410, 5_410, 6_410, 7_410, 8_410
+            ]
         );
-        server.flush(410);
-        assert_eq!(server.peer_count(), 0);
+        assert!(server.poll(9_000).is_empty());
+        assert_eq!(server.peer_count(), 1);
+    }
+
+    /// Defect (#303 review): backoff reset per lane, so a lane the peer has
+    /// not acknowledged keeps its doubled timeout while another lane of the
+    /// same peer is acknowledged. Oracle: RFC 9002 Appendix A.7
+    /// (`OnAckReceived` zeroes the backoff on any newly acknowledged
+    /// packet): lanes 0 and 1 are sent at 10 ms and resent at 210 ms, then
+    /// only lane 1 is acknowledged; lane 0 is next resent one unmeasured
+    /// 200 ms timeout after its last send, at 410 ms, not the doubled
+    /// 610 ms.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn an_acknowledgement_on_one_lane_resets_every_lanes_backoff() {
+        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
+        server
+            .send(1, Delivery::Reliable(lane(0)), b"lane 0")
+            .unwrap();
+        server
+            .send(1, Delivery::Reliable(lane(1)), b"lane 1")
+            .unwrap();
+        for now in 10..=700 {
+            if now == 300 {
+                let mut acks = [None; RELIABLE_LANES];
+                acks[1] = Some(packet::Ack {
+                    next: 1,
+                    bits: 0,
+                    held: false,
+                });
+                server.transport.receive_acks(source, nonces, &acks);
+                assert!(server.poll(now).is_empty());
+            }
+            server.flush(now);
+        }
+        let lane0_sends: Vec<_> = server
+            .transport
+            .sent
+            .iter()
+            .filter(|datagram| match packet::parse(&datagram.bytes, MAGIC) {
+                Some(Parsed::Payload { mut items, .. }) => items.any(
+                    |item| matches!(item, Item::Reliable { lane: sent, .. } if sent == lane(0)),
+                ),
+                _ => false,
+            })
+            .map(|datagram| datagram.now_ms)
+            .collect();
+        assert_eq!(lane0_sends, [10, 210, 410]);
+    }
+
+    /// Defect (#303 review): a peer that keeps answering but never
+    /// acknowledges a fragment wedging its lane forever, or being closed
+    /// before a stall `timeout_ms` tolerates could have ended. Oracle: the
+    /// liveness bound of netcode.md 12, 2 × (`timeout_ms` + 1 s) without
+    /// progress on a lane holding an unheld fragment: 22 s at the default
+    /// 10 s timeout. The client sends a keepalive every 500 ms and never
+    /// acknowledges the fragment first sent at 10 ms: the server keeps the
+    /// peer through 22,009 ms and closes it `TimedOut` at 22,010 ms.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_heard_peer_that_never_acknowledges_times_out_at_the_stall_bound() {
+        let bound = 22_000;
+        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
+        server
+            .send(1, Delivery::RELIABLE_ORDERED, b"never-acked")
+            .unwrap();
+        for now in 10..10 + bound {
+            if now % 500 == 0 {
+                server
+                    .transport
+                    .receive_acks(source, nonces, &[None; RELIABLE_LANES]);
+            }
+            assert!(server.poll(now).is_empty(), "at {now}");
+            server.flush(now);
+        }
+        assert_eq!(server.peer_count(), 1);
+        server.flush(10 + bound);
         assert_eq!(
-            server.poll(411),
+            server.poll(10 + bound),
             vec![EndpointEvent::Disconnected {
                 peer: 1,
                 reason: DisconnectReason::TimedOut,
