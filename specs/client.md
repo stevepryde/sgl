@@ -45,7 +45,9 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    quads `draw` emits for the same text and size. Each page is one texture
    asset under a stable handle; `end_frame` republishes changed pages in
    place and returns their handles for the game to upload, which replaces
-   their pixels in the existing renderer or sprite pass. Outline and
+   their pixels in the existing renderer or sprite pass. A glyph too large
+   for a standard page gets a page sized to it; an upload wider than the
+   device allows fails with `TextureError::TooLarge`. Outline and
    shadow are offset copies of the glyph quads. `pixel_scale = 1` is
    bit-identical to unscaled rendering.
 6. **Overlay.** Lines, rect outlines, fills, and circles are emitted as quads

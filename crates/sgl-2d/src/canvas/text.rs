@@ -28,12 +28,16 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::assets::{Assets, Handle, Texture};
-use crate::canvas::atlas::ShelfPacker;
+use crate::canvas::atlas::{PADDING, ShelfPacker};
 use crate::canvas::draw::{DrawList, Rect, SpriteInstance};
 use sgl_core::math::Vec2;
 
 /// Pixel size of one (square) glyph atlas page. Comfortably holds the 84 px
-/// title alphabet; more pages open as needed.
+/// title alphabet; more pages open as needed. A glyph too large for it (a
+/// large size at a high pixel scale) gets a square page sized to the glyph,
+/// which uploads like any texture: one wider than the device's
+/// `max_texture_dimension_2d` is refused by the upload with
+/// `TextureError::TooLarge`.
 pub const GLYPH_PAGE_SIZE: u32 = 512;
 
 /// Which [`DrawList`] channel text lands in.
@@ -190,6 +194,9 @@ struct GlyphSlot {
 
 /// One CPU-side atlas page: pixels + packer + the publish state.
 struct GlyphPage {
+    /// Width and height in pixels: [`GLYPH_PAGE_SIZE`], or an oversized
+    /// glyph's larger side.
+    side: u32,
     packer: ShelfPacker,
     /// RGBA8: white RGB, glyph coverage in alpha (the shader multiplies the
     /// instance color in, so one page serves every text color).
@@ -201,11 +208,12 @@ struct GlyphPage {
 }
 
 impl GlyphPage {
-    fn new() -> Self {
-        let side = GLYPH_PAGE_SIZE as usize;
+    fn new(side: u32) -> Self {
+        let len = side as usize;
         Self {
-            packer: ShelfPacker::new(GLYPH_PAGE_SIZE, GLYPH_PAGE_SIZE),
-            pixels: vec![0; side * side * 4],
+            side,
+            packer: ShelfPacker::new(side, side),
+            pixels: vec![0; len * len * 4],
             dirty: false,
             handle: None,
         }
@@ -473,8 +481,8 @@ impl TextRenderer {
             let handle = assets.insert(
                 path,
                 Texture {
-                    width: GLYPH_PAGE_SIZE,
-                    height: GLYPH_PAGE_SIZE,
+                    width: page.side,
+                    height: page.side,
                     rgba: page.pixels.clone(),
                 },
             );
@@ -519,8 +527,8 @@ impl TextRenderer {
         } else {
             let (w, h) = (metrics.width as u32, metrics.height as u32);
             let (page, x, y) = self.place(w, h);
+            let stride = self.pages[page].side as usize;
             let pixels = &mut self.pages[page].pixels;
-            let stride = GLYPH_PAGE_SIZE as usize;
             for row in 0..metrics.height {
                 for col in 0..metrics.width {
                     let a = coverage[row * metrics.width + col];
@@ -550,18 +558,19 @@ impl TextRenderer {
     }
 
     /// Find (or open) a page with room for `w × h`; returns
-    /// `(page index, x, y)`.
+    /// `(page index, x, y)`. A glyph that does not fit a [`GLYPH_PAGE_SIZE`]
+    /// page opens a page of its larger side plus the packer's padding.
     fn place(&mut self, w: u32, h: u32) -> (usize, u32, u32) {
         for (i, page) in self.pages.iter_mut().enumerate() {
             if let Some((x, y)) = page.packer.insert(w, h) {
                 return (i, x, y);
             }
         }
-        let mut page = GlyphPage::new();
+        let mut page = GlyphPage::new(GLYPH_PAGE_SIZE.max(w.max(h) + PADDING));
         let (x, y) = page
             .packer
             .insert(w, h)
-            .expect("glyph larger than a fresh atlas page");
+            .expect("a fresh page one padding wider than the glyph fits it");
         self.pages.push(page);
         (self.pages.len() - 1, x, y)
     }
@@ -903,6 +912,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// #291: a glyph larger than a standard page (160 px at pixel scale 4,
+    /// so 640 px) gets a page of its own size instead of panicking, and its
+    /// quad samples exactly fontdue's coverage for that glyph.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn an_oversized_high_dpi_glyph_gets_its_own_page() {
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        let mut list = DrawList::new();
+        tr.set_pixel_scale(4.0);
+        tr.draw(
+            "W",
+            Vec2::ZERO,
+            &TextStyle::new(160.0, [1.0; 4]),
+            0.0,
+            TextChannel::Screen,
+        );
+        tr.end_frame(&mut assets, &mut list);
+
+        let (metrics, coverage) = renderer().font.rasterize('W', 640.0);
+        assert!(metrics.width.max(metrics.height) > GLYPH_PAGE_SIZE as usize);
+        let [quad] = list.screen.as_slice() else {
+            panic!("one quad for one glyph, got {}", list.screen.len());
+        };
+        let page = assets.get(quad.texture).expect("published page");
+        let src = quad.src.expect("glyph quads have a src rect");
+        assert_eq!(
+            (src.size().x as usize, src.size().y as usize),
+            (metrics.width, metrics.height)
+        );
+        let (x0, y0) = (src.min.x as usize, src.min.y as usize);
+        let stride = page.width as usize;
+        let alpha: Vec<u8> = (0..metrics.height)
+            .flat_map(|row| {
+                (0..metrics.width).map(move |col| ((y0 + row) * stride + x0 + col) * 4 + 3)
+            })
+            .map(|at| page.rgba[at])
+            .collect();
+        assert_eq!(alpha, coverage);
     }
 
     /// The 1 px outline ring is the classic 8 directions; a 10 px ring has
