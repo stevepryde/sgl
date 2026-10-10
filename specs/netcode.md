@@ -86,7 +86,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     worker moves a message to its endpoint only when the endpoint has room
     on that lane, rotating between backlogged peers and lanes, and the
     browser holds released frames while `bufferedAmount` is above its
-    watermark; neither refuses an accepted message or disconnects. A UDP
+    watermark, each watermark at least the largest frame it paces so a
+    frame always fits an empty buffer; neither refuses an accepted message
+    or disconnects. A UDP
     `disconnect` (caller-polled or threaded) admits nothing more but still
     sends the reliable and unreliable messages accepted before it, closing
     once they are acknowledged or `close_grace_ms` after the disconnect,
@@ -127,10 +129,19 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     bits 0–30 mark which of the 31 fragments after it arrived and whose bit
     31 (HELD) says `next` itself arrived and waits for the receiver's caller
     to make room (11). The sender resends neither a marked nor a held
-    fragment and never counts a held one toward
-    `max_reliable_transmissions`, nor samples its round trip; its window of
-    `WINDOW` (32) fragments starts at the oldest fragment before which
-    everything is acknowledged, so it never reaches past the receiver's,
+    fragment, nor samples a held one's round trip. It resends any other
+    unacknowledged fragment one retransmission timeout after its last
+    transmission, doubling that timeout for each resend since the peer last
+    acknowledged anything new, up to the 1 s ceiling of the timeout itself;
+    anything newly acknowledged on any lane resets every lane's (D-43).
+    There is no resend limit: a peer is closed `TimedOut` after `timeout_ms`
+    without hearing from it, or once a lane with an unheld fragment in
+    flight has had nothing newly acknowledged for 2 × (`timeout_ms` + 1 s)
+    since that fragment was first sent. After any stall shorter than
+    `timeout_ms`, the peer therefore has more than `timeout_ms` + 2 s from
+    when it answers again to take the fragment. Its window of `WINDOW`
+    (32) fragments starts at the oldest fragment before which everything
+    is acknowledged, so it never reaches past the receiver's,
     which buffers the same span from `next`. Any number of items fill the
     rest of the datagram. Every payload datagram carries the
     acknowledgement of each lane that has received anything, where it fits,
@@ -192,8 +203,13 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     sender that outruns them is still closed with `InboundOverflow`.
     Neither transport negotiates a version, so builds on different versions
     cannot connect; a game changes its WebSocket subprotocol when the wire
-    version changes. Browser reconnect follows `ReconnectPolicy` with
-    bounded attempts and delay, driven by `poll(now_ms)`.
+    version changes. Browser reconnect follows `ReconnectPolicy`, driven by
+    `poll(now_ms)`, after every close the game did not ask for,
+    `InboundOverflow` and `ProtocolViolation` included: at most
+    `max_attempts` attempts with doubling delays up to `max_delay_ms`. The
+    count restarts only after a connection that stayed up at least
+    `max_delay_ms`, so one that keeps failing soon after it opens backs off
+    and stops.
 14. Lanes share a connection by deficit round robin over the lanes with
     sendable work. Each lane's quantum is `LaneConfig::weight` items
     (`1..=MAX_LANE_WEIGHT`, default 1), an item being a reliable fragment or
@@ -256,7 +272,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
   keeps its scheduling bound.
 - A receiver that polls slowly makes a UDP (caller-polled or threaded) or
   native WebSocket sender slower, not disconnected; so does a threaded UDP
-  server whose caller stops polling for longer than the timeout.
+  server whose caller stops polling for longer than the timeout, and a
+  caller-polled UDP receiver that stalls for less than `timeout_ms` with
+  reliable data in flight keeps its connection and receives the data.
 - Unreliable messages are never retransmitted and never delivered twice;
   with no network loss and a polled receiver every accepted one arrives,
   and no sending side drops one.

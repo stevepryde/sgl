@@ -181,6 +181,16 @@ fn parents(document: &gltf::Document) -> Result<Vec<Option<usize>>> {
     Ok(parents)
 }
 
+/// `mesh`'s morph-target count: its first primitive with targets' (glTF
+/// 2.0 3.7.2.2, as KhronosGroup/glTF#2650 words it), which every primitive
+/// with targets must share; a primitive without any takes none.
+pub(super) fn mesh_morph_target_count(mesh: &gltf::Mesh<'_>) -> usize {
+    mesh.primitives()
+        .map(|primitive| primitive.morph_targets().count())
+        .find(|&count| count > 0)
+        .unwrap_or(0)
+}
+
 fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) -> Result<Clip> {
     let label = format!("animation {}", animation.index());
     let channels = animation
@@ -255,8 +265,7 @@ fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) ->
                         .target()
                         .node()
                         .mesh()
-                        .and_then(|mesh| mesh.primitives().next())
-                        .map_or(0, |primitive| primitive.morph_targets().count());
+                        .map_or(0, |mesh| mesh_morph_target_count(&mesh));
                     if targets == 0 {
                         return Err(format!(
                             "{label}: morph weights animate a node without morph targets"
