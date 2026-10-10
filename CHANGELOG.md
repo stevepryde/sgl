@@ -21,6 +21,14 @@ docs and specs the entry links.
   `canvas::text::MAX_GLYPH_PAGE_SIZE` (16384) is not drawn. A page past the
   device's texture limit fails its upload with `TextureError::TooLarge`: log
   that error rather than unwrapping the upload.
+- `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain
+  buffers doubled past the device's storage binding limit once they held
+  over half of it, failing the frame's cull bind group; their growth now
+  stops at the limit. No game-code changes needed.
+- `sgl-2d` light shadows (`shadow_triangles`, `LightPass`): a light close to
+  a long occluder edge lit part of the area behind it inside its footprint
+  (the wall-torch case); such edges now get a far cap that covers the
+  footprint. No game-code changes needed.
 - `sgl-2d` `TextRenderer`: glyph pages were never reused, so text whose size
   changed every frame opened pages without bound, and an infinite outline or
   shadow width hung `draw`; a full atlas now empties and reuses its least
@@ -140,6 +148,10 @@ docs and specs the entry links.
   motion search took an out-of-screen neighbour as nearest, so the 1-pixel
   border read zero motion and ghosted while the camera moved; neighbours now
   clamp to the screen. No game-code changes needed.
+- `sgl-post-fx` SSR and TAA temporal passes: the reprojected depth was
+  linearised with the current projection, so a near or far plane that
+  changed between frames rejected history for a frame; it now uses the
+  previous camera's. No game-code changes needed.
 - `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
   replaced the enclosing clip and its end reset the clip to `None`; it now
   clips within the enclosing clip, nests, and restores the enclosing clip at
