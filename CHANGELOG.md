@@ -20,7 +20,9 @@ docs and specs the entry links.
   shadow width hung `draw`; a full atlas now empties and reuses its least
   recently used page (same handle, republished by `end_frame`), and ring
   widths are capped at `canvas::text::MAX_RING_WIDTH` (64 px), non-finite
-  ones drawing no ring. No game-code changes needed.
+  ones drawing no ring. Glyph instances from `end_frame` are valid for that
+  frame only; call it once per presented frame. No game-code changes needed
+  for games that already do.
 
 - `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
   of steps before confirming a hit was accepted by depth proximity and now

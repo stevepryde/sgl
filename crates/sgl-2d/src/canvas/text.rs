@@ -479,7 +479,10 @@ impl TextRenderer {
     /// changed this frame — the app must upload each
     /// (`Renderer::upload_texture` or `SpritePass::upload`, which replace an
     /// already-uploaded page's pixels under its handle) before rendering the
-    /// frame. Call once per frame after all `draw` calls.
+    /// frame. Call once per presented frame after all `draw` calls. The glyph
+    /// instances it emits are valid for that frame only: pages are reused, so
+    /// a retained `DrawList`, or a second `end_frame` before the first is
+    /// submitted, can sample a reused page's new pixels.
     pub fn end_frame(
         &mut self,
         assets: &mut Assets<Texture>,
