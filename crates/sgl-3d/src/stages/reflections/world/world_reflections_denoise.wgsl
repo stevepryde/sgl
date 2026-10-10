@@ -157,7 +157,7 @@ const VARIANCE_TEMPORAL_RESPONSE:f32=.9;
   textureStore(temporal_variance_output,p,vec4(0.));
   return;
  }
- let view=TemporalView(world.inverse_view_projection,world.previous_view_projection,world.reduced,world.eye.w);
+ let view=TemporalView(world.inverse_view_projection,world.previous_view_projection,world.reduced,world.eye.w,world.previous_near);
  // SGL3D motion (current minus previous), negated into Wicked's.
  let velocity=-textureLoad(world_motion,p*downscale,0).xy;
  let accumulated=temporal_accumulate(view,p,current,velocity,textureLoad(temporal_reprojection,p,0).x,receiver.depth);
