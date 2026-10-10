@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-input` `Gamepads::poll` on macOS: input queued before a controller
+  was unplugged was dropped (a tap then unplug between polls lost the tap);
+  it is now reported before the `Disconnected` event. No game-code changes
+  needed.
 - `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
   of steps before confirming a hit was accepted by depth proximity and now
   reports a miss, so streaks near surfaces at the step cap give way to the
