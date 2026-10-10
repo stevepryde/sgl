@@ -21,7 +21,30 @@ docs and specs the entry links.
   `canvas::text::MAX_GLYPH_PAGE_SIZE` (16384) is not drawn. A page past the
   device's texture limit fails its upload with `TextureError::TooLarge`: log
   that error rather than unwrapping the upload.
-
+- `sgl-2d` `TextRenderer`: glyph pages were never reused, so text whose size
+  changed every frame opened pages without bound, and an infinite outline or
+  shadow width hung `draw`; a full atlas now empties and reuses its least
+  recently used page (same handle, republished by `end_frame`), and ring
+  widths are capped at `canvas::text::MAX_RING_WIDTH` (64 px), non-finite
+  ones drawing no ring. Glyph instances from `end_frame` are valid for that
+  frame only; call it once per presented frame. No game-code changes needed
+  for games that already do.
+- `sgl-input` `Gamepads::poll` on Windows, Linux and the web (Gilrs): a
+  repeated `Connected` for a pad reset its held state and is now ignored, and
+  a `ButtonReleased` with no reported press (a button held when the pad
+  connected) is now dropped on every target. Input already held at connection
+  is still not reported until it changes, a gilrs limitation. No game-code
+  changes needed.
+- `sgl-post-fx` half-resolution SSR (SGL3D's `ScreenSpaceReflections::Half`):
+  a one-pixel-wide or -tall frame created zero-sized textures, a wgpu
+  validation error; each half-resolution side is now at least one texel. No
+  game-code changes needed.
+- `sgl-2d` `Renderer` screen channel: when `set_target_size` scaled a very
+  large target down (over 4096² px), the UI laid out over the smaller
+  target, too large and misaligned with the pointer; it now keeps the
+  requested size over `ui_scale`. Lay out over the new `Renderer::ui_size()`
+  instead of `target_size() / ui_scale`, and set the text raster scale to the
+  new `Renderer::ui_pixel_scale()`.
 - `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
   its near plane read the reflection depth history with the new near plane
   and discarded the history; it is now read with the near plane that wrote

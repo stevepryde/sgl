@@ -82,7 +82,8 @@ pub enum VAlign {
 #[derive(Debug, Clone, Copy)]
 pub struct Outline {
     /// Outline radius in pixels (Godot `outline_size`; PR-9: 10 for the
-    /// title, 1 elsewhere).
+    /// title, 1 elsewhere). Capped at [`MAX_RING_WIDTH`]; a non-finite
+    /// width draws no outline.
     pub width: f32,
     pub color: [f32; 4],
 }
@@ -93,7 +94,8 @@ pub struct Shadow {
     /// Pixel offset of the shadow copy (PR-9 title: `(5, 5)`).
     pub offset: Vec2,
     /// Ring spread of the shadow, like an outline width (Godot
-    /// `shadow_size`; PR-9 title: 10). `0.0` = a plain offset copy.
+    /// `shadow_size`; PR-9 title: 10). `0.0` = a plain offset copy. Capped
+    /// at [`MAX_RING_WIDTH`]; a non-finite spread draws a plain copy.
     pub spread: f32,
     pub color: [f32; 4],
 }
@@ -214,12 +216,14 @@ struct GlyphPage {
     /// The page's asset handle (`None` until first publish), stable from
     /// then on: republishing replaces the asset in place.
     handle: Option<Handle<Texture>>,
+    /// The last frame a glyph on this page was drawn or placed.
+    last_used: u64,
 }
 
 impl GlyphPage {
     /// A page of `side` pixels square; `side` is at most
     /// [`MAX_GLYPH_PAGE_SIZE`].
-    fn new(side: u32, dedicated: bool) -> Self {
+    fn new(side: u32, dedicated: bool, frame: u64) -> Self {
         let bytes = usize::try_from(u64::from(side) * u64::from(side) * 4)
             .expect("a page within MAX_GLYPH_PAGE_SIZE is addressable");
         Self {
@@ -229,7 +233,15 @@ impl GlyphPage {
             pixels: vec![0; bytes],
             dirty: false,
             handle: None,
+            last_used: frame,
         }
+    }
+
+    /// Empty the page for reuse, keeping its size, kind and handle.
+    fn clear(&mut self, frame: u64) {
+        self.packer = ShelfPacker::new(self.side, self.side);
+        self.pixels.fill(0);
+        self.last_used = frame;
     }
 }
 
@@ -269,6 +281,9 @@ pub struct TextRenderer {
     ///
     /// [`set_pixel_scale`]: Self::set_pixel_scale
     pixel_scale: f32,
+    /// Frames completed by [`end_frame`](Self::end_frame); pages record the
+    /// last one that used them.
+    frame: u64,
 }
 
 impl TextRenderer {
@@ -294,6 +309,7 @@ impl TextRenderer {
             queued: Vec::new(),
             clip: None,
             pixel_scale: 1.0,
+            frame: 0,
         })
     }
 
@@ -324,7 +340,10 @@ impl TextRenderer {
         Self::new(&bytes)
     }
 
-    /// Number of atlas pages opened so far (diagnostics/tests).
+    /// Number of atlas pages opened so far (diagnostics/tests). It grows only
+    /// when every page is full and was used in the current frame: otherwise
+    /// the least recently used page is emptied and reused, so text whose
+    /// size changes every frame keeps a bounded number of pages.
     pub fn page_count(&self) -> usize {
         self.pages.len()
     }
@@ -403,6 +422,8 @@ impl TextRenderer {
             }
             let slot = self.glyph(c, raster_px);
             if let Some(b) = slot.bitmap {
+                // In use this frame: never recycled before its quads flush.
+                self.pages[b.page].last_used = self.frame;
                 let gx = snap(pen + b.xmin / s);
                 let gy = snap(baseline - b.ymin / s - b.h as f32 / s);
                 placed.push((b, Vec2::new(gx, gy)));
@@ -479,7 +500,10 @@ impl TextRenderer {
     /// changed this frame — the app must upload each
     /// (`Renderer::upload_texture` or `SpritePass::upload`, which replace an
     /// already-uploaded page's pixels under its handle) before rendering the
-    /// frame. Call once per frame after all `draw` calls. An upload can fail
+    /// frame. Call once per presented frame after all `draw` calls. The glyph
+    /// instances it emits are valid for that frame only: pages are reused, so
+    /// a retained `DrawList`, or a second `end_frame` before the first is
+    /// submitted, can sample a reused page's new pixels. An upload can fail
     /// (`TextureError::TooLarge` for an oversized glyph's dedicated page on a
     /// device with a smaller texture limit): log it and carry on rather than
     /// unwrapping — only that glyph goes undrawn.
@@ -525,6 +549,7 @@ impl TextRenderer {
                 list.push(instance);
             }
         }
+        self.frame += 1;
         changed
     }
 
@@ -578,39 +603,76 @@ impl TextRenderer {
         slot
     }
 
-    /// Find (or open) a page with room for `w × h`; returns
-    /// `(page index, x, y)`. A glyph that does not fit a [`GLYPH_PAGE_SIZE`]
-    /// page opens a dedicated page of its larger side plus the packer's
-    /// padding; dedicated pages are never packed into again.
+    /// Find room for `w × h`, returning `(page index, x, y)` and marking the
+    /// page used this frame. A glyph that fits a [`GLYPH_PAGE_SIZE`] page
+    /// takes a standard page with space; else the least recently used
+    /// standard page not drawn from this frame, emptied (its cached glyphs
+    /// re-rasterize on next use); else a new standard page. A larger glyph
+    /// takes a dedicated page of its own, never packed into again: a stale
+    /// dedicated page at least its size, emptied, or else a new one of its
+    /// larger side plus the packer's padding.
     fn place(&mut self, w: u32, h: u32) -> (usize, u32, u32) {
-        let side = w.max(h) + PADDING;
-        let dedicated = side > GLYPH_PAGE_SIZE;
-        if !dedicated {
-            for (i, page) in self.pages.iter_mut().enumerate() {
-                if page.dedicated {
-                    continue;
-                }
-                if let Some((x, y)) = page.packer.insert(w, h) {
-                    return (i, x, y);
-                }
-            }
-        }
-        let mut page = GlyphPage::new(side.max(GLYPH_PAGE_SIZE), dedicated);
-        let (x, y) = page
-            .packer
-            .insert(w, h)
-            .expect("a fresh page one padding wider than the glyph fits it");
-        self.pages.push(page);
-        (self.pages.len() - 1, x, y)
+        let frame = self.frame;
+        let need = w.max(h) + PADDING;
+        let dedicated = need > GLYPH_PAGE_SIZE;
+        let found = if dedicated {
+            None
+        } else {
+            self.pages
+                .iter_mut()
+                .enumerate()
+                .filter(|(_, page)| !page.dedicated)
+                .find_map(|(i, page)| page.packer.insert(w, h).map(|(x, y)| (i, x, y)))
+        };
+        let (i, x, y) = found.unwrap_or_else(|| {
+            let stale = self
+                .pages
+                .iter()
+                .enumerate()
+                .filter(|(_, page)| {
+                    page.last_used < frame
+                        && page.dedicated == dedicated
+                        && (!dedicated || page.side >= need)
+                })
+                .min_by_key(|(_, page)| page.last_used)
+                .map(|(i, _)| i);
+            let i = if let Some(i) = stale {
+                self.glyphs
+                    .retain(|_, slot| slot.bitmap.is_none_or(|b| b.page != i));
+                self.pages[i].clear(frame);
+                i
+            } else {
+                let side = need.max(GLYPH_PAGE_SIZE);
+                self.pages.push(GlyphPage::new(side, dedicated, frame));
+                self.pages.len() - 1
+            };
+            let (x, y) = self.pages[i]
+                .packer
+                .insert(w, h)
+                .expect("an empty page one padding wider than the glyph fits it");
+            (i, x, y)
+        });
+        self.pages[i].last_used = frame;
+        (i, x, y)
     }
 }
 
+/// Widest outline or shadow spread drawn, in pixels. Each ring copies every
+/// glyph quad, so the quad count grows with the square of the width: 64 px is
+/// several times the widest authored outline (the 10 px title) and still
+/// bounds a glyph to about 3,300 copies.
+pub const MAX_RING_WIDTH: f32 = 64.0;
+
 /// Offsets approximating a solid stroke of radius `width`: concentric rings
 /// sampled every ~2 px, from `width` inward. Glyph coverage overlap fills
-/// the gaps; a 1 px outline is the classic 8-direction ring.
+/// the gaps; a 1 px outline is the classic 8-direction ring. A width above
+/// [`MAX_RING_WIDTH`] draws at that width; a non-finite width draws no ring.
 fn ring_offsets(width: f32) -> Vec<Vec2> {
     let mut out = Vec::new();
-    let mut r = width;
+    if !width.is_finite() {
+        return out;
+    }
+    let mut r = width.min(MAX_RING_WIDTH);
     while r > 0.25 {
         let samples = ((std::f32::consts::TAU * r) / 2.0).ceil().max(8.0) as usize;
         for i in 0..samples {
@@ -1011,6 +1073,34 @@ mod tests {
         }
     }
 
+    /// #291/#327: oversized text whose size changes every frame reuses a
+    /// stale dedicated page large enough for it, so the page count stays
+    /// bounded, and standard pages are never handed to it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn animated_oversized_text_reuses_dedicated_pages() {
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        let mut list = DrawList::new();
+        tr.set_pixel_scale(4.0);
+        // Sizes shrinking from 200 px (800 px raster) keep fitting the first
+        // frame's dedicated page.
+        for frame in 0..40u8 {
+            let style = TextStyle::new(200.0 - f32::from(frame), [1.0; 4]);
+            tr.draw("W", Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+            tr.end_frame(&mut assets, &mut list);
+            for quad in &list.screen {
+                let page = assets.get(quad.texture).expect("published page");
+                assert!(page.width > GLYPH_PAGE_SIZE, "a dedicated page");
+            }
+            list.clear();
+            assert!(
+                tr.page_count() <= 2,
+                "{} pages at frame {frame}",
+                tr.page_count()
+            );
+        }
+    }
+
     /// #291: a glyph whose page would exceed `MAX_GLYPH_PAGE_SIZE` is neither
     /// rasterized nor packed, and still advances the pen.
     #[wasm_bindgen_test(unsupported = test)]
@@ -1020,6 +1110,68 @@ mod tests {
         assert!(slot.bitmap.is_none());
         assert!(slot.advance > 0.0);
         assert_eq!(tr.page_count(), 0);
+    }
+
+    /// The glyph pixels each queued quad samples, in push order.
+    fn sampled_glyphs(assets: &Assets<Texture>, list: &DrawList) -> Vec<Vec<u8>> {
+        list.screen
+            .iter()
+            .map(|quad| {
+                let page = assets.get(quad.texture).expect("published page");
+                let src = quad.src.expect("glyph quads have a src rect");
+                let (x0, y0) = (src.min.x as usize, src.min.y as usize);
+                let (x1, y1) = (src.max.x as usize, src.max.y as usize);
+                let stride = GLYPH_PAGE_SIZE as usize * 4;
+                (y0..y1)
+                    .flat_map(|y| page.rgba[y * stride + x0 * 4..y * stride + x1 * 4].to_vec())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// #327: text whose size changes every frame reuses stale pages instead
+    /// of opening new ones, and a glyph whose page was reused re-rasterizes:
+    /// drawn again, its quads sample the same pixels a fresh renderer gives.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn animated_text_sizes_keep_a_bounded_page_count() {
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        let mut list = DrawList::new();
+        // 1000 distinct quarter-pixel sizes from 16 px to about 266 px; one
+        // frame's two glyphs always fit on one page.
+        for frame in 0..1000u16 {
+            let style = TextStyle::new(16.0 + f32::from(frame) * 0.25, [1.0; 4]);
+            tr.draw("Hi", Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+            tr.end_frame(&mut assets, &mut list);
+            list.clear();
+            assert!(
+                tr.page_count() <= 3,
+                "{} pages at frame {frame}",
+                tr.page_count()
+            );
+        }
+
+        let style = TextStyle::new(16.0, [1.0; 4]);
+        tr.draw("Hi", Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+        tr.end_frame(&mut assets, &mut list);
+        let mut fresh = renderer();
+        let mut fresh_assets: Assets<Texture> = Assets::new();
+        let mut fresh_list = DrawList::new();
+        fresh.draw("Hi", Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+        fresh.end_frame(&mut fresh_assets, &mut fresh_list);
+        assert_eq!(
+            sampled_glyphs(&assets, &list),
+            sampled_glyphs(&fresh_assets, &fresh_list)
+        );
+    }
+
+    /// #327: an infinite or NaN outline or shadow width draws no ring (and
+    /// returns), and an enormous one draws at the cap.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn non_finite_and_huge_ring_widths_are_bounded() {
+        assert!(ring_offsets(f32::INFINITY).is_empty());
+        assert!(ring_offsets(f32::NAN).is_empty());
+        assert_eq!(ring_offsets(1e9).len(), ring_offsets(MAX_RING_WIDTH).len());
     }
 
     /// The 1 px outline ring is the classic 8 directions; a 10 px ring has
