@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `AnimationSequence::tick`: in `Repeat`/`PingPongRepeat`, a
+  zero-time pass stopped after as many advances as there are steps, so
+  zero-duration frames delayed a following action and dropped the tick's
+  time; it now stops after as many as it has frame and step positions. No
+  game-code changes needed.
 - `sgl-core` `AnimationSequence`: a ping-pong sequence of one step with one
   frame (or one pause or action) played it twice per bounce; it now plays it
   once, so a `PingPongOnce` completes after one frame duration. No game-code

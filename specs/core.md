@@ -58,7 +58,10 @@ browser client must get identical results from it.
    construction or reset. Ping-pong never plays either end frame twice.
    Every tick returns: a non-finite `dt` is ignored, and in a repeating loop
    a tick whose duration is too small for `f32` to subtract from the
-   accumulated time drops the remainder.
+   accumulated time drops the remainder. So does a repeating cycle that
+   consumes no time, after as many zero-time advances as it has playback
+   positions (frames plus other steps, doubled for ping-pong), by when every
+   position has played at least once.
 7. **Collision.** `sweep_aabb` is a closed-form swept AABB test returning
    `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
    toward the body. `move_and_collide` slides a kinematic body against a
