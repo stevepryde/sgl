@@ -965,14 +965,6 @@ fn inverse(m: [f32; 16]) -> [f32; 16] {
     std::array::from_fn(|i| a[i / 4][4 + i % 4] as f32)
 }
 
-// PROVENANCE.md DFX-15: under a projection with off-centre terms (TAA
-// jitter) each ray reads the texel its reflection hits. A mirror floor at
-// y=-1, seen from the origin looking along +z, reflects a wall at z=8. Each
-// texel's colour is its own coordinates, so the output names the texel each
-// floor pixel's ray read; the expected texel is the mirror image projected
-// with the jittered projection. Upstream reconstructs view space without the
-// off-centre terms, which bends every screen-space ray by the jitter scaled
-// by the ray's length (several texels here).
 /// One SSR execution with the default attributes over a still frame of
 /// `SIZE` texels: depths, Rgba16Float world normals, R8 roughness and
 /// Rgba16Float colour. Returns the SSR radiance.
@@ -1049,6 +1041,14 @@ fn ssr_radiance(
     read_rgba16f(device, queue, ssr.get_ssr_radiance_srv())
 }
 
+// PROVENANCE.md DFX-15: under a projection with off-centre terms (TAA
+// jitter) each ray reads the texel its reflection hits. A mirror floor at
+// y=-1, seen from the origin looking along +z, reflects a wall at z=8. Each
+// texel's colour is its own coordinates, so the output names the texel each
+// floor pixel's ray read; the expected texel is the mirror image projected
+// with the jittered projection. Upstream reconstructs view space without the
+// off-centre terms, which bends every screen-space ray by the jitter scaled
+// by the ray's length (several texels here).
 #[test]
 fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
     let Some((device, queue)) = device() else {

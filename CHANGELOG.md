@@ -118,6 +118,10 @@ docs and specs the entry links.
   within a frame's step of the target stepped the correction past it, by
   stops after a hitch; it now lands on the target. No game-code changes
   needed.
+- `sgl-post-fx` half-resolution SSR (`FeatureFlags::HALF_RESOLUTION`): a 2×2
+  block on a silhouette could trace from its background pixel, a NaN ray
+  under an infinite reversed-Z projection; that pixel now reports a miss.
+  No game-code changes needed.
 - `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
   glTF does not allow for its use, of no elements, or past its buffer view
   or buffer, or an image view past its buffer, panicked or was misread; it
