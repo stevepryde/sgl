@@ -77,7 +77,8 @@ browser client must get identical results from it.
    `ColliderSet::query` returns every collider overlapping the region (it may
    return more). Neither `insert` nor `query` walks an unbounded cell range:
    an insert buckets at most a fixed number of cells, and a query visits at
-   most as many cells or colliders as the set holds.
+   most about as many cells as the set holds colliders, plus the oversized
+   colliders. An inverted box (negative half-extents) addresses no cells.
 8. Overflow checks are on in every profile; arithmetic on caller sizes must
    fail as an error or be checked, not wrap.
 

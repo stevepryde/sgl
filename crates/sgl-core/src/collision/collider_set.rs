@@ -69,7 +69,9 @@ const MAX_COLLIDER_CELLS: u64 = 1024;
 /// Work is bounded whatever the boxes' size: a collider spanning more than
 /// 1024 cells is not bucketed but checked by every query, and a query region
 /// spanning more cells than the set has colliders scans the colliders
-/// instead of the cells.
+/// instead of the cells. A query visits at most about as many cells as the
+/// set holds colliders, plus the oversized colliders. An inverted box (a
+/// negative `half`) addresses no cells.
 #[derive(Debug)]
 pub struct ColliderSet {
     cell_size: f32,
@@ -139,8 +141,8 @@ impl ColliderSet {
     /// breaks ties by "first candidate wins" behaves identically run to run.
     ///
     /// A region spanning more cells than the set has colliders is answered by
-    /// scanning the colliders' cell ranges, so a query costs at most one visit
-    /// per collider or per cell, whichever is fewer.
+    /// scanning the colliders' cell ranges, so a query visits at most about as
+    /// many cells as the set holds colliders, plus the oversized colliders.
     #[must_use]
     pub fn query(&self, region: &Aabb) -> Vec<usize> {
         let Some(cells) = CellRange::of(region, self.cell_size) else {
@@ -215,10 +217,15 @@ impl CellRange {
     /// grid.
     fn of(aabb: &Aabb, cell_size: f32) -> Option<Self> {
         let (min, max) = (aabb.min(), aabb.max());
-        (min.is_finite() && max.is_finite()).then(|| Self {
+        if !(min.is_finite() && max.is_finite()) {
+            return None;
+        }
+        let range = Self {
             min: IVec2::new(cell_of(min.x, cell_size), cell_of(min.y, cell_size)),
             max: IVec2::new(cell_of(max.x, cell_size), cell_of(max.y, cell_size)),
-        })
+        };
+        // An inverted box (negative `half`) addresses no cells.
+        range.min.cmple(range.max).all().then_some(range)
     }
 
     /// How many cells the range holds.
@@ -352,6 +359,27 @@ mod tests {
         let far = set.insert(aabb(9e5, -9e5, 0.5, 0.5), ColliderFlags::SOLID);
         set.insert(aabb(3e6, 0.0, 0.5, 0.5), ColliderFlags::SOLID);
         assert_eq!(set.query(&aabb(0.0, 0.0, 1e6, 1e6)), vec![near, far]);
+    }
+
+    /// #316: an inverted box (negative half-extents spanning cells) addresses
+    /// no cells: as a collider it is never a candidate, and as a region it
+    /// finds nothing, whether the query walks the grid or scans.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn inverted_boxes_address_no_cells() {
+        let mut set = ColliderSet::new(1.0);
+        let solid = set.insert(aabb(0.0, 0.0, 0.5, 0.5), ColliderFlags::SOLID);
+        set.insert(aabb(0.0, 0.0, -3.0, -3.0), ColliderFlags::SOLID);
+        for i in 0..8u8 {
+            set.insert(
+                aabb(-50.0, f32::from(i) * 4.0, 0.5, 0.5),
+                ColliderFlags::SOLID,
+            );
+        }
+        // Grid path (4 cells, 10 colliders) and scan path (1e6 cells).
+        assert_eq!(set.query(&aabb(0.0, 0.0, 0.5, 0.5)), vec![solid]);
+        assert_eq!(set.query(&aabb(0.0, 0.0, 500.0, 500.0)).len(), 9);
+        assert!(set.query(&aabb(0.0, 0.0, -2.0, -2.0)).is_empty());
+        assert!(set.query(&aabb(0.0, 0.0, -500.0, -500.0)).is_empty());
     }
 
     /// #316: a collider spanning 4e12 cells is inserted without walking its
