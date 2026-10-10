@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
+  on the world channel shrank by `pixels_per_unit`; the new `units:
+  WorldUnits` field (default logical pixels) makes positions, sizes and
+  widths world units. World gizmos set `units: camera.units()`; struct
+  literals without `..Overlay::new(white)` add `units`; pixel overlays need
+  no other change.
 - `sgl-3d` `asset::load*`: a glTF mesh whose morphed primitives have
   different numbers of morph targets loaded, the extra targets driven by
   another node's weights; it now fails the load naming the primitive.
