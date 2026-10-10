@@ -138,15 +138,20 @@ fn compute_average() {
  if settings.reset!=0u {
   correction=target_exposure;
  } else {
+  // Bevy's step, ending on the target: within the transition distance
+  // Bevy (and Godot's `exposure_adjust`) scale the remaining delta by
+  // speed × time unclamped, which overshoots once a frame lasts longer than
+  // distance / speed (a hitch) and oscillates below that frame rate. The
+  // step stops at the delta instead.
   let delta=target_exposure-correction;
   if target_exposure>correction {
    let speed_down=settings.speed_down*settings.delta_time;
    let exp_down=speed_down/settings.exponential_transition_distance;
-   correction=correction+min(speed_down,delta*exp_down);
+   correction=correction+min(min(speed_down,delta*exp_down),delta);
   } else {
    let speed_up=settings.speed_up*settings.delta_time;
    let exp_up=speed_up/settings.exponential_transition_distance;
-   correction=correction+max(-speed_up,delta*exp_up);
+   correction=correction+max(max(-speed_up,delta*exp_up),delta);
   }
  }
  correction=clamp(correction,settings.correction_min,settings.correction_max);

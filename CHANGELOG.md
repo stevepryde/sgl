@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `AutoExposure`: a long frame (`FrameInput::frame_time_ms`) near
+  the target stepped the correction past it, by stops after a hitch; it now
+  lands on the target. No game-code changes needed.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`
