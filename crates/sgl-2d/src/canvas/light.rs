@@ -44,8 +44,8 @@
 //!   sprites leave *fractional* coverage — a soft per-pixel approximation of
 //!   Godot's per-item masking.
 //! - **Shadows**: CPU-extruded shadow geometry (AR-6, Godot-style). For each
-//!   occluder polygon edge, a quad (capped by a far vertex on the bisector
-//!   when the edge spans more than 90° from the light) is extruded away from
+//!   occluder polygon edge, a quad (capped by a far vertex along the edge's
+//!   normal when the edge spans more than 90° from the light) is extruded away from
 //!   the light past its footprint ([`shadow_triangles`]); the union over
 //!   all edges darkens everything *behind* the first surface seen from the
 //!   light — matching Godot's 1D shadow map occlusion shape. Per shadow-casting light the triangles render
@@ -77,8 +77,8 @@ pub const MAX_SHADOW_LIGHTS: usize = 8;
 /// footprint (the largest cookie is 512 px at `texture_scale` 3.0 in the
 /// menu). Divided by the camera's `pixels_per_unit` so it is the same screen
 /// length in a world-unit camera. Lights with a larger footprint (a big
-/// analytic `radius`) extrude to twice their footprint's half-diagonal
-/// instead, so shadows always cover the footprint ([`shadow_triangles`]).
+/// analytic `radius`) extrude to twice their half-extent instead, so shadows
+/// always cover the footprint ([`shadow_triangles`]).
 const SHADOW_FAR: f32 = 4096.0;
 
 /// The light-accumulation target format: float so overlapping lights can sum
@@ -296,10 +296,11 @@ pub fn coverage(mask_rgb: [f32; 3], item_mask: u32) -> f32 {
 /// When the edge subtends more than 90° at the light (a long wall close to
 /// it), the straight far edge of that quad would pass close to the light and
 /// leave the shadow behind the wall lit. Such an edge gets a third far
-/// vertex on the bisector of `dir(a)` and `dir(b)` (a convex pentagon, 9
+/// vertex along its normal, away from the light (a convex pentagon, 9
 /// vertices), so every far edge stays at least `far·cos 45°` from the light.
-/// Pass `far ≥ √2 ×` the footprint's half-diagonal (`|half_extent|`) and the
-/// shadow covers everything behind the edge inside the footprint.
+/// Pass `far ≥ 2 × half_extent.max_element()` (so `far·cos 45°` reaches the
+/// footprint's corners) and the shadow covers everything behind the edge
+/// inside the footprint.
 ///
 /// The union over all edges is exactly "everything behind the first surface
 /// seen from the light" (Godot's occlusion shape): front-edge quads cover the
@@ -346,14 +347,19 @@ pub fn shadow_triangles(
                 continue;
             };
             let (da, db) = ((ea - a).normalize(), (eb - b).normalize());
-            let bisector = da + db;
-            // Past 90°, cap the far side with a vertex on the bisector, as far
-            // from the light as the farther extruded end: it lies beyond the
-            // straight far edge, so the pentagon stays convex. A light on
-            // the edge itself (opposite directions) has no area behind it.
-            if da.dot(db) < 0.0 && bisector.length_squared() > 1e-8 {
+            let edge = b - a;
+            let side = edge.perp_dot(a - light_pos);
+            // Past 90°, cap the far side with a vertex along the edge's
+            // normal away from the light, as far from it as the farther
+            // extruded end. The span is over 90° only when the light's foot
+            // on the edge's line lies between `a` and `b`, so the normal
+            // splits it into two parts under 90° each, and the vertex lies
+            // beyond the straight far edge, keeping the pentagon convex. A
+            // light exactly on the edge's line has no area behind it.
+            if da.dot(db) < 0.0 && side != 0.0 {
                 let reach = (ea - light_pos).length().max((eb - light_pos).length());
-                let em = light_pos + bisector.normalize() * reach;
+                let normal = (edge.perp() * side.signum()).normalize();
+                let em = light_pos + normal * reach;
                 out.extend_from_slice(&[
                     a.to_array(),
                     b.to_array(),
@@ -983,7 +989,7 @@ impl LightPass {
                         // Always extrude past the footprint: an analytic
                         // radius is caller-chosen and may exceed SHADOW_FAR
                         // (in the camera's units).
-                        (SHADOW_FAR / units.pixels_per_unit).max(2.0 * half.length()),
+                        (SHADOW_FAR / units.pixels_per_unit).max(2.0 * half.max_element()),
                         &mut self.verts,
                     );
                     let end = self.verts.len() as u32;
@@ -1331,20 +1337,27 @@ mod tests {
         assert!(!in_shadow(&verts, Vec2::new(16.0, 90.0)), "beside/below");
     }
 
-    /// #319: a light 2 px from a long wall (the edge subtends nearly 180°)
-    /// still shadows everything behind the wall inside its footprint: with a
-    /// straight far edge, `(0, 200)` and `(0, 290)` were lit.
+    /// #319: a light 2 px from a long wall (the edge subtends nearly 180°),
+    /// or 0.05 px from a 2000 px one, still shadows everything behind the
+    /// wall inside its footprint: with a straight far edge, `(0, 200)` and
+    /// `(0, 290)` were lit.
     #[wasm_bindgen_test(unsupported = test)]
     fn shadow_behind_a_long_wall_close_to_the_light_reaches_the_footprint() {
-        let wall = vec![Vec2::new(-500.0, 2.0), Vec2::new(500.0, 10.0)];
+        let walls = [
+            vec![Vec2::new(-500.0, 2.0), Vec2::new(500.0, 10.0)],
+            vec![Vec2::new(-1000.0, 0.05), Vec2::new(1000.0, 0.05)],
+        ];
         let half = Vec2::splat(300.0);
-        for winding in [wall.clone(), wall.iter().rev().copied().collect()] {
+        let windings = walls
+            .iter()
+            .flat_map(|wall| [wall.clone(), wall.iter().rev().copied().collect()]);
+        for winding in windings {
             let mut verts = Vec::new();
             shadow_triangles(
                 Vec2::ZERO,
                 half,
                 &[winding],
-                2.0 * half.length(),
+                2.0 * half.max_element(),
                 &mut verts,
             );
             for p in [
@@ -1357,7 +1370,7 @@ mod tests {
             for p in [
                 Vec2::new(0.0, -200.0),
                 Vec2::new(290.0, -290.0),
-                Vec2::new(0.0, 1.0),
+                Vec2::new(0.0, -0.5),
             ] {
                 assert!(
                     !in_shadow(&verts, p),
