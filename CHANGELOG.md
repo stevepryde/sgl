@@ -20,6 +20,16 @@ docs and specs the entry links.
   `u8(0x34); u8(0x12)`); it now promises them only within one schema.
   Encoding and digests unchanged. Games that hash several kinds of state in
   one stream, or change what they write, add a leading tag or version.
+- `sgl-core` `FrameAnimation::tick` / `AnimationSequence::tick`: a NaN or
+  infinite `dt` could hang a repeating animation or freeze a `Once` one, and
+  is now ignored. In `Repeat`/`PingPongRepeat`, a frame duration too small
+  for `f32` to subtract from the accumulated time hung the tick; it now drops
+  the remainder. `FrameAnimation::new` now panics on an infinite `fps` (a
+  `Once` animation completed on its first tick; `Repeat` hung): pass a
+  finite `fps`. No other game-code changes needed.
+- `sgl-3d` `Renderer::finish_frame`: a `Renderer::resize` that changed the
+  targets between `render` and `finish_frame` no longer loses its history
+  reset; the next frame restarts history. No game-code changes needed.
 - `sgl-post-fx` SSR (`HierarchicalRaymarch`, SGL3D's `Crystal` reflections):
   a ray that runs out of `max_traversal_intersections` before confirming a
   hit was accepted by proximity and now reports a miss, so streaks near
