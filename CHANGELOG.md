@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` WebSocket latest state: corrected the 0.4.0 promise that a
+  flushed state leaves ahead of lane frames flushed after it; it waits only
+  for frames flushed with or before it, and other lanes' later frames may
+  leave first. Behaviour is unchanged. No game-code changes needed.
+
 - `sgl-net` `NativeWebSocketClient::connect`: an IPv6-literal URL such as
   `ws://[::1]:9000/game/ws` failed host resolution; it now connects. No
   game-code changes needed.
