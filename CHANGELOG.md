@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Renderer` screen channel: when `set_target_size` scaled a very
+  large target down (over 4096² px), the UI laid out over the smaller
+  target, too large and misaligned with the pointer; it now keeps the
+  requested size over `ui_scale`. Lay out over the new `Renderer::ui_size()`
+  instead of `target_size() / ui_scale`.
 - `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
   on the world channel shrank by `pixels_per_unit`; the new `units:
   WorldUnits` field (default logical pixels) makes positions, sizes and

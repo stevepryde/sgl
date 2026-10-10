@@ -109,7 +109,7 @@ mod native {
             self.renderer.set_ui_scale(scale);
             self.text.set_pixel_scale(scale);
             let (width, height) = self.renderer.target_size();
-            let view = Vec2::new(width as f32 / scale, height as f32 / scale);
+            let view = self.renderer.ui_size();
             self.input.dt = self.previous.elapsed().as_secs_f32();
             self.previous = Instant::now();
             let theme = if self.light_tools {
