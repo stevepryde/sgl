@@ -45,9 +45,19 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    quads `draw` emits for the same text and size. Each page is one texture
    asset under a stable handle; `end_frame` republishes changed pages in
    place and returns their handles for the game to upload, which replaces
-   their pixels in the existing renderer or sprite pass. Outline and
-   shadow are offset copies of the glyph quads. `pixel_scale = 1` is
-   bit-identical to unscaled rendering.
+   their pixels in the existing renderer or sprite pass. A new standard page
+   opens only when every standard page is full and drawn from in the current
+   frame; otherwise the least recently used one is emptied and reused under
+   its handle, so text whose size changes every frame keeps a bounded page
+   count. A glyph too large for a standard page gets a dedicated page sized
+   to it, holding nothing else (the least recently used stale one is rebuilt
+   at the new glyph's size); an upload wider than the device allows fails
+   with `TextureError::TooLarge`, which the game logs. A glyph whose page
+   would exceed `MAX_GLYPH_PAGE_SIZE` (16384; 8192 on wasm32, WebGPU's
+   default limit) is not drawn; its advance applies.
+   Outline and shadow are offset copies of the glyph quads, at most
+   `MAX_RING_WIDTH` wide; a non-finite width draws no ring. `pixel_scale = 1`
+   is bit-identical to unscaled rendering.
 6. **Overlay.** Lines, rect outlines, fills, and circles are emitted as quads
    on the shared white texture into whichever channel the caller passes, with
    the overlay's color, `z`, and clip. Positions, sizes and widths are in the
@@ -61,7 +71,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    horizontal edit scroll, numeric draft, popups, blink). Tab/Shift-Tab wrap
    through visible widgets in the preceding frame's submission order; fully
    clipped and removed controls cannot receive keyboard input. Open dropdowns
-   and modals restrict keyboard interaction to their contents; a dropdown's
+   and modals restrict keyboard interaction to their contents; an open
+   dropdown not submitted in a frame closes at its end; a dropdown's
    popover stays in the current clip, and only its visible part blocks
    widgets beneath it. Buttons, toggles, checkboxes and dropdowns show an
    accent focus border and activate with Enter/Space. Escape dismisses the topmost dropdown or cancels the modal.
@@ -131,10 +142,12 @@ original translucent game appearance. Copy `*ui.theme()` for custom labels and
 rectangles so their text, accent and surface roles follow the selected palette.
 
 - **Coordinates and density.** Recompute bounds from the current logical
-  viewport in points. Convert physical pointer coordinates through the same
-  DPI/letterbox mapping once, and set text raster scale accordingly. Do not
-  assume 960×540. Compact mouse/keyboard tools can use small glyphs inside larger
-  hit rectangles; preserve readable type, focus borders and gaps between actions.
+  viewport in points (`Renderer::ui_size`, which stays the window's size in
+  points when a very large target is rendered scaled down). Convert physical
+  pointer coordinates through the same DPI/letterbox mapping once, and set
+  text raster scale to `Renderer::ui_pixel_scale`. Do not assume 960×540. Compact
+  mouse/keyboard tools can use small glyphs inside larger hit rectangles;
+  preserve readable type, focus borders and gaps between actions.
 - **Bounded panes and rows.** Store pane extents in the game and constrain
   `splitter` bounds to leave usable space for both sides. Clamp again when the
   viewport shrinks (with `.max(min).min(max)`, not `f32::clamp`, which panics

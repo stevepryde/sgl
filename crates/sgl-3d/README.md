@@ -1320,8 +1320,18 @@ over the contract SGL3D declares, `shading/shader_contract.wgsl`, verbatim:
 
 // A vertex in and out of material_vertex, in the mesh's own units and axes,
 // after SGL3D's skinning and morphing and before the instance's pose:
-// `normal` unit; `tangent` xyz unit and w its handedness, all zero where the
-// mesh has none; `color` linear RGB and alpha, as asset::Vertex::color;
+// `normal` unit and `tangent` xyz a unit vector in the normal's plane, w its
+// handedness (+1 or -1), at rest and after skinning, while morph targets add
+// their deltas without renormalising or re-orthogonalising (as Bevy's
+// morph_vertex, which the deform stage ports), so a morphed vertex's frame
+// is only approximately orthonormal. A vertex without an authored
+// tangent (none, along the normal, or handedness not +1 or -1) gets an
+// arbitrary one in the normal's plane, handedness +1, never zero, which a
+// shader cannot tell from an authored one: a shader used on meshes without
+// authored tangents derives its frame itself, as from screen derivatives
+// in material_surface (as SGL3D's own normal maps do), or has such meshes
+// flagged through its ShaderParams or shader data; `color` linear RGB and
+// alpha, as asset::Vertex::color;
 // `shader_data` the mesh's per-vertex data (PreparedModel::with_shader_data),
 // zero without any; `custom` what the shader passes to material_surface,
 // interpolated, zero in.
@@ -2588,14 +2598,21 @@ loads on several threads: build it where it is used, or store a
 The loader supports glTF triangle meshes, baked rigid node transforms,
 skins with four influences per vertex, morph targets, animation clips as data
 ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)),
-UV0, metallic/roughness materials, the opaque, masked and blended alpha modes,
+UV0, `TEXCOORD_1` as `Vertex::lightmap_uv`, metallic/roughness materials, the
+opaque, masked and blended alpha modes,
 normal and bump maps, an occlusion map packed in the red channel of the
 metallic-roughness image (ORM), `KHR_materials_clearcoat` with its maps,
 emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_iridescence`, `KHR_materials_sheen`,
 `KHR_materials_diffuse_transmission`, and the `KHR_materials_ior` and
 `KHR_materials_specular` factors. A primitive whose material has any map
-needs `TEXCOORD_0`. Every accessor the load reads must hold at least one
+needs `TEXCOORD_0`. Each map SGL3D samples needs linear magnification and
+trilinear minification (or none set); a map it leaves out may sample any
+way. `TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static
+instance while an atlas is installed, a vertex it charts samples the atlas
+and takes no baked lights, so set `lightmap_uv` to `[0, 0]` on models the
+bake does not chart (one exported with a second UV map for AO, say).
+Every accessor the load reads must hold at least one
 element, within its buffer view and buffer, of a component type and shape
 glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
 bind matrices or keyframes), and an embedded image's buffer view must lie
