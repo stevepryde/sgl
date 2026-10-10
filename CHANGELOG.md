@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
+  `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes,
+  so content re-derived from a persisted base seed (generated worlds,
+  replays) changes on upgrade. Games that need the old output regenerate it,
+  or store the derived seeds before upgrading.
 - `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
   `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
   Use or remove such calls; no other game-code changes are needed.
