@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::dropdown`: an open dropdown that stopped being
+  submitted kept its popup open and the keyboard captured, blocking Tab and
+  Enter elsewhere; it now closes at `UiFrame::end`. No game-code changes
+  needed.
 - `sgl-2d` `AsepriteSheet::parse` / `load`: a frame rect reaching past
   `meta.size` was accepted and sampled neighbouring atlas pixels; it is now
   `AsepriteError::FrameOutsideSheet { index, frame, sheet_size }`. Add the
