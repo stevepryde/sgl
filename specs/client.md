@@ -45,9 +45,13 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    quads `draw` emits for the same text and size. Each page is one texture
    asset under a stable handle; `end_frame` republishes changed pages in
    place and returns their handles for the game to upload, which replaces
-   their pixels in the existing renderer or sprite pass. Outline and
-   shadow are offset copies of the glyph quads. `pixel_scale = 1` is
-   bit-identical to unscaled rendering.
+   their pixels in the existing renderer or sprite pass. A new page opens
+   only when every page is full and drawn from in the current frame;
+   otherwise the least recently used page is emptied and reused under its
+   handle, so text whose size changes every frame keeps a bounded page
+   count. Outline and shadow are offset copies of the glyph quads, at most
+   `MAX_RING_WIDTH` wide; a non-finite width draws no ring. `pixel_scale = 1`
+   is bit-identical to unscaled rendering.
 6. **Overlay.** Lines, rect outlines, fills, and circles are emitted as quads
    on the shared white texture into whichever channel the caller passes, with
    the overlay's color, `z`, and clip. Positions, sizes and widths are in the

@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `TextRenderer`: glyph pages were never reused, so text whose size
+  changed every frame opened pages without bound, and an infinite outline or
+  shadow width hung `draw`; a full atlas now empties and reuses its least
+  recently used page (same handle, republished by `end_frame`), and ring
+  widths are capped at `canvas::text::MAX_RING_WIDTH` (64 px), non-finite
+  ones drawing no ring. No game-code changes needed.
+
 - `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
   of steps before confirming a hit was accepted by depth proximity and now
   reports a miss, so streaks near surfaces at the step cap give way to the
