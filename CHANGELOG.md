@@ -20,6 +20,16 @@ docs and specs the entry links.
   it waits only for frames flushed with or before it, and lane frames
   flushed later may leave first. Behaviour is unchanged. No game-code
   changes needed.
+- `sgl-2d` `UiFrame::password_edit_clear`: the clear button released the
+  buffer's allocation; it now zeroizes in place and keeps the preallocated
+  capacity. No game-code changes needed.
+- All SGL crates: published packages no longer ship examples, tests, test
+  fixtures or unused vendored reference sources; read those in the repository.
+  Licences and notices still ship. No game-code changes needed.
+- `sgl-3d` `AutoExposure`: a long frame (`FrameInput::frame_time_ms`)
+  within a frame's step of the target stepped the correction past it, by
+  stops after a hitch; it now lands on the target. No game-code changes
+  needed.
 - `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
   glTF does not allow for its use, of no elements, or past its buffer view
   or buffer, or an image view past its buffer, panicked or was misread; it
