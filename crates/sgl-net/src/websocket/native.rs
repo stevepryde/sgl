@@ -24,7 +24,7 @@ use tungstenite::http::{HeaderValue, StatusCode, Uri};
 use tungstenite::protocol::{Message, WebSocketConfig};
 
 use self::worker::{IoWorker, WorkerHandle};
-use super::native_write::{drain_outbound, send_ping};
+use super::native_write::{DrainResult, drain_outbound, send_ping};
 use super::queue::{PeerState, Received};
 use super::{MAX_WEBSOCKET_FRAME_BYTES, WebSocketIdentity, decode_envelope, encode_envelope};
 use crate::{
@@ -1050,6 +1050,11 @@ where
         let _ = socket.close(None);
         return SocketTick::Stop;
     }
+    // Only a graceful close writes our Close frame while the peer is not yet
+    // terminal (a received Close or a failure makes it terminal above).
+    if !socket.can_write() {
+        return flush_graceful_close(socket, shared);
+    }
     let mut reads = 0;
     let mut closing = false;
     if let Some(bytes) = held.take() {
@@ -1123,19 +1128,59 @@ where
         };
         Some(Message::Binary(encoded.into()))
     });
-    if drain.is_err() {
+    let Ok(drain) = drain else {
         shared.close(DisconnectReason::Transport);
         return SocketTick::Stop;
-    }
-    {
-        let mut state = lock(&shared.state);
-        state.finish_graceful_close();
-        if state.terminal() == Some(DisconnectReason::Local) {
-            let _ = socket.close(None);
-            return SocketTick::Stop;
-        }
+    };
+    // `Empty` means nothing is pending and tungstenite's write buffer has
+    // flushed, so the Close frame follows every accepted frame.
+    if drain == DrainResult::Empty && lock(&shared.state).graceful_close_drained() {
+        return flush_graceful_close(socket, shared);
     }
     SocketTick::Continue { idle: !saturated }
+}
+
+/// Writes or keeps flushing our Close frame, then reads and discards what
+/// the peer still sends until its Close reply or the end of the stream, as
+/// tungstenite's close handshake asks. Flushed bytes are only in the
+/// kernel: closing a socket with unread data resets the connection and can
+/// discard them, and reading keeps two sides closing at once from stalling
+/// each other. The close finishes as `Local`; the graceful-close deadline
+/// ends a peer that never takes it or never answers.
+fn flush_graceful_close<Stream>(socket: &mut WebSocket<Stream>, shared: &SharedPeer) -> SocketTick
+where
+    Stream: Read + Write,
+{
+    let flushed = match socket.close(None) {
+        Ok(()) => true,
+        Err(tungstenite::Error::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => false,
+        Err(_) => {
+            shared.close(DisconnectReason::Transport);
+            return SocketTick::Stop;
+        }
+    };
+    let finish = || {
+        lock(&shared.state).finish_graceful_close();
+        SocketTick::Stop
+    };
+    for _ in 0..MAX_READS_PER_WAKE {
+        match socket.read() {
+            // The peer's Close, a reply or one crossing ours: every data
+            // frame was flushed before ours was queued.
+            Ok(Message::Close(_)) => return finish(),
+            Ok(_) => {}
+            Err(tungstenite::Error::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
+                return SocketTick::Continue { idle: true };
+            }
+            // The peer ended the stream after taking everything we sent.
+            Err(_) if flushed => return finish(),
+            Err(_) => {
+                shared.close(DisconnectReason::Transport);
+                return SocketTick::Stop;
+            }
+        }
+    }
+    SocketTick::Continue { idle: false }
 }
 
 #[cfg(test)]
@@ -1147,12 +1192,14 @@ mod tests {
     /// An in-memory socket: reads consume a scripted inbound buffer and
     /// report `WouldBlock` when it runs dry, like a non-blocking TCP stream;
     /// writes accumulate for inspection, or report `WouldBlock` while
-    /// `writes_blocked` is set, like a peer that has stopped reading.
+    /// `writes_blocked` is set, like a peer that has stopped reading. A
+    /// `write_budget` takes that many more bytes before blocking.
     #[derive(Default)]
     struct Scripted {
         inbound: VecDeque<u8>,
         outbound: Vec<u8>,
         writes_blocked: bool,
+        write_budget: Option<usize>,
     }
 
     impl Read for Scripted {
@@ -1170,11 +1217,17 @@ mod tests {
 
     impl Write for Scripted {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            if self.writes_blocked {
+            let n = self
+                .write_budget
+                .map_or(buf.len(), |budget| budget.min(buf.len()));
+            if self.writes_blocked || (n == 0 && !buf.is_empty()) {
                 return Err(io::ErrorKind::WouldBlock.into());
             }
-            self.outbound.extend_from_slice(buf);
-            Ok(buf.len())
+            if let Some(budget) = &mut self.write_budget {
+                *budget -= n;
+            }
+            self.outbound.extend_from_slice(&buf[..n]);
+            Ok(n)
         }
 
         fn flush(&mut self) -> io::Result<()> {
@@ -1565,7 +1618,8 @@ mod tests {
     }
 
     /// A graceful close drains the released reliable frames first, then
-    /// writes the Close frame and stops the worker as `Local`.
+    /// writes the Close frame and stops the worker as `Local` once the peer
+    /// answers it.
     #[test]
     fn socket_tick_drains_before_finishing_a_graceful_close() {
         let shared = shared(0, 0);
@@ -1576,10 +1630,9 @@ mod tests {
             state.release_outbound().unwrap();
         }
         let mut socket = server_socket(Vec::new());
-        assert_eq!(tick(&mut socket, &shared), SocketTick::Stop);
         assert_eq!(
-            lock(&shared.state).terminal(),
-            Some(DisconnectReason::Local)
+            tick(&mut socket, &shared),
+            SocketTick::Continue { idle: true }
         );
         let frames = server_frames(std::mem::take(&mut socket.get_mut().outbound));
         assert!(
@@ -1587,6 +1640,128 @@ mod tests {
                 if decode_envelope(MAGIC, bytes).map(|e| e.payload) == Ok(&b"bye"[..])),
             "{frames:?}"
         );
+        socket
+            .get_mut()
+            .inbound
+            .extend(client_frames(vec![Message::Close(None)]));
+        assert_eq!(tick(&mut socket, &shared), SocketTick::Stop);
+        assert_eq!(
+            lock(&shared.state).terminal(),
+            Some(DisconnectReason::Local)
+        );
+    }
+
+    /// Defect (#304): a graceful close that stops the worker while a frame
+    /// is still pending or buffered behind a blocked socket, before its Close
+    /// frame has flushed, or with the peer's data unread (closing such a
+    /// socket resets the connection, which can discard what was flushed);
+    /// or a ping written after the Close, which fails the peer. Oracle: the
+    /// bytes the peer receives and those left unread — while the socket
+    /// blocks the close stays open, then the peer reads the frame and the
+    /// Close and nothing else, and once the peer's data and Close reply have
+    /// been read the worker stops as `Local`.
+    #[test]
+    fn a_graceful_close_waits_for_a_blocked_socket_to_take_every_frame_and_the_close() {
+        let shared = shared(10, 0);
+        shared.advance(0);
+        {
+            let mut state = lock(&shared.state);
+            state.send(Delivery::RELIABLE_ORDERED, b"bye").unwrap();
+            state.begin_graceful_close(0);
+            state.release_outbound().unwrap();
+        }
+        let Message::Binary(bye) = envelope(Delivery::RELIABLE_ORDERED, 0, b"bye") else {
+            unreachable!()
+        };
+        // An unmasked server frame under 126 bytes has a two-byte header.
+        let bye_frame_len = 2 + bye.len();
+        let mut socket = server_socket(Vec::new());
+        let (mut pending, mut held) = (None, None);
+        // Nothing is writable, then only the data frame is.
+        for budget in [0, bye_frame_len] {
+            socket.get_mut().write_budget = Some(budget);
+            assert_eq!(
+                socket_tick(&mut socket, &shared, &mut pending, &mut held),
+                SocketTick::Continue { idle: true },
+                "budget {budget}"
+            );
+            assert_eq!(lock(&shared.state).terminal(), None, "budget {budget}");
+        }
+        // A ping comes due and the peer sends data before it reads our Close.
+        shared.advance(10);
+        socket.get_mut().write_budget = None;
+        socket.get_mut().inbound.extend(client_frames(vec![envelope(
+            Delivery::RELIABLE_ORDERED,
+            0,
+            b"late",
+        )]));
+        assert_eq!(
+            socket_tick(&mut socket, &shared, &mut pending, &mut held),
+            SocketTick::Continue { idle: true }
+        );
+        assert_eq!(lock(&shared.state).terminal(), None);
+        assert!(
+            socket.get_ref().inbound.is_empty(),
+            "the peer's data was left unread"
+        );
+        let frames = server_frames(std::mem::take(&mut socket.get_mut().outbound));
+        assert!(
+            matches!(&frames[..], [Message::Binary(bytes), Message::Close(_)] if *bytes == bye),
+            "{frames:?}"
+        );
+        socket
+            .get_mut()
+            .inbound
+            .extend(client_frames(vec![Message::Close(None)]));
+        assert_eq!(
+            socket_tick(&mut socket, &shared, &mut pending, &mut held),
+            SocketTick::Stop
+        );
+        assert_eq!(
+            lock(&shared.state).terminal(),
+            Some(DisconnectReason::Local)
+        );
+
+        // A peer Close crossing our still-blocked Close finishes the close.
+        let crossing = self::shared(0, 0);
+        {
+            let mut state = lock(&crossing.state);
+            state.send(Delivery::RELIABLE_ORDERED, b"bye").unwrap();
+            state.begin_graceful_close(0);
+            state.release_outbound().unwrap();
+        }
+        let mut socket = server_socket(Vec::new());
+        socket.get_mut().write_budget = Some(bye_frame_len);
+        assert_eq!(
+            tick(&mut socket, &crossing),
+            SocketTick::Continue { idle: true }
+        );
+        socket
+            .get_mut()
+            .inbound
+            .extend(client_frames(vec![Message::Close(None)]));
+        assert_eq!(tick(&mut socket, &crossing), SocketTick::Stop);
+        assert_eq!(
+            lock(&crossing.state).terminal(),
+            Some(DisconnectReason::Local)
+        );
+
+        // A socket that never drains is let go at the graceful-close deadline.
+        let stuck = self::shared(0, 0);
+        {
+            let mut state = lock(&stuck.state);
+            state.send(Delivery::RELIABLE_ORDERED, b"bye").unwrap();
+            state.begin_graceful_close(0);
+            state.release_outbound().unwrap();
+        }
+        let mut socket = server_socket(Vec::new());
+        socket.get_mut().writes_blocked = true;
+        assert_eq!(
+            tick(&mut socket, &stuck),
+            SocketTick::Continue { idle: true }
+        );
+        stuck.advance(crate::websocket::GRACEFUL_CLOSE_TIMEOUT_MS);
+        assert_eq!(tick(&mut socket, &stuck), SocketTick::Stop);
     }
 
     fn test_identity() -> WebSocketIdentity {

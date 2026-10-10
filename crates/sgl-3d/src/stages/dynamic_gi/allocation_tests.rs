@@ -337,3 +337,139 @@ fn test_turn(@builtin(global_invocation_id) id:vec3<u32>) {{
         }
     }
 }
+
+// With each of the frame's shared counts (its budget, the starting probes'
+// room in the boundary bin and the shortened turns' spare rays) 68 rays
+// short of its limit, a probe asking for 132 is refused and a later one
+// asking for 36 still takes them, leaving the count where the first found it
+// plus 36. (A refused request that kept its rays left the later probe
+// refused, under-using the frame.) And a probe granted its start or its
+// shortened turn that the full budget then refuses leaves the room or spare
+// where it found it. The requests are made one after another, by one
+// invocation, so their order is the test's.
+#[test]
+fn a_refused_request_leaves_its_rays_to_a_later_one_that_fits() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    const ROOM: u32 = 1000;
+    let source = format!(
+        "{}
+@group(1) @binding(0) var<storage,read_write> test_results:array<u32>;
+@compute @workgroup_size(1)
+fn test_reserve() {{
+ let distance_turn=DdgiReservation(true,0u);
+ atomicStore(&allocation.reserved,volume.budget-68u);
+ test_results[0]=u32(reserve_turn(132u,distance_turn,false));
+ test_results[1]=u32(reserve_turn(36u,distance_turn,false));
+ test_results[2]=atomicLoad(&allocation.reserved);
+ allocation.ramp_bins=ramp_bin(2.);
+ allocation.ramp_room={ROOM}u;
+ atomicStore(&allocation.ramp_taken,{ROOM}u-68u);
+ test_results[3]=u32(ramp_starts(2.,132u).granted);
+ test_results[4]=u32(ramp_starts(2.,36u).granted);
+ test_results[5]=atomicLoad(&allocation.ramp_taken);
+ allocation.spare={ROOM}u;
+ atomicStore(&allocation.spare_taken,{ROOM}u-68u);
+ test_results[6]=u32(ddgi_shortened_turn(0u,2u,1u,132u).granted);
+ test_results[7]=u32(ddgi_shortened_turn(0u,2u,1u,36u).granted);
+ test_results[8]=atomicLoad(&allocation.spare_taken);
+ // The budget full: granted, refused, and the count as it was.
+ atomicStore(&allocation.reserved,volume.budget);
+ atomicStore(&allocation.ramp_taken,{ROOM}u-68u);
+ let start=ramp_starts(2.,36u);
+ test_results[9]=u32(start.granted);
+ test_results[10]=u32(reserve_turn(36u,start,true));
+ test_results[11]=atomicLoad(&allocation.ramp_taken);
+ atomicStore(&allocation.spare_taken,{ROOM}u-68u);
+ let shortened=ddgi_shortened_turn(0u,2u,1u,36u);
+ test_results[12]=u32(shortened.granted);
+ test_results[13]=u32(reserve_turn(36u,shortened,false));
+ test_results[14]=atomicLoad(&allocation.spare_taken);
+}}",
+        crate::shading::compose(&[&ALLOCATE]),
+    );
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("dynamic GI reservations"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("dynamic GI reservations"),
+        layout: None,
+        module: &module,
+        entry_point: Some("test_reserve"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let budget = budget(MOST_RAYS);
+    let volume = VolumeUniform {
+        budget,
+        ..bytemuck::Zeroable::zeroed()
+    };
+    let buffer = |label, contents: &[u8], usage| {
+        crate::scene::buffer(
+            &device,
+            label,
+            contents,
+            usage | wgpu::BufferUsages::COPY_SRC,
+        )
+    };
+    let volume = buffer(
+        "volume",
+        bytemuck::bytes_of(&volume),
+        wgpu::BufferUsages::UNIFORM,
+    );
+    let allocation = buffer(
+        "allocation",
+        &[0; std::mem::size_of::<Allocation>()],
+        wgpu::BufferUsages::STORAGE,
+    );
+    let results = buffer("results", &[0; 15 * 4], wgpu::BufferUsages::STORAGE);
+    fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+        wgpu::BindGroupEntry {
+            binding,
+            resource: buffer.as_entire_binding(),
+        }
+    }
+    let stage_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[entry(0, &volume), entry(4, &allocation)],
+    });
+    let test_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(1),
+        entries: &[entry(0, &results)],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &stage_group, &[]);
+        pass.set_bind_group(1, &test_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    queue.submit([encoder.finish()]);
+    let results = test_support::read_words(&device, &queue, &results);
+    for (name, limit, taken) in [
+        ("budget", budget, &results[0..3]),
+        ("starting room", ROOM, &results[3..6]),
+        ("spare", ROOM, &results[6..9]),
+    ] {
+        assert_eq!(
+            taken,
+            [0, 1, limit - 68 + 36],
+            "{name}: refused, taken, count"
+        );
+    }
+    for (name, taken) in [
+        ("starting room", &results[9..12]),
+        ("spare", &results[12..15]),
+    ] {
+        assert_eq!(
+            taken,
+            [1, 0, ROOM - 68],
+            "{name} past a full budget: granted, traced, count"
+        );
+    }
+}
