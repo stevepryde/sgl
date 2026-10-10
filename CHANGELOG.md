@@ -22,6 +22,9 @@ docs and specs the entry links.
   the remainder. `FrameAnimation::new` now panics on an infinite `fps` (a
   `Once` animation completed on its first tick; `Repeat` hung): pass a
   finite `fps`. No other game-code changes needed.
+- `sgl-3d` `Renderer::finish_frame`: a `Renderer::resize` that changed the
+  targets between `render` and `finish_frame` no longer loses its history
+  reset; the next frame restarts history. No game-code changes needed.
 - `sgl-post-fx` SSR (`HierarchicalRaymarch`, SGL3D's `Crystal` reflections):
   a ray that runs out of `max_traversal_intersections` before confirming a
   hit was accepted by proximity and now reports a miss, so streaks near
