@@ -1,6 +1,6 @@
 //! sRGB's transfer function (IEC 61966-2-1), each way, for the CPU:
 //! filtering colour mips in linear light, the decal atlas and packed vertex
-//! colours. srgb.wgsl decodes for shaders.
+//! colours. srgb.wgsl is the same for shaders.
 
 /// The linear value of sRGB-encoded `value` in 0..=1.
 pub(crate) fn to_linear(value: f32) -> f32 {
