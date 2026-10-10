@@ -707,8 +707,9 @@ impl Renderer {
     /// already on the GPU replaces its pixels as [`Self::replace_texture`]
     /// does, so a texture changed under its handle (a glyph page from
     /// `TextRenderer::end_frame`) reaches the GPU without a new texture.
-    /// An empty texture, or one whose `rgba` length does not match its
-    /// dimensions, is refused with a [`TextureError`].
+    /// An invalid texture (empty, larger than the device allows, or with an
+    /// `rgba` length that does not match its dimensions) is refused with a
+    /// [`TextureError`].
     pub fn upload_texture(
         &mut self,
         gpu: &Gpu,
@@ -756,24 +757,30 @@ impl Renderer {
     /// Register `normal` as the companion normal map of the already-uploaded
     /// `diffuse` texture (R-6, PR-4). Sprites then opt in by setting their
     /// `normal` field to this handle. The normal map must match the
-    /// diffuse's dimensions.
+    /// diffuse's dimensions, or a [`TextureError`] refuses it.
     pub fn upload_normal_map(
         &mut self,
         gpu: &Gpu,
         diffuse: Handle<Texture>,
         normal: Handle<Texture>,
         tex: &Texture,
-    ) {
+    ) -> Result<(), TextureError> {
         self.sprites
-            .upload_normal(&gpu.device, &gpu.queue, diffuse, normal, tex);
+            .upload_normal(&gpu.device, &gpu.queue, diffuse, normal, tex)
     }
 
     /// Upload a light-cookie texture (PR-4 `assets/lights/*.png`) for use by
     /// [`PointLight`](crate::canvas::light::PointLight)s. Idempotent per
-    /// handle; lights referencing an unregistered cookie are skipped.
-    pub fn upload_light_cookie(&mut self, gpu: &Gpu, handle: Handle<Texture>, tex: &Texture) {
+    /// handle; lights referencing an unregistered cookie are skipped. An
+    /// invalid texture is refused with a [`TextureError`].
+    pub fn upload_light_cookie(
+        &mut self,
+        gpu: &Gpu,
+        handle: Handle<Texture>,
+        tex: &Texture,
+    ) -> Result<(), TextureError> {
         self.lights
-            .upload_cookie(&gpu.device, &gpu.queue, handle, tex);
+            .upload_cookie(&gpu.device, &gpu.queue, handle, tex)
     }
 
     /// Render one frame **unlit**: identity lighting (white modulate, no

@@ -295,7 +295,8 @@ fn lit_scene(space: LightingSpace, name: &str) {
     let checker = rig.texture("checker", checker(16, 4, RED, BLUE));
     let cookie = rig.assets.insert(PathBuf::from("cookie"), radial(32));
     rig.renderer
-        .upload_light_cookie(&rig.gpu, cookie, rig.assets.get(cookie).unwrap());
+        .upload_light_cookie(&rig.gpu, cookie, rig.assets.get(cookie).unwrap())
+        .unwrap();
     let white = rig.white;
     let mut list = DrawList::new();
     list.push(SpriteInstance {

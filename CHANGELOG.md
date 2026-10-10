@@ -15,11 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-2d` `Renderer::upload_texture` / `replace_texture` and
-  `SpritePass::upload` / `replace`: an empty texture panicked; they now
-  return `Result<_, TextureError>` (also for `rgba` not `width × height × 4`
-  bytes), changing nothing on error. Handle or `.expect` the result;
-  `replace` moves from `bool` to `Result<bool, _>`.
+- `sgl-2d` texture uploads: an empty, oversized or short-`rgba` texture, or
+  a mis-sized normal map, panicked; `Renderer::upload_texture`,
+  `upload_normal_map`, `upload_light_cookie`, `SpritePass::upload`,
+  `upload_normal` and `LightPass::upload_cookie` now return
+  `Result<(), sgl_2d::canvas::TextureError>`, and `Renderer::replace_texture`
+  / `SpritePass::replace` `Result<bool, TextureError>`, changing nothing on
+  error. Handle or `.expect` each result.
 
 ## 0.4.0 — 2026-10-09
 

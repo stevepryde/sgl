@@ -40,7 +40,7 @@ pane layout, themes, input ordering, clipping, and keyboard behavior.
 For HUDs over SGL3D, share the game-owned wgpu device and queue and draw UI
 after the 3D scene. A HUD that drives `canvas::sprite::SpritePass` itself
 keeps one pass: `upload` adds a texture or replaces a known handle's pixels
-(an empty or mis-sized texture returns a `TextureError`), and `draw_stats`
+(an invalid texture returns a `TextureError`), and `draw_stats`
 reports the draws `draw_screen` encodes. Follow the
 [SGL3D frame lifecycle](../sgl-3d/docs/README.md#a-frame)
 and [3D integration conventions](../../docs/3d-development.md).

@@ -181,15 +181,24 @@ struct CameraSlot {
     bind_group: wgpu::BindGroup,
 }
 
-/// A texture [`SpritePass::upload`] or [`SpritePass::replace`] refused,
-/// uploading nothing. [`Texture`]'s fields are public, so a procedurally
-/// built texture can break its invariants.
+/// A texture an upload refused, uploading and changing nothing
+/// ([`SpritePass::upload`], [`SpritePass::replace`],
+/// [`SpritePass::upload_normal`] and the light-cookie upload).
+/// [`Texture`]'s fields are public, so a procedurally built texture can
+/// break its invariants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextureError {
     /// `width` or `height` is zero.
     Empty { width: u32, height: u32 },
     /// `rgba` is not `width × height × 4` bytes.
     DataLength { expected: u64, actual: usize },
+    /// A side exceeds the device's `max_texture_dimension_2d`.
+    TooLarge { width: u32, height: u32, max: u32 },
+    /// A normal map's `(width, height)` differs from its diffuse's.
+    SizeMismatch {
+        expected: (u32, u32),
+        actual: (u32, u32),
+    },
 }
 
 impl std::fmt::Display for TextureError {
@@ -199,6 +208,17 @@ impl std::fmt::Display for TextureError {
             Self::DataLength { expected, actual } => {
                 write!(f, "texture has {actual} RGBA bytes, expected {expected}")
             }
+            Self::TooLarge { width, height, max } => {
+                write!(
+                    f,
+                    "{width}x{height} texture exceeds the device's {max} px limit"
+                )
+            }
+            Self::SizeMismatch { expected, actual } => write!(
+                f,
+                "normal map is {}x{}, its diffuse {}x{}",
+                actual.0, actual.1, expected.0, expected.1
+            ),
         }
     }
 }
@@ -206,11 +226,15 @@ impl std::fmt::Display for TextureError {
 impl std::error::Error for TextureError {}
 
 impl TextureError {
-    /// The first invariant `tex` breaks, if any.
-    fn check(tex: &Texture) -> Result<(), Self> {
+    /// The first invariant `tex` breaks on `device`, if any.
+    pub(crate) fn check(device: &wgpu::Device, tex: &Texture) -> Result<(), Self> {
         let (width, height) = (tex.width, tex.height);
         if width == 0 || height == 0 {
             return Err(Self::Empty { width, height });
+        }
+        let max = device.limits().max_texture_dimension_2d;
+        if width > max || height > max {
+            return Err(Self::TooLarge { width, height, max });
         }
         let expected = u64::from(width) * u64::from(height) * 4;
         if tex.rgba.len() as u64 != expected {
@@ -537,7 +561,7 @@ impl SpritePass {
         if self.entries.contains_key(&handle) {
             return self.replace(device, queue, handle, tex).map(drop);
         }
-        TextureError::check(tex)?;
+        TextureError::check(device, tex)?;
         let entry = self.place(device, queue, tex);
         self.entries.insert(handle, entry);
         Ok(())
@@ -574,7 +598,7 @@ impl SpritePass {
         handle: Handle<Texture>,
         tex: &Texture,
     ) -> Result<bool, TextureError> {
-        TextureError::check(tex)?;
+        TextureError::check(device, tex)?;
         let size = Vec2::new(tex.width as f32, tex.height as f32);
         let mut found = false;
 
@@ -684,9 +708,9 @@ impl SpritePass {
     /// Register `normal_handle`/`tex` as the companion normal map of the
     /// already-uploaded `diffuse` texture (R-6): the normal pixels are
     /// written into the page's normal companion at the diffuse's placement,
-    /// so instances sample it with the same UVs. The normal texture must
-    /// match the diffuse's dimensions (mismatches are skipped — a content
-    /// error, not a crash). Idempotent per diffuse.
+    /// so instances sample it with the same UVs. A normal map whose
+    /// dimensions differ from the diffuse's, or that is otherwise invalid,
+    /// is refused with a [`TextureError`]. Idempotent per diffuse.
     pub fn upload_normal(
         &mut self,
         device: &wgpu::Device,
@@ -694,17 +718,20 @@ impl SpritePass {
         diffuse: Handle<Texture>,
         normal_handle: Handle<Texture>,
         tex: &Texture,
-    ) {
+    ) -> Result<(), TextureError> {
+        TextureError::check(device, tex)?;
         let Some(entry) = self.entries.get(&diffuse) else {
             debug_assert!(false, "upload_normal before upload of the diffuse");
-            return;
+            return Ok(());
         };
         if entry.normal.is_some() {
-            return;
+            return Ok(());
         }
         if entry.size != Vec2::new(tex.width as f32, tex.height as f32) {
-            debug_assert!(false, "normal map size differs from its diffuse");
-            return;
+            return Err(TextureError::SizeMismatch {
+                expected: (entry.size.x as u32, entry.size.y as u32),
+                actual: (tex.width, tex.height),
+            });
         }
         let page = entry.page;
         let (x, y) = (entry.offset.x as u32, entry.offset.y as u32);
@@ -718,6 +745,7 @@ impl SpritePass {
             .get_mut(&diffuse)
             .expect("entry checked above")
             .normal = Some(normal_handle);
+        Ok(())
     }
 
     /// Create the page's companion normal texture (zero-initialized) and
@@ -1421,7 +1449,8 @@ mod gpu_tests {
             diffuse,
             normal,
             assets.get(normal).unwrap(),
-        );
+        )
+        .unwrap();
 
         let mut list = DrawList::new();
         list.push(SpriteInstance {
@@ -1522,7 +1551,8 @@ mod gpu_tests {
                 diffuse,
                 normal,
                 assets.get(normal).unwrap(),
-            );
+            )
+            .unwrap();
         }
         assert!(
             !pass.has_texture(normal),
@@ -1612,8 +1642,9 @@ mod gpu_tests {
         );
     }
 
-    /// #320: an empty or short texture through `upload` or `replace` is
-    /// refused without panicking and leaves the existing pixels drawing.
+    /// #320: an empty, short or oversized texture through `upload` or
+    /// `replace`, and a mis-sized normal map, are refused without panicking
+    /// and leave the existing pixels drawing.
     #[test]
     fn invalid_textures_are_refused_without_changes() {
         let Some((device, queue)) = device() else {
@@ -1664,6 +1695,28 @@ mod gpu_tests {
             Err(TextureError::DataLength {
                 expected: 16,
                 actual: 4
+            })
+        );
+        let max = device.limits().max_texture_dimension_2d;
+        let wide = Texture {
+            width: max + 1,
+            height: 1,
+            rgba: Vec::new(),
+        };
+        assert_eq!(
+            pass.replace(&device, &queue, handle, &wide),
+            Err(TextureError::TooLarge {
+                width: max + 1,
+                height: 1,
+                max
+            })
+        );
+        let normal = assets.insert("normal.png".into(), flat(2, 2, [128, 128, 255, 255]));
+        assert_eq!(
+            pass.upload_normal(&device, &queue, handle, normal, assets.get(normal).unwrap()),
+            Err(TextureError::SizeMismatch {
+                expected: (1, 1),
+                actual: (2, 2)
             })
         );
 
