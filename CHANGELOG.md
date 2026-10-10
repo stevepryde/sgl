@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `ThreadedUdpServer::disconnect`: reliable and unreliable
+  messages accepted before it but not yet handed to the endpoint were
+  dropped; they are now sent before the graceful close, within the same
+  `close_grace_ms`. No game-code changes needed.
 - `sgl-net` `NativeWebSocketClient::connect`: an IPv6-literal URL such as
   `ws://[::1]:9000/game/ws` failed host resolution; it now connects. No
   game-code changes needed.
