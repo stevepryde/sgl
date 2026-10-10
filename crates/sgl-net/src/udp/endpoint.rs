@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use super::cookie::{ChallengeLimiter, ConfirmReplayCache, CookieKey};
 use super::packet::{self, Acks, Item, Kind, Nonces, Parsed};
 use super::peer::{CloseGrace, Handshake, Outgoing, Peer};
+use super::reliable::MAX_RTO_MS;
 use super::transport::DatagramTransport;
 use crate::lanes::InboundUsage;
 use crate::{
@@ -30,8 +31,9 @@ pub struct EndpointConfig {
     pub magic: [u8; 3],
     pub max_peers: usize,
     /// How long a connected peer may go unheard before it is closed with
-    /// `TimedOut`. This is the only liveness bound: an unacknowledged
-    /// fragment is resent, with backoff, for as long as the peer is heard.
+    /// `TimedOut`. An unacknowledged fragment is resent, with backoff, for
+    /// as long as the peer is heard, unless its lane makes no progress for
+    /// two seconds more than this, which no stall this tolerates causes.
     pub timeout_ms: u64,
     pub keepalive_ms: u64,
     pub handshake_retry_ms: u64,
@@ -706,6 +708,21 @@ impl<T: DatagramTransport> Endpoint<T> {
             return;
         }
 
+        // A peer heard throughout a stall `timeout_ms` tolerates has a
+        // fragment resent within `MAX_RTO_MS` of answering again and
+        // acknowledged within a round trip, which the measured timeout's
+        // ceiling bounds; a lane that waits longer than that holds a
+        // fragment the peer will not take.
+        let bound_ms = self.config.timeout_ms + 2 * MAX_RTO_MS;
+        if self
+            .peers
+            .get(&id)
+            .is_some_and(|peer| !peer.is_closing() && peer.stalled(now_ms, bound_ms))
+        {
+            self.drop_peer(id, DisconnectReason::TimedOut, true);
+            return;
+        }
+
         let max_packets = self.config.max_packets_per_peer_flush;
         let packet_count = self.flush_payloads(id, now_ms, max_packets);
         if !self.peers[&id].is_closing() {
@@ -748,13 +765,10 @@ impl<T: DatagramTransport> Endpoint<T> {
     /// is neither taken nor charged and waits for a later flush.
     fn flush_payloads(&mut self, id: u64, now_ms: u64, budget: usize) -> usize {
         let peer = self.peers.get_mut(&id).expect("peer exists");
-        // A live peer's fragments are resent until acknowledged; only
-        // `timeout_ms` of silence ends it.
-        let max_transmissions = if peer.is_closing() {
-            self.config.close_retransmits.saturating_add(1)
-        } else {
-            u8::MAX
-        };
+        // A live peer's fragments are resent until acknowledged.
+        let max_transmissions = peer
+            .is_closing()
+            .then(|| self.config.close_retransmits.saturating_add(1));
         let rto_ms = peer.rto_ms();
         // Every lane that has received anything acknowledges in every
         // datagram, so the room beside them is the same all flush.
@@ -1057,12 +1071,7 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
         peer.last_receive_ms = now_ms;
         let held = peer.held();
-        let mut samples = Vec::new();
-        for (lane, ack) in peer.reliable.iter_mut().zip(acks) {
-            if let Some(ack) = ack {
-                lane.acknowledge(*ack, now_ms, &mut samples);
-            }
-        }
+        let samples = peer.acknowledge(acks, now_ms);
         let still_held = peer.held();
         self.outbound = (
             self.outbound.0 - (held.0 - still_held.0),
@@ -2357,16 +2366,15 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test(unsupported = test)]
     /// Defect (#303): an unacknowledged fragment resent at a flat interval,
     /// or its resends ending the connection before `timeout_ms`. Oracle:
     /// RFC 6298 §5.5 (the timer doubles on each expiry) with the
-    /// `MAX_RTO_MS` ceiling, and `timeout_ms` as the only liveness bound:
-    /// from the unmeasured 200 ms timeout the resends fall 200, 400 and
-    /// 800 ms apart, then every second, and the peer stays until its
-    /// silence reaches `timeout_ms`.
+    /// `MAX_RTO_MS` ceiling, and `timeout_ms` bounding a silent peer: from
+    /// the unmeasured 200 ms timeout the resends fall 200, 400 and 800 ms
+    /// apart, then every second, and the peer stays until its silence
+    /// reaches `timeout_ms`.
     #[wasm_bindgen_test(unsupported = test)]
-    fn unacknowledged_fragments_back_off_and_never_end_the_connection() {
+    fn unacknowledged_fragments_back_off_to_the_timeout_ceiling() {
         let (mut server, _source, _nonces) = connected_server(EndpointConfig::default());
         server
             .send(1, Delivery::RELIABLE_ORDERED, b"never-acked")
@@ -2388,6 +2396,42 @@ mod tests {
         );
         assert!(server.poll(9_000).is_empty());
         assert_eq!(server.peer_count(), 1);
+    }
+
+    /// Defect (#303 review): a peer that keeps answering but never
+    /// acknowledges a fragment wedging its lane forever, or being closed
+    /// before a stall `timeout_ms` tolerates could have ended. Oracle: the
+    /// liveness bound of netcode.md 12, `timeout_ms` plus twice
+    /// `MAX_RTO_MS` without progress on a lane holding an unheld fragment.
+    /// The client sends a keepalive every 500 ms and never acknowledges the
+    /// fragment first sent at 10 ms: the server keeps the peer through
+    /// 12,009 ms and closes it `TimedOut` at 12,010 ms.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_heard_peer_that_never_acknowledges_times_out_at_the_stall_bound() {
+        let config = EndpointConfig::default();
+        let bound = config.timeout_ms + 2 * MAX_RTO_MS;
+        let (mut server, source, nonces) = connected_server(config);
+        server
+            .send(1, Delivery::RELIABLE_ORDERED, b"never-acked")
+            .unwrap();
+        for now in 10..10 + bound {
+            if now % 500 == 0 {
+                server
+                    .transport
+                    .receive_acks(source, nonces, &[None; RELIABLE_LANES]);
+            }
+            assert!(server.poll(now).is_empty(), "at {now}");
+            server.flush(now);
+        }
+        assert_eq!(server.peer_count(), 1);
+        server.flush(10 + bound);
+        assert_eq!(
+            server.poll(10 + bound),
+            vec![EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::TimedOut,
+            }]
+        );
     }
 
     #[wasm_bindgen_test(unsupported = test)]

@@ -10,13 +10,14 @@
 //! retransmit it.
 //!
 //! An unacknowledged fragment is resent after the round-trip timeout, then
-//! after twice as long each time while the peer acknowledges nothing on the
-//! lane (RFC 6298 §5.5's backoff, kept per fragment as `ENet` keeps it per
-//! command), up to [`MAX_RTO_MS`]. The next acknowledgement of anything
-//! returns every fragment to the plain timeout, as TCP recomputes its RTO
-//! once new data is acknowledged (RFC 6298 §5.7), so random loss on a live
-//! path is not slowed. However often a fragment is resent, it never ends
-//! the connection: only the endpoint's `timeout_ms` of silence does.
+//! after twice as long each time while the peer acknowledges nothing (RFC
+//! 6298 §5.5's backoff, kept per fragment as `ENet` keeps it per command),
+//! up to [`MAX_RTO_MS`]. The peer resets every lane's backoff when it
+//! acknowledges anything new on any lane, as QUIC resets its probe timeout
+//! backoff on each acknowledgement (RFC 9002 §6.2.1, Appendix A.7
+//! `OnAckReceived`), so random loss on a live path is not slowed. A fragment
+//! is resent however many times it takes; a lane whose unheld fragment has
+//! waited [`Reliable::stalled`]'s bound with no progress closes the peer.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -51,9 +52,11 @@ struct InFlight {
     start: usize,
     end: usize,
     fragment: Fragment,
+    /// When it was first sent, and last.
+    first_sent_at: Option<u64>,
     sent_at: Option<u64>,
     transmissions: u8,
-    /// Resends since the lane last saw the peer acknowledge anything: the
+    /// Resends since the peer last acknowledged anything new: the
     /// doublings of this fragment's retransmission timeout.
     backoff: u8,
     /// Arrived: before the peer's `next`, or marked in its bits. It stays
@@ -91,6 +94,9 @@ pub struct Reliable {
     reassembly: Reassembly,
     max_message_bytes: usize,
     received: bool,
+    /// When the peer last acknowledged a fragment of this lane it had not
+    /// before.
+    progressed_at: u64,
     /// Flushes that must still carry this lane's acknowledgement.
     pub acks_owed: u8,
 }
@@ -114,6 +120,7 @@ impl Reliable {
             reassembly: Reassembly::default(),
             max_message_bytes,
             received: false,
+            progressed_at: 0,
             acks_owed: 0,
         }
     }
@@ -144,7 +151,7 @@ impl Reliable {
         &mut self,
         now_ms: u64,
         rto_ms: u64,
-        max_transmissions: u8,
+        max_transmissions: Option<u8>,
     ) -> Option<u16> {
         self.first_due(now_ms, rto_ms, max_transmissions)
             .or_else(|| self.admit())
@@ -189,6 +196,7 @@ impl Reliable {
             start,
             end,
             fragment,
+            first_sent_at: None,
             sent_at: None,
             transmissions: 0,
             backoff: 0,
@@ -200,17 +208,22 @@ impl Reliable {
 
     /// The oldest in-flight fragment due for (re)transmission: `rto_ms`
     /// after its last transmission, doubled for each resend since the peer
-    /// last acknowledged anything on the lane, up to [`MAX_RTO_MS`], and
-    /// only while it has gone out fewer than `max_transmissions` times. A
+    /// last acknowledged anything new, up to [`MAX_RTO_MS`], and, given a
+    /// `max_transmissions`, only while it has gone out fewer times. A
     /// fragment the peer holds is not: it has arrived.
-    pub fn first_due(&self, now_ms: u64, rto_ms: u64, max_transmissions: u8) -> Option<u16> {
+    pub fn first_due(
+        &self,
+        now_ms: u64,
+        rto_ms: u64,
+        max_transmissions: Option<u8>,
+    ) -> Option<u16> {
         self.in_flight.iter().find_map(|item| {
             let interval = rto_ms
                 .saturating_mul(1 << item.backoff.min(16))
                 .min(MAX_RTO_MS.max(rto_ms));
             (!item.acknowledged
                 && !item.peer_holds
-                && item.transmissions < max_transmissions
+                && max_transmissions.is_none_or(|maximum| item.transmissions < maximum)
                 && item
                     .sent_at
                     .is_none_or(|sent| now_ms.saturating_sub(sent) >= interval))
@@ -240,6 +253,7 @@ impl Reliable {
                 item.backoff = item.backoff.saturating_add(1);
             }
             item.transmissions = item.transmissions.saturating_add(1);
+            item.first_sent_at.get_or_insert(now_ms);
             item.sent_at = Some(now_ms);
         }
     }
@@ -248,10 +262,11 @@ impl Reliable {
     /// its bits mark have arrived and are not sent again, and those before
     /// `next` leave the window. The window follows `next`, the front of the
     /// peer's own window, so it never reaches past it: a fragment the peer
-    /// buffered out of order may later be the one it holds.
-    pub fn acknowledge(&mut self, ack: Ack, now_ms: u64, rtt_samples: &mut Vec<u64>) {
+    /// buffered out of order may later be the one it holds. Returns whether
+    /// it acknowledged a fragment for the first time.
+    pub fn acknowledge(&mut self, ack: Ack, now_ms: u64, rtt_samples: &mut Vec<u64>) -> bool {
         if sequence::newer(ack.next, self.next_sequence) {
-            return;
+            return false;
         }
         let mut progressed = false;
         for item in &mut self.in_flight {
@@ -275,12 +290,8 @@ impl Reliable {
                 item.peer_holds = true;
             }
         }
-        // The peer answers, so a fragment still missing was lost, not
-        // stalled: its timeout returns to the round-trip estimate.
         if progressed {
-            for item in &mut self.in_flight {
-                item.backoff = 0;
-            }
+            self.progressed_at = now_ms;
         }
         // Fragments leave the window in sequence order, which is message
         // order, so a message's last fragment leaves after all its others
@@ -296,6 +307,28 @@ impl Reliable {
                 self.first_message += 1;
             }
         }
+        progressed
+    }
+
+    /// The peer acknowledged something new, so a fragment still missing was
+    /// lost, not stalled: its timeout returns to the round-trip estimate.
+    pub fn reset_backoff(&mut self) {
+        for item in &mut self.in_flight {
+            item.backoff = 0;
+        }
+    }
+
+    /// Whether a fragment the peer does not hold has waited `bound_ms`
+    /// unacknowledged since it was first sent, with no fragment of the lane
+    /// newly acknowledged meanwhile.
+    pub fn stalled(&self, now_ms: u64, bound_ms: u64) -> bool {
+        self.in_flight.iter().any(|item| {
+            !item.acknowledged
+                && !item.peer_holds
+                && item.first_sent_at.is_some_and(|first| {
+                    now_ms.saturating_sub(first.max(self.progressed_at)) >= bound_ms
+                })
+        })
     }
 
     #[must_use]
@@ -473,7 +506,7 @@ mod tests {
             reliable.enqueue(payload);
         }
         for sequence in 0..3 {
-            assert_eq!(reliable.next_sendable(10, 100, 12), Some(sequence));
+            assert_eq!(reliable.next_sendable(10, 100, None), Some(sequence));
             reliable.mark_sent(sequence, 10);
         }
         reliable.mark_sent(1, 20);
@@ -508,24 +541,24 @@ mod tests {
     /// Defect: a receiver whose caller has no room delivering anyway or
     /// dropping the fragment, an acknowledgement that advances past it or
     /// hides that it arrived, a sender that keeps retransmitting a held
-    /// fragment, counts it toward its retry limit (so a stalled receiver
-    /// times a healthy sender out), lets a reordered older acknowledgement
-    /// undo the hold, or samples the hold as round-trip time. Oracle:
-    /// netcode.md 12 and 15 on held fragments — with no room the message
-    /// waits, `next` stays put and is reported held while later fragments
-    /// are acknowledged as usual; the sender sends nothing more and is not
-    /// exhausted at a limit of one transmission however long the hold
-    /// lasts; once room returns both messages arrive once, in order, and
-    /// only the promptly acknowledged fragment yields an RTT sample.
+    /// fragment or counts it as stalled (so a stalled receiver times a
+    /// healthy sender out), lets a reordered older acknowledgement undo
+    /// the hold, or samples the hold as round-trip time. Oracle: netcode.md
+    /// 12 and 15 on held fragments: with no room the message waits, `next`
+    /// stays put and is reported held while later fragments are
+    /// acknowledged as usual; the sender, with no transmission limit,
+    /// resends nothing and is never stalled however long the hold lasts;
+    /// once room returns both messages arrive once, in order, and only the
+    /// promptly acknowledged fragment yields an RTT sample.
     #[wasm_bindgen_test(unsupported = test)]
-    fn a_refused_message_holds_the_window_without_exhausting_the_sender() {
+    fn a_held_fragment_is_neither_resent_nor_stalled() {
         let (mut sender, mut receiver) = (lane(), lane());
         for payload in [b"first".as_slice(), b"second"] {
             sender.enqueue(payload);
         }
         let mut out = Vec::new();
         for sequence in [0, 1] {
-            assert_eq!(sender.next_sendable(0, 100, 1), Some(sequence));
+            assert_eq!(sender.next_sendable(0, 100, None), Some(sequence));
             sender.mark_sent(sequence, 0);
             let (fragment, bytes) = sender.fragment(sequence).unwrap();
             receiver
@@ -551,7 +584,8 @@ mod tests {
         };
         sender.acknowledge(stale, 11, &mut samples);
         for now_ms in [200, 5_000, 60_000] {
-            assert_eq!(sender.next_sendable(now_ms, 100, 1), None, "at {now_ms}");
+            assert_eq!(sender.next_sendable(now_ms, 100, None), None, "at {now_ms}");
+            assert!(!sender.stalled(now_ms, 1_000), "at {now_ms}");
         }
 
         receiver.consume(&mut all, &mut out).unwrap();
@@ -620,7 +654,6 @@ mod properties {
 
     const FRAGMENT: usize = 100;
     const RTO_MS: u64 = 100;
-    const MAX_TRANSMISSIONS: u8 = 200;
 
     #[derive(Debug, Clone)]
     struct Round {
@@ -661,7 +694,7 @@ mod properties {
     /// datagrams put on the wire.
     fn transmit(sender: &mut Reliable, now_ms: u64) -> Vec<Datagram> {
         let mut wire = Vec::new();
-        while let Some(sequence) = sender.next_sendable(now_ms, RTO_MS, MAX_TRANSMISSIONS) {
+        while let Some(sequence) = sender.next_sendable(now_ms, RTO_MS, None) {
             sender.mark_sent(sequence, now_ms);
             let (fragment, bytes) = sender
                 .fragment(sequence)
