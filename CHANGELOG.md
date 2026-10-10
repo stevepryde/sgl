@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` half-resolution SSR (SGL3D's `ScreenSpaceReflections::Half`):
+  a one-pixel-wide or -tall frame created zero-sized textures, a wgpu
+  validation error; each half-resolution side is now at least one texel. No
+  game-code changes needed.
 - `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
   ran on the unexposed HDR scene, so the exposure changed which edges it
   found; it now runs after tone mapping, on display colour, before the
