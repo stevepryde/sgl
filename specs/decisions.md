@@ -602,7 +602,11 @@ Use the [current specs](README.md) for implementation and the
   flush withheld the flushed state. Each released state keeps its flush's
   generation; one with nothing flushed after it is dropped when the next is
   released, so the queue holds at most one state more than the lanes have
-  queued generations.
+  queued generations. It is not a barrier: while it waits, lane frames
+  flushed later may leave first, since holding them would make one lane's
+  long message hold every lane back by more than one fragment. Within one
+  poll a receiver could not see that order anyway: `pop_inbound` returns
+  lane messages before the latest state (#311).
 - **D-41** Decision, 2026-10-09 (#283): a game's blended volume measures its
   optical path from three depth layers SGL3D draws of the volumes whose
   shader reads it, each over a copy of the opaque depth: the nearest entry

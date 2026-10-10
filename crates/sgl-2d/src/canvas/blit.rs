@@ -741,7 +741,9 @@ impl Renderer {
     /// Idempotent, and the same handle [`crate::assets::white_texture`] and
     /// `Ui::new` resolve — so a renderer-only consumer (an overlay, a screen
     /// fade) gets the flat-quad texture without hand-inserting one and
-    /// without a second atlas entry.
+    /// without a second atlas entry. Pass the game's own texture cache: the
+    /// renderer keys textures by handle, and a second cache's handles collide
+    /// with it.
     pub fn white_texture(&mut self, gpu: &Gpu, assets: &mut Assets<Texture>) -> Handle<Texture> {
         let handle = crate::assets::white_texture(assets);
         if !self.sprites.has_texture(handle)

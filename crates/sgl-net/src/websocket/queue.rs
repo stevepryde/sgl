@@ -634,12 +634,16 @@ impl PeerState {
         false
     }
 
-    pub(super) fn finish_graceful_close(&mut self) {
-        if self.graceful_closing
+    /// A graceful close is under way and every frame has left the queue.
+    pub(super) fn graceful_close_drained(&self) -> bool {
+        self.graceful_closing
             && self.outbound.iter().all(OutboundLane::is_empty)
             && self.staged_latest.is_none()
             && self.released_latest.is_empty()
-        {
+    }
+
+    pub(super) fn finish_graceful_close(&mut self) {
+        if self.graceful_close_drained() {
             self.terminal = Some(DisconnectReason::Local);
             self.graceful_closing = false;
             self.graceful_started_ms = None;
