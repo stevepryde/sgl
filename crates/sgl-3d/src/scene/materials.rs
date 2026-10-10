@@ -89,9 +89,12 @@ impl Material {
 
     /// Whether its shading may change with the frame's time where its
     /// geometry stands still: its record's (`record_moves`), or any
-    /// material's with a shader, whose functions SGL3D does not analyse
-    /// (Godot b130438's `is_animated()` analyses its material's code;
-    /// scene_shader_forward_clustered.cpp 250–252).
+    /// material's with a shader, whose surface may follow its parameters
+    /// and instance data from frame to frame as well as the time. Only the
+    /// local-light shadow cache narrows this, by whether the shader reads
+    /// the time (`Shader::reads_time`, as Godot b130438's `is_animated()`
+    /// reads its material's code; scene_shader_forward_clustered.cpp
+    /// 250–252).
     pub fn surface_moves(&self) -> bool {
         self.record_moves() || self.values.shader.is_some()
     }
