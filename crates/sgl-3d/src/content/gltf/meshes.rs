@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use super::super::asset::{CpuMesh, Material, Result, Vertex};
 use super::super::deformation::{MeshDeformation, MorphTarget};
 use super::check_accessor;
-use super::rig::{Rigging, read_influences, read_morph_targets};
+use super::rig::{Rigging, mesh_morph_target_count, read_influences, read_morph_targets};
 
 /// What primitives must share to be drawn as one mesh: a material, and
 /// whether a skin and which node's morph weights deform them.
@@ -119,8 +119,15 @@ pub(super) fn read_node(
             .into());
         }
         let normal_transform = transform.inverse().transpose();
+        // Every primitive with morph targets has the mesh's, which the
+        // node's one set of weights drives; one without is unmorphed.
+        let mesh_targets = mesh_morph_target_count(&mesh);
         for primitive in mesh.primitives() {
             let label = format!("mesh {} primitive {}", mesh.index(), primitive.index());
+            let target_count = primitive.morph_targets().count();
+            if target_count != 0 && target_count != mesh_targets {
+                return Err(format!("{label}: {target_count} morph targets where the mesh's other morphed primitives have {mesh_targets}; give every morphed primitive of a mesh the same shape keys").into());
+            }
             if primitive.mode() != Mode::Triangles {
                 return Err(format!(
                     "{label}: only triangle primitives are supported; triangulate before export"
@@ -285,7 +292,6 @@ pub(super) fn read_node(
                 Some(skin) => read_influences(&reader, skin, vertices.len(), &label)?,
                 None => Vec::new(),
             };
-            let target_count = primitive.morph_targets().count();
             let morph_targets = if target_count == 0 {
                 Vec::new()
             } else {
