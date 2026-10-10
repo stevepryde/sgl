@@ -15,7 +15,8 @@ This boundary was requested while fixing Detonator Squad's macOS controller path
    release between polls must remain two ordered events even when held state
    ends released. Absent optional controls must not generate invented input.
 3. **Lifecycle.** It must discover controllers already connected and hot-plugged
-   after initialization. Disconnect must remove their held state; late callbacks
+   after initialization. Input that happened before a disconnect must be
+   reported before it. Disconnect must remove their held state; late callbacks
    from that connection must not affect a replacement controller. Device names
    must be display metadata, never identity keys.
 4. **Composition.** The game must supply a running window event loop and continue

@@ -40,8 +40,15 @@ which rebuilds the detection and weight pipelines.
 `encode(device, encoder, input, output, timing)` performs
 edge detection, weight calculation, and blending. Input and output must be
 distinct equally sized views; input must be filterable and texture-bindable.
-Input is linear HDR color before AgX tone mapping and sRGB output conversion. Overlay the
-HUD after presentation. Resize retains pipelines, samplers and lookup textures.
+Input is tone-mapped, display-linear colour (RGBA16F at the scene size, before
+the resample to the output and its dither). Edge detection compares its sRGB
+encoding, the gamma-space colour `SMAA.hlsl`'s colour edge detection and
+thresholds require; blending mixes the linear colour, as `SMAA.hlsl` asks of
+its neighbourhood blending. Godot 4's SMAA runs at the same place, on its tone
+mapper's output before scaling (`renderer_scene_render_rd.cpp`
+`_render_buffers_post_process_and_tonemap`, `smaa_blending.glsl`), as Bevy's
+runs after its tone mapping. Overlay the HUD after presentation. Resize
+retains pipelines, samplers and lookup textures.
 
 ## Settings that isolate it
 
@@ -52,9 +59,9 @@ Gaussian pyramid and bloom sampling; its targets shrink independently of the
 scene and reflection histories. `Settings::atmosphere` `false` skips the
 volumetric fog and mist.
 
-SMAA runs in the post stage on HDR, after reflections and before tone mapping,
-so it can change the displayed reflection pixels but cannot change ray hits or
-reflection history. Bloom can spread existing bright pixels; atmosphere can add
+SMAA runs in the post stage after tone mapping, so the exposure does not change
+which edges it finds; it can change the displayed reflection pixels but cannot
+change ray hits or reflection history. Bloom can spread existing bright pixels; atmosphere can add
 depth-dependent fog and procedural mist.
 
 ## Evidence
@@ -89,7 +96,16 @@ On 2026-09-09 the standalone module test passed on Apple M5 / Metal. Sum of
 absolute diagonal coverage error fell from 7614.14 to 5358.38 at 128×96 (29.6%)
 and from 10919.18 to 7355.44 after resizing to 192×128 (32.6%). These figures
 establish the isolated filter's behavior; they do not establish Windows/Linux
-GPU acceptance.
+GPU acceptance. On 2026-10-10, with the fixture in RGBA16F and edges detected
+on the sRGB encoding, Medium gave 5359.61 and 7357.51.
+
+The exposure check presents a diagonal 16 times brighter under an exposure 16
+times lower, and the reverse, and requires the same antialiased image as the
+scene's own:
+
+```sh
+cargo test -p sgl-3d --lib smaa_antialiases_the_displayed_image_whatever_the_exposure
+```
 
 The diagonal test compares against supersampled mathematical coverage; it does
 not depend on AI image recognition.

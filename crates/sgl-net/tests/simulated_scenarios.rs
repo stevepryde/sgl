@@ -433,6 +433,60 @@ fn a_saturated_sender_still_times_out_when_the_peer_falls_silent() {
     assert!(next > 0, "the sender was admitting before the link died");
 }
 
+/// Defect (#303): a caller-polled receiver that stalls with reliable data
+/// in flight being dropped once the sender has resent a fragment a fixed
+/// number of times, well inside `timeout_ms`. Oracle: netcode.md 11 (a
+/// receiver that polls slowly makes the sender slower, not disconnected)
+/// and netcode.md 12 (a stall shorter than `timeout_ms` never closes the
+/// peer). On a 1 ms link whose
+/// round trips the server has measured, the client stops polling for 5 s
+/// (more than twelve retransmissions even at the unmeasured 200 ms
+/// timeout, and under the 10 s `timeout_ms`) just after the server sends a
+/// message; neither end disconnects and the message arrives once the
+/// client polls again.
+#[test]
+fn a_caller_polled_receiver_that_stalls_keeps_its_connection_and_data() {
+    const STALL_MS: u64 = 5_000;
+    let network = SimulatedConfig {
+        one_way_latency_ms: 1,
+        ..clean()
+    };
+    let mut world = World::new(network, 17, EndpointConfig::default());
+    let client = world.connect(1);
+    let conn = world.connect_all(5_000)[client];
+    for _ in 0..20 {
+        world
+            .server
+            .send(conn, Delivery::RELIABLE_ORDERED, b"warm-up")
+            .unwrap();
+        world.tick();
+    }
+    world.tick();
+    world
+        .server
+        .send(conn, Delivery::RELIABLE_ORDERED, b"sent into the stall")
+        .unwrap();
+    let stall_end = world.now + STALL_MS;
+    while world.now < stall_end {
+        // Only the server runs: the client's caller is busy.
+        world.now += TICK_MS;
+        assert!(world.server.poll(world.now).is_empty(), "at {}", world.now);
+        world.server.flush(world.now);
+    }
+    let mut received = Vec::new();
+    while world.now < stall_end + 2_000 {
+        let (server_events, client_events) = world.tick();
+        assert!(server_events.is_empty(), "{server_events:?}");
+        for event in client_events.into_iter().flatten() {
+            match event {
+                ClientEvent::Message { payload, .. } => received.push(payload),
+                other => panic!("client: {other:?} at {}", world.now),
+            }
+        }
+    }
+    assert_eq!(received, [b"sent into the stall".to_vec()]);
+}
+
 /// Defect: a datagram from a previous connection (old nonce/epoch) surfacing
 /// on the new one after a reconnect from the same address. Oracle: the new
 /// connection gets a fresh id and only the bytes sent on it; the old epoch

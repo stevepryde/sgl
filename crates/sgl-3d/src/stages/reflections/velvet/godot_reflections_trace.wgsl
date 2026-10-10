@@ -7,7 +7,11 @@
 // perceptual roughness directly, without Godot's dynamic-object encoding; the
 // mip level is stored in R32F; source_last_frame is this frame's radiance, so
 // the host's reprojection is the identity. Godot's near-origin normal rejection
-// and proximity confidence for unfinished traversal endpoints are retained.
+// is retained. Godot validates a ray that runs out of steps before confirming
+// a hit at the finest level by its endpoint's depth proximity, which accepts
+// unfinished endpoints beside a surface; here such a ray is a miss, as AR-12
+// (specs/sgl3d-architecture.md) requires and Crystal does (sgl-post-fx
+// PROVENANCE.md, DFX-38).
 // Missing depth derivatives fall back to the receiver's stored normal, the
 // normal source used by AMD SSSR (ffx-sssr/ffx_sssr.h, revision
 // 34dcacd1feefcfab2855b82e76c7d711f2020a75). Exact zero-depth-gradient rays
@@ -273,7 +277,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 		let cur_pixel_pos = vec2<i32>(cur_screen_pos.xy * screen_size);
 
 		let hit_depth = textureLoad(source_hiz, cur_pixel_pos, 0).x;
-		if (t >= t_max || hit_depth == 0.0) {
+		// SGL3D: a hit is confirmed only by descending below the finest level;
+		// a trace that ran out of steps first is a miss.
+		if (cur_level >= 0 || t >= t_max || hit_depth == 0.0) {
 			validity = 0.0;
 		}
 

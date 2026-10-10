@@ -2,7 +2,10 @@
 //! This catches reversed neighborhood directions and broken search/area sampling
 //! that shader validation alone cannot detect. No application startup gate.
 use super::*;
-use crate::test_support::read;
+use crate::test_support::{half, read};
+
+/// The fixture's format, the RGBA16F SMAA reads and writes in post.
+const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 fn image_target(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
@@ -15,7 +18,7 @@ fn image_target(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format: FORMAT,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_SRC,
@@ -32,8 +35,11 @@ const QUALITIES: [SmaaQuality; 4] = [
 ];
 
 /// The triangle's level on black for an edge of contrast 32/255, about
-/// 0.125: between Medium's threshold (0.1) and Low's (0.15).
-const FAINT: f32 = 32. / 255.;
+/// 0.125, in the sRGB encoding SMAA detects edges on: between Medium's
+/// threshold (0.1) and Low's (0.15).
+fn faint() -> f32 {
+    crate::shading::srgb::to_linear(32. / 255.)
+}
 
 /// Absolute coverage error of a triangle's slanted edge on black, raw and
 /// through SMAA, against an independent reference, away from the viewport
@@ -103,14 +109,7 @@ fn coverage(
             .into(),
         ),
     });
-    let raster = pipeline(
-        device,
-        &shader,
-        "white",
-        "fullscreen",
-        wgpu::TextureFormat::Rgba8Unorm,
-        &[],
-    );
+    let raster = pipeline(device, &shader, "white", "fullscreen", FORMAT, &[]);
     let render = |target: &wgpu::Texture| {
         let view = target.create_view(&Default::default());
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -151,25 +150,31 @@ fn coverage(
         None,
     );
     queue.submit([encoder.finish()]);
-    let raw = read(device, queue, &input, 4);
-    let aa = read(device, queue, &output, 4);
-    let high = read(device, queue, &supersampled, 4);
+    // Each texel's red channel, in 8-bit code values.
+    let red = |texture: &wgpu::Texture| -> Vec<f64> {
+        read(device, queue, texture, 8)
+            .chunks_exact(8)
+            .map(|texel| f64::from(half(texel)) * 255.)
+            .collect()
+    };
+    let raw = red(&input);
+    let aa = red(&output);
+    let high = red(&supersampled);
     let (mut raw_error, mut smaa_error) = (0.0f64, 0.0f64);
     for y in 0..size[1] as usize {
         for x in 0..size[0] as usize {
-            let mut total = 0u32;
+            let mut total = 0.;
             for sy in 0..16 {
                 for sx in 0..16 {
-                    total +=
-                        u32::from(high[((y * 16 + sy) * size[0] as usize * 16 + x * 16 + sx) * 4]);
+                    total += high[(y * 16 + sy) * size[0] as usize * 16 + x * 16 + sx];
                 }
             }
-            let value = f64::from(total) / 256.0;
-            let i = (y * size[0] as usize + x) * 4;
+            let value = total / 256.0;
+            let i = y * size[0] as usize + x;
             // Exclude the viewport boundary, which has no outside image.
             if x > 1 && y > 1 && x + 2 < size[0] as usize && y + 2 < size[1] as usize {
-                raw_error += (f64::from(raw[i]) - value).abs();
-                smaa_error += (f64::from(aa[i]) - value).abs();
+                raw_error += (raw[i] - value).abs();
+                smaa_error += (aa[i] - value).abs();
             }
         }
     }
@@ -199,17 +204,9 @@ fn every_preset_approaches_supersampled_rasterization() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut smaa = Smaa::new(
-        &device,
-        &queue,
-        1,
-        1,
-        wgpu::TextureFormat::Rgba8Unorm,
-        SmaaQuality::default(),
-    )
-    .unwrap();
+    let mut smaa = Smaa::new(&device, &queue, 1, 1, FORMAT, SmaaQuality::default()).unwrap();
     let faint_edge = Edge {
-        level: FAINT,
+        level: faint(),
         ..Edge::WHITE
     };
     for size in [[128, 96], [192, 128]] {
