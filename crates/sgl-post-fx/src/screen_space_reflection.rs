@@ -1332,3 +1332,7 @@ mod roughness_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "ssr_temporal_neighborhood_tests.rs"]
 mod temporal_neighborhood_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "ssr_intersection_tests.rs"]
+mod intersection_tests;

@@ -21,7 +21,47 @@ docs and specs the entry links.
   connected) is now dropped on every target. Input already held at connection
   is still not reported until it changes, a gilrs limitation. No game-code
   changes needed.
-
+- `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
+  ran on the unexposed HDR scene, so the exposure changed which edges it
+  found; it now runs after tone mapping, on display colour, before the
+  resample to the output. No game-code changes needed.
+- `sgl-net` UDP `stop_admission`: a stopped server ignored the handshake
+  confirm of a client it had already accepted, so a lost accept left that
+  client unconnected until both timed out; it now answers connections it
+  has and refuses only new ones. No game-code changes needed.
+- `sgl-net` UDP: an unacknowledged reliable fragment was resent every
+  round-trip timeout and closed the peer `TimedOut` after
+  `EndpointConfig::max_reliable_transmissions` sends (about 600 ms on a
+  LAN); resends now back off up to 1 s, and a peer is closed `TimedOut`
+  only after `timeout_ms` of silence, or 2 × (`timeout_ms` + 1 s) in which
+  a lane it keeps answering on acknowledges nothing. Migration: delete any
+  `max_reliable_transmissions` field from `EndpointConfig` literals; set
+  `timeout_ms` for how long a stalled peer may last.
+- `sgl-input` `Gamepads::poll` on macOS: input queued before a controller
+  was unplugged was dropped (a tap then unplug between polls lost the tap);
+  it is now reported before the `Disconnected` event. No game-code changes
+  needed.
+- `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
+  of steps before confirming a hit was accepted by depth proximity and now
+  reports a miss, so streaks near surfaces at the step cap give way to the
+  fallback. No game-code changes needed.
+- `sgl-net` `BrowserWebSocketClient`: a close caused by a received frame
+  (`InboundOverflow`, or a `ProtocolViolation` found by the lane queues)
+  never reconnected; it now follows `ReconnectPolicy` like other non-local
+  closes, so expect `Reconnecting` after it. No game-code changes needed.
+- `sgl-net` `ReconnectPolicy::max_attempts` (browser): every `Connected`
+  restarted the count, so a connection that kept failing soon after it
+  opened reconnected forever at the first delay; the count now restarts only
+  after a connection stayed up at least `max_delay_ms`, so such a loop backs
+  off and stops after `max_attempts`. No game-code changes needed.
+- `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
+  grid cell it spanned (effectively hanging); a collider over 1024 cells is
+  now kept apart and a query over more cells than colliders scans the
+  colliders. No game-code changes needed.
+- `sgl-core` `AnimationSequence` ping-pong: a trailing step replayed the end
+  frame; a leading step skipped the reverse pass or replayed the start frame.
+  The bounce now turns on the first and last frame steps, playing outer
+  steps once per turnaround. No game-code changes needed.
 - `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
   on the world channel shrank by `pixels_per_unit`; the new `units:
   WorldUnits` field (default logical pixels) makes positions, sizes and
@@ -104,6 +144,10 @@ docs and specs the entry links.
   within a frame's step of the target stepped the correction past it, by
   stops after a hitch; it now lands on the target. No game-code changes
   needed.
+- `sgl-post-fx` half-resolution SSR (`FeatureFlags::HALF_RESOLUTION`): a 2×2
+  block on a silhouette could trace from its background pixel, a NaN ray
+  under an infinite reversed-Z projection; that pixel now reports a miss.
+  No game-code changes needed.
 - `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
   glTF does not allow for its use, of no elements, or past its buffer view
   or buffer, or an image view past its buffer, panicked or was misread; it

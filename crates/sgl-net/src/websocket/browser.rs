@@ -174,8 +174,15 @@ impl BrowserSocket {
                 let _ = message_socket.close();
                 return;
             };
-            let result = message_state.borrow_mut().peer.receive(envelope);
-            if result.is_err() {
+            let mut state = message_state.borrow_mut();
+            let open = state.peer.terminal().is_none();
+            if let Err(reason) = state.peer.receive(envelope) {
+                // Like every other non-local close, a receive failure
+                // follows the reconnect policy.
+                if open {
+                    state.fail(reason);
+                }
+                drop(state);
                 let _ = message_socket.close();
             }
         }) as Box<dyn FnMut(_)>);
@@ -237,7 +244,8 @@ pub struct BrowserWebSocketClient {
     socket: BrowserSocket,
     reconnect: ReconnectState,
     terminal_announced: bool,
-    ever_connected: bool,
+    /// When the current connection reported `Connected`, until it ends.
+    connected_since_ms: Option<u64>,
 }
 
 impl BrowserWebSocketClient {
@@ -252,7 +260,7 @@ impl BrowserWebSocketClient {
             socket,
             reconnect: ReconnectState::new(),
             terminal_announced: false,
-            ever_connected: false,
+            connected_since_ms: None,
         })
     }
 
@@ -341,9 +349,8 @@ impl ClientIo for BrowserWebSocketClient {
         {
             let mut state = self.state.borrow_mut();
             if std::mem::take(&mut state.connected_pending) {
-                self.ever_connected = true;
                 self.terminal_announced = false;
-                self.reconnect.reset();
+                self.connected_since_ms = Some(now_ms);
                 events.push(ClientEvent::Connected);
             }
             while let Some((delivery, payload)) = state.peer.pop_inbound() {
@@ -356,6 +363,14 @@ impl ClientIo for BrowserWebSocketClient {
                 events.push(ClientEvent::Disconnected { reason });
             }
             if state.needs_reconnect {
+                // Only a connection that stayed up as long as the longest
+                // delay restarts the count, so one that keeps failing soon
+                // after it opens backs off and stops at `max_attempts`.
+                if self.connected_since_ms.take().is_some_and(|since| {
+                    now_ms.saturating_sub(since) >= self.config.reconnect.max_delay_ms
+                }) {
+                    self.reconnect.reset();
+                }
                 self.reconnect.schedule(now_ms, self.config.reconnect);
             }
         }
