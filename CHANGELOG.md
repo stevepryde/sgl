@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Renderer::upload_texture` / `replace_texture` and
+  `SpritePass::upload` / `replace`: an empty texture panicked; they now
+  return `Result<_, TextureError>` (also for `rgba` not `width × height × 4`
+  bytes), changing nothing on error. Handle or `.expect` the result;
+  `replace` moves from `bool` to `Result<bool, _>`.
+
 ## 0.4.0 — 2026-10-09
 
 - Move every SGL crate to `0.4.0` together. Breaking: update `sgl-net`

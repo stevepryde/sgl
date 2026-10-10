@@ -105,7 +105,8 @@ impl Rig {
     fn texture(&mut self, name: &str, tex: Texture) -> Handle<Texture> {
         let handle = self.assets.insert(PathBuf::from(name), tex);
         self.renderer
-            .upload_texture(&self.gpu, handle, self.assets.get(handle).unwrap());
+            .upload_texture(&self.gpu, handle, self.assets.get(handle).unwrap())
+            .unwrap();
         handle
     }
 
@@ -280,7 +281,8 @@ fn text_with_outline_and_shadow_matches_the_reference() {
     );
     for page in text.end_frame(&mut rig.assets, &mut list) {
         rig.renderer
-            .upload_texture(&rig.gpu, page, rig.assets.get(page).unwrap());
+            .upload_texture(&rig.gpu, page, rig.assets.get(page).unwrap())
+            .unwrap();
     }
     let pixels = rig.render(&mut list, &LightFrame::default());
     check("text", &pixels);

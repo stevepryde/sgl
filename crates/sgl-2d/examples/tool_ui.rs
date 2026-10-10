@@ -61,11 +61,13 @@ mod native {
             let mut renderer = Renderer::new(&context, size.width, size.height, [0.04, 0.05, 0.07]);
             let mut assets = Assets::default();
             let ui = Ui::new(&mut assets);
-            renderer.upload_texture(
-                &context,
-                ui.white_texture(),
-                assets.get(ui.white_texture()).unwrap(),
-            );
+            renderer
+                .upload_texture(
+                    &context,
+                    ui.white_texture(),
+                    assets.get(ui.white_texture()).unwrap(),
+                )
+                .expect("white texture uploads");
             Self {
                 window,
                 context,
@@ -310,11 +312,9 @@ mod native {
                 self.grid = !self.grid;
             }
             for handle in self.text.end_frame(&mut self.assets, &mut list) {
-                self.renderer.upload_texture(
-                    &self.context,
-                    handle,
-                    self.assets.get(handle).unwrap(),
-                );
+                self.renderer
+                    .upload_texture(&self.context, handle, self.assets.get(handle).unwrap())
+                    .expect("glyph page uploads");
             }
             if let Some(surface) = self.context.acquire() {
                 self.renderer.render(

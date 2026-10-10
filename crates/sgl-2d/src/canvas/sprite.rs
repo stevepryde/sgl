@@ -181,6 +181,48 @@ struct CameraSlot {
     bind_group: wgpu::BindGroup,
 }
 
+/// A texture [`SpritePass::upload`] or [`SpritePass::replace`] refused,
+/// uploading nothing. [`Texture`]'s fields are public, so a procedurally
+/// built texture can break its invariants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextureError {
+    /// `width` or `height` is zero.
+    Empty { width: u32, height: u32 },
+    /// `rgba` is not `width × height × 4` bytes.
+    DataLength { expected: u64, actual: usize },
+}
+
+impl std::fmt::Display for TextureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty { width, height } => write!(f, "empty {width}x{height} texture"),
+            Self::DataLength { expected, actual } => {
+                write!(f, "texture has {actual} RGBA bytes, expected {expected}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TextureError {}
+
+impl TextureError {
+    /// The first invariant `tex` breaks, if any.
+    fn check(tex: &Texture) -> Result<(), Self> {
+        let (width, height) = (tex.width, tex.height);
+        if width == 0 || height == 0 {
+            return Err(Self::Empty { width, height });
+        }
+        let expected = u64::from(width) * u64::from(height) * 4;
+        if tex.rgba.len() as u64 != expected {
+            return Err(Self::DataLength {
+                expected,
+                actual: tex.rgba.len(),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// The instanced sprite pipelines + texture pages + instance buffer.
 pub struct SpritePass {
     /// World-channel MRT pipeline (albedo + normal + mask).
@@ -483,20 +525,22 @@ impl SpritePass {
     /// pass. Upload a texture again only when its pixels change: each call
     /// writes them. A handle known only as a normal map gains a diffuse
     /// upload here; use [`replace`](Self::replace) to update its normal-map
-    /// pixels.
+    /// pixels. An empty texture, or one whose `rgba` length does not match
+    /// its dimensions, is refused with a [`TextureError`].
     pub fn upload(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         handle: Handle<Texture>,
         tex: &Texture,
-    ) {
+    ) -> Result<(), TextureError> {
         if self.entries.contains_key(&handle) {
-            self.replace(device, queue, handle, tex);
-            return;
+            return self.replace(device, queue, handle, tex).map(drop);
         }
+        TextureError::check(tex)?;
         let entry = self.place(device, queue, tex);
         self.entries.insert(handle, entry);
+        Ok(())
     }
 
     /// Replace a texture's GPU pixels under its existing asset `handle`, so
@@ -504,9 +548,10 @@ impl SpritePass {
     /// next [`prepare`](Self::prepare). The handle may be an ordinary
     /// diffuse upload, a normal map registered with
     /// [`upload_normal`](Self::upload_normal) for one or more diffuse
-    /// textures, or both; every role is updated. Returns `false`, uploading
-    /// nothing, when the handle is unknown in either role
-    /// ([`upload`](Self::upload) adds it instead).
+    /// textures, or both; every role is updated. Returns `Ok(false)`,
+    /// uploading nothing, when the handle is unknown in either role
+    /// ([`upload`](Self::upload) adds it instead), and a [`TextureError`],
+    /// changing nothing, for an invalid texture.
     ///
     /// - **Same dimensions** write into the existing placement: no texture,
     ///   page or bind group is created, and a registered normal map stays
@@ -528,7 +573,8 @@ impl SpritePass {
         queue: &wgpu::Queue,
         handle: Handle<Texture>,
         tex: &Texture,
-    ) -> bool {
+    ) -> Result<bool, TextureError> {
+        TextureError::check(tex)?;
         let size = Vec2::new(tex.width as f32, tex.height as f32);
         let mut found = false;
 
@@ -575,7 +621,7 @@ impl SpritePass {
                 .expect("ensure_page_normal just created it");
             write_pixels(queue, normal, offset.x as u32, offset.y as u32, tex);
         }
-        found
+        Ok(found)
     }
 
     /// Before `handle` (on page `page`) is placed again for `tex`: when `page`
@@ -1331,7 +1377,8 @@ mod gpu_tests {
             &queue,
             handle,
             assets.get(handle).expect("inserted"),
-        );
+        )
+        .unwrap();
 
         let mut list = DrawList::new();
         list.push(SpriteInstance {
@@ -1366,7 +1413,8 @@ mod gpu_tests {
         let mut assets = Assets::<Texture>::new();
         let diffuse = assets.insert("diffuse.png".into(), flat(1, 1, [220, 30, 20, 255]));
         let normal = assets.insert("normal.png".into(), flat(1, 1, [128, 128, 255, 255]));
-        pass.upload(&device, &queue, diffuse, assets.get(diffuse).unwrap());
+        pass.upload(&device, &queue, diffuse, assets.get(diffuse).unwrap())
+            .unwrap();
         pass.upload_normal(
             &device,
             &queue,
@@ -1382,7 +1430,10 @@ mod gpu_tests {
             ..SpriteInstance::new(diffuse, Vec2::splat(SIZE as f32 / 2.0))
         });
 
-        assert!(pass.replace(&device, &queue, diffuse, &flat(1, 1, [20, 210, 40, 255]),));
+        assert!(
+            pass.replace(&device, &queue, diffuse, &flat(1, 1, [20, 210, 40, 255]),)
+                .unwrap()
+        );
         let pixels = draw_albedo(
             &device,
             &queue,
@@ -1405,7 +1456,7 @@ mod gpu_tests {
             height: 1,
             rgba: [30, 50, 230, 255, 230, 180, 20, 255].to_vec(),
         };
-        assert!(pass.replace(&device, &queue, diffuse, &resized));
+        assert!(pass.replace(&device, &queue, diffuse, &resized).unwrap());
         let mut resized_list = DrawList::new();
         resized_list.push(SpriteInstance {
             scale: Vec2::new(2.0, SIZE as f32),
@@ -1430,12 +1481,16 @@ mod gpu_tests {
         );
 
         let never_uploaded = assets.insert("unused.png".into(), flat(1, 1, [0, 0, 0, 255]));
-        assert!(!pass.replace(
-            &device,
-            &queue,
-            never_uploaded,
-            assets.get(never_uploaded).unwrap(),
-        ));
+        assert!(
+            !pass
+                .replace(
+                    &device,
+                    &queue,
+                    never_uploaded,
+                    assets.get(never_uploaded).unwrap(),
+                )
+                .unwrap()
+        );
     }
 
     /// A normal-map handle is replaceable even when it has no diffuse entry.
@@ -1459,7 +1514,8 @@ mod gpu_tests {
         let right = assets.insert("right.png".into(), flat(1, 1, [255; 4]));
         let normal = assets.insert("shared-normal.png".into(), flat(1, 1, [255, 128, 128, 255]));
         for diffuse in [left, right] {
-            pass.upload(&device, &queue, diffuse, assets.get(diffuse).unwrap());
+            pass.upload(&device, &queue, diffuse, assets.get(diffuse).unwrap())
+                .unwrap();
             pass.upload_normal(
                 &device,
                 &queue,
@@ -1482,7 +1538,7 @@ mod gpu_tests {
             });
         }
         let new_normal = flat(1, 1, [128, 255, 128, 255]);
-        assert!(pass.replace(&device, &queue, normal, &new_normal));
+        assert!(pass.replace(&device, &queue, normal, &new_normal).unwrap());
         let (_, normal_pixels) = draw_targets(
             &device,
             &queue,
@@ -1498,9 +1554,10 @@ mod gpu_tests {
             "shared companion pixels were not replaced for both owners"
         );
 
-        pass.upload(&device, &queue, normal, &flat(1, 1, [10, 20, 30, 255]));
+        pass.upload(&device, &queue, normal, &flat(1, 1, [10, 20, 30, 255]))
+            .unwrap();
         let both_roles = flat(1, 1, [240, 30, 60, 255]);
-        assert!(pass.replace(&device, &queue, normal, &both_roles));
+        assert!(pass.replace(&device, &queue, normal, &both_roles).unwrap());
         let mut diffuse_draw = DrawList::new();
         diffuse_draw.push(SpriteInstance {
             scale: Vec2::splat(SIZE as f32),
@@ -1535,7 +1592,10 @@ mod gpu_tests {
             "the handle's companion roles were not replaced"
         );
 
-        assert!(pass.replace(&device, &queue, normal, &flat(2, 1, [70, 80, 90, 255]),));
+        assert!(
+            pass.replace(&device, &queue, normal, &flat(2, 1, [70, 80, 90, 255]),)
+                .unwrap()
+        );
         let (_, normal_pixels) = draw_targets(
             &device,
             &queue,
@@ -1550,6 +1610,77 @@ mod gpu_tests {
                 .all(|pixel| pixel == [128, 128, 255, 255]),
             "mismatched shared normal remained associated"
         );
+    }
+
+    /// #320: an empty or short texture through `upload` or `replace` is
+    /// refused without panicking and leaves the existing pixels drawing.
+    #[test]
+    fn invalid_textures_are_refused_without_changes() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut pass = SpritePass::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+            LightingSpace::Gamma,
+        );
+        let mut assets = Assets::<Texture>::new();
+        let empty = assets.insert("empty.png".into(), flat(0, 4, [0; 4]));
+        assert_eq!(
+            pass.upload(&device, &queue, empty, assets.get(empty).unwrap()),
+            Err(TextureError::Empty {
+                width: 0,
+                height: 4
+            })
+        );
+        assert!(!pass.has_texture(empty));
+
+        let handle = assets.insert("kept.png".into(), flat(1, 1, [10, 20, 30, 255]));
+        pass.upload(&device, &queue, handle, assets.get(handle).unwrap())
+            .unwrap();
+        assert_eq!(
+            pass.replace(&device, &queue, handle, &flat(4, 0, [0; 4])),
+            Err(TextureError::Empty {
+                width: 4,
+                height: 0
+            })
+        );
+        assert_eq!(
+            pass.upload(&device, &queue, handle, &flat(0, 0, [0; 4])),
+            Err(TextureError::Empty {
+                width: 0,
+                height: 0
+            })
+        );
+        let short = Texture {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 4],
+        };
+        assert_eq!(
+            pass.replace(&device, &queue, handle, &short),
+            Err(TextureError::DataLength {
+                expected: 16,
+                actual: 4
+            })
+        );
+
+        let mut list = DrawList::new();
+        list.push(SpriteInstance {
+            scale: Vec2::splat(SIZE as f32),
+            ..SpriteInstance::new(handle, Vec2::splat(2.0))
+        });
+        let pixels = draw_albedo(
+            &device,
+            &queue,
+            &mut pass,
+            &list,
+            wgpu::TextureFormat::Rgba8Unorm,
+            4,
+        );
+        assert!(pixels.chunks_exact(4).all(|p| p == [10, 20, 30, 255]));
     }
 
     /// Crossing the atlas threshold in either direction produces a valid new
@@ -1568,11 +1699,12 @@ mod gpu_tests {
         );
         let mut assets = Assets::<Texture>::new();
         let handle = assets.insert("threshold.png".into(), flat(1, 1, [10, 20, 30, 255]));
-        pass.upload(&device, &queue, handle, assets.get(handle).unwrap());
+        pass.upload(&device, &queue, handle, assets.get(handle).unwrap())
+            .unwrap();
         assert_eq!(pass.page_count(), 1);
 
         let standalone = flat(MAX_ATLAS_DIM + 1, 1, [25, 75, 225, 255]);
-        assert!(pass.replace(&device, &queue, handle, &standalone));
+        assert!(pass.replace(&device, &queue, handle, &standalone).unwrap());
         assert_eq!(pass.page_count(), 2, "standalone page was not allocated");
         let mut list = DrawList::new();
         list.push(SpriteInstance {
@@ -1590,7 +1722,10 @@ mod gpu_tests {
         );
         assert!(pixels.chunks_exact(4).all(|p| p == [25, 75, 225, 255]));
 
-        assert!(pass.replace(&device, &queue, handle, &flat(1, 1, [210, 45, 15, 255]),));
+        assert!(
+            pass.replace(&device, &queue, handle, &flat(1, 1, [210, 45, 15, 255]),)
+                .unwrap()
+        );
         assert_eq!(
             pass.page_count(),
             2,
@@ -1716,8 +1851,8 @@ mod gpu_tests {
             quad_texels([[1, 2, 3], [40, 50, 60], [70, 80, 90], [250, 240, 230]]),
         );
         let (neighbour, first) = (assets.get(left).unwrap(), assets.get(right).unwrap());
-        pass.upload(&device, &queue, left, neighbour);
-        pass.upload(&device, &queue, right, first);
+        pass.upload(&device, &queue, left, neighbour).unwrap();
+        pass.upload(&device, &queue, right, first).unwrap();
         let mut list = DrawList::new();
         list.push_screen(at_x(left, 0.0));
         list.push_screen(at_x(right, 2.0));
@@ -1728,7 +1863,7 @@ mod gpu_tests {
 
         let replaced = quad_texels([[33, 66, 99], [120, 0, 7], [5, 180, 5], [0, 0, 0]]);
         let pages = pass.page_count();
-        assert!(pass.replace(&device, &queue, right, &replaced));
+        assert!(pass.replace(&device, &queue, right, &replaced).unwrap());
         assert_eq!(
             draw_screen_target(&device, &queue, &mut pass, &list, (4, 2)),
             side_by_side(neighbour, &replaced),
@@ -1736,7 +1871,7 @@ mod gpu_tests {
         );
 
         let uploaded = quad_texels([[9, 8, 7], [6, 5, 4], [3, 2, 1], [222, 111, 0]]);
-        pass.upload(&device, &queue, right, &uploaded);
+        pass.upload(&device, &queue, right, &uploaded).unwrap();
         assert_eq!(pass.page_count(), pages, "a same-size update opened a page");
         assert_eq!(
             draw_screen_target(&device, &queue, &mut pass, &list, (4, 2)),
@@ -1767,7 +1902,8 @@ mod gpu_tests {
             "icon.png".into(),
             quad_texels([[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]]),
         );
-        pass.upload(&device, &queue, icon, assets.get(icon).unwrap());
+        pass.upload(&device, &queue, icon, assets.get(icon).unwrap())
+            .unwrap();
         let icon_texels = assets.get(icon).unwrap().rgba.clone();
         let mut text = TextRenderer::new(include_bytes!(
             "../../tests/fixtures/IBMPlexSans-Regular.ttf"
@@ -1782,7 +1918,8 @@ mod gpu_tests {
         let [page] = changed[..] else {
             panic!("expected one new page, got {changed:?}")
         };
-        pass.upload(&device, &queue, page, assets.get(page).unwrap());
+        pass.upload(&device, &queue, page, assets.get(page).unwrap())
+            .unwrap();
         draw_screen_target(&device, &queue, &mut pass, &list, (64, 64));
         let before = assets.get(page).unwrap().rgba.clone();
 
@@ -1793,7 +1930,7 @@ mod gpu_tests {
         assert_eq!(changed, [page], "the page kept its handle");
         let republished = assets.get(page).unwrap();
         let pages = pass.page_count();
-        pass.upload(&device, &queue, page, republished);
+        pass.upload(&device, &queue, page, republished).unwrap();
         assert_eq!(pass.page_count(), pages, "the page update opened a page");
 
         // Probe: the page's packed region 1:1, the icon below it.
@@ -1860,7 +1997,8 @@ mod gpu_tests {
         );
         let resized = assets.insert("resized.png".into(), flat(MAX_ATLAS_DIM + 1, 1, [1; 4]));
         for handle in [other, resized] {
-            pass.upload(&device, &queue, handle, assets.get(handle).unwrap());
+            pass.upload(&device, &queue, handle, assets.get(handle).unwrap())
+                .unwrap();
         }
         let pages = pass.page_count();
         // Texel (x, y) of the last texture is (x, y, x + y, 255).
@@ -1873,13 +2011,15 @@ mod gpu_tests {
         };
         for step in 0..8 {
             let tex = flat(MAX_ATLAS_DIM + 2 + step, 1 + step % 3, [step as u8; 4]);
-            pass.upload(&device, &queue, resized, &tex);
+            pass.upload(&device, &queue, resized, &tex).unwrap();
         }
         // Into the atlas (opening it) and back out.
-        pass.upload(&device, &queue, resized, &flat(2, 2, [7; 4]));
+        pass.upload(&device, &queue, resized, &flat(2, 2, [7; 4]))
+            .unwrap();
         let with_atlas = pass.page_count();
         assert_eq!(with_atlas, pages + 1, "the atlas page");
-        pass.upload(&device, &queue, resized, &pattern(MAX_ATLAS_DIM + 5, 3));
+        pass.upload(&device, &queue, resized, &pattern(MAX_ATLAS_DIM + 5, 3))
+            .unwrap();
         assert_eq!(
             pass.page_count(),
             with_atlas,
@@ -1974,7 +2114,8 @@ mod gpu_tests {
         let big = assets.insert("big.png".into(), flat(MAX_ATLAS_DIM + 1, 1, [255; 4]));
         let missing = assets.insert("missing.png".into(), flat(1, 1, [255; 4]));
         for handle in [a, b, big] {
-            pass.upload(&device, &queue, handle, assets.get(handle).unwrap());
+            pass.upload(&device, &queue, handle, assets.get(handle).unwrap())
+                .unwrap();
         }
 
         let target = (64, 32);
