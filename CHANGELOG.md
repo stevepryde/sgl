@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` half-resolution SSR (SGL3D's `ScreenSpaceReflections::Half`):
+  a one-pixel-wide or -tall frame created zero-sized textures, a wgpu
+  validation error; each half-resolution side is now at least one texel. No
+  game-code changes needed.
 - `sgl-2d` `Renderer` screen channel: when `set_target_size` scaled a very
   large target down (over 4096² px), the UI laid out over the smaller
   target, too large and misaligned with the pointer; it now keeps the
