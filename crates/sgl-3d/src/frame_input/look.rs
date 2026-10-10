@@ -21,8 +21,8 @@ pub struct Exposure {
 /// Luminance below the range is metered at -8; above it counts in the
 /// highest bin. The correction moves toward the target at the authored
 /// speeds, linearly while far from it and exponentially within 1.5 stops,
-/// against jitter when the target keeps moving slightly, and restarts at the
-/// target when history does. `frame_time_ms` times it. The range, filter and
+/// against jitter when the target keeps moving slightly, never stepping past
+/// it however long the frame, and restarts at the target when history does. `frame_time_ms` times it. The range, filter and
 /// 1.5 stops are Bevy's defaults and SGL3D's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AutoExposure {

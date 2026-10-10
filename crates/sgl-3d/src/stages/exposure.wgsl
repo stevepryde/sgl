@@ -7,8 +7,10 @@
 // only the first 64 invocations add a workgroup's bins to the histogram (Bevy
 // indexes its 64 bins with all 256); the compensation curve is linear between
 // authored points instead of a 256-texel lookup; a history reset sets the
-// correction to its target; the result is also written as the frame's
-// exposure multiplier, which the tone map and FSR2 read.
+// correction to its target; the adaptation step stops at the remaining
+// delta, so a long frame lands on the target where Bevy and Godot overshoot;
+// the result is also written as the frame's exposure multiplier, which the
+// tone map and FSR2 read.
 // The most points a compensation curve has (CompensationCurve::MAX_POINTS).
 const EXPOSURE_COMPENSATION_POINTS:u32=8u;
 struct AutoExposure {
@@ -138,15 +140,21 @@ fn compute_average() {
  if settings.reset!=0u {
   correction=target_exposure;
  } else {
+  // Bevy's step, ending on the target: within the transition distance
+  // Bevy (and Godot's `exposure_adjust`) scale the remaining delta by
+  // speed × time unclamped, which overshoots once a frame lasts longer than
+  // distance / speed (a hitch) and oscillates below that frame rate. The
+  // factor stops at 1 instead, so the step stops at the delta (and an
+  // unbounded frame time takes the whole delta, never 0 × ∞).
   let delta=target_exposure-correction;
   if target_exposure>correction {
    let speed_down=settings.speed_down*settings.delta_time;
    let exp_down=speed_down/settings.exponential_transition_distance;
-   correction=correction+min(speed_down,delta*exp_down);
+   correction=correction+min(speed_down,delta*min(exp_down,1.));
   } else {
    let speed_up=settings.speed_up*settings.delta_time;
    let exp_up=speed_up/settings.exponential_transition_distance;
-   correction=correction+max(-speed_up,delta*exp_up);
+   correction=correction+max(-speed_up,delta*min(exp_up,1.));
   }
  }
  correction=clamp(correction,settings.correction_min,settings.correction_max);

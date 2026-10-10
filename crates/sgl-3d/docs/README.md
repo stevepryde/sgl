@@ -76,6 +76,8 @@ its rendering `settings::Settings`.
    (chunk-aligned in a streamed world); then give the camera and edits in
    the new frame. Nothing restarts or redraws.
 
+The examples live in the repository, not the published crate:
+<https://github.com/stevepryde/sgl/tree/main/crates/sgl-3d/examples>.
 [`examples/offscreen.rs`](../examples/offscreen.rs) is the loop to copy
 (`--decals` adds decals, `--motion-blur` motion blur, `--fog` volumetric
 fog);

@@ -194,7 +194,8 @@ frame.color_grading = ColorGrading {
   shifts the frame into the range. The correction follows it at
   `speed_brighten` stops per second when the scene got brighter and
   `speed_darken` when it got darker, by `FrameInput::frame_time_ms`, slowing
-  within 1.5 stops of it (Bevy's default), and stays within
+  within 1.5 stops of it (Bevy's default) and never stepping past it however
+  long the frame, and stays within
   `correction_min..=correction_max`. A camera cut, a target-changing resize,
   another scene or a switch from a fixed exposure sets it to its target.
   Timing group `exposure`.
@@ -658,7 +659,8 @@ combines passes from several engines, listed with their licences under it.
   resolution, and supplies the roughness input (`src/view/post_fx.rs`):
   DiligentFX's `ScreenSpaceReflectionAttribs` defaults, with a perceptual
   `RoughnessThreshold` of 0.2 as in AMD's SSSR sample, Hydrogent's 64
-  traversal steps (`MaxTraversalIntersections`), the lobe peak
+  traversal steps (`MaxTraversalIntersections`; a ray that has not confirmed
+  a hit within them is a miss), the lobe peak
   (`GGXImportanceSampleBias` 1) and 0.95 of temporal history
   (`TemporalRadianceStabilityFactor`): one stochastic ray per pixel leaves
   blotches on glossy receivers that the denoiser holds.
@@ -1858,7 +1860,8 @@ authored look and per-frame state in a `FrameInput`.
    abandoned frame loses none.
 
 History restarts for `FrameInput::camera_cut`, a resize that changes the
-targets and a different scene. Submit each encoded frame before rendering the
+targets (also one between a frame's `render` and `finish_frame`) and a
+different scene. Submit each encoded frame before rendering the
 next one with the same `Scene` and `Renderer`: frame uniforms and upload
 storage are retained, so frames with different inputs cannot be queued in one
 submission. Run probe captures between frames, never between a frame's
@@ -2581,7 +2584,11 @@ emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_iridescence`, `KHR_materials_sheen`,
 `KHR_materials_diffuse_transmission`, and the `KHR_materials_ior` and
 `KHR_materials_specular` factors. A primitive whose material has any map
-needs `TEXCOORD_0`.
+needs `TEXCOORD_0`. Every accessor the load reads must hold at least one
+element, within its buffer view and buffer, of a component type and shape
+glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
+bind matrices or keyframes), and an embedded image's buffer view must lie
+within its buffer; any other fails the load with an error naming it.
 
 A clearcoat normal map tilts the coat alone, on the base normal map's
 frame; without one the coat follows the geometry normal. An iridescent

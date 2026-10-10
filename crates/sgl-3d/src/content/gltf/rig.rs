@@ -4,13 +4,15 @@
 use std::collections::HashMap;
 
 use glam::{Mat4, Quat, Vec3};
-use gltf::animation::{Interpolation as GltfInterpolation, util::ReadOutputs};
+use gltf::accessor::{DataType, Dimensions};
+use gltf::animation::{Interpolation as GltfInterpolation, Property, util::ReadOutputs};
 
 use super::super::asset::Result;
 use super::super::deformation::{
     Channel, ChannelValues, Clip, Influence, Interpolation, Joint, MAX_INDEX, MorphDelta,
     MorphTarget, MorphWeight, Node, Rig,
 };
+use super::check_accessor;
 
 /// The rig being imported, and where each skin's joints and each morphed
 /// node's weights start in it.
@@ -56,6 +58,14 @@ impl Rigging {
             .collect();
         for skin in document.skins() {
             rigging.skins.push(rigging.rig.joints.len() as u32);
+            if let Some(accessor) = skin.inverse_bind_matrices() {
+                check_accessor(
+                    &accessor,
+                    &format!("skin {}: inverse bind matrices", skin.index()),
+                    &[DataType::F32],
+                    &[Dimensions::Mat4],
+                )?;
+            }
             let reader = skin.reader(|buffer| Some(&buffers[buffer.index()].0));
             let inverse_binds: Vec<Mat4> = match reader.read_inverse_bind_matrices() {
                 Some(matrices) => matrices.map(|m| Mat4::from_cols_array_2d(&m)).collect(),
@@ -176,6 +186,27 @@ fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) ->
     let channels = animation
         .channels()
         .map(|channel| {
+            // glTF 2.0 3.11's accessor types for keyframe times and each
+            // property's values.
+            use DataType::{F32, I8, I16, U8, U16};
+            let sampler = channel.sampler();
+            check_accessor(
+                &sampler.input(),
+                &format!("{label}: keyframe times"),
+                &[F32],
+                &[Dimensions::Scalar],
+            )?;
+            let (types, shape): (&[DataType], _) = match channel.target().property() {
+                Property::Translation | Property::Scale => (&[F32], Dimensions::Vec3),
+                Property::Rotation => (&[F32, I8, U8, I16, U16], Dimensions::Vec4),
+                Property::MorphTargetWeights => (&[F32, I8, U8, I16, U16], Dimensions::Scalar),
+            };
+            check_accessor(
+                &sampler.output(),
+                &format!("{label}: keyframe values"),
+                types,
+                &[shape],
+            )?;
             let reader = channel.reader(|buffer| Some(&buffers[buffer.index()].0));
             let times: Vec<f32> = reader
                 .read_inputs()

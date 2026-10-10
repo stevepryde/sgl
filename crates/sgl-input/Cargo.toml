@@ -7,15 +7,26 @@ categories = ["game-development"]
 keywords = ["gamedev", "input", "gamepad", "controller"]
 readme = "README.md"
 description = "Caller-polled controller discovery, events, and held state for SGL games"
+# Examples and tests stay in the repository.
+include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# Only the macOS FFI module may use unsafe; all other SGL crates retain the
-# workspace-wide forbid. The public input API is safe Rust.
+# Only the macOS FFI module may use unsafe; other SGL crates' unsafe-code
+# levels follow specs/stack.md. The public input API is safe Rust. Cargo cannot
+# inherit `[workspace.lints]` while overriding one lint, so the clippy table
+# mirrors `[workspace.lints.clippy]` in the root manifest.
 [lints.rust]
 unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
