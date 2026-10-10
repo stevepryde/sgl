@@ -54,12 +54,17 @@ impl SplitMix64 {
 
 /// Derives a deterministic stream seed from a game-owned base seed and three
 /// caller-supplied domain components.
+///
+/// Each component is absorbed in turn and mixed by one `SplitMix64` step, a
+/// bijection, so changing any single component always changes the seed and
+/// no two components can cancel. Inputs that differ in several components
+/// share a seed only by 64-bit chance.
 #[must_use]
 pub fn derive_stream_seed(base: u64, domain: u64, a: u32, b: u64) -> u64 {
-    let mut rng = SplitMix64::new(base ^ domain.rotate_left(17));
-    rng.cursor ^= u64::from(a).rotate_left(31);
-    rng.cursor ^= b.rotate_left(47);
-    rng.next_u64()
+    let mix = |state: u64| SplitMix64::new(state).next_u64();
+    [domain, u64::from(a), b]
+        .into_iter()
+        .fold(mix(base), |state, component| mix(state ^ component))
 }
 
 #[cfg(test)]
@@ -78,23 +83,21 @@ mod tests {
         assert_eq!(rng.cursor(), 42u64.wrapping_add(0x9e37_79b9_7f4a_7c15));
     }
 
-    /// #249: stream derivation mixes with XOR, so components whose rotated
-    /// bits overlap cancel rather than accumulate. Frozen values for a base
-    /// equal to its domain and for all-ones components.
+    /// #312: components whose bits once overlapped after rotation (and
+    /// cancelled under XOR) give different seeds: chunk `(65536, 0)` versus
+    /// `(0, 1)`, and a domain bit versus a `b` bit.
     #[wasm_bindgen_test(unsupported = test)]
-    fn derived_seeds_with_overlapping_components_are_frozen() {
-        assert_eq!(
-            (
-                derive_stream_seed(7, 7, 7, 7),
-                derive_stream_seed(u64::MAX, u64::MAX, u32::MAX, u64::MAX),
-                derive_stream_seed(1 << 47, 1 << 30, 1 << 16, 1),
-            ),
-            (
-                1_085_486_224_634_377_940,
-                1_817_513_978_328_618_816,
-                16_294_208_416_658_607_535
-            )
-        );
+    fn overlapping_components_do_not_cancel() {
+        for (left, right) in [
+            ((9, 3, 1 << 16, 0), (9, 3, 0, 1)),
+            ((9, 1, 5, 0), (9, 0, 5, 1 << 34)),
+        ] {
+            assert_ne!(
+                derive_stream_seed(left.0, left.1, left.2, left.3),
+                derive_stream_seed(right.0, right.1, right.2, right.3),
+                "{left:?} vs {right:?}"
+            );
+        }
     }
 
     #[wasm_bindgen_test(unsupported = test)]
@@ -115,6 +118,6 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = test)]
     fn derived_seed_is_frozen() {
-        assert_eq!(derive_stream_seed(17, 29, 41, 53), 0x002e_c4c0_58ec_97c1);
+        assert_eq!(derive_stream_seed(17, 29, 41, 53), 0xfa0d_d366_259b_7519);
     }
 }

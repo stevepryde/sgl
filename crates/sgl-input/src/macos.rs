@@ -92,8 +92,7 @@ impl Pad {
                 }));
             }
         }
-        for (axis, input) in &axes {
-            let axis = *axis;
+        for &(axis, ref input) in &axes {
             let events = sender.clone();
             let handler = RcBlock::new(move |_: NonNull<GCControllerAxisInput>, value: f32| {
                 let _ = events.send(Update::Input(Event {
@@ -171,7 +170,7 @@ impl Backend {
         self.pads.retain(|id, pad| {
             if controllers
                 .iter()
-                .any(|c| std::ptr::eq(&**c, &*pad.controller))
+                .any(|c| std::ptr::eq(Retained::as_ptr(c), Retained::as_ptr(&pad.controller)))
             {
                 true
             } else {
@@ -183,11 +182,12 @@ impl Backend {
             }
         });
         for controller in controllers {
-            if self
-                .pads
-                .values()
-                .any(|pad| std::ptr::eq(&*controller, &*pad.controller))
-            {
+            if self.pads.values().any(|pad| {
+                std::ptr::eq(
+                    Retained::as_ptr(&controller),
+                    Retained::as_ptr(&pad.controller),
+                )
+            }) {
                 continue;
             }
             // SAFETY: Accessing retained controller properties on the main thread.
