@@ -20,6 +20,9 @@ docs and specs the entry links.
   or buffer, or an image view past its buffer, panicked or was misread; it
   now fails the load with an error naming it.
   No game-code changes needed; re-export a file that now fails.
+- `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
+  panicked; now `max` wins and a NaN bound is ignored. No game-code changes
+  needed.
 
 ## 0.4.0 — 2026-10-09
 
