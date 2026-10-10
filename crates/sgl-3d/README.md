@@ -687,7 +687,8 @@ combines passes from several engines, listed with their licences under it.
   the resolve reads each pixel's mip from a cone that widens with its
   roughness and ray length. Nothing is stochastic. It traces below perceptual
   roughness 0.7, fading over the last 0.1, with Godot's `Environment` defaults
-  (64 steps, fade in 0.15, fade out 2, depth tolerance 0.5 m). SGL3D converts
+  (64 steps, fade in 0.15, fade out 2, depth tolerance 0.5 m); unlike Godot,
+  a ray that has not confirmed a hit within its steps is a miss. SGL3D converts
   its G-buffer to Godot's view-space normal-roughness and depth, and the rays
   read this frame's radiance. As in Godot, the trace tone maps radiance by
   luminance before RGBA16F storage and roughness filtering and the resolve
@@ -828,13 +829,15 @@ fast motion resolves softened rather than aliased. Upstream rejects by speed
 
 ### SMAA
 
-SMAA 1x runs on the linear HDR scene before tone mapping
-([`src/stages/post/smaa/README.md`](src/stages/post/smaa/README.md)) at
+SMAA 1x runs on the tone-mapped scene at the scene size, before it is
+resampled to the output and dithered
+([`src/stages/post/smaa/README.md`](src/stages/post/smaa/README.md)), so the
+exposure does not change which edges it finds. It runs at
 `Settings::smaa_quality` (`settings::SmaaQuality`), SMAA 2.8's presets:
 Low, Medium (the default), High and Ultra. They search up to 4, 8, 16 and
-32 steps of two pixels each way along an edge, at a colour contrast
-threshold of 0.15, 0.1, 0.1 and 0.05; High and Ultra also detect diagonal
-lines and corners.
+32 steps of two pixels each way along an edge, at a contrast threshold in
+sRGB-encoded display colour of 0.15, 0.1, 0.1 and 0.05; High and Ultra also
+detect diagonal lines and corners.
 
 ### FSR2
 
@@ -1317,8 +1320,18 @@ over the contract SGL3D declares, `shading/shader_contract.wgsl`, verbatim:
 
 // A vertex in and out of material_vertex, in the mesh's own units and axes,
 // after SGL3D's skinning and morphing and before the instance's pose:
-// `normal` unit; `tangent` xyz unit and w its handedness, all zero where the
-// mesh has none; `color` linear RGB and alpha, as asset::Vertex::color;
+// `normal` unit and `tangent` xyz a unit vector in the normal's plane, w its
+// handedness (+1 or -1), at rest and after skinning, while morph targets add
+// their deltas without renormalising or re-orthogonalising (as Bevy's
+// morph_vertex, which the deform stage ports), so a morphed vertex's frame
+// is only approximately orthonormal. A vertex without an authored
+// tangent (none, along the normal, or handedness not +1 or -1) gets an
+// arbitrary one in the normal's plane, handedness +1, never zero, which a
+// shader cannot tell from an authored one: a shader used on meshes without
+// authored tangents derives its frame itself, as from screen derivatives
+// in material_surface (as SGL3D's own normal maps do), or has such meshes
+// flagged through its ShaderParams or shader data; `color` linear RGB and
+// alpha, as asset::Vertex::color;
 // `shader_data` the mesh's per-vertex data (PreparedModel::with_shader_data),
 // zero without any; `custom` what the shader passes to material_surface,
 // interpolated, zero in.
@@ -1591,7 +1604,9 @@ the module into every program the device's binding tier creates for it, so
 a pipeline created later from an accepted module cannot fail WGSL
 validation. It refuses, with a typed `shader::ShaderError`: a directive
 (`enable`, `requires`, `diagnostic`); a name SGL3D's programs on either
-binding tier declare; a
+binding tier declare, or a WGSL predeclared type, enumerant or built-in
+function (`smoothstep`, `saturate`), which would replace it in SGL3D's
+calls; a
 parse or type error against the contract alone, its line and column in the
 game's source (SGL3D's other declarations, such as `view` or `frame`, are
 not the module's to read); a module-scope `var`, a binding, an `override`
@@ -1667,7 +1682,8 @@ stay in the game (S3D-1).
   `Influence` per vertex (four joints of the asset's joint list and their
   weights; a fifth influence set is refused) and `MorphTarget`s (a
   displacement of each vertex's position, normal and tangent, scaled by one
-  morph weight). `Asset::rig` (`deformation::Rig`) holds the node hierarchy
+  morph weight; a primitive without targets loads unmorphed, and a mesh
+  whose morphed primitives differ in their number of targets is refused). `Asset::rig` (`deformation::Rig`) holds the node hierarchy
   with each node's rest transform, the joints (each skin's, in one list: a
   node and its inverse bind matrix), the morph weights (each morphed node's,
   with its rest weights) and the animation clips (`Clip`: channels of
@@ -2578,14 +2594,21 @@ loads on several threads: build it where it is used, or store a
 The loader supports glTF triangle meshes, baked rigid node transforms,
 skins with four influences per vertex, morph targets, animation clips as data
 ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)),
-UV0, metallic/roughness materials, the opaque, masked and blended alpha modes,
+UV0, `TEXCOORD_1` as `Vertex::lightmap_uv`, metallic/roughness materials, the
+opaque, masked and blended alpha modes,
 normal and bump maps, an occlusion map packed in the red channel of the
 metallic-roughness image (ORM), `KHR_materials_clearcoat` with its maps,
 emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_iridescence`, `KHR_materials_sheen`,
 `KHR_materials_diffuse_transmission`, and the `KHR_materials_ior` and
 `KHR_materials_specular` factors. A primitive whose material has any map
-needs `TEXCOORD_0`. Every accessor the load reads must hold at least one
+needs `TEXCOORD_0`. Each map SGL3D samples needs linear magnification and
+trilinear minification (or none set); a map it leaves out may sample any
+way. `TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static
+instance while an atlas is installed, a vertex it charts samples the atlas
+and takes no baked lights, so set `lightmap_uv` to `[0, 0]` on models the
+bake does not chart (one exported with a second UV map for AO, say).
+Every accessor the load reads must hold at least one
 element, within its buffer view and buffer, of a component type and shape
 glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
 bind matrices or keyframes), and an embedded image's buffer view must lie

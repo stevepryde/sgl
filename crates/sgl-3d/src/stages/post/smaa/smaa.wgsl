@@ -8,7 +8,10 @@
 // of them (crates/bevy_anti_alias/src/smaa/smaa.wesl, MIT OR Apache-2.0,
 // src/LICENSE-bevy.txt) as a guide. Changes: SMAA 1x's zero subsample
 // offsets are left out, and the corners take Three's search ends and
-// distances, rounded as SMAA.hlsl rounds its own.
+// distances, rounded as SMAA.hlsl rounds its own; the input is tone-mapped,
+// display-linear colour, whose sRGB encoding edges are detected on
+// (`encoded`) and which blending mixes linearly, as SMAA.hlsl asks of its
+// colour input.
 // Copyright and permission notices: LICENSE-three.txt and LICENSE-smaa.txt.
 
 // SMAA_THRESHOLD and SMAA_MAX_SEARCH_STEPS; diagonal and corner detection
@@ -70,6 +73,13 @@ fn fullscreen(index: u32) -> Varyings {
 fn color(uv: vec2<f32>) -> vec4<f32> {
     return textureSampleLevel(source, linear_sampler, uv, 0.0);
 }
+// The source is tone-mapped, display-linear colour, which blending mixes;
+// edges are detected on its sRGB encoding, the gamma-space colour SMAA.hlsl's
+// thresholds are for (SMAAColorEdgeDetectionPS), as Godot's SMAA detects on
+// its tone mapper's sRGB output.
+fn encoded(uv: vec2<f32>) -> vec3<f32> {
+    return linear_to_srgb(max(color(uv).rgb, vec3<f32>(0.0)));
+}
 fn edge(uv: vec2<f32>) -> vec2<f32> {
     return textureSampleLevel(edges, linear_sampler, uv, 0.0).rg;
 }
@@ -79,15 +89,15 @@ fn difference(a: vec3<f32>, b: vec3<f32>) -> f32 {
 }
 @fragment fn detect(v: Varyings) -> @location(0) vec4<f32> {
     let uv = v.uv;
-    let c = color(uv).rgb;
-    let d = vec2<f32>(difference(c, color(v.o0.xy).rgb),
-                      difference(c, color(v.o0.zw).rgb));
+    let c = encoded(uv);
+    let d = vec2<f32>(difference(c, encoded(v.o0.xy)),
+                      difference(c, encoded(v.o0.zw)));
     var e = step(vec2<f32>(SMAA_THRESHOLD), d);
     if dot(e,vec2<f32>(1.0)) == 0.0 { return vec4<f32>(0.0); }
-    let right = difference(c,color(v.o1.xy).rgb);
-    let bottom = difference(c,color(v.o1.zw).rgb);
-    let left2 = difference(c,color(v.o2.xy).rgb);
-    let top2 = difference(c,color(v.o2.zw).rgb);
+    let right = difference(c,encoded(v.o1.xy));
+    let bottom = difference(c,encoded(v.o1.zw));
+    let left2 = difference(c,encoded(v.o2.xy));
+    let top2 = difference(c,encoded(v.o2.zw));
     let largest = max(max(d.x,d.y),max(max(right,bottom),max(left2,top2)));
     e *= step(vec2<f32>(0.5*largest),d);
     return vec4<f32>(e,0.0,0.0);

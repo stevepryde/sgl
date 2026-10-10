@@ -1,4 +1,5 @@
 use super::*;
+use crate::stages::post::tests::exposure_texture;
 use crate::test_support::{half, hdr_texture, read};
 
 /// The looks `FILAMENT_AGX` gives outputs for, in its order.
@@ -126,30 +127,6 @@ const FILAMENT_AGX: [([f32; 3], [[f32; 3]; 3]); 14] = [
     ),
 ];
 
-fn exposure_texture(device: &wgpu::Device, queue: &wgpu::Queue, value: f32) -> wgpu::TextureView {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("fixture exposure"),
-        size: wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R32Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        texture.as_image_copy(),
-        bytemuck::bytes_of(&value),
-        wgpu::TexelCopyBufferLayout::default(),
-        texture.size(),
-    );
-    texture.create_view(&Default::default())
-}
-
 // Defects: a transposed or wrong AgX or colour-space matrix, a wrong log2
 // range or sigmoid coefficient, a missing primaries conversion, an exposure
 // applied after the curve instead of before it, a neutral grading that is
@@ -190,8 +167,10 @@ fn tone_maps_as_filaments_agx_with_each_look_after_the_exposure() {
                 &unread_bloom,
                 &exposure,
                 &grading,
-                true,
-                &output,
+                Destination::Output {
+                    capture: true,
+                    output: &output,
+                },
                 None,
             );
             queue.submit([encoder.finish()]);
@@ -263,8 +242,10 @@ fn dithering_breaks_8_bit_banding_into_bounded_noise() {
             &unread_bloom,
             &exposure,
             &ColorGrading::default(),
-            capture,
-            &output,
+            Destination::Output {
+                capture,
+                output: &output,
+            },
             None,
         );
         queue.submit([encoder.finish()]);

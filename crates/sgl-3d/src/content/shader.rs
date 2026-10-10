@@ -120,7 +120,8 @@ pub enum ShaderError {
     /// `select` on its value.
     NonUniformDerivative { function: String },
     /// A declaration whose name SGL3D's programs on either binding tier
-    /// already use.
+    /// already use, or a WGSL predeclared type, enumerant or built-in
+    /// function, which it would replace in SGL3D's calls.
     NameTaken { name: String },
     /// `ShaderParams` takes more than `SHADER_PARAMS_MAX_BYTES`.
     ParamsTooLarge { size: u32, max: u32 },

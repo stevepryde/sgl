@@ -11,7 +11,8 @@
 // previous frame's depth buffer, and supplies the velocity (SGL3D motion,
 // current minus previous, negated into Wicked's); a reflection hit on or
 // behind the previous camera's plane reprojects off the screen rather than
-// mirrored onto it (temporal_reprojection_uv).
+// mirrored onto it (temporal_reprojection_uv); the depth history, raw
+// device depth, is linearised with the near plane it was written under.
 // Reads `temporal_current`, `temporal_history`, `temporal_depth_history` and
 // `linear_sampler`.
 const TEMPORAL_RESPONSE:f32=.95;
@@ -24,8 +25,10 @@ struct TemporalView {
  previous_view_projection:mat4x4<f32>,
  // Traced width, height, 1/width, 1/height.
  size:vec4<f32>,
- // The reversed-Z infinite projection's near plane.
+ // The reversed-Z infinite projection's near plane, this frame's and the
+ // previous frame's, which wrote the depth history.
  near:f32,
+ previous_near:f32,
 }
 fn temporal_saturated(uv:vec2<f32>)->bool {
  return all(uv==clamp(uv,vec2(0.),vec2(1.)));
@@ -54,12 +57,9 @@ fn temporal_reprojection_uv(view:TemporalView,uv:vec2<f32>,depth:f32)->vec2<f32>
  }
  return previous.xy/previous.w*vec2(.5,-.5)+vec2(.5);
 }
-fn temporal_linear_depth(view:TemporalView,z:f32)->f32 {
- return linear_depth(view.near,z);
-}
 fn temporal_disocclusion(view:TemporalView,depth:f32,history:f32)->f32 {
- let current=temporal_linear_depth(view,depth);
- let previous=temporal_linear_depth(view,history);
+ let current=linear_depth(view.near,depth);
+ let previous=linear_depth(view.previous_near,history);
  return exp(-abs(previous-current)/current*DISOCCLUSION_DEPTH_WEIGHT);
 }
 fn temporal_history_depth(view:TemporalView,uv:vec2<f32>)->f32 {
