@@ -584,8 +584,15 @@ and no normal fade.
   decals brought images in, as Godot packs its atlas once per frame. Add
   images and decals at load. A removed decal's images stay in the atlas
   until it next packs. A decal whose layout would be larger than the
-  device's textures is refused when it is added, with
-  `SceneError::DeviceLimit`.
+  device's textures, or take more memory to build than the target can
+  allocate, is refused when it is added, with `SceneError::DeviceLimit`.
+  SGL3D builds the atlas on the CPU at 8 bytes a texel, with its mips a
+  third more, and allows 2 GiB for it in the browser and 8 GiB natively.
+  An image's side and its 32-texel border round up to a power of two, and
+  each map counts: one 4096-square image takes an 8192-square atlas
+  (0.67 GiB), two or three 8192 by 16384 (1.33 GiB), and four, or one
+  8192-square image, 16384 square (2.66 GiB), which the browser refuses.
+  8160 square is the largest image an 8192-square atlas holds.
 - Values must be finite, the size positive, the rotation nonzero, `color`
   and `base_color_mix` in [0, 1], the fades nonnegative and `normal_fade`
   below 1; anything else is refused with `SceneError::InvalidDecal`.
@@ -1406,11 +1413,12 @@ struct MaterialSurface {
 }
 // What material_surface evaluates at: the fragment's render-frame
 // `position` (displaced), its interpolated `geometry_normal` on the shaded
-// side, the unit direction toward the eye `view`, its `uv` and `color`,
-// material_vertex's `custom`, the instance's data, pose and the pose's axis
-// scales `model_scale`, the frame's `time` and `phase`, whether it is the
-// material's authored `front`, its `pixel` in the pass's target in texels,
-// and its linear `view_depth` in metres.
+// side, the unit direction toward the viewer `view` (toward the eye under a
+// perspective projection, the camera's backward axis under an orthographic
+// one), its `uv` and `color`, material_vertex's `custom`, the instance's
+// data, pose and the pose's axis scales `model_scale`, the frame's `time`
+// and `phase`, whether it is the material's authored `front`, its `pixel` in
+// the pass's target in texels, and its linear `view_depth` in metres.
 struct SurfaceContext {
  position:vec3<f32>,
  geometry_normal:vec3<f32>,
@@ -2600,8 +2608,8 @@ not supported, since SGL3D needs compute.
 - **No blocking readback.** `Renderer::capture_specular_probe` blocks for its
   readback, which WebGPU cannot: in the browser it fails with
   `ProbeError::Readback` before rendering. Capture natively and load the
-  baked probes. The `diagnostics` feature's `diagnostics::read` also blocks
-  and is native-only.
+  baked probes. The `diagnostics` feature's `diagnostics::read` also blocks,
+  so a browser build does not have it.
 
 `browser_smoke` (`examples/browser_smoke.rs`) is the browser lane's test and a
 minimal page integration: device creation; procedural content (a textured
@@ -2745,8 +2753,9 @@ fractions of its mesh's UV rectangle, within the rectangle's extent over
 proportion; the colour as 8-bit sRGB with linear alpha, clamped to 0..1 as
 glTF's `COLOR_0` is; the lightmap UV as 16-bit fractions (a negative one is
 unassigned, as before); and the lightmap chart bounds once per distinct
-chart in a table of its mesh's. A vertex normal must be finite and not
-zero (`SceneError::NonFiniteGeometry`), and a mesh's vertices may name at
+chart in a table of its mesh's. A vertex position, UV and lightmap UV
+must be finite, a mesh's UVs must span less than `f32::MAX`, and a normal
+must be finite and not zero (`SceneError::NonFiniteGeometry`), and a mesh's vertices may name at
 most 65,536 distinct `lightmap_bounds` (`SceneError::TooManyLightmapCharts`,
 which names the mesh's index); a model's meshes together may name any
 number.
@@ -2818,7 +2827,7 @@ Active anisotropy requires authored tangents; automatic tangent generation is
 not implemented. Normal maps and anisotropy share that frame. A tangent
 within 0.02° of its normal (as authored or after node transforms) spans no
 frame: it fails the load of an anisotropic material and is absent
-(`Vertex::tangent` zero) on any other.
+(`Vertex::tangent` zero, with no morph-target tangent delta) on any other.
 Where skinning or morphing cancels a tangent or turns it along its normal,
 shading takes an arbitrary tangent in the normal's plane, keeping the
 authored handedness (+1 where there is none), as for a vertex without one.

@@ -7,7 +7,7 @@ use glam::{Mat4, Quat, Vec3};
 use gltf::accessor::{DataType, Dimensions};
 use gltf::animation::{Interpolation as GltfInterpolation, Property, util::ReadOutputs};
 
-use super::super::asset::Result;
+use super::super::asset::{Result, Vertex};
 use super::super::deformation::{
     Channel, ChannelValues, Clip, Influence, Interpolation, Joint, MAX_INDEX, MorphDelta,
     MorphTarget, MorphWeight, Node, Rig,
@@ -360,12 +360,14 @@ where
 /// in the space its vertices were baked to: positions by `transform`;
 /// normals by `normal_transform`, and tangents by `transform` projected off
 /// the baked normal, each at the factor that normalized its baked vector.
-/// Without authored `tangents`, a target displaces no tangent.
+/// A target displaces no tangent of a `baked` vertex whose tangent is
+/// absent (zero), as when it was not authored or lay along its normal.
 pub(super) fn read_morph_targets<'a, 's, F>(
     reader: &gltf::mesh::Reader<'a, 's, F>,
     first: u32,
     (transform, normal_transform): (Mat4, Mat4),
     (normals, authored_tangents): (&[[f32; 3]], Option<&[[f32; 4]]>),
+    baked: &[Vertex],
     label: &str,
 ) -> Result<Vec<MorphTarget>>
 where
@@ -398,12 +400,15 @@ where
                     let normal =
                         normal_transform.transform_vector3(Vec3::from_array(normals[vertex]));
                     let baked_normal = normal.normalize();
-                    let tangent = authored_tangents.map_or(Vec3::ZERO, |authored| {
-                        let [x, y, z, _] = authored[vertex];
-                        let transformed = transform.transform_vector3(Vec3::new(x, y, z));
-                        let projected = transformed - baked_normal * baked_normal.dot(transformed);
-                        transform.transform_vector3(tangents[vertex]) / projected.length()
-                    });
+                    let tangent = authored_tangents
+                        .filter(|_| baked[vertex].tangent != [0.0; 4])
+                        .map_or(Vec3::ZERO, |authored| {
+                            let [x, y, z, _] = authored[vertex];
+                            let transformed = transform.transform_vector3(Vec3::new(x, y, z));
+                            let projected =
+                                transformed - baked_normal * baked_normal.dot(transformed);
+                            transform.transform_vector3(tangents[vertex]) / projected.length()
+                        });
                     MorphDelta {
                         position: transform.transform_vector3(positions[vertex]).to_array(),
                         normal: (normal_transform.transform_vector3(target_normals[vertex])

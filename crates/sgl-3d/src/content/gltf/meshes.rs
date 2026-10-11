@@ -341,6 +341,7 @@ pub(super) fn read_node(
                     first,
                     (transform, normal_transform),
                     (&normals, tangents.as_deref()),
+                    &vertices,
                     &label,
                 )?
             };

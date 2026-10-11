@@ -1,5 +1,6 @@
 //! Skins, morph targets and clips imported from a hand-built document.
 use super::*;
+use crate::content::identity::Identity;
 use crate::deformation::{ChannelValues, Interpolation};
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
@@ -253,6 +254,48 @@ fn skins_morph_targets_and_clips_import_as_plain_data() {
     .unwrap();
     assert_eq!(static_asset.rig, Default::default());
     assert!(static_asset.meshes.pop().unwrap().deformation.is_rigid());
+}
+
+// Plausible defects: a morph target's tangent delta divided by the length
+// of a tangent along its normal: zero, so the delta is not finite and
+// preparing the asset refuses the file the loader accepted; or a few ulps,
+// so a vertex with no tangent gets a huge one. The oracle is
+// `Vertex::tangent`'s contract (zero means absent, so nothing displaces it)
+// and the lid's third vertex, whose frame keeps its delta.
+#[wasm_bindgen_test(unsupported = test)]
+fn morph_targets_leave_absent_tangents_undisplaced() {
+    let lid_along_its_normal = |document: &mut Value, buffer: &mut Buffer| {
+        let off = 4. * f32::EPSILON;
+        let tangents = buffer.floats(
+            &[0., 0., 1., 1., off, 0., 1., 1., 1., 0., 0., 1.],
+            "VEC4",
+            4,
+        );
+        document["meshes"][1]["primitives"][0]["attributes"]["TANGENT"] = json!(tangents);
+    };
+    let asset = load_slice(&rigged(lid_along_its_normal)).unwrap_or_else(|error| panic!("{error}"));
+    let lid = asset
+        .meshes
+        .iter()
+        .find(|mesh| !mesh.deformation.morph_targets.is_empty())
+        .unwrap();
+    let tangents: Vec<_> = lid.vertices.iter().map(|vertex| vertex.tangent).collect();
+    assert_eq!(tangents, [[0.; 4], [0.; 4], [1., 0., 0., 1.]]);
+    let deltas = &lid.deformation.morph_targets[0].deltas;
+    assert_eq!(deltas[0].tangent, [0.; 3]);
+    assert_eq!(deltas[1].tangent, [0.; 3]);
+    assert!(Vec3::from(deltas[2].tangent).abs_diff_eq(Vec3::new(0., 0.1, 0.), 1e-6));
+    let meshes = asset
+        .meshes
+        .into_iter()
+        .map(|mesh| crate::ModelMesh {
+            vertices: mesh.vertices,
+            indices: mesh.indices,
+            material: crate::MaterialId::issue(0, 0),
+            deformation: mesh.deformation,
+        })
+        .collect();
+    crate::PreparedModel::new(meshes).unwrap_or_else(|error| panic!("{error}"));
 }
 
 // Plausible defects: a node hierarchy that is not a set of trees walked as

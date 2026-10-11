@@ -895,3 +895,112 @@ fn an_anisotropic_metal_completes_opaque_as_it_shades_blended() {
         );
     }
 }
+
+// Defects: an orthographic camera's surfaces take the perspective view
+// vector toward the eye (#583), in the forward pass's direct light, source
+// completion's environment specular or the blended draws' own. The oracle
+// is the projection: an orthographic camera's view rays are parallel, so
+// two squares of one material facing it under the sun and a uniform
+// environment, one before the eye and one between the eye and a near plane
+// behind it, shade alike at every pixel, where the eye's direction would
+// change across each square and turn away from the one behind the eye.
+#[test]
+fn an_orthographic_camera_shades_every_surface_along_its_axis() {
+    use crate::{DirectionalLight, EnvironmentLight};
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut asset = test_support::cube();
+    let shifted = |x: f32, z: f32| {
+        let mut mesh = square(z, 1.);
+        for vertex in &mut mesh.vertices {
+            vertex.position[0] += x;
+        }
+        mesh
+    };
+    asset.meshes = vec![shifted(-1., -3.), shifted(1., 3.)];
+    asset.materials[0].base = [0.5, 0.5, 0.5, 1.];
+    asset.materials[0].metallic = 0.;
+    asset.materials[0].roughness = 0.3;
+    let (ids, _) = test_support::add_static(&device, &queue, &mut scene, asset);
+    let environment = scene
+        .add_environment(
+            &device,
+            &queue,
+            &test_support::environment([255; 4], &0x3c00u16.to_le_bytes()),
+        )
+        .unwrap();
+    let settings = Settings {
+        antialiasing: Antialiasing::Off,
+        ambient_occlusion: AmbientOcclusionQuality::Off,
+        atmosphere: false,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let output = crate::view::targets::target(&device, "orthographic", SIZE, gbuffer::COLOR);
+    // Reversed-Z from 10 m before the eye to 5 m behind it.
+    let mut input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: camera::rh::proj::directx::orthographic(-2., 2., -2., 2., 10., -5.),
+        eye: Vec3::ZERO,
+    });
+    input.backdrop = Backdrop::Color([0.; 3]);
+    input.environment = Some(environment);
+    input.reflection_environment = EnvironmentLight {
+        yaw: 0.,
+        intensity: 1.,
+    };
+    input.directional_lights[0] = Some(DirectionalLight {
+        direction: Vec3::new(0.3, 0.2, -1.),
+        color: [1.; 3],
+        illuminance: 3.,
+        shadow: None,
+        ..Default::default()
+    });
+    // Across the square before the eye (x -1.5 and -0.5) and the one behind
+    // it (x 0.5 and 1.5), on the middle row.
+    let pixels = [8, 24, 40, 56].map(|x| (SIZE[1] / 2 * SIZE[0] + x) as usize);
+    for alpha in [
+        crate::AlphaMode::Opaque,
+        crate::AlphaMode::Blend {
+            receives_screen_space_reflections: false,
+            keeps_specular: false,
+        },
+    ] {
+        let mut values = scene.material(ids.materials[0]).unwrap();
+        values.alpha = alpha;
+        scene
+            .set_material(&queue, ids.materials[0], values)
+            .unwrap();
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+        let composite =
+            test_support::read(&device, &queue, renderer.targets().composite.texture(), 8);
+        let shaded = pixels.map(|at| {
+            Vec3::from_array([0, 1, 2].map(|c| test_support::half(&composite[at * 8 + c * 2..])))
+        });
+        assert!(
+            shaded[0].min_element() > 0.05,
+            "{alpha:?}: the fixture must light the squares, {shaded:?}"
+        );
+        for (index, &radiance) in shaded.iter().enumerate() {
+            assert!(
+                (radiance - shaded[0]).abs().max_element() <= 0.01 * shaded[0].max_element(),
+                "{alpha:?}: sample {index} shades {radiance}, sample 0 {}",
+                shaded[0]
+            );
+        }
+    }
+}

@@ -172,7 +172,8 @@ them through unrefracted. A probe captured on an
   none. Keep boxes shallow: everything inside one takes the decal.
   `Decal::new(image)` has Godot's decal defaults. The lit pipelines apply
   decals only while the scene holds one, so the first decal added compiles
-  them anew.
+  them anew. The atlas is limited to 2 GiB in the browser (one 8192-square
+  image is too large) and 8 GiB natively.
   [Decals](../README.md#decals).
 - **Material edits** at runtime: `Scene::set_material` (`SurfaceMaterial`,
   whose default is glTF's default material).
@@ -419,7 +420,8 @@ Environment and probe specular always apply. On top of them:
   `diagnostic_draws`, `diagnostic_view_times` and
   `take_dynamic_gi_reports` (`Diagnostics::dynamic_gi`: the dynamic GI
   volume's probes, rays, BVH visits and budget stride, by frame) return what
-  they observed. Configuration only:
+  they observed; `diagnostics::read` reads a target back, blocking, so
+  natively only. Configuration only:
   no environment variables or files. Shipping builds leave it off.
 
 ## Not provided

@@ -65,6 +65,10 @@
 //! static shadow layers and the one after redraws none. An abandoned frame
 //! precedes each submitted one. `--hardware-ray-tracing` and
 //! `--ray-traced-shadows` apply to it too.
+// Native-only: it blocks on GPU readback.
+#![cfg_attr(target_arch = "wasm32", no_main)]
+#![cfg(not(target_arch = "wasm32"))]
+
 use sgl_3d::diagnostics::{Counters, DiagnosticTarget, SceneResources};
 use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3};
 use sgl_3d::settings::RayTracedShadowQuality;
