@@ -1713,7 +1713,8 @@ stay in the game (S3D-1).
   node's transform is baked into its vertices and morph displacements, as
   before. Primitives batch by material, skin and morphed node. A node
   hierarchy that is not a set of trees (a node with two parents, or its own
-  ancestor) fails the load.
+  ancestor) fails the load, as do keyframe times that are not finite and
+  strictly increasing.
 - **Procedural.** `ModelMesh::deformation` takes the same data; a model with
   any deforming mesh deforms. `PreparedModel::new` refuses influences or
   targets that do not match their vertices, negative or non-finite weights,

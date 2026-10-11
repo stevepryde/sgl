@@ -258,11 +258,12 @@ fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) ->
                 .collect();
             if times.is_empty()
                 || times.iter().any(|t| !t.is_finite())
-                || times.windows(2).any(|pair| pair[1] < pair[0])
+                || times.windows(2).any(|pair| pair[1] <= pair[0])
             {
-                return Err(
-                    format!("{label}: keyframe times must be finite and increasing").into(),
-                );
+                return Err(format!(
+                    "{label}: keyframe times must be finite and strictly increasing; re-export valid glTF"
+                )
+                .into());
             }
             let values = match reader
                 .read_outputs()

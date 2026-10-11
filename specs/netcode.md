@@ -193,7 +193,8 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     holds with an accept naming the cookie it kept, at any cookie age. A
     client that has not connected takes that cookie from the accept, and a
     client that has confirmed takes a payload carrying its nonces as the
-    accept.
+    accept. A client honours a deny only before it connects and only for the
+    cookie it holds.
 13. WebSocket frames use the 18-byte version-2 envelope: magic, version, flags
     (kind 0 reliable, 1 latest, 2 unreliable; FIRST; MORE), lane, big-endian
     sequence (0 for reliable and unreliable, strictly increasing for latest),

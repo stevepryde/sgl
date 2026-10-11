@@ -8,7 +8,8 @@ This boundary was requested while fixing Detonator Squad's macOS controller path
    and Gilrs on Windows/Linux. It must not require Steam or rendering. The macOS
    owner must be created/polled/dropped on the main thread, with native callbacks
    removed before their owned elements are released. It must receive releases
-   while unfocused and restore process-local monitoring preferences on drop.
+   while unfocused and restore process-local monitoring preferences when the
+   last live owner drops, so an owner replaced in place keeps them.
 2. **Input.** It must expose face buttons by position, D-pad, shoulders, lower
    triggers as digital buttons, stick clicks, menu/options/home when available,
    and both sticks. Stick axes must use -1..1 with positive Y up. A press and
@@ -19,7 +20,8 @@ This boundary was requested while fixing Detonator Squad's macOS controller path
    ignored). On macOS the buttons already held and the sticks' positions
    follow it; on Gilrs targets input already held at connection is not
    reported until it changes (gilrs starts a pad's state empty), and a
-   release with no reported press is dropped. Input that happened before a
+   release with no reported press is dropped. A press of a button already
+   held is dropped on every target. Input that happened before a
    disconnect must be reported before it. Disconnect must remove their held
    state; late callbacks from that connection must not affect a replacement
    controller. Device names must be display metadata, never identity keys.
