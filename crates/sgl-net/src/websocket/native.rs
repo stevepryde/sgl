@@ -809,7 +809,8 @@ pub struct NativeWebSocketClientConfig {
     /// side spends not reading because a lane is full does not count; the
     /// peer's own timeout bounds how long it waits for this side to poll.
     pub timeout_ms: u64,
-    /// Maximum wall-clock time spent connecting and completing the HTTP upgrade.
+    /// Maximum wall-clock time spent connecting, across every resolved
+    /// address tried in turn, and completing the HTTP upgrade.
     pub handshake_timeout: Duration,
     /// The connection's reliable lanes: weights and per-lane bounds.
     pub reliable: ReliableConfig,
@@ -833,6 +834,41 @@ impl NativeWebSocketClientConfig {
             reliable: ReliableConfig::DEFAULT,
         }
     }
+}
+
+/// Connects to the first reachable resolved address, trying each in order
+/// until one accepts or `deadline` passes.
+fn connect_first_reachable(
+    addrs: impl IntoIterator<Item = SocketAddr>,
+    deadline: Instant,
+) -> io::Result<TcpStream> {
+    let mut failures = Vec::new();
+    let mut last_kind = io::ErrorKind::NotFound;
+    for addr in addrs {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            last_kind = io::ErrorKind::TimedOut;
+            failures.push(format!("{addr}: connection budget exhausted"));
+            break;
+        }
+        match TcpStream::connect_timeout(&addr, remaining) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => {
+                last_kind = error.kind();
+                failures.push(format!("{addr}: {error}"));
+            }
+        }
+    }
+    if failures.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "WebSocket host unresolved",
+        ));
+    }
+    Err(io::Error::new(
+        last_kind,
+        format!("WebSocket connect failed: {}", failures.join("; ")),
+    ))
 }
 
 /// Native WebSocket client implementing [`ClientIo`].
@@ -894,11 +930,11 @@ impl NativeWebSocketClient {
             .and_then(|literal| literal.strip_suffix(']'))
             .unwrap_or(host);
         let port = request.uri().port_u16().unwrap_or(80);
-        let addr = (host, port)
-            .to_socket_addrs()?
-            .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "WebSocket host unresolved"))?;
-        let stream = TcpStream::connect_timeout(&addr, config.handshake_timeout)?;
+        let addrs = (host, port).to_socket_addrs()?;
+        // One budget, starting after resolution, covers every address
+        // attempt and the HTTP upgrade.
+        let deadline = Instant::now() + config.handshake_timeout;
+        let stream = connect_first_reachable(addrs, deadline)?;
         stream.set_nonblocking(true)?;
         let shared = SharedPeer::new(
             config.identity.magic,
@@ -907,12 +943,7 @@ impl NativeWebSocketClient {
             &config.reliable,
         );
         let (mut worker, waker) = IoWorker::new()?;
-        let response = worker.connect(
-            request,
-            stream,
-            config.handshake_timeout,
-            Arc::clone(&shared),
-        )?;
+        let response = worker.connect(request, stream, deadline, Arc::clone(&shared))?;
         let selected = response
             .headers()
             .get(SEC_WEBSOCKET_PROTOCOL)
@@ -1188,6 +1219,23 @@ mod tests {
     use super::*;
     use crate::websocket::{Fragment, WEBSOCKET_FRAGMENT_BYTES};
     use tungstenite::protocol::Role;
+
+    #[test]
+    fn connect_falls_back_past_an_unreachable_resolved_address() {
+        // A port whose listener has closed refuses connections.
+        let refused = TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("bind closed port");
+        let live = TcpListener::bind("127.0.0.1:0").expect("bind live port");
+        let stream = connect_first_reachable(
+            [refused, live.local_addr().expect("live addr")],
+            // Windows can spend about 2 s retrying before it reports a refusal.
+            Instant::now() + MAX_WEBSOCKET_HANDSHAKE_TIMEOUT,
+        )
+        .expect("fallback reaches the live address");
+        let (_, peer) = live.accept().expect("live listener accepts");
+        assert_eq!(peer, stream.local_addr().expect("client addr"));
+    }
 
     /// An in-memory socket: reads consume a scripted inbound buffer and
     /// report `WouldBlock` when it runs dry, like a non-blocking TCP stream;

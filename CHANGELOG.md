@@ -20,6 +20,14 @@ docs and specs the entry links.
   and the next frame at the capture's time reused that stale layer; they
   are now drawn at the capture's `elapsed_seconds`. No game-code change
   needed.
+- `sgl-net` `NativeWebSocketClient::connect`: tried only the host's first
+  resolved address (so `localhost` could be refused when `::1` came first),
+  and the TCP connect and HTTP upgrade each took a full `handshake_timeout`;
+  now each resolved address is tried in order within one
+  `handshake_timeout` covering the upgrade too. No game-code change needed.
+- `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
+  radius that is not positive (including NaN) now emits nothing. No
+  game-code change needed.
 - `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
   could not be allocated (the largest byte grid on wasm32); now returns
   `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or
