@@ -170,7 +170,8 @@ rectangles so their text, accent and surface roles follow the selected palette.
   at its end, so the content shows it from the next frame. Restore enclosing clips yourself
   after custom clipping. Widget borders extend outside their hit rectangles:
   inset content from viewport edges and reserve gaps for focus/selection strokes
-  and the scrollbar. Clip long row names to their allocated space; provide
+  and the scrollbar: while content overflows, the area clips it
+  `Ui::SCROLLBAR_WIDTH` short of its right edge, where the track sits. Clip long row names to their allocated space; provide
   their full meaning in focus/hover help instead of letting them cover actions.
 - **Discoverability and state.** Use icons for familiar repeated row actions,
   text for unfamiliar or consequential commands. Pair `icon_button` and

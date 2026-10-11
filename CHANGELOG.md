@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::scroll_area_begin`: content was clipped to the whole
+  area, so a press on the scrollbar thumb also pressed the row under it; while
+  the scrollbar shows, content is now clipped `Ui::SCROLLBAR_WIDTH` (new, 8 px)
+  short of the right edge. Keep row hit areas and actions within
+  `rect.max.x - Ui::SCROLLBAR_WIDTH`.
 - `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
   `SendError::Disconnected`; it now returns `UnknownConnection`, like every
   other server transport. A game that matched `Disconnected` from a server
