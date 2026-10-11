@@ -19,6 +19,13 @@ docs and specs the entry links.
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they
   now find them. No game-code change needed.
+- `sgl-3d` `BakedSpecularProbe::proxy`: a proxy box reaching more than
+  about 1e19 m from its capture centre made box projection sample an
+  arbitrary texel; it now samples toward the ray's hit on the proxy, which
+  acts as distant at that size. No game-code changes.
+- `sgl-3d` glTF import: a file with many morph-weight channels on a mesh
+  of many primitives took time quadratic in its size to load; it no
+  longer does. No game-code change needed.
 - `sgl-3d` glTF import: a small file whose morph-weight keyframes or
   instanced meshes declared gigabytes of data could abort the process; a
   scene listing a root twice or a child as a root now fails the load, as
@@ -42,9 +49,15 @@ docs and specs the entry links.
   game-code change needed.
 - `sgl-net` UDP client: a deny that overtook the accept of a retried confirm
   (or whose accept was lost) left the server holding that connection until
-  `timeout_ms`; the client now answers the deny with a disconnect, so the
-  server reports `Disconnected { reason: Peer }` right after `Connected`. No
-  game-code change needed.
+  `timeout_ms`; the client now answers the deny with a disconnect, sent
+  three times as every UDP disconnect is, so the server reports
+  `Disconnected { reason: Peer }` right after `Connected`. No game-code
+  change needed.
+- `sgl-net` UDP endpoint: a peer closed for `ProtocolViolation`,
+  `InboundOverflow` or a stalled send (`TimedOut`) was sent one disconnect,
+  so losing it left the remote holding the connection until `timeout_ms`;
+  that disconnect is now sent three times, as a caller's is. No game-code
+  change needed.
 - `sgl-3d` `Scene::add_decal`/`set_decal`: a decal atlas too large for the
   CPU to build (one 8192-square image in the browser) panicked when the
   next frame packed it, and an image wider than the device's textures could
