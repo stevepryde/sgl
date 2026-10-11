@@ -457,10 +457,12 @@ impl ServerIo for MemoryServerIo {
         }
         // `Disconnected` is the client's error; a server reports an ended
         // connection as unknown, as every other `ServerIo` does.
-        self.duplex.send(delivery, payload).map_err(|error| match error {
-            SendError::Disconnected => SendError::UnknownConnection,
-            error => error,
-        })
+        self.duplex
+            .send(delivery, payload)
+            .map_err(|error| match error {
+                SendError::Disconnected => SendError::UnknownConnection,
+                error => error,
+            })
     }
 
     fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
