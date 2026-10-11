@@ -697,9 +697,11 @@ Use the [current specs](README.md) for implementation and the
   pixel in raster and per metre at ray hits. Raster follows three.js r185's
   `BumpMapNode`, whose height gradient is a screen-space difference over one
   pixel's UV step; a ray hit has no pixel, so it takes the height gradient
-  per metre on its triangle's UV frame. Reflections, probe captures and
-  dynamic GI therefore show a bump stronger than the camera does, by the
-  metres a pixel covers. Matching them needs a ray footprint at the hit,
+  per metre on its triangle's UV frame. World-space reflections and
+  dynamic GI therefore tilt a bump by the pixels a metre covers relative
+  to the camera: stronger wherever a camera pixel covers less than a metre
+  (probe captures and screen-space reflections are raster, as the camera).
+  Matching them needs a ray footprint at the hit,
   such as Wicked Engine's `RayCone` (Akenine-Möller et al., "Improved
   Shader and Texture Level of Detail Using Ray Cones", JCGT 2021), which
   SGL3D lacks: its hits sample textures at LOD 0. Filament and Bevy have
