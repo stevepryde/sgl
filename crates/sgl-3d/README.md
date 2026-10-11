@@ -3010,7 +3010,8 @@ Composition snapshots the complete camera HDR source after reflections, fog,
 blended surfaces, additive effects and mist, then overwrites
 only submitted triangle coverage before bloom, antialiasing, tone mapping and
 the game's HUD. Medium transport and additive attenuation are not applied again.
-Each displacement samples the immutable snapshot; overlapping triangles use
+Displacement is scaled to render pixels, so it keeps its scene-pixel size
+under FSR2. Each displacement samples the immutable snapshot; overlapping triangles use
 submission order, without repeated refraction. Off/empty skips the copy and draw.
 One full-size HDR snapshot is retained and replaced on resize; geometry storage
 is retained. Thus Off avoids a full-frame copy plus bounded raster work.

@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `HeatDistortion::displacement`: under FSR2 it shifted the frame
+  by render pixels, magnified 1.5× to 3× in scene pixels by the quality
+  mode; it now shifts by the scene pixels it documents at every
+  antialiasing setting, so heat under FSR2 looks smaller than before. No
+  game-code change needed.
 - `sgl-post-fx` `post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH`:
   toggling it at an unchanged size kept the old depth format and panicked at
   the next resize; `PostFXContext::prepare_resources` now recreates the
