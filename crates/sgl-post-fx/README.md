@@ -100,7 +100,8 @@ taa.execute(&mut temporal_anti_aliasing::RenderAttributes { /* color, depth, mot
 
 The caller supplies Diligent's conventions: a left-handed camera (view space
 +z forward) with a finite far plane, the depth buffer as a depth texture,
-world normals in [-1, 1], NDC motion vectors (current − previous) and the
+unit world normals (SSR traces a normal that is not unit length as a miss,
+DFX-52), NDC motion vectors (current − previous) and the
 previous frame's depth. Set each `CameraAttribs`' clip planes with
 `set_clip_planes(near, far)`, passing far before near for reversed-Z: SSR's
 and TAA's temporal passes read the near and far planes' depths (DFX-32), and
@@ -115,10 +116,13 @@ the previous execution, which time the transition fade instead of a clock
 (DFX-24): pass the measured frame time, or create the context with
 `CreateInfo::transition_duration` 0, as SGL3D does. With the default
 duration of 1.0 and `frame_time` left at 0, SSR's output stays zero.
-SSR discards its history by the rule DiligentFX's TAA uses:
-- on its first execution,
+SSR and TAA discard their history:
+- on their first execution,
 - after skipped frame indices,
-- when `RenderAttributes::reset_accumulation` asks.
+- after a resize (or SSR's half-resolution change) recreates it (DFX-49,
+  DFX-53),
+- when SSR's `RenderAttributes::reset_accumulation` or
+  `TemporalAntiAliasingAttribs::reset_accumulation` asks.
 
 TAA finds the closest motion vectors in its resolve, from the depth buffer
 and motion vectors it is given (DFX-13). Both are listed in PROVENANCE.md.

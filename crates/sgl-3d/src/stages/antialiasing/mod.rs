@@ -93,6 +93,12 @@ impl Antialiasing {
         post_fx: Option<&mut PostFx>,
         context_jitter: Option<[f32; 2]>,
     ) -> Option<Jitter> {
+        // A reset ends FSR2's history even in a frame it does not run.
+        if !history.valid
+            && let Some(upscaler) = self.fsr2.as_mut()
+        {
+            upscaler.forget_history();
+        }
         if effective.taa {
             Some(Jitter {
                 ndc: context_jitter.expect("TAA runs in the post-effect context"),

@@ -965,7 +965,9 @@ scene.set_baked_specular_probes(&device, &queue, &[])?;
   face (Godot's blend distance); zero blend is a hard edge. Influences may and
   should overlap: a receiver's probes are normalised by their total weight, so
   neighbours whose blends meet partition it exactly, and where the total is
-  below one, as at the collection's edge, the sky fills the rest.
+  below one, as at the collection's edge, the sky fills the rest. Each box
+  (influence and proxy) needs `min < max` and a finite `max - min` on every
+  axis.
 - `proxy`: the geometry the capture sees, for box projection. Keep it separate
   from the influence and as large as the space: a corridor's proxy spans the
   whole corridor, and an opening's proxy extends well past it. `None` treats
@@ -1730,7 +1732,12 @@ stay in the game (S3D-1).
   bind matrix; `Rig::joint_matrices` composes them from each node's local
   transform, and ends, with wrong matrices, on a built rig whose parents
   form a cycle) and one weight per morph weight its targets name; further ones
-  are ignored, fewer are refused (`SceneError::DeformationMismatch`). An
+  are ignored, fewer are refused (`SceneError::DeformationMismatch`). A
+  skinned normal faces the side its deformed triangles wind towards, as a
+  mirrored joint's faces do. A joint matrix may scale an axis to zero, as a
+  rig flattens or hides a part: a flattened surface takes the flattened
+  surface's normal, and a vertex whose normal's plane collapses to a line or
+  a point keeps its unskinned normal. An
   instance keeps its deformation until it is set again and starts at its
   bind pose. The instance's pose places the deformed model in the world.
   Every call counts as a change, whatever its values: the frame deforms the
@@ -2797,9 +2804,10 @@ linear RG direction (remapped to -1..1) and B strength. No texture means +T and
 full texture strength, as on a device of the `Basic` [binding tier](#binding-tiers),
 which binds no anisotropy map. File and embedded glTF imports use the same rules.
 Active anisotropy requires authored tangents; automatic tangent generation is
-not implemented. Normal maps and anisotropy share that frame. An authored
-tangent along its normal spans no frame: it fails the load of an
-anisotropic material and is absent (`Vertex::tangent` zero) on any other.
+not implemented. Normal maps and anisotropy share that frame. A tangent
+within 0.02° of its normal (as authored or after node transforms) spans no
+frame: it fails the load of an anisotropic material and is absent
+(`Vertex::tangent` zero) on any other.
 Where skinning or morphing cancels a tangent or turns it along its normal,
 shading takes an arbitrary tangent in the normal's plane, keeping the
 authored handedness (+1 where there is none), as for a vertex without one.

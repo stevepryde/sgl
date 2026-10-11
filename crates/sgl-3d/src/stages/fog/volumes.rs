@@ -2,6 +2,7 @@
 //! frame's froxels and their history, the integrated volume, and the
 //! filter's and integration's groups over them.
 use super::FORMAT;
+use crate::view::history::HistoryFrame;
 
 /// The volumes of one froxel size.
 pub(super) struct Volumes {
@@ -10,7 +11,7 @@ pub(super) struct Volumes {
     /// count's parity and reprojects the other.
     pub scattering: [wgpu::TextureView; 2],
     /// The history frame count each of `scattering` holds.
-    pub holds: [Option<u32>; 2],
+    pub holds: Holds,
     /// Which of `scattering` the last integration read: the one its frame
     /// wrote, or with the filter the other, which holds them filtered.
     pub integrated_from: usize,
@@ -110,12 +111,85 @@ impl Volumes {
         Self {
             size,
             scattering,
-            holds: [None; 2],
+            holds: Holds::default(),
             integrated_from: 0,
             integrated,
             inject: None,
             integrate,
             filter,
+        }
+    }
+}
+
+/// The history frame count each of a pair of froxel volumes holds.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Holds([Option<u32>; 2]);
+
+impl Holds {
+    /// Follows a frame of `history`, which the fog `runs` in or not. A reset
+    /// forgets both volumes, even in a frame without fog, so no later frame
+    /// takes one from before it for its predecessor's. A frame that runs
+    /// writes the volume at its count's parity: its index, and whether it
+    /// reprojects the other, which then holds its predecessor's froxels.
+    pub fn frame(&mut self, history: &HistoryFrame, runs: bool) -> Option<(usize, bool)> {
+        if !history.valid {
+            self.0 = [None; 2];
+        }
+        if !runs {
+            return None;
+        }
+        let index = (history.frames % 2) as usize;
+        let reprojects = self.0[1 - index] == Some(history.frames.wrapping_sub(1));
+        self.0[index] = Some(history.frames);
+        Some((index, reprojects))
+    }
+
+    /// The volume the last frame the fog ran in wrote.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn last(&self) -> usize {
+        usize::from(self.0[1] > self.0[0])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Holds;
+    use crate::view::history::{CameraFrame, CameraHistory};
+    use glam::{DVec3, Mat4};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Defect: a reset in a frame without fog leaves the volumes' holds, so
+    // fog returning at the count after one it ran at before the reset
+    // reprojects froxels from before it (sgl#570). The oracle is the camera
+    // history's contract: nothing from before a reset is reused, and a
+    // frame reprojects its predecessor's froxels within one history.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_reset_without_fog_ends_the_froxels_history() {
+        let camera = CameraFrame {
+            view: Mat4::IDENTITY,
+            projection: Mat4::IDENTITY,
+            jitter: [0.; 2],
+        };
+        let mut history = CameraHistory::default();
+        let mut holds = Holds::default();
+        // Each frame's reset, whether it has fog, and whether it reprojects
+        // (none where the fog does not run).
+        let frames = [
+            (true, true, Some(false)),
+            (false, true, Some(true)),
+            (true, false, None),
+            (false, true, Some(false)),
+            (false, true, Some(true)),
+        ];
+        for (frame, (reset, fog, expected)) in frames.into_iter().enumerate() {
+            let begun = history.begin(camera, reset, DVec3::ZERO, 0.);
+            let reprojects = holds.frame(&begun, fog).map(|(_, reprojects)| reprojects);
+            assert_eq!(
+                reprojects, expected,
+                "frame {frame}, count {}",
+                begun.frames
+            );
+            history.finish(begun);
         }
     }
 }

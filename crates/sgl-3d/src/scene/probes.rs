@@ -477,6 +477,36 @@ mod tests {
         ));
     }
 
+    // Defect: a box wider than f32 can hold passes as finite with `min <
+    // max`, and its infinite extent reaches the probe grid and shading.
+    // Independent signal: f32 overflow of `max - min`.
+    #[test]
+    fn boxes_wider_than_f32_can_hold_are_rejected() {
+        let mut probe = fixture();
+        let huge = SpecularProbeBox {
+            min: Vec3::splat(-1e13),
+            max: Vec3::splat(1e13),
+        };
+        probe.influence = huge;
+        probe.proxy = Some(huge);
+        assert!(probe.validate(&wgpu::Limits::default()).is_ok());
+        let overflowing = SpecularProbeBox {
+            min: Vec3::new(-1., -f32::MAX, -1.),
+            max: Vec3::new(1., f32::MAX, 1.),
+        };
+        probe.influence = overflowing;
+        assert!(matches!(
+            probe.validate(&wgpu::Limits::default()),
+            Err(ProbeError::InvalidProbe(_))
+        ));
+        probe.influence = huge;
+        probe.proxy = Some(overflowing);
+        assert!(matches!(
+            probe.validate(&wgpu::Limits::default()),
+            Err(ProbeError::InvalidProbe(_))
+        ));
+    }
+
     #[test]
     fn unaddressable_face_sizes_are_rejected_before_payload_access() {
         let mut probe = fixture();
