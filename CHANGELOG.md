@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` native WebSocket keepalive: an unsolicited 8-byte pong arriving
+  after the reply to this side's ping, before the next `poll` or `flush`,
+  discarded the reply, so this side never pinged again and its `rtt` stopped
+  updating; the reply now counts. No game-code changes needed.
 - `sgl-2d` `UiFrame::dropdown`: for one frame after a selection,
   click-away, Escape, `Ui::close_popups` or `Ui::cancel_interactions` closed
   the popover, widgets under where it was could not hover or take a press;
