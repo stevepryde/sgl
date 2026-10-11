@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `NativeWebSocketClient::connect`: tried only the host's first
+  resolved address (so `localhost` could be refused when `::1` came first),
+  and the TCP connect and HTTP upgrade each took a full `handshake_timeout`;
+  now each resolved address is tried in order within one
+  `handshake_timeout` covering the upgrade too. No game-code change needed.
 - `sgl-2d` `TextRenderer::draw` / `measure`: a negative size panicked in
   `draw` and measured negative in `measure`; a size that is not positive
   and finite now draws nothing and measures `Vec2::ZERO`. No game-code
