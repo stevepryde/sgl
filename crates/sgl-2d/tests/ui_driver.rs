@@ -58,6 +58,8 @@ const POPOVER: Rect = rect(10.0, 234.0, 200.0, 96.0);
 /// Deliberately underneath the popover, to exercise input blocking.
 const OPEN_MODAL: Rect = rect(10.0, 260.0, 150.0, 40.0);
 const SCROLL: Rect = rect(400.0, 10.0, 200.0, 200.0);
+/// The content clip: `SCROLL` short of its scrollbar (the content overflows).
+const SCROLL_CONTENT: Rect = rect(400.0, 10.0, 200.0 - Ui::SCROLLBAR_WIDTH, 200.0);
 const CONTENT_H: f32 = 600.0;
 const INNER_Y: [f32; 3] = [20.0, 300.0, 500.0];
 /// The modal's CONFIRM / CANCEL buttons (a 420×160 panel centered on the
@@ -460,7 +462,7 @@ fn widget_tree_obeys_the_interaction_contract_under_random_input() {
                 );
                 if *name == "inner" {
                     prop_assert!(
-                        contains(&SCROLL, p),
+                        contains(&SCROLL_CONTENT, p),
                         "{}",
                         ctx("clipped button fired outside its scroll area")
                     );
@@ -527,7 +529,7 @@ fn widget_tree_obeys_the_interaction_contract_under_random_input() {
                 for q in bodies {
                     prop_assert_eq!(
                         q.clip,
-                        Some(SCROLL),
+                        Some(SCROLL_CONTENT),
                         "{}",
                         ctx("clipped button quad without the clip")
                     );
