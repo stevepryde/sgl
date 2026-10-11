@@ -22,6 +22,33 @@ docs and specs the entry links.
   keyframes' for values) or when a sparse accessor without a buffer view
   that nothing else counts declares more elements than the file's buffers
   would hold. No game-code change needed.
+- `sgl-3d` point and spot lights: a light was dropped wherever the mapped
+  base normal faced away from its centre, so a clearcoat over normal-mapped
+  flakes lost the coat's highlight and a sphere light's highlight popped off
+  as its centre crossed the horizon; it now reaches a surface while the
+  base or the coat normal faces any of its sphere, as directional lights
+  already did, in lighting and ray-traced shadows alike; the directional
+  light's ray-traced shadow now traces its whole disc too. No game-code
+- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): a ray that left
+  past the far plane, such as a floor reflecting the sky under infinite
+  reversed-Z, stored a length beyond RGBA16F's range, becoming infinity and
+  NaN in the denoiser or a wrong direction where the backend saturates, or a
+  short meaningless one where its last step overshot the plane; it is now
+  stored 65504 long along its direction. No game-code change needed.
+- `sgl-3d` anisotropic materials: a tangent that skinning or morphing
+  cancelled or turned along its normal, or a ray hit whose vertex tangents
+  all vanished, shaded NaN; it now takes an arbitrary tangent in the
+  normal's plane, keeping its handedness (+1 where it has none), as a vertex
+  without a tangent does. No game-code change needed.
+- `sgl-2d` `fetch_runtime_bundle` (wasm): listed assets were fetched from
+  `assets/{path}` relative to the page, whatever the manifest URL; they are
+  now fetched relative to the manifest's directory. Serve the manifest from
+  the asset root, e.g. `fetch_runtime_bundle("assets/manifest.txt")`.
+- `sgl-3d` `Scene::set_baked_specular_probes` and `Scene::move_origin`: a
+  tiny probe influence box far from the render origin overflowed the probe
+  grid's cell count, panicking with overflow checks or else building a
+  wrongly sized grid; it now builds within budget. No game-code change
+  needed.
 - `sgl-3d` `Scene::set_instance_deformation`: on a device created with a
   uniform offset alignment of 32 bytes (an adapter's real limits), a frame with two or more deforming meshes failed
   wgpu validation; the deform stage's records are now aligned. No game-code

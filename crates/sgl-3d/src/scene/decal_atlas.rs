@@ -144,14 +144,17 @@ impl DecalAtlas {
         texels: impl Fn(AtlasKey) -> Option<&'a image::RgbaImage>,
     ) -> Self {
         let size = layout.size;
-        let mut level = vec![0f32; (size[0] * size[1] * 4) as usize];
+        // Texel counts and indices are `usize`: a 32768-square atlas's
+        // channel count overflows `u32`.
+        let width = size[0] as usize;
+        let mut level = vec![0f32; width * size[1] as usize * 4];
         for &(key, corner, _) in &layout.places {
             let Some(image) = texels(key) else {
                 continue;
             };
             let color = key.1 == Sampling::Color;
             for (x, y, texel) in image.enumerate_pixels() {
-                let at = (((corner[1] + y) * size[0] + corner[0] + x) * 4) as usize;
+                let at = ((corner[1] + y) as usize * width + (corner[0] + x) as usize) * 4;
                 for channel in 0..4 {
                     let value = f32::from(texel[channel]) / 255.;
                     level[at + channel] = if color && channel < 3 {
@@ -165,12 +168,11 @@ impl DecalAtlas {
         let mut levels = vec![level];
         if !layout.places.is_empty() {
             for mip in 1..MIPS {
-                let [width, height] = size.map(|side| side >> (mip - 1));
+                let [width, height] = size.map(|side| (side >> (mip - 1)) as usize);
                 let previous = levels.last().unwrap();
-                let texel = |x: u32, y: u32, channel: u32| {
-                    previous[((y * width + x) * 4 + channel) as usize]
-                };
-                let mut halved = Vec::with_capacity((width * height) as usize);
+                let texel =
+                    |x: usize, y: usize, channel: usize| previous[(y * width + x) * 4 + channel];
+                let mut halved = Vec::with_capacity(width * height);
                 for y in (0..height).step_by(2) {
                     for x in (0..width).step_by(2) {
                         for channel in 0..4 {
