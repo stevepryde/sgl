@@ -1077,8 +1077,10 @@ last, after everything it may use, and refuses a directive in it.
   684–687) and its Hybrid Reflections sample its hardware rays
   (`Intersect.hlsl` 273–300): a classification pass, a workgroup a tile
   of 8 by 8 tracing pixels, writes every tracing pixel's miss, lists those
-  whose jittered receiver needs a ray (traced, the screen-space method not
-  confident, not under a blended receiver) in a ray list with one count
+  whose jittered receiver needs a ray (traced, its fallback taking a share
+  of the lobe, 1 − confidence × fade by composition's formula, so a
+  confident receiver in the roughness fade still traces, not under a
+  blended receiver) in a ray list with one count
   increment a workgroup; a one-thread dispatch in the same pass turns the
   count into the trace's indirect arguments, in rows of 64 workgroups; and
   the trace, a compute pass, traces the listed rays, a ray a thread. Which
@@ -1271,10 +1273,16 @@ last, after everything it may use, and refuses a directive in it.
 - **Fog.** One participating medium per frame (`FrameInput::fog`), with the
   scene's fog volumes added where they lie (Godot's box `FogVolume`s), fills
   a froxel volume over the camera's frustum, as Godot's volumetric fog does
-  (after Hillaire 2015). The fog stage lights each froxel through the shared
-  lighting: the directional lights with the shared cascade sampling, the
-  camera's clustered lights (baked ones too) through their records and the
-  shared local-shadow sampling, each froxel a shadow receiver with no side,
+  (after Hillaire 2015). The volume holds the fog quality's side across
+  the geometric mean of the render size's sides, so its froxels are square
+  and as many as Godot's, each side within 1 and the device's 3D texture
+  limit (`stages::fog::froxels`); Godot's split (side × r and side / r,
+  r = width / mean side) leaves its froxels about 8% wider than tall at
+  16:9 and its height unbounded as the frame narrows, an RD-2 departure.
+  The fog stage lights each froxel through the shared lighting: the
+  directional lights with the shared cascade sampling, the camera's
+  clustered lights (baked ones too) through their records and the shared
+  local-shadow sampling, each froxel a shadow receiver with no side,
   each light scaled by its fog energy and skipped at or below 0.001
   (Godot's `volumetric_fog_energy` and cutoff) and its shadow taken at the
   light's shadow opacity, as surfaces take it (`shading::shadow_sampling`'s
@@ -1615,9 +1623,12 @@ last, after everything it may use, and refuses a directive in it.
   and group 1 and takes its ray list and writes its ray results as textures
   ([Bind groups](#shared-contracts)); the allocation and the blends bind the
   stage's own. The probe texture is the stage's, one RGBA16F texture of
-  three regions, the irradiance maps, the depth maps and one texel per
-  probe of probe data (its relocated offset as three halves and whether it
-  has been blended and is active or dormant, RTXGI's probe data), sized for the
+  three regions, the irradiance maps, the depth maps (each texel's mean
+  and mean square ray distance in units of the volume's longest spacing,
+  where Wicked's are in world units, whose square half precision cannot
+  hold past a spacing of about 170 m) and one texel per probe of probe
+  data (its relocated offset as three halves and whether it has been
+  blended and is active or dormant, RTXGI's probe data), sized for the
   installed placement
   and lent through lit group 0 to every view that shades, so the camera's
   surfaces, blended surfaces, probe captures, world-space ray hits and the

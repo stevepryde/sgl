@@ -358,6 +358,7 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
  var probe_offset_new=vec3(0.);
  let probe_offset_distance=max_distance*DDGI_KEEP_DISTANCE;
  let texel_direction=ddgi_decode_oct(((vec2<f32>(thread.xy)+.5)/f32(DDGI_DEPTH_RESOLUTION))*2.-1.);
+ let depth_unit=ddgi_depth_unit(volume.spacing);
  var result=vec2(0.);
  var total_weight=0.;
  var backfaces=0u;
@@ -383,7 +384,8 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
    }
    let weight=pow(saturate(dot(texel_direction,ray.direction)),64.);
    if weight>DDGI_WEIGHT_EPSILON {
-    result+=vec2(depth,depth*depth)*weight;
+    let moment=depth/depth_unit;
+    result+=vec2(moment,moment*moment)*weight;
     total_weight+=weight;
    }
   }

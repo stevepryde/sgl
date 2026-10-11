@@ -35,22 +35,16 @@ use sgl_core::math::Vec2;
 /// Pixel size of one (square) glyph atlas page. Comfortably holds the 84 px
 /// title alphabet; more pages open as needed. A glyph too large for it (a
 /// large size at a high pixel scale) gets a square page of its own, sized to
-/// it and holding nothing else, which uploads like any texture: one wider
-/// than the device's `max_texture_dimension_2d` is refused by the upload
-/// with `TextureError::TooLarge`. A glyph whose page would exceed
+/// it and holding nothing else, which uploads like any texture (a device
+/// with lower limits refuses one wider than its `max_texture_dimension_2d`
+/// with `TextureError::TooLarge`). A glyph whose page would exceed
 /// [`MAX_GLYPH_PAGE_SIZE`] is not drawn (its advance still applies).
 pub const GLYPH_PAGE_SIZE: u32 = 512;
 
-/// Largest glyph page side, in pixels: 16384 natively, the widest texture
-/// any common GPU accepts (its page is 1 GiB of RGBA), and 8192 on wasm32,
-/// WebGPU's default `max_texture_dimension_2d`, past which a page could
-/// never upload. A larger glyph is neither rasterized nor packed.
-#[cfg(not(target_arch = "wasm32"))]
-pub const MAX_GLYPH_PAGE_SIZE: u32 = 16384;
-/// Largest glyph page side, in pixels: 8192 on wasm32, WebGPU's default
-/// `max_texture_dimension_2d`, past which a page could never upload (16384
-/// natively). A larger glyph is neither rasterized nor packed.
-#[cfg(target_arch = "wasm32")]
+/// Largest glyph page side, in pixels: 8192, the `max_texture_dimension_2d`
+/// of the default limits [`Gpu`](crate::canvas::gpu::Gpu) requests (and
+/// WebGPU's default), past which a page could never upload. A larger glyph
+/// is neither rasterized nor packed.
 pub const MAX_GLYPH_PAGE_SIZE: u32 = 8192;
 
 /// Which [`DrawList`] channel text lands in.
@@ -1175,6 +1169,22 @@ mod tests {
     fn a_glyph_beyond_the_page_cap_is_skipped() {
         let mut tr = renderer();
         let slot = tr.glyph('W', 40_000.0);
+        assert!(slot.bitmap.is_none());
+        assert!(slot.advance > 0.0);
+        assert_eq!(tr.page_count(), 0);
+    }
+
+    /// #430: a glyph whose page would exceed the default-limits device's
+    /// `max_texture_dimension_2d` (which `Gpu` requests) could never upload,
+    /// so it is neither rasterized nor packed.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_glyph_past_the_default_texture_limit_is_skipped() {
+        let mut tr = renderer();
+        let limit = wgpu::Limits::default().max_texture_dimension_2d;
+        let px = 10_400.0;
+        let m = tr.font.metrics('W', px);
+        assert!(m.width.max(m.height) as u32 + PADDING > limit);
+        let slot = tr.glyph('W', px);
         assert!(slot.bitmap.is_none());
         assert!(slot.advance > 0.0);
         assert_eq!(tr.page_count(), 0);

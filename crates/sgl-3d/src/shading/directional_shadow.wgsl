@@ -28,7 +28,8 @@ const DIRECTIONAL_SHADOW_NORMAL_BIAS:f32=2.5455844;
 // A cascade's rectangle in its layer: the whole layer.
 const DIRECTIONAL_SHADOW_BOUNDS:vec4<f32>=vec4(0.,0.,1.,1.);
 // view::cascades::SHADOW_CASCADE_OVERLAP's twin: the share of a cascade's
-// far bound that the next cascade overlaps and the shading blends across.
+// far bound's distance from the eye that the next cascade overlaps and the
+// shading blends across.
 const SHADOW_CASCADE_OVERLAP:f32=0.2;
 
 // The cascades in use, at most the frame's, so a loop over them ends
@@ -107,7 +108,9 @@ fn fetch_directional_shadow(light_id:u32,frag_position:vec3<f32>,surface_normal:
  let next_cascade_index=cascade_index+1u;
  if next_cascade_index<directional_shadow_cascades() {
   let this_far_bound=frame.shadow_cascades[cascade_index].far_bound;
-  let next_near_bound=(1.0-SHADOW_CASCADE_OVERLAP)*this_far_bound;
+  // view::cascades::next_near_bound: before the far bound even when it
+  // lies behind the eye.
+  let next_near_bound=this_far_bound-SHADOW_CASCADE_OVERLAP*abs(this_far_bound);
   if -view_z>=next_near_bound {
    let next_shadow=sample_directional_cascade(light_id,next_cascade_index,frag_position,surface_normal,frag_coord_xy,shadow_filtering);
    shadow=mix(shadow,next_shadow,(-view_z-next_near_bound)/(this_far_bound-next_near_bound));
