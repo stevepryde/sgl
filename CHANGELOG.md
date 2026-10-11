@@ -28,9 +28,10 @@ docs and specs the entry links.
   matches on `Ignored` add the arm.
 - `sgl-net` `NativeWebSocketClient::connect`: tried only the host's first
   resolved address (so `localhost` could be refused when `::1` came first),
-  and the TCP connect and HTTP upgrade each took a full `handshake_timeout`;
-  now each resolved address is tried in order within one
-  `handshake_timeout` covering the upgrade too. No game-code change needed.
+  host resolution was unbounded, and the TCP connect and HTTP upgrade each
+  took a full `handshake_timeout`; now each resolved address is tried in
+  order within one `handshake_timeout` covering resolution and the upgrade
+  too. No game-code change needed.
 - `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
   radius that is not positive (including NaN) now emits nothing. No
   game-code change needed.
