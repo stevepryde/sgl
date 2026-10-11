@@ -19,6 +19,24 @@ docs and specs the entry links.
   `SendError::Disconnected`; it now returns `UnknownConnection`, like every
   other server transport. A game that matched `Disconnected` from a server
   send should match `UnknownConnection`; otherwise no game-code change needed.
+- `sgl-post-fx` `TemporalAntiAliasing::execute`: the first frame for a
+  feature set sampled the colour through a filterable binding, failing
+  validation for an unfilterable colour such as `Rgba32Float` on WebGPU, and
+  copied +infinity to the output; it now loads the colour as later frames do,
+  clamped to [0, 65504], so negative colour and alpha become 0 on that frame.
+  No game-code change needed.
+- `sgl-3d` local-light shadows: a shadowed light with a large range at or
+  behind the camera overflowed its atlas slot size, panicking with overflow
+  checks or else taking the smallest slot; it now takes the largest slot.
+  No game-code change needed.
+- `sgl-2d` `UiFrame::dropdown`: on the first frame an opened popover was drawn,
+  nothing shielded the widgets under it, so they could hover or fire with a
+  row; the popover now blocks them from that frame. No game-code change
+  needed.
+- `sgl-core` `random::Rng::usize`: on wasm32 it reduced only 32 bits of the
+  draw, giving different values than native for the same seed; it now gives
+  native's values on every target. Browser builds that persisted values
+  derived from it see a different sequence; no game-code change needed.
 - `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
   light again on top of the background, so even a black glow brightened the
   fog; glow now adds only its own light dimmed by the fog in front of it, so
