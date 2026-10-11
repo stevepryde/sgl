@@ -438,6 +438,61 @@ fn swept_aabb_mirrors_across_the_x_axis() {
     );
 }
 
+/// Defect (#427): the sweep rounds its edges differently from
+/// `Aabb::overlaps`, so a body exactly touching a face (not overlapping)
+/// misses it and moves straight through. Oracle: the edges themselves — on
+/// every face, a body whose edge equals the face's moves toward it with
+/// contact at `t = 0`, and one a rounding gap away still makes contact,
+/// on that face, before it penetrates.
+#[test]
+fn swept_aabb_hits_a_touched_face_at_once_on_every_side() {
+    let case = (
+        aabb(),
+        vec2(0.1..3.0),
+        finite(-0.9..0.9),
+        finite(0.1..5.0),
+        finite(-5.0..5.0),
+    );
+    check(case, |(target, half, along, toward, lateral)| {
+        // Built resting on the target's top face, then rotated exactly
+        // (swaps and negations) onto each face in turn.
+        let body = Aabb {
+            center: Vec2::new(
+                target.center.x + along * target.half.x,
+                target.max().y + half.y,
+            ),
+            half,
+        };
+        let delta = Vec2::new(lateral, -toward);
+        let quarter = |v: Vec2| Vec2::new(-v.y, v.x);
+        let turn = |a: &Aabb| Aabb {
+            center: quarter(a.center),
+            half: Vec2::new(a.half.y, a.half.x),
+        };
+        let (mut body, mut target, mut delta, mut face) = (body, target, delta, Vec2::Y);
+        for _ in 0..4 {
+            if !body.overlaps(&target) {
+                let gap = (body.min() - target.max()).max(target.min() - body.max());
+                let gap = gap.dot(face.abs());
+                let hit = sweep_aabb(&body, delta, &target);
+                prop_assert!(hit.is_some(), "missed face {face} at gap {gap}");
+                let hit = hit.unwrap();
+                prop_assert_eq!(hit.normal, face);
+                if gap == 0.0 {
+                    prop_assert_eq!(hit.t.to_bits(), 0.0f32.to_bits());
+                } else {
+                    prop_assert!(hit.t * delta.dot(-face) <= gap * 1.0001, "t = {}", hit.t);
+                }
+            }
+            body = turn(&body);
+            target = turn(&target);
+            delta = quarter(delta);
+            face = quarter(face);
+        }
+        Ok(())
+    });
+}
+
 fn solids() -> impl Strategy<Value = Vec<Aabb>> {
     prop::collection::vec(
         (-8i32..8, -8i32..8, 1u8..3, 1u8..3).prop_map(|(x, y, hw, hh)| Aabb {

@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `sweep_aabb` (and `move_and_collide`, `snap_to_ground`): a body
+  exactly touching a collider at coordinates that round could miss it and
+  move straight through; now touching moving toward the face is a contact at
+  `t = 0`, as `Aabb::overlaps` agrees. No game-code change needed.
 - `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
   UDP and memory reported nothing for a connection the caller closed (UDP
   sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
