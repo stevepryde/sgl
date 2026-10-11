@@ -38,7 +38,7 @@ navigation and release-before-resume behavior. Poll while unfocused to drain
 releases/disconnects, but do not dispatch gameplay or menu actions then. Keep
 one owner per process: on macOS a controller's callbacks go to the owner that
 most recently connected it, so an older owner still alive gets no input from
-it. An owner's drop removes only callbacks it still holds, so replacing an
+it, even after the newer owner drops, until the controller reconnects. An owner's drop removes only callbacks it still holds, so replacing an
 owner keeps the new one's input even if the new one polled first.
 
 Try `cargo run -p sgl-input --example controllers` with a focused window. The
