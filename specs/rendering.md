@@ -56,7 +56,9 @@ Their CPU-side contracts are in [client](client.md).
 7. The renderer renders and reads back its offscreen scene without a
    window: a `Gpu` (device + queue, which a windowed `Context` derefs to)
    is enough for uploads, `render_scene`, `read_scene`, and `capture_scene`.
-   Only the swapchain blit needs a surface.
+   Only the swapchain blit needs a surface. `read_scene` and `capture_scene`
+   block until the GPU copy maps, which WebGPU cannot, so they and
+   `CaptureError` exist only in native builds.
 
 ## Acceptance
 

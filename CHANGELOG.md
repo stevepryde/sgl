@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Renderer::read_scene`, `Renderer::capture_scene` and
+  `CaptureError`, and `sgl-3d` `diagnostics::read`: a browser build compiled
+  them and hung the tab when called; they are now native-only, a compile
+  error on `wasm32`. No game-code changes for native games; a browser game
+  drops those calls.
 - `sgl-3d` glTF import, `deformation::MorphDelta::tangent`: a morphed
   vertex whose `TANGENT` lies along its normal (loaded as absent) got a
   non-finite delta, so `Scene::add_asset` refused the file with

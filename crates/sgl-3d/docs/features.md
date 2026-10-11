@@ -420,7 +420,8 @@ Environment and probe specular always apply. On top of them:
   `diagnostic_draws`, `diagnostic_view_times` and
   `take_dynamic_gi_reports` (`Diagnostics::dynamic_gi`: the dynamic GI
   volume's probes, rays, BVH visits and budget stride, by frame) return what
-  they observed. Configuration only:
+  they observed; `diagnostics::read` reads a target back, blocking, so
+  natively only. Configuration only:
   no environment variables or files. Shipping builds leave it off.
 
 ## Not provided

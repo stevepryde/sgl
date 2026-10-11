@@ -87,7 +87,7 @@ impl Gpu {
     }
 
     /// A device + queue from whatever adapter the host offers, with no
-    /// surface: for offscreen rendering, scene capture, and tests.
+    /// surface: for offscreen rendering, native scene capture, and tests.
     pub async fn headless_async() -> Result<Self, GpuError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = instance
