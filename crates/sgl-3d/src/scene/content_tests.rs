@@ -963,10 +963,11 @@ fn alpha_cutoffs_outside_gltfs_bound_are_refused() {
 }
 
 // Plausible defects: a core value outside its documented range (metallic,
-// roughness, clearcoat or clearcoat roughness outside glTF's 0..=1, a base
-// colour, emission or environment scale negative or not finite) accepted
-// when it is added or edited, so a NaN reaches the uniform and ray record
-// and poisons temporal history or a clearcoat above 1 adds energy; a value
+// roughness, clearcoat, clearcoat roughness or base alpha outside glTF's
+// 0..=1, a base colour, emission or environment scale negative or not
+// finite) accepted when it is added or edited, so a NaN reaches the uniform
+// and ray record and poisons temporal history or a clearcoat or blended
+// coverage above 1 adds energy; a value
 // on a bound refused; or a refused edit applied anyway. The oracles are
 // glTF 2.0's and KHR_materials_clearcoat's bounds and the refusal's
 // contract: nothing changes.
@@ -976,7 +977,7 @@ fn core_values_outside_their_bounds_are_refused() {
         return;
     };
     let mut scene = Scene::new(&device, &queue);
-    let invalid: [fn(&mut asset::Material); 8] = [
+    let invalid: [fn(&mut asset::Material); 9] = [
         |m| m.roughness = f32::NAN,
         |m| m.roughness = 1.01,
         |m| m.metallic = -0.1,
@@ -984,6 +985,7 @@ fn core_values_outside_their_bounds_are_refused() {
         |m| m.coat_roughness = f32::NAN,
         |m| m.base = [0.5, -0.1, 0.5, 1.],
         |m| m.base = [0.5, 0.5, 0.5, f32::NAN],
+        |m| m.base = [0.5, 0.5, 0.5, 1.01],
         |m| m.emissive = [f32::INFINITY, 0., 0.],
     ];
     for change in invalid {

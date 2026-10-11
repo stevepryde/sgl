@@ -83,8 +83,8 @@ pub struct Material {
     /// Whether this material casts directional shadows when its visibility group is enabled.
     /// Imported materials cast by default; games may opt out decorative inlays explicitly.
     pub casts_directional_shadow: bool,
-    /// Linear base color multiplier, including alpha, each finite and
-    /// nonnegative.
+    /// Linear base color multiplier, each channel finite and nonnegative,
+    /// and alpha in `0..=1`.
     pub base: [f32; 4],
     /// Linear emissive color with emissive strength already applied, each
     /// channel finite and nonnegative.

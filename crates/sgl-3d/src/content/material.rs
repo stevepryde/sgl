@@ -69,7 +69,8 @@ impl Default for NormalLayer {
 /// the textures it was added with stay as they were.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceMaterial {
-    /// Linear RGB base multiplier and alpha, each finite and nonnegative.
+    /// Linear RGB base multiplier, each channel finite and nonnegative, and
+    /// alpha in `0..=1`.
     pub base: [f32; 4],
     /// Linear RGB emission, each channel finite and nonnegative.
     pub emission: [f32; 3],
