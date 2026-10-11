@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `memory_duplex`: flushed unreliable messages the peer had not
+  polled counted against the sender's unreliable bounds, so `send` returned
+  `WouldBlock` and the peer later got the oldest; now only unflushed ones
+  count and an unpolled peer drops its oldest past the lane's bounds, as on
+  WebSocket and UDP. No game-code change needed.
 - `sgl-2d` `UiFrame::scroll_area_end`: one wheel tick scrolled every nested
   scroll area under the pointer; it now scrolls only the innermost hovered area
   with content to scroll, applied at its end (so it shows from the next frame,
