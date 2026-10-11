@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::screen_space_reflections`: on Metal (and Vulkan without
+  robust access) the screen's last column and row reconstructed a wrong
+  surface normal for their rays, offsetting and bouncing them; edge pixels now
+  take the same normal as the interior on every backend. No game-code change
+  needed.
 - `sgl-3d` `asset::load*`: a KHR material extension object (anisotropy,
   clearcoat, iridescence, sheen, diffuse transmission, transmission, volume,
   dispersion) carrying its own `extensions` property was refused as
