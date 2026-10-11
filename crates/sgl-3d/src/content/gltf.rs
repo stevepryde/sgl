@@ -27,8 +27,8 @@ pub struct LoadOptions<'a> {
     /// Maximum authored emissive strength, applied before the emissive color.
     /// `None` preserves authored intensity. A cap must be finite and nonnegative.
     pub emissive_strength_cap: Option<f32>,
-    /// Where each of the glTF's images comes from, asked once per image in
-    /// image order. `None` decodes every image.
+    /// Where each of the glTF's images a material map samples comes from,
+    /// asked once per such image in image order. `None` decodes each one.
     #[allow(clippy::type_complexity)]
     pub images: Option<&'a (dyn Fn(GltfImage<'_>) -> Result<ImageSource> + Sync)>,
     /// Which of the scene's mesh nodes load, asked once per mesh node with
@@ -161,6 +161,12 @@ pub enum Ignored {
     /// Material `material`'s `KHR_materials_specular` specular or specular
     /// colour texture: SGL3D takes the extension's factors alone so far.
     SpecularMap { material: usize },
+    /// Image `image` (an index into [`Asset::images`]), which no material
+    /// map SGL3D samples uses, such as an extension's texture source or an
+    /// ignored map's image: it is neither asked of
+    /// [`LoadOptions::images`], read nor decoded, and its entry is a
+    /// one-texel placeholder.
+    Image { image: usize },
 }
 
 /// The document in `bytes`, validated, and its buffers. glTF 2.0 5.17.2: a
@@ -184,23 +190,38 @@ fn import(bytes: &[u8], base: Option<&Path>) -> Result<(gltf::Document, Vec<gltf
     Ok((document, buffers))
 }
 
-/// `document`'s images, each from where `options.images` says, decoded
-/// where it says nothing. Bevy's glTF loader resolves each image's source
-/// as it loads (9d12036 `crates/bevy_gltf/src/loader/mod.rs` `load_image`):
-/// it decodes an embedded image and leaves an external one to its asset
-/// server, so the loader never decodes it. Here the game, which has no
-/// asset server, chooses for each image. A file's images resolve beside it
-/// (`base`).
+/// `document`'s images, each one `materials` sample from where
+/// `options.images` says, decoded where it says nothing. Bevy's glTF loader
+/// resolves each image's source as it loads (9d12036
+/// `crates/bevy_gltf/src/loader/mod.rs` `load_image`): it decodes an
+/// embedded image and leaves an external one to its asset server, so the
+/// loader never decodes it. Here the game, which has no asset server,
+/// chooses for each image. A file's images resolve beside it (`base`). An
+/// image no material samples is a placeholder, listed in `ignored`: glTF
+/// lets a loader leave out what an unsupported extension adds (glTF 2.0
+/// 5.17.1), such as a texture's `KHR_texture_basisu` or `EXT_texture_webp`
+/// source, which a loader without it replaces with the core `source`, and
+/// SGL3D never binds an ignored map's image.
 fn read_images(
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
     base: Option<&Path>,
     options: LoadOptions<'_>,
+    materials: &[Material],
+    ignored: &mut Vec<Ignored>,
 ) -> Result<Vec<Image>> {
+    let mut sampled = vec![false; document.images().len()];
+    for image in materials.iter().flat_map(sampled_images) {
+        sampled[image] = true;
+    }
     document
         .images()
         .map(|image| {
             let index = image.index();
+            if !sampled[index] {
+                ignored.push(Ignored::Image { image: index });
+                return Ok(Image::Rgba8(image::RgbaImage::new(1, 1)));
+            }
             let file = match image.source() {
                 gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => Some(uri),
                 _ => None,
@@ -238,6 +259,20 @@ fn read_images(
             }
         })
         .collect()
+}
+
+/// The images `material`'s maps sample: every one it names but an occlusion
+/// map's outside its metallic-roughness image, which SGL3D does not sample.
+fn sampled_images(material: &Material) -> Vec<usize> {
+    let mut images: Vec<usize> = material.texture_indices().into_iter().flatten().collect();
+    if let Some(occlusion) = material
+        .occlusion_texture
+        .filter(|_| !material.packed_occlusion())
+        && let Some(slot) = images.iter().position(|&image| image == occlusion)
+    {
+        images.swap_remove(slot);
+    }
+    images
 }
 
 /// A decoded 8-bit image as RGBA8.
@@ -296,10 +331,10 @@ fn decode(
             Ok(result)
         })
         .collect::<Result<Vec<_>>>()?;
+    let images = read_images(&document, buffers, base, options, &materials, &mut ignored)?;
     // glTF primitives may omit a material; retain the specification default.
     let default_material = materials.len();
     materials.push(Material::default());
-    let images = read_images(&document, buffers, base, options)?;
     let scene = document
         .default_scene()
         .or_else(|| document.scenes().next())

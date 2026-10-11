@@ -418,7 +418,8 @@ pub struct Asset {
     /// Materials addressed by [`CpuMesh::material`].
     pub materials: Vec<Material>,
     /// Images addressed by the materials' texture indices; colour-space
-    /// interpretation belongs to each channel.
+    /// interpretation belongs to each channel. A glTF image no sampled map
+    /// uses is a placeholder ([`Ignored::Image`]).
     pub images: Vec<Image>,
     /// What poses its deforming meshes, and its animation clips; empty when
     /// nothing deforms.
