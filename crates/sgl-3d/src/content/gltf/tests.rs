@@ -936,6 +936,29 @@ fn read_textured_material(material: serde_json::Value) -> Result<Material> {
     )
 }
 
+// Defects: a bump map without bumpFactor read as factor 0, so it changed
+// nothing, or a factor above 1 refused. The oracle is EXT_materials_bump's
+// schema (KhronosGroup/glTF#2339) and three.js's GLTFMaterialsBumpExtension:
+// bumpFactor defaults to 1, in 0..100.
+#[test]
+fn a_bump_factor_defaults_to_one_and_may_exceed_one() {
+    let bump = |extension: serde_json::Value| {
+        read_textured_material(serde_json::json!({
+            "extensions": {"EXT_materials_bump": extension}
+        }))
+    };
+    let plain = bump(serde_json::json!({"bumpTexture": {"index": 0}})).unwrap();
+    assert_eq!((plain.bump_texture, plain.bump_scale), (Some(2), 1.));
+    let strong = bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": 2.0})).unwrap();
+    assert_eq!(strong.bump_scale, 2.);
+    for refused in [-1.0, 101.0] {
+        assert!(
+            bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": refused})).is_err(),
+            "bumpFactor {refused} loaded"
+        );
+    }
+}
+
 // Defects: a clearcoat or iridescence texture's index taken for its image
 // (glTF's texture -> image indirection lost), or one map's texture read for
 // another's; a KHR default misread; the clearcoat normal map's scale lost;
@@ -1161,6 +1184,48 @@ fn sheen_and_diffuse_transmission_load_with_their_defaults() {
             "{unlit} loaded"
         );
     }
+}
+
+// Defects: a material extension object carrying its own `extensions` (or
+// `extras`) is refused, or its authored values are lost. The oracle is
+// glTF 2.0's glTFProperty schema, from which every KHR material extension's
+// schema derives, so each may hold both; and the authored values.
+#[test]
+fn material_extensions_with_their_own_extensions_load() {
+    let nested = |mut lobe: serde_json::Value| {
+        lobe["extensions"] = serde_json::json!({"EXT_vendor_note": {"note": 1}});
+        lobe["extras"] = serde_json::json!({"author": "fixture"});
+        lobe
+    };
+    let material = read_textured_material(serde_json::json!({"extensions": {
+        "KHR_materials_anisotropy": nested(serde_json::json!({"anisotropyStrength": 0.5})),
+        "KHR_materials_clearcoat": nested(serde_json::json!({"clearcoatFactor": 0.25})),
+        "KHR_materials_iridescence": nested(serde_json::json!({"iridescenceFactor": 0.75})),
+        "KHR_materials_sheen": nested(serde_json::json!({"sheenRoughnessFactor": 0.5})),
+        "KHR_materials_diffuse_transmission": nested(serde_json::json!({"diffuseTransmissionFactor": 0.25})),
+        "KHR_materials_transmission": nested(serde_json::json!({"transmissionFactor": 0.75})),
+        "KHR_materials_volume": nested(serde_json::json!({"thicknessFactor": 0.5})),
+        "KHR_materials_dispersion": nested(serde_json::json!({"dispersion": 0.25}))
+    }}))
+    .unwrap();
+    assert_eq!(
+        (
+            material.anisotropy_strength,
+            material.clearcoat,
+            material.iridescence,
+            material.sheen_roughness,
+        ),
+        (0.5, 0.25, 0.75, 0.5)
+    );
+    assert_eq!(
+        (
+            material.diffuse_transmission,
+            material.transmission,
+            material.thickness,
+            material.dispersion,
+        ),
+        (0.25, 0.75, 0.5, 0.25)
+    );
 }
 
 // Defects: a primitive without TEXCOORD_0 loads though its material samples

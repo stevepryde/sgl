@@ -1,7 +1,7 @@
 //! A material's `KHR_materials_diffuse_transmission`: the diffuse light it
 //! passes to its other side.
 use super::super::super::asset::Result;
-use super::{color_factor, extension_texture, unit_factor};
+use super::{GLTF_PROPERTY_KEYS, color_factor, extension_texture, unit_factor};
 
 /// A material's diffuse transmission (KHR_materials_diffuse_transmission).
 pub(super) struct DiffuseTransmission<'a> {
@@ -41,8 +41,8 @@ pub(super) fn read_diffuse_transmission<'a>(
                 | "diffuseTransmissionTexture"
                 | "diffuseTransmissionColorFactor"
                 | "diffuseTransmissionColorTexture"
-                | "extras"
-        ) {
+        ) && !GLTF_PROPERTY_KEYS.contains(&key.as_str())
+        {
             return Err(error(&format!("unsupported property {key}")).into());
         }
     }

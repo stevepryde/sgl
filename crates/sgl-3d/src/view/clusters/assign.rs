@@ -20,7 +20,10 @@
 //! their planes in view space. Bevy projects the center to find them, which
 //! mirrors a center behind the camera and misses clusters its sphere
 //! reaches in front, and it cuts a center between the camera and the near
-//! plane at the camera's plane, which is not conservative.
+//! plane at the camera's plane, which is not conservative. Under an
+//! orthographic camera a light's bounds keep their view z behind the camera,
+//! where Bevy clamps them in front for every projection, which drops a light
+//! behind the camera from the clusters of a near plane that lies behind it.
 use super::ClusterConfig;
 use super::volumes::{HalfSpace, Sphere, decal_sphere, frustum, intersects_sphere};
 use crate::content::decal::Decal;
@@ -462,9 +465,12 @@ fn cluster_space_clusterable_object_aabb(
     let mut view_min = view_center - Vec3::splat(radius);
     let mut view_max = view_center + Vec3::splat(radius);
     // Keep view z in front of the camera, where perspective keeps the axes'
-    // directions.
-    view_min.z = view_min.z.min(-f32::MIN_POSITIVE);
-    view_max.z = view_max.z.min(-f32::MIN_POSITIVE);
+    // directions. An orthographic camera keeps them everywhere, and its near
+    // plane may lie behind it, so its view z stays as it is.
+    if clip_from_view.w_axis.w != 1.0 {
+        view_min.z = view_min.z.min(-f32::MIN_POSITIVE);
+        view_max.z = view_max.z.min(-f32::MIN_POSITIVE);
+    }
     // The nearer and farther z at the minimum and maximum x and y: under
     // perspective either may be the wider on screen.
     let corners = [

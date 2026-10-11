@@ -51,6 +51,10 @@ pub enum SceneError {
     TooManyLightmapCharts { mesh: usize },
     /// A pose is not finite or not invertible.
     InvalidPose,
+    /// A material's metallic, roughness, clearcoat, clearcoat roughness or
+    /// base alpha is outside 0..=1, or a channel of its base colour or
+    /// emission or its environment scale is negative or not finite.
+    InvalidMaterialFactors,
     /// Anisotropy strength is outside 0..=1 or its rotation is not finite.
     InvalidAnisotropy,
     /// An anisotropic material's mesh lacks authored tangent frames.
@@ -212,6 +216,9 @@ impl std::fmt::Display for SceneError {
                 );
             }
             Self::InvalidPose => "a pose must be finite and invertible",
+            Self::InvalidMaterialFactors => {
+                "metallic, roughness, clearcoat, clearcoat roughness and base alpha must be in 0..1, and base colour, emission and environment scale finite and nonnegative"
+            }
             Self::InvalidAnisotropy => {
                 "anisotropy strength must be finite in 0..1 and rotation finite"
             }

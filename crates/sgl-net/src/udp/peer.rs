@@ -63,6 +63,9 @@ pub struct Peer {
     pub last_receive_ms: u64,
     pub last_send_ms: u64,
     pub last_handshake_send_ms: u64,
+    /// Confirms a client sent for the cookie it holds since it last asked
+    /// for one.
+    pub confirms_sent: u32,
     pub rtt: RttEstimator,
     pub verified_cookie_epoch: Option<u64>,
     pub close_grace: Option<CloseGrace>,
@@ -92,6 +95,7 @@ impl Peer {
             last_receive_ms: now_ms,
             last_send_ms: now_ms,
             last_handshake_send_ms: now_ms,
+            confirms_sent: 0,
             rtt: RttEstimator::new(),
             verified_cookie_epoch: None,
             close_grace: None,

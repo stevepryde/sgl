@@ -109,21 +109,25 @@ fn a_fixed_point_moves_by_whole_texels_as_the_camera_moves_and_turns() {
 // Plausible defects: slice corners taken at the wrong depths or from the
 // wrong projection, a diameter or centre that leaves part of a slice outside
 // its map, a depth range that cuts receivers off, far bounds that leave a gap
-// before the shadow distance, or an overlap the next cascade does not cover
-// where the shading blends into it. The oracle draws points the camera sees,
-// by projecting candidates through its own view and projection, and checks
-// that the cascade the shading selects for each (the first whose far bound
-// lies beyond its view depth) holds it, as does the next one across the
-// overlap.
+// before the shadow distance, an overlap the next cascade does not cover
+// where the shading blends into it, a first cascade that starts at the eye
+// when an orthographic near plane lies behind it, or a next cascade that
+// starts after a far bound behind the eye. The oracle draws points the
+// camera sees, by projecting candidates through its own view and projection,
+// and checks that the cascade the shading selects for each (the first whose
+// far bound lies beyond its view depth) holds it, as does the next one
+// across the overlap.
 #[wasm_bindgen_test(unsupported = test)]
 fn every_visible_point_within_the_shadow_distance_falls_inside_its_cascade() {
     // Each camera with the region its view space holds at a view depth d:
-    // x within centre.x ± (slope.x d + half.x), y likewise.
+    // x within centre.x ± (slope.x d + half.x), y likewise, beyond the view
+    // depth of its near plane.
     struct Camera {
         projection: Mat4,
         slope: DVec3,
         half: DVec3,
         centre: DVec3,
+        near: f64,
     }
     let perspective = |fov: f32, aspect: f32, near: f32| {
         let tan = f64::from((fov / 2.).tan());
@@ -132,6 +136,7 @@ fn every_visible_point_within_the_shadow_distance_falls_inside_its_cascade() {
             slope: DVec3::new(tan * f64::from(aspect), tan, 0.),
             half: DVec3::ZERO,
             centre: DVec3::ZERO,
+            near: f64::from(near),
         }
     };
     let cameras = [
@@ -143,6 +148,23 @@ fn every_visible_point_within_the_shadow_distance_falls_inside_its_cascade() {
             slope: DVec3::ZERO,
             half: DVec3::new(40., 22.5, 0.),
             centre: DVec3::new(10., 2.5, 0.),
+            near: 0.5,
+        },
+        // Its near plane 40 m behind the eye.
+        Camera {
+            projection: camera::rh::proj::directx::orthographic(-40., 40., -25., 25., 200., -40.),
+            slope: DVec3::ZERO,
+            half: DVec3::new(40., 25., 0.),
+            centre: DVec3::ZERO,
+            near: -40.,
+        },
+        // 400 m behind it, so that cascades end behind the eye too.
+        Camera {
+            projection: camera::rh::proj::directx::orthographic(-40., 40., -25., 25., 200., -400.),
+            slope: DVec3::ZERO,
+            half: DVec3::new(40., 25., 0.),
+            centre: DVec3::ZERO,
+            near: -400.,
         },
     ];
     let directions = [
@@ -169,7 +191,7 @@ fn every_visible_point_within_the_shadow_distance_falls_inside_its_cascade() {
                     // A candidate in the camera's view space, a little wider
                     // than what it sees, kept when the camera's clip volume
                     // holds it.
-                    let depth = sequence.between(0., f64::from(shadow.distance));
+                    let depth = sequence.between(camera.near, f64::from(shadow.distance));
                     let reach = (camera.slope * depth + camera.half) * 1.2;
                     let candidate = DVec4::new(
                         camera.centre.x + sequence.between(-reach.x, reach.x),
@@ -192,8 +214,7 @@ fn every_visible_point_within_the_shadow_distance_falls_inside_its_cascade() {
                         holds(&cascades[index], world),
                         "{count} cascades, light {direction:?}: cascade {index} misses a point at depth {depth}"
                     );
-                    let overlap = (1. - f64::from(SHADOW_CASCADE_OVERLAP))
-                        * f64::from(cascades[index].far_bound);
+                    let overlap = f64::from(next_near_bound(cascades[index].far_bound));
                     if index + 1 < cascades.len() && depth >= overlap {
                         assert!(
                             holds(&cascades[index + 1], world),
