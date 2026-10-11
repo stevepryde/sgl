@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use super::super::asset::{CpuMesh, Material, Result, Vertex, tangent_off_normal};
 use super::super::deformation::{MeshDeformation, MorphTarget};
 use super::check_accessor;
-use super::rig::{Rigging, mesh_morph_target_count, read_influences, read_morph_targets};
+use super::rig::{Rigging, read_influences, read_morph_targets};
 
 /// Whether SGL3D leaves out a vertex attribute (`Ignored::Attribute`):
 /// nothing it draws reads a third UV set, a second colour set or an
@@ -103,7 +103,7 @@ pub(super) fn batch(meshes: Vec<(BatchKey, CpuMesh)>, materials: usize) -> Vec<C
 pub(super) fn read_node(
     node: gltf::Node<'_>,
     parent: Mat4,
-    buffers: &[gltf::buffer::Data],
+    (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
     (default_material, materials): (usize, &[Material]),
     rigging: &mut Rigging,
     meshes: &mut Vec<(BatchKey, CpuMesh)>,
@@ -139,7 +139,7 @@ pub(super) fn read_node(
         }
         // Every primitive with morph targets has the mesh's, which the
         // node's one set of weights drives; one without is unmorphed.
-        let mesh_targets = mesh_morph_target_count(&mesh);
+        let mesh_targets = rigging.mesh_targets(&mesh);
         for primitive in mesh.primitives() {
             let label = format!("mesh {} primitive {}", mesh.index(), primitive.index());
             let target_count = primitive.morph_targets().count();
@@ -183,7 +183,7 @@ pub(super) fn read_node(
                     types,
                     shapes,
                     vertices.filter(|_| semantic != Semantic::Positions),
-                    buffers,
+                    buffer_bytes,
                 )?;
             }
             if let Some(indices) = primitive.indices() {
@@ -193,7 +193,7 @@ pub(super) fn read_node(
                     &[U8, U16, U32],
                     &[Scalar],
                     None,
-                    buffers,
+                    buffer_bytes,
                 )?;
             }
             for (target, displacements) in primitive.morph_targets().enumerate() {
@@ -211,7 +211,7 @@ pub(super) fn read_node(
                         &[F32],
                         &[Dimensions::Vec3],
                         vertices,
-                        buffers,
+                        buffer_bytes,
                     )?;
                 }
             }
@@ -368,7 +368,7 @@ pub(super) fn read_node(
         read_node(
             child,
             global,
-            buffers,
+            (buffers, buffer_bytes),
             (default_material, materials),
             rigging,
             meshes,
