@@ -1,7 +1,7 @@
 //! A material's `KHR_materials_transmission`, `KHR_materials_volume` and
 //! `KHR_materials_dispersion`: the light it transmits from behind it.
 use super::super::super::asset::Result;
-use super::extension_texture;
+use super::{GLTF_PROPERTY_KEYS, extension_texture};
 
 /// A material extension's number at `key` of `value`, `default` where it is
 /// absent, which `valid` must hold for; `error` words a refusal.
@@ -22,8 +22,8 @@ fn number(
 }
 
 /// Refuses a property of `value`, an extension's object, that `known` does
-/// not list (or `extras`), as SGL3D's other material extensions do;
-/// `error` words the refusal.
+/// not list (or glTFProperty's `extensions` and `extras`), as SGL3D's other
+/// material extensions do; `error` words the refusal.
 fn known_properties(
     value: &serde_json::Value,
     known: &[&str],
@@ -34,7 +34,7 @@ fn known_properties(
         .ok_or_else(|| error("extension must be an object"))?;
     match object
         .keys()
-        .find(|key| *key != "extras" && !known.contains(&key.as_str()))
+        .find(|key| !GLTF_PROPERTY_KEYS.contains(&key.as_str()) && !known.contains(&key.as_str()))
     {
         Some(key) => Err(error(&format!("unsupported property {key}")).into()),
         None => Ok(()),

@@ -18,9 +18,9 @@ use params::ParamBlock;
 use std::collections::HashMap;
 use std::ops::Range;
 use validate::{
-    validate_alpha, validate_anisotropy, validate_diffuse_transmission, validate_iridescence,
-    validate_normal_layers, validate_reflectance, validate_shader, validate_sheen,
-    validate_transmission,
+    validate_alpha, validate_anisotropy, validate_core, validate_diffuse_transmission,
+    validate_iridescence, validate_normal_layers, validate_reflectance, validate_shader,
+    validate_sheen, validate_transmission,
 };
 
 /// The parameter blocks of `values`' shader, of its size, where it has one.
@@ -365,6 +365,7 @@ impl Materials {
                 }
             }
             let values = SurfaceMaterial::authored(material);
+            validate_core(&values)?;
             validate_anisotropy(&values, 0)?;
             validate_alpha(&values)?;
             validate_reflectance(&values)?;
@@ -553,6 +554,7 @@ impl Materials {
     ) -> Result<(), SceneError> {
         validate_shader(&values, shaders)?;
         let material = self.slots.get_mut(id).ok_or(SceneError::UnknownMaterial)?;
+        validate_core(&values)?;
         validate_anisotropy(&values, material.untangented)?;
         validate_alpha(&values)?;
         validate_reflectance(&values)?;
