@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-input` `Gamepads` on macOS: replacing a live owner in place
+  (`pads = Gamepads::new()?`) turned background event delivery off, losing
+  releases while unfocused; it now stays on until the last owner drops. No
 - `sgl-2d` `Ui::begin` / `UiFrame::end`: a release and a new press in one
   frame (button still down) dropped the press's held button, scrollbar,
   number-field or splitter drag; they now count as release then press, so the
