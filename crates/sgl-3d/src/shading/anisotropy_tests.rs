@@ -211,9 +211,15 @@ fn vanished_tangent_shades_absent_tangent_frame() {
         DVec3::new(0.3, -0.5, 0.8).normalize(),
         DVec3::new(-0.6, 0.2, -0.77).normalize(),
     ] {
-        // The tangent: zero with no handedness, as object_tangent and an
-        // all-vanished ray hit give, and parallel to the normal with each.
-        for tangent in [[0.; 4], [n.x, n.y, n.z, 1.], [-n.x, -n.y, -n.z, -1.]] {
+        // The tangent: zero with no handedness, as a game's vertex function
+        // may return it; zero with its handedness, as object_tangent and an
+        // all-vanished ray hit give it; and parallel to the normal with each.
+        for tangent in [
+            [0.; 4],
+            [0., 0., 0., -1.],
+            [n.x, n.y, n.z, 1.],
+            [-n.x, -n.y, -n.z, -1.],
+        ] {
             cases.push([
                 [n.x as f32, n.y as f32, n.z as f32, 0.],
                 tangent.map(|value| value as f32),

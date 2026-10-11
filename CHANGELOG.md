@@ -15,11 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d` anisotropic materials: a tangent that skinning or morphing turned
-  along its normal, or a ray hit whose vertex tangents all vanished, shaded
-  NaN; it now takes an arbitrary tangent in the normal's plane with
-  handedness +1, as a vertex without a tangent does. No game-code change
-  needed.
+- `sgl-3d` anisotropic materials: a tangent that skinning or morphing
+  cancelled or turned along its normal, or a ray hit whose vertex tangents
+  all vanished, shaded NaN; it now takes an arbitrary tangent in the
+  normal's plane, keeping its handedness (+1 where it has none), as a vertex
+  without a tangent does. No game-code change needed.
 - `sgl-post-fx` `TemporalAntiAliasing::execute`: the first frame for a
   feature set sampled the colour through a filterable binding, failing
   validation for an unfilterable colour such as `Rgba32Float` on WebGPU, and

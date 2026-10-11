@@ -87,9 +87,12 @@ fn skin_normals(model:mat4x4<f32>,normal:vec3<f32>)->vec3<f32> {
   let model=skin_model(vertex_index);
   position=(model*vec4(position,1.)).xyz;
   normal=skin_normals(model,normal);
-  if any(tangent!=vec4(0.)) {
-   tangent=vec4(normalize(mat3x3<f32>(model[0].xyz,model[1].xyz,model[2].xyz)*tangent.xyz),tangent.w);
-  }
+  // Bevy guards on the rest tangent, which the packed frame never leaves
+  // zero; a tangent the morphs cancel or a singular skin collapses stays
+  // zero here instead, keeping its handedness, and shading takes an absent
+  // tangent's frame for it (pbr_tangent_frame).
+  let skinned=mat3x3<f32>(model[0].xyz,model[1].xyz,model[2].xyz)*tangent.xyz;
+  tangent=vec4(select(vec3(0.),normalize(skinned),dot(skinned,skinned)>0.),tangent.w);
  }
  store_v3(dispatch.positions+vertex_index*DEFORMED_POSITION_WORDS,position);
  let tangent_frame=dispatch.normals+vertex_index*DEFORMED_NORMAL_WORDS;
