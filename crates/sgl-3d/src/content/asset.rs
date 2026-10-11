@@ -53,7 +53,8 @@ pub struct Vertex {
     /// A mesh's vertices may name at most 65,536 distinct bounds.
     pub lightmap_bounds: [f32; 4],
     /// Unit tangent XYZ and bitangent handedness W after node transforms.
-    /// Zero means absent for legacy isotropic geometry; anisotropy requires a valid frame.
+    /// Zero means absent for legacy isotropic geometry, and for an imported
+    /// tangent along its normal; anisotropy requires a valid frame.
     /// Made perpendicular to the normal and unit, then kept within 0.01°.
     pub tangent: [f32; 4],
 }

@@ -10,7 +10,7 @@ use gltf::accessor::{DataType, Dimensions};
 use super::asset::{Asset, Material, Result};
 use super::images::Image;
 use material::read_material;
-use meshes::{batch, read_node};
+use meshes::{batch, ignored_attribute, read_node};
 use rig::Rigging;
 
 mod material;
@@ -167,6 +167,15 @@ pub enum Ignored {
     /// [`LoadOptions::images`], read nor decoded, and its entry is a
     /// one-texel placeholder.
     Image { image: usize },
+    /// Vertex attribute `name` of mesh `mesh`'s primitive `primitive`,
+    /// which SGL3D does not read: a third or later UV set (`TEXCOORD_2`
+    /// on), a second or later colour set (`COLOR_1` on) or an
+    /// application-specific one (`_NAME`).
+    Attribute {
+        mesh: usize,
+        primitive: usize,
+        name: String,
+    },
 }
 
 /// The document in `bytes`, validated, and its buffers. glTF 2.0 5.17.2: a
@@ -332,6 +341,20 @@ fn decode(
         })
         .collect::<Result<Vec<_>>>()?;
     let images = read_images(&document, buffers, base, options, &materials, &mut ignored)?;
+    for mesh in document.meshes() {
+        for primitive in mesh.primitives() {
+            ignored.extend(
+                primitive
+                    .attributes()
+                    .filter(|(semantic, _)| ignored_attribute(semantic))
+                    .map(|(semantic, _)| Ignored::Attribute {
+                        mesh: mesh.index(),
+                        primitive: primitive.index(),
+                        name: semantic.to_string(),
+                    }),
+            );
+        }
+    }
     // glTF primitives may omit a material; retain the specification default.
     let default_material = materials.len();
     materials.push(Material::default());

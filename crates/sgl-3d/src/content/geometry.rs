@@ -33,7 +33,11 @@ pub fn obstructed_distance(triangles: &[[Vec3; 3]], origin: Vec3, ray: Vec3, max
         let e2 = *c - *a;
         let p = ray.cross(e2);
         let det = e1.dot(p);
-        if det.abs() < 1e-6 {
+        // |det| is |e1 x e2| times the cosine between the unit ray and the
+        // triangle's normal, so the cutoff scales with the edges and misses
+        // the same rays at any size: a degenerate triangle, or a ray within
+        // about 0.00006° of a right-angled triangle's plane.
+        if det.abs() <= 1e-6 * e1.length() * e2.length() {
             continue;
         }
         let inv = 1.0 / det;
@@ -100,5 +104,19 @@ mod tests {
             obstructed_distance(&faces, Vec3::new(2., 2., 0.), Vec3::Z, 10.),
             10.
         );
+    }
+
+    // Defect: a cutoff on the determinant that ignores the triangle's size,
+    // dropping every hit on a small one. A ray head-on through a triangle
+    // with half-millimetre legs in the plane z = 2 hits it 2 units away.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_millimetre_triangle_is_hit_head_on() {
+        let faces = [[
+            Vec3::new(0., 0., 2.),
+            Vec3::new(5e-4, 0., 2.),
+            Vec3::new(0., 5e-4, 2.),
+        ]];
+        let origin = Vec3::new(1e-4, 1e-4, 0.);
+        assert!((obstructed_distance(&faces, origin, Vec3::Z, 10.) - 2.).abs() < 1e-6);
     }
 }

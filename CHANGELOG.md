@@ -22,6 +22,16 @@ docs and specs the entry links.
   default is now 0.95 and such a frame takes the current frame's radiance.
   A game that relied on 1.0 sets it
   explicitly; otherwise no game-code change needed (SGL3D already used 0.95).
+- `sgl-3d` `geometry::obstructed_distance`: its absolute determinant cutoff
+  missed every hit on a triangle with sub-millimetre edges and grazing hits
+  on centimetre ones; the cutoff now scales with the triangle's edges, so
+  small triangles are hit like large ones. No game-code change needed.
+- `sgl-3d` glTF import and `Ignored::Attribute` (new): a `TEXCOORD_2`+,
+  `COLOR_1`+ or `_NAME` attribute, or a `TANGENT` along its normal on a
+  material without anisotropy, failed the load; the attribute is now left
+  out and listed in `Asset::ignored`, and the tangent is absent (zero). A
+  game matching `Ignored` exhaustively adds an arm for `Attribute`;
+  otherwise no game-code change needed.
 - `sgl-3d` glTF import: a sparse accessor without a buffer view declaring a
   huge count aborted the process; the load now fails with an error naming
   it when an accessor's count differs from what glTF requires (POSITION's
