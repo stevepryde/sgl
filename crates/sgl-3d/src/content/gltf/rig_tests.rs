@@ -621,6 +621,21 @@ fn malformed_accessors_are_rejected() {
     }
 }
 
+// Plausible defect: two keyframes at one time, which glTF forbids (a
+// sampler's input is strictly increasing), loaded, so a game interpolating
+// over the pair divides by a zero span.
+#[wasm_bindgen_test(unsupported = test)]
+fn equal_keyframe_times_are_rejected() {
+    let error = load_slice(&rigged(|document, buffer| {
+        let times = buffer.floats(&[1., 1.], "SCALAR", 1);
+        document["animations"][0]["samplers"][0]["input"] = json!(times);
+    }))
+    .err()
+    .expect("equal keyframe times were accepted")
+    .to_string();
+    assert!(error.contains("animation 0"), "{error}");
+}
+
 // Plausible defect: an embedded image's buffer view reaching past its
 // buffer handed to gltf's image decoding, which slices the buffer with it
 // unchecked and panics.
