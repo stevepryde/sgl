@@ -930,9 +930,11 @@ impl NativeWebSocketClient {
             .and_then(|literal| literal.strip_suffix(']'))
             .unwrap_or(host);
         let port = request.uri().port_u16().unwrap_or(80);
-        // One budget covers every address attempt and the HTTP upgrade.
+        let addrs = (host, port).to_socket_addrs()?;
+        // One budget, starting after resolution, covers every address
+        // attempt and the HTTP upgrade.
         let deadline = Instant::now() + config.handshake_timeout;
-        let stream = connect_first_reachable((host, port).to_socket_addrs()?, deadline)?;
+        let stream = connect_first_reachable(addrs, deadline)?;
         stream.set_nonblocking(true)?;
         let shared = SharedPeer::new(
             config.identity.magic,
@@ -1227,7 +1229,8 @@ mod tests {
         let live = TcpListener::bind("127.0.0.1:0").expect("bind live port");
         let stream = connect_first_reachable(
             [refused, live.local_addr().expect("live addr")],
-            Instant::now() + Duration::from_secs(2),
+            // Windows can spend about 2 s retrying before it reports a refusal.
+            Instant::now() + MAX_WEBSOCKET_HANDSHAKE_TIMEOUT,
         )
         .expect("fallback reaches the live address");
         let (_, peer) = live.accept().expect("live listener accepts");
