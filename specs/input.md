@@ -8,7 +8,8 @@ This boundary was requested while fixing Detonator Squad's macOS controller path
    and Gilrs on Windows/Linux. It must not require Steam or rendering. The macOS
    owner must be created/polled/dropped on the main thread, with native callbacks
    removed before their owned elements are released. It must receive releases
-   while unfocused and restore process-local monitoring preferences on drop.
+   while unfocused and restore process-local monitoring preferences when the
+   last live owner drops, so an owner replaced in place keeps them.
 2. **Input.** It must expose face buttons by position, D-pad, shoulders, lower
    triggers as digital buttons, stick clicks, menu/options/home when available,
    and both sticks. Stick axes must use -1..1 with positive Y up. A press and
