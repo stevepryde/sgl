@@ -12,6 +12,13 @@ use glam::{Mat4, UVec3, Vec3};
 /// Cells at most: 256 KiB of cell records.
 const MAX_CELLS: u32 = 1 << 15;
 
+/// The farthest world coordinate the grid covers: a quarter of f32's range,
+/// so the extent of bounds clamped to it, with its margin, and the grid's
+/// origin and scale stay finite. A box reaching past it, or one whose world
+/// bounds overflow f32 (a rotated box nearly as wide as f32 allows), covers
+/// the grid only to here.
+const REACH: f32 = f32::MAX / 4.;
+
 /// One cell's record in `ProbeGrid::words`: its list's first index into
 /// `words` and its probe count. probe_grid.wgsl reads it as
 /// PROBE_GRID_CELL_WORDS words, the fields at PROBE_GRID_CELL_FIRST and
@@ -55,7 +62,11 @@ impl ProbeGrid {
         if influences.is_empty() {
             return Self::empty();
         }
-        let bounds: Vec<[Vec3; 2]> = influences.iter().map(world_bounds).collect();
+        let reach = Vec3::splat(REACH);
+        let bounds: Vec<[Vec3; 2]> = influences
+            .iter()
+            .map(|influence| world_bounds(influence).map(|b| b.clamp(-reach, reach)))
+            .collect();
         let (min, max) = bounds.iter().fold(
             (Vec3::INFINITY, Vec3::NEG_INFINITY),
             |(min, max), [lo, hi]| (min.min(*lo), max.max(*hi)),
@@ -67,12 +78,13 @@ impl ProbeGrid {
         // collection's cell positive, nor than f32's spacing at the bounds,
         // which keeps it positive when a tiny box far from the origin has
         // no extent in f32, nor below the smallest normal f32, where a
-        // sub-picometre box at the origin underflows both.
-        let mut cell = (extent.x * extent.y * extent.z / MAX_CELLS as f32)
-            .cbrt()
-            .max(extent.max_element() / MAX_CELLS as f32)
-            .max(magnitude * f32::EPSILON)
-            .max(f32::MIN_POSITIVE);
+        // sub-picometre box at the origin underflows both. Each axis's cube
+        // root is taken first, so the volume cannot overflow.
+        let mut cell = (extent.x.cbrt() * extent.y.cbrt() * extent.z.cbrt()
+            / (MAX_CELLS as f32).cbrt())
+        .max(extent.max_element() / MAX_CELLS as f32)
+        .max(magnitude * f32::EPSILON)
+        .max(f32::MIN_POSITIVE);
         // A cell lists every probe whose bounds, widened by `margin`, overlap
         // it, so rounding in the GPU's local transform and cell arithmetic
         // cannot move a point a probe reaches into a cell that omits it.
@@ -317,6 +329,59 @@ mod tests {
                 &[0],
                 "{center} {half}"
             );
+        }
+    }
+
+    // Defect: the cell volume overflows f32 for a box wider than about 7e12
+    // on each axis, or a box's world bounds overflow when it is rotated or
+    // nearly as wide as f32 allows, so the origin or scale is not finite and
+    // probe_grid.wgsl's lookup (NaN cells) finds no probe. Independent
+    // signal: points inside the box, found as probe_grid.wgsl finds them,
+    // land in a cell of the grid that lists the probe.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_huge_box_is_listed_where_it_reaches() {
+        for (rotation, center, half) in [
+            (Quat::IDENTITY, Vec3::ZERO, 1e13),
+            (Quat::IDENTITY, Vec3::new(3e12, -1e12, 0.), 1e13),
+            (Quat::IDENTITY, Vec3::ZERO, f32::MAX / 2.),
+            (Quat::from_rotation_y(0.7), Vec3::ZERO, 1e38),
+        ] {
+            let world_to_local = Mat4::from_rotation_translation(rotation, center).inverse();
+            let influence = SpecularProbeBox {
+                min: Vec3::splat(-half),
+                max: Vec3::splat(half),
+            };
+            let grid = ProbeGrid::new(&[(world_to_local, influence)]);
+            assert!(
+                grid.origin.is_finite() && grid.scale.is_finite() && grid.scale > 0.,
+                "{half}: origin {} scale {}",
+                grid.origin,
+                grid.scale
+            );
+            let records: &[GridCell] = bytemuck::cast_slice(
+                &grid.words[..CELL_WORDS * grid.size.element_product() as usize],
+            );
+            for corner in 0..9 {
+                let local = if corner == 8 {
+                    Vec3::ZERO
+                } else {
+                    let pick = glam::BVec3::new(corner & 1 != 0, corner & 2 != 0, corner & 4 != 0);
+                    Vec3::select(pick, Vec3::splat(half / 4.), Vec3::splat(-half / 4.))
+                };
+                let point = world_to_local.inverse().transform_point3(local);
+                let cell = grid.coordinates(point);
+                assert!(
+                    cell.cmpge(Vec3::ZERO).all() && cell.cmplt(grid.size.as_vec3()).all(),
+                    "{half}: {point} is in cell {cell} outside {}",
+                    grid.size
+                );
+                let GridCell { first, count } = records[grid.flatten(cell.as_uvec3())];
+                assert_eq!(
+                    &grid.words[first as usize..(first + count) as usize],
+                    &[0],
+                    "{half}: {point}"
+                );
+            }
         }
     }
 }

@@ -141,7 +141,7 @@ impl std::fmt::Display for ProbeError {
 impl std::error::Error for ProbeError {}
 
 fn validate_box(b: SpecularProbeBox, what: &'static str) -> Result<(), ProbeError> {
-    if !b.min.is_finite() || !b.max.is_finite() || !b.min.cmplt(b.max).all() {
+    if !b.min.is_finite() || !(b.max - b.min).is_finite() || !b.min.cmplt(b.max).all() {
         return Err(ProbeError::InvalidProbe(what));
     }
     Ok(())
@@ -174,14 +174,14 @@ impl BakedSpecularProbe {
                 "transform must be a rigid rotation and translation",
             ));
         }
-        validate_box(self.influence, "influence must have positive extent")?;
+        validate_box(self.influence, "influence must have positive, finite extent")?;
         if !self.blend.is_finite() || self.blend.min_element() < 0. {
             return Err(ProbeError::InvalidProbe(
                 "blend distances must be finite and nonnegative",
             ));
         }
         if let Some(proxy) = self.proxy {
-            validate_box(proxy, "proxy must have positive extent")?;
+            validate_box(proxy, "proxy must have positive, finite extent")?;
             let local = m.transform_point3(self.center);
             if !local.cmpge(proxy.min).all() || !local.cmple(proxy.max).all() {
                 return Err(ProbeError::InvalidProbe(
