@@ -138,8 +138,11 @@ impl Atlas {
         self.seen.insert(light, frame);
         let quadrant_size = self.size >> 1;
         let smallest_subdivision = *SUBDIVISIONS.iter().min().unwrap();
-        let wanted = (quadrant_size as f32 * coverage.max(0.)).min(u32::MAX as f32) as u32;
-        let desired_fit = (quadrant_size / smallest_subdivision).min(wanted.next_power_of_two());
+        // Capped at the largest slot before rounding up, which a light at or
+        // behind the camera would otherwise overflow.
+        let largest = quadrant_size / smallest_subdivision;
+        let wanted = (quadrant_size as f32 * coverage.max(0.)).min(largest as f32) as u32;
+        let desired_fit = wanted.next_power_of_two().min(largest);
         // The quadrants it fits, and the best size among them.
         let mut valid = Vec::with_capacity(4);
         let mut best_size = None;

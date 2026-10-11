@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` local-light shadows: a shadowed light with a large range at or
+  behind the camera overflowed its atlas slot size, panicking with overflow
+  checks or else taking the smallest slot; it now takes the largest slot.
+  No game-code change needed.
 - `sgl-2d` `UiFrame::dropdown`: on the first frame an opened popover was drawn,
   nothing shielded the widgets under it, so they could hover or fire with a
   row; the popover now blocks them from that frame. No game-code change
