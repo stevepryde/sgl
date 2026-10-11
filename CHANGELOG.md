@@ -19,7 +19,8 @@ docs and specs the entry links.
   feature set sampled the colour through a filterable binding, failing
   validation for an unfilterable colour such as `Rgba32Float` on WebGPU, and
   copied +infinity to the output; it now loads the colour as later frames do,
-  clamped to 65504. No game-code change needed.
+  clamped to [0, 65504], so negative colour and alpha become 0 on that frame.
+  No game-code change needed.
 - `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
   light again on top of the background, so even a black glow brightened the
   fog; glow now adds only its own light dimmed by the fog in front of it, so
