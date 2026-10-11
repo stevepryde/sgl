@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP client: a `ConnectDeny` arriving after the accept (reordered)
+  or naming a cookie the client was not confirming removed the connection and
+  reported `Denied` after `Connected`; it is now ignored, and only a deny for
+  the confirm the client sent refuses it. No game-code change needed.
 - `sgl-3d` local-light shadows: a shadowed light with a large range at or
   behind the camera overflowed its atlas slot size, panicking with overflow
   checks or else taking the smallest slot; it now takes the largest slot.

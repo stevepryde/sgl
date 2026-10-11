@@ -988,9 +988,14 @@ impl<T: DatagramTransport> Endpoint<T> {
                 peer.last_receive_ms = now_ms;
             }
             Kind::ConnectDeny if self.role == EndpointRole::Client => {
-                let Some(&id) = self.routes.get(&(source, nonces.client)) else {
+                // A deny answers the confirm the client sent; once connected,
+                // one is late (reordered behind the accept) or forged.
+                let Some(id) = self.match_peer(source, nonces) else {
                     return;
                 };
+                if self.peers[&id].handshake == Handshake::Connected {
+                    return;
+                }
                 self.remove_peer(id);
                 events.push(EndpointEvent::Denied {
                     peer: id,
@@ -1296,6 +1301,64 @@ fn lane_at(index: usize) -> Lane {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    /// #523: a server deny answers one confirm. Oracle: `ClientEvent::Denied`
+    /// means admission was refused, so a connection already admitted cannot
+    /// be denied: an accept followed by a reordered deny leaves it
+    /// connected. A deny naming a cookie the client is not confirming is
+    /// ignored; the matching one denies.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_deny_after_the_accept_or_for_another_cookie_is_ignored() {
+        let server_addr = address(192, 0, 2, 1, 7_000);
+        let confirming = Nonces {
+            client: 77,
+            server: 5,
+        };
+        let mut client =
+            Endpoint::client(RecordingTransport::default(), EndpointConfig::default()).unwrap();
+        let peer = client.start_connect(server_addr, 0, 77).unwrap();
+        client
+            .transport
+            .receive_control(server_addr, Kind::ConnectChallenge, confirming);
+        assert!(client.poll(1).is_empty());
+        client
+            .transport
+            .receive_control(server_addr, Kind::ConnectAccept, confirming);
+        client
+            .transport
+            .receive_control(server_addr, Kind::ConnectDeny, confirming);
+        assert_eq!(client.poll(2), vec![EndpointEvent::Connected { peer }]);
+        assert_eq!(client.peer_count(), 1);
+
+        let mut client =
+            Endpoint::client(RecordingTransport::default(), EndpointConfig::default()).unwrap();
+        let peer = client.start_connect(server_addr, 0, 77).unwrap();
+        client
+            .transport
+            .receive_control(server_addr, Kind::ConnectChallenge, confirming);
+        assert!(client.poll(1).is_empty());
+        client.transport.receive_control(
+            server_addr,
+            Kind::ConnectDeny,
+            Nonces {
+                client: 77,
+                server: 6,
+            },
+        );
+        assert!(client.poll(2).is_empty());
+        assert_eq!(client.peer_count(), 1);
+        client
+            .transport
+            .receive_control(server_addr, Kind::ConnectDeny, confirming);
+        assert_eq!(
+            client.poll(3),
+            vec![EndpointEvent::Denied {
+                peer,
+                reason: DenyReason::ServerFull,
+            }]
+        );
+        assert_eq!(client.peer_count(), 0);
+    }
 
     /// #254: handshake datagrams meant for the other role are ignored — a
     /// server never reacts to a challenge, accept, or deny, and a client
