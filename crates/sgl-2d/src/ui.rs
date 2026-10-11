@@ -505,7 +505,8 @@ impl UiFrame<'_> {
             .draw_in_rect(text, rect, h, v, style, z, TextChannel::Screen);
     }
 
-    /// Finish the frame: releases clear the pressed widget; a press that no
+    /// Finish the frame: a release with the button up clears the pressed
+    /// widget; a press that no
     /// line-edit consumed drops focus (click-away unfocus); a dropdown not
     /// submitted this frame closes; this frame's overlay regions become next
     /// frame's input blockers.
@@ -517,7 +518,10 @@ impl UiFrame<'_> {
         if !self.popup_seen {
             self.ui.open_popup = None;
         }
-        if self.input.mouse_released {
+        // A release with the button still down means a press followed it in
+        // this frame (the only order consistent with `mouse_down`); that
+        // press may have re-armed a widget, so keep it.
+        if self.input.mouse_released && !self.input.mouse_down {
             self.ui.active = None;
             self.ui.thumb_drag = None;
             self.ui.number_drag = None;

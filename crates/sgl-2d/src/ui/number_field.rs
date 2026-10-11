@@ -488,4 +488,37 @@ mod tests {
         f.end();
         assert_eq!(value, 15.0, "typed text edits the value");
     }
+
+    /// A release and the next press in one frame (a fast double-click at a
+    /// low frame rate, button still down at the frame's end) keep the drag
+    /// that press armed: moving then scrubs, without another press.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn number_field_release_then_press_in_one_frame_keeps_the_drag() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut list = DrawList::new();
+        let opts = NumberField::default().speed(1.0).range(-100.0, 100.0);
+        let mut value = 1.0;
+        let mut f = ui.begin(&mut text, &mut list, press_at(100.0, 116.0));
+        f.number_field("n", ROW, &mut value, opts, 20.0);
+        f.end();
+        let release_and_press = UiInput {
+            mouse_pos: Vec2::new(100.0, 116.0),
+            mouse_pressed: true,
+            mouse_released: true,
+            mouse_down: true,
+            ..UiInput::default()
+        };
+        let mut f = ui.begin(&mut text, &mut list, release_and_press);
+        assert!(!f.number_field("n", ROW, &mut value, opts, 20.0));
+        f.end();
+        // 20 px right of the second press: 1 + 20 × 1.
+        let mut f = ui.begin(&mut text, &mut list, hover_at(120.0, 116.0, true));
+        assert!(f.number_field("n", ROW, &mut value, opts, 20.0));
+        f.end();
+        assert_eq!(value, 21.0);
+        let mut f = ui.begin(&mut text, &mut list, release_at(120.0, 116.0));
+        f.number_field("n", ROW, &mut value, opts, 20.0);
+        f.end();
+        assert!(!ui.has_focus(), "a drag never opens the field for typing");
+    }
 }

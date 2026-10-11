@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::end`: a release and a new press in one frame (button
+  still down) dropped the press's held button, scrollbar or number-field drag;
+  it now keeps them, so a fast double-click's second press scrubs or holds.
+  No game-code change needed.
 - `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
   light again on top of the background, so even a black glow brightened the
   fog; glow now adds only its own light dimmed by the fog in front of it, so
