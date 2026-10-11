@@ -38,9 +38,15 @@ docs and specs the entry links.
   game-code change needed.
 - `sgl-net` UDP client: a deny that overtook the accept of a retried confirm
   (or whose accept was lost) left the server holding that connection until
-  `timeout_ms`; the client now answers the deny with a disconnect, so the
-  server reports `Disconnected { reason: Peer }` right after `Connected`. No
-  game-code change needed.
+  `timeout_ms`; the client now answers the deny with a disconnect, sent
+  three times as every UDP disconnect is, so the server reports
+  `Disconnected { reason: Peer }` right after `Connected`. No game-code
+  change needed.
+- `sgl-net` UDP endpoint: a peer closed for `ProtocolViolation`,
+  `InboundOverflow` or a stalled send (`TimedOut`) was sent one disconnect,
+  so losing it left the remote holding the connection until `timeout_ms`;
+  that disconnect is now sent three times, as a caller's is. No game-code
+  change needed.
 - `sgl-3d` `Scene::add_decal`/`set_decal`: a decal atlas too large for the
   CPU to build (one 8192-square image in the browser) panicked when the
   next frame packed it, and an image wider than the device's textures could

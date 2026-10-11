@@ -194,9 +194,12 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     client that has not connected takes that cookie from the accept, and a
     client that has confirmed takes a payload carrying its nonces as the
     accept. A client honours a deny only before it connects and only for the
-    cookie it holds, and answers it with one best-effort disconnect for that
-    cookie, so a server that already admitted a retried confirm frees the
-    connection rather than waiting out `timeout_ms`.
+    cookie it holds, and answers it with a disconnect for that cookie, so a
+    server that already admitted a retried confirm frees the connection
+    rather than waiting out `timeout_ms`. Every disconnect a UDP endpoint
+    sends (a close, a deny's answer, or a peer closed for a violation,
+    overflow or stalled send) goes out three times, so one lost datagram
+    does not leave the remote holding the connection until `timeout_ms`.
 13. WebSocket frames use the 18-byte version-2 envelope: magic, version, flags
     (kind 0 reliable, 1 latest, 2 unreliable; FIRST; MORE), lane, big-endian
     sequence (0 for reliable and unreliable, strictly increasing for latest),

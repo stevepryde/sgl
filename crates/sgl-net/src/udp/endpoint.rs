@@ -30,6 +30,10 @@ const DEFAULT_LANES: usize = DEFAULT_PEERS * RELIABLE_LANES;
 /// one request, answered by an accept when the server already holds the
 /// connection or a fresh challenge otherwise.
 const CONFIRMS_PER_COOKIE: u32 = 4;
+/// Copies of each disconnect sent, so one lost datagram does not leave the
+/// remote holding the connection until `timeout_ms`; netcode.io sends its
+/// disconnect redundantly too (`NETCODE_NUM_DISCONNECT_PACKETS`).
+const DISCONNECT_SENDS: usize = 3;
 
 #[derive(Debug, Clone)]
 pub struct EndpointConfig {
@@ -1000,7 +1004,7 @@ impl<T: DatagramTransport> Endpoint<T> {
                 // A retried confirm may have been admitted, its accept lost
                 // or overtaken by this deny; a server holding it frees the
                 // slot, and one that is not ignores the disconnect.
-                self.send_control(source, Kind::Disconnect, nonces, now_ms);
+                self.send_disconnect(source, nonces, now_ms);
                 events.push(EndpointEvent::Denied {
                     peer: id,
                     reason: DenyReason::ServerFull,
@@ -1244,7 +1248,7 @@ impl<T: DatagramTransport> Endpoint<T> {
             && notify_remote
         {
             let (addr, nonces) = (peer.addr, peer.nonces);
-            self.send_control(addr, Kind::Disconnect, nonces, self.now_ms);
+            self.send_disconnect(addr, nonces, self.now_ms);
         }
         if self.remove_peer(id).is_some_and(|peer| !peer.is_closing()) {
             self.pending_events
@@ -1270,8 +1274,12 @@ impl<T: DatagramTransport> Endpoint<T> {
         let Some(peer) = self.remove_peer(id) else {
             return;
         };
-        for _ in 0..3 {
-            self.send_control(peer.addr, Kind::Disconnect, peer.nonces, now_ms);
+        self.send_disconnect(peer.addr, peer.nonces, now_ms);
+    }
+
+    fn send_disconnect(&mut self, addr: SocketAddr, nonces: Nonces, now_ms: u64) {
+        for _ in 0..DISCONNECT_SENDS {
+            self.send_control(addr, Kind::Disconnect, nonces, now_ms);
         }
     }
 
@@ -1376,7 +1384,8 @@ mod tests {
     /// it admits the retried confirm, but the deny reaches the client
     /// before the accept. Oracle: the client reports `Denied` and so never
     /// uses the connection; the server's connection for it ends at its next
-    /// poll, not after `timeout_ms`.
+    /// poll, not after `timeout_ms`, even when the client's first disconnect
+    /// is lost (#614).
     #[wasm_bindgen_test(unsupported = test)]
     fn a_deny_that_overtakes_the_accept_frees_the_servers_slot() {
         let (server_addr, client_addr, occupant) = (
@@ -1449,8 +1458,10 @@ mod tests {
                 reason: DenyReason::ServerFull,
             }]
         );
+        // The client's first disconnect is lost.
+        let mut first = true;
         ferry(&mut client, client_addr, &mut server, server_addr, |_| {
-            false
+            std::mem::take(&mut first)
         });
         assert_eq!(
             server.poll(1_002),
@@ -3899,6 +3910,72 @@ mod tests {
                 reason: DisconnectReason::ProtocolViolation,
             }]
         );
+    }
+
+    /// Defect (#614): a server that ends a violating peer with a single
+    /// disconnect, so when that datagram is lost the client keeps the
+    /// connection until `timeout_ms`. Oracle: the client reports
+    /// `Disconnected { Peer }` at its next poll although the server's first
+    /// disconnect is lost.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_violation_disconnect_reaches_the_remote_when_one_datagram_is_lost() {
+        let (server_addr, client_addr) =
+            (address(192, 0, 2, 1, 7_000), address(192, 0, 2, 2, 40_000));
+        let config = EndpointConfig::default();
+        let mut server =
+            Endpoint::server(RecordingTransport::default(), config.clone(), [19; 32]).unwrap();
+        let mut client = Endpoint::client(RecordingTransport::default(), config).unwrap();
+        let peer = client.start_connect(server_addr, 0, 33).unwrap();
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(1).is_empty());
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert!(client.poll(1).is_empty());
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert_eq!(server.poll(2), [EndpointEvent::Connected { peer: 1 }]);
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert_eq!(client.poll(2), [EndpointEvent::Connected { peer }]);
+
+        let mut bytes = Vec::new();
+        packet::begin_payload(
+            &mut bytes,
+            MAGIC,
+            client.peers[&peer].nonces,
+            &[None; RELIABLE_LANES],
+        );
+        bytes.extend_from_slice(&[99, 0, 0, 0, 0]);
+        server.transport.received.push_back(ReceivedDatagram {
+            source: client_addr,
+            bytes,
+            fail: false,
+        });
+        assert!(server.poll(3).is_empty());
+        assert_eq!(
+            server.poll(4),
+            [EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::ProtocolViolation,
+            }]
+        );
+        let mut first = true;
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            std::mem::take(&mut first)
+        });
+        assert_eq!(
+            client.poll(5),
+            [EndpointEvent::Disconnected {
+                peer,
+                reason: DisconnectReason::Peer,
+            }]
+        );
+        assert_eq!(client.peer_count(), 0);
     }
 
     /// Defect: items sent one per datagram, a datagram closed while the next
