@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` deformation (`Scene::set_instance_deformation`): a deforming mesh
+  above 4,194,240 vertices failed device validation every frame it deformed;
+  it now deforms. No game-code changes needed.
 - `sgl-net` native WebSocket keepalive: an unsolicited 8-byte pong arriving
   after the reply to this side's ping, before the next `poll` or `flush`,
   discarded the reply, so this side never pinged again and its `rtt` stopped
