@@ -94,9 +94,9 @@ fn the_contract_is_accepted() {
 // Plausible defects: a loop whose bound data can raise reaching a device,
 // which can hang it (AR-12); a counted loop miscounted. The oracle is the
 // counted-loop rule and SHADER_LOOP_BUDGET: a loop bounded by a parameter
-// or a `while` is unbounded, as is a counter whose limit plus step
-// overflows its type, which wraps before it passes the limit (`i <=
-// 4294967295u` holds for every u32); a 16 by 16 nest makes the budget's 256
+// or a `while` is unbounded, as is a counter whose limit plus step, or
+// start plus step, overflows its type, which wraps before it passes the
+// limit (`i <= 4294967295u` holds for every u32); a 16 by 16 nest makes the budget's 256
 // iterations, a 17 by 17 one 289 and two loops of 200 one after the other
 // 400, each over it.
 #[wasm_bindgen_test(unsupported = test)]
@@ -118,6 +118,14 @@ fn loops_are_counted_within_the_budget() {
     unbounded("var s=0.; for (var i=0;i<4;i++) { s+=1.; i--; } return s;");
     unbounded("var s=0.; loop { s+=1.; if s>4. { break; } } return s;");
     unbounded("var s=0.; for (var i=4294967290u;i<=4294967295u;i++) { s+=1.; } return s;");
+    // A `break if` loop runs once whatever its counter holds: from a start
+    // past its limit, its first step wraps below the limit (#446).
+    unbounded(
+        "var s=0.; var i=4294967295u; loop { s+=1.; continuing { i+=1u; break if i>4294967000u; } } return s;",
+    );
+    unbounded(
+        "var s=0.; var i=2147483647; loop { s+=1.; continuing { i+=1; break if i>=2147483000; } } return s;",
+    );
     // A `let` evaluates once where it stands (#287): a test or a step
     // computed before the loop reads the counter's first value for ever.
     unbounded(

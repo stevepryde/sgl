@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::add_shader`: a `break if` loop whose counter starts past
+  its limit, so its first step wraps (`var i=4294967295u; … i+=1u; break if
+  i>4294967000u;`), was accepted as one iteration; it is now refused with
+  `ShaderError::UnboundedLoop`, as start plus step must fit the counter's
+  type. Games with such a loop: start the counter at or below its limit.
 - `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
   UDP and memory reported nothing for a connection the caller closed (UDP
   sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
