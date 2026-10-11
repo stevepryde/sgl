@@ -20,11 +20,26 @@ docs and specs the entry links.
   sample's visibility test (NaN irradiance on some backends); they are now
   stored in units of the longest spacing, so any spacing works. No game-code
   change needed.
+- `sgl-2d` `Renderer::set_target_size`: a size wider or taller than the
+  device's maximum texture dimension clamped only that axis, distorting the
+  aspect, letterboxing the frame and shrinking `ui_size()`; both axes now
+  scale together, so the frame fills the window and `ui_size()` stays the
+  window's logical size. No game-code change needed.
+- `sgl-net` `BrowserWebSocketClient`: a reconnect attempt whose `WebSocket`
+  constructor threw (a `SecurityError`, say) reported no `Disconnected`, so
+  a game waiting after `Reconnecting` waited forever; each such attempt now
+  reports `Disconnected { Transport }` like any other failed attempt. No
+  game-code change needed.
 - `sgl-2d` `SpritePass::prepare`: a frame with more instances than the
   device's `max_buffer_size` holds (about 3.3 million at the 256 MiB
   default) grew the instance buffer past it, a wgpu validation error; it now
   draws the first that many (world, then screen) and drops the rest, which
   `draw_stats` reflects. No game-code change needed.
+- `sgl-3d` `asset::load*`: a node transform with an absolute determinant
+  below 1e-10 was refused as singular, so a uniform scale at or below about
+  4.6e-4 failed to load; singularity is now judged relative to the node's
+  axis lengths, so small scales load and only a collapsed axis is refused.
+  No game-code change needed.
 - `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and
