@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::screen_space_reflections` (Velvet) and
+  `Settings::world_space_reflections`: within half a texel of the top or
+  left edge, the history fallback took colour and depth from one texel
+  inward, and the world-ray resolve reused an edge pixel for a neighbour off
+  the grid; the fallback now reads the edge texel and the resolve skips the
+  neighbour. No game-code changes needed.
 - `sgl-post-fx` `post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH`:
   toggling it at an unchanged size kept the old depth format and panicked at
   the next resize; `PostFXContext::prepare_resources` now recreates the
