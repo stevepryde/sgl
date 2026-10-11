@@ -365,28 +365,31 @@ fn decode(
     })
 }
 
-/// An accessor's most elements, 16 Mi: far above any legitimate model's
-/// primitive, skin or animation, and few enough that reading one (at most
-/// 64 bytes an element, a 4x4 matrix) fits in memory. glTF bounds `count`
-/// by nothing, an accessor without a buffer view (a sparse one) declares it
-/// without data, and gltf 1.4.1's readers allocate all of it up front.
-const MOST_ACCESSOR_ELEMENTS: usize = 1 << 24;
-
 /// Refuses an accessor the gltf crate's readers cannot read, which its
 /// validation lets through and its readers (gltf 1.4.1 `mesh::Reader`,
 /// `skin::Reader`, `animation::util::Reader` and `accessor::util::Iter`)
 /// assume away, panicking or misreading otherwise: one holding a component
 /// type or shape glTF 2.0 does not allow for its use (`types`, `shapes`),
-/// one of no elements or more than [`MOST_ACCESSOR_ELEMENTS`], and one
-/// whose elements or sparse substitutions do
+/// one of no elements, and one whose elements or sparse substitutions do
 /// not lie within their buffer views at a stride no narrower than an
 /// element, or whose views do not lie within their buffers. `what` names
 /// its use.
+///
+/// It also refuses one whose element count its use does not allow, before
+/// gltf's readers allocate that many, so what a load reads stays in
+/// proportion to the file's data: `count` is the count glTF requires (the
+/// primitive's vertices, the skin's joints, the sampler's keyframes),
+/// itself fixed by data or the document, or None where nothing fixes it.
+/// An accessor without a buffer view holds zeros but for its sparse
+/// substitutions, and declares its count without data; where nothing fixes
+/// that count, it may hold no zero beyond the one its substitutions leave,
+/// as more would only repeat it.
 fn check_accessor(
     accessor: &gltf::Accessor<'_>,
     what: &str,
     types: &[DataType],
     shapes: &[Dimensions],
+    count: Option<usize>,
 ) -> Result<()> {
     let index = accessor.index();
     let (data_type, shape) = (accessor.data_type(), accessor.dimensions());
@@ -399,8 +402,17 @@ fn check_accessor(
             format!("{what} accessor {index} has no elements; re-export valid glTF").into(),
         );
     }
-    if accessor.count() > MOST_ACCESSOR_ELEMENTS {
-        return Err(format!("{what} accessor {index} has {} elements, more than {MOST_ACCESSOR_ELEMENTS}; re-export valid glTF", accessor.count()).into());
+    let elements = accessor.count();
+    if let Some(count) = count
+        && elements != count
+    {
+        return Err(format!("{what} accessor {index} has {elements} elements where its use needs {count}; re-export valid glTF").into());
+    }
+    let substitutions = sparse
+        .as_ref()
+        .map_or(0, gltf::accessor::sparse::Sparse::count);
+    if count.is_none() && accessor.view().is_none() && elements > substitutions + 1 {
+        return Err(format!("{what} accessor {index} has {elements} elements without a buffer view and {substitutions} sparse substitutions, repeating zero; re-export valid glTF").into());
     }
     let size = accessor.size();
     let within = accessor

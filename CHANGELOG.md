@@ -15,10 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d` glTF import: an accessor declaring a huge element count without
-  data (a sparse one with no buffer view) aborted the process; an accessor
-  of more than 16,777,216 (2^24) elements now fails the load with an error
-  naming it. No game-code change needed.
+- `sgl-3d` glTF import: a sparse accessor without a buffer view declaring a
+  huge count aborted the process; the load now fails with an error naming
+  it when an accessor's count differs from what glTF requires (POSITION's
+  for attributes and morph targets, the joints' for inverse binds, the
+  keyframes' for values) or when such an accessor that nothing else counts
+  holds more than one element beyond its substitutions. No game-code change
+  needed.
 - `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
   `SendError::Disconnected`; it now returns `UnknownConnection`, like every
   other server transport. A game that matched `Disconnected` from a server
