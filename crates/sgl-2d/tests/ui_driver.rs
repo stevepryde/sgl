@@ -418,7 +418,7 @@ fn widget_tree_obeys_the_interaction_contract_under_random_input() {
                     fires.push(("inner", r));
                 }
             }
-            frame.scroll_area_end();
+            frame.scroll_area_end(&mut scroll_offset);
             if frame.checkbox("cb", CHECKBOX, "Check", PX, &mut checked) {
                 fires.push(("checkbox", CHECKBOX));
             }

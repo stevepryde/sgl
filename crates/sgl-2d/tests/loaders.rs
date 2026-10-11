@@ -384,9 +384,9 @@ fn hash_export_frame_indices_are_recovered_from_trailing_digits() {
         })
     ));
     assert!(matches!(
-        AsepriteSheet::parse(&hash_export(&["f 70000.aseprite"]), white()),
+        AsepriteSheet::parse(&hash_export(&["a 0.aseprite", "f 70000.aseprite"]), white()),
         Err(AsepriteError::MissingFrameIndex {
-            expected: 0,
+            expected: 1,
             found: 70_000
         })
     ));

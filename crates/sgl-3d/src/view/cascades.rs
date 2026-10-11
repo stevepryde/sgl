@@ -9,7 +9,9 @@
 //! shadow of a still scene does not shimmer while the camera moves or turns.
 //! Changes: the slice corners unproject the camera's projection matrix,
 //! which also covers off-centre and orthographic cameras (Bevy takes them
-//! from its projection types); the light's rotation is built from its
+//! from its projection types), including an orthographic near plane behind
+//! the camera, where the overlap is measured from the bound's distance from
+//! the eye ([`next_near_bound`]); the light's rotation is built from its
 //! direction; a probe capture's cascades are cubes about its centre, what
 //! its six faces see out to each far bound; and the texel grid is snapped
 //! about the frame the scene was created in rather than its render frame:
@@ -38,9 +40,9 @@ use glam::{DVec3, Mat3, Mat4, Vec3, Vec4};
 /// The most cascades a shadow has (`FRAME_SHADOW_CASCADES` in uniforms.wgsl).
 pub(crate) const MAX_SHADOW_CASCADES: usize = 4;
 /// Bevy's default `overlap_proportion`: each cascade starts this share of
-/// the previous cascade's far bound before that bound, and shading blends the
-/// two across the overlap. directional_shadow.wgsl's SHADOW_CASCADE_OVERLAP
-/// is its twin.
+/// the previous cascade's far bound before that bound ([`next_near_bound`]),
+/// and shading blends the two across the overlap.
+/// directional_shadow.wgsl's SHADOW_CASCADE_OVERLAP is its twin.
 pub(crate) const SHADOW_CASCADE_OVERLAP: f32 = 0.2;
 /// How far toward the light, in metres, each cascade's map still records a
 /// caster at its own depth beyond the part of the view it covers:
@@ -113,12 +115,11 @@ impl Cascades {
         let world_from_light = world_from_light(direction);
         let origin = light_origin(world_from_light, origin);
         let light_from_camera = world_from_light.transpose() * view.inverse();
-        let overlap_factor = 1. - SHADOW_CASCADE_OVERLAP;
         Self::from_bounds(bounds.as_slice(), |index, far_bound| {
             let near_bound = if index == 0 {
                 near
             } else {
-                overlap_factor * bounds.as_slice()[index - 1]
+                next_near_bound(bounds.as_slice()[index - 1])
             };
             let corners = slice_corners(projection, near_bound, far_bound);
             calculate_cascade(
@@ -212,10 +213,23 @@ fn cascade_bounds(shadow: &DirectionalShadow, near: f32) -> Bounds {
     Bounds { list, count }
 }
 
-/// The view depth of the camera's near plane: device depth 1.
+/// Where the cascade after one ending at view depth `far_bound` starts, and
+/// where the shading starts blending into it: Bevy's
+/// `(1 - overlap_proportion) * far_bound`, [`SHADOW_CASCADE_OVERLAP`] of
+/// the bound's distance from the eye before it. A bound behind the eye,
+/// which an orthographic camera whose near plane lies behind it can have,
+/// keeps the next cascade starting before it, where Bevy's product would
+/// start it after. directional_shadow.wgsl's fetch_directional_shadow is
+/// its twin.
+pub(crate) fn next_near_bound(far_bound: f32) -> f32 {
+    far_bound - SHADOW_CASCADE_OVERLAP * far_bound.abs()
+}
+
+/// The view depth of the camera's near plane: device depth 1. An
+/// orthographic camera's may lie behind it, at a negative depth.
 fn camera_near(projection: Mat4) -> f32 {
     let near = projection.inverse() * Vec4::new(0., 0., 1., 1.);
-    (-near.z / near.w).max(0.)
+    -near.z / near.w
 }
 
 /// A light's rotation, light space to world, with its forward (-Z) along

@@ -76,19 +76,31 @@ fn compute_screen_pos(pos: vec3<f32>) -> vec3<f32> {
 	return vec3<f32>(screen_pos.xy * 0.5 + 0.5, screen_pos.z);
 }
 
+// SGL3D: a neighbour off the screen has no depth, 0 like sky. Godot relies on
+// Vulkan's robust image access returning 0 for it; on Metal and Vulkan without
+// robust access wgpu restricts an out-of-bounds load to the last texel, a
+// negative coordinate too (compared as unsigned). That fakes a neighbour at
+// the right or bottom edge's own depth, or at the opposite edge's depth.
+fn neighbour_depth(pos: vec2<i32>) -> f32 {
+	if (any(pos < vec2<i32>(0)) || any(pos >= params.screen_size)) {
+		return 0.0;
+	}
+	return textureLoad(source_hiz, pos, 0).x;
+}
+
 // https://habr.com/ru/articles/744336/
 fn compute_geometric_normal(pixel_pos: vec2<i32>, depth_c: f32, view_c: vec3<f32>, pixel_offset: f32) -> vec3<f32> {
 	let H = vec4<f32>(
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(-1, 0), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(-2, 0), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(1, 0), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(2, 0), 0).x);
+			neighbour_depth(pixel_pos + vec2<i32>(-1, 0)),
+			neighbour_depth(pixel_pos + vec2<i32>(-2, 0)),
+			neighbour_depth(pixel_pos + vec2<i32>(1, 0)),
+			neighbour_depth(pixel_pos + vec2<i32>(2, 0)));
 
 	let V = vec4<f32>(
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(0, -1), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(0, -2), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(0, 1), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(0, 2), 0).x);
+			neighbour_depth(pixel_pos + vec2<i32>(0, -1)),
+			neighbour_depth(pixel_pos + vec2<i32>(0, -2)),
+			neighbour_depth(pixel_pos + vec2<i32>(0, 1)),
+			neighbour_depth(pixel_pos + vec2<i32>(0, 2)));
 
 	let he = abs((2.0 * H.xz - H.yw) - depth_c);
 	let ve = abs((2.0 * V.xz - V.yw) - depth_c);

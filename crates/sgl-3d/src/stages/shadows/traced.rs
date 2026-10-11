@@ -197,6 +197,24 @@ impl Pass {
     }
 }
 
+/// The traced history's frame count since it last restarted (0 restarts
+/// it), and the half of each history pair the frame writes, the other
+/// holding the last frame's. The half alternates every frame the stage
+/// runs, apart from the count, so the count skipping 0 as it wraps never
+/// writes one half twice in a row.
+#[derive(Clone, Copy, Default)]
+struct HistoryFrame {
+    count: u32,
+    current: usize,
+}
+
+impl HistoryFrame {
+    fn advance(&mut self) {
+        self.count = self.count.wrapping_add(1).max(1);
+        self.current = 1 - self.current;
+    }
+}
+
 /// The ray-traced shadow stage. Owns its pipelines, targets (reallocated
 /// when the render size changes), slot table and history, which continues
 /// across consecutive frames it runs in.
@@ -219,8 +237,9 @@ pub(crate) struct TracedShadows {
     table: shadow_mask::ShadowMaskSlots,
     ran: bool,
     targets: Option<Targets>,
-    /// Frames since the history last restarted; 0 restarts it.
-    frame: u32,
+    /// Frames since the history last restarted, and the half of each
+    /// history pair the frame writes.
+    history: HistoryFrame,
     /// Turns the rays' draws on the lights each frame the stage runs.
     seed: u32,
     /// The camera history's frame count of the last frame the stage ran.
@@ -302,7 +321,7 @@ impl TracedShadows {
             ),
             ran: false,
             targets: None,
-            frame: 0,
+            history: HistoryFrame::default(),
             seed: 0,
             previous_frame: None,
         }
@@ -340,7 +359,7 @@ impl TracedShadows {
         // history for.
         let quality = ctx.effective.ray_traced_shadow_quality;
         if resized || !continuous || self.quality != Some(quality) {
-            self.frame = 0;
+            self.history.count = 0;
         }
         self.quality = Some(quality);
         self.previous_frame = Some(history.frames);
@@ -374,14 +393,14 @@ impl TracedShadows {
                     1. / reduced_height,
                 ],
                 eye: [eye.x, eye.y, eye.z, 1.],
-                frame: self.frame,
+                frame: self.history.count,
                 seed: self.seed,
                 denoised: shape.lanes.slots(),
                 padding: 0,
             }),
         );
         self.seed = self.seed.wrapping_add(1);
-        let current = (self.frame % 2) as usize;
+        let current = self.history.current;
         let previous = 1 - current;
         let shared = ctx.targets;
         let resource = wgpu::BindingResource::TextureView;
@@ -516,7 +535,7 @@ impl TracedShadows {
             pass.set_bind_group(0, upsample_group, &[]);
             pass.dispatch_workgroups(targets.full[0].div_ceil(8), targets.full[1].div_ceil(8), 1);
         }
-        self.frame = self.frame.wrapping_add(1).max(1);
+        self.history.advance();
         self.ran = true;
         Some(ShadowMask {
             mask: &targets.mask,

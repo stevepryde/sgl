@@ -116,7 +116,8 @@ pub(super) struct Volume {
     pub probes: wgpu::TextureView,
     /// Each irradiance texel's estimator.
     pub variance: wgpu::Buffer,
-    /// Each depth texel's mean and mean square distance.
+    /// Each depth texel's mean and mean square distance, in units of the
+    /// volume's longest spacing.
     pub depth_history: wgpu::Buffer,
     /// Each probe's offset, whether it has been blended, and its share of
     /// back faces, which classifies it.
