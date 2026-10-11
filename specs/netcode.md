@@ -179,9 +179,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     flags, latest state with a lane, a first fragment declaring no more than
     it carries, or mask bits on a control kind is rejected; from a connected
     peer that is `ProtocolViolation`. Handshakes use a keyed cookie
-    challenge with a per-prefix challenge budget and a confirm replay cache.
-    A client confirms the first challenge it receives and ignores others,
-    so challenges to its retried requests, reordered across a cookie epoch,
+    challenge with a per-prefix challenge budget and a confirm replay cache
+    that keeps every verified confirm until its cookie expires. A client
+    confirms the first challenge it receives and ignores others, so
+    challenges to its retried requests, reordered across a cookie epoch,
     rarely leave it holding a cookie the server has not kept. After four
     unanswered confirms it requests again, keeping its cookie until a new
     challenge replaces it. The cookie gates only a new connection: a server,

@@ -19,6 +19,17 @@ docs and specs the entry links.
   by render pixels, larger than documented; it now shifts by the scene
   pixels it documents at every antialiasing setting, so heat under FSR2
   looks smaller than before. No game-code change needed.
+- `sgl-net` UDP server endpoints: after 64 other joins within a departed
+  client's cookie lifetime, a late duplicate of its confirm reported
+  `Connected` for a client that was gone; each verified confirm is now kept
+  until its cookie expires, so the duplicate is dropped. No game-code change
+  needed.
+- `sgl-3d` `Settings::screen_space_reflections` (Velvet) and
+  `Settings::world_space_reflections`: within half a texel of the top or
+  left edge, the history fallback took colour and depth from one texel
+  inward, and the world-ray resolve reused an edge pixel for a neighbour off
+  the grid; the fallback now reads the edge texel and the resolve skips the
+  neighbour. No game-code changes needed.
 - `sgl-post-fx` `post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH`:
   toggling it at an unchanged size kept the old depth format and panicked at
   the next resize; `PostFXContext::prepare_resources` now recreates the
@@ -83,6 +94,11 @@ docs and specs the entry links.
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and
   layout matches a cold cache and `measure`. No game-code change needed.
+- `sgl-3d` `asset::load*`: an `EXT_materials_bump` map without
+  `bumpFactor` loaded with `bump_scale` 0 (no effect) and a factor above 1
+  was refused; now the factor defaults to 1 and loads in `0..=100`, as the
+  extension's schema sets. No game-code change needed; bump maps that had no
+  effect now show.
 - `sgl-3d` `asset::load*`: every glTF image was decoded (and asked of
   `LoadOptions::images`), so one only an unsupported texture extension
   (`KHR_texture_basisu`) or an ignored map used could fail the load; now
@@ -163,7 +179,7 @@ docs and specs the entry links.
 - `sgl-2d` `TextRenderer::draw`: a glyph larger than a `GLYPH_PAGE_SIZE`
   page (a large size at a high pixel scale) panicked; it now gets a page of
   its own sized to it, published by `end_frame` like any page, and one past
-  `canvas::text::MAX_GLYPH_PAGE_SIZE` (16384; 8192 on wasm32) is not drawn.
+  `canvas::text::MAX_GLYPH_PAGE_SIZE` (8192) is not drawn.
   A page past the device's texture limit fails its upload with
   `TextureError::TooLarge`: log that error rather than unwrapping the
   upload.
