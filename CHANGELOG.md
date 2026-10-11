@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::set_instance_deformation`: on a device created with a
+  uniform offset alignment of 32 bytes (an adapter's real limits), a frame with two or more deforming meshes failed
+  wgpu validation; the deform stage's records are now aligned. No game-code
+  change needed.
 - `sgl-input` `Gamepads` on macOS: replacing a live owner in place
   (`pads = Gamepads::new()?`) turned background event delivery off, losing
   releases while unfocused; it now stays on until the last owner drops. No
