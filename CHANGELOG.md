@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `BakedSpecularProbe::proxy`: a proxy box reaching more than
+  about 1e19 m from its capture centre made box projection sample an
+  arbitrary texel; it now samples toward the ray's hit on the proxy, which
+  acts as distant at that size. No game-code changes.
 - `sgl-3d` glTF import: a small file whose morph-weight keyframes or
   instanced meshes declared gigabytes of data could abort the process; a
   scene listing a root twice or a child as a root now fails the load, as
