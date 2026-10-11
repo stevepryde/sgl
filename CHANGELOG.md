@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import and `Ignored::Attribute` (new): a `TEXCOORD_2`+,
+  `COLOR_1`+ or `_NAME` attribute, or a `TANGENT` along its normal on a
+  material without anisotropy, failed the load; the attribute is now left
+  out and listed in `Asset::ignored`, and the tangent is absent (zero). A
+  game matching `Ignored` exhaustively adds an arm for `Attribute`;
+  otherwise no game-code change needed.
 - `sgl-input` `Gamepads::poll`: a button pressed while the macOS handler was
   being installed could yield two `ButtonPressed` events and one release; a
   press of a button already held is now dropped on every target. No

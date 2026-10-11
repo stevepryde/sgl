@@ -176,6 +176,67 @@ fn anisotropic_loader_rejects_missing_or_degenerate_authored_frames() {
     assert!(load(&fixture.path()).is_ok());
 }
 
+// Defect: a tangent along its normal, valid glTF (unit XYZ, w = ±1), fails
+// the load of a material that never builds a frame from it. The oracle is
+// `Vertex::tangent`'s contract: zero means absent. An anisotropic material
+// still refuses it (above).
+#[test]
+fn a_tangent_along_its_normal_is_absent_without_anisotropy() {
+    let q = std::f32::consts::FRAC_1_SQRT_2;
+    let fixture = anisotropy_fixture(serde_json::json!({}), Some([0., -q, q, 1.]), false);
+    let asset = load(&fixture.path()).unwrap_or_else(|error| panic!("{error}"));
+    for vertex in &asset.meshes[0].vertices {
+        assert_eq!(vertex.tangent, [0.; 4]);
+    }
+}
+
+// Defects: a valid file refused over a vertex attribute nothing SGL3D draws
+// reads (a third UV set, a second colour set, an application-specific
+// one), one left out without being listed in `Asset::ignored`, or COLOR_1
+// read as the vertex colour. The oracle is glTF 2.0 3.7.2.1 (loaders need
+// not support more than two UV sets and one colour set; `_`-prefixed
+// attributes are application-specific) and the documented fallback.
+#[test]
+fn unread_vertex_attributes_are_listed_not_refused() {
+    let document = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "buffers": [{"uri": "fixture.bin", "byteLength": 72}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 36}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0]},
+            {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC2"}
+        ],
+        "meshes": [{"primitives": [{"attributes": {
+            "POSITION": 0, "NORMAL": 1, "TEXCOORD_2": 2, "COLOR_1": 1, "_TEMPERATURE": 0
+        }}]}],
+        "nodes": [{"mesh": 0}],
+        "scenes": [{"nodes": [0]}], "scene": 0
+    });
+    let values = [
+        0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 1., 0., 0., 1.,
+    ];
+    let fixture = Fixture::new(&serde_json::to_vec(&document).unwrap(), &values);
+    let asset = load(&fixture.path()).unwrap_or_else(|error| panic!("{error}"));
+    let mut names: Vec<_> = asset
+        .ignored
+        .iter()
+        .map(|ignored| match ignored {
+            Ignored::Attribute {
+                mesh: 0,
+                primitive: 0,
+                name,
+            } => name.as_str(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["COLOR_1", "TEXCOORD_2", "_TEMPERATURE"]);
+    for vertex in &asset.meshes[0].vertices {
+        assert_eq!(vertex.color, [1.; 4], "COLOR_1 read as the vertex colour");
+    }
+}
+
 #[test]
 fn anisotropy_import_resolves_texture_image_and_rejects_unsupported_inputs() {
     let fixture = anisotropy_fixture(
