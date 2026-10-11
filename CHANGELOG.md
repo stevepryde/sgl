@@ -15,9 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d` `Scene::set_baked_specular_probes`: a probe whose influence box
-  was wider than about 7e12 m on each axis was never found by probe captures
-  and world-space ray hits; it now is. A box whose `max - min` overflows f32
+- `sgl-3d` `Scene::set_baked_specular_probes`: when the probes' influence
+  boxes together spanned more than about 7e12 m on each axis, probe captures
+  and world-space ray hits found none of them; they now do. A box whose `max - min` overflows f32
   (e.g. `-f32::MAX..f32::MAX`) is now refused with
   `ProbeError::InvalidProbe`; give such a box a smaller, finite extent.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every

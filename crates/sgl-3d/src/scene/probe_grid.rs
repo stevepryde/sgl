@@ -332,55 +332,75 @@ mod tests {
         }
     }
 
-    // Defect: the cell volume overflows f32 for a box wider than about 7e12
-    // on each axis, or a box's world bounds overflow when it is rotated or
-    // nearly as wide as f32 allows, so the origin or scale is not finite and
-    // probe_grid.wgsl's lookup (NaN cells) finds no probe. Independent
-    // signal: points inside the box, found as probe_grid.wgsl finds them,
-    // land in a cell of the grid that lists the probe.
+    // Defect: the collection's cell volume overflows f32 once it spans more
+    // than about 7e12 on each axis, or its extent and margin overflow when a
+    // box is nearly as wide as f32 allows, or a rotated box's world bounds
+    // overflow, so the origin or scale is not finite and probe_grid.wgsl's
+    // lookup (NaN cells) finds no probe. Independent signal: points inside
+    // the box (its centre among the symmetric ones), found as
+    // probe_grid.wgsl finds them, land in a cell of the grid that lists it.
     #[wasm_bindgen_test(unsupported = test)]
     fn a_huge_box_is_listed_where_it_reaches() {
-        for (rotation, center, half) in [
-            (Quat::IDENTITY, Vec3::ZERO, 1e13),
-            (Quat::IDENTITY, Vec3::new(3e12, -1e12, 0.), 1e13),
-            (Quat::IDENTITY, Vec3::ZERO, f32::MAX / 2.),
-            (Quat::from_rotation_y(0.7), Vec3::ZERO, 1e38),
+        let around_centre = [0.375, 0.5, 0.625];
+        for (rotation, center, min, max, fractions) in [
+            (Quat::IDENTITY, Vec3::ZERO, -1e13, 1e13, around_centre),
+            (
+                Quat::IDENTITY,
+                Vec3::new(3e12, -1e12, 0.),
+                -1e13,
+                1e13,
+                around_centre,
+            ),
+            (
+                Quat::IDENTITY,
+                Vec3::ZERO,
+                -f32::MAX / 2.,
+                f32::MAX / 2.,
+                around_centre,
+            ),
+            // Its far corner's world x, about 3.5e38, overflows f32.
+            (
+                Quat::from_rotation_y(std::f32::consts::FRAC_PI_4),
+                Vec3::ZERO,
+                0.,
+                2.5e38,
+                [0.0625, 0.125, 0.1875],
+            ),
         ] {
             let world_to_local = Mat4::from_rotation_translation(rotation, center).inverse();
             let influence = SpecularProbeBox {
-                min: Vec3::splat(-half),
-                max: Vec3::splat(half),
+                min: Vec3::splat(min),
+                max: Vec3::splat(max),
             };
             let grid = ProbeGrid::new(&[(world_to_local, influence)]);
             assert!(
                 grid.origin.is_finite() && grid.scale.is_finite() && grid.scale > 0.,
-                "{half}: origin {} scale {}",
+                "{max}: origin {} scale {}",
                 grid.origin,
                 grid.scale
             );
             let records: &[GridCell] = bytemuck::cast_slice(
                 &grid.words[..CELL_WORDS * grid.size.element_product() as usize],
             );
-            for corner in 0..9 {
-                let local = if corner == 8 {
-                    Vec3::ZERO
-                } else {
-                    let pick = glam::BVec3::new(corner & 1 != 0, corner & 2 != 0, corner & 4 != 0);
-                    Vec3::select(pick, Vec3::splat(half / 4.), Vec3::splat(-half / 4.))
-                };
-                let point = world_to_local.inverse().transform_point3(local);
-                let cell = grid.coordinates(point);
-                assert!(
-                    cell.cmpge(Vec3::ZERO).all() && cell.cmplt(grid.size.as_vec3()).all(),
-                    "{half}: {point} is in cell {cell} outside {}",
-                    grid.size
-                );
-                let GridCell { first, count } = records[grid.flatten(cell.as_uvec3())];
-                assert_eq!(
-                    &grid.words[first as usize..(first + count) as usize],
-                    &[0],
-                    "{half}: {point}"
-                );
+            for x in fractions {
+                for y in fractions {
+                    for z in fractions {
+                        let local = min + (max - min) * Vec3::new(x, y, z);
+                        let point = world_to_local.inverse().transform_point3(local);
+                        let cell = grid.coordinates(point);
+                        assert!(
+                            cell.cmpge(Vec3::ZERO).all() && cell.cmplt(grid.size.as_vec3()).all(),
+                            "{max}: {point} is in cell {cell} outside {}",
+                            grid.size
+                        );
+                        let GridCell { first, count } = records[grid.flatten(cell.as_uvec3())];
+                        assert_eq!(
+                            &grid.words[first as usize..(first + count) as usize],
+                            &[0],
+                            "{max}: {point}"
+                        );
+                    }
+                }
             }
         }
     }
