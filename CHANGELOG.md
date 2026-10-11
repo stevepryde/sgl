@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::set_baked_specular_probes` and `Scene::move_origin`: a
+  tiny probe influence box far from the render origin overflowed the probe
+  grid's cell count, panicking with overflow checks or else building a
+  wrongly sized grid; it now builds within budget. No game-code change
+  needed.
 - `sgl-2d` `UiFrame::dropdown`: on the first frame an opened popover was drawn,
   nothing shielded the widgets under it, so they could hover or fire with a
   row; the popover now blocks them from that frame. No game-code change

@@ -77,7 +77,9 @@ impl ProbeGrid {
                 .ceil()
                 .max(Vec3::ONE)
                 .as_uvec3();
-            if size.x * size.y * size.z <= MAX_CELLS {
+            // In u64: a tiny box far from the origin has a margin of many
+            // cells, whose product can pass u32::MAX.
+            if size.as_u64vec3().element_product() <= MAX_CELLS as u64 {
                 break (margin, size);
             }
             cell *= 1.125;
@@ -89,7 +91,7 @@ impl ProbeGrid {
             words: Vec::new(),
         };
         let last_cell = (size - UVec3::ONE).as_vec3();
-        let mut cells = vec![Vec::new(); (size.x * size.y * size.z) as usize];
+        let mut cells = vec![Vec::new(); size.as_u64vec3().element_product() as usize];
         for (index, [lo, hi]) in bounds.iter().enumerate() {
             let first = grid
                 .coordinates(*lo - Vec3::splat(margin))
@@ -275,5 +277,27 @@ mod tests {
                 }
             }
         }
+    }
+
+    // Defect: the cell count multiplied in u32 overflows (a panic with
+    // overflow checks, else a wrongly sized grid) when a tiny box far from
+    // the origin has a margin of thousands of cells. Independent signal: the
+    // grid builds within its cell budget and the box's centre cell lists it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_tiny_box_far_from_the_origin_builds_a_grid_within_budget() {
+        let center = Vec3::new(50_000., 0., 0.);
+        let world_to_local = Mat4::from_translation(-center);
+        let influence = SpecularProbeBox {
+            min: Vec3::splat(-0.05),
+            max: Vec3::splat(0.05),
+        };
+        let grid = ProbeGrid::new(&[(world_to_local, influence)]);
+        assert!(grid.size.as_u64vec3().element_product() <= MAX_CELLS as u64);
+        let records: &[GridCell] = bytemuck::cast_slice(
+            &grid.words[..CELL_WORDS * grid.size.element_product() as usize],
+        );
+        let GridCell { first, count } =
+            records[grid.flatten(grid.coordinates(center).as_uvec3())];
+        assert_eq!(&grid.words[first as usize..(first + count) as usize], &[0]);
     }
 }
