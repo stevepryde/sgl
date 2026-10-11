@@ -634,3 +634,58 @@ fn a_collapsed_skinned_tangent_stays_zero_with_its_handedness() {
         );
     }
 }
+
+// Plausible defect: a skinned normal taken through the skin's inverse,
+// which divides by its zero determinant when a joint is scaled to zero on
+// an axis, so the deformed normal stores NaN that shading and TAA spread;
+// or one taken through the skin itself, which tilts it off the flattened
+// surface. The oracle is the geometry: a quad facing +Z, flattened along Z
+// by a joint scaled (1, 1, 0) and then rotated, is a plane facing the
+// rotated +Z with its winding kept, whatever its vertex normals leant. A
+// joint scaled (1, 0, 0) collapses the quad to a line, which has no normal,
+// and each vertex keeps its rest normal (within the Vertex encoding's
+// 0.01°).
+#[test]
+fn a_joint_scaled_to_zero_on_an_axis_gives_finite_normals() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let skin = MeshDeformation {
+        influences: vec![
+            Influence {
+                joints: [0, 0, 0, 0],
+                weights: [1., 0., 0., 0.],
+            };
+            4
+        ],
+        morph_targets: Vec::new(),
+    };
+    let mesh = quad(0., -2., 0.5, skin);
+    let rotation = Quat::from_rotation_x(0.4) * Quat::from_rotation_y(-0.3);
+    let flattened = rotation * Vec3::Z;
+    for scale in [Vec3::new(1., 1., 0.), Vec3::new(1., 0., 0.)] {
+        let mut scene = Scene::new(&device, &queue);
+        let model = scene
+            .add_asset(&device, &queue, asset(vec![mesh.clone()]))
+            .unwrap()
+            .model;
+        let instance = moving(&mut scene, &device, &queue, model);
+        let joint =
+            Mat4::from_scale_rotation_translation(scale, rotation, Vec3::new(0.3, 0.2, -1.));
+        scene
+            .set_instance_deformation(&queue, instance, &[joint], &[])
+            .unwrap();
+        let observed = deformed(&device, &queue, &mut scene, instance, 4);
+        for (v, (vertex, (_, n, _))) in mesh.vertices.iter().zip(observed).enumerate() {
+            let expected = if scale.y == 0. {
+                Vec3::from_array(vertex.normal)
+            } else {
+                flattened
+            };
+            assert!(
+                n.is_finite() && (n - expected).length() <= 3e-4,
+                "scale {scale}, vertex {v}: normal {n}, expected {expected}"
+            );
+        }
+    }
+}

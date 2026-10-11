@@ -1118,7 +1118,9 @@ last, after everything it may use, and refuses a directive in it.
   rest pose into its own `f32` vertices in the ray source (Bevy's skinning
   and morph math, run once per frame as Wicked Engine's `skinningCS` runs
   it, chosen over skinning in every pass's vertex shader by measurement,
-  #347): its positions, in the
+  #347; normals take the skin's cofactor as the pose's do,
+  `normal_transform.wgsl`, not Bevy's inverse, which a joint scaled to zero
+  on an axis makes NaN, #572): its positions, in the
   slot that does not hold the last submitted frame's, and its normals and
   tangents. Pulled passes read them through the object record, with the
   other slot's positions for motion; casters, which read positions from a

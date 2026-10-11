@@ -28,15 +28,6 @@ fn scene_clip_position(world:vec4<f32>,view:mat4x4<f32>,projection:mat4x4<f32>)-
  let view_position=view*world;
  return projection*view_position;
 }
-// Cofactor(model) is inverse-transpose(model) times its determinant. Only
-// normal direction survives interpolation; remove the determinant sign here.
-fn object_normal(model:mat4x4<f32>,normal:vec3<f32>)->vec3<f32> {
- let x=model[0].xyz;
- let y=model[1].xyz;
- let z=model[2].xyz;
- let cofactor=mat3x3(cross(y,z),cross(z,x),cross(x,y));
- return (cofactor*normal)*select(1.,-1.,dot(x,cofactor[0])<0.);
-}
 fn object_tangent(model:mat4x4<f32>,t:vec4<f32>,normal:vec3<f32>)->vec4<f32> {
  let n=normalize(object_normal(model,normal));
  let transformed=(model*vec4(t.xyz,0.)).xyz;
