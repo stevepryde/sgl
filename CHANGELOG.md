@@ -19,6 +19,9 @@ docs and specs the entry links.
   about 1e19 m from its capture centre made box projection sample an
   arbitrary texel; it now samples toward the ray's hit on the proxy, which
   acts as distant at that size. No game-code changes.
+- `sgl-3d` glTF import: a file with many morph-weight channels on a mesh
+  of many primitives took time quadratic in its size to load; it no
+  longer does. No game-code change needed.
 - `sgl-3d` glTF import: a small file whose morph-weight keyframes or
   instanced meshes declared gigabytes of data could abort the process; a
   scene listing a root twice or a child as a root now fails the load, as
