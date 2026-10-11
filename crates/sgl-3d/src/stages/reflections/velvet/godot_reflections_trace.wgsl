@@ -77,9 +77,10 @@ fn compute_screen_pos(pos: vec3<f32>) -> vec3<f32> {
 }
 
 // SGL3D: a neighbour off the screen has no depth, 0 like sky. Godot relies on
-// Vulkan's robust image access returning 0 for it; wgpu clamps an
-// out-of-bounds load to the edge texel on Metal and Vulkan without robust
-// access, which would fake a neighbour at the receiver's own depth.
+// Vulkan's robust image access returning 0 for it; on Metal and Vulkan without
+// robust access wgpu restricts an out-of-bounds load to the last texel, a
+// negative coordinate too (compared as unsigned). That fakes a neighbour at
+// the right or bottom edge's own depth, or at the opposite edge's depth.
 fn neighbour_depth(pos: vec2<i32>) -> f32 {
 	if (any(pos < vec2<i32>(0)) || any(pos >= params.screen_size)) {
 		return 0.0;
