@@ -8,7 +8,7 @@ use gltf::accessor::Dimensions::{self, Scalar, Vec2, Vec4};
 use gltf::mesh::Mode;
 use std::collections::HashMap;
 
-use super::super::asset::{CpuMesh, Material, Result, Vertex};
+use super::super::asset::{CpuMesh, Material, Result, Vertex, tangent_off_normal};
 use super::super::deformation::{MeshDeformation, MorphTarget};
 use super::check_accessor;
 use super::rig::{Rigging, mesh_morph_target_count, read_influences, read_morph_targets};
@@ -279,26 +279,24 @@ pub(super) fn read_node(
                     let tangent = tangents.as_ref().map(|tangents| -> Result<[f32; 4]> {
                         let authored = tangents[i];
                         let direction = Vec3::new(authored[0], authored[1], authored[2]);
-                        let transformed = transform.transform_vector3(direction);
-                        let projected = transformed - normal * normal.dot(transformed);
                         let invalid = || format!("{label}: vertex {i} has invalid TANGENT; export finite nonzero tangents perpendicular to NORMAL with handedness +1 or -1").into();
                         if !direction.is_finite() || direction == Vec3::ZERO
                             || !matches!(authored[3], -1.0 | 1.0)
                         {
                             return Err(invalid());
                         }
-                        // Valid glTF, but along the normal it spans no
+                        // Valid glTF, but along the normal, as authored
+                        // or as the transform leaves it, it spans no
                         // frame: absent, unless anisotropy needs it.
-                        if Vec3::from_array(normals[i]).cross(direction).try_normalize().is_none()
-                            || projected.try_normalize().is_none()
-                        {
+                        let tangent = tangent_off_normal(Vec3::from_array(normals[i]), direction)
+                            .and(tangent_off_normal(normal, transform.transform_vector3(direction)));
+                        let Some(tangent) = tangent else {
                             return if material.anisotropy_strength > 0.0 {
                                 Err(invalid())
                             } else {
                                 Ok([0.0; 4])
                             };
-                        }
-                        let tangent = projected.normalize();
+                        };
                         // Winding correction changes indices only: this determinant sign
                         // converts the frame once, including mirrored UV handedness.
                         Ok([tangent.x, tangent.y, tangent.z, authored[3] * transform.determinant().signum()])
