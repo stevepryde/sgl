@@ -13,7 +13,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::net::{Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use tungstenite::WebSocket;
@@ -809,8 +810,10 @@ pub struct NativeWebSocketClientConfig {
     /// side spends not reading because a lane is full does not count; the
     /// peer's own timeout bounds how long it waits for this side to poll.
     pub timeout_ms: u64,
-    /// Maximum wall-clock time spent connecting, across every resolved
-    /// address tried in turn, and completing the HTTP upgrade.
+    /// Maximum wall-clock time spent resolving the host, connecting across
+    /// every resolved address tried in turn, and completing the HTTP upgrade.
+    /// A host lookup still running at the deadline cannot be cancelled: it
+    /// keeps running on a background thread and its result is discarded.
     pub handshake_timeout: Duration,
     /// The connection's reliable lanes: weights and per-lane bounds.
     pub reliable: ReliableConfig,
@@ -832,6 +835,33 @@ impl NativeWebSocketClientConfig {
             timeout_ms: 15_000,
             handshake_timeout: Duration::from_secs(2),
             reliable: ReliableConfig::DEFAULT,
+        }
+    }
+}
+
+/// Resolves `target` on a helper thread, waiting no later than `deadline`.
+/// The standard resolver cannot be cancelled, so a lookup still running at
+/// the deadline finishes on its own thread and its result is discarded.
+fn resolve_by(
+    target: impl ToSocketAddrs + Send + 'static,
+    deadline: Instant,
+) -> io::Result<Vec<SocketAddr>> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::Builder::new()
+        .name("sgl-net-ws-resolve".into())
+        .spawn(move || {
+            let resolved = target.to_socket_addrs().map(Iterator::collect);
+            // The caller has stopped waiting if the receiver is gone.
+            let _ = sender.send(resolved);
+        })?;
+    match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(resolved) => resolved,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "WebSocket host resolution timed out",
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(io::Error::other("WebSocket host resolver stopped"))
         }
     }
 }
@@ -930,10 +960,10 @@ impl NativeWebSocketClient {
             .and_then(|literal| literal.strip_suffix(']'))
             .unwrap_or(host);
         let port = request.uri().port_u16().unwrap_or(80);
-        let addrs = (host, port).to_socket_addrs()?;
-        // One budget, starting after resolution, covers every address
-        // attempt and the HTTP upgrade.
+        // One budget covers host resolution, every address attempt and the
+        // HTTP upgrade.
         let deadline = Instant::now() + config.handshake_timeout;
+        let addrs = resolve_by((host.to_owned(), port), deadline)?;
         let stream = connect_first_reachable(addrs, deadline)?;
         stream.set_nonblocking(true)?;
         let shared = SharedPeer::new(
@@ -1235,6 +1265,30 @@ mod tests {
         .expect("fallback reaches the live address");
         let (_, peer) = live.accept().expect("live listener accepts");
         assert_eq!(peer, stream.local_addr().expect("client addr"));
+    }
+
+    /// A host lookup that blocks until its test releases it.
+    struct StalledLookup(mpsc::Receiver<()>);
+
+    impl ToSocketAddrs for StalledLookup {
+        type Iter = std::vec::IntoIter<SocketAddr>;
+
+        fn to_socket_addrs(&self) -> io::Result<Self::Iter> {
+            let _ = self.0.recv();
+            Ok(Vec::new().into_iter())
+        }
+    }
+
+    #[test]
+    fn a_stalled_host_lookup_ends_at_the_deadline() {
+        let (release, released) = mpsc::channel();
+        let error = resolve_by(
+            StalledLookup(released),
+            Instant::now() + Duration::from_millis(20),
+        )
+        .expect_err("a lookup that never answers must time out");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut, "{error}");
+        drop(release);
     }
 
     /// An in-memory socket: reads consume a scripted inbound buffer and
