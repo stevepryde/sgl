@@ -1412,7 +1412,10 @@ mod tests {
         assert!(server.poll(2).is_empty());
         // The deny is held back while the occupant leaves and the retried
         // confirm is admitted.
-        let deny = std::mem::take(&mut server.transport.sent);
+        let (deny, others) = std::mem::take(&mut server.transport.sent)
+            .into_iter()
+            .partition::<Vec<_>, _>(|datagram| datagram.destination == client_addr);
+        server.transport.sent = others;
         server
             .transport
             .receive_control(occupant, Kind::Disconnect, occupied);

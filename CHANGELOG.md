@@ -15,10 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-net` UDP client: a `ConnectDeny` that overtook the accept of a retried
-  confirm (or whose accept was lost) left the server holding the connection
-  until `timeout_ms`; the client now answers the deny with one `Disconnect`,
-  so the server frees it at once. No game-code change needed.
+- `sgl-net` UDP client: a deny that overtook the accept of a retried confirm
+  (or whose accept was lost) left the server holding that connection until
+  `timeout_ms`; the client now answers the deny with a disconnect, so the
+  server reports `Disconnected { reason: Peer }` right after `Connected`. No
+  game-code change needed.
 - `sgl-net` WebSocket transports (`NativeWebSocketServer`,
   `NativeWebSocketClient`, `BrowserWebSocketClient`): a peer closed for
   `ProtocolViolation` or `InboundOverflow` discarded the messages received
