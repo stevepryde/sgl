@@ -17,9 +17,9 @@
 // 8×4 tile. Changed at the port boundary: a pixel's lights are the
 // slot table's (shadow_mask_slots.wgsl), not the first sixteen of a
 // sorted entity array; a light reaches the surface as the lit library's
-// light_reach says (range, cone, and where the base or the coat normal,
-// never fewer than the lighting uses (traced_visible), faces any of its
-// sphere; a rectangle the
+// light_reach says (range, cone, and where the base or the G-buffer's coat
+// normal, a coatless surface's geometry normal (traced_visible), faces any
+// of its sphere; a rectangle the
 // half-space before its face), a directional light where either faces any
 // of its disc (light_faces); a baked light casts no ray at a
 // receiver that takes no baked lights, which the lighting never gives

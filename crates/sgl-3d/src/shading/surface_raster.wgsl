@@ -166,8 +166,10 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
  if material.coat>0. {
   s.coat_normal=surface_coat_normal(i,front);
  }
- // A coatless surface's coat normal is its base normal (Surface).
- if s.coat<=0. {
+ // A coatless surface's coat normal is its base normal (Surface). A coated
+ // record keeps its coat normal where its texel's coat is 0, as the
+ // G-buffer records it (stable_material).
+ if material.coat<=0. && s.coat<=0. {
   s.coat_normal=n;
  }
  s.coat_roughness=surface_roughness(m.coat_roughness,n,i);
