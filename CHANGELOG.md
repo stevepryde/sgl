@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP server endpoints: after 64 other joins within a departed
+  client's cookie lifetime, a late duplicate of its confirm reported
+  `Connected` for a client that was gone; each verified confirm is now kept
+  until its cookie expires, so the duplicate is dropped. No game-code change
+  needed.
 - `sgl-net` UDP endpoints: a handshake whose confirms or accept were lost
   until the cookie expired (5 to 10 s) never completed; the server, even
   after `stop_admission`, now accepts a request or confirm for a connection
