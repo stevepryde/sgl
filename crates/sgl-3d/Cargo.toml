@@ -39,7 +39,7 @@ bcdec_rs.workspace = true
 bytemuck.workspace = true
 sgl-post-fx.workspace = true
 glam.workspace = true
-gltf = { workspace = true, features = ["KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions"] }
+gltf = { workspace = true, features = ["KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions", "extras"] }
 image = { workspace = true, features = ["jpeg"] }
 # `Scene::add_shader` parses and validates a game's WGSL module in the
 # programs it is composed into, with the naga wgpu creates modules with.

@@ -2641,8 +2641,13 @@ bake does not chart (one exported with a second UV map for AO, say).
 Every accessor the load reads must hold at least one
 element, within its buffer view and buffer, of a component type and shape
 glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
-bind matrices or keyframes), and an embedded image's buffer view must lie
-within its buffer; any other fails the load with an error naming it.
+bind matrices or keyframes), and as many elements as glTF requires: a
+primitive's attributes and morph targets as many as its POSITION, inverse
+bind matrices one a joint, and keyframe values as many as their times
+need. A sparse accessor without a buffer view that nothing else counts
+(POSITION, indices or keyframe times) may declare no more elements than
+the file's buffers would hold in a buffer view. An embedded image's buffer view must lie within its
+buffer. Any other fails the load with an error naming it.
 
 A clearcoat normal map tilts the coat alone, on the base normal map's
 frame; without one the coat follows the geometry normal. An iridescent
@@ -2667,7 +2672,11 @@ into the metallic-roughness image's red channel on `TEXCOORD_0` in the
 export step. The load reads and decodes only the images a map it samples
 uses; each other image, such as a texture extension's source or an
 ignored map's image, is a one-texel placeholder that is never bound, and
-the list names it (`Ignored::Image`). Other unsupported visible features return asset-path errors.
+the list names it (`Ignored::Image`). A vertex attribute nothing SGL3D
+draws reads (`TEXCOORD_2` on, `COLOR_1` on, or an application-specific
+`_NAME`) is neither checked nor read, and the list names it with its mesh
+and primitive (`Ignored::Attribute`); a second joint and weight set still
+fails the load. Other unsupported visible features return asset-path errors.
 
 A dielectric's reflectance at normal incidence (F0) follows its index of
 refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for water
@@ -2788,11 +2797,13 @@ linear RG direction (remapped to -1..1) and B strength. No texture means +T and
 full texture strength, as on a device of the `Basic` [binding tier](#binding-tiers),
 which binds no anisotropy map. File and embedded glTF imports use the same rules.
 Active anisotropy requires authored tangents; automatic tangent generation is
-not implemented. Normal maps and anisotropy share that frame. Where skinning
-or morphing cancels a tangent or turns it along its normal, shading takes an
-arbitrary tangent in the normal's plane, keeping the authored handedness (+1
-where there is none), as for a vertex without one. Node and instance
-transforms preserve mirrored handedness, nonuniform scaling and shear.
+not implemented. Normal maps and anisotropy share that frame. An authored
+tangent along its normal spans no frame: it fails the load of an
+anisotropic material and is absent (`Vertex::tangent` zero) on any other.
+Where skinning or morphing cancels a tangent or turns it along its normal,
+shading takes an arbitrary tangent in the normal's plane, keeping the
+authored handedness (+1 where there is none), as for a vertex without one.
+Node and instance transforms preserve mirrored handedness, nonuniform scaling and shear.
 
 `Scene::set_material` exposes `SurfaceMaterial::anisotropy_strength` and
 `anisotropy_rotation`; the anisotropy map, like every map, stays as the

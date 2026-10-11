@@ -3,8 +3,8 @@
 // view's clusters list them (clusters.wgsl). How a light reaches a point is
 // light_reach.wgsl's.
 // Scene light `index` at `receiver` (SHADOW_RECEIVER_*) with its position,
-// its shading normal and its geometry normal (Surface), seen at the view's
-// `pixel`. It does not reach a receiver light_reach says it does not
+// its base and coat shading normals and its geometry normal (Surface),
+// seen at the view's `pixel`. It does not reach a receiver light_reach says it does not
 // reach, or that its shadow, looked up along the geometry normal, at its
 // shadow opacity, fully occludes. A light at or below the shadow opacity
 // cutoff looks up no shadow. The camera's surfaces take the shadow of a
@@ -17,20 +17,20 @@
 // transmitted lobe's point `back` (surface_transmitted_point), offset along
 // the reversed geometry normal, as Bevy 9d12036 shadows its transmitted
 // lobe (pbr_functions.wesl 494–513, 555–580); such a light reaches it where
-// either side sees it. A point or spot light behind its normal lights only
-// that other side: light_reach keeps such a light from a surface that
-// passes none through, so the front takes none of it either and looks up
-// no shadow for it. `distance_bias_square` raises a point or spot light's
+// either side sees it. A point or spot light behind both its normals,
+// beyond its sphere (light_faces), lights only that other side:
+// light_reach keeps such a light from a surface that passes none through,
+// so the front takes none of it either and looks up no shadow for it. `distance_bias_square` raises a point or spot light's
 // inverse-square denominator (light_reach): the fog passes its froxel's,
 // every surface 0.
-fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,transmits:bool,back:vec3<f32>,distance_bias_square:f32)->LightSample {
+fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,coat_normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,transmits:bool,back:vec3<f32>,distance_bias_square:f32)->LightSample {
  let unreached=LightSample(vec3(0.),vec3(0.),0.,0.,0.,NO_RECT_LIGHT,0.);
  let light=lights[index];
- let reach=light_reach(light,position,normal,receiver==SHADOW_RECEIVER_MEDIUM||transmits,distance_bias_square);
+ let reach=light_reach(light,position,normal,coat_normal,receiver==SHADOW_RECEIVER_MEDIUM||transmits,distance_bias_square);
  if reach.attenuation<=0. {
   return unreached;
  }
- let front=!transmits || reach.rect || dot(normal,reach.direction)>0.;
+ let front=!transmits || reach.rect || light_faces(normal,coat_normal,reach.direction,reach.size);
  let behind=transmits && (reach.rect || dot(normal,reach.direction)<0.);
  var visibility=select(0.,1.,front);
  var transmitted=select(0.,1.,behind);
@@ -56,8 +56,5 @@ fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,geometry_nor
  if visibility<=0. && transmitted<=0. {
   return unreached;
  }
- // A point or spot light's sphere over its distance; a rectangle has none.
- let to_light=light.position-position;
- let size=select(light.radius*inverseSqrt(dot(to_light,to_light)),0.,reach.rect);
- return LightSample(reach.direction,light.color*reach.attenuation,visibility,transmitted,light.specular,select(NO_RECT_LIGHT,index,reach.rect),size);
+ return LightSample(reach.direction,light.color*reach.attenuation,visibility,transmitted,light.specular,select(NO_RECT_LIGHT,index,reach.rect),reach.size);
 }

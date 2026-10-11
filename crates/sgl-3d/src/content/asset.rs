@@ -53,7 +53,8 @@ pub struct Vertex {
     /// A mesh's vertices may name at most 65,536 distinct bounds.
     pub lightmap_bounds: [f32; 4],
     /// Unit tangent XYZ and bitangent handedness W after node transforms.
-    /// Zero means absent for legacy isotropic geometry; anisotropy requires a valid frame.
+    /// Zero means absent for legacy isotropic geometry, and for an imported
+    /// tangent along its normal; anisotropy requires a valid frame.
     /// Made perpendicular to the normal and unit, then kept within 0.01°.
     pub tangent: [f32; 4],
 }
@@ -208,7 +209,8 @@ pub struct Material {
     pub normal_layers: Option<[NormalLayer; 2]>,
     /// Bump image index, sampled as linear height data.
     pub bump_texture: Option<usize>,
-    /// Bump height multiplier.
+    /// Bump height multiplier
+    /// ([`SurfaceMaterial::bump_scale`](crate::SurfaceMaterial::bump_scale)).
     pub bump_scale: f32,
     /// The share of the light behind the surface that passes through it,
     /// refracted, in `0..=1` (`KHR_materials_transmission`'s
