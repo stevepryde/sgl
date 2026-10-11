@@ -510,7 +510,10 @@ enum Token {
     Mark(char),
 }
 
-/// `source`'s tokens, line and nested block comments skipped.
+/// `source`'s tokens, line and nested block comments skipped, as naga 30
+/// lexes WGSL (`front::wgsl::parse::lexer`, `consume_token`): a line
+/// comment ends at any of its line breaks and its blankspace separates
+/// tokens, so no declaration naga sees is hidden from `declared_names`.
 fn tokens(source: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut chars = source.chars().peekable();
@@ -518,7 +521,7 @@ fn tokens(source: &str) -> Vec<Token> {
         match c {
             '/' if chars.peek() == Some(&'/') => {
                 for next in chars.by_ref() {
-                    if next == '\n' {
+                    if is_comment_end(next) {
                         break;
                     }
                 }
@@ -558,11 +561,29 @@ fn tokens(source: &str) -> Vec<Token> {
                 }
                 tokens.push(Token::Word(word));
             }
-            c if c.is_whitespace() => {}
+            c if is_blankspace(c) => {}
             c => tokens.push(Token::Mark(c)),
         }
     }
     tokens
+}
+
+/// Whether `c` ends a line comment: WGSL's line breaks, naga 30's
+/// `is_comment_end` (`front::wgsl::parse::lexer`).
+const fn is_comment_end(c: char) -> bool {
+    matches!(
+        c,
+        '\u{000a}'..='\u{000d}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// Whether `c` is WGSL blankspace (Unicode Pattern_White_Space), naga 30's
+/// `is_blankspace` (`front::wgsl::parse::lexer`).
+const fn is_blankspace(c: char) -> bool {
+    matches!(
+        c,
+        '\t'..='\r' | ' ' | '\u{0085}' | '\u{200e}' | '\u{200f}' | '\u{2028}' | '\u{2029}'
+    )
 }
 
 /// The directive the module starts with, if any, up to its `;`.

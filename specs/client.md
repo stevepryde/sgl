@@ -54,9 +54,10 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    page sized to it, holding nothing else (the least recently used stale one is
    rebuilt at the new glyph's size); an upload wider than the device allows
    fails with `TextureError::TooLarge`, which the game logs. A glyph whose page
-   would exceed `MAX_GLYPH_PAGE_SIZE` (16384; 8192 on wasm32, WebGPU's default
-   limit) is not drawn; its advance applies. Text whose raster size (`px ×
-   pixel_scale`) is not positive and finite draws nothing and measures zero.
+   would exceed `MAX_GLYPH_PAGE_SIZE` (8192, the default
+   `max_texture_dimension_2d` that `Gpu` requests) is not drawn; its advance
+   applies. Text whose raster size (`px × pixel_scale`) is not positive and
+   finite draws nothing and measures zero.
    Outline and shadow are offset copies of the glyph quads, at most
    `MAX_RING_WIDTH` wide; a non-finite width draws no ring. `pixel_scale = 1`
    is bit-identical to unscaled rendering.
@@ -74,7 +75,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    through visible widgets in the preceding frame's submission order; fully
    clipped and removed controls cannot receive keyboard input. Open dropdowns
    and modals restrict keyboard interaction to their contents; an open
-   dropdown not submitted in a frame closes at its end; a dropdown's
+   dropdown not submitted in a frame, or with its button and popover both
+   outside the clip, closes at its end; a dropdown's
    popover stays in the current clip, and only its visible part blocks
    widgets beneath it. Buttons, toggles, checkboxes and dropdowns show an
    accent focus border and activate with Enter/Space. Escape dismisses the topmost dropdown or cancels the modal.
@@ -119,7 +121,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    bounds, layout, icons and platform cursor mapping.
 8. **Aseprite.** `AseSheet::parse` accepts Hash and Array exports; Hash frame
    indices are recovered from trailing digits and must be exactly
-   `0..len` (gap, duplicate, or missing digits is an error). Tags are
+   `0..len` (gap, duplicate, or missing digits is an error); a single-entry
+   Hash is frame 0 whatever its key, as Aseprite omits the number. Tags are
    inclusive ranges validated against the frame count; `direction` defaults
    to `forward` and expands `forward`, `reverse`, `pingpong`, and
    `pingpong_reverse` into frame orders. A frame rect outside the sheet is an
@@ -162,7 +165,9 @@ rectangles so their text, accent and surface roles follow the selected palette.
   `scroll_area_begin`/`scroll_area_end` pair and its own game-owned offset.
   Compute content height from the laid-out rows; keep headers and toolbars
   outside its scrolling content. A scroll area clips within the enclosing
-  clip and restores it at `scroll_area_end`; restore enclosing clips yourself
+  clip and restores it at `scroll_area_end`, which takes the same offset; the
+  wheel scrolls only the innermost hovered area with content to scroll, applied
+  at its end, so the content shows it from the next frame. Restore enclosing clips yourself
   after custom clipping. Widget borders extend outside their hit rectangles:
   inset content from viewport edges and reserve gaps for focus/selection strokes
   and the scrollbar. Clip long row names to their allocated space; provide

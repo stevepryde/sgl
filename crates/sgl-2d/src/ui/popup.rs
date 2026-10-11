@@ -149,7 +149,8 @@ impl UiFrame<'_> {
     /// blocks widgets underneath. Place dropdowns where
     /// `rect.max.y + options·row` stays on screen and inside the clip.
     /// Submit it every frame while shown: an open dropdown not submitted in
-    /// a frame closes at [`end`](Self::end), releasing keyboard capture.
+    /// a frame, or whose button and popover are both outside the clip,
+    /// closes at [`end`](Self::end), releasing keyboard capture.
     /// Returns `true` the frame the selection changed.
     pub fn dropdown(
         &mut self,
@@ -197,12 +198,6 @@ impl UiFrame<'_> {
         if fired {
             self.ui.open_popup = if was_open { None } else { Some(id) };
         }
-        self.popup_seen |= self.ui.open_popup == Some(id);
-        if !was_open || fired {
-            return false;
-        }
-
-        // Open popover (overlay band).
         let row_h = rect.size().y;
         let pop = Rect::new(
             rect.min.x,
@@ -213,6 +208,17 @@ impl UiFrame<'_> {
         // The popover draws and hit-tests within the current clip, so only
         // its visible part blocks widgets underneath or counts as inside.
         let visible = self.clip.map_or(Some(pop), |clip| clip.intersection(&pop));
+        // An open dropdown whose button and popover are both clipped away
+        // (scrolled out of view) counts as not submitted and closes at `end`.
+        let button_visible = self
+            .clip
+            .is_none_or(|clip| clip.intersection(&rect).is_some());
+        self.popup_seen |= self.ui.open_popup == Some(id) && (button_visible || visible.is_some());
+        if !was_open || fired {
+            return false;
+        }
+
+        // Open popover (overlay band).
         let overlay_was = self.overlay;
         self.overlay = true;
         self.popup_scope = Some(id);
@@ -512,7 +518,7 @@ mod tests {
             fired.push(f.button("below", below, "B", 16.0));
             f.scroll_area_begin("list", area, 100.0, &mut offset);
             f.dropdown("zoom", dd, &options, &mut selected, 16.0);
-            f.scroll_area_end();
+            f.scroll_area_end(&mut offset);
             f.end();
         }
         assert_eq!(fired, [false, false, true]);
@@ -550,6 +556,55 @@ mod tests {
         }
         assert!(!ui.any_popup_open());
         assert_eq!(fired, [false, false, true]);
+    }
+
+    /// #434: an open dropdown scrolled fully out of its scroll area closes,
+    /// releasing keyboard capture, so Tab and Enter reach another button.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn dropdown_scrolled_out_of_view_releases_its_popup() {
+        let (mut ui, mut text, _assets) = fixture();
+        let area = Rect::new(0.0, 200.0, 200.0, 100.0);
+        let options = ["a", "b"];
+        let mut selected = 0usize;
+        let mut offset = 0.0;
+        let wheel = UiInput {
+            mouse_pos: Vec2::new(50.0, 250.0),
+            scroll: Vec2::new(0.0, -5.0),
+            ..UiInput::default()
+        };
+        let key = |key| UiInput {
+            keys: vec![key],
+            ..UiInput::default()
+        };
+        let mut fired = Vec::new();
+        for (i, input) in [
+            press_at(50.0, 225.0),
+            wheel,
+            UiInput::default(),
+            key(UiKey::Tab),
+            key(UiKey::Enter),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut list = DrawList::new();
+            let mut f = ui.begin(&mut text, &mut list, input);
+            fired.push(f.button("other", BTN, "OK", 16.0));
+            f.scroll_area_begin("list", area, 1000.0, &mut offset);
+            let dd = Rect::new(10.0, 210.0 - offset, 160.0, 30.0);
+            f.dropdown("menu", dd, &options, &mut selected, 16.0);
+            f.scroll_area_end();
+            f.end();
+            if i == 0 {
+                assert!(ui.any_popup_open());
+            }
+            if i == 2 {
+                assert!(!ui.any_popup_open());
+                assert!(!ui.keyboard_captured());
+            }
+        }
+        assert!(offset > 100.0, "the wheel scrolled the dropdown away");
+        assert_eq!(fired, [false, false, false, false, true]);
     }
 
     /// A modal blocks every ordinary widget anywhere on screen the frame

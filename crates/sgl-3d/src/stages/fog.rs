@@ -138,18 +138,17 @@ pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 1] {
     )]
 }
 
-/// The froxels of `quality` for a frame of `render` pixels: Godot's volume
-/// size across the frame's mean side, so its froxels stay near square, and
-/// its depth slices.
-pub(crate) fn froxels(quality: FogQuality, render: [u32; 2]) -> [u32; 3] {
+/// The froxels of `quality` for a frame of `render` pixels, each side no
+/// more than `largest`, the device's 3D texture limit: Godot's volume size
+/// as the geometric mean of the two sides, so its froxels are square and
+/// it holds as many as Godot's, and its depth slices. Godot's own split
+/// (`side × r`, `side / r` with `r = w / ((w + h) / 2)`) leaves its froxels
+/// wider than tall and its height unbounded as the frame narrows.
+pub(crate) fn froxels(quality: FogQuality, render: [u32; 2], largest: u32) -> [u32; 3] {
     let (side, depth) = quality.volume();
     let [width, height] = render.map(|v| v.max(1) as f32);
-    let ratio = width / ((width + height) / 2.);
-    [
-        ((side as f32 * ratio) as u32).max(1),
-        ((side as f32 / ratio) as u32).max(1),
-        depth,
-    ]
+    let across = |aspect: f32| ((side as f32 * aspect.sqrt()) as u32).clamp(1, largest);
+    [across(width / height), across(height / width), depth]
 }
 
 pub(crate) struct VolumetricFog {
@@ -322,7 +321,7 @@ impl VolumetricFog {
         let Some(quality) = quality else {
             return;
         };
-        let size = froxels(quality, render);
+        let size = froxels(quality, render, device.limits().max_texture_dimension_3d);
         if self.volumes.size != size {
             self.volumes = Volumes::new(
                 device,

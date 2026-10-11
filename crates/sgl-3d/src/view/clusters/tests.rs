@@ -613,6 +613,20 @@ fn every_light_and_decal_reaching_a_point_is_in_its_cluster() {
         .map(|_| random_decal(&mut random, Vec3::ZERO, Vec3::splat(40.)))
         .collect();
     judge(&device, &queue, &mut random, &camera, &lights, &decals);
+    // Orthographic with its near plane 40 m behind the eye: lights behind the
+    // eye reach what it sees.
+    let camera = Camera {
+        label: "orthographic, near plane behind the eye",
+        projection: camera::rh::proj::directx::orthographic(-40., 40., -25., 25., 200., -40.),
+        ..camera
+    };
+    let lights: Vec<_> = (0..200)
+        .map(|_| random_light(&mut random, eye, Vec3::splat(40.)))
+        .collect();
+    let decals: Vec<_> = (0..100)
+        .map(|_| random_decal(&mut random, eye, Vec3::splat(40.)))
+        .collect();
+    judge(&device, &queue, &mut random, &camera, &lights, &decals);
 }
 
 // A cluster past CLUSTER_MOST_ITEMS keeps its first items, live lights

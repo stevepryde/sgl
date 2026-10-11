@@ -37,8 +37,10 @@ pub(crate) struct Inputs<'a> {
     pub source_id: &'a wgpu::TextureView,
     pub screen_space: &'a wgpu::TextureView,
     pub camera: reflection_camera::Camera,
-    /// Alpha roughness below which screen-space reflections trace a lobe.
+    /// Alpha roughness below which screen-space reflections trace a lobe,
+    /// and the width of their fade below that in perceptual roughness.
     pub traced: f32,
+    pub fade: f32,
 }
 
 /// `WorldParams` in world_reflections_common.wgsl.
@@ -55,7 +57,8 @@ struct Params {
     traced: f32,
     range: f32,
     previous_near: f32,
-    padding: [u32; 3],
+    fade: f32,
+    padding: [u32; 2],
 }
 /// Where the listed rays' count lies in the parameters, which the trace
 /// reads it from.
@@ -413,7 +416,8 @@ impl WorldReflections {
                 traced: input.traced,
                 range: RANGE,
                 previous_near,
-                padding: [0; 3],
+                fade: input.fade,
+                padding: [0; 2],
             }),
         );
         let current = (self.frame % 2) as usize;
@@ -576,6 +580,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
             traced,
             range,
             previous_near,
+            fade,
         ]
     )]
 }
