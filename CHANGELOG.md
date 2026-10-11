@@ -20,6 +20,12 @@ docs and specs the entry links.
   `Connected` for a client that was gone; each verified confirm is now kept
   until its cookie expires, so the duplicate is dropped. No game-code change
   needed.
+- `sgl-post-fx` `post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH`:
+  toggling it at an unchanged size kept the old depth format and panicked at
+  the next resize; `PostFXContext::prepare_resources` now recreates the
+  depths when the flag changes. The flag needs a device with
+  `TEXTURE_FORMAT_16BIT_NORM` and `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`
+  whose adapter renders to R16Unorm. No game-code change needed.
 - `sgl-net` UDP endpoints: a handshake whose confirms or accept were lost
   until the cookie expired (5 to 10 s) never completed; the server, even
   after `stop_admission`, now accepts a request or confirm for a connection

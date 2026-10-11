@@ -108,7 +108,9 @@ struct VerifiedConfirm {
 /// epoch and the next, so a slot per epoch parity holds every confirm whose
 /// cookie can still validate, and a slot is emptied only once its epoch's
 /// cookies have expired. A slot holds one entry per verified handshake in its
-/// epoch, each having cost a challenge round trip from its address.
+/// epoch, each having cost a challenge round trip from its address, so its
+/// growth is capped by the challenge rate (`challenge_responses_per_poll` and
+/// the per-prefix buckets) over the epoch, not by a fixed size.
 #[derive(Default)]
 pub(super) struct ConfirmReplayCache {
     slots: [ReplayEpoch; 2],
