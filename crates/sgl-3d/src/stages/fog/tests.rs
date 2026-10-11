@@ -1339,6 +1339,76 @@ fn a_blended_surface_covers_its_fog_by_its_alpha() {
     }
 }
 
+// Defect: additive glow adds the fog's in-scatter on top of a background
+// that already holds it (D-44), so a black glow brightens the fog and N
+// layers add it N times, or its own light is not dimmed by the medium in
+// front of it. An unshadowed light at a known depth reaches the camera
+// through Beer-Lambert's transmittance alone: in a medium that scatters the
+// hemisphere fill, a glow of colour c at alpha 1 raises the frame by c T,
+// and a black one leaves it unchanged.
+#[test]
+fn glow_adds_its_light_through_the_fog_and_none_of_its_in_scatter() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let depth = 30.;
+    let fog = Fog {
+        density: 0.02,
+        length: 60.,
+        ambient: 1.,
+        ..Fog::default()
+    };
+    let mut frame = input(fog);
+    frame.hemisphere_light = HemisphereLight {
+        sky_color: [0.4, 0.5, 0.7],
+        ground_color: [0.4, 0.5, 0.7],
+        intensity: 1.,
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut centre = |color: Option<[f32; 3]>| {
+        let vertices = match color {
+            Some([r, g, b]) => [
+                [-200., -200., -depth],
+                [600., -200., -depth],
+                [-200., 600., -depth],
+            ]
+            .map(|position| crate::effects::Glow {
+                position,
+                color: [r, g, b, 1.],
+                kind: crate::effects::GlowKind::Uniform,
+                soft_distance: 0.,
+            })
+            .to_vec(),
+            None => Vec::new(),
+        };
+        scene.update_effects(&device, &queue, &vertices);
+        let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
+        let composite = texels(&read(&device, &queue, &renderer.targets().composite));
+        composite[(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize]
+    };
+    let behind = centre(None);
+    let (ndc, _) = froxel_ray(&frame, [SIZE[0], SIZE[1], 1], [SIZE[0] / 2, SIZE[1] / 2], 0);
+    let transmittance = (-fog.density * depth * view_ray(&frame, ndc).length()).exp();
+    for color in [[0.; 3], [1., 0.6, 0.3]] {
+        let glowing = centre(Some(color));
+        for channel in 0..3 {
+            assert!(
+                behind[channel] > 0.02,
+                "channel {channel}: too little fog ({}) to tell its in-scatter",
+                behind[channel]
+            );
+            let added = glowing[channel] - behind[channel];
+            let expected = color[channel] * transmittance;
+            assert!(
+                (added - expected).abs() <= 5e-3 * expected + 1e-3,
+                "glow {color:?} channel {channel}: added {added} over {} behind, against its \
+                 light through Beer-Lambert's {transmittance}, {expected}",
+                behind[channel]
+            );
+        }
+    }
+}
+
 // Defect: the sky ignores `Fog::sky_affect`, it reaches the surfaces too, or
 // it scales one part of the fog (its scattering or its transmittance) alone.
 // Godot's sky affect (b130438 sky.glsl) mixes the sky with the fogged sky:

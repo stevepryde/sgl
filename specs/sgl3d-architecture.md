@@ -1296,7 +1296,8 @@ last, after everything it may use, and refuses a directive in it.
   view ray. The
   integrated volume is the frame's one fog: group 0 lends it, with its
   slicing in `Frame`, to the draws that fog themselves (blended surfaces,
-  glow and mist) through `shading::fog`, and source completion samples it
+  glow and mist) through `shading::fog`, additive glow taking its
+  transmittance alone ([D-44](decisions.md)), and source completion samples it
   for the opaque surfaces, the sky (by the fog's sky affect) and the
   incident radiance, as Godot's
   forward pass samples its volume for every material; composition scales

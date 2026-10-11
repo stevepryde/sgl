@@ -683,3 +683,13 @@ Use the [current specs](README.md) for implementation and the
   tighter `timeout_ms` + 2 s left a recovering peer about 1 s. Only a
   peer that keeps answering but never takes a fragment reaches the bound.
   Held fragments (D-38) are exempt: they wait for the receiver's caller.
+- **D-44** Decision, 2026-10-11 (#463): additive glow takes the fog's
+  transmittance alone, `a × c × T`, not `a × (c × T + S)`. The additive
+  blend adds to a background that already holds the in-scattered light `S`
+  at that depth, so adding it again let a black glow brighten the fog and N
+  overlapping layers add `N × S`, drawing fog-coloured halos around
+  effects. Unity's built-in additive shaders fog toward black
+  (`UNITY_APPLY_FOG_COLOR` with zero colour), transmittance only; Godot
+  (b130438) applies `rgb × fog.a + fog.rgb` to every blend mode, and SGL3D
+  departs from it here. Blended surfaces keep `c × T + S` over their
+  coverage, which their over blend replaces.
