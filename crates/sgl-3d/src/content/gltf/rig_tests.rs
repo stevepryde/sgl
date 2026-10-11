@@ -469,7 +469,7 @@ fn malformed_accessors_are_rejected() {
         ("exceeds system limits", "exceeds system limits")
     };
     type Edit = fn(&mut Value, &mut Buffer);
-    let cases: [(&str, Edit, &str); 15] = [
+    let cases: [(&str, Edit, &str); 16] = [
         (
             "FLOAT indices",
             |document, buffer| {
@@ -531,6 +531,29 @@ fn malformed_accessors_are_rejected() {
             |document, buffer| {
                 let positions = attribute(document, "POSITION");
                 buffer.accessors[positions]["count"] = json!(1u64 << 62);
+            },
+            past_view,
+        ),
+        (
+            // No data, but gltf's readers allocate every element up front.
+            "sparse POSITION of a trillion elements without a view",
+            |document, buffer| {
+                let positions = attribute(document, "POSITION");
+                let indices = buffer.accessor(bytemuck::cast_slice(&[0u16]), 5123, "SCALAR", 1);
+                let values = buffer.floats(&[0., 0., 0.], "VEC3", 3);
+                let indices = buffer.accessors[indices]["bufferView"].clone();
+                let values = buffer.accessors[values]["bufferView"].clone();
+                let accessor = buffer.accessors[positions].as_object_mut().unwrap();
+                accessor.remove("bufferView");
+                accessor.insert("count".into(), json!(1_000_000_000_000u64));
+                accessor.insert(
+                    "sparse".into(),
+                    json!({
+                        "count": 1,
+                        "indices": {"bufferView": indices, "componentType": 5123},
+                        "values": {"bufferView": values}
+                    }),
+                );
             },
             past_view,
         ),

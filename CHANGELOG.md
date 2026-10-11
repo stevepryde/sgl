@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import: an accessor declaring a huge element count without
+  data (a sparse one with no buffer view) aborted the process; an accessor
+  of more than 16,777,216 (2^24) elements now fails the load with an error
+  naming it. No game-code change needed.
 - `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
   light again on top of the background, so even a black glow brightened the
   fog; glow now adds only its own light dimmed by the fog in front of it, so

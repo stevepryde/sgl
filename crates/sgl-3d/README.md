@@ -2635,8 +2635,8 @@ way. `TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static
 instance while an atlas is installed, a vertex it charts samples the atlas
 and takes no baked lights, so set `lightmap_uv` to `[0, 0]` on models the
 bake does not chart (one exported with a second UV map for AO, say).
-Every accessor the load reads must hold at least one
-element, within its buffer view and buffer, of a component type and shape
+Every accessor the load reads must hold at least one and at most 16,777,216
+(2^24) elements, within its buffer view and buffer, of a component type and shape
 glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
 bind matrices or keyframes), and an embedded image's buffer view must lie
 within its buffer; any other fails the load with an error naming it.
