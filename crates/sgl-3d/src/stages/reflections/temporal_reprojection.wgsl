@@ -12,7 +12,10 @@
 // current minus previous, negated into Wicked's); a reflection hit on or
 // behind the previous camera's plane reprojects off the screen rather than
 // mirrored onto it (temporal_reprojection_uv); the depth history, raw
-// device depth, is linearised with the near plane it was written under.
+// device depth, is linearised with the near plane it was written under; the
+// bilinear fallback floors its base texel where Wicked's uint2 truncates, so
+// within half a texel of the top or left edge the weights land on the edge
+// texel.
 // Reads `temporal_current`, `temporal_history`, `temporal_depth_history` and
 // `linear_sampler`.
 const TEMPORAL_RESPONSE:f32=.95;
@@ -96,7 +99,7 @@ fn temporal_previous_color(view:TemporalView,previous_uv:vec2<f32>,depth:f32)->T
  if disocclusion<DISOCCLUSION_THRESHOLD {
   let f=fract(uv*view.size.xy+vec2(.5));
   let weights=array((1.-f.x)*(1.-f.y),f.x*(1.-f.y),(1.-f.x)*f.y,f.x*f.y);
-  let base=vec2<i32>(view.size.xy*uv-vec2(.5));
+  let base=vec2<i32>(floor(view.size.xy*uv-vec2(.5)));
   let offsets=array(vec2(0,0),vec2(1,0),vec2(0,1),vec2(1,1));
   var color_sum=vec4(0.);
   var depth_sum=0.;

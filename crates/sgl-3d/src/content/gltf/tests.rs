@@ -936,6 +936,29 @@ fn read_textured_material(material: serde_json::Value) -> Result<Material> {
     )
 }
 
+// Defects: a bump map without bumpFactor read as factor 0, so it changed
+// nothing, or a factor above 1 refused. The oracle is EXT_materials_bump's
+// schema (KhronosGroup/glTF#2339) and three.js's GLTFMaterialsBumpExtension:
+// bumpFactor defaults to 1, in 0..100.
+#[test]
+fn a_bump_factor_defaults_to_one_and_may_exceed_one() {
+    let bump = |extension: serde_json::Value| {
+        read_textured_material(serde_json::json!({
+            "extensions": {"EXT_materials_bump": extension}
+        }))
+    };
+    let plain = bump(serde_json::json!({"bumpTexture": {"index": 0}})).unwrap();
+    assert_eq!((plain.bump_texture, plain.bump_scale), (Some(2), 1.));
+    let strong = bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": 2.0})).unwrap();
+    assert_eq!(strong.bump_scale, 2.);
+    for refused in [-1.0, 101.0] {
+        assert!(
+            bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": refused})).is_err(),
+            "bumpFactor {refused} loaded"
+        );
+    }
+}
+
 // Defects: a clearcoat or iridescence texture's index taken for its image
 // (glTF's texture -> image indirection lost), or one map's texture read for
 // another's; a KHR default misread; the clearcoat normal map's scale lost;
