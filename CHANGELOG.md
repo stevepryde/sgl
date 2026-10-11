@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `SpritePass::upload_normal` and `Renderer::upload_normal_map`: a
+  second normal map under a different handle for a diffuse was ignored
+  (returning `Ok`, even when mis-sized); it now replaces the first, and a
+  mis-sized one returns `TextureError::SizeMismatch`. A call before the
+  diffuse's upload, previously a debug panic or silent no-op, returns the
+  new `TextureError::DiffuseNotUploaded`. Upload the diffuse first; an
+  exhaustive `match` on `TextureError` adds the variant.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
   controller callback, including those a newer owner had installed, so the
   newer one stopped receiving input; it now clears only callbacks it still
