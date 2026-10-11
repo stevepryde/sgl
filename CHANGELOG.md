@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import and `asset::Vertex::tangent`: a tangent a few f32
+  ulps off its normal counted as a frame, its rounding normalised into an
+  arbitrary tangent; a tangent within 0.02° of its normal is now along it:
+  absent on a material without anisotropy, refused on an anisotropic one
+  (import error, or `SceneError::MissingAnisotropyTangents`). No game-code
+  change needed.
 - `sgl-3d` `Scene::set_baked_specular_probes`: when the probes' influence
   boxes together spanned more than about 7e12 m on each axis, probe captures
   and world-space ray hits found none of them; they now do. A box whose `max - min` overflows f32

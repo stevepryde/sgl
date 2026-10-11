@@ -2799,9 +2799,10 @@ linear RG direction (remapped to -1..1) and B strength. No texture means +T and
 full texture strength, as on a device of the `Basic` [binding tier](#binding-tiers),
 which binds no anisotropy map. File and embedded glTF imports use the same rules.
 Active anisotropy requires authored tangents; automatic tangent generation is
-not implemented. Normal maps and anisotropy share that frame. An authored
-tangent along its normal spans no frame: it fails the load of an
-anisotropic material and is absent (`Vertex::tangent` zero) on any other.
+not implemented. Normal maps and anisotropy share that frame. A tangent
+within 0.02° of its normal (as authored or after node transforms) spans no
+frame: it fails the load of an anisotropic material and is absent
+(`Vertex::tangent` zero) on any other.
 Where skinning or morphing cancels a tangent or turns it along its normal,
 shading takes an arbitrary tangent in the normal's plane, keeping the
 authored handedness (+1 where there is none), as for a vertex without one.
