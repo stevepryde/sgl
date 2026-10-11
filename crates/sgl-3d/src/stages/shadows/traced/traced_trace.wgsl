@@ -17,10 +17,10 @@
 // 8×4 tile. Changed at the port boundary: a pixel's lights are the
 // slot table's (shadow_mask_slots.wgsl), not the first sixteen of a
 // sorted entity array; a light reaches the surface as the lit library's
-// light_reach says (range, cone, and the lit side of the shading normal; a
-// rectangle the half-space before its face), a directional light where
-// either the base or the coat normal faces it, the normals the lighting
-// uses; a baked light casts no ray at a
+// light_reach says (range, cone, and where the base or the coat normal,
+// the normals the lighting uses, faces any of its sphere; a rectangle the
+// half-space before its face), a directional light where either faces any
+// of its disc (light_faces); a baked light casts no ray at a
 // receiver that takes no baked lights, which the lighting never gives
 // them (the slot table's baked bits, the G-buffer's F0 flag), its slot
 // holding 1 there wherever the light reaches (traced_visible), where
@@ -76,9 +76,10 @@ fn traced_directional_light()->u32 {
 // with base normal `normal` and coat normal `coat_normal` (G-buffer
 // normal.BA: the coat's mapped normal, else the geometry normal), along a
 // ray toward the point of the light `random` draws (light_surface.wgsl);
-// false where the light does not reach the surface. A directional light's
-// reach test covers the normals the lighting uses, base and coat: where
-// both face away, no lobe takes the light. Where `untraced`, a
+// false where the light does not reach the surface. The reach test covers
+// the normals the lighting uses, base and coat, and the light's sphere or
+// disc (light_faces): where both face away from all of it, no lobe takes
+// the light. Where `untraced`, a
 // baked light at a receiver that takes no baked lights, which the lighting
 // never gives it, no ray is cast and the light is unoccluded where it
 // reaches: a value no lighting at the pixel reads, chosen for the passes
@@ -97,7 +98,7 @@ fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,coat
   }
   let light=frame.directional_lights[index];
   let to_light=normalize(light.direction_to_light);
-  if dot(normal,to_light)<=0. && dot(coat_normal,to_light)<=0. {
+  if !light_faces(normal,coat_normal,to_light,light.disc_radius) {
    return false;
   }
   let direction=directional_ray_direction(to_light,light.disc_radius,random);
@@ -107,7 +108,7 @@ fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,coat
   return false;
  }
  let light=lights[key];
- if light_reach(light,position,normal,false,0.).attenuation<=0. {
+ if light_reach(light,position,normal,coat_normal,false,0.).attenuation<=0. {
   return false;
  }
  if untraced {
