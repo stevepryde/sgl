@@ -1125,7 +1125,7 @@ fn tiles_that_stop_hitting_keep_no_history() {
     }
 }
 
-// PROVENANCE.md DFX-50: a pixel that leaves the reflection mask keeps no
+// PROVENANCE.md DFX-51: a pixel that leaves the reflection mask keeps no
 // radiance for when it returns. The plane's right half (x >= 32) is glossy
 // for two frames, rough for three, then glossy again. Before it leaves,
 // every ray hits white in one run and misses in the other; while it is out,

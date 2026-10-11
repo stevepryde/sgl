@@ -16,6 +16,7 @@ mod targets;
 
 use crate::shading::Module;
 use crate::view::cached_group::CachedGroup;
+use crate::view::history::StageHistory;
 use crate::view::reflection_camera;
 use glam::{Mat4, Vec4};
 use targets::Targets;
@@ -184,8 +185,8 @@ pub(crate) struct Velvet {
     temporal_params: wgpu::Buffer,
     targets: Option<Targets>,
     groups: Option<Groups>,
-    /// Frames since history last reset; 0 resets it.
-    frame: u32,
+    /// Frames since history last reset (0 resets it), and the half written.
+    history: StageHistory,
     /// Scene frame last encoded, matching the TAA/SSR continuity rule.
     previous_scene_frame: Option<u32>,
 }
@@ -246,7 +247,7 @@ impl Velvet {
             ),
             targets: None,
             groups: None,
-            frame: 0,
+            history: StageHistory::default(),
             previous_scene_frame: None,
         }
     }
@@ -302,14 +303,14 @@ impl Velvet {
                 .previous_scene_frame
                 .is_some_and(|previous| input.frame.frames == previous.wrapping_add(1));
         if resized || !continuous {
-            self.frame = 0;
+            self.history.count = 0;
         }
         self.previous_scene_frame = Some(input.frame.frames);
         // The renderer's camera history is the previous camera, as it
         // rasterized; a new history reprojects through this frame's.
         let near = input.camera.proj[3][2];
         let (previous, previous_near) = match input.frame.previous_camera {
-            Some(camera) if self.frame > 0 => (
+            Some(camera) if self.history.count > 0 => (
                 camera.jittered_view_projection(),
                 camera.projection.w_axis.z,
             ),
@@ -319,9 +320,9 @@ impl Velvet {
                 near,
             ),
         };
-        let current = (self.frame % 2) as usize;
-        let continues = self.frame > 0;
-        self.frame = self.frame.wrapping_add(1).max(1);
+        let current = self.history.current;
+        let continues = self.history.count > 0;
+        self.history.advance();
         let t = self.targets.as_ref().unwrap();
         let [width, height] = t.size.map(|v| v as f32);
         crate::counters::write_buffer(

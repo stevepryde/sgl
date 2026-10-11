@@ -1245,7 +1245,7 @@ impl ScreenSpaceReflection {
                 &r.radiance_history[curr_frame_idx],
                 &r.variance_history[curr_frame_idx],
             ],
-            // DFX-50: pixels outside the mask hold no history, zero radiance
+            // DFX-51: pixels outside the mask hold no history, zero radiance
             // and variance 1, as DFX-29's skipped tiles do, so the next
             // frame's bilinear reprojection reads no radiance they kept from
             // the last frame they were in the mask.

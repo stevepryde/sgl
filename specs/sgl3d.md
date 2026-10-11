@@ -110,7 +110,9 @@ settings SGL3D has today.
    result at its cause (units, double-counted energy, broken normals, ownership
    between passes) instead of masking it with a compensating gain, clamp or
    per-content exception. Artistic parameters such as exposure, bloom, emissive
-   strength, fog and reflection intensity are legitimate and game-owned.
+   strength, fog and reflection intensity are legitimate and game-owned. A
+   bump map is the recorded exception: per pixel in raster and per metre at
+   ray hits, which have no pixel footprint ([D-45](decisions.md)).
 6. **S3D-6 — Settings.** SGL3D's settings are what a game specifies about its
    rendering, as one plain value, `settings::Settings`; games persist it, own
    presets and settings UI, and decide which settings, if any, their players

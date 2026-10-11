@@ -591,3 +591,46 @@ fn deformed_casters_cast_at_their_deformed_depth() {
         );
     }
 }
+
+// Plausible defect: a skinned tangent that the skin collapses normalised as
+// is, so the deformed tangent stores NaN, which no later zero test catches
+// and anisotropic shading spreads. A joint scaled to zero collapses it, as
+// a rig hides a part. The oracle is glTF 2.0's skinning: the tangent times
+// the joint's linear part, here zero, with the vertex's handedness kept
+// (the Vertex encoding's ±1), and every position at the joint's
+// translation.
+#[test]
+fn a_collapsed_skinned_tangent_stays_zero_with_its_handedness() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let skin = MeshDeformation {
+        influences: vec![
+            Influence {
+                joints: [0, 0, 0, 0],
+                weights: [1., 0., 0., 0.],
+            };
+            4
+        ],
+        morph_targets: Vec::new(),
+    };
+    let mesh = quad(0., -2., 0.5, skin);
+    let mut scene = Scene::new(&device, &queue);
+    let model = scene
+        .add_asset(&device, &queue, asset(vec![mesh.clone()]))
+        .unwrap()
+        .model;
+    let instance = moving(&mut scene, &device, &queue, model);
+    let translation = Vec3::new(0.3, 0.2, -1.);
+    let joint = Mat4::from_scale_rotation_translation(Vec3::ZERO, Quat::IDENTITY, translation);
+    scene
+        .set_instance_deformation(&queue, instance, &[joint], &[])
+        .unwrap();
+    let observed = deformed(&device, &queue, &mut scene, instance, 4);
+    for (v, (vertex, (p, _, t))) in mesh.vertices.iter().zip(observed).enumerate() {
+        assert!(
+            p == translation && t == Vec4::new(0., 0., 0., vertex.tangent[3]),
+            "vertex {v}: position {p}, tangent {t}"
+        );
+    }
+}

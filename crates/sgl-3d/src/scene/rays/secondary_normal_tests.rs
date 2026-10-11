@@ -166,7 +166,8 @@ fn disabled_normal_stage_keeps_the_geometry_normal() {
 }
 
 // A bump map alone: the affine height's slope in both UV axes, per pixel in
-// raster and per metre in secondary rays, under mirrored UVs and back faces.
+// raster and per metre in secondary rays (D-45), under mirrored UVs and back
+// faces.
 #[test]
 fn affine_bump_height_axes_mirrored_uv_and_back_faces() {
     material_normal_oracle(false, true, false, Observe::Base);
@@ -694,8 +695,8 @@ override fixture_observe:u32=0u;
                 }
             };
             let side = if case < 2 { 1. } else { -1. };
-            // Secondary rays take the physical height gradient per metre: 16
-            // texels across each 1.5 m plane axis. Raster follows Three r185's
+            // Secondary rays take the physical height gradient per metre
+            // (D-45): 16 texels across each 1.5 m plane axis. Raster follows Three r185's
             // BumpMapNode, whose normalized positional derivatives take the
             // gradient per pixel: 16 texels across the 24 pixels each plane
             // covers (a quarter of 128 columns wide at 1.5/4 of clip X, and
