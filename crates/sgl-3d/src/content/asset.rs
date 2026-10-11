@@ -55,7 +55,7 @@ pub struct Vertex {
     /// Unit tangent XYZ and bitangent handedness W after node transforms.
     /// Zero means absent for legacy isotropic geometry, and for an imported
     /// tangent along its normal; a tangent within 0.02° of its normal is
-    /// absent too. Anisotropy requires a valid frame.
+    /// treated as absent. Anisotropy requires a valid frame.
     /// Made perpendicular to the normal and unit, then kept within 0.01°.
     pub tangent: [f32; 4],
 }
