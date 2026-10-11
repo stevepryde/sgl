@@ -215,15 +215,16 @@ enum DepthStencil<'a> {
     ReadOnly(&'a wgpu::TextureView),
 }
 
-/// One draw of a technique into `rtvs` (cleared to zero where `clear_rtvs`)
-/// and an optional depth-stencil view: upstream's `SetRenderTargets`, clears,
-/// `SetPipelineState`, `CommitShaderResources` and `Draw`.
+/// One draw of a technique into `rtvs` (each cleared to its colour in
+/// `clear`, when given) and an optional depth-stencil view: upstream's
+/// `SetRenderTargets`, clears, `SetPipelineState`, `CommitShaderResources`
+/// and `Draw`.
 #[allow(clippy::too_many_arguments)]
 fn draw_pass(
     device_context: &mut wgpu::CommandEncoder,
     label: &str,
     rtvs: &[&wgpu::TextureView],
-    clear_rtvs: bool,
+    clear: Option<&[wgpu::Color]>,
     dsv: Option<DepthStencil<'_>>,
     tech: &PostFXRenderTechnique,
     group: &wgpu::BindGroup,
@@ -231,17 +232,16 @@ fn draw_pass(
 ) {
     let attachments: Vec<_> = rtvs
         .iter()
-        .map(|view| {
+        .enumerate()
+        .map(|(index, view)| {
             Some(wgpu::RenderPassColorAttachment {
                 view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: if clear_rtvs {
-                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
-                    } else {
-                        wgpu::LoadOp::Load
-                    },
+                    load: clear.map_or(wgpu::LoadOp::Load, |colors| {
+                        wgpu::LoadOp::Clear(colors[index])
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
             })
@@ -934,7 +934,7 @@ impl ScreenSpaceReflection {
                 render_attribs.device_context,
                 "ComputeHierarchicalDepthBuffer",
                 &[&self.hierarchical_depth_mip_map_rtv[mip_level]],
-                false,
+                None,
                 None,
                 tech,
                 &group,
@@ -975,7 +975,7 @@ impl ScreenSpaceReflection {
             render_attribs.device_context,
             "ComputeStencilMaskAndExtractRoughness",
             &[&r.roughness],
-            false,
+            None,
             Some(DepthStencil::Clear(&r.depth_stencil_mask)),
             tech,
             &group,
@@ -1015,7 +1015,7 @@ impl ScreenSpaceReflection {
             render_attribs.device_context,
             "ComputeDownsampledStencilMask",
             &[],
-            false,
+            None,
             Some(DepthStencil::Clear(
                 r.depth_stencil_mask_half_res.as_ref().unwrap(),
             )),
@@ -1077,7 +1077,7 @@ impl ScreenSpaceReflection {
             render_attribs.device_context,
             "ComputeIntersection",
             &[&r.radiance, &r.ray_direction_pdf],
-            true,
+            Some(&[wgpu::Color::TRANSPARENT; 2]),
             Some(DepthStencil::ReadOnly(dsv)),
             tech,
             &group,
@@ -1130,7 +1130,7 @@ impl ScreenSpaceReflection {
                 render_attribs.device_context,
                 "DenoiserTiles",
                 &[output],
-                false,
+                None,
                 None,
                 tech,
                 &group,
@@ -1193,7 +1193,7 @@ impl ScreenSpaceReflection {
             ],
             // DFX-23: temporal neighbourhood statistics read outside the
             // active mask, so skipped pixels must contain this frame's zero.
-            true,
+            Some(&[wgpu::Color::TRANSPARENT; 3]),
             Some(DepthStencil::ReadOnly(&r.depth_stencil_mask)),
             tech,
             &group,
@@ -1279,7 +1279,11 @@ impl ScreenSpaceReflection {
                 &r.radiance_history[curr_frame_idx],
                 &r.variance_history[curr_frame_idx],
             ],
-            false,
+            // DFX-51: pixels outside the mask hold no history, zero radiance
+            // and variance 1, as DFX-29's skipped tiles do, so the next
+            // frame's bilinear reprojection reads no radiance they kept from
+            // the last frame they were in the mask.
+            Some(&[wgpu::Color::TRANSPARENT, wgpu::Color::WHITE]),
             Some(DepthStencil::ReadOnly(&r.depth_stencil_mask)),
             tech,
             &group,
@@ -1336,7 +1340,7 @@ impl ScreenSpaceReflection {
             render_attribs.device_context,
             "ComputeBilateralCleanup",
             &[&r.output],
-            true,
+            Some(&[wgpu::Color::TRANSPARENT]),
             Some(DepthStencil::ReadOnly(&r.depth_stencil_mask)),
             tech,
             &group,

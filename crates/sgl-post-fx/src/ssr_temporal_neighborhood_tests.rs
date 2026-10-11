@@ -802,6 +802,37 @@ fn denoise_frame(
     previous: Option<Previous>,
     hit: impl Fn(u32, u32) -> bool,
 ) -> Denoised {
+    denoise_frame_over(
+        device,
+        queue,
+        ssr,
+        context,
+        flags,
+        filter,
+        index,
+        all_tiles,
+        previous,
+        hit,
+        |_, _| true,
+    )
+}
+
+/// `denoise_frame` over a plane that is glossy where `glossy` holds and
+/// rough (perceptual roughness 1, outside the reflection mask) elsewhere.
+#[allow(clippy::too_many_arguments)]
+fn denoise_frame_over(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    ssr: &mut ScreenSpaceReflection,
+    context: &mut PostFXContext,
+    flags: FeatureFlags,
+    filter: [f32; 2],
+    index: u32,
+    all_tiles: bool,
+    previous: Option<Previous>,
+    hit: impl Fn(u32, u32) -> bool,
+    glossy: impl Fn(u32, u32) -> bool,
+) -> Denoised {
     use wgpu::util::DeviceExt;
     let mut encoder = device.create_command_encoder(&Default::default());
     // A glossy plane facing the camera (perceptual roughness 0.196, which
@@ -813,7 +844,11 @@ fn denoise_frame(
         wgpu::TextureFormat::Rgba16Float,
         &half(&[0.0, 0.0, -1.0, 0.0]),
     );
-    let material = texture(device, queue, wgpu::TextureFormat::R8Unorm, &[50]);
+    let roughness: Vec<u8> = (0..SIZE[1])
+        .flat_map(|y| (0..SIZE[0]).map(move |x| (x, y)))
+        .map(|(x, y)| if glossy(x, y) { 50 } else { 255 })
+        .collect();
+    let material = texels(device, queue, wgpu::TextureFormat::R8Unorm, &roughness);
     // Motion in NDC: 4 is two screens.
     let motion = texture(
         device,
@@ -1094,6 +1129,69 @@ fn tiles_that_stop_hitting_keep_no_history() {
             }
         }
     }
+}
+
+// PROVENANCE.md DFX-51: a pixel that leaves the reflection mask keeps no
+// radiance for when it returns. The plane's right half (x >= 32) is glossy
+// for two frames, rough for three, then glossy again. Before it leaves,
+// every ray hits white in one run and misses in the other; while it is out,
+// every ray misses; when it returns, a checkerboard of hits gives the
+// neighbourhood a box wide enough to admit the old white. The returning
+// frame's histories and output must not depend on the radiance from before
+// the pixels left.
+#[test]
+fn pixels_returning_to_the_mask_keep_no_old_radiance() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let run = |hit_before_leaving: bool| {
+        let mut ssr = ScreenSpaceReflection::new(&device);
+        let mut context = PostFXContext::new(
+            &device,
+            &queue,
+            post_fx_context::CreateInfo {
+                transition_duration: 0.0,
+            },
+        );
+        let mut frames = (0..6).map(|index| {
+            denoise_frame_over(
+                &device,
+                &queue,
+                &mut ssr,
+                &mut context,
+                FeatureFlags::NONE,
+                DEFAULT_FILTER,
+                index,
+                false,
+                None,
+                |x, y| match index {
+                    0 | 1 => hit_before_leaving,
+                    2..=4 => false,
+                    _ => checkerboard(x, y),
+                },
+                |x, _| x < 32 || !(2..=4).contains(&index),
+            )
+        });
+        let before_leaving = frames.nth(1).unwrap();
+        (before_leaving, frames.last().unwrap())
+    };
+    let (white_before, white) = run(true);
+    let (black_before, black) = run(false);
+    let right = |pixel: &usize| pixel % SIZE[0] as usize >= 32;
+    for pixel in (0..(SIZE[0] * SIZE[1]) as usize).filter(right) {
+        assert!(
+            white_before.radiance_history[pixel][3] > black_before.radiance_history[pixel][3] + 0.5,
+            "pixel {pixel} must hold the white hits before leaving"
+        );
+    }
+    let differ = |a: &[[f32; 4]], b: &[[f32; 4]]| a.iter().zip(b).filter(|(a, b)| a != b).count();
+    let radiance = differ(&white.radiance_history, &black.radiance_history);
+    let output = differ(&white.output, &black.output);
+    assert_eq!(
+        (radiance, output),
+        (0, 0),
+        "the radiance from before leaving reached {radiance} history and {output} output pixels"
+    );
 }
 
 // PROVENANCE.md DFX-49: a reset history is no history. A still glossy plane

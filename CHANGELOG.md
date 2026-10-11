@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): pixels that
+  left the reflection mask kept their last radiance history, which the next
+  frames' bilinear reprojection blended back in as faint ghosting at mask
+  edges; they now hold no history (zero radiance, variance 1). No game-code
+  change needed.
 - `sgl-post-fx` `ScreenSpaceReflectionAttribs::temporal_radiance_stability_factor`
   and `ScreenSpaceReflection::execute`: the default was 1.0, and a frame
   whose history was reset, or recreated by a resize or half-resolution
