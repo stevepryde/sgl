@@ -19,8 +19,8 @@ docs and specs the entry links.
   and `ScreenSpaceReflection::execute`: the default was 1.0, and a frame
   whose history was reset, or recreated by a resize or half-resolution
   change, mixed in the zeroed history, so reflections stayed dark; the
-  default is now 0.95 and such a frame takes the current frame's radiance,
-  also at a frame index of `u32::MAX`. A game that relied on 1.0 sets it
+  default is now 0.95 and such a frame takes the current frame's radiance.
+  A game that relied on 1.0 sets it
   explicitly; otherwise no game-code change needed (SGL3D already used 0.95).
 - `sgl-3d` glTF import: a sparse accessor without a buffer view declaring a
   huge count aborted the process; the load now fails with an error naming
