@@ -39,7 +39,10 @@ Their CPU-side contracts are in [client](client.md).
    game pushes world-unit positions and sizes and the renderer applies the
    pixel seam; the default remains y-down logical pixels.
 4. Pipelines, textures, the camera uniform, quad data, and instance allocation
-   persist across frames. The instance buffer grows only when required.
+   persist across frames. The instance buffer grows only when required, and
+   never past the device's `max_buffer_size`: a frame with more instances
+   than that holds draws the first that many in draw order (world, then
+   screen) and drops the rest.
 5. Adjacent sprites on the same texture page (atlas page or standalone
    texture) and clip share a draw call. `SpritePass::draw_stats` reports
    each channel's draw calls and instances as encoded for the latest

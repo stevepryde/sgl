@@ -15,10 +15,75 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH`:
+  toggling it at an unchanged size kept the old depth format and panicked at
+  the next resize; `PostFXContext::prepare_resources` now recreates the
+  depths when the flag changes. The flag needs a device with
+  `TEXTURE_FORMAT_16BIT_NORM` and `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`
+  whose adapter renders to R16Unorm. No game-code change needed.
+- `sgl-net` UDP endpoints: a handshake whose confirms or accept were lost
+  until the cookie expired (5 to 10 s) never completed; the server, even
+  after `stop_admission`, now accepts a request or confirm for a connection
+  it holds at any cookie age, and the client requests again after four
+  unanswered confirms, takes the cookie the accept names, and takes a
+  payload carrying its nonces as the accept. No game-code change needed.
+- `sgl-3d` `Settings::world_space_reflections`: on rare frames each world
+  ray traced the next 2×2 block's pixel (the last outside the screen), and
+  at a render 1 pixel wide or tall it read past the edge; each now traces a
+  pixel of its own block inside the screen. No game-code changes needed.
+- `sgl-net` `ThreadedUdpServer`: a connection that ended at the worker (peer
+  close, timeout, protocol violation) discarded the messages it had
+  delivered but the caller had not yet polled and reported `Disconnected`
+  first; polls now return those messages, then `Disconnected`. No game-code
+  change needed.
+- `sgl-3d` `Settings::world_space_reflections`: a receiver in the
+  screen-space method's roughness fade that the method saw with full
+  confidence traced no world ray, leaving its faded share to probes and sky;
+  it now traces one, as composition gives that share to world rays. No
+  game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown`: an open dropdown scrolled fully out of its
+  clip stayed open and kept the keyboard captured; it now closes at
+  `UiFrame::end`. No game-code changes needed.
+- `sgl-3d` `Scene::add_materials`, `add_asset` and `set_material`: a
+  metallic, roughness, clearcoat, clearcoat roughness or base alpha outside
+  0..=1, or a base colour, emission or `environment_scale` that is negative
+  or not finite, was accepted and reached the GPU; it is now refused with
+  new `SceneError::InvalidMaterialFactors`. Migration: keep those values in
+  range; exhaustive matches on `SceneError` add the variant.
+- `sgl-3d` `asset::load*`: a KHR material extension object (anisotropy,
+  clearcoat, iridescence, sheen, diffuse transmission, transmission, volume,
+  dispersion) carrying its own `extensions` property was refused as
+  unsupported; it now loads, as glTF's `glTFProperty` allows. No game-code
+  change needed.
+- `sgl-2d` `Renderer::set_target_size`: a size wider or taller than the
+  device's maximum texture dimension clamped only that axis, distorting the
+  aspect, letterboxing the frame and shrinking `ui_size()`; both axes now
+  scale together, so the frame fills the window and `ui_size()` stays the
+  window's logical size. No game-code change needed.
+- `sgl-net` `BrowserWebSocketClient`: a reconnect attempt whose `WebSocket`
+  constructor threw (a `SecurityError`, say) reported no `Disconnected`, so
+  a game waiting after `Reconnecting` waited forever; each such attempt now
+  reports `Disconnected { Transport }` like any other failed attempt. No
+  game-code change needed.
+- `sgl-2d` `SpritePass::prepare`: a frame with more instances than the
+  device's `max_buffer_size` holds (about 3.3 million at the 256 MiB
+  default) grew the instance buffer past it, a wgpu validation error; it now
+  draws the first that many (world, then screen) and drops the rest, which
+  `draw_stats` reflects. No game-code change needed.
+- `sgl-3d` `asset::load*`: a node transform with an absolute determinant
+  below 1e-10 was refused as singular, so a uniform scale at or below about
+  4.6e-4 failed to load; singularity is now judged relative to the node's
+  axis lengths, so small scales load and only a collapsed axis is refused.
+  No game-code change needed.
 - `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and
   layout matches a cold cache and `measure`. No game-code change needed.
+- `sgl-3d` `asset::load*`: an `EXT_materials_bump` map without
+  `bumpFactor` loaded with `bump_scale` 0 (no effect) and a factor above 1
+  was refused; now the factor defaults to 1 and loads in `0..=100`, as the
+  extension's schema sets. No game-code change needed; bump maps that had no
+  effect now show.
 - `sgl-3d` `asset::load*`: every glTF image was decoded (and asked of
   `LoadOptions::images`), so one only an unsupported texture extension
   (`KHR_texture_basisu`) or an ignored map used could fail the load; now

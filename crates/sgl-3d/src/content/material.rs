@@ -69,9 +69,10 @@ impl Default for NormalLayer {
 /// the textures it was added with stay as they were.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceMaterial {
-    /// Linear RGB base multiplier and alpha.
+    /// Linear RGB base multiplier, each channel finite and nonnegative, and
+    /// alpha in `0..=1`.
     pub base: [f32; 4],
-    /// Linear RGB emission.
+    /// Linear RGB emission, each channel finite and nonnegative.
     pub emission: [f32; 3],
     /// Metallic factor in `0..=1`.
     pub metallic: f32,
@@ -92,10 +93,11 @@ pub struct SurfaceMaterial {
     /// without one
     /// ([`asset::Material::occlusion_texture`](crate::asset::Material::occlusion_texture)).
     pub occlusion_strength: f32,
-    /// Clearcoat intensity, which a clearcoat map's red channel multiplies.
+    /// Clearcoat intensity in `0..=1`, which a clearcoat map's red channel
+    /// multiplies.
     pub clearcoat: f32,
-    /// Clearcoat perceptual roughness, which a clearcoat roughness map's
-    /// green channel multiplies.
+    /// Clearcoat perceptual roughness in `0..=1`, which a clearcoat
+    /// roughness map's green channel multiplies.
     pub coat_roughness: f32,
     /// Scale applied to the clearcoat normal map's tangent-space X and Y
     /// components ([`Material::coat_normal_scale`]).
@@ -168,7 +170,8 @@ pub struct SurfaceMaterial {
     /// Counter-clockwise tangent-space rotation of the anisotropy direction,
     /// in radians.
     pub anisotropy_rotation: f32,
-    /// Multiplier of the environment's diffuse and specular light.
+    /// Multiplier of the environment's diffuse and specular light, finite
+    /// and nonnegative.
     pub environment_scale: f32,
     /// Visibility group: every bit must be enabled by the frame's mask.
     /// Zero is always visible.

@@ -1077,8 +1077,10 @@ last, after everything it may use, and refuses a directive in it.
   684–687) and its Hybrid Reflections sample its hardware rays
   (`Intersect.hlsl` 273–300): a classification pass, a workgroup a tile
   of 8 by 8 tracing pixels, writes every tracing pixel's miss, lists those
-  whose jittered receiver needs a ray (traced, the screen-space method not
-  confident, not under a blended receiver) in a ray list with one count
+  whose jittered receiver needs a ray (traced, its fallback taking a share
+  of the lobe, 1 − confidence × fade by composition's formula, so a
+  confident receiver in the roughness fade still traces, not under a
+  blended receiver) in a ray list with one count
   increment a workgroup; a one-thread dispatch in the same pass turns the
   count into the trace's indirect arguments, in rows of 64 workgroups; and
   the trace, a compute pass, traces the listed rays, a ray a thread. Which

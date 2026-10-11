@@ -269,10 +269,12 @@ impl BrowserWebSocketClient {
         self.state
             .borrow_mut()
             .reset_for_reconnect(&self.config.reliable);
+        // Every attempt reports its own end, including one whose `WebSocket`
+        // constructor throws before a socket exists.
+        self.terminal_announced = false;
         match BrowserSocket::connect(&self.config.url, &self.config.identity, &self.state) {
             Ok(socket) => {
                 self.socket = socket;
-                self.terminal_announced = false;
                 true
             }
             Err(_) => {
