@@ -84,6 +84,17 @@ fn a_light_moves_to_its_wanted_size_only_after_holding_its_slots() {
     assert_eq!(large.size, 512);
 }
 
+// Plausible defect: the wanted size rounded up to a power of two before it
+// is capped, which overflows (a panic with overflow checks, else the
+// smallest slot) for a light at or behind the camera, whose coverage is
+// huge. The oracle is the requirement: the most covering light takes the
+// largest slot.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_huge_coverage_takes_the_largest_slot() {
+    let mut atlas = Atlas::new(SIZE);
+    assert_eq!(atlas.update(light(0), 1e9, 1, 1).unwrap().size, 512);
+}
+
 /// Fills the 64-texel quadrant with one-slot lights 0..1024 seen at frame 1,
 /// except `stale`, last seen at frame `stale_frame`.
 fn full(stale: usize, stale_frame: u64) -> Atlas {

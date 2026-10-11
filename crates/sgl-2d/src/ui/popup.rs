@@ -215,6 +215,11 @@ impl UiFrame<'_> {
             .is_none_or(|clip| clip.intersection(&rect).is_some());
         self.popup_seen |= self.ui.open_popup == Some(id) && (button_visible || visible.is_some());
         if !was_open || fired {
+            // The popover first draws next frame; shield what lies under it
+            // then, as `new_blocked` becomes next frame's blockers.
+            if fired && !was_open {
+                self.new_blocked.extend(visible);
+            }
             return false;
         }
 
@@ -449,8 +454,8 @@ mod tests {
     }
 
     /// Dropdown lifecycle: closed by default; press opens; an option press
-    /// selects + closes; while open, the popover region blocks ordinary
-    /// widgets underneath on the following frame.
+    /// selects + closes; from the first frame the popover is drawn, its
+    /// region blocks ordinary widgets underneath.
     #[wasm_bindgen_test(unsupported = test)]
     fn dropdown_opens_selects_and_blocks_underneath() {
         let (mut ui, mut text, _assets) = fixture();
@@ -465,14 +470,10 @@ mod tests {
         f.end();
         assert!(ui.any_popup_open());
 
-        // Frame 2: no input; the popover draws. Rows sit below the button:
-        // row i occupies y ∈ [42 + 30i, 72 + 30i).
-        let mut f = ui.begin(&mut text, &mut list, hover_at(0.0, 0.0, false));
-        f.dropdown("zoom", dd, &options, &mut selected, 16.0);
-        f.end();
-
-        // Frame 3: an underlying button at the popover position must be
-        // blocked while a click there selects option 1 (row y = 72..102).
+        // Frame 2: the popover's first drawn frame. Rows sit below the
+        // button: row i occupies y ∈ [42 + 30i, 72 + 30i). An underlying
+        // button at the popover position must be blocked while a click
+        // there selects option 1 (row y = 72..102).
         let mut f = ui.begin(&mut text, &mut list, press_at(50.0, 85.0));
         let under = f.button("under", Rect::new(10.0, 42.0, 160.0, 90.0), "X", 16.0);
         assert!(!under, "widget under an open popover must not fire");
@@ -567,8 +568,10 @@ mod tests {
         let options = ["a", "b"];
         let mut selected = 0usize;
         let mut offset = 0.0;
+        // Wheel over the area beside the open popover (x 10..170), which
+        // shields what lies under it.
         let wheel = UiInput {
-            mouse_pos: Vec2::new(50.0, 250.0),
+            mouse_pos: Vec2::new(185.0, 250.0),
             scroll: Vec2::new(0.0, -5.0),
             ..UiInput::default()
         };
