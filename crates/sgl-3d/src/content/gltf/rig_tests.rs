@@ -918,9 +918,10 @@ fn instancing_beyond_the_load_limit_is_rejected() {
 // mesh's primitives, which costs channels times primitives: 30000 channels
 // on nodes outside the scene, all using a mesh of 60000 primitives without
 // targets before its morphed one, a file of about 4 MB. A per-channel walk
-// visits 1.8 billion primitives, tens of seconds even optimized; linear
-// import reads it in a fraction of a second. The bound sits far above what
-// a slow, shared runner needs for the linear import.
+// visits 1.8 billion primitives, over a minute in a test build; linear
+// import reads it in well under half a second there. The 5 s bound sits an
+// order of magnitude from each, so a slow, shared runner neither fails the
+// linear import nor passes the quadratic one.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn many_morph_weight_channels_on_a_mesh_of_many_primitives_import_in_linear_time() {
