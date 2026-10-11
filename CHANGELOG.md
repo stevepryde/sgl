@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `sweep_aabb` (and `move_and_collide`, `snap_to_ground`): a body
+  exactly touching a collider at coordinates that round could miss it and
+  move straight through; now a body exactly touching a collider contacts it
+  at `t = 0` when moving toward it. No game-code change needed.
 - `sgl-3d` `HeatDistortion::displacement`: under FSR2 it shifted the frame
   by render pixels, larger than documented; it now shifts by the scene
   pixels it documents at every antialiasing setting, so heat under FSR2
