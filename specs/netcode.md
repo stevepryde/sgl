@@ -9,7 +9,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
 ## Requirements
 
 1. Native peers can use UDP, browser peers can use binary WebSocket, and solo
-   or tests can use an in-memory duplex.
+   or tests can use an in-memory duplex. Native WebSocket is plaintext: the
+   native client accepts only `ws://` URLs and refuses any other, `wss://`
+   included, before connecting; TLS terminates at the deployment edge.
 2. Every transport exposes connect/disconnect events, bounded receive polling,
    send, flush, and close. Native UDP can be caller-polled or owned by a bounded
    worker; a native WebSocket server or client owns one I/O worker thread that

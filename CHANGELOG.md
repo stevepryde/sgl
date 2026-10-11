@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `NativeWebSocketClient::connect`: a `wss://` URL connected in
+  plaintext; now any scheme but `ws` fails with `InvalidInput` before
+  connecting. Games passing `wss://` to the native client: use `ws://` and
+  terminate TLS at the deployment edge.
 - `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
   UDP and memory reported nothing for a connection the caller closed (UDP
   sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
