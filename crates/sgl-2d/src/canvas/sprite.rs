@@ -716,10 +716,11 @@ impl SpritePass {
     /// so instances sample it with the same UVs. A different
     /// `normal_handle` replaces the diffuse's current normal map, pixels and
     /// handle; the same handle again changes nothing (use
-    /// [`replace`](Self::replace) to update its pixels). A normal map whose
-    /// dimensions differ from the diffuse's, or that is otherwise invalid,
-    /// is refused with a [`TextureError`], as is a call before `diffuse`'s
-    /// [`upload`](Self::upload) ([`TextureError::DiffuseNotUploaded`]).
+    /// [`replace`](Self::replace) to update its pixels). An invalid texture,
+    /// a new normal map whose dimensions differ from the diffuse's, and a
+    /// call before `diffuse`'s [`upload`](Self::upload)
+    /// ([`TextureError::DiffuseNotUploaded`]) are refused with a
+    /// [`TextureError`].
     pub fn upload_normal(
         &mut self,
         device: &wgpu::Device,
