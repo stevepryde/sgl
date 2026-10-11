@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::fog_quality`: the fog's froxel volume grew without
+  bound as the frame narrowed, so a tall portrait frame (60×1900 at High)
+  panicked creating it, and its froxels were wider than tall; it now holds
+  the quality's side across the geometric mean of the frame's sides in
+  square froxels, each side within the device's 3D texture limit (at 16:9
+  High 170×96 where it was 163×100, Low 85×48 where it was 81×50). No
+  game-code change needed.
 - `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
   UDP and memory reported nothing for a connection the caller closed (UDP
   sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
