@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::dropdown`: on the first frame an opened popover was drawn,
+  nothing shielded the widgets under it, so they could hover or fire with a
+  row; the popover now blocks them from that frame. No game-code change
+  needed.
 - `sgl-core` `random::Rng::usize`: on wasm32 it reduced only 32 bits of the
   draw, giving different values than native for the same seed; it now gives
   native's values on every target. Browser builds that persisted values
