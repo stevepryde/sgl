@@ -186,9 +186,10 @@ pub enum AmbientOcclusionQuality {
 }
 
 /// The resolution of the volumetric fog's froxel volume: Godot's
-/// `volumetric_fog/volume_size` across the frame's mean side, with its
-/// default `volume_depth` of 64 slices. Higher resolves sharper light shafts
-/// and shadow edges in the fog at a higher cost.
+/// `volumetric_fog/volume_size` across the geometric mean of the frame's
+/// sides, in square froxels, with its default `volume_depth` of 64 slices.
+/// Higher resolves sharper light shafts and shadow edges in the fog at a
+/// higher cost.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FogQuality {
     /// Godot's default: 64 froxels across, about 260,000 at 16:9.
@@ -200,7 +201,8 @@ pub enum FogQuality {
 }
 
 impl FogQuality {
-    /// Froxels across the frame's mean side, and depth slices.
+    /// Froxels across the geometric mean of the frame's sides, and depth
+    /// slices.
     pub(crate) fn volume(self) -> (u32, u32) {
         match self {
             Self::Low => (64, 64),

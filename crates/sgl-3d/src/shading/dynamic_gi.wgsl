@@ -4,8 +4,9 @@
 // owns. The texture has three regions, top to bottom:
 //
 // depth: each probe's bordered 18x18 octahedral map of the mean and the mean
-//  square of the distances its rays travel, in rg, at column (x + y nx) 18
-//  and row z 18, as Wicked's depth texture lays them out;
+//  square of the distances its rays travel, in units of the volume's longest
+//  spacing (ddgi_depth_unit), in rg, at column (x + y nx) 18 and row z 18, as
+//  Wicked's depth texture lays them out;
 // irradiance: each probe's bordered 8x8 octahedral map of irradiance / PI,
 //  in rgb, two slabs of the lattice's z to each band of eight rows: slab z's
 //  tile at column ((z % 2) nx ny + x + y nx) 8 and row 18 nz + (z / 2) 8;
@@ -34,7 +35,12 @@
 // argument; f32 in place of half. Added: probes stored by their lattice
 // coordinate plus the volume's scroll, wrapping, as NVIDIA RTXGI's infinite
 // scrolling volume stores its probes (DDGIGetScrollingProbeIndex and its
-// probe scroll offsets; practice only, its code not copied).
+// probe scroll offsets; practice only, its code not copied). Changed: the
+// depth moments are in units of the longest spacing (ddgi_depth_unit) where
+// Wicked's and RTXGI's are in world units, so they hold the same range at
+// any spacing, a miss's 1.5 and its square 2.25: in world units a miss's
+// square passes half's largest value (65504) once the spacing passes about
+// 170 m, and the sample's visibility test took no variance or none at all.
 const DDGI_COLOR_RESOLUTION:u32=6u;
 const DDGI_COLOR_TEXELS:u32=8u;
 const DDGI_DEPTH_RESOLUTION:u32=16u;
@@ -50,6 +56,11 @@ const DDGI_MOST_RAYS:u32=256u;
 // The fixed rays each probe traces a frame beside its others, which classify
 // it and are not blended.
 const DDGI_FIXED_RAYS_PER_FRAME:u32=4u;
+// The unit of a probe's depth moments: the longest of the volume's
+// `spacing`.
+fn ddgi_depth_unit(spacing:vec3<f32>)->f32 {
+ return max(spacing.x,max(spacing.y,spacing.z));
+}
 fn ddgi_sign_not_zero(v:vec2<f32>)->vec2<f32> {
  return select(vec2(-1.),vec2(1.),v>=vec2(0.));
 }

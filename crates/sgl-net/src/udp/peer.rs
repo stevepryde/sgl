@@ -63,6 +63,9 @@ pub struct Peer {
     pub last_receive_ms: u64,
     pub last_send_ms: u64,
     pub last_handshake_send_ms: u64,
+    /// Confirms a client sent for the cookie it holds since it last asked
+    /// for one.
+    pub confirms_sent: u32,
     pub rtt: RttEstimator,
     pub verified_cookie_epoch: Option<u64>,
     pub close_grace: Option<CloseGrace>,
@@ -92,6 +95,7 @@ impl Peer {
             last_receive_ms: now_ms,
             last_send_ms: now_ms,
             last_handshake_send_ms: now_ms,
+            confirms_sent: 0,
             rtt: RttEstimator::new(),
             verified_cookie_epoch: None,
             close_grace: None,
@@ -105,10 +109,10 @@ impl Peer {
     }
 
     pub fn rto_ms(&self) -> u64 {
-        let estimate = self.rtt.estimate();
-        if estimate == RttEstimate::default() {
+        if !self.rtt.is_seeded() {
             return 200;
         }
+        let estimate = self.rtt.estimate();
         u64::from(estimate.srtt_ms)
             .saturating_add(4 * u64::from(estimate.rttvar_ms))
             .clamp(50, MAX_RTO_MS)
@@ -274,5 +278,36 @@ impl Peer {
                 lane.acks_owed = lane.acks_owed.saturating_sub(1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    fn peer() -> Peer {
+        Peer::new(
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            Nonces {
+                client: 1,
+                server: 2,
+            },
+            Handshake::Connected,
+            0,
+            &ReliableConfig::default(),
+        )
+    }
+
+    /// Defect: a 0 ms first sample (loopback, sub-millisecond LAN) yields the
+    /// all-zero estimate and was read as "unmeasured", keeping the 200 ms
+    /// unseeded timeout. Oracle: srtt + 4 * rttvar = 0 clamps to the 50 ms
+    /// floor, as a 1 ms sample does.
+    #[test]
+    fn a_zero_ms_first_sample_seeds_the_retransmission_floor() {
+        let mut unmeasured = peer();
+        assert_eq!(unmeasured.rto_ms(), 200);
+        unmeasured.update_rtt(&[0]);
+        assert_eq!(unmeasured.rto_ms(), 50);
     }
 }

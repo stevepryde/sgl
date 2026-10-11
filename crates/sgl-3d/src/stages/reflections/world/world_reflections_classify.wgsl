@@ -47,8 +47,7 @@ fn world_needs_ray(tracing:vec2<u32>)->bool {
  if world_fallback_share(pixel,textureLoad(world_screen_space,pixel,0).a)<=0.001 {
   return false;
  }
- let clamped=world_clamped(pixel);
- return !gbuffer_under_receiver(textureLoad(world_surface_depth,clamped,0),textureLoad(world_depth,clamped,0));
+ return !gbuffer_under_receiver(textureLoad(world_surface_depth,pixel,0),textureLoad(world_depth,pixel,0));
 }
 var<workgroup> tile_rays:atomic<u32>;
 var<workgroup> tile_base:u32;

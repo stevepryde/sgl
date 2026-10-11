@@ -7,7 +7,9 @@
 // them. Modified: translated to WGSL; alpha carries the share of rays that hit
 // (premultiplied radiance), weighted like colour; a pixel that traced nothing
 // contributes no weight; loads outside the grid are skipped or clamped where
-// HLSL would read zero; the temporal pass keeps its own reduced-grid depth
+// HLSL would read zero; a resolve neighbour floors its offset pixel where
+// Wicked's int2 truncates, so one off the grid is skipped rather than
+// read as the edge pixel; the temporal pass keeps its own reduced-grid depth
 // history; the resolve reads radiance above binary16's range (+infinity) as
 // its largest finite value, as FSR2's PrepareRgb clamps its input, so its
 // tone map makes no inf / inf, and keeps its inverse within that range (#464).
@@ -92,7 +94,7 @@ fn world_hammersley(index:u32,count:u32,random:vec2<u32>)->vec2<f32> {
  let random=hash33(vec3(id.xy,world.frame)).xy;
  for(var i=0u;i<RESOLVE_SPATIAL_RECONSTRUCTION_COUNT;i++) {
   let offset=(world_hammersley(i,RESOLVE_SPATIAL_RECONSTRUCTION_COUNT,random)-vec2(.5))*spatial;
-  let neighbor=vec2<i32>(vec2<f32>(p)+offset);
+  let neighbor=vec2<i32>(floor(vec2<f32>(p)+offset));
   if !world_in_grid(neighbor,world.reduced) {
    continue;
   }

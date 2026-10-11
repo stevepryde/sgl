@@ -347,14 +347,15 @@ fn widget_tree_obeys_the_interaction_contract_under_random_input() {
                 number_drag = Some((p.x, number, false));
             }
             if let Some((start_x, start_value, mut moved)) = number_drag {
+                // The release frame's movement counts too.
+                if (p.x - start_x).abs() >= NUMBER_DRAG_THRESHOLD {
+                    moved = true;
+                }
+                if moved {
+                    expected_number =
+                        number_clamp(start_value + (p.x - start_x) * NUMBER_OPTS.speed);
+                }
                 if down {
-                    if (p.x - start_x).abs() >= NUMBER_DRAG_THRESHOLD {
-                        moved = true;
-                    }
-                    if moved {
-                        expected_number =
-                            number_clamp(start_value + (p.x - start_x) * NUMBER_OPTS.speed);
-                    }
                     number_drag = Some((start_x, start_value, moved));
                 } else {
                     number_drag = None;
@@ -417,7 +418,7 @@ fn widget_tree_obeys_the_interaction_contract_under_random_input() {
                     fires.push(("inner", r));
                 }
             }
-            frame.scroll_area_end();
+            frame.scroll_area_end(&mut scroll_offset);
             if frame.checkbox("cb", CHECKBOX, "Check", PX, &mut checked) {
                 fires.push(("checkbox", CHECKBOX));
             }

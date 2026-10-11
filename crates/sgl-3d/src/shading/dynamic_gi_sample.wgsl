@@ -110,7 +110,8 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,prob
   weight*=wrap*wrap+.2;
   // Moment visibility test.
   let depth_uv=ddgi_probe_uv(ddgi_probe_depth_pixel(stored,probes),DDGI_DEPTH_RESOLUTION,-dir,size);
-  let dist_to_probe=length(probe_to_point);
+  // In the depth moments' unit.
+  let dist_to_probe=length(probe_to_point)/ddgi_depth_unit(spacing);
   let moments=textureSampleLevel(dynamic_gi_probes,baked_sampler,depth_uv,0.).xy;
   let mean=moments.x;
   let variance=abs(mean*mean-moments.y);

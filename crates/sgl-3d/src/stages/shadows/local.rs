@@ -64,10 +64,20 @@ pub struct LocalShadowStats {
     pub draws: usize,
 }
 
-/// A face view's uniform and the shadow group 0 that binds it.
+/// A face view's uniform and the shadow group 0 that binds it with the
+/// frame's uniform.
 struct FaceView {
     buffer: wgpu::Buffer,
     group: wgpu::BindGroup,
+}
+
+/// A planned probe capture's local-light shadows: the shadow records its
+/// lit groups bind, and its faces' shadow groups 0, which bind the
+/// capture's own frame uniform, so shader-driven casters are drawn at the
+/// capture's time.
+pub(crate) struct CaptureShadows {
+    pub records: wgpu::Buffer,
+    groups: Vec<wgpu::BindGroup>,
 }
 
 pub(crate) struct Local {
@@ -321,8 +331,10 @@ impl Local {
     /// Places the static layers a probe capture at `center` of `scene`
     /// samples for `frame`, when `enabled`, with their draws'
     /// instances in `drawn`, and returns the shadow records that place them,
-    /// which the capture's lit groups bind. `encode_capture` draws them, and
-    /// `finish_capture` commits them once the capture is submitted.
+    /// which the capture's lit groups bind, and its faces' groups, which
+    /// bind the capture's frame uniform `uniform`. `encode_capture` draws
+    /// them, and `finish_capture` commits them once the capture is
+    /// submitted.
     #[allow(clippy::too_many_arguments)]
     pub fn plan_capture(
         &mut self,
@@ -330,30 +342,43 @@ impl Local {
         queue: &wgpu::Queue,
         bindings: &FrameBindings,
         (scene, drawn): (&Scene, &mut DrawInstances),
-        center: Vec3,
+        (center, uniform): (Vec3, &wgpu::Buffer),
         frame: ShadowFrame,
         enabled: bool,
-    ) -> wgpu::Buffer {
+    ) -> CaptureShadows {
         self.plan
             .prepare_capture(drawn, scene, center, frame, enabled);
         self.upload_views(device, queue, bindings);
-        crate::scene::buffer(
-            device,
-            "probe capture local light shadow records",
-            bytemuck::cast_slice(self.plan.records()),
-            wgpu::BufferUsages::STORAGE,
-        )
+        let faces = self.plan.faces().len();
+        CaptureShadows {
+            records: crate::scene::buffer(
+                device,
+                "probe capture local light shadow records",
+                bytemuck::cast_slice(self.plan.records()),
+                wgpu::BufferUsages::STORAGE,
+            ),
+            groups: self.views[..faces]
+                .iter()
+                .map(|view| bindings.shadow_group(device, &view.buffer, uniform))
+                .collect(),
+        }
     }
 
-    /// Draws the planned capture's static layers into `encoder`, with the
-    /// uploaded draw instances it was planned with.
+    /// Draws the planned capture's static layers into `encoder` with its
+    /// groups, from the uploaded draw instances it was planned with.
     pub fn encode_capture(
         &self,
         encoder: &mut wgpu::CommandEncoder,
+        capture: &CaptureShadows,
         (scene, pipelines): (&Scene, &GeometryPipelines),
         drawn: &DrawInstances,
     ) {
-        self.encode_layers(encoder, None, (scene, pipelines, drawn));
+        self.encode_layers(
+            encoder,
+            None,
+            |index| &capture.groups[index],
+            (scene, pipelines, drawn),
+        );
     }
 
     /// Commits the last capture, once submitted.
@@ -389,7 +414,12 @@ impl Local {
     /// frame's faces.
     pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
         let (scene, pipelines, drawn) = (ctx.scene, ctx.pipelines, &ctx.views.instances);
-        let mut draws = self.encode_layers(ctx.encoder, ctx.timing, (scene, pipelines, drawn));
+        let mut draws = self.encode_layers(
+            ctx.encoder,
+            ctx.timing,
+            |index| &self.views[index].group,
+            (scene, pipelines, drawn),
+        );
         let faces = self.plan.faces();
         if !faces.is_empty() {
             let mut pass = begin(ctx.encoder, ctx.timing, &self.frame.target, "local shadows");
@@ -417,12 +447,14 @@ impl Local {
         self.plan.stats.draws = draws;
     }
 
-    /// Draws the planned faces' static layers, and returns how many draws
-    /// it encoded.
-    fn encode_layers(
+    /// Draws the planned faces' static layers, each with the shadow group 0
+    /// `group` gives for its place in the plan's faces, and returns how
+    /// many draws it encoded.
+    fn encode_layers<'a>(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         timing: Option<&GpuTiming>,
+        group: impl Fn(usize) -> &'a wgpu::BindGroup,
         (scene, pipelines, drawn): (&Scene, &GeometryPipelines, &DrawInstances),
     ) -> usize {
         let mut layers = self
@@ -441,7 +473,7 @@ impl Local {
             limit(&mut pass, face);
             pass.set_pipeline(&self.clear);
             pass.draw(0..3, 0..1);
-            pass.set_bind_group(0, &self.views[index].group, &[]);
+            pass.set_bind_group(0, group(index), &[]);
             draws += 1 + face.casters.draw(
                 scene,
                 pipelines,

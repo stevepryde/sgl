@@ -95,10 +95,12 @@ fn world_random(p:vec2<u32>,frame:u32)->vec2<f32> {
 }
 // The full-resolution pixel tracing pixel `tracing` traces this frame: one
 // jitter a frame chooses which pixel of each block traces, so that
-// upscaling does not reuse the same pixels.
+// upscaling does not reuse the same pixels. world_random reaches 1, so the
+// jitter is capped at the block's last pixel; the pixel is clamped to the
+// frame, which a block of a 1-pixel side overhangs.
 fn world_traced_pixel(tracing:vec2<u32>)->vec2<i32> {
- let jitter=vec2<u32>(floor(world_random(vec2(0u),world.frame)*f32(WORLD_DOWNSCALE)));
- return vec2<i32>(jitter+tracing*WORLD_DOWNSCALE);
+ let jitter=min(vec2<u32>(floor(world_random(vec2(0u),world.frame)*f32(WORLD_DOWNSCALE))),vec2(WORLD_DOWNSCALE-1u));
+ return world_clamped(vec2<i32>(jitter+tracing*WORLD_DOWNSCALE));
 }
 // A listed ray: its tracing pixel's coordinates in 16 bits each, as
 // FidelityFX SSSR packs its denoiser tiles' (ffx_sssr_callbacks_hlsl.h

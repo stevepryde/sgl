@@ -810,3 +810,119 @@ fn confident_receivers_in_the_roughness_fade_still_trace_world_rays() {
         "a confident receiver below the fade takes its whole lobe from the screen-space method"
     );
 }
+
+/// Each tracing pixel's `world_traced_pixel`, x and y, row by row.
+static TRACED_PIXELS: crate::shading::Module = crate::shading::Module {
+    name: "world_traced_pixel_test",
+    source: "@group(0) @binding(0) var<storage,read_write> traced:array<vec2<i32>>;\n@compute @workgroup_size(8,8) fn traced_pixels(@builtin(global_invocation_id) id:vec3<u32>) {\n let reduced=vec2<u32>(world.reduced.xy);\n if all(id.xy<reduced) {\n  traced[id.x+id.y*reduced.x]=world_traced_pixel(id.xy);\n }\n}\n",
+    deps: &[&super::COMMON],
+};
+
+/// The full-resolution pixel each tracing pixel of a `size` frame traces on
+/// frame `frame`, row by row over the reduced grid.
+fn traced_pixels(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    size: [u32; 2],
+    frame: u32,
+) -> Vec<[i32; 2]> {
+    let reduced = super::Targets::new(device, size).reduced;
+    let [rw, rh] = reduced.map(|side| side as f32);
+    let [w, h] = size.map(|side| side as f32);
+    let identity = Mat4::IDENTITY.to_cols_array_2d();
+    let params = wgpu::util::DeviceExt::create_buffer_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("world reflection parameters"),
+            contents: bytemuck::bytes_of(&super::Params {
+                inverse_view_projection: identity,
+                previous_view_projection: identity,
+                eye: [0., 0., 0., 0.1],
+                full: [w, h, 1. / w, 1. / h],
+                reduced: [rw, rh, 1. / rw, 1. / rh],
+                frame,
+                rays: 0,
+                traced: 0.,
+                range: super::RANGE,
+                previous_near: 0.1,
+                fade: 0.,
+                padding: [0; 2],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        },
+    );
+    let output = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("traced pixels"),
+        size: 8 * u64::from(reduced[0] * reduced[1]),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("traced pixels"),
+        source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&TRACED_PIXELS]).into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("traced pixels"),
+        layout: None,
+        module: &module,
+        entry_point: Some("traced_pixels"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let group = |index, binding, buffer: &wgpu::Buffer| {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(index),
+            entries: &[wgpu::BindGroupEntry {
+                binding,
+                resource: buffer.as_entire_binding(),
+            }],
+        })
+    };
+    let (outputs, world) = (group(0, 0, &output), group(3, 4, &params));
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &outputs, &[]);
+        pass.set_bind_group(3, &world, &[]);
+        pass.dispatch_workgroups(reduced[0].div_ceil(8), reduced[1].div_ceil(8), 1);
+    }
+    queue.submit([encoder.finish()]);
+    test_support::read_words(device, queue, &output)
+        .chunks_exact(2)
+        .map(|pixel| [pixel[0] as i32, pixel[1] as i32])
+        .collect()
+}
+
+// Plausible defects: a jitter of 2 on the frames where world_random's
+// hash rounds up to 1 (frame 4181424 on x, 9574095 on y), so every tracing
+// pixel traces the next block's pixel and the last block of an even side
+// traces outside the frame; or, on a side of 1 pixel, whose reduced grid
+// still has one tracing pixel, a jitter of 1 tracing the pixel past the
+// frame. The oracle is the tracing grid's definition: tracing pixel t
+// traces a pixel of its own block, t × 2 to t × 2 + 1, inside the frame.
+// Frames 0 to 7 give each axis both jitters.
+#[test]
+fn every_traced_pixel_lies_in_its_block_and_the_frame() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let frames = (0..8).chain([4_181_424, 9_574_095]);
+    for frame in frames {
+        for size in [[8, 6], [1, 4], [5, 1]] {
+            let reduced = super::Targets::new(&device, size).reduced;
+            let pixels = traced_pixels((&device, &queue), size, frame);
+            for (index, pixel) in pixels.iter().enumerate() {
+                let tracing = [index as u32 % reduced[0], index as u32 / reduced[0]];
+                for axis in 0..2 {
+                    let block = tracing[axis] * super::DOWNSCALE;
+                    let end = (block + super::DOWNSCALE).min(size[axis]);
+                    assert!(
+                        (block as i32..end as i32).contains(&pixel[axis]),
+                        "frame {frame}, size {size:?}: tracing pixel {tracing:?} traces {pixel:?}"
+                    );
+                }
+            }
+        }
+    }
+}
