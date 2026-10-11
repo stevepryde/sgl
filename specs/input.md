@@ -7,7 +7,8 @@ This boundary was requested while fixing Detonator Squad's macOS controller path
 1. **Backend.** `sgl-input` must use Apple's Game Controller framework on macOS 11.3+
    and Gilrs on Windows/Linux. It must not require Steam or rendering. The macOS
    owner must be created/polled/dropped on the main thread, with native callbacks
-   removed before their owned elements are released. It must receive releases
+   removed before their owned elements are released; an owner removes only
+   callbacks it still holds, never a newer owner's. It must receive releases
    while unfocused and restore process-local monitoring preferences when the
    last live owner drops, so an owner replaced in place keeps them.
 2. **Input.** It must expose face buttons by position, D-pad, shoulders, lower

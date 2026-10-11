@@ -35,12 +35,11 @@ previous value on drop. It does not change system preferences.
 
 The game owns player assignment, focus gating, action bindings, deadzones, menu
 navigation and release-before-resume behavior. Poll while unfocused to drain
-releases/disconnects, but do not dispatch gameplay or menu actions then. Do not
-create another native controller owner in the same process: native element
-callbacks belong to this owner and are removed when it drops. Replacing the
-owner in place (`self.pads = Gamepads::new()?;`) is fine: the old one drops
-before the new one's first poll installs its callbacks. Do not poll a new owner
-while the old one is still alive.
+releases/disconnects, but do not dispatch gameplay or menu actions then. Keep
+one owner per process: on macOS a controller's callbacks go to the owner that
+most recently connected it, so an older owner still alive gets no input from
+it. An owner's drop removes only callbacks it still holds, so replacing an
+owner keeps the new one's input even if the new one polled first.
 
 Try `cargo run -p sgl-input --example controllers` with a focused window. The
 example prints actual connection/button/stick events and updates its window title.
