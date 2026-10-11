@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::world_space_reflections`: on rare frames each world
+  ray traced the next 2×2 block's pixel (the last outside the screen), and
+  at a render 1 pixel wide or tall it read past the edge; each now traces a
+  pixel of its own block inside the screen. No game-code changes needed.
 - `sgl-3d` `Settings::world_space_reflections`: a receiver in the
   screen-space method's roughness fade that the method saw with full
   confidence traced no world ray, leaving its faded share to probes and sky;
