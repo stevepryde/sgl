@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `canvas::text::MAX_GLYPH_PAGE_SIZE`: was 16384 natively, so a
+  glyph page between 8192 and 16384 pixels was rasterized and packed but
+  failed its upload under the default limits `Gpu` requests; it is now 8192
+  on every target and such a glyph is not drawn (its advance applies). No
+  game-code change needed.
 - `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and
