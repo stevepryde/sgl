@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `AsepriteSheet::parse`: a one-frame Hash export, whose key
+  Aseprite writes without a frame number (`"player.aseprite"`), failed with
+  `FrameKey` or `MissingFrameIndex`; a single-entry Hash now loads as frame
+  0. No game-code change needed.
 - `sgl-2d` `Renderer::set_target_size`: a size wider or taller than the
   device's maximum texture dimension clamped only that axis, distorting the
   aspect, letterboxing the frame and shrinking `ui_size()`; both axes now
