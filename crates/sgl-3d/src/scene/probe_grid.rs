@@ -62,23 +62,30 @@ impl ProbeGrid {
         );
         // Cubic cells, as fine as the budget allows.
         let extent = max - min;
+        let magnitude = min.abs().max(max.abs()).max_element();
         // No finer than the longest axis allows, which also keeps a thin
-        // collection's cell positive.
+        // collection's cell positive, nor than f32's spacing at the bounds,
+        // which keeps it positive when a tiny box far from the origin has
+        // no extent in f32, nor below the smallest normal f32, where a
+        // sub-picometre box at the origin underflows both.
         let mut cell = (extent.x * extent.y * extent.z / MAX_CELLS as f32)
             .cbrt()
-            .max(extent.max_element() / MAX_CELLS as f32);
+            .max(extent.max_element() / MAX_CELLS as f32)
+            .max(magnitude * f32::EPSILON)
+            .max(f32::MIN_POSITIVE);
         // A cell lists every probe whose bounds, widened by `margin`, overlap
         // it, so rounding in the GPU's local transform and cell arithmetic
         // cannot move a point a probe reaches into a cell that omits it.
-        let magnitude = min.abs().max(max.abs()).max_element();
         let (margin, size) = loop {
             let margin = cell / 64. + magnitude * f32::EPSILON * 512.;
-            let size = ((extent + Vec3::splat(2. * margin)) / cell)
+            // Counted in f32: a tiny box far from the origin has a margin of
+            // so many cells that their product overflows any integer, and
+            // f32 is exact to the budget and rounds monotonically past it.
+            let counts = ((extent + Vec3::splat(2. * margin)) / cell)
                 .ceil()
-                .max(Vec3::ONE)
-                .as_uvec3();
-            if size.x * size.y * size.z <= MAX_CELLS {
-                break (margin, size);
+                .max(Vec3::ONE);
+            if counts.element_product() <= MAX_CELLS as f32 {
+                break (margin, counts.as_uvec3());
             }
             cell *= 1.125;
         };
@@ -89,7 +96,7 @@ impl ProbeGrid {
             words: Vec::new(),
         };
         let last_cell = (size - UVec3::ONE).as_vec3();
-        let mut cells = vec![Vec::new(); (size.x * size.y * size.z) as usize];
+        let mut cells = vec![Vec::new(); size.element_product() as usize];
         for (index, [lo, hi]) in bounds.iter().enumerate() {
             let first = grid
                 .coordinates(*lo - Vec3::splat(margin))
@@ -274,6 +281,42 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    // Defect: the cell count overflows its integer (a panic with overflow
+    // checks, else a wrongly sized grid or an endless loop) when a tiny box
+    // far from the origin has a margin of thousands of cells, or has an axis
+    // (or every axis) with no extent in f32. Independent signal: the grid
+    // builds and the box's centre cell lists it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_tiny_box_far_from_the_origin_builds_a_grid() {
+        for (center, half) in [
+            // A margin of about 1984 cells per axis.
+            (Vec3::new(50_000., 0., 0.), 0.05),
+            // No extent on x.
+            (Vec3::new(50_000., 0., 0.), 0.0005),
+            // No extent on any axis.
+            (Vec3::splat(50_000.), 0.0005),
+            // Every cell floor underflows to zero.
+            (Vec3::ZERO, 1e-42),
+        ] {
+            let world_to_local = Mat4::from_translation(-center);
+            let influence = SpecularProbeBox {
+                min: Vec3::splat(-half),
+                max: Vec3::splat(half),
+            };
+            let grid = ProbeGrid::new(&[(world_to_local, influence)]);
+            let records: &[GridCell] = bytemuck::cast_slice(
+                &grid.words[..CELL_WORDS * grid.size.element_product() as usize],
+            );
+            let GridCell { first, count } =
+                records[grid.flatten(grid.coordinates(center).as_uvec3())];
+            assert_eq!(
+                &grid.words[first as usize..(first + count) as usize],
+                &[0],
+                "{center} {half}"
+            );
         }
     }
 }

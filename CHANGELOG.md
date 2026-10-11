@@ -19,6 +19,11 @@ docs and specs the entry links.
   `assets/{path}` relative to the page, whatever the manifest URL; they are
   now fetched relative to the manifest's directory. Serve the manifest from
   the asset root, e.g. `fetch_runtime_bundle("assets/manifest.txt")`.
+- `sgl-3d` `Scene::set_baked_specular_probes` and `Scene::move_origin`: a
+  tiny probe influence box far from the render origin overflowed the probe
+  grid's cell count, panicking with overflow checks or else building a
+  wrongly sized grid; it now builds within budget. No game-code change
+  needed.
 - `sgl-3d` `Scene::set_instance_deformation`: on a device created with a
   uniform offset alignment of 32 bytes (an adapter's real limits), a frame with two or more deforming meshes failed
   wgpu validation; the deform stage's records are now aligned. No game-code
