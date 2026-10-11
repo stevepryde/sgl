@@ -66,11 +66,13 @@ impl ProbeGrid {
         // No finer than the longest axis allows, which also keeps a thin
         // collection's cell positive, nor than f32's spacing at the bounds,
         // which keeps it positive when a tiny box far from the origin has
-        // no extent in f32.
+        // no extent in f32, nor below the smallest normal f32, where a
+        // sub-picometre box at the origin underflows both.
         let mut cell = (extent.x * extent.y * extent.z / MAX_CELLS as f32)
             .cbrt()
             .max(extent.max_element() / MAX_CELLS as f32)
-            .max(magnitude * f32::EPSILON);
+            .max(magnitude * f32::EPSILON)
+            .max(f32::MIN_POSITIVE);
         // A cell lists every probe whose bounds, widened by `margin`, overlap
         // it, so rounding in the GPU's local transform and cell arithmetic
         // cannot move a point a probe reaches into a cell that omits it.
@@ -296,6 +298,8 @@ mod tests {
             (Vec3::new(50_000., 0., 0.), 0.0005),
             // No extent on any axis.
             (Vec3::splat(50_000.), 0.0005),
+            // Every cell floor underflows to zero.
+            (Vec3::ZERO, 1e-42),
         ] {
             let world_to_local = Mat4::from_translation(-center);
             let influence = SpecularProbeBox {
