@@ -1,9 +1,9 @@
+use std::collections::BTreeSet;
 use std::net::{IpAddr, SocketAddr};
 
 const COOKIE_DOMAIN: &[u8] = b"udp-connect-cookie/v1";
 pub(super) const COOKIE_EPOCH_MS: u64 = 5_000;
 pub(super) const SOURCE_PREFIX_BUCKETS: usize = 64;
-const VERIFIED_REPLAY_SLOTS: usize = 64;
 
 #[derive(Clone)]
 pub(super) struct CookieKey([u8; 32]);
@@ -97,53 +97,88 @@ pub(super) struct ChallengeLimiter {
     buckets: [Option<PrefixBucket>; SOURCE_PREFIX_BUCKETS],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct VerifiedConfirm {
     source: SocketAddr,
     client_nonce: u64,
     cookie: u64,
 }
 
+/// Verified confirms by their cookie's epoch. A cookie validates in its own
+/// epoch and the next, so a slot per epoch parity holds every confirm whose
+/// cookie can still validate, and a slot is emptied only once its epoch's
+/// cookies have expired. A slot holds one entry per verified handshake in its
+/// epoch, each having cost a challenge round trip from its address, so its
+/// growth is capped by the challenge rate (`challenge_responses_per_poll` and
+/// the per-prefix buckets) over the epoch, not by a fixed size.
+#[derive(Default)]
 pub(super) struct ConfirmReplayCache {
-    entries: [Option<VerifiedConfirm>; VERIFIED_REPLAY_SLOTS],
-    next: usize,
+    slots: [ReplayEpoch; 2],
 }
 
-impl Default for ConfirmReplayCache {
-    fn default() -> Self {
-        Self {
-            entries: [None; VERIFIED_REPLAY_SLOTS],
-            next: 0,
-        }
-    }
+#[derive(Default)]
+struct ReplayEpoch {
+    epoch: u64,
+    confirms: BTreeSet<VerifiedConfirm>,
 }
 
 impl ConfirmReplayCache {
-    pub(super) fn contains(&self, source: SocketAddr, client_nonce: u64, cookie: u64) -> bool {
-        let confirm = VerifiedConfirm {
-            source,
-            client_nonce,
-            cookie,
-        };
-        self.entries.contains(&Some(confirm))
+    pub(super) fn contains(
+        &self,
+        source: SocketAddr,
+        client_nonce: u64,
+        cookie: u64,
+        cookie_epoch: u64,
+    ) -> bool {
+        let slot = &self.slots[slot_index(cookie_epoch)];
+        slot.epoch == cookie_epoch
+            && slot.confirms.contains(&VerifiedConfirm {
+                source,
+                client_nonce,
+                cookie,
+            })
     }
 
-    pub(super) fn remember(&mut self, source: SocketAddr, client_nonce: u64, cookie: u64) {
-        if self.contains(source, client_nonce, cookie) {
+    pub(super) fn remember(
+        &mut self,
+        source: SocketAddr,
+        client_nonce: u64,
+        cookie: u64,
+        cookie_epoch: u64,
+        now_ms: u64,
+    ) {
+        let current = epoch(now_ms);
+        for slot in &mut self.slots {
+            if slot.epoch.saturating_add(1) < current {
+                *slot = ReplayEpoch::default();
+            }
+        }
+        // A cookie this old no longer validates, so nothing can replay it.
+        if cookie_epoch.saturating_add(1) < current {
             return;
         }
-        self.entries[self.next] = Some(VerifiedConfirm {
+        let slot = &mut self.slots[slot_index(cookie_epoch)];
+        if slot.epoch != cookie_epoch {
+            *slot = ReplayEpoch {
+                epoch: cookie_epoch,
+                confirms: BTreeSet::new(),
+            };
+        }
+        slot.confirms.insert(VerifiedConfirm {
             source,
             client_nonce,
             cookie,
         });
-        self.next = (self.next + 1) % VERIFIED_REPLAY_SLOTS;
     }
 
     #[cfg(test)]
     pub(super) fn occupied(&self) -> usize {
-        self.entries.iter().flatten().count()
+        self.slots.iter().map(|slot| slot.confirms.len()).sum()
     }
+}
+
+const fn slot_index(cookie_epoch: u64) -> usize {
+    (cookie_epoch % 2) as usize
 }
 
 impl Default for ChallengeLimiter {
@@ -307,23 +342,43 @@ mod tests {
         assert!(v6_prefix.allow(other, 0, 1, 1_000));
     }
 
+    /// #440: every confirm stays while its cookie can validate (its epoch
+    /// and the next), however many arrive, and remembering an expired
+    /// cookie's confirm evicts none of them.
     #[wasm_bindgen_test(unsupported = test)]
-    fn verified_confirm_replay_cache_is_fixed_and_keeps_recent_tombstones() {
+    fn verified_confirm_replay_cache_keeps_confirms_while_their_cookie_validates() {
+        let source = |index: u16| {
+            v4(
+                203,
+                u8::try_from(index >> 8).unwrap(),
+                u8::try_from(index & 0xff).unwrap(),
+                1,
+                40_000,
+            )
+        };
         let mut cache = ConfirmReplayCache::default();
         for index in 0..1_000_u16 {
             cache.remember(
-                v4(
-                    203,
-                    u8::try_from(index >> 8).unwrap(),
-                    u8::try_from(index & 0xff).unwrap(),
-                    1,
-                    40_000,
-                ),
-                u64::from(index) + 1,
+                source(index),
+                1,
                 u64::from(index) + 2,
+                10,
+                COOKIE_EPOCH_MS * 10,
             );
         }
-        assert_eq!(cache.occupied(), VERIFIED_REPLAY_SLOTS);
-        assert!(cache.contains(v4(203, 3, 231, 1, 40_000), 1_000, 1_001));
+        cache.remember(source(1_000), 1, 9, 11, COOKIE_EPOCH_MS * 11);
+        cache.remember(source(1_001), 1, 9, 2, COOKIE_EPOCH_MS * 11);
+        assert!((0..1_000_u16).all(|index| cache.contains(
+            source(index),
+            1,
+            u64::from(index) + 2,
+            10
+        )));
+        assert!(cache.contains(source(1_000), 1, 9, 11));
+        assert!(!cache.contains(source(1_001), 1, 9, 2));
+
+        cache.remember(source(1_002), 1, 9, 12, COOKIE_EPOCH_MS * 12);
+        assert_eq!(cache.occupied(), 2);
+        assert!(cache.contains(source(1_000), 1, 9, 11));
     }
 }

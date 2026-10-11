@@ -798,7 +798,8 @@ fn has_subprotocol(request: &Request, expected: &str) -> bool {
 /// Native WebSocket client configuration.
 #[derive(Clone, Debug)]
 pub struct NativeWebSocketClientConfig {
-    /// `ws://` endpoint URL. TLS termination belongs at the deployment edge.
+    /// `ws://` endpoint URL; `connect` refuses any other scheme, `wss://`
+    /// included. TLS termination belongs at the deployment edge.
     pub url: String,
     /// Canonical Origin value sent during the handshake.
     pub origin: String,
@@ -910,7 +911,9 @@ pub struct NativeWebSocketClient {
 }
 
 impl NativeWebSocketClient {
-    /// Connects and completes the WebSocket handshake.
+    /// Connects and completes the WebSocket handshake. A URL whose scheme is
+    /// not `ws` fails with `InvalidInput` before anything is resolved or
+    /// connected.
     pub fn connect(config: NativeWebSocketClientConfig) -> io::Result<Self> {
         if config.identity.path.is_empty() || config.identity.subprotocol.is_empty() {
             return Err(io::Error::new(
@@ -943,6 +946,17 @@ impl NativeWebSocketClient {
             ));
         }
         let mut request = config.url.into_client_request().map_err(io::Error::other)?;
+        // This client has no TLS: refuse `wss://` rather than connect in plaintext.
+        if !request
+            .uri()
+            .scheme_str()
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("ws"))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "native WebSocket client supports only ws:// URLs",
+            ));
+        }
         request.headers_mut().insert(
             ORIGIN,
             HeaderValue::from_str(&config.origin).map_err(io::Error::other)?,
@@ -1088,6 +1102,25 @@ fn deliver_frame(shared: &SharedPeer, bytes: &[u8]) -> Result<Received, ()> {
     lock(&shared.state).receive_or_hold(envelope).map_err(drop)
 }
 
+/// Why a failed read ended the connection: the peer closing or dropping the
+/// stream is `Peer` (tungstenite reports end of stream without a Close as
+/// `ResetWithoutClosingHandshake`), a frame that breaks the WebSocket
+/// framing is `ProtocolViolation`, and a socket failure is `Transport`.
+fn read_failure_reason(error: &tungstenite::Error) -> DisconnectReason {
+    use tungstenite::error::ProtocolError;
+    match error {
+        tungstenite::Error::ConnectionClosed
+        | tungstenite::Error::AlreadyClosed
+        | tungstenite::Error::Protocol(ProtocolError::ResetWithoutClosingHandshake) => {
+            DisconnectReason::Peer
+        }
+        tungstenite::Error::Protocol(_) | tungstenite::Error::Utf8(_) => {
+            DisconnectReason::ProtocolViolation
+        }
+        _ => DisconnectReason::Transport,
+    }
+}
+
 /// One socket turn: read buffered inbound frames into the shared
 /// peer state (bounded per turn so a flood cannot starve outbound work),
 /// send a due ping, drain released outbound frames, and finish a graceful
@@ -1160,8 +1193,8 @@ where
             Err(tungstenite::Error::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
                 break;
             }
-            Err(_) => {
-                shared.close(DisconnectReason::Transport);
+            Err(error) => {
+                shared.close(read_failure_reason(&error));
                 closing = true;
             }
         }
