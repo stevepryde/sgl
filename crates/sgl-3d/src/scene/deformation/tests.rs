@@ -635,18 +635,22 @@ fn a_collapsed_skinned_tangent_stays_zero_with_its_handedness() {
     }
 }
 
-// Plausible defect: a skinned normal taken through the skin's inverse,
+// Plausible defects: a skinned normal taken through the skin's inverse,
 // which divides by its zero determinant when a joint is scaled to zero on
 // an axis, so the deformed normal stores NaN that shading and TAA spread;
-// or one taken through the skin itself, which tilts it off the flattened
-// surface. The oracle is the geometry: a quad facing +Z, flattened along Z
-// by a joint scaled (1, 1, 0) and then rotated, is a plane facing the
-// rotated +Z with its winding kept, whatever its vertex normals leant. A
-// joint scaled (1, 0, 0) collapses the quad to a line, which has no normal,
-// and each vertex keeps its rest normal (within the Vertex encoding's
-// 0.01°).
+// one taken through the skin itself, which tilts it off the flattened
+// surface; or one flipped by the sign of the skin's determinant, which is
+// rounding noise once a glTF joint's inverse bind rotates the zeroed axis,
+// and which turns a mirrored skin's normal against its deformed winding.
+// The oracle is the geometry read back: a quad facing +Z flattened by a
+// joint scaled (1, 1, 0) is a plane, and every vertex normal, whatever its
+// rest lean, is that plane's normal on the side its deformed winding faces;
+// a mirrored joint keeps the normals' lean of at most 20° off the face, so
+// each lies within it of the side its deformed winding faces. A joint
+// scaled (1, 0, 0) collapses the quad to a line, which has no normal, and
+// each vertex keeps its rest normal (within the Vertex encoding's 0.01°).
 #[test]
-fn a_joint_scaled_to_zero_on_an_axis_gives_finite_normals() {
+fn a_joint_scaled_to_zero_on_an_axis_gives_the_flattened_surface_normal() {
     let Some((device, queue)) = test_support::device() else {
         return;
     };
@@ -662,8 +666,14 @@ fn a_joint_scaled_to_zero_on_an_axis_gives_finite_normals() {
     };
     let mesh = quad(0., -2., 0.5, skin);
     let rotation = Quat::from_rotation_x(0.4) * Quat::from_rotation_y(-0.3);
-    let flattened = rotation * Vec3::Z;
-    for scale in [Vec3::new(1., 1., 0.), Vec3::new(1., 0., 0.)] {
+    let bind = Mat4::from_quat(Quat::from_rotation_x(0.5) * Quat::from_rotation_z(0.2));
+    let flattened = Vec3::new(1., 1., 0.);
+    for (scale, inverse_bind) in [
+        (flattened, Mat4::IDENTITY),
+        (flattened, bind),
+        (Vec3::new(1., 1., -1.), bind),
+        (Vec3::new(1., 0., 0.), Mat4::IDENTITY),
+    ] {
         let mut scene = Scene::new(&device, &queue);
         let model = scene
             .add_asset(&device, &queue, asset(vec![mesh.clone()]))
@@ -671,20 +681,26 @@ fn a_joint_scaled_to_zero_on_an_axis_gives_finite_normals() {
             .model;
         let instance = moving(&mut scene, &device, &queue, model);
         let joint =
-            Mat4::from_scale_rotation_translation(scale, rotation, Vec3::new(0.3, 0.2, -1.));
+            Mat4::from_scale_rotation_translation(scale, rotation, Vec3::new(0.3, 0.2, -1.))
+                * inverse_bind;
         scene
             .set_instance_deformation(&queue, instance, &[joint], &[])
             .unwrap();
         let observed = deformed(&device, &queue, &mut scene, instance, 4);
+        // The quad's corners wind counter-clockwise about its rest +Z.
+        let (p0, p1, p3) = (observed[0].0, observed[1].0, observed[3].0);
+        let winding = (p1 - p0).cross(p3 - p0).normalize();
         for (v, (vertex, (_, n, _))) in mesh.vertices.iter().zip(observed).enumerate() {
-            let expected = if scale.y == 0. {
-                Vec3::from_array(vertex.normal)
+            let held = if scale.y == 0. {
+                (n - Vec3::from_array(vertex.normal)).length() <= 3e-4
+            } else if scale == flattened {
+                (n - winding).length() <= 3e-4
             } else {
-                flattened
+                n.dot(winding) >= 20f32.to_radians().cos() - 1e-3
             };
             assert!(
-                n.is_finite() && (n - expected).length() <= 3e-4,
-                "scale {scale}, vertex {v}: normal {n}, expected {expected}"
+                n.is_finite() && held,
+                "scale {scale}, inverse bind {inverse_bind}, vertex {v}: normal {n}, winding {winding}"
             );
         }
     }

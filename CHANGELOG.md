@@ -16,9 +16,10 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` `Scene::set_instance_deformation`: a joint matrix scaling an axis
-  to zero gave its skinned vertices NaN normals; a flattened surface now
-  takes its flattened normal, and a normal the skin collapses keeps its rest
-  direction. No game-code change needed.
+  to zero gave its skinned vertices NaN normals, and a mirrored skin turned
+  them against its deformed faces; skinned normals now face the deformed
+  winding, a flattened surface takes its flattened normal, and a normal the
+  skin collapses keeps its unskinned direction. No game-code change needed.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
   controller callback, including those a newer owner had installed, so the
   newer one stopped receiving input; it now clears only callbacks it still

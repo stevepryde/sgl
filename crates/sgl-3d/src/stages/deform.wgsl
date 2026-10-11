@@ -12,11 +12,13 @@
 // (MIT, src/LICENSE-wicked.txt) runs them; the result stays in the model's
 // space, which the instance's pose then places; a tangent keeps its
 // handedness, which the pose's mirroring flips later. A skinned normal takes
-// the skin's cofactor times its determinant's sign (object_normal), the
-// direction of Bevy's inverse transpose (inverse_transpose_3x3m, the cofactor
-// over the determinant) without its division, which makes a skin with an
-// axis scaled to zero NaN; Wicked's skinningCS.hlsl (163, 170) takes the
-// skin itself, which tilts a normal under non-uniform scale and is zero there.
+// the skin's cofactor (cofactor_normal): Bevy's inverse transpose
+// (inverse_transpose_3x3m) is the cofactor over the determinant, whose
+// division makes a skin with an axis scaled to zero NaN, and whose sign,
+// rounding noise in such a skin, flips a mirrored skin's normal against
+// its deformed winding and its kept tangent handedness. Wicked's
+// skinningCS.hlsl (163, 170) takes the skin itself, which tilts a normal
+// under non-uniform scale.
 @group(0) @binding(0) var<storage,read_write> source:array<u32>;
 @group(0) @binding(1) var<uniform> dispatch:DeformDispatch;
 
@@ -56,7 +58,7 @@ fn skin_model(vertex_index:u32)->mat4x4<f32> {
 // line or a point keeps its unskinned direction rather than normalising zero
 // to NaN, which shading would spread.
 fn skin_normals(model:mat4x4<f32>,normal:vec3<f32>)->vec3<f32> {
- let skinned=object_normal(model,normal);
+ let skinned=cofactor_normal(model,normal);
  return select(normal,normalize(skinned),dot(skinned,skinned)>0.);
 }
 @compute @workgroup_size(64) fn deform(@builtin(global_invocation_id) id:vec3<u32>) {

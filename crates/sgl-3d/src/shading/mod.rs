@@ -443,8 +443,8 @@ pub(crate) static LIGHTS: Module = Module {
         &SHADOW_MASK_SLOTS,
     ],
 };
-/// A normal under a matrix (`object_normal`): the drawn instance's pose's,
-/// and the deform stage's skin's.
+/// A normal under a matrix by its cofactor (`cofactor_normal`): the drawn
+/// instance's pose's (`object_normal`) and the deform stage's skin's.
 pub(crate) static NORMAL_TRANSFORM: Module = Module {
     name: "normal_transform",
     source: include_str!("normal_transform.wgsl"),
