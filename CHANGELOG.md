@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
+  controller callback, including those a newer owner had installed, so the
+  newer one stopped receiving input; it now clears only callbacks it still
+  holds. No game-code change needed.
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): pixels that
   left the reflection mask kept their last radiance history, which the next
   frames' bilinear reprojection blended back in as faint ghosting at mask
