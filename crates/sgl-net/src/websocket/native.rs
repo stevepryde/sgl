@@ -1102,6 +1102,25 @@ fn deliver_frame(shared: &SharedPeer, bytes: &[u8]) -> Result<Received, ()> {
     lock(&shared.state).receive_or_hold(envelope).map_err(drop)
 }
 
+/// Why a failed read ended the connection: the peer closing or dropping the
+/// stream is `Peer` (tungstenite reports end of stream without a Close as
+/// `ResetWithoutClosingHandshake`), a frame that breaks the WebSocket
+/// framing is `ProtocolViolation`, and a socket failure is `Transport`.
+fn read_failure_reason(error: &tungstenite::Error) -> DisconnectReason {
+    use tungstenite::error::ProtocolError;
+    match error {
+        tungstenite::Error::ConnectionClosed
+        | tungstenite::Error::AlreadyClosed
+        | tungstenite::Error::Protocol(ProtocolError::ResetWithoutClosingHandshake) => {
+            DisconnectReason::Peer
+        }
+        tungstenite::Error::Protocol(_) | tungstenite::Error::Utf8(_) => {
+            DisconnectReason::ProtocolViolation
+        }
+        _ => DisconnectReason::Transport,
+    }
+}
+
 /// One socket turn: read buffered inbound frames into the shared
 /// peer state (bounded per turn so a flood cannot starve outbound work),
 /// send a due ping, drain released outbound frames, and finish a graceful
@@ -1174,8 +1193,8 @@ where
             Err(tungstenite::Error::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
                 break;
             }
-            Err(_) => {
-                shared.close(DisconnectReason::Transport);
+            Err(error) => {
+                shared.close(read_failure_reason(&error));
                 closing = true;
             }
         }

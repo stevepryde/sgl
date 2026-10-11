@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` native WebSocket `Disconnected` reason: a peer that dropped
+  the TCP stream without a Close, or sent a frame breaking WebSocket
+  framing (reserved bits, an unmasked client frame), was reported as
+  `Transport`; now `Peer` and `ProtocolViolation` respectively. No
+  game-code change needed unless the game branches on `Transport`.
 - `sgl-3d` `Renderer::capture_specular_probe`: local-light shadows of static
   casters whose shader reads the time were drawn at the last frame's time,
   and the next frame at the capture's time reused that stale layer; they
