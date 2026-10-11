@@ -455,7 +455,12 @@ impl ServerIo for MemoryServerIo {
         if conn != SOLO_CONNECTION || !self.announced {
             return Err(SendError::UnknownConnection);
         }
-        self.duplex.send(delivery, payload)
+        // `Disconnected` is the client's error; a server reports an ended
+        // connection as unknown, as every other `ServerIo` does.
+        self.duplex.send(delivery, payload).map_err(|error| match error {
+            SendError::Disconnected => SendError::UnknownConnection,
+            error => error,
+        })
     }
 
     fn capacity(&self, conn: ConnectionId, lane: Lane) -> ReliableCapacity {
@@ -782,6 +787,32 @@ mod tests {
         assert_eq!(
             client.send(Delivery::LatestState, b"peer gone"),
             Err(SendError::Disconnected)
+        );
+    }
+
+    /// Oracle: the `SendError` contract (lib.rs): `Disconnected` is the
+    /// client's error, and a server reports a disconnected connection as
+    /// `UnknownConnection`, whichever end ended it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_server_send_after_a_disconnect_reports_an_unknown_connection() {
+        let (mut client, mut server) = memory_duplex();
+        let _ = server.poll(0);
+        server.disconnect(SOLO_CONNECTION, 1);
+        assert_eq!(
+            server.send(SOLO_CONNECTION, Delivery::RELIABLE_ORDERED, b"late"),
+            Err(SendError::UnknownConnection)
+        );
+        assert_eq!(
+            client.send(Delivery::RELIABLE_ORDERED, b"late"),
+            Err(SendError::Disconnected)
+        );
+
+        let (client, mut server) = memory_duplex();
+        let _ = server.poll(0);
+        drop(client);
+        assert_eq!(
+            server.send(SOLO_CONNECTION, Delivery::LatestState, b"late"),
+            Err(SendError::UnknownConnection)
         );
     }
 }
