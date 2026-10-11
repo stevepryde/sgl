@@ -9,6 +9,8 @@
 // d851ae838de54a0bd3dde9043912f39c74265cdd), MIT licensed (LICENSE-godot.txt).
 // DFX-20 traces the mirror direction at full importance-sample bias, as that
 // file does (revision ed1daf0bf001b61586d9930840f2f1394092c079, 4.7.2-stable).
+// DFX-54 counts each mip's cells as that file's compute_cell_count does
+// (revision d851ae838de54a0bd3dde9043912f39c74265cdd).
 
 #include "ScreenSpaceReflectionStructures.fxh"
 #include "BasicStructures.fxh"
@@ -39,9 +41,11 @@ struct PSOutput
 @group(0) @binding(6) var g_TextureBlueNoise: texture_2d<f32>;
 @group(0) @binding(7) var g_TextureDepthHierarchy: texture_2d<f32>;
 
-fn GetMipResolution(ScreenDimensions: vec2<f32>, MipLevel: i32) -> vec2<f32>
+// PROVENANCE.md DFX-54: a mip's cells are its texels, max(1, size >> mip) a side, as Godot's
+// compute_cell_count counts them, not size / 2^mip, which addresses past the last texel.
+fn GetMipResolution(MipLevel: i32) -> vec2<f32>
 {
-    return ScreenDimensions * (1.0 / f32(1i << u32(MipLevel)));
+    return vec2<f32>(textureDimensions(g_TextureDepthHierarchy, MipLevel));
 }
 
 fn LoadRandomVector2D(PixelCoord: vec2<i32>) -> vec2<f32>
@@ -179,9 +183,7 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
     // Start on mip with highest detail.
     var CurrentMip = MostDetailedMip;
 
-    // Could recompute these every iteration, but it's faster to hoist them out and update them.
-    var CurrentMipResolution = GetMipResolution(ScreenSize, CurrentMip);
-    var InvCurrentMipResolution = 1.0 / CurrentMipResolution;
+    let MostDetailedMipResolution = GetMipResolution(MostDetailedMip);
 
     // Offset to the bounding boxes uv space to intersect the ray with the center of the next pixel.
     // This means we ever so slightly over shoot into the next region.
@@ -197,7 +199,7 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
     // Initially advance ray to avoid immediate self intersections.
     var CurrentT: f32;
     var Position: vec3<f32>;
-    InitialAdvanceRay(Origin, Direction, InvDirection, CurrentMipResolution, InvCurrentMipResolution, FloorOffset, UVOffset, &Position, &CurrentT);
+    InitialAdvanceRay(Origin, Direction, InvDirection, MostDetailedMipResolution, 1.0 / MostDetailedMipResolution, FloorOffset, UVOffset, &Position, &CurrentT);
 
     // DFX-52: the hierarchy's top mip, SSR_DEPTH_HIERARCHY_MAX_MIP (screen_space_reflection.rs)
     // or lower where the screen's longer side is under 64 pixels.
@@ -223,6 +225,9 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
             break;
         }
 #endif
+        // DFX-54: as Godot does, per lookup; nearly every lookup changes the mip.
+        let CurrentMipResolution = GetMipResolution(CurrentMip);
+        let InvCurrentMipResolution = 1.0 / CurrentMipResolution;
         let CurrentMipPosition = CurrentMipResolution * Position.xy;
         let SurfaceDepth = LoadDepthHierarchy(vec2<i32>(CurrentMipPosition), CurrentMip);
 
@@ -246,8 +251,6 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
         if (!NextMipIsOutOfRange)
         {
             CurrentMip += select(-1, 1, SkippedTile);
-            CurrentMipResolution *= select(2.0, 0.5, SkippedTile);
-            InvCurrentMipResolution *= select(0.5, 2.0, SkippedTile);
         }
 
         Idx += 1u;
@@ -394,7 +397,7 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 
     let IsMirror = IsMirrorReflection(Roughness);
     let MostDetailedMip = select(i32(g_SSRAttribs.MostDetailedMip), 0, IsMirror);
-    let MipResolution = GetMipResolution(g_Camera.f4ViewportSize.xy, MostDetailedMip);
+    let MipResolution = GetMipResolution(MostDetailedMip);
 
     let RayOriginSS = vec3<f32>(ScreenCoordUV, LoadDepthHierarchy(vec2<i32>(ScreenCoordUV * MipResolution), MostDetailedMip));
     let RayOriginVS = ScreenXYDepthToViewSpace(RayOriginSS, g_Camera.mProj);

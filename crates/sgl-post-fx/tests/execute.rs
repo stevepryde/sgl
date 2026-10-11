@@ -1123,9 +1123,9 @@ fn inverse(m: [f32; 16]) -> [f32; 16] {
     std::array::from_fn(|i| a[i / 4][4 + i % 4] as f32)
 }
 
-/// One SSR execution with the default attributes over a still frame of
-/// `SIZE` texels: depths, Rgba16Float world normals, R8 roughness and
-/// Rgba16Float colour. Returns the SSR radiance.
+/// One SSR execution with the default attributes, in the camera's depth
+/// convention, over a still frame of `SIZE` texels: depths, Rgba16Float world
+/// normals, R8 roughness and Rgba16Float colour. Returns the SSR radiance.
 fn ssr_radiance(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1166,7 +1166,11 @@ fn ssr_radiance(
             output_width: SIZE[0],
             output_height: SIZE[1],
         },
-        post_fx_context::FeatureFlags::NONE,
+        if camera.f_near_plane_depth > camera.f_far_plane_depth {
+            post_fx_context::FeatureFlags::REVERSED_DEPTH
+        } else {
+            post_fx_context::FeatureFlags::NONE
+        },
     );
     ssr.prepare_resources(device, &mut encoder, &mut context, FeatureFlags::NONE);
     context.execute(&mut RenderAttributes {
@@ -1396,6 +1400,110 @@ fn ssr_a_near_mirror_reflects_the_floor_in_front_of_it() {
     assert!(
         checked > 100,
         "only {checked} mirror pixels reflected the floor"
+    );
+}
+
+// PROVENANCE.md DFX-54: SSR finds surfaces past a depth-hierarchy mip's
+// last texel where the viewport is not a multiple of its cell. SIZE's height,
+// 48, gives mip 5 one texel row; addressed as 1.5 rows of 32-pixel cells,
+// rows 32-47 loaded a second row past the texture, which reads as the far
+// plane under reversed depth, so a ray that had climbed to mip 5 skipped them.
+// A mirror ceiling strip near the camera reflects a floor strip seen in
+// exactly those rows; between them the rays pass in front of a far wall, so
+// they climb to mip 5 before they reach the floor.
+#[test]
+fn ssr_finds_surfaces_past_a_mips_last_whole_cell() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // View-space planes, dot(p, n) = -distance, each up to `end` ahead: the
+    // mirror ceiling 0.5 above, the floor 1 below (rows 32-47), a wall at 50.
+    const CEILING: usize = 0;
+    const FLOOR: usize = 1;
+    const PLANES: [([f64; 3], f64, f64); 3] = [
+        ([0.0, -1.0, 0.0], 0.5, 1.8),
+        ([0.0, 1.0, 0.0], 1.0, 5.5),
+        ([0.0, 0.0, -1.0], 50.0, f64::INFINITY),
+    ];
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    // The nearest plane a ray from `o` along `d` meets, and which.
+    let trace = |o: [f64; 3], d: [f64; 3]| {
+        PLANES
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &(n, distance, end))| {
+                let t = (-distance - dot(o, n)) / dot(d, n);
+                let point: [f64; 3] = std::array::from_fn(|j| o[j] + t * d[j]);
+                (dot(d, n) < 0.0 && t > 1e-9 && point[2] <= end).then_some((t, point, i))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, point, i)| (point, i))
+    };
+    let curr = camera(true, 0);
+    let p = curr.m_proj.map(f64::from);
+    let (a, b, m22, m32) = (p[0], p[5], p[10], p[14]);
+    let [width, height] = SIZE.map(f64::from);
+    let pixels: Vec<_> = (0..SIZE[1])
+        .flat_map(|y| (0..SIZE[0]).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let ndc = [
+                (f64::from(x) + 0.5) / width * 2.0 - 1.0,
+                1.0 - (f64::from(y) + 0.5) / height * 2.0,
+            ];
+            let ray = [ndc[0] / a, ndc[1] / b, 1.0];
+            let (point, plane) = trace([0.0; 3], ray).unwrap();
+            (ray, point, plane)
+        })
+        .collect();
+    let mut normals = Vec::new();
+    let mut roughness = Vec::new();
+    let mut color = Vec::new();
+    let mut depths = Vec::new();
+    for (i, &(_, point, plane)) in pixels.iter().enumerate() {
+        let normal = PLANES[plane].0;
+        normals.extend(half(&[
+            normal[0] as f32,
+            normal[1] as f32,
+            normal[2] as f32,
+            0.0,
+        ]));
+        roughness.push(if plane == CEILING { 0 } else { 255 });
+        let texel = [i as u32 % SIZE[0], i as u32 / SIZE[0]];
+        color.extend(half(&[texel[0] as f32, texel[1] as f32, 0.0, 1.0]));
+        depths.push(((point[2] * m22 + m32) / point[2]) as f32);
+    }
+    let output = ssr_radiance(
+        &device, &queue, &curr, &depths, &normals, &roughness, &color,
+    );
+    let mut checked = 0;
+    for (&(ray, point, plane), read) in pixels.iter().zip(&output) {
+        if plane != CEILING || read[3] == 0.0 {
+            continue;
+        }
+        let length = dot(ray, ray).sqrt();
+        let view = ray.map(|r| r / length);
+        let normal = PLANES[CEILING].0;
+        let mirror: [f64; 3] =
+            std::array::from_fn(|i| view[i] - 2.0 * dot(view, normal) * normal[i]);
+        let (hit, hit_plane) = trace(point, mirror).unwrap();
+        let expected = [
+            (hit[0] * a / hit[2] + 1.0) / 2.0 * width,
+            (1.0 - hit[1] * b / hit[2]) / 2.0 * height,
+        ]
+        .map(f64::floor);
+        // Radiance is premultiplied by confidence (DFX-17).
+        let texel = [read[0] / read[3], read[1] / read[3]].map(f64::from);
+        // Spatial reconstruction blends in neighbouring rays, as in DFX-39's test.
+        let error = [texel[0] - expected[0], texel[1] - expected[1]];
+        assert!(
+            hit_plane == FLOOR && error.iter().all(|e| e.abs() <= 1.5),
+            "ceiling point {point:?} read texel {texel:?}, its mirror ray meets {hit:?}, texel {expected:?}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked > 200,
+        "only {checked} ceiling pixels reflected the floor"
     );
 }
 

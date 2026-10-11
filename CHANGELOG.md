@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
+  near the bottom or right edge of a viewport whose size is not a multiple
+  of 64 skipped surfaces there and fell back to probes or sky; they now
+  find them. No game-code change needed.
 - `sgl-3d` glTF import: a small file whose morph-weight keyframes or
   instanced meshes declared gigabytes of data could abort the process; a
   scene listing a root twice or a child as a root now fails the load, as
