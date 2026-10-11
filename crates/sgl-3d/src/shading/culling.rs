@@ -314,9 +314,9 @@ pub(crate) const fn words<T>() -> u32 {
     (std::mem::size_of::<T>() / 4) as u32
 }
 
-/// The workgroups along x and y of a dispatch of `workgroups` in all, past
-/// `CULL_MAX_WORKGROUPS` remapped to two dimensions, as the finalize remaps
-/// the indirect ones: the cull's direct dispatches and the deform stage's.
+/// The workgroups along x and y of the cull's and the deform stage's direct
+/// dispatches, `workgroups` in all, past `CULL_MAX_WORKGROUPS` remapped to
+/// two dimensions as the finalize remaps the indirect ones.
 pub(crate) fn dispatch_side(workgroups: u32) -> [u32; 2] {
     [
         workgroups.min(CULL_MAX_WORKGROUPS),
