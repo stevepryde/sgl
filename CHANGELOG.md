@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH`:
+  toggling it at an unchanged size kept the old depth format and panicked at
+  the next resize; `PostFXContext::prepare_resources` now recreates the
+  depths when the flag changes. The flag needs a device with
+  `TEXTURE_FORMAT_16BIT_NORM` and `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`
+  whose adapter renders to R16Unorm. No game-code change needed.
 - `sgl-net` `ThreadedUdpServer`: a connection that ended at the worker (peer
   close, timeout, protocol violation) discarded the messages it had
   delivered but the caller had not yet polled and reported `Disconnected`
