@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP client: a `ConnectDeny` arriving after the accept (reordered)
+  or naming a cookie the client was not confirming removed the connection and
+  reported `Denied` after `Connected`; it is now ignored, and only a deny for
+  the confirm the client sent refuses it. No game-code change needed.
 - `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
   `SendError::Disconnected`; it now returns `UnknownConnection`, like every
   other server transport. A game that matched `Disconnected` from a server
