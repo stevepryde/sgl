@@ -452,7 +452,7 @@ impl PostFx {
         }
 
         let depth_view = &inputs.depth[(self.frame_index & 1) as usize];
-        let previous_depth = &inputs.depth[((self.frame_index + 1) & 1) as usize];
+        let previous_depth = &inputs.depth[(self.frame_index.wrapping_add(1) & 1) as usize];
         let camera = camera_attribs(view, projection, self.jitter, size, self.frame_index);
         let reset_accumulation = self.reset_accumulation;
         if reset_accumulation {
