@@ -1099,9 +1099,10 @@ fn tiles_that_stop_hitting_keep_no_history() {
 // PROVENANCE.md DFX-49: a reset history is no history. A still glossy plane
 // reflects a checkerboard of hits, whose uneven neighbourhoods clamp a zeroed
 // history towards zero. The first frame and a frame after skipped ones
-// (DFX-12) write the current frame's radiance, the spatial reconstruction's,
-// and variance 1, as where reprojection finds no history; the frame between
-// them accumulates history.
+// (DFX-12), and a consecutive frame that switches to half resolution, whose
+// histories are recreated, write the current frame's radiance, the spatial
+// reconstruction's, and variance 1, as where reprojection finds no history;
+// frame 1 accumulates history.
 #[test]
 fn a_reset_frame_takes_the_current_radiance() {
     let Some((device, queue)) = device() else {
@@ -1115,13 +1116,18 @@ fn a_reset_frame_takes_the_current_radiance() {
             transition_duration: 0.0,
         },
     );
-    for index in [0, 1, 3] {
+    for (index, flags) in [
+        (0, FeatureFlags::NONE),
+        (1, FeatureFlags::NONE),
+        (3, FeatureFlags::NONE),
+        (4, FeatureFlags::HALF_RESOLUTION),
+    ] {
         let frame = denoise_frame(
             &device,
             &queue,
             &mut ssr,
             &mut context,
-            FeatureFlags::NONE,
+            flags,
             DEFAULT_FILTER,
             index,
             false,

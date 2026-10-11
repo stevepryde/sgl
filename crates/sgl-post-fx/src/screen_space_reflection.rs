@@ -157,9 +157,11 @@ pub struct ScreenSpaceReflection {
     /// DFX-24); `None` before the first execution.
     frame_timer: Option<f32>,
     linear_clamp: wgpu::Sampler,
-    /// The frame index of the last execution, `!0` before the first, as
-    /// `TemporalAntiAliasing::AccumulationBufferInfo::LastFrameIdx`.
-    last_frame_idx: u32,
+    /// The frame index of the last execution, as
+    /// `TemporalAntiAliasing::AccumulationBufferInfo::LastFrameIdx`; `None`
+    /// before the first and after the histories are recreated, where
+    /// upstream's `!0` would collide with a frame index of `u32::MAX`.
+    last_frame_idx: Option<u32>,
     /// Whether this frame's histories were reset (PROVENANCE.md DFX-12),
     /// and the temporal pass's uniform that holds it as 1 or 0 (DFX-49).
     history_reset: bool,
@@ -295,7 +297,7 @@ impl ScreenSpaceReflection {
             feature_flags: FeatureFlags::NONE,
             use_reverse_depth: false,
             frame_timer: None,
-            last_frame_idx: !0,
+            last_frame_idx: None,
             history_reset: false,
             // A u32 in a buffer of 16 bytes, the uniform size every backend
             // accepts.
@@ -347,6 +349,9 @@ impl ScreenSpaceReflection {
 
         self.back_buffer_width = frame_desc.width;
         self.back_buffer_height = frame_desc.height;
+        // DFX-49: the histories created below hold no history, so the next
+        // execution is a reset, as the first is.
+        self.last_frame_idx = None;
 
         let (width, height) = (self.back_buffer_width, self.back_buffer_height);
         let half_res = feature_flags.contains(FeatureFlags::HALF_RESOLUTION);
@@ -842,10 +847,12 @@ impl ScreenSpaceReflection {
     /// takes the current frame, as TAA's resolve does on a reset.
     fn reset_history(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
         let current_frame_idx = render_attribs.post_fx_context.get_frame_desc().index;
-        let reset_accumulation = self.last_frame_idx == !0 // No history on the first frame
-            || current_frame_idx != self.last_frame_idx.wrapping_add(1) // Reset history if frames were skipped
-            || render_attribs.reset_accumulation; // Reset history if requested
-        self.last_frame_idx = current_frame_idx;
+        let reset_accumulation = self.last_frame_idx.is_none_or(|last| {
+            // No history on the first frame or after the histories were
+            // recreated (None); reset if frames were skipped.
+            current_frame_idx != last.wrapping_add(1)
+        }) || render_attribs.reset_accumulation; // Reset history if requested
+        self.last_frame_idx = Some(current_frame_idx);
         if reset_accumulation != self.history_reset {
             self.history_reset = reset_accumulation;
             render_attribs.queue.write_buffer(

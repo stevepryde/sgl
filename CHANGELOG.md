@@ -17,10 +17,11 @@ docs and specs the entry links.
 
 - `sgl-post-fx` `ScreenSpaceReflectionAttribs::temporal_radiance_stability_factor`
   and `ScreenSpaceReflection::execute`: the default was 1.0, and a frame
-  whose history was reset mixed in the zeroed history, so reflections stayed
-  dark after a reset; the default is now 0.95 and a reset frame takes the
-  current frame's radiance. A game that relied on 1.0 sets it explicitly;
-  otherwise no game-code change needed (SGL3D already used 0.95).
+  whose history was reset, or recreated by a resize or half-resolution
+  change, mixed in the zeroed history, so reflections stayed dark; the
+  default is now 0.95 and such a frame takes the current frame's radiance,
+  also at a frame index of `u32::MAX`. A game that relied on 1.0 sets it
+  explicitly; otherwise no game-code change needed (SGL3D already used 0.95).
 - `sgl-3d` point and spot lights: a light was dropped wherever the mapped
   base normal faced away from its centre, so a clearcoat over normal-mapped
   flakes lost the coat's highlight and a sphere light's highlight popped off
