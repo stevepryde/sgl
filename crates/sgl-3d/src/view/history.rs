@@ -196,7 +196,7 @@ mod tests {
     // frame looks like a gap and TAA, SSR, fog and the traced stages restart
     // their history each frame. The oracle is the stages' continuity rule:
     // a frame continues the last when its count is the last's plus one,
-    // wrapping, and fog's ping-pong half (the count's parity) alternates.
+    // wrapping.
     #[wasm_bindgen_test(unsupported = test)]
     fn consecutive_frames_continue_across_the_frame_count_s_wrap() {
         let camera = CameraFrame {
@@ -213,7 +213,6 @@ mod tests {
             let frame = history.begin(camera, false, DVec3::ZERO, 0.);
             if let Some(last) = last {
                 assert_eq!(frame.frames, u32::wrapping_add(last, 1));
-                assert_ne!(frame.frames % 2, last % 2);
             }
             last = Some(frame.frames);
             history.finish(frame);

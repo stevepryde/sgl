@@ -108,7 +108,7 @@ struct AccumulationBufferInfo {
     width: u32,
     height: u32,
     current_frame_idx: u32,
-    last_frame_idx: u32,
+    last_frame_idx: Option<u32>,
     feature_flags: FeatureFlags,
 
     shader_attribs: TemporalAntiAliasingAttribs,
@@ -123,7 +123,7 @@ impl Default for AccumulationBufferInfo {
             width: 0,
             height: 0,
             current_frame_idx: 0,
-            last_frame_idx: !0,
+            last_frame_idx: None,
             feature_flags: FeatureFlags::NONE,
             shader_attribs: TemporalAntiAliasingAttribs::default(),
         }
@@ -213,8 +213,11 @@ impl AccumulationBufferInfo {
         queue: &wgpu::Queue,
         attribs: &TemporalAntiAliasingAttribs,
     ) {
-        let reset_accumulation = self.last_frame_idx == !0 // No history on the first frame
-            || self.current_frame_idx != self.last_frame_idx.wrapping_add(1) // Reset history if frames were skipped
+        // No history on the first frame, nor if frames were skipped
+        // (PROVENANCE.md DFX-50).
+        let reset_accumulation = self
+            .last_frame_idx
+            .is_none_or(|last| self.current_frame_idx != last.wrapping_add(1))
             || attribs.reset_accumulation != 0; // Reset history if requested
 
         let update_required = reset_accumulation != (self.shader_attribs.reset_accumulation != 0)
@@ -230,7 +233,7 @@ impl AccumulationBufferInfo {
             );
         }
 
-        self.last_frame_idx = self.current_frame_idx;
+        self.last_frame_idx = Some(self.current_frame_idx);
     }
 
     fn accumulated_buffer(&self, index: u32) -> &wgpu::TextureView {
@@ -406,7 +409,10 @@ impl TemporalAntiAliasing {
                 panic!("Accumulation buffer with index {accumulation_buffer_idx} is not found.")
             });
 
-        let buff_idx = (acc_buffer.current_frame_idx + u32::from(is_prev_frame)) & 0x01;
+        let buff_idx = acc_buffer
+            .current_frame_idx
+            .wrapping_add(u32::from(is_prev_frame))
+            & 0x01;
         acc_buffer.accumulated_buffer(buff_idx)
     }
 
