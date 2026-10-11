@@ -1340,7 +1340,9 @@ over the contract SGL3D declares, `shading/shader_contract.wgsl`, verbatim:
 // handedness (+1 or -1), at rest and after skinning, while morph targets add
 // their deltas without renormalising or re-orthogonalising (as Bevy's
 // morph_vertex, which the deform stage ports), so a morphed vertex's frame
-// is only approximately orthonormal. A vertex without an authored
+// is only approximately orthonormal; morphs that cancel a tangent, or a
+// skin that collapses it, leave its xyz zero with its handedness, which a
+// shader that normalises the tangent guards. A vertex without an authored
 // tangent (none, along the normal, or handedness not +1 or -1) gets an
 // arbitrary one in the normal's plane, handedness +1, never zero, which a
 // shader cannot tell from an authored one: a shader used on meshes without
@@ -2786,7 +2788,10 @@ linear RG direction (remapped to -1..1) and B strength. No texture means +T and
 full texture strength, as on a device of the `Basic` [binding tier](#binding-tiers),
 which binds no anisotropy map. File and embedded glTF imports use the same rules.
 Active anisotropy requires authored tangents; automatic tangent generation is
-not implemented. Normal maps and anisotropy share that frame. Node and instance
+not implemented. Normal maps and anisotropy share that frame. Where skinning
+or morphing cancels a tangent or turns it along its normal, shading takes an
+arbitrary tangent in the normal's plane, keeping the authored handedness (+1
+where there is none), as for a vertex without one. Node and instance
 transforms preserve mirrored handedness, nonuniform scaling and shear.
 
 `Scene::set_material` exposes `SurfaceMaterial::anisotropy_strength` and

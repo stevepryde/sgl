@@ -20,7 +20,9 @@
 // handedness (+1 or -1), at rest and after skinning, while morph targets add
 // their deltas without renormalising or re-orthogonalising (as Bevy's
 // morph_vertex, which the deform stage ports), so a morphed vertex's frame
-// is only approximately orthonormal. A vertex without an authored
+// is only approximately orthonormal; morphs that cancel a tangent, or a
+// skin that collapses it, leave its xyz zero with its handedness, which a
+// shader that normalises the tangent guards. A vertex without an authored
 // tangent (none, along the normal, or handedness not +1 or -1) gets an
 // arbitrary one in the normal's plane, handedness +1, never zero, which a
 // shader cannot tell from an authored one: a shader used on meshes without

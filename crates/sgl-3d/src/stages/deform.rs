@@ -21,11 +21,10 @@ pub(crate) static DEFORM: crate::shading::Module = crate::shading::Module {
 /// The entry point the deform stage's pipeline is created with.
 pub(crate) const DEFORM_ENTRY: &str = "deform";
 
-/// The bytes between dispatch records: the device's uniform offset
-/// alignment.
-fn stride(device: &wgpu::Device) -> u64 {
-    u64::from(device.limits().min_uniform_buffer_offset_alignment)
-        .max(std::mem::size_of::<DeformDispatch>() as u64)
+/// The bytes between dispatch records: a record rounded up to the device's
+/// uniform offset `alignment`, so every record's dynamic offset is aligned.
+fn stride(alignment: u32) -> u64 {
+    (std::mem::size_of::<DeformDispatch>() as u64).next_multiple_of(u64::from(alignment))
 }
 
 pub(crate) struct Deform {
@@ -67,7 +66,7 @@ impl Deform {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let stride = stride(device);
+        let stride = stride(device.limits().min_uniform_buffer_offset_alignment);
         Self {
             pipeline: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("deform"),
@@ -166,4 +165,24 @@ fn records(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
             mapped_at_creation: false,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Defect: a stride that holds a record but is not a multiple of the
+    // device's uniform offset alignment, so the second record's dynamic
+    // offset fails wgpu validation on a device reporting 32. The
+    // oracle is wgpu's rule: each dynamic offset is a multiple of the
+    // alignment, and records must not overlap.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn the_stride_is_aligned_and_holds_a_record() {
+        for alignment in [32, 64, 256] {
+            let stride = stride(alignment);
+            assert_eq!(stride % u64::from(alignment), 0, "alignment {alignment}");
+            assert!(stride >= std::mem::size_of::<DeformDispatch>() as u64);
+        }
+    }
 }
