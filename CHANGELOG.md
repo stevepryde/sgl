@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::number_field`: a press and release arriving in one
+  frame dropped the typing focus the click had just opened; it now enters
+  typing like a two-frame click. No game-code changes needed.
 - `sgl-3d` `Settings::screen_space_reflections`: on Metal (and Vulkan without
   robust access) the screen's edge columns and rows could reconstruct a wrong
   surface normal for their rays, offsetting and bouncing them; edge pixels now
