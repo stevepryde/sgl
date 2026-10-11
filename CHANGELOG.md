@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
+  could not be allocated (the largest byte grid on wasm32); now returns
+  `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or
+  `.expect("grid fits")`: `Grid2::filled(w, h, 0u8)?`; exhaustive matches
+  on `GridError` add the `TooLarge` arm.
 - `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
   UDP and memory reported nothing for a connection the caller closed (UDP
   sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
