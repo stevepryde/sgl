@@ -1,8 +1,8 @@
 //! The dynamic GI volume in real frames, observed through the one sample
 //! every view shades with (`dynamic_gi_irradiance`) and the frame's pixels:
-//! an open volume holds a uniform environment's radiance and the hemisphere
-//! fill's irradiance, and a closed room's emitters' with their bounces,
-//! damped, while light outside the room reaches no probe inside but through
+//! an open volume holds a uniform environment's radiance at any spacing
+//! and the hemisphere fill's irradiance, and a closed room's emitters' with
+//! their bounces, damped, while light outside the room reaches no probe inside but through
 //! its shadow opacity or as a light that casts none, and the backs of
 //! single-sided walls keep the sky out of a room seen from within and an
 //! inside-out box's light in; a material that does not emit into GI gives
@@ -322,6 +322,86 @@ fn an_open_volume_holds_a_uniform_environments_radiance() {
         .zip(irradiance(&device, &queue, &renderer, &queries()))
     {
         assert_eq!(answer[3], 1., "{query:?}: the volume's share");
+        for channel in 0..3 {
+            assert!(
+                close(
+                    answer[channel],
+                    radiance[channel],
+                    radiance[channel] * 0.005
+                ),
+                "{query:?}: {answer:?}"
+            );
+        }
+    }
+}
+
+// The same open volume with probes 200 m apart, whose misses lie at 300 m,
+// beyond what half precision holds squared (65504): every ray misses, so
+// each depth texel holds one depth, its mean square the square of its
+// mean, finite, and the sample takes the environment's radiance.
+#[test]
+fn an_open_volume_of_wide_spacing_keeps_finite_depth_moments() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let radiance = [0.5, 0.25, 0.125];
+    let environment = uniform_environment(&device, &queue, &mut scene, radiance);
+    let scale = 100.;
+    let volume = DynamicGiVolume {
+        origin: VOLUME.origin * scale,
+        spacing: VOLUME.spacing * scale,
+        ..VOLUME
+    };
+    scene.set_dynamic_gi_volume(&device, Some(volume)).unwrap();
+    let mut input = input(Vec3::new(0., 0., 8.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    render(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        1,
+    );
+    // Each probe's interior depth texels: the probe in position, the texel
+    // in normal.
+    let [x, y, z] = volume.probes;
+    let texels: Vec<(Vec3, Vec3, Vec3)> = (0..x)
+        .flat_map(|x| {
+            (0..y).flat_map(move |y| (0..z).map(move |z| Vec3::new(x as f32, y as f32, z as f32)))
+        })
+        .flat_map(|probe| {
+            (0..16u32).flat_map(move |u| {
+                (0..16u32).map(move |v| (probe, Vec3::new(u as f32, v as f32, 0.), Vec3::Z))
+            })
+        })
+        .collect();
+    let moments = observe(
+        &device,
+        &queue,
+        &renderer,
+        &texels,
+        "textureLoad(dynamic_gi_probes,ddgi_probe_depth_pixel(vec3<u32>(queries[id.x].position.xyz),frame.dynamic_gi_probes)+vec2<u32>(queries[id.x].normal.xy),0)",
+    );
+    for (texel, moments) in texels.iter().zip(&moments) {
+        let [mean, square, ..] = *moments;
+        assert!(
+            mean > 0. && square.is_finite() && close(square, mean * mean, mean * mean * 0.01),
+            "{texel:?}: {moments:?}"
+        );
+    }
+    let queries: Vec<(Vec3, Vec3)> = queries()
+        .into_iter()
+        .map(|(point, normal)| (point * scale, normal))
+        .collect();
+    for (query, answer) in queries
+        .iter()
+        .zip(irradiance(&device, &queue, &renderer, &queries))
+    {
         for channel in 0..3 {
             assert!(
                 close(

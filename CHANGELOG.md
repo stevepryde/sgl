@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` dynamic GI (`DynamicGiVolume::spacing`): past a spacing of about
+  170 m the probes' depth moments overflowed half precision, breaking the
+  sample's visibility test (NaN irradiance on some backends); they are now
+  stored in units of the longest spacing, so any spacing works. No game-code
+  change needed.
 - `sgl-2d` `SpritePass::prepare`: a frame with more instances than the
   device's `max_buffer_size` holds (about 3.3 million at the 256 MiB
   default) grew the instance buffer past it, a wgpu validation error; it now
