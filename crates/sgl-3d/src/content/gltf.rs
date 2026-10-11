@@ -376,20 +376,21 @@ fn decode(
 /// its use.
 ///
 /// It also refuses one whose element count its use does not allow, before
-/// gltf's readers allocate that many, so what a load reads stays in
+/// gltf's readers allocate that many, so what each use reads stays in
 /// proportion to the file's data: `count` is the count glTF requires (the
 /// primitive's vertices, the skin's joints, the sampler's keyframes),
 /// itself fixed by data or the document, or None where nothing fixes it.
-/// An accessor without a buffer view holds zeros but for its sparse
-/// substitutions, and declares its count without data; where nothing fixes
-/// that count, it may hold no zero beyond the one its substitutions leave,
-/// as more would only repeat it.
+/// An accessor without a buffer view (a sparse one) declares its count
+/// without data; where nothing fixes that count, its elements may take no
+/// more bytes than `buffers` hold, the bound its elements would meet in a
+/// buffer view.
 fn check_accessor(
     accessor: &gltf::Accessor<'_>,
     what: &str,
     types: &[DataType],
     shapes: &[Dimensions],
     count: Option<usize>,
+    buffers: &[gltf::buffer::Data],
 ) -> Result<()> {
     let index = accessor.index();
     let (data_type, shape) = (accessor.data_type(), accessor.dimensions());
@@ -408,11 +409,14 @@ fn check_accessor(
     {
         return Err(format!("{what} accessor {index} has {elements} elements where its use needs {count}; re-export valid glTF").into());
     }
-    let substitutions = sparse
-        .as_ref()
-        .map_or(0, gltf::accessor::sparse::Sparse::count);
-    if count.is_none() && accessor.view().is_none() && elements > substitutions + 1 {
-        return Err(format!("{what} accessor {index} has {elements} elements without a buffer view and {substitutions} sparse substitutions, repeating zero; re-export valid glTF").into());
+    let data: usize = buffers.iter().map(|buffer| buffer.0.len()).sum();
+    if count.is_none()
+        && accessor.view().is_none()
+        && elements
+            .checked_mul(accessor.size())
+            .is_none_or(|bytes| bytes > data)
+    {
+        return Err(format!("{what} accessor {index} has {elements} elements without a buffer view, more than the file's {data} buffer bytes would hold; re-export valid glTF").into());
     }
     let size = accessor.size();
     let within = accessor

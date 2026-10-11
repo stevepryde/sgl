@@ -169,6 +169,7 @@ pub(super) fn read_node(
                     types,
                     shapes,
                     vertices.filter(|_| semantic != Semantic::Positions),
+                    buffers,
                 )?;
             }
             if let Some(indices) = primitive.indices() {
@@ -178,6 +179,7 @@ pub(super) fn read_node(
                     &[U8, U16, U32],
                     &[Scalar],
                     None,
+                    buffers,
                 )?;
             }
             for (target, displacements) in primitive.morph_targets().enumerate() {
@@ -195,6 +197,7 @@ pub(super) fn read_node(
                         &[F32],
                         &[Dimensions::Vec3],
                         vertices,
+                        buffers,
                     )?;
                 }
             }

@@ -460,9 +460,10 @@ fn malformed_accessors_are_rejected() {
             .unwrap() as usize
     }
     // Makes `accessor` sparse without a buffer view, one substitution of
-    // zero bytes (enough for any element) for element 0, and declares more
-    // elements than the address space can hold, which gltf's readers
-    // allocate up front on any target.
+    // zero bytes (enough for any element) for element 0, and declares
+    // `isize::MAX` elements, whose bytes at four or more an element exceed
+    // what a `Vec` may allocate on any target: gltf's readers, which
+    // allocate them up front, fail at once on capacity overflow.
     fn viewless(buffer: &mut Buffer, accessor: usize) {
         let indices = buffer.accessor(bytemuck::cast_slice(&[0u16]), 5123, "SCALAR", 1);
         let values = buffer.accessor(&[0; 64], 5121, "SCALAR", 64);
@@ -470,7 +471,7 @@ fn malformed_accessors_are_rejected() {
         let values = buffer.accessors[values]["bufferView"].clone();
         let accessor = buffer.accessors[accessor].as_object_mut().unwrap();
         accessor.remove("bufferView");
-        accessor.insert("count".into(), json!((usize::MAX / 8) as u64));
+        accessor.insert("count".into(), json!(isize::MAX as u64));
         accessor.insert(
             "sparse".into(),
             json!({
@@ -721,6 +722,41 @@ fn a_sparse_morph_target_without_a_view_loads() {
         .map(|delta| delta.position)
         .collect();
     assert_eq!(lifts, [[0., 0., 0.], [0., 0., 2.], [0., 0., 0.]]);
+}
+
+// Plausible defect: the bound on an accessor without a buffer view that
+// nothing else counts refusing valid glTF in which its zero repeats, here
+// a sparse POSITION with two vertices at the origin.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_sparse_position_without_a_view_repeating_the_origin_loads() {
+    let bytes = rigged(|document, buffer| {
+        let positions = document["meshes"][1]["primitives"][0]["attributes"]["POSITION"]
+            .as_u64()
+            .unwrap() as usize;
+        let indices = buffer.accessor(bytemuck::cast_slice(&[1u16]), 5123, "SCALAR", 1);
+        let values = buffer.floats(&[1., 0., 0.], "VEC3", 3);
+        let indices = buffer.accessors[indices]["bufferView"].clone();
+        let values = buffer.accessors[values]["bufferView"].clone();
+        let accessor = buffer.accessors[positions].as_object_mut().unwrap();
+        accessor.remove("bufferView");
+        accessor.insert(
+            "sparse".into(),
+            json!({
+                "count": 1,
+                "indices": {"bufferView": indices, "componentType": 5123},
+                "values": {"bufferView": values}
+            }),
+        );
+    });
+    let asset = load_slice(&bytes).unwrap_or_else(|error| panic!("{error}"));
+    let lid = asset
+        .meshes
+        .iter()
+        .find(|mesh| !mesh.deformation.morph_targets.is_empty())
+        .unwrap();
+    // Vertex 1 alone leaves the origin, at the node's scale of 2.
+    let positions: Vec<_> = lid.vertices.iter().map(|vertex| vertex.position).collect();
+    assert_eq!(positions, [[0., 0., 0.], [2., 0., 0.], [0., 0., 0.]]);
 }
 
 // Plausible defect: two keyframes at one time, which glTF forbids (a

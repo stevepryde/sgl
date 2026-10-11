@@ -2643,8 +2643,8 @@ bind matrices or keyframes), and as many elements as glTF requires: a
 primitive's attributes and morph targets as many as its POSITION, inverse
 bind matrices one a joint, and keyframe values as many as their times
 need. A sparse accessor without a buffer view that nothing else counts
-(POSITION, indices or keyframe times) holds at most one element more than
-its substitutions. An embedded image's buffer view must lie within its
+(POSITION, indices or keyframe times) may declare no more elements than
+the file's buffers would hold in a buffer view. An embedded image's buffer view must lie within its
 buffer. Any other fails the load with an error naming it.
 
 A clearcoat normal map tilts the coat alone, on the base normal map's

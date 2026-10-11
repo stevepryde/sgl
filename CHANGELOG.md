@@ -19,9 +19,9 @@ docs and specs the entry links.
   huge count aborted the process; the load now fails with an error naming
   it when an accessor's count differs from what glTF requires (POSITION's
   for attributes and morph targets, the joints' for inverse binds, the
-  keyframes' for values) or when such an accessor that nothing else counts
-  holds more than one element beyond its substitutions. No game-code change
-  needed.
+  keyframes' for values) or when a sparse accessor without a buffer view
+  that nothing else counts declares more elements than the file's buffers
+  would hold. No game-code change needed.
 - `sgl-3d` `Scene::set_instance_deformation`: on a device created with a
   uniform offset alignment of 32 bytes (an adapter's real limits), a frame with two or more deforming meshes failed
   wgpu validation; the deform stage's records are now aligned. No game-code
