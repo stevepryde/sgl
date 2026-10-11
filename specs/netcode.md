@@ -194,7 +194,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     client that has not connected takes that cookie from the accept, and a
     client that has confirmed takes a payload carrying its nonces as the
     accept. A client honours a deny only before it connects and only for the
-    cookie it holds.
+    cookie it holds, and answers it with one disconnect for that cookie, so
+    a server that admitted a retried confirm whose accept the deny overtook
+    or that was lost frees the connection at once.
 13. WebSocket frames use the 18-byte version-2 envelope: magic, version, flags
     (kind 0 reliable, 1 latest, 2 unreliable; FIRST; MORE), lane, big-endian
     sequence (0 for reliable and unreliable, strictly increasing for latest),

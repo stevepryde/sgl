@@ -997,6 +997,10 @@ impl<T: DatagramTransport> Endpoint<T> {
                     return;
                 }
                 self.remove_peer(id);
+                // A retried confirm may have been admitted, its accept lost
+                // or overtaken by this deny; a server holding it frees the
+                // slot, and one that is not ignores the disconnect.
+                self.send_control(source, Kind::Disconnect, nonces, now_ms);
                 events.push(EndpointEvent::Denied {
                     peer: id,
                     reason: DenyReason::ServerFull,
@@ -1329,6 +1333,14 @@ mod tests {
             .receive_control(server_addr, Kind::ConnectDeny, confirming);
         assert_eq!(client.poll(2), vec![EndpointEvent::Connected { peer }]);
         assert_eq!(client.peer_count(), 1);
+        assert!(
+            client
+                .transport
+                .sent
+                .iter()
+                .all(|datagram| parsed_control(datagram).0 != Kind::Disconnect),
+            "an ignored deny ends nothing on the server"
+        );
 
         let mut client =
             Endpoint::client(RecordingTransport::default(), EndpointConfig::default()).unwrap();
@@ -1358,6 +1370,93 @@ mod tests {
             }]
         );
         assert_eq!(client.peer_count(), 0);
+    }
+
+    /// #568: a full server denies a client's confirm, then a slot frees and
+    /// it admits the retried confirm, but the deny reaches the client
+    /// before the accept. Oracle: the client reports `Denied` and so never
+    /// uses the connection; the server's connection for it ends at its next
+    /// poll, not after `timeout_ms`.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_deny_that_overtakes_the_accept_frees_the_servers_slot() {
+        let (server_addr, client_addr, occupant) = (
+            address(192, 0, 2, 1, 7_000),
+            address(192, 0, 2, 2, 40_000),
+            address(192, 0, 2, 3, 40_000),
+        );
+        let config = EndpointConfig {
+            max_peers: 1,
+            ..EndpointConfig::default()
+        };
+        let mut server =
+            Endpoint::server(RecordingTransport::default(), config.clone(), [18; 32]).unwrap();
+        request(&mut server, occupant, 31);
+        assert!(server.poll(0).is_empty());
+        let occupied = challenge_for(&server, occupant, 31);
+        confirm(&mut server, occupant, occupied);
+        assert_eq!(server.poll(0), [EndpointEvent::Connected { peer: 1 }]);
+
+        let mut client = Endpoint::client(RecordingTransport::default(), config).unwrap();
+        let peer = client.start_connect(server_addr, 0, 32).unwrap();
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(1).is_empty());
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert!(client.poll(1).is_empty());
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(2).is_empty());
+        // The deny is held back while the occupant leaves and the retried
+        // confirm is admitted.
+        let deny = std::mem::take(&mut server.transport.sent);
+        server
+            .transport
+            .receive_control(occupant, Kind::Disconnect, occupied);
+        assert_eq!(
+            server.poll(3),
+            [EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::Peer,
+            }]
+        );
+        client.flush(1_000);
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert_eq!(server.poll(1_000), [EndpointEvent::Connected { peer: 2 }]);
+
+        for datagram in deny {
+            client.transport.received.push_back(ReceivedDatagram {
+                source: server_addr,
+                bytes: datagram.bytes,
+                fail: false,
+            });
+        }
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert_eq!(
+            client.poll(1_001),
+            [EndpointEvent::Denied {
+                peer,
+                reason: DenyReason::ServerFull,
+            }]
+        );
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert_eq!(
+            server.poll(1_002),
+            [EndpointEvent::Disconnected {
+                peer: 2,
+                reason: DisconnectReason::Peer,
+            }]
+        );
+        assert_eq!(server.peer_count(), 0);
     }
 
     /// #254: handshake datagrams meant for the other role are ignored — a
