@@ -982,9 +982,9 @@ scene.set_baked_specular_probes(&device, &queue, &[])?;
 - `radiance`: a cube with perceptual roughness level/6 at mip `level`, seven
   levels from a power-of-two `face_size` of at least 64 (Filament and Bevy use
   the same roughness-to-mip mapping). Up to 256 probes of one face size and
-  texel encoding, and six array layers each within the device's
+  texel encoding, taking six array layers each, all within the device's
   `max_texture_array_layers` (`graphics_device::limits` requests the
-  adapter's). Captures return `SpecularProbeTexels::Rgba16Float`; ship
+  adapter's; WebGPU's default of 256 layers holds 42 probes). Captures return `SpecularProbeTexels::Rgba16Float`; ship
   `Bc6hUfloat` blocks, an eighth of the size on disk and in memory, compressed
   offline with a BC6H encoder such as Intel's ISPC Texture Compressor (as Unreal
   compresses its captures). Installing BC6H needs the device feature
