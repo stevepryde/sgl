@@ -1782,8 +1782,8 @@ authored look and per-frame state in a `FrameInput`.
    explicitly; `LoadOptions` can bound emissive strength when the game requests
    that behavior, supply any of the glTF's images (`images`) so the loader
    never reads or decodes them, and select mesh nodes (`nodes`). Default
-   loading preserves authored strength, decodes every image and loads every
-   node.
+   loading preserves authored strength, decodes each image a sampled map uses
+   and loads every node.
 3. `Scene::new(&device, &queue)` starts empty. Add content between frames;
    each addition returns its identity (`MaterialId`, `ModelId`, `InstanceId`,
    `LightId`, `DecalImageId`, `DecalId`, `EnvironmentId`), and every operation
@@ -2747,7 +2747,8 @@ let asset = asset::load_with_options(&path, LoadOptions { images: Some(&sources)
 The loader asks once per image a sampled map uses, in image order, as
 Bevy's glTF loader resolves each image's source; a supplied image takes the glTF image's index,
 which its materials address. An embedded glTF (`load_slice_with_options`)
-may refer to external image files when every one is supplied.
+may refer to external image files when each one a sampled map uses is
+supplied.
 `CompressedImage::from_ktx2(bytes)` reads a KTX2
 file of one 2D BC7 image (`VK_FORMAT_BC7_UNORM_BLOCK` or `_SRGB_BLOCK`) with
 its stored levels, uncompressed or Zstandard-supercompressed, as Bevy reads
