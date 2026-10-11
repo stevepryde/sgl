@@ -540,6 +540,147 @@ fn a_capture_shadows_scene_lights_from_static_layers_it_places() {
     );
 }
 
+// A probe capture draws its scene lights' static layers at its own time:
+// a static caster whose shader reads the time casts where it stands at the
+// capture's `elapsed_seconds`, as the capture's surfaces are drawn, not
+// where it stood in the last frame. Plausible defect: the layers drawn
+// with the frame's uniform, at the last frame's time. The oracle is
+// geometric: the shader lifts an occluder by amplitude × sin(π/2 × time)
+// from below the floor, beyond the light's reach, to between a casting
+// point light and the floor the capture looks down at. After a frame at
+// t = 0, a capture at t = 1 records the floor dark, and one at t = 2,
+// where the occluder is back at rest, lit.
+#[test]
+fn a_capture_shadows_scene_lights_from_casters_at_its_own_time() {
+    use crate::asset::CpuMesh;
+    use crate::settings::Settings;
+    use crate::{Camera, FrameInput, Light, LightShape, Scene};
+    use glam::Vec3;
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    // A white double-sided square facing +Y at height `y`.
+    let square = |y: f32, half: f32| {
+        let mut asset = crate::test_support::cube();
+        let mut mesh: CpuMesh = asset.meshes.remove(0);
+        // The cube's +Y face: vertices 12..16, indices 18..24.
+        mesh.vertices = mesh.vertices[12..16]
+            .iter()
+            .map(|vertex| {
+                let [x, _, z] = vertex.position;
+                crate::asset::Vertex {
+                    position: [x * 2. * half, y, z * 2. * half],
+                    ..*vertex
+                }
+            })
+            .collect();
+        mesh.indices = vec![0, 1, 2, 0, 2, 3];
+        asset.meshes = vec![mesh];
+        asset.materials[0].base = [0.8, 0.8, 0.8, 1.];
+        asset.materials[0].metallic = 0.;
+        asset.materials[0].double_sided = true;
+        asset
+    };
+    // Lifted by `amplitude`, the occluder rests at 3 m, between the light
+    // and the floor; at rest it lies 15 m from the light, beyond its 10 m
+    // reach.
+    let amplitude = 13.;
+    let mut scene = Scene::new(&device, &queue);
+    let shader = crate::test_support::add_test_shader(&mut scene);
+    crate::test_support::add_static(&device, &queue, &mut scene, square(0., 6.));
+    let (occluder, _) =
+        crate::test_support::add_static(&device, &queue, &mut scene, square(3. - amplitude, 1.));
+    let material = occluder.materials[0];
+    crate::test_support::set_shader(&mut scene, &queue, material, (shader, amplitude));
+    let params = crate::test_support::TestShaderParams {
+        direction: [0., 1., 0.],
+        amplitude,
+        frequency: std::f32::consts::FRAC_PI_2,
+        ..Default::default()
+    };
+    crate::test_support::set_test_params(&mut scene, &queue, material, params);
+    scene
+        .add_light(
+            &device,
+            &queue,
+            Light {
+                position: Vec3::new(0., 5., 0.),
+                shape: LightShape::Point {
+                    radius: LightShape::DEFAULT_RADIUS,
+                },
+                color: [1.; 3],
+                intensity: 20.,
+                range: 10.,
+                baked: false,
+                specular: 1.,
+                casts_shadow: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let at = |elapsed_seconds| FrameInput {
+        elapsed_seconds,
+        ..FrameInput::new(Camera {
+            view: camera::rh::view::look_at_mat4(
+                Vec3::new(1000., 0., 0.),
+                Vec3::new(2000., 0., 0.),
+                Vec3::Y,
+            ),
+            projection: crate::perspective(1., 1., 0.1),
+            eye: Vec3::new(1000., 0., 0.),
+        })
+    };
+    let settings = Settings::default();
+    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let output = crate::view::targets::target(
+        &device,
+        "frame before the capture",
+        [64, 64],
+        crate::shading::gbuffer::COLOR,
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.render(
+        &device,
+        &queue,
+        &mut encoder,
+        &mut scene,
+        &at(0.),
+        &settings,
+        &output,
+        None,
+    );
+    queue.submit([encoder.finish()]);
+    renderer.finish_frame(&mut scene);
+    let face_size = 64;
+    let mut floor = |scene: &mut Scene, seconds| {
+        let radiance = renderer
+            .capture_specular_probe(
+                &device,
+                &queue,
+                scene,
+                &at(seconds),
+                &settings,
+                Vec3::Y,
+                face_size,
+            )
+            .unwrap();
+        let crate::SpecularProbeTexels::Rgba16Float(texels) = radiance.texels else {
+            unreachable!("captures return RGBA16F");
+        };
+        // The centre of the downward face (-Y, the fourth) at full detail.
+        let size = face_size as usize;
+        let texel = (3 * size * size + size / 2 * size + size / 2) * 4;
+        crate::test_support::half(&texels[texel].to_le_bytes())
+    };
+    let shadowed = floor(&mut scene, 1.);
+    let lit = floor(&mut scene, 2.);
+    assert!(
+        lit > 0.05 && shadowed < 0.01 * lit,
+        "the floor below the capture is {shadowed} with the occluder lifted at the capture's \
+         time and {lit} with it at rest"
+    );
+}
+
 /// A floor lit by the hemisphere fill alone under a black sky, packing an
 /// occlusion map of red `red` in its metallic-roughness image, white and
 /// `metallic` at perceptual `roughness`: the radiance a probe capture at

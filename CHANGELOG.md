@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Renderer::capture_specular_probe`: local-light shadows of static
+  casters whose shader reads the time were drawn at the last frame's time,
+  and the next frame at the capture's time reused that stale layer; they
+  are now drawn at the capture's `elapsed_seconds`. No game-code change
+  needed.
 - `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
   could not be allocated (the largest byte grid on wasm32); now returns
   `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or
