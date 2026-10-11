@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` volumetric fog and ray-traced shadows: a camera-history reset in
+  a frame where the stage did not run was missed, so the stage could resume
+  one count later reusing history from before the reset; any reset now ends
+  it. No game-code change needed.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
   controller callback, including those a newer owner had installed, so the
   newer one stopped receiving input; it now clears only callbacks it still
