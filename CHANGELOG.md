@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Ui::begin` / `UiFrame::end`: a release and a new press in one
+  frame (button still down) dropped the press's held button, scrollbar,
+  number-field or splitter drag; they now count as release then press, so the
+  earlier drag ends and the second press holds, scrubs or resizes. No
+  game-code change needed.
 - `sgl-input` `Gamepads::poll`: a button pressed while the macOS handler was
   being installed could yield two `ButtonPressed` events and one release; a
   press of a button already held is now dropped on every target. No
