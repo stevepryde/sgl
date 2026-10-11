@@ -394,7 +394,7 @@ fn decode(
 
 /// The most bytes one load's meshes, rig and clips may hold, which
 /// `load_bytes` counts before an accessor or image is read. Natively,
-/// 4 GiB: the largest public scenes need a quarter to two fifths of it
+/// 4 GiB: the largest public scenes need a quarter to about a third of it
 /// (Power Plant's 10.6 million vertices and 12.8 million triangles 1.01
 /// GiB, Lucy's 14 million vertices and 28 million triangles 1.46 GiB, at
 /// 88 bytes a vertex and 4 an index).
@@ -402,7 +402,9 @@ fn decode(
 const MAX_LOAD_BYTES: u64 = 4 << 30;
 /// In the browser, 1 GiB: a quarter of the 4 GiB a wasm32 module
 /// addresses, since batching holds up to about three times the meshes'
-/// bytes at once and the game's other content shares the rest. It holds
+/// bytes at once while the file's bytes and its decoded buffers stay
+/// resident, so a load at the cap nears 4 GiB; the game's other content
+/// shares that space too. It holds
 /// the Bistro exterior (2.9 million vertices and 2.8 million triangles,
 /// 0.27 GiB); Power Plant and Lucy, which that address space cannot import
 /// with their working copies, are refused.
