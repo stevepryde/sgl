@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 
 const [task, ...options] = Bun.argv.slice(2);
 
@@ -134,9 +134,16 @@ async function mutants(args: string[]): Promise<void> {
       argv.push("--exclude", glob);
     }
     console.log(`\n== mutants: ${crate}`);
-    // cargo-mutants exits non-zero when mutants survive or time out; that is
-    // the report, not a task failure. A run that tested nothing is.
-    Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
+    // A run that never starts must not leave the previous run's files to count.
+    rmSync(`mutants.out/${crate}`, { recursive: true, force: true });
+    // cargo-mutants exits 2 when mutants survive and 3 when they time out;
+    // that is the report, not a task failure. Any other non-zero code (or
+    // cargo's 101 when cargo-mutants is missing) is. So is a run that tested nothing.
+    const { exitCode, signalCode } = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
+    if (exitCode !== 0 && exitCode !== 2 && exitCode !== 3) {
+      const status = signalCode ? `signal ${signalCode}` : `exit code ${exitCode}`;
+      throw new Error(`${crate}: cargo mutants failed with ${status}; see the output above`);
+    }
     const dir = `mutants.out/${crate}/mutants.out`;
     const count = async (name: string) => {
       const file = Bun.file(`${dir}/${name}.txt`);
