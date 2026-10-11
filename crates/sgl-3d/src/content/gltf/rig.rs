@@ -64,6 +64,8 @@ impl Rigging {
                     &format!("skin {}: inverse bind matrices", skin.index()),
                     &[DataType::F32],
                     &[Dimensions::Mat4],
+                    Some(skin.joints().count()),
+                    buffers,
                 )?;
             }
             let reader = skin.reader(|buffer| Some(&buffers[buffer.index()].0));
@@ -205,17 +207,52 @@ fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) ->
                 &format!("{label}: keyframe times"),
                 &[F32],
                 &[Dimensions::Scalar],
+                None,
+                buffers,
             )?;
-            let (types, shape): (&[DataType], _) = match channel.target().property() {
-                Property::Translation | Property::Scale => (&[F32], Dimensions::Vec3),
-                Property::Rotation => (&[F32, I8, U8, I16, U16], Dimensions::Vec4),
-                Property::MorphTargetWeights => (&[F32, I8, U8, I16, U16], Dimensions::Scalar),
+            let interpolation = match sampler.interpolation() {
+                GltfInterpolation::Step => Interpolation::Step,
+                GltfInterpolation::Linear => Interpolation::Linear,
+                GltfInterpolation::CubicSpline => Interpolation::CubicSpline,
             };
+            // A keyframe's values: a cubic spline's in-tangent, value and
+            // out-tangent, each one element a morph target for weights.
+            let per_key = if interpolation == Interpolation::CubicSpline {
+                3
+            } else {
+                1
+            };
+            let (types, shape, per_value): (&[DataType], _, _) = match channel.target().property() {
+                Property::Translation | Property::Scale => (&[F32], Dimensions::Vec3, 1),
+                Property::Rotation => (&[F32, I8, U8, I16, U16], Dimensions::Vec4, 1),
+                Property::MorphTargetWeights => {
+                    let targets = channel
+                        .target()
+                        .node()
+                        .mesh()
+                        .map_or(0, |mesh| mesh_morph_target_count(&mesh));
+                    if targets == 0 {
+                        return Err(format!(
+                            "{label}: morph weights animate a node without morph targets"
+                        )
+                        .into());
+                    }
+                    (&[F32, I8, U8, I16, U16], Dimensions::Scalar, targets)
+                }
+            };
+            let values = sampler
+                .input()
+                .count()
+                .checked_mul(per_key)
+                .and_then(|values| values.checked_mul(per_value))
+                .ok_or_else(|| format!("{label}: a channel has too many keyframe values"))?;
             check_accessor(
                 &sampler.output(),
                 &format!("{label}: keyframe values"),
                 types,
                 &[shape],
+                Some(values),
+                buffers,
             )?;
             let reader = channel.reader(|buffer| Some(&buffers[buffer.index()].0));
             let times: Vec<f32> = reader
@@ -248,43 +285,6 @@ fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) ->
                     ChannelValues::MorphWeights(values.into_f32().collect())
                 }
             };
-            let interpolation = match channel.sampler().interpolation() {
-                GltfInterpolation::Step => Interpolation::Step,
-                GltfInterpolation::Linear => Interpolation::Linear,
-                GltfInterpolation::CubicSpline => Interpolation::CubicSpline,
-            };
-            let per_key = if interpolation == Interpolation::CubicSpline {
-                3
-            } else {
-                1
-            };
-            let count = match &values {
-                ChannelValues::Translation(v) | ChannelValues::Scale(v) => v.len(),
-                ChannelValues::Rotation(v) => v.len(),
-                ChannelValues::MorphWeights(v) => {
-                    let targets = channel
-                        .target()
-                        .node()
-                        .mesh()
-                        .map_or(0, |mesh| mesh_morph_target_count(&mesh));
-                    if targets == 0 {
-                        return Err(format!(
-                            "{label}: morph weights animate a node without morph targets"
-                        )
-                        .into());
-                    }
-                    if v.len() % targets == 0 {
-                        v.len() / targets
-                    } else {
-                        usize::MAX
-                    }
-                }
-            };
-            if count != times.len() * per_key {
-                return Err(
-                    format!("{label}: a channel's values do not match its keyframes").into(),
-                );
-            }
             Ok(Channel {
                 node: channel.target().node().index(),
                 interpolation,

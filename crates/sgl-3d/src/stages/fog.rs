@@ -366,11 +366,8 @@ impl VolumetricFog {
             volumes.holds = [None; 2];
         }
         let index = (history.frames % 2) as usize;
-        let reprojects = history.valid
-            && history
-                .frames
-                .checked_sub(1)
-                .is_some_and(|last| volumes.holds[1 - index] == Some(last));
+        let reprojects =
+            history.valid && volumes.holds[1 - index] == Some(history.frames.wrapping_sub(1));
         volumes.holds[index] = Some(history.frames);
         let fog = ctx.input.fog;
         let camera = ctx.input.camera;
