@@ -18,7 +18,8 @@
 // slot table's (shadow_mask_slots.wgsl), not the first sixteen of a
 // sorted entity array; a light reaches the surface as the lit library's
 // light_reach says (range, cone, and where the base or the coat normal,
-// the normals the lighting uses, faces any of its sphere; a rectangle the
+// never fewer than the lighting uses (traced_visible), faces any of its
+// sphere; a rectangle the
 // half-space before its face), a directional light where either faces any
 // of its disc (light_faces); a baked light casts no ray at a
 // receiver that takes no baked lights, which the lighting never gives
@@ -74,15 +75,15 @@ fn traced_directional_light()->u32 {
 
 // Whether slot `key`'s light is unoccluded from the surface at `position`
 // with base normal `normal` and coat normal `coat_normal` (G-buffer
-// normal.BA: the coat's mapped normal, else the geometry normal, which a
-// coatless pixel keeps here although its lighting reaches by its base normal
-// alone, since a tracing texel stands for the 2×2 footprint the upsample
-// and denoiser share), along a
+// normal.BA: the coat's mapped normal, else the geometry normal), along a
 // ray toward the point of the light `random` draws (light_surface.wgsl);
 // false where the light does not reach the surface. The reach test covers
-// the normals the lighting uses, base and coat, and the light's sphere or
-// disc (light_faces): where both face away from all of it, no lobe takes
-// the light. Where `untraced`, a
+// both normals and the light's sphere or disc (light_faces): where both
+// face away from all of it, no lobe takes the light. It is never narrower
+// than the lighting's, which takes a coatless surface's base normal alone
+// (shade_lit): a coatless pixel keeps its geometry normal here, since its
+// texel carries onto the neighbours the upsample and denoiser share, whose
+// own mapped normals may face a light its own does not. Where `untraced`, a
 // baked light at a receiver that takes no baked lights, which the lighting
 // never gives it, no ray is cast and the light is unoccluded where it
 // reaches: a value no lighting at the pixel reads, chosen for the passes
