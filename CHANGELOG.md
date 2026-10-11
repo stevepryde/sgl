@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::world_space_reflections`: on rare frames each world
+  ray traced the next 2×2 block's pixel (the last outside the screen), and
+  at a render 1 pixel wide or tall it read past the edge; each now traces a
+  pixel of its own block inside the screen. No game-code changes needed.
 - `sgl-net` `ThreadedUdpServer`: a connection that ended at the worker (peer
   close, timeout, protocol violation) discarded the messages it had
   delivered but the caller had not yet polled and reported `Disconnected`
