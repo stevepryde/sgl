@@ -9,7 +9,7 @@ use crate::shading;
 use crate::shading::RayQueryForm;
 use crate::view::cached_group::CachedGroup;
 use crate::view::frame::HardwareRays;
-use crate::view::history::HistoryFrame;
+use crate::view::history::{HistoryFrame, StageHistory};
 use crate::view::pipelines::LitConstants;
 use crate::view::reflection_camera;
 use crate::view::trace_paths::{TracePath, TracePaths};
@@ -174,8 +174,8 @@ pub(crate) struct WorldReflections {
     sampler: wgpu::Sampler,
     params: wgpu::Buffer,
     targets: Targets,
-    /// Frames since history last reset; 0 resets it.
-    frame: u32,
+    /// Frames since history last reset (0 resets it), and the half written.
+    history: StageHistory,
     /// Scene frame last encoded, matching the TAA/SSR continuity rule.
     previous_scene_frame: Option<u32>,
 }
@@ -301,7 +301,7 @@ impl WorldReflections {
                 },
             ),
             targets: Targets::new(device, size),
-            frame: 0,
+            history: StageHistory::default(),
             previous_scene_frame: None,
         }
     }
@@ -380,14 +380,14 @@ impl WorldReflections {
                 .previous_scene_frame
                 .is_some_and(|previous| history.frames == previous.wrapping_add(1));
         if resized || !continuous {
-            self.frame = 0;
+            self.history.count = 0;
         }
         self.previous_scene_frame = Some(history.frames);
         // The renderer's camera history is the previous camera, as it
         // rasterized; a new history reprojects through this frame's.
         let near = input.camera.proj[3][2];
         let (previous, previous_near) = match history.previous_camera {
-            Some(camera) if self.frame > 0 => (
+            Some(camera) if self.history.count > 0 => (
                 camera.jittered_view_projection(),
                 camera.projection.w_axis.z,
             ),
@@ -411,7 +411,7 @@ impl WorldReflections {
                 eye: [eye[0], eye[1], eye[2], near],
                 full: [w, h, 1. / w, 1. / h],
                 reduced: [rw, rh, 1. / rw, 1. / rh],
-                frame: self.frame,
+                frame: self.history.count,
                 rays: 0,
                 traced: input.traced,
                 range: RANGE,
@@ -420,7 +420,7 @@ impl WorldReflections {
                 padding: [0; 2],
             }),
         );
-        let current = (self.frame % 2) as usize;
+        let current = self.history.current;
         let history = 1 - current;
         let view = wgpu::BindingResource::TextureView;
         let receivers = [
@@ -549,7 +549,7 @@ impl WorldReflections {
             t.full,
             encoder,
         );
-        self.frame = self.frame.wrapping_add(1).max(1);
+        self.history.advance();
     }
 }
 
