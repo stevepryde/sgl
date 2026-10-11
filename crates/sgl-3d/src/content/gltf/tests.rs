@@ -322,6 +322,46 @@ fn hierarchical_reflection_preserves_surface_orientation() {
 }
 
 #[test]
+fn a_tiny_uniform_scale_loads_and_a_collapsed_axis_is_refused() {
+    // A uniform scale of 3e-4 (determinant 2.7e-11) is invertible and must
+    // load at its scaled positions; a zero scale on one axis is singular.
+    let fixture_scaled = |scale: [f32; 3]| {
+        let source = serde_json::json!({
+            "asset": {"version": "2.0"},
+            "buffers": [{"uri": "fixture.bin", "byteLength": 72}],
+            "bufferViews": [{"buffer": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 36}],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0]},
+                {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"}
+            ],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1}}]}],
+            "nodes": [{"scale": scale, "mesh": 0}],
+            "scenes": [{"nodes": [0]}], "scene": 0
+        });
+        let values: [f32; 18] = [
+            0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 1., 0., 0., 1.,
+        ];
+        Fixture::new(&serde_json::to_vec(&source).unwrap(), &values)
+    };
+    let tiny = fixture_scaled([3e-4; 3]);
+    let asset = load(&tiny.path()).unwrap();
+    let mesh = &asset.meshes[0];
+    for (vertex, expected) in
+        mesh.vertices
+            .iter()
+            .zip([[0., 0., 0.], [3e-4, 0., 0.], [0., 3e-4, 0.]])
+    {
+        assert!((Vec3::from_array(vertex.position) - Vec3::from_array(expected)).length() < 1e-9);
+        assert!((Vec3::from_array(vertex.normal) - Vec3::Z).length() < 1e-5);
+    }
+    let collapsed = fixture_scaled([1., 1., 0.]);
+    let Err(error) = load(&collapsed.path()) else {
+        panic!("a zero-scale axis loaded");
+    };
+    assert!(error.to_string().contains("singular"), "{error}");
+}
+
+#[test]
 fn emitted_strength_is_preserved_unless_the_caller_caps_it() {
     // KHR_materials_emissive_strength multiplies the authored color. The
     // application option limits strength, not the resulting color channels.
@@ -458,10 +498,11 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
         {"uri":"glow.png"},
         {"uri":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNwC4gCAAHQAPElUIcnAAAAAElFTkSuQmCC"}
       ],
-      "textures":[{"source":0},{"source":1}],
+      "textures":[{"source":0},{"source":1},{"source":2}],
       "materials":[{
         "pbrMetallicRoughness":{"baseColorTexture":{"index":0}},
-        "emissiveTexture":{"index":1},"emissiveFactor":[1,1,1]
+        "emissiveTexture":{"index":1},"emissiveFactor":[1,1,1],
+        "normalTexture":{"index":2}
       }],
       "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"material":0}]}],
       "nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0
@@ -734,7 +775,13 @@ fn an_ignored_occlusion_map_constrains_neither_attributes_nor_sampling() {
     // are the lightmap UVs.
     let asset = load_triangle(serde_json::json!({"index": 1, "texCoord": 1}), 1, true)
         .unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(asset.ignored, [Ignored::OcclusionMap { material: 0 }]);
+    assert_eq!(
+        asset.ignored,
+        [
+            Ignored::OcclusionMap { material: 0 },
+            Ignored::Image { image: 1 }
+        ]
+    );
     let vertices = &asset.meshes[0].vertices;
     let uvs: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.uv).collect();
     let lightmap_uvs: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.lightmap_uv).collect();
@@ -743,7 +790,13 @@ fn an_ignored_occlusion_map_constrains_neither_attributes_nor_sampling() {
     // An image of its own, sampled nearest, which SGL3D never samples.
     let asset = load_triangle(serde_json::json!({"index": 1}), 1, false)
         .unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(asset.ignored, [Ignored::OcclusionMap { material: 0 }]);
+    assert_eq!(
+        asset.ignored,
+        [
+            Ignored::OcclusionMap { material: 0 },
+            Ignored::Image { image: 1 }
+        ]
+    );
     assert_eq!(
         (
             asset.materials[0].mr_texture,
@@ -881,6 +934,29 @@ fn read_textured_material(material: serde_json::Value) -> Result<Material> {
         0,
         &mut Vec::new(),
     )
+}
+
+// Defects: a bump map without bumpFactor read as factor 0, so it changed
+// nothing, or a factor above 1 refused. The oracle is EXT_materials_bump's
+// schema (KhronosGroup/glTF#2339) and three.js's GLTFMaterialsBumpExtension:
+// bumpFactor defaults to 1, in 0..100.
+#[test]
+fn a_bump_factor_defaults_to_one_and_may_exceed_one() {
+    let bump = |extension: serde_json::Value| {
+        read_textured_material(serde_json::json!({
+            "extensions": {"EXT_materials_bump": extension}
+        }))
+    };
+    let plain = bump(serde_json::json!({"bumpTexture": {"index": 0}})).unwrap();
+    assert_eq!((plain.bump_texture, plain.bump_scale), (Some(2), 1.));
+    let strong = bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": 2.0})).unwrap();
+    assert_eq!(strong.bump_scale, 2.);
+    for refused in [-1.0, 101.0] {
+        assert!(
+            bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": refused})).is_err(),
+            "bumpFactor {refused} loaded"
+        );
+    }
 }
 
 // Defects: a clearcoat or iridescence texture's index taken for its image
@@ -1110,6 +1186,48 @@ fn sheen_and_diffuse_transmission_load_with_their_defaults() {
     }
 }
 
+// Defects: a material extension object carrying its own `extensions` (or
+// `extras`) is refused, or its authored values are lost. The oracle is
+// glTF 2.0's glTFProperty schema, from which every KHR material extension's
+// schema derives, so each may hold both; and the authored values.
+#[test]
+fn material_extensions_with_their_own_extensions_load() {
+    let nested = |mut lobe: serde_json::Value| {
+        lobe["extensions"] = serde_json::json!({"EXT_vendor_note": {"note": 1}});
+        lobe["extras"] = serde_json::json!({"author": "fixture"});
+        lobe
+    };
+    let material = read_textured_material(serde_json::json!({"extensions": {
+        "KHR_materials_anisotropy": nested(serde_json::json!({"anisotropyStrength": 0.5})),
+        "KHR_materials_clearcoat": nested(serde_json::json!({"clearcoatFactor": 0.25})),
+        "KHR_materials_iridescence": nested(serde_json::json!({"iridescenceFactor": 0.75})),
+        "KHR_materials_sheen": nested(serde_json::json!({"sheenRoughnessFactor": 0.5})),
+        "KHR_materials_diffuse_transmission": nested(serde_json::json!({"diffuseTransmissionFactor": 0.25})),
+        "KHR_materials_transmission": nested(serde_json::json!({"transmissionFactor": 0.75})),
+        "KHR_materials_volume": nested(serde_json::json!({"thicknessFactor": 0.5})),
+        "KHR_materials_dispersion": nested(serde_json::json!({"dispersion": 0.25}))
+    }}))
+    .unwrap();
+    assert_eq!(
+        (
+            material.anisotropy_strength,
+            material.clearcoat,
+            material.iridescence,
+            material.sheen_roughness,
+        ),
+        (0.5, 0.25, 0.75, 0.5)
+    );
+    assert_eq!(
+        (
+            material.diffuse_transmission,
+            material.transmission,
+            material.thickness,
+            material.dispersion,
+        ),
+        (0.25, 0.75, 0.5, 0.25)
+    );
+}
+
 // Defects: a primitive without TEXCOORD_0 loads though its material samples
 // a map, which then reads one texel everywhere (the check covered the base,
 // metallic-roughness, occlusion and anisotropy maps alone). The oracle is
@@ -1161,4 +1279,147 @@ fn a_primitive_without_texcoord_0_is_refused_for_any_map() {
             );
         }
     }
+}
+
+/// A UV-mapped triangle drawn with `material`, in a document of `images`
+/// and `textures` that lists `used`.
+fn textured_triangle(
+    material: serde_json::Value,
+    images: serde_json::Value,
+    textures: serde_json::Value,
+    used: &[&str],
+) -> Fixture {
+    let document = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "extensionsUsed": used,
+        "buffers": [{"uri": "fixture.bin", "byteLength": 96}],
+        "bufferViews": [
+            {"buffer": 0, "byteLength": 36},
+            {"buffer": 0, "byteOffset": 36, "byteLength": 36},
+            {"buffer": 0, "byteOffset": 72, "byteLength": 24}
+        ],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0]},
+            {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+            {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2"}
+        ],
+        "images": images,
+        "textures": textures,
+        "materials": [material],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "material": 0}]}],
+        "nodes": [{"mesh": 0}],
+        "scenes": [{"nodes": [0]}], "scene": 0
+    });
+    let values = [
+        0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0.,
+        1.,
+    ];
+    Fixture::new(&serde_json::to_vec(&document).unwrap(), &values)
+}
+
+// Defects: an image only an unsupported extension's texture source names
+// is decoded, failing the load over a KTX2 image a loader without
+// KHR_texture_basisu never needs; or the core source it falls back to is
+// not decoded; or the skipped image is not listed. The oracle is glTF 2.0
+// 5.17.1 and KHR_texture_basisu (a client without the extension that the
+// file does not require uses the texture's core `source`), and the
+// embedded PNG's known texel.
+#[test]
+fn an_unsupported_texture_extensions_image_is_left_out_and_its_fallback_decodes() {
+    let png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNwC4gCAAHQAPElUIcnAAAAAElFTkSuQmCC";
+    // A KTX2 file identifier and nothing more, which no loader decodes.
+    let ktx2 = "data:image/ktx2;base64,q0tUWCAyMLsNChoK";
+    let fixture = textured_triangle(
+        serde_json::json!({"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}),
+        serde_json::json!([{"uri": png}, {"uri": ktx2}]),
+        serde_json::json!([{"source": 0, "extensions": {"KHR_texture_basisu": {"source": 1}}}]),
+        &["KHR_texture_basisu"],
+    );
+    let asset = load_slice(&fixture.embedded()).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(asset.materials[0].base_texture, Some(0));
+    let Image::Rgba8(base) = &asset.images[0] else {
+        panic!("expected RGBA8");
+    };
+    assert_eq!(base.as_raw(), &[70, 80, 90, 255]);
+    assert_eq!(
+        asset.ignored,
+        [
+            Ignored::Extension("KHR_texture_basisu".into()),
+            Ignored::Image { image: 1 }
+        ]
+    );
+}
+
+// Defects: a 16-bit PNG, which SGL3D does not decode, fails the load though
+// only a map SGL3D leaves out (an occlusion map in an image of its own, a
+// KHR_materials_specular texture) uses it, or the game is asked for it; or,
+// the other way, the same image loads unnoticed where a map SGL3D samples
+// uses it. The oracle is the documented fallback (a left-out map constrains
+// nothing and is listed in `Asset::ignored`) and the error for an image in
+// effect that cannot decode.
+#[test]
+fn an_image_only_ignored_maps_use_is_not_decoded() {
+    let images = serde_json::json!([{"uri": "orm.png"}, {"uri": "deep.png"}]);
+    let textures = serde_json::json!([{"source": 0}, {"source": 1}]);
+    let load_material = |material: serde_json::Value| {
+        let fixture = textured_triangle(
+            material,
+            images.clone(),
+            textures.clone(),
+            &["KHR_materials_specular"],
+        );
+        image::RgbImage::new(1, 1)
+            .save(fixture.directory.join("orm.png"))
+            .unwrap();
+        image::ImageBuffer::<image::Rgb<u16>, _>::from_raw(1, 1, vec![1000u16, 2000, 3000])
+            .unwrap()
+            .save(fixture.directory.join("deep.png"))
+            .unwrap();
+        let asked = std::sync::Mutex::new(Vec::new());
+        let ask = |image: GltfImage<'_>| {
+            asked.lock().unwrap().push(image.index);
+            Ok(ImageSource::Decode)
+        };
+        let options = LoadOptions {
+            images: Some(&ask),
+            ..LoadOptions::default()
+        };
+        let asset = load_with_options(&fixture.path(), options);
+        (asset, asked.into_inner().unwrap())
+    };
+    let mr = serde_json::json!({"metallicRoughnessTexture": {"index": 0}});
+    let (asset, asked) = load_material(serde_json::json!({
+        "pbrMetallicRoughness": mr,
+        "occlusionTexture": {"index": 1}
+    }));
+    let asset = asset.unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        asset.ignored,
+        [
+            Ignored::OcclusionMap { material: 0 },
+            Ignored::Image { image: 1 }
+        ]
+    );
+    assert_eq!(asked, [0]);
+    let (asset, asked) = load_material(serde_json::json!({
+        "pbrMetallicRoughness": mr,
+        "extensions": {"KHR_materials_specular": {"specularTexture": {"index": 1}}}
+    }));
+    let asset = asset.unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        asset.ignored,
+        [
+            Ignored::SpecularMap { material: 0 },
+            Ignored::Image { image: 1 }
+        ]
+    );
+    assert_eq!(asked, [0]);
+    let (asset, _) = load_material(serde_json::json!({
+        "pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}
+    }));
+    let error = asset
+        .err()
+        .expect("a sampled 16-bit image loaded")
+        .to_string();
+    assert!(error.contains("image 1 has unsupported"), "{error}");
 }

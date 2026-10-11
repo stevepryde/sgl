@@ -1,6 +1,12 @@
 // Sousa, GPU Gems 2 §19.1 snapshot/offset; §19.2 rejection with opaque depth
 // replacing the alpha mask. Every contributing bilinear tap is checked.
-@group(0) @binding(0) var<uniform> camera:mat4x4<f32>;
+struct View {
+ camera:mat4x4<f32>,
+ // Render pixels per scene pixel on each axis: displacement is authored in
+ // scene pixels and this pass runs at the render size (below it under FSR2).
+ render_per_scene:vec2<f32>,
+}
+@group(0) @binding(0) var<uniform> view:View;
 @group(0) @binding(1) var source:texture_2d<f32>;
 @group(0) @binding(2) var depth:texture_depth_2d;
 struct Vertex {
@@ -9,7 +15,7 @@ struct Vertex {
  @location(1) weight:f32,
 }
 @vertex fn vs(@location(0) position:vec3<f32>, @location(1) displacement:vec2<f32>, @location(2) weight:f32)->Vertex {
- return Vertex(camera*vec4(position,1.),displacement,weight);
+ return Vertex(view.camera*vec4(position,1.),displacement*view.render_per_scene,weight);
 }
 @fragment fn fs(v:Vertex)->@location(0) vec4<f32> {
  let pixel=vec2<i32>(v.p.xy);

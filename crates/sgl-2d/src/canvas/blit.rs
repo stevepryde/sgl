@@ -395,18 +395,24 @@ const MAX_TARGET_AREA: u64 = 4096 * 4096;
 /// 2. above [`MAX_TARGET_AREA`], apply a proportional render scale-down
 ///    (aspect preserved; the letterbox blit upscales the smaller target to
 ///    the full surface, so the frame stays correct, just softer);
-/// 3. hard-clamp each axis to the device's max 2D texture dimension
-///    (exceeding it is a wgpu validation failure, not a soft error).
+/// 3. when either axis exceeds the device's max 2D texture dimension
+///    (a wgpu validation failure, not a soft error), scale both axes by
+///    `max_dim / max(width, height)` so the aspect is preserved and the
+///    screen channel keeps laying out over the requested size.
 fn clamp_target_size(width: u32, height: u32, max_dim: u32) -> (u32, u32) {
-    let (mut width, mut height) = (width.max(1), height.max(1));
-    let area = u64::from(width) * u64::from(height);
-    if area > MAX_TARGET_AREA {
-        let scale = ((MAX_TARGET_AREA as f64) / (area as f64)).sqrt();
-        width = ((f64::from(width) * scale) as u32).max(1);
-        height = ((f64::from(height) * scale) as u32).max(1);
-    }
+    let (width, height) = (width.max(1), height.max(1));
     let max_dim = max_dim.max(1);
-    (width.min(max_dim), height.min(max_dim))
+    let area = u64::from(width) * u64::from(height);
+    // One combined scale, floored once, so the two limits never compound
+    // rounding error into the aspect.
+    let area_scale = ((MAX_TARGET_AREA as f64) / (area as f64)).sqrt();
+    let dim_scale = f64::from(max_dim) / f64::from(width.max(height));
+    let scale = area_scale.min(dim_scale);
+    if scale >= 1.0 {
+        return (width, height);
+    }
+    let axis = |len: u32| ((f64::from(len) * scale) as u32).clamp(1, max_dim);
+    (axis(width), axis(height))
 }
 
 /// The screen channel's layout for a `target` the window's `requested` size
@@ -1190,13 +1196,36 @@ mod tests {
         );
     }
 
-    /// Each axis hard-clamps to the device's max texture dimension even
-    /// when the area budget allows it (a 20000×100 request on an
-    /// 8192-limit device would otherwise fail wgpu validation).
+    /// A target over the device's max texture dimension shrinks to it on
+    /// its long axis even when the area budget allows the request (a
+    /// 20000×100 request on an 8192-limit device would otherwise fail wgpu
+    /// validation), and the short axis shrinks with it so the aspect holds.
     #[wasm_bindgen_test(unsupported = test)]
     fn clamp_target_size_respects_the_device_dimension_limit() {
-        assert_eq!(clamp_target_size(20_000, 100, 8192), (8192, 100));
-        assert_eq!(clamp_target_size(100, 20_000, 8192), (100, 8192));
+        assert_eq!(clamp_target_size(20_000, 100, 8192), (8192, 40));
+        assert_eq!(clamp_target_size(100, 20_000, 8192), (40, 8192));
+    }
+
+    /// #433: a triple-4K span (and its tall equivalent) over an 8192-limit
+    /// device keeps the window's 16:3 aspect, so the screen channel still
+    /// lays out over the window's logical size instead of letterboxing.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn clamping_to_the_device_limit_keeps_the_window_aspect() {
+        for requested in [(11_520, 2160), (2160, 11_520)] {
+            let target = clamp_target_size(requested.0, requested.1, 8192);
+            assert!(target.0 <= 8192 && target.1 <= 8192, "{target:?}");
+            let aspect = |(w, h): (u32, u32)| f64::from(w) / f64::from(h);
+            assert!(
+                (aspect(target) / aspect(requested) - 1.0).abs() < 0.005,
+                "{requested:?} -> {target:?}"
+            );
+            let (layout, _) = ui_layout(requested, target, 1.0);
+            let window = Vec2::new(requested.0 as f32, requested.1 as f32);
+            assert!(
+                (layout - window).abs().max_element() < 1.0,
+                "{requested:?} lays out over {layout}"
+            );
+        }
     }
 
     /// #326: an 8K window at UI scale 2 renders into a scaled-down target,

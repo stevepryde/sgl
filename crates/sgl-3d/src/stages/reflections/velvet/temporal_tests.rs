@@ -404,3 +404,77 @@ fn a_changed_near_plane_keeps_history() {
         );
     }
 }
+
+// The bilinear fallback (#460) weights the four history texels around a UV,
+// clamped to the grid, so within half a texel of the left edge all its weight
+// lands on the edge column. Every pixel reprojects a quarter texel left, by
+// motion and by hit alike, so the left column reads its history at a quarter
+// texel. The receiver is at depth 0.3; the history's left column at 0.75 and
+// the rest at 0.15 both disocclude it, the left column less, so the
+// neighbour search keeps the reprojected UV and the fallback decides. Over
+// the edge column alone it disoccludes and the left column keeps this
+// frame's hits exactly; weighting the next column three quarters, as a
+// truncated base texel does, blends a depth of exactly 0.3 and pulls the
+// left column toward the history's uniform 0.5.
+#[test]
+fn the_left_edge_fallback_reads_the_edge_texel() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let pass = Pass::new(&device, &queue);
+    let texels = (SIZE * SIZE) as usize;
+    upload(
+        &queue,
+        &pass.depth,
+        bytemuck::cast_slice(&vec![0.3f32; texels]),
+        4,
+    );
+    let depth_history: Vec<f32> = (0..SIZE * SIZE)
+        .map(|i| if i % SIZE == 0 { 0.75 } else { 0.15 })
+        .collect();
+    upload(
+        &queue,
+        &pass.depth_history[0],
+        bytemuck::cast_slice(&depth_history),
+        4,
+    );
+    upload(
+        &queue,
+        &pass.history[0],
+        bytemuck::cast_slice(&[HALF, HALF, HALF, ONE].repeat(texels)),
+        8,
+    );
+    // Motion (1/128, 0), a quarter texel: binary16 0x2000.
+    upload(
+        &queue,
+        &pass.motion,
+        bytemuck::cast_slice(&[0x2000u16, 0, 0, 0].repeat(texels)),
+        8,
+    );
+    let size = SIZE as f32;
+    // The same quarter texel by hit: a quarter of a clip-space texel (2/size).
+    let previous_view_projection = Mat4::from_translation(Vec3::new(-0.5 / size, 0., 0.));
+    let output = pass.run(
+        (&device, &queue),
+        &hits(0),
+        TemporalParams {
+            inverse_view_projection: Mat4::IDENTITY.to_cols_array_2d(),
+            previous_view_projection: previous_view_projection.to_cols_array_2d(),
+            size: [size, size, 1. / size, 1. / size],
+            near: 0.1,
+            previous_near: 0.1,
+            flags: TEMPORAL_CONTINUES,
+            padding: 0,
+        },
+        1,
+    );
+    let expected = hits(0);
+    for y in 0..SIZE as usize {
+        let i = y * SIZE as usize;
+        assert_eq!(
+            output[i][0],
+            value(expected[i * 4]),
+            "left-edge pixel {y} took history from the next column"
+        );
+    }
+}
