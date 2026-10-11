@@ -263,3 +263,58 @@ fn a_long_frame_lands_on_the_target() {
         );
     }
 }
+
+// Defect: a NaN speed reaches the shader and makes the stored correction
+// NaN until history restarts; a negative one walks it away from its target.
+// The oracle is `AutoExposure`'s documented fallback: the default speeds.
+#[test]
+fn invalid_speeds_take_the_defaults() {
+    let defaults = AutoExposure::default();
+    let uniform = AutoExposureUniform::new(
+        &AutoExposure {
+            speed_brighten: f32::NAN,
+            speed_darken: -2.,
+            ..defaults
+        },
+        0.,
+        1. / 60.,
+        false,
+    );
+    assert_eq!(uniform.speed_up, defaults.speed_brighten);
+    assert_eq!(uniform.speed_down, defaults.speed_darken);
+}
+
+// Defect: an unbounded frame time reaches the shader, where a speed of 0
+// times it is NaN, so the correction moves (or turns NaN) instead of
+// holding. The oracle is the documented speed: 0 holds the correction at
+// the target it took on the previous scene, however long the frame.
+#[test]
+fn a_zero_speed_holds_over_an_unbounded_frame() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let mut exposure = Exposure::new(&device);
+    let automatic = AutoExposure {
+        speed_brighten: 0.,
+        speed_darken: 0.,
+        ..Default::default()
+    };
+    let frame = |delta_time, reset| Metering {
+        automatic: &automatic,
+        stops: 0.,
+        delta_time,
+        reset,
+    };
+    let dim = grey(&device, &queue, 1.);
+    let held = adapt(&device, &queue, &mut exposure, &dim, frame(0., true));
+    for scene in [grey(&device, &queue, 2.), grey(&device, &queue, 0.5)] {
+        let after = adapt(
+            &device,
+            &queue,
+            &mut exposure,
+            &scene,
+            frame(f32::INFINITY, false),
+        );
+        assert_eq!(after, held, "a speed of 0 over an unbounded frame");
+    }
+}

@@ -109,7 +109,8 @@ pub struct ScreenSpaceReflectionAttribs {
     /// Regions with a roughness value greater than this threshold won't spawn rays"
     pub roughness_threshold: f32,
 
-    /// The most detailed MIP map level in the depth hierarchy. Perfect mirrors always use 0 as the most detailed level
+    /// The most detailed MIP map level in the depth hierarchy. Perfect mirrors always use 0 as the most detailed level.
+    /// At most the hierarchy's top mip, `SSR_DEPTH_HIERARCHY_MAX_MIP` or lower where the viewport's longer side is under 64 pixels (PROVENANCE.md DFX-52); more counts as that mip.
     pub most_detailed_mip: u32,
 
     /// A boolean to describe the space used to store roughness in the materialParameters texture.

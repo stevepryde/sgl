@@ -181,7 +181,7 @@ struct CameraSlot {
     bind_group: wgpu::BindGroup,
 }
 
-/// A texture an upload refused, uploading and changing nothing
+/// A texture or normal map an upload refused, uploading and changing nothing
 /// ([`SpritePass::upload`], [`SpritePass::replace`],
 /// [`SpritePass::upload_normal`] and the light-cookie upload).
 /// [`Texture`]'s fields are public, so a procedurally built texture can
@@ -199,6 +199,8 @@ pub enum TextureError {
         expected: (u32, u32),
         actual: (u32, u32),
     },
+    /// A normal map named a diffuse texture that has not been uploaded.
+    DiffuseNotUploaded,
 }
 
 impl std::fmt::Display for TextureError {
@@ -219,6 +221,9 @@ impl std::fmt::Display for TextureError {
                 "normal map is {}x{}, its diffuse {}x{}",
                 actual.0, actual.1, expected.0, expected.1
             ),
+            Self::DiffuseNotUploaded => {
+                write!(f, "normal map's diffuse texture is not uploaded")
+            }
         }
     }
 }
@@ -708,9 +713,14 @@ impl SpritePass {
     /// Register `normal_handle`/`tex` as the companion normal map of the
     /// already-uploaded `diffuse` texture (R-6): the normal pixels are
     /// written into the page's normal companion at the diffuse's placement,
-    /// so instances sample it with the same UVs. A normal map whose
-    /// dimensions differ from the diffuse's, or that is otherwise invalid,
-    /// is refused with a [`TextureError`]. Idempotent per diffuse.
+    /// so instances sample it with the same UVs. A different
+    /// `normal_handle` replaces the diffuse's current normal map, pixels and
+    /// handle; the same handle again changes nothing (use
+    /// [`replace`](Self::replace) to update its pixels). An invalid texture,
+    /// a new normal map whose dimensions differ from the diffuse's, and a
+    /// call before `diffuse`'s [`upload`](Self::upload)
+    /// ([`TextureError::DiffuseNotUploaded`]) are refused with a
+    /// [`TextureError`].
     pub fn upload_normal(
         &mut self,
         device: &wgpu::Device,
@@ -721,10 +731,9 @@ impl SpritePass {
     ) -> Result<(), TextureError> {
         TextureError::check(device, tex)?;
         let Some(entry) = self.entries.get(&diffuse) else {
-            debug_assert!(false, "upload_normal before upload of the diffuse");
-            return Ok(());
+            return Err(TextureError::DiffuseNotUploaded);
         };
-        if entry.normal.is_some() {
+        if entry.normal == Some(normal_handle) {
             return Ok(());
         }
         if entry.size != Vec2::new(tex.width as f32, tex.height as f32) {
@@ -1648,6 +1657,92 @@ mod gpu_tests {
                 .chunks_exact(4)
                 .all(|pixel| pixel == [128, 128, 255, 255]),
             "mismatched shared normal remained associated"
+        );
+    }
+
+    /// #592: a different normal handle for a diffuse that already has one
+    /// replaces its pixels and association; a mis-sized replacement is
+    /// refused and keeps the current map; a call before the diffuse's upload
+    /// is an error.
+    #[test]
+    fn a_second_normal_map_replaces_the_first() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut pass = SpritePass::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+            LightingSpace::Gamma,
+        );
+        let mut assets = Assets::<Texture>::new();
+        let diffuse = assets.insert("diffuse.png".into(), flat(1, 1, [255; 4]));
+        let first = assets.insert("first.png".into(), flat(1, 1, [128, 255, 128, 255]));
+        let second = assets.insert("second.png".into(), flat(1, 1, [240, 30, 60, 255]));
+        let wide = assets.insert("wide.png".into(), flat(2, 1, [70, 80, 90, 255]));
+
+        assert_eq!(
+            pass.upload_normal(&device, &queue, diffuse, first, assets.get(first).unwrap()),
+            Err(TextureError::DiffuseNotUploaded)
+        );
+        pass.upload(&device, &queue, diffuse, assets.get(diffuse).unwrap())
+            .unwrap();
+        for normal in [first, second] {
+            pass.upload_normal(
+                &device,
+                &queue,
+                diffuse,
+                normal,
+                assets.get(normal).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            pass.upload_normal(&device, &queue, diffuse, wide, assets.get(wide).unwrap()),
+            Err(TextureError::SizeMismatch {
+                expected: (1, 1),
+                actual: (2, 1)
+            })
+        );
+
+        let drawn_with = |normal| {
+            let mut list = DrawList::new();
+            list.push(SpriteInstance {
+                scale: Vec2::splat(SIZE as f32),
+                normal: Some(normal),
+                ..SpriteInstance::new(diffuse, Vec2::splat(2.0))
+            });
+            list
+        };
+        let (_, normal_pixels) = draw_targets(
+            &device,
+            &queue,
+            &mut pass,
+            &drawn_with(second),
+            wgpu::TextureFormat::Rgba8Unorm,
+            4,
+        );
+        assert!(
+            normal_pixels
+                .chunks_exact(4)
+                .all(|pixel| pixel == [240, 225, 60, 255]),
+            "the second normal map did not replace the first: {:?}",
+            &normal_pixels[..4]
+        );
+        let (_, normal_pixels) = draw_targets(
+            &device,
+            &queue,
+            &mut pass,
+            &drawn_with(first),
+            wgpu::TextureFormat::Rgba8Unorm,
+            4,
+        );
+        assert!(
+            normal_pixels
+                .chunks_exact(4)
+                .all(|pixel| pixel == [128, 128, 255, 255]),
+            "the replaced handle still lights the diffuse"
         );
     }
 

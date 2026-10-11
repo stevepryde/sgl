@@ -20,6 +20,27 @@ docs and specs the entry links.
   and world-space ray hits found none of them; they now do. A box whose `max - min` overflows f32
   (e.g. `-f32::MAX..f32::MAX`) is now refused with
   `ProbeError::InvalidProbe`; give such a box a smaller, finite extent.
+- `sgl-post-fx` `ScreenSpaceReflection` and
+  `ScreenSpaceReflectionAttribs::most_detailed_mip`: a zero world normal
+  gave its ray a NaN direction, a non-unit one a skewed ray, and a
+  `most_detailed_mip` past the depth hierarchy's top level started rays at
+  a level that does not exist; a normal whose squared length is more than
+  0.1 from 1 now reports a miss, and `most_detailed_mip` counts as the top
+  level at most. A game feeding SSR directly writes unit world normals;
+  SGL3D games need no change.
+- `sgl-3d` `AutoExposure::speed_brighten`/`speed_darken`: a NaN speed made
+  the adapted exposure NaN until a history reset, a negative one moved it
+  away from its target, an infinite one adapted instantly, and a speed of 0
+  over an infinite `FrameInput::frame_time_ms` moved it or made it NaN; a
+  nonfinite or negative speed now takes the default (3 and 1), and 0 holds.
+  For instant adaptation, use `f32::MAX` instead of `f32::INFINITY`.
+- `sgl-2d` `SpritePass::upload_normal` and `Renderer::upload_normal_map`: a
+  second normal map under a different handle for a diffuse was ignored
+  (returning `Ok`, even when mis-sized); it now replaces the first, and a
+  mis-sized one returns `TextureError::SizeMismatch`. A call before the
+  diffuse's upload, previously a debug panic or silent no-op, returns the
+  new `TextureError::DiffuseNotUploaded`. Upload the diffuse first; an
+  exhaustive `match` on `TextureError` adds the variant.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
   controller callback, including those a newer owner had installed, so the
   newer one stopped receiving input; it now clears only callbacks it still
