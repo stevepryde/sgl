@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::add_shader`: a declaration of a built-in's or SGL3D's
+  name after a line comment ended by `\r` or another non-`\n` line break,
+  or separated by U+200E/U+200F, was accepted; it is now refused with
+  `ShaderError::NameTaken`, as the same declaration on a new line was. No
+  game-code changes needed unless a shader relied on it: rename the helper.
 - `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
   UDP and memory reported nothing for a connection the caller closed (UDP
   sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
