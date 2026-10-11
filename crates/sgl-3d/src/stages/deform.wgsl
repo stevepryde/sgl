@@ -5,13 +5,20 @@
 //
 // Ported from Bevy 9d12036, MIT OR Apache-2.0 (src/LICENSE-bevy.txt):
 // morph_vertex (crates/bevy_pbr/src/render/mesh.wesl, with morph.wesl's
-// targets), and skin_model, inverse_transpose_3x3m and skin_normals
+// targets), and skin_model and skin_normals
 // (crates/bevy_pbr/src/render/skinning.wesl) with mesh_tangent_local_to_world
 // (mesh_functions.wesl). Changed: run once per frame in compute rather than
 // in every pass's vertex shader, as Wicked Engine 4323a33's skinningCS.hlsl
 // (MIT, src/LICENSE-wicked.txt) runs them; the result stays in the model's
 // space, which the instance's pose then places; a tangent keeps its
-// handedness, which the pose's mirroring flips later.
+// handedness, which the pose's mirroring flips later. A skinned normal takes
+// the skin's cofactor (cofactor_normal): Bevy's inverse transpose
+// (inverse_transpose_3x3m) is the cofactor over the determinant, whose
+// division makes a skin with an axis scaled to zero NaN, and whose sign,
+// rounding noise in such a skin, flips a mirrored skin's normal against
+// its deformed winding and its kept tangent handedness. Wicked's
+// skinningCS.hlsl (163, 170) takes the skin itself, which tilts a normal
+// under non-uniform scale.
 @group(0) @binding(0) var<storage,read_write> source:array<u32>;
 @group(0) @binding(1) var<uniform> dispatch:DeformDispatch;
 
@@ -47,15 +54,12 @@ fn skin_model(vertex_index:u32)->mat4x4<f32> {
   +weights.z*joint_matrix(joints.z)
   +weights.w*joint_matrix(joints.w);
 }
-fn inverse_transpose_3x3m(in:mat3x3<f32>)->mat3x3<f32> {
- let x=cross(in[1],in[2]);
- let y=cross(in[2],in[0]);
- let z=cross(in[0],in[1]);
- let det=dot(in[2],z);
- return mat3x3<f32>(x/det,y/det,z/det);
-}
+// Bevy's skin_normals, guarded: a normal whose plane the skin collapses to a
+// line or a point keeps its unskinned direction rather than normalising zero
+// to NaN, which shading would spread.
 fn skin_normals(model:mat4x4<f32>,normal:vec3<f32>)->vec3<f32> {
- return normalize(inverse_transpose_3x3m(mat3x3<f32>(model[0].xyz,model[1].xyz,model[2].xyz))*normal);
+ let skinned=cofactor_normal(model,normal);
+ return select(normal,normalize(skinned),dot(skinned,skinned)>0.);
 }
 @compute @workgroup_size(64) fn deform(@builtin(global_invocation_id) id:vec3<u32>) {
  let vertex_index=id.x;
@@ -90,8 +94,7 @@ fn skin_normals(model:mat4x4<f32>,normal:vec3<f32>)->vec3<f32> {
   // Bevy guards on the rest tangent, which the packed frame never leaves
   // zero; a tangent the morphs cancel or the skin collapses (a joint scaled
   // to zero) stays zero here instead, keeping its handedness, and shading
-  // takes an absent tangent's for it (pbr_tangent_frame). The normal of a
-  // singular skin is not guarded: skin_normals divides by its determinant.
+  // takes an absent tangent's for it (pbr_tangent_frame).
   let skinned=mat3x3<f32>(model[0].xyz,model[1].xyz,model[2].xyz)*tangent.xyz;
   tangent=vec4(select(vec3(0.),normalize(skinned),dot(skinned,skinned)>0.),tangent.w);
  }

@@ -1732,7 +1732,12 @@ stay in the game (S3D-1).
   bind matrix; `Rig::joint_matrices` composes them from each node's local
   transform, and ends, with wrong matrices, on a built rig whose parents
   form a cycle) and one weight per morph weight its targets name; further ones
-  are ignored, fewer are refused (`SceneError::DeformationMismatch`). An
+  are ignored, fewer are refused (`SceneError::DeformationMismatch`). A
+  skinned normal faces the side its deformed triangles wind towards, as a
+  mirrored joint's faces do. A joint matrix may scale an axis to zero, as a
+  rig flattens or hides a part: a flattened surface takes the flattened
+  surface's normal, and a vertex whose normal's plane collapses to a line or
+  a point keeps its unskinned normal. An
   instance keeps its deformation until it is set again and starts at its
   bind pose. The instance's pose places the deformed model in the world.
   Every call counts as a change, whatever its values: the frame deforms the

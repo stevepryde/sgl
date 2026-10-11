@@ -28,20 +28,20 @@ fn scene_clip_position(world:vec4<f32>,view:mat4x4<f32>,projection:mat4x4<f32>)-
  let view_position=view*world;
  return projection*view_position;
 }
+// Whether the pose `model` mirrors: its determinant is negative.
+fn model_mirrored(model:mat4x4<f32>)->bool {
+ return dot(model[0].xyz,cross(model[1].xyz,model[2].xyz))<0.;
+}
 // Cofactor(model) is inverse-transpose(model) times its determinant. Only
 // normal direction survives interpolation; remove the determinant sign here.
 fn object_normal(model:mat4x4<f32>,normal:vec3<f32>)->vec3<f32> {
- let x=model[0].xyz;
- let y=model[1].xyz;
- let z=model[2].xyz;
- let cofactor=mat3x3(cross(y,z),cross(z,x),cross(x,y));
- return (cofactor*normal)*select(1.,-1.,dot(x,cofactor[0])<0.);
+ return cofactor_normal(model,normal)*select(1.,-1.,model_mirrored(model));
 }
 fn object_tangent(model:mat4x4<f32>,t:vec4<f32>,normal:vec3<f32>)->vec4<f32> {
  let n=normalize(object_normal(model,normal));
  let transformed=(model*vec4(t.xyz,0.)).xyz;
  let projected=transformed-n*dot(n,transformed);
- let handed=t.w*select(1.,-1.,dot(model[0].xyz,cross(model[1].xyz,model[2].xyz))<0.);
+ let handed=t.w*select(1.,-1.,model_mirrored(model));
  if dot(projected,projected)==0. {
   return vec4(0.,0.,0.,handed);
  }
@@ -74,9 +74,7 @@ fn fragment_object(i:Fragment)->u32 {
 // authored: whether a face raster takes as `front` of the instance whose
 // object record is at index `object` is its material's front.
 fn object_front(object:u32,front:bool)->bool {
- let model=objects[object].model;
- let mirrored=dot(model[0].xyz,cross(model[1].xyz,model[2].xyz))<0.;
- return front!=mirrored;
+ return front!=model_mirrored(objects[object].model);
 }
 fn object_front_face(i:Fragment,front:bool)->bool {
  return object_front(fragment_object(i),front);
