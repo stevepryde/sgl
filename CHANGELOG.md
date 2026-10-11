@@ -20,6 +20,17 @@ docs and specs the entry links.
   frames' bilinear reprojection blended back in as faint ghosting at mask
   edges; they now hold no history (zero radiance, variance 1). No game-code
   change needed.
+- `sgl-post-fx` `ScreenSpaceReflectionAttribs::temporal_radiance_stability_factor`
+  and `ScreenSpaceReflection::execute`: the default was 1.0, and a frame
+  whose history was reset, or recreated by a resize or half-resolution
+  change, mixed in the zeroed history, so reflections stayed dark; the
+  default is now 0.95 and such a frame takes the current frame's radiance.
+  A game that relied on 1.0 sets it
+  explicitly; otherwise no game-code change needed (SGL3D already used 0.95).
+- `sgl-3d` `geometry::obstructed_distance`: its absolute determinant cutoff
+  missed every hit on a triangle with sub-millimetre edges and grazing hits
+  on centimetre ones; the cutoff now scales with the triangle's edges, so
+  small triangles are hit like large ones. No game-code change needed.
 - `sgl-3d` glTF import and `Ignored::Attribute` (new): a `TEXCOORD_2`+,
   `COLOR_1`+ or `_NAME` attribute, or a `TANGENT` along its normal on a
   material without anisotropy, failed the load; the attribute is now left
