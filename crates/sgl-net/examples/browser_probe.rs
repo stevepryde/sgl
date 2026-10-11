@@ -13,7 +13,8 @@
 //! and working at it, a saturated lane that refuses and then drains without
 //! losing the connection, a server-initiated close with its bounded
 //! reconnect, an inbound overflow and its reconnect, reconnects bounded by
-//! the policy when every connection fails, a rejected subprotocol, and a
+//! the policy when every connection fails, each reconnect whose
+//! `WebSocket` constructor throws reported, a rejected subprotocol, and a
 //! clean local disconnect, also during reconnect backoff.
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
@@ -574,6 +575,70 @@ async fn a_connection_that_keeps_failing_stops_at_max_attempts() -> Result<(), S
     Ok(())
 }
 
+/// Defect (#445): a reconnect whose `WebSocket` constructor throws (a
+/// `SecurityError`, say) reported nothing, because the previous close was
+/// still counted as announced, so a game waiting after `Reconnecting` for
+/// `Connected` or `Disconnected` waited forever. Oracle: with the page's
+/// `WebSocket` constructor replaced by one that throws after the client
+/// connects, a server close is followed by the policy's three attempts,
+/// each one `Reconnecting` and then `Disconnected { Transport }`.
+async fn a_reconnect_whose_constructor_throws_reports_each_failure() -> Result<(), String> {
+    let mut driver = Driver::connect(config()).await?;
+    let global = js_sys::global();
+    let key = JsValue::from_str("WebSocket");
+    let original =
+        js_sys::Reflect::get(&global, &key).map_err(|e| format!("read WebSocket: {e:?}"))?;
+    let throwing = js_sys::Function::new_no_args(
+        "throw new DOMException('blocked by the probe', 'SecurityError');",
+    );
+    js_sys::Reflect::set(&global, &key, &throwing)
+        .map_err(|e| format!("replace WebSocket: {e:?}"))?;
+    let result = async {
+        driver
+            .client
+            .send(Delivery::RELIABLE_ORDERED, b"close")
+            .map_err(|e| format!("send: {e:?}"))?;
+        let transport = ClientEvent::Disconnected {
+            reason: DisconnectReason::Transport,
+        };
+        driver
+            .settle(|events| events.iter().filter(|e| **e == transport).count() >= 3)
+            .await?;
+        // Polls past the longest delay surface nothing more.
+        for _ in 0..30 {
+            driver.now_ms += 10;
+            driver.events.extend(driver.client.poll(driver.now_ms));
+            sleep_ms(10).await;
+        }
+        let lifecycle: Vec<&ClientEvent> = driver
+            .events
+            .iter()
+            .filter(|e| !matches!(e, ClientEvent::Message { .. }))
+            .collect();
+        let want = [
+            ClientEvent::Connected,
+            ClientEvent::Disconnected {
+                reason: DisconnectReason::Peer,
+            },
+            ClientEvent::Reconnecting { attempt: 1 },
+            transport.clone(),
+            ClientEvent::Reconnecting { attempt: 2 },
+            transport.clone(),
+            ClientEvent::Reconnecting { attempt: 3 },
+            transport,
+        ];
+        ensure!(
+            lifecycle.iter().copied().eq(want.iter()),
+            "events: {lifecycle:?}"
+        );
+        Ok(())
+    }
+    .await;
+    js_sys::Reflect::set(&global, &key, &original)
+        .map_err(|e| format!("restore WebSocket: {e:?}"))?;
+    result
+}
+
 /// Defect: a handshake that ignores the subprotocol. Oracle: the fixture
 /// refuses another subprotocol, so the client never connects and reports
 /// the loss instead.
@@ -711,6 +776,11 @@ pub async fn run() -> String {
         &mut report,
         "a_connection_that_keeps_failing_stops_at_max_attempts",
         a_connection_that_keeps_failing_stops_at_max_attempts().await,
+    );
+    record(
+        &mut report,
+        "a_reconnect_whose_constructor_throws_reports_each_failure",
+        a_reconnect_whose_constructor_throws_reports_each_failure().await,
     );
     record(
         &mut report,
