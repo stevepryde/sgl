@@ -1,0 +1,4 @@
+# Generated notices are compared byte-for-byte with LF output; keep them LF
+# in every checkout. Vendored licences keep their original bytes.
+THIRD_PARTY_NOTICES.txt text eol=lf
+DISTRIBUTION_NOTICES.txt text eol=lf

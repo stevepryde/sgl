@@ -124,14 +124,7 @@ fn read(
 
 #[test]
 fn finite_hdr_survives_trace_filter_storage_and_both_resolves() {
-    let adapter =
-        pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default()));
-    let Ok(adapter) = adapter else {
-        assert!(
-            std::env::var_os("SGL_REQUIRE_GPU").is_none(),
-            "GPU required"
-        );
-        eprintln!("skipping HDR GPU test: no adapter");
+    let Some(adapter) = crate::test_support::adapter() else {
         return;
     };
     eprintln!("GPU: {:?}", adapter.get_info());

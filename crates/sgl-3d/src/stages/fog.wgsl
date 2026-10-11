@@ -10,6 +10,11 @@
 // "Physically Based and Unified Volumetric Rendering in Frostbite".
 //
 // Where it differs from Godot, and why:
+// - The froxel volume holds the quality's side across the geometric mean of
+//   the frame's sides (fog.rs froxels): square froxels, as many as Godot's
+//   split (side × r, side / r, r = width / mean side) gives, each side within
+//   the device's 3D texture limit, where Godot's are wider than tall and its
+//   height grows without bound as the frame narrows.
 // - The frame's medium, Godot's environment fog, takes a FogMaterial's
 //   height falloff (uniform by default), so height fog needs no volume.
 // - A fog volume is a box with a FogMaterial's density, albedo and edge
