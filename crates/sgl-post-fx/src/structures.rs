@@ -130,7 +130,8 @@ pub struct ScreenSpaceReflectionAttribs {
     /// At most 8, the top of DiligentFX's range (`SSR_SPATIAL_RECONSTRUCTION_MAX_RADIUS`, PROVENANCE.md DFX-30); more counts as 8
     pub spatial_reconstruction_radius: f32,
 
-    /// A factor to control the accmulation of history values of radiance buffer. Higher values reduce noise, but are more likely to exhibit ghosting artefacts
+    /// A factor to control the accmulation of history values of radiance buffer. Higher values reduce noise, but are more likely to exhibit ghosting artefacts.
+    /// Default 0.95, as Wicked Engine's `ssr_temporalCS` keeps; at 1 the current frame never enters (PROVENANCE.md DFX-49)
     pub temporal_radiance_stability_factor: f32,
 
     /// A factor to control the accmulation of history values of variance buffer. Higher values reduce noise, but are more likely to exhibit ghosting artefacts
@@ -154,7 +155,7 @@ impl Default for ScreenSpaceReflectionAttribs {
             max_traversal_intersections: 128,
             ggx_importance_sample_bias: 0.3,
             spatial_reconstruction_radius: 4.0,
-            temporal_radiance_stability_factor: 1.0,
+            temporal_radiance_stability_factor: 0.95,
             temporal_variance_stability_factor: 0.9,
             bilateral_cleanup_spatial_sigma_factor: 0.9,
             alpha_interpolation: 1.0,

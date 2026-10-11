@@ -94,16 +94,14 @@ const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// sample per pixel leaves noise on glossy, normal-mapped receivers that the
 /// denoiser cannot remove, and its temporal pass holds it as blotches. The
 /// spatial reconstruction still widens reflections with roughness. The
-/// temporal pass keeps 0.95 of its clamped history, as Wicked Engine's
-/// `ssr_temporalCS` (the pass it derives from) does; at DiligentFX's 1.0 the
-/// current frame never enters and stale history smears as the camera moves.
+/// temporal pass keeps sgl-post-fx's default 0.95 of its clamped history
+/// (DFX-49).
 pub(crate) fn ssr_attribs() -> ScreenSpaceReflectionAttribs {
     ScreenSpaceReflectionAttribs {
         is_roughness_perceptual: 1,
         roughness_channel: 0,
         max_traversal_intersections: 64,
         ggx_importance_sample_bias: 1.,
-        temporal_radiance_stability_factor: 0.95,
         ..Default::default()
     }
 }

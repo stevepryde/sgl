@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflectionAttribs::temporal_radiance_stability_factor`
+  and `ScreenSpaceReflection::execute`: the default was 1.0, and a frame
+  whose history was reset, or recreated by a resize or half-resolution
+  change, mixed in the zeroed history, so reflections stayed dark; the
+  default is now 0.95 and such a frame takes the current frame's radiance.
+  A game that relied on 1.0 sets it
+  explicitly; otherwise no game-code change needed (SGL3D already used 0.95).
 - `sgl-3d` `geometry::obstructed_distance`: its absolute determinant cutoff
   missed every hit on a triangle with sub-millimetre edges and grazing hits
   on centimetre ones; the cutoff now scales with the triangle's edges, so
