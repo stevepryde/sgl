@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `ThreadedUdpServer`: a connection that ended at the worker (peer
+  close, timeout, protocol violation) discarded the messages it had
+  delivered but the caller had not yet polled and reported `Disconnected`
+  first; polls now return those messages, then `Disconnected`. No game-code
+  change needed.
 - `sgl-3d` `asset::load*`: a KHR material extension object (anisotropy,
   clearcoat, iridescence, sheen, diffuse transmission, transmission, volume,
   dispersion) carrying its own `extensions` property was refused as

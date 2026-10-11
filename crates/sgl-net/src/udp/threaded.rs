@@ -32,6 +32,10 @@
 //! when it ends is abandoned. Messages that arrive from the connection
 //! meanwhile are acknowledged and dropped: the caller has already seen it
 //! end.
+//!
+//! A connection that ends at the worker instead (the peer closes, times
+//! out or breaks the protocol) keeps the messages it delivered before
+//! ending: the caller's polls return them first, then its `Disconnected`.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
@@ -186,6 +190,20 @@ struct PeerIngress {
     latest: Option<Vec<u8>>,
     /// The lane the next drain starts with.
     next_lane: usize,
+    /// How the connection ended at the worker, reported once the messages
+    /// it delivered before ending have been drained.
+    ended: Option<DisconnectReason>,
+}
+
+impl PeerIngress {
+    fn is_empty(&self) -> bool {
+        self.latest.is_none()
+            && self
+                .reliable
+                .iter()
+                .chain(&self.unreliable)
+                .all(|lane| lane.messages.is_empty())
+    }
 }
 
 struct IngressState {
@@ -228,19 +246,35 @@ impl IngressHub {
                     unreliable: Default::default(),
                     latest: None,
                     next_lane: 0,
+                    ended: None,
                 },
             );
             state.lifecycle.push_back(ServerEvent::Connected { conn });
         }
     }
 
+    /// The connection ended at the worker: what it delivered before ending
+    /// still drains, then its end is reported.
     fn disconnected(&self, conn: ConnectionId, reason: DisconnectReason) {
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
-        state.peers.remove(&conn);
+        if state.active.remove(&conn)
+            && let Some(peer) = state.peers.get_mut(&conn)
+        {
+            peer.ended = Some(reason);
+        }
+    }
+
+    /// The caller ended the connection: if it is still open, its unpolled
+    /// messages go and the next drain reports it `Local`. One that already
+    /// ended keeps its queued end.
+    fn disconnected_by_caller(&self, conn: ConnectionId) {
+        let mut state = self.state.lock().expect("UDP ingress hub poisoned");
         if state.active.remove(&conn) {
-            state
-                .lifecycle
-                .push_back(ServerEvent::Disconnected { conn, reason });
+            state.peers.remove(&conn);
+            state.lifecycle.push_back(ServerEvent::Disconnected {
+                conn,
+                reason: DisconnectReason::Local,
+            });
         }
     }
 
@@ -269,7 +303,11 @@ impl IngressHub {
         payload: Vec<u8>,
     ) -> Result<(), DisconnectReason> {
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
-        let Some(peer) = state.peers.get_mut(&conn) else {
+        let Some(peer) = state
+            .peers
+            .get_mut(&conn)
+            .filter(|peer| peer.ended.is_none())
+        else {
             return Ok(());
         };
         match delivery {
@@ -302,10 +340,11 @@ impl IngressHub {
 
     /// Surfaces lifecycle events, then up to a bounded number of reliable
     /// and unreliable messages per peer taken from its lanes in turn, then
-    /// its latest state.
+    /// its latest state, then its end once nothing it delivered is left.
     fn drain(&self) -> Vec<ServerEvent> {
         let mut state = self.state.lock().expect("UDP ingress hub poisoned");
         let mut output: Vec<_> = state.lifecycle.drain(..).collect();
+        let mut ended = Vec::new();
         for (&conn, peer) in &mut state.peers {
             let first = peer.next_lane;
             peer.next_lane = (first + 1) % RELIABLE_LANES;
@@ -344,6 +383,15 @@ impl IngressHub {
                     payload,
                 });
             }
+            if let Some(reason) = peer.ended
+                && peer.is_empty()
+            {
+                output.push(ServerEvent::Disconnected { conn, reason });
+                ended.push(conn);
+            }
+        }
+        for conn in ended {
+            state.peers.remove(&conn);
         }
         output
     }
@@ -708,7 +756,7 @@ impl Drop for ThreadedUdpServer {
 /// The ingress records the end first, so an end the worker finds
 /// afterwards is not reported.
 fn disconnect_by_caller(commands: &CommandQueue, ingress: &IngressHub, conn: ConnectionId) {
-    ingress.disconnected(conn, DisconnectReason::Local);
+    ingress.disconnected_by_caller(conn);
     commands.disconnect(conn);
 }
 
@@ -1780,6 +1828,109 @@ mod tests {
                 reason: DisconnectReason::Local,
             }]
         );
+    }
+
+    /// Defect (#438): the threaded server discarding the reliable messages
+    /// it acknowledged from a peer that then closed, reporting only
+    /// `Disconnected { Peer }` to a caller that polls after the close.
+    /// Oracle: the caller-polled endpoint
+    /// (`client_reliable_data_drains_before_udp_disconnect`) and netcode.md
+    /// 10, under which an acknowledged reliable message is delivered. Over
+    /// real loopback sockets the client sends a reliable goodbye and
+    /// disconnects; its graceful close completes, which needs the server's
+    /// acknowledgement, before the caller first polls; that poll returns
+    /// the goodbye, then `Disconnected { Peer }`.
+    #[test]
+    fn a_peer_close_delivers_its_last_reliable_message_before_the_end() {
+        let config = EndpointConfig::default();
+        let (mut server, mut client, commands, ingress, conn, mut now) = loopback(&config);
+        while !client.poll(now).contains(&ClientEvent::Connected) {
+            now += 1;
+            assert!(now < 1_000, "the client never connected");
+            worker_tick(&mut server, &commands, &ingress, now);
+        }
+        client.send(Delivery::RELIABLE_ORDERED, b"goodbye").unwrap();
+        client.disconnect(now);
+        for _ in 0..500 {
+            now += 1;
+            client.poll(now);
+            client.flush(now);
+            worker_tick(&mut server, &commands, &ingress, now);
+        }
+        assert_eq!(
+            server.endpoint_mut().peer_count(),
+            0,
+            "the close never completed"
+        );
+        assert_eq!(
+            ingress.drain(),
+            [
+                ServerEvent::Message {
+                    conn,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: b"goodbye".to_vec(),
+                },
+                ServerEvent::Disconnected {
+                    conn,
+                    reason: DisconnectReason::Peer,
+                },
+            ]
+        );
+    }
+
+    /// Defect (#438): a peer's end reported while messages it delivered
+    /// before ending still wait past one poll's per-peer limit. Oracle:
+    /// reliable delivery is exact and in order (netcode.md 10), and nothing
+    /// about a connection follows its `Disconnected`. A peer delivers one
+    /// message more than a poll returns, then ends; the first poll returns
+    /// the limit and no end, the second the last message and then the end.
+    #[test]
+    fn a_peer_end_waits_for_every_message_delivered_before_it() {
+        let conn = cid(5);
+        let commands = CommandQueue::new(&ReliableConfig::DEFAULT, CLOSE_GRACE_MS);
+        let ingress = IngressHub::new(&ReliableConfig::DEFAULT);
+        let count = LANE_MESSAGES_PER_PEER_PER_POLL + 1;
+        let mut turn = vec![ServerEvent::Connected { conn }];
+        turn.extend((0..count).map(|index| ServerEvent::Message {
+            conn,
+            delivery: Delivery::RELIABLE_ORDERED,
+            payload: vec![u8::try_from(index).unwrap()],
+        }));
+        turn.push(ServerEvent::Disconnected {
+            conn,
+            reason: DisconnectReason::Peer,
+        });
+        let mut endpoint = Scripted {
+            turns: VecDeque::from([turn]),
+        };
+        worker_tick(&mut endpoint, &commands, &ingress, 0);
+        let first = ingress.drain();
+        assert_eq!(
+            first.len(),
+            1 + LANE_MESSAGES_PER_PEER_PER_POLL,
+            "{first:?}"
+        );
+        assert!(
+            !first
+                .iter()
+                .any(|event| matches!(event, ServerEvent::Disconnected { .. })),
+            "{first:?}"
+        );
+        assert_eq!(
+            ingress.drain(),
+            [
+                ServerEvent::Message {
+                    conn,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: vec![u8::try_from(count - 1).unwrap()],
+                },
+                ServerEvent::Disconnected {
+                    conn,
+                    reason: DisconnectReason::Peer,
+                },
+            ]
+        );
+        assert_eq!(ingress.drain(), []);
     }
 
     #[test]

@@ -25,8 +25,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    reports exactly one `Disconnected`, with reason `Local`, at a later poll,
    whatever the peer does afterwards (its own close included). One that had
    already ended, its end set or queued though not yet polled, reports that
-   end instead. A UDP client that disconnects during its handshake reports
-   `Local` with no `Connected`.
+   end instead. A connection that ends otherwise reports the messages it
+   delivered before ending first, then its `Disconnected`. A UDP client that
+   disconnects during its handshake reports `Local` with no `Connected`.
 3. Delivery has three classes: reliable ordered on a lane
    (`Delivery::Reliable(Lane)`; `RELIABLE_LANES` (4) independent lanes,
    `Delivery::RELIABLE_ORDERED` is lane 0), unreliable on a lane
