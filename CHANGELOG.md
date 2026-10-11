@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
+  `SendError::Disconnected`; it now returns `UnknownConnection`, like every
+  other server transport. A game that matched `Disconnected` from a server
+  send should match `UnknownConnection`; otherwise no game-code change needed.
 - `sgl-post-fx` `TemporalAntiAliasing::execute`: the first frame for a
   feature set sampled the colour through a filterable binding, failing
   validation for an unfilterable colour such as `Rgba32Float` on WebGPU, and
