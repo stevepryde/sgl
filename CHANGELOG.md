@@ -22,6 +22,20 @@ docs and specs the entry links.
   base or the coat normal faces any of its sphere, as directional lights
   already did, in lighting and ray-traced shadows alike. No game-code change
   needed.
+- `sgl-net` UDP client: a `ConnectDeny` arriving after the accept (reordered)
+  or naming a cookie the client was not confirming removed the connection and
+  reported `Denied` after `Connected`; it is now ignored, and only a deny for
+  the confirm the client sent refuses it. No game-code change needed.
+- `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
+  `SendError::Disconnected`; it now returns `UnknownConnection`, like every
+  other server transport. A game that matched `Disconnected` from a server
+  send should match `UnknownConnection`; otherwise no game-code change needed.
+- `sgl-post-fx` `TemporalAntiAliasing::execute`: the first frame for a
+  feature set sampled the colour through a filterable binding, failing
+  validation for an unfilterable colour such as `Rgba32Float` on WebGPU, and
+  copied +infinity to the output; it now loads the colour as later frames do,
+  clamped to [0, 65504], so negative colour and alpha become 0 on that frame.
+  No game-code change needed.
 - `sgl-3d` local-light shadows: a shadowed light with a large range at or
   behind the camera overflowed its atlas slot size, panicking with overflow
   checks or else taking the smallest slot; it now takes the largest slot.

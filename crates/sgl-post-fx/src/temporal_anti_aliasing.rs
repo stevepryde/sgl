@@ -8,7 +8,7 @@
 //! Implements [temporal anti-aliasing post-process effect](https://github.com/DiligentGraphics/DiligentFX/tree/master/PostProcess/TemporalAntiAliasing).
 use crate::post_fx_context::{self, PostFXContext, TextureOperationAttribs, draw};
 use crate::render_technique::{
-    DepthStencilStateDesc, PostFXRenderTechnique, Resource, create_shader,
+    DepthStencilStateDesc, PostFXRenderTechnique, Resource, Shader, create_shader,
 };
 use crate::screen_space_reflection::PostFxExecutionStatus;
 use crate::structures::TemporalAntiAliasingAttribs;
@@ -51,7 +51,8 @@ pub struct RenderAttributes<'a, 'p> {
     pub device_context: &'a mut wgpu::CommandEncoder,
     /// PostFX context.
     pub post_fx_context: &'a mut PostFXContext,
-    /// Shader resource view of the source color.
+    /// Shader resource view of the source color, in any float format: it is
+    /// read with loads, so it need not be filterable.
     pub color_buffer_srv: &'a wgpu::TextureView,
     /// Shader resource view of the depth buffer, the context's
     /// `curr_depth_buffer_srv`, in which the closest motion vectors are
@@ -72,6 +73,9 @@ pub struct RenderAttributes<'a, 'p> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum RenderTech {
     ComputeTemporalAccumulation,
+    /// The output while the effect is pending (PROVENANCE.md DFX-2,
+    /// DFX-47), created with the resolve, so readiness does not wait on it.
+    ComputePlaceholder,
 }
 
 const RENDER_TECHS: [RenderTech; 1] = [RenderTech::ComputeTemporalAccumulation];
@@ -379,7 +383,7 @@ impl TemporalAntiAliasing {
         if all_psos_ready {
             self.compute_temporal_accumulation(render_attribs, acc_buffer);
         } else {
-            Self::compute_placeholder_texture(render_attribs, acc_buffer);
+            self.compute_placeholder_texture(render_attribs, acc_buffer);
         }
 
         if all_psos_ready {
@@ -435,13 +439,14 @@ impl TemporalAntiAliasing {
         feature_flags: FeatureFlags,
         reversed_depth: bool,
     ) {
+        let key = |render_tech| RenderTechniqueKey {
+            render_tech,
+            feature_flags,
+            reversed_depth,
+        };
         let tech = self
             .render_tech
-            .entry(RenderTechniqueKey {
-                render_tech: RenderTech::ComputeTemporalAccumulation,
-                feature_flags,
-                reversed_depth,
-            })
+            .entry(key(RenderTech::ComputeTemporalAccumulation))
             .or_default();
         if !tech.is_initialized_pso() {
             let flag = |flag: FeatureFlags| {
@@ -505,6 +510,26 @@ impl TemporalAntiAliasing {
                 None,
                 DepthStencilStateDesc::DisableDepth,
             );
+
+            // PROVENANCE.md DFX-47: the placeholder reads the colour through
+            // the resolve's unfilterable binding.
+            let placeholder_ps = Shader {
+                module: ps.module,
+                entry_point: "ComputePlaceholderPS",
+            };
+            self.render_tech
+                .entry(key(RenderTech::ComputePlaceholder))
+                .or_default()
+                .initialize_pso(
+                    device,
+                    "TemporalAntiAliasing::ComputePlaceholder",
+                    &vs,
+                    &placeholder_ps,
+                    &[(2, Resource::Texture)],
+                    &[ACCUMULATED_BUFFER_FORMAT],
+                    None,
+                    DepthStencilStateDesc::DisableDepth,
+                );
         }
     }
 
@@ -594,22 +619,37 @@ impl TemporalAntiAliasing {
     }
 
     fn compute_placeholder_texture(
+        &self,
         render_attribs: &mut RenderAttributes<'_, '_>,
         acc_buff: &AccumulationBufferInfo,
     ) {
         let buff_idx = acc_buff.current_frame_idx & 0x01;
 
-        render_attribs.post_fx_context.copy_texture_color(
-            &mut TextureOperationAttribs {
-                device: render_attribs.device,
-                device_context: render_attribs.device_context,
-                timestamp_writes: render_attribs
-                    .pass_timestamps
-                    .and_then(|timestamps| timestamps("TemporalAccumulation")),
-            },
-            render_attribs.color_buffer_srv,
-            acc_buff.accumulated_buffer(buff_idx),
-            ACCUMULATED_BUFFER_FORMAT,
+        // PROVENANCE.md DFX-47: upstream copies the colour with
+        // `CopyTextureColor`; the placeholder loads it as the resolve does.
+        let tech = &self.render_tech[&RenderTechniqueKey {
+            render_tech: RenderTech::ComputePlaceholder,
+            feature_flags: acc_buff.feature_flags,
+            reversed_depth: reversed_depth(render_attribs.post_fx_context),
+        }];
+        let group = tech.bind_group(
+            render_attribs.device,
+            "ComputePlaceholder",
+            &[wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(render_attribs.color_buffer_srv),
+            }],
+        );
+        draw(
+            render_attribs.device_context,
+            "ComputePlaceholder",
+            &[acc_buff.accumulated_buffer(buff_idx)],
+            tech,
+            &group,
+            0..3,
+            render_attribs
+                .pass_timestamps
+                .and_then(|timestamps| timestamps("TemporalAccumulation")),
         );
 
         // PROVENANCE.md DFX-14: without the resolve, the next frame's previous
