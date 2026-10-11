@@ -20,6 +20,14 @@ docs and specs the entry links.
   and the TCP connect and HTTP upgrade each took a full `handshake_timeout`;
   now each resolved address is tried in order within one
   `handshake_timeout` covering the upgrade too. No game-code change needed.
+- `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
+  radius that is not positive (including NaN) now emits nothing. No
+  game-code change needed.
+- `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
+  could not be allocated (the largest byte grid on wasm32); now returns
+  `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or
+  `.expect("grid fits")`: `Grid2::filled(w, h, 0u8)?`; exhaustive matches
+  on `GridError` add the `TooLarge` arm.
 - `sgl-2d` `TextRenderer::draw` / `measure`: a negative size panicked in
   `draw` and measured negative in `measure`; a size that is not positive
   and finite now draws nothing and measures `Vec2::ZERO`. No game-code
