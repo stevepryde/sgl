@@ -16,8 +16,8 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` glTF import: a file with many morph-weight channels on a mesh
-  of many primitives took time quadratic in its size to load; import is
-  now linear in the file. No game-code change needed.
+  of many primitives took time quadratic in its size to load; it no
+  longer does. No game-code change needed.
 - `sgl-3d` glTF import: a small file whose morph-weight keyframes or
   instanced meshes declared gigabytes of data could abort the process; a
   scene listing a root twice or a child as a root now fails the load, as

@@ -23,8 +23,8 @@ pub(super) struct Rigging {
     /// Each morphed node's first weight.
     morphs: HashMap<usize, u32>,
     /// Each mesh's morph-target count (`morph_target_count`), by mesh
-    /// index, counted once so a load stays linear in its document however
-    /// many nodes and channels name a mesh.
+    /// index, counted once rather than for each node or channel that
+    /// names a mesh.
     targets: Vec<usize>,
 }
 
