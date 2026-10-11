@@ -143,7 +143,10 @@ pub(super) fn read_node(
                 .into());
             }
             // glTF 2.0 3.7.2.1's accessor types for each attribute, its
-            // indices and its morph targets' displacements.
+            // indices and its morph targets' displacements. Every attribute
+            // and displacement holds one element a vertex, as many as
+            // POSITION (glTF 2.0 3.7.2.1 and 3.7.2.2).
+            let vertices = primitive.get(&Semantic::Positions).map(|p| p.count());
             for (semantic, accessor) in primitive.attributes() {
                 let (types, shapes): (&[DataType], &[Dimensions]) = match semantic {
                     Semantic::Joints(1..) | Semantic::Weights(1..) => {
@@ -165,6 +168,8 @@ pub(super) fn read_node(
                     &format!("{label}: {}", semantic.to_string()),
                     types,
                     shapes,
+                    vertices.filter(|_| semantic != Semantic::Positions),
+                    buffers,
                 )?;
             }
             if let Some(indices) = primitive.indices() {
@@ -173,6 +178,8 @@ pub(super) fn read_node(
                     &format!("{label}: indices"),
                     &[U8, U16, U32],
                     &[Scalar],
+                    None,
+                    buffers,
                 )?;
             }
             for (target, displacements) in primitive.morph_targets().enumerate() {
@@ -189,6 +196,8 @@ pub(super) fn read_node(
                         &format!("{label}: morph target {target}"),
                         &[F32],
                         &[Dimensions::Vec3],
+                        vertices,
+                        buffers,
                     )?;
                 }
             }
