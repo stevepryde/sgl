@@ -162,8 +162,7 @@ impl Overlay {
 
     /// A circle outline as a regular `segments`-gon of `width`-wide lines,
     /// starting at `center + (radius, 0)`. `segments` floors at 3; a
-    /// non-positive `radius` collapses every side to zero length and emits
-    /// nothing.
+    /// `radius` that is not positive (including NaN) emits nothing.
     pub fn circle(
         &self,
         out: &mut Vec<SpriteInstance>,
@@ -172,6 +171,9 @@ impl Overlay {
         segments: u32,
         width: f32,
     ) {
+        if radius.is_nan() || radius <= 0.0 {
+            return;
+        }
         let n = segments.max(3);
         let step = std::f32::consts::TAU / n as f32;
         let mut prev = center + Vec2::new(radius, 0.0);
@@ -386,6 +388,11 @@ mod tests {
         assert_eq!(out.len(), 3);
         out.clear();
         o.circle(&mut out, Vec2::new(2.0, 2.0), 0.0, 8, 1.0);
+        assert!(out.is_empty());
+        // #436: a negative or NaN radius emits nothing too.
+        o.circle(&mut out, Vec2::new(100.0, 100.0), -20.0, 16, 1.0);
+        assert!(out.is_empty());
+        o.circle(&mut out, Vec2::new(100.0, 100.0), f32::NAN, 16, 1.0);
         assert!(out.is_empty());
     }
 

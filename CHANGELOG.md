@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
+  radius that is not positive (including NaN) now emits nothing. No
+  game-code change needed.
 - `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
   could not be allocated (the largest byte grid on wasm32); now returns
   `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or
