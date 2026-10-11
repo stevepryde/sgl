@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::add_shader`: a declaration of a built-in's or SGL3D's
+  name after a line comment ended by `\r` or another non-`\n` line break,
+  or separated by U+200E/U+200F, was accepted; it is now refused with
+  `ShaderError::NameTaken`, as the same declaration on a new line was. No
+  game-code changes needed unless a shader relied on it: rename the helper.
 - `sgl-3d` `Settings::fog_quality`: the fog's froxel volume grew without
   bound as the frame narrowed, so a tall portrait frame (60×1900 at High)
   panicked creating it, and its froxels were wider than tall; it now holds

@@ -264,6 +264,20 @@ fn forbidden_declarations_are_refused() {
             ShaderError::NameTaken { name: name.into() }
         );
     }
+    // Hidden by WGSL's lexical rules as naga applies them: a line comment
+    // ends at any line break, not only `\n`, and U+200E is blankspace.
+    for hidden in [
+        "// note\rfn smoothstep(a:f32,b:f32,x:f32)->f32 { return x; }",
+        "// note\u{2028}fn smoothstep(a:f32,b:f32,x:f32)->f32 { return x; }",
+        "fn\u{200e}smoothstep(a:f32,b:f32,x:f32)->f32 { return x; }",
+    ] {
+        assert_eq!(
+            refused(&with(hidden)),
+            ShaderError::NameTaken {
+                name: "smoothstep".into()
+            }
+        );
+    }
     // A name only the Extended tier's programs declare (its blended draws'
     // opaque depth, bind_blended_extended.wgsl), refused on Basic too: a
     // game's module runs on whichever tier a player's device has.
