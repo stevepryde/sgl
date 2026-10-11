@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `random::Rng::usize`: on wasm32 it reduced only 32 bits of the
+  draw, giving different values than native for the same seed; it now gives
+  native's values on every target. Browser builds that persisted values
+  derived from it see a different sequence; no game-code change needed.
 - `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
   light again on top of the background, so even a black glow brightened the
   fog; glow now adds only its own light dimmed by the fog in front of it, so
