@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::dropdown`: an open dropdown scrolled fully out of its
+  clip stayed open and kept the keyboard captured; it now closes at
+  `UiFrame::end`. No game-code changes needed.
 - `sgl-3d` `asset::load*`: a KHR material extension object (anisotropy,
   clearcoat, iridescence, sheen, diffuse transmission, transmission, volume,
   dispersion) carrying its own `extensions` property was refused as
