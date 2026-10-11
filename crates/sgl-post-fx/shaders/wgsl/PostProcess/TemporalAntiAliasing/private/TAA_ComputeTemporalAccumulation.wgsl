@@ -243,13 +243,6 @@ fn ComputeDepthDisocclusion(Position: vec2<f32>, PrevPosition: vec2<f32>) -> f32
     return select(0.0, 1.0, Disocclusion > TAA_DEPTH_DISOCCLUSION_THRESHOLD);
 }
 
-// PROVENANCE.md DFX-46: a history tap is at most HALF_MAX, as the first frame's
-// placeholder (DFX-2) copies the input, +infinity included.
-fn SamplePrevColorTap(Texcoord: vec2<f32>) -> vec4<f32>
-{
-    return min(textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, Texcoord, 0.0), vec4<f32>(HALF_MAX));
-}
-
 fn SamplePrevColorCatmullRom(Position: vec2<f32>) -> vec4<f32>
 {
     // Source: https://advances.realtimerendering.com/s2016/Filmic%20SMAA%20v7.pptx Slide 77
@@ -278,18 +271,18 @@ fn SamplePrevColorCatmullRom(Position: vec2<f32>) -> vec4<f32>
     let P4 = W12.x * W3.y;
 
     var Result = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    Result += SamplePrevColorTap(vec2<f32>(TexPos12.x, TexPos0.y))  * P0;
-    Result += SamplePrevColorTap(vec2<f32>(TexPos0.x,  TexPos12.y)) * P1;
-    Result += SamplePrevColorTap(vec2<f32>(TexPos12.x, TexPos12.y)) * P2;
-    Result += SamplePrevColorTap(vec2<f32>(TexPos3.x,  TexPos12.y)) * P3;
-    Result += SamplePrevColorTap(vec2<f32>(TexPos12.x, TexPos3.y))  * P4;
+    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos12.x, TexPos0.y),  0.0) * P0;
+    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos0.x,  TexPos12.y), 0.0) * P1;
+    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos12.x, TexPos12.y), 0.0) * P2;
+    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos3.x,  TexPos12.y), 0.0) * P3;
+    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos12.x, TexPos3.y),  0.0) * P4;
 
     return max(Result * (1.0 / (P0 + P1 + P2 + P3 + P4)), vec4<f32>(0.0));
 }
 
 fn SamplePrevColorBilinear(Position: vec2<f32>) -> vec4<f32>
 {
-    return max(SamplePrevColorTap(Position * cbCameraAttribs.g_CurrCamera.f4ViewportSize.zw), vec4<f32>(0.0));
+    return max(textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, Position * cbCameraAttribs.g_CurrCamera.f4ViewportSize.zw, 0.0), vec4<f32>(0.0));
 }
 
 fn SamplePrevColor(Position: vec2<f32>) -> vec4<f32>
@@ -356,6 +349,16 @@ fn ComputeMaxAlpha(IsStill: bool) -> f32
 fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
 {
     return min(ComputeMaxAlpha(IsStill), saturate(1.0 / (2.0 - Alpha)));
+}
+
+// PROVENANCE.md DFX-47: the placeholder (DFX-2) of a feature set's first frame is the
+// input, as upstream's CopyTextureColor copies it, loaded and clamped as the resolve
+// loads it (DFX-46), alpha included.
+@fragment
+fn ComputePlaceholderPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) vec4<f32>
+{
+    let PixelCoord = vec2<i32>(VSOut.f4PixelPos.xy);
+    return vec4<f32>(SampleCurrColor(PixelCoord), clamp(HlslLoad(g_TextureCurrColor, PixelCoord, 0).a, 0.0, HALF_MAX));
 }
 
 // PROVENANCE.md DFX-13: the accumulated frame, and the closest motion vector the next frame

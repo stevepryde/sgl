@@ -1640,8 +1640,8 @@ const HALF_INFINITY: [u8; 2] = 0x7c00u16.to_le_bytes();
 
 // PROVENANCE.md DFX-46: TAA reads a scene texel of +infinity as binary16's
 // largest finite value, so its tone map (`HDRToSDR`, c / (1 + c)) yields no
-// inf / inf, and every output after the first frame's placeholder copy (DFX-2),
-// which history then reads, stays finite.
+// inf / inf, and every output stays finite, the first frame's placeholder
+// (DFX-2, DFX-47), which history then reads, included.
 #[test]
 fn taa_infinite_input_texel_keeps_its_output_finite() {
     let Some((device, queue)) = device() else {
@@ -1713,12 +1713,96 @@ fn taa_infinite_input_texel_keeps_its_output_finite() {
                 device.create_command_encoder(&Default::default()),
             )
             .finish()]);
-            if index > 0 {
-                assert!(
-                    finite_output(&device, &queue, taa.get_accumulated_frame_srv(false, 0)),
-                    "non-finite output at frame {index}, flags {flags:?}"
-                );
-            }
+            assert!(
+                finite_output(&device, &queue, taa.get_accumulated_frame_srv(false, 0)),
+                "non-finite output at frame {index}, flags {flags:?}"
+            );
+        }
+    }
+}
+
+// PROVENANCE.md DFX-47: the first frame's placeholder reads the colour as the
+// resolve does, so a colour format that is not filterable (RGBA32F without
+// FLOAT32_FILTERABLE, as on WebGPU by default) binds on every frame.
+#[test]
+fn taa_first_frame_takes_an_unfilterable_colour() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    assert!(
+        !device
+            .features()
+            .contains(wgpu::Features::FLOAT32_FILTERABLE),
+        "the device must leave RGBA32F unfilterable"
+    );
+    let colour: Vec<u8> = [4.0f32, 2.0, 1.0, 1.0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    let color = texture(&device, &queue, wgpu::TextureFormat::Rgba32Float, &colour);
+    let motion = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0.0, 0.0]),
+    );
+    let mut context = PostFXContext::new(&device, &queue, Default::default());
+    let mut taa = TemporalAntiAliasing::new(&device);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let current_depth = depth(&device, &mut encoder, 0.95);
+    let previous_depth = depth(&device, &mut encoder, 0.95);
+    for index in 0..2 {
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        context.prepare_resources(
+            &device,
+            &FrameDesc {
+                index,
+                width: SIZE[0],
+                height: SIZE[1],
+                output_width: SIZE[0],
+                output_height: SIZE[1],
+            },
+            post_fx_context::FeatureFlags::NONE,
+        );
+        taa.prepare_resources(
+            &device,
+            &mut encoder,
+            &context,
+            temporal_anti_aliasing::FeatureFlags::NONE,
+            0,
+        );
+        let curr = camera(false, index);
+        let prev = camera(false, index.saturating_sub(1));
+        context.execute(&mut RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &current_depth,
+            prev_depth_buffer_srv: &previous_depth,
+            curr_camera: Some(&curr),
+            prev_camera: Some(&prev),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            post_fx_context: &mut context,
+            color_buffer_srv: &color,
+            depth_buffer_srv: &current_depth,
+            motion_vectors_srv: &motion,
+            taa_attribs: &TemporalAntiAliasingAttribs::default(),
+            accumulation_buffer_idx: 0,
+            pass_timestamps: None,
+        });
+        queue.submit([std::mem::replace(
+            &mut encoder,
+            device.create_command_encoder(&Default::default()),
+        )
+        .finish()]);
+        if let Some(error) = pollster::block_on(validation.pop()) {
+            panic!("frame {index}: {error}");
         }
     }
 }
