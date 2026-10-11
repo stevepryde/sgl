@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Renderer::set_target_size`: a size wider or taller than the
+  device's maximum texture dimension clamped only that axis, distorting the
+  aspect, letterboxing the frame and shrinking `ui_size()`; both axes now
+  scale together, so the frame fills the window and `ui_size()` stays the
+  window's logical size. No game-code change needed.
 - `sgl-2d` `SpritePass::prepare`: a frame with more instances than the
   device's `max_buffer_size` holds (about 3.3 million at the 256 MiB
   default) grew the instance buffer past it, a wgpu validation error; it now
