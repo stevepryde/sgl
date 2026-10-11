@@ -20,6 +20,11 @@ docs and specs the entry links.
   clusters and surfaces between the near plane and the camera got no
   directional shadow; both now reach the near plane. No game-code change
   needed.
+- `sgl-2d` `SpritePass::prepare`: a frame with more instances than the
+  device's `max_buffer_size` holds (about 3.3 million at the 256 MiB
+  default) grew the instance buffer past it, a wgpu validation error; it now
+  draws the first that many (world, then screen) and drops the rest, which
+  `draw_stats` reflects. No game-code change needed.
 - `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and
@@ -33,9 +38,10 @@ docs and specs the entry links.
   matches on `Ignored` add the arm.
 - `sgl-net` `NativeWebSocketClient::connect`: tried only the host's first
   resolved address (so `localhost` could be refused when `::1` came first),
-  and the TCP connect and HTTP upgrade each took a full `handshake_timeout`;
-  now each resolved address is tried in order within one
-  `handshake_timeout` covering the upgrade too. No game-code change needed.
+  host resolution was unbounded, and the TCP connect and HTTP upgrade each
+  took a full `handshake_timeout`; now each resolved address is tried in
+  order within one `handshake_timeout` covering resolution and the upgrade
+  too. No game-code change needed.
 - `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
   radius that is not positive (including NaN) now emits nothing. No
   game-code change needed.
