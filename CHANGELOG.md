@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: an `EXT_materials_bump` map without
+  `bumpFactor` loaded with `bump_scale` 0 (no effect) and a factor above 1
+  was refused; now the factor defaults to 1 and loads in `0..=100`, as the
+  extension's schema. No game-code change needed; bump maps that had no
+  effect now show.
 - `sgl-3d` `asset::load*`: every glTF image was decoded (and asked of
   `LoadOptions::images`), so one only an unsupported texture extension
   (`KHR_texture_basisu`) or an ignored map used could fail the load; now
