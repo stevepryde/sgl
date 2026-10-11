@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` WebSocket transports (`NativeWebSocketServer`,
+  `NativeWebSocketClient`, `BrowserWebSocketClient`): a peer closed for
+  `ProtocolViolation` or `InboundOverflow` discarded the messages received
+  before the offending frame; they are now delivered before its
+  `Disconnected`. No game-code change needed.
 - `sgl-3d` `Scene::set_instance_deformation`: a joint matrix scaling an axis
   to zero gave its skinned vertices NaN normals, and a mirrored skin turned
   them against its deformed faces; skinned normals now face the deformed
