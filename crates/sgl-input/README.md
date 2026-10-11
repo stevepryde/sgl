@@ -30,14 +30,17 @@ may reuse them for later connections. They are not saved player identities. macO
 and omits optional buttons a device does not provide.
 
 On macOS, the owner enables process-local background event delivery so releases
-are not lost during focus changes, and restores the previous value on drop.
-It does not change system preferences.
+are not lost during focus changes, and the last live owner restores the
+previous value on drop. It does not change system preferences.
 
 The game owns player assignment, focus gating, action bindings, deadzones, menu
 navigation and release-before-resume behavior. Poll while unfocused to drain
 releases/disconnects, but do not dispatch gameplay or menu actions then. Do not
 create another native controller owner in the same process: native element
-callbacks belong to this owner and are removed when it drops.
+callbacks belong to this owner and are removed when it drops. Replacing the
+owner in place (`self.pads = Gamepads::new()?;`) is fine: the old one drops
+before the new one's first poll installs its callbacks. Do not poll a new owner
+while the old one is still alive.
 
 Try `cargo run -p sgl-input --example controllers` with a focused window. The
 example prints actual connection/button/stick events and updates its window title.

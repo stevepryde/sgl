@@ -333,7 +333,22 @@ impl Default for AssetServer {
     }
 }
 
-/// Browser-only HTTP loader for the generated runtime manifest (D-17).
+/// The URL of asset `path` listed in the manifest at `manifest_url`: the
+/// path joined to the manifest's directory (its URL up to the last `/`,
+/// ignoring any query or fragment).
+#[cfg(any(target_arch = "wasm32", test))]
+fn manifest_asset_url(manifest_url: &str, path: &str) -> String {
+    let end = manifest_url.find(['?', '#']).unwrap_or(manifest_url.len());
+    let file = &manifest_url[..end];
+    let dir = file.rfind('/').map_or("", |slash| &file[..=slash]);
+    format!("{dir}{path}")
+}
+
+/// Browser-only HTTP loader for a runtime asset manifest: a text file
+/// listing one asset-relative path per line. `manifest_url` names the
+/// manifest file; each listed path is fetched relative to the manifest's
+/// directory, so `assets/manifest.txt` listing `ui/icon.png` fetches
+/// `assets/ui/icon.png`. The bundle keys are the listed paths.
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_runtime_bundle(manifest_url: &str) -> Result<AssetBundle, String> {
     use futures::future::try_join_all;
@@ -379,7 +394,7 @@ pub async fn fetch_runtime_bundle(manifest_url: &str) -> Result<AssetBundle, Str
     }
 
     let fetched = try_join_all(paths.into_iter().map(|path| async move {
-        let url = format!("assets/{path}");
+        let url = manifest_asset_url(manifest_url, &path);
         let response = response(&url).await?;
         let buffer = JsFuture::from(
             response
@@ -405,6 +420,24 @@ pub async fn fetch_runtime_bundle(manifest_url: &str) -> Result<AssetBundle, Str
 mod tests {
     use super::*;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    /// #541: listed asset paths resolve against the manifest's directory,
+    /// not the page.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn manifest_assets_resolve_against_the_manifest_directory() {
+        for (manifest, expected) in [
+            ("data/manifest.txt", "data/ui/icon.png"),
+            ("manifest.txt", "ui/icon.png"),
+            ("/game/assets/manifest.txt", "/game/assets/ui/icon.png"),
+            (
+                "https://cdn.example.com/v2/manifest.txt?rev=3#top",
+                "https://cdn.example.com/v2/ui/icon.png",
+            ),
+            ("data/manifest?from=a/b", "data/ui/icon.png"),
+        ] {
+            assert_eq!(manifest_asset_url(manifest, "ui/icon.png"), expected);
+        }
+    }
 
     /// #255: bundle bookkeeping and handle hashing behave as keys.
     #[wasm_bindgen_test(unsupported = test)]

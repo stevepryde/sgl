@@ -209,7 +209,8 @@ pub struct Material {
     pub normal_layers: Option<[NormalLayer; 2]>,
     /// Bump image index, sampled as linear height data.
     pub bump_texture: Option<usize>,
-    /// Bump height multiplier.
+    /// Bump height multiplier
+    /// ([`SurfaceMaterial::bump_scale`](crate::SurfaceMaterial::bump_scale)).
     pub bump_scale: f32,
     /// The share of the light behind the surface that passes through it,
     /// refracted, in `0..=1` (`KHR_materials_transmission`'s

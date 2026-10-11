@@ -488,4 +488,65 @@ mod tests {
         f.end();
         assert_eq!(value, 15.0, "typed text edits the value");
     }
+
+    /// A release and press in one frame with the button held.
+    fn release_and_press_at(x: f32, y: f32) -> UiInput {
+        UiInput {
+            mouse_pos: Vec2::new(x, y),
+            mouse_pressed: true,
+            mouse_released: true,
+            mouse_down: true,
+            ..UiInput::default()
+        }
+    }
+
+    /// A release and the next press in one frame (a fast double-click at a
+    /// low frame rate, button still down at the frame's end) keep the drag
+    /// that press armed: moving then scrubs from the second press point,
+    /// without another press.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn number_field_release_then_press_in_one_frame_keeps_the_drag() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut list = DrawList::new();
+        let opts = NumberField::default().speed(1.0).range(-100.0, 100.0);
+        let mut value = 1.0;
+        let mut f = ui.begin(&mut text, &mut list, press_at(100.0, 116.0));
+        f.number_field("n", ROW, &mut value, opts, 20.0);
+        f.end();
+        let mut f = ui.begin(&mut text, &mut list, release_and_press_at(110.0, 116.0));
+        f.number_field("n", ROW, &mut value, opts, 20.0);
+        f.end();
+        // 10 px right of the second press: 1 + 10 × 1.
+        let mut f = ui.begin(&mut text, &mut list, hover_at(120.0, 116.0, true));
+        assert!(f.number_field("n", ROW, &mut value, opts, 20.0));
+        f.end();
+        assert_eq!(value, 11.0);
+        let mut f = ui.begin(&mut text, &mut list, release_at(120.0, 116.0));
+        f.number_field("n", ROW, &mut value, opts, 20.0);
+        f.end();
+        assert!(!ui.has_focus(), "a drag never opens the field for typing");
+    }
+
+    /// A release and press in one frame that lands off the field ends the
+    /// field's drag: a held move then leaves its value, and the final
+    /// release does not open it for typing.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn number_field_release_then_press_elsewhere_ends_the_drag() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut list = DrawList::new();
+        let opts = NumberField::default().speed(1.0).range(-100.0, 100.0);
+        let mut value = 1.0;
+        for input in [
+            press_at(100.0, 116.0),
+            release_and_press_at(500.0, 500.0),
+            hover_at(140.0, 116.0, true),
+            release_at(140.0, 116.0),
+        ] {
+            let mut f = ui.begin(&mut text, &mut list, input);
+            f.number_field("n", ROW, &mut value, opts, 20.0);
+            f.end();
+        }
+        assert_eq!(value, 1.0);
+        assert!(!ui.has_focus());
+    }
 }

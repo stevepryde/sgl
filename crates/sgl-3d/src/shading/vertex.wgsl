@@ -43,7 +43,7 @@ fn object_tangent(model:mat4x4<f32>,t:vec4<f32>,normal:vec3<f32>)->vec4<f32> {
  let projected=transformed-n*dot(n,transformed);
  let handed=t.w*select(1.,-1.,dot(model[0].xyz,cross(model[1].xyz,model[2].xyz))<0.);
  if dot(projected,projected)==0. {
-  return vec4(0.);
+  return vec4(0.,0.,0.,handed);
  }
  return vec4(normalize(projected),handed);
 }

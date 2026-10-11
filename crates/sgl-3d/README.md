@@ -1340,7 +1340,9 @@ over the contract SGL3D declares, `shading/shader_contract.wgsl`, verbatim:
 // handedness (+1 or -1), at rest and after skinning, while morph targets add
 // their deltas without renormalising or re-orthogonalising (as Bevy's
 // morph_vertex, which the deform stage ports), so a morphed vertex's frame
-// is only approximately orthonormal. A vertex without an authored
+// is only approximately orthonormal; morphs that cancel a tangent, or a
+// skin that collapses it, leave its xyz zero with its handedness, which a
+// shader that normalises the tangent guards. A vertex without an authored
 // tangent (none, along the normal, or handedness not +1 or -1) gets an
 // arbitrary one in the normal's plane, handedness +1, never zero, which a
 // shader cannot tell from an authored one: a shader used on meshes without
@@ -2639,8 +2641,13 @@ bake does not chart (one exported with a second UV map for AO, say).
 Every accessor the load reads must hold at least one
 element, within its buffer view and buffer, of a component type and shape
 glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
-bind matrices or keyframes), and an embedded image's buffer view must lie
-within its buffer; any other fails the load with an error naming it.
+bind matrices or keyframes), and as many elements as glTF requires: a
+primitive's attributes and morph targets as many as its POSITION, inverse
+bind matrices one a joint, and keyframe values as many as their times
+need. A sparse accessor without a buffer view that nothing else counts
+(POSITION, indices or keyframe times) may declare no more elements than
+the file's buffers would hold in a buffer view. An embedded image's buffer view must lie within its
+buffer. Any other fails the load with an error naming it.
 
 A clearcoat normal map tilts the coat alone, on the base normal map's
 frame; without one the coat follows the geometry normal. An iridescent
@@ -2790,10 +2797,13 @@ linear RG direction (remapped to -1..1) and B strength. No texture means +T and
 full texture strength, as on a device of the `Basic` [binding tier](#binding-tiers),
 which binds no anisotropy map. File and embedded glTF imports use the same rules.
 Active anisotropy requires authored tangents; automatic tangent generation is
-not implemented. Normal maps and anisotropy share that frame. A tangent
-along its normal spans no frame: it fails the load of an anisotropic
-material and is absent (`Vertex::tangent` zero) on any other. Node and instance
-transforms preserve mirrored handedness, nonuniform scaling and shear.
+not implemented. Normal maps and anisotropy share that frame. An authored
+tangent along its normal spans no frame: it fails the load of an
+anisotropic material and is absent (`Vertex::tangent` zero) on any other.
+Where skinning or morphing cancels a tangent or turns it along its normal,
+shading takes an arbitrary tangent in the normal's plane, keeping the
+authored handedness (+1 where there is none), as for a vertex without one.
+Node and instance transforms preserve mirrored handedness, nonuniform scaling and shear.
 
 `Scene::set_material` exposes `SurfaceMaterial::anisotropy_strength` and
 `anisotropy_rotation`; the anisotropy map, like every map, stays as the

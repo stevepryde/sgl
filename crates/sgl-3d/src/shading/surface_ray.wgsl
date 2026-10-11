@@ -64,8 +64,8 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
  // effect only without a normal map (scene::materials::maps), so its bit
  // alone selects it, with the normal-map stage disabled too.
  if bump_maps_enabled && (material.values.maps&MATERIAL_MAP_BUMP)!=0u {
-  // One authored texel on each UV axis gives the bump surface gradient;
-  // this is not a fabricated screen-space dpdx/dpdy in a compute invocation.
+  // One authored texel on each UV axis gives the bump surface gradient, per
+  // metre where raster's is per pixel: a hit has no pixel footprint (D-45).
   let step=1./vec2<f32>(scene_texture_size(material.textures[SCENE_TEXTURE_BUMP]));
   let u=vec2(step.x,0.);
   let v=vec2(0.,step.y);
@@ -256,7 +256,8 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
   ray=directional_ray_direction(direction,light.disc_radius,random.yz);
  } else {
   let index=cluster_item(list.first+pick-directional_count);
-  sample=scene_light_sample(index,s.position,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT,transmits,back,0.);
+  // A probe hit takes diffuse light alone, which its base normal bounds.
+  sample=scene_light_sample(index,s.position,s.normal,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT,transmits,back,0.);
   if sample.visibility<=0. && sample.transmitted_visibility<=0. {
    return vec3(0.);
   }
