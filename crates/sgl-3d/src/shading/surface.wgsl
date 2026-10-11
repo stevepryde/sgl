@@ -28,7 +28,12 @@ struct Surface {
  // (normal or bump map, the coat's normal map, decals, scrolling layers),
  // so none of them moves a shadow map's lookup; and the coat normal, which
  // the coat follows: its clearcoat normal map's on the base map's frame,
- // else the geometry normal (KHR_materials_clearcoat).
+ // else the geometry normal (KHR_materials_clearcoat); without a coat, the
+ // base normal, which no lobe then reads, so that a light reaches the
+ // surface by its base normal alone (light_faces) and skips one every lobe
+ // would clamp to 0. The builders set it so (raster where the material
+ // record has no coat either); the G-buffer records the geometry normal
+ // there instead (stable_material), for the ray-traced shadow trace.
  // Filament ef1a133 offsets its spot and cascade shadows along this normal,
  // flipped to the side shaded (getWorldGeometricNormalVector(),
  // shading_geometricNormal in shaders/src/surface_shading_parameters.fs and
@@ -547,8 +552,8 @@ fn surface_rect_light_transmitted(surface:Surface,reflectance:SurfaceReflectance
 // surface at `position` with `normal`, `coat_normal` and `geometry_normal`
 // (Surface), shadowed when it has the frame's shadow cascades. Where both
 // normals face farther from it than its disc's radius, no lobe of the
-// front takes it, as the ray-traced shadow trace's reach test holds
-// (traced_visible), its disc included (pbr_sized_light moves its
+// front takes it, which the ray-traced shadow trace's reach test never
+// narrows (traced_visible), its disc included (pbr_sized_light moves its
 // direction at most that far), so the front looks up no shadow. A surface that
 // `transmits` diffuse light to its other side takes the light behind its
 // normal on that side, its shadow looked up from the cascades
