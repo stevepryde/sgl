@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import and `asset::Vertex::tangent`: a tangent a few f32
+  ulps off its normal counted as a frame, its rounding normalised into an
+  arbitrary tangent; a tangent within 0.02° of its normal is now along it:
+  absent on a material without anisotropy, refused on an anisotropic one
+  (import error, or `SceneError::MissingAnisotropyTangents`). No game-code
+  change needed.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
   controller callback, including those a newer owner had installed, so the
   newer one stopped receiving input; it now clears only callbacks it still
