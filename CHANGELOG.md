@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `HeatDistortion::displacement`: under FSR2 it shifted the frame
+  by render pixels, larger than documented; it now shifts by the scene
+  pixels it documents at every antialiasing setting, so heat under FSR2
+  looks smaller than before. No game-code change needed.
 - `sgl-net` UDP server endpoints: after 64 other joins within a departed
   client's cookie lifetime, a late duplicate of its confirm reported
   `Connected` for a client that was gone; each verified confirm is now kept
