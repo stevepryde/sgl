@@ -67,6 +67,13 @@ fn vertex(object:u32,rest:MaterialVertex,lightmap_uv:vec2<f32>,lightmap_bounds:v
  o.previous_clip=view.previous_view_projection*objects[object].previous_model*vec4(previous.position,1);
  return o;
 }
+// The unit view vector of the pass's view at `world` (pbr_view): toward its
+// eye under a perspective projection, its backward axis, its view matrix's
+// third row, under an orthographic one.
+fn material_view(world:vec3<f32>)->vec3<f32> {
+ let backward=vec3(view.view[0].z,view.view[1].z,view.view[2].z);
+ return pbr_view(world,view.eye,backward,projection_perspective(view.projection));
+}
 // What the material's surface function evaluates a fragment of the instance
 // whose object record is at index `object` at (shader_contract.wgsl's
 // SurfaceContext): its render-frame position `world`, geometry normal on
@@ -77,5 +84,5 @@ fn vertex(object:u32,rest:MaterialVertex,lightmap_uv:vec2<f32>,lightmap_bounds:v
 fn material_context(object:u32,world:vec3<f32>,geometry_normal:vec3<f32>,uv:vec2<f32>,color:vec4<f32>,custom:vec4<f32>,instance:vec4<f32>,front:bool,pixel:vec2<f32>)->SurfaceContext {
  let model=objects[object].model;
  let view_depth=-(view.view*vec4(world,1.)).z;
- return SurfaceContext(world,geometry_normal,normalize(view.eye-world),uv,color,custom,instance,model,transmission_model_scale(model),frame.elapsed_seconds,frame.animation_phase,front,pixel,view_depth);
+ return SurfaceContext(world,geometry_normal,material_view(world),uv,color,custom,instance,model,transmission_model_scale(model),frame.elapsed_seconds,frame.animation_phase,front,pixel,view_depth);
 }

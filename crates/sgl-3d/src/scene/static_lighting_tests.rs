@@ -947,14 +947,12 @@ fn a_coat_dims_baked_diffuse_and_emission_by_its_fresnel() {
             view,
             projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
         });
-        // Pixel (32, 32)'s centre on the camera's plane and, along the view,
-        // on the square. Raster's view runs from that point to the eye, a
-        // ray hit's back along the ray.
+        // Pixel (32, 32)'s centre on the camera's plane. Raster's view is
+        // the orthographic camera's backward axis, a ray hit's back along
+        // its ray, which runs along that axis too.
         let start = view
             .inverse()
             .transform_point3(Vec3::new(1. / 64., -1. / 64., 0.));
-        let point = start - backward * (start.z / backward.z);
-        let raster_cosine = (eye - point).normalize().z;
         let observation = format!(
             r#"
 @group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
@@ -1007,7 +1005,7 @@ fn a_coat_dims_baked_diffuse_and_emission_by_its_fresnel() {
                 ]
             });
             for (path, cosine, bare, coated) in [
-                ("raster", raster_cosine, bare[0], coated[0]),
+                ("raster", cosine, bare[0], coated[0]),
                 ("ray hit", cosine, bare[1], coated[1]),
             ] {
                 let expected = 1. - fresnel(cosine);
