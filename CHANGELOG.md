@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `TemporalAntiAliasing::prepare_resources`: the frame after a
+  resize resolved against the zeroed, recreated history instead of resetting
+  accumulation, which shifted bright HDR texels; it now takes the current
+  colour, as after `reset_accumulation`. No game-code changes needed.
 - `sgl-3d` glTF import and `asset::Vertex::tangent`: a tangent a few f32
   ulps off its normal counted as a frame, its rounding normalised into an
   arbitrary tangent; a tangent within 0.02° of its normal is now along it:
