@@ -23,6 +23,9 @@ struct WorldParams {
  range:f32,
  // The previous frame's near plane, which wrote the depth history.
  previous_near:f32,
+ // Width of the screen-space method's fade below its cutoff, in
+ // perceptual roughness.
+ fade:f32,
 }
 @group(3) @binding(0) var world_depth:texture_depth_2d;
 @group(3) @binding(1) var world_normal:texture_2d<f32>;
@@ -71,22 +74,33 @@ fn world_clamped(p:vec2<i32>)->vec2<i32> {
 fn world_traces(depth:f32,lit:bool,roughness:f32)->bool {
  return depth>0. && lit && specular_traces(roughness,world.traced);
 }
-// world_receiver's `traced` alone, without the normal it needs no load of.
-fn world_receives(p:vec2<i32>)->bool {
+// The share of a receiver's traced lobe that composition leaves to its
+// fallback, world-space rays included, where the screen-space method's
+// result holds `confidence` (specular_fallback_share, with the fade
+// compose_screen_space takes), 0 where the receiver at `p` has no traced
+// lobe. world_receiver's test alone, without the normal it needs no load
+// of.
+fn world_fallback_share(p:vec2<i32>,confidence:f32)->f32 {
  let q=world_clamped(p);
  let material=gbuffer_material(textureLoad(world_material,q,0));
  let lit=gbuffer_lit(textureLoad(world_f0,q,0));
- return world_traces(textureLoad(world_depth,q,0),lit,gbuffer_traced_roughness(material,lit));
+ let roughness=gbuffer_traced_roughness(material,lit);
+ if !world_traces(textureLoad(world_depth,q,0),lit,roughness) {
+  return 0.;
+ }
+ return specular_fallback_share(confidence,specular_trace_fade(roughness,sqrt(world.traced),world.fade));
 }
 fn world_random(p:vec2<u32>,frame:u32)->vec2<f32> {
  return hash33_unit(vec3(p,frame)).xy;
 }
 // The full-resolution pixel tracing pixel `tracing` traces this frame: one
 // jitter a frame chooses which pixel of each block traces, so that
-// upscaling does not reuse the same pixels.
+// upscaling does not reuse the same pixels. world_random reaches 1, so the
+// jitter is capped at the block's last pixel; the pixel is clamped to the
+// frame, which a block of a 1-pixel side overhangs.
 fn world_traced_pixel(tracing:vec2<u32>)->vec2<i32> {
- let jitter=vec2<u32>(floor(world_random(vec2(0u),world.frame)*f32(WORLD_DOWNSCALE)));
- return vec2<i32>(jitter+tracing*WORLD_DOWNSCALE);
+ let jitter=min(vec2<u32>(floor(world_random(vec2(0u),world.frame)*f32(WORLD_DOWNSCALE))),vec2(WORLD_DOWNSCALE-1u));
+ return world_clamped(vec2<i32>(jitter+tracing*WORLD_DOWNSCALE));
 }
 // A listed ray: its tracing pixel's coordinates in 16 bits each, as
 // FidelityFX SSSR packs its denoiser tiles' (ffx_sssr_callbacks_hlsl.h
