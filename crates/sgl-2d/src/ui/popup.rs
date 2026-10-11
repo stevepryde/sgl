@@ -272,12 +272,12 @@ impl UiFrame<'_> {
         changed
     }
 
-    /// `new_blocked` becomes next frame's blockers: shield what lies under
-    /// dropdown `id`'s visible popover then only if it is still open, so a
-    /// selection or click-away frees that spot at once.
+    /// Shield what lies under dropdown `id`'s visible popover next frame
+    /// only if it is still open, so a selection or click-away frees that
+    /// spot at once.
     fn shield_open_popover(&mut self, id: u64, visible: Option<Rect>) {
         if self.ui.open_popup == Some(id) {
-            self.new_blocked.extend(visible);
+            self.new_popover_blocked = visible;
         }
     }
 
@@ -501,8 +501,8 @@ mod tests {
         assert_eq!(selected, 1);
     }
 
-    /// #575: the frame after a selection or click-away closes the popover,
-    /// a press on a widget that lay under it fires.
+    /// #575: once a selection, click-away, Escape or `close_popups` closes
+    /// the popover, a press on a widget that lay under it fires.
     #[wasm_bindgen_test(unsupported = test)]
     fn closed_dropdown_frees_widgets_under_its_popover() {
         let (mut ui, mut text, _assets) = fixture();
@@ -511,22 +511,50 @@ mod tests {
         let mut selected = 0usize;
         // Rows occupy y ∈ [42, 132), over this button.
         let under = Rect::new(10.0, 42.0, 160.0, 90.0);
+        let open = press_at(50.0, 25.0);
+        let press_under = || press_at(50.0, 85.0);
+        let escape_and_press_under = UiInput {
+            keys: vec![UiKey::Escape],
+            ..press_under()
+        };
         let mut fired = Vec::new();
-        for input in [
-            press_at(50.0, 25.0),   // open
-            press_at(50.0, 85.0),   // select option 1
-            press_at(50.0, 85.0),   // under
-            press_at(50.0, 25.0),   // open
-            press_at(800.0, 500.0), // click away
-            press_at(50.0, 85.0),   // under
+        let mut open_after = Vec::new();
+        for (input, close_popups) in [
+            (open.clone(), false),
+            (press_under(), false), // selects option 1
+            (press_under(), false),
+            (open.clone(), false),
+            (press_at(800.0, 500.0), false), // click-away
+            (press_under(), false),
+            (open.clone(), false),
+            (UiInput::default(), false),
+            (escape_and_press_under, false),
+            (open, false),
+            (UiInput::default(), false),
+            (press_under(), true),
         ] {
+            if close_popups {
+                ui.close_popups();
+            }
             let mut list = DrawList::new();
             let mut f = ui.begin(&mut text, &mut list, input);
             fired.push(f.button("under", under, "U", 16.0));
             f.dropdown("zoom", dd, &options, &mut selected, 16.0);
             f.end();
+            open_after.push(ui.any_popup_open());
         }
-        assert_eq!(fired, [false, false, true, false, false, true]);
+        assert_eq!(
+            fired,
+            [
+                false, false, true, false, false, true, false, false, true, false, false, true
+            ]
+        );
+        assert_eq!(
+            open_after,
+            [
+                true, false, false, true, false, false, true, true, false, true, true, false
+            ]
+        );
         assert_eq!(selected, 1);
     }
 

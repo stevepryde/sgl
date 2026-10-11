@@ -15,10 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-2d` `UiFrame::dropdown`: on the frame after a selection or
-  click-away closed the popover, widgets under where it was could not hover
-  or take a press; they now respond on that frame. No game-code change
-  needed.
+- `sgl-2d` `UiFrame::dropdown`: for one frame after a selection,
+  click-away, Escape, `Ui::close_popups` or `Ui::cancel_interactions` closed
+  the popover, widgets under where it was could not hover or take a press;
+  they now respond at once. No game-code change needed.
 - `sgl-2d` `SpritePass::upload_normal` and `Renderer::upload_normal_map`: a
   second normal map under a different handle for a diffuse was ignored
   (returning `Ok`, even when mis-sized); it now replaces the first, and a
