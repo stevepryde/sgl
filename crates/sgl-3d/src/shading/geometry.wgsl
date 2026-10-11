@@ -21,7 +21,8 @@ struct StableMaterial {
 }
 fn stable_material(s:Surface)->StableMaterial {
  // Preserve both lobes: the base follows normal/bump maps, the coat its
- // clearcoat normal map, else the geometry normal. The base's F0 and F90
+ // clearcoat normal map, else the geometry normal (the base's without a
+ // coat). The base's F0 and F90
  // are those its environment lights at the camera's view, beneath its
  // sheen (surface_environment_lobe).
  var o:StableMaterial;
