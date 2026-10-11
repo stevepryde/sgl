@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `TemporalAntiAliasing::prepare_resources`: the frame after a
+  resize resolved against the zeroed, recreated history instead of resetting
+  accumulation, which shifted bright HDR texels; it now takes the current
+  colour, as after `reset_accumulation`. No game-code changes needed.
 - `sgl-post-fx` `ScreenSpaceReflection` and
   `ScreenSpaceReflectionAttribs::most_detailed_mip`: a zero world normal
   gave its ray a NaN direction, a non-unit one a skewed ray, and a
