@@ -64,8 +64,8 @@ settings SGL3D has today.
    rather than silently returning a partial model; what a file uses without
    requiring it and SGL3D does not render is left out, as glTF lets a
    loader do, and listed with the asset (`Asset::ignored`); file and embedded-byte imports share
-   one decoder, which decodes each image the game does not supply and never
-   reads one it does. Explicit node selection preserves ancestor transforms and rejects
+   one decoder, which decodes each image a sampled map uses that the game
+   does not supply, and never reads one it does or one no sampled map uses. Explicit node selection preserves ancestor transforms and rejects
    an empty selection. Games keep authored sources, export recipes and gameplay RON.
    A game's material shaders (`Scene::add_shader`: WGSL vertex and surface
    functions SGL3D composes into its own programs) are its content, never

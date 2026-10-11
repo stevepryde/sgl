@@ -632,6 +632,10 @@ fn an_image_view_past_its_buffer_is_rejected() {
             .push(json!({"buffer": 0, "byteOffset": buffer.bytes.len(), "byteLength": 64}));
         document["images"] =
             json!([{"bufferView": buffer.views.len() - 1, "mimeType": "image/png"}]);
+        // A material samples it, so the load reads it.
+        document["textures"] = json!([{"source": 0}]);
+        document["materials"] =
+            json!([{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}]);
     });
     let error = load_slice(&bytes)
         .err()

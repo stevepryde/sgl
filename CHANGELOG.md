@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: every glTF image was decoded (and asked of
+  `LoadOptions::images`), so one only an unsupported texture extension
+  (`KHR_texture_basisu`) or an ignored map used could fail the load; now
+  only images a sampled material map uses are asked for and decoded, and
+  each other is a one-texel placeholder listed as the new
+  `Ignored::Image { image }`. No game-code change needed; exhaustive
+  matches on `Ignored` add the arm.
 - `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
   could not be allocated (the largest byte grid on wasm32); now returns
   `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or

@@ -2655,7 +2655,10 @@ set, which the load leaves out (`occlusion_texture` `None`). It names each
 material whose specular textures SGL3D does not sample
 (`Ignored::SpecularMap`). To have occlusion drawn, pack it
 into the metallic-roughness image's red channel on `TEXCOORD_0` in the
-export step. Other unsupported visible features return asset-path errors.
+export step. The load reads and decodes only the images a map it samples
+uses; each other image, such as a texture extension's source or an
+ignored map's image, is a one-texel placeholder that is never bound, and
+the list names it (`Ignored::Image`). Other unsupported visible features return asset-path errors.
 
 A dielectric's reflectance at normal incidence (F0) follows its index of
 refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for water
@@ -2741,8 +2744,8 @@ let sources = |image: GltfImage<'_>| -> asset::Result<ImageSource> {
 let asset = asset::load_with_options(&path, LoadOptions { images: Some(&sources), ..Default::default() })?;
 ```
 
-The loader asks once per image, in image order, as Bevy's glTF loader
-resolves each image's source; a supplied image takes the glTF image's index,
+The loader asks once per image a sampled map uses, in image order, as
+Bevy's glTF loader resolves each image's source; a supplied image takes the glTF image's index,
 which its materials address. An embedded glTF (`load_slice_with_options`)
 may refer to external image files when every one is supplied.
 `CompressedImage::from_ktx2(bytes)` reads a KTX2
