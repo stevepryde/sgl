@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::dropdown`: an open dropdown scrolled fully out of its
+  clip stayed open and kept the keyboard captured; it now closes at
+  `UiFrame::end`. No game-code changes needed.
 - `sgl-3d` `Scene::add_materials`, `add_asset` and `set_material`: a
   metallic, roughness, clearcoat, clearcoat roughness or base alpha outside
   0..=1, or a base colour, emission or `environment_scale` that is negative
