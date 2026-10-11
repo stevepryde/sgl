@@ -406,10 +406,13 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     var Output: PSOutput;
     // DFX-17: radiance premultiplied by confidence, so averages of hits and misses keep both consistent.
     Output.Specular = vec4<f32>(ReflectionRadiance * Confidence, Confidence);
-    // PROVENANCE.md DFX-48: a ray that ends at or past the far plane is infinitely long, or
-    // longer than RGBA16F holds; it is stored HALF_MAX long, along its direction. The
-    // comparison also takes a NaN length, which a hit at infinite depth can make, as HALF_MAX.
+    // PROVENANCE.md DFX-48: a ray that ends at or past the far plane, by the DFX-26 exit's
+    // threshold, left through it. The initial advance and the DFX-18 pass-through step to a
+    // cell boundary without bounding depth, so it may end well past the plane, where its
+    // distance is infinite, NaN or finite but meaningless. It is stored HALF_MAX long, as far
+    // as RGBA16F holds, along its direction; a longer ray before the plane is clamped to that.
     let RayLength = distance(SurfaceHitVS, RayOriginVS);
-    Output.DirectionPDF = vec4<f32>(RayDirectionWS * select(HALF_MAX, RayLength, RayLength < HALF_MAX), RayDirectionVS.w);
+    let StoredLength = select(min(RayLength, HALF_MAX), HALF_MAX, IsBackground(SurfaceHitSS.z));
+    Output.DirectionPDF = vec4<f32>(RayDirectionWS * StoredLength, RayDirectionVS.w);
     return Output;
 }

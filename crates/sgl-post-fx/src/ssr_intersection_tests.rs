@@ -213,48 +213,80 @@ fn half_resolution_rays_at_an_infinite_horizon_are_finite() {
     }
 }
 
-// PROVENANCE.md DFX-48: a level mirror floor reflects rays into the sky,
-// which under an infinite reversed-Z projection end at or just past the far
-// plane, depth 0, where the hit's camera-space distance is infinite or past
-// RGBA16F's range. Each floor pixel's stored ray still points along the
-// mirror direction of its view ray about the floor, and the reconstructed
-// output stays finite.
+// PROVENANCE.md DFX-48: a mirror floor reflects every ray into the sky, so
+// under an infinite reversed-Z projection each ray leaves through the far
+// plane, depth 0, where its camera-space distance is infinite. Rays stepping
+// one cell at a time end at or just past depth 0, where the distance is
+// infinite or past RGBA16F's range. The camera is pitched up so the horizon
+// lies 0.1 pixel above the centre of row 24, the floor's first row. That
+// row's rays reach depth 0 0.2 pixel from their origin, so the initial
+// advance to the cell boundary half a pixel away overshoots to a clearly
+// negative depth, where the distance is finite but meaningless. Each floor
+// pixel's stored ray must still point along the mirror direction of its view
+// ray about the floor and be as long as RGBA16F holds, and the reconstructed
+// output must stay finite.
 #[test]
 fn rays_past_the_far_plane_keep_their_direction() {
     let Some((device, queue)) = device() else {
         return;
     };
-    let floor_normal = [0.0, 1.0, 0.0];
+    let (a, b) = projection_scales();
+    // Row 24's centre, NDC y -1/48, and 0.1 pixel (0.2/48 in NDC) above it.
+    let horizon = -1.0 / 48.0 + 0.2 / 48.0;
+    let (s, c) = (horizon / f64::from(b)).atan().sin_cos();
+    let floor_normal = [0.0, c, -s];
     let depths = floor_depths(floor_normal);
     let ssr = trace_mirror_floor(&device, &queue, floor_normal, FeatureFlags::NONE);
     let rays = read_rgba16f(&device, &queue, &ssr.resources().ray_direction_pdf);
     let mut wrong = Vec::new();
-    let mut far = 0;
+    let mut row_24_past_far_plane = 0;
     for y in 0..SIZE[1] {
         for x in 0..SIZE[0] {
             let at = (y * SIZE[0] + x) as usize;
             if depths[at] == 0.0 {
                 continue;
             }
+            assert!(y >= 24, "({x}, {y}) is floor above row 24");
             let ray = rays[at];
             let length = ray[..3].iter().map(|v| v * v).sum::<f32>().sqrt();
-            // Farther than any floor point in front of the sky that this
-            // camera sees: the ray left through the far plane.
-            if length > 1000.0 {
-                far += 1;
-            }
             let view = pixel_ray(x, y);
             let view_length = view.iter().map(|v| v * v).sum::<f64>().sqrt();
-            let mirror = [view[0], -view[1], view[2]].map(|v| (v / view_length) as f32);
-            if !(length > 0.0 && (0..3).all(|i| (ray[i] / length - mirror[i]).abs() < 4e-3)) {
+            let view = view.map(|v| v / view_length);
+            let v_dot_n: f64 = (0..3).map(|i| view[i] * floor_normal[i]).sum();
+            let mirror: [f32; 3] =
+                std::array::from_fn(|i| (view[i] - 2.0 * v_dot_n * floor_normal[i]) as f32);
+            // A ray whose vanishing point, where its depth reaches 0, lies on
+            // the screen a pixel or more inside its edges leaves through the
+            // far plane before the screen's edge. Its length is binary16's
+            // largest finite value, 65504, within the rounding of each stored
+            // component near it (a spacing of at most 32).
+            let vanishing = [
+                f64::from(mirror[0] / mirror[2] * a),
+                f64::from(mirror[1] / mirror[2] * b),
+            ];
+            let past_far_plane = mirror[2] > 0.0
+                && vanishing[0].abs() < 1.0 - 2.0 / f64::from(SIZE[0])
+                && vanishing[1].abs() < 1.0 - 2.0 / f64::from(SIZE[1]);
+            if past_far_plane && y == 24 {
+                row_24_past_far_plane += 1;
+            }
+            // Each component holds about 11 significant bits (a relative
+            // 4.9e-4), and the GPU rebuilds the ray's origin from its depth
+            // in f32, so the unit direction may differ by a few 1e-4.
+            if !((!past_far_plane || (65504.0 - 64.0..=65504.0 + 64.0).contains(&length))
+                && (0..3).all(|i| (ray[i] / length - mirror[i]).abs() < 4e-3))
+            {
                 wrong.push(format!("({x}, {y}): {ray:?}, mirror {mirror:?}"));
             }
         }
     }
-    assert!(far > 0, "no ray left through the far plane");
+    assert!(
+        row_24_past_far_plane > 0,
+        "no ray of row 24 overshoots the far plane"
+    );
     assert!(
         wrong.is_empty(),
-        "{} of the floor's rays left their mirror direction:\n{}",
+        "{} of the floor's rays are not along their mirror direction, as long as RGBA16F holds past the far plane:\n{}",
         wrong.len(),
         wrong.join("\n")
     );
