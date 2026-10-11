@@ -293,11 +293,9 @@ mod tests {
         };
         let grid = ProbeGrid::new(&[(world_to_local, influence)]);
         assert!(grid.size.as_u64vec3().element_product() <= MAX_CELLS as u64);
-        let records: &[GridCell] = bytemuck::cast_slice(
-            &grid.words[..CELL_WORDS * grid.size.element_product() as usize],
-        );
-        let GridCell { first, count } =
-            records[grid.flatten(grid.coordinates(center).as_uvec3())];
+        let records: &[GridCell] =
+            bytemuck::cast_slice(&grid.words[..CELL_WORDS * grid.size.element_product() as usize]);
+        let GridCell { first, count } = records[grid.flatten(grid.coordinates(center).as_uvec3())];
         assert_eq!(&grid.words[first as usize..(first + count) as usize], &[0]);
     }
 }
