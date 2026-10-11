@@ -814,8 +814,11 @@ impl Renderer {
 
     /// Register `normal` as the companion normal map of the already-uploaded
     /// `diffuse` texture (R-6, PR-4). Sprites then opt in by setting their
-    /// `normal` field to this handle. The normal map must match the
-    /// diffuse's dimensions, or a [`TextureError`] refuses it.
+    /// `normal` field to this handle. A different `normal` replaces the
+    /// diffuse's current normal map; the same one again changes nothing.
+    /// The normal map must match the diffuse's dimensions, and the diffuse
+    /// must be uploaded, or a [`TextureError`] refuses it. Follows
+    /// [`SpritePass::upload_normal`](super::sprite::SpritePass::upload_normal).
     pub fn upload_normal_map(
         &mut self,
         gpu: &Gpu,
