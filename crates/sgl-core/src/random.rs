@@ -36,8 +36,11 @@ impl Rng {
     }
 
     /// A `usize` uniformly distributed in `range` (e.g. an index).
+    #[allow(clippy::cast_possible_truncation)] // The draw is below `range.end`, a `usize`.
     pub fn usize(&mut self, range: std::ops::Range<usize>) -> usize {
-        self.inner.usize(range)
+        // One 64-bit draw on every target: `fastrand::Rng::usize` reduces only
+        // 32 bits on wasm32, giving different values than native.
+        self.inner.u64(range.start as u64..range.end as u64) as usize
     }
 
     /// A fair coin flip.
