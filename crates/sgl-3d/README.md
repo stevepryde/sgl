@@ -965,7 +965,9 @@ scene.set_baked_specular_probes(&device, &queue, &[])?;
   face (Godot's blend distance); zero blend is a hard edge. Influences may and
   should overlap: a receiver's probes are normalised by their total weight, so
   neighbours whose blends meet partition it exactly, and where the total is
-  below one, as at the collection's edge, the sky fills the rest.
+  below one, as at the collection's edge, the sky fills the rest. Each box
+  (influence and proxy) needs `min < max` and a finite `max - min` on every
+  axis.
 - `proxy`: the geometry the capture sees, for box projection. Keep it separate
   from the influence and as large as the space: a corridor's proxy spans the
   whole corridor, and an opening's proxy extends well past it. `None` treats
@@ -2797,9 +2799,10 @@ linear RG direction (remapped to -1..1) and B strength. No texture means +T and
 full texture strength, as on a device of the `Basic` [binding tier](#binding-tiers),
 which binds no anisotropy map. File and embedded glTF imports use the same rules.
 Active anisotropy requires authored tangents; automatic tangent generation is
-not implemented. Normal maps and anisotropy share that frame. An authored
-tangent along its normal spans no frame: it fails the load of an
-anisotropic material and is absent (`Vertex::tangent` zero) on any other.
+not implemented. Normal maps and anisotropy share that frame. A tangent
+within 0.02° of its normal (as authored or after node transforms) spans no
+frame: it fails the load of an anisotropic material and is absent
+(`Vertex::tangent` zero) on any other.
 Where skinning or morphing cancels a tangent or turns it along its normal,
 shading takes an arbitrary tangent in the normal's plane, keeping the
 authored handedness (+1 where there is none), as for a vertex without one.

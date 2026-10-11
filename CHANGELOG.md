@@ -19,6 +19,17 @@ docs and specs the entry links.
   resize resolved against the zeroed, recreated history instead of resetting
   accumulation, which shifted bright HDR texels; it now takes the current
   colour, as after `reset_accumulation`. No game-code changes needed.
+- `sgl-3d` glTF import and `asset::Vertex::tangent`: a tangent a few f32
+  ulps off its normal counted as a frame, its rounding normalised into an
+  arbitrary tangent; a tangent within 0.02° of its normal is now along it:
+  absent on a material without anisotropy, refused on an anisotropic one
+  (import error, or `SceneError::MissingAnisotropyTangents`). No game-code
+  change needed.
+- `sgl-3d` `Scene::set_baked_specular_probes`: when the probes' influence
+  boxes together spanned more than about 7e12 m on each axis, probe captures
+  and world-space ray hits found none of them; they now do. A box whose `max - min` overflows f32
+  (e.g. `-f32::MAX..f32::MAX`) is now refused with
+  `ProbeError::InvalidProbe`; give such a box a smaller, finite extent.
 - `sgl-post-fx` `ScreenSpaceReflection` and
   `ScreenSpaceReflectionAttribs::most_detailed_mip`: a zero world normal
   gave its ray a NaN direction, a non-unit one a skewed ray, and a
