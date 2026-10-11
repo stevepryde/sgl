@@ -9,7 +9,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
 ## Requirements
 
 1. Native peers can use UDP, browser peers can use binary WebSocket, and solo
-   or tests can use an in-memory duplex.
+   or tests can use an in-memory duplex. Native WebSocket is plaintext: the
+   native client accepts only `ws://` URLs and refuses any other, `wss://`
+   included, before connecting; TLS terminates at the deployment edge.
 2. Every transport exposes connect/disconnect events, bounded receive polling,
    send, flush, and close. Native UDP can be caller-polled or owned by a bounded
    worker; a native WebSocket server or client owns one I/O worker thread that
@@ -25,8 +27,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    reports exactly one `Disconnected`, with reason `Local`, at a later poll,
    whatever the peer does afterwards (its own close included). One that had
    already ended, its end set or queued though not yet polled, reports that
-   end instead. A UDP client that disconnects during its handshake reports
-   `Local` with no `Connected`.
+   end instead. A connection that ends otherwise reports the messages it
+   delivered before ending first, then its `Disconnected`. A UDP client that
+   disconnects during its handshake reports `Local` with no `Connected`.
 3. Delivery has three classes: reliable ordered on a lane
    (`Delivery::Reliable(Lane)`; `RELIABLE_LANES` (4) independent lanes,
    `Delivery::RELIABLE_ORDERED` is lane 0), unreliable on a lane
@@ -178,10 +181,18 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     flags, latest state with a lane, a first fragment declaring no more than
     it carries, or mask bits on a control kind is rejected; from a connected
     peer that is `ProtocolViolation`. Handshakes use a keyed cookie
-    challenge with a per-prefix challenge budget and a confirm replay cache.
-    A client confirms the first challenge it receives and ignores others,
-    so challenges to its retried requests, reordered across a cookie epoch,
-    cannot leave it holding a cookie the server has not kept.
+    challenge with a per-prefix challenge budget and a confirm replay cache
+    that keeps every verified confirm until its cookie expires. A client
+    confirms the first challenge it receives and ignores others, so
+    challenges to its retried requests, reordered across a cookie epoch,
+    rarely leave it holding a cookie the server has not kept. After four
+    unanswered confirms it requests again, keeping its cookie until a new
+    challenge replaces it. The cookie gates only a new connection: a server,
+    stopped or not, answers a request or confirm carrying a connection it
+    holds with an accept naming the cookie it kept, at any cookie age. A
+    client that has not connected takes that cookie from the accept, and a
+    client that has confirmed takes a payload carrying its nonces as the
+    accept.
 13. WebSocket frames use the 18-byte version-2 envelope: magic, version, flags
     (kind 0 reliable, 1 latest, 2 unreliable; FIRST; MORE), lane, big-endian
     sequence (0 for reliable and unreliable, strictly increasing for latest),
@@ -200,7 +211,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     it, and of states whose turn comes together only the newest leaves. Text frames, wrong magic or version, the reserved kind, reserved
     flags, an invalid lane, latest state or an unreliable message with
     fragment flags, a total not above its fragment, and frames over
-    `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`. Every
+    `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`, as are
+    frames that break WebSocket framing (reserved bits, an unmasked client
+    frame, an unknown opcode); a peer that ends the stream without a Close
+    is `Peer`, as in the browser and memory transports. Every
     lane shares the one TCP stream: a lost segment stalls every lane until TCP
     retransmits it, and a frame already written precedes everything after it;
     UDP is the transport for loss-isolated lanes. WebSocket may be slower

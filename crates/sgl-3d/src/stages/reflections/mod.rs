@@ -195,7 +195,7 @@ impl Reflections {
             half_resolution,
             ..
         } = screen_space?;
-        let (traced, _) = traced(ctx);
+        let (traced, fade) = traced(ctx);
         let t = ctx.targets;
         let surface = ctx.surface;
         let camera = ctx.views.reflection_camera;
@@ -265,6 +265,7 @@ impl Reflections {
                     screen_space: reflected,
                     camera,
                     traced,
+                    fade,
                 },
                 ctx.timing,
             );
