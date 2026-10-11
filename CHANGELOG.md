@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import, `deformation::MorphDelta::tangent`: a morphed
+  vertex whose `TANGENT` lies along its normal (loaded as absent) got a
+  non-finite delta, so `Scene::add_asset` refused the file with
+  `SceneError::InvalidDeformation`, or, a few ulps off, a huge one; its
+  delta is now zero. No game-code change needed.
 - `sgl-3d` `PreparedModel::new` (and `Scene::add_asset`): a vertex with a
   non-finite `uv` or `lightmap_uv`, or a mesh whose UVs span more than `f32`
   holds, loaded, an infinite UV collapsing its whole mesh's UVs onto one
