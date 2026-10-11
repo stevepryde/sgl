@@ -584,8 +584,15 @@ and no normal fade.
   decals brought images in, as Godot packs its atlas once per frame. Add
   images and decals at load. A removed decal's images stay in the atlas
   until it next packs. A decal whose layout would be larger than the
-  device's textures is refused when it is added, with
-  `SceneError::DeviceLimit`.
+  device's textures, or take more memory to build than the target can
+  allocate, is refused when it is added, with `SceneError::DeviceLimit`.
+  SGL3D builds the atlas on the CPU at 8 bytes a texel, with its mips a
+  third more, and allows 2 GiB for it in the browser and 8 GiB natively.
+  An image's side and its 32-texel border round up to a power of two, and
+  each map counts: one 4096-square image takes an 8192-square atlas
+  (0.67 GiB), two or three 8192 by 16384 (1.33 GiB), and four, or one
+  8192-square image, 16384 square (2.66 GiB), which the browser refuses.
+  8160 square is the largest image an 8192-square atlas holds.
 - Values must be finite, the size positive, the rotation nonzero, `color`
   and `base_color_mix` in [0, 1], the fades nonnegative and `normal_fade`
   below 1; anything else is refused with `SceneError::InvalidDecal`.

@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::add_decal`/`set_decal`: a decal atlas too large for the
+  CPU to build (one 8192-square image in the browser) panicked when the
+  next frame packed it, and an image wider than the device's textures could
+  stall or overflow packing; both are now refused with `SceneError::DeviceLimit`
+  when the decal is added, at most 2 GiB of atlas in the browser and 8 GiB
+  natively. In the browser, keep the decal images in use within that
+  ([Decals](crates/sgl-3d/README.md#decals)); no other game-code changes.
 - `sgl-3d` orthographic `Camera` shading and `SurfaceContext::view`: the
   view vector pointed from each surface toward `Camera::eye`, so highlights
   and Fresnel varied across a flat surface and vanished on one between the
