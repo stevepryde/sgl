@@ -139,9 +139,10 @@ async function mutants(args: string[]): Promise<void> {
     // cargo-mutants exits 2 when mutants survive and 3 when they time out;
     // that is the report, not a task failure. Any other non-zero code (or
     // cargo's 101 when cargo-mutants is missing) is. So is a run that tested nothing.
-    const { exitCode } = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
+    const { exitCode, signalCode } = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
     if (exitCode !== 0 && exitCode !== 2 && exitCode !== 3) {
-      throw new Error(`${crate}: cargo mutants failed with exit code ${exitCode}; see the output above`);
+      const status = signalCode ? `signal ${signalCode}` : `exit code ${exitCode}`;
+      throw new Error(`${crate}: cargo mutants failed with ${status}; see the output above`);
     }
     const dir = `mutants.out/${crate}/mutants.out`;
     const count = async (name: string) => {
