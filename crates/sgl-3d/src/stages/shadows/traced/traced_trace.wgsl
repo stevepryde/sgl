@@ -81,7 +81,7 @@ fn traced_directional_light()->u32 {
 // both normals and the light's sphere or disc (light_faces): where both
 // face away from all of it, no lobe takes the light. It is never narrower
 // than the lighting's, which takes a coatless surface's base normal alone
-// (shade_lit): a coatless pixel keeps its geometry normal here, since its
+// (Surface): a coatless pixel keeps its geometry normal here, since its
 // texel carries onto the neighbours the upsample and denoiser share, whose
 // own mapped normals may face a light its own does not. Where `untraced`, a
 // baked light at a receiver that takes no baked lights, which the lighting
