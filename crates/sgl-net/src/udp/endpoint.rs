@@ -930,10 +930,13 @@ impl<T: DatagramTransport> Endpoint<T> {
         events: &mut Vec<EndpointEvent>,
     ) {
         match kind {
+            // A stopped server still answers a connection it already has,
+            // whose client may be asking again after its accept was lost.
             Kind::ConnectRequest
                 if self.role == EndpointRole::Server
-                    && self.accepting_connections
-                    && nonces.server == 0 =>
+                    && nonces.server == 0
+                    && (self.accepting_connections
+                        || self.routes.contains_key(&(source, nonces.client))) =>
             {
                 self.handle_connect_request(nonces.client, source, now_ms);
             }
@@ -965,19 +968,24 @@ impl<T: DatagramTransport> Endpoint<T> {
             Kind::ConnectConfirm if self.role == EndpointRole::Server => {
                 self.handle_connect_confirm(nonces, source, now_ms, events);
             }
-            Kind::ConnectAccept if self.role == EndpointRole::Client => {
+            Kind::ConnectAccept if self.role == EndpointRole::Client && nonces.server != 0 => {
                 let Some(&id) = self.routes.get(&(source, nonces.client)) else {
                     return;
                 };
                 let peer = self.peers.get_mut(&id).expect("route points to peer");
-                if peer.nonces != nonces {
-                    return;
-                }
-                peer.last_receive_ms = now_ms;
-                if peer.handshake != Handshake::Connected {
+                if peer.handshake == Handshake::Connected {
+                    if peer.nonces != nonces {
+                        return;
+                    }
+                } else {
+                    // The accept names the cookie the server kept. After
+                    // asking again, the client may have confirmed an older
+                    // challenge, which the server answers with that one.
+                    peer.nonces = nonces;
                     peer.handshake = Handshake::Connected;
                     events.push(EndpointEvent::Connected { peer: id });
                 }
+                peer.last_receive_ms = now_ms;
             }
             Kind::ConnectDeny if self.role == EndpointRole::Client => {
                 let Some(&id) = self.routes.get(&(source, nonces.client)) else {
@@ -2088,6 +2096,99 @@ mod tests {
                 }
             ]
         );
+    }
+
+    /// Defect (#439): a stopped server dropping a request from a connection
+    /// it holds, so a client asking again after its accept was lost goes
+    /// unanswered. Oracle: `stop_admission` stops new connections "without
+    /// affecting existing ones" (`ServerIo`); a request carrying an admitted
+    /// connection's client nonce is answered with its accept.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_stopped_server_answers_a_request_from_a_connection_it_holds() {
+        let (mut server, source, nonces) = connected_server(EndpointConfig::default());
+        server.stop_admission();
+        request(&mut server, source, nonces.client);
+        assert!(server.poll(10).is_empty());
+        assert_eq!(
+            server
+                .transport
+                .sent
+                .iter()
+                .map(|datagram| (datagram.destination, parsed_control(datagram)))
+                .collect::<Vec<_>>(),
+            [(source, (Kind::ConnectAccept, nonces))]
+        );
+    }
+
+    /// Defect (#439): a client that, after asking again, confirmed a late
+    /// challenge to an earlier request discarding the server's accept for
+    /// the newer cookie the server kept, so it never connects. Oracle: the
+    /// server answers a confirm for an older cookie with an accept naming
+    /// the one it kept; the client connects on it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_client_holding_an_older_cookie_connects_on_the_servers_accept() {
+        let (server_addr, client_addr) =
+            (address(192, 0, 2, 1, 7_000), address(192, 0, 2, 2, 40_000));
+        let config = EndpointConfig {
+            timeout_ms: 60_000,
+            ..EndpointConfig::default()
+        };
+        let mut server =
+            Endpoint::server(RecordingTransport::default(), config.clone(), [17; 32]).unwrap();
+        let mut client = Endpoint::client(RecordingTransport::default(), config).unwrap();
+        let peer = client.start_connect(server_addr, 0, 76).unwrap();
+        // The first challenge (cookie epoch 0) is held back.
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(0).is_empty());
+        let late_challenge = std::mem::take(&mut server.transport.sent);
+        // A retried request in epoch 1 is challenged and confirmed; the
+        // server admits it, but its accept is lost.
+        client.flush(5_000);
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(5_000).is_empty());
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert!(client.poll(5_001).is_empty());
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert_eq!(server.poll(5_002), [EndpointEvent::Connected { peer: 1 }]);
+        server.transport.sent.clear();
+        // Its confirms are lost until it asks again.
+        let mut now = 5_001;
+        while !client
+            .transport
+            .sent
+            .iter()
+            .any(|datagram| parsed_control(datagram).0 == Kind::ConnectRequest)
+        {
+            client.transport.sent.clear();
+            now += 10;
+            client.flush(now);
+        }
+        client.transport.sent.clear();
+        // The late challenge arrives and is confirmed.
+        for datagram in late_challenge {
+            client.transport.received.push_back(ReceivedDatagram {
+                source: server_addr,
+                bytes: datagram.bytes,
+                fail: false,
+            });
+        }
+        assert!(client.poll(now).is_empty());
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(now).is_empty());
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert_eq!(client.poll(now + 1), [EndpointEvent::Connected { peer }]);
     }
 
     /// Defect (#307): a failed receive (Windows' `WSAEMSGSIZE` or

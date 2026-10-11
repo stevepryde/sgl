@@ -16,10 +16,11 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-net` UDP endpoints: a handshake whose confirms or accept were lost
-  until the cookie expired (5 to 10 s) never completed; the server now
-  accepts a confirm for a connection it holds at any cookie age, and the
-  client requests again after four unanswered confirms and takes a payload
-  carrying its nonces as the accept. No game-code change needed.
+  until the cookie expired (5 to 10 s) never completed; the server, even
+  after `stop_admission`, now accepts a request or confirm for a connection
+  it holds at any cookie age, and the client requests again after four
+  unanswered confirms, takes the cookie the accept names, and takes a
+  payload carrying its nonces as the accept. No game-code change needed.
 - `sgl-net` `ThreadedUdpServer`: a connection that ended at the worker (peer
   close, timeout, protocol violation) discarded the messages it had
   delivered but the caller had not yet polled and reported `Disconnected`
