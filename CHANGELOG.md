@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::screen_space_reflections` (Velvet) and
+  `Settings::world_space_reflections`: within half a texel of the top or
+  left edge, the history fallback took colour and depth from one texel
+  inward, and the world-ray resolve reused an edge pixel for a neighbour off
+  the grid; the fallback now reads the edge texel and the resolve skips the
+  neighbour. No game-code changes needed.
 - `sgl-3d` `Settings::world_space_reflections`: on rare frames each world
   ray traced the next 2×2 block's pixel (the last outside the screen), and
   at a render 1 pixel wide or tall it read past the edge; each now traces a
