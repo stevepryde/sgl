@@ -20,9 +20,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    reset, it accepts again at once; after any other accept error it retries
    after a short back-off. A native WebSocket client tries each address its
    host resolves to, in order, until one accepts; one `handshake_timeout`
-   bounds those attempts and the HTTP upgrade together. On every
-   transport, a connection still open when the caller disconnects reports
-   exactly one `Disconnected`, with reason `Local`, at a later poll,
+   bounds host resolution, those attempts and the HTTP upgrade together.
+   On every transport, a connection still open when the caller disconnects
+   reports exactly one `Disconnected`, with reason `Local`, at a later poll,
    whatever the peer does afterwards (its own close included). One that had
    already ended, its end set or queued though not yet polled, reports that
    end instead. A UDP client that disconnects during its handshake reports
