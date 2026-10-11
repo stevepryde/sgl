@@ -14,33 +14,39 @@ use super::super::deformation::{
 };
 use super::check_accessor;
 
-/// The rig being imported, and where each skin's joints and each morphed
-/// node's weights start in it.
+/// The rig being imported, where each skin's joints and each morphed
+/// node's weights start in it, and each mesh's morph-target count.
 pub(super) struct Rigging {
     pub rig: Rig,
     /// Each skin's first joint, by skin index.
     skins: Vec<u32>,
     /// Each morphed node's first weight.
     morphs: HashMap<usize, u32>,
+    /// Each mesh's morph-target count (`morph_target_count`), by mesh
+    /// index, counted once rather than for each node or channel that
+    /// names a mesh.
+    targets: Vec<usize>,
 }
 
 impl Rigging {
     /// The document's nodes, each with its parent (`parents`), skins and
     /// clips; empty when it has no skin, morph target or animation.
+    /// `buffer_bytes` is the total length of `buffers`.
     pub fn new(
         document: &gltf::Document,
         parents: &[Option<usize>],
-        buffers: &[gltf::buffer::Data],
+        (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
     ) -> Result<Self> {
         let mut rigging = Self {
             rig: Rig::default(),
             skins: Vec::new(),
             morphs: HashMap::new(),
+            targets: document
+                .meshes()
+                .map(|mesh| morph_target_count(&mesh))
+                .collect(),
         };
-        let morphed = document
-            .meshes()
-            .flat_map(|mesh| mesh.primitives())
-            .any(|primitive| primitive.morph_targets().next().is_some());
+        let morphed = rigging.targets.iter().any(|&targets| targets > 0);
         if document.skins().next().is_none() && document.animations().next().is_none() && !morphed {
             return Ok(rigging);
         }
@@ -66,7 +72,7 @@ impl Rigging {
                     &[DataType::F32],
                     &[Dimensions::Mat4],
                     Some(skin.joints().count()),
-                    buffers,
+                    buffer_bytes,
                 )?;
             }
             let reader = skin.reader(|buffer| Some(&buffers[buffer.index()].0));
@@ -99,9 +105,14 @@ impl Rigging {
         }
         rigging.rig.clips = document
             .animations()
-            .map(|animation| read_clip(&animation, buffers))
+            .map(|animation| read_clip(&animation, (buffers, buffer_bytes), &rigging.targets))
             .collect::<Result<_>>()?;
         Ok(rigging)
+    }
+
+    /// `mesh`'s morph-target count.
+    pub fn mesh_targets(&self, mesh: &gltf::Mesh<'_>) -> usize {
+        self.targets[mesh.index()]
     }
 
     /// The first joint of `skin` and its joint count.
@@ -188,14 +199,19 @@ pub(super) fn parents(document: &gltf::Document) -> Result<Vec<Option<usize>>> {
 /// `mesh`'s morph-target count: its first primitive with targets' (glTF
 /// 2.0 3.7.2.2, as KhronosGroup/glTF#2650 words it), which every primitive
 /// with targets must share; a primitive without any takes none.
-pub(super) fn mesh_morph_target_count(mesh: &gltf::Mesh<'_>) -> usize {
+fn morph_target_count(mesh: &gltf::Mesh<'_>) -> usize {
     mesh.primitives()
         .map(|primitive| primitive.morph_targets().count())
         .find(|&count| count > 0)
         .unwrap_or(0)
 }
 
-fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) -> Result<Clip> {
+/// `animation`'s clip; `targets` holds each mesh's morph-target count.
+fn read_clip(
+    animation: &gltf::Animation<'_>,
+    (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
+    targets: &[usize],
+) -> Result<Clip> {
     let label = format!("animation {}", animation.index());
     let channels = animation
         .channels()
@@ -210,7 +226,7 @@ fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) ->
                 &[F32],
                 &[Dimensions::Scalar],
                 None,
-                buffers,
+                buffer_bytes,
             )?;
             let interpolation = match sampler.interpolation() {
                 GltfInterpolation::Step => Interpolation::Step,
@@ -232,7 +248,7 @@ fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) ->
                         .target()
                         .node()
                         .mesh()
-                        .map_or(0, |mesh| mesh_morph_target_count(&mesh));
+                        .map_or(0, |mesh| targets[mesh.index()]);
                     if targets == 0 {
                         return Err(format!(
                             "{label}: morph weights animate a node without morph targets"
@@ -254,7 +270,7 @@ fn read_clip(animation: &gltf::Animation<'_>, buffers: &[gltf::buffer::Data]) ->
                 types,
                 &[shape],
                 Some(values),
-                buffers,
+                buffer_bytes,
             )?;
             let reader = channel.reader(|buffer| Some(&buffers[buffer.index()].0));
             let times: Vec<f32> = reader

@@ -366,14 +366,15 @@ fn decode(
     // glTF primitives may omit a material; retain the specification default.
     let default_material = materials.len();
     materials.push(Material::default());
-    let mut rigging = Rigging::new(&document, &parents, buffers)?;
+    let buffer_bytes = buffers.iter().map(|buffer| buffer.0.len()).sum();
+    let mut rigging = Rigging::new(&document, &parents, (buffers, buffer_bytes))?;
     let include_node = options.nodes.unwrap_or(&|_| true);
     let mut meshes = Vec::new();
     for node in scene.nodes() {
         read_node(
             node,
             Mat4::IDENTITY,
-            buffers,
+            (buffers, buffer_bytes),
             (default_material, &materials),
             &mut rigging,
             &mut meshes,
@@ -528,15 +529,15 @@ fn load_bytes(document: &gltf::Document, scene: &gltf::Scene<'_>) -> Option<u64>
 /// itself fixed by data or the document, or None where nothing fixes it.
 /// An accessor without a buffer view (a sparse one) declares its count
 /// without data; where nothing fixes that count, its elements may take no
-/// more bytes than `buffers` hold, the bound its elements would meet in a
-/// buffer view.
+/// more bytes than the file's buffers hold (`buffer_bytes`, their total),
+/// the bound its elements would meet in a buffer view.
 fn check_accessor(
     accessor: &gltf::Accessor<'_>,
     what: &str,
     types: &[DataType],
     shapes: &[Dimensions],
     count: Option<usize>,
-    buffers: &[gltf::buffer::Data],
+    buffer_bytes: usize,
 ) -> Result<()> {
     let index = accessor.index();
     let (data_type, shape) = (accessor.data_type(), accessor.dimensions());
@@ -555,14 +556,13 @@ fn check_accessor(
     {
         return Err(format!("{what} accessor {index} has {elements} elements where its use needs {count}; re-export valid glTF").into());
     }
-    let data: usize = buffers.iter().map(|buffer| buffer.0.len()).sum();
     if count.is_none()
         && accessor.view().is_none()
         && elements
             .checked_mul(accessor.size())
-            .is_none_or(|bytes| bytes > data)
+            .is_none_or(|bytes| bytes > buffer_bytes)
     {
-        return Err(format!("{what} accessor {index} has {elements} elements without a buffer view, more than the file's {data} buffer bytes would hold; re-export valid glTF").into());
+        return Err(format!("{what} accessor {index} has {elements} elements without a buffer view, more than the file's {buffer_bytes} buffer bytes would hold; re-export valid glTF").into());
     }
     let size = accessor.size();
     let within = accessor

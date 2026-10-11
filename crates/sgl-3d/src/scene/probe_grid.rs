@@ -16,8 +16,9 @@ const MAX_CELLS: u32 = 1 << 15;
 /// so the extent of bounds clamped to it, with its margin, and the grid's
 /// origin and scale stay finite. A box reaching past it, or one whose world
 /// bounds overflow f32 (a rotated box nearly as wide as f32 allows), covers
-/// the grid only to here.
-const REACH: f32 = f32::MAX / 4.;
+/// the grid only to here. Proxies are clamped to it in their own frame
+/// (probes.rs), which keeps box projection's distances finite.
+pub(super) const REACH: f32 = f32::MAX / 4.;
 
 /// One cell's record in `ProbeGrid::words`: its list's first index into
 /// `words` and its probe count. probe_grid.wgsl reads it as
