@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `geometry::obstructed_distance`: its absolute determinant cutoff
+  missed every hit on a triangle with sub-millimetre edges and grazing hits
+  on centimetre ones; the cutoff now scales with the triangle's edges, so
+  small triangles are hit like large ones. No game-code change needed.
 - `sgl-3d` glTF import and `Ignored::Attribute` (new): a `TEXCOORD_2`+,
   `COLOR_1`+ or `_NAME` attribute, or a `TANGENT` along its normal on a
   material without anisotropy, failed the load; the attribute is now left
