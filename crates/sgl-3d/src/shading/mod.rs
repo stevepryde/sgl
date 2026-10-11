@@ -22,6 +22,8 @@ pub(crate) mod iridescence_tests;
 #[cfg(test)]
 pub(crate) mod layout_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod light_reach_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod lighting_model_tests;
 pub(crate) mod lights;
 pub(crate) mod lod;
