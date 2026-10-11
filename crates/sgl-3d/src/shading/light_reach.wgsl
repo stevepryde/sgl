@@ -37,24 +37,38 @@ fn light_angle_attenuation(light:Light,to_light:vec3<f32>)->f32 {
  let attenuation=saturate(cosine*light.spot_scale+light.spot_offset);
  return attenuation*attenuation;
 }
+// Whether a front lobe of a surface with base normal `normal` and coat
+// normal `coat_normal` can take a light toward unit `direction` of size
+// `size` (LightSample.size: a sphere's radius over its distance, a
+// directional light's disc radius): a sized light's lobes take its
+// representative point (pbr_sized_light), which lies at most `size` from
+// `direction`, so where both normals face farther from the light than
+// that, no lobe takes it, and every lobe clamps its own cosine elsewhere.
+fn light_faces(normal:vec3<f32>,coat_normal:vec3<f32>,direction:vec3<f32>,size:f32)->bool {
+ return dot(normal,direction)>-size || dot(coat_normal,direction)>-size;
+}
 // How a scene light reaches a receiver: the unit direction toward its
-// position, its attenuation there, 0 where it does not reach, and whether
-// it is a rectangle the pipeline shades.
+// position, its attenuation there, 0 where it does not reach, whether it
+// is a rectangle the pipeline shades, and its size (LightSample.size): a
+// point or spot light's sphere over its distance, a rectangle's none.
 struct LightReach {
  direction:vec3<f32>,
  attenuation:f32,
  rect:bool,
+ size:f32,
 }
-// How `light` reaches a receiver at `position` with shading normal
-// `normal`. It does not reach a receiver it is out of range of, outside
-// the cone of, or behind (a rectangle: not in front of its face); a point
-// in the fog has no side, and a surface that passes diffuse light to its
-// other side takes light on both (`both_sides`), so a light reaches either
-// from any direction. A point or spot light's inverse square takes
+// How `light` reaches a receiver at `position` with base and coat shading
+// normals `normal` and `coat_normal` (Surface). It does not reach a
+// receiver it is out of range of, outside the cone of, or behind (a point
+// or spot light: where neither normal faces any of its sphere,
+// light_faces; a rectangle: not in front of its face); a point in the fog
+// has no side, and a surface that passes diffuse light to its other side
+// takes light on both (`both_sides`), so a light reaches either from any
+// direction. A point or spot light's inverse square takes
 // `distance_bias_square` in its denominator (light_distance_attenuation);
 // a rectangle's light, bounded near its face, takes none.
-fn light_reach(light:Light,position:vec3<f32>,normal:vec3<f32>,both_sides:bool,distance_bias_square:f32)->LightReach {
- let unreached=LightReach(vec3(0.),0.,false);
+fn light_reach(light:Light,position:vec3<f32>,normal:vec3<f32>,coat_normal:vec3<f32>,both_sides:bool,distance_bias_square:f32)->LightReach {
+ let unreached=LightReach(vec3(0.),0.,false,0.);
  let to_light=light.position-position;
  let distance_square=dot(to_light,to_light);
  if distance_square<=1e-10 {
@@ -69,11 +83,12 @@ fn light_reach(light:Light,position:vec3<f32>,normal:vec3<f32>,both_sides:bool,d
   if dot(light.direction,direction)>=0. {
    return unreached;
   }
-  return LightReach(direction,light_range_window(distance_square,light.inverse_square_range),true);
+  return LightReach(direction,light_range_window(distance_square,light.inverse_square_range),true,0.);
  }
- if !both_sides && dot(normal,direction)<=0. {
+ let size=light.radius*inverseSqrt(distance_square);
+ if !both_sides && !light_faces(normal,coat_normal,direction,size) {
   return unreached;
  }
  let attenuation=light_distance_attenuation(distance_square,light.inverse_square_range,distance_bias_square)*light_angle_attenuation(light,direction);
- return LightReach(direction,attenuation,false);
+ return LightReach(direction,attenuation,false,size);
 }

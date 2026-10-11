@@ -15,6 +15,26 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import: a sparse accessor without a buffer view declaring a
+  huge count aborted the process; the load now fails with an error naming
+  it when an accessor's count differs from what glTF requires (POSITION's
+  for attributes and morph targets, the joints' for inverse binds, the
+  keyframes' for values) or when a sparse accessor without a buffer view
+  that nothing else counts declares more elements than the file's buffers
+  would hold. No game-code change needed.
+- `sgl-3d` point and spot lights: a light was dropped wherever the mapped
+  base normal faced away from its centre, so a clearcoat over normal-mapped
+  flakes lost the coat's highlight and a sphere light's highlight popped off
+  as its centre crossed the horizon; it now reaches a surface while the
+  base or the coat normal faces any of its sphere, as directional lights
+  already did, in lighting and ray-traced shadows alike; the directional
+  light's ray-traced shadow now traces its whole disc too. No game-code
+- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): a ray that left
+  past the far plane, such as a floor reflecting the sky under infinite
+  reversed-Z, stored a length beyond RGBA16F's range, becoming infinity and
+  NaN in the denoiser or a wrong direction where the backend saturates, or a
+  short meaningless one where its last step overshot the plane; it is now
+  stored 65504 long along its direction. No game-code change needed.
 - `sgl-3d` anisotropic materials: a tangent that skinning or morphing
   cancelled or turned along its normal, or a ray hit whose vertex tangents
   all vanished, shaded NaN; it now takes an arbitrary tangent in the
