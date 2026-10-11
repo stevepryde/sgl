@@ -61,8 +61,10 @@ fn skin_normals(model:mat4x4<f32>,normal:vec3<f32>)->vec3<f32> {
  let skinned=cofactor_normal(model,normal);
  return select(normal,normalize(skinned),dot(skinned,skinned)>0.);
 }
-@compute @workgroup_size(64) fn deform(@builtin(global_invocation_id) id:vec3<u32>) {
- let vertex_index=id.x;
+// Past 65 535 workgroups a dispatch wraps into rows of `workgroups.x`
+// (`dispatch_side`); a direct dispatch's `num_workgroups` holds on DX12.
+@compute @workgroup_size(64) fn deform(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) workgroups:vec3<u32>) {
+ let vertex_index=id.y*workgroups.x*64u+id.x;
  if vertex_index>=dispatch.vertex_count {
   return;
  }

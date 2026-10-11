@@ -20,6 +20,17 @@ docs and specs the entry links.
   and Fresnel varied across a flat surface and vanished on one between the
   eye and a near plane behind it; it is now the camera's backward axis at
   every surface. No game-code changes.
+- `sgl-3d` deformation (`Scene::set_instance_deformation`): a deforming mesh
+  above 4,194,240 vertices failed device validation every frame it deformed;
+  it now deforms. No game-code changes needed.
+- `sgl-net` native WebSocket keepalive: an unsolicited 8-byte pong arriving
+  after the reply to this side's ping, before the next `poll` or `flush`,
+  discarded the reply, so this side never pinged again and its `rtt` stopped
+  updating; the reply now counts. No game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown`: for one frame after a selection,
+  click-away, Escape, `Ui::close_popups` or `Ui::cancel_interactions` closed
+  the popover, widgets under where it was could not hover or take a press;
+  they now respond at once. No game-code change needed.
 - `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
   (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
   (`FrameInput::camera_cut`, a resize or another scene) in a frame where the
