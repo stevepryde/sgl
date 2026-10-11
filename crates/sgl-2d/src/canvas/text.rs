@@ -368,7 +368,8 @@ impl TextRenderer {
 
     /// Single-line size of `text` at `px`: width = advances + kerning,
     /// height = [`line_height`](Self::line_height). Pure metrics — no
-    /// rasterization.
+    /// rasterization. A size that is not positive and finite measures
+    /// zero, matching [`draw`](Self::draw), which draws nothing at it.
     ///
     /// **Coupling with [`draw`](Self::draw)**: `draw` advances the pen with
     /// metrics fetched at `px × pixel_scale` and divided back by the scale,
@@ -378,6 +379,9 @@ impl TextRenderer {
     /// `draw`'s advance math ever stops being a pure rescale of the `px`
     /// metrics, route this through the same `raster_px / s` computation.
     pub fn measure(&self, text: &str, px: f32) -> Vec2 {
+        if !drawable_px(px) {
+            return Vec2::ZERO;
+        }
         let mut width = 0.0;
         let mut prev: Option<char> = None;
         for c in text.chars() {
@@ -410,7 +414,8 @@ impl TextRenderer {
     /// Queue one line of text with its top-left at `top_left` (logical
     /// pixels). Pass order per glyph run: shadow, outline rings, fill — all
     /// at `z`, relying on the `DrawList`'s stable sort (PR-2 push order).
-    /// Quads reach the list at [`end_frame`](Self::end_frame).
+    /// Quads reach the list at [`end_frame`](Self::end_frame). A size that
+    /// is not positive and finite draws nothing.
     pub fn draw(
         &mut self,
         text: &str,
@@ -427,6 +432,9 @@ impl TextRenderer {
         // pre-scale layout (multiplying/dividing by 1.0 is exact).
         let s = self.pixel_scale;
         let raster_px = style.px * s;
+        if !drawable_px(raster_px) {
+            return;
+        }
         let snap = |v: f32| (v * s).round() / s;
         let baseline = top_left.y + self.ascent(raster_px) / s;
         let mut placed: Vec<(GlyphBitmap, Vec2)> = Vec::new();
@@ -582,11 +590,17 @@ impl TextRenderer {
             return *slot;
         }
         let metrics = self.font.metrics(c, px);
-        let side = u64::try_from(metrics.width.max(metrics.height)).unwrap_or(u64::MAX);
-        let bitmap = if metrics.width == 0
-            || metrics.height == 0
-            || side + u64::from(PADDING) > u64::from(MAX_GLYPH_PAGE_SIZE)
-        {
+        // A size fontdue reports past `u32` (a negative size wraps its
+        // dimensions near `usize::MAX`) is not drawn, like one past the cap.
+        let dims = u32::try_from(metrics.width)
+            .ok()
+            .zip(u32::try_from(metrics.height).ok())
+            .filter(|&(w, h)| {
+                w != 0
+                    && h != 0
+                    && u64::from(w.max(h)) + u64::from(PADDING) <= u64::from(MAX_GLYPH_PAGE_SIZE)
+            });
+        let bitmap = if dims.is_none() {
             None
         } else {
             let (metrics, coverage) = self.font.rasterize(c, px);
@@ -699,6 +713,12 @@ fn ring_offsets(width: f32) -> Vec<Vec2> {
         r -= 2.0;
     }
     out
+}
+
+/// Whether text at `px` is drawn: a size that is not positive and finite is
+/// not (fontdue's metrics for a negative size are meaningless).
+fn drawable_px(px: f32) -> bool {
+    px > 0.0 && px.is_finite()
 }
 
 #[cfg(test)]
@@ -1151,6 +1171,23 @@ mod tests {
         let slot = tr.glyph('W', 40_000.0);
         assert!(slot.bitmap.is_none());
         assert!(slot.advance > 0.0);
+        assert_eq!(tr.page_count(), 0);
+    }
+
+    /// #429: a negative or infinite size draws nothing, measures zero and
+    /// does not panic.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn negative_and_non_finite_sizes_draw_nothing() {
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        for px in [-16.0, f32::NEG_INFINITY, f32::INFINITY, f32::NAN] {
+            let mut list = DrawList::new();
+            let style = TextStyle::new(px, [1.0; 4]);
+            tr.draw("Hello", Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+            tr.end_frame(&mut assets, &mut list);
+            assert!(list.screen.is_empty(), "{px} drew glyphs");
+            assert_eq!(tr.measure("Hello", px), Vec2::ZERO, "{px}");
+        }
         assert_eq!(tr.page_count(), 0);
     }
 
