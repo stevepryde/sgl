@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP client: a deny that overtook the accept of a retried confirm
+  (or whose accept was lost) left the server holding that connection until
+  `timeout_ms`; the client now answers the deny with a disconnect, so the
+  server reports `Disconnected { reason: Peer }` right after `Connected`. No
+  game-code change needed.
 - `sgl-3d` `Scene::add_decal`/`set_decal`: a decal atlas too large for the
   CPU to build (one 8192-square image in the browser) panicked when the
   next frame packed it, and an image wider than the device's textures could
