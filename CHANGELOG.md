@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `ThreadedUdpServer`: a connection that ended at the worker (peer
+  close, timeout, protocol violation) discarded the messages it had
+  delivered but the caller had not yet polled and reported `Disconnected`
+  first; polls now return those messages, then `Disconnected`. No game-code
+  change needed.
 - `sgl-3d` `Settings::world_space_reflections`: a receiver in the
   screen-space method's roughness fade that the method saw with full
   confidence traced no world ray, leaving its faded share to probes and sky;
