@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `memory_duplex`: flushed unreliable messages the peer had not
+  polled counted against the sender's unreliable bounds, so `send` returned
+  `WouldBlock` and the peer later got the oldest; now only unflushed ones
+  count and an unpolled peer drops its oldest past the lane's bounds, as on
+  WebSocket and UDP. No game-code change needed.
 - `sgl-2d` `Renderer::set_target_size`: a size wider or taller than the
   device's maximum texture dimension clamped only that axis, distorting the
   aspect, letterboxing the frame and shrinking `ui_size()`; both axes now

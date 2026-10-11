@@ -125,8 +125,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     reason means only a peer past the UDP endpoint's
     `global_reliable_inbound_bytes`.
     Received unreliable messages waiting for `poll` past a lane's
-    `unreliable_messages` or `unreliable_bytes` (WebSocket and threaded UDP
-    ingress) instead shed the oldest: a receiver that is not polled drops
+    `unreliable_messages` or `unreliable_bytes` (WebSocket, threaded UDP
+    ingress and memory, whose sender's queue holds only what it has not
+    flushed) instead shed the oldest: a receiver that is not polled drops
     its oldest unpolled unreliable messages, as a full UDP socket buffer
     does. The threaded server's poll returns at most 32 lane messages per
     peer (`udp::LANE_MESSAGES_PER_PEER_PER_POLL`), shared across its lanes and
