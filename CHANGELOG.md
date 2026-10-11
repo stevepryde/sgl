@@ -19,6 +19,13 @@ docs and specs the entry links.
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and
   layout matches a cold cache and `measure`. No game-code change needed.
+- `sgl-3d` `asset::load*`: every glTF image was decoded (and asked of
+  `LoadOptions::images`), so one only an unsupported texture extension
+  (`KHR_texture_basisu`) or an ignored map used could fail the load; now
+  only images a sampled material map uses are asked for and decoded, and
+  each other is a one-texel placeholder listed as the new
+  `Ignored::Image { image }`. No game-code change needed; exhaustive
+  matches on `Ignored` add the arm.
 - `sgl-net` `NativeWebSocketClient::connect`: tried only the host's first
   resolved address (so `localhost` could be refused when `::1` came first),
   and the TCP connect and HTTP upgrade each took a full `handshake_timeout`;
