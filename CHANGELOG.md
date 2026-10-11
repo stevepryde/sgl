@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
+  radius that is not positive (including NaN) now emits nothing. No
+  game-code change needed.
 - `sgl-2d` `TextRenderer::draw` / `measure`: a negative size panicked in
   `draw` and measured negative in `measure`; a size that is not positive
   and finite now draws nothing and measures `Vec2::ZERO`. No game-code
