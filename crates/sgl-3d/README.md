@@ -2802,7 +2802,7 @@ Active anisotropy requires authored tangents; automatic tangent generation is
 not implemented. Normal maps and anisotropy share that frame. A tangent
 within 0.02° of its normal (as authored or after node transforms) spans no
 frame: it fails the load of an anisotropic material and is absent
-(`Vertex::tangent` zero) on any other.
+(`Vertex::tangent` zero, with no morph-target tangent delta) on any other.
 Where skinning or morphing cancels a tangent or turns it along its normal,
 shading takes an arbitrary tangent in the normal's plane, keeping the
 authored handedness (+1 where there is none), as for a vertex without one.

@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import, morph targets: a vertex whose `TANGENT` lies along
+  its normal (loaded as absent) got a non-finite or huge tangent delta, so
+  `Scene::add_asset` refused the file with `SceneError::InvalidDeformation`;
+  such a vertex's tangent delta is now zero and the file loads. No
+  game-code change needed.
 - `sgl-3d` glTF import and `asset::Vertex::tangent`: a tangent a few f32
   ulps off its normal counted as a frame, its rounding normalised into an
   arbitrary tangent; a tangent within 0.02° of its normal is now along it:
