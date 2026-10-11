@@ -121,7 +121,9 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   keeps one size and moves in whole texels, so a still shadow does not
   shimmer as the camera moves and turns (a change of field of view or of
   these values resizes it). Each cascade overlaps the next by a fifth of its
-  far bound, and surfaces blend between the two there. Beyond `distance`
+  far bound's distance from the camera, and surfaces blend between the two
+  there. An orthographic camera's near plane may lie behind it: the cascades
+  and the clustered lights then start there. Beyond `distance`
   nothing is shadowed. Casters between the light and a cascade still cast
   into it: their depth is unclipped, through
   `wgpu::Features::DEPTH_CLIP_CONTROL` where the device has it

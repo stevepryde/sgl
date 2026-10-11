@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` orthographic cameras: with the near plane behind the camera
+  (a negative near), lights behind the camera were dropped from the
+  clusters and surfaces between the near plane and the camera got no
+  directional shadow; both now reach the near plane. No game-code change
+  needed.
 - `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and
