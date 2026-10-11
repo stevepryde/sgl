@@ -15,6 +15,14 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflection` and
+  `ScreenSpaceReflectionAttribs::most_detailed_mip`: a zero world normal
+  gave its ray a NaN direction, a non-unit one a skewed ray, and a
+  `most_detailed_mip` past the depth hierarchy's top level started rays at
+  a level that does not exist; a normal whose squared length is more than
+  0.1 from 1 now reports a miss, and `most_detailed_mip` counts as the top
+  level at most. A game feeding SSR directly writes unit world normals;
+  SGL3D games need no change.
 - `sgl-3d` `AutoExposure::speed_brighten`/`speed_darken`: a NaN speed made
   the adapted exposure NaN until a history reset, a negative one moved it
   away from its target, an infinite one adapted instantly, and a speed of 0
