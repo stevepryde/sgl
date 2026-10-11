@@ -12,6 +12,11 @@ use diffuse_transmission::read_diffuse_transmission;
 use sheen::read_sheen;
 use transmission::{read_dispersion, read_transmission, read_volume};
 
+/// The properties every material extension object takes from glTF 2.0's
+/// glTFProperty, beside its own (Khronos glTF
+/// specification/2.0/schema/glTFProperty.schema.json).
+const GLTF_PROPERTY_KEYS: [&str; 2] = ["extensions", "extras"];
+
 /// glTF material `index`, adding what SGL3D leaves out of it to `ignored`.
 pub(super) fn read_material(
     material: gltf::Material<'_>,
@@ -228,8 +233,9 @@ fn read_anisotropy<'a>(
     for key in object.keys() {
         if !matches!(
             key.as_str(),
-            "anisotropyStrength" | "anisotropyRotation" | "anisotropyTexture" | "extras"
-        ) {
+            "anisotropyStrength" | "anisotropyRotation" | "anisotropyTexture"
+        ) && !GLTF_PROPERTY_KEYS.contains(&key.as_str())
+        {
             return Err(error(&format!("unsupported property {key}")).into());
         }
     }
@@ -320,8 +326,8 @@ fn read_clearcoat<'a>(
                 | "clearcoatTexture"
                 | "clearcoatRoughnessTexture"
                 | "clearcoatNormalTexture"
-                | "extras"
-        ) {
+        ) && !GLTF_PROPERTY_KEYS.contains(&key.as_str())
+        {
             return Err(error(&format!("unsupported property {key}")).into());
         }
     }
@@ -387,8 +393,8 @@ fn read_iridescence<'a>(
                 | "iridescenceThicknessMinimum"
                 | "iridescenceThicknessMaximum"
                 | "iridescenceThicknessTexture"
-                | "extras"
-        ) {
+        ) && !GLTF_PROPERTY_KEYS.contains(&key.as_str())
+        {
             return Err(error(&format!("unsupported property {key}")).into());
         }
     }

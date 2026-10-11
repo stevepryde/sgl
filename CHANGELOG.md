@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load*`: a KHR material extension object (anisotropy,
+  clearcoat, iridescence, sheen, diffuse transmission, transmission, volume,
+  dispersion) carrying its own `extensions` property was refused as
+  unsupported; it now loads, as glTF's `glTFProperty` allows. No game-code
+  change needed.
 - `sgl-2d` `Renderer::set_target_size`: a size wider or taller than the
   device's maximum texture dimension clamped only that axis, distorting the
   aspect, letterboxing the frame and shrinking `ui_size()`; both axes now
