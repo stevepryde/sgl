@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::number_field`: pointer movement arriving in the same
+  frame as the release was dropped, so a quick drag could open typing; it
+  now scrubs the value before deciding between drag and click. No game-code
+  changes needed.
 - `sgl-2d` `UiFrame::number_field`: a press and release arriving in one
   frame dropped the typing focus the click had just opened; it now enters
   typing like a two-frame click. No game-code changes needed.
