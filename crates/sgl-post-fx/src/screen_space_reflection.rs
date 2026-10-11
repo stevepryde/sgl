@@ -160,6 +160,10 @@ pub struct ScreenSpaceReflection {
     /// The frame index of the last execution, `!0` before the first, as
     /// `TemporalAntiAliasing::AccumulationBufferInfo::LastFrameIdx`.
     last_frame_idx: u32,
+    /// Whether this frame's histories were reset (PROVENANCE.md DFX-12),
+    /// and the temporal pass's uniform that holds it as 1 or 0 (DFX-49).
+    history_reset: bool,
+    history_reset_buffer: wgpu::Buffer,
 }
 
 /// `ComputeMipLevelsCount(Width, Height)`.
@@ -292,6 +296,15 @@ impl ScreenSpaceReflection {
             use_reverse_depth: false,
             frame_timer: None,
             last_frame_idx: !0,
+            history_reset: false,
+            // A u32 in a buffer of 16 bytes, the uniform size every backend
+            // accepts.
+            history_reset_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ScreenSpaceReflection::HistoryReset"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
             linear_clamp: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("Sam_LinearClamp"),
                 mag_filter: wgpu::FilterMode::Linear,
@@ -783,6 +796,7 @@ impl ScreenSpaceReflection {
                         (10, Resource::Sampler { filtering: true }),
                         (11, Resource::Sampler { filtering: true }),
                         (12, Resource::Texture),
+                        (13, Resource::ConstantBuffer),
                     ],
                     &[RADIANCE_FORMAT, VARIANCE_FORMAT],
                     Some(DEPTH_STENCIL_FORMAT),
@@ -824,13 +838,22 @@ impl ScreenSpaceReflection {
     /// DFX-12: DiligentFX's TAA rule for when history is invalid
     /// (`TemporalAntiAliasing::AccumulationBufferInfo::UpdateConstantBuffer`),
     /// applied to SSR's histories by clearing them as `PrepareResources`
-    /// does when it creates them.
+    /// does when it creates them. DFX-49: the frame's temporal pass then
+    /// takes the current frame, as TAA's resolve does on a reset.
     fn reset_history(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
         let current_frame_idx = render_attribs.post_fx_context.get_frame_desc().index;
         let reset_accumulation = self.last_frame_idx == !0 // No history on the first frame
             || current_frame_idx != self.last_frame_idx.wrapping_add(1) // Reset history if frames were skipped
             || render_attribs.reset_accumulation; // Reset history if requested
         self.last_frame_idx = current_frame_idx;
+        if reset_accumulation != self.history_reset {
+            self.history_reset = reset_accumulation;
+            render_attribs.queue.write_buffer(
+                &self.history_reset_buffer,
+                0,
+                bytemuck::bytes_of(&u32::from(reset_accumulation)),
+            );
+        }
         if !reset_accumulation {
             return;
         }
@@ -1235,6 +1258,10 @@ impl ScreenSpaceReflection {
                 wgpu::BindGroupEntry {
                     binding: 12,
                     resource: texture(&r.denoiser_tiles),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: self.history_reset_buffer.as_entire_binding(),
                 },
             ],
         );

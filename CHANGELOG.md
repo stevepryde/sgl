@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflectionAttribs::temporal_radiance_stability_factor`
+  and `ScreenSpaceReflection::execute`: the default was 1.0, and a frame
+  whose history was reset mixed in the zeroed history, so reflections stayed
+  dark after a reset; the default is now 0.95 and a reset frame takes the
+  current frame's radiance. A game that relied on 1.0 sets it explicitly;
+  otherwise no game-code change needed (SGL3D already used 0.95).
 - `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
   `SendError::Disconnected`; it now returns `UnknownConnection`, like every
   other server transport. A game that matched `Disconnected` from a server

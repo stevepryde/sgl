@@ -775,6 +775,8 @@ fn resolved_depth_is_the_virtual_point_along_the_view_ray() {
 /// The SSR textures one denoised frame leaves, row-major at full size.
 struct Denoised {
     output: Vec<[f32; 4]>,
+    /// The frame's spatial reconstruction, which the temporal pass reads.
+    resolved_radiance: Vec<[f32; 4]>,
     radiance_history: Vec<[f32; 4]>,
     variance_history: Vec<f32>,
 }
@@ -907,6 +909,9 @@ fn denoise_frame(
         frame_time: 1.0 / 60.0,
     };
     ssr.update_constant_buffer(&render, false);
+    // DFX-12: the first frame and a frame after skipped ones reset the
+    // histories, as `execute` does.
+    ssr.reset_history(&mut render);
     ssr.compute_stencil_mask_and_extract_roughness(&mut render);
     ssr.compute_downsampled_stencil_mask(&mut render);
     if all_tiles {
@@ -923,6 +928,7 @@ fn denoise_frame(
     let current = (index & 1) as usize;
     Denoised {
         output: read_rgba16f(device, queue, &r.output),
+        resolved_radiance: read_rgba16f(device, queue, &r.resolved_radiance),
         radiance_history: read_rgba16f(device, queue, &r.radiance_history[current]),
         variance_history: read_r16f(device, queue, &r.variance_history[current]),
     }
@@ -1086,6 +1092,66 @@ fn tiles_that_stop_hitting_keep_no_history() {
                     );
                 }
             }
+        }
+    }
+}
+
+// PROVENANCE.md DFX-49: a reset history is no history. A still glossy plane
+// reflects a checkerboard of hits, whose uneven neighbourhoods clamp a zeroed
+// history towards zero. The first frame and a frame after skipped ones
+// (DFX-12) write the current frame's radiance, the spatial reconstruction's,
+// and variance 1, as where reprojection finds no history; the frame between
+// them accumulates history.
+#[test]
+fn a_reset_frame_takes_the_current_radiance() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut ssr = ScreenSpaceReflection::new(&device);
+    let mut context = PostFXContext::new(
+        &device,
+        &queue,
+        post_fx_context::CreateInfo {
+            transition_duration: 0.0,
+        },
+    );
+    for index in [0, 1, 3] {
+        let frame = denoise_frame(
+            &device,
+            &queue,
+            &mut ssr,
+            &mut context,
+            FeatureFlags::NONE,
+            DEFAULT_FILTER,
+            index,
+            false,
+            None,
+            checkerboard,
+        );
+        let lit = frame
+            .resolved_radiance
+            .iter()
+            .filter(|r| r[3] > 0.0)
+            .count();
+        assert!(lit > 0, "frame {index}: the reconstruction found no hits");
+        let differ = frame
+            .radiance_history
+            .iter()
+            .zip(&frame.resolved_radiance)
+            .filter(|(history, current)| history != current)
+            .count();
+        if index == 1 {
+            assert!(differ > 0, "frame {index} took no history");
+        } else {
+            assert_eq!(
+                differ, 0,
+                "frame {index}: {differ} pixels differ from the current radiance"
+            );
+            let untaken = frame.variance_history.iter().filter(|v| **v != 1.0).count();
+            assert_eq!(
+                untaken, 0,
+                "frame {index}: {untaken} pixels' variance is not 1"
+            );
         }
     }
 }

@@ -44,6 +44,8 @@ struct CameraAttribsPair
 @group(0) @binding(11) var g_TexturePrevVariance_sampler: sampler;
 // PROVENANCE.md DFX-29.
 @group(0) @binding(12) var g_TextureDenoiserTiles: texture_2d<f32>;
+// PROVENANCE.md DFX-49: 1 on a frame whose histories were reset (DFX-12).
+@group(0) @binding(13) var<uniform> g_HistoryReset: u32;
 
 struct ProjectionDesc
 {
@@ -291,7 +293,9 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let IncidentAgrees = dot(IncidentOffset, IncidentOffset) < SSR_REPROJECT_SURFACE_DISCARD_VARIANCE_WEIGHT * length(PixelStat.Variance.rgb);
 
     var Output: PSOutput;
-    if (Reprojection.IsSuccess && (!UseIncidentPoint || IncidentAgrees))
+    // PROVENANCE.md DFX-49: a reset history is no history, as where reprojection fails: the
+    // frame takes the current radiance, as TAA's resolve does on a reset.
+    if (g_HistoryReset == 0u && Reprojection.IsSuccess && (!UseIncidentPoint || IncidentAgrees))
     {
         let ColorMin = PixelStat.Mean - SSR_TEMPORAL_VARIANCE_GAMMA * PixelStat.StdDev;
         let ColorMax = PixelStat.Mean + SSR_TEMPORAL_VARIANCE_GAMMA * PixelStat.StdDev;
