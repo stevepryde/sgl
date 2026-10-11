@@ -27,10 +27,12 @@ pub struct Exposure {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AutoExposure {
     /// Stops per second at which the exposure follows a scene that got
-    /// brighter.
+    /// brighter; 0 holds it. A nonfinite or negative speed is the
+    /// default's, 3.
     pub speed_brighten: f32,
     /// Stops per second at which the exposure follows a scene that got
-    /// darker.
+    /// darker; 0 holds it. A nonfinite or negative speed is the default's,
+    /// 1.
     pub speed_darken: f32,
     /// The least correction in stops, relative to `Exposure::stops`: the
     /// limit on darkening. With a nonfinite limit, or one above
