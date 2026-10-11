@@ -119,7 +119,7 @@ pub enum ChannelValues {
 pub struct Channel {
     pub node: usize,
     pub interpolation: Interpolation,
-    /// Keyframe times in seconds, increasing.
+    /// Keyframe times in seconds, strictly increasing.
     pub times: Vec<f32>,
     pub values: ChannelValues,
 }
