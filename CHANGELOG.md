@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::number_field`: a press and release arriving in one
+  frame dropped the typing focus the click had just opened; it now enters
+  typing like a two-frame click. No game-code changes needed.
 - `sgl-2d` `UiFrame::dropdown`: an open dropdown scrolled fully out of its
   clip stayed open and kept the keyboard captured; it now closes at
   `UiFrame::end`. No game-code changes needed.
