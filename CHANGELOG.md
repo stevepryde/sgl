@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
+  quarter-pixel size range, so text laid out by whichever size drew first
+  and drifted from `measure`; glyphs are now cached per exact size and
+  layout matches a cold cache and `measure`. No game-code change needed.
 - `sgl-3d` `asset::load*`: every glTF image was decoded (and asked of
   `LoadOptions::images`), so one only an unsupported texture extension
   (`KHR_texture_basisu`) or an ignored map used could fail the load; now
