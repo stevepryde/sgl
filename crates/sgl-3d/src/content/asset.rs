@@ -54,7 +54,8 @@ pub struct Vertex {
     pub lightmap_bounds: [f32; 4],
     /// Unit tangent XYZ and bitangent handedness W after node transforms.
     /// Zero means absent for legacy isotropic geometry, and for an imported
-    /// tangent along its normal; anisotropy requires a valid frame.
+    /// tangent along its normal; a tangent within 0.02° of its normal is
+    /// treated as absent. Anisotropy requires a valid frame.
     /// Made perpendicular to the normal and unit, then kept within 0.01°.
     pub tangent: [f32; 4],
 }
@@ -443,14 +444,38 @@ pub(crate) fn tangent_frames(vertices: &[Vertex]) -> bool {
 }
 
 /// Whether `vertex` carries a finite, nonzero authored tangent frame: a
-/// tangent that keeps a length off its normal, with handedness +1 or -1.
+/// tangent off its normal (`tangent_off_normal`), with handedness +1 or -1.
 pub(crate) fn tangent_frame(vertex: &Vertex) -> bool {
-    let n = Vec3::from_array(vertex.normal);
-    let t = Vec3::from_slice(&vertex.tangent[..3]);
-    n.try_normalize().is_some()
-        && t.try_normalize().is_some()
-        && n.cross(t).try_normalize().is_some()
+    tangent_off_normal(
+        Vec3::from_array(vertex.normal),
+        Vec3::from_slice(&vertex.tangent[..3]),
+    )
+    .is_some()
         && matches!(vertex.tangent[3], -1.0 | 1.0)
+}
+
+/// The squared sine of the angle within which a tangent lies along its
+/// normal: f32::EPSILON, so within 0.0198°. Filament's `randomPerp`
+/// (libs/geometry/src/SurfaceOrientation.cpp) treats a unit vector as along
+/// an axis by the same test, `dot(perp, perp) <= epsilon`, and Godot's glTF
+/// importer counts a tangent as off perpendicular past `|t·n| > 0.0001`
+/// (modules/gltf/gltf_document.cpp). An exact-zero test, as MikkTSpace's
+/// `VNotZero` (FLT_MIN), would let a tangent a few f32 ulps (6e-8 each) off
+/// its normal normalise that rounding into an arbitrary direction (#573);
+/// past this threshold a few ulps turn the tangent by under about 0.1°.
+/// Authored tangents (MikkTSpace makes them perpendicular to the normal)
+/// sit near 90°, far from it.
+const ALONG_NORMAL_SIN_SQUARED: f32 = f32::EPSILON;
+
+/// `tangent` made unit and perpendicular to `normal`, or `None` when either
+/// cannot be normalised or the tangent lies along the normal (within
+/// `ALONG_NORMAL_SIN_SQUARED`), where it spans no frame. The one rule for
+/// both glTF import and procedural vertices.
+pub(crate) fn tangent_off_normal(normal: Vec3, tangent: Vec3) -> Option<Vec3> {
+    let normal = normal.try_normalize()?;
+    let tangent = tangent.try_normalize()?;
+    let projected = tangent - normal * normal.dot(tangent);
+    (projected.length_squared() > ALONG_NORMAL_SIN_SQUARED).then(|| projected.normalize())
 }
 
 pub(crate) fn valid_anisotropy(strength: f32, rotation: f32) -> bool {

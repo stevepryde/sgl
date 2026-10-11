@@ -16,6 +16,7 @@ pub(crate) static DEFORM: crate::shading::Module = crate::shading::Module {
         &crate::shading::SCENE_SOURCE,
         &crate::shading::PACKED_VERTEX,
         &crate::shading::DEFORMATION,
+        &crate::shading::NORMAL_TRANSFORM,
     ],
 };
 /// The entry point the deform stage's pipeline is created with.

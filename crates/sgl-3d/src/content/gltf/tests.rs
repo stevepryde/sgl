@@ -150,6 +150,20 @@ fn anisotropic_frames_follow_shear_reflection_and_uv_handedness() {
     }
 }
 
+/// Tangents along the fixture's normal in all but rounding, so their
+/// projection off it is noise: four ulps off the authored normal (0, -q, q),
+/// and (8, -16, 9) four ulps off, which the node's shear (columns (2,0,0),
+/// (1,3,0), (0,0,4)) takes to (0, -48, 36), along the normal (0, -0.8, 0.6)
+/// it leaves, though far off the authored one.
+fn tangents_ulps_off_the_normal(handedness: f32) -> [[f32; 4]; 2] {
+    let q = std::f32::consts::FRAC_1_SQRT_2;
+    let near = |x: f32| f32::from_bits(x.to_bits() + 4);
+    [
+        [0., -q, near(q), handedness],
+        [8., -16., near(9.), handedness],
+    ]
+}
+
 #[test]
 fn anisotropic_loader_rejects_missing_or_degenerate_authored_frames() {
     let invalid = [
@@ -159,7 +173,8 @@ fn anisotropic_loader_rejects_missing_or_degenerate_authored_frames() {
         Some([1., 0., 0., 0.]),
         Some([f32::NAN, 0., 0., 1.]),
     ];
-    for tangent in invalid {
+    let near = tangents_ulps_off_the_normal(1.).map(Some);
+    for tangent in invalid.into_iter().chain(near) {
         let fixture = anisotropy_fixture(
             serde_json::json!({"anisotropyStrength":0.7}),
             tangent,
@@ -176,17 +191,23 @@ fn anisotropic_loader_rejects_missing_or_degenerate_authored_frames() {
     assert!(load(&fixture.path()).is_ok());
 }
 
-// Defect: a tangent along its normal, valid glTF (unit XYZ, w = ±1), fails
-// the load of a material that never builds a frame from it. The oracle is
-// `Vertex::tangent`'s contract: zero means absent. An anisotropic material
-// still refuses it (above).
+// Defects: a tangent along its normal, valid glTF (unit XYZ, w = ±1), fails
+// the load of a material that never builds a frame from it; one a few ulps
+// off it has its rounding normalised into an arbitrary tangent. The oracle
+// is `Vertex::tangent`'s contract: zero means absent. An anisotropic
+// material still refuses both (above).
 #[test]
 fn a_tangent_along_its_normal_is_absent_without_anisotropy() {
     let q = std::f32::consts::FRAC_1_SQRT_2;
-    let fixture = anisotropy_fixture(serde_json::json!({}), Some([0., -q, q, 1.]), false);
-    let asset = load(&fixture.path()).unwrap_or_else(|error| panic!("{error}"));
-    for vertex in &asset.meshes[0].vertices {
-        assert_eq!(vertex.tangent, [0.; 4]);
+    for tangent in [[0., -q, q, 1.]]
+        .into_iter()
+        .chain(tangents_ulps_off_the_normal(-1.))
+    {
+        let fixture = anisotropy_fixture(serde_json::json!({}), Some(tangent), false);
+        let asset = load(&fixture.path()).unwrap_or_else(|error| panic!("{error}"));
+        for vertex in &asset.meshes[0].vertices {
+            assert_eq!(vertex.tangent, [0.; 4], "{tangent:?}");
+        }
     }
 }
 
@@ -321,15 +342,22 @@ fn generated_assets_cannot_activate_anisotropy_without_valid_frames() {
     let mut scene = crate::Scene::new(&device, &queue);
     let fixture = anisotropy_fixture(serde_json::json!({}), Some([1., 0., 0., 1.]), false);
     let mut asset = load(&fixture.path()).unwrap();
-    let mut missing = asset.meshes[0].clone();
-    missing.vertices[0].tangent = [0.; 4];
-    asset.meshes.push(missing);
     asset.materials[0].anisotropy_strength = 0.7;
-    assert!(matches!(
-        scene.add_asset(&device, &queue, asset.clone()),
-        Err(crate::SceneError::MissingAnisotropyTangents)
-    ));
-    asset.meshes.pop();
+    // Absent, or a few ulps off its normal (along it in all but rounding).
+    let [x, y, z] = asset.meshes[0].vertices[0].normal;
+    for tangent in [[0.; 4], [x, y, f32::from_bits(z.to_bits() + 4), 1.]] {
+        let mut missing = asset.meshes[0].clone();
+        missing.vertices[0].tangent = tangent;
+        asset.meshes.push(missing);
+        assert!(
+            matches!(
+                scene.add_asset(&device, &queue, asset.clone()),
+                Err(crate::SceneError::MissingAnisotropyTangents)
+            ),
+            "{tangent:?}"
+        );
+        asset.meshes.pop();
+    }
     assert!(scene.add_asset(&device, &queue, asset.clone()).is_ok());
     asset.materials[0].anisotropy_rotation = f32::INFINITY;
     assert!(matches!(

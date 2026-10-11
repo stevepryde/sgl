@@ -33,7 +33,9 @@ Their CPU-side contracts are in [client](client.md).
    a standalone page it had to itself) and detach the now-incompatible
    normal map. Replacing a handle used as a
    normal map updates every size-compatible diffuse association and detaches
-   each incompatible one.
+   each incompatible one. Registering a normal map under a different handle
+   for a diffuse that has one replaces it; the same handle again changes
+   nothing.
 3. A frame supplies game-owned draw and light data at the configured logical
    size. The camera may carry a pixels-per-unit / y-up world convention so the
    game pushes world-unit positions and sizes and the renderer applies the

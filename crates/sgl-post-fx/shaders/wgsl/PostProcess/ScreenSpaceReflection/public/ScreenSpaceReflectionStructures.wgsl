@@ -17,9 +17,6 @@
 
 #include "ShaderDefinitions.fxh"
 
-// Maximum mip level of depth buffer used in the Hi-Z tracing
-#define SSR_DEPTH_HIERARCHY_MAX_MIP 6
-
 // Number of samples on the Poisson disc used at the stage of spatial reconstruction
 #define SSR_SPATIAL_RECONSTRUCTION_SAMPLES 8
 
@@ -63,6 +60,12 @@
 #define SSR_MAX_TRAVERSAL_INTERSECTIONS 256
 #define SSR_SPATIAL_RECONSTRUCTION_MAX_RADIUS 8
 #define SSR_BILATERAL_MAX_RADIUS 2
+
+// PROVENANCE.md DFX-52: how far a world normal's squared length may be from 1 and still be traced.
+// Generous above the rounding of every common normal encoding (8-bit snorm components, the coarsest,
+// move it by under 0.02); a zero or infinite normal is far outside it, and a NaN one fails the test
+// where the backend keeps IEEE NaN comparisons.
+#define SSR_NORMAL_LENGTH_SQ_TOLERANCE 0.1
 
 // Defaults are those of the host structure (src/structures.rs).
 struct ScreenSpaceReflectionAttribs
