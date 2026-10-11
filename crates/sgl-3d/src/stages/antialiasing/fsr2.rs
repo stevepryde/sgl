@@ -263,6 +263,12 @@ impl Fsr2 {
         &self.output
     }
 
+    /// Ends the history, so the next `prepare` restarts it: a reset in a
+    /// frame FSR2 does not run in.
+    pub fn forget_history(&mut self) {
+        self.history = None;
+    }
+
     /// Before the frame's geometry: decides whether history continues and
     /// returns the frame's projection jitter in NDC.
     pub fn prepare(&mut self, render_size: [u32; 2], frames: u32, history_valid: bool) -> [f32; 2] {

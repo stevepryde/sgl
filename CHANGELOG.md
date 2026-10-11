@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
+  (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
+  (`FrameInput::camera_cut`, a resize or another scene) in a frame where the
+  feature did not run could leave its history from before the reset in use
+  when it resumed; any reset now ends it. No game-code change needed.
 - `sgl-net` WebSocket transports (`NativeWebSocketServer`,
   `NativeWebSocketClient`, `BrowserWebSocketClient`): a peer closed for
   `ProtocolViolation` or `InboundOverflow` discarded the messages received
