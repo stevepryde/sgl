@@ -16,9 +16,10 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` `PreparedModel::new` (and `Scene::add_asset`): a vertex with a
-  non-finite `uv` or `lightmap_uv` loaded, an infinite UV collapsing its whole
-  mesh's UVs onto one texel; the mesh is now refused with
-  `SceneError::NonFiniteGeometry`. No game-code change needed.
+  non-finite `uv` or `lightmap_uv`, or a mesh whose UVs span more than `f32`
+  holds, loaded, an infinite UV collapsing its whole mesh's UVs onto one
+  texel; the mesh is now refused with `SceneError::NonFiniteGeometry`. No
+  game-code change needed.
 - `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
   (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
   (`FrameInput::camera_cut`, a resize or another scene) in a frame where the

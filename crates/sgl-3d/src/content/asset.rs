@@ -39,7 +39,8 @@ pub struct Vertex {
     /// Finite and not zero, or the mesh is refused; kept within 0.01°.
     pub normal: [f32; 3],
     /// First texture coordinate set (`TEXCOORD_0`), kept as 16-bit fractions
-    /// of the rectangle its mesh's UVs span. Finite, or the mesh is refused.
+    /// of the rectangle its mesh's UVs span. Finite, or the mesh is refused,
+    /// as is a mesh whose UVs span more than `f32` holds.
     pub uv: [f32; 2],
     /// Linear vertex color multiplier, including alpha. Clamped to 0..=1 and
     /// kept as 8-bit sRGB with 8-bit linear alpha.

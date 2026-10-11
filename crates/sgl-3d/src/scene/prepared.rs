@@ -13,8 +13,9 @@ use crate::content::identity::MaterialId;
 use crate::content::model::ModelMesh;
 use crate::counters::{BuildStep, step};
 use crate::shading::culling::MAX_MESH_SECTIONS;
+use crate::shading::packed_vertex::UvRect;
 use crate::shading::vertex::CasterVertex;
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 /// A model's geometry, prepared for `Scene::add_model` or `Scene::set_model`
 /// by `PreparedModel::new`, which needs no device and no scene: build it on
@@ -42,10 +43,11 @@ pub(super) struct PreparedMesh {
 }
 
 /// `vertices` and `indices` as a mesh: indices name vertices, positions,
-/// UVs and lightmap UVs are finite, and normals finite and not zero, as a
-/// packed vertex needs (`shading::packed_vertex`): its frame a normal, and
-/// its UVs fractions of their mesh's rectangle, which one infinite UV makes
-/// infinite. Returns whether every vertex has an authored tangent frame.
+/// UVs and lightmap UVs are finite, the UVs' rectangle has a finite extent,
+/// and normals are finite and not zero, as a packed vertex needs
+/// (`shading::packed_vertex`): its frame a normal, and its UVs fractions of
+/// their mesh's rectangle, which an infinite extent collapses onto its
+/// corner. Returns whether every vertex has an authored tangent frame.
 pub(super) fn validate_geometry(vertices: &[Vertex], indices: &[u32]) -> Result<bool, SceneError> {
     if indices
         .iter()
@@ -62,7 +64,8 @@ pub(super) fn validate_geometry(vertices: &[Vertex], indices: &[u32]) -> Result<
                 .as_dvec3()
                 .try_normalize()
                 .is_some()
-    }) {
+    }) || !Vec2::from_array(UvRect::of(vertices).extent).is_finite()
+    {
         return Err(SceneError::NonFiniteGeometry);
     }
     Ok(asset::tangent_frames(vertices))
@@ -77,7 +80,8 @@ pub(crate) fn fits_sections(triangles: usize) -> bool {
 impl PreparedModel {
     /// `meshes`, an ordered list each drawn with a material of the scene
     /// that will take them, prepared: validated (indices name vertices,
-    /// positions and UVs are finite, a deformation fits its vertices, a mesh
+    /// positions, UVs and normals are as `Vertex` requires, a deformation
+    /// fits its vertices, a mesh
     /// holds at most 65,536 sections of 128 triangles), with each mesh's
     /// culling hierarchy, whose leaves are its sections, and shadow-caster
     /// clusters, the model's BVH, and its ray-source words (its section
@@ -262,6 +266,15 @@ mod tests {
             model(vertices)
         };
         assert!(with([-1e30, 1e30], [-1., 2.]).is_ok());
+        // Finite UVs whose rectangle's extent overflows f32 collapse as an
+        // infinite one does.
+        let mut spanning = vec![vertex(unit, [0.; 4]); 3];
+        spanning[0].uv = [-3e38, 0.];
+        spanning[1].uv = [3e38, 0.];
+        assert!(matches!(
+            model(spanning),
+            Err(SceneError::NonFiniteGeometry)
+        ));
         for (uv, lightmap_uv) in [
             ([f32::INFINITY, 0.], [0.; 2]),
             ([0., f32::NAN], [0.; 2]),
