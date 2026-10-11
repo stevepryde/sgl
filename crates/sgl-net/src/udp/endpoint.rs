@@ -1093,15 +1093,20 @@ impl<T: DatagramTransport> Endpoint<T> {
                 peer.last_receive_ms = now_ms;
                 peer.nonces
             };
-            self.confirm_replays
-                .remember(source, nonces.client, nonces.server);
+            self.confirm_replays.remember(
+                source,
+                nonces.client,
+                nonces.server,
+                cookie_epoch,
+                now_ms,
+            );
             self.send_control(source, Kind::ConnectAccept, response, now_ms);
             return;
         }
 
         if self
             .confirm_replays
-            .contains(source, nonces.client, nonces.server)
+            .contains(source, nonces.client, nonces.server, cookie_epoch)
         {
             return;
         }
@@ -1124,7 +1129,7 @@ impl<T: DatagramTransport> Endpoint<T> {
         self.routes.insert((source, nonces.client), id);
         self.peers.insert(id, peer);
         self.confirm_replays
-            .remember(source, nonces.client, nonces.server);
+            .remember(source, nonces.client, nonces.server, cookie_epoch, now_ms);
         self.send_control(source, Kind::ConnectAccept, nonces, now_ms);
         events.push(EndpointEvent::Connected { peer: id });
     }
@@ -1267,9 +1272,16 @@ impl<T: DatagramTransport> Endpoint<T> {
         self.outbound = (self.outbound.0 - held.0, self.outbound.1 - held.1);
         self.inbound_retained -= peer.retained_bytes();
         self.routes.remove(&(peer.addr, peer.nonces.client));
-        if self.role == EndpointRole::Server && peer.verified_cookie_epoch.is_some() {
-            self.confirm_replays
-                .remember(peer.addr, peer.nonces.client, peer.nonces.server);
+        if self.role == EndpointRole::Server
+            && let Some(cookie_epoch) = peer.verified_cookie_epoch
+        {
+            self.confirm_replays.remember(
+                peer.addr,
+                peer.nonces.client,
+                peer.nonces.server,
+                cookie_epoch,
+                self.now_ms,
+            );
         }
         Some(peer)
     }
@@ -2611,6 +2623,66 @@ mod tests {
         assert!(server.transport.sent.is_empty());
         assert!(server.peers.is_empty());
         assert!(server.routes.is_empty());
+    }
+
+    /// Defect (#440): a replay cache of 64 FIFO slots, so 64 joins from
+    /// other /24s while a departed client's cookie still validates evict
+    /// its confirm, and a late duplicate of that confirm reports
+    /// `Connected` for a client that is gone. Oracle: #440's acceptance —
+    /// the duplicate is dropped, and the client reconnects with a new
+    /// challenge once its old cookie has expired.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_departed_clients_confirm_replayed_after_many_joins_is_dropped() {
+        let departed = address(192, 0, 2, 40, 40_000);
+        let config = EndpointConfig {
+            max_peers: 128,
+            ..EndpointConfig::default()
+        };
+        let mut server = Endpoint::server(RecordingTransport::default(), config, [8; 32]).unwrap();
+        request(&mut server, departed, 1);
+        server.poll(0);
+        let departed_confirm = challenge_for(&server, departed, 1);
+        confirm(&mut server, departed, departed_confirm);
+        assert_eq!(server.poll(1), vec![EndpointEvent::Connected { peer: 1 }]);
+        server.disconnect(1, 2);
+        assert_eq!(
+            server.poll(3),
+            vec![EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::Local,
+            }]
+        );
+
+        let mut now = 4;
+        for join in 0..64_u8 {
+            let source = address(10, join, 0, 1, 40_000);
+            let nonce = u64::from(join) + 100;
+            request(&mut server, source, nonce);
+            server.poll(now);
+            let nonces = challenge_for(&server, source, nonce);
+            confirm(&mut server, source, nonces);
+            assert!(matches!(
+                server.poll(now + 1)[..],
+                [EndpointEvent::Connected { .. }]
+            ));
+            now += 2;
+        }
+        assert!(now < super::super::cookie::COOKIE_EPOCH_MS);
+
+        confirm(&mut server, departed, departed_confirm);
+        assert!(server.poll(now).is_empty());
+        assert_eq!(server.peers.len(), 64);
+
+        let expired = super::super::cookie::COOKIE_EPOCH_MS * 2;
+        request(&mut server, departed, 1);
+        server.poll(expired);
+        let fresh = challenge_for(&server, departed, 1);
+        assert_ne!(fresh, departed_confirm);
+        confirm(&mut server, departed, fresh);
+        assert!(matches!(
+            server.poll(expired + 1)[..],
+            [EndpointEvent::Connected { .. }]
+        ));
     }
 
     #[wasm_bindgen_test(unsupported = test)]

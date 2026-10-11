@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP server endpoints: after 64 other joins within a departed
+  client's cookie lifetime, a late duplicate of its confirm reported
+  `Connected` for a client that was gone; each verified confirm is now kept
+  until its cookie expires, so the duplicate is dropped. No game-code change
+  needed.
 - `sgl-3d` `Settings::screen_space_reflections` (Velvet) and
   `Settings::world_space_reflections`: within half a texel of the top or
   left edge, the history fallback took colour and depth from one texel
