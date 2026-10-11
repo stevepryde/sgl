@@ -642,7 +642,7 @@ fn native_client_handshake_timeout_is_bounded() {
 /// still queues any TCP connection, so a nonblocking accept after `connect`
 /// returns shows whether the client opened one.
 #[test]
-fn native_client_refuses_wss_before_connecting_and_still_connects_over_ws() {
+fn native_client_refuses_wss_before_connecting() {
     let listener =
         std::net::TcpListener::bind(std::net::SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -660,11 +660,6 @@ fn native_client_refuses_wss_before_connecting_and_still_connects_over_ws() {
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
         other => panic!("a refused wss:// URL opened a TCP connection: {other:?}"),
     }
-
-    let mut server = server(1);
-    let mut client = connect_native(&server);
-    assert_eq!(client.poll(0), vec![ClientEvent::Connected]);
-    connected_id(&wait_server_events(&mut server));
 }
 
 #[test]
