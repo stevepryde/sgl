@@ -1807,6 +1807,99 @@ fn taa_first_frame_takes_an_unfilterable_colour() {
     }
 }
 
+// PROVENANCE.md DFX-53: recreating TAA's accumulation buffers on a resize
+// resets accumulation, so the next frame, though its index follows the last,
+// takes the current colour (alpha 0.5) rather than resolving it against the
+// zeroed history. The resolve round-trips the colour through its SDR tone map,
+// which bright HDR texels do not survive at binary16 precision.
+#[test]
+fn taa_a_resize_resets_accumulation() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let colours = [
+        [4.0f32, 2.0, 1.0, 1.0],
+        [0.25, 0.5, 0.125, 1.0],
+        [30000.0, 12000.0, 6000.0, 1.0],
+    ];
+    let pixels = (SIZE[0] * SIZE[1]) as usize;
+    let input: Vec<[f32; 4]> = (0..pixels).map(|i| colours[i % colours.len()]).collect();
+    let color = texels(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba16Float,
+        &half(input.as_flattened()),
+    );
+    let motion = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0.0, 0.0]),
+    );
+    let mut context = PostFXContext::new(&device, &queue, Default::default());
+    let mut taa = TemporalAntiAliasing::new(&device);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let current_depth = depth(&device, &mut encoder, 0.95);
+    let previous_depth = depth(&device, &mut encoder, 0.95);
+    let camera = camera(false, 0);
+    // Frame 1 at the full size follows frame 0 at half of it.
+    for (index, [width, height]) in [(0, SIZE.map(|v| v / 2)), (1, SIZE)] {
+        let frame = FrameDesc {
+            index,
+            width,
+            height,
+            output_width: width,
+            output_height: height,
+        };
+        context.prepare_resources(&device, &frame, post_fx_context::FeatureFlags::NONE);
+        taa.prepare_resources(
+            &device,
+            &mut encoder,
+            &context,
+            temporal_anti_aliasing::FeatureFlags::NONE,
+            0,
+        );
+        context.execute(&mut RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &current_depth,
+            prev_depth_buffer_srv: &previous_depth,
+            curr_camera: Some(&camera),
+            prev_camera: Some(&camera),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            post_fx_context: &mut context,
+            color_buffer_srv: &color,
+            depth_buffer_srv: &current_depth,
+            motion_vectors_srv: &motion,
+            taa_attribs: &TemporalAntiAliasingAttribs::default(),
+            accumulation_buffer_idx: 0,
+            pass_timestamps: None,
+        });
+        queue.submit([std::mem::replace(
+            &mut encoder,
+            device.create_command_encoder(&Default::default()),
+        )
+        .finish()]);
+    }
+    let output = read_rgba16f(&device, &queue, taa.get_accumulated_frame_srv(false, 0));
+    let differing = output
+        .iter()
+        .zip(&input)
+        .filter(|&(out, &[r, g, b, _])| *out != [r, g, b, 0.5])
+        .count();
+    assert_eq!(
+        differing, 0,
+        "{differing} of {pixels} pixels after the resize are not the current colour"
+    );
+}
+
 // PROVENANCE.md DFX-46: SSR reads a reflected scene texel of +infinity as
 // binary16's largest finite value, so spatial reconstruction's tone map
 // (DFX-16, c / (1 + luminance)) yields no inf / inf and its inverse stays
