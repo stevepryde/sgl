@@ -322,6 +322,11 @@ impl TracedShadows {
         lights: &slots::SlotLights,
     ) -> Option<ShadowMask<'s>> {
         self.ran = false;
+        // A reset ends the history even in a frame the stage does not run,
+        // so no later frame takes one from before it for its predecessor.
+        if !ctx.history.valid {
+            self.previous_frame = None;
+        }
         let hardware = ctx
             .hardware_rays
             .filter(|_| ctx.effective.ray_traced_shadows)?;

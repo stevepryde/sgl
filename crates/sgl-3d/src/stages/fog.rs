@@ -346,8 +346,7 @@ impl VolumetricFog {
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn test_volumes(&self) -> [&wgpu::TextureView; 3] {
         let volumes = &self.volumes;
-        let holds = volumes.holds;
-        let last = usize::from(holds[1] > holds[0]);
+        let last = volumes.holds.last();
         [
             &volumes.scattering[last],
             &volumes.scattering[volumes.integrated_from],
@@ -357,18 +356,12 @@ impl VolumetricFog {
 
     /// Lights and integrates the frame's volume while the frame has fog.
     pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
-        if ctx.effective.fog.is_none() {
-            return;
-        }
         let history = ctx.history;
         let volumes = &mut self.volumes;
-        if !history.valid {
-            volumes.holds = [None; 2];
-        }
-        let index = (history.frames % 2) as usize;
-        let reprojects =
-            history.valid && volumes.holds[1 - index] == Some(history.frames.wrapping_sub(1));
-        volumes.holds[index] = Some(history.frames);
+        let Some((index, reprojects)) = volumes.holds.frame(&history, ctx.effective.fog.is_some())
+        else {
+            return;
+        };
         let fog = ctx.input.fog;
         let camera = ctx.input.camera;
         let projection = camera.projection;

@@ -630,29 +630,20 @@ impl ServerIo for NativeWebSocketServer {
         let mut events = Vec::with_capacity(self.max_events_per_poll);
         let mut remove = Vec::new();
         let mut wake = false;
-        // Only a close made before the drain is reported. The worker can
-        // close a peer between two of its events, after this poll popped
-        // messages the close would have purged; that close waits for the
-        // next poll, so no poll returns a peer's messages beside its
-        // `ProtocolViolation`.
-        let closed: Vec<bool> = connections
-            .iter()
-            .map(|conn| {
-                let shared = &registry
-                    .get(conn)
-                    .expect("connection key came from registry")
-                    .shared;
-                shared.advance(now_ms);
-                lock(&shared.state).terminal().is_some()
-            })
-            .collect();
+        for conn in &connections {
+            registry
+                .get(conn)
+                .expect("connection key came from registry")
+                .shared
+                .advance(now_ms);
+        }
 
         // Drain in rounds so every active peer gets one turn before any peer
         // gets a second. Rotate the starting peer between polls as well.
         let mut progressed = true;
         while events.len() < self.max_events_per_poll && progressed {
             progressed = false;
-            for (&conn, &closed) in connections.iter().zip(&closed) {
+            for &conn in &connections {
                 if events.len() >= self.max_events_per_poll {
                     break;
                 }
@@ -668,9 +659,10 @@ impl ServerIo for NativeWebSocketServer {
                             payload,
                         })
                     } else if let Some(reason) = state.terminal()
-                        && closed
                         && !peer.disconnected_announced
                     {
+                        // Under the same lock as the empty queue: a closed
+                        // peer takes no more messages, so none follows this.
                         peer.disconnected_announced = true;
                         peer.shared.shutdown.store(true, Ordering::Release);
                         remove.push(conn);
@@ -1550,9 +1542,9 @@ mod tests {
     /// against the default cap instead of its configured one. Oracle: the
     /// configured cap (netcode.md 15) — a first fragment declaring it,
     /// past the default, waits for its message; one declaring a byte more
-    /// closes the peer as `ProtocolViolation` before anything is buffered,
-    /// and a whole message received before it in the same turn is not
-    /// delivered.
+    /// closes the peer as `ProtocolViolation` before anything is buffered.
+    /// Either way a whole message received before it in the same turn is
+    /// still delivered.
     #[test]
     fn a_declared_total_past_the_configured_cap_is_a_protocol_violation() {
         const CAP: u32 = 1 << 20;
@@ -1570,16 +1562,15 @@ mod tests {
             ]));
             tick(&mut socket, &shared);
             let mut state = lock(&shared.state);
-            if violation {
-                assert_eq!(state.terminal(), Some(DisconnectReason::ProtocolViolation));
-                assert_eq!(state.pop_inbound(), None);
-            } else {
-                assert_eq!(state.terminal(), None);
-                assert_eq!(
-                    state.pop_inbound(),
-                    Some((Delivery::Reliable(Lane::new(1).unwrap()), b"whole".to_vec()))
-                );
-            }
+            assert_eq!(
+                state.terminal(),
+                violation.then_some(DisconnectReason::ProtocolViolation)
+            );
+            assert_eq!(
+                state.pop_inbound(),
+                Some((Delivery::Reliable(Lane::new(1).unwrap()), b"whole".to_vec()))
+            );
+            assert_eq!(state.pop_inbound(), None);
         }
     }
 

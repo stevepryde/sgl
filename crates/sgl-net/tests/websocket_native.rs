@@ -432,7 +432,11 @@ fn ipv6_literal_origins_are_admitted_by_exact_and_any_policies() {
     assert!(connect(raw_request(&url(&any), &["https://[2001:db8::1]"])).is_ok());
 }
 
-fn assert_protocol_disconnect(message_sequence: Vec<Message>) {
+/// Sends `message_sequence`, whose last frame breaks the protocol, then a
+/// valid frame, and asserts that the server reports the `delivered`
+/// messages sent before the offending frame, then the connection's
+/// `ProtocolViolation`, and nothing else (netcode.md 2 and 15).
+fn assert_protocol_disconnect(message_sequence: Vec<Message>, delivered: &[(Delivery, &[u8])]) {
     let mut server = server(2);
     let (mut socket, _) = connect(raw_request(&url(&server), &[ORIGIN_VALUE])).unwrap();
     if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
@@ -442,41 +446,44 @@ fn assert_protocol_disconnect(message_sequence: Vec<Message>) {
     for message in message_sequence {
         socket.send(message).unwrap();
     }
-    let events = wait_until(Duration::from_secs(2), || {
-        let events = server.poll(0);
+    // The server may already have closed the socket and refuse this.
+    let _ = socket.send(Message::Binary(
+        frame(Delivery::RELIABLE_ORDERED, 0, b"after").into(),
+    ));
+    let mut events = Vec::new();
+    wait_until(Duration::from_secs(2), || {
+        events.extend(server.poll(0));
         events
             .iter()
-            .any(|event| {
-                matches!(
-                    event,
-                    ServerEvent::Disconnected {
-                        reason: DisconnectReason::ProtocolViolation,
-                        ..
-                    }
-                )
-            })
-            .then_some(events)
+            .any(|event| matches!(event, ServerEvent::Disconnected { .. }))
+            .then_some(())
     });
-    assert_eq!(
-        events
-            .iter()
-            .filter(
-                |event| matches!(event, ServerEvent::Disconnected { conn: id, .. } if *id == conn)
-            )
-            .count(),
-        1
-    );
-    assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, ServerEvent::Message { .. }))
-    );
+    let mut expected: Vec<_> = delivered
+        .iter()
+        .map(|&(delivery, payload)| ServerEvent::Message {
+            conn,
+            delivery,
+            payload: payload.to_vec(),
+        })
+        .collect();
+    expected.push(ServerEvent::Disconnected {
+        conn,
+        reason: DisconnectReason::ProtocolViolation,
+    });
+    assert_eq!(events, expected);
 }
 
 #[test]
 fn text_malformed_oversize_wrong_class_and_stale_frames_fail_closed() {
-    assert_protocol_disconnect(vec![Message::Text("no text".into())]);
-    assert_protocol_disconnect(vec![Message::Binary(vec![1, 2, 3].into())]);
+    assert_protocol_disconnect(vec![Message::Text("no text".into())], &[]);
+    // #589: a valid frame before a malformed one is still delivered.
+    assert_protocol_disconnect(
+        vec![
+            Message::Binary(frame(Delivery::RELIABLE_ORDERED, 0, b"before").into()),
+            Message::Binary(vec![1, 2, 3].into()),
+        ],
+        &[(Delivery::RELIABLE_ORDERED, b"before")],
+    );
 
     let mut oversized = Vec::with_capacity(ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES + 1);
     oversized.extend_from_slice(b"TST");
@@ -489,33 +496,45 @@ fn text_malformed_oversize_wrong_class_and_stale_frames_fail_closed() {
             .to_be_bytes(),
     );
     oversized.resize(ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES + 1, 0);
-    assert_protocol_disconnect(vec![Message::Binary(oversized.into())]);
+    assert_protocol_disconnect(vec![Message::Binary(oversized.into())], &[]);
 
     let mut wrong_class = frame(Delivery::RELIABLE_ORDERED, 0, b"queued");
     wrong_class[6..14].copy_from_slice(&1_u64.to_be_bytes());
-    assert_protocol_disconnect(vec![
-        Message::Binary(frame(Delivery::RELIABLE_ORDERED, 0, b"must be purged").into()),
-        Message::Binary(wrong_class.into()),
-    ]);
+    assert_protocol_disconnect(
+        vec![
+            Message::Binary(frame(Delivery::RELIABLE_ORDERED, 0, b"before").into()),
+            Message::Binary(wrong_class.into()),
+        ],
+        &[(Delivery::RELIABLE_ORDERED, b"before")],
+    );
 
-    assert_protocol_disconnect(vec![
-        Message::Binary(frame(Delivery::LatestState, 2, b"new").into()),
-        Message::Binary(frame(Delivery::LatestState, 1, b"stale").into()),
-    ]);
+    assert_protocol_disconnect(
+        vec![
+            Message::Binary(frame(Delivery::LatestState, 2, b"new").into()),
+            Message::Binary(frame(Delivery::LatestState, 1, b"stale").into()),
+        ],
+        &[(Delivery::LatestState, b"new")],
+    );
 
     // Past the frame cap the socket itself refuses the frame (#268).
-    assert_protocol_disconnect(vec![Message::Binary(
-        vec![0; MAX_WEBSOCKET_FRAME_BYTES + 1].into(),
-    )]);
+    assert_protocol_disconnect(
+        vec![Message::Binary(
+            vec![0; MAX_WEBSOCKET_FRAME_BYTES + 1].into(),
+        )],
+        &[],
+    );
 
     // A fragment the reassembly table refuses (#268): a last fragment with
-    // no first, after a whole message that must not be delivered.
+    // no first, after a whole message on another lane.
     let mut orphan = frame(Delivery::Reliable(Lane::new(1).unwrap()), 0, b"orphan");
     orphan[4] = 0;
-    assert_protocol_disconnect(vec![
-        Message::Binary(frame(Delivery::RELIABLE_ORDERED, 0, b"must be purged").into()),
-        Message::Binary(orphan.into()),
-    ]);
+    assert_protocol_disconnect(
+        vec![
+            Message::Binary(frame(Delivery::RELIABLE_ORDERED, 0, b"before").into()),
+            Message::Binary(orphan.into()),
+        ],
+        &[(Delivery::RELIABLE_ORDERED, b"before")],
+    );
 }
 
 type RawSocket = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
