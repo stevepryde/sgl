@@ -220,6 +220,9 @@ fn finite_hdr_survives_trace_filter_storage_and_both_resolves() {
             ([65504., 4096., 32.], [0x7bff, 0x6c00, 0x5000], 0., false),
             ([65504., 4096., 32.], [0x7bff, 0x6c00, 0x5000], 0.5, false),
             ([4.; 3], [0x4400; 3], 0.5, true),
+            // +infinity: radiance above binary16's range (#464).
+            ([f32::INFINITY; 3], [0x7c00; 3], 0., false),
+            ([f32::INFINITY; 3], [0x7c00; 3], 0.5, false),
         ] {
             let make_normals = |size: [u32; 2]| -> Vec<[u16; 4]> {
                 (0..size[1])
@@ -425,7 +428,7 @@ fn finite_hdr_survives_trace_filter_storage_and_both_resolves() {
     for &(half, brightness, roughness, nonfinite, hits, error, luminance) in &results {
         assert_eq!(
             nonfinite, 0,
-            "half={half} HDR={brightness:?} roughness={roughness}: finite HDR must remain finite"
+            "half={half} HDR={brightness:?} roughness={roughness}: HDR must resolve finite"
         );
         assert!(hits > 0, "fixture must exercise real hits");
         if roughness == 0. && ordinary(brightness) {

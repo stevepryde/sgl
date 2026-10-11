@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `TemporalAntiAliasing` and `ScreenSpaceReflection`, and
+  `sgl-3d` Velvet and world-space reflections: a colour texel of +infinity
+  (radiance past RGBA16F's range on backends that round overflow to
+  infinity) tone-mapped to NaN, which spread through the frame; it now reads
+  as 65504, binary16's largest finite value, and their outputs stay finite.
+  No game-code change needed.
 - `sgl-net` `ThreadedUdpServer`: a connection that ended at the worker (peer
   close, timeout, protocol violation) discarded the messages it had
   delivered but the caller had not yet polled and reported `Disconnected`

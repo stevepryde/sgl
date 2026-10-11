@@ -19,6 +19,9 @@
 #define FLT_EPS                   5.960464478e-8
 #define FLT_MAX                   3.402823466e+38
 #define FLT_MIN                   1.175494351e-38
+// PROVENANCE.md DFX-46: binary16's largest finite value, the bound of the
+// colour the effects read and write.
+#define HALF_MAX                  65504.0
 
 fn Luminance(Color: vec3<f32>) -> f32
 {
