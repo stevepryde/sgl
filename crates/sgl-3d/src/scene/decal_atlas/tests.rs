@@ -73,6 +73,20 @@ fn an_atlas_too_large_to_build_is_refused_before_it_is_built() {
     assert_eq!(layout(4096).unwrap().size, [8192, 8192]);
 }
 
+// Plausible defect: an image wider than any atlas the device allows is
+// packed before it is refused, on a grid as wide as the image, whose width
+// in texels can wrap `u32` to an atlas that passes the side check. This
+// one's 2^27 cells fill its grid in one scan and then wrap to 0. The oracle
+// is the requirement that no atlas exceeds `limit` on a side.
+#[wasm_bindgen_test(unsupported = test)]
+fn an_image_wider_than_the_device_allows_is_refused_before_it_is_packed() {
+    let key = (DecalImageId::issue(0, 1), Sampling::Color);
+    assert!(matches!(
+        AtlasLayout::place(&[(key, [u32::MAX - 31, 1])], 16384),
+        Err(SceneError::DeviceLimit)
+    ));
+}
+
 // Plausible defects: a wrong exponent bias or subnormal scale in the decode
 // each mip is filtered through, darkening or brightening every mip. The
 // oracle is IEEE 754 binary16's encodings.

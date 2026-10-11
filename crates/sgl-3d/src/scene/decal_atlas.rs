@@ -34,7 +34,7 @@ const TEXEL_BYTES: usize = 8;
 /// device allows can be more than the target can allocate. In the browser,
 /// 2 GiB: half the 4 GiB a wasm32 module addresses, which the game's other
 /// content shares. It holds a 16384 by 8192 atlas (1.33 GiB with its mips,
-/// from an 8192 by 4096 image) and refuses a 16384-square one (2.67 GiB,
+/// from an 8192 by 4096 image) and refuses a 16384-square one (2.66 GiB,
 /// from an 8192-square image), whose first level alone is more than one
 /// wasm32 allocation can be.
 #[cfg(target_arch = "wasm32")]
@@ -42,7 +42,7 @@ const MAX_BUILD_BYTES: u64 = 2 << 30;
 /// Natively, 8 GiB: the 16384-square atlas most devices' textures top out
 /// at, and a 32768 by 16384 one (5.33 GiB, from a 16384 by 8192 image)
 /// where the device allows that side; it refuses a 32768-square one
-/// (10.67 GiB, from a 16384-square image).
+/// (10.66 GiB, from a 16384-square image).
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_BUILD_BYTES: u64 = 8 << 30;
 
@@ -82,6 +82,14 @@ impl AtlasLayout {
     pub fn place(images: &[(AtlasKey, [u32; 2])], limit: u32) -> Result<Self, SceneError> {
         if images.is_empty() {
             return Ok(Self::empty());
+        }
+        // An image with its border wider than `limit` fits no atlas; refused
+        // before packing, whose grid would be as wide as the image.
+        if images
+            .iter()
+            .any(|(_, size)| size.iter().any(|side| side.saturating_add(BORDER) > limit))
+        {
+            return Err(SceneError::DeviceLimit);
         }
         let mut items: Vec<Item> = images
             .iter()
