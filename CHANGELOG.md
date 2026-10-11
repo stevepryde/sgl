@@ -25,6 +25,11 @@ docs and specs the entry links.
   default) grew the instance buffer past it, a wgpu validation error; it now
   draws the first that many (world, then screen) and drops the rest, which
   `draw_stats` reflects. No game-code change needed.
+- `sgl-3d` `asset::load*`: a node transform with an absolute determinant
+  below 1e-10 was refused as singular, so a uniform scale at or below about
+  4.6e-4 failed to load; singularity is now judged relative to the node's
+  axis lengths, so small scales load and only a collapsed axis is refused.
+  No game-code change needed.
 - `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and
