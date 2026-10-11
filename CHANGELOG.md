@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP transport: a first round trip measured as 0 ms (loopback,
+  sub-millisecond LAN) was treated as unmeasured, keeping the 200 ms
+  retransmission timeout; it now seeds the estimate, giving the 50 ms floor,
+  so retransmission timing changes on very fast links. No game-code change
+  needed.
 - `sgl-2d` `Renderer::set_target_size`: a size wider or taller than the
   device's maximum texture dimension clamped only that axis, distorting the
   aspect, letterboxing the frame and shrinking `ui_size()`; both axes now
