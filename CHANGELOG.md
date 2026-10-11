@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d`, `sgl-3d`, `sgl-post-fx`, `sgl-input`: required `bytemuck`
+  `=1.25.2`, `winit` `=0.30.13` and (native `sgl-2d`) `pollster` `=0.4.0`
+  exactly, so Cargo could not resolve beside a crate needing a newer patch;
+  now caret ranges (`^1.25.2`, `^0.30.13`, `^0.4.0`). No game-code change
+  needed; `cargo update` may pick newer compatible releases.
+
 - `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
   could not be allocated (the largest byte grid on wasm32); now returns
   `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or
