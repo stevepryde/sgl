@@ -304,8 +304,8 @@ impl UploadedProbes {
     }
 
     /// Moves the render origin by `by` (`Scene::move_origin`): each probe's
-    /// centre and frame, and the world grid built over them anew. A
-    /// capture's radiance is about its centre and is unchanged.
+    /// frame, which carries its centre, and the world grid built over them
+    /// anew. A capture's radiance is about its centre and is unchanged.
     pub(crate) fn move_origin(&mut self, device: &wgpu::Device, by: Vec3) {
         for placement in &mut self.placements {
             *placement = placement.translated(by);
