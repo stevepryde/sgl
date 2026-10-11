@@ -449,7 +449,7 @@ impl FrameBindings {
         frame: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("static capture shadow cascade"),
+            label: Some("shadow view"),
             layout: &self.shadow,
             entries: &shading::bind::uniforms(view, frame),
         })

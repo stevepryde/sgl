@@ -87,5 +87,10 @@ fn specular_trace_fade(roughness:f32,cutoff:f32,fade:f32)->f32 {
 // resolved. Bevy composites its SSR this way, and AMD's SSSR blends the
 // environment into each missed ray.
 fn specular_traced(lobe:SpecularLobe,reflected:vec4<f32>,fade:f32,fallback:vec3<f32>)->vec3<f32> {
- return lobe.response*(reflected.rgb*fade+fallback*(1.-reflected.a*fade));
+ return lobe.response*(reflected.rgb*fade+fallback*specular_fallback_share(reflected.a,fade));
+}
+// The share of the traced lobe specular_traced gives its fallback where the
+// method's result holds `confidence` and the lobe takes `fade` of it.
+fn specular_fallback_share(confidence:f32,fade:f32)->f32 {
+ return 1.-confidence*fade;
 }

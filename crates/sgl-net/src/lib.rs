@@ -521,6 +521,13 @@ impl RttEstimator {
     pub const fn estimate(&self) -> RttEstimate {
         self.estimate
     }
+
+    /// Whether any round trip has been sampled; a 0 ms first sample yields
+    /// the same all-zero estimate as none.
+    #[must_use]
+    pub(crate) const fn is_seeded(&self) -> bool {
+        self.seeded
+    }
 }
 
 #[cfg(test)]
