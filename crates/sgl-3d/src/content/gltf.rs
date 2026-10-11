@@ -4,10 +4,12 @@
 //! morph weights and animation clips.
 use std::path::Path;
 
-use glam::Mat4;
+use glam::{Mat4, Quat, Vec3};
 use gltf::accessor::{DataType, Dimensions};
+use gltf::animation::Property;
 
-use super::asset::{Asset, Material, Result};
+use super::asset::{Asset, Material, Result, Vertex};
+use super::deformation;
 use super::images::Image;
 use material::read_material;
 use meshes::{batch, ignored_attribute, read_node};
@@ -320,6 +322,12 @@ fn decode(
     base: Option<&Path>,
     options: LoadOptions<'_>,
 ) -> Result<Asset> {
+    let scene = document
+        .default_scene()
+        .or_else(|| document.scenes().next())
+        .ok_or("GLB contains no scene")?;
+    let parents = rig::parents(&document)?;
+    check_scene(&document, &scene, &parents)?;
     // What the file uses but does not require (import refused the rest).
     let mut ignored: Vec<Ignored> = document
         .extensions_used()
@@ -358,12 +366,6 @@ fn decode(
     // glTF primitives may omit a material; retain the specification default.
     let default_material = materials.len();
     materials.push(Material::default());
-    let scene = document
-        .default_scene()
-        .or_else(|| document.scenes().next())
-        .ok_or("GLB contains no scene")?;
-    let parents = rig::parents(&document)?;
-    check_scene(&document, &scene, &parents)?;
     let mut rigging = Rigging::new(&document, &parents, buffers)?;
     let include_node = options.nodes.unwrap_or(&|_| true);
     let mut meshes = Vec::new();
@@ -390,20 +392,31 @@ fn decode(
     })
 }
 
-/// The most elements one load may read and build: 2^28, well above the
-/// largest public scenes' (Power Plant's 10.6 million vertices and 12.8
-/// million triangles come to about 81 million with four attributes a
-/// vertex, Lucy's 14 million vertices and 28 million triangles to 112
-/// million with two).
-const MAX_LOAD_ELEMENTS: usize = 1 << 28;
+/// The most bytes one load's meshes, rig and clips may hold, which
+/// `load_bytes` counts before an accessor or image is read. Natively,
+/// 4 GiB: the largest public scenes need a quarter to two fifths of it
+/// (Power Plant's 10.6 million vertices and 12.8 million triangles 1.01
+/// GiB, Lucy's 14 million vertices and 28 million triangles 1.46 GiB, at
+/// 88 bytes a vertex and 4 an index).
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_LOAD_BYTES: u64 = 4 << 30;
+/// In the browser, 1 GiB: a quarter of the 4 GiB a wasm32 module
+/// addresses, since batching holds up to about three times the meshes'
+/// bytes at once and the game's other content shares the rest. It holds
+/// the Bistro exterior (2.9 million vertices and 2.8 million triangles,
+/// 0.27 GiB); Power Plant and Lucy, which that address space cannot import
+/// with their working copies, are refused.
+#[cfg(target_arch = "wasm32")]
+const MAX_LOAD_BYTES: u64 = 1 << 30;
 
 /// Refuses a scene the load would read too much of, before reading any of
 /// it: one that lists a node among its roots more than once or a node with
 /// a parent, which glTF 2.0 forbids (3.5.1, and the scene schema's
 /// `uniqueItems`: a scene's `nodes` are distinct root nodes) and which
 /// would read a subtree's meshes again each time it is listed, and one
-/// whose reads, counted by `load_elements`, exceed `MAX_LOAD_ELEMENTS`.
-/// `parents` holds each node's parent, its hierarchy a set of trees.
+/// whose load, as `load_bytes` counts it, would hold more than
+/// `MAX_LOAD_BYTES`. `parents` holds each node's parent, its hierarchy a
+/// set of trees.
 fn check_scene(
     document: &gltf::Document,
     scene: &gltf::Scene<'_>,
@@ -422,70 +435,78 @@ fn check_scene(
             return Err(format!("scene {} lists node {node} as a root, but node {parent} is its parent; re-export valid glTF", scene.index()).into());
         }
     }
-    match load_elements(document, scene) {
-        Some(elements) if elements <= MAX_LOAD_ELEMENTS => Ok(()),
-        elements => Err(format!(
-            "the load would read {} accessor elements and morph target deltas, more than the {MAX_LOAD_ELEMENTS} one load may; split the asset or re-export valid glTF",
-            elements.map_or("more".into(), |elements| elements.to_string())
-        )
-        .into()),
+    if load_bytes(document, scene).is_none() {
+        return Err(format!("scene {}'s meshes (once for each node that uses them), skins and animation clips would take more than the {MAX_LOAD_BYTES} bytes one load may; split the asset", scene.index()).into());
     }
+    Ok(())
 }
 
-/// The elements a load of `scene` may read and build, as each accessor
-/// declares them, or None beyond `usize`: for each of the scene's mesh
-/// nodes, selected or not, the elements of every accessor its mesh's
-/// primitives name and a morph target delta a vertex and target; each
-/// skin's inverse bind matrices; and each animation channel's keyframe
-/// times and values. A mesh counts once a node that uses it, and a sampler
-/// once a channel, as the load reads them. No read allocates more elements
-/// than its accessor declares, so what the load allocates stays in
-/// proportion to this count.
-fn load_elements(document: &gltf::Document, scene: &gltf::Scene<'_>) -> Option<usize> {
-    let mut meshes = Vec::new();
+/// The bytes a load of `scene` produces, from the counts its accessors
+/// declare, or None once they pass `MAX_LOAD_BYTES`: for each of the
+/// scene's mesh nodes, selected or not, each of its mesh's primitives'
+/// vertices (with their skin influences on a skinned node), indices and
+/// morph target deltas; each skin's joints; and each animation channel's
+/// keyframe times and values. A mesh counts once for each node that uses
+/// it, and a sampler once for each channel, as the load reads them. No
+/// read takes more elements than its accessor declares, so what the load
+/// allocates stays in proportion to this. Each primitive counts at least
+/// one vertex, each skin a joint and each channel a keyframe, so the
+/// count's own work stops within the cap too.
+fn load_bytes(document: &gltf::Document, scene: &gltf::Scene<'_>) -> Option<u64> {
+    use std::mem::size_of;
+    let bytes = |count: usize, size: usize| (count.max(1) as u64).checked_mul(size as u64);
+    let mut mesh_nodes = Vec::new();
     let mut nodes: Vec<gltf::Node<'_>> = scene.nodes().collect();
     while let Some(node) = nodes.pop() {
-        meshes.extend(node.mesh());
         nodes.extend(node.children());
+        if node.mesh().is_some() {
+            mesh_nodes.push(node);
+        }
     }
-    let primitives = meshes.iter().flat_map(|mesh| mesh.primitives());
-    let primitives = primitives.flat_map(|primitive| {
-        let vertices = primitive
-            .get(&gltf::Semantic::Positions)
-            .map_or(0, |positions| positions.count());
-        let deltas = vertices.checked_mul(primitive.morph_targets().count());
-        let targets = primitive.morph_targets().flat_map(|target| {
-            [target.positions(), target.normals(), target.tangents()]
-                .into_iter()
-                .flatten()
-        });
-        let accessors = primitive
-            .attributes()
-            .map(|(_, accessor)| accessor)
-            .chain(primitive.indices())
-            .chain(targets);
-        accessors
-            .map(|accessor| Some(accessor.count()))
-            .chain([deltas])
+    let primitives = mesh_nodes.iter().flat_map(|node| {
+        let vertex = size_of::<Vertex>()
+            + node
+                .skin()
+                .map_or(0, |_| size_of::<deformation::Influence>());
+        let primitives = node.mesh().into_iter().flat_map(|mesh| mesh.primitives());
+        primitives.map(move |primitive| {
+            let vertices = primitive
+                .get(&gltf::Semantic::Positions)
+                .map_or(0, |positions| positions.count());
+            let indices = primitive
+                .indices()
+                .map_or(vertices, |indices| indices.count());
+            let deltas = bytes(vertices, size_of::<deformation::MorphDelta>())?
+                .checked_mul(primitive.morph_targets().count() as u64)?;
+            bytes(vertices, vertex)?
+                .checked_add(bytes(indices, size_of::<u32>())?)?
+                .checked_add(deltas)
+        })
     });
     let skins = document
         .skins()
-        .flat_map(|skin| skin.inverse_bind_matrices())
-        .map(|matrices| Some(matrices.count()));
-    let keyframes = document
+        .map(|skin| bytes(skin.joints().count(), size_of::<deformation::Joint>()));
+    let channels = document
         .animations()
         .flat_map(|animation| animation.channels())
-        .flat_map(|channel| {
+        .map(|channel| {
+            let value = match channel.target().property() {
+                Property::Translation | Property::Scale => size_of::<Vec3>(),
+                Property::Rotation => size_of::<Quat>(),
+                Property::MorphTargetWeights => size_of::<f32>(),
+            };
             let sampler = channel.sampler();
-            [
-                Some(sampler.input().count()),
-                Some(sampler.output().count()),
-            ]
+            bytes(sampler.input().count(), size_of::<f32>())?
+                .checked_add(bytes(sampler.output().count(), value)?)
         });
     primitives
         .chain(skins)
-        .chain(keyframes)
-        .try_fold(0usize, |total, elements| total.checked_add(elements?))
+        .chain(channels)
+        .try_fold(0u64, |total, bytes| {
+            total
+                .checked_add(bytes?)
+                .filter(|&total| total <= MAX_LOAD_BYTES)
+        })
 }
 
 /// Refuses an accessor the gltf crate's readers cannot read, which its

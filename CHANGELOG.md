@@ -15,11 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d` glTF import: a scene listing a root twice or a child as a root,
-  or morph-weight keyframes and nodes reusing a mesh declaring billions of
-  elements, could abort the process; such a scene now fails the load, as
-  does one reading more than 2^28 accessor elements and morph target deltas
-  in all (each instance counted). No game-code change needed.
+- `sgl-3d` glTF import: a small file whose morph-weight keyframes or
+  instanced meshes declared gigabytes of data could abort the process; a
+  scene listing a root twice or a child as a root now fails the load, as
+  does one whose meshes (each instance counted), skins and clips would
+  take more than 4 GiB natively or 1 GiB in the browser. No game-code
+  change needed.
 - `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
   (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
   (`FrameInput::camera_cut`, a resize or another scene) in a frame where the

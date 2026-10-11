@@ -823,12 +823,12 @@ fn scene_roots_that_repeat_or_have_a_parent_are_rejected() {
 
 // Plausible defect: morph-weight keyframe values, which glTF requires a
 // key and target each (three a key for a cubic spline), read without a
-// bound on their count: 65536 cubic keys for 4096 targets need 805 million
-// values (3.2 GB), declared by a sparse accessor without a buffer view in
+// bound on their count: 65536 cubic keys for 8192 targets need 1.6 billion
+// values (6.4 GB), declared by a sparse accessor without a buffer view in
 // a file of under 1 MB.
 #[wasm_bindgen_test(unsupported = test)]
 fn morph_weight_keyframes_beyond_the_load_limit_are_rejected() {
-    const TARGETS: usize = 4096;
+    const TARGETS: usize = 8192;
     const KEYS: usize = 65536;
     let bytes = rigged(|document, buffer| {
         let primitive = &mut document["meshes"][1]["primitives"][0];
@@ -844,17 +844,18 @@ fn morph_weight_keyframes_beyond_the_load_limit_are_rejected() {
     });
     let error = load_slice(&bytes)
         .err()
-        .expect("3.2 GB of keyframe values were read")
+        .expect("6.4 GB of keyframe values were read")
         .to_string();
-    assert!(error.contains("accessor elements"), "{error}");
+    assert!(error.contains("bytes one load may"), "{error}");
 }
 
 // Plausible defect: a mesh read once for each node that uses it without a
-// bound on the total: 4096 nodes using a mesh of 65535 vertices produce
-// 268 million vertices (over 20 GB) from a file of under 1 MB.
+// bound on the total: 1024 nodes using a mesh of 65535 vertices produce 67
+// million vertices (6.2 GB as `Vertex`es and their indices) from a file of
+// under 1 MB, though only 134 million accessor elements.
 #[wasm_bindgen_test(unsupported = test)]
 fn instancing_beyond_the_load_limit_is_rejected() {
-    const NODES: usize = 4096;
+    const NODES: usize = 1024;
     let mut buffer = Buffer::default();
     let positions = buffer.floats(&[1.; 3 * 65535], "VEC3", 3);
     let document = json!({
@@ -865,7 +866,7 @@ fn instancing_beyond_the_load_limit_is_rejected() {
     });
     let error = load_slice(&buffer.glb(document))
         .err()
-        .expect("268 million vertices were read")
+        .expect("67 million vertices were read")
         .to_string();
-    assert!(error.contains("accessor elements"), "{error}");
+    assert!(error.contains("bytes one load may"), "{error}");
 }

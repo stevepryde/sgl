@@ -2655,14 +2655,17 @@ need. A sparse accessor without a buffer view that nothing else counts
 (POSITION, indices or keyframe times) may declare no more elements than
 the file's buffers would hold in a buffer view. An embedded image's buffer view must lie within its
 buffer. Any other fails the load with an error naming it.
-A scene must list each root node once, and only nodes without a parent,
-as glTF requires. One load reads at most 2^28 (268,435,456) elements,
-counted from what accessors declare before anything is read: for each of
-the scene's mesh nodes, selected or not, every accessor its mesh's
-primitives name plus one morph target delta a vertex and target; each
-skin's inverse bind matrices; and each animation channel's keyframe times
-and values. A mesh counts again for each node that uses it, so instancing
-counts each instance. A file beyond it fails the load; split it.
+
+A scene must list each root node once, and only nodes without a parent, as
+glTF requires. Before it decodes an image or reads an accessor, a load
+counts the bytes its scene produces from the counts its accessors declare,
+and fails beyond 4 GiB natively or 1 GiB in the browser: for each of the
+scene's mesh nodes, selected or not, its mesh's vertices (88 bytes each,
+plus 32 for skin influences on a skinned node), indices (4 bytes) and
+morph target deltas (36 bytes a vertex and target); each skin's joints;
+and each animation channel's keyframe times and values. A mesh counts
+again for each node that uses it, so each instance counts. Split a file
+beyond it.
 
 A clearcoat normal map tilts the coat alone, on the base normal map's
 frame; without one the coat follows the geometry normal. An iridescent
