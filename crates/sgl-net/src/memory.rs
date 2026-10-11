@@ -984,10 +984,11 @@ mod properties {
     /// class, an unpolled receiver refusing its sender's unreliable messages
     /// or keeping the oldest instead of the newest (#443), a stale latest
     /// state, staged data leaking before `flush`, a lane that keeps refusing
-    /// after a drain, or a capacity that disagrees with admission. Oracle: a model with a stage/flush step, a reliable
-    /// and an unreliable FIFO per lane bounded by that lane's configuration,
-    /// and one slot; a reliable send succeeds exactly when the capacity
-    /// reported just before it says the payload fits.
+    /// after a drain, or a capacity that disagrees with admission. Oracle: a
+    /// model with a stage/flush step, a reliable and an unreliable FIFO per
+    /// lane bounded by that lane's configuration, and one slot; a reliable
+    /// send succeeds exactly when the capacity reported just before it says
+    /// the payload fits.
     #[test]
     fn memory_duplex_matches_the_staged_lane_model_in_both_directions() {
         check(
