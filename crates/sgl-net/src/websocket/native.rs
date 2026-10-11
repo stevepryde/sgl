@@ -215,7 +215,7 @@ impl SharedPeer {
                 initialized: false,
                 activity_pending: false,
                 outstanding_ping: None,
-                pending_pong: None,
+                pong_matched: false,
                 rtt: RttEstimator::new(),
             }),
             magic,
@@ -303,7 +303,9 @@ struct Liveness {
     initialized: bool,
     activity_pending: bool,
     outstanding_ping: Option<u64>,
-    pending_pong: Option<u64>,
+    /// A pong echoing `outstanding_ping` arrived since the last `advance`,
+    /// which samples its round trip at the caller's clock.
+    pong_matched: bool,
     rtt: RttEstimator,
 }
 
@@ -319,12 +321,11 @@ impl Liveness {
             self.last_activity_ms = self.now_ms;
             self.activity_pending = false;
         }
-        if let Some(sent_ms) = self.pending_pong.take()
-            && self.outstanding_ping == Some(sent_ms)
+        if std::mem::take(&mut self.pong_matched)
+            && let Some(sent_ms) = self.outstanding_ping.take()
         {
             let elapsed = self.now_ms.saturating_sub(sent_ms);
             self.rtt.sample(u32::try_from(elapsed).unwrap_or(u32::MAX));
-            self.outstanding_ping = None;
         }
     }
 
@@ -337,8 +338,11 @@ impl Liveness {
         let Ok(sent_bytes) = <[u8; 8]>::try_from(payload) else {
             return;
         };
-        let sent_ms = u64::from_be_bytes(sent_bytes);
-        self.pending_pong = Some(sent_ms);
+        // Matched on arrival, so a later unsolicited pong (RFC 6455
+        // section 5.5.3) cannot displace the reply before `advance`.
+        if self.outstanding_ping == Some(u64::from_be_bytes(sent_bytes)) {
+            self.pong_matched = true;
+        }
     }
 
     fn timed_out(&self) -> bool {
@@ -2130,5 +2134,18 @@ mod tests {
         pinging.observe_pong(&ping);
         pinging.advance(40);
         assert_eq!(pinging.rtt().srtt_ms, 30);
+    }
+
+    #[test]
+    fn an_unsolicited_pong_after_the_reply_keeps_pinging() {
+        let pinging = shared(10, 0);
+        pinging.advance(0);
+        pinging.advance(10);
+        let ping = pinging.take_ping().unwrap();
+        pinging.observe_pong(&ping);
+        pinging.observe_pong(&99u64.to_be_bytes());
+        pinging.advance(40);
+        assert_eq!(pinging.rtt().srtt_ms, 30);
+        assert!(pinging.take_ping().is_some());
     }
 }

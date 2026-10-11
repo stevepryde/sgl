@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` native WebSocket keepalive: an unsolicited 8-byte pong arriving
+  after the reply to this side's ping, before the next `poll`, discarded the
+  reply, so the peer never pinged again and its `rtt` stopped updating; the
+  reply now counts. No game-code changes needed.
 - `sgl-post-fx` `TemporalAntiAliasing::prepare_resources`: the frame after a
   resize resolved against the zeroed, recreated history instead of resetting
   accumulation, which shifted bright HDR texels; it now takes the current
