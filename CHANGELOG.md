@@ -16,8 +16,7 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` `Scene::set_instance_deformation`: on a device created with a
-  uniform offset alignment that does not divide 36 bytes (16 or 32, from an
-  adapter's real limits), a frame with two or more deforming meshes failed
+  uniform offset alignment of 32 bytes (an adapter's real limits), a frame with two or more deforming meshes failed
   wgpu validation; the deform stage's records are now aligned. No game-code
   change needed.
 - `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned

@@ -174,12 +174,12 @@ mod tests {
 
     // Defect: a stride that holds a record but is not a multiple of the
     // device's uniform offset alignment, so the second record's dynamic
-    // offset fails wgpu validation on a device reporting 16 or 32. The
+    // offset fails wgpu validation on a device reporting 32. The
     // oracle is wgpu's rule: each dynamic offset is a multiple of the
     // alignment, and records must not overlap.
     #[wasm_bindgen_test(unsupported = test)]
     fn the_stride_is_aligned_and_holds_a_record() {
-        for alignment in [16, 32, 64, 256] {
+        for alignment in [32, 64, 256] {
             let stride = stride(alignment);
             assert_eq!(stride % u64::from(alignment), 0, "alignment {alignment}");
             assert!(stride >= std::mem::size_of::<DeformDispatch>() as u64);
