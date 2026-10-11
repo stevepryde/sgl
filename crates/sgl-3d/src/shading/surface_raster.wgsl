@@ -38,8 +38,12 @@ fn surface_map_frame(i:Fragment,front:bool)->mat3x3<f32> {
  let uv_dx=dpdx(i.uv);
  let uv_dy=dpdy(i.uv);
  // Three185.1 TangentUtils uses GLSL dFdy; its WebGPU builder lowers that
- // to -dpdy. Negate BOTH world and UV Y derivatives, then reverse the
- // tangent/bitangent on accepted backs (normal already carries face).
+ // to -dpdy. Negate BOTH world and UV Y derivatives. The cotangent frame
+ // is scaled by dot(cross(dx,-dy),n), positive wherever n faces the view,
+ // an accepted back's flipped normal included, so a and b give the
+ // surface's own +T and +B on either side; face reverses them on a back,
+ // to (-T,-B,-N) as surface_tangent_frame, ray_map_frame and the Khronos
+ // glTF Sample Renderer 0686eb2 (material_info.glsl 164–171) give.
  let a=cross(-dy,n);
  let b=cross(n,dx);
  let tangent=(a*uv_dx.x-b*uv_dy.x)*face;
