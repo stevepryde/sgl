@@ -1459,10 +1459,13 @@ mod tests {
             }]
         );
         // The client's first disconnect is lost.
-        let mut first = true;
-        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
-            std::mem::take(&mut first)
-        });
+        ferry(
+            &mut client,
+            client_addr,
+            &mut server,
+            server_addr,
+            first_disconnect(),
+        );
         assert_eq!(
             server.poll(1_002),
             [EndpointEvent::Disconnected {
@@ -2458,6 +2461,21 @@ mod tests {
                     fail: false,
                 });
             }
+        }
+    }
+
+    /// A `ferry` loss rule that loses only the first disconnect.
+    fn first_disconnect() -> impl FnMut(&SentDatagram) -> bool {
+        let mut lost = false;
+        move |datagram| {
+            let disconnect = matches!(
+                packet::parse(&datagram.bytes, MAGIC),
+                Some(Parsed::Control {
+                    kind: Kind::Disconnect,
+                    ..
+                })
+            );
+            disconnect && !std::mem::replace(&mut lost, true)
         }
     }
 
@@ -3964,10 +3982,13 @@ mod tests {
                 reason: DisconnectReason::ProtocolViolation,
             }]
         );
-        let mut first = true;
-        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
-            std::mem::take(&mut first)
-        });
+        ferry(
+            &mut server,
+            server_addr,
+            &mut client,
+            client_addr,
+            first_disconnect(),
+        );
         assert_eq!(
             client.poll(5),
             [EndpointEvent::Disconnected {
