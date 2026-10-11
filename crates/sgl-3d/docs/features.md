@@ -59,8 +59,9 @@ them through unrefracted. A probe captured on an
   with occlusion maps in an image of their own and specular textures, which
   SGL3D does not sample yet, the images no sampled map uses, which are
   neither read nor decoded, and vertex attributes nothing reads
-  (`TEXCOORD_2` on, `COLOR_1` on, `_NAME`). A tangent along its normal is
-  absent except on an anisotropic material, which refuses it. Other
+  (`TEXCOORD_2` on, `COLOR_1` on, `_NAME`). A tangent along its normal
+  (within 0.02°) is absent except on an anisotropic material, which
+  refuses it. Other
   unsupported features return errors rather
   than partial models. [Limits](../README.md#asset-and-environment-limits).
 - **Compressed material textures**: a material image is decoded RGBA8, whose

@@ -35,8 +35,10 @@ pub(crate) const HISTORY_BYTES: u64 = 4
     * (6 * (COLOR_RESOLUTION * COLOR_RESOLUTION) + DEPTH_RESOLUTION * DEPTH_RESOLUTION + 4) as u64;
 
 /// The ray texels each probe takes at `max_rays` (`ddgi_ray_slot`): its
-/// rays and its fixed rays.
-pub(crate) fn ray_stride(max_rays: u32) -> u32 {
+/// rays and its fixed rays. Every tier's `max_rays` leaves room for the
+/// turn that traces all of a probe's fixed rays (asserted in the dynamic GI
+/// stage's buffers).
+pub(crate) const fn ray_stride(max_rays: u32) -> u32 {
     max_rays + FIXED_RAYS_PER_FRAME
 }
 

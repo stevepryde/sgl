@@ -41,7 +41,7 @@ fn scene_depth_behind(ctx:SurfaceContext)->f32 {
 // orthographic one's. Within 0 and SCENE_DEPTH_FAR.
 fn scene_along_ray(ctx:SurfaceContext,depth:f32)->f32 {
  let difference=max(depth,0.);
- if view.projection[2][3]==0. {
+ if !projection_perspective(view.projection) {
   return min(difference,SCENE_DEPTH_FAR);
  }
  let position=(view.view*vec4(ctx.position,1.)).xyz;

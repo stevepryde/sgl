@@ -106,6 +106,30 @@ pub(super) const CONVERGENCE_BYTES: u64 = std::mem::size_of::<Convergence>() as 
 pub(super) const RAMP_BINS: u32 = 1024;
 /// The lengthenings of every period the allocation weighs (`DDGI_STRIDES`).
 pub(super) const STRIDES: u32 = 7;
+/// The fixed directions that classify a probe, all of which it traces on
+/// its second turn (`DDGI_FIXED_RAYS`).
+const FIXED_RAYS: u32 = 32;
+/// A probe traces its other rays in buckets of this many
+/// (`DDGI_RAY_BUCKET_COUNT`).
+const RAY_BUCKET_COUNT: u32 = 4;
+// Every tier's probe slots (`ray_stride`) hold the turn that traces all of a
+// probe's fixed rays and at least a bucket of its others (`ddgi_turn_rays`);
+// fewer would write that turn's rays into the next probe's slots.
+const _: () = {
+    use crate::settings::DynamicGiQuality;
+    let tiers = [
+        DynamicGiQuality::Off,
+        DynamicGiQuality::Low,
+        DynamicGiQuality::High,
+    ];
+    let mut tier = 0;
+    while tier < tiers.len() {
+        if let Some(rays) = tiers[tier].rays() {
+            assert!(crate::shading::dynamic_gi::ray_stride(rays) >= FIXED_RAYS + RAY_BUCKET_COUNT);
+        }
+        tier += 1;
+    }
+};
 /// The frame's most rays, fixed rays included, in probes at the tier's
 /// most: 32,768 at High, 16,384 at Low. Wicked's surfel GI traces at most
 /// 100,000 a frame (4323a33c `SURFEL_RAY_BUDGET`) on hardware ray tracing;
@@ -225,6 +249,16 @@ pub(super) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "dynamic_gi_allocate",
             "DDGI_MOST_MOVING_BOUNDS",
             naga::Literal::U32(MOST_MOVING_BOUNDS),
+        ),
+        Constant::new(
+            "dynamic_gi_allocate",
+            "DDGI_FIXED_RAYS",
+            naga::Literal::U32(FIXED_RAYS),
+        ),
+        Constant::new(
+            "dynamic_gi_allocate",
+            "DDGI_RAY_BUCKET_COUNT",
+            naga::Literal::U32(RAY_BUCKET_COUNT),
         ),
     ]
 }
