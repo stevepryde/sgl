@@ -99,22 +99,25 @@ fn trace_mirror_floor(
     queue: &wgpu::Queue,
     floor_normal: [f64; 3],
     feature_flags: FeatureFlags,
+    zero_normal: fn(u32, u32) -> bool,
 ) -> ScreenSpaceReflection {
     let camera = infinite_reversed_camera();
     let mut encoder = device.create_command_encoder(&Default::default());
     let scene_depth = depth_values(device, queue, &mut encoder, &floor_depths(floor_normal));
     let previous_depth = depth(device, &mut encoder, 0.0);
-    let normal = texture(
-        device,
-        queue,
-        wgpu::TextureFormat::Rgba16Float,
-        &half(&[
-            floor_normal[0] as f32,
-            floor_normal[1] as f32,
-            floor_normal[2] as f32,
-            0.0,
-        ]),
-    );
+    let floor_normal = floor_normal.map(|v| v as f32);
+    let normals: Vec<u8> = (0..SIZE[1])
+        .flat_map(|y| (0..SIZE[0]).map(move |x| (x, y)))
+        .flat_map(|(x, y)| {
+            let [nx, ny, nz] = if zero_normal(x, y) {
+                [0.0; 3]
+            } else {
+                floor_normal
+            };
+            half(&[nx, ny, nz, 0.0])
+        })
+        .collect();
+    let normal = texels(device, queue, wgpu::TextureFormat::Rgba16Float, &normals);
     // A mirror everywhere, the sky included.
     let material = texture(device, queue, wgpu::TextureFormat::R8Unorm, &[0]);
     let color = texture(
@@ -202,7 +205,13 @@ fn half_resolution_rays_at_an_infinite_horizon_are_finite() {
     // 0.13, between the centres of rows 20 (sky) and 21 (floor), which share
     // 2×2 blocks.
     let (s, c) = (0.13 / f64::from(b)).atan().sin_cos();
-    let ssr = trace_mirror_floor(&device, &queue, [0.0, c, -s], FeatureFlags::HALF_RESOLUTION);
+    let ssr = trace_mirror_floor(
+        &device,
+        &queue,
+        [0.0, c, -s],
+        FeatureFlags::HALF_RESOLUTION,
+        |_, _| false,
+    );
     for (name, view) in [
         ("radiance", &ssr.resources().radiance),
         ("direction and PDF", &ssr.resources().ray_direction_pdf),
@@ -236,7 +245,9 @@ fn rays_past_the_far_plane_keep_their_direction() {
     let (s, c) = (horizon / f64::from(b)).atan().sin_cos();
     let floor_normal = [0.0, c, -s];
     let depths = floor_depths(floor_normal);
-    let ssr = trace_mirror_floor(&device, &queue, floor_normal, FeatureFlags::NONE);
+    let ssr = trace_mirror_floor(&device, &queue, floor_normal, FeatureFlags::NONE, |_, _| {
+        false
+    });
     let rays = read_rgba16f(&device, &queue, &ssr.resources().ray_direction_pdf);
     let mut wrong = Vec::new();
     let mut row_24_past_far_plane = 0;
@@ -293,4 +304,62 @@ fn rays_past_the_far_plane_keep_their_direction() {
     let output = read_rgba16f(&device, &queue, ssr.get_ssr_radiance_srv());
     let nonfinite = nonfinite(&output);
     assert_eq!(nonfinite, 0, "{nonfinite} non-finite output pixels");
+}
+
+// PROVENANCE.md DFX-52: a zero world normal, outside the input contract, has
+// no tangent frame to sample a reflection from, which made its ray's
+// direction NaN. Every fifth pixel of a mirror floor has a zero normal. Each
+// ray's radiance, direction and PDF stay finite at full and half resolution,
+// and at full resolution each zero-normal floor pixel reports a miss, no ray
+// and no radiance, while each unit-normal floor pixel still stores its ray.
+#[test]
+fn zero_normals_report_a_miss() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let (_, b) = projection_scales();
+    let (s, c) = (0.13 / f64::from(b)).atan().sin_cos();
+    let floor_normal = [0.0, c, -s];
+    let zero_normal = |x: u32, y: u32| (x + y).is_multiple_of(5);
+    let depths = floor_depths(floor_normal);
+    for feature_flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        let ssr = trace_mirror_floor(&device, &queue, floor_normal, feature_flags, zero_normal);
+        let radiance = read_rgba16f(&device, &queue, &ssr.resources().radiance);
+        let rays = read_rgba16f(&device, &queue, &ssr.resources().ray_direction_pdf);
+        for (name, texels) in [("radiance", &radiance), ("direction and PDF", &rays)] {
+            let nonfinite = nonfinite(texels);
+            assert_eq!(
+                nonfinite,
+                0,
+                "{feature_flags:?}: {nonfinite} of {} rays' {name}",
+                texels.len()
+            );
+        }
+        if feature_flags != FeatureFlags::NONE {
+            continue;
+        }
+        let mut wrong = Vec::new();
+        for y in 0..SIZE[1] {
+            for x in 0..SIZE[0] {
+                let at = (y * SIZE[0] + x) as usize;
+                if depths[at] == 0.0 {
+                    continue;
+                }
+                let traced = rays[at][..3].iter().any(|&v| v != 0.0);
+                let missed = rays[at] == [0.0; 4] && radiance[at] == [0.0; 4];
+                if zero_normal(x, y) && !missed || !zero_normal(x, y) && !traced {
+                    wrong.push(format!(
+                        "({x}, {y}): ray {:?}, radiance {:?}",
+                        rays[at], radiance[at]
+                    ));
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} floor pixels traced a zero normal or missed a unit one:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
+    }
 }

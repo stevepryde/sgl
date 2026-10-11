@@ -90,6 +90,16 @@ impl AutoExposureUniform {
         } else {
             (f32::MIN, f32::MAX)
         };
+        // A nonfinite or negative speed would make the stored correction
+        // NaN, or walk it away from its target, until history restarts.
+        let defaults = AutoExposure::default();
+        let speed = |speed: f32, default| {
+            if speed.is_finite() && speed >= 0. {
+                speed
+            } else {
+                default
+            }
+        };
         let points = automatic.compensation.points();
         let mut compensation = [[0.; 4]; CompensationCurve::MAX_POINTS / 2];
         for (index, point) in points.iter().enumerate() {
@@ -101,12 +111,14 @@ impl AutoExposureUniform {
             log_lum_range,
             low_percent: FILTER_LOW,
             high_percent: FILTER_HIGH,
-            speed_up: automatic.speed_brighten,
-            speed_down: automatic.speed_darken,
+            speed_up: speed(automatic.speed_brighten, defaults.speed_brighten),
+            speed_down: speed(automatic.speed_darken, defaults.speed_darken),
             exponential_transition_distance: EXPONENTIAL_TRANSITION_DISTANCE,
             correction_min,
             correction_max,
-            delta_time,
+            // Finite, so a speed of 0 over an unbounded frame stays 0, not
+            // 0 × ∞.
+            delta_time: delta_time.min(f32::MAX),
             stops,
             reset: u32::from(reset),
             compensation_points: points.len() as u32,

@@ -892,9 +892,10 @@ impl ScreenSpaceReflection {
         let alpha = render_attribs.post_fx_context.get_transition_alpha(elapsed);
         let mut attribs = *render_attribs.ssr_attribs;
         attribs.alpha_interpolation = alpha;
-        let update_required = self.ssr_attribs.alpha_interpolation != alpha
-            || bytemuck::bytes_of(render_attribs.ssr_attribs)
-                != bytemuck::bytes_of(&self.ssr_attribs);
+        // DFX-52: at most the depth hierarchy's top mip.
+        let top_mip = self.hierarchical_depth_mip_map_srv.len().saturating_sub(1) as u32;
+        attribs.most_detailed_mip = attribs.most_detailed_mip.min(top_mip);
+        let update_required = bytemuck::bytes_of(&attribs) != bytemuck::bytes_of(&self.ssr_attribs);
         if update_required {
             self.ssr_attribs = attribs;
             render_attribs.queue.write_buffer(
