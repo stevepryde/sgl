@@ -20,6 +20,22 @@ docs and specs the entry links.
   grid's cell count, panicking with overflow checks or else building a
   wrongly sized grid; it now builds within budget. No game-code change
   needed.
+- `sgl-3d` `Scene::set_instance_deformation`: on a device created with a
+  uniform offset alignment of 32 bytes (an adapter's real limits), a frame with two or more deforming meshes failed
+  wgpu validation; the deform stage's records are now aligned. No game-code
+  change needed.
+- `sgl-input` `Gamepads` on macOS: replacing a live owner in place
+  (`pads = Gamepads::new()?`) turned background event delivery off, losing
+  releases while unfocused; it now stays on until the last owner drops. No
+- `sgl-2d` `Ui::begin` / `UiFrame::end`: a release and a new press in one
+  frame (button still down) dropped the press's held button, scrollbar,
+  number-field or splitter drag; they now count as release then press, so the
+  earlier drag ends and the second press holds, scrubs or resizes. No
+  game-code change needed.
+- `sgl-input` `Gamepads::poll`: a button pressed while the macOS handler was
+  being installed could yield two `ButtonPressed` events and one release; a
+  press of a button already held is now dropped on every target. No
+  game-code change needed.
 - `sgl-2d` `UiFrame::scroll_area_begin`: content was clipped to the whole
   area, so a press on the scrollbar thumb also pressed the row under it; while
   the scrollbar shows, content is now clipped `Ui::SCROLLBAR_WIDTH` (new, 8 px)

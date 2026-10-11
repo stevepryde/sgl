@@ -93,7 +93,10 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    fields retain ASCII append/backspace/paste editing and never copy or cut;
    they avoid temporary copies of the secret while editing, provided the
    game preallocates `buf` with at least `max_len` bytes.
-   Buttons act on press-down. At most one widget is active at a time. An open
+   Buttons act on press-down. At most one widget is active at a time. A
+   release and press in one frame with the button held count as release then
+   press: the release ends any drag or held widget, and the press re-arms only
+   what it hits. An open
    modal blocks widgets behind it. Line edits respect `max_len` and keep the
    buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text in
    place and keeps the buffer's allocation. Scroll areas clip their content

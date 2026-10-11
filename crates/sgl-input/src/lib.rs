@@ -119,7 +119,11 @@ impl State {
             let pad = self.pads.get_mut(&event.id)?;
             match event.event {
                 EventType::ButtonPressed(button) => {
-                    pad.pressed.insert(button);
+                    // A press of a held button (the seeded state and the
+                    // handler both reporting one press on macOS) is dropped.
+                    if !pad.pressed.insert(button) {
+                        return None;
+                    }
                 }
                 EventType::ButtonReleased(button) => {
                     // A release with no reported press (held when the pad
@@ -235,5 +239,32 @@ mod tests {
         assert!(!state.pads[&id].is_pressed(Button::South));
         assert!(state.apply(release(Button::East)).is_some());
         assert!(!state.pads[&id].is_pressed(Button::East));
+    }
+
+    /// #531: a press reported twice without a release in between (macOS
+    /// seeding held state as its handler fires) reaches the game once, so
+    /// presses and releases stay paired (specs/input.md).
+    #[test]
+    fn a_repeated_press_is_reported_once() {
+        let mut state = State::default();
+        let id = GamepadId(0);
+        state.apply(Update::Connected(id, "pad".into()));
+        let events: Vec<_> = [
+            EventType::ButtonPressed(Button::South),
+            EventType::ButtonPressed(Button::South),
+            EventType::ButtonReleased(Button::South),
+        ]
+        .into_iter()
+        .filter_map(|event| state.apply(Update::Input(Event { id, event })))
+        .map(|event| event.event)
+        .collect();
+        assert_eq!(
+            events,
+            [
+                EventType::ButtonPressed(Button::South),
+                EventType::ButtonReleased(Button::South),
+            ]
+        );
+        assert!(!state.pads[&id].is_pressed(Button::South));
     }
 }
