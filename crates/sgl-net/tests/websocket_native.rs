@@ -549,9 +549,14 @@ fn a_peer_that_drops_its_socket_without_a_close_is_reported_as_peer() {
 
 #[test]
 fn frames_that_break_websocket_framing_are_protocol_violations() {
-    // A masked binary frame with RSV1 set (no extension negotiated it), and
-    // an unmasked client frame: both invalid under RFC 6455 section 5.
-    for raw in [&[0xC2, 0x81, 1, 2, 3, 4, 0][..], &[0x82, 0x01, 0][..]] {
+    // A masked binary frame with RSV1 set (no extension negotiated it), an
+    // unmasked client frame, and a masked frame with reserved opcode 0x3:
+    // all invalid under RFC 6455 section 5.
+    for raw in [
+        &[0xC2, 0x81, 1, 2, 3, 4, 0][..],
+        &[0x82, 0x01, 0][..],
+        &[0x83, 0x81, 1, 2, 3, 4, 0][..],
+    ] {
         let reason = server_disconnect_reason(|mut socket| {
             let MaybeTlsStream::Plain(stream) = socket.get_mut() else {
                 unreachable!("ws:// is plain TCP");
