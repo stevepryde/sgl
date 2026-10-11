@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `SpritePass::prepare`: a frame with more instances than the
+  device's `max_buffer_size` holds (about 3.3 million at the 256 MiB
+  default) grew the instance buffer past it, a wgpu validation error; it now
+  draws the first that many (world, then screen) and drops the rest, which
+  `draw_stats` reflects. No game-code change needed.
 - `sgl-3d` `asset::load*`: a node transform with an absolute determinant
   below 1e-10 was refused as singular, so a uniform scale at or below about
   4.6e-4 failed to load; singularity is now judged relative to the node's

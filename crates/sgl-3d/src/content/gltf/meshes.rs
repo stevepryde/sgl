@@ -115,7 +115,8 @@ pub(super) fn read_node(
         // scale (determinant s³) loads and only a collapsed axis is refused.
         let axes = Mat3::from_mat4(transform);
         let volume = axes.x_axis.length() * axes.y_axis.length() * axes.z_axis.length();
-        let normal_transform = transform.inverse().transpose();
+        // Normals use only the 3x3, so an inverted translation cannot overflow it.
+        let normal_transform = Mat4::from_mat3(axes.inverse().transpose());
         if !transform.is_finite()
             || axes.determinant().abs() <= 1e-6 * volume
             || !normal_transform.is_finite()
