@@ -102,7 +102,7 @@ impl UiFrame<'_> {
                 *extent = next;
             }
         }
-        let dragging = captured.is_some() && !self.input.mouse_released;
+        let dragging = captured.is_some() && self.input.mouse_down;
         SplitterResponse {
             changed,
             dragging,
@@ -201,6 +201,45 @@ mod tests {
     use crate::ui::{UiInput, UiKey};
     use sgl_core::math::Vec2;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    /// A release and press in one frame with the button held count as
+    /// release then press: a second press on the handle re-captures it, so a
+    /// held move resizes from that press; a second press off the handle ends
+    /// the capture, so a held move leaves the extent.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn splitter_release_then_press_in_one_frame() {
+        let options = Splitter {
+            axis: SplitterAxis::Horizontal,
+            min: 60.0,
+            max: 180.0,
+        };
+        for (second_x, expected) in [(102.0, 140.0), (300.0, 100.0)] {
+            let (mut ui, mut text, _assets) = fixture();
+            let mut extent = 100.0;
+            let release_and_press = UiInput {
+                mouse_pos: Vec2::new(second_x, 15.0),
+                mouse_pressed: true,
+                mouse_released: true,
+                mouse_down: true,
+                ..UiInput::default()
+            };
+            let mut dragging = Vec::new();
+            for input in [
+                press_at(102.0, 15.0),
+                release_and_press,
+                hover_at(142.0, 15.0, true),
+            ] {
+                let mut list = DrawList::new();
+                let mut f = ui.begin(&mut text, &mut list, input);
+                let handle = Rect::new(extent, 0.0, 5.0, 100.0);
+                dragging.push(f.splitter("split", handle, &mut extent, options).dragging);
+                f.end();
+            }
+            let on_handle = second_x == 102.0;
+            assert_eq!(extent, expected, "second press at x {second_x}");
+            assert_eq!(dragging, [true, on_handle, on_handle]);
+        }
+    }
 
     #[wasm_bindgen_test(unsupported = test)]
     fn splitter_capture_crosses_panes_and_cancels() {

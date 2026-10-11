@@ -15,10 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-2d` `UiFrame::end`: a release and a new press in one frame (button
-  still down) dropped the press's held button, scrollbar or number-field drag;
-  it now keeps them, so a fast double-click's second press scrubs or holds.
-  No game-code change needed.
+- `sgl-2d` `Ui::begin` / `UiFrame::end`: a release and a new press in one
+  frame (button still down) dropped the press's held button, scrollbar,
+  number-field or splitter drag; they now count as release then press, so the
+  earlier drag ends and the second press holds, scrubs or resizes. No
+  game-code change needed.
 - `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
   `SendError::Disconnected`; it now returns `UnknownConnection`, like every
   other server transport. A game that matched `Disconnected` from a server

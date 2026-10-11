@@ -289,6 +289,8 @@ impl Ui {
     /// Start a frame: widgets are drawn through the returned [`UiFrame`]
     /// into `list`'s screen channel (rects immediately, text via `text`'s
     /// queue). Call [`UiFrame::end`] when done, then `text.end_frame(..)`.
+    /// A release and press in one frame with the button held count as
+    /// release then press: the release ends any drag or held widget first.
     pub fn begin<'a>(
         &'a mut self,
         text: &'a mut TextRenderer,
@@ -296,6 +298,15 @@ impl Ui {
         input: UiInput,
     ) -> UiFrame<'a> {
         self.clock = (self.clock + input.dt) % CARET_BLINK;
+        // A release and press in one frame with the button held count as
+        // release then press: the release ends any capture first, so the
+        // press re-arms only what it hits.
+        if input.mouse_pressed && input.mouse_released && input.mouse_down {
+            self.active = None;
+            self.thumb_drag = None;
+            self.number_drag = None;
+            self.splitter_drag = None;
+        }
         self.pointer_consumed = self.splitter_drag.is_some();
         self.keyboard_captured =
             self.focus.is_some() || self.open_popup.is_some() || self.modal_blocking;
@@ -506,22 +517,24 @@ impl UiFrame<'_> {
     }
 
     /// Finish the frame: a release with the button up clears the pressed
-    /// widget; a press that no
-    /// line-edit consumed drops focus (click-away unfocus); a dropdown not
+    /// widget (a release and press in one frame with the button held count
+    /// as release then press, so the press's widget stays armed); a press
+    /// that no line-edit consumed drops focus (click-away unfocus); a dropdown not
     /// submitted this frame closes; this frame's overlay regions become next
     /// frame's input blockers.
     pub fn end(self) {
         self.text.set_clip(None);
-        if self.input.mouse_released || !self.splitter_seen {
+        // A release with the button still down means a press followed it in
+        // this frame (the only order consistent with `mouse_down`); that
+        // press may have re-armed a widget, so keep it.
+        let released = self.input.mouse_released && !self.input.mouse_down;
+        if released || !self.splitter_seen {
             self.ui.splitter_drag = None;
         }
         if !self.popup_seen {
             self.ui.open_popup = None;
         }
-        // A release with the button still down means a press followed it in
-        // this frame (the only order consistent with `mouse_down`); that
-        // press may have re-armed a widget, so keep it.
-        if self.input.mouse_released && !self.input.mouse_down {
+        if released {
             self.ui.active = None;
             self.ui.thumb_drag = None;
             self.ui.number_drag = None;
