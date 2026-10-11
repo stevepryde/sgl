@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::dropdown`: on the first frame an opened popover was drawn,
+  nothing shielded the widgets under it, so they could hover or fire with a
+  row; the popover now blocks them from that frame. No game-code change
+  needed.
 - `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
   light again on top of the background, so even a black glow brightened the
   fog; glow now adds only its own light dimmed by the fog in front of it, so
