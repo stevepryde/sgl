@@ -634,6 +634,7 @@ fn equal_keyframe_times_are_rejected() {
     .expect("equal keyframe times were accepted")
     .to_string();
     assert!(error.contains("animation 0"), "{error}");
+    assert!(error.contains("strictly increasing"), "{error}");
 }
 
 // Plausible defect: an embedded image's buffer view reaching past its
