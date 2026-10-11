@@ -21,6 +21,16 @@ docs and specs the entry links.
   depths when the flag changes. The flag needs a device with
   `TEXTURE_FORMAT_16BIT_NORM` and `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`
   whose adapter renders to R16Unorm. No game-code change needed.
+- `sgl-net` UDP endpoints: a handshake whose confirms or accept were lost
+  until the cookie expired (5 to 10 s) never completed; the server, even
+  after `stop_admission`, now accepts a request or confirm for a connection
+  it holds at any cookie age, and the client requests again after four
+  unanswered confirms, takes the cookie the accept names, and takes a
+  payload carrying its nonces as the accept. No game-code change needed.
+- `sgl-3d` `Settings::world_space_reflections`: on rare frames each world
+  ray traced the next 2×2 block's pixel (the last outside the screen), and
+  at a render 1 pixel wide or tall it read past the edge; each now traces a
+  pixel of its own block inside the screen. No game-code changes needed.
 - `sgl-net` `ThreadedUdpServer`: a connection that ended at the worker (peer
   close, timeout, protocol violation) discarded the messages it had
   delivered but the caller had not yet polled and reported `Disconnected`
