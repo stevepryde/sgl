@@ -1,5 +1,5 @@
 //! World-space reflection rays observed in the reflection composite of real
-//! frames.
+//! frames, and the classification's ray list over fixture receivers.
 use crate::asset::{CpuMesh, Vertex};
 use crate::renderer::Renderer;
 use crate::settings::WorldSpaceReflections::{All, Moving};
@@ -682,5 +682,131 @@ fn every_tracing_pixel_over_the_mirror_hits_and_every_mirror_pixel_reflects() {
         dark.len(),
         dark.iter().filter(|pixel| remainder(pixel)).count(),
         &dark[..dark.len().min(8)]
+    );
+}
+
+/// The rays the classification lists over a `size` frame of one receiver
+/// everywhere: lit, traced perceptual `roughness`, uncoated, under no
+/// blended receiver, where the screen-space method returned `confidence`
+/// and has Velvet's cutoff and fade.
+fn listed_rays(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    size: [u32; 2],
+    roughness: f32,
+    confidence: f32,
+) -> u32 {
+    let texels = (size[0] * size[1]) as usize;
+    let material =
+        test_support::hdr_texture(device, queue, size, &vec![[0., roughness, 0., 1.]; texels]);
+    let screen_space =
+        test_support::hdr_texture(device, queue, size, &vec![[0., 0., 0., confidence]; texels]);
+    let target = |label, format| crate::view::targets::target(device, label, size, format);
+    let f0 = target("lit F0", crate::shading::gbuffer::F0);
+    let depth = target("receiver depth", crate::shading::gbuffer::DEPTH);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("lit F0"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &f0,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        ..Default::default()
+    });
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("receiver depth"),
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &depth,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(0.5),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        ..Default::default()
+    });
+    let targets = super::Targets::new(device, size);
+    let [rw, rh] = targets.reduced.map(|side| side as f32);
+    let [w, h] = size.map(|side| side as f32);
+    let identity = Mat4::IDENTITY.to_cols_array_2d();
+    let cutoff = crate::stages::reflections::velvet::ROUGHNESS_CUTOFF;
+    let params = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("world reflection parameters"),
+        size: std::mem::size_of::<super::Params>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(
+        &params,
+        0,
+        bytemuck::bytes_of(&super::Params {
+            inverse_view_projection: identity,
+            previous_view_projection: identity,
+            eye: [0., 0., 0., 0.1],
+            full: [w, h, 1. / w, 1. / h],
+            reduced: [rw, rh, 1. / rw, 1. / rh],
+            frame: 0,
+            rays: 0,
+            traced: cutoff * cutoff,
+            range: super::RANGE,
+            previous_near: 0.1,
+            fade: crate::stages::reflections::velvet::ROUGHNESS_FADE,
+            padding: [0; 2],
+        }),
+    );
+    let mut classify = super::classify::Classify::new(device);
+    classify.encode(
+        device,
+        &mut encoder,
+        targets.reduced,
+        super::classify::Bindings {
+            targets: [&targets.indirect, &targets.direction_pdf, &targets.length],
+            lists: &targets.lists,
+            depth: &depth,
+            material: &material,
+            f0: &f0,
+            params: &params,
+            screen_space: &screen_space,
+            surface_depth: &depth,
+        },
+        None,
+    );
+    queue.submit([encoder.finish()]);
+    test_support::read_words(device, queue, &targets.lists.count)[0]
+}
+
+// Plausible defect: the classification treats the screen-space method's
+// confidence as the share of the lobe it resolved, so a confident receiver
+// inside the roughness fade traces no ray, although composition takes the
+// method's result times the fade and leaves the rest, 1 − confidence ×
+// fade, to the fallback that world-space rays fill (specular_traced). The
+// oracle is that composition rule: in the middle of Velvet's fade the
+// method's share is a half (the fade's smoothstep at its midpoint), so a
+// fully confident receiver leaves half its lobe to the fallback and every
+// tracing pixel needs a ray; below the fade the method takes the whole
+// lobe, so none does.
+#[test]
+fn confident_receivers_in_the_roughness_fade_still_trace_world_rays() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = [32, 16];
+    let tracing = size[0] / super::DOWNSCALE * (size[1] / super::DOWNSCALE);
+    let velvet = crate::stages::reflections::velvet::ROUGHNESS_CUTOFF;
+    let fade = crate::stages::reflections::velvet::ROUGHNESS_FADE;
+    let in_fade = listed_rays(gpu, size, velvet - fade / 2., 1.);
+    let below_fade = listed_rays(gpu, size, velvet - fade * 2., 1.);
+    assert_eq!(
+        in_fade, tracing,
+        "every confident receiver in the fade leaves half its lobe to world rays"
+    );
+    assert_eq!(
+        below_fade, 0,
+        "a confident receiver below the fade takes its whole lobe from the screen-space method"
     );
 }
