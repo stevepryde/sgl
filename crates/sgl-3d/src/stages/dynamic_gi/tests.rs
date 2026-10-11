@@ -1,19 +1,19 @@
 //! The dynamic GI volume in real frames, observed through the one sample
 //! every view shades with (`dynamic_gi_irradiance`) and the frame's pixels:
-//! an open volume holds a uniform environment's radiance at any spacing
-//! and the hemisphere fill's irradiance, and a closed room's emitters' with
-//! their bounces, damped, while light outside the room reaches no probe inside but through
-//! its shadow opacity or as a light that casts none, and the backs of
-//! single-sided walls keep the sky out of a room seen from within and an
-//! inside-out box's light in; a material that does not emit into GI gives
-//! the probes none of its own light, yet blocks their rays and reflects a
-//! lamp's light; its share fades over the spacing past its extent; the
-//! one determination puts it below charts and above ambient cubes, and in
-//! place of the frame's ambient; the probes continue across renderer resets,
-//! abandoned frames and render origin moves, light probe captures as the
-//! last submitted frame left them, and restart for another placement or
-//! scene or after a frame that did not run them; and the scene refuses a
-//! placement that is not a lattice or does not fit the device.
+//! an open volume holds a uniform environment's radiance at any spacing and
+//! the hemisphere fill's irradiance, and a closed room's emitters' with
+//! their bounces, damped, while light outside the room reaches no probe
+//! inside but through its shadow opacity or as a light that casts none, and
+//! the backs of single-sided walls keep the sky out of a room seen from
+//! within and an inside-out box's light in; a material that does not emit
+//! into GI gives the probes none of its own light, yet blocks their rays and
+//! reflects a lamp's light; its share fades over the spacing past its
+//! extent; the one determination puts it below charts and above ambient
+//! cubes, and in place of the frame's ambient; the probes continue across
+//! renderer resets, abandoned frames and render origin moves, light probe
+//! captures as the last submitted frame left them, and restart for another
+//! placement or scene or after a frame that did not run them; and the scene
+//! refuses a placement that is not a lattice or does not fit the device.
 use super::buffers::BUDGET_PROBES;
 use crate::renderer::Renderer;
 use crate::settings::{self, DynamicGiQuality, Settings};

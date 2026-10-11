@@ -1618,8 +1618,9 @@ last, after everything it may use, and refuses a directive in it.
   three regions, the irradiance maps, the depth maps (each texel's mean
   and mean square ray distance in units of the volume's longest spacing,
   where Wicked's are in world units, whose square half precision cannot
-  hold past a spacing of about 170 m) and one texel per probe of probe data (its relocated offset as three halves and whether it
-  has been blended and is active or dormant, RTXGI's probe data), sized for the
+  hold past a spacing of about 170 m) and one texel per probe of probe
+  data (its relocated offset as three halves and whether it has been
+  blended and is active or dormant, RTXGI's probe data), sized for the
   installed placement
   and lent through lit group 0 to every view that shades, so the camera's
   surfaces, blended surfaces, probe captures, world-space ray hits and the
