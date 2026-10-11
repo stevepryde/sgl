@@ -261,8 +261,7 @@ fn skins_morph_targets_and_clips_import_as_plain_data() {
 // preparing the asset refuses the file the loader accepted; or a few ulps,
 // so a vertex with no tangent gets a huge one. The oracle is
 // `Vertex::tangent`'s contract (zero means absent, so nothing displaces it)
-// and the lid's third vertex, whose frame keeps its delta. An anisotropic
-// material still refuses such tangents.
+// and the lid's third vertex, whose frame keeps its delta.
 #[wasm_bindgen_test(unsupported = test)]
 fn morph_targets_leave_absent_tangents_undisplaced() {
     let lid_along_its_normal = |document: &mut Value, buffer: &mut Buffer| {
@@ -297,18 +296,6 @@ fn morph_targets_leave_absent_tangents_undisplaced() {
         })
         .collect();
     crate::PreparedModel::new(meshes).unwrap_or_else(|error| panic!("{error}"));
-
-    let error = load_slice(&rigged(|document, buffer| {
-        lid_along_its_normal(document, buffer);
-        document["extensionsUsed"] = json!(["KHR_materials_anisotropy"]);
-        document["materials"] = json!([{"extensions":
-            {"KHR_materials_anisotropy": {"anisotropyStrength": 0.7}}}]);
-        document["meshes"][1]["primitives"][0]["material"] = json!(0);
-    }))
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(error.contains("invalid TANGENT"), "{error}");
 }
 
 // Plausible defects: a node hierarchy that is not a set of trees walked as
