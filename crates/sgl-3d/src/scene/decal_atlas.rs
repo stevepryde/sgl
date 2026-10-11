@@ -10,20 +10,41 @@
 //! halve the atlas, and the border keeps an image's texels apart from its
 //! neighbours' down to the last. Changes: a side is rounded up to whole
 //! cells before its border is added, which Godot's sizing leaves out (see
-//! `Item::new`); texels are linear 16-bit floats, a
-//! colour image's decoded from sRGB, so one view serves colour and data
-//! where Godot shares an sRGB view of RGBA8; images of the same size are
-//! placed in a fixed order; the mips are box-filtered here, as Godot's blits
-//! halve them; and an atlas without images is one transparent texel.
+//! `Item::new`); texels are linear 16-bit floats, a colour image's decoded
+//! from sRGB, so one view serves colour and data where Godot shares an sRGB
+//! view of RGBA8; images of the same size are placed in a fixed order; the
+//! mips are box-filtered here, each from the 16-bit level above, as Godot's
+//! blits halve its 8-bit ones, so the atlas is bounded by the memory its
+//! build takes (`MAX_BUILD_BYTES`) as well as the device's texture size;
+//! and an atlas without images is one transparent texel.
 use super::SceneError;
 use crate::content::identity::{DecalImageId, Identity};
-use crate::content::static_lighting::irradiance_half;
+use crate::content::static_lighting::{half_value, irradiance_half};
 
 /// The atlas's mips, Godot's `DecalAtlas::mipmaps`.
 const MIPS: u32 = 5;
 /// The packing grid's cell, in texels: an image's border on each side is
 /// half of it, a texel at the last mip.
 const BORDER: u32 = 1 << MIPS;
+/// Bytes in a texel: RGBA16F, which `fill` builds and uploads.
+const TEXEL_BYTES: usize = 8;
+/// The most memory `fill` may build an atlas in: its levels' texels on the
+/// CPU. Godot bounds its atlas only by the device's texture size, as it
+/// blits the atlas on the GPU; SGL3D builds it on the CPU, where a size the
+/// device allows can be more than the target can allocate. In the browser,
+/// 2 GiB: half the 4 GiB a wasm32 module addresses, which the game's other
+/// content shares. It holds a 16384 by 8192 atlas (1.33 GiB with its mips,
+/// from an 8192 by 4096 image) and refuses a 16384-square one (2.67 GiB,
+/// from an 8192-square image), whose first level alone is more than one
+/// wasm32 allocation can be.
+#[cfg(target_arch = "wasm32")]
+const MAX_BUILD_BYTES: u64 = 2 << 30;
+/// Natively, 8 GiB: the 16384-square atlas most devices' textures top out
+/// at, and a 32768 by 16384 one (5.33 GiB, from a 16384 by 8192 image)
+/// where the device allows that side; it refuses a 32768-square one
+/// (10.67 GiB, from a 16384-square image).
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_BUILD_BYTES: u64 = 8 << 30;
 
 /// How decals sample an image: as sRGB colour (a base colour) or as linear
 /// data (a normal or metallic-roughness map).
@@ -56,7 +77,8 @@ impl AtlasLayout {
 
     /// `images`, each a key and its size in texels, placed as Godot's
     /// `update_decal_atlas` places them; `DeviceLimit` when the atlas would
-    /// be larger than `limit` texels on a side.
+    /// be larger than `limit` texels on a side or take more than
+    /// `MAX_BUILD_BYTES` to build.
     pub fn place(images: &[(AtlasKey, [u32; 2])], limit: u32) -> Result<Self, SceneError> {
         if images.is_empty() {
             return Ok(Self::empty());
@@ -66,7 +88,10 @@ impl AtlasLayout {
             .map(|&(key, size)| Item::new(key, size))
             .collect();
         let size = place(&mut items);
-        if size[0] > limit || size[1] > limit {
+        if size[0] > limit
+            || size[1] > limit
+            || build_bytes(size).is_none_or(|bytes| bytes > MAX_BUILD_BYTES)
+        {
             return Err(SceneError::DeviceLimit);
         }
         Ok(Self {
@@ -130,13 +155,14 @@ impl DecalAtlas {
     /// An atlas of no images.
     pub fn empty(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         Self {
-            view: upload(device, queue, [1, 1], &[vec![0.; 4]]),
+            view: upload(device, queue, [1, 1], &[vec![0; TEXEL_BYTES]]),
             layout: AtlasLayout::empty(),
         }
     }
 
     /// The atlas `layout` places, filled with the texels `texels` gives each
     /// image, with its mips; an image it gives none for stays transparent.
+    /// Each level is built in the upload format, so the upload copies none.
     pub fn fill<'a>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -144,24 +170,28 @@ impl DecalAtlas {
         texels: impl Fn(AtlasKey) -> Option<&'a image::RgbaImage>,
     ) -> Self {
         let size = layout.size;
-        // Texel counts and indices are `usize`: a 32768-square atlas's
-        // channel count overflows `u32`.
+        // Byte counts and indices are `usize`: a 32768 by 16384 atlas has
+        // more bytes than `u32` counts. `place` bounds them by
+        // `MAX_BUILD_BYTES`.
         let width = size[0] as usize;
-        let mut level = vec![0f32; width * size[1] as usize * 4];
+        let mut level = vec![0u8; width * size[1] as usize * TEXEL_BYTES];
         for &(key, corner, _) in &layout.places {
             let Some(image) = texels(key) else {
                 continue;
             };
             let color = key.1 == Sampling::Color;
             for (x, y, texel) in image.enumerate_pixels() {
-                let at = ((corner[1] + y) as usize * width + (corner[0] + x) as usize) * 4;
+                let at =
+                    ((corner[1] + y) as usize * width + (corner[0] + x) as usize) * TEXEL_BYTES;
                 for channel in 0..4 {
                     let value = f32::from(texel[channel]) / 255.;
-                    level[at + channel] = if color && channel < 3 {
+                    let value = if color && channel < 3 {
                         crate::shading::srgb::to_linear(value)
                     } else {
                         value
                     };
+                    level[at + channel * 2..][..2]
+                        .copy_from_slice(&irradiance_half(value).to_le_bytes());
                 }
             }
         }
@@ -170,19 +200,20 @@ impl DecalAtlas {
             for mip in 1..MIPS {
                 let [width, height] = size.map(|side| (side >> (mip - 1)) as usize);
                 let previous = levels.last().unwrap();
-                let texel =
-                    |x: usize, y: usize, channel: usize| previous[(y * width + x) * 4 + channel];
-                let mut halved = Vec::with_capacity(width * height);
+                let texel = |x: usize, y: usize, channel: usize| {
+                    let at = (y * width + x) * TEXEL_BYTES + channel * 2;
+                    half_value(u16::from_le_bytes([previous[at], previous[at + 1]]))
+                };
+                let mut halved = Vec::with_capacity(width / 2 * (height / 2) * TEXEL_BYTES);
                 for y in (0..height).step_by(2) {
                     for x in (0..width).step_by(2) {
                         for channel in 0..4 {
-                            halved.push(
-                                (texel(x, y, channel)
-                                    + texel(x + 1, y, channel)
-                                    + texel(x, y + 1, channel)
-                                    + texel(x + 1, y + 1, channel))
-                                    / 4.,
-                            );
+                            let mean = (texel(x, y, channel)
+                                + texel(x + 1, y, channel)
+                                + texel(x, y + 1, channel)
+                                + texel(x + 1, y + 1, channel))
+                                / 4.;
+                            halved.extend_from_slice(&irradiance_half(mean).to_le_bytes());
                         }
                     }
                 }
@@ -254,12 +285,24 @@ fn place(items: &mut [Item]) -> [u32; 2] {
     ]
 }
 
-/// An RGBA16F texture of `size` with mips `levels`, each RGBA in [0, 1].
+/// The bytes `fill` builds an atlas of `size` in, `None` past `u64`.
+fn build_bytes(size: [u32; 2]) -> Option<u64> {
+    (0..MIPS).try_fold(0u64, |sum, mip| {
+        let [width, height] = size.map(|side| u64::from(side >> mip));
+        width
+            .checked_mul(height)?
+            .checked_mul(TEXEL_BYTES as u64)?
+            .checked_add(sum)
+    })
+}
+
+/// An RGBA16F texture of `size` with mips `levels`, each little-endian
+/// RGBA16F texels in [0, 1].
 fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     size: [u32; 2],
-    levels: &[Vec<f32>],
+    levels: &[Vec<u8>],
 ) -> wgpu::TextureView {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("decal atlas"),
@@ -275,12 +318,8 @@ fn upload(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    for (mip, values) in levels.iter().enumerate() {
+    for (mip, bytes) in levels.iter().enumerate() {
         let [width, height] = size.map(|side| (side >> mip).max(1));
-        let bytes: Vec<u8> = values
-            .iter()
-            .flat_map(|&value| irradiance_half(value).to_le_bytes())
-            .collect();
         crate::counters::write_texture(
             queue,
             wgpu::TexelCopyTextureInfo {
@@ -289,10 +328,10 @@ fn upload(
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &bytes,
+            bytes,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(width * 8),
+                bytes_per_row: Some(width * TEXEL_BYTES as u32),
                 rows_per_image: Some(height),
             },
             wgpu::Extent3d {

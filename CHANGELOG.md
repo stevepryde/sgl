@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::add_decal`/`set_decal`: a decal atlas too large for the
+  CPU to build (one 8192-square image in the browser) panicked when the
+  next frame packed it; it is now refused with `SceneError::DeviceLimit`
+  when the decal is added, at most 2 GiB of atlas in the browser and 8 GiB
+  natively. Keep decal images under 8192 texels on a side for the browser;
+  no other game-code changes.
 - `sgl-post-fx` `ScreenSpaceReflection` and
   `ScreenSpaceReflectionAttribs::most_detailed_mip`: a zero world normal
   gave its ray a NaN direction, a non-unit one a skewed ray, and a
