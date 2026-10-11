@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP transport: a first round trip measured as 0 ms (loopback,
+  sub-millisecond LAN) was treated as unmeasured, keeping the 200 ms
+  retransmission timeout; it now seeds the estimate, giving the 50 ms floor,
+  so retransmission timing changes on very fast links. No game-code change
+  needed.
 - `sgl-3d` dynamic GI (`DynamicGiVolume::spacing`): past a spacing of about
   170 m the probes' depth moments overflowed half precision, breaking the
   sample's visibility test (NaN irradiance on some backends); they are now
