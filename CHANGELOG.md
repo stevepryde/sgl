@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` point and spot lights: a light was dropped wherever the mapped
+  base normal faced away from its centre, so a clearcoat over normal-mapped
+  flakes lost the coat's highlight and a sphere light's highlight popped off
+  as its centre crossed the horizon; it now reaches a surface while the
+  base or the coat normal faces any of its sphere, as directional lights
+  already did, in lighting and ray-traced shadows alike; the directional
+  light's ray-traced shadow now traces its whole disc too. No game-code
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): a ray that left
   past the far plane, such as a floor reflecting the sky under infinite
   reversed-Z, stored a length beyond RGBA16F's range, becoming infinity and
