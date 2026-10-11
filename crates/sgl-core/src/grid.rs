@@ -7,6 +7,9 @@ use crate::{CanonicalWrite, StateHasher};
 pub enum GridError {
     /// The supplied cells did not equal `width * height`.
     IncorrectCellCount,
+    /// The cells could not be allocated: their size exceeds the target's
+    /// address space or the allocator refused it.
+    TooLarge,
 }
 
 /// A row-major grid with fixed-width dimensions.
@@ -87,14 +90,20 @@ impl<T> Grid2<T> {
 }
 
 impl<T: Clone> Grid2<T> {
-    /// Constructs a grid filled with clones of `value`.
-    #[must_use]
-    pub fn filled(width: u16, height: u16, value: T) -> Self {
-        Self {
+    /// Constructs a grid filled with clones of `value`, or
+    /// [`GridError::TooLarge`] when its cells cannot be allocated.
+    pub fn filled(width: u16, height: u16, value: T) -> Result<Self, GridError> {
+        let count = Self::cell_count(width, height);
+        let mut cells = Vec::new();
+        cells
+            .try_reserve_exact(count)
+            .map_err(|_| GridError::TooLarge)?;
+        cells.resize(count, value);
+        Ok(Self {
             width,
             height,
-            cells: vec![value; Self::cell_count(width, height)],
-        }
+            cells,
+        })
     }
 }
 
@@ -114,9 +123,20 @@ mod tests {
     /// #249: the dimension getters report the constructed size.
     #[wasm_bindgen_test(unsupported = test)]
     fn dimensions_are_reported() {
-        let grid = Grid2::filled(3, 5, 0u8);
+        let grid = Grid2::filled(3, 5, 0u8).expect("small grid");
         assert_eq!((grid.width(), grid.height()), (3, 5));
         assert_eq!(grid.cells().len(), 15);
+    }
+
+    /// #428: on 32-bit targets the largest byte grid (about 4.29e9 bytes)
+    /// exceeds `isize::MAX`; construction reports it instead of panicking.
+    #[cfg(target_pointer_width = "32")]
+    #[wasm_bindgen_test(unsupported = test)]
+    fn oversized_fill_returns_an_error() {
+        assert_eq!(
+            Grid2::filled(u16::MAX, u16::MAX, 0u8),
+            Err(GridError::TooLarge)
+        );
     }
 
     #[wasm_bindgen_test(unsupported = test)]

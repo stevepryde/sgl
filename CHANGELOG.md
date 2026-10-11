@@ -20,6 +20,15 @@ docs and specs the entry links.
   or separated by U+200E/U+200F, was accepted; it is now refused with
   `ShaderError::NameTaken`, as the same declaration on a new line was. No
   game-code changes needed unless a shader relied on it: rename the helper.
+- `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
+  could not be allocated (the largest byte grid on wasm32); now returns
+  `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or
+  `.expect("grid fits")`: `Grid2::filled(w, h, 0u8)?`; exhaustive matches
+  on `GridError` add the `TooLarge` arm.
+- `sgl-2d` `TextRenderer::draw` / `measure`: a negative size panicked in
+  `draw` and measured negative in `measure`; a size that is not positive
+  and finite now draws nothing and measures `Vec2::ZERO`. No game-code
+  change needed.
 - `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
   UDP and memory reported nothing for a connection the caller closed (UDP
   sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
