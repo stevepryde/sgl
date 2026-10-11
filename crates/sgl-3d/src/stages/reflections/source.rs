@@ -111,6 +111,11 @@ struct SourceCamera {
 }
 /// `SourceCamera::flags`: completion and composition apply the fog.
 const SOURCE_FOG: u32 = 1;
+/// `SourceCamera::flags`: the projection is orthographic, keeping clip w at
+/// 1, so every receiver's view vector is the camera's backward axis
+/// (`pbr_view`); the Rust twin of uniforms.wgsl's `projection_perspective`
+/// test.
+const SOURCE_ORTHOGRAPHIC: u32 = 2;
 
 /// The frame's fog as completion and composition apply it.
 #[derive(Clone, Copy, Debug)]
@@ -140,7 +145,12 @@ impl SourceCamera {
                 ]
             }),
             forward: forward.to_array(),
-            flags: if fog.is_some() { SOURCE_FOG } else { 0 },
+            flags: if fog.is_some() { SOURCE_FOG } else { 0 }
+                | if camera.proj[2][3] == 0. {
+                    SOURCE_ORTHOGRAPHIC
+                } else {
+                    0
+                },
         }
     }
 }
@@ -485,13 +495,20 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
 
 /// The constants with WGSL twins.
 #[cfg(test)]
-pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 1] {
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 2] {
     use crate::shading::layout_tests::Constant;
-    [Constant::new(
-        "reflection_source",
-        "SOURCE_FOG",
-        naga::Literal::U32(SOURCE_FOG),
-    )]
+    [
+        Constant::new(
+            "reflection_source",
+            "SOURCE_FOG",
+            naga::Literal::U32(SOURCE_FOG),
+        ),
+        Constant::new(
+            "reflection_source",
+            "SOURCE_ORTHOGRAPHIC",
+            naga::Literal::U32(SOURCE_ORTHOGRAPHIC),
+        ),
+    ]
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

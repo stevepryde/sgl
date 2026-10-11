@@ -20,6 +20,34 @@ docs and specs the entry links.
   holds, loaded, an infinite UV collapsing its whole mesh's UVs onto one
   texel; the mesh is now refused with `SceneError::NonFiniteGeometry`. No
   game-code change needed.
+- `sgl-net` UDP client: a deny that overtook the accept of a retried confirm
+  (or whose accept was lost) left the server holding that connection until
+  `timeout_ms`; the client now answers the deny with a disconnect, so the
+  server reports `Disconnected { reason: Peer }` right after `Connected`. No
+  game-code change needed.
+- `sgl-3d` `Scene::add_decal`/`set_decal`: a decal atlas too large for the
+  CPU to build (one 8192-square image in the browser) panicked when the
+  next frame packed it, and an image wider than the device's textures could
+  stall or overflow packing; both are now refused with `SceneError::DeviceLimit`
+  when the decal is added, at most 2 GiB of atlas in the browser and 8 GiB
+  natively. In the browser, keep the decal images in use within that
+  ([Decals](crates/sgl-3d/README.md#decals)); no other game-code changes.
+- `sgl-3d` orthographic `Camera` shading and `SurfaceContext::view`: the
+  view vector pointed from each surface toward `Camera::eye`, so highlights
+  and Fresnel varied across a flat surface and vanished on one between the
+  eye and a near plane behind it; it is now the camera's backward axis at
+  every surface. No game-code changes.
+- `sgl-3d` deformation (`Scene::set_instance_deformation`): a deforming mesh
+  above 4,194,240 vertices failed device validation every frame it deformed;
+  it now deforms. No game-code changes needed.
+- `sgl-net` native WebSocket keepalive: an unsolicited 8-byte pong arriving
+  after the reply to this side's ping, before the next `poll` or `flush`,
+  discarded the reply, so this side never pinged again and its `rtt` stopped
+  updating; the reply now counts. No game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown`: for one frame after a selection,
+  click-away, Escape, `Ui::close_popups` or `Ui::cancel_interactions` closed
+  the popover, widgets under where it was could not hover or take a press;
+  they now respond at once. No game-code change needed.
 - `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
   (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
   (`FrameInput::camera_cut`, a resize or another scene) in a frame where the

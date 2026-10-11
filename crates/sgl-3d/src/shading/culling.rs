@@ -26,7 +26,7 @@ pub(crate) const SECTION_VERTICES: u32 = 384;
 /// instance cull's candidates, the finalize's single workgroup, and the
 /// section cull's stride over a mesh's sections.
 pub(crate) const CULL_WORKGROUP: u32 = 64;
-/// The most workgroups an indirect dispatch takes along x: WebGPU's
+/// The most workgroups a dispatch takes along x: WebGPU's
 /// default `maxComputeWorkgroupsPerDimension`. Past it a dispatch is
 /// remapped to two dimensions, as Bevy's `remap_1d_to_2d_dispatch.wesl`
 /// remaps it, in integers.
@@ -314,9 +314,9 @@ pub(crate) const fn words<T>() -> u32 {
     (std::mem::size_of::<T>() / 4) as u32
 }
 
-/// The workgroups along x and y of a dispatch of `workgroups` in all, past
-/// `CULL_MAX_WORKGROUPS` remapped to two dimensions, as the finalize remaps
-/// the indirect ones.
+/// The workgroups along x and y of the cull's and the deform stage's direct
+/// dispatches, `workgroups` in all, past `CULL_MAX_WORKGROUPS` remapped to
+/// two dimensions as the finalize remaps the indirect ones.
 pub(crate) fn dispatch_side(workgroups: u32) -> [u32; 2] {
     [
         workgroups.min(CULL_MAX_WORKGROUPS),

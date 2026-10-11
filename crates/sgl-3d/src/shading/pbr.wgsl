@@ -56,6 +56,20 @@ fn pbr_fresnel_schlick(c:f32,f0:vec3<f32>,f90:f32)->vec3<f32> {
  let x2=x*x;
  return f0+(vec3(f90)-f0)*(x2*x2*x);
 }
+// The unit view vector of a surface at `world`, the direction toward the
+// viewer whose eye is `eye` and whose backward axis, its view's +Z in world
+// space, is `backward`: toward the eye under a `perspective` projection;
+// under an orthographic one every view ray runs along the axis, so the axis
+// itself, wherever the surface lies, before the eye included. Filament
+// ef1a133's shading_view (shaders/src/surface_shading_parameters.fs 37–42),
+// Bevy 9d12036's calculate_view (crates/bevy_pbr/src/render/
+// pbr_functions.wesl 251–264).
+fn pbr_view(world:vec3<f32>,eye:vec3<f32>,backward:vec3<f32>,perspective:bool)->vec3<f32> {
+ if perspective {
+  return normalize(eye-world);
+ }
+ return normalize(backward);
+}
 // A coat's Fresnel toward the view, weighted by the coat: Schlick's
 // (pbr_fresnel_schlick) at the coat normal's cosine to the view, with F0
 // 0.04 and F90 1, the cosine at which Three.js 0.185.1's
