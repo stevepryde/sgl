@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
+  quarter-pixel size range, so text laid out by whichever size drew first
+  and drifted from `measure`; glyphs are now cached per exact size and
+  layout matches a cold cache and `measure`. No game-code change needed.
 - `sgl-3d` `asset::load*`: every glTF image was decoded (and asked of
   `LoadOptions::images`), so one only an unsupported texture extension
   (`KHR_texture_basisu`) or an ignored map used could fail the load; now
@@ -24,9 +28,10 @@ docs and specs the entry links.
   matches on `Ignored` add the arm.
 - `sgl-net` `NativeWebSocketClient::connect`: tried only the host's first
   resolved address (so `localhost` could be refused when `::1` came first),
-  and the TCP connect and HTTP upgrade each took a full `handshake_timeout`;
-  now each resolved address is tried in order within one
-  `handshake_timeout` covering the upgrade too. No game-code change needed.
+  host resolution was unbounded, and the TCP connect and HTTP upgrade each
+  took a full `handshake_timeout`; now each resolved address is tried in
+  order within one `handshake_timeout` covering resolution and the upgrade
+  too. No game-code change needed.
 - `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
   radius that is not positive (including NaN) now emits nothing. No
   game-code change needed.
