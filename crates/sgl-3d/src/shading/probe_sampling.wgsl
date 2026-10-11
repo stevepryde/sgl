@@ -2,7 +2,8 @@
 // shader that binds a collection.
 struct BakedProbe {
  world_to_local:mat4x4<f32>,
- // xyz capture position; w 1 when the proxy box corrects parallax.
+ // xyz capture position in the probe's frame, within its proxy; w 1 when
+ // the proxy box corrects parallax.
  center:vec4<f32>,
  influence_min:vec4<f32>, influence_max:vec4<f32>, blend:vec4<f32>,
  proxy_min:vec4<f32>, proxy_max:vec4<f32>,
@@ -34,6 +35,10 @@ const PROBE_TILE_SIZE:u32=32u;
 // Box projection (Lagarde and Zanuttini, "Local Image-based Lighting With
 // Parallax-corrected Cubemaps", SIGGRAPH 2012): the reflected ray from the
 // receiver meets the proxy box, and the probe is sampled toward that point.
+// As Godot's reflection_process (scene_forward_lights_inc.glsl), the hit is
+// found in the probe's frame and taken relative to the capture centre there;
+// a cube lookup divides by the major axis, so no length is formed. The
+// result is a world direction whose major component is one.
 fn probe_parallax_direction(world:vec3<f32>,direction:vec3<f32>,probe:BakedProbe)->vec3<f32> {
  let p=(probe.world_to_local*vec4(world,1.)).xyz;
  let d=(probe.world_to_local*vec4(direction,0.)).xyz;
@@ -45,10 +50,14 @@ fn probe_parallax_direction(world:vec3<f32>,direction:vec3<f32>,probe:BakedProbe
  let t1=(probe.proxy_max.xyz-projected)/safe;
  let far_axis=max(t0,t1);
  let t_far=max(0.,min(far_axis.x,min(far_axis.y,far_axis.z)));
+ // The hit and the centre both lie in the proxy, which upload keeps within
+ // f32::MAX/4 of the frame's origin, so each halved keeps their difference
+ // within 2^126, where WGSL's division is accurate; divided by its major
+ // axis it rotates back to world without overflow.
+ let toward=(projected+d*t_far)*.5-probe.center.xyz*.5;
+ let major=max(abs(toward.x),max(abs(toward.y),abs(toward.z)));
  let rotation=mat3x3(probe.world_to_local[0].xyz,probe.world_to_local[1].xyz,probe.world_to_local[2].xyz);
- let hit=world+transpose(rotation)*(projected-p)+direction*t_far;
- let displacement=hit-probe.center.xyz;
- return displacement/max(length(displacement),0.000001);
+ return transpose(rotation)*(toward/max(major,0.000001));
 }
 // Three.js 0.185.1 PMREMUtils / PMREMNode. PMREMGenerator output is retained
 // verbatim in layer zero.
