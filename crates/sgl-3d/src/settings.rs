@@ -230,7 +230,7 @@ pub enum DynamicGiQuality {
 
 impl DynamicGiQuality {
     /// The most rays a probe traces a frame, while it runs.
-    pub(crate) fn rays(self) -> Option<u32> {
+    pub(crate) const fn rays(self) -> Option<u32> {
         let most = crate::shading::dynamic_gi::MOST_RAYS;
         match self {
             Self::Off => None,
@@ -239,6 +239,25 @@ impl DynamicGiQuality {
         }
     }
 }
+
+// Every tier's probe slots (`ray_stride`) hold the turn that traces all of a
+// probe's fixed rays and a bucket of its others (`ddgi_turn_rays`); fewer
+// would write that turn's rays into the next probe's slots.
+const _: () = {
+    use crate::shading::dynamic_gi::{FIXED_RAYS, RAY_BUCKET_COUNT, ray_stride};
+    let tiers = [
+        DynamicGiQuality::Off,
+        DynamicGiQuality::Low,
+        DynamicGiQuality::High,
+    ];
+    let mut tier = 0;
+    while tier < tiers.len() {
+        if let Some(rays) = tiers[tier].rays() {
+            assert!(ray_stride(rays) >= FIXED_RAYS + RAY_BUCKET_COUNT);
+        }
+        tier += 1;
+    }
+};
 
 /// The shadows' map sizes and the filter the camera's surfaces take them
 /// with, as Godot's desktop and mobile project settings set them
