@@ -422,7 +422,7 @@ fn every_taa_feature_permutation_executes() {
     }
 }
 
-/// Texels of an RGBA16F view (normal and zero halves only).
+/// Texels of an RGBA16F view.
 fn read_rgba16f(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -459,6 +459,12 @@ fn read_rgba16f(
         let mantissa = f32::from(h & 0x3ff);
         if exponent == 0 {
             sign * mantissa * 2f32.powi(-24)
+        } else if exponent == 0x1f {
+            if mantissa == 0.0 {
+                sign * f32::INFINITY
+            } else {
+                f32::NAN
+            }
         } else {
             sign * (1.0 + mantissa / 1024.0) * 2f32.powi(exponent - 15)
         }
@@ -1627,6 +1633,170 @@ fn ssr_roughness_zero_reflection_rays_are_finite() {
         (0..3).all(|i| (ray[i] - mirror[i]).abs() < 1e-4),
         "roughness 0 traced {ray:?}, its mirror direction is {mirror:?}"
     );
+}
+
+/// IEEE binary16 +infinity: a scene texel brighter than the format holds.
+const HALF_INFINITY: [u8; 2] = 0x7c00u16.to_le_bytes();
+
+// PROVENANCE.md DFX-46: TAA reads a scene texel of +infinity as binary16's
+// largest finite value, so its tone map (`HDRToSDR`, c / (1 + c)) yields no
+// inf / inf, and every output after the first frame's placeholder copy (DFX-2),
+// which history then reads, stays finite.
+#[test]
+fn taa_infinite_input_texel_keeps_its_output_finite() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut colour: Vec<u8> = half(&[4.0, 2.0, 1.0, 1.0])
+        .into_iter()
+        .cycle()
+        .take(8 * (SIZE[0] * SIZE[1]) as usize)
+        .collect();
+    let bright = 8 * (SIZE[0] * (SIZE[1] / 2) + SIZE[0] / 2) as usize;
+    for channel in 0..3 {
+        colour[bright + 2 * channel..bright + 2 * channel + 2].copy_from_slice(&HALF_INFINITY);
+    }
+    for bits in 0..8 {
+        let flags = temporal_anti_aliasing::FeatureFlags(bits);
+        let mut context = PostFXContext::new(&device, &queue, Default::default());
+        let mut taa = TemporalAntiAliasing::new(&device);
+        let color = texels(&device, &queue, wgpu::TextureFormat::Rgba16Float, &colour);
+        let motion = texture(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rg16Float,
+            &half(&[0.01, 0.0]),
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let current_depth = depth(&device, &mut encoder, 0.95);
+        let previous_depth = depth(&device, &mut encoder, 0.95);
+        for index in 0..4 {
+            context.prepare_resources(
+                &device,
+                &FrameDesc {
+                    index,
+                    width: SIZE[0],
+                    height: SIZE[1],
+                    output_width: SIZE[0],
+                    output_height: SIZE[1],
+                },
+                post_fx_context::FeatureFlags::NONE,
+            );
+            taa.prepare_resources(&device, &mut encoder, &context, flags, 0);
+            let curr = camera(false, index);
+            let prev = camera(false, index.saturating_sub(1));
+            context.execute(&mut RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                curr_depth_buffer_srv: &current_depth,
+                prev_depth_buffer_srv: &previous_depth,
+                curr_camera: Some(&curr),
+                prev_camera: Some(&prev),
+                camera_attribs_cb: None,
+                pass_timestamps: None,
+            });
+            taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                post_fx_context: &mut context,
+                color_buffer_srv: &color,
+                depth_buffer_srv: &current_depth,
+                motion_vectors_srv: &motion,
+                taa_attribs: &TemporalAntiAliasingAttribs::default(),
+                accumulation_buffer_idx: 0,
+                pass_timestamps: None,
+            });
+            queue.submit([std::mem::replace(
+                &mut encoder,
+                device.create_command_encoder(&Default::default()),
+            )
+            .finish()]);
+            if index > 0 {
+                assert!(
+                    finite_output(&device, &queue, taa.get_accumulated_frame_srv(false, 0)),
+                    "non-finite output at frame {index}, flags {flags:?}"
+                );
+            }
+        }
+    }
+}
+
+// PROVENANCE.md DFX-46: SSR reads a reflected scene texel of +infinity as
+// binary16's largest finite value, so spatial reconstruction's tone map
+// (DFX-16, c / (1 + luminance)) yields no inf / inf and its inverse stays
+// within the RGBA16F targets. A mirror floor and a glossy one at y=-1, seen
+// from the origin looking along +z, reflect a wall at z=8 that is +infinity
+// in every texel.
+#[test]
+fn ssr_infinite_reflected_texels_keep_its_output_finite() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    const WALL: f64 = 8.0;
+    let [width, height] = SIZE.map(f64::from);
+    let curr = camera(false, 0);
+    let p = curr.m_proj.map(f64::from);
+    let (a, b, m22, m32) = (p[0], p[5], p[10], p[14]);
+    let mut floors = Vec::new();
+    let mut normals = Vec::new();
+    let mut color = Vec::new();
+    let mut depths = Vec::new();
+    for y in 0..SIZE[1] {
+        for x in 0..SIZE[0] {
+            let ndc = [
+                (f64::from(x) + 0.5) / width * 2.0 - 1.0,
+                1.0 - (f64::from(y) + 0.5) / height * 2.0,
+            ];
+            let ray = [ndc[0] / a, ndc[1] / b];
+            let floor_z = if ray[1] < 0.0 {
+                -1.0 / ray[1]
+            } else {
+                f64::INFINITY
+            };
+            let floor = floor_z < WALL;
+            let z = floor_z.min(WALL);
+            floors.push(floor);
+            if floor {
+                normals.extend(half(&[0.0, 1.0, 0.0, 0.0]));
+                color.extend(half(&[0.5, 0.5, 0.5, 1.0]));
+            } else {
+                normals.extend(half(&[0.0, 0.0, -1.0, 0.0]));
+                color.extend(HALF_INFINITY.repeat(3));
+                color.extend(half(&[1.0]));
+            }
+            depths.push(((z * m22 + m32) / z) as f32);
+        }
+    }
+    // Perceptual roughness 0 (a mirror, one ray per pixel) and 40/255, which
+    // reconstruction averages over neighbouring rays.
+    for floor_roughness in [0, 40] {
+        let roughness: Vec<u8> = floors
+            .iter()
+            .map(|&floor| if floor { floor_roughness } else { 255 })
+            .collect();
+        let output = ssr_radiance(
+            &device, &queue, &curr, &depths, &normals, &roughness, &color,
+        );
+        let hits = floors
+            .iter()
+            .zip(&output)
+            .filter(|&(&floor, read)| floor && read[3] > 0.0)
+            .count();
+        assert!(
+            hits > 200,
+            "roughness {floor_roughness}: only {hits} floor pixels reflected the wall"
+        );
+        let bad = output
+            .iter()
+            .filter(|read| read.iter().any(|v| !v.is_finite()))
+            .count();
+        assert_eq!(
+            bad, 0,
+            "roughness {floor_roughness}: {bad} non-finite pixels"
+        );
+    }
 }
 
 /// A device that renders to R16Unorm, as `HALF_PRECISION_DEPTH` requires,

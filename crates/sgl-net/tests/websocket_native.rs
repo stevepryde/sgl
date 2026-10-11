@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use std::io::Write;
 use std::net::TcpStream;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -517,6 +518,58 @@ fn text_malformed_oversize_wrong_class_and_stale_frames_fail_closed() {
     ]);
 }
 
+type RawSocket = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
+
+/// Connects a raw client, hands its open socket to `act`, and returns the
+/// reason the server reports for that connection's end. A socket `act`
+/// returns stays open until then.
+fn server_disconnect_reason(act: impl FnOnce(RawSocket) -> Option<RawSocket>) -> DisconnectReason {
+    let mut server = server(2);
+    let (socket, _) = connect(raw_request(&url(&server), &[ORIGIN_VALUE])).unwrap();
+    let conn = connected_id(&wait_server_events(&mut server));
+    let _held = act(socket);
+    wait_until(Duration::from_secs(2), || {
+        server.poll(0).into_iter().find_map(|event| match event {
+            ServerEvent::Disconnected { conn: id, reason } if id == conn => Some(reason),
+            _ => None,
+        })
+    })
+}
+
+#[test]
+fn a_peer_that_drops_its_socket_without_a_close_is_reported_as_peer() {
+    assert_eq!(
+        server_disconnect_reason(|socket| {
+            drop(socket);
+            None
+        }),
+        DisconnectReason::Peer
+    );
+}
+
+#[test]
+fn frames_that_break_websocket_framing_are_protocol_violations() {
+    // A masked binary frame with RSV1 set (no extension negotiated it), an
+    // unmasked client frame, and a masked frame with reserved opcode 0x3:
+    // all invalid under RFC 6455 section 5.
+    for raw in [
+        &[0xC2, 0x81, 1, 2, 3, 4, 0][..],
+        &[0x82, 0x01, 0][..],
+        &[0x83, 0x81, 1, 2, 3, 4, 0][..],
+    ] {
+        let reason = server_disconnect_reason(|mut socket| {
+            let MaybeTlsStream::Plain(stream) = socket.get_mut() else {
+                unreachable!("ws:// is plain TCP");
+            };
+            stream.write_all(raw).unwrap();
+            stream.flush().unwrap();
+            // Held open so the server sees the frame, not the end of stream.
+            Some(socket)
+        });
+        assert_eq!(reason, DisconnectReason::ProtocolViolation, "{raw:?}");
+    }
+}
+
 #[test]
 fn ping_timeout_advances_only_from_the_caller_clock() {
     let mut config = NativeWebSocketServerConfig::new(([127, 0, 0, 1], 0).into(), identity())
@@ -635,6 +688,31 @@ fn native_client_handshake_timeout_is_bounded() {
         Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error}"),
     }
     let _ = stalled.join();
+}
+
+/// Defect: the native client has no TLS, yet it accepted `wss://` and ran
+/// the handshake over plain TCP. Oracle: a listener that is never accepted
+/// still queues any TCP connection, so a nonblocking accept after `connect`
+/// returns shows whether the client opened one.
+#[test]
+fn native_client_refuses_wss_before_connecting() {
+    let listener =
+        std::net::TcpListener::bind(std::net::SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let result = NativeWebSocketClient::connect(NativeWebSocketClientConfig::new(
+        format!("wss://{address}{GAME_PATH}"),
+        ORIGIN_VALUE,
+        identity(),
+    ));
+    match result {
+        Ok(_) => panic!("wss:// must be refused, not connected in plaintext"),
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{error}"),
+    }
+    match listener.accept() {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+        other => panic!("a refused wss:// URL opened a TCP connection: {other:?}"),
+    }
 }
 
 #[test]

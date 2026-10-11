@@ -468,6 +468,7 @@ impl Transparent {
             ctx.encoder,
             &ctx.scene.transient,
             &ctx.values.view.view_projection,
+            ctx.sizes.scene,
             color,
             &ctx.targets.depth,
             ctx.timing,

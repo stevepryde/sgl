@@ -18,6 +18,9 @@
 // are rejected because this Godot/Supnik Z-parameterization cannot represent them.
 // SGL3D also writes the post-projection depth of each receiver's reflected
 // point, the input of godot_reflections_temporal.wgsl's hit reprojection.
+// Radiance above binary16's range (+infinity) reads as its largest finite
+// value, as FSR2's PrepareRgb clamps its input, so the tone map makes no
+// inf / inf (#464).
 
 // The most steps a trace takes, the top of Godot's `ssr_max_steps` range
 // (scene/resources/environment.cpp at the revision above), so a trace ends
@@ -76,19 +79,31 @@ fn compute_screen_pos(pos: vec3<f32>) -> vec3<f32> {
 	return vec3<f32>(screen_pos.xy * 0.5 + 0.5, screen_pos.z);
 }
 
+// SGL3D: a neighbour off the screen has no depth, 0 like sky. Godot relies on
+// Vulkan's robust image access returning 0 for it; on Metal and Vulkan without
+// robust access wgpu restricts an out-of-bounds load to the last texel, a
+// negative coordinate too (compared as unsigned). That fakes a neighbour at
+// the right or bottom edge's own depth, or at the opposite edge's depth.
+fn neighbour_depth(pos: vec2<i32>) -> f32 {
+	if (any(pos < vec2<i32>(0)) || any(pos >= params.screen_size)) {
+		return 0.0;
+	}
+	return textureLoad(source_hiz, pos, 0).x;
+}
+
 // https://habr.com/ru/articles/744336/
 fn compute_geometric_normal(pixel_pos: vec2<i32>, depth_c: f32, view_c: vec3<f32>, pixel_offset: f32) -> vec3<f32> {
 	let H = vec4<f32>(
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(-1, 0), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(-2, 0), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(1, 0), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(2, 0), 0).x);
+			neighbour_depth(pixel_pos + vec2<i32>(-1, 0)),
+			neighbour_depth(pixel_pos + vec2<i32>(-2, 0)),
+			neighbour_depth(pixel_pos + vec2<i32>(1, 0)),
+			neighbour_depth(pixel_pos + vec2<i32>(2, 0)));
 
 	let V = vec4<f32>(
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(0, -1), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(0, -2), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(0, 1), 0).x,
-			textureLoad(source_hiz, pixel_pos + vec2<i32>(0, 2), 0).x);
+			neighbour_depth(pixel_pos + vec2<i32>(0, -1)),
+			neighbour_depth(pixel_pos + vec2<i32>(0, -2)),
+			neighbour_depth(pixel_pos + vec2<i32>(0, 1)),
+			neighbour_depth(pixel_pos + vec2<i32>(0, 2)));
 
 	let he = abs((2.0 * H.xz - H.yw) - depth_c);
 	let ve = abs((2.0 * V.xz - V.yw) - depth_c);
@@ -330,7 +345,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 		reprojection = reflected_depth(receiver_pos, select(0.0, length(cur_pos - receiver_pos), validity > 0.0));
 
 		if (validity > 0.0) {
-			color = vec4<f32>(textureSampleLevel(source_last_frame, linear_sampler, reprojected_pos.xy, 0.0).xyz, 1.0) * validity;
+			color = vec4<f32>(min(textureSampleLevel(source_last_frame, linear_sampler, reprojected_pos.xy, 0.0).xyz, vec3<f32>(65504.0)), 1.0) * validity;
 
 			// Tone map the SSR color to have smoother roughness filtering across samples with varying luminance.
 			let rec709_luminance_weights = vec3<f32>(0.2126, 0.7152, 0.0722);

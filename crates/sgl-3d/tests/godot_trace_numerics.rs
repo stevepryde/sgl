@@ -195,6 +195,7 @@ fn trace_numerical_boundaries() {
     let mut results = Vec::new();
     for (name, case, steps) in [
         ("sky_normal", "sky", -1i32),
+        ("bowl_normal", "bowl", -1),
         ("parallel_direction", "parallel", -2),
         ("sky_trace", "sky", 128),
         ("parallel_trace", "parallel", 128),
@@ -213,9 +214,27 @@ fn trace_numerical_boundaries() {
         scene.extend([0.; 4]);
         queue.write_buffer(&scene_buffer, 0, bytemuck::cast_slice(&scene));
         let mut params = params;
-        params[7] = u32::from(case == "parallel" || case == "ordinary");
+        params[7] = u32::from(case != "sky" && case != "silhouette");
         params[3] = steps as u32;
         queue.write_buffer(&params_buffer, 0, bytemuck::cast_slice(&params));
+        // The bowl's view depth is -5 + CURVE * (x^2 + y^2), symmetric about
+        // the screen centre, so its normal is (-2 CURVE x, -2 CURVE y, 1).
+        // Every real neighbour pair has a non-zero second difference. An
+        // off-screen tap restricted to the last texel has none: on the right
+        // and bottom that is the receiver's own texel, and on the left and top
+        // (a negative coordinate compared as unsigned) the opposite edge,
+        // which the symmetry puts at the receiver's depth. Either would win
+        // over the real side on all four edges. The stored normal is +Z,
+        // unlike the edges' normals, so the stored-normal fallback cannot pass
+        // there. A one-sided difference is off by CURVE * pixel width, inside
+        // the tolerance.
+        const CURVE: f32 = 0.25;
+        let view_xy = |x: u32, y: u32| {
+            let ndc = |p: u32| (p as f32 + 0.5) / SIZE as f32 * 2. - 1.;
+            projection
+                .inverse()
+                .project_point3(Vec3::new(ndc(x), ndc(y), 0.5))
+        };
         let n = if case == "parallel" {
             Vec3::new(1., 0., 1.).normalize()
         } else if case == "sky" {
@@ -229,8 +248,15 @@ fn trace_numerical_boundaries() {
         };
         let mut depths = Vec::new();
         let mut ns = Vec::new();
-        for _y in 0..SIZE {
+        for y in 0..SIZE {
             for x in 0..SIZE {
+                if case == "bowl" {
+                    let view = view_xy(x, y);
+                    let z = -5. + CURVE * (view.x * view.x + view.y * view.y);
+                    depths.push(projection.project_point3(Vec3::new(view.x, view.y, z)).z);
+                    ns.extend([0.5, 0.5, 1., 0.3]);
+                    continue;
+                }
                 let target = (case == "silhouette" || case == "ordinary") && x >= 64;
                 let receiver = case == "parallel" || case == "ordinary" || x == 32;
                 depths.push(if target {
@@ -293,6 +319,26 @@ fn trace_numerical_boundaries() {
         buffer.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         let bytes = buffer.get_mapped_range(..).unwrap();
+        if case == "bowl" {
+            // Every edge column and row, the pixels one in from them, and an
+            // interior pixel.
+            let edges = [0, 1, SIZE / 2, SIZE - 2, SIZE - 1];
+            for y in edges {
+                for x in edges {
+                    let view = view_xy(x, y);
+                    let expected =
+                        Vec3::new(-2. * CURVE * view.x, -2. * CURVE * view.y, 1.).normalize();
+                    let offset = ((y * SIZE + x) * 8) as usize;
+                    let normal = Vec3::from_array(std::array::from_fn(|c| {
+                        half(&bytes[offset + c * 2..offset + c * 2 + 2])
+                    }));
+                    assert!(
+                        (normal - expected).length() < 0.01,
+                        "pixel ({x}, {y}) reconstructs {normal}, the surface normal is {expected}"
+                    );
+                }
+            }
+        }
         let offset = ((64 * SIZE + 32) * 8) as usize;
         let rgba: [f32; 4] =
             std::array::from_fn(|c| half(&bytes[offset + c * 2..offset + c * 2 + 2]));

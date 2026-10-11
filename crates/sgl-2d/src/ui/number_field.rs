@@ -179,20 +179,26 @@ impl UiFrame<'_> {
         if let Some(mut drag) = self.ui.number_drag
             && drag.id == id
         {
+            // The pointer's position this frame counts even when the release
+            // arrives in the same frame, so the final movement is applied
+            // before deciding between a scrub and a click.
+            let dx = self.input.mouse_pos.x - drag.start_x;
+            if dx.abs() >= NUMBER_DRAG_THRESHOLD {
+                drag.moved = true;
+            }
+            if drag.moved {
+                *value = opts.clamp(drag.start_value + dx * opts.speed);
+            }
             if self.input.mouse_down {
-                let dx = self.input.mouse_pos.x - drag.start_x;
-                if dx.abs() >= NUMBER_DRAG_THRESHOLD {
-                    drag.moved = true;
-                }
-                if drag.moved {
-                    *value = opts.clamp(drag.start_value + dx * opts.speed);
-                }
                 self.ui.number_drag = Some(drag);
                 dragging = drag.moved;
             } else {
                 self.ui.number_drag = None;
                 if !drag.moved {
                     self.ui.focus = Some(id);
+                    // A press and release in one frame: this click opened
+                    // the field, so frame-end click-away must not drop it.
+                    self.edit_clicked = true;
                     self.ui.number_edit = opts.display(*value);
                     self.ui.edit = EditState {
                         id: Some(id),
@@ -352,6 +358,38 @@ mod tests {
         assert_eq!(value, 100.0);
     }
 
+    /// Movement delivered in the release frame counts: a press released 20 px
+    /// away in the next frame is a scrub (not a click), and an established
+    /// drag applies its final displacement.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn number_field_release_frame_movement_scrubs() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut list = DrawList::new();
+        let opts = NumberField::default();
+        let mut value = 1.0;
+        let mut f = ui.begin(&mut text, &mut list, press_at(100.0, 116.0));
+        f.number_field("n", ROW, &mut value, opts, 20.0);
+        f.end();
+        let mut f = ui.begin(&mut text, &mut list, release_at(120.0, 116.0));
+        assert!(f.number_field("n", ROW, &mut value, opts, 20.0));
+        f.end();
+        assert_eq!(value, 21.0);
+        assert!(!ui.has_focus(), "a drag never opens the field for typing");
+
+        let mut f = ui.begin(&mut text, &mut list, press_at(100.0, 116.0));
+        f.number_field("n", ROW, &mut value, opts, 20.0);
+        f.end();
+        let mut f = ui.begin(&mut text, &mut list, hover_at(110.0, 116.0, true));
+        f.number_field("n", ROW, &mut value, opts, 20.0);
+        f.end();
+        assert_eq!(value, 31.0);
+        let mut f = ui.begin(&mut text, &mut list, release_at(130.0, 116.0));
+        assert!(f.number_field("n", ROW, &mut value, opts, 20.0));
+        f.end();
+        assert_eq!(value, 51.0, "the release frame's movement is applied");
+        assert!(!ui.has_focus());
+    }
+
     /// A click on the middle (press + release without travel) opens the
     /// field for typing: typed text that parses replaces the value, text
     /// that does not leaves it, and a press elsewhere ends typing.
@@ -412,5 +450,42 @@ mod tests {
         f.end();
         assert!(!ui.has_focus());
         assert_eq!(value, -10.0);
+    }
+
+    /// A whole click inside one frame (press and release together, as at a
+    /// low frame rate) opens the field for typing like a two-frame click.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn number_field_one_frame_click_types_a_value() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut list = DrawList::new();
+        let opts = NumberField::default().decimals(0);
+        let mut value = 1.0;
+        let click = UiInput {
+            mouse_pos: Vec2::new(100.0, 116.0),
+            mouse_pressed: true,
+            mouse_released: true,
+            ..UiInput::default()
+        };
+        let mut f = ui.begin(&mut text, &mut list, click);
+        assert!(!f.number_field("n", ROW, &mut value, opts, 20.0));
+        f.end();
+        assert!(
+            ui.has_focus(),
+            "a one-frame click opens the field for typing"
+        );
+
+        // The caret sits at the end of "1": typing appends.
+        let mut f = ui.begin(
+            &mut text,
+            &mut list,
+            UiInput {
+                mouse_pos: Vec2::new(500.0, 500.0),
+                chars: vec!['5'],
+                ..UiInput::default()
+            },
+        );
+        assert!(f.number_field("n", ROW, &mut value, opts, 20.0));
+        f.end();
+        assert_eq!(value, 15.0, "typed text edits the value");
     }
 }

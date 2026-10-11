@@ -306,8 +306,11 @@ fn counted(
     {
         return None;
     }
+    // The counter's last value, past the limit, or one step from a start
+    // already past it (a `break if` loop runs once whatever the counter
+    // holds), fits its type: it never wraps back below the limit (#446).
     let fits = |value: i64| (low..=high).contains(&value);
-    if step <= 0 || !fits(start) || !fits(limit) || !fits(step) || !fits(limit + step) {
+    if step <= 0 || !fits(start) || !fits(limit) || !fits(step) || !fits(start.max(limit) + step) {
         return None;
     }
     // Iterations: the count the counter takes from the start in steps while

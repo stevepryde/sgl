@@ -96,12 +96,13 @@ impl Renderer {
             dynamic_gi.map(|(volume, _)| volume).as_ref(),
         );
         // Their lights' shadows sample static layers placed for the capture.
-        let local_records = self.shadows.local.plan_capture(
+        // They draw at the capture's time, from its frame uniform.
+        let local = self.shadows.local.plan_capture(
             device,
             queue,
             &self.bindings,
             (scene, &mut views.instances),
-            center,
+            (center, &views.frame),
             crate::stages::shadows::local::ShadowFrame {
                 mask: input.visibility_mask,
                 time: input.elapsed_seconds,
@@ -122,9 +123,12 @@ impl Renderer {
             (&views.casters, &views.instances),
             &cascades,
         );
-        self.shadows
-            .local
-            .encode_capture(&mut encoder, (scene, &self.pipelines), &views.instances);
+        self.shadows.local.encode_capture(
+            &mut encoder,
+            &local,
+            (scene, &self.pipelines),
+            &views.instances,
+        );
         // Surfaces here sample the installed probes (surface.wgsl).
         let probes = scene
             .specular_probes()
@@ -140,7 +144,7 @@ impl Renderer {
                 [view, &views.frame],
                 probes,
                 views.clusters.buffer(),
-                self.bindings.static_local_shadows(&local_records),
+                self.bindings.static_local_shadows(&local.records),
                 dynamic_gi.map(|(_, probes)| probes).or_else(|| {
                     self.dynamic_gi
                         .as_ref()

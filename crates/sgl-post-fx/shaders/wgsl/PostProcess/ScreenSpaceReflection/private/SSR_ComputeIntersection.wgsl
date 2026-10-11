@@ -71,9 +71,11 @@ fn LoadMotion(PixelCoord: vec2<i32>) -> vec2<f32>
 }
 #endif
 
+// PROVENANCE.md DFX-46: +infinity reads as HALF_MAX, so spatial
+// reconstruction's tone map (DFX-16) makes no inf / inf.
 fn LoadRadiance(PixelCoord: vec2<i32>) -> vec3<f32>
 {
-    return HlslLoad(g_TextureRadiance, PixelCoord, 0).xyz;
+    return clamp(HlslLoad(g_TextureRadiance, PixelCoord, 0).xyz, vec3<f32>(0.0), vec3<f32>(HALF_MAX));
 }
 
 fn InitialAdvanceRay(Origin: vec3<f32>,
