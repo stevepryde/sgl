@@ -215,7 +215,7 @@ impl SharedPeer {
                 initialized: false,
                 activity_pending: false,
                 outstanding_ping: None,
-                pending_pong: None,
+                pong_matched: false,
                 rtt: RttEstimator::new(),
             }),
             magic,
@@ -303,7 +303,9 @@ struct Liveness {
     initialized: bool,
     activity_pending: bool,
     outstanding_ping: Option<u64>,
-    pending_pong: Option<u64>,
+    /// A pong echoing `outstanding_ping` arrived since the last `advance`,
+    /// which samples its round trip at the caller's clock.
+    pong_matched: bool,
     rtt: RttEstimator,
 }
 
@@ -319,12 +321,11 @@ impl Liveness {
             self.last_activity_ms = self.now_ms;
             self.activity_pending = false;
         }
-        if let Some(sent_ms) = self.pending_pong.take()
-            && self.outstanding_ping == Some(sent_ms)
+        if std::mem::take(&mut self.pong_matched)
+            && let Some(sent_ms) = self.outstanding_ping.take()
         {
             let elapsed = self.now_ms.saturating_sub(sent_ms);
             self.rtt.sample(u32::try_from(elapsed).unwrap_or(u32::MAX));
-            self.outstanding_ping = None;
         }
     }
 
@@ -337,8 +338,11 @@ impl Liveness {
         let Ok(sent_bytes) = <[u8; 8]>::try_from(payload) else {
             return;
         };
-        let sent_ms = u64::from_be_bytes(sent_bytes);
-        self.pending_pong = Some(sent_ms);
+        // Matched on arrival, so a later unsolicited pong (RFC 6455
+        // section 5.5.3) cannot displace the reply before `advance`.
+        if self.outstanding_ping == Some(u64::from_be_bytes(sent_bytes)) {
+            self.pong_matched = true;
+        }
     }
 
     fn timed_out(&self) -> bool {
@@ -626,29 +630,20 @@ impl ServerIo for NativeWebSocketServer {
         let mut events = Vec::with_capacity(self.max_events_per_poll);
         let mut remove = Vec::new();
         let mut wake = false;
-        // Only a close made before the drain is reported. The worker can
-        // close a peer between two of its events, after this poll popped
-        // messages the close would have purged; that close waits for the
-        // next poll, so no poll returns a peer's messages beside its
-        // `ProtocolViolation`.
-        let closed: Vec<bool> = connections
-            .iter()
-            .map(|conn| {
-                let shared = &registry
-                    .get(conn)
-                    .expect("connection key came from registry")
-                    .shared;
-                shared.advance(now_ms);
-                lock(&shared.state).terminal().is_some()
-            })
-            .collect();
+        for conn in &connections {
+            registry
+                .get(conn)
+                .expect("connection key came from registry")
+                .shared
+                .advance(now_ms);
+        }
 
         // Drain in rounds so every active peer gets one turn before any peer
         // gets a second. Rotate the starting peer between polls as well.
         let mut progressed = true;
         while events.len() < self.max_events_per_poll && progressed {
             progressed = false;
-            for (&conn, &closed) in connections.iter().zip(&closed) {
+            for &conn in &connections {
                 if events.len() >= self.max_events_per_poll {
                     break;
                 }
@@ -664,9 +659,10 @@ impl ServerIo for NativeWebSocketServer {
                             payload,
                         })
                     } else if let Some(reason) = state.terminal()
-                        && closed
                         && !peer.disconnected_announced
                     {
+                        // Under the same lock as the empty queue: a closed
+                        // peer takes no more messages, so none follows this.
                         peer.disconnected_announced = true;
                         peer.shared.shutdown.store(true, Ordering::Release);
                         remove.push(conn);
@@ -1546,9 +1542,9 @@ mod tests {
     /// against the default cap instead of its configured one. Oracle: the
     /// configured cap (netcode.md 15) — a first fragment declaring it,
     /// past the default, waits for its message; one declaring a byte more
-    /// closes the peer as `ProtocolViolation` before anything is buffered,
-    /// and a whole message received before it in the same turn is not
-    /// delivered.
+    /// closes the peer as `ProtocolViolation` before anything is buffered.
+    /// Either way a whole message received before it in the same turn is
+    /// still delivered.
     #[test]
     fn a_declared_total_past_the_configured_cap_is_a_protocol_violation() {
         const CAP: u32 = 1 << 20;
@@ -1566,16 +1562,15 @@ mod tests {
             ]));
             tick(&mut socket, &shared);
             let mut state = lock(&shared.state);
-            if violation {
-                assert_eq!(state.terminal(), Some(DisconnectReason::ProtocolViolation));
-                assert_eq!(state.pop_inbound(), None);
-            } else {
-                assert_eq!(state.terminal(), None);
-                assert_eq!(
-                    state.pop_inbound(),
-                    Some((Delivery::Reliable(Lane::new(1).unwrap()), b"whole".to_vec()))
-                );
-            }
+            assert_eq!(
+                state.terminal(),
+                violation.then_some(DisconnectReason::ProtocolViolation)
+            );
+            assert_eq!(
+                state.pop_inbound(),
+                Some((Delivery::Reliable(Lane::new(1).unwrap()), b"whole".to_vec()))
+            );
+            assert_eq!(state.pop_inbound(), None);
         }
     }
 
@@ -2130,5 +2125,18 @@ mod tests {
         pinging.observe_pong(&ping);
         pinging.advance(40);
         assert_eq!(pinging.rtt().srtt_ms, 30);
+    }
+
+    #[test]
+    fn an_unsolicited_pong_after_the_reply_keeps_pinging() {
+        let pinging = shared(10, 0);
+        pinging.advance(0);
+        pinging.advance(10);
+        let ping = pinging.take_ping().unwrap();
+        pinging.observe_pong(&ping);
+        pinging.observe_pong(&99u64.to_be_bytes());
+        pinging.advance(40);
+        assert_eq!(pinging.rtt().srtt_ms, 30);
+        assert!(pinging.take_ping().is_some());
     }
 }

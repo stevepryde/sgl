@@ -18,6 +18,24 @@ docs and specs the entry links.
 - `sgl-3d` deformation (`Scene::set_instance_deformation`): a deforming mesh
   above 4,194,240 vertices failed device validation every frame it deformed;
   it now deforms. No game-code changes needed.
+- `sgl-net` native WebSocket keepalive: an unsolicited 8-byte pong arriving
+  after the reply to this side's ping, before the next `poll` or `flush`,
+  discarded the reply, so this side never pinged again and its `rtt` stopped
+  updating; the reply now counts. No game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown`: for one frame after a selection,
+  click-away, Escape, `Ui::close_popups` or `Ui::cancel_interactions` closed
+  the popover, widgets under where it was could not hover or take a press;
+  they now respond at once. No game-code change needed.
+- `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
+  (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
+  (`FrameInput::camera_cut`, a resize or another scene) in a frame where the
+  feature did not run could leave its history from before the reset in use
+  when it resumed; any reset now ends it. No game-code change needed.
+- `sgl-net` WebSocket transports (`NativeWebSocketServer`,
+  `NativeWebSocketClient`, `BrowserWebSocketClient`): a peer closed for
+  `ProtocolViolation` or `InboundOverflow` discarded the messages received
+  before the offending frame; they are now delivered before its
+  `Disconnected`. No game-code change needed.
 - `sgl-3d` `Scene::set_instance_deformation`: a joint matrix scaling an axis
   to zero gave its skinned vertices NaN normals, and a mirrored skin turned
   them against its deformed faces; skinned normals now face the deformed
