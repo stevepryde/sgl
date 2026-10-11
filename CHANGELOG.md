@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflection` and
+  `ScreenSpaceReflectionAttribs::most_detailed_mip`: a zero or non-unit
+  world normal gave its ray a NaN direction, and a `most_detailed_mip` past
+  the depth hierarchy's top level started rays at a level that does not
+  exist; such a normal now reports a miss and `most_detailed_mip` counts as
+  the top level at most. No game-code change needed.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
   controller callback, including those a newer owner had installed, so the
   newer one stopped receiving input; it now clears only callbacks it still
