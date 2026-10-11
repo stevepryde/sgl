@@ -24,6 +24,12 @@ const MAX_GLOBAL_RELIABLE_MESSAGES: usize = 1 << 20;
 const MAX_GLOBAL_RELIABLE_BYTES: usize = 1 << 30;
 const DEFAULT_PEERS: usize = 24;
 const DEFAULT_LANES: usize = DEFAULT_PEERS * RELIABLE_LANES;
+/// Confirms a client sends for one cookie before it asks for another. One
+/// that goes unanswered this long was lost or outlived its cookie (valid 5
+/// to 10 s after issue), which the server then drops; asking again costs
+/// one request, answered by an accept when the server already holds the
+/// connection or a fresh challenge otherwise.
+const CONFIRMS_PER_COOKIE: u32 = 4;
 
 #[derive(Debug, Clone)]
 pub struct EndpointConfig {
@@ -765,21 +771,29 @@ impl<T: DatagramTransport> Endpoint<T> {
         if !retry {
             return;
         }
-        let peer = &self.peers[&id];
-        let (addr, nonces, kind) = (
-            peer.addr,
-            peer.nonces,
-            match peer.handshake {
-                Handshake::ClientRequest => Kind::ConnectRequest,
-                Handshake::ClientConfirm => Kind::ConnectConfirm,
-                Handshake::Connected => return,
-            },
-        );
+        let peer = self.peers.get_mut(&id).expect("peer exists");
+        // A client asking again keeps the cookie it holds, so a late accept
+        // or payload for it still completes the handshake.
+        let request = Nonces {
+            client: peer.nonces.client,
+            server: 0,
+        };
+        let (kind, nonces) = match peer.handshake {
+            Handshake::ClientRequest => (Kind::ConnectRequest, request),
+            Handshake::ClientConfirm if peer.confirms_sent >= CONFIRMS_PER_COOKIE => {
+                peer.handshake = Handshake::ClientRequest;
+                (Kind::ConnectRequest, request)
+            }
+            Handshake::ClientConfirm => {
+                peer.confirms_sent += 1;
+                (Kind::ConnectConfirm, peer.nonces)
+            }
+            Handshake::Connected => return,
+        };
+        peer.last_handshake_send_ms = now_ms;
+        peer.last_send_ms = now_ms;
+        let addr = peer.addr;
         self.send_control(addr, kind, nonces, now_ms);
-        if let Some(peer) = self.peers.get_mut(&id) {
-            peer.last_handshake_send_ms = now_ms;
-            peer.last_send_ms = now_ms;
-        }
     }
 
     /// Sends up to `budget` payload datagrams, packing items into each in
@@ -928,17 +942,21 @@ impl<T: DatagramTransport> Endpoint<T> {
                     return;
                 };
                 let peer = self.peers.get_mut(&id).expect("route points to peer");
-                // The client confirms the first challenge it gets. A later
-                // one answers a retried request and may carry an older
-                // cookie than one the server already accepted, which the
-                // server would not switch to.
+                // The client confirms the first challenge it gets after
+                // asking. A later one answers a retried request and may
+                // carry an older cookie than one the server already
+                // accepted, which the server would not switch to.
                 if peer.handshake == Handshake::Connected
                     || (peer.handshake == Handshake::ClientConfirm && peer.nonces != nonces)
                 {
                     return;
                 }
+                if peer.handshake == Handshake::ClientRequest {
+                    peer.confirms_sent = 0;
+                }
                 peer.nonces = nonces;
                 peer.handshake = Handshake::ClientConfirm;
+                peer.confirms_sent += 1;
                 peer.last_receive_ms = now_ms;
                 self.send_control(source, Kind::ConnectConfirm, nonces, now_ms);
             }
@@ -1035,6 +1053,16 @@ impl<T: DatagramTransport> Endpoint<T> {
         if !self.accepting_connections && !self.routes.contains_key(&(source, nonces.client)) {
             return;
         }
+        // The cookie admits a new connection; the one it admitted is
+        // answered by its nonces alone, however old the cookie now is.
+        if let Some(id) = self.match_peer(source, nonces) {
+            self.peers
+                .get_mut(&id)
+                .expect("matched peer exists")
+                .last_receive_ms = now_ms;
+            self.send_control(source, Kind::ConnectAccept, nonces, now_ms);
+            return;
+        }
         let Some(cookie_epoch) = self
             .cookie_key
             .as_ref()
@@ -1107,7 +1135,13 @@ impl<T: DatagramTransport> Endpoint<T> {
         };
         let peer = self.peers.get_mut(&id).expect("matched peer exists");
         if peer.handshake != Handshake::Connected {
-            return;
+            // Only a server that accepted the cookie this client holds sends
+            // payloads carrying it, so one stands in for a lost accept.
+            if peer.nonces.server == 0 {
+                return;
+            }
+            peer.handshake = Handshake::Connected;
+            events.push(EndpointEvent::Connected { peer: id });
         }
         peer.last_receive_ms = now_ms;
         let held = peer.held();
@@ -1887,6 +1921,172 @@ mod tests {
                 delivery: Delivery::RELIABLE_ORDERED,
                 payload: b"welcome".to_vec(),
             }]
+        );
+    }
+
+    /// Drives a client connecting to a fresh server at virtual 0 in 10 ms
+    /// steps to `until_ms`, losing each datagram bound for the server or the
+    /// client while `server_bound_lost` or `client_bound_lost` holds for the
+    /// step that delivers it. Returns when each side reported `Connected`,
+    /// and every other event either reported.
+    fn handshake_through_outage(
+        server_bound_lost: impl Fn(u64) -> bool,
+        client_bound_lost: impl Fn(u64) -> bool,
+        until_ms: u64,
+    ) -> (Option<u64>, Option<u64>, Vec<EndpointEvent>) {
+        let (server_addr, client_addr) =
+            (address(192, 0, 2, 1, 7_000), address(192, 0, 2, 2, 40_000));
+        let config = EndpointConfig {
+            timeout_ms: 60_000,
+            ..EndpointConfig::default()
+        };
+        let mut server =
+            Endpoint::server(RecordingTransport::default(), config.clone(), [15; 32]).unwrap();
+        let mut client = Endpoint::client(RecordingTransport::default(), config).unwrap();
+        let peer = client.start_connect(server_addr, 0, 73).unwrap();
+        let (mut client_connected, mut server_connected, mut others) = (None, None, Vec::new());
+        for now in (0..=until_ms).step_by(10) {
+            ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+                server_bound_lost(now)
+            });
+            for event in server.poll(now) {
+                match event {
+                    EndpointEvent::Connected { peer: 1 } if server_connected.is_none() => {
+                        server_connected = Some(now);
+                    }
+                    other => others.push(other),
+                }
+            }
+            server.flush(now);
+            ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+                client_bound_lost(now)
+            });
+            for event in client.poll(now) {
+                if event == (EndpointEvent::Connected { peer }) && client_connected.is_none() {
+                    client_connected = Some(now);
+                } else {
+                    others.push(event);
+                }
+            }
+            client.flush(now);
+        }
+        (client_connected, server_connected, others)
+    }
+
+    /// Defect (#439): a client that holds a challenge's cookie confirming
+    /// it for ever, so when every confirm is lost until the cookie expires
+    /// (two 5 s epochs) the server drops each later one and the handshake
+    /// never completes. Oracle: #439's scenario A — the request and its
+    /// challenge cross, then everything bound for the server is lost until
+    /// 10 s; with the network clean from then on, both ends connect.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn confirms_lost_until_their_cookie_expires_still_connect() {
+        let (client, server, others) =
+            handshake_through_outage(|now| (10..10_000).contains(&now), |_| false, 30_000);
+        assert!(client.is_some_and(|at| at >= 10_000), "client: {client:?}");
+        assert!(server.is_some_and(|at| at >= 10_000), "server: {server:?}");
+        assert!(others.is_empty(), "{others:?}");
+    }
+
+    /// Defect (#439): a server checking a confirm's cookie before looking up
+    /// the connection it already admitted, and a client ignoring that
+    /// server's payloads until an accept arrives, so a client whose accept
+    /// is lost until its cookie expires never connects while the server
+    /// holds the connection. Oracle: #439's scenario B — the server accepts
+    /// at 10 ms and everything bound for the client is lost until 10 s;
+    /// with the network clean from then on, both ends connect.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn an_accept_lost_until_its_cookie_expires_still_connects() {
+        let (client, server, others) =
+            handshake_through_outage(|_| false, |now| (10..10_000).contains(&now), 30_000);
+        assert_eq!(server, Some(10));
+        assert!(client.is_some_and(|at| at >= 10_000), "client: {client:?}");
+        assert!(others.is_empty(), "{others:?}");
+    }
+
+    /// Defect (#439): a server dropping a confirm for a connection it
+    /// already admitted once the cookie that admitted it is two epochs old,
+    /// leaving the client unanswered. Oracle: #439's fix — the cookie gates
+    /// a new connection only; a confirm carrying an admitted connection's
+    /// nonces is answered with an accept carrying them at any age.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_confirm_for_an_admitted_connection_is_accepted_after_its_cookie_expires() {
+        let (mut server, source, nonces) = connected_server(EndpointConfig {
+            timeout_ms: 60_000,
+            ..EndpointConfig::default()
+        });
+        confirm(&mut server, source, nonces);
+        assert!(server.poll(10_000).is_empty());
+        assert_eq!(
+            server
+                .transport
+                .sent
+                .iter()
+                .map(|datagram| (datagram.destination, parsed_control(datagram)))
+                .collect::<Vec<_>>(),
+            [(source, (Kind::ConnectAccept, nonces))]
+        );
+    }
+
+    /// Defect (#439): a client discarding the server's payloads while it
+    /// waits for a lost accept, though they carry the nonces the server
+    /// accepted it with. Oracle: #439's fix — such a payload stands in for
+    /// the accept: the client reports `Connected`, then the payload's
+    /// message.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_payload_completes_a_handshake_whose_accept_was_lost() {
+        let (server_addr, client_addr) =
+            (address(192, 0, 2, 1, 7_000), address(192, 0, 2, 2, 40_000));
+        let mut server = Endpoint::server(
+            RecordingTransport::default(),
+            EndpointConfig::default(),
+            [16; 32],
+        )
+        .unwrap();
+        let mut client =
+            Endpoint::client(RecordingTransport::default(), EndpointConfig::default()).unwrap();
+        let peer = client.start_connect(server_addr, 0, 74).unwrap();
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(1).is_empty());
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert!(client.poll(2).is_empty());
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert_eq!(server.poll(3), [EndpointEvent::Connected { peer: 1 }]);
+        server
+            .send(1, Delivery::RELIABLE_ORDERED, b"welcome")
+            .unwrap();
+        server.flush(4);
+        ferry(
+            &mut server,
+            server_addr,
+            &mut client,
+            client_addr,
+            |datagram| {
+                matches!(
+                    packet::parse(&datagram.bytes, MAGIC),
+                    Some(Parsed::Control {
+                        kind: Kind::ConnectAccept,
+                        ..
+                    })
+                )
+            },
+        );
+        assert_eq!(
+            client.poll(5),
+            [
+                EndpointEvent::Connected { peer },
+                EndpointEvent::Message {
+                    peer,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: b"welcome".to_vec(),
+                }
+            ]
         );
     }
 
