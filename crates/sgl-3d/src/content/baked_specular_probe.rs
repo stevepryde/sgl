@@ -174,7 +174,10 @@ impl BakedSpecularProbe {
                 "transform must be a rigid rotation and translation",
             ));
         }
-        validate_box(self.influence, "influence must have positive, finite extent")?;
+        validate_box(
+            self.influence,
+            "influence must have positive, finite extent",
+        )?;
         if !self.blend.is_finite() || self.blend.min_element() < 0. {
             return Err(ProbeError::InvalidProbe(
                 "blend distances must be finite and nonnegative",
