@@ -379,7 +379,8 @@ Environment and probe specular always apply. On top of them:
   rectangle lights through their shadows, each scaled by its `fog_energy`,
   and that share of the ambient light, so light shafts form where openings
   let a shadowed light through. Opaque surfaces, the sky, blended surfaces,
-  glow and mist all fog from one volume, the sky by `Fog::sky_affect`
+  glow and mist all fog from one volume (glow dimmed by it, adding none of
+  its scattered light), the sky by `Fog::sky_affect`
   (all of it by default, as Godot's). `Fog::length` sets its reach,
   `Settings::fog_quality` its resolution and `Settings::fog_filter` its
   blur; SGL3D spaces its slices and weights its history.

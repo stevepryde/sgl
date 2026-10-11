@@ -313,7 +313,8 @@ Every draw then fogs from that volume where its point lies, as colour ×
 transmittance + scattered light: source completion fogs opaque surfaces and
 the sky (as if at `length`, by `sky_affect`: the sky mixed with its fogged
 self, as Godot's `volumetric_fog_sky_affect`, 1 by default), and blended
-surfaces, glow and mist fog themselves. Reflections composed over a surface
+surfaces, glow and mist fog themselves; glow adds only its light times the
+transmittance, as the frame behind it already holds the scattered light. Reflections composed over a surface
 take its transmittance, and screen-space reflections trace the fogged frame.
 Probe captures have no fog.
 The `offscreen` example's `--fog` shows the frame's medium and a fog volume.

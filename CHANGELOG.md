@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
+  light again on top of the background, so even a black glow brightened the
+  fog; glow now adds only its own light dimmed by the fog in front of it, so
+  glow in fog looks dimmer. No game-code change needed.
 - `sgl-post-fx` `post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH`:
   toggling it at an unchanged size kept the old depth format and panicked at
   the next resize; `PostFXContext::prepare_resources` now recreates the

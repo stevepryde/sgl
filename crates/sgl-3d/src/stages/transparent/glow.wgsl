@@ -75,7 +75,9 @@ fn glow_color(i:Glow)->vec4<f32> {
   let ripple=sin(dot(i.uv,i.ripple_frequency))*i.ripple_amplitude+1.-i.ripple_amplitude;
   alpha*=pow(1.-i.uv.y,i.taper)*ripple;
  }
- return vec4(frame_fog(i.color.rgb,i.clip.xy,i.view_depth),alpha);
+ // Additive light takes the fog's transmittance alone: the background it adds
+ // to already holds the in-scattered light at this depth (D-44).
+ return vec4(frame_fog_premultiplied(i.color.rgb,0.,i.clip.xy,i.view_depth),alpha);
 }
 
 @group(1) @binding(1) var effect_depth:texture_depth_2d;
