@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `AutoExposure::speed_brighten`/`speed_darken`: a NaN speed made
+  the adapted exposure NaN until a history reset, a negative one moved it
+  away from its target, an infinite one adapted instantly, and a speed of 0
+  over an infinite `FrameInput::frame_time_ms` moved it or made it NaN; a
+  nonfinite or negative speed now takes the default (3 and 1), and 0 holds.
+  For instant adaptation, use `f32::MAX` instead of `f32::INFINITY`.
 - `sgl-2d` `SpritePass::upload_normal` and `Renderer::upload_normal_map`: a
   second normal map under a different handle for a diffuse was ignored
   (returning `Ok`, even when mis-sized); it now replaces the first, and a
