@@ -187,3 +187,101 @@ fn case_surface(c:Case)->Surface {
         worst[2]
     );
 }
+
+// Plausible defect: a tangent that vanishes in the normal's plane (skinned
+// or morphed parallel to its normal, or a ray hit whose vertex tangents all
+// vanished) normalised as is, so NaN reaches the anisotropic axis, the map
+// frame and the lobe; or a fallback that is not in the normal's plane, or
+// that drops the handedness. The oracle is the absent-tangent frame of the
+// vertex encoding contract (specs/sgl3d-architecture.md, Vertex encoding):
+// glam's any_orthonormal_vector, the bitangent n × t times the tangent's
+// handedness, +1 where it has none; and KHR_materials_anisotropy's axis,
+// the frame's tangent turned toward its bitangent by the rotation.
+#[test]
+fn vanished_tangent_shades_absent_tangent_frame() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let rotation = 0.7f64;
+    let mut cases: Vec<[[f32; 4]; 2]> = Vec::new();
+    for n in [
+        DVec3::Z,
+        DVec3::NEG_Z,
+        DVec3::X,
+        DVec3::new(0.3, -0.5, 0.8).normalize(),
+        DVec3::new(-0.6, 0.2, -0.77).normalize(),
+    ] {
+        // The tangent: zero with no handedness, as object_tangent and an
+        // all-vanished ray hit give, and parallel to the normal with each.
+        for tangent in [[0.; 4], [n.x, n.y, n.z, 1.], [-n.x, -n.y, -n.z, -1.]] {
+            cases.push([
+                [n.x as f32, n.y as f32, n.z as f32, 0.],
+                tangent.map(|value| value as f32),
+            ]);
+        }
+    }
+    let observation = r#"
+struct Case { n:vec4<f32>,tangent:vec4<f32> }
+@group(0) @binding(3) var<storage,read> cases:array<Case>;
+@group(0) @binding(4) var<storage,read_write> result:array<vec4<f32>>;
+@compute @workgroup_size(64) fn observe(@builtin(global_invocation_id) id:vec3<u32>) {
+ if id.x>=arrayLength(&cases) { return; }
+ let c=cases[id.x];
+ let n=c.n.xyz;
+ let frame=pbr_tangent_frame(n,c.tangent);
+ let axis=pbr_resolve_anisotropy(n,frame,.8,.7,false,vec3(0.));
+ var surface:Surface;
+ surface.base=vec4(.54,.49,.44,1.);
+ surface.metallic=1.;
+ surface.normal=n;
+ surface.geometry_normal=n;
+ surface.coat_normal=n;
+ surface.view=normalize(n+frame[0]*.4);
+ surface.roughness=.3;
+ surface.anisotropy=axis;
+ let reflectance=surface_reflectance(surface,vec2(.8,.025));
+ let light=LightSample(normalize(n-frame[1]*.5),vec3(1.),1.,0.,1.,NO_RECT_LIGHT,0.);
+ result[id.x*4u]=vec4(frame[0],0.);
+ result[id.x*4u+1u]=vec4(frame[1],0.);
+ result[id.x*4u+2u]=axis;
+ result[id.x*4u+3u]=vec4(surface_direct_light(surface,reflectance,light),0.);
+}
+"#;
+    let scene = crate::Scene::new(&device, &queue);
+    let rows = crate::test_support::observe_surface(
+        &device,
+        &queue,
+        &scene,
+        bytemuck::cast_slice(&cases),
+        observation,
+        (cases.len() as u32).div_ceil(64),
+        cases.len() * 4,
+    );
+    let vector = |a: [f32; 4]| DVec3::new(a[0] as f64, a[1] as f64, a[2] as f64);
+    for (i, [n, tangent]) in cases.iter().enumerate() {
+        let n = vector(*n);
+        let t = n.any_orthonormal_vector();
+        let handedness = if tangent[3] == 0. {
+            1.
+        } else {
+            tangent[3] as f64
+        };
+        let b = n.cross(t) * handedness;
+        let axis = t * rotation.cos() + b * rotation.sin();
+        for (name, actual, expected) in [
+            ("tangent", vector(rows[4 * i]), t),
+            ("bitangent", vector(rows[4 * i + 1]), b),
+            ("axis", vector(rows[4 * i + 2]), axis),
+        ] {
+            assert!(
+                actual.distance(expected) < 1e-5,
+                "{name}, case {i}: actual={actual:?}, expected={expected:?}"
+            );
+        }
+        let colour = vector(rows[4 * i + 3]);
+        assert!(
+            colour.is_finite() && colour.min_element() > 0.,
+            "direct light, case {i}: {colour:?}"
+        );
+    }
+}

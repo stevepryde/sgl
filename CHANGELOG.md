@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` anisotropic materials: a tangent that skinning or morphing turned
+  along its normal, or a ray hit whose vertex tangents all vanished, shaded
+  NaN; it now takes an arbitrary tangent in the normal's plane with
+  handedness +1, as a vertex without a tangent does. No game-code change
+  needed.
 - `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
   light again on top of the background, so even a black glow brightened the
   fog; glow now adds only its own light dimmed by the fog in front of it, so
