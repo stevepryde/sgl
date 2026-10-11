@@ -93,7 +93,10 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    fields retain ASCII append/backspace/paste editing and never copy or cut;
    they avoid temporary copies of the secret while editing, provided the
    game preallocates `buf` with at least `max_len` bytes.
-   Buttons act on press-down. At most one widget is active at a time. An open
+   Buttons act on press-down. At most one widget is active at a time. A
+   release and press in one frame with the button held count as release then
+   press: the release ends any drag or held widget, and the press re-arms only
+   what it hits. An open
    modal blocks widgets behind it. Line edits respect `max_len` and keep the
    buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text in
    place and keeps the buffer's allocation. Scroll areas clip their content
@@ -170,8 +173,10 @@ rectangles so their text, accent and surface roles follow the selected palette.
   at its end, so the content shows it from the next frame. Restore enclosing clips yourself
   after custom clipping. Widget borders extend outside their hit rectangles:
   inset content from viewport edges and reserve gaps for focus/selection strokes
-  and the scrollbar. Clip long row names to their allocated space; provide
-  their full meaning in focus/hover help instead of letting them cover actions.
+  and the scrollbar: while content overflows, the area clips its content
+  `Ui::SCROLLBAR_WIDTH` short of its right edge, where the track sits. Clip
+  long row names to their allocated space; provide their full meaning in
+  focus/hover help instead of letting them cover actions.
 - **Discoverability and state.** Use icons for familiar repeated row actions,
   text for unfamiliar or consequential commands. Pair `icon_button` and
   `tooltip_for` with the same stable name; explain disabled reasons and any

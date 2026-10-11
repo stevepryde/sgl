@@ -20,6 +20,28 @@ docs and specs the entry links.
   reversed-Z, stored a length beyond RGBA16F's range, becoming infinity and
   NaN in the denoiser or a wrong direction where the backend saturates; it is
   now stored 65504 long along its direction. No game-code change needed.
+- `sgl-2d` `Ui::begin` / `UiFrame::end`: a release and a new press in one
+  frame (button still down) dropped the press's held button, scrollbar,
+  number-field or splitter drag; they now count as release then press, so the
+  earlier drag ends and the second press holds, scrubs or resizes. No
+  game-code change needed.
+- `sgl-input` `Gamepads::poll`: a button pressed while the macOS handler was
+  being installed could yield two `ButtonPressed` events and one release; a
+  press of a button already held is now dropped on every target. No
+  game-code change needed.
+- `sgl-2d` `UiFrame::scroll_area_begin`: content was clipped to the whole
+  area, so a press on the scrollbar thumb also pressed the row under it; while
+  the scrollbar shows, content is now clipped `Ui::SCROLLBAR_WIDTH` (new, 8 px)
+  short of the right edge. Keep row hit areas, actions and nested scroll
+  areas within `rect.max.x - Ui::SCROLLBAR_WIDTH`.
+- `sgl-3d` glTF import: an animation sampler with two keyframes at the same
+  time loaded; it now fails the load, as glTF requires strictly increasing
+  times. Re-export the file with distinct keyframe times; no game-code
+  change needed.
+- `sgl-net` UDP client: a `ConnectDeny` arriving after the accept (reordered)
+  or naming a cookie the client was not confirming removed the connection and
+  reported `Denied` after `Connected`; it is now ignored, and only a deny for
+  the confirm the client sent refuses it. No game-code change needed.
 - `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
   `SendError::Disconnected`; it now returns `UnknownConnection`, like every
   other server transport. A game that matched `Disconnected` from a server
