@@ -637,6 +637,31 @@ fn native_client_handshake_timeout_is_bounded() {
     let _ = stalled.join();
 }
 
+/// Defect: the native client has no TLS, yet it accepted `wss://` and ran
+/// the handshake over plain TCP. Oracle: a listener that is never accepted
+/// still queues any TCP connection, so a nonblocking accept after `connect`
+/// returns shows whether the client opened one.
+#[test]
+fn native_client_refuses_wss_before_connecting() {
+    let listener =
+        std::net::TcpListener::bind(std::net::SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let result = NativeWebSocketClient::connect(NativeWebSocketClientConfig::new(
+        format!("wss://{address}{GAME_PATH}"),
+        ORIGIN_VALUE,
+        identity(),
+    ));
+    match result {
+        Ok(_) => panic!("wss:// must be refused, not connected in plaintext"),
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{error}"),
+    }
+    match listener.accept() {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+        other => panic!("a refused wss:// URL opened a TCP connection: {other:?}"),
+    }
+}
+
 #[test]
 fn native_client_connects_to_an_ipv6_literal_url() {
     let config =

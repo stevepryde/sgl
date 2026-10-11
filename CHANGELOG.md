@@ -20,6 +20,10 @@ docs and specs the entry links.
   i>4294967000u;`), was accepted as one iteration; it is now refused with
   `ShaderError::UnboundedLoop`, as start plus step must fit the counter's
   type. Games with such a loop: start the counter at or below its limit.
+- `sgl-net` `NativeWebSocketClient::connect`: a `wss://` URL connected in
+  plaintext; now any scheme but `ws` fails with `InvalidInput` before
+  connecting. Games passing `wss://` to the native client: use `ws://` and
+  terminate TLS at the deployment edge.
 - `sgl-core` `sweep_aabb` (and `move_and_collide`, `snap_to_ground`): a body
   exactly touching a collider at coordinates that round could miss it and
   move straight through; now a body exactly touching a collider contacts it
