@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `geometry::obstructed_distance`: its absolute determinant cutoff
+  missed every hit on a triangle with sub-millimetre edges and grazing hits
+  on centimetre ones; the cutoff now scales with the triangle's edges, so
+  small triangles are hit like large ones. No game-code change needed.
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): a ray that left
   past the far plane, such as a floor reflecting the sky under infinite
   reversed-Z, stored a length beyond RGBA16F's range, becoming infinity and
